@@ -109,6 +109,14 @@ The right sequence is therefore: finish PG18, capture query/latency evidence, bu
 4. Keep PgCache as an external benchmark option, configured with a strict table allowlist and telemetry disabled unless explicitly accepted.
 5. Do not cache SQL that relies only on `SET LOCAL app.current_tenant` for tenant isolation; require explicit tenant predicates for every cacheable projection query.
 
+## Consolidated Checklist
+
+- [ ] Finish the PG18 upgrade work before treating PgCache as a serious adoption candidate.
+- [ ] Capture real snapshot/delta/read-path latency evidence before introducing a cache layer.
+- [ ] Decide whether a tenant projection read model should be task-planned.
+- [ ] Add request coalescing and response-byte instrumentation for the projection reads.
+- [ ] Keep any future PgCache experiment behind an explicit allowlist and benchmark gate.
+
 ## Final Recommendation
 
 Use PG18-native mechanics and an explicit tenant projection read model first. Treat PgCache as a measured, opt-in accelerator for a small set of projection SELECTs only after the PG18 roadmap is complete and real query metrics show that native Postgres plus domain projections are not enough.

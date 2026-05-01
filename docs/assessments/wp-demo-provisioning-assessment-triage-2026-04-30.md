@@ -55,6 +55,15 @@ Provision `demo.altcontext.com` only after the E15-3a LocalWP -> OCI round-trip 
 5. Seed licensed media/rosters, run the Workbench scan, and capture proof assets.
 6. Publish a conversion page with screenshot/video proof, privacy/licensing text, and lead capture.
 
+## Consolidated Checklist
+
+- [ ] E15-3a gate passes with the full LocalWP -> OCI round-trip evidence set.
+- [ ] Host choice is recorded for E15-3 with managed/shared WordPress as the default path.
+- [ ] `demo.altcontext.com` WordPress hosting, DNS, and TLS are provisioned.
+- [ ] ACX plugin is installed and configured against `https://api.altcontext.com` with a server-side demo key.
+- [ ] Seeded licensed demo media and rosters are loaded and verified through a Workbench scan.
+- [ ] Public conversion page is published before sharing the URL broadly.
+
 ## Explicit Non-Priorities For First Launch
 
 - Public visitor upload, public recognition API, or shared wp-admin credentials.

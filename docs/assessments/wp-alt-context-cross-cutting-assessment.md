@@ -162,6 +162,17 @@ Ordered by leverage (impact × ease).
 8. **Steady-state purge for accumulating tables.** `acx_sync_conflicts` (SY-5), retained job history, transient breaker rows (RX-2). Each needs an explicit retention horizon.
    *Principles*: REL-SS
 
+## Consolidated Checklist
+
+- [ ] Add bounded request/result caps at the server and repository boundaries called out in RX-3, DB-1, DB-5, MX-1, and CL-1.
+- [ ] Introduce shared `EmptyState`, `Skeleton`, and `ErrorState` UI primitives across the admin SPA.
+- [ ] Unify backend breaker state across proxy and sync surfaces.
+- [ ] Replace blocking retry sleeps in proxy paths with fast-fail or queued retry behavior.
+- [ ] Centralize job-state updates behind one canonical state surface instead of fragmented hook-level updates.
+- [ ] Document and expose the reset-projection rebuild path.
+- [ ] Align batch configuration with the canonical multipart cap.
+- [ ] Add steady-state retention/purge policy for conflict and breaker state.
+
 ---
 
 ## 5. Preserve (already aligned)

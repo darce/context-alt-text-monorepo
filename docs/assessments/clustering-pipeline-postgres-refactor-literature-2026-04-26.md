@@ -111,6 +111,16 @@ Each finding: principle, source citation, concrete code anchor, recommended move
 3. **Slice 3 (F-4, F-5):** Observability + per-chunk deadline. Depends on F-6 to express the timeout-recovery state cleanly.
 4. **Defer (F-8, F-9, F-10):** ADR-only for F-8; minor seams for F-9 and F-10. Pick up as part of an integrity-of-the-pipeline sweep, not standalone work.
 
+## Consolidated Checklist
+
+- [ ] Add explicit timeout handling around embedding and other external adapter calls.
+- [ ] Split database transaction boundaries away from remote adapter calls on the clustering path.
+- [ ] Add application-level breaker coverage for embedding/labeling adapter failures.
+- [ ] Add per-chunk timeout/latency instrumentation once the state surface is centralized enough to recover cleanly.
+- [ ] Replace magic-string job statuses with a canonical enum surface.
+- [ ] Group orchestration dependencies/config/context into parameter objects.
+- [ ] Keep isolation-level, chunk-boundary, and backpressure refinements deferred until the Tier 1/Tier 2 slices land.
+
 ## Open questions for follow-up planning
 
 1. Is the per-tenant `with_for_update()` lock at job admission *guaranteed* to be the only entry point, or can the worker path ([scan_worker.py:127](../../apps/prototype-description-service/recognition/application/scan/scan_worker.py#L127)) start a clustering job concurrently? If yes, F-8's serialization assumption is wrong.

@@ -438,10 +438,24 @@ do_reset() {
     "echo '==> Starting unit ${unit}'" \
     "sudo systemctl start ${unit}"
 
+  # Post-reset bootstrap. Recreates one usable service-mode dev API key after
+  # the destructive reset has wiped the credentials table. The actual key value
+  # is operator-captured; the script just runs the canonical CLI in 'create'
+  # mode and prints the resulting JSON for the operator to copy into the plugin.
+  local bootstrap_cmd="cd ${REPO_ROOT}/apps/prototype-description-service && PYENV_VERSION=description-service pyenv exec python scripts/manage_api_keys.py create --tenant-id acx-${env}-dev --name e15-12-reset-bootstrap"
+
+  # /ready verification: distinct from /health because reset specifically needs
+  # dependency readiness (postgres up, schema migrated, models loaded) before
+  # we declare the env operable.
+  local verify_cmd="curl -fsS --max-time 30 ${ready_url}"
+
   if [[ "${ACX_RESET_DRY_RUN:-0}" == "1" ]]; then
     log "DRY-RUN: would invoke ssh ${SSH_TARGET} with the following remote command:"
     printf '%s\n' "${remote_cmd}"
-    log "DRY-RUN: would then run dev bootstrap and verify ${ready_url}"
+    log "DRY-RUN: would then run post-reset bootstrap:"
+    printf '%s\n' "${bootstrap_cmd}"
+    log "DRY-RUN: would then verify readiness:"
+    printf '%s\n' "${verify_cmd}"
     log "DRY-RUN: no SSH session opened; no remote state mutated"
     return 0
   fi
@@ -450,7 +464,23 @@ do_reset() {
   log "Executing reset on ${SSH_TARGET}"
   ssh "${SSH_TARGET}" "bash -s" <<<"${remote_cmd}"
 
-  log "Reset complete. Post-reset bootstrap + ${ready_url} verification land in slice 2d."
+  log "Running post-reset bootstrap to recreate a service-mode dev API key"
+  bash -c "${bootstrap_cmd}"
+
+  log "Verifying readiness at ${ready_url}"
+  # Brief settle window: systemd start is async; the unit may need a few seconds
+  # before postgres + the API report ready. 30s is the same envelope as deploy verify.
+  local attempts=0
+  until eval "${verify_cmd}"; do
+    attempts=$((attempts + 1))
+    if (( attempts >= 6 )); then
+      fail "Readiness check failed after ${attempts} attempts at ${ready_url}"
+    fi
+    log "Readiness not yet reported (attempt ${attempts}/6); retrying in 5s"
+    sleep 5
+  done
+
+  log "Reset complete. ${ready_url} returned ready."
 }
 
 #---------------------------------------------------------------- dispatch

@@ -222,11 +222,6 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 			return 'service';
 		}
 
-		$option_source = trim( (string) get_option( 'acx_recognition_source', '' ) );
-		if ( $this->is_valid_recognition_source( $option_source ) ) {
-			return $option_source;
-		}
-
 		$filter_url = trim( (string) apply_filters( 'acx_recognition_base_url', '' ) );
 		if ( $this->is_valid_recognition_base_url( $filter_url ) ) {
 			return 'service';
@@ -235,6 +230,11 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 		$filter_source = trim( (string) apply_filters( 'acx_recognition_source', '' ) );
 		if ( $this->is_valid_recognition_source( $filter_source ) ) {
 			return $filter_source;
+		}
+
+		$option_source = trim( (string) get_option( 'acx_recognition_source', '' ) );
+		if ( $this->is_valid_recognition_source( $option_source ) ) {
+			return $option_source;
 		}
 
 		$option_url = trim( (string) get_option( 'acx_recognition_url', '' ) );

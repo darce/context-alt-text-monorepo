@@ -177,6 +177,20 @@ describe('SettingsPage', () => {
     expect(screen.getByRole('button', { name: 'Test Connection' })).toBeDisabled();
   });
 
+  it('disables the Test Connection button when recognition source is local', () => {
+    // Local mode targets http://localhost:8000 and never calls the hosted
+    // service URL — probing the saved service URL from local mode would be
+    // misleading.
+    mockUseQuery.mockReturnValue(
+      createMockQuery({
+        data: { ...defaultSettings, recognition_source: 'local' as const },
+      }),
+    );
+    render(<SettingsPage />);
+
+    expect(screen.getByRole('button', { name: 'Test Connection' })).toBeDisabled();
+  });
+
   describe('probe outcome banners', () => {
     const driveOutcome = (response: TestConnectionResponse): void => {
       expect(capturedTestOptions?.onSuccess).toBeDefined();

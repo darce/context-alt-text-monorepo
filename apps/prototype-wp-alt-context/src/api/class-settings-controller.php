@@ -365,14 +365,14 @@ class SettingsController {
 			return array( 'value' => 'service', 'source' => $url_resolution['source'] );
 		}
 
-		$option = trim( (string) get_option( 'acx_recognition_source', '' ) );
-		if ( $this->is_valid_recognition_source( $option ) ) {
-			return array( 'value' => $option, 'source' => 'option' );
-		}
-
 		$filter = trim( (string) apply_filters( 'acx_recognition_source', '' ) );
 		if ( $this->is_valid_recognition_source( $filter ) ) {
 			return array( 'value' => $filter, 'source' => 'filter' );
+		}
+
+		$option = trim( (string) get_option( 'acx_recognition_source', '' ) );
+		if ( $this->is_valid_recognition_source( $option ) ) {
+			return array( 'value' => $option, 'source' => 'option' );
 		}
 
 		if ( '' !== $url_resolution['value'] ) {

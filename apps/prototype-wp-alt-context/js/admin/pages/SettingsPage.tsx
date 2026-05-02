@@ -360,7 +360,7 @@ export const SettingsPage = (): React.JSX.Element => {
             type="button"
             className="button"
             onClick={handleTest}
-            disabled={testMutation.isPending || url.trim() === ''}
+            disabled={testMutation.isPending || url.trim() === '' || recognitionSource === RecognitionSource.LOCAL}
             style={{ marginLeft: '8px' }}
           >
             {testMutation.isPending ? __('Testing\u2026', 'alt-context') : __('Test Connection', 'alt-context')}

@@ -438,11 +438,38 @@ do_reset() {
     "echo '==> Starting unit ${unit}'" \
     "sudo systemctl start ${unit}"
 
-  # Post-reset bootstrap. Recreates one usable service-mode dev API key after
-  # the destructive reset has wiped the credentials table. The actual key value
-  # is operator-captured; the script just runs the canonical CLI in 'create'
-  # mode and prints the resulting JSON for the operator to copy into the plugin.
-  local bootstrap_cmd="cd ${REPO_ROOT}/apps/prototype-description-service && PYENV_VERSION=description-service pyenv exec python scripts/manage_api_keys.py create --tenant-id acx-${env}-dev --name e15-12-reset-bootstrap"
+  # Post-reset bootstrap. Recreates one usable service-mode API key after the
+  # destructive reset wipes the credentials table.
+  #
+  # Contract notes (E15-12-BR-03):
+  #   - manage_api_keys.py requires a top-level --env {prod,dev,local}. The
+  #     CLI validates --env against the configured DSN host: 'prod' rejects
+  #     loopback hosts, 'dev|local' rejects non-loopback. Inside the api
+  #     container on the OCI VM the DSN host is 'postgres' (compose service),
+  #     which is non-loopback, so --env prod is the only choice that passes
+  #     the validation guard regardless of OCI deployment env (dev/staging/prod).
+  #   - The CLI uses `--tenant <uuid>`, NOT `--tenant-id <string>`. Tenant
+  #     identifiers must be UUIDs.
+  #   - There is no `--name` flag.
+  #   - `create` requires the tenant row to already exist (FK constraint), so
+  #     we run `tenant create --tenant <uuid> --site-url <url>` first; the
+  #     CLI handles the create-or-update case idempotently.
+  #   - The OCI postgres is what just got wiped — bootstrap must run on the
+  #     remote VM via `docker compose exec api`, not locally.
+  local tenant_id="${ACX_RESET_TENANT_ID:-00000000-0000-7000-8000-000000000000}"
+  local site_url
+  case "${env}" in
+    prod)    site_url="${ACX_RESET_SITE_URL:-https://api.altcontext.com}" ;;
+    staging) site_url="${ACX_RESET_SITE_URL:-https://staging.api.altcontext.com}" ;;
+    *)       site_url="${ACX_RESET_SITE_URL:-https://dev.api.altcontext.com}" ;;
+  esac
+  local bootstrap_cmd
+  printf -v bootstrap_cmd '%s\n' \
+    "cd ${remote_dir}" \
+    "echo '==> Ensuring tenant row exists for service-mode key bootstrap'" \
+    "sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod tenant create --tenant ${tenant_id} --site-url ${site_url}" \
+    "echo '==> Creating post-reset service-mode API key (operator: copy api_key= line into the plugin)'" \
+    "sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod create --tenant ${tenant_id}"
 
   # /ready verification: distinct from /health because reset specifically needs
   # dependency readiness (postgres up, schema migrated, models loaded) before
@@ -452,10 +479,10 @@ do_reset() {
   if [[ "${ACX_RESET_DRY_RUN:-0}" == "1" ]]; then
     log "DRY-RUN: would invoke ssh ${SSH_TARGET} with the following remote command:"
     printf '%s\n' "${remote_cmd}"
-    log "DRY-RUN: would then run post-reset bootstrap:"
-    printf '%s\n' "${bootstrap_cmd}"
     log "DRY-RUN: would then verify readiness:"
     printf '%s\n' "${verify_cmd}"
+    log "DRY-RUN: would then run post-reset bootstrap on ${SSH_TARGET}:"
+    printf '%s\n' "${bootstrap_cmd}"
     log "DRY-RUN: no SSH session opened; no remote state mutated"
     return 0
   fi
@@ -464,12 +491,10 @@ do_reset() {
   log "Executing reset on ${SSH_TARGET}"
   ssh "${SSH_TARGET}" "bash -s" <<<"${remote_cmd}"
 
-  log "Running post-reset bootstrap to recreate a service-mode dev API key"
-  bash -c "${bootstrap_cmd}"
-
   log "Verifying readiness at ${ready_url}"
   # Brief settle window: systemd start is async; the unit may need a few seconds
-  # before postgres + the API report ready. 30s is the same envelope as deploy verify.
+  # before postgres + the API report ready. The bootstrap must wait for /ready
+  # because `docker compose exec api` requires the api container to be up.
   local attempts=0
   until eval "${verify_cmd}"; do
     attempts=$((attempts + 1))
@@ -480,7 +505,10 @@ do_reset() {
     sleep 5
   done
 
-  log "Reset complete. ${ready_url} returned ready."
+  log "Running post-reset bootstrap on ${SSH_TARGET} (tenant create + key create)"
+  ssh "${SSH_TARGET}" "bash -s" <<<"${bootstrap_cmd}"
+
+  log "Reset complete. ${ready_url} returned ready and a fresh service-mode API key was printed above."
 }
 
 #---------------------------------------------------------------- dispatch

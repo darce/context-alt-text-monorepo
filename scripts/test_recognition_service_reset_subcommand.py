@@ -134,10 +134,64 @@ def test_reset_dev_dry_run_includes_ready_verification_and_bootstrap_steps() -> 
     # /ready verification curl, not just /health
     assert "curl" in out
     assert "https://dev.api.altcontext.com/ready" in out
-    # Bootstrap step references the canonical credential-recreation entry point
-    # (apps/prototype-description-service/scripts/manage_api_keys.py).
-    assert "manage_api_keys.py" in out
+    # Bootstrap step references the canonical credential-recreation entry point.
+    assert "manage_api_keys" in out
     assert "create" in out
+
+
+def test_reset_dev_dry_run_bootstrap_uses_canonical_cli_contract() -> None:
+    """Slice 3 / E15-12-BR-03: the bootstrap shape must match the real
+    manage_api_keys.py CLI contract.
+
+    The earlier slice-2d implementation used flags that do not exist
+    (--tenant-id, --name) and omitted the mandatory top-level --env, which
+    would make the destructive reset path unrecoverable: postgres wiped, then
+    the bootstrap exits with argparse usage error and the operator is left
+    without a service-mode key.
+
+    Real contract (apps/prototype-description-service/scripts/manage_api_keys.py):
+        python -m scripts.manage_api_keys --env {prod,dev,local} \
+            tenant create --tenant <uuid> --site-url <url>
+        python -m scripts.manage_api_keys --env {prod,dev,local} \
+            create --tenant <uuid>
+    """
+    result = _run(
+        ["reset", "dev"],
+        env_overrides={
+            "CONFIRM_REMOTE_RESET": "RESET",
+            "ACX_RESET_DRY_RUN": "1",
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
+
+    # Mandatory top-level env flag with a valid choice.
+    assert "--env prod" in out or "--env dev" in out or "--env local" in out, (
+        "bootstrap is missing the mandatory --env flag from manage_api_keys CLI"
+    )
+
+    # Tenant bootstrap (idempotent) before key creation.
+    assert "tenant create" in out, (
+        "bootstrap must run `tenant create` before `create` so the FK exists"
+    )
+    assert "--site-url" in out, "tenant create requires --site-url per the CLI contract"
+
+    # Key creation uses --tenant <uuid>, NOT --tenant-id, and there is no --name.
+    assert "--tenant " in out, "create must use --tenant <uuid>, not --tenant-id"
+    assert "--tenant-id" not in out, (
+        "the CLI has no --tenant-id flag; use --tenant <uuid>"
+    )
+    assert "--name " not in out, (
+        "the CLI has no --name flag; remove it from the bootstrap command"
+    )
+
+    # The OCI postgres lives inside the compose project on the remote VM. The
+    # bootstrap must run there (via docker compose exec or equivalent), not
+    # locally, because the local DSN points at the operator's laptop DB.
+    assert "docker compose" in out and "exec" in out, (
+        "bootstrap must run inside the api container on the remote VM "
+        "(the local DSN is not the OCI db that was just reset)"
+    )
 
 
 def test_reset_dev_dry_run_does_not_open_ssh_connection() -> None:

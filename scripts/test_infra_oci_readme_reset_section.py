@@ -41,8 +41,16 @@ def test_readme_documents_post_reset_verification() -> None:
     text = README.read_text()
     # /ready (not /health) is the destructive-reset verification surface
     assert "/ready" in text
-    # post-reset bootstrap step references the credential CLI
-    assert "manage_api_keys.py" in text
+    # post-reset bootstrap step references the credential CLI (E15-12-BR-03:
+    # the canonical invocation is `python -m scripts.manage_api_keys`, run
+    # via `docker compose exec api` on the remote VM, with the mandatory
+    # top-level --env flag and `--tenant <uuid>` rather than the old
+    # non-existent --tenant-id/--name flags).
+    assert "manage_api_keys" in text
+    assert "--env" in text
+    assert "--tenant" in text and "--tenant-id" not in text
+    assert "tenant create" in text
+    assert "docker compose" in text and "exec" in text
 
 
 def test_readme_destructive_reset_section_appears_with_anchor_heading() -> None:

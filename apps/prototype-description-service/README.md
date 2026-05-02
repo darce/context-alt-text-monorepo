@@ -72,6 +72,24 @@ PGPORT=55432 make reset
 
 Stop the container with `docker compose -f docker-compose.db.yml down`.
 
+#### Local vs remote reset — when to use each
+
+The local Postgres reset above (`make reset` from this directory, or
+`make reset-local WP_PATH=...` from the repo root) only touches your local
+development DB. **Use it when** you want to wipe the database your local
+description service is talking to.
+
+For OCI environments, the equivalent operator workflow is `make reset-remote
+ENV=<dev|staging|prod> CONFIRM_REMOTE_RESET=RESET`, documented in
+[infra/oci/README.md](../../infra/oci/README.md#destructive-remote-reset).
+**Use it when** you want to wipe the database that backs `acx-dev`,
+`acx-staging`, or `acx-prod` on the OCI VM. The remote workflow uses `/ready`
+(not `/health`) for verification and runs a post-reset bootstrap to recreate
+one usable service-mode dev API key.
+
+Don't cross the streams: `make reset-local` does not touch OCI; `make
+reset-remote` does not touch your local DB.
+
 Need alternative instructions (manual psql workflow)? See
 [`db/README.md`](db/README.md).
 

@@ -99,6 +99,14 @@ env_to_health_url() {
     *) fail "Unknown env: $1" ;;
   esac
 }
+env_to_ready_url() {
+  case "$1" in
+    dev)     echo "https://dev.api.altcontext.com/ready" ;;
+    staging) echo "https://staging.api.altcontext.com/ready" ;;
+    prod)    echo "https://api.altcontext.com/ready" ;;
+    *) fail "Unknown env: $1" ;;
+  esac
+}
 
 #---------------------------------------------------------------- pre-flight
 preflight_docker() {
@@ -382,6 +390,38 @@ do_status() {
   done
 }
 
+#---------------------------------------------------------------- reset
+# Destructive remote reset for an OCI environment. This sub-slice (E15-12 slice
+# 2a) lands the validation gates and the affirmative dry-run path. The actual
+# stop/reset/start sequence + bootstrap + /ready verify is implemented in the
+# follow-on slice; that path runs only when ACX_RESET_DRY_RUN!=1.
+do_reset() {
+  local env="$1"
+  local unit remote_dir ready_url
+
+  # env validation: reuse the existing case-based guards. They `fail` on unknown.
+  unit="$(env_to_unit "$env")"
+  remote_dir="$(env_to_remote_dir "$env")"
+  ready_url="$(env_to_ready_url "$env")"
+
+  if [[ "${CONFIRM_REMOTE_RESET:-}" != "RESET" ]]; then
+    fail "Remote reset requires CONFIRM_REMOTE_RESET=RESET. Re-run: CONFIRM_REMOTE_RESET=RESET $0 reset $env"
+  fi
+  if [[ "$env" == "prod" && "${CONFIRM:-}" != "PROMOTE" ]]; then
+    fail "Production remote reset additionally requires CONFIRM=PROMOTE. Re-run: CONFIRM=PROMOTE CONFIRM_REMOTE_RESET=RESET $0 reset prod"
+  fi
+
+  log "Reset plan for env=${env}: unit=${unit} remote_dir=${remote_dir} ready_url=${ready_url}"
+
+  if [[ "${ACX_RESET_DRY_RUN:-0}" == "1" ]]; then
+    log "DRY-RUN: would stop ${unit}, clear ACX_PGDATA_PATH under ${remote_dir}, restart ${unit}, run dev bootstrap, verify ${ready_url}"
+    log "DRY-RUN: no SSH session opened; no remote state mutated"
+    return 0
+  fi
+
+  fail "Destructive remote reset not yet implemented (slice 2b). Set ACX_RESET_DRY_RUN=1 to validate the plan."
+}
+
 #---------------------------------------------------------------- dispatch
 cmd="${1:-}"; shift || true
 case "$cmd" in
@@ -389,6 +429,7 @@ case "$cmd" in
   build-remote) do_build_remote "${1:-dev}" ;;
   deploy)       [[ -n "${1:-}" ]] || fail "deploy requires <env>"; do_deploy "$1" ;;
   promote)      [[ -n "${1:-}" && -n "${2:-}" ]] || fail "promote requires <from-env> <to-env>"; do_promote "$1" "$2" ;;
+  reset)        [[ -n "${1:-}" ]] || fail "reset requires <env> (dev|staging|prod)"; do_reset "$1" ;;
   verify)       do_verify "${1:-dev}" ;;
   status)       do_status ;;
   ""|-h|--help|help) sed -n '2,40p' "$0" ;;

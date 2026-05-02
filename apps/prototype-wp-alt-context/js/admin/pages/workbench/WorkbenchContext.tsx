@@ -261,7 +261,10 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
 
     return sprintf(
-      __('Showing detail metadata for the first %1$d of %2$d requested media items. Narrow the page size to inspect the rest.', 'alt-context'),
+      __(
+        'Showing detail metadata for the first %1$d of %2$d requested media items. Narrow the page size to inspect the rest.',
+        'alt-context',
+      ),
       detailData.limit,
       detailData.total,
     );

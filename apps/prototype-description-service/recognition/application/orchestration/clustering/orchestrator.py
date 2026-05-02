@@ -44,7 +44,6 @@ from recognition.shared.ids import generate_id
 from recognition.shared.tenant import coerce_tenant_uuid
 
 if TYPE_CHECKING:
-
     pass
 
 logger = logging.getLogger(__name__)

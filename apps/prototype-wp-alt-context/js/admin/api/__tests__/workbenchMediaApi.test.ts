@@ -49,9 +49,7 @@ describe('workbenchMediaApi', () => {
       },
     });
 
-    await expect(fetchWorkbenchMediaDetail([11])).rejects.toThrow(
-      'Workbench media detail response was malformed.',
-    );
+    await expect(fetchWorkbenchMediaDetail([11])).rejects.toThrow('Workbench media detail response was malformed.');
   });
 
   it('rejects workbench media detail payloads with null details_by_media', async () => {
@@ -62,9 +60,7 @@ describe('workbenchMediaApi', () => {
       truncated: false,
     });
 
-    await expect(fetchWorkbenchMediaDetail([11])).rejects.toThrow(
-      'Workbench media detail response was malformed.',
-    );
+    await expect(fetchWorkbenchMediaDetail([11])).rejects.toThrow('Workbench media detail response was malformed.');
   });
 
   it('returns envelope metadata for valid workbench media detail payloads', async () => {

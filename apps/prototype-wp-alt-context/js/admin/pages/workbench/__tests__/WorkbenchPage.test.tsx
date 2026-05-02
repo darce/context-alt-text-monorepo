@@ -384,7 +384,9 @@ describe('WorkbenchPage', () => {
     renderWorkbench();
 
     expect(
-      screen.getByText('Showing detail metadata for the first 100 of 101 requested media items. Narrow the page size to inspect the rest.'),
+      screen.getByText(
+        'Showing detail metadata for the first 100 of 101 requested media items. Narrow the page size to inspect the rest.',
+      ),
     ).toBeInTheDocument();
   });
 

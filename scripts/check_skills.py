@@ -214,8 +214,19 @@ def _validate_sections(body: str) -> list[str]:
     return [f"missing required section `{section}`" for section in REQUIRED_SECTIONS if section not in body]
 
 
+def _has_contract_shaped_overlay_manifest(repo_root: Path) -> bool:
+    manifest_path = repo_root / ".agentic-overlay.json"
+    if not manifest_path.is_file():
+        return False
+    try:
+        payload = json.loads(manifest_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(payload, dict) and isinstance(payload.get("surfaces"), dict)
+
+
 def _resolve_skill_files(repo_root: Path, skills_root: Path) -> tuple[list[Path], list[str]]:
-    if not (repo_root / ".agentic-overlay.json").is_file():
+    if not _has_contract_shaped_overlay_manifest(repo_root):
         return sorted(skills_root.glob("*/SKILL.md")), []
 
     try:
@@ -235,7 +246,7 @@ def _resolve_skill_files(repo_root: Path, skills_root: Path) -> tuple[list[Path]
 
 def _format_success_message(*, repo_root: Path, skills_root: Path) -> str:
     skill_files, _overlay_failures = _resolve_skill_files(repo_root, skills_root)
-    if not (repo_root / ".agentic-overlay.json").is_file():
+    if not _has_contract_shaped_overlay_manifest(repo_root):
         return f"check-skills: OK ({len(skill_files)} skills)"
 
     counts: Counter[str] = Counter(

@@ -51,6 +51,8 @@ def is_excluded(path: Path) -> bool:
             return True
     if "docs/tasks/archive/" in posix:
         return True
+    if "docs/assessments/archive/" in posix:
+        return True
     if "/test_fixtures/" in posix or posix.startswith("test_fixtures/"):
         return True
     parts = path.parts

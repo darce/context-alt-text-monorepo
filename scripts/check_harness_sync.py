@@ -149,8 +149,25 @@ def _copy_package_source_root(local_root: Path, destination: Path, *, package_na
     shutil.copytree(package_dir, destination / package_dir.name)
 
 
+def _has_contract_shaped_overlay_manifest(repo_root: Path) -> bool:
+    manifest_path = repo_root / ".agentic-overlay.json"
+    if not manifest_path.is_file():
+        return False
+    try:
+        payload = json.loads(manifest_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(payload, dict) and isinstance(payload.get("surfaces"), dict)
+
+
 def _load_contract(*, repo_root: Path = REPO_ROOT) -> dict:
     contract_path = repo_root / CONTRACT_RELATIVE
+    if not _has_contract_shaped_overlay_manifest(repo_root):
+        payload = yaml.safe_load(contract_path.read_text()) or {}
+        if not isinstance(payload, dict):
+            raise ValueError("harness-protocol.yaml must parse to a mapping")
+        return payload
+
     resolved_contract = next(
         (
             path
@@ -178,7 +195,7 @@ def _load_contract(*, repo_root: Path = REPO_ROOT) -> dict:
 
 
 def _format_success_message(*, repo_root: Path = REPO_ROOT) -> str:
-    if not (repo_root / ".agentic-overlay.json").is_file():
+    if not _has_contract_shaped_overlay_manifest(repo_root):
         return "check-harness-sync: OK"
 
     counts: Counter[str] = Counter(
@@ -959,6 +976,8 @@ _DASHBOARD_EXTRA_FILES = (
 def _iter_dashboard_lint_files(repo_root: Path) -> list[Path]:
     def _should_skip(rel: str) -> bool:
         if rel.startswith("docs/tasks/archive/"):
+            return True
+        if rel.startswith("docs/assessments/archive/"):
             return True
         if rel.startswith("docs/assessments/dashboard-md-vs-txt-"):
             return True

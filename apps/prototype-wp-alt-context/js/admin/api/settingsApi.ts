@@ -32,12 +32,9 @@ export const TestConnectionOutcome = {
   TLS_ERROR: 'tls_error',
 } as const;
 
-export type TestConnectionOutcomeValue =
-  (typeof TestConnectionOutcome)[keyof typeof TestConnectionOutcome];
+export type TestConnectionOutcomeValue = (typeof TestConnectionOutcome)[keyof typeof TestConnectionOutcome];
 
-const KNOWN_TEST_CONNECTION_OUTCOMES: ReadonlySet<string> = new Set(
-  Object.values(TestConnectionOutcome)
-);
+const KNOWN_TEST_CONNECTION_OUTCOMES: ReadonlySet<string> = new Set(Object.values(TestConnectionOutcome));
 
 export const isTestConnectionOutcome = (value: unknown): value is TestConnectionOutcomeValue =>
   typeof value === 'string' && KNOWN_TEST_CONNECTION_OUTCOMES.has(value);

@@ -3,11 +3,7 @@ import { act, render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { SettingsPage } from '../SettingsPage';
-import type {
-  SettingsResponse,
-  TestConnectionOutcomeValue,
-  TestConnectionResponse,
-} from '../../api/settingsApi';
+import type { SettingsResponse, TestConnectionOutcomeValue, TestConnectionResponse } from '../../api/settingsApi';
 import { createMockMutation, createMockQuery } from '../../test-utils/mockHooks';
 
 type QueryHookResult = ReturnType<typeof createMockQuery<SettingsResponse>>;
@@ -157,9 +153,7 @@ describe('SettingsPage', () => {
   });
 
   it('disables the Test Connection button when the URL field is empty', () => {
-    mockUseQuery.mockReturnValue(
-      createMockQuery({ data: { ...defaultSettings, url: '' } }),
-    );
+    mockUseQuery.mockReturnValue(createMockQuery({ data: { ...defaultSettings, url: '' } }));
     render(<SettingsPage />);
 
     expect(screen.getByRole('button', { name: 'Test Connection' })).toBeDisabled();

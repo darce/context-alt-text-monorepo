@@ -282,7 +282,9 @@ describe('RosterPage route container', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText('Showing 1 of 12 clusters. Refine the list to review the remaining matches.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Showing 1 of 12 clusters. Refine the list to review the remaining matches.'),
+    ).toBeInTheDocument();
   });
 
   it('applies bulk merge action through confirm dialog', async () => {

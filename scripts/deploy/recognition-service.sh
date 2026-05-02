@@ -412,14 +412,45 @@ do_reset() {
   fi
 
   log "Reset plan for env=${env}: unit=${unit} remote_dir=${remote_dir} ready_url=${ready_url}"
+  log "SSH target: ${SSH_TARGET}"
+
+  # Canonical remote command sequence. ACX_PGDATA_PATH is sourced from the env's
+  # .env so the reset boundary stays exactly the env-scoped Postgres data root —
+  # no other env's data is touched. `docker compose down` releases the volume
+  # mount so the directory can be cleared atomically before restart.
+  local remote_cmd
+  printf -v remote_cmd '%s\n' \
+    "set -euo pipefail" \
+    "cd ${remote_dir}" \
+    "echo '==> Stopping unit ${unit}'" \
+    "sudo systemctl stop ${unit}" \
+    "echo '==> Bringing compose project down to release the postgres volume'" \
+    "sudo docker compose -f docker-compose.env.yml down --remove-orphans" \
+    "echo '==> Sourcing ACX_PGDATA_PATH from ${remote_dir}/.env'" \
+    "set -a" \
+    "source ${remote_dir}/.env" \
+    "set +a" \
+    "if [ -z \"\${ACX_PGDATA_PATH:-}\" ]; then echo 'ACX_PGDATA_PATH is empty after sourcing .env — refusing to wipe' >&2; exit 64; fi" \
+    "if [ \"\${ACX_PGDATA_PATH}\" = '/' ] || [ \"\${ACX_PGDATA_PATH}\" = '/opt' ] || [ \"\${ACX_PGDATA_PATH}\" = '/opt/acx-backend' ]; then echo \"Refusing to clear suspicious ACX_PGDATA_PATH=\${ACX_PGDATA_PATH}\" >&2; exit 65; fi" \
+    "echo \"==> Clearing \${ACX_PGDATA_PATH}\"" \
+    "sudo rm -rf -- \"\${ACX_PGDATA_PATH}\"" \
+    "sudo mkdir -p -- \"\${ACX_PGDATA_PATH}\"" \
+    "echo '==> Starting unit ${unit}'" \
+    "sudo systemctl start ${unit}"
 
   if [[ "${ACX_RESET_DRY_RUN:-0}" == "1" ]]; then
-    log "DRY-RUN: would stop ${unit}, clear ACX_PGDATA_PATH under ${remote_dir}, restart ${unit}, run dev bootstrap, verify ${ready_url}"
+    log "DRY-RUN: would invoke ssh ${SSH_TARGET} with the following remote command:"
+    printf '%s\n' "${remote_cmd}"
+    log "DRY-RUN: would then run dev bootstrap and verify ${ready_url}"
     log "DRY-RUN: no SSH session opened; no remote state mutated"
     return 0
   fi
 
-  fail "Destructive remote reset not yet implemented (slice 2b). Set ACX_RESET_DRY_RUN=1 to validate the plan."
+  preflight_ssh
+  log "Executing reset on ${SSH_TARGET}"
+  ssh "${SSH_TARGET}" "bash -s" <<<"${remote_cmd}"
+
+  log "Reset complete. Post-reset bootstrap + ${ready_url} verification land in slice 2d."
 }
 
 #---------------------------------------------------------------- dispatch

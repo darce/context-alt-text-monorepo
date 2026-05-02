@@ -41,13 +41,13 @@ Runtime bootstrap:
 cd "${REPO_ROOT:-$PWD}"
 
 # Core ledger server
-uv tool install "agent-handoff-mcp @ git+ssh://git@github.com/darce/mcp-agent-handoff.git"
+uv tool install "mcp-agent-handoff>=0.6.0,<0.7"
 
 # Orchestration server (daemons, workers, lanes, metrics)
-uv tool install "agent-orchestrator-mcp @ git+ssh://git@github.com/darce/mcp-agent-orchestrator.git"
+uv tool install "mcp-agent-orchestrator>=0.3.0,<0.4"
 
 # Codex subagent bridge for BACKEND=codex-subagent
-python3 -m pip install -e packages/codex-subagent-bridge
+uv tool install "codex-subagent-bridge>=0.1.0,<0.2"
 
 # Validate runtime wiring, writable state dirs, and FTS5 support
 mcp-agent-handoff --workspace-root "$(pwd)" doctor

@@ -98,11 +98,11 @@ Handles daemons, workers, lane management, plan cursors, and turn metrics. Run `
 .vscode/mcp.json  →  env { PYENV_VERSION=description-service, PYENV_ROOT, PATH, AGENT_HANDOFF_ENFORCE_BRANCH=1 }  →  mcp-agent-orchestrator --workspace-root ${workspaceFolder} --state-dir ${workspaceFolder}/.task-state --current-task-path ${workspaceFolder}/CURRENT_TASK.json --exports-dir ${workspaceFolder}/.task-state/exports serve-stdio
 ```
 
-Both servers share `handoff.db` and `mcp-artifacts.db` on disk; SQLite WAL mode makes concurrent readers safe. Install both:
+Both servers share `handoff.db` and `mcp-artifacts.db` on disk; SQLite WAL mode makes concurrent readers safe. Install both from PyPI:
 
 ```bash
-uv tool install "agent-handoff-mcp @ git+ssh://git@github.com/darce/mcp-agent-handoff.git"
-uv tool install "agent-orchestrator-mcp @ git+ssh://git@github.com/darce/mcp-agent-orchestrator.git"
+uv tool install "mcp-agent-handoff>=0.6.0,<0.7"
+uv tool install "mcp-agent-orchestrator>=0.3.0,<0.4"
 ```
 
 The old repo-intel helpers remain a separate decomposition task and are not part of either package.
@@ -112,17 +112,17 @@ The old repo-intel helpers remain a separate decomposition task and are not part
 - VS Code 1.99+ with Copilot (or other MCP-capable client)
 - `.vscode/mcp.json` already committed to the repo
 - Python 3.11+ environment
-- Installed `agent-handoff-mcp` and `agent-orchestrator-mcp` from their external repositories
+- Installed `mcp-agent-handoff` and `mcp-agent-orchestrator` from PyPI
 - Python resolved through pyenv or another Python 3.11+ environment with the
   package dependencies installed
 
 ### Install Options
 
-Install from the external MCP repositories:
+Install from PyPI:
 
 ```bash
-uv tool install "agent-handoff-mcp @ git+ssh://git@github.com/darce/mcp-agent-handoff.git"
-uv tool install "agent-orchestrator-mcp @ git+ssh://git@github.com/darce/mcp-agent-orchestrator.git"
+uv tool install "mcp-agent-handoff>=0.6.0,<0.7"
+uv tool install "mcp-agent-orchestrator>=0.3.0,<0.4"
 ```
 
 ### Validation

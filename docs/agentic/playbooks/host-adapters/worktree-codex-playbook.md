@@ -110,10 +110,10 @@ Bootstrap these pieces before relying on daemon-based orchestration or artifact 
 cd "${REPO_ROOT:-$PWD}"
 
 # MCP server package
-uv tool install "agent-handoff-mcp @ git+ssh://git@github.com/darce/mcp-agent-handoff.git"
+uv tool install "mcp-agent-handoff>=0.6.0,<0.7"
 
 # Codex app-server bridge used by BACKEND=codex-subagent
-python3 -m pip install -e packages/codex-subagent-bridge
+uv tool install "codex-subagent-bridge>=0.1.0,<0.2"
 
 # Optional dashboard dependencies for richer monitoring UI
 PYENV_VERSION=description-service python3 -m pip install -e "apps/prototype-description-service[dashboard,dev]"

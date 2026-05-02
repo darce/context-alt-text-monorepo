@@ -1,12 +1,15 @@
 ---
 name: scope
-description: "Use before drafting a new feature or epic when requirements still need clarification. Triggers on fresh asks that are not yet traced to code or an approved spec."
+scope: harness
+description: Use before drafting a new feature or epic when requirements still need
+  clarification. Triggers on fresh asks that are not yet traced to code or an approved
+  spec.
 mode: advisory
 context_budget: 60
 makefile_target: null
 mcp_tools:
-  - record_event
-  - artifacts
+- record_event
+- artifacts
 tdd_gate: false
 disable-model-invocation: false
 ---

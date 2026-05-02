@@ -1,1 +1,0 @@
-../../../docs/agentic/skills/review/SKILL.md

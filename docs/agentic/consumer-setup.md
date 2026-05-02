@@ -11,12 +11,12 @@ Use this guide when you want another private Daniel-owned repository to consume 
 
 ## Install
 
-Install the three package surfaces from their standalone repositories, then materialize the shared overlay into the current repo:
+Install the three package surfaces from PyPI, then materialize the shared overlay into the current repo:
 
 ```bash
-pip install "git+ssh://git@github.com/darce/mcp-agent-handoff.git@v0.4.3"
-pip install "git+ssh://git@github.com/darce/mcp-agent-orchestrator.git@v0.1.4"
-pip install "git+ssh://git@github.com/darce/agentic-bootstrap.git@v0.2.0"
+pip install "mcp-agent-handoff>=0.6.0,<0.7"
+pip install "mcp-agent-orchestrator>=0.3.0,<0.4"
+pip install "agentic-bootstrap>=0.2.0,<0.3"
 
 agentic-bootstrap install --target .
 ```
@@ -57,9 +57,9 @@ If you set explicit relative paths, they resolve from `AGENT_HANDOFF_WORKSPACE_R
 Use the package manager for MCP package upgrades and `agentic-bootstrap update` for the overlay clone:
 
 ```bash
-pip install --upgrade "git+ssh://git@github.com/darce/mcp-agent-handoff.git"
-pip install --upgrade "git+ssh://git@github.com/darce/mcp-agent-orchestrator.git"
-pip install --upgrade "git+ssh://git@github.com/darce/agentic-bootstrap.git"
+pip install --upgrade "mcp-agent-handoff"
+pip install --upgrade "mcp-agent-orchestrator"
+pip install --upgrade "agentic-bootstrap"
 
 agentic-bootstrap update
 ```
@@ -174,6 +174,6 @@ The overlay relies on symlinks and git-hook path wiring. Windows support is defe
 
 ### Follow-on tasks opened
 
-- `MAINT-orchestrator-pyproject-pin-policy` — decide whether orchestrator should pin handoff via URL (current) vs version-only constraint (e.g. `agent-handoff-mcp>=0.4.1,<0.5`) so cleanup tags don't force orchestrator retags.
+- `MAINT-orchestrator-pyproject-pin-policy` — decide whether orchestrator should pin handoff via URL (current) vs version-only constraint (e.g. `mcp-agent-handoff>=0.6.0,<0.7`) so cleanup tags don't force orchestrator retags.
 - `MAINT-bootstrap-cli-version-flag` — add a `--version` flag to `agentic-bootstrap` so external smoke checks can verify the installed CLI without `pip show`.
 - `MAINT-consumer-setup-explicit-venv-path` — update `consumer-setup.md` install snippets to prefer `./.venv/bin/agentic-bootstrap` over `agentic-bootstrap` to avoid pyenv-shim shadowing.

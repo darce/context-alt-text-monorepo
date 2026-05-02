@@ -1,18 +1,21 @@
 ---
 name: branch-lifecycle
-description: "Use when starting, advancing, reviewing, or finishing a task branch. Triggers on `make task-start`, `make review-ready`, `make handoff-close-check`, or `make task-finish`."
+scope: harness
+description: Use when starting, advancing, reviewing, or finishing a task branch.
+  Triggers on `make task-start`, `make review-ready`, `make handoff-close-check`,
+  or `make task-finish`.
 mode: execution
 context_budget: 150
 makefile_target: task-start
 mcp_tools:
-  - set_handoff_state
-  - record_event
-  - close_slice
-  - handoff_close_check
-  - update_task_status
-  - render_handoff
-  - manage_worktree_lane
-  - switch_task
+- set_handoff_state
+- record_event
+- close_slice
+- handoff_close_check
+- update_task_status
+- render_handoff
+- manage_worktree_lane
+- switch_task
 tdd_gate: true
 disable-model-invocation: false
 ---

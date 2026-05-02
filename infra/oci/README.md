@@ -539,16 +539,35 @@ make reset-remote ENV=prod CONFIRM_REMOTE_RESET=RESET CONFIRM=PROMOTE
 5. `sudo rm -rf -- "$ACX_PGDATA_PATH" && sudo mkdir -p -- "$ACX_PGDATA_PATH"`.
 6. `sudo systemctl start acx-<env>` so the unit comes back up through the
    normal systemd contract; Alembic runs on container start.
-7. Runs the post-reset bootstrap to recreate one usable service-mode dev API
-   key:
-   `cd apps/prototype-description-service && PYENV_VERSION=description-service pyenv exec python scripts/manage_api_keys.py create --tenant-id acx-<env>-dev --name e15-12-reset-bootstrap`.
-   The output is operator-captured and pasted into the plugin's settings page
-   so the plugin can talk to the freshly-reset env in service mode.
-8. Polls `https://<env>.api.altcontext.com/ready` (or `https://api.altcontext.com/ready`
+7. Polls `https://<env>.api.altcontext.com/ready` (or `https://api.altcontext.com/ready`
    for prod) until it succeeds. The `/ready` probe is intentionally stricter
    than the `/health` liveness probe: it requires postgres to be up, the
    schema to be migrated, and models to be loaded before declaring the env
-   operable. Up to 6 attempts at 5s intervals.
+   operable. Up to 6 attempts at 5s intervals. The bootstrap in step 8 is
+   gated on /ready because `docker compose exec` requires a running api
+   container.
+8. Runs the post-reset bootstrap inside the api container on the remote VM to
+   recreate one usable service-mode API key:
+
+   ```bash
+   sudo docker compose -f docker-compose.env.yml exec -T api \
+     python -m scripts.manage_api_keys --env prod \
+     tenant create --tenant <uuid> --site-url <url>
+   sudo docker compose -f docker-compose.env.yml exec -T api \
+     python -m scripts.manage_api_keys --env prod \
+     create --tenant <uuid>
+   ```
+
+   The tenant UUID and site URL come from `ACX_RESET_TENANT_ID` (default
+   `00000000-0000-7000-8000-000000000000`) and `ACX_RESET_SITE_URL` (defaults
+   to the env's public API URL). `--env prod` is required regardless of the
+   OCI deployment env (dev/staging/prod): the manage_api_keys CLI validates
+   `--env` against the DSN host, and the in-container DSN host is `postgres`
+   (compose service name), which only `--env prod` accepts. The tenant step
+   runs first because `create` enforces the tenant-foreign-key. The
+   `api_key=` line printed by `create` is operator-captured and pasted into
+   the plugin's settings page so the plugin can talk to the freshly-reset
+   env in service mode.
 
 **Boundary:** the reset is environment-scoped. `make reset-remote ENV=dev`
 touches only `/opt/acx-backend/dev/.env`'s `ACX_PGDATA_PATH` (`dev-pgdata`).

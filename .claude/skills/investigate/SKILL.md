@@ -1,1 +1,0 @@
-../../../docs/agentic/skills/investigate/SKILL.md

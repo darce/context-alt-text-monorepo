@@ -2,7 +2,10 @@
   "servers": {
     "context7": {
       "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp@2.1.4"],
+      "args": [
+        "-y",
+        "@upstash/context7-mcp@2.1.4"
+      ],
       "type": "stdio"
     },
     "mcp-agent-handoff": {
@@ -40,6 +43,24 @@
         "PYENV_ROOT": "${env:PYENV_ROOT}",
         "AGENT_HANDOFF_ENFORCE_BRANCH": "1"
       }
+    },
+    "agent-handoff-mcp": {
+      "command": "uvx",
+      "args": [
+        "mcp-agent-handoff",
+        "--workspace-root",
+        ".",
+        "serve-stdio"
+      ]
+    },
+    "agent-orchestrator-mcp": {
+      "command": "uvx",
+      "args": [
+        "mcp-agent-orchestrator",
+        "--workspace-root",
+        ".",
+        "serve-stdio"
+      ]
     }
   }
 }

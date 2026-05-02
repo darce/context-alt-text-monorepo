@@ -1,1 +1,0 @@
-../../../docs/agentic/skills/security-audit/SKILL.md

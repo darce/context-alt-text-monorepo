@@ -1,13 +1,15 @@
 ---
 name: tdd
-description: "Use at the start of any implementation slice. Triggers when `make slice-start` is the next step or when new test coverage is needed before any production edit."
+scope: harness
+description: Use at the start of any implementation slice. Triggers when `make slice-start`
+  is the next step or when new test coverage is needed before any production edit.
 mode: execution
 context_budget: 90
 makefile_target: slice-start
 mcp_tools:
-  - record_event
-  - get_verified_tests
-  - search_handoff
+- record_event
+- get_verified_tests
+- search_handoff
 tdd_gate: true
 disable-model-invocation: false
 ---

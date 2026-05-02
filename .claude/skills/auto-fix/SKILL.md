@@ -1,15 +1,19 @@
 ---
 name: auto-fix
-description: "Use when iterating on a single failing test inside an active feature-branch task. Triggers on `/auto-fix`, on 'loop until this test passes' asks, or when the operator wants a bounded autonomous debug pass without spending a task-plan's worth of tokens per iteration."
+scope: harness
+description: Use when iterating on a single failing test inside an active feature-branch
+  task. Triggers on `/auto-fix`, on 'loop until this test passes' asks, or when the
+  operator wants a bounded autonomous debug pass without spending a task-plan's worth
+  of tokens per iteration.
 mode: execution
 context_budget: 120
 makefile_target: null
 mcp_tools:
-  - get_handoff_state
-  - record_event
-  - review_findings
-  - handoff_close_check
-  - update_task_status
+- get_handoff_state
+- record_event
+- review_findings
+- handoff_close_check
+- update_task_status
 tdd_gate: false
 disable-model-invocation: false
 ---

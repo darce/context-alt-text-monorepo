@@ -32,8 +32,8 @@ Default workspace-owned state:
 Runtime bootstrap:
 
 ```bash
-uv tool install "agent-handoff-mcp @ git+ssh://git@github.com/darce/mcp-agent-handoff.git"
-uv tool install "agent-orchestrator-mcp @ git+ssh://git@github.com/darce/mcp-agent-orchestrator.git"
+uv tool install "mcp-agent-handoff>=0.6.0,<0.7"
+uv tool install "mcp-agent-orchestrator>=0.3.0,<0.4"
 
 # Validate runtime wiring and orchestration/ directory resolution
 mcp-agent-orchestrator --workspace-root "$(pwd)" doctor

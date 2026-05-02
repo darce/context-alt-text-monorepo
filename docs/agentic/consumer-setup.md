@@ -174,6 +174,6 @@ The overlay relies on symlinks and git-hook path wiring. Windows support is defe
 
 ### Follow-on tasks opened
 
-- `MAINT-orchestrator-pyproject-pin-policy` — decide whether orchestrator should pin handoff via URL (current) vs version-only constraint (e.g. `agent-handoff-mcp>=0.4.1,<0.5`) so cleanup tags don't force orchestrator retags.
+- `MAINT-orchestrator-pyproject-pin-policy` — decide whether orchestrator should pin handoff via URL (current) vs version-only constraint (e.g. `mcp-agent-handoff>=0.6.0,<0.7`) so cleanup tags don't force orchestrator retags.
 - `MAINT-bootstrap-cli-version-flag` — add a `--version` flag to `agentic-bootstrap` so external smoke checks can verify the installed CLI without `pip show`.
 - `MAINT-consumer-setup-explicit-venv-path` — update `consumer-setup.md` install snippets to prefer `./.venv/bin/agentic-bootstrap` over `agentic-bootstrap` to avoid pyenv-shim shadowing.

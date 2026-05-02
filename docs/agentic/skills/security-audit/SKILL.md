@@ -115,7 +115,7 @@ For Python packages:
 ls packages/*/requirements*.txt packages/*/poetry.lock packages/*/uv.lock 2>/dev/null
 
 # Review direct dependencies
-python -m pip show agent-handoff-mcp agent-orchestrator-mcp
+python -m pip show mcp-agent-handoff mcp-agent-orchestrator
 ```
 
 For Node.js:

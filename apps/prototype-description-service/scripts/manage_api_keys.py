@@ -145,12 +145,16 @@ async def _cmd_list(args, session: AsyncSession) -> int:
     repo = SqlAlchemyApiKeyRepository(session)
     rows = await repo.list_for_tenant(uuid.UUID(args.tenant), include_revoked=args.include_revoked)
     for r in rows:
-        last4 = (r.api_key_hash or "")[-4:]
+        # E15-12-BR-04: emit the hash tail with an explicit `hash:` prefix so
+        # operators cannot mistake it for the raw-key tail. The raw key is
+        # only printed once at create time and is unrecoverable from the
+        # stored SHA-256; this column has always been a hash fingerprint.
+        hash_tail = "hash:" + (r.api_key_hash or "")[-4:]
         sys.stdout.write(
             "\t".join(
                 [
                     str(r.id),
-                    last4,
+                    hash_tail,
                     _fmt(r.created_at),
                     _fmt(r.last_used_at),
                     _fmt(r.expires_at),

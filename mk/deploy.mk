@@ -20,7 +20,8 @@ DEPLOY_COMPOSE_SCRIPT := $(ROOT_MAKEFILE_DIR)/scripts/deploy/sync-compose.sh
         deploy-promote-staging deploy-promote-prod deploy-rollback-dev \
         deploy-verify deploy-verify-dev deploy-verify-staging deploy-verify-prod \
         deploy-status \
-        deploy-compose-dev deploy-compose-staging deploy-compose-prod
+        deploy-compose-dev deploy-compose-staging deploy-compose-prod \
+        reset-remote
 
 deploy-help:
 	@echo "Recognition service deploy targets:"
@@ -44,6 +45,12 @@ deploy-help:
 	@echo "    make deploy-verify ENV=dev                 GET /health and compare commit_sha to local HEAD"
 	@echo "    make deploy-verify-dev|staging|prod        Same, fixed env"
 	@echo "    make deploy-status                         Snapshot /health for dev, staging, prod"
+	@echo ""
+	@echo "  Destructive remote reset (stops unit, clears env Postgres state, restarts, verifies /ready):"
+	@echo "    make reset-remote ENV=dev CONFIRM_REMOTE_RESET=RESET            Reset OCI dev"
+	@echo "    make reset-remote ENV=staging CONFIRM_REMOTE_RESET=RESET        Reset OCI staging"
+	@echo "    make reset-remote ENV=prod CONFIRM_REMOTE_RESET=RESET CONFIRM=PROMOTE   Reset OCI prod"
+	@echo "    make reset-remote ENV=dev CONFIRM_REMOTE_RESET=RESET ACX_RESET_DRY_RUN=1   Print plan only"
 	@echo ""
 	@echo "  Compose-file sync (run when docker-compose.env.yml itself changes):"
 	@echo "    make deploy-compose-dev                    Sync compose to acx-dev VM and 'docker compose up -d'"
@@ -110,6 +117,19 @@ deploy-verify-prod:
 # Cross-env health snapshot. Cheap triage tool.
 deploy-status:
 	@"$(DEPLOY_SCRIPT)" status
+
+# Destructive remote reset. Requires explicit ENV=<dev|staging|prod> and confirmation
+# levers (CONFIRM_REMOTE_RESET=RESET; CONFIRM=PROMOTE additionally for prod). Pass
+# ACX_RESET_DRY_RUN=1 to print the plan without mutating any remote state.
+reset-remote:
+	@if [ -z "$(ENV)" ]; then \
+		echo "reset-remote: ENV is required (dev|staging|prod)" >&2; \
+		exit 2; \
+	fi
+	@CONFIRM_REMOTE_RESET="$(CONFIRM_REMOTE_RESET)" \
+		CONFIRM="$(CONFIRM)" \
+		ACX_RESET_DRY_RUN="$(ACX_RESET_DRY_RUN)" \
+		"$(DEPLOY_SCRIPT)" reset $(ENV)
 
 # Compose-file sync (independent of image deploy).
 deploy-compose-dev:

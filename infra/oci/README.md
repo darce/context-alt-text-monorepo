@@ -579,6 +579,12 @@ pair is `make reset-local WP_PATH="<wordpress>/app/public" CONFIRM_LOCAL_RESET=R
 Use `reset-local` for the local dev DB and `reset-remote ENV=<env>` for the
 OCI envs. Don't cross the streams.
 
+**Smoke proof:** after a reset, prove plugin connectivity end-to-end via
+[`docs/operations/reset-smoke-runbook.md`](../../docs/operations/reset-smoke-runbook.md).
+The runbook hosts the post-reset smoke procedure (key handoff → plugin
+selector mode → workbench probe → captured proof) so this section stays
+focused on the destructive contract.
+
 
 ### VM Layout
 

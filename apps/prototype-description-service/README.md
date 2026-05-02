@@ -90,6 +90,11 @@ one usable service-mode dev API key.
 Don't cross the streams: `make reset-local` does not touch OCI; `make
 reset-remote` does not touch your local DB.
 
+After either reset, prove plugin connectivity end-to-end with
+[`docs/operations/reset-smoke-runbook.md`](../../docs/operations/reset-smoke-runbook.md)
+(post-reset key handoff → plugin selector mode → workbench probe → captured
+proof). That runbook is the standing procedure for both smoke directions.
+
 Need alternative instructions (manual psql workflow)? See
 [`db/README.md`](db/README.md).
 

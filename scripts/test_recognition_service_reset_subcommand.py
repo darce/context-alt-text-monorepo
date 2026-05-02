@@ -119,6 +119,27 @@ def test_reset_dev_dry_run_prints_canonical_remote_command_sequence() -> None:
     assert "/opt/acx-backend/dev" in out
 
 
+def test_reset_dev_dry_run_includes_ready_verification_and_bootstrap_steps() -> None:
+    """Slice 2d: dry-run must surface the post-reset bootstrap command and the
+    /ready verification curl so the operator can audit both before a real run."""
+    result = _run(
+        ["reset", "dev"],
+        env_overrides={
+            "CONFIRM_REMOTE_RESET": "RESET",
+            "ACX_RESET_DRY_RUN": "1",
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
+    # /ready verification curl, not just /health
+    assert "curl" in out
+    assert "https://dev.api.altcontext.com/ready" in out
+    # Bootstrap step references the canonical credential-recreation entry point
+    # (apps/prototype-description-service/scripts/manage_api_keys.py).
+    assert "manage_api_keys.py" in out
+    assert "create" in out
+
+
 def test_reset_dev_dry_run_does_not_open_ssh_connection() -> None:
     """The dry-run path must not actually invoke ssh — it announces what it would
     do and exits 0 cleanly."""

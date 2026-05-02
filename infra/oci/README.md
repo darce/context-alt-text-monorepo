@@ -491,6 +491,76 @@ docker push iad.ocir.io/idu2kqqe2jxy/acx-backend:latest
 ssh ubuntu@acx-backend.tail1a44b8.ts.net 'cd /opt/acx-backend/prod && docker compose -f docker-compose.env.yml pull && sudo systemctl restart acx-prod'
 ```
 
+### Destructive Remote Reset
+
+The reset workflow rebuilds an OCI environment's database from empty. It is
+**destructive by design**: the selected env's `ACX_PGDATA_PATH` is wiped and
+recreated, all rows (tenants, jobs, persons, API keys, embeddings) are gone,
+and the unit comes back up with a freshly migrated empty schema. There is no
+preservation path. Use it when you intentionally want to rebuild dev state, or
+to recover from corruption that cannot be untangled with a normal deploy.
+
+**Always run with `ACX_RESET_DRY_RUN=1` first** to print the exact remote
+command sequence and the verification plan. The dry-run opens no SSH session
+and mutates no remote state — it is safe to run repeatedly.
+
+```bash
+# Plan the reset without touching anything (recommended first step):
+make reset-remote ENV=dev CONFIRM_REMOTE_RESET=RESET ACX_RESET_DRY_RUN=1
+
+# Reset OCI dev for real after reviewing the dry-run plan:
+make reset-remote ENV=dev CONFIRM_REMOTE_RESET=RESET
+
+# Reset OCI staging:
+make reset-remote ENV=staging CONFIRM_REMOTE_RESET=RESET
+
+# Reset OCI prod (additional confirmation gate):
+make reset-remote ENV=prod CONFIRM_REMOTE_RESET=RESET CONFIRM=PROMOTE
+```
+
+**Confirmation contract:**
+
+| Lever | Required for | Purpose |
+|---|---|---|
+| `CONFIRM_REMOTE_RESET=RESET` | every env | Acknowledges the reset is destructive |
+| `CONFIRM=PROMOTE` | prod only | Second gate so a stray `ENV=prod` cannot wipe production |
+| `ACX_RESET_DRY_RUN=1` | optional | Print plan only; no SSH, no state mutation |
+
+**What the reset does, in order:**
+
+1. SSHes to `ubuntu@<OCI_HOST>` (override with `OCI_HOST=...` for non-default
+   hosts).
+2. `sudo systemctl stop acx-<env>`.
+3. `sudo docker compose -f docker-compose.env.yml down --remove-orphans` from
+   `/opt/acx-backend/<env>` to release the postgres volume mount.
+4. Sources `/opt/acx-backend/<env>/.env` to read the env-scoped
+   `ACX_PGDATA_PATH`. The script refuses to proceed if the path is empty,
+   `/`, `/opt`, or `/opt/acx-backend`.
+5. `sudo rm -rf -- "$ACX_PGDATA_PATH" && sudo mkdir -p -- "$ACX_PGDATA_PATH"`.
+6. `sudo systemctl start acx-<env>` so the unit comes back up through the
+   normal systemd contract; Alembic runs on container start.
+7. Runs the post-reset bootstrap to recreate one usable service-mode dev API
+   key:
+   `cd apps/prototype-description-service && PYENV_VERSION=description-service pyenv exec python scripts/manage_api_keys.py create --tenant-id acx-<env>-dev --name e15-12-reset-bootstrap`.
+   The output is operator-captured and pasted into the plugin's settings page
+   so the plugin can talk to the freshly-reset env in service mode.
+8. Polls `https://<env>.api.altcontext.com/ready` (or `https://api.altcontext.com/ready`
+   for prod) until it succeeds. The `/ready` probe is intentionally stricter
+   than the `/health` liveness probe: it requires postgres to be up, the
+   schema to be migrated, and models to be loaded before declaring the env
+   operable. Up to 6 attempts at 5s intervals.
+
+**Boundary:** the reset is environment-scoped. `make reset-remote ENV=dev`
+touches only `/opt/acx-backend/dev/.env`'s `ACX_PGDATA_PATH` (`dev-pgdata`).
+Staging and prod data roots are untouched. There is no shared multi-env reset
+target by design — operators must opt into each env explicitly.
+
+**Local counterpart:** the equivalent workflow for the local LocalWP/Postgres
+pair is `make reset-local WP_PATH="<wordpress>/app/public" CONFIRM_LOCAL_RESET=RESET`.
+Use `reset-local` for the local dev DB and `reset-remote ENV=<env>` for the
+OCI envs. Don't cross the streams.
+
+
 ### VM Layout
 
 ```

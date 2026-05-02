@@ -262,7 +262,7 @@ describe('RosterPage route container', () => {
     expect(dragDropState.resetDragState).toHaveBeenCalledTimes(1);
   });
 
-  it('surfaces a partial-state notice when the cluster list is truncated', async () => {
+  it('surfaces a partial-state notice when the cluster list is truncated', () => {
     mockedUseRecognitionClusters.mockReturnValue(
       createMockQuery({
         data: makeClusterListResponse({

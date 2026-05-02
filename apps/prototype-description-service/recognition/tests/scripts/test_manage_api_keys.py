@@ -105,8 +105,17 @@ async def test_list_masks_hash(db_session: AsyncSession, tenant_row: Tenant, cap
     out = capsys.readouterr().out
     # Full hash must not appear in listing.
     assert raw_hash not in out
-    # Last 4 chars of the hash should appear.
-    assert raw_hash[-4:] in out
+    # The hash tail must be self-labeled so operators do not confuse it with
+    # the raw-key tail. E15-12-BR-04: bare `dbfb`-style output mislead the
+    # local-mode smoke into thinking the wrong key was pasted.
+    expected_tail = raw_hash[-4:]
+    assert f"hash:{expected_tail}" in out
+    # The unprefixed last-4 alone must not appear as a standalone token.
+    tokens = out.replace("\n", "\t").split("\t")
+    assert expected_tail not in tokens, (
+        f"raw last-4 hash tail '{expected_tail}' must not appear as a bare "
+        f"column; expected `hash:{expected_tail}` instead. Output was: {out!r}"
+    )
 
 
 @pytest.mark.asyncio

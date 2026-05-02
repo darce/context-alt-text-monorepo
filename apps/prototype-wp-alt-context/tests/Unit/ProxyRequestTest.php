@@ -419,6 +419,35 @@ PHP;
         $this->assertStringContainsString('https://filtered.example/recognition/jobs/test-123', $calls[0]['url']);
     }
 
+    public function testFilteredBaseUrlBeatsSavedLocalSourceOption(): void
+    {
+        // Code-managed filter (acx_recognition_base_url) must override a saved
+        // local-mode option. A site whose admin previously saved local cannot
+        // silently keep traffic on localhost once an operator wires a filter.
+        $this->setOption('acx_recognition_source', 'local');
+        $this->setOption('acx_recognition_url', '');
+
+        add_filter('acx_recognition_base_url', static function (): string {
+            return 'https://filtered.example';
+        });
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"status":"completed"}',
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/jobs/123/cancel');
+        $request->set_param('job_id', 'test-123');
+
+        $result = $this->controller->cancel_job($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $result);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertStringContainsString('https://filtered.example/recognition/jobs/test-123', $calls[0]['url']);
+    }
+
     public function testProxyRequestIgnoresInvalidFilteredBaseUrl(): void
     {
         $this->setOption('acx_recognition_url', '');

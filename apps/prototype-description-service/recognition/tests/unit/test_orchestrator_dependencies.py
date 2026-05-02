@@ -44,6 +44,8 @@ def test_cluster_unclustered_identities_uses_grouped_inputs() -> None:
 
 
 def test_incremental_runner_initializer_uses_grouped_inputs() -> None:
-    parameter_names = tuple(name for name in inspect.signature(IncrementalClusteringRunner).parameters if name != "self")
+    parameter_names = tuple(
+        name for name in inspect.signature(IncrementalClusteringRunner).parameters if name != "self"
+    )
 
     assert parameter_names == ("session", "dependencies", "runtime_config")

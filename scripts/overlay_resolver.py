@@ -54,8 +54,14 @@ def _surface_roots(project_root: Path, kind: SurfaceKind) -> tuple[Path, Path] |
         return None
 
     surfaces = manifest.get("surfaces")
+    # `.agentic-overlay.json` is shared between two consumers with different
+    # schemas: agentic-bootstrap writes a state file with `surfaces: [list]`,
+    # the overlay-resolver contract expects `surfaces: {dict}`. When the
+    # manifest is not contract-shaped, fall back to local-only resolution
+    # rather than failing every caller. Resolved durably once the upstream
+    # bootstrap-state file is renamed to `.agentic-bootstrap.json`.
     if not isinstance(surfaces, dict):
-        raise OverlayResolverError("overlay manifest must define a `surfaces` mapping")
+        return None
 
     surface = surfaces.get(kind)
     if surface is None:

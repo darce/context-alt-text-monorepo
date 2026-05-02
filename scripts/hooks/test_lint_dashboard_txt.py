@@ -53,6 +53,16 @@ def test_scan_paths_excludes_archive_plans(tmp_path: Path) -> None:
     assert not violations, "archived task plans must be excluded"
 
 
+def test_scan_paths_excludes_archived_assessments(tmp_path: Path) -> None:
+    module = _load_module()
+    archived = tmp_path / "docs" / "assessments" / "archive" / "historical-investigation.md"
+    archived.parent.mkdir(parents=True)
+    archived.write_text("historical DASHBOARD.md drift writeup\n")
+
+    violations = module.scan_paths([archived])
+    assert not violations, "archived assessments must be excluded"
+
+
 def test_scan_paths_excludes_test_fixtures(tmp_path: Path) -> None:
     module = _load_module()
     fixture = tmp_path / "packages" / "foo" / "tests" / "fixtures" / "sample.md"
@@ -76,6 +86,7 @@ def test_scan_paths_clean_file_returns_no_violations(tmp_path: Path) -> None:
 def test_is_excluded_recognizes_archive_and_fixture_patterns() -> None:
     module = _load_module()
     assert module.is_excluded(Path("docs/tasks/archive/something.md"))
+    assert module.is_excluded(Path("docs/assessments/archive/something.md"))
     assert module.is_excluded(Path("packages/foo/tests/fixtures/x.md"))
     assert module.is_excluded(Path("packages/foo/test_fixtures/x.md"))
     assert module.is_excluded(Path("packages/foo/tests/test_rendering.py"))

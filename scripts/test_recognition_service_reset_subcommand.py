@@ -92,3 +92,50 @@ def test_reset_prod_dry_run_with_both_confirmations_succeeds() -> None:
     out = result.stdout
     assert "acx-prod" in out
     assert "https://api.altcontext.com/ready" in out
+
+
+def test_reset_dev_dry_run_prints_canonical_remote_command_sequence() -> None:
+    """The dry-run must print the exact remote shell sequence the operator can audit
+    before allowing the destructive run. This is the verification surface for slice 2c
+    since we cannot exercise the actual SSH path from CI."""
+    result = _run(
+        ["reset", "dev"],
+        env_overrides={
+            "CONFIRM_REMOTE_RESET": "RESET",
+            "ACX_RESET_DRY_RUN": "1",
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
+    # SSH target named (default OCI host or override echoed back)
+    assert "ssh " in out or "SSH target" in out
+    # Stop, clear, and start verbs visible in the remote command shape
+    assert "systemctl stop acx-dev" in out
+    assert "docker compose" in out and "down" in out
+    assert "systemctl start acx-dev" in out
+    # PGDATA reset boundary named explicitly
+    assert "ACX_PGDATA_PATH" in out
+    # Working directory for the remote compose project
+    assert "/opt/acx-backend/dev" in out
+
+
+def test_reset_dev_dry_run_does_not_open_ssh_connection() -> None:
+    """The dry-run path must not actually invoke ssh — it announces what it would
+    do and exits 0 cleanly."""
+    result = _run(
+        ["reset", "dev"],
+        env_overrides={
+            "CONFIRM_REMOTE_RESET": "RESET",
+            "ACX_RESET_DRY_RUN": "1",
+            # If any code path tried to ssh, this fake host would fail loudly.
+            "OCI_HOST": "definitely-not-a-real-host.invalid",
+            "OCI_USER": "nobody",
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    combined = result.stdout + result.stderr
+    # No connection attempts surfaced.
+    assert "Connection" not in combined
+    assert "Could not resolve" not in combined
+    # And the dry-run still echoes the configured target so operators can review it.
+    assert "definitely-not-a-real-host.invalid" in combined

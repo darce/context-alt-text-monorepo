@@ -264,7 +264,7 @@ Proof:
 - [x] Local and remote reset docs point to each other and describe when each tool should be used.
 - [x] Operator smoke procedure exists at [`docs/operations/reset-smoke-runbook.md`](../../operations/reset-smoke-runbook.md) (no content duplicated from the destructive reset docs; both reset docs back-link into it).
 - [ ] At least one plugin-side service-mode smoke is captured per the runbook after OCI dev reset (filed under `docs/tasks/15.0/E15-12-slice3-reset-smoke-proofs.md`).
-- [ ] At least one local-mode smoke is captured per the runbook after local reset (filed in the same proof file).
+- [x] At least one local-mode smoke is captured per the runbook after local reset (filed in the same proof file).
 
 ## Review Readiness
 

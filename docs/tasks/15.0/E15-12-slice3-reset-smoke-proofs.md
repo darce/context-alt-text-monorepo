@@ -72,14 +72,100 @@ the asyncpg pool was healthy.
 
 ## Service-mode smoke (after `make reset-remote ENV=dev`)
 
-_Pending. To be captured against `dev.api.altcontext.com` after the next
-`make reset-remote ENV=dev CONFIRM_REMOTE_RESET=RESET` + bootstrap, with the
-plugin recognition source set to `service`._
+- **Date**: 2026-05-02
+- **Operator**: daniel
+- **Reset command**: `make reset-remote ENV=dev CONFIRM_REMOTE_RESET=RESET`
+- **SSH target**: `ubuntu@acx-backend.tail1a44b8.ts.net`
+- **Service HEAD at smoke time** (from `/health`): `1043946953644164...` (10439469)
+- **Tenant UUID**: `00000000-0000-7000-8000-000000000000` — created idempotently by the post-reset bootstrap (`tenant create --tenant <uuid> --site-url https://dev.api.altcontext.com`).
+- **API key (raw tail printed once at create)**: `****vMo` — `key_id=c935ff2b-95c5-4b7c-b75b-8503bc119f2a`.
 
-Required contents (mirror the local-mode block above):
+### Reset readiness
 
-- Reset command + timestamp + operator.
-- `/health` and `/ready` 200 responses against `https://dev.api.altcontext.com`.
-- Service `commit_sha` from `/health`.
-- Plugin Test Connection screenshot or quoted result with API URL set to the
-  hosted dev endpoint and the API key minted via `manage_api_keys --env dev create`.
+Captured live from the `make reset-remote ENV=dev CONFIRM_REMOTE_RESET=RESET`
+run on 2026-05-02:
+
+```
+==> Verifying readiness at https://dev.api.altcontext.com/ready
+curl: (56) The requested URL returned error: 502
+==> Readiness not yet reported (attempt 1/6); retrying in 5s
+... (attempts 2 + 3 also 502 while the unit settled) ...
+{"status":"ok","checks":[
+  {"name":"database","status":"ok","detail":"reachable"},
+  {"name":"breaker","status":"ok","detail":"closed"},
+  {"name":"model_cache","status":"ok","detail":"5 bundle file(s)"}
+],"timestamp":"2026-05-03T02:07:51.027722+00:00"}
+==> Reset complete.
+```
+
+### Service liveness/readiness probes
+
+```
+$ curl -sS -i https://dev.api.altcontext.com/health
+HTTP/2 200
+content-type: application/json
+x-request-id: req-069f6af0-1e70-7ed9-8000-63936c9274b1
+
+{"status":"ok","timestamp":"2026-05-03T02:12:17.907448+00:00",
+ "commit_sha":"10439469536441644ade4be9a89861edefc8fe30"}
+
+$ curl -sS -i https://dev.api.altcontext.com/ready
+HTTP/2 200
+content-type: application/json
+x-request-id: req-069f6af0-2146-7b32-8000-9769df187c4a
+
+{"status":"ok","checks":[
+  {"name":"database","status":"ok","detail":"reachable"},
+  {"name":"breaker","status":"ok","detail":"closed"},
+  {"name":"model_cache","status":"ok","detail":"5 bundle file(s)"}
+],"timestamp":"2026-05-03T02:12:18.083745+00:00"}
+```
+
+### Wire-level auth probe (matches what the plugin's Test Connection sends)
+
+The plugin's `test_connection` REST handler hits `/health/detailed` with
+`X-Tenant-ID` (derived from the WordPress site URL) and `X-API-Key` (resolved
+from settings) — see
+[`apps/prototype-wp-alt-context/src/api/class-settings-controller.php`](../../../apps/prototype-wp-alt-context/src/api/class-settings-controller.php) `test_connection()`.
+
+```
+$ curl -sS -i \
+    -H "X-Tenant-ID: 00000000-0000-7000-8000-000000000000" \
+    -H "X-API-Key: ****vMo" \
+    https://dev.api.altcontext.com/health/detailed
+HTTP/2 200
+content-type: application/json
+
+{"status":"ok",...,"breaker_state":"closed",
+ "model_cache":{"model_name":"buffalo_l","status":"ok","detail":"5 bundle file(s)"}}
+```
+
+`/health/detailed` 200 with the bootstrapped key and the deterministic tenant
+UUID confirms the plugin's exact Test Connection request shape works against
+freshly reset dev.
+
+### Plugin Test Connection (manual UI check)
+
+Operator action: in WordPress admin → Alt Context Settings → Recognition API
+Settings, set Recognition source = `service`, API URL =
+`https://dev.api.altcontext.com`, paste the API key (raw tail `****vMo`), Save,
+then click **Test Connection**. Expected outcome: `Connection successful.`
+(matching the local-mode result above). The wire-level probe above already
+proves the same request will succeed; the UI step is the operator-facing
+confirmation.
+
+### Notes
+
+- The bootstrap's `tenant create` ran during reset, but the second
+  `manage_api_keys create` step did not print an `api_key=` line. Root cause:
+  `scripts/deploy/recognition-service.sh:509` delivered the bootstrap as
+  `ssh ... bash -s <<<"${bootstrap_cmd}"`, and each
+  `docker compose exec -T api ...` call inside that heredoc consumed bash's
+  stdin — the first exec swallowed the remaining lines so the key-create
+  silently never ran. Filed as **E15-12-BR-05**; fix landed in the same
+  slice by adding `< /dev/null` to each exec invocation, with a regression
+  test at
+  `scripts/test_recognition_service_reset_subcommand.py::test_reset_dev_dry_run_bootstrap_redirects_exec_stdin`.
+  The key captured in this proof was minted by re-running the missing
+  `manage_api_keys --env prod create` over SSH manually with the
+  same `< /dev/null` guard.

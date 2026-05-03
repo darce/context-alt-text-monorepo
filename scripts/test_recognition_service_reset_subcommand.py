@@ -194,6 +194,48 @@ def test_reset_dev_dry_run_bootstrap_uses_canonical_cli_contract() -> None:
     )
 
 
+def test_reset_dev_dry_run_bootstrap_redirects_exec_stdin() -> None:
+    """E15-12-BR-05: each `docker compose exec -T` line in the bootstrap
+    must redirect its stdin from /dev/null.
+
+    The bootstrap is delivered to the remote shell via
+    `ssh ... bash -s <<<"${bootstrap_cmd}"`. Without `< /dev/null` on each
+    `exec -T` invocation, the first exec call reads from bash's stdin and
+    consumes the remaining bootstrap lines, so the second exec — the one
+    that prints the `api_key=` line — silently never runs.
+
+    This was caught against a real `make reset-remote ENV=dev` on
+    2026-05-02: tenant create succeeded, key create did not, and the
+    operator was left with no way to authenticate the plugin against the
+    freshly reset env.
+    """
+    result = _run(
+        ["reset", "dev"],
+        env_overrides={
+            "CONFIRM_REMOTE_RESET": "RESET",
+            "ACX_RESET_DRY_RUN": "1",
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
+
+    exec_lines = [
+        line
+        for line in out.splitlines()
+        if "docker compose" in line and "exec -T" in line
+    ]
+    assert len(exec_lines) >= 2, (
+        f"expected at least two `docker compose exec -T` lines (tenant + "
+        f"key create); got {len(exec_lines)}: {exec_lines!r}"
+    )
+    for line in exec_lines:
+        assert "< /dev/null" in line, (
+            "bootstrap exec line must redirect stdin from /dev/null so the "
+            "first exec does not swallow the remaining bootstrap heredoc "
+            f"lines (E15-12-BR-05); offender: {line!r}"
+        )
+
+
 def test_reset_dev_dry_run_does_not_open_ssh_connection() -> None:
     """The dry-run path must not actually invoke ssh — it announces what it would
     do and exits 0 cleanly."""

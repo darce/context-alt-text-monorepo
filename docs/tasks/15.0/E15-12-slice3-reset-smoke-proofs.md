@@ -78,6 +78,7 @@ the asyncpg pool was healthy.
 - **SSH target**: `ubuntu@acx-backend.tail1a44b8.ts.net`
 - **Service HEAD at smoke time** (from `/health`): `1043946953644164...` (10439469)
 - **Tenant UUID**: `00000000-0000-7000-8000-000000000000` — created idempotently by the post-reset bootstrap (`tenant create --tenant <uuid> --site-url https://dev.api.altcontext.com`).
+- **BR-06 callout (post-proof)**: this proof was captured pre-BR-06, when the bootstrap defaulted `ACX_RESET_TENANT_ID` to the legacy zero-UUID and `ACX_RESET_SITE_URL` to the env's API URL. After E15-12-BR-06, `ACX_RESET_SITE_URL` is required and must be the WordPress site URL the plugin will hit; the bootstrap derives the per-site tenant UUID via `scripts/deploy/_derive_tenant_id.py` (mirror of `TenantIdentity::derive_from_site_url()`). Re-running the reset against the same env post-BR-06 will emit a derived UUID, not this legacy zero-UUID — the proof is historically valid but no longer reproducible verbatim.
 - **API key (raw tail printed once at create)**: `****vMo` — `key_id=c935ff2b-95c5-4b7c-b75b-8503bc119f2a`.
 
 ### Reset readiness

@@ -558,16 +558,22 @@ make reset-remote ENV=prod CONFIRM_REMOTE_RESET=RESET CONFIRM=PROMOTE
      create --tenant <uuid>
    ```
 
-   The tenant UUID and site URL come from `ACX_RESET_TENANT_ID` (default
-   `00000000-0000-7000-8000-000000000000`) and `ACX_RESET_SITE_URL` (defaults
-   to the env's public API URL). `--env prod` is required regardless of the
-   OCI deployment env (dev/staging/prod): the manage_api_keys CLI validates
-   `--env` against the DSN host, and the in-container DSN host is `postgres`
-   (compose service name), which only `--env prod` accepts. The tenant step
-   runs first because `create` enforces the tenant-foreign-key. The
-   `api_key=` line printed by `create` is operator-captured and pasted into
-   the plugin's settings page so the plugin can talk to the freshly-reset
-   env in service mode.
+   `ACX_RESET_SITE_URL` is **required** (no default). It must be the
+   WordPress site URL the plugin will hit (e.g. `https://altcontext.local`,
+   `https://staging.altcontext.com`). The bootstrap derives the per-site
+   tenant UUID from this value via `scripts/deploy/_derive_tenant_id.py`,
+   which mirrors the plugin's `TenantIdentity::derive_from_site_url()`. If
+   the URL does not match the plugin's site URL, the plugin's recognition
+   requests will fail with `403 tenant mismatch`. `ACX_RESET_TENANT_ID`
+   remains an explicit override for non-derived tenants (rarely needed).
+   `--env prod` is required regardless of the OCI deployment env
+   (dev/staging/prod): the manage_api_keys CLI validates `--env` against
+   the DSN host, and the in-container DSN host is `postgres` (compose
+   service name), which only `--env prod` accepts. The tenant step runs
+   first because `create` enforces the tenant-foreign-key. The `api_key=`
+   line printed by `create` is operator-captured and pasted into the
+   plugin's settings page so the plugin can talk to the freshly-reset env
+   in service mode.
 
 **Boundary:** the reset is environment-scoped. `make reset-remote ENV=dev`
 touches only `/opt/acx-backend/dev/.env`'s `ACX_PGDATA_PATH` (`dev-pgdata`).

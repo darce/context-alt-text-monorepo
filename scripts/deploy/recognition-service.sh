@@ -21,6 +21,10 @@
 #   verify         <env>              GET /health and compare commit_sha to GIT_REF (default HEAD).
 #                                       Retries up to ACX_VERIFY_ATTEMPTS times for warm-up. Fails closed.
 #   status                            Snapshot /health for dev, staging, prod.
+#   reset          <env>              Destructive: stop unit, clear env Postgres state, restart, verify
+#                                       /ready, run post-reset bootstrap (tenant + api_key creation).
+#                                       Requires CONFIRM_REMOTE_RESET=RESET and ACX_RESET_SITE_URL.
+#                                       'reset prod' also requires CONFIRM=PROMOTE.
 #
 # Set REMOTE_BUILD=1 (or env ACX_REMOTE_BUILD=1) to make 'deploy' / 'promote' build/retag
 # on the OCI VM via SSH+rsync instead of locally. Removes the colima/Docker-Desktop
@@ -42,6 +46,18 @@
 #   ACX_VERIFY_SLEEP         default 5  (seconds between verify attempts)
 #   ACX_VERIFY_OPTIONAL      set to 1 to downgrade verify failure from fail to warn after deploy/promote
 #   CONFIRM                  required for prod actions: CONFIRM=PROMOTE (applies to deploy prod and promote * prod)
+#
+# Reset-specific environment overrides (see do_reset()):
+#   ACX_RESET_SITE_URL       REQUIRED for reset. WordPress site URL the plugin will hit
+#                              (e.g. https://altcontext.local). The bootstrap derives the
+#                              per-site tenant UUID from this value via
+#                              scripts/deploy/_derive_tenant_id.py (mirror of
+#                              TenantIdentity::derive_from_site_url()). If the URL does
+#                              not match the plugin's site URL, recognition requests fail
+#                              with 403 tenant mismatch.
+#   ACX_RESET_TENANT_ID      Optional explicit override. Skips per-site derivation; rare.
+#   ACX_RESET_DRY_RUN        set to 1 to print the reset plan and exit without executing.
+#   CONFIRM_REMOTE_RESET     required for reset: CONFIRM_REMOTE_RESET=RESET (fail-closed gate).
 set -euo pipefail
 
 OCI_HOST="${OCI_HOST:-acx-backend.tail1a44b8.ts.net}"

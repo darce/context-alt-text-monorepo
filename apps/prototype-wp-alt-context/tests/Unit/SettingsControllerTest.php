@@ -86,6 +86,29 @@ class SettingsControllerTest extends TestCase
         $this->assertSame('filter', $data['url_source']);
     }
 
+    public function testGetSettingsBr07FilterUrlWinsOverSavedOptionUrl(): void
+    {
+        // E15-12-BR-07: when both a saved option URL and a code-managed filter
+        // URL exist, the filter (code-managed) MUST win over the option
+        // (operator-saved). The pre-fix order was constant -> option -> filter,
+        // which let a stale saved URL keep routing recognition traffic even
+        // after the operator wired up a filter to point at a new environment,
+        // and surfaced the selector as option-owned/editable instead of
+        // code-managed/read-only.
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_recognition_url', 'https://stale-saved.example.com');
+        add_filter('acx_recognition_base_url', static fn () => 'https://filter.example.com');
+
+        $request = new WP_REST_Request('GET', '/acx/v1/settings');
+        $response = $this->controller->get_settings($request);
+
+        $data = $response->get_data();
+        $this->assertSame('https://filter.example.com', $data['url'], 'filter URL must win over saved option URL');
+        $this->assertSame('filter', $data['url_source'], 'url_source must report filter when filter is set, even if option is set');
+        $this->assertSame('service', $data['recognition_source']);
+        $this->assertSame('filter', $data['recognition_source_source'], 'recognition_source_source must report filter (code-managed) so the selector renders read-only');
+    }
+
     public function testGetSettingsMasksShortApiKey(): void
     {
         $this->setUserCapability('manage_options', true);

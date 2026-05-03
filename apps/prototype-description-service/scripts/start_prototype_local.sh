@@ -12,6 +12,36 @@ DEFAULT_HOST="0.0.0.0"
 DEFAULT_PORT="8000"
 ENV_FILE="${PROJECT_ROOT}/.env"
 
+canonicalize_local_db_name() {
+  local env_mode="$1"
+  local db_name="$2"
+  local resolved_name
+
+  if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
+    echo "[prototype-local] canonicalize_local_db_name requires ${PYTHON_BIN} on PATH." >&2
+    return 1
+  fi
+
+  if ! resolved_name="$(PYTHONPATH="${PROJECT_ROOT}" "${PYTHON_BIN}" - "${env_mode}" "${db_name}" <<'PY'
+from __future__ import annotations
+
+import sys
+
+from db.settings import canonicalize_local_db_name
+
+resolved_name, warning = canonicalize_local_db_name(sys.argv[2] or None, env_mode=sys.argv[1])
+if warning:
+    print(warning, file=sys.stderr)
+print("" if resolved_name is None else resolved_name)
+PY
+)"; then
+    echo "[prototype-local] canonicalize_local_db_name: python invocation failed." >&2
+    return 1
+  fi
+
+  printf '%s\n' "${resolved_name}"
+}
+
 has_network_access() {
   if [[ "${ASSUME_OFFLINE:-0}" == "1" ]]; then
     return 1
@@ -208,6 +238,7 @@ start_scan_worker() {
 
 start_service() {
   load_env
+  export DB_NAME="$(canonicalize_local_db_name "${ENV_MODE:-local}" "${DB_NAME:-}")"
   export CACHE_BASE="${CACHE_BASE:-/Volumes/Butter/cache}"
 
   if [[ ! -d "${CACHE_BASE}" ]]; then

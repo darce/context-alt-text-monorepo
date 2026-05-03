@@ -158,13 +158,15 @@ Each member task below should be promoted to a full plan in `docs/tasks/15.0/` o
 
 - **Source of truth:** `docs/tasks/tech-debt/rename-database-context-alt-text-to-alt-context.md`
 - **Action:** Close the local-environment items in that doc's Consolidated Triage Checklist (local `.env`, local pgdata). VM env-file drift moves to a separate operator-only sub-task that does **not** block the rest of Theme E.
+- **Guardrail note:** The `copilot_slice_complete_e16_1_local_db_name_guardrails` slice is a preflight guardrail only. It prevents stale local `DB_NAME=context_alt_text_service` values from silently re-binding local reset/start flows, but it does **not** satisfy E16-1a on its own. E16-1a stays open until the local `.env`, reset, legacy-DB drop, and runtime verification steps below are completed.
 - **Concrete step set (local only — VM deferred per operator instruction "work locally, once process is fixed push to remote vm"):**
   1. `feature/e16-1a` branch.
-  2. Update `apps/prototype-description-service/.env:25` to `DB_NAME=alt_context_service`.
-  3. `make reset-local WP_PATH="$LOCAL_WP_ROOT/app/public" CONFIRM_LOCAL_RESET="RESET"` — wipes both WP and `alt_context_service`.
-  4. `psql -h 127.0.0.1 -U context -d postgres -c 'DROP DATABASE IF EXISTS context_alt_text_service;'` — kills the legacy DB so no future env drift can re-bind to it locally.
-  5. Restart the description service; confirm via `pg_stat_activity` that the only DB it touches is `alt_context_service`.
-  6. Tick the local items in the rename doc's Consolidated Triage Checklist. Leave the VM checkbox open and re-target it from a follow-up operator runbook (E16-1a-vm) once the local process is proven.
+  2. Land and keep the local guardrail coverage in place until the local environment is rewritten (`db.settings` + local reset/start flows canonicalize the stale legacy DB name and surface a warning instead of silently trusting it).
+  3. Update the active local `apps/prototype-description-service/.env` so `DB_NAME=alt_context_service` is the persisted value going forward.
+  4. `make reset-local WP_PATH="$LOCAL_WP_ROOT/app/public" CONFIRM_LOCAL_RESET="RESET"` — wipes both WP and `alt_context_service`.
+  5. `psql -h 127.0.0.1 -U context -d postgres -c 'DROP DATABASE IF EXISTS context_alt_text_service;'` — kills the legacy DB so no future env drift can re-bind to it locally.
+  6. Restart the description service; confirm via `pg_stat_activity` that the only DB it touches is `alt_context_service`.
+  7. Tick the local items in the rename doc's Consolidated Triage Checklist. Leave the VM checkbox open and re-target it from a follow-up operator runbook (E16-1a-vm) once the local process is proven.
 - **VM follow-up (E16-1a-vm, deferred):** updates `/opt/acx-backend/<env>/secrets/.env` for prod/staging/dev, restarts the env compose stack, drops the legacy DB on each VM. Runs only after the local pipeline is observed clean end-to-end. No code in this monorepo depends on the VM step landing first.
 - **Risk:** Low — greenfield policy applies; no prod data to preserve.
 - **Done when (local):** No local process is connected to `context_alt_text_service`; the legacy DB is dropped locally; the rename doc's local checklist items are ticked. **Done when (VM follow-up):** same conditions verified on each VM; rename tech-debt doc archived.
@@ -172,6 +174,14 @@ Each member task below should be promoted to a full plan in `docs/tasks/15.0/` o
 ### E16-1b — Batch-run aggregate state + multipart submit failure surfacing
 
 > Originally scoped as per-batch failure surfacing only. Expanded after planning review (E16-1-PLAN-01, E16-1-PLAN-02): the existing frontend treats one user "scan" as a fan-out of N independent backend jobs (one per 5-image batch), but the state machine only consumes the latest child job — so a single completed tail batch can mask earlier stalls/failures, and `Processed 11/11 ✓` over 100 submitted items is the natural outcome. Aggregation must live above the per-job SSE stream, and any new fields must be promoted through the owning contract surfaces, not added ad hoc.
+
+**Literature anchors for the promoted implementation plan:**
+
+- Michael T. Nygard, *Release It!* (`literature/extracted/refactoring/Release-it--design-and–deploy–production-ready-software--Michael-T-Nygard.txt`): "your system will have a variety of failure modes." Treat stalled child jobs, rejected batches, and stale clusters as designed failure modes with explicit UI/status outcomes.
+- Martin Kleppmann, *Designing Data-Intensive Applications* (`literature/extracted/refactoring/Designing-Data-Intensive-Applications-The-Big-Ideas-Behind-Martin-Kleppmann2017.txt`): "makes the provenance of data much clearer." `BatchRun` exists to preserve user-submit provenance, child-job lineage, and deterministic reconciliation.
+- Martin Fowler and Kent Beck, *Refactoring* (`literature/extracted/refactoring/Refactoring-Improving-the-Design-of-Existing-Code-MartinFowlerKentBeck.txt`): "The key here is being able to catch an error quickly." The slice must land with focused aggregate/state-machine tests, not only manual UI inspection.
+- Pekka Enberg, *Latency* (`literature/extracted/refactoring/Latency-Reduce-delay-in-software-systems-PekkaEnberg.txt`): "latency increases as concurrency increases." The aggregate must expose queue/child progress clearly instead of hiding fan-out pressure behind the latest child job.
+- David Farley, *Modern Software Engineering* (`literature/extracted/refactoring/modern-software-engineering.txt`): "use accurate measurement rather than waiting for something bad to happen." Add observable counters, timestamps, and terminal-state checks so the UI detects drift before an operator sees a false green check.
 
 **Current behaviour the fix must replace:**
 
@@ -344,3 +354,90 @@ Closed during planning review on 2026-05-03 with operator authorization. These a
 | Dashboard SQL error in debug.log | E4 | E16-1f |
 | Self-merge offered on Emilie Chartrand cluster | E8 | E16-1e |
 | `make reset-local` does not produce expected clean state | E3 | E16-1a |
+
+---
+
+## Consolidated Checklist
+
+> **Checklist scope rule:** Describe work being delivered, not finding status. Do not add rows like `(PLAN-01 closed)` or "resolve E16-1-PLAN-XX"; finding status is queried from the handoff DB via `review_findings(review={"operation":"list","status":"open","task_ref":"E16-1"})` or read from `DASHBOARD.txt`. See [`branch-review-guide.md` § Review Findings Placement](../../agentic/rules/branch-review-guide.md#review-findings-placement-mandatory).
+
+## Context and Ownership
+
+- [ ] Loaded the minimum authoritative rules, contracts, and handoff state before editing.
+- [ ] Confirmed whether external dependency context requires `ctx7`.
+- [ ] Recorded boundary ownership and compatibility expectations for E16-1b's new shared-contracts schema, REST surface, and SSE bridge change.
+
+### Checklist for E16-1a: Complete local DB rename (foundation)
+
+- [ ] Update `apps/prototype-description-service/.env:25` to `DB_NAME=alt_context_service`.
+- [ ] Run `make reset-local WP_PATH="$LOCAL_WP_ROOT/app/public" CONFIRM_LOCAL_RESET="RESET"` against the canonical DB.
+- [ ] Drop legacy DB: `psql -h 127.0.0.1 -U context -d postgres -c 'DROP DATABASE IF EXISTS context_alt_text_service;'`.
+- [ ] Restart description service; confirm via `pg_stat_activity` that only `alt_context_service` is bound.
+- [ ] Tick the local items in `docs/tasks/tech-debt/rename-database-context-alt-text-to-alt-context.md`.
+- [ ] Verification: 100-item scan persists rows in `alt_context_service` (legacy DB no longer exists locally).
+
+### Checklist for E16-1b: BatchRun aggregate + multipart submit failure surfacing
+
+- [ ] Add `packages/shared-contracts/schemas/wp-batch-run.schema.json` defining the aggregate fields.
+- [ ] Regenerate TS + PHP types via `make schemas` (or equivalent).
+- [ ] Add `acx/v1/recognition/batch-runs/<run_id>` REST surface returning the aggregate.
+- [ ] Choose and implement either `batch_run_id` embedded on every per-child SSE event OR a sibling `/batch-runs/<run_id>/stream` topic (record the choice in this doc).
+- [ ] Plugin storage decision (`wp_acx_*` table vs transient) recorded and implemented.
+- [ ] Frontend state machine consumes aggregate; phase / clustering / `removeJob` gated on aggregate `terminal_state`.
+- [ ] UI shows `Processed completed/submitted (X failed)` with a failed-batch dropdown when failures > 0.
+- [ ] Tests: earlier child fails while latest completes (no clustering); latest completes while earlier queued (no ✓); pre-`scan_job` 4xx batch surfaced in `failed_batches`; aggregate terminal triggers clustering exactly once.
+
+### Checklist for E16-1c: Frontend stall detection
+
+- [ ] Add `lastEventAt` per stream in `useJobProgressStream`.
+- [ ] Stall threshold (default 30 000 ms) + non-terminal phase ⇒ "Stuck — last update Xs ago" badge with Retry / Cancel.
+- [ ] Tests: simulate stream silence; assert badge appears; assert Retry re-subscribes.
+
+### Checklist for E16-1d: Suggestion-panel empty-state taxonomy
+
+- [ ] Distinguish `unconfigured` / `endpoint_error` / `empty_backend` / `zero_pending` with distinct copy + remediation.
+- [ ] Tests cover each variant.
+
+### Checklist for E16-1e: Self-merge guard + friendly merge-error surface
+
+- [ ] `findClusterByLabel` (or its callers) excludes `editableClusterId` from candidates.
+- [ ] Empty post-exclusion result treated as rename, not merge.
+- [ ] Cluster-mutations 4xx responses rendered inline (`invalid_target_cluster_id` ⇒ "That cluster is already named X — nothing to merge.").
+
+### Checklist for E16-1f: Dashboard `media_id` → `attachment_id` SQL fix
+
+- [ ] Fix `apps/prototype-wp-alt-context/src/api/class-api.php:994`.
+- [ ] Audit `class-api.php` for other `media_id` references against `wp_acx_identity_members`; fix in the same diff.
+- [ ] Smoke test: `get_dashboard_stats` returns `200 OK` against a populated mirror.
+
+### Checklist for E16-1g: WP-mirror reconciliation when backend is empty
+
+- [ ] Detect divergence on dashboard load (cluster UUIDs missing in backend ⇒ stale-mirror banner).
+- [ ] "Reset mirror" button truncates `wp_acx_clusters | wp_acx_identity_members | wp_acx_sync_outbox` and re-arms sync.
+- [ ] Auto-detect cron deferred to v0.4.2+ per Resolved Decisions §3.
+
+### Checklist for E16-1h: Cluster-membership integrity check
+
+- [ ] Investigate media 6624's 6× similarity=1.0 cluster assignments.
+- [ ] Decide: standalone cluster-correctness task plan vs. fold into `td-retry-attempt-observability`.
+
+## Review Readiness
+
+- [ ] No boundary-touching implementation is left without matching contract/doc/fixture evidence (especially the new `wp-batch-run` schema, REST surface, and SSE bridge change in E16-1b).
+- [ ] Runtime-parity checks are included where tests can mask real behavior (a 100-item end-to-end scan against the canonical DB after E16-1a lands).
+- [ ] Handoff decision records the change, verification, and any contract implications.
+
+## Stretch Goals
+
+- [ ] None — Theme E sticks to the demo-blocking minimum; ambition expansions (auto-detect cron, deeper cluster-integrity work) are tracked as v0.4.2+ follow-ons.
+
+## Success Criteria
+
+See [`## Acceptance Criteria for the Theme as a Whole`](#acceptance-criteria-for-the-theme-as-a-whole) above. Each bullet maps to an observable outcome and is restated here as a checklist:
+
+- [ ] 100-item scan produces a single `BatchRun` aggregate that reaches `terminal_state=true` only after every child job is terminal; UI shows `100/100` or a visible per-batch failure count.
+- [ ] Stalled SSE stream surfaces a stall badge within 30 s with Retry / Cancel.
+- [ ] Dashboard SQL error stops appearing in `wp-content/debug.log`.
+- [ ] "No suggestions" copy distinguishes empty / error / unconfigured / zero-pending.
+- [ ] Self-merge against a cluster's own label produces inline "already named X" message, not a 400 JSON dump.
+- [ ] `pg_stat_activity` confirms `context_alt_text_service` is dropped locally; rename tech-debt doc local items ticked.

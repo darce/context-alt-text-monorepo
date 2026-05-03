@@ -204,6 +204,48 @@ class SettingsControllerTest extends TestCase
         $this->assertSame('new-key-12345678', get_option('acx_recognition_api_key'));
     }
 
+    public function testSaveSettingsRr07PreservesCodeManagedSelectorContract(): void
+    {
+        // E15-12-RR-07: when a code-managed source (filter) is active, saving
+        // a different URL via the operator-facing settings POST must NOT change
+        // what the read side returns. The save-path is allowed to update the
+        // underlying option (operators may stage a value for the day the
+        // filter is removed), but the round-trip read MUST continue to surface
+        // the filter URL with source=filter so the selector stays read-only
+        // and recognition traffic stays code-managed. This guards against a
+        // regression where save_settings or a future cache layer makes the
+        // saved option win over the filter.
+        $this->setUserCapability('manage_options', true);
+        add_filter('acx_recognition_base_url', static fn () => 'https://filter.example.com');
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params([
+            'url' => 'https://operator-saved.example.com',
+        ]);
+
+        $save_response = $this->controller->save_settings($request);
+        $this->assertInstanceOf(\WP_REST_Response::class, $save_response);
+
+        $get_response = $this->controller->get_settings(new WP_REST_Request('GET', '/acx/v1/settings'));
+        $data = $get_response->get_data();
+
+        $this->assertSame(
+            'https://filter.example.com',
+            $data['url'],
+            'GET after save must still surface the filter URL when filter is active'
+        );
+        $this->assertSame(
+            'filter',
+            $data['url_source'],
+            'url_source must remain filter so the selector renders read-only'
+        );
+        $this->assertSame(
+            'filter',
+            $data['recognition_source_source'],
+            'recognition_source_source must remain filter (code-managed) so the source selector renders read-only'
+        );
+    }
+
     public function testSaveSettingsRejectsInvalidUrl(): void
     {
         $this->setUserCapability('manage_options', true);

@@ -463,13 +463,19 @@ do_reset() {
     staging) site_url="${ACX_RESET_SITE_URL:-https://staging.api.altcontext.com}" ;;
     *)       site_url="${ACX_RESET_SITE_URL:-https://dev.api.altcontext.com}" ;;
   esac
+  # E15-12-BR-05: each `docker compose exec -T` reads from this script's
+  # stdin (the `bash -s <<<"${bootstrap_cmd}"` heredoc on line 509). Without
+  # `< /dev/null` on each exec, the first call swallows the remaining lines
+  # of bootstrap_cmd and the second call silently never runs — the operator
+  # sees the tenant create succeed but no `api_key=` line is printed and the
+  # plugin has nothing to authenticate with.
   local bootstrap_cmd
   printf -v bootstrap_cmd '%s\n' \
     "cd ${remote_dir}" \
     "echo '==> Ensuring tenant row exists for service-mode key bootstrap'" \
-    "sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod tenant create --tenant ${tenant_id} --site-url ${site_url}" \
+    "sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod tenant create --tenant ${tenant_id} --site-url ${site_url} < /dev/null" \
     "echo '==> Creating post-reset service-mode API key (operator: copy api_key= line into the plugin)'" \
-    "sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod create --tenant ${tenant_id}"
+    "sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod create --tenant ${tenant_id} < /dev/null"
 
   # /ready verification: distinct from /health because reset specifically needs
   # dependency readiness (postgres up, schema migrated, models loaded) before

@@ -309,19 +309,26 @@ class SettingsController {
 	 * @return array{value: string, source: string}
 	 */
 	private function resolve_url_source(): array {
+		// E15-12-BR-07: code-managed sources (constant, filter) MUST win over
+		// operator-saved options. The pre-fix order resolved option before
+		// filter, which let a stale saved URL keep routing recognition traffic
+		// even after an operator wired a filter to point at a new environment,
+		// and surfaced the selector as option-owned/editable instead of
+		// code-managed/read-only. Precedence is now: constant -> filter ->
+		// option -> default, matching the proxy runtime resolver.
 		$constant = $this->get_constant_value( 'ACX_RECOGNITION_URL' );
 		if ( '' !== $constant ) {
 			return array( 'value' => $constant, 'source' => 'constant' );
 		}
 
-		$option = trim( (string) get_option( 'acx_recognition_url', '' ) );
-		if ( '' !== $option && $this->is_valid_url( $option ) ) {
-			return array( 'value' => $option, 'source' => 'option' );
-		}
-
 		$filter = trim( (string) apply_filters( 'acx_recognition_base_url', '' ) );
 		if ( '' !== $filter && $this->is_valid_url( $filter ) ) {
 			return array( 'value' => $filter, 'source' => 'filter' );
+		}
+
+		$option = trim( (string) get_option( 'acx_recognition_url', '' ) );
+		if ( '' !== $option && $this->is_valid_url( $option ) ) {
+			return array( 'value' => $option, 'source' => 'option' );
 		}
 
 		return array( 'value' => '', 'source' => 'default' );

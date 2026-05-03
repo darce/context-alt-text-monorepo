@@ -196,10 +196,17 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 			return 'http://localhost:8000';
 		}
 
+		// E15-12-BR-07: code-managed sources (constant, filter) MUST win over
+		// operator-saved options. The pre-fix candidate order resolved option
+		// before filter, which let a stale saved URL keep routing recognition
+		// traffic even after an operator wired a filter to point at a new
+		// environment. The resolver here now matches get_recognition_source()
+		// (which already inspected the filter URL before the saved option)
+		// instead of contradicting it.
 		$candidates = array(
 			$this->get_recognition_base_url_from_constant(),
-			trim( (string) get_option( 'acx_recognition_url', '' ) ),
 			trim( (string) apply_filters( 'acx_recognition_base_url', '' ) ),
+			trim( (string) get_option( 'acx_recognition_url', '' ) ),
 		);
 
 		foreach ( $candidates as $candidate ) {

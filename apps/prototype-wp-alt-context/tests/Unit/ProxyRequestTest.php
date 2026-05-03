@@ -448,6 +448,48 @@ PHP;
         $this->assertStringContainsString('https://filtered.example/recognition/jobs/test-123', $calls[0]['url']);
     }
 
+    public function testBr07FilteredBaseUrlBeatsSavedNonEmptyOptionUrl(): void
+    {
+        // E15-12-BR-07: when both a saved option URL AND a code-managed filter
+        // URL are set, the filter (code-managed) MUST win over the option
+        // (operator-saved). The pre-fix candidate order in
+        // get_recognition_base_url() was [constant, option, filter], which
+        // meant a stale saved URL silently kept routing recognition traffic
+        // even after an operator wired up a filter to point at a new
+        // environment. The selector also reported the URL as option-owned and
+        // editable, hiding the fact that code-managed source was active.
+        $this->setOption('acx_recognition_url', 'https://stale-saved.example');
+
+        add_filter('acx_recognition_base_url', static function (): string {
+            return 'https://filtered.example';
+        });
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"status":"completed"}',
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/jobs/123/cancel');
+        $request->set_param('job_id', 'test-123');
+
+        $result = $this->controller->cancel_job($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $result);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertStringContainsString(
+            'https://filtered.example/recognition/jobs/test-123',
+            $calls[0]['url'],
+            'filter URL must win over saved option URL; pre-fix code routed to the stale saved URL'
+        );
+        $this->assertStringNotContainsString(
+            'stale-saved.example',
+            $calls[0]['url'],
+            'request must not leak the stale saved option URL when a filter is active'
+        );
+    }
+
     public function testProxyRequestIgnoresInvalidFilteredBaseUrl(): void
     {
         $this->setOption('acx_recognition_url', '');

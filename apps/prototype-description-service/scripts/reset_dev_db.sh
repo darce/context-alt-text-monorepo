@@ -35,6 +35,37 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ENV_FILE="${PROJECT_ROOT}/.env"
 EXAMPLE_ENV_FILE="${PROJECT_ROOT}/.env.example"
 
+canonicalize_local_db_name() {
+  local env_mode="$1"
+  local db_name="$2"
+  local python_bin="${PYTHON_BIN:-python}"
+  local resolved_name
+
+  if ! command -v "${python_bin}" >/dev/null 2>&1; then
+    echo "[reset-dev-db] canonicalize_local_db_name requires ${python_bin} on PATH." >&2
+    return 1
+  fi
+
+  if ! resolved_name="$(PYTHONPATH="${PROJECT_ROOT}" "${python_bin}" - "${env_mode}" "${db_name}" <<'PY'
+from __future__ import annotations
+
+import sys
+
+from db.settings import canonicalize_local_db_name
+
+resolved_name, warning = canonicalize_local_db_name(sys.argv[2] or None, env_mode=sys.argv[1])
+if warning:
+    print(warning, file=sys.stderr)
+print("" if resolved_name is None else resolved_name)
+PY
+)"; then
+    echo "[reset-dev-db] canonicalize_local_db_name: python invocation failed." >&2
+    return 1
+  fi
+
+  printf '%s\n' "${resolved_name}"
+}
+
 ORIGINAL_ALLOW_DEV_DB_RESET="${ALLOW_DEV_DB_RESET-}"
 
 if [[ ! -f "${ENV_FILE}" ]]; then
@@ -72,6 +103,7 @@ DB_PORT="${PGPORT:-5432}"
 DB_USER="${PGUSER:-${APP_PGUSER:-}}"
 DB_PASS="${PGPASSWORD:-${APP_PGPASSWORD:-}}"
 DB_NAME="${DB_NAME:-}"
+DB_NAME="$(canonicalize_local_db_name "${ENV_MODE_VALUE}" "${DB_NAME}")"
 
 if [[ -z "${DB_USER}" || -z "${DB_PASS}" || -z "${DB_NAME}" ]]; then
   echo "[reset-dev-db] PGUSER/PGPASSWORD (or APP_PGUSER/APP_PGPASSWORD) and DB_NAME must be set in ${ENV_FILE}." >&2

@@ -37,6 +37,36 @@ def test_database_settings_expand_env_file_references(monkeypatch, tmp_path: Pat
     assert settings.postgres_sync_dsn == "postgresql+psycopg://context:context@localhost:5432/alt_context_service"
 
 
+def test_database_settings_canonicalize_legacy_db_name_from_env_file(monkeypatch, tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            (
+                "PGUSER=context",
+                "PGPASSWORD=context",
+                "PGHOST=localhost",
+                "PGPORT=5432",
+                "DB_NAME=context_alt_text_service",
+                "POSTGRES_DSN=postgresql+asyncpg://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${DB_NAME}",
+            )
+        )
+        + "\n"
+    )
+
+    for key in ("PGUSER", "PGPASSWORD", "PGHOST", "PGPORT", "DB_NAME", "POSTGRES_DSN", "POSTGRES_SYNC_DSN", "ENV_MODE"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(settings_module, "ENV_FILE", env_file)
+
+    settings_module.get_database_settings.cache_clear()
+    try:
+        settings = settings_module.get_database_settings()
+    finally:
+        settings_module.get_database_settings.cache_clear()
+
+    assert settings.postgres_dsn == "postgresql+asyncpg://context:context@localhost:5432/alt_context_service"
+    assert settings.postgres_sync_dsn == "postgresql+psycopg://context:context@localhost:5432/alt_context_service"
+
+
 def test_env_example_defines_reset_prerequisites() -> None:
     env_example = Path(__file__).resolve().parents[3] / ".env.example"
     content = env_example.read_text()
@@ -216,3 +246,46 @@ def test_database_settings_can_override_observability_pool_values(monkeypatch, t
     assert settings.observability_pool_size == 4
     assert settings.observability_max_overflow == 1
     assert settings.observability_pool_timeout == 7
+
+
+def test_canonicalize_local_db_name_rewrites_legacy_name() -> None:
+    db_name, warning = settings_module.canonicalize_local_db_name(
+        "context_alt_text_service",
+        env_mode="local",
+    )
+
+    assert db_name == "alt_context_service"
+    assert warning is not None
+    assert "context_alt_text_service" in warning
+    assert "alt_context_service" in warning
+
+
+def test_canonicalize_local_db_name_preserves_non_local_values() -> None:
+    db_name, warning = settings_module.canonicalize_local_db_name(
+        "context_alt_text_service",
+        env_mode="production",
+    )
+
+    assert db_name == "context_alt_text_service"
+    assert warning is None
+
+
+def test_database_settings_canonicalize_legacy_db_name_from_environment(monkeypatch, tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+
+    for key in ("PGUSER", "PGPASSWORD", "PGHOST", "PGPORT", "POSTGRES_DSN", "POSTGRES_SYNC_DSN"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("ENV_MODE", "local")
+    monkeypatch.setenv("DB_NAME", "context_alt_text_service")
+    monkeypatch.setattr(settings_module, "ENV_FILE", env_file)
+
+    settings_module.get_database_settings.cache_clear()
+    try:
+        settings = settings_module.get_database_settings()
+    finally:
+        settings_module.get_database_settings.cache_clear()
+        monkeypatch.delenv("ENV_MODE", raising=False)
+        monkeypatch.delenv("DB_NAME", raising=False)
+
+    assert settings.postgres_dsn == "postgresql+asyncpg://context:context@localhost:5432/alt_context_service"
+    assert settings.postgres_sync_dsn == "postgresql+psycopg://context:context@localhost:5432/alt_context_service"

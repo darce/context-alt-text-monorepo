@@ -13,6 +13,8 @@ DEFAULT_PGPASSWORD = "context"
 DEFAULT_PGHOST = "localhost"
 DEFAULT_PGPORT = "5432"
 DEFAULT_DB_NAME = "alt_context_service"
+LOCAL_ENV_MODES = frozenset({"local", "development"})
+LEGACY_LOCAL_DB_NAMES = frozenset({"context_alt_text_service"})
 
 DEFAULT_ASYNC_DSN_TEMPLATE = "postgresql+asyncpg://{PGUSER}:{PGPASSWORD}@{PGHOST}:{PGPORT}/{DB_NAME}"
 DEFAULT_SYNC_DSN_TEMPLATE = "postgresql+psycopg://{PGUSER}:{PGPASSWORD}@{PGHOST}:{PGPORT}/{DB_NAME}"
@@ -93,7 +95,27 @@ def _load_env_file() -> None:
         key = key.strip()
         if not key or key in os.environ:
             continue
-        os.environ[key] = os.path.expandvars(value.strip())
+        resolved_value = os.path.expandvars(value.strip())
+        if key == "DB_NAME":
+            resolved_value, warning = canonicalize_local_db_name(
+                resolved_value,
+                env_mode=os.environ.get("ENV_MODE", "local"),
+            )
+            if warning:
+                print(warning)
+        os.environ[key] = resolved_value
+
+
+def _resolved_db_name() -> str:
+    """Return the canonical local DB name for settings-driven DSN rendering."""
+
+    resolved_name, warning = canonicalize_local_db_name(
+        os.getenv("DB_NAME", DEFAULT_DB_NAME),
+        env_mode=os.getenv("ENV_MODE", "local"),
+    )
+    if warning:
+        print(warning)
+    return resolved_name or DEFAULT_DB_NAME
 
 
 def _render_default_async_dsn() -> str:
@@ -104,7 +126,7 @@ def _render_default_async_dsn() -> str:
         PGPASSWORD=os.getenv("PGPASSWORD", DEFAULT_PGPASSWORD),
         PGHOST=os.getenv("PGHOST", DEFAULT_PGHOST),
         PGPORT=os.getenv("PGPORT", DEFAULT_PGPORT),
-        DB_NAME=os.getenv("DB_NAME", DEFAULT_DB_NAME),
+        DB_NAME=_resolved_db_name(),
     )
 
 
@@ -116,7 +138,7 @@ def _render_default_sync_dsn() -> str:
         PGPASSWORD=os.getenv("PGPASSWORD", DEFAULT_PGPASSWORD),
         PGHOST=os.getenv("PGHOST", DEFAULT_PGHOST),
         PGPORT=os.getenv("PGPORT", DEFAULT_PGPORT),
-        DB_NAME=os.getenv("DB_NAME", DEFAULT_DB_NAME),
+        DB_NAME=_resolved_db_name(),
     )
 
 
@@ -127,6 +149,27 @@ def _disable_asyncpg_statement_cache(async_dsn: str) -> str:
     query = dict(parse_qsl(parsed.query, keep_blank_values=True))
     query["prepared_statement_cache_size"] = "0"
     return urlunparse(parsed._replace(query=urlencode(query)))
+
+
+def canonicalize_local_db_name(
+    db_name: str | None,
+    *,
+    env_mode: str | None,
+) -> tuple[str | None, str | None]:
+    """Map legacy local DB names to the canonical one for local startup/reset flows."""
+
+    normalized_mode = (env_mode or "").strip().lower()
+    if normalized_mode not in LOCAL_ENV_MODES or db_name not in LEGACY_LOCAL_DB_NAMES:
+        return db_name, None
+
+    return (
+        DEFAULT_DB_NAME,
+        (
+            f"[prototype-local] DB_NAME={db_name} is legacy for local development; "
+            f"using {DEFAULT_DB_NAME} instead. Update apps/prototype-description-service/.env "
+            "to keep reset/start flows aligned."
+        ),
+    )
 
 
 @lru_cache(maxsize=1)
@@ -195,6 +238,7 @@ def get_database_settings() -> DatabaseSettings:
 __all__ = [
     "DatabaseSettings",
     "get_database_settings",
+    "canonicalize_local_db_name",
     "DEFAULT_ASYNC_DSN_TEMPLATE",
     "DEFAULT_SYNC_DSN_TEMPLATE",
 ]

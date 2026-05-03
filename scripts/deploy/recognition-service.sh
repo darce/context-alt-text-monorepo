@@ -54,7 +54,8 @@ PLATFORM="${ACX_DEPLOY_PLATFORM:-linux/arm64}"
 REMOTE_BUILD="${REMOTE_BUILD:-${ACX_REMOTE_BUILD:-0}}"
 REMOTE_BUILD_DIR="${ACX_REMOTE_BUILD_DIR:-/tmp/acx-build}"
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 SERVICE_DIR="${REPO_ROOT}/apps/prototype-description-service"
 IMAGE_BASE="${OCIR_REGISTRY}/${OCIR_NAMESPACE}/${IMAGE_NAME}"
 SSH_TARGET="${OCI_USER}@${OCI_HOST}"
@@ -456,13 +457,32 @@ do_reset() {
   #     CLI handles the create-or-update case idempotently.
   #   - The OCI postgres is what just got wiped — bootstrap must run on the
   #     remote VM via `docker compose exec api`, not locally.
-  local tenant_id="${ACX_RESET_TENANT_ID:-00000000-0000-7000-8000-000000000000}"
-  local site_url
-  case "${env}" in
-    prod)    site_url="${ACX_RESET_SITE_URL:-https://api.altcontext.com}" ;;
-    staging) site_url="${ACX_RESET_SITE_URL:-https://staging.api.altcontext.com}" ;;
-    *)       site_url="${ACX_RESET_SITE_URL:-https://dev.api.altcontext.com}" ;;
-  esac
+  # E15-12-BR-06: the plugin sends X-Tenant-ID = TenantIdentity::derive_from_site_url()
+  # on every authenticated recognition request, where site_url is the WordPress
+  # site URL — not the recognition API URL. The bootstrap MUST bind the new
+  # service-mode API key to that same per-site tenant UUID, otherwise the
+  # backend rejects the plugin's first authenticated request with HTTP 403
+  # 'tenant mismatch' and the operator is left thinking reset failed.
+  #
+  # Operator contract:
+  #   - ACX_RESET_SITE_URL is required and must be the WordPress site URL the
+  #     plugin will hit (e.g. https://altcontext.local for a LocalWP site).
+  #     There is no safe default: the previous defaults were the recognition
+  #     API URLs, which are NOT what the plugin sends as its origin tenant.
+  #   - ACX_RESET_TENANT_ID is optional. When unset, the bootstrap derives the
+  #     UUID from ACX_RESET_SITE_URL via scripts/deploy/_derive_tenant_id.py
+  #     (the Python mirror of TenantIdentity::derive_from_site_url()). When
+  #     set, the explicit value wins — escape hatch for non-derived tenants.
+  if [[ -z "${ACX_RESET_SITE_URL:-}" ]]; then
+    fail "ACX_RESET_SITE_URL must be set to the WordPress site URL the plugin will hit (e.g. https://altcontext.local). The bootstrap derives the per-site tenant UUID from this value to match the plugin's TenantIdentity::derive_from_site_url() (E15-12-BR-06). Set ACX_RESET_TENANT_ID as well only if you need to override derivation for a custom tenant."
+  fi
+  local site_url="${ACX_RESET_SITE_URL}"
+  local tenant_id
+  if [[ -n "${ACX_RESET_TENANT_ID:-}" ]]; then
+    tenant_id="${ACX_RESET_TENANT_ID}"
+  else
+    tenant_id="$(python3 "${SCRIPT_DIR}/_derive_tenant_id.py" "${site_url}")"
+  fi
   # E15-12-BR-05: each `docker compose exec -T` reads from this script's
   # stdin (the `bash -s <<<"${bootstrap_cmd}"` heredoc on line 509). Without
   # `< /dev/null` on each exec, the first call swallows the remaining lines

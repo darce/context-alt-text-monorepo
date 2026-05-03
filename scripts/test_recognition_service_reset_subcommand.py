@@ -69,6 +69,7 @@ def test_reset_dev_dry_run_with_confirmation_succeeds_and_summarizes_plan() -> N
         env_overrides={
             "CONFIRM_REMOTE_RESET": "RESET",
             "ACX_RESET_DRY_RUN": "1",
+            "ACX_RESET_SITE_URL": "https://altcontext.local",
         },
     )
     assert result.returncode == 0, result.stderr
@@ -86,6 +87,7 @@ def test_reset_prod_dry_run_with_both_confirmations_succeeds() -> None:
             "CONFIRM_REMOTE_RESET": "RESET",
             "CONFIRM": "PROMOTE",
             "ACX_RESET_DRY_RUN": "1",
+            "ACX_RESET_SITE_URL": "https://altcontext.local",
         },
     )
     assert result.returncode == 0, result.stderr
@@ -103,6 +105,7 @@ def test_reset_dev_dry_run_prints_canonical_remote_command_sequence() -> None:
         env_overrides={
             "CONFIRM_REMOTE_RESET": "RESET",
             "ACX_RESET_DRY_RUN": "1",
+            "ACX_RESET_SITE_URL": "https://altcontext.local",
         },
     )
     assert result.returncode == 0, result.stderr
@@ -127,6 +130,7 @@ def test_reset_dev_dry_run_includes_ready_verification_and_bootstrap_steps() -> 
         env_overrides={
             "CONFIRM_REMOTE_RESET": "RESET",
             "ACX_RESET_DRY_RUN": "1",
+            "ACX_RESET_SITE_URL": "https://altcontext.local",
         },
     )
     assert result.returncode == 0, result.stderr
@@ -160,6 +164,7 @@ def test_reset_dev_dry_run_bootstrap_uses_canonical_cli_contract() -> None:
         env_overrides={
             "CONFIRM_REMOTE_RESET": "RESET",
             "ACX_RESET_DRY_RUN": "1",
+            "ACX_RESET_SITE_URL": "https://altcontext.local",
         },
     )
     assert result.returncode == 0, result.stderr
@@ -214,6 +219,7 @@ def test_reset_dev_dry_run_bootstrap_redirects_exec_stdin() -> None:
         env_overrides={
             "CONFIRM_REMOTE_RESET": "RESET",
             "ACX_RESET_DRY_RUN": "1",
+            "ACX_RESET_SITE_URL": "https://altcontext.local",
         },
     )
     assert result.returncode == 0, result.stderr
@@ -236,6 +242,122 @@ def test_reset_dev_dry_run_bootstrap_redirects_exec_stdin() -> None:
         )
 
 
+def _derive_tenant_id_from_site_url(site_url: str) -> str:
+    """Mirror of TenantIdentity::derive_from_site_url() for assertion purposes.
+
+    The PHP implementation lives at
+    apps/prototype-wp-alt-context/src/api/class-tenant-identity.php. The
+    bootstrap must produce the same value or the plugin's per-request
+    X-Tenant-ID will not match the tenant the bootstrap key is bound to,
+    and the backend rejects with HTTP 403 'tenant mismatch' (E15-12-BR-06).
+    """
+    import hashlib
+
+    normalized = site_url.lower().rstrip("/")
+    h = hashlib.sha1(f"acx-site-tenant:{normalized}".encode()).hexdigest()
+    time_hi = (int(h[12:16], 16) & 0x0FFF) | 0x5000
+    clock_seq = (int(h[16:20], 16) & 0x3FFF) | 0x8000
+    return f"{h[0:8]}-{h[8:12]}-{time_hi:04x}-{clock_seq:04x}-{h[20:32]}"
+
+
+def test_reset_dev_dry_run_br06_requires_explicit_site_url() -> None:
+    """E15-12-BR-06: the bootstrap must not silently default site_url to the
+    recognition API URL.
+
+    The plugin sends X-Tenant-ID = TenantIdentity::derive_from_site_url() on
+    every request, where site_url is the WordPress site URL — not the
+    recognition API URL. If the bootstrap creates a key for a tenant derived
+    from the API URL (or a hard-coded default UUID), the backend rejects the
+    plugin's first authenticated request with HTTP 403 'tenant mismatch'.
+
+    The reset path must require ACX_RESET_SITE_URL to be the WordPress site
+    URL the plugin will hit, and fail closed when it is missing.
+    """
+    result = _run(
+        ["reset", "dev"],
+        env_overrides={
+            "CONFIRM_REMOTE_RESET": "RESET",
+            "ACX_RESET_DRY_RUN": "1",
+        },
+    )
+    assert result.returncode != 0, (
+        "reset must fail closed without ACX_RESET_SITE_URL; got rc=0 with "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    combined = result.stdout + result.stderr
+    assert "ACX_RESET_SITE_URL" in combined, (
+        "error message must name the ACX_RESET_SITE_URL lever the operator "
+        f"needs to set; got: {combined!r}"
+    )
+
+
+def test_reset_dev_dry_run_br06_derives_tenant_id_from_site_url() -> None:
+    """E15-12-BR-06: when ACX_RESET_SITE_URL is supplied without an explicit
+    ACX_RESET_TENANT_ID, the bootstrap derives the tenant UUID from the site
+    URL using the same algorithm as TenantIdentity::derive_from_site_url() in
+    the WordPress plugin. This is what makes the bootstrap key actually usable
+    by the plugin's first authenticated request post-reset.
+    """
+    site_url = "https://altcontext.local"
+    expected_uuid = _derive_tenant_id_from_site_url(site_url)
+    result = _run(
+        ["reset", "dev"],
+        env_overrides={
+            "CONFIRM_REMOTE_RESET": "RESET",
+            "ACX_RESET_DRY_RUN": "1",
+            "ACX_RESET_SITE_URL": site_url,
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
+    assert expected_uuid in out, (
+        f"bootstrap must use derived tenant UUID {expected_uuid} for "
+        f"site_url={site_url}; got: {out!r}"
+    )
+    # The legacy hard-coded default UUID must not appear when derivation is
+    # in effect — that was the BR-06 bug.
+    assert "00000000-0000-7000-8000-000000000000" not in out, (
+        "bootstrap leaked the legacy hard-coded default tenant UUID; the "
+        "derivation path must replace it entirely"
+    )
+    # The site_url passed to `tenant create --site-url` must be the WordPress
+    # site URL (the one the plugin sends as Origin/host context), not the
+    # recognition API URL.
+    assert f"--site-url {site_url}" in out, (
+        f"tenant create must use --site-url={site_url}; got: {out!r}"
+    )
+
+
+def test_reset_dev_dry_run_br06_explicit_tenant_id_overrides_derivation() -> None:
+    """E15-12-BR-06: if both ACX_RESET_TENANT_ID and ACX_RESET_SITE_URL are
+    supplied, the explicit UUID wins (escape hatch for non-derived tenants
+    such as a custom multi-site arrangement). Site URL is still required for
+    `tenant create --site-url`.
+    """
+    site_url = "https://altcontext.local"
+    explicit_uuid = "11111111-2222-7333-9444-555555555555"
+    result = _run(
+        ["reset", "dev"],
+        env_overrides={
+            "CONFIRM_REMOTE_RESET": "RESET",
+            "ACX_RESET_DRY_RUN": "1",
+            "ACX_RESET_SITE_URL": site_url,
+            "ACX_RESET_TENANT_ID": explicit_uuid,
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
+    assert explicit_uuid in out, (
+        f"explicit ACX_RESET_TENANT_ID={explicit_uuid} must override "
+        f"derivation; got: {out!r}"
+    )
+    derived = _derive_tenant_id_from_site_url(site_url)
+    assert derived not in out, (
+        f"derived UUID {derived} must not appear when explicit "
+        f"ACX_RESET_TENANT_ID is set; got: {out!r}"
+    )
+
+
 def test_reset_dev_dry_run_does_not_open_ssh_connection() -> None:
     """The dry-run path must not actually invoke ssh — it announces what it would
     do and exits 0 cleanly."""
@@ -244,6 +366,7 @@ def test_reset_dev_dry_run_does_not_open_ssh_connection() -> None:
         env_overrides={
             "CONFIRM_REMOTE_RESET": "RESET",
             "ACX_RESET_DRY_RUN": "1",
+            "ACX_RESET_SITE_URL": "https://altcontext.local",
             # If any code path tried to ssh, this fake host would fail loudly.
             "OCI_HOST": "definitely-not-a-real-host.invalid",
             "OCI_USER": "nobody",

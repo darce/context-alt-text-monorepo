@@ -340,19 +340,27 @@ class SettingsController {
 	 * @return array{value: string, source: string}
 	 */
 	private function resolve_key_source(): array {
+		// E15-12-RR-01: code-managed sources (constant, filter) MUST win over
+		// operator-saved options. The pre-fix order resolved option before
+		// filter, mirroring the BR-07 URL bug: a stale saved key kept routing
+		// recognition auth even after an operator wired a filter to inject a
+		// deploy-time key, and the key field surfaced as option-owned/editable
+		// instead of code-managed/read-only. Precedence is now: constant ->
+		// filter -> option -> default, matching resolve_url_source() and the
+		// documented selector contract.
 		$constant = $this->get_constant_value( 'ACX_RECOGNITION_API_KEY' );
 		if ( '' !== $constant ) {
 			return array( 'value' => $constant, 'source' => 'constant' );
 		}
 
-		$option = trim( (string) get_option( 'acx_recognition_api_key', '' ) );
-		if ( '' !== $option ) {
-			return array( 'value' => $option, 'source' => 'option' );
-		}
-
 		$filter = trim( (string) apply_filters( 'acx_recognition_api_key', '' ) );
 		if ( '' !== $filter ) {
 			return array( 'value' => $filter, 'source' => 'filter' );
+		}
+
+		$option = trim( (string) get_option( 'acx_recognition_api_key', '' ) );
+		if ( '' !== $option ) {
+			return array( 'value' => $option, 'source' => 'option' );
 		}
 
 		return array( 'value' => '', 'source' => 'default' );

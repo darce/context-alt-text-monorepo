@@ -109,6 +109,36 @@ class SettingsControllerTest extends TestCase
         $this->assertSame('filter', $data['recognition_source_source'], 'recognition_source_source must report filter (code-managed) so the selector renders read-only');
     }
 
+    public function testGetSettingsRr01FilterApiKeyWinsOverSavedOptionApiKey(): void
+    {
+        // E15-12-RR-01: same selector contract as BR-07, applied to the API key
+        // resolver. When both a saved option api_key and a code-managed filter
+        // api_key exist, the filter (code-managed) MUST win over the option
+        // (operator-saved). The pre-fix order in resolve_key_source() was
+        // constant -> option -> filter, which let a stale saved key keep
+        // routing recognition auth to the option value even after the operator
+        // wired up a filter to inject a deploy-time key, and surfaced the key
+        // field as option-owned/editable instead of code-managed/read-only.
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_recognition_api_key', 'sk-stale-saved-abcdef1234');
+        add_filter('acx_recognition_api_key', static fn () => 'sk-filter-wins-12345678');
+
+        $request = new WP_REST_Request('GET', '/acx/v1/settings');
+        $response = $this->controller->get_settings($request);
+
+        $data = $response->get_data();
+        $this->assertSame(
+            'filter',
+            $data['key_source'],
+            'key_source must report filter when filter is set, even if option is set'
+        );
+        $this->assertSame(
+            '****5678',
+            $data['api_key_last4'],
+            'api_key_last4 must reflect the filter-provided key, not the saved option'
+        );
+    }
+
     public function testGetSettingsMasksShortApiKey(): void
     {
         $this->setUserCapability('manage_options', true);

@@ -539,6 +539,80 @@ describe('IdentityClusterList', () => {
     );
   });
 
+  it('treats a self-match returned by label lookup as a rename', async () => {
+    const updateDeferred = createDeferred<unknown>();
+    (api.updateClusterLabel as Mock).mockReturnValue(updateDeferred.promise);
+
+    const matchDeferreds: Deferred<{ id: string; label: string } | null>[] = [];
+    const findClusterByLabelRemote = vi.fn(() => {
+      const deferred = createDeferred<{ id: string; label: string } | null>();
+      matchDeferreds.push(deferred);
+      return deferred.promise;
+    });
+
+    useClusterSuggestionsLoaderMock.mockReturnValue({
+      identitySuggestions: { matches: [] },
+      labelMatches: [],
+      isLoading: false,
+      findClusterByLabel: findClusterByLabelRemote,
+    });
+
+    const { client, user } = await renderWithClient(<IdentityClusterList identities={[baseIdentity]} />);
+    const cacheData: MediaIdentitiesResponse = {
+      identities_by_media: {
+        '1': [baseIdentity],
+      },
+    };
+    await actFlow(async () => {
+      setMediaIdentitiesCache(client, cacheData);
+    });
+
+    await actFlow(async () => {
+      await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
+    });
+    const input = screen.getByPlaceholderText(/enter a name/i);
+    await actFlow(async () => {
+      await user.clear(input);
+      fireEvent.change(input, { target: { value: 'Emilie Chartrand' } });
+    });
+
+    await actFlow(async () => {
+      await flushTimers(MATCH_DEBOUNCE_MS);
+    });
+    await waitFor(() => expect(findClusterByLabelRemote).toHaveBeenCalled());
+
+    const matchDeferred = matchDeferreds[0];
+    expect(matchDeferred).toBeDefined();
+    await actFlow(async () => {
+      if (!matchDeferred) {
+        throw new Error('Expected self-match deferred to be defined.');
+      }
+      await resolveDeferred(matchDeferred, { id: 'cluster-1', label: 'Emilie Chartrand' });
+    });
+
+    await actFlow(async () => {
+      await runWithTimers(() => user.click(getSaveButton()));
+    });
+    await waitFor(() => expect(findClusterByLabelRemote).toHaveBeenCalledTimes(2));
+
+    const saveMatchDeferred = matchDeferreds[1];
+    expect(saveMatchDeferred).toBeDefined();
+    await actFlow(async () => {
+      if (!saveMatchDeferred) {
+        throw new Error('Expected save-time self-match deferred to be defined.');
+      }
+      await resolveDeferred(saveMatchDeferred, { id: 'cluster-1', label: 'Emilie Chartrand' });
+      await resolveSaveDeferred(updateDeferred, {});
+    });
+
+    await waitForEditClosed();
+
+    await waitFor(() =>
+      expect(api.updateClusterLabel).toHaveBeenCalledWith('cluster-1', 'Emilie Chartrand', expect.anything()),
+    );
+    expect(api.mergeCluster).not.toHaveBeenCalled();
+  });
+
   it('merges into existing cluster when label matches', async () => {
     const mergeDeferred = createDeferred<unknown>();
     (api.mergeCluster as Mock).mockReturnValue(mergeDeferred.promise);

@@ -7,7 +7,7 @@ import { __, sprintf } from '@wordpress/i18n';
 
 import type { MergeClusterResponse } from '../../../api/recognition';
 import type { ClusterGroup } from './types';
-import { formatClusterLabel, getEditableClusterId } from './utils';
+import { filterEditableClusterMatch, formatClusterLabel, getEditableClusterId } from './utils';
 import { useClusterEditState } from './useClusterEditState';
 import { useClusterMutations } from './useClusterMutations';
 import { useClusterSuggestions } from './useClusterSuggestions';
@@ -204,7 +204,7 @@ export const IdentityClusterItem = ({
       try {
         const match = await findClusterByLabel(trimmed, abortController.signal);
         if (!abortController.signal.aborted) {
-          setMatchedCluster(match);
+          setMatchedCluster(filterEditableClusterMatch(match, editableClusterId));
         }
       } catch {
         // Ignore

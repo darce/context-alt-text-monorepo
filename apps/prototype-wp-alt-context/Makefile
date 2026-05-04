@@ -1,4 +1,4 @@
-.PHONY: help check fix format lint typecheck arch test test-watch check-php php-cs php-cs-fix php-test phpstan mcp projection-reset localwp-link localwp-verify-activation localwp-batch-run-smoke gate-package worker-daemon _php-deps FORCE
+.PHONY: help check fix format lint typecheck arch test test-watch check-php php-cs php-cs-fix php-test phpstan mcp projection-reset localwp-link localwp-verify-activation localwp-mirror-integrity localwp-batch-run-smoke gate-package worker-daemon _php-deps FORCE
 
 help:
 	@echo "Available commands:"
@@ -14,6 +14,7 @@ help:
 	@echo "  make php-cs-fix - Auto-fix plugin PHP style violations (PHPCBF)"
 	@echo "  make localwp-link - Symlink plugin into a LocalWP site from a stable checkout (guarded)"
 	@echo "  make localwp-verify-activation - Re-run plugin activation cycle (deactivate + activate) through LocalWP WP-CLI; runs lifecycle hooks, not a dry run"
+	@echo "  make localwp-mirror-integrity - Run the mirror integrity WP-CLI check through the LocalWP wrapper"
 	@echo "  make localwp-batch-run-smoke - Submit a real LocalWP batch scan through the REST API and poll the BatchRun aggregate"
 	@echo "  make gate-package - Build the reproducible plugin ZIP for release/gate verification"
 	@echo "  make projection-reset - Truncate ACX projection tables (guarded; requires WP_PATH + confirmation)"
@@ -161,6 +162,34 @@ projection-reset:
 	esac; \
 	echo "Resetting ACX projection tables on $$SITE_URL..."; \
 	_run_wp --path="$(WP_PATH)" acx reset-projection --yes
+
+# Non-destructive helper that reports suspicious mirror rows before the local
+# projection is treated as trustworthy.
+# Usage:
+#   make localwp-mirror-integrity WP_PATH="/path/to/wordpress/site"
+#   make localwp-mirror-integrity WP_PATH="/path/to/wordpress/site" THRESHOLD="0.999" LIMIT="50" FORMAT="json"
+#   make localwp-mirror-integrity WP_PATH="/path/to/wordpress/site" ATTACHMENT_ID="6624"
+localwp-mirror-integrity:
+	@if [ -z "$(WP_PATH)" ]; then \
+		echo "WP_PATH is required (path to WordPress root containing wp-load.php)."; \
+		echo "Example: make localwp-mirror-integrity WP_PATH=\"$$HOME/Development/wp-context-alt-text/app/public\" THRESHOLD=\"0.999\" LIMIT=\"50\" FORMAT=\"table\""; \
+		exit 1; \
+	fi
+	@if [ ! -f "$(WP_PATH)/wp-load.php" ]; then \
+		echo "Invalid WP_PATH: $(WP_PATH) (missing wp-load.php)"; \
+		exit 1; \
+	fi
+	@_LOCALWP_WP="$$(git rev-parse --show-toplevel)/scripts/localwp-wp.sh"; \
+	if [ ! -x "$$_LOCALWP_WP" ]; then \
+		echo "LocalWP WP-CLI wrapper missing or not executable: $$_LOCALWP_WP"; \
+		exit 1; \
+	fi; \
+	ARGS=""; \
+	if [ -n "$(ATTACHMENT_ID)" ]; then ARGS="$$ARGS --attachment-id=$(ATTACHMENT_ID)"; fi; \
+	if [ -n "$(THRESHOLD)" ]; then ARGS="$$ARGS --threshold=$(THRESHOLD)"; fi; \
+	if [ -n "$(LIMIT)" ]; then ARGS="$$ARGS --limit=$(LIMIT)"; fi; \
+	if [ -n "$(FORMAT)" ]; then ARGS="$$ARGS --format=$(FORMAT)"; fi; \
+	"$$_LOCALWP_WP" --path="$(WP_PATH)" acx mirror-integrity $$ARGS
 
 # Re-run the plugin lifecycle (deactivate + activate) against a LocalWP site
 # and optionally gate elapsed time. This is an execution check, not a dry run.

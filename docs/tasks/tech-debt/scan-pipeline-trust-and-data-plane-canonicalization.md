@@ -266,9 +266,12 @@ The plugin storage surface and admin REST shape for this record must be picked e
 
 ### E16-1h — Cluster-membership integrity check (lower priority)
 
+- Add a tenant-scoped integrity summary that flags suspicious `similarity >= 0.999` attachments linked to more than one projected cluster and surfaces sample attachment IDs through `GET /acx/v1/recognition/sync-status` for operator follow-up.
+- Add an operator-facing integrity command (`wp acx mirror-integrity`, plus the repo-local `make localwp-mirror-integrity` wrapper) so operators can block on suspicious local mirror rows before trusting the projection again.
 - Investigate why media 6624 (and likely others) accumulated 6× similarity=1.0 cluster assignments.
 - Likely candidates: duplicate sync_outbox replay; missing dedupe on `(attachment_id, cluster_uuid)` upsert; clustering job re-run without idempotency.
 - May fold into existing td-retry-attempt-observability if root cause is replay-related.
+- **Incremental implementation status:** sync-status now returns a `cluster_membership_integrity` summary with a suspicious-attachment count plus sample attachment IDs for perfect-similarity attachments linked to more than one cluster. Operators can also run `wp acx mirror-integrity` (or `make localwp-mirror-integrity`) to print the offending attachment IDs, cluster counts, and cluster UUIDs before trusting the local mirror. The command now supports `--attachment-id=<id>` / `ATTACHMENT_ID=<id>` for the remaining E16-1h drill-down path, so attachment `6624` can be spot-checked directly from the worktree root. Current retained evidence still does not confirm direct replay of attachment 6624 itself: the live backend and live mirror no longer contain 6624 rows, the `wp_acx_sync_outbox` window from `21:26:59` to `21:35:34` contains 30 cluster-only rows with zero payload hits for `6624`, the retained `debug.log` window scan found zero matching lines for `6624`, `sync`, `cluster`, or `identity_members`, and the new attachment-scoped command currently returns a clean local result for `6624` at `similarity >= 0.999`.
 
 ## Reset Procedure (proposed for E16-1a)
 
@@ -373,19 +376,20 @@ Closed during planning review on 2026-05-03 with operator authorization. These a
 
 ## Context and Ownership
 
-- [ ] Loaded the minimum authoritative rules, contracts, and handoff state before editing.
-- [ ] Confirmed whether external dependency context requires `ctx7`.
-- [ ] Recorded boundary ownership and compatibility expectations for E16-1b's new shared-contracts schema, REST surface, and SSE bridge change.
+- [x] Loaded the minimum authoritative rules, contracts, and handoff state before editing.
+- [x] Confirmed whether external dependency context requires `ctx7`.
+- [x] Recorded boundary ownership and compatibility expectations for E16-1b's new shared-contracts schema, REST surface, and SSE bridge change.
 
 ### Checklist for E16-1a: Complete local DB rename (foundation)
 
 - [x] Guardrail-only code slice landed (`78d2b0e5` + `a3dd4e90`); local `.env` now points at `alt_context_service`. Remaining items below are still operator verification steps, not branch-local code changes.
 - [x] Update `apps/prototype-description-service/.env:25` to `DB_NAME=alt_context_service`.
-- [ ] Run `make reset-local WP_PATH="$LOCAL_WP_ROOT/app/public" CONFIRM_LOCAL_RESET="RESET"` against the canonical DB.
-- [ ] Drop legacy DB: `psql -h 127.0.0.1 -U context -d postgres -c 'DROP DATABASE IF EXISTS context_alt_text_service;'`.
-- [ ] Restart description service; confirm via `pg_stat_activity` that only `alt_context_service` is bound.
+- [x] Run `make reset-local WP_PATH="$LOCAL_WP_ROOT/app/public" CONFIRM_LOCAL_RESET="RESET"` against the canonical DB.
+- [x] Drop legacy DB: `psql -h 127.0.0.1 -U context -d postgres -c 'DROP DATABASE IF EXISTS context_alt_text_service;'`.
+- [x] Restart description service; confirm via `pg_stat_activity` that only `alt_context_service` is bound.
 - [x] Tick the local items in `docs/tasks/tech-debt/rename-database-context-alt-text-to-alt-context.md`.
 - [ ] Verification: 100-item scan persists rows in `alt_context_service` (legacy DB no longer exists locally).
+  Supported smoke retry from this branch still fails locally: `make localwp-batch-run-smoke WP_PATH="$HOME/Development/wp-context-alt-text/app/public" SMOKE_LIMIT="100" BATCH_SIZE="5"` exits with `BatchRun status could not be loaded.`, and the post-smoke canonical DB probe still shows `identity_scan_jobs=0`.
 
 ### Checklist for E16-1b: BatchRun aggregate + multipart submit failure surfacing
 
@@ -433,7 +437,9 @@ Closed during planning review on 2026-05-03 with operator authorization. These a
 
 ### Checklist for E16-1h: Cluster-membership integrity check
 
-- [ ] Investigate media 6624's 6× similarity=1.0 cluster assignments.
+- [x] Add a tenant-scoped integrity summary that flags suspicious `similarity >= 0.999` attachments linked to more than one projected cluster and surfaces sample attachment IDs through `GET /acx/v1/recognition/sync-status`.
+- [x] Add an operator-facing integrity command (`wp acx mirror-integrity` and `make localwp-mirror-integrity`) that reports attachments with `COUNT(DISTINCT cluster_uuid) > 1` at `similarity >= 0.999` before the mirror is trusted.
+- [x] Investigate media 6624's 6× similarity=1.0 cluster assignments. Current retained evidence does not confirm direct replay of attachment `6624`; the live backend and live mirror are clean, the historical outbox window contains only cluster-level rows with zero payload hits for `6624`, and the attachment-scoped mirror-integrity command currently reports no suspicious local row for `6624` at `similarity >= 0.999`.
 - [ ] Decide: standalone cluster-correctness task plan vs. fold into `td-retry-attempt-observability`.
 
 ## Review Readiness

@@ -156,15 +156,19 @@ describe('TopClustersSection', () => {
     ).toBeInTheDocument();
   });
 
-  it('keeps rendering nothing when the API returns zero clusters', async () => {
+  it('renders explicit zero-pending guidance when all recognized groups are already labeled', async () => {
     vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue(topUnlabeledResponse([], 0, true));
-    const rendered = renderSection();
+
+    renderSection();
 
     await waitFor(() => {
       expect(fetchTopUnlabeledClusters).toHaveBeenCalled();
     });
 
-    expect(rendered.container.firstChild).toBeNull();
+    expect(screen.getByText('Name These People')).toBeInTheDocument();
+    expect(
+      screen.getByText('Everyone already has a label. New unlabeled groups will appear here after future scans.'),
+    ).toBeInTheDocument();
   });
 
   it('renders explicit empty-backend guidance when no projected clusters exist yet', async () => {

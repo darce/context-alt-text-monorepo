@@ -24,6 +24,7 @@ interface TopUnlabeledClustersResponsePayload {
   total?: number | null;
   truncated?: boolean | null;
   singleton_count?: number | null;
+  has_clusters?: boolean | null;
   data_source?: string | null;
   projection_status?: string | null;
 }
@@ -173,6 +174,8 @@ export const fetchTopUnlabeledClusters = async (
 
   const singletonCount =
     dataSource === 'backend_proxy' ? undefined : requireTopUnlabeledNumber(payload.singleton_count, 'singleton_count');
+  const hasClusters =
+    dataSource === 'local_projection' ? requireTopUnlabeledBoolean(payload.has_clusters, 'has_clusters') : undefined;
 
   return {
     clusters: payload.clusters.map(normalizeTopUnlabeledCluster),
@@ -180,6 +183,7 @@ export const fetchTopUnlabeledClusters = async (
     total: requireTopUnlabeledNumber(payload.total, 'total'),
     truncated: requireTopUnlabeledBoolean(payload.truncated, 'truncated'),
     singleton_count: singletonCount,
+    has_clusters: hasClusters,
     data_source: dataSource,
     projection_status: projectionStatus ?? undefined,
   };

@@ -107,9 +107,59 @@ class ClustersControllerTest extends TestCase
         $this->assertSame(1, $data['total']);
         $this->assertFalse($data['truncated']);
         $this->assertSame(0, $data['singleton_count']);
+        $this->assertTrue($data['has_clusters']);
         $this->assertSame('local_projection', $data['data_source']);
         $this->assertSame('available', $data['projection_status']);
         $this->assertSame('http://example.test/media/101.jpg', $data['clusters'][0]['representatives'][0]['thumb_url']);
+    }
+
+    public function testTopUnlabeledClustersExposeEmptyProjectionStateWhenNoProjectedClustersExist(): void
+    {
+        $clustersRepo = new class() extends NullClustersRepository {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return false;
+            }
+
+            public function list_top_unlabeled(string $tenant_id, int $limit = 10): array
+            {
+                return [];
+            }
+        };
+
+        $syncRepo = new class() extends NullSyncStateRepository {
+            public function get_snapshot_version(string $tenant_id): int {
+                return 1;
+            }
+        };
+
+        $controller = new ClustersController(
+            $clustersRepo,
+            new NullIdentityMembersRepository(),
+            $syncRepo,
+            null,
+            new ClusterResponseMapper(),
+            new MemberResponseMapper()
+        );
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled');
+        $response = $controller->list_top_unlabeled_clusters($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $this->assertSame(
+            [
+                'clusters' => [],
+                'limit' => 10,
+                'total' => 0,
+                'truncated' => false,
+                'singleton_count' => 0,
+                'has_clusters' => false,
+                'data_source' => 'local_projection',
+                'projection_status' => 'available',
+            ],
+            $response->get_data()
+        );
     }
 
     public function testTopUnlabeledClustersClampExcessiveRequestLimit(): void

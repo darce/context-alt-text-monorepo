@@ -75,4 +75,56 @@ describe('useClusterSuggestions', () => {
 
     queryClient.clear();
   });
+
+  it('excludes the editable cluster from suggestions and exact label lookup', async () => {
+    const { wrapper, queryClient } = createWrapper();
+    const fetchIdentitySuggestionsMock = vi.mocked(recognitionApi.fetchIdentitySuggestions);
+    const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
+
+    fetchIdentitySuggestionsMock.mockResolvedValue({
+      matches: [
+        { cluster_id: 'cluster-self', label: 'Emilie Chartrand', similarity: 0.99, identity_count: 3 },
+        { cluster_id: 'cluster-other', label: 'Emilie Chartrand Archive', similarity: 0.75, identity_count: 7 },
+      ],
+    });
+
+    const baseCluster = {
+      member_ids: [],
+      representative_identity: {
+        media_id: null,
+        bbox: { x: 0, y: 0, width: 0, height: 0 },
+      },
+      sample_identities: [],
+    };
+
+    listRecognitionClustersMock.mockResolvedValue({
+      clusters: [
+        { ...baseCluster, id: 'cluster-self', label: 'Emilie Chartrand', identity_count: 3 },
+        { ...baseCluster, id: 'cluster-other', label: 'Emilie Chartrand Archive', identity_count: 7 },
+      ],
+      limit: 20,
+      total: 2,
+      truncated: false,
+    });
+
+    const { result } = renderHook(
+      () =>
+        useClusterSuggestions({
+          identityId: 'identity-1',
+          enabled: true,
+          labelInput: 'Emilie',
+          debounceMs: 0,
+          editableClusterId: 'cluster-self',
+        }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.options).toHaveLength(1));
+    expect(result.current.options[0]?.value).toBe('cluster-other');
+
+    const exactMatch = await result.current.findClusterByLabel('Emilie Chartrand');
+    expect(exactMatch).toBeNull();
+
+    queryClient.clear();
+  });
 });

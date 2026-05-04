@@ -20,6 +20,8 @@ export interface ClusterSuggestionsLoaderOptions {
   identityId: string | undefined;
   /** Whether to enable the suggestions query */
   enabled: boolean;
+  /** Current editable cluster that must not be returned as a merge target */
+  editableClusterId?: string | null;
   /** Current typed label for searching existing clusters */
   labelInput?: string;
   /** Debounce delay for searching (ms) */
@@ -42,6 +44,7 @@ const DEFAULT_DEBOUNCE_MS = 300;
 export const useClusterSuggestionsLoader = ({
   identityId,
   enabled,
+  editableClusterId,
   labelInput = '',
   debounceMs = DEFAULT_DEBOUNCE_MS,
 }: ClusterSuggestionsLoaderOptions): ClusterSuggestionsLoaderResult => {
@@ -73,7 +76,7 @@ export const useClusterSuggestionsLoader = ({
         labeled_only: true,
         search: debouncedValue,
       }),
-    select: (response) => response.clusters,
+    select: (response) => response.clusters.filter((cluster) => cluster.id !== editableClusterId),
     enabled: Boolean(enabled && debouncedValue.length >= 2),
     staleTime: 30000,
   });
@@ -87,7 +90,9 @@ export const useClusterSuggestionsLoader = ({
 
       try {
         const results = await listRecognitionClusters({ search: label, limit: 10, labeled_only: true }, signal);
-        const match = results.clusters.find((cluster) => cluster.label.toLowerCase() === normalizedLabel);
+        const match = results.clusters.find(
+          (cluster) => cluster.id !== editableClusterId && cluster.label.toLowerCase() === normalizedLabel,
+        );
         if (match?.id && match.label) {
           return { id: match.id, label: match.label };
         }
@@ -103,7 +108,7 @@ export const useClusterSuggestionsLoader = ({
 
       return null;
     },
-    [],
+    [editableClusterId],
   );
 
   return {

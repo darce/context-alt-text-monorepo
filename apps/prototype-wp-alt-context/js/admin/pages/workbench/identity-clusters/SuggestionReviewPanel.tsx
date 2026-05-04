@@ -194,8 +194,8 @@ export const SuggestionReviewPanel = ({ onLabel, onReview }: SuggestionReviewPan
           <div className="acx-suggestion-queue">
             {showUnavailableWarning ? (
               <EmptyStateWarning
-                title={__('Suggestions unavailable', 'alt-context')}
-                message={__('We could not load assignment suggestions right now.', 'alt-context')}
+                title={__('Suggestion service not configured', 'alt-context')}
+                message={__('Check the recognition service connection, then retry loading suggestions.', 'alt-context')}
                 onRetry={() => void refetchAssignment().then(() => refetchMerge())}
               />
             ) : showZeroPendingAssignmentGuidance ? (

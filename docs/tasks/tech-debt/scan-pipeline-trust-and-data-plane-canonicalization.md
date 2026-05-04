@@ -249,7 +249,7 @@ The plugin storage surface and admin REST shape for this record must be picked e
 - `findClusterByLabel` (or its callers in `IdentityClusterItem.tsx` / `useClusterSaveAction.ts`) excludes `editableClusterId` from candidate results.
 - When candidates are empty after exclusion, treat the input as a pure rename, not a merge.
 - Cluster-mutations 4xx responses are caught and re-rendered as inline messages, not raw JSON. (`invalid_target_cluster_id` ⇒ "That cluster is already named X — nothing to merge.")
-- **Incremental implementation status:** the self-match rename guard is now wired through the proactive match state and final save path, so same-cluster label lookups downgrade to rename instead of issuing a self-merge. Friendly inline 4xx copy remains the adjacent merge-surface behavior for this theme.
+- **Incremental implementation status:** self-match rename guard landed on `1c4acd83`; the adjacent friendly inline `invalid_target_cluster_id` merge-error surface is green on this branch and was re-verified against `IdentityClusterList.test.tsx` on `1c4acd83`.
 
 ### E16-1f — `media_id` → `attachment_id` SQL fix
 
@@ -408,9 +408,9 @@ Closed during planning review on 2026-05-03 with operator authorization. These a
 
 ### Checklist for E16-1e: Self-merge guard + friendly merge-error surface
 
-- [ ] `findClusterByLabel` (or its callers) excludes `editableClusterId` from candidates.
-- [ ] Empty post-exclusion result treated as rename, not merge.
-- [ ] Cluster-mutations 4xx responses rendered inline (`invalid_target_cluster_id` ⇒ "That cluster is already named X — nothing to merge.").
+- [x] `findClusterByLabel` (or its callers) excludes `editableClusterId` from candidates.
+- [x] Empty post-exclusion result treated as rename, not merge.
+- [x] Cluster-mutations 4xx responses rendered inline (`invalid_target_cluster_id` ⇒ "That cluster is already named X — nothing to merge.").
 
 ### Checklist for E16-1f: Dashboard `media_id` → `attachment_id` SQL fix
 

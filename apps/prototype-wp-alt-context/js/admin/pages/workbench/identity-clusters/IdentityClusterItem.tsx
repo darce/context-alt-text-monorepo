@@ -359,7 +359,11 @@ export const IdentityClusterItem = ({
         />
       )}
 
-      {editState.error && <p className="acx-identity-cluster__error">{editState.error}</p>}
+      {editState.error && (
+        <p className="acx-identity-cluster__error" role="alert">
+          {editState.error}
+        </p>
+      )}
 
       <DebugMetricsPanel metrics={representative?.debug_metrics} />
 

@@ -609,6 +609,64 @@ describe('IdentityClusterList', () => {
     );
   });
 
+  it('shows a friendly inline message when merge rejects a self-target request', async () => {
+    (api.mergeCluster as Mock).mockRejectedValueOnce(
+      new Error(
+        'Request to /recognition/clusters/cluster-1/merge failed (400): {"code":"invalid_target_cluster_id","message":"Source and target cluster IDs must differ."}',
+      ),
+    );
+    const existingClusters = [
+      {
+        id: 'target-cluster',
+        label: 'Existing Label',
+        identity_count: 1,
+        member_ids: ['identity-1'],
+        representative_identity: { media_id: 1, bbox: { x: 0, y: 0, width: 100, height: 100 } },
+        sample_identities: [],
+      },
+    ];
+    const loaderResult = {
+      identitySuggestions: { matches: [] },
+      labelMatches: existingClusters,
+      isLoading: false,
+      findClusterByLabel: defaultFindClusterByLabel,
+    };
+    useClusterSuggestionsLoaderMock.mockReturnValue(loaderResult);
+
+    const { client, user } = await renderWithClient(<IdentityClusterList identities={[baseIdentity]} />);
+    const cacheData: MediaIdentitiesResponse = {
+      identities_by_media: {
+        '1': [baseIdentity],
+      },
+    };
+    await actFlow(async () => {
+      setMediaIdentitiesCache(client, cacheData);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /edit label/i })).toBeInTheDocument();
+    });
+
+    await actFlow(async () => {
+      await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
+    });
+    const input = screen.getByPlaceholderText(/enter a name/i);
+    await actFlow(async () => {
+      await user.clear(input);
+      fireEvent.change(input, { target: { value: 'Existing Label' } });
+    });
+
+    await actFlow(async () => {
+      await runWithTimers(() => user.click(getSaveButton()));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'That cluster is already named Existing Label - nothing to merge.',
+      );
+    });
+  });
+
   it('shows undo when merge completes and reverts on request', async () => {
     const mergeDeferred = createDeferred<unknown>();
     const revertDeferred = createDeferred<unknown>();

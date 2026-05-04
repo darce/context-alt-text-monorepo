@@ -316,6 +316,7 @@ class Admin {
 					'workbenchMedia'                 => rest_url( 'acx/v1/workbench/media' ),
 					'workbenchMediaDetail'           => rest_url( 'acx/v1/workbench/media/detail' ),
 					'recognitionAnalyze'             => rest_url( 'acx/v1/recognition/analyze' ),
+					'recognitionBatchRuns'           => rest_url( 'acx/v1/recognition/batch-runs' ),
 					'recognitionJobs'                => rest_url( 'acx/v1/recognition/jobs' ),
 					'recognitionCluster'             => rest_url( 'acx/v1/recognition/cluster' ),
 					'recognitionClusters'            => rest_url( 'acx/v1/recognition/clusters' ),

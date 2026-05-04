@@ -6,8 +6,10 @@ import type { HTTPOptions } from '../../../utils/http';
 
 interface ScanRequestBody {
   media_ids: number[];
+  batch_index?: number;
+  submitted_total?: number;
 }
-type FetchRequiredApiMock = (endpoint: string, options?: HTTPOptions) => Promise<AnalyzeResponse>;
+type FetchRequiredApiMock = (endpoint: string, options?: HTTPOptions) => Promise<AnalyzeResponse | { status: string }>;
 
 const hasMediaIds = (value: unknown): value is ScanRequestBody => {
   if (typeof value !== 'object' || value === null) {
@@ -29,7 +31,10 @@ const makeAnalyzeResponse = (mediaIds: number[]): AnalyzeResponse => ({
 
 const mockConfig = {
   nonce: 'nonce-123',
-  endpoints: { recognitionAnalyze: 'https://example.com/analyze' } as Record<string, string>,
+  endpoints: {
+    recognitionAnalyze: 'https://example.com/analyze',
+    recognitionBatchRuns: 'https://example.com/batch-runs',
+  } as Record<string, string>,
   maxMediaPerBatch: 10000,
   devMode: false,
 };
@@ -68,16 +73,22 @@ describe('scanFacesBatched chunk size', () => {
   it('sends a single request when total <= server multipart cap of 5', async () => {
     const result = await scanFacesBatched({ mediaIds: [1, 2, 3, 4, 5] });
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(result).toHaveLength(1);
-    expect(getRequestBody(0)).toEqual({ media_ids: [1, 2, 3, 4, 5] });
+    expect(result.jobs).toHaveLength(1);
+    expect(getRequestBody(0)).toEqual(
+      expect.objectContaining({ media_ids: [1, 2, 3, 4, 5] }),
+    );
   });
 
   it('chunks into batches of 5 when total exceeds the cap', async () => {
     const result = await scanFacesBatched({ mediaIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] });
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(getRequestBody(0)).toEqual({ media_ids: [1, 2, 3, 4, 5] });
-    expect(getRequestBody(1)).toEqual({ media_ids: [6, 7, 8, 9, 10] });
-    expect(result).toHaveLength(2);
+    expect(getRequestBody(0)).toEqual(
+      expect.objectContaining({ media_ids: [1, 2, 3, 4, 5] }),
+    );
+    expect(getRequestBody(1)).toEqual(
+      expect.objectContaining({ media_ids: [6, 7, 8, 9, 10] }),
+    );
+    expect(result.jobs).toHaveLength(2);
   });
 
   it('chunks at 5 even when configured maxMediaPerBatch is higher', async () => {
@@ -103,5 +114,21 @@ describe('scanFacesBatched chunk size', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(getRequestBody(0).media_ids).toHaveLength(3);
     expect(getRequestBody(1).media_ids).toHaveLength(2);
+  });
+
+  it('records a synthetic failed batch when a multipart submit rejects', async () => {
+    fetchMock.mockRejectedValueOnce(new Error('network down'));
+    fetchMock.mockResolvedValueOnce({ status: 'recorded' });
+
+    const result = await scanFacesBatched({ mediaIds: [1, 2, 3, 4, 5, 6] });
+
+    expect(result.jobs).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls[1]?.[0]).toContain('/client-failures');
+    expect(fetchMock.mock.calls[1]?.[1]?.body).toEqual({
+      batch_index: 0,
+      submitted_total: 6,
+      media_ids: [1, 2, 3, 4, 5],
+    });
   });
 });

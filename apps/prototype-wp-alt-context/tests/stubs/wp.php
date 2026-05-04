@@ -1601,6 +1601,8 @@ if (!isset($GLOBALS['wpdb'])) {
         public $defaultUpdateResult = 1;
         /** @var array<string,mixed> */
         public array $updateResults = [];
+        /** @var array<string,array<int,array<string,mixed>>> */
+        public array $tableRows = [];
 
         public function query($sql)
         {
@@ -1689,9 +1691,13 @@ if (!isset($GLOBALS['wpdb'])) {
 
         public function get_results($query, $output = OBJECT)
         {
-            $this->queries[] = (string) $query;
+            $normalizedSql = trim((string) $query);
+            $this->queries[] = $normalizedSql;
 
             $results = $this->mockResults;
+            if ($results === []) {
+                $results = $this->resolveStoredSelectResults($normalizedSql);
+            }
             if ($output === ARRAY_A) {
                 $mapped = $results;
             } elseif ($output === OBJECT) {
@@ -1705,20 +1711,28 @@ if (!isset($GLOBALS['wpdb'])) {
 
         public function get_row($query, $output = OBJECT, $y = 0)
         {
-            $this->queries[] = (string) $query;
-            if ($this->mockRow === null) {
+            $normalizedSql = trim((string) $query);
+            $this->queries[] = $normalizedSql;
+
+            $row = $this->mockRow;
+            if ($row === null) {
+                $results = $this->resolveStoredSelectResults($normalizedSql);
+                $row = $results[0] ?? null;
+            }
+
+            if ($row === null) {
                 return null;
             }
 
             if ($output === ARRAY_A) {
-                return $this->mockRow;
+                return $row;
             }
 
             if ($output === OBJECT) {
-                return (object) $this->mockRow;
+                return (object) $row;
             }
 
-            return $this->mockRow;
+            return $row;
         }
 
         public function get_var($query, $x = 0, $y = 0)
@@ -1728,6 +1742,15 @@ if (!isset($GLOBALS['wpdb'])) {
             
             if (array_key_exists($normalizedSql, $this->queryResults)) {
                 return $this->queryResults[$normalizedSql];
+            }
+
+            $results = $this->resolveStoredSelectResults($normalizedSql);
+            if ($results !== []) {
+                $firstRow = $results[0];
+                $firstKey = array_key_first($firstRow);
+                if (is_string($firstKey) || is_int($firstKey)) {
+                    return $firstRow[$firstKey];
+                }
             }
 
             return $this->mockVar;
@@ -1777,6 +1800,17 @@ if (!isset($GLOBALS['wpdb'])) {
                 $this->insert_id = 1;
             }
 
+            if (!isset($this->tableRows[$table])) {
+                $this->tableRows[$table] = [];
+            }
+
+            $row = $data;
+            if (!array_key_exists('id', $row) && preg_match('/_failures$/', $table) === 1) {
+                $row['id'] = count($this->tableRows[$table]) + 1;
+            }
+
+            $this->tableRows[$table][] = $row;
+
             return $result;
         }
 
@@ -1825,10 +1859,12 @@ if (!isset($GLOBALS['wpdb'])) {
 
             if (is_int($result)) {
                 $this->rows_affected = $result;
+                $this->applyUpdateToRows($table, $data, $where);
                 return $result;
             }
 
             $this->rows_affected = 1;
+            $this->applyUpdateToRows($table, $data, $where);
             return $result;
         }
 
@@ -1853,7 +1889,157 @@ if (!isset($GLOBALS['wpdb'])) {
 
             $this->queries[] = $sql;
 
+            if (isset($this->tableRows[$table])) {
+                $this->tableRows[$table] = array_values(array_filter(
+                    $this->tableRows[$table],
+                    fn(array $row): bool => !$this->rowMatchesWhere($row, $where)
+                ));
+            }
+
             return 1;
+        }
+
+        /** @return array<int,array<string,mixed>> */
+        private function resolveStoredSelectResults(string $query): array
+        {
+            $parsed = $this->parseSelectQuery($query);
+            if ($parsed === null) {
+                return [];
+            }
+
+            $rows = $this->tableRows[$parsed['table']] ?? [];
+            $rows = array_values(array_filter(
+                $rows,
+                fn(array $row): bool => $this->rowMatchesParsedConditions($row, $parsed['conditions'])
+            ));
+
+            if ($parsed['orderBy'] !== null) {
+                usort(
+                    $rows,
+                    function (array $left, array $right) use ($parsed): int {
+                        $column = $parsed['orderBy'];
+                        $direction = $parsed['orderDirection'];
+                        $leftValue = $left[$column] ?? null;
+                        $rightValue = $right[$column] ?? null;
+                        $comparison = $leftValue <=> $rightValue;
+                        return $direction === 'DESC' ? -$comparison : $comparison;
+                    }
+                );
+            }
+
+            if ($parsed['limit'] !== null) {
+                $rows = array_slice($rows, 0, $parsed['limit']);
+            }
+
+            if ($parsed['select'] === '*') {
+                return $rows;
+            }
+
+            $columns = array_map('trim', explode(',', $parsed['select']));
+            return array_map(
+                static function (array $row) use ($columns): array {
+                    $projected = [];
+                    foreach ($columns as $column) {
+                        $normalized = trim($column, " `");
+                        $projected[$normalized] = $row[$normalized] ?? null;
+                    }
+
+                    return $projected;
+                },
+                $rows
+            );
+        }
+
+        /** @return array{select:string,table:string,conditions:array<int,array<string,string>>,orderBy:?string,orderDirection:string,limit:?int}|null */
+        private function parseSelectQuery(string $query): ?array
+        {
+            $matches = [];
+            if (preg_match('/^SELECT\s+(?P<select>.+?)\s+FROM\s+`?(?P<table>[A-Za-z0-9_]+)`?(?:\s+WHERE\s+(?P<where>.+?))?(?:\s+ORDER BY\s+`?(?P<order>[A-Za-z0-9_]+)`?\s+(?P<direction>ASC|DESC))?(?:\s+LIMIT\s+(?P<limit>\d+))?$/i', $query, $matches) !== 1) {
+                return null;
+            }
+
+            $conditions = [];
+            if (isset($matches['where']) && $matches['where'] !== '') {
+                $parts = preg_split('/\s+AND\s+/i', trim($matches['where']));
+                if (is_array($parts)) {
+                    foreach ($parts as $part) {
+                        $condition = trim($part);
+                        if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s*=\s*\'(?P<value>.*)\'$/', $condition, $conditionMatches) === 1) {
+                            $conditions[] = ['type' => 'eq', 'column' => $conditionMatches['column'], 'value' => stripslashes($conditionMatches['value'])];
+                            continue;
+                        }
+                        if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s*=\s*(?P<value>\d+)$/', $condition, $conditionMatches) === 1) {
+                            $conditions[] = ['type' => 'eq', 'column' => $conditionMatches['column'], 'value' => $conditionMatches['value']];
+                            continue;
+                        }
+                        if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s+LIKE\s+\'(?P<value>.*)\'$/', $condition, $conditionMatches) === 1) {
+                            $conditions[] = ['type' => 'like', 'column' => $conditionMatches['column'], 'value' => stripslashes($conditionMatches['value'])];
+                            continue;
+                        }
+                        if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s+IS\s+NULL$/i', $condition, $conditionMatches) === 1) {
+                            $conditions[] = ['type' => 'null', 'column' => $conditionMatches['column'], 'value' => ''];
+                        }
+                    }
+                }
+            }
+
+            return [
+                'select' => trim($matches['select']),
+                'table' => $matches['table'],
+                'conditions' => $conditions,
+                'orderBy' => isset($matches['order']) && $matches['order'] !== '' ? $matches['order'] : null,
+                'orderDirection' => strtoupper($matches['direction'] ?? 'ASC'),
+                'limit' => isset($matches['limit']) && $matches['limit'] !== '' ? (int) $matches['limit'] : null,
+            ];
+        }
+
+        /** @param array<int,array<string,string>> $conditions */
+        private function rowMatchesParsedConditions(array $row, array $conditions): bool
+        {
+            foreach ($conditions as $condition) {
+                $column = $condition['column'];
+                $value = $row[$column] ?? null;
+                if ($condition['type'] === 'eq' && (string) $value !== $condition['value']) {
+                    return false;
+                }
+                if ($condition['type'] === 'like') {
+                    $needle = str_replace('%', '', $condition['value']);
+                    if ($needle !== '' && strpos((string) $value, $needle) === false) {
+                        return false;
+                    }
+                }
+                if ($condition['type'] === 'null' && $value !== null) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private function applyUpdateToRows(string $table, array $data, array $where): void
+        {
+            if (!isset($this->tableRows[$table])) {
+                return;
+            }
+
+            foreach ($this->tableRows[$table] as $index => $row) {
+                if (!$this->rowMatchesWhere($row, $where)) {
+                    continue;
+                }
+
+                $this->tableRows[$table][$index] = array_merge($row, $data);
+            }
+        }
+
+        private function rowMatchesWhere(array $row, array $where): bool
+        {
+            foreach ($where as $column => $value) {
+                if (($row[$column] ?? null) != $value) {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         public function reset(): void
@@ -1870,6 +2056,7 @@ if (!isset($GLOBALS['wpdb'])) {
             $this->insertResults = [];
             $this->defaultUpdateResult = 1;
             $this->updateResults = [];
+            $this->tableRows = [];
         }
     }
 

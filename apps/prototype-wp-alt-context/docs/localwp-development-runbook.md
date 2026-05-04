@@ -12,6 +12,13 @@ The guardrail exists because task worktrees are temporary by design. A LocalWP
 plugin symlink that points at `context-alt-text-monorepo-<task>` can disappear
 as soon as the task is archived or the worktree is pruned.
 
+For this repo's LocalWP install, the canonical site/admin base is:
+
+- Site URL: `http://localhost:10010/`
+- Admin URL: `http://localhost:10010/wp-admin/`
+
+`wp-context-alt-text.local` was never the correct address for this setup.
+
 ## Recommended Layout
 
 Keep one stable checkout dedicated to LocalWP plugin iteration. Example:
@@ -39,7 +46,7 @@ Use the guarded helper from the plugin app directory:
 ```bash
 cd apps/prototype-wp-alt-context
 make localwp-link \
-  WP_PATH="$HOME/Local Sites/<site-name>/app/public" \
+  WP_PATH="$HOME/Development/wp-context-alt-text/app/public" \
   PLUGIN_SOURCE="$HOME/Development/context-alt-text-monorepo-localwp/apps/prototype-wp-alt-context"
 ```
 
@@ -55,13 +62,13 @@ Helpful variants:
 ```bash
 # Preview only
 make localwp-link \
-  WP_PATH="$HOME/Local Sites/<site-name>/app/public" \
+  WP_PATH="$HOME/Development/wp-context-alt-text/app/public" \
   PLUGIN_SOURCE="$HOME/Development/context-alt-text-monorepo-localwp/apps/prototype-wp-alt-context" \
   DRY_RUN=1
 
 # Replace an existing plugin dir/symlink
 make localwp-link \
-  WP_PATH="$HOME/Local Sites/<site-name>/app/public" \
+  WP_PATH="$HOME/Development/wp-context-alt-text/app/public" \
   PLUGIN_SOURCE="$HOME/Development/context-alt-text-monorepo-localwp/apps/prototype-wp-alt-context" \
   OVERWRITE=1
 ```
@@ -71,7 +78,7 @@ forces an explicit opt-in:
 
 ```bash
 make localwp-link \
-  WP_PATH="$HOME/Local Sites/<site-name>/app/public" \
+  WP_PATH="$HOME/Development/wp-context-alt-text/app/public" \
   PLUGIN_SOURCE="/path/to/some/worktree/apps/prototype-wp-alt-context" \
   ALLOW_WORKTREE_SOURCE=1
 ```

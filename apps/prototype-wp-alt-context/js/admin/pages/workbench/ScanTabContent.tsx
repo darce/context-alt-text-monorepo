@@ -35,6 +35,8 @@ export const ScanTabContent = (): React.JSX.Element => {
     scanError,
     scanProgress,
     clusterProgress,
+    batchRunStatus,
+    scanStallSeconds,
     currentPhase,
     projectionSyncState,
     etaSeconds,
@@ -45,6 +47,7 @@ export const ScanTabContent = (): React.JSX.Element => {
     dispatchClusterPanel,
     scan,
     cancelScan,
+    retryScanStream,
     activeJobIds,
   } = useWorkbenchContext();
 
@@ -76,6 +79,9 @@ export const ScanTabContent = (): React.JSX.Element => {
         jobId={latestJobId ?? jobId}
         errorMessage={scanError}
         progress={scanProgress}
+        batchRunStatus={batchRunStatus}
+        stallSeconds={scanStallSeconds}
+        onRetryStream={retryScanStream}
         etaSeconds={etaSeconds}
         isSynced={!isPrimary && !!latestJobId}
       />

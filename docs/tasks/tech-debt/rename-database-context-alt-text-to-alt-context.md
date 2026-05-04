@@ -77,12 +77,12 @@ done
 
 ## Consolidated Triage Checklist (2026-04-30)
 
-**Disposition:** Partially complete; archive after local/operator environment drift is resolved or explicitly accepted.
+**Disposition:** Partially complete; checked-in local env drift is resolved on the feature branch, but operator verification for VM env files and legacy pgdata still remains before archive.
 **Evaluation basis:** Current `main` app code under `apps/prototype-description-service`.
 
 - [x] Runtime defaults and checked-in examples now use `alt_context_service` (`db/settings.py`, `.env.example`, `.env.prod.example`, `db/alembic.ini`, and DB docs).
 - [x] Historical archive references are intentionally left unchanged.
-- [ ] Resolve or document the remaining local `.env` drift: `apps/prototype-description-service/.env` still sets `DB_NAME=context_alt_text_service`.
+- [x] Resolve the checked-in local `.env` drift: `apps/prototype-description-service/.env` now sets `DB_NAME=alt_context_service` on the feature branch.
 - [ ] Confirm VM `prod`, `staging`, and `dev` env files use the new DB names or record that those updates are an operator-only step outside the repo.
 - [ ] Confirm old local pgdata has been wiped or is no longer referenced by active local startup flows.
 - [ ] Archive after the local/operator drift checklist is complete.

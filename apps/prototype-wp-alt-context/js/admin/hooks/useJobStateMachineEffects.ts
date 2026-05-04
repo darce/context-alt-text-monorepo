@@ -3,7 +3,7 @@ import type { QueryClient, UseMutationResult } from '@tanstack/react-query';
 
 import { queryKeys } from '../api/queryKeys';
 import type { SyncTriggerResponse } from '../api/recognition';
-import type { JobStatusResponse } from '../api/recognition/types/scan';
+import type { BatchRunStatus, JobStatusResponse } from '../api/recognition/types/scan';
 import type { PipelinePhase } from './jobStateMachineUtils';
 import type { PersistedJob } from './useJobPersistence';
 import type { JobStatus } from './useJobProgressStream';
@@ -12,6 +12,7 @@ export type ProjectionSyncState = 'idle' | 'syncing' | 'ready' | 'acknowledging'
 
 interface JobStateMachineEffectsOptions {
   scanStatus: JobStatusResponse | undefined;
+  batchRunStatus: BatchRunStatus | undefined;
   queryClient: QueryClient;
   activeJobIds: string[];
   activeJobs: PersistedJob[];
@@ -32,6 +33,7 @@ interface JobStateMachineEffectsOptions {
 
 export const useJobStateMachineEffects = ({
   scanStatus,
+  batchRunStatus,
   queryClient,
   activeJobIds,
   activeJobs,
@@ -90,27 +92,21 @@ export const useJobStateMachineEffects = ({
   }, [scanStatus?.status, queryClient]);
 
   useEffect(() => {
-    if (!isWaitingForScanCompletion || activeJobIds.length === 0) {
+    if (!isWaitingForScanCompletion || !batchRunStatus || !batchRunStatus.terminal_state) {
       return;
     }
 
-    const completed = sseStatus === 'completed' || sseStatus === 'failed';
-
-    if (completed && latestScanJob) {
-      setIsWaitingForScanCompletion(false);
-      activeJobs.filter((job) => job.type === 'scan').forEach((job) => removeJob(job.id));
-      void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
-      if (!backendHandledClustering) {
-        cluster();
-      }
+    setIsWaitingForScanCompletion(false);
+    activeJobs.filter((job) => job.type === 'scan').forEach((job) => removeJob(job.id));
+    void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
+    if (!backendHandledClustering && batchRunStatus.failed_total === 0 && batchRunStatus.accepted_total > 0) {
+      cluster();
     }
   }, [
+    batchRunStatus,
     backendHandledClustering,
-    sseStatus,
-    activeJobIds,
     activeJobs,
-    latestScanJob,
     isWaitingForScanCompletion,
     removeJob,
     cluster,

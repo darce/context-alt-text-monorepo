@@ -6,7 +6,14 @@
 
 import { fetchRequiredApi } from '../../utils/http';
 import { getEndpoint, getConfig } from '../config';
-import type { AnalyzeRequest, AnalyzeResponse, JobStatusResponse, ClusterResponse } from './types';
+import type {
+  AnalyzeRequest,
+  AnalyzeResponse,
+  BatchAnalyzeResponse,
+  BatchRunStatus,
+  JobStatusResponse,
+  ClusterResponse,
+} from './types';
 import { createRecognitionTimeoutSignal } from './requestTimeout';
 
 // Hard cap enforced server-side at AnalysisJobsController::MULTIPART_MAX_IMAGES.
@@ -33,6 +40,38 @@ const chunkMediaIds = (mediaIds: number[], size: number): number[][] => {
   return batches;
 };
 
+const createBatchRunId = (): string => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+
+  return `batch-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+};
+
+const recordClientBatchFailure = async (
+  batchRunId: string,
+  batchIndex: number,
+  submittedTotal: number,
+  mediaIds: number[],
+): Promise<void> => {
+  const base = getEndpoint('recognitionBatchRuns');
+  const separator = base.endsWith('/') ? '' : '/';
+
+  await fetchRequiredApi<{ status: string }>(
+    `${base}${separator}${batchRunId}/client-failures`,
+    {
+      method: 'POST',
+      body: {
+        batch_index: batchIndex,
+        submitted_total: submittedTotal,
+        media_ids: mediaIds,
+      },
+      restNonce: getConfig().nonce,
+      signal: createRecognitionTimeoutSignal(15_000),
+    },
+  );
+};
+
 export const scanFaces = async (request: AnalyzeRequest): Promise<AnalyzeResponse> => {
   const body: Record<string, unknown> = { media_ids: request.mediaIds };
   if (request.sensitivity) {
@@ -40,6 +79,11 @@ export const scanFaces = async (request: AnalyzeRequest): Promise<AnalyzeRespons
   }
   if (request.clusterId) {
     body.cluster_id = request.clusterId;
+  }
+  if (request.batchRunId) {
+    body.batch_run_id = request.batchRunId;
+    body.batch_index = request.batchIndex ?? 0;
+    body.submitted_total = request.submittedTotal ?? request.mediaIds.length;
   }
 
   return fetchRequiredApi<AnalyzeResponse>(getEndpoint('recognitionAnalyze'), {
@@ -50,19 +94,59 @@ export const scanFaces = async (request: AnalyzeRequest): Promise<AnalyzeRespons
   });
 };
 
-export const scanFacesBatched = async (request: AnalyzeRequest): Promise<AnalyzeResponse[]> => {
+export const scanFacesBatched = async (request: AnalyzeRequest): Promise<BatchAnalyzeResponse> => {
+  const batchRunId = request.batchRunId ?? createBatchRunId();
   const batchSize = getEffectiveBatchSize();
   if (request.mediaIds.length <= batchSize) {
-    const result = await scanFaces(request);
-    return [result];
+    try {
+      const result = await scanFaces({
+        ...request,
+        batchRunId,
+        batchIndex: 0,
+        submittedTotal: request.mediaIds.length,
+      });
+      return { batchRunId, jobs: [result] };
+    } catch {
+      await recordClientBatchFailure(batchRunId, 0, request.mediaIds.length, request.mediaIds).catch(() => {
+        // Best effort only: if the browser cannot report the synthetic failure,
+        // the caller still receives an empty jobs list for the batch run.
+      });
+      return { batchRunId, jobs: [] };
+    }
   }
 
   const batches = chunkMediaIds(request.mediaIds, batchSize);
   const results: AnalyzeResponse[] = [];
-  for (const batch of batches) {
-    results.push(await scanFaces({ ...request, mediaIds: batch }));
+  for (const [index, batch] of batches.entries()) {
+    try {
+      results.push(
+        await scanFaces({
+          ...request,
+          mediaIds: batch,
+          batchRunId,
+          batchIndex: index,
+          submittedTotal: request.mediaIds.length,
+        }),
+      );
+    } catch {
+      await recordClientBatchFailure(batchRunId, index, request.mediaIds.length, batch).catch(() => {
+        // Best effort only: if the browser cannot report the synthetic failure,
+        // the caller still receives the successfully submitted jobs.
+      });
+    }
   }
-  return results;
+  return { batchRunId, jobs: results };
+};
+
+export const fetchBatchRunStatus = async (runId: string): Promise<BatchRunStatus> => {
+  const base = getEndpoint('recognitionBatchRuns');
+  const separator = base.endsWith('/') ? '' : '/';
+
+  return fetchRequiredApi<BatchRunStatus>(`${base}${separator}${runId}`, {
+    method: 'GET',
+    restNonce: getConfig().nonce,
+    signal: createRecognitionTimeoutSignal(15_000),
+  });
 };
 
 export const fetchScanStatus = async (jobId: string): Promise<JobStatusResponse> => {

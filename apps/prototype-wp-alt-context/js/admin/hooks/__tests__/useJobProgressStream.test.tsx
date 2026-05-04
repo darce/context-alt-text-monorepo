@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { useJobProgressStream } from '../useJobProgressStream';
+import { JOB_PROGRESS_STALL_THRESHOLD_MS, useJobProgressStream } from '../useJobProgressStream';
 import { useJobCoordination } from '../useJobCoordination';
 import { resetConfigCache } from '../../api/config';
 
@@ -46,6 +46,7 @@ describe('useJobProgressStream', () => {
 
   beforeEach(() => {
     MockEventSource.instances = [];
+    vi.useRealTimers();
     window.AltContextAdmin = {
       nonce: 'test-nonce',
       endpoints: {
@@ -158,6 +159,57 @@ describe('useJobProgressStream', () => {
     expect(postMessage).toHaveBeenCalledWith({
       type: 'JOB_PROGRESS',
       payload: { progress: { completed: 10, total: 10 }, status: 'completed', etaSeconds: null },
+    });
+  });
+
+  it('marks the stream stalled after silence and retry opens a new EventSource', async () => {
+    vi.useFakeTimers();
+
+    const { result } = renderHook(() => useJobProgressStream('job-stalled'));
+
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+    const firstSource = MockEventSource.instances[0];
+
+    act(() => {
+      vi.advanceTimersByTime(JOB_PROGRESS_STALL_THRESHOLD_MS + 1000);
+    });
+
+    await waitFor(() => {
+      expect(result.current.stalledForSeconds).toBe(31);
+    });
+
+    act(() => {
+      result.current.retry();
+    });
+
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(2));
+    expect(firstSource.readyState).toBe(MockEventSource.CLOSED);
+    expect(result.current.stalledForSeconds).toBeNull();
+  });
+
+  it('clears the stalled state when progress resumes', async () => {
+    vi.useFakeTimers();
+
+    const { result } = renderHook(() => useJobProgressStream('job-recovered'));
+
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+    const source = MockEventSource.instances[0];
+
+    act(() => {
+      vi.advanceTimersByTime(JOB_PROGRESS_STALL_THRESHOLD_MS + 1000);
+    });
+
+    await waitFor(() => {
+      expect(result.current.stalledForSeconds).toBe(31);
+    });
+
+    act(() => {
+      source.emit('progress', { completed: 1, total: 5, status: 'running' });
+    });
+
+    await waitFor(() => {
+      expect(result.current.stalledForSeconds).toBeNull();
+      expect(result.current.lastEventAt).not.toBeNull();
     });
   });
 });

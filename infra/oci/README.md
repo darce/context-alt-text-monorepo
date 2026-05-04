@@ -559,8 +559,8 @@ make reset-remote ENV=prod CONFIRM_REMOTE_RESET=RESET CONFIRM=PROMOTE
    ```
 
    `ACX_RESET_SITE_URL` is **required** (no default). It must be the
-   WordPress site URL the plugin will hit (e.g. `https://altcontext.local`,
-   `https://staging.altcontext.com`). The bootstrap derives the per-site
+  WordPress site URL the plugin will hit (e.g. `http://localhost:10010`
+  for the repo's LocalWP install, or `https://staging.altcontext.com`). The bootstrap derives the per-site
    tenant UUID from this value via `scripts/deploy/_derive_tenant_id.py`,
    which mirrors the plugin's `TenantIdentity::derive_from_site_url()`. If
    the URL does not match the plugin's site URL, the plugin's recognition

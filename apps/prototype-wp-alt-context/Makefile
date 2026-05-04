@@ -1,4 +1,4 @@
-.PHONY: help check fix format lint typecheck arch test test-watch check-php php-cs php-cs-fix php-test phpstan mcp projection-reset localwp-link localwp-verify-activation gate-package worker-daemon _php-deps FORCE
+.PHONY: help check fix format lint typecheck arch test test-watch check-php php-cs php-cs-fix php-test phpstan mcp projection-reset localwp-link localwp-verify-activation localwp-batch-run-smoke gate-package worker-daemon _php-deps FORCE
 
 help:
 	@echo "Available commands:"
@@ -14,6 +14,7 @@ help:
 	@echo "  make php-cs-fix - Auto-fix plugin PHP style violations (PHPCBF)"
 	@echo "  make localwp-link - Symlink plugin into a LocalWP site from a stable checkout (guarded)"
 	@echo "  make localwp-verify-activation - Re-run plugin activation cycle (deactivate + activate) through LocalWP WP-CLI; runs lifecycle hooks, not a dry run"
+	@echo "  make localwp-batch-run-smoke - Submit a real LocalWP batch scan through the REST API and poll the BatchRun aggregate"
 	@echo "  make gate-package - Build the reproducible plugin ZIP for release/gate verification"
 	@echo "  make projection-reset - Truncate ACX projection tables (guarded; requires WP_PATH + confirmation)"
 	@echo "  make mcp        - Start the MCP server for AI agents (monorepo-wide)"
@@ -239,3 +240,52 @@ localwp-verify-activation:
 	if [ -n "$(ACTIVATION_BUDGET_SECONDS)" ]; then \
 		echo "Activation budget: $(ACTIVATION_BUDGET_SECONDS)s"; \
 	fi
+
+# Submit a real LocalWP recognition batch run through the REST surface and
+# poll the plugin-owned BatchRun aggregate until it reaches a terminal state.
+# Usage:
+#   make localwp-batch-run-smoke WP_PATH="/path/to/wordpress/site"
+#   make localwp-batch-run-smoke WP_PATH="/path/to/wordpress/site" SMOKE_LIMIT="100" BATCH_SIZE="5"
+localwp-batch-run-smoke:
+	@if [ -z "$(WP_PATH)" ]; then \
+		echo "WP_PATH is required (path to WordPress root containing wp-load.php)."; \
+		echo "Example: make localwp-batch-run-smoke WP_PATH=\"$$HOME/Development/wp-context-alt-text/app/public\" SMOKE_LIMIT=\"100\" BATCH_SIZE=\"5\""; \
+		exit 1; \
+	fi
+	@if [ ! -f "$(WP_PATH)/wp-load.php" ]; then \
+		echo "Invalid WP_PATH: $(WP_PATH) (missing wp-load.php)"; \
+		exit 1; \
+	fi
+	@_LOCALWP_WP="$$(git rev-parse --show-toplevel)/scripts/localwp-wp.sh"; \
+	if [ ! -x "$$_LOCALWP_WP" ]; then \
+		echo "LocalWP WP-CLI wrapper missing or not executable: $$_LOCALWP_WP"; \
+		exit 1; \
+	fi; \
+	_run_wp() { "$$_LOCALWP_WP" "$$@"; }; \
+	SITE_URL_RAW="$$(_run_wp --quiet --skip-plugins --skip-themes --path="$(WP_PATH)" option get siteurl 2>&1 || true)"; \
+	if printf '%s\n' "$$SITE_URL_RAW" | grep -qi 'Error establishing a database connection\|Can'"'"'t connect\|Connection refused'; then \
+		echo "Database connection failed at $(WP_PATH)."; \
+		echo "Start your local WordPress environment (e.g. LocalWP) and try again."; \
+		echo "WP-CLI output: $$SITE_URL_RAW"; \
+		exit 1; \
+	fi; \
+	SITE_URL="$$(printf '%s\n' "$$SITE_URL_RAW" | sed '/^Deprecated:/d;/^Warning:/d;/^Notice:/d;/^PHP Deprecated:/d;/^PHP Warning:/d;/^PHP Notice:/d;/^PHP Fatal/d;/^Error:/d' | awk 'NF { print; exit }')"; \
+	if [ -z "$$SITE_URL" ]; then \
+		echo "Unable to read siteurl from WordPress at $(WP_PATH)."; \
+		echo "WP-CLI output: $$SITE_URL_RAW"; \
+		exit 1; \
+	fi; \
+	case "$$SITE_URL" in \
+		*localhost*|*127.0.0.1*|*.local*|*.test*) ;; \
+		*) \
+			echo "Refusing to run against non-local siteurl: $$SITE_URL"; \
+			exit 1; \
+			;; \
+	esac; \
+	CURRENT_SOURCE="$$(_run_wp --quiet --path="$(WP_PATH)" option get acx_recognition_source 2>/dev/null || true)"; \
+	CURRENT_SOURCE="$$(printf '%s\n' "$$CURRENT_SOURCE" | sed 's/^[[:space:]]*//;s/[[:space:]]*$$//' | head -n 1)"; \
+	if [ "$$CURRENT_SOURCE" != "local" ]; then \
+		echo "Switching LocalWP recognition source to local for smoke verification (was: $${CURRENT_SOURCE:-<empty>})."; \
+		_run_wp --path="$(WP_PATH)" option update acx_recognition_source local >/dev/null; \
+	fi; \
+	_run_wp --path="$(WP_PATH)" eval-file "$(CURDIR)/scripts/localwp/batch-run-smoke.php" -- "$(if $(SMOKE_LIMIT),$(SMOKE_LIMIT),100)" "$(if $(BATCH_SIZE),$(BATCH_SIZE),5)" "$(if $(TIMEOUT_SECONDS),$(TIMEOUT_SECONDS),240)" "$(if $(POLL_INTERVAL_MS),$(POLL_INTERVAL_MS),1000)"

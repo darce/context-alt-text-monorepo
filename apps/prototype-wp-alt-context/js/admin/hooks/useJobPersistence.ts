@@ -17,6 +17,8 @@ export interface PersistedJob {
   startedAt: number;
   /** Total number of items in the batch. */
   totalItems: number;
+  /** Client-generated batch run id shared by sibling scan jobs. */
+  batchRunId?: string;
 }
 
 /**
@@ -26,7 +28,7 @@ export interface JobPersistence {
   /** Array of active job metadata. */
   activeJobs: PersistedJob[];
   /** Track a new job with its type. */
-  addJob: (id: string, type: JobType, totalItems: number) => void;
+  addJob: (id: string, type: JobType, totalItems: number, batchRunId?: string) => void;
   /** Remove a job from tracking. */
   removeJob: (id: string) => void;
 }
@@ -89,13 +91,13 @@ export const useJobPersistence = (): JobPersistence => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(activeJobs));
   }, [activeJobs]);
 
-  const addJob = (id: string, type: JobType, totalItems: number) => {
+  const addJob = (id: string, type: JobType, totalItems: number, batchRunId?: string) => {
     setActiveJobs((prev) => {
       // Don't add duplicate jobs
       if (prev.some((job) => job.id === id)) {
         return prev;
       }
-      return [...prev, { id, type, startedAt: Date.now(), totalItems }];
+      return [...prev, { id, type, startedAt: Date.now(), totalItems, batchRunId }];
     });
   };
 

@@ -7,10 +7,11 @@ import { useScanIdentities, useClusterIdentities, useCancelScanJobs } from './us
 
 interface JobStateMachineMutationOptions {
   activeJobIds: string[];
-  addJob: (id: string, type: JobType, totalItems: number) => void;
+  addJob: (id: string, type: JobType, totalItems: number, batchRunId?: string) => void;
   removeJob: (id: string) => void;
   setIsWaitingForScanCompletion: (value: boolean) => void;
   setIsCancellingScan: (value: boolean) => void;
+  setActiveBatchRunId: (value: string | null) => void;
   invalidateIdentities: () => void;
   onScanStart?: () => void;
   onScanComplete?: (jobIds: string[]) => void;
@@ -26,6 +27,7 @@ export const useJobStateMachineMutations = ({
   removeJob,
   setIsWaitingForScanCompletion,
   setIsCancellingScan,
+  setActiveBatchRunId,
   invalidateIdentities,
   onScanStart,
   onScanComplete,
@@ -43,14 +45,22 @@ export const useJobStateMachineMutations = ({
       onScanStart?.();
       clearActiveJobs();
       setIsWaitingForScanCompletion(false);
+      setActiveBatchRunId(null);
     },
     onSuccess: (data) => {
-      const jobIds = data.map((job) => job.id).filter((id): id is string => Boolean(id));
+      setActiveBatchRunId(data.batchRunId);
+      const jobIds = data.jobs.map((job) => job.id).filter((id): id is string => Boolean(id));
       if (jobIds.length > 0) {
-        const totalItems = data[0].progress?.total ?? 0;
-        jobIds.forEach((id) => addJob(id, 'scan', totalItems));
+        data.jobs.forEach((job) => {
+          if (!job.id) {
+            return;
+          }
+          addJob(job.id, 'scan', job.progress?.total ?? 0, data.batchRunId);
+        });
+        setIsWaitingForScanCompletion(true);
+      } else {
+        setIsWaitingForScanCompletion(false);
       }
-      setIsWaitingForScanCompletion(true);
       invalidateIdentities();
       onScanComplete?.(jobIds);
     },

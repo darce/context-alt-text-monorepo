@@ -49,6 +49,7 @@ export const useJobStateMachine = ({
 
   const [isWaitingForScanCompletion, setIsWaitingForScanCompletion] = useState(false);
   const [isCancellingScan, setIsCancellingScan] = useState(false);
+  const [activeBatchRunId, setActiveBatchRunId] = useState<string | null>(null);
   const [projectionSyncState, setProjectionSyncState] = useState<ProjectionSyncState>('idle');
   const [projectionError, setProjectionError] = useState<string | null>(null);
   const [projectionSyncNonce, setProjectionSyncNonce] = useState(0);
@@ -63,6 +64,7 @@ export const useJobStateMachine = ({
     removeJob,
     setIsWaitingForScanCompletion,
     setIsCancellingScan,
+    setActiveBatchRunId,
     invalidateIdentities,
     onScanStart,
     onScanComplete,
@@ -75,9 +77,10 @@ export const useJobStateMachine = ({
   // Track jobs by type
   const latestScanJob = useMemo(() => getLatestJobByType(activeJobs, 'scan'), [activeJobs]);
   const latestClusterJob = useMemo(() => getLatestJobByType(activeJobs, 'clustering'), [activeJobs]);
+  const batchRunId = activeBatchRunId ?? latestScanJob?.batchRunId ?? null;
 
   // Poll for history / external updates
-  const { scanStatusQuery } = useCombinedScanStatus(jobId ?? null, activeJobIds);
+  const { scanStatusQuery, batchRunStatusQuery } = useCombinedScanStatus(jobId ?? null, activeJobIds, batchRunId);
 
   useEffect(() => {
     if (!jobId) {
@@ -91,8 +94,8 @@ export const useJobStateMachine = ({
 
   // Derive phase
   const currentPhase = useMemo<PipelinePhase>(
-    () => derivePipelinePhase(latestScanJob, latestClusterJob, scanStatusQuery.data),
-    [latestScanJob, latestClusterJob, scanStatusQuery.data],
+    () => derivePipelinePhase(latestScanJob, latestClusterJob, scanStatusQuery.data, batchRunStatusQuery.data),
+    [batchRunStatusQuery.data, latestScanJob, latestClusterJob, scanStatusQuery.data],
   );
 
   // SSE Stream
@@ -107,11 +110,14 @@ export const useJobStateMachine = ({
     isOnline,
     etaSeconds,
     isPrimary,
+    stalledForSeconds,
+    retry: retryScanStream,
   } = useJobProgressStream(latestJobId);
   const syncTrigger = useSyncTrigger(false);
 
   useJobStateMachineEffects({
     scanStatus: scanStatusQuery.data,
+    batchRunStatus: batchRunStatusQuery.data,
     queryClient,
     activeJobIds,
     activeJobs,
@@ -139,11 +145,13 @@ export const useJobStateMachine = ({
         sseProgress,
         activeJobIds,
         scanStatus: scanStatusQuery.data,
+        batchRunStatus: batchRunStatusQuery.data,
         latestJobId,
         scanPending: scanMutation.isPending,
       }),
     [
       activeJobIds,
+      batchRunStatusQuery.data,
       clusterMutation.isPending,
       sseProgress,
       sseStatus,
@@ -162,9 +170,10 @@ export const useJobStateMachine = ({
         activeJobs,
         sseProgress,
         latestScanJob,
+        batchRunStatus: batchRunStatusQuery.data,
         fallbackProgress: scanStatusQuery.data?.progress,
       }),
-    [currentPhase, activeJobIds, activeJobs, sseProgress, latestScanJob, scanStatusQuery.data?.progress],
+    [batchRunStatusQuery.data, currentPhase, activeJobIds, activeJobs, sseProgress, latestScanJob, scanStatusQuery.data?.progress],
   );
 
   const clusterProgress = useMemo(() => buildClusterProgress(currentPhase, sseProgress), [currentPhase, sseProgress]);
@@ -177,9 +186,18 @@ export const useJobStateMachine = ({
         activeJobIds,
         sseStatus,
         scanStatus: scanStatusQuery.data,
+        batchRunStatus: batchRunStatusQuery.data,
       }),
-    [activeJobIds, isWaitingForScanCompletion, scanMutation.isPending, scanStatusQuery.data, sseStatus],
+    [activeJobIds, batchRunStatusQuery.data, isWaitingForScanCompletion, scanMutation.isPending, scanStatusQuery.data, sseStatus],
   );
+
+  const scanStallSeconds = useMemo(() => {
+    if (typeof stalledForSeconds !== 'number') {
+      return null;
+    }
+
+    return currentPhase === 'idle' ? null : stalledForSeconds;
+  }, [currentPhase, stalledForSeconds]);
 
   const handleScan = useCallback(
     (mediaIds: number[]) => {
@@ -208,6 +226,8 @@ export const useJobStateMachine = ({
     statusText,
     scanProgress,
     clusterProgress,
+    batchRunStatus: batchRunStatusQuery.data ?? null,
+    scanStallSeconds,
     sseStatus,
     sseProgress,
     isOnline,
@@ -219,5 +239,6 @@ export const useJobStateMachine = ({
     cancelScan: cancelMutation.mutate,
     cluster: clusterMutation.mutate,
     retryProjectionSync,
+    retryScanStream,
   };
 };

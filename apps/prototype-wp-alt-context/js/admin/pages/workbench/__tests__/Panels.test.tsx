@@ -96,6 +96,26 @@ describe('ScanActionPanel', () => {
     expect(screen.getByRole('button', { name: 'Cancelling…' })).toBeDisabled();
   });
 
+  it('renders the stuck badge and retries the stream', async () => {
+    const onRetryStream = vi.fn();
+    const onCancelScan = vi.fn();
+
+    render(
+      <ScanActionPanel
+        {...baseProps}
+        isScanning
+        stallSeconds={31}
+        onRetryStream={onRetryStream}
+        onCancelScan={onCancelScan}
+      />,
+    );
+
+    expect(screen.getByText('Stuck - last update 31 seconds ago')).toBeTruthy();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(onRetryStream).toHaveBeenCalledOnce();
+  });
+
   it('shows "Clustering identities…" button text when scanning and phase is clustering', () => {
     const progress: JobProgress = { completed: 50, total: 150, phase: 'clustering' };
     render(<ScanActionPanel {...baseProps} selectedCount={1} isScanning progress={progress} />);

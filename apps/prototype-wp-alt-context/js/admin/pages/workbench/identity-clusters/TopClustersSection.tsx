@@ -198,6 +198,17 @@ export const TopClustersSection = ({
       );
     }
 
+    if (dataSource === DATA_SOURCE.LOCAL_PROJECTION && hasClusters === true) {
+      return (
+        <div className="acx-top-clusters-section acx-top-clusters-section--empty">
+          <h4 className="acx-top-clusters-section__title">{__('Name These People', 'alt-context')}</h4>
+          <p className="acx-top-clusters-section__empty-message">
+            {__('Everyone already has a label. New unlabeled groups will appear here after future scans.', 'alt-context')}
+          </p>
+        </div>
+      );
+    }
+
     return null;
   }
 

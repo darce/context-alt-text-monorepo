@@ -11,7 +11,12 @@ import {
   updateClusterLabel,
   type MergeClusterResponse,
 } from '../../../api/recognition';
-import { getProjectionNotReadyMessage, isAbortError, isProjectionNotReadyError } from './clusterMutationUtils';
+import {
+  getClusterMutationErrorMessage,
+  getProjectionNotReadyMessage,
+  isAbortError,
+  isProjectionNotReadyError,
+} from './clusterMutationUtils';
 
 interface UseClusterLabelMutationsOptions {
   clusterId: string | null;
@@ -104,13 +109,12 @@ export const useClusterLabelMutations = ({
       invalidateQueries();
       onMergeSuccess?.(result);
     },
-    onError: (err: unknown) => {
+    onError: (err: unknown, variables) => {
       if (isAbortError(err)) {
         onAbort?.();
         return;
       }
-      const message = err instanceof Error ? err.message : String(err);
-      onError?.(message);
+      onError?.(getClusterMutationErrorMessage(err, variables.targetLabel ?? 'that label'));
     },
   });
 

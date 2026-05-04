@@ -33,9 +33,17 @@ use WP_REST_Response;
 use function do_action;
 use function is_string;
 use function max;
+use function method_exists;
+use function sprintf;
 use function trim;
 
 class SyncStatusController extends AbstractRecognitionProxyController {
+	private const RESET_TABLE_SUFFIXES = array(
+		'acx_clusters',
+		'acx_identity_members',
+		'acx_sync_outbox',
+	);
+
 	private SyncStateRepositoryInterface $sync_state_repository;
 	private ?SyncPullJobInterface $sync_pull_job;
 	private ?SyncPullJobFactory $sync_pull_job_factory;
@@ -74,6 +82,16 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 				'permission_callback' => array( $this, 'can_manage_recognition' ),
 			)
 		);
+
+		register_rest_route(
+			'acx/v1',
+			'/recognition/sync/reset-mirror',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( $this, 'reset_mirror' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+			)
+		);
 	}
 
 	public function get_sync_status( WP_REST_Request $request ): WP_REST_Response {
@@ -90,6 +108,17 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 	}
 
 	public function trigger_sync( WP_REST_Request $request ): WP_REST_Response {
+		return $this->run_sync_action( false );
+	}
+
+	public function reset_mirror( WP_REST_Request $request ): WP_REST_Response {
+		$this->truncate_reset_projection_tables();
+		$this->sync_state_repository->reset_projection_state( $this->get_tenant_id() );
+
+		return $this->run_sync_action( true );
+	}
+
+	private function run_sync_action( bool $did_reset_mirror ): WP_REST_Response {
 		$tenant_id = $this->get_tenant_id();
 		$sync_pull_job = $this->resolve_sync_pull_job();
 		$version = $this->sync_state_repository->get_snapshot_version( $tenant_id );
@@ -106,6 +135,9 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 			$payload['synced'] = false;
 			$payload['reason'] = 'sync_unavailable';
 			$payload['error'] = $this->sync_pull_job_error;
+			if ( $did_reset_mirror ) {
+				$payload['reset'] = true;
+			}
 
 			return new WP_REST_Response( $payload, 200 );
 		}
@@ -123,8 +155,25 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 		$payload = $this->build_sync_status_payload( $version, $updated, $curation_state, $last_sync_result );
 		$payload['synced'] = $result->is_success();
 		$payload['reason'] = $this->determine_sync_reason( $result, $version );
+		if ( $did_reset_mirror ) {
+			$payload['reset'] = true;
+		}
 
 		return new WP_REST_Response( $payload, 200 );
+	}
+
+	private function truncate_reset_projection_tables(): void {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! method_exists( $wpdb, 'query' ) || ! is_string( $wpdb->prefix ) ) {
+			return;
+		}
+
+		foreach ( self::RESET_TABLE_SUFFIXES as $suffix ) {
+			$table_name = $wpdb->prefix . $suffix;
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared -- Table names are fixed plugin-owned suffixes with wpdb prefix.
+			$wpdb->query( sprintf( 'TRUNCATE TABLE `%s`', $table_name ) );
+		}
 	}
 
 	private function determine_sync_reason( SyncPullResult $result, ?int $version ): string {

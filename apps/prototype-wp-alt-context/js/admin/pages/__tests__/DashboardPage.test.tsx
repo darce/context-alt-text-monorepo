@@ -1,13 +1,14 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 
 import { DashboardPage } from '../DashboardPage';
 import type { DashboardStats } from '../../api/dashboardApi';
 import { useIdentityStats } from '../../hooks/useIdentityStats';
 import { useMediaStats } from '../../hooks/useMediaStats';
 import { useRecognitionJobHistory } from '../../hooks/useRecognitionJobHistory';
+import { useResetMirror } from '../../hooks/useSyncTrigger';
 import { useSyncStatus } from '../../hooks/useSyncStatus';
 import { useRetentionStatus } from '../../hooks/useRetentionStatus';
-import { createMockQuery } from '../../test-utils/mockHooks';
+import { createMockMutation, createMockQuery } from '../../test-utils/mockHooks';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -39,6 +40,10 @@ vi.mock('../../hooks/useSyncStatus', () => ({
   useSyncStatus: vi.fn(),
 }));
 
+vi.mock('../../hooks/useSyncTrigger', () => ({
+  useResetMirror: vi.fn(),
+}));
+
 vi.mock('../../hooks/useRetentionStatus', () => ({
   useRetentionStatus: vi.fn(),
 }));
@@ -52,6 +57,7 @@ describe('DashboardPage', () => {
   const mockedUseRecognitionJobHistory = vi.mocked(useRecognitionJobHistory);
   const mockedUseIdentityStats = vi.mocked(useIdentityStats);
   const mockedUseSyncStatus = vi.mocked(useSyncStatus);
+  const mockedUseResetMirror = vi.mocked(useResetMirror);
   const mockedUseRetentionStatus = vi.mocked(useRetentionStatus);
 
   beforeEach(() => {
@@ -85,6 +91,7 @@ describe('DashboardPage', () => {
         },
       }),
     );
+    mockedUseResetMirror.mockReturnValue(createMockMutation());
     mockedUseRetentionStatus.mockReturnValue(
       createMockQuery({
         data: {
@@ -637,6 +644,51 @@ describe('DashboardPage', () => {
     expect(
       screen.getByText('Mirror is out of sync with the backend — 7 stale clusters, 2 failed sync events.'),
     ).toBeInTheDocument();
+  });
+
+  it('renders a reset mirror action for stale backend-empty divergence and triggers it on click', () => {
+    const mutate = vi.fn();
+
+    mockedUseSyncStatus.mockReturnValue(
+      createMockQuery({
+        data: {
+          last_snapshot_version: 0,
+          last_synced_at: '2026-03-10T10:00:00Z',
+          is_stale: true,
+          sync_health: 'stale',
+          last_sync_result: 'failed',
+          conflict_count: 0,
+          failed_curation_operations: 2,
+        },
+      }),
+    );
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 4,
+          assigned_clusters_count: 4,
+          pending_clusters_count: 3,
+          media_with_faces_count: 10,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
+    mockedUseResetMirror.mockReturnValue(
+      createMockMutation({
+        mutate,
+      }),
+    );
+
+    render(<DashboardPage />);
+
+    const banner = screen.getByRole('status');
+    expect(banner).toHaveClass('acx-dashboard__mirror-warning');
+
+    const resetButton = screen.getByRole('button', { name: 'Reset mirror' });
+    fireEvent.click(resetButton);
+
+    expect(mutate).toHaveBeenCalledTimes(1);
   });
 
   it('renders failures sync summary copy', () => {

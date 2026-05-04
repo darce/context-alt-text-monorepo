@@ -260,9 +260,9 @@ The plugin storage surface and admin REST shape for this record must be picked e
 
 ### E16-1g — WP-mirror reconciliation when backend is empty
 
-- Detect divergence: on dashboard load, compare cluster counts WP-side vs backend; if WP has clusters whose UUIDs don't exist on the backend, emit a single banner: "Mirror is out of sync with the backend — N stale clusters, M failed sync events. [Reset mirror]"
-- The reset action truncates `wp_acx_clusters | wp_acx_identity_members | wp_acx_sync_outbox` and re-arms a fresh sync.
-- Optional: schedule a cron that auto-detects > 50 % outbox-failure-rate and surfaces the same banner without requiring a dashboard load.
+- Detect backend-empty divergence: on dashboard load, if `last_snapshot_version === 0` and WP still has local assigned/pending clusters, emit a single banner: "Mirror is out of sync with the backend — N stale clusters, M failed sync events. [Reset mirror]". Broader UUID-by-UUID divergence detection remains a follow-up.
+- The reset action truncates `wp_acx_clusters | wp_acx_identity_members | wp_acx_sync_outbox`, zeroes the local snapshot state, and re-arms a fresh sync.
+- Optional: schedule a cron that auto-detects > 50 % outbox-failure-rate and surfaces the same banner without requiring a dashboard load. This remains out of scope for v0.4.1.
 
 ### E16-1h — Cluster-membership integrity check (lower priority)
 
@@ -334,7 +334,7 @@ Closed during planning review on 2026-05-03 with operator authorization. These a
 
 1. **Theme E placement** — **Resolved: Theme E inside E16** (v0.4.1 Public Demo Follow-Ons). No sibling epic E17 created. Promotion of E16-1b–h to full task plans goes under `docs/tasks/15.0/` per the existing E15/E16 stub-vs-plan convention.
 2. **Reset procedure** — **Resolved: local only now.** E16-1a ships a local `.env` fix + local pgdata wipe + legacy DB drop. VM env-file updates move to deferred sub-task **E16-1a-vm**, run only after the local pipeline is observed clean end-to-end. Theme E does not block on the VM step.
-3. **E16-1g scope** — **Resolved: button for v0.4.1.** Mirror reconciliation surfaces a banner with an explicit "Reset mirror" button. Auto-detect cron / >50 % outbox-failure-rate threshold is explicitly **out of scope** for v0.4.1 and tracked as a v0.4.2+ follow-on.
+3. **E16-1g scope** — **Resolved: backend-empty banner + button for v0.4.1.** Mirror reconciliation surfaces a banner with an explicit "Reset mirror" button when the backend snapshot is empty but WP still has local clusters. Broader UUID-by-UUID divergence detection plus any auto-detect cron / >50 % outbox-failure-rate threshold are explicitly **out of scope** for v0.4.1 and tracked as v0.4.2+ follow-ons.
 4. **E16-1h placement** — **Resolved: keep exploratory** inside E16 at the lowest priority. Promote to a standalone cluster-correctness task plan only if investigation reveals the 6× similarity=1.0 ingestion is a deeper replay/dedupe bug rather than a one-time artifact of the broken DB-rename state.
 
 ## Acceptance Criteria for the Theme as a Whole
@@ -422,7 +422,7 @@ Closed during planning review on 2026-05-03 with operator authorization. These a
 ### Checklist for E16-1g: WP-mirror reconciliation when backend is empty
 
 - [x] Detect divergence on dashboard load (banner landed on `09ed04f8` via the `last_snapshot_version === 0 && localClusterCount > 0` heuristic; UUID-by-UUID divergence comparison remains a follow-up — see review finding `E16-1G-BR-01`).
-- [ ] "Reset mirror" button truncates `wp_acx_clusters | wp_acx_identity_members | wp_acx_sync_outbox` and re-arms sync.
+- [x] "Reset mirror" button truncates `wp_acx_clusters | wp_acx_identity_members | wp_acx_sync_outbox`, zeroes the local snapshot state, and re-arms sync (`13ee758a`).
 - [ ] Auto-detect cron deferred to v0.4.2+ per Resolved Decisions §3.
 
 ### Checklist for E16-1h: Cluster-membership integrity check

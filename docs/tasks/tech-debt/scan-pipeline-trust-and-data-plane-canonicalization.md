@@ -242,7 +242,7 @@ The plugin storage surface and admin REST shape for this record must be picked e
   - **`empty_backend`** — clusters table is empty (no scans have ever produced clusters).
   - **`zero_pending`** — clusters exist but no pending suggestions.
 - Render distinct copy + a remediation action per state.
-- **Incremental implementation status:** naming-queue `empty_backend` landed on `354da7f5`; naming-queue `zero_pending` landed on `6defb7c8`; assignment-panel `zero_pending` landed on `85cc1bc8`; suggestion-review `unconfigured` landed on `a949dfa8`; suggestion-review `endpoint_error` is the current discriminator follow-up slice.
+- **Incremental implementation status:** naming-queue `empty_backend` landed on `354da7f5`; naming-queue `zero_pending` landed on `6defb7c8`; assignment-panel `zero_pending` landed on `85cc1bc8`; suggestion-review `unconfigured` landed on `a949dfa8`; suggestion-review `endpoint_error` discriminator landed on `cc8c30c7`.
 
 ### E16-1e — Self-merge guard + friendly merge-error surface
 
@@ -373,7 +373,7 @@ Closed during planning review on 2026-05-03 with operator authorization. These a
 
 ### Checklist for E16-1a: Complete local DB rename (foundation)
 
-- [ ] Guardrail-only code slice landed; remaining items below are still operator workflow, not already executed branch steps.
+- [x] Guardrail-only code slice landed (`78d2b0e5` + `a3dd4e90`); remaining items below are still operator workflow, not already executed branch steps.
 - [ ] Update `apps/prototype-description-service/.env:25` to `DB_NAME=alt_context_service`.
 - [ ] Run `make reset-local WP_PATH="$LOCAL_WP_ROOT/app/public" CONFIRM_LOCAL_RESET="RESET"` against the canonical DB.
 - [ ] Drop legacy DB: `psql -h 127.0.0.1 -U context -d postgres -c 'DROP DATABASE IF EXISTS context_alt_text_service;'`.
@@ -400,12 +400,12 @@ Closed during planning review on 2026-05-03 with operator authorization. These a
 
 ### Checklist for E16-1d: Suggestion-panel empty-state taxonomy
 
-- [ ] Naming queue `empty_backend` state landed (`354da7f5`) with explicit scan guidance.
-- [ ] Naming queue `zero_pending` state landed (`6defb7c8`) with explicit already-labeled guidance.
-- [ ] Assignment panel `zero_pending` state landed (`85cc1bc8`) with explicit review-next guidance.
-- [ ] Assignment/suggestion panel `unconfigured` state landed with explicit recognition-service connection guidance.
-- [ ] Assignment/suggestion panel `endpoint_error` state landed with distinct backend-error copy + remediation.
-- [ ] Tests cover each variant.
+- [x] Naming queue `empty_backend` state landed (`354da7f5`) with explicit scan guidance.
+- [x] Naming queue `zero_pending` state landed (`6defb7c8`) with explicit already-labeled guidance.
+- [x] Assignment panel `zero_pending` state landed (`85cc1bc8`) with explicit review-next guidance.
+- [x] Assignment/suggestion panel `unconfigured` state landed (`a949dfa8`) with explicit recognition-service connection guidance.
+- [x] Assignment/suggestion panel `endpoint_error` state landed (`cc8c30c7`) with distinct backend-error copy + remediation.
+- [x] Tests cover each variant.
 
 ### Checklist for E16-1e: Self-merge guard + friendly merge-error surface
 
@@ -421,7 +421,7 @@ Closed during planning review on 2026-05-03 with operator authorization. These a
 
 ### Checklist for E16-1g: WP-mirror reconciliation when backend is empty
 
-- [ ] Detect divergence on dashboard load (cluster UUIDs missing in backend ⇒ stale-mirror banner).
+- [x] Detect divergence on dashboard load (banner landed on `09ed04f8` via the `last_snapshot_version === 0 && localClusterCount > 0` heuristic; UUID-by-UUID divergence comparison remains a follow-up — see review finding `E16-1G-BR-01`).
 - [ ] "Reset mirror" button truncates `wp_acx_clusters | wp_acx_identity_members | wp_acx_sync_outbox` and re-arms sync.
 - [ ] Auto-detect cron deferred to v0.4.2+ per Resolved Decisions §3.
 

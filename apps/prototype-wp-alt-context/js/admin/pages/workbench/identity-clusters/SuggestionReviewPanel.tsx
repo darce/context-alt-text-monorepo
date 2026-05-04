@@ -32,6 +32,8 @@ export const SuggestionReviewPanel = ({ onLabel, onReview }: SuggestionReviewPan
     mergeSuggestions,
     nameSuggestions,
     nameDataSource,
+    topUnlabeledHasClusters,
+    topUnlabeledDataSource,
     reviewItems,
     assignmentCount,
     loadedAssignmentCount,
@@ -158,6 +160,11 @@ export const SuggestionReviewPanel = ({ onLabel, onReview }: SuggestionReviewPan
 
   const showUnavailableWarning = reviewItems.length === 0 && assignmentDataSource === DATA_SOURCE.UNAVAILABLE;
   const showNameUnavailableWarning = nameSuggestions.length === 0 && nameDataSource === DATA_SOURCE.UNAVAILABLE;
+  const showZeroPendingAssignmentGuidance =
+    reviewItems.length === 0 &&
+    assignmentDataSource === DATA_SOURCE.LOCAL_PROJECTION &&
+    topUnlabeledDataSource === DATA_SOURCE.LOCAL_PROJECTION &&
+    topUnlabeledHasClusters === true;
 
   return (
     <div className={`acx-suggestion-panel${isOpen ? '' : ' acx-suggestion-panel--collapsed'}`}>
@@ -191,6 +198,15 @@ export const SuggestionReviewPanel = ({ onLabel, onReview }: SuggestionReviewPan
                 message={__('We could not load assignment suggestions right now.', 'alt-context')}
                 onRetry={() => void refetchAssignment().then(() => refetchMerge())}
               />
+            ) : showZeroPendingAssignmentGuidance ? (
+              <>
+                <p className="acx-suggestion-panel__description">
+                  {__('No assignment suggestions are waiting right now.', 'alt-context')}
+                </p>
+                <p className="acx-suggestion-panel__description">
+                  {__('Review the naming queue below or run another scan after new photos arrive.', 'alt-context')}
+                </p>
+              </>
             ) : reviewItems.length === 0 ? (
               <p className="acx-suggestion-panel__description">{__('No suggestions to review yet.', 'alt-context')}</p>
             ) : (

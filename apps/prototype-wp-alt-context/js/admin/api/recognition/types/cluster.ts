@@ -72,6 +72,7 @@ export interface TopUnlabeledClustersResponse {
   total: number;
   truncated: boolean;
   singleton_count?: number;
+  has_clusters?: boolean;
   data_source: DataSource;
   projection_status?: ProjectionStatus;
 }

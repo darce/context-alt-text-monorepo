@@ -271,6 +271,7 @@ class ClustersController extends AbstractRecognitionProxyController {
 		}
 
 		$sovereign_data = $this->cluster_facade->list_top_unlabeled( $tenant_id, $limit );
+		$has_clusters = $this->clusters_repository->has_projection_rows_for_tenant( $tenant_id );
 		$unlabeled_items = $this->cluster_mapper->map_top_unlabeled_clusters(
 			$sovereign_data['clusters'],
 			$sovereign_data['members'],
@@ -288,6 +289,7 @@ class ClustersController extends AbstractRecognitionProxyController {
 				'total' => $total,
 				'truncated' => $total > count( $unlabeled_items ),
 				'singleton_count' => max( 0, (int) ( $sovereign_data['singleton_count'] ?? 0 ) ),
+				'has_clusters' => $has_clusters,
 				'data_source' => self::DATA_SOURCE_LOCAL_PROJECTION,
 				'projection_status' => self::PROJECTION_STATUS_AVAILABLE,
 			),

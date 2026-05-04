@@ -76,12 +76,17 @@ const clusterWithSuggestion = (): TopUnlabeledCluster => ({
   ],
 });
 
-const topUnlabeledResponse = (clusters: TopUnlabeledCluster[], singletonCount = 0): TopUnlabeledClustersResponse => ({
+const topUnlabeledResponse = (
+  clusters: TopUnlabeledCluster[],
+  singletonCount = 0,
+  hasClusters = true,
+): TopUnlabeledClustersResponse => ({
   clusters,
   limit: 20,
   total: clusters.length,
   truncated: false,
   singleton_count: singletonCount,
+  has_clusters: hasClusters,
   data_source: DATA_SOURCE.LOCAL_PROJECTION,
 });
 
@@ -152,7 +157,7 @@ describe('TopClustersSection', () => {
   });
 
   it('keeps rendering nothing when the API returns zero clusters', async () => {
-    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue(topUnlabeledResponse([]));
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue(topUnlabeledResponse([], 0, true));
     const rendered = renderSection();
 
     await waitFor(() => {
@@ -160,6 +165,21 @@ describe('TopClustersSection', () => {
     });
 
     expect(rendered.container.firstChild).toBeNull();
+  });
+
+  it('renders explicit empty-backend guidance when no projected clusters exist yet', async () => {
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue(topUnlabeledResponse([], 0, false));
+
+    renderSection();
+
+    await waitFor(() => {
+      expect(fetchTopUnlabeledClusters).toHaveBeenCalled();
+    });
+
+    expect(screen.getByText('Name These People')).toBeInTheDocument();
+    expect(
+      screen.getByText('No recognized people are available yet. Run a scan to build the naming queue.'),
+    ).toBeInTheDocument();
   });
 
   it('renders a retryable warning when top-unlabeled data is unavailable', async () => {

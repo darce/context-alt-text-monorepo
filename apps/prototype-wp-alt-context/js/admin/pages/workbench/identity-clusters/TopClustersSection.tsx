@@ -152,6 +152,7 @@ export const TopClustersSection = ({
 
   const topClusters = topUnlabeledResponse?.clusters ?? [];
   const singletonCount = topUnlabeledResponse?.singleton_count ?? 0;
+  const hasClusters = topUnlabeledResponse?.has_clusters;
   const dataSource = topUnlabeledResponse?.data_source;
   const projectionStatus = topUnlabeledResponse?.projection_status;
   const isReadOnly = dataSource === DATA_SOURCE.BACKEND_PROXY;
@@ -186,6 +187,17 @@ export const TopClustersSection = ({
   }
 
   if (topClusters.length === 0 && singletonCount === 0) {
+    if (dataSource === DATA_SOURCE.LOCAL_PROJECTION && hasClusters === false) {
+      return (
+        <div className="acx-top-clusters-section acx-top-clusters-section--empty">
+          <h4 className="acx-top-clusters-section__title">{__('Name These People', 'alt-context')}</h4>
+          <p className="acx-top-clusters-section__empty-message">
+            {__('No recognized people are available yet. Run a scan to build the naming queue.', 'alt-context')}
+          </p>
+        </div>
+      );
+    }
+
     return null;
   }
 

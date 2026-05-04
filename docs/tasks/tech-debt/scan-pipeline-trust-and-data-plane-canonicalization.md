@@ -248,7 +248,7 @@ The plugin storage surface and admin REST shape for this record must be picked e
 
 - `findClusterByLabel` (or its callers in `IdentityClusterItem.tsx` / `useClusterSaveAction.ts`) excludes `editableClusterId` from candidate results.
 - When candidates are empty after exclusion, treat the input as a pure rename, not a merge.
-- Cluster-mutations 4xx responses are caught and re-rendered as inline messages, not raw JSON. (`invalid_target_cluster_id` ⇒ "That cluster is already named X — nothing to merge.")
+- Cluster-mutations 4xx responses are caught and re-rendered as inline messages, not raw JSON. (`invalid_target_cluster_id` ⇒ "That cluster is already named X - nothing to merge.")
 - **Incremental implementation status:** self-match rename guard landed on `1c4acd83`; the adjacent friendly inline `invalid_target_cluster_id` merge-error surface is green on this branch and was re-verified against `IdentityClusterList.test.tsx` on `1c4acd83`.
 
 ### E16-1f — `media_id` → `attachment_id` SQL fix
@@ -256,6 +256,7 @@ The plugin storage surface and admin REST shape for this record must be picked e
 - One-line change at `apps/prototype-wp-alt-context/src/api/class-api.php:994`.
 - Grep `class-api.php` for any other `media_id` references against `wp_acx_identity_members`; fix in the same diff.
 - Add a smoke test that `get_dashboard_stats` returns `200 OK` against a populated mirror.
+- **Incremental implementation status:** the dashboard stats query now counts `DISTINCT attachment_id` in `wp_acx_identity_members`, no other `media_id` references remain against that table in `class-api.php`, and `DashboardApiTest.php` is green on this branch.
 
 ### E16-1g — WP-mirror reconciliation when backend is empty
 
@@ -414,9 +415,9 @@ Closed during planning review on 2026-05-03 with operator authorization. These a
 
 ### Checklist for E16-1f: Dashboard `media_id` → `attachment_id` SQL fix
 
-- [ ] Fix `apps/prototype-wp-alt-context/src/api/class-api.php:994`.
-- [ ] Audit `class-api.php` for other `media_id` references against `wp_acx_identity_members`; fix in the same diff.
-- [ ] Smoke test: `get_dashboard_stats` returns `200 OK` against a populated mirror.
+- [x] Fix `apps/prototype-wp-alt-context/src/api/class-api.php:994`.
+- [x] Audit `class-api.php` for other `media_id` references against `wp_acx_identity_members`; fix in the same diff.
+- [x] Smoke test: `get_dashboard_stats` returns `200 OK` against a populated mirror.
 
 ### Checklist for E16-1g: WP-mirror reconciliation when backend is empty
 

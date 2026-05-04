@@ -18,6 +18,7 @@ use function sprintf;
 
 class SuggestionsController extends AbstractRecognitionProxyController {
 	private const DATA_SOURCE_BACKEND_PROXY = 'backend_proxy';
+	private const DATA_SOURCE_ENDPOINT_ERROR = 'endpoint_error';
 	private const DATA_SOURCE_UNAVAILABLE = 'unavailable';
 	private const REQUEST_CLASS_POST_SCAN_READ = 'post_scan_read';
 
@@ -232,8 +233,11 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 		if ( $this->is_backend_overloaded( $response ) ) {
 			return parent::backend_overloaded_response( $response );
 		}
-		if ( $this->is_proxy_unavailable( $response ) ) {
+		if ( is_wp_error( $response ) ) {
 			return $this->empty_pending_suggestions_response( (int) $query['limit'], (int) $query['offset'] );
+		}
+		if ( $response instanceof WP_REST_Response && $response->get_status() >= 500 ) {
+			return $this->empty_pending_suggestions_response( (int) $query['limit'], (int) $query['offset'], self::DATA_SOURCE_ENDPOINT_ERROR );
 		}
 
 		return $this->normalize_pending_suggestions_response( $response, (int) $query['limit'], (int) $query['offset'] );
@@ -256,8 +260,11 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 		if ( $this->is_backend_overloaded( $response ) ) {
 			return parent::backend_overloaded_response( $response );
 		}
-		if ( $this->is_proxy_unavailable( $response ) ) {
+		if ( is_wp_error( $response ) ) {
 			return $this->empty_pending_suggestions_response( (int) $query['limit'], (int) $query['offset'] );
+		}
+		if ( $response instanceof WP_REST_Response && $response->get_status() >= 500 ) {
+			return $this->empty_pending_suggestions_response( (int) $query['limit'], (int) $query['offset'], self::DATA_SOURCE_ENDPOINT_ERROR );
 		}
 
 		return $this->normalize_pending_suggestions_response( $response, (int) $query['limit'], (int) $query['offset'] );
@@ -428,14 +435,14 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 
 		return $response;
 	}
-	private function empty_pending_suggestions_response( int $limit, int $offset ): WP_REST_Response {
+	private function empty_pending_suggestions_response( int $limit, int $offset, string $data_source = self::DATA_SOURCE_UNAVAILABLE ): WP_REST_Response {
 		return new WP_REST_Response(
 			array(
 				'suggestions' => array(),
 				'total'       => 0,
 				'limit'       => $limit,
 				'offset'      => $offset,
-				'data_source' => self::DATA_SOURCE_UNAVAILABLE,
+				'data_source' => $data_source,
 			),
 			200
 		);

@@ -90,6 +90,29 @@ class SuggestionsControllerTest extends TestCase
         $this->assertSame('unavailable', $data['data_source'] ?? null);
     }
 
+    public function testGetPendingSuggestionsReturnsEndpointErrorPayloadWhenBackendFails(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 500, 'message' => 'Internal Server Error'],
+            'body' => '{"error":"backend_failure"}',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/suggestions');
+        $request->set_param('limit', 25);
+        $request->set_param('offset', 0);
+
+        $response = $this->controller->get_pending_suggestions($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $data = $response->get_data();
+        $this->assertSame([], $data['suggestions'] ?? null);
+        $this->assertSame(0, $data['total'] ?? null);
+        $this->assertSame(25, $data['limit'] ?? null);
+        $this->assertSame(0, $data['offset'] ?? null);
+        $this->assertSame('endpoint_error', $data['data_source'] ?? null);
+    }
+
     public function testBackendOverloadedDetectionMatchesOnlyHttp503Responses(): void
     {
         $controller = new class() extends SuggestionsController {

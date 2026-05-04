@@ -991,7 +991,7 @@ class Api {
 			);
 
 			$media_with_faces = (int) $wpdb->get_var(
-				$wpdb->prepare( 'SELECT COUNT(DISTINCT media_id) FROM %i', $table_members )
+				$wpdb->prepare( 'SELECT COUNT(DISTINCT attachment_id) FROM %i', $table_members )
 			);
 
 			$unassigned_persons = (int) $wpdb->get_var(

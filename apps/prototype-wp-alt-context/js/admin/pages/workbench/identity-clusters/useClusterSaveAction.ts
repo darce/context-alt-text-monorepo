@@ -10,6 +10,7 @@ import type { ClusterGroup } from './types';
 import type { SaveDialogAction } from './useClusterConfirmDialog';
 import type { SaveStatus } from './useClusterSaveStatus';
 import { useClusterMatchAction } from './useClusterMatchAction';
+import { filterEditableClusterMatch } from './utils';
 
 interface ClusterSaveMutations {
   isPending: boolean;
@@ -100,9 +101,12 @@ export const useClusterSaveAction = ({
       queueSaveStatus();
       let mutationStarted = false;
       try {
-        let match = matchedCluster;
+        let match = filterEditableClusterMatch(matchedCluster, editableClusterId);
         if (match?.label.toLowerCase() !== trimmed.toLowerCase()) {
-          match = await findClusterByLabel(trimmed, abortController.signal);
+          match = filterEditableClusterMatch(
+            await findClusterByLabel(trimmed, abortController.signal),
+            editableClusterId,
+          );
         }
 
         if (abortController.signal.aborted) {

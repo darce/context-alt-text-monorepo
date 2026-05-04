@@ -249,6 +249,7 @@ The plugin storage surface and admin REST shape for this record must be picked e
 - `findClusterByLabel` (or its callers in `IdentityClusterItem.tsx` / `useClusterSaveAction.ts`) excludes `editableClusterId` from candidate results.
 - When candidates are empty after exclusion, treat the input as a pure rename, not a merge.
 - Cluster-mutations 4xx responses are caught and re-rendered as inline messages, not raw JSON. (`invalid_target_cluster_id` ⇒ "That cluster is already named X — nothing to merge.")
+- **Incremental implementation status:** the self-match rename guard is now wired through the proactive match state and final save path, so same-cluster label lookups downgrade to rename instead of issuing a self-merge. Friendly inline 4xx copy remains the adjacent merge-surface behavior for this theme.
 
 ### E16-1f — `media_id` → `attachment_id` SQL fix
 

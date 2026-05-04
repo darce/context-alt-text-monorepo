@@ -87,3 +87,14 @@ export const getEditableClusterId = (cluster: ClusterGroup): string | null => {
   const memberWithCluster = cluster.members.find((member) => member.cluster_id);
   return memberWithCluster?.cluster_id ?? null;
 };
+
+export const filterEditableClusterMatch = <T extends { id: string }>(
+  match: T | null,
+  editableClusterId?: string | null,
+): T | null => {
+  if (!match || !editableClusterId) {
+    return match;
+  }
+
+  return match.id === editableClusterId ? null : match;
+};

@@ -131,6 +131,7 @@ export const IdentityClusterItem = ({
   } = useClusterSuggestions({
     identityId: anchorIdentityId,
     enabled: editState.isEditing,
+    editableClusterId,
     labelInput: editState.labelInput,
   });
 

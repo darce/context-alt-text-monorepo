@@ -24,10 +24,12 @@ interface UseClusterSuggestionsReturn {
 export const selectClusterSuggestions = ({
   identitySuggestions,
   labelMatches,
+  editableClusterId,
   labelInput = '',
 }: {
   identitySuggestions?: IdentitySuggestionsResponse;
   labelMatches?: ClusterSummary[];
+  editableClusterId?: string | null;
   labelInput?: string;
 }): ComboboxOption[] => {
   const result: ComboboxOption[] = [];
@@ -40,6 +42,9 @@ export const selectClusterSuggestions = ({
     .forEach((match) => {
       const normalizedLabel = match.label?.trim() ?? '';
       if (!normalizedLabel) {
+        return;
+      }
+      if (match.cluster_id === editableClusterId) {
         return;
       }
       const key = normalizedLabel.toLowerCase();
@@ -65,6 +70,9 @@ export const selectClusterSuggestions = ({
   // 2. Label search matches (already filtered by API)
   (labelMatches ?? []).forEach((cluster) => {
     if (!cluster.label?.trim()) {
+      return;
+    }
+    if (cluster.id === editableClusterId) {
       return;
     }
     const normalizedLabel = cluster.label.trim();
@@ -103,6 +111,7 @@ export const selectClusterSuggestions = ({
 export const useClusterSuggestions = ({
   identityId,
   enabled,
+  editableClusterId,
   labelInput = '',
   debounceMs,
 }: UseClusterSuggestionsOptions): UseClusterSuggestionsReturn => {
@@ -114,13 +123,14 @@ export const useClusterSuggestions = ({
   } = useClusterSuggestionsLoader({
     identityId,
     enabled,
+    editableClusterId,
     labelInput,
     debounceMs,
   });
 
   const options = React.useMemo(
-    () => selectClusterSuggestions({ identitySuggestions, labelMatches, labelInput }),
-    [identitySuggestions, labelMatches, labelInput],
+    () => selectClusterSuggestions({ identitySuggestions, labelMatches, editableClusterId, labelInput }),
+    [identitySuggestions, labelMatches, editableClusterId, labelInput],
   );
 
   const findClusterByLabel = React.useCallback(

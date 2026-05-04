@@ -159,6 +159,7 @@ export const SuggestionReviewPanel = ({ onLabel, onReview }: SuggestionReviewPan
   }
 
   const showUnavailableWarning = reviewItems.length === 0 && assignmentDataSource === DATA_SOURCE.UNAVAILABLE;
+  const showEndpointErrorWarning = reviewItems.length === 0 && assignmentDataSource === DATA_SOURCE.ENDPOINT_ERROR;
   const showNameUnavailableWarning = nameSuggestions.length === 0 && nameDataSource === DATA_SOURCE.UNAVAILABLE;
   const showZeroPendingAssignmentGuidance =
     reviewItems.length === 0 &&
@@ -196,6 +197,12 @@ export const SuggestionReviewPanel = ({ onLabel, onReview }: SuggestionReviewPan
               <EmptyStateWarning
                 title={__('Suggestion service not configured', 'alt-context')}
                 message={__('Check the recognition service connection, then retry loading suggestions.', 'alt-context')}
+                onRetry={() => void refetchAssignment().then(() => refetchMerge())}
+              />
+            ) : showEndpointErrorWarning ? (
+              <EmptyStateWarning
+                title={__('Suggestion service error', 'alt-context')}
+                message={__('The recognition service responded with an error. Retry now or check the service logs.', 'alt-context')}
                 onRetry={() => void refetchAssignment().then(() => refetchMerge())}
               />
             ) : showZeroPendingAssignmentGuidance ? (

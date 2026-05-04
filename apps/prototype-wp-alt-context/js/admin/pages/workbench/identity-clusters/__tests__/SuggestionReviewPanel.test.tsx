@@ -172,6 +172,34 @@ describe('SuggestionReviewPanel', () => {
     expect(screen.queryByText('No suggestions to review yet.')).not.toBeInTheDocument();
   });
 
+  it('renders endpoint error guidance when the backend returns a server error envelope', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      total: 0,
+      limit: 10,
+      offset: 0,
+      data_source: DATA_SOURCE.ENDPOINT_ERROR,
+    });
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [],
+      total: 0,
+      limit: 10,
+      offset: 0,
+      data_source: DATA_SOURCE.ENDPOINT_ERROR,
+    });
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(fetchPendingSuggestions).toHaveBeenCalled();
+    });
+
+    expect(screen.getByText('Suggestion service error')).toBeInTheDocument();
+    expect(screen.getByText('The recognition service responded with an error. Retry now or check the service logs.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(screen.queryByText('No suggestions to review yet.')).not.toBeInTheDocument();
+  });
+
   it('renders assignment zero-pending guidance when clusters exist but no review suggestions are pending', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [],

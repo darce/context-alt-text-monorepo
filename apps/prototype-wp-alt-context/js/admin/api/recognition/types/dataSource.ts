@@ -1,6 +1,7 @@
 export const DATA_SOURCE = {
   LOCAL_PROJECTION: 'local_projection',
   BACKEND_PROXY: 'backend_proxy',
+  ENDPOINT_ERROR: 'endpoint_error',
   UNAVAILABLE: 'unavailable',
 } as const;
 
@@ -18,6 +19,7 @@ export const parseDataSource = (value: unknown): DataSource | null => {
   if (
     value === DATA_SOURCE.LOCAL_PROJECTION ||
     value === DATA_SOURCE.BACKEND_PROXY ||
+    value === DATA_SOURCE.ENDPOINT_ERROR ||
     value === DATA_SOURCE.UNAVAILABLE
   ) {
     return value;

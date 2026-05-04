@@ -242,7 +242,7 @@ The plugin storage surface and admin REST shape for this record must be picked e
   - **`empty_backend`** — clusters table is empty (no scans have ever produced clusters).
   - **`zero_pending`** — clusters exist but no pending suggestions.
 - Render distinct copy + a remediation action per state.
-- **Incremental implementation status:** naming-queue `empty_backend` landed on `354da7f5`; naming-queue `zero_pending` landed on `6defb7c8`; assignment-panel `zero_pending` landed on `85cc1bc8`. The next follow-up slice is the remaining `endpoint_error` state after the suggestion-review `unconfigured` copy/remediation lands.
+- **Incremental implementation status:** naming-queue `empty_backend` landed on `354da7f5`; naming-queue `zero_pending` landed on `6defb7c8`; assignment-panel `zero_pending` landed on `85cc1bc8`; suggestion-review `unconfigured` landed on `a949dfa8`; suggestion-review `endpoint_error` is the current discriminator follow-up slice.
 
 ### E16-1e — Self-merge guard + friendly merge-error surface
 
@@ -402,7 +402,7 @@ Closed during planning review on 2026-05-03 with operator authorization. These a
 - [ ] Naming queue `zero_pending` state landed (`6defb7c8`) with explicit already-labeled guidance.
 - [ ] Assignment panel `zero_pending` state landed (`85cc1bc8`) with explicit review-next guidance.
 - [ ] Assignment/suggestion panel `unconfigured` state landed with explicit recognition-service connection guidance.
-- [ ] Assignment/suggestion panel `endpoint_error` state still needs distinct copy + remediation.
+- [ ] Assignment/suggestion panel `endpoint_error` state landed with distinct backend-error copy + remediation.
 - [ ] Tests cover each variant.
 
 ### Checklist for E16-1e: Self-merge guard + friendly merge-error surface

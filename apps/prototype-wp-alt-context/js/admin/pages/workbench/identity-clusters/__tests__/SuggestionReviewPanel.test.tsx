@@ -171,6 +171,43 @@ describe('SuggestionReviewPanel', () => {
     expect(screen.queryByText('No suggestions to review yet.')).not.toBeInTheDocument();
   });
 
+  it('renders assignment zero-pending guidance when clusters exist but no review suggestions are pending', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      total: 0,
+      limit: 10,
+      offset: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [],
+      total: 0,
+      limit: 10,
+      offset: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 0,
+      truncated: false,
+      singleton_count: 0,
+      has_clusters: true,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(fetchPendingSuggestions).toHaveBeenCalled();
+      expect(fetchTopUnlabeledClusters).toHaveBeenCalled();
+    });
+
+    expect(screen.getByText('No assignment suggestions are waiting right now.')).toBeInTheDocument();
+    expect(screen.getByText('Review the naming queue below or run another scan after new photos arrive.')).toBeInTheDocument();
+    expect(screen.queryByText('No suggestions to review yet.')).not.toBeInTheDocument();
+  });
+
   it('renders an unavailable warning when suggested names cannot be loaded', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [],

@@ -1,7 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
 
+import { getConfig } from '../../../api/config';
 import { queryKeys } from '../../../api/queryKeys';
 import {
+  fetchTopUnlabeledClusters,
   fetchPendingMergeSuggestions,
   fetchPendingNameSuggestions,
   fetchPendingSuggestions,
@@ -10,8 +12,11 @@ import {
 import { buildSuggestionReviewItems } from './suggestionReviewItems';
 
 export const SUGGESTION_PAGE_SIZE = 25;
+const TOP_UNLABELED_LIMIT = 20;
 
 export const useSuggestionReviewQueries = () => {
+  const tenantId = getConfig().tenant_id;
+
   const assignmentQuery = useQuery({
     queryKey: queryKeys.suggestions.pending(),
     queryFn: () => fetchPendingSuggestions(SUGGESTION_PAGE_SIZE, 0),
@@ -33,6 +38,14 @@ export const useSuggestionReviewQueries = () => {
     retry: false,
   });
 
+  const topUnlabeledQuery = useQuery({
+    queryKey: queryKeys.clusters.topUnlabeled(tenantId),
+    queryFn: () => fetchTopUnlabeledClusters(tenantId, TOP_UNLABELED_LIMIT),
+    enabled: tenantId !== '',
+    staleTime: 60000,
+    refetchOnMount: 'always',
+  });
+
   const assignmentSuggestions = assignmentQuery.data?.suggestions;
 
   return {
@@ -44,6 +57,8 @@ export const useSuggestionReviewQueries = () => {
     mergeSuggestions: mergeQuery.data?.suggestions ?? [],
     nameSuggestions: nameQuery.data?.suggestions ?? [],
     nameDataSource: nameQuery.data?.data_source,
+    topUnlabeledHasClusters: topUnlabeledQuery.data?.has_clusters,
+    topUnlabeledDataSource: topUnlabeledQuery.data?.data_source,
     reviewItems: buildSuggestionReviewItems(assignmentSuggestions),
   };
 };

@@ -147,7 +147,7 @@ Add to `docs/epics/v0.4.1/public-demo-followons-epic.md` after Theme D:
 | **E16-1g** WP-mirror reconciliation when backend is empty | Stub (this doc) | (to be promoted) | Detect mirror/backend divergence; offer (or auto-perform) a mirror reset; do not let stale clusters accumulate forever. |
 | **E16-1h** Cluster-membership integrity check (separate, lower priority) | Stub (this doc) | (to be promoted) | Investigate media 6624's 6× similarity=1.0 assignments. Likely duplicate-sync ingestion bug. May fold into td-retry-attempt-observability. |
 
-**Theme E ordering:** E16-1a is a hard prerequisite — without canonical DB wiring, every reset is a no-op against the live service. After E16-1a lands and a clean reset is verified, E16-1f (one-line SQL fix) can land in parallel with E16-1b/c/d/e (each independent). E16-1g lands after E16-1b so the reconciliation logic has a stable batch-outcome signal to key off. E16-1h is exploratory, lower priority.
+**Theme E ordering:** E16-1a is split into two parts: (1) the shipped guardrail slice that prevents stale local `DB_NAME=context_alt_text_service` values from silently rebinding reset/start flows, and (2) the still-open local operator foundation (`.env` rewrite, canonical reset, legacy DB drop, runtime verification). The operator foundation remains the prerequisite for end-to-end local scan/reset verification and for backend-dependent tasks such as E16-1b and E16-1g. Isolated UI/plugin slices such as E16-1d/e/f may continue on mocked or contract-backed paths while that operator work stays open. E16-1h remains exploratory and lowest priority.
 ```
 
 ## Member-Task Sketches
@@ -159,6 +159,7 @@ Each member task below should be promoted to a full plan in `docs/tasks/15.0/` o
 - **Source of truth:** `docs/tasks/tech-debt/rename-database-context-alt-text-to-alt-context.md`
 - **Action:** Close the local-environment items in that doc's Consolidated Triage Checklist (local `.env`, local pgdata). VM env-file drift moves to a separate operator-only sub-task that does **not** block the rest of Theme E.
 - **Guardrail note:** The `copilot_slice_complete_e16_1_local_db_name_guardrails` slice is a preflight guardrail only. It prevents stale local `DB_NAME=context_alt_text_service` values from silently re-binding local reset/start flows, but it does **not** satisfy E16-1a on its own. E16-1a stays open until the local `.env`, reset, legacy-DB drop, and runtime verification steps below are completed.
+- **Implementation split:** Treat E16-1a as `guardrail shipped` plus `operator foundation pending`. Commits `78d2b0e5` and `a3dd4e90` cover only the shipped guardrail portion. The checklist below tracks the remaining local operator work; downstream docs should not imply those steps were already executed on this branch.
 - **Concrete step set (local only — VM deferred per operator instruction "work locally, once process is fixed push to remote vm"):**
   1. `feature/e16-1a` branch.
   2. Land and keep the local guardrail coverage in place until the local environment is rewritten (`db.settings` + local reset/start flows canonicalize the stale legacy DB name and surface a warning instead of silently trusting it).
@@ -241,6 +242,7 @@ The plugin storage surface and admin REST shape for this record must be picked e
   - **`empty_backend`** — clusters table is empty (no scans have ever produced clusters).
   - **`zero_pending`** — clusters exist but no pending suggestions.
 - Render distinct copy + a remediation action per state.
+- **Incremental implementation status:** naming-queue `empty_backend` landed on `354da7f5`; naming-queue `zero_pending` landed on `6defb7c8`. Remaining follow-up slices still need to cover assignment-panel `zero_pending` plus explicit `endpoint_error` and `unconfigured` copy/remediation in the suggestion-review surface.
 
 ### E16-1e — Self-merge guard + friendly merge-error surface
 
@@ -369,6 +371,7 @@ Closed during planning review on 2026-05-03 with operator authorization. These a
 
 ### Checklist for E16-1a: Complete local DB rename (foundation)
 
+- [ ] Guardrail-only code slice landed; remaining items below are still operator workflow, not already executed branch steps.
 - [ ] Update `apps/prototype-description-service/.env:25` to `DB_NAME=alt_context_service`.
 - [ ] Run `make reset-local WP_PATH="$LOCAL_WP_ROOT/app/public" CONFIRM_LOCAL_RESET="RESET"` against the canonical DB.
 - [ ] Drop legacy DB: `psql -h 127.0.0.1 -U context -d postgres -c 'DROP DATABASE IF EXISTS context_alt_text_service;'`.
@@ -395,7 +398,10 @@ Closed during planning review on 2026-05-03 with operator authorization. These a
 
 ### Checklist for E16-1d: Suggestion-panel empty-state taxonomy
 
-- [ ] Distinguish `unconfigured` / `endpoint_error` / `empty_backend` / `zero_pending` with distinct copy + remediation.
+- [ ] Naming queue `empty_backend` state landed (`354da7f5`) with explicit scan guidance.
+- [ ] Naming queue `zero_pending` state landed (`6defb7c8`) with explicit already-labeled guidance.
+- [ ] Assignment panel `zero_pending` state still needs explicit copy + remediation.
+- [ ] Assignment/suggestion panel still needs distinct `unconfigured` and `endpoint_error` states.
 - [ ] Tests cover each variant.
 
 ### Checklist for E16-1e: Self-merge guard + friendly merge-error surface

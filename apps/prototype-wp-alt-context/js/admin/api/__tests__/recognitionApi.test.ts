@@ -676,6 +676,7 @@ describe('recognitionApi', () => {
       total: 5,
       truncated: true,
       singleton_count: 4,
+      has_clusters: true,
       data_source: 'local_projection',
       projection_status: 'available',
     });

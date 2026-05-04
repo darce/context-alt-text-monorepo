@@ -19,6 +19,8 @@ export const useSuggestionReviewData = () => {
     mergeSuggestions,
     nameSuggestions,
     nameDataSource,
+    topUnlabeledHasClusters,
+    topUnlabeledDataSource,
     reviewItems,
   } = useSuggestionReviewQueries();
 
@@ -50,6 +52,8 @@ export const useSuggestionReviewData = () => {
     mergeSuggestions,
     nameSuggestions,
     nameDataSource,
+    topUnlabeledHasClusters,
+    topUnlabeledDataSource,
     reviewItems,
     assignmentCount,
     loadedAssignmentCount,

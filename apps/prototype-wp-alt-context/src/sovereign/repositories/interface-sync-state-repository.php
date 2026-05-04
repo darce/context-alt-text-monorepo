@@ -17,6 +17,8 @@ interface SyncStateRepositoryInterface {
 
 	public function touch_local_curation_marker( string $tenant_id ): void;
 
+	public function reset_projection_state( string $tenant_id ): void;
+
 	public function refresh_curation_metrics( string $tenant_id ): void;
 
 	public function get_pending_curation_operations( string $tenant_id ): int;

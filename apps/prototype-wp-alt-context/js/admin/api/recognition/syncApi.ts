@@ -20,3 +20,12 @@ export const triggerSync = async (): Promise<SyncTriggerResponse> => {
     signal: createRecognitionTimeoutSignal(30_000),
   });
 };
+
+export const resetMirror = async (): Promise<SyncTriggerResponse> => {
+  const endpoint = getEndpoint('recognitionSyncResetMirror');
+  return fetchRequiredApi<SyncTriggerResponse>(endpoint, {
+    method: 'POST',
+    restNonce: getConfig().nonce,
+    signal: createRecognitionTimeoutSignal(30_000),
+  });
+};

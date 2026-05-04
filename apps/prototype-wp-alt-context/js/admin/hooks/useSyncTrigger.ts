@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
-import { triggerSync, type SyncTriggerResponse } from '../api/recognition';
+import { resetMirror, triggerSync, type SyncTriggerResponse } from '../api/recognition';
 import { queryKeys } from '../api/queryKeys';
 
 /**
@@ -70,4 +70,20 @@ export const useSyncTrigger = (isStale: boolean, autoTrigger = false) => {
   }, [shouldAutoTrigger, mutation.isPending]);
 
   return mutation;
+};
+
+export const useResetMirror = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation<SyncTriggerResponse>({
+    mutationFn: () => resetMirror(),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.sync.all });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.conflicts.all });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.outbox.all });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.all });
+    },
+  });
 };

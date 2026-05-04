@@ -239,6 +239,39 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 		}
 	}
 
+	public function reset_projection_state( string $tenant_id ): void {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			$this->log_empty_tenant_id_guard( __METHOD__ );
+			return;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
+			return;
+		}
+
+		$sql = $this->prepare_query(
+			'INSERT INTO %i (stream_name, last_snapshot_version, updated_at)
+			VALUES (%s, %d, %s)
+			ON DUPLICATE KEY UPDATE
+				last_snapshot_version = VALUES(last_snapshot_version),
+				updated_at = VALUES(updated_at)',
+			array(
+				$this->table_name,
+				$this->stream_name_for_tenant( $normalized_tenant_id ),
+				0,
+				'1970-01-01 00:00:00',
+			)
+		);
+
+		if ( is_string( $sql ) && '' !== $sql ) {
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+			$wpdb->query( $sql );
+		}
+	}
+
 	public function refresh_curation_metrics( string $tenant_id ): void {
 		global $wpdb;
 

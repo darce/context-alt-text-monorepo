@@ -107,6 +107,26 @@
   gap: var(--acx-space-8);
 }
 
+.acx-dashboard__mirror-warning {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--acx-space-12);
+  margin-bottom: var(--acx-space-16);
+  padding: var(--acx-space-16);
+  border: 1px solid var(--acx-color-warning-border);
+  background-color: var(--acx-color-warning-bg);
+  border-radius: 0.75rem;
+
+  p {
+    margin: 0;
+    color: var(--acx-color-warning-pill-text);
+    font-weight: 500;
+    flex: 1 1 18rem;
+  }
+}
+
 .acx-dashboard__guidance-count {
   display: inline-flex;
   align-items: center;

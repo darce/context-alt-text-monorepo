@@ -306,6 +306,54 @@ class SyncStatusControllerTest extends TestCase
         $this->assertFalse($data['is_stale']);
     }
 
+    public function testResetMirrorTruncatesProjectionTablesAndRearmsSync(): void
+    {
+        global $wpdb;
+
+        $syncRepo = new class() extends NullSyncStateRepository {
+            public int $snapshotVersion = 12;
+            public bool $resetProjectionStateCalled = false;
+
+            public function get_snapshot_version(string $tenant_id): int {
+                return $this->snapshotVersion;
+            }
+
+            public function reset_projection_state(string $tenant_id): void {
+                $this->resetProjectionStateCalled = true;
+                $this->snapshotVersion = 0;
+            }
+        };
+
+        $syncJob = new class() implements SyncPullJobInterface {
+            public function perform(string $tenant_id): SyncPullResult {
+                return SyncPullResult::ok();
+            }
+
+            public function perform_bypass_cooldown(string $tenant_id): SyncPullResult {
+                return SyncPullResult::ok();
+            }
+
+            public function perform_projection_payload(string $tenant_id, array $payload): SyncPullResult {
+                return SyncPullResult::ok();
+            }
+        };
+
+        $controller = new SyncStatusController($syncRepo, $syncJob);
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/reset-mirror');
+        $response = $controller->reset_mirror($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+
+        $data = $response->get_data();
+        $this->assertTrue($data['synced']);
+        $this->assertSame('no_remote_data', $data['reason']);
+        $this->assertSame(0, $data['last_snapshot_version']);
+        $this->assertTrue($syncRepo->resetProjectionStateCalled);
+        $this->assertContains('TRUNCATE TABLE `wp_acx_clusters`', $wpdb->queries);
+        $this->assertContains('TRUNCATE TABLE `wp_acx_identity_members`', $wpdb->queries);
+        $this->assertContains('TRUNCATE TABLE `wp_acx_sync_outbox`', $wpdb->queries);
+    }
+
     public function testTriggerSyncReturnsUpdatedConflictCountAfterProjection(): void
     {
         $recentTimestamp = gmdate('Y-m-d H:i:s', time() - 10);

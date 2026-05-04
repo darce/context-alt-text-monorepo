@@ -325,6 +325,7 @@ class Admin {
 					'recognitionFailedOutbox'       => rest_url( 'acx/v1/recognition/outbox/failed' ),
 					'recognitionSyncStatus'          => rest_url( 'acx/v1/recognition/sync-status' ),
 					'recognitionSyncTrigger'         => rest_url( 'acx/v1/recognition/sync/trigger' ),
+					'recognitionSyncResetMirror'     => rest_url( 'acx/v1/recognition/sync/reset-mirror' ),
 					'recognitionMediaIdentities'     => rest_url( 'acx/v1/recognition/media-identities' ),
 					'retentionStatus'                => rest_url( 'acx/v1/retention/status' ),
 					'retentionPolicy'                => rest_url( 'acx/v1/retention/policy' ),

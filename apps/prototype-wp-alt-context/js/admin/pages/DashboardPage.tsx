@@ -10,6 +10,7 @@ import { __ } from '@wordpress/i18n';
 import { useMediaStats } from '../hooks/useMediaStats';
 import { useRecognitionJobHistory } from '../hooks/useRecognitionJobHistory';
 import { useIdentityStats } from '../hooks/useIdentityStats';
+import { useResetMirror } from '../hooks/useSyncTrigger';
 import { useSyncStatus } from '../hooks/useSyncStatus';
 import { useRetentionStatus } from '../hooks/useRetentionStatus';
 import { rosterClustersUrl } from './workbench/Panels';
@@ -29,6 +30,7 @@ export const DashboardPage = (): React.JSX.Element => {
   const { stats, isLoading: isStatsLoading } = useMediaStats();
   const { jobHistory, jobStatuses, jobDetails } = useRecognitionJobHistory();
   const { data: syncStatus, isLoading: isSyncStatusLoading, isError: isSyncStatusError } = useSyncStatus();
+  const resetMirror = useResetMirror();
   const { data: retentionStatus } = useRetentionStatus();
   const {
     data: identityStats,
@@ -195,13 +197,23 @@ export const DashboardPage = (): React.JSX.Element => {
           ) : (
             <>
               {showMirrorDivergenceBanner ? (
-                <p className="acx-error-state" role="alert">
-                  {sprintf(
-                    __('Mirror is out of sync with the backend — %1$d stale clusters, %2$d failed sync events.', 'alt-context'),
-                    localClusterCount,
-                    failedReplayCount,
-                  )}
-                </p>
+                <div className="acx-dashboard__mirror-warning" role="status">
+                  <p>
+                    {sprintf(
+                      __('Mirror is out of sync with the backend — %1$d stale clusters, %2$d failed sync events.', 'alt-context'),
+                      localClusterCount,
+                      failedReplayCount,
+                    )}
+                  </p>
+                  <button
+                    type="button"
+                    className="acx-button acx-button--secondary"
+                    disabled={resetMirror.isPending}
+                    onClick={() => resetMirror.mutate()}
+                  >
+                    {resetMirror.isPending ? __('Resetting…', 'alt-context') : __('Reset mirror', 'alt-context')}
+                  </button>
+                </div>
               ) : null}
               <p>
                 {syncStatus.sync_health === 'healthy'

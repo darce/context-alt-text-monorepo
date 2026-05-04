@@ -144,7 +144,7 @@ describe('SuggestionReviewPanel', () => {
     expect(screen.queryByText('Failed to load suggestions.')).not.toBeInTheDocument();
   });
 
-  it('renders an unavailable warning instead of a false empty state', async () => {
+  it('renders unconfigured guidance instead of a false empty state when suggestions are unavailable', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [],
       total: 0,
@@ -166,7 +166,8 @@ describe('SuggestionReviewPanel', () => {
       expect(fetchPendingSuggestions).toHaveBeenCalled();
     });
 
-    expect(screen.getByText('Suggestions unavailable')).toBeInTheDocument();
+    expect(screen.getByText('Suggestion service not configured')).toBeInTheDocument();
+    expect(screen.getByText('Check the recognition service connection, then retry loading suggestions.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
     expect(screen.queryByText('No suggestions to review yet.')).not.toBeInTheDocument();
   });

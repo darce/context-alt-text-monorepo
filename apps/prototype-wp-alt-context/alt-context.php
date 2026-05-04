@@ -25,6 +25,7 @@ use AltContext\Admin\Menu;
 use AltContext\Api\Api;
 use AltContext\Api\XmpEmbedController;
 use AltContext\AltContext;
+use AltContext\Cli\MirrorIntegrityCommand;
 use AltContext\Cli\ResetProjectionCommand;
 use AltContext\Cli\XmpBackfillCommand;
 use AltContext\Media\XmpPersistenceFactory;
@@ -92,6 +93,7 @@ require_once $altContextAutoload;
 // Explicit require_once guarantees the class is available on every request
 // regardless of classmap staleness.
 require_once ACX_PLUGIN_DIR . 'src/support/class-telemetry.php';
+require_once ACX_PLUGIN_DIR . 'src/cli/class-mirror-integrity-command.php';
 
 $dotenv = Dotenv::createImmutable(ACX_PLUGIN_DIR, ['.env', '.env.local']);
 $dotenv->safeLoad();
@@ -227,6 +229,7 @@ function acx_register_cli_commands(): void
         return;
     }
 
+    WP_CLI::add_command('acx mirror-integrity', new MirrorIntegrityCommand());
     WP_CLI::add_command('acx xmp-backfill', new XmpBackfillCommand());
     WP_CLI::add_command('acx reset-projection', new ResetProjectionCommand());
 }

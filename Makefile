@@ -129,7 +129,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/logs.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends context dashboard worktree-audit worktree-prune task-plan-audit generate-agent-workflows check-agent-workflows check-skills check-harness-sync lint-hoisted-paths maint-start task-start task-finish check-main-clean install-git-hooks
+.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends context dashboard worktree-audit worktree-prune task-plan-audit generate-agent-workflows check-agent-workflows check-skills check-harness-sync lint-hoisted-paths maint-start task-start task-finish check-main-clean install-git-hooks localwp-mirror-integrity
 
 # Default target
 help:
@@ -145,6 +145,7 @@ help:
 	@echo "  make fix-php-style    - Auto-fix WordPress plugin PHPCS violations"
 	@echo "  make clean-all        - Clean cache files in all apps"
 	@echo "  make reset-local      - Reset local backend DB + WordPress projection data (destructive)"
+	@echo "  make localwp-mirror-integrity - Run the WordPress mirror integrity check through the plugin app wrapper"
 	@echo ""
 	@echo "App-Specific Commands:"
 	@echo "  cd apps/prototype-description-service && make help"
@@ -265,6 +266,14 @@ check-all:
 			echo ""; \
 			echo "✅ All monorepo checks passed!"; \
 		fi
+
+localwp-mirror-integrity:
+	@$(MAKE) -C apps/prototype-wp-alt-context localwp-mirror-integrity \
+		WP_PATH="$(WP_PATH)" \
+		ATTACHMENT_ID="$(ATTACHMENT_ID)" \
+		THRESHOLD="$(THRESHOLD)" \
+		LIMIT="$(LIMIT)" \
+		FORMAT="$(FORMAT)"
 
 check-frontend:
 	@set -eu; \

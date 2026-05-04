@@ -43,6 +43,8 @@ export const DashboardPage = (): React.JSX.Element => {
   const pendingReplayCount = normalizeCount(syncStatus?.pending_curation_operations);
   const conflictCount = normalizeCount(syncStatus?.conflict_count);
   const failedReplayCount = normalizeCount(syncStatus?.failed_curation_operations);
+  const localClusterCount = normalizeCount(identityStats?.assigned_clusters_count) + normalizeCount(identityStats?.pending_clusters_count);
+  const showMirrorDivergenceBanner = Boolean(syncStatus && syncStatus.last_snapshot_version === 0 && localClusterCount > 0);
   const topologyPending = normalizeCount(syncStatus?.topology_commands?.pending);
   const topologyFailed = normalizeCount(syncStatus?.topology_commands?.failed);
   const topologyConflicts = normalizeCount(syncStatus?.topology_commands?.conflict);
@@ -192,6 +194,15 @@ export const DashboardPage = (): React.JSX.Element => {
             <p>{__('Sync health is unavailable right now.', 'alt-context')}</p>
           ) : (
             <>
+              {showMirrorDivergenceBanner ? (
+                <p className="acx-error-state" role="alert">
+                  {sprintf(
+                    __('Mirror is out of sync with the backend — %1$d stale clusters, %2$d failed sync events.', 'alt-context'),
+                    localClusterCount,
+                    failedReplayCount,
+                  )}
+                </p>
+              ) : null}
               <p>
                 {syncStatus.sync_health === 'healthy'
                   ? __('Machine sync is healthy and curation replay is caught up.', 'alt-context')

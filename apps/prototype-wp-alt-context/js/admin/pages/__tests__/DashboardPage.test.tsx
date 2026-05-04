@@ -605,6 +605,40 @@ describe('DashboardPage', () => {
     expect(screen.getByText('Machine state is stale and should be refreshed.')).toBeInTheDocument();
   });
 
+  it('renders a stale-mirror banner when the backend snapshot is empty but local clusters remain', () => {
+    mockedUseSyncStatus.mockReturnValue(
+      createMockQuery({
+        data: {
+          last_snapshot_version: 0,
+          last_synced_at: '2026-03-10T10:00:00Z',
+          is_stale: true,
+          sync_health: 'stale',
+          last_sync_result: 'failed',
+          conflict_count: 0,
+          failed_curation_operations: 2,
+        },
+      }),
+    );
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 4,
+          assigned_clusters_count: 4,
+          pending_clusters_count: 3,
+          media_with_faces_count: 10,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(<DashboardPage />);
+
+    expect(
+      screen.getByText('Mirror is out of sync with the backend — 7 stale clusters, 2 failed sync events.'),
+    ).toBeInTheDocument();
+  });
+
   it('renders failures sync summary copy', () => {
     mockedUseSyncStatus.mockReturnValue(
       createMockQuery({

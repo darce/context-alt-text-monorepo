@@ -35,6 +35,7 @@ export const queryKeys = {
   jobs: {
     all: ['jobs'] as const,
     status: (jobId: string | null) => [...queryKeys.jobs.all, 'status', jobId] as const,
+    batchRun: (runId: string | null) => [...queryKeys.jobs.all, 'batch-run', runId] as const,
   },
   roster: {
     all: ['roster'] as const,

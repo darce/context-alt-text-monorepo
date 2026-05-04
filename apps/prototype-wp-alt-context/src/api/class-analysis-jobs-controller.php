@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Api;
 
 require_once __DIR__ . '/../sovereign/repositories/interface-sync-state-repository.php';
+require_once __DIR__ . '/../sovereign/repositories/class-batch-run-repository.php';
 require_once __DIR__ . '/../sovereign/repositories/class-sync-state-repository.php';
 require_once __DIR__ . '/../sovereign/repositories/class-clusters-repository.php';
 require_once __DIR__ . '/../sovereign/repositories/class-identity-members-repository.php';
@@ -16,6 +17,7 @@ require_once __DIR__ . '/../sovereign/sync/class-sync-pull-job.php';
 require_once __DIR__ . '/../sovereign/sync/class-sync-pull-result.php';
 require_once __DIR__ . '/../sovereign/sync/class-sync-pull-job-factory.php';
 
+use AltContext\Sovereign\Repositories\BatchRunRepository;
 use AltContext\Sovereign\Repositories\ClustersRepository;
 use AltContext\Sovereign\Repositories\IdentityMembersRepository;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
@@ -51,11 +53,14 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 	use BatchLimits;
 
 	private const REQUEST_CLASS_POST_SCAN_READ = 'post_scan_read';
+	private const BATCH_RUN_STATUS_STALE_SECONDS = 5;
 	private const JOB_MEDIA_IDS_TRANSIENT_PREFIX = 'acx_job_media_ids_';
+	private const JOB_BATCH_RUN_TRANSIENT_PREFIX = 'acx_job_batch_run_';
 	private const PROJECTION_SYNC_TRANSIENT_PREFIX = 'acx_projection_sync_';
 	private const JOB_TRACKING_TTL_SECONDS = 86400;
 	private const PROJECTION_SYNC_SUCCESS_TTL_SECONDS = 300;
 	private const PROJECTION_SYNC_RETRY_TTL_SECONDS = 5;
+	private BatchRunRepository $batch_run_repository;
 	private SyncStateRepositoryInterface $sync_state_repository;
 	private ?SyncPullJobInterface $sync_pull_job;
 	private ?SyncPullJobFactory $sync_pull_job_factory;
@@ -63,11 +68,13 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 	public function __construct(
 		?SyncStateRepositoryInterface $sync_state_repository = null,
 		?SyncPullJobInterface $sync_pull_job = null,
-		?SyncPullJobFactory $sync_pull_job_factory = null
+		?SyncPullJobFactory $sync_pull_job_factory = null,
+		?BatchRunRepository $batch_run_repository = null
 	) {
 		$this->sync_state_repository = $sync_state_repository ?? new SyncStateRepository();
 		$this->sync_pull_job = $sync_pull_job;
 		$this->sync_pull_job_factory = $sync_pull_job_factory;
+		$this->batch_run_repository = $batch_run_repository ?? new BatchRunRepository();
 	}
 
 	public function register_routes(): void {
@@ -92,6 +99,26 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 						'description' => 'Media item descriptors (media_id + media_url).',
 					),
 				),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/recognition/batch-runs/(?P<run_id>[a-f0-9-]+)',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'get_batch_run_status' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/recognition/batch-runs/(?P<run_id>[a-f0-9-]+)/client-failures',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( $this, 'record_client_batch_failure' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
 			)
 		);
 
@@ -137,9 +164,12 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 	}
 
 	public function analyze_media( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$batch_context      = $this->extract_batch_run_context( $request );
 		$media_items_param = $request->get_param( 'media_items' );
 		$media_ids         = $request->get_param( 'media_ids' );
 		$media_items       = array();
+		$requested_media_ids = $this->extract_requested_media_ids( $media_items_param, $media_ids );
+		$unreadable_media_ids = array();
 
 		// E15-11 Slice 2.2: 'multipart' (default) ships image bytes inline so
 		// any WordPress install reaches the hosted recognition API without
@@ -174,18 +204,25 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 		} elseif ( is_array( $media_ids ) && count( $media_ids ) > 0 ) {
 			$validated = $this->validate_media_ids( $media_ids, $request, 'media_ids' );
 			if ( is_wp_error( $validated ) ) {
+				$this->record_batch_run_failure( $batch_context, $requested_media_ids, $validated, array() );
 				return $validated;
 			}
 			$media_items = $this->build_media_items( $media_ids );
 		}
 
+		$dispatched_media_ids = $this->extract_media_ids_from_analyze_payload( $media_items );
+		$unreadable_media_ids = $this->diff_media_ids( $requested_media_ids, $dispatched_media_ids );
+
 		if ( empty( $media_items ) ) {
-			return new WP_Error( 'no_media_items', 'At least one media item is required', array( 'status' => 400 ) );
+			$error = new WP_Error( 'no_media_items', 'At least one media item is required', array( 'status' => 400 ) );
+			$this->record_batch_run_failure( $batch_context, $requested_media_ids, $error, $unreadable_media_ids );
+			return $error;
 		}
 
 		if ( 'multipart' === $transport ) {
-			$multipart_result = $this->analyze_media_multipart( $media_items );
+			$multipart_result = $this->analyze_media_multipart( $media_items, $unreadable_media_ids );
 			if ( is_wp_error( $multipart_result ) ) {
+				$this->record_batch_run_failure( $batch_context, $requested_media_ids, $multipart_result, $unreadable_media_ids );
 				// E15-11 Slice 3.2: surface dispatch failures (cap exceeded,
 				// no readable files, proxy misconfig) in server logs so an
 				// operator can correlate a stuck WP scan with the underlying
@@ -198,6 +235,7 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 					)
 				);
 			}
+			$this->record_batch_run_success_from_response( $batch_context, $multipart_result, $media_items, $unreadable_media_ids );
 			return $multipart_result;
 		}
 
@@ -213,7 +251,10 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 			$data = $response->get_data();
 			if ( is_array( $data ) ) {
 				$this->store_job_media_ids( (string) ( $data['id'] ?? '' ), $this->extract_media_ids_from_analyze_payload( $media_items ) );
+				$this->record_batch_run_success( $batch_context, (string) ( $data['id'] ?? '' ), $this->extract_media_ids_from_analyze_payload( $media_items ), $unreadable_media_ids, $response );
 			}
+		} elseif ( is_wp_error( $response ) ) {
+			$this->record_batch_run_failure( $batch_context, $requested_media_ids, $response, $unreadable_media_ids );
 		}
 
 		return $response;
@@ -245,7 +286,7 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 	private const MULTIPART_MAX_IMAGES = 5;
 	private const MULTIPART_MAX_BYTES  = 25 * 1024 * 1024;
 
-	private function analyze_media_multipart( array $media_items ): WP_REST_Response|WP_Error {
+	private function analyze_media_multipart( array $media_items, array &$unreadable_media_ids = array() ): WP_REST_Response|WP_Error {
 		$tier_limit          = $this->get_current_tier_batch_limit();
 		$effective_max_count = min( $tier_limit, self::MULTIPART_MAX_IMAGES );
 		if ( count( $media_items ) > $effective_max_count ) {
@@ -279,11 +320,13 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 			}
 			$path = get_attached_file( $media_id, true );
 			if ( ! is_string( $path ) || '' === $path || ! is_readable( $path ) ) {
+				$unreadable_media_ids[] = $media_id;
 				Telemetry::log_line( sprintf( '[acx] skipping media_id=%d for multipart upload: file not readable', $media_id ) );
 				continue;
 			}
 			$bytes = @file_get_contents( $path );
 			if ( false === $bytes || '' === $bytes ) {
+				$unreadable_media_ids[] = $media_id;
 				Telemetry::log_line( sprintf( '[acx] skipping media_id=%d for multipart upload: empty file', $media_id ) );
 				continue;
 			}
@@ -391,11 +434,66 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 		if ( $response instanceof WP_REST_Response ) {
 			$data = $response->get_data();
 			if ( is_array( $data ) ) {
+				$this->batch_run_repository->record_observed_job_status(
+					$this->get_tenant_id(),
+					$job_id,
+					(string) ( $data['status'] ?? 'pending' )
+				);
+				$batch_run_id = $this->lookup_batch_run_id_for_job( $job_id );
+				if ( '' !== $batch_run_id ) {
+					$data['batch_run_id'] = $batch_run_id;
+					$response->set_data( $data );
+				}
 				$this->maybe_trigger_projection_sync( $data );
 			}
 		}
 
 		return $response;
+	}
+
+	public function get_batch_run_status( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$run_id = sanitize_text_field( (string) $request->get_param( 'run_id' ) );
+		if ( '' === $run_id ) {
+			return new WP_Error( 'missing_run_id', 'Batch run ID is required.', array( 'status' => 400 ) );
+		}
+
+		$this->refresh_stale_batch_run_children( $run_id );
+		$computed = $this->batch_run_repository->get_status( $this->get_tenant_id(), $run_id );
+		if ( null === $computed ) {
+			return new WP_Error( 'batch_run_not_found', 'Batch run not found.', array( 'status' => 404 ) );
+		}
+
+		return new WP_REST_Response( $computed, 200 );
+	}
+
+	public function record_client_batch_failure( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$run_id = sanitize_text_field( (string) $request->get_param( 'run_id' ) );
+		if ( '' === $run_id ) {
+			return new WP_Error( 'missing_run_id', 'Batch run ID is required.', array( 'status' => 400 ) );
+		}
+
+		$media_ids = $this->extract_requested_media_ids( null, $request->get_param( 'media_ids' ) );
+		if ( array() === $media_ids ) {
+			return new WP_Error( 'missing_media_ids', 'Media IDs are required.', array( 'status' => 400 ) );
+		}
+
+		$this->batch_run_repository->record_batch_failure(
+			$this->get_tenant_id(),
+			$run_id,
+			max( 0, absint( $request->get_param( 'batch_index' ) ) ),
+			max( count( $media_ids ), absint( $request->get_param( 'submitted_total' ) ) ),
+			$media_ids,
+			new WP_Error( 'client_transport_error', 'Client could not submit this batch to WordPress.' ),
+			array()
+		);
+
+		return new WP_REST_Response(
+			array(
+				'batch_run_id' => $run_id,
+				'status'       => 'recorded',
+			),
+			202
+		);
 	}
 
 	public function stream_job_progress( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -476,6 +574,7 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 			$completed  = absint( $progress['completed'] ?? 0 );
 			$total      = absint( $progress['total'] ?? 0 );
 			$status     = isset( $data['status'] ) ? sanitize_text_field( (string) $data['status'] ) : 'pending';
+			$this->batch_run_repository->record_observed_job_status( $this->get_tenant_id(), $job_id, $status );
 			$phase      = isset( $progress['phase'] ) ? sanitize_text_field( (string) $progress['phase'] ) : null;
 			$job_type   = isset( $data['type'] ) ? sanitize_text_field( (string) $data['type'] ) : 'analyze';
 			$event_type = 'scan_progress';
@@ -620,6 +719,11 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 			$payload['last_error_code'] = sanitize_text_field( (string) $progress['last_error_code'] );
 		}
 
+		$batch_run_id = $this->lookup_batch_run_id_for_job( $job_id );
+		if ( '' !== $batch_run_id ) {
+			$payload['batch_run_id'] = $batch_run_id;
+		}
+
 		return $payload;
 	}
 
@@ -710,6 +814,185 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 
 	private function projection_sync_transient_key( string $job_id, int $snapshot_version ): string {
 		return self::PROJECTION_SYNC_TRANSIENT_PREFIX . md5( $job_id . ':' . (string) $snapshot_version );
+	}
+
+	/**
+	 * @return array{id:string,batch_index:int,submitted_total:int}|null
+	 */
+	private function extract_batch_run_context( WP_REST_Request $request ): ?array {
+		$run_id = sanitize_text_field( (string) $request->get_param( 'batch_run_id' ) );
+		if ( '' === $run_id ) {
+			return null;
+		}
+
+		return array(
+			'id'              => $run_id,
+			'batch_index'     => max( 0, absint( $request->get_param( 'batch_index' ) ) ),
+			'submitted_total' => max( 0, absint( $request->get_param( 'submitted_total' ) ) ),
+		);
+	}
+
+	/**
+	 * @param mixed $media_items_param
+	 * @param mixed $media_ids
+	 * @return int[]
+	 */
+	private function extract_requested_media_ids( $media_items_param, $media_ids ): array {
+		if ( is_array( $media_items_param ) ) {
+			return array_values(
+				array_filter(
+					array_map(
+						static function ( $item ): int {
+							return absint( is_array( $item ) ? ( $item['media_id'] ?? 0 ) : 0 );
+						},
+						$media_items_param
+					)
+				)
+			);
+		}
+
+		if ( is_array( $media_ids ) ) {
+			return array_values(
+				array_filter(
+					array_map( 'absint', $media_ids )
+				)
+			);
+		}
+
+		return array();
+	}
+
+	/**
+	 * @param int[] $left
+	 * @param int[] $right
+	 * @return int[]
+	 */
+	private function diff_media_ids( array $left, array $right ): array {
+		$right_lookup = array_fill_keys( $right, true );
+		return array_values(
+			array_filter(
+				$left,
+				static function ( int $media_id ) use ( $right_lookup ): bool {
+					return ! isset( $right_lookup[ $media_id ] );
+				}
+			)
+		);
+	}
+
+	/**
+	 * @param array{id:string,batch_index:int,submitted_total:int}|null $batch_context
+	 * @param int[] $media_ids
+	 * @param int[] $unreadable_media_ids
+	 */
+	private function record_batch_run_success_from_response( ?array $batch_context, WP_REST_Response $response, array $media_items, array $unreadable_media_ids ): void {
+		$data = $response->get_data();
+		if ( ! is_array( $data ) ) {
+			return;
+		}
+
+		$this->record_batch_run_success(
+			$batch_context,
+			(string) ( $data['id'] ?? '' ),
+			$this->extract_media_ids_from_analyze_payload( $media_items ),
+			$unreadable_media_ids,
+			$response
+		);
+	}
+
+	/**
+	 * @param array{id:string,batch_index:int,submitted_total:int}|null $batch_context
+	 * @param int[] $media_ids
+	 * @param int[] $unreadable_media_ids
+	 */
+	private function record_batch_run_success( ?array $batch_context, string $job_id, array $media_ids, array $unreadable_media_ids, WP_REST_Response $response ): void {
+		if ( null === $batch_context || '' === $job_id ) {
+			return;
+		}
+
+		$this->batch_run_repository->record_job_submission(
+			$this->get_tenant_id(),
+			$batch_context['id'],
+			$batch_context['batch_index'],
+			$batch_context['submitted_total'],
+			$job_id,
+			$media_ids,
+			$unreadable_media_ids
+		);
+
+		$data = $response->get_data();
+		if ( is_array( $data ) ) {
+			$data['batch_run_id'] = $batch_context['id'];
+			$response->set_data( $data );
+		}
+
+		set_transient( $this->job_batch_run_transient_key( $job_id ), $batch_context['id'], self::JOB_TRACKING_TTL_SECONDS );
+	}
+
+	/**
+	 * @param array{id:string,batch_index:int,submitted_total:int}|null $batch_context
+	 * @param int[] $media_ids
+	 * @param int[] $unreadable_media_ids
+	 */
+	private function record_batch_run_failure( ?array $batch_context, array $media_ids, WP_Error $error, array $unreadable_media_ids ): void {
+		if ( null === $batch_context ) {
+			return;
+		}
+
+		$this->batch_run_repository->record_batch_failure(
+			$this->get_tenant_id(),
+			$batch_context['id'],
+			$batch_context['batch_index'],
+			$batch_context['submitted_total'],
+			$media_ids,
+			$error,
+			$unreadable_media_ids
+		);
+	}
+
+	private function lookup_batch_run_id_for_job( string $job_id ): string {
+		$run_id = $this->batch_run_repository->lookup_run_id_for_job( $this->get_tenant_id(), $job_id );
+		if ( '' !== $run_id ) {
+			return $run_id;
+		}
+
+		$value = get_transient( $this->job_batch_run_transient_key( $job_id ) );
+		return is_string( $value ) ? sanitize_text_field( $value ) : '';
+	}
+
+	private function job_batch_run_transient_key( string $job_id ): string {
+		return self::JOB_BATCH_RUN_TRANSIENT_PREFIX . $job_id;
+	}
+
+	private function refresh_stale_batch_run_children( string $run_id ): void {
+		$tenant_id = $this->get_tenant_id();
+		$job_ids   = $this->batch_run_repository->get_stale_non_terminal_job_ids( $tenant_id, $run_id, self::BATCH_RUN_STATUS_STALE_SECONDS );
+
+		foreach ( $job_ids as $job_id ) {
+			$response = $this->proxy_request(
+				'GET',
+				sprintf( '/recognition/jobs/%s', $job_id ),
+				array(),
+				array(
+					'tenant_id' => $tenant_id,
+				),
+				self::REQUEST_CLASS_POST_SCAN_READ
+			);
+
+			if ( ! ( $response instanceof WP_REST_Response ) ) {
+				continue;
+			}
+
+			$data = $response->get_data();
+			if ( ! is_array( $data ) ) {
+				continue;
+			}
+
+			$this->batch_run_repository->record_observed_job_status(
+				$tenant_id,
+				$job_id,
+				(string) ( $data['status'] ?? 'pending' )
+			);
+		}
 	}
 
 	private function resolve_sync_pull_job(): ?SyncPullJobInterface {

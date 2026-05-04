@@ -1,6 +1,6 @@
 import { __, sprintf } from '@wordpress/i18n';
 
-import type { JobProgress, JobStatusResponse } from '../api/recognition/types/scan';
+import type { BatchRunStatus, JobProgress, JobStatusResponse } from '../api/recognition/types/scan';
 import type { PersistedJob } from './useJobPersistence';
 import type { JobStatus } from './useJobProgressStream';
 
@@ -16,6 +16,7 @@ export const derivePipelinePhase = (
   latestScanJob: PersistedJob | null,
   latestClusterJob: PersistedJob | null,
   scanStatus: JobStatusResponse | undefined,
+  batchRunStatus?: BatchRunStatus,
 ): PipelinePhase => {
   // Trust the backend when it reports awaiting_projection.  The previous guard
   // `(latestClusterJob || latestScanJob)` prevented entering 'projecting' when
@@ -34,6 +35,14 @@ export const derivePipelinePhase = (
   }
   if (latestClusterJob) {
     return 'clustering';
+  }
+  if (batchRunStatus) {
+    if (!batchRunStatus.terminal_state) {
+      return 'scanning';
+    }
+    if (batchRunStatus.failed_total > 0 || batchRunStatus.cancelled_total > 0) {
+      return 'idle';
+    }
   }
   if (latestScanJob) {
     return 'scanning';
@@ -66,6 +75,7 @@ interface StatusTextParams {
   sseProgress: JobProgress | null;
   activeJobIds: string[];
   scanStatus: JobStatusResponse | undefined;
+  batchRunStatus?: BatchRunStatus;
   latestJobId: string | null;
   scanPending: boolean;
 }
@@ -76,6 +86,7 @@ export const buildStatusText = ({
   sseProgress,
   activeJobIds,
   scanStatus,
+  batchRunStatus,
   latestJobId,
   scanPending,
 }: StatusTextParams): string | undefined => {
@@ -88,6 +99,23 @@ export const buildStatusText = ({
 
   if (sseProgress?.phase === 'awaiting_projection' || scanStatus?.progress?.phase === 'awaiting_projection') {
     return __('Syncing projected results…', 'alt-context');
+  }
+
+  if (batchRunStatus && batchRunStatus.submitted_total > 0) {
+    if (batchRunStatus.failed_total > 0) {
+      return sprintf(
+        __('Processed %1$d/%2$d (%3$d failed)', 'alt-context'),
+        batchRunStatus.completed_total,
+        batchRunStatus.submitted_total,
+        batchRunStatus.failed_total,
+      );
+    }
+
+    const processedTotal =
+      batchRunStatus.completed_total + batchRunStatus.failed_total + batchRunStatus.cancelled_total;
+    if (!batchRunStatus.terminal_state) {
+      return sprintf(__('Processed %1$d/%2$d images', 'alt-context'), processedTotal, batchRunStatus.submitted_total);
+    }
   }
 
   if (activeJobIds.length > 0) {
@@ -135,6 +163,7 @@ interface ScanProgressParams {
   activeJobs: PersistedJob[];
   sseProgress: JobProgress | null;
   latestScanJob: PersistedJob | null;
+  batchRunStatus?: BatchRunStatus;
   fallbackProgress: JobProgress | null | undefined;
 }
 
@@ -144,8 +173,19 @@ export const buildScanProgress = ({
   activeJobs,
   sseProgress,
   latestScanJob,
+  batchRunStatus,
   fallbackProgress,
 }: ScanProgressParams): JobProgress | null => {
+  if (batchRunStatus && batchRunStatus.submitted_total > 0) {
+    const processedTotal = batchRunStatus.completed_total + batchRunStatus.failed_total + batchRunStatus.cancelled_total;
+    return {
+      completed: processedTotal,
+      total: batchRunStatus.submitted_total,
+      phase: batchRunStatus.terminal_state ? 'complete' : 'detecting',
+      images_processed: processedTotal,
+    };
+  }
+
   if (currentPhase === 'clustering' || currentPhase === 'projecting') {
     return fallbackProgress ?? null;
   }
@@ -191,6 +231,7 @@ interface ScanRunningParams {
   activeJobIds: string[];
   sseStatus: JobStatus;
   scanStatus: JobStatusResponse | undefined;
+  batchRunStatus?: BatchRunStatus;
 }
 
 export const isScanRunning = ({
@@ -199,8 +240,12 @@ export const isScanRunning = ({
   activeJobIds,
   sseStatus,
   scanStatus,
+  batchRunStatus,
 }: ScanRunningParams): boolean => {
   if (scanPending || waitingForCompletion) {
+    return true;
+  }
+  if (batchRunStatus && !batchRunStatus.terminal_state) {
     return true;
   }
   if (activeJobIds.length > 0) {

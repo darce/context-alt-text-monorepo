@@ -10,8 +10,11 @@ import {
 import {
   acknowledgeProjection,
   clusterFaces,
+  fetchBatchRunStatus,
   fetchScanStatus,
   cancelScanJob,
+  type BatchAnalyzeResponse,
+  type BatchRunStatus,
   type ClusterListResponse,
   getRecognitionCluster,
   listRecognitionClusters,
@@ -34,8 +37,11 @@ export const getJobRefetchInterval = (data: JobStatusResponse | undefined): numb
   return isActive || isAwaitingProjection ? 1500 : false;
 };
 
-export const useScanIdentities = (options?: UseMutationOptions<AnalyzeResponse[], Error, number[], unknown>) =>
-  useMutation<AnalyzeResponse[], Error, number[]>({
+export const getBatchRunRefetchInterval = (data: BatchRunStatus | undefined): number | false =>
+  data && !data.terminal_state ? 1500 : false;
+
+export const useScanIdentities = (options?: UseMutationOptions<BatchAnalyzeResponse, Error, number[], unknown>) =>
+  useMutation<BatchAnalyzeResponse, Error, number[]>({
     mutationFn: async (mediaIds) => {
       if (mediaIds.length === 0) {
         throw new Error('No media IDs provided for analysis.');
@@ -83,6 +89,20 @@ export const useMultiScanStatus = (jobIds: string[], enabled = true) =>
     ),
   });
 
+export const useBatchRunStatus = (runId: string | null, enabled = true) =>
+  useQuery<BatchRunStatus>({
+    queryKey: queryKeys.jobs.batchRun(runId),
+    enabled: Boolean(runId) && enabled,
+    queryFn: () => fetchBatchRunStatus(runId!),
+    refetchInterval: (query) => getBatchRunRefetchInterval(query.state.data),
+    retry: (failureCount, error) => {
+      if (error.message.includes('404')) {
+        return false;
+      }
+      return failureCount < 3;
+    },
+  });
+
 /**
  * Combined hook for tracking both single and multi-scan status.
  * Reduces hook count in components that need both status trackers.
@@ -92,12 +112,19 @@ export interface CombinedScanStatus {
   scanStatusQuery: UseQueryResult<JobStatusResponse, Error>;
   /** Status queries for all active batch jobs */
   multiScanStatus: UseQueryResult<JobStatusResponse, Error>[];
+  /** Aggregate status for the active batch run */
+  batchRunStatusQuery: UseQueryResult<BatchRunStatus, Error>;
 }
 
-export const useCombinedScanStatus = (jobId: string | null, activeJobIds: string[]): CombinedScanStatus => {
+export const useCombinedScanStatus = (
+  jobId: string | null,
+  activeJobIds: string[],
+  batchRunId: string | null,
+): CombinedScanStatus => {
   const scanStatusQuery = useScanStatus(jobId, Boolean(jobId));
   const multiScanStatus = useMultiScanStatus(activeJobIds, activeJobIds.length > 0);
-  return { scanStatusQuery, multiScanStatus };
+  const batchRunStatusQuery = useBatchRunStatus(batchRunId, Boolean(batchRunId));
+  return { scanStatusQuery, multiScanStatus, batchRunStatusQuery };
 };
 
 export const useClusterIdentities = (options?: UseMutationOptions<ClusterResponse, Error, void, unknown>) =>

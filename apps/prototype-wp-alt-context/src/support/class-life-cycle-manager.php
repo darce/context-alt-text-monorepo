@@ -35,6 +35,8 @@ class LifecycleManager {
 		'acx_identity_members',
 		'acx_sync_state',
 		'acx_persons',
+		'acx_batch_runs',
+		'acx_batch_run_failures',
 		'acx_sync_outbox',
 		'acx_topology_commands',
 		'acx_sync_conflicts',
@@ -447,6 +449,8 @@ class LifecycleManager {
 		$members_table   = $wpdb->prefix . 'acx_identity_members';
 		$sync_table      = $wpdb->prefix . 'acx_sync_state';
 		$persons_table   = $wpdb->prefix . 'acx_persons';
+		$batch_runs_table = $wpdb->prefix . 'acx_batch_runs';
+		$batch_failures_table = $wpdb->prefix . 'acx_batch_run_failures';
 		$outbox_table    = $wpdb->prefix . 'acx_sync_outbox';
 		$topology_table  = $wpdb->prefix . 'acx_topology_commands';
 		$conflicts_table = $wpdb->prefix . 'acx_sync_conflicts';
@@ -522,6 +526,37 @@ class LifecycleManager {
 			last_curation_failed_at datetime DEFAULT NULL,
 			updated_at datetime NOT NULL,
 			PRIMARY KEY  (stream_name)
+		) {$charset_collate};";
+
+		$batch_runs_sql = "CREATE TABLE {$batch_runs_table} (
+			run_id char(36) NOT NULL,
+			tenant_id varchar(64) NOT NULL,
+			submitted_total int(11) unsigned NOT NULL DEFAULT 0,
+			accepted_total int(11) unsigned NOT NULL DEFAULT 0,
+			completed_total int(11) unsigned NOT NULL DEFAULT 0,
+			failed_total int(11) unsigned NOT NULL DEFAULT 0,
+			cancelled_total int(11) unsigned NOT NULL DEFAULT 0,
+			unreadable_media_ids_json longtext NOT NULL,
+			child_jobs_json longtext NOT NULL,
+			terminal_state tinyint(1) NOT NULL DEFAULT 0,
+			created_at datetime NOT NULL,
+			updated_at datetime NOT NULL,
+			PRIMARY KEY  (run_id),
+			KEY idx_tenant_created (tenant_id, created_at)
+		) {$charset_collate};";
+
+		$batch_failures_sql = "CREATE TABLE {$batch_failures_table} (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			run_id char(36) NOT NULL,
+			tenant_id varchar(64) NOT NULL,
+			batch_index int(11) unsigned NOT NULL DEFAULT 0,
+			media_ids_json longtext NOT NULL,
+			error_code varchar(64) NOT NULL,
+			error_message text NOT NULL,
+			created_at datetime NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY uq_run_batch (run_id, batch_index),
+			KEY idx_tenant_run (tenant_id, run_id)
 		) {$charset_collate};";
 
 		$outbox_sql = "CREATE TABLE {$outbox_table} (
@@ -602,5 +637,7 @@ class LifecycleManager {
 		dbDelta( $outbox_sql );
 		dbDelta( $topology_sql );
 		dbDelta( $conflicts_sql );
+		dbDelta( $batch_runs_sql );
+		dbDelta( $batch_failures_sql );
 	}
 }

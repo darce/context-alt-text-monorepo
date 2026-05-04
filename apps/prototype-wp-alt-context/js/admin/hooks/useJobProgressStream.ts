@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { JobProgress } from '../api/recognition/types/scan';
 import { getConfig, getEndpoint } from '../api/config';
@@ -7,12 +7,17 @@ import { broadcastJobProgress, parseDoneEvent, parseProgressEvent } from './useJ
 
 export type JobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'clustering';
 
+export const JOB_PROGRESS_STALL_THRESHOLD_MS = 30_000;
+
 export interface JobProgressStream {
   progress: JobProgress | null;
   status: JobStatus;
   isOnline: boolean;
   etaSeconds: number | null;
   isPrimary: boolean;
+  lastEventAt: number | null;
+  stalledForSeconds: number | null;
+  retry: () => void;
 }
 
 /**
@@ -23,10 +28,24 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
   const [status, setStatus] = useState<JobStatus>('pending');
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
+  const [lastEventAt, setLastEventAt] = useState<number | null>(null);
+  const [stalledForSeconds, setStalledForSeconds] = useState<number | null>(null);
+  const [connectionNonce, setConnectionNonce] = useState(0);
   const startTimeRef = useRef<number | null>(null);
+  const streamOpenedAtRef = useRef<number | null>(null);
   const progressRef = useRef<JobProgress | null>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
 
   const { isPrimary, channel } = useJobCoordination(jobId);
+
+  const retry = useCallback(() => {
+    setLastEventAt(null);
+    setStalledForSeconds(null);
+    streamOpenedAtRef.current = Date.now();
+    eventSourceRef.current?.close();
+    eventSourceRef.current = null;
+    setConnectionNonce((value) => value + 1);
+  }, []);
 
   useEffect(() => {
     const goOnline = () => setIsOnline(true);
@@ -44,9 +63,39 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
     setProgress(null);
     setStatus('pending');
     setEtaSeconds(null);
+    setLastEventAt(null);
+    setStalledForSeconds(null);
     startTimeRef.current = null;
+    streamOpenedAtRef.current = null;
     progressRef.current = null;
   }, [jobId]);
+
+  useEffect(() => {
+    if (!jobId || !isOnline || !isPrimary) {
+      setStalledForSeconds(null);
+      return;
+    }
+
+    if (status === 'completed' || status === 'failed') {
+      setStalledForSeconds(null);
+      return;
+    }
+
+    const updateStallState = () => {
+      const baseline = lastEventAt ?? streamOpenedAtRef.current;
+      if (!baseline) {
+        setStalledForSeconds(null);
+        return;
+      }
+
+      const elapsedMs = Date.now() - baseline;
+      setStalledForSeconds(elapsedMs >= JOB_PROGRESS_STALL_THRESHOLD_MS ? Math.floor(elapsedMs / 1000) : null);
+    };
+
+    updateStallState();
+    const intervalId = window.setInterval(updateStallState, 1000);
+    return () => window.clearInterval(intervalId);
+  }, [connectionNonce, isOnline, isPrimary, jobId, lastEventAt, status]);
 
   useEffect(() => {
     if (!channel || isPrimary) {
@@ -86,11 +135,16 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
     }
 
     let closed = false;
+    streamOpenedAtRef.current = Date.now();
     let eventSource: EventSource | null = new EventSource(streamUrl.toString());
+    eventSourceRef.current = eventSource;
 
     const close = () => {
       closed = true;
       eventSource?.close();
+      if (eventSourceRef.current === eventSource) {
+        eventSourceRef.current = null;
+      }
       eventSource = null;
     };
 
@@ -105,10 +159,14 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
         return;
       }
 
+      const receivedAt = Date.now();
+
       progressRef.current = parsed.progress;
       setProgress(parsed.progress);
       setStatus(parsed.status);
       setEtaSeconds(parsed.etaSeconds);
+      setLastEventAt(receivedAt);
+      setStalledForSeconds(null);
       broadcastJobProgress(channel, parsed);
     });
 
@@ -123,9 +181,12 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
         return;
       }
 
+      setLastEventAt(Date.now());
+
       setStatus(parsed.status);
       setProgress(parsed.progress);
       setEtaSeconds(null);
+      setStalledForSeconds(null);
       broadcastJobProgress(channel, {
         progress: parsed.progress,
         status: parsed.status,
@@ -163,7 +224,7 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
     };
 
     return () => close();
-  }, [jobId, isOnline, isPrimary, channel]);
+  }, [channel, connectionNonce, isOnline, isPrimary, jobId]);
 
-  return { progress, status, isOnline, etaSeconds, isPrimary };
+  return { progress, status, isOnline, etaSeconds, isPrimary, lastEventAt, stalledForSeconds, retry };
 };

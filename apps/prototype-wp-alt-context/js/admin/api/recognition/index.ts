@@ -9,7 +9,10 @@
 export type {
   AnalyzeRequest,
   AnalyzeResponse,
+  BatchAnalyzeResponse,
+  BatchRunStatus,
   DataSource,
+  FailedBatchStatus,
   JobProgress,
   JobStatusResponse,
   ClusterResponse,
@@ -85,6 +88,7 @@ export { DATA_SOURCE, PROJECTION_STATUS } from './types';
 export {
   scanFaces,
   scanFacesBatched,
+  fetchBatchRunStatus,
   fetchScanStatus,
   cancelScanJob,
   clusterFaces,

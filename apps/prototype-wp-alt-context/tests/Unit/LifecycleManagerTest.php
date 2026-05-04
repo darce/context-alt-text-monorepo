@@ -72,7 +72,7 @@ class LifecycleManagerTest extends TestCase
 
         $queries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
         $this->assertIsArray($queries);
-        $this->assertCount(7, $queries);
+        $this->assertCount(9, $queries);
 
         $personsSql = $queries[0];
         $clustersSql = $queries[1];
@@ -81,6 +81,8 @@ class LifecycleManagerTest extends TestCase
         $outboxSql = $queries[4];
         $topologySql = $queries[5];
         $conflictsSql = $queries[6];
+        $batchRunsSql = $queries[7];
+        $batchFailuresSql = $queries[8];
 
         $this->assertStringContainsString('CREATE TABLE wp_acx_persons', $personsSql);
         $this->assertStringContainsString('person_uuid', $personsSql);
@@ -125,6 +127,16 @@ class LifecycleManagerTest extends TestCase
         $this->assertStringContainsString('backend_proposed_value', $conflictsSql);
         $this->assertStringContainsString('resolution_status', $conflictsSql);
         $this->assertStringContainsString('UNIQUE KEY uq_projection_conflict', $conflictsSql);
+
+        $this->assertStringContainsString('CREATE TABLE wp_acx_batch_runs', $batchRunsSql);
+        $this->assertStringContainsString('tenant_id', $batchRunsSql);
+        $this->assertStringContainsString('child_jobs_json', $batchRunsSql);
+        $this->assertStringContainsString('terminal_state', $batchRunsSql);
+
+        $this->assertStringContainsString('CREATE TABLE wp_acx_batch_run_failures', $batchFailuresSql);
+        $this->assertStringContainsString('run_id', $batchFailuresSql);
+        $this->assertStringContainsString('batch_index', $batchFailuresSql);
+        $this->assertStringContainsString('error_code', $batchFailuresSql);
     }
 
     public function testActivateProjectionDbDeltaIsIdempotentAcrossReactivation(): void
@@ -133,7 +145,7 @@ class LifecycleManagerTest extends TestCase
         $this->manager->activate();
 
         $queries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
-        $this->assertCount(14, $queries);
+        $this->assertCount(18, $queries);
         $this->assertStringNotContainsString('DROP TABLE', \implode("\n", $queries));
     }
 

@@ -291,6 +291,11 @@ $PSQL -h 127.0.0.1 -U context -d postgres -c "DROP DATABASE IF EXISTS context_al
 # 4. Reset the canonical DB + WP mirror in one shot (per [sr-010])
 cd /Users/daniel/Development/context-alt-text-monorepo
 make reset-local WP_PATH="$LOCAL_WP_ROOT/app/public" CONFIRM_LOCAL_RESET="RESET"
+# Repo-local LocalWP admin base: http://localhost:10010/wp-admin/
+# `wp-context-alt-text.local` is not a valid address for this install.
+# Provenance note: this LocalWP address correction, the matching runbook update,
+# and the OCI reset-doc example belong to E16-1a operator guidance on
+# `feature/e16-1`. They are not a standalone main-branch maintenance patch.
 
 # 5. Restart description service; verify
 make start
@@ -336,6 +341,7 @@ Closed during planning review on 2026-05-03 with operator authorization. These a
 2. **Reset procedure** — **Resolved: local only now.** E16-1a ships a local `.env` fix + local pgdata wipe + legacy DB drop. VM env-file updates move to deferred sub-task **E16-1a-vm**, run only after the local pipeline is observed clean end-to-end. Theme E does not block on the VM step.
 3. **E16-1g scope** — **Resolved: backend-empty banner + button for v0.4.1.** Mirror reconciliation surfaces a banner with an explicit "Reset mirror" button when the backend snapshot is empty but WP still has local clusters. Broader UUID-by-UUID divergence detection plus any auto-detect cron / >50 % outbox-failure-rate threshold are explicitly **out of scope** for v0.4.1 and tracked as v0.4.2+ follow-ons.
 4. **E16-1h placement** — **Resolved: keep exploratory** inside E16 at the lowest priority. Promote to a standalone cluster-correctness task plan only if investigation reveals the 6× similarity=1.0 ingestion is a deeper replay/dedupe bug rather than a one-time artifact of the broken DB-rename state.
+5. **LocalWP address docs provenance** — **Resolved: branch-owned E16-1a operator guidance.** The LocalWP admin-base correction in [apps/prototype-wp-alt-context/docs/localwp-development-runbook.md](apps/prototype-wp-alt-context/docs/localwp-development-runbook.md) and the matching `ACX_RESET_SITE_URL` localhost example in [infra/oci/README.md](infra/oci/README.md) ship as part of E16-1a's operator foundation. Historical decision `codex_doc_update_e16_1_localwp_admin_address` (id 2724) mis-attributed that slice to `main`; treat the superseding E16-1 branch decision as the authoritative provenance for those doc lines.
 
 ## Acceptance Criteria for the Theme as a Whole
 
@@ -373,30 +379,30 @@ Closed during planning review on 2026-05-03 with operator authorization. These a
 
 ### Checklist for E16-1a: Complete local DB rename (foundation)
 
-- [x] Guardrail-only code slice landed (`78d2b0e5` + `a3dd4e90`); remaining items below are still operator workflow, not already executed branch steps.
-- [ ] Update `apps/prototype-description-service/.env:25` to `DB_NAME=alt_context_service`.
+- [x] Guardrail-only code slice landed (`78d2b0e5` + `a3dd4e90`); local `.env` now points at `alt_context_service`. Remaining items below are still operator verification steps, not branch-local code changes.
+- [x] Update `apps/prototype-description-service/.env:25` to `DB_NAME=alt_context_service`.
 - [ ] Run `make reset-local WP_PATH="$LOCAL_WP_ROOT/app/public" CONFIRM_LOCAL_RESET="RESET"` against the canonical DB.
 - [ ] Drop legacy DB: `psql -h 127.0.0.1 -U context -d postgres -c 'DROP DATABASE IF EXISTS context_alt_text_service;'`.
 - [ ] Restart description service; confirm via `pg_stat_activity` that only `alt_context_service` is bound.
-- [ ] Tick the local items in `docs/tasks/tech-debt/rename-database-context-alt-text-to-alt-context.md`.
+- [x] Tick the local items in `docs/tasks/tech-debt/rename-database-context-alt-text-to-alt-context.md`.
 - [ ] Verification: 100-item scan persists rows in `alt_context_service` (legacy DB no longer exists locally).
 
 ### Checklist for E16-1b: BatchRun aggregate + multipart submit failure surfacing
 
-- [ ] Add `packages/shared-contracts/schemas/wp-batch-run.schema.json` defining the aggregate fields.
-- [ ] Regenerate TS + PHP types via `make schemas` (or equivalent).
-- [ ] Add `acx/v1/recognition/batch-runs/<run_id>` REST surface returning the aggregate.
-- [ ] Choose and implement either `batch_run_id` embedded on every per-child SSE event OR a sibling `/batch-runs/<run_id>/stream` topic (record the choice in this doc).
-- [ ] Plugin storage decision (`wp_acx_*` table vs transient) recorded and implemented.
-- [ ] Frontend state machine consumes aggregate; phase / clustering / `removeJob` gated on aggregate `terminal_state`.
-- [ ] UI shows `Processed completed/submitted (X failed)` with a failed-batch dropdown when failures > 0.
-- [ ] Tests: earlier child fails while latest completes (no clustering); latest completes while earlier queued (no ✓); pre-`scan_job` 4xx batch surfaced in `failed_batches`; aggregate terminal triggers clustering exactly once.
+- [x] Add `packages/shared-contracts/schemas/wp-batch-run.schema.json` defining the aggregate fields.
+- [x] Regenerate TS + PHP types via `make schemas` (or equivalent).
+- [x] Add `acx/v1/recognition/batch-runs/<run_id>` REST surface returning the aggregate.
+- [x] Choose and implement `batch_run_id` embedded on every per-child SSE event; the frontend hydrates the aggregate via the dedicated REST surface rather than a sibling aggregate stream.
+- [x] Plugin storage decision recorded and implemented via the plugin-owned `wp_acx_batch_runs` / `wp_acx_batch_run_failures` tables.
+- [x] Frontend state machine consumes aggregate; phase / clustering / `removeJob` gated on aggregate `terminal_state`.
+- [x] UI shows `Processed completed/submitted (X failed)` with a failed-batch dropdown when failures > 0.
+- [x] Tests cover earlier child fails while latest completes (no clustering), latest completes while earlier queued (no ✓), pre-`scan_job` 4xx batch surfaced in `failed_batches`, and aggregate terminal triggering clustering exactly once.
 
 ### Checklist for E16-1c: Frontend stall detection
 
-- [ ] Add `lastEventAt` per stream in `useJobProgressStream`.
-- [ ] Stall threshold (default 30 000 ms) + non-terminal phase ⇒ "Stuck — last update Xs ago" badge with Retry / Cancel.
-- [ ] Tests: simulate stream silence; assert badge appears; assert Retry re-subscribes.
+- [x] Add `lastEventAt` per stream in `useJobProgressStream`.
+- [x] Stall threshold (default 30 000 ms) + non-terminal phase ⇒ "Stuck - last update Xs ago" badge with Retry / Cancel.
+- [x] Tests simulate stream silence, assert the badge appears, and assert Retry re-subscribes.
 
 ### Checklist for E16-1d: Suggestion-panel empty-state taxonomy
 
@@ -422,7 +428,7 @@ Closed during planning review on 2026-05-03 with operator authorization. These a
 ### Checklist for E16-1g: WP-mirror reconciliation when backend is empty
 
 - [x] Detect divergence on dashboard load (banner landed on `09ed04f8` via the `last_snapshot_version === 0 && localClusterCount > 0` heuristic; UUID-by-UUID divergence comparison remains a follow-up — see review finding `E16-1G-BR-01`).
-- [x] "Reset mirror" button truncates `wp_acx_clusters | wp_acx_identity_members | wp_acx_sync_outbox`, zeroes the local snapshot state, and re-arms sync (`13ee758a`).
+- [x] "Reset mirror" button truncates `wp_acx_clusters | wp_acx_identity_members | wp_acx_sync_outbox`, zeroes the local snapshot state, and re-arms sync (`e5256e1c`).
 - [ ] Auto-detect cron deferred to v0.4.2+ per Resolved Decisions §3.
 
 ### Checklist for E16-1h: Cluster-membership integrity check
@@ -445,7 +451,7 @@ Closed during planning review on 2026-05-03 with operator authorization. These a
 See [`## Acceptance Criteria for the Theme as a Whole`](#acceptance-criteria-for-the-theme-as-a-whole) above. Each bullet maps to an observable outcome and is restated here as a checklist:
 
 - [ ] 100-item scan produces a single `BatchRun` aggregate that reaches `terminal_state=true` only after every child job is terminal; UI shows `100/100` or a visible per-batch failure count.
-- [ ] Stalled SSE stream surfaces a stall badge within 30 s with Retry / Cancel.
+- [x] Stalled SSE stream surfaces a stall badge within 30 s with Retry / Cancel.
 - [ ] Dashboard SQL error stops appearing in `wp-content/debug.log`.
 - [ ] "No suggestions" copy distinguishes empty / error / unconfigured / zero-pending.
 - [ ] Self-merge against a cluster's own label produces inline "already named X" message, not a 400 JSON dump.

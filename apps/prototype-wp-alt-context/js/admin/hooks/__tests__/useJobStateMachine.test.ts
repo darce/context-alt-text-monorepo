@@ -27,13 +27,16 @@ vi.mock('../useJobProgressStream', () => ({
     isOnline: true,
     etaSeconds: null,
     isPrimary: true,
+    lastEventAt: null,
+    stalledForSeconds: null,
+    retry: vi.fn(),
   })),
 }));
 vi.mock('../useRecognitionHooks', () => ({
   useScanIdentities: vi.fn(() => ({ mutate: vi.fn() })),
   useClusterIdentities: vi.fn(() => ({ mutate: vi.fn() })),
   useCancelScanJobs: vi.fn(() => ({ mutate: vi.fn() })),
-  useCombinedScanStatus: vi.fn(() => ({ scanStatusQuery: { data: null } })),
+  useCombinedScanStatus: vi.fn(() => ({ scanStatusQuery: { data: null }, batchRunStatusQuery: { data: null } })),
 }));
 vi.mock('../useSyncTrigger', () => ({
   useSyncTrigger: vi.fn(() => ({ mutateAsync: vi.fn() })),
@@ -101,6 +104,9 @@ describe('useJobStateMachine', () => {
       isOnline: true,
       etaSeconds: null,
       isPrimary: true,
+      lastEventAt: null,
+      stalledForSeconds: null,
+      retry: vi.fn(),
     });
     (useCombinedScanStatus as Mock).mockReturnValue({
       scanStatusQuery: {
@@ -113,6 +119,7 @@ describe('useJobStateMachine', () => {
           finished_at: new Date().toISOString(),
         },
       },
+      batchRunStatusQuery: { data: null },
     });
 
     const { result } = renderHook(() => useJobStateMachine());
@@ -129,6 +136,97 @@ describe('useJobStateMachine', () => {
       total: 750,
       phase: 'complete',
     });
+  });
+
+  it('stays in scanning while sibling batches are still running', async () => {
+    const { useCombinedScanStatus } = await import('../useRecognitionHooks');
+
+    (useJobPersistence as Mock).mockReturnValue({
+      activeJobs: [{ id: 'scan-2', type: 'scan', totalItems: 5, batchRunId: 'batch-1' }],
+      addJob: vi.fn(),
+      removeJob: vi.fn(),
+    });
+    (useCombinedScanStatus as Mock).mockReturnValue({
+      scanStatusQuery: {
+        data: {
+          id: 'scan-2',
+          type: 'analyze',
+          status: 'completed',
+          progress: { completed: 5, total: 5, phase: 'complete', images_processed: 5 },
+          started_at: new Date().toISOString(),
+          finished_at: new Date().toISOString(),
+        },
+      },
+      batchRunStatusQuery: {
+        data: {
+          id: 'batch-1',
+          submitted_total: 10,
+          accepted_total: 10,
+          completed_total: 5,
+          failed_total: 0,
+          cancelled_total: 0,
+          unreadable_media_ids: [],
+          failed_batches: [],
+          child_job_ids: ['scan-1', 'scan-2'],
+          terminal_state: false,
+        },
+      },
+    });
+
+    const { result } = renderHook(() => useJobStateMachine());
+
+    expect(result.current.currentPhase).toBe('scanning');
+    expect(result.current.isScanRunning).toBe(true);
+    expect(result.current.scanProgress).toEqual({
+      completed: 5,
+      total: 10,
+      phase: 'detecting',
+      images_processed: 5,
+    });
+  });
+
+  it('surfaces batch submit failures without entering clustering', async () => {
+    const { useCombinedScanStatus } = await import('../useRecognitionHooks');
+
+    (useJobPersistence as Mock).mockReturnValue({
+      activeJobs: [{ id: 'scan-2', type: 'scan', totalItems: 5, batchRunId: 'batch-2' }],
+      addJob: vi.fn(),
+      removeJob: vi.fn(),
+    });
+    (useCombinedScanStatus as Mock).mockReturnValue({
+      scanStatusQuery: {
+        data: {
+          id: 'scan-2',
+          type: 'analyze',
+          status: 'completed',
+          progress: { completed: 5, total: 5, phase: 'complete', images_processed: 5 },
+          started_at: new Date().toISOString(),
+          finished_at: new Date().toISOString(),
+        },
+      },
+      batchRunStatusQuery: {
+        data: {
+          id: 'batch-2',
+          submitted_total: 10,
+          accepted_total: 5,
+          completed_total: 5,
+          failed_total: 5,
+          cancelled_total: 0,
+          unreadable_media_ids: [],
+          failed_batches: [
+            { batch_index: 1, media_ids: [6, 7, 8, 9, 10], error_code: 'proxy_failed', error_message: 'Proxy failure.' },
+          ],
+          child_job_ids: ['scan-2'],
+          terminal_state: true,
+        },
+      },
+    });
+
+    const { result } = renderHook(() => useJobStateMachine());
+
+    expect(result.current.currentPhase).toBe('idle');
+    expect(result.current.batchRunStatus?.failed_total).toBe(5);
+    expect(result.current.statusText).toContain('(5 failed)');
   });
 
   it('reports projecting phase when the backend exposes awaiting_projection', async () => {
@@ -161,6 +259,7 @@ describe('useJobStateMachine', () => {
           projection_acknowledged_at: null,
         },
       },
+      batchRunStatusQuery: { data: null },
     });
 
     const { result, unmount } = renderHook(() => useJobStateMachine());
@@ -209,6 +308,7 @@ describe('useJobStateMachine', () => {
           projection_acknowledged_at: null,
         },
       },
+      batchRunStatusQuery: { data: null },
     });
 
     const { result, unmount } = renderHook(() => useJobStateMachine());
@@ -241,6 +341,7 @@ describe('useJobStateMachine', () => {
         error: new Error('Request failed (404)'),
       },
       multiScanStatus: [],
+      batchRunStatusQuery: { data: null },
     });
 
     renderHook(() =>
@@ -290,6 +391,7 @@ describe('useJobStateMachine', () => {
           projection_acknowledged_at: null,
         },
       },
+      batchRunStatusQuery: { data: null },
     });
     (useSyncTrigger as Mock).mockReturnValue({ mutateAsync: syncMutateAsync });
 
@@ -323,6 +425,7 @@ describe('useJobStateMachine', () => {
           finished_at: null,
         },
       },
+      batchRunStatusQuery: { data: null },
     });
 
     const { result } = renderHook(() => useJobStateMachine());
@@ -344,6 +447,7 @@ describe('useJobStateMachine', () => {
           finished_at: null,
         },
       },
+      batchRunStatusQuery: { data: null },
     });
 
     const { result } = renderHook(() => useJobStateMachine());
@@ -364,6 +468,7 @@ describe('useJobStateMachine', () => {
           finished_at: new Date().toISOString(),
         },
       },
+      batchRunStatusQuery: { data: null },
     });
 
     const { result } = renderHook(() => useJobStateMachine());

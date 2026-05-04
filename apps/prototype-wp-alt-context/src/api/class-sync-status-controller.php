@@ -112,8 +112,21 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 	}
 
 	public function reset_mirror( WP_REST_Request $request ): WP_REST_Response {
-		$this->truncate_reset_projection_tables();
-		$this->sync_state_repository->reset_projection_state( $this->get_tenant_id() );
+		$tenant_id = $this->get_tenant_id();
+
+		try {
+			$this->reset_projection_tables_transactionally( $tenant_id );
+		} catch ( Throwable $e ) {
+			return new WP_REST_Response(
+				array(
+					'code'    => 'acx_reset_mirror_failed',
+					'message' => 'Could not reset the local mirror.',
+				),
+				500
+			);
+		}
+
+		do_action( 'acx_sync_mirror_reset', $tenant_id, self::RESET_TABLE_SUFFIXES );
 
 		return $this->run_sync_action( true );
 	}
@@ -162,17 +175,35 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 		return new WP_REST_Response( $payload, 200 );
 	}
 
-	private function truncate_reset_projection_tables(): void {
+	private function reset_projection_tables_transactionally( string $tenant_id ): void {
 		global $wpdb;
 
-		if ( ! isset( $wpdb ) || ! method_exists( $wpdb, 'query' ) || ! is_string( $wpdb->prefix ) ) {
-			return;
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) || ! method_exists( $wpdb, 'prepare' ) || ! is_string( $wpdb->prefix ) ) {
+			throw new \RuntimeException( 'Reset mirror requires wpdb transaction support.' );
 		}
 
-		foreach ( self::RESET_TABLE_SUFFIXES as $suffix ) {
-			$table_name = $wpdb->prefix . $suffix;
-			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared -- Table names are fixed plugin-owned suffixes with wpdb prefix.
-			$wpdb->query( sprintf( 'TRUNCATE TABLE `%s`', $table_name ) );
+		$started = false !== $wpdb->query( 'START TRANSACTION' );
+		if ( ! $started ) {
+			throw new \RuntimeException( 'Could not start reset mirror transaction.' );
+		}
+
+		try {
+			foreach ( self::RESET_TABLE_SUFFIXES as $suffix ) {
+				$table_name = $wpdb->prefix . $suffix;
+				$query      = $wpdb->prepare( 'DELETE FROM %i', $table_name );
+				if ( false === $wpdb->query( $query ) ) {
+					throw new \RuntimeException( sprintf( 'Could not clear reset mirror table %s.', $table_name ) );
+				}
+			}
+
+			$this->sync_state_repository->reset_projection_state( $tenant_id );
+
+			if ( false === $wpdb->query( 'COMMIT' ) ) {
+				throw new \RuntimeException( 'Could not commit reset mirror transaction.' );
+			}
+		} catch ( Throwable $e ) {
+			$wpdb->query( 'ROLLBACK' );
+			throw $e;
 		}
 	}
 

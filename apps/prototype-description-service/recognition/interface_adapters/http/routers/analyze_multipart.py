@@ -31,6 +31,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request,
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from starlette.datastructures import FormData, UploadFile
 
+from db.tenant_context import ensure_tenant_exists
 from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.application.storage import ObjectStore, ObjectStoreError
 from recognition.application.tasks.scan import chain_populate_and_process
@@ -289,6 +290,8 @@ async def analyze_media_multipart(
     # row exists for cleanup-by-job_id to find later).
     persistence_committed = False
     try:
+        if session is not None:
+            await ensure_tenant_exists(session, tenant_uuid)
         persisted_job_id = await scan_queue.create_scan_job_record(
             tenant_id=tenant_uuid,
             total=len(media_items_list),

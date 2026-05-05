@@ -239,5 +239,4 @@ class MirrorIntegrityCommand extends \WP_CLI_Command {
 			'cluster_uuids'           => '' === $cluster_uuids ? array() : \explode( ',', $cluster_uuids ),
 		);
 	}
-
 }

@@ -167,7 +167,9 @@ describe('SuggestionReviewPanel', () => {
     });
 
     expect(screen.getByText('Suggestion service not configured')).toBeInTheDocument();
-    expect(screen.getByText('Check the recognition service connection, then retry loading suggestions.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Check the recognition service connection, then retry loading suggestions.'),
+    ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
     expect(screen.queryByText('No suggestions to review yet.')).not.toBeInTheDocument();
   });
@@ -195,7 +197,9 @@ describe('SuggestionReviewPanel', () => {
     });
 
     expect(screen.getByText('Suggestion service error')).toBeInTheDocument();
-    expect(screen.getByText('The recognition service responded with an error. Retry now or check the service logs.')).toBeInTheDocument();
+    expect(
+      screen.getByText('The recognition service responded with an error. Retry now or check the service logs.'),
+    ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
     expect(screen.queryByText('No suggestions to review yet.')).not.toBeInTheDocument();
   });
@@ -233,7 +237,9 @@ describe('SuggestionReviewPanel', () => {
     });
 
     expect(screen.getByText('No assignment suggestions are waiting right now.')).toBeInTheDocument();
-    expect(screen.getByText('Review the naming queue below or run another scan after new photos arrive.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Review the naming queue below or run another scan after new photos arrive.'),
+    ).toBeInTheDocument();
     expect(screen.queryByText('No suggestions to review yet.')).not.toBeInTheDocument();
   });
 

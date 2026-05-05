@@ -45,7 +45,8 @@ export const DashboardPage = (): React.JSX.Element => {
   const pendingReplayCount = normalizeCount(syncStatus?.pending_curation_operations);
   const conflictCount = normalizeCount(syncStatus?.conflict_count);
   const failedReplayCount = normalizeCount(syncStatus?.failed_curation_operations);
-  const localClusterCount = normalizeCount(identityStats?.assigned_clusters_count) + normalizeCount(identityStats?.pending_clusters_count);
+  const localClusterCount =
+    normalizeCount(identityStats?.assigned_clusters_count) + normalizeCount(identityStats?.pending_clusters_count);
   const showMirrorDivergenceBanner = Boolean(syncStatus?.last_snapshot_version === 0 && localClusterCount > 0);
   const topologyPending = normalizeCount(syncStatus?.topology_commands?.pending);
   const topologyFailed = normalizeCount(syncStatus?.topology_commands?.failed);
@@ -200,7 +201,10 @@ export const DashboardPage = (): React.JSX.Element => {
                 <div className="acx-dashboard__mirror-warning" role="status">
                   <p>
                     {sprintf(
-                      __('Mirror is out of sync with the backend — %1$d stale clusters, %2$d failed sync events.', 'alt-context'),
+                      __(
+                        'Mirror is out of sync with the backend — %1$d stale clusters, %2$d failed sync events.',
+                        'alt-context',
+                      ),
                       localClusterCount,
                       failedReplayCount,
                     )}

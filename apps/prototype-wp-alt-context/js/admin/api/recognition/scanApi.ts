@@ -57,19 +57,16 @@ const recordClientBatchFailure = async (
   const base = getEndpoint('recognitionBatchRuns');
   const separator = base.endsWith('/') ? '' : '/';
 
-  await fetchRequiredApi<{ status: string }>(
-    `${base}${separator}${batchRunId}/client-failures`,
-    {
-      method: 'POST',
-      body: {
-        batch_index: batchIndex,
-        submitted_total: submittedTotal,
-        media_ids: mediaIds,
-      },
-      restNonce: getConfig().nonce,
-      signal: createRecognitionTimeoutSignal(15_000),
+  await fetchRequiredApi<{ status: string }>(`${base}${separator}${batchRunId}/client-failures`, {
+    method: 'POST',
+    body: {
+      batch_index: batchIndex,
+      submitted_total: submittedTotal,
+      media_ids: mediaIds,
     },
-  );
+    restNonce: getConfig().nonce,
+    signal: createRecognitionTimeoutSignal(15_000),
+  });
 };
 
 export const scanFaces = async (request: AnalyzeRequest): Promise<AnalyzeResponse> => {

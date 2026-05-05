@@ -171,7 +171,15 @@ export const useJobStateMachine = ({
         batchRunStatus: batchRunStatusQuery.data,
         fallbackProgress: scanStatusQuery.data?.progress,
       }),
-    [batchRunStatusQuery.data, currentPhase, activeJobIds, activeJobs, sseProgress, latestScanJob, scanStatusQuery.data?.progress],
+    [
+      batchRunStatusQuery.data,
+      currentPhase,
+      activeJobIds,
+      activeJobs,
+      sseProgress,
+      latestScanJob,
+      scanStatusQuery.data?.progress,
+    ],
   );
 
   const clusterProgress = useMemo(() => buildClusterProgress(currentPhase, sseProgress), [currentPhase, sseProgress]);
@@ -186,7 +194,14 @@ export const useJobStateMachine = ({
         scanStatus: scanStatusQuery.data,
         batchRunStatus: batchRunStatusQuery.data,
       }),
-    [activeJobIds, batchRunStatusQuery.data, isWaitingForScanCompletion, scanMutation.isPending, scanStatusQuery.data, sseStatus],
+    [
+      activeJobIds,
+      batchRunStatusQuery.data,
+      isWaitingForScanCompletion,
+      scanMutation.isPending,
+      scanStatusQuery.data,
+      sseStatus,
+    ],
   );
 
   const scanStallSeconds = useMemo(() => {

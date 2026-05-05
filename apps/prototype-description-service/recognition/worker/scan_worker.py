@@ -405,8 +405,8 @@ class ScanWorker:
 async def _main() -> None:
     """CLI entrypoint for local development.
 
-        Uses the shared DB settings loader so local legacy DB aliases are
-        canonicalized before the worker probes or opens connections.
+    Uses the shared DB settings loader so local legacy DB aliases are
+    canonicalized before the worker probes or opens connections.
     """
     import sys
 

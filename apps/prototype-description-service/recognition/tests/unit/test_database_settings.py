@@ -74,7 +74,9 @@ def test_database_settings_canonicalize_explicit_legacy_dsn_env_vars(monkeypatch
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("ENV_MODE", "local")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql+asyncpg://context:context@localhost:5432/context_alt_text_service")
-    monkeypatch.setenv("POSTGRES_SYNC_DSN", "postgresql+psycopg://context:context@localhost:5432/context_alt_text_service")
+    monkeypatch.setenv(
+        "POSTGRES_SYNC_DSN", "postgresql+psycopg://context:context@localhost:5432/context_alt_text_service"
+    )
     monkeypatch.setattr(settings_module, "ENV_FILE", env_file)
 
     settings_module.get_database_settings.cache_clear()

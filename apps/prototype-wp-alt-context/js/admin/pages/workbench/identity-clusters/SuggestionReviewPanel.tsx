@@ -202,7 +202,10 @@ export const SuggestionReviewPanel = ({ onLabel, onReview }: SuggestionReviewPan
             ) : showEndpointErrorWarning ? (
               <EmptyStateWarning
                 title={__('Suggestion service error', 'alt-context')}
-                message={__('The recognition service responded with an error. Retry now or check the service logs.', 'alt-context')}
+                message={__(
+                  'The recognition service responded with an error. Retry now or check the service logs.',
+                  'alt-context',
+                )}
                 onRetry={() => void refetchAssignment().then(() => refetchMerge())}
               />
             ) : showZeroPendingAssignmentGuidance ? (

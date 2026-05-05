@@ -74,20 +74,14 @@ describe('scanFacesBatched chunk size', () => {
     const result = await scanFacesBatched({ mediaIds: [1, 2, 3, 4, 5] });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(result.jobs).toHaveLength(1);
-    expect(getRequestBody(0)).toEqual(
-      expect.objectContaining({ media_ids: [1, 2, 3, 4, 5] }),
-    );
+    expect(getRequestBody(0)).toEqual(expect.objectContaining({ media_ids: [1, 2, 3, 4, 5] }));
   });
 
   it('chunks into batches of 5 when total exceeds the cap', async () => {
     const result = await scanFacesBatched({ mediaIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] });
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(getRequestBody(0)).toEqual(
-      expect.objectContaining({ media_ids: [1, 2, 3, 4, 5] }),
-    );
-    expect(getRequestBody(1)).toEqual(
-      expect.objectContaining({ media_ids: [6, 7, 8, 9, 10] }),
-    );
+    expect(getRequestBody(0)).toEqual(expect.objectContaining({ media_ids: [1, 2, 3, 4, 5] }));
+    expect(getRequestBody(1)).toEqual(expect.objectContaining({ media_ids: [6, 7, 8, 9, 10] }));
     expect(result.jobs).toHaveLength(2);
   });
 

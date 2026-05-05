@@ -70,6 +70,14 @@ class _FakeScanQueue:
         return len(list(media_items))
 
 
+class _CommitOnlySession:
+    def __init__(self) -> None:
+        self.commit_calls = 0
+
+    async def commit(self) -> None:
+        self.commit_calls += 1
+
+
 @pytest.fixture
 def tenant_id() -> str:
     return str(uuid.uuid4())
@@ -147,6 +155,46 @@ def test_multipart_happy_path_returns_202_and_stores_blob(
     expected = settings.blob_root / tenant_id / job_id / "42.bin"
     assert expected.is_file()
     assert expected.read_bytes() == PNG_BYTES
+
+
+def test_multipart_ensures_tenant_exists_before_persisting_job(
+    tmp_path: Path, tenant_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("RECOGNITION_ASYNC_ANALYZE_INLINE", "0")
+
+    settings = RecognitionSettings()
+    settings.blob_root = tmp_path / "blobs"
+
+    fake_queue = _FakeScanQueue()
+    fake_session = _CommitOnlySession()
+
+    fastapi_app = FastAPI()
+    fastapi_app.include_router(router, prefix="/recognition")
+    fastapi_app.dependency_overrides[require_write_access] = lambda: AuthContext(token="t", tenant_claim=tenant_id)
+    fastapi_app.dependency_overrides[get_optional_session] = lambda: fake_session
+    fastapi_app.dependency_overrides[get_scan_queue_service_optional] = lambda: fake_queue
+    fastapi_app.dependency_overrides[_settings_default] = lambda: settings
+
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    ensure_calls: list[str] = []
+
+    async def _ensure_tenant_exists(session, tenant_uuid):
+        assert session is fake_session
+        ensure_calls.append(str(tenant_uuid))
+
+    async def _noop_chain(**_kwargs):
+        return None
+
+    monkeypatch.setattr(mod, "ensure_tenant_exists", _ensure_tenant_exists)
+    monkeypatch.setattr(mod, "chain_populate_and_process", _noop_chain)
+
+    client = TestClient(fastapi_app)
+    response = client.post("/recognition/analyze/multipart", **_multipart_submission(tenant_id))
+
+    assert response.status_code == 202, response.text
+    assert ensure_calls == [tenant_id]
+    assert fake_session.commit_calls == 1
 
 
 def test_multipart_admin_key_with_envelope_tenant_succeeds(

@@ -214,7 +214,12 @@ describe('useJobStateMachine', () => {
           cancelled_total: 0,
           unreadable_media_ids: [],
           failed_batches: [
-            { batch_index: 1, media_ids: [6, 7, 8, 9, 10], error_code: 'proxy_failed', error_message: 'Proxy failure.' },
+            {
+              batch_index: 1,
+              media_ids: [6, 7, 8, 9, 10],
+              error_code: 'proxy_failed',
+              error_message: 'Proxy failure.',
+            },
           ],
           child_job_ids: ['scan-2'],
           terminal_state: true,

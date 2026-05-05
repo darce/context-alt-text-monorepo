@@ -177,7 +177,8 @@ export const buildScanProgress = ({
   fallbackProgress,
 }: ScanProgressParams): JobProgress | null => {
   if (batchRunStatus && batchRunStatus.submitted_total > 0) {
-    const processedTotal = batchRunStatus.completed_total + batchRunStatus.failed_total + batchRunStatus.cancelled_total;
+    const processedTotal =
+      batchRunStatus.completed_total + batchRunStatus.failed_total + batchRunStatus.cancelled_total;
     return {
       completed: processedTotal,
       total: batchRunStatus.submitted_total,

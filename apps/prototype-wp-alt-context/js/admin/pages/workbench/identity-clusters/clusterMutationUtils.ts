@@ -15,7 +15,9 @@ export const getProjectionNotReadyMessage = (): string =>
 
 export const isInvalidTargetClusterError = (message: string): boolean => {
   const normalized = message.toLowerCase();
-  return message.includes('invalid_target_cluster_id') || normalized.includes('source and target cluster ids must differ');
+  return (
+    message.includes('invalid_target_cluster_id') || normalized.includes('source and target cluster ids must differ')
+  );
 };
 
 export const getInvalidTargetClusterMessage = (label: string): string =>

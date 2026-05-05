@@ -14,11 +14,9 @@ interface JobStateMachineEffectsOptions {
   scanStatus: JobStatusResponse | undefined;
   batchRunStatus: BatchRunStatus | undefined;
   queryClient: QueryClient;
-  activeJobIds: string[];
   activeJobs: PersistedJob[];
   isWaitingForScanCompletion: boolean;
   setIsWaitingForScanCompletion: (value: boolean) => void;
-  latestScanJob: PersistedJob | null;
   sseStatus: JobStatus;
   removeJob: (id: string) => void;
   cluster: () => void;
@@ -35,11 +33,9 @@ export const useJobStateMachineEffects = ({
   scanStatus,
   batchRunStatus,
   queryClient,
-  activeJobIds,
   activeJobs,
   isWaitingForScanCompletion,
   setIsWaitingForScanCompletion,
-  latestScanJob,
   sseStatus,
   removeJob,
   cluster,
@@ -92,7 +88,7 @@ export const useJobStateMachineEffects = ({
   }, [scanStatus?.status, queryClient]);
 
   useEffect(() => {
-    if (!isWaitingForScanCompletion || !batchRunStatus || !batchRunStatus.terminal_state) {
+    if (!isWaitingForScanCompletion || !batchRunStatus?.terminal_state) {
       return;
     }
 

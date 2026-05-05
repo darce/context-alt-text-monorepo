@@ -46,7 +46,7 @@ export const DashboardPage = (): React.JSX.Element => {
   const conflictCount = normalizeCount(syncStatus?.conflict_count);
   const failedReplayCount = normalizeCount(syncStatus?.failed_curation_operations);
   const localClusterCount = normalizeCount(identityStats?.assigned_clusters_count) + normalizeCount(identityStats?.pending_clusters_count);
-  const showMirrorDivergenceBanner = Boolean(syncStatus && syncStatus.last_snapshot_version === 0 && localClusterCount > 0);
+  const showMirrorDivergenceBanner = Boolean(syncStatus?.last_snapshot_version === 0 && localClusterCount > 0);
   const topologyPending = normalizeCount(syncStatus?.topology_commands?.pending);
   const topologyFailed = normalizeCount(syncStatus?.topology_commands?.failed);
   const topologyConflicts = normalizeCount(syncStatus?.topology_commands?.conflict);

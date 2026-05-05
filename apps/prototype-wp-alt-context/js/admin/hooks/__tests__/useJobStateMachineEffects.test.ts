@@ -1,10 +1,25 @@
 import { renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
+import type { BatchRunStatus } from '../../api/recognition';
 import type { PipelinePhase } from '../jobStateMachineUtils';
 import { useJobStateMachineEffects, type ProjectionSyncState } from '../useJobStateMachineEffects';
 
 describe('useJobStateMachineEffects', () => {
+  const buildTerminalBatchRunStatus = (): BatchRunStatus => ({
+    batchRunId: 'batch-run-1',
+    status: 'completed',
+    submitted_total: 14,
+    accepted_total: 14,
+    completed_total: 14,
+    failed_total: 0,
+    terminal_state: true,
+    jobs: [],
+    started_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    finished_at: new Date().toISOString(),
+  });
+
   const buildBaseOptions = () => ({
     scanStatus: {
       id: 'job-2',
@@ -22,11 +37,9 @@ describe('useJobStateMachineEffects', () => {
       projection_acknowledged_at: null,
     },
     queryClient: { invalidateQueries: vi.fn() } as never,
-    activeJobIds: ['job-2'],
     activeJobs: [{ id: 'job-2', type: 'clustering' as const, startedAt: Date.now(), totalItems: 10 }],
     isWaitingForScanCompletion: false,
     setIsWaitingForScanCompletion: vi.fn(),
-    latestScanJob: null,
     sseStatus: 'completed' as const,
     removeJob: vi.fn(),
     cluster: vi.fn(),
@@ -64,11 +77,10 @@ describe('useJobStateMachineEffects', () => {
           message: 'Clustering identities',
         },
         queryClient: { invalidateQueries } as never,
-        activeJobIds: ['job-1'],
         activeJobs: [{ id: 'job-1', type: 'scan', startedAt: Date.now(), totalItems: 500 }],
+        batchRunStatus: buildTerminalBatchRunStatus(),
         isWaitingForScanCompletion: true,
         setIsWaitingForScanCompletion,
-        latestScanJob: { id: 'job-1', type: 'scan', startedAt: Date.now(), totalItems: 500 },
         sseStatus: 'completed',
         removeJob,
         cluster,

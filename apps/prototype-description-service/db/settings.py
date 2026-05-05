@@ -172,13 +172,69 @@ def canonicalize_local_db_name(
     )
 
 
+def canonicalize_local_postgres_dsn(
+    dsn: str | None,
+    *,
+    env_mode: str | None,
+    setting_name: str,
+) -> tuple[str | None, str | None]:
+    """Rewrite legacy local database names inside PostgreSQL DSNs."""
+
+    normalized_mode = (env_mode or "").strip().lower()
+    if normalized_mode not in LOCAL_ENV_MODES or not dsn:
+        return dsn, None
+
+    parsed = urlparse(dsn)
+    if not parsed.scheme.startswith("postgresql"):
+        return dsn, None
+
+    db_name = parsed.path.removeprefix("/")
+    if not db_name:
+        return dsn, None
+
+    resolved_name, _warning = canonicalize_local_db_name(db_name, env_mode=env_mode)
+    if not resolved_name or resolved_name == db_name:
+        return dsn, None
+
+    return (
+        urlunparse(parsed._replace(path=f"/{resolved_name}")),
+        (
+            f"[prototype-local] {setting_name} targets legacy database {db_name}; "
+            f"using {resolved_name} instead. Update apps/prototype-description-service/.env "
+            "to keep reset/start flows aligned."
+        ),
+    )
+
+
 @lru_cache(maxsize=1)
 def get_database_settings() -> DatabaseSettings:
     """Load settings from environment variables with sensible defaults."""
 
     _load_env_file()
-    async_dsn = os.getenv("POSTGRES_DSN") or _render_default_async_dsn()
-    sync_dsn = os.getenv("POSTGRES_SYNC_DSN") or _infer_sync_dsn(async_dsn)
+    async_dsn, async_warning = canonicalize_local_postgres_dsn(
+        os.getenv("POSTGRES_DSN"),
+        env_mode=os.getenv("ENV_MODE", "local"),
+        setting_name="POSTGRES_DSN",
+    )
+    if async_warning:
+        print(async_warning)
+    if async_dsn:
+        os.environ["POSTGRES_DSN"] = async_dsn
+    else:
+        async_dsn = _render_default_async_dsn()
+
+    sync_dsn, sync_warning = canonicalize_local_postgres_dsn(
+        os.getenv("POSTGRES_SYNC_DSN"),
+        env_mode=os.getenv("ENV_MODE", "local"),
+        setting_name="POSTGRES_SYNC_DSN",
+    )
+    if sync_warning:
+        print(sync_warning)
+    if sync_dsn:
+        os.environ["POSTGRES_SYNC_DSN"] = sync_dsn
+    else:
+        sync_dsn = _infer_sync_dsn(async_dsn)
+
     pgvector_dim = int(os.getenv("PGVECTOR_DIM", "512"))
     embedding_timeout_s = float(os.getenv("DB_EMBEDDING_TIMEOUT_SECONDS", "30"))
     pool_size = int(os.getenv("DB_POOL_SIZE", "20"))
@@ -239,6 +295,7 @@ __all__ = [
     "DatabaseSettings",
     "get_database_settings",
     "canonicalize_local_db_name",
+    "canonicalize_local_postgres_dsn",
     "DEFAULT_ASYNC_DSN_TEMPLATE",
     "DEFAULT_SYNC_DSN_TEMPLATE",
 ]

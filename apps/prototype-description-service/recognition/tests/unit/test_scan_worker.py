@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -18,6 +19,54 @@ class _FakeDetector:
 class _FakeGenerator:
     def __init__(self, adapter: object) -> None:
         self.adapter = adapter
+
+
+@pytest.mark.asyncio
+async def test_scan_worker_main_uses_database_settings_dsn(monkeypatch: pytest.MonkeyPatch) -> None:
+    used: dict[str, object] = {}
+
+    class _FakeConnection:
+        async def execute(self, _statement) -> None:  # noqa: ANN001
+            return None
+
+    class _FakeConnectContext:
+        async def __aenter__(self) -> _FakeConnection:
+            return _FakeConnection()
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
+            return None
+
+    class _FakeEngine:
+        def connect(self) -> _FakeConnectContext:
+            return _FakeConnectContext()
+
+        async def dispose(self) -> None:
+            return None
+
+    class _FakeWorker:
+        def __init__(self, config) -> None:  # noqa: ANN001
+            used["dsn"] = config.postgres_dsn
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
+            return None
+
+        async def run_forever(self) -> None:
+            raise asyncio.CancelledError()
+
+    monkeypatch.setattr(
+        scan_worker_module,
+        "get_database_settings",
+        lambda: SimpleNamespace(postgres_dsn="postgresql+asyncpg://context:context@localhost:5432/alt_context_service"),
+    )
+    monkeypatch.setattr(scan_worker_module, "create_async_engine", lambda dsn, **_kwargs: _FakeEngine())
+    monkeypatch.setattr(scan_worker_module, "ScanWorker", _FakeWorker)
+
+    await scan_worker_module._main()
+
+    assert used["dsn"] == "postgresql+asyncpg://context:context@localhost:5432/alt_context_service"
 
 
 @pytest.mark.asyncio

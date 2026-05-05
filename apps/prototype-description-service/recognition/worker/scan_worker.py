@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from db.models import IdentityClusteringJob
+from db.settings import get_database_settings
 from db.tenant_context import enable_rls_bypass, set_tenant_context
 from recognition.application.embedding.detector import FaceDetectorProtocol, InsightFaceFaceDetector, StubFaceDetector
 from recognition.application.embedding.generator import (
@@ -404,10 +405,9 @@ class ScanWorker:
 async def _main() -> None:
     """CLI entrypoint for local development.
 
-    Expected environment variables:
-      - POSTGRES_DSN (required)
+        Uses the shared DB settings loader so local legacy DB aliases are
+        canonicalized before the worker probes or opens connections.
     """
-    import os
     import sys
 
     from sqlalchemy import text
@@ -416,9 +416,9 @@ async def _main() -> None:
 
     configure_logging("INFO")
 
-    postgres_dsn = os.environ.get("POSTGRES_DSN")
+    postgres_dsn = get_database_settings().postgres_dsn
     if not postgres_dsn:
-        logger.error("POSTGRES_DSN not set. Exiting.")
+        logger.error("Database DSN not configured. Exiting.")
         sys.exit(1)
 
     # Wait for database availability before starting main loop

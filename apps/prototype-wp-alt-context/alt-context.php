@@ -93,7 +93,9 @@ require_once $altContextAutoload;
 // Explicit require_once guarantees the class is available on every request
 // regardless of classmap staleness.
 require_once ACX_PLUGIN_DIR . 'src/support/class-telemetry.php';
-require_once ACX_PLUGIN_DIR . 'src/cli/class-mirror-integrity-command.php';
+if (defined('WP_CLI') && WP_CLI) {
+    require_once ACX_PLUGIN_DIR . 'src/cli/class-mirror-integrity-command.php';
+}
 
 $dotenv = Dotenv::createImmutable(ACX_PLUGIN_DIR, ['.env', '.env.local']);
 $dotenv->safeLoad();

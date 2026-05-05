@@ -213,7 +213,7 @@ export const IdentityClusterItem = ({
 
     const timer = window.setTimeout(() => void runMatch(), MATCH_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
-  }, [editState.isEditing, editState.labelInput, cluster.label, findClusterByLabel]);
+  }, [editState.isEditing, editState.labelInput, cluster.label, findClusterByLabel, editableClusterId]);
 
   // Handle "Wrong person" action
   const handleWrongPerson = () => {

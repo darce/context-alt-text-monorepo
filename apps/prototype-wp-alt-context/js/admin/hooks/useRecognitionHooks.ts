@@ -19,7 +19,6 @@ import {
   getRecognitionCluster,
   listRecognitionClusters,
   scanFacesBatched,
-  type AnalyzeResponse,
   type ClusterListParams,
   type ClusterResponse,
   type ClusterSummary,

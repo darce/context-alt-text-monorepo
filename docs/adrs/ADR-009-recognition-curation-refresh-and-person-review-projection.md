@@ -4,7 +4,9 @@
 >
 > - **Date**: 2026-05-05
 > - **Author**: Codex
-> - **Status**: Proposed
+> - **Status**: Conditional Accepted
+> - **Decided on**: 2026-05-06
+> - **Accepting decision**: `codex_conditional_accept_adr009_e15_planning_gate_20260506`
 >
 > **Purpose:** Resolve the design boundary for post-curation suggestion refresh,
 > person-instance roster review projections, and curriculum review queues. This
@@ -14,11 +16,30 @@
 
 ## Status
 
-Proposed
+Conditional Accepted
 
 ## Date
 
 2026-05-05
+
+## Decision Date
+
+2026-05-06
+
+## Accepting Decision
+
+`codex_conditional_accept_adr009_e15_planning_gate_20260506`
+
+## Conditions
+
+This ADR is accepted for downstream planning and implementation ordering with
+the following conditions called out explicitly in the owning specs before code
+work begins:
+
+- `RCL-008` must define queue-membership predicates and the local projection
+   authority for each named review queue.
+- `DASH-007` must require a recorded durable-activity source decision before
+   the dashboard demotes or replaces browser-local recent-job history.
 
 ## Context
 

@@ -191,6 +191,7 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 			foreach ( self::RESET_TABLE_SUFFIXES as $suffix ) {
 				$table_name = $wpdb->prefix . $suffix;
 				$query      = $wpdb->prepare( 'DELETE FROM %i', $table_name );
+				// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 				if ( false === $wpdb->query( $query ) ) {
 					throw new \RuntimeException( sprintf( 'Could not clear reset mirror table %s.', $table_name ) );
 				}

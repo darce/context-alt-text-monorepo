@@ -15,7 +15,7 @@ export const SUGGESTION_PAGE_SIZE = 25;
 const TOP_UNLABELED_LIMIT = 20;
 
 export const useSuggestionReviewQueries = () => {
-  const tenantId = getConfig().tenant_id;
+  const tenantId = getConfig().tenant_id ?? '';
 
   const assignmentQuery = useQuery({
     queryKey: queryKeys.suggestions.pending(),

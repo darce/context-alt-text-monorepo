@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 
-import type { AnalyzeResponse, ClusterListResponse, ClusterSummary } from '../../api/recognition';
+import type { BatchAnalyzeResponse, ClusterListResponse, ClusterSummary } from '../../api/recognition';
 import { useRecognitionCluster, useRecognitionClusters } from '../../hooks/useRecognitionHooks';
 import { useCreatePerson, useDeletePerson, useRosterEntries, useUpdatePerson } from '../../hooks/useRosterHooks';
 import { useClusterSelection } from '../../hooks/useClusterSelection';
@@ -104,7 +104,7 @@ describe('RosterPage route container', () => {
       mutate: vi.fn(),
     }),
     rescanMutation: createMockMutation<
-      AnalyzeResponse[],
+      BatchAnalyzeResponse,
       Error,
       { cluster: { id: string; sample_identities: { media_id: number }[] }; mediaIds: number[] }
     >({

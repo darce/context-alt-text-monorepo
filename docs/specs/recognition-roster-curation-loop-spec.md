@@ -301,12 +301,21 @@ Apple's people-recognition paper describes unsupervised clusters, periodic proce
 - **Hard examples**: low-margin or conflicting candidates that require deliberate human confirmation.
 - **Needs confirmation after merge**: candidates affected by workbench merge cleanup or post-merge recomputation.
 
+**Queue membership rules:**
+
+- `singleton-proposals`: projected rows where `identity_count = 1`, `person_uuid IS NULL`, and at least one pending suggestion exists for binding the singleton to a known person.
+- `hard-examples`: projected rows where suggestion refresh marks the candidate as low-margin or conflict-bearing and requires explicit operator confirmation before accept/dismiss.
+- `needs-confirmation-after-merge`: projected rows whose current candidate set was recomputed after merge cleanup or post-merge refresh and therefore require a fresh operator decision.
+
+The canonical owner of queue membership is the local roster review projection defined by `RCL-004`; UI surfaces may read `queue_memberships`, but they must not recompute queue inclusion independently from raw clusters.
+
 **Done when:**
 
 - The roster/clusters UI shows these three queues with counts.
 - Queue rows link to candidate face evidence and the target person/cluster context.
 - Accept/dismiss/defer actions are available or explicitly routed to an existing review action.
 - Empty states explain that no candidates currently need that curriculum review.
+- `RCL-004` exposes `queue_memberships` so E15-13 and E15-17 consume the same projection answer.
 
 ---
 

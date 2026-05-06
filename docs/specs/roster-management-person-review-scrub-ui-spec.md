@@ -8,7 +8,7 @@
 > - **Related assessment**: [docs/assessments/current/recognition-roster-suggestion-workflow-assessment-2026-05-05.md](../assessments/current/recognition-roster-suggestion-workflow-assessment-2026-05-05.md)
 > - **Related spec**: [docs/specs/recognition-roster-curation-loop-spec.md](recognition-roster-curation-loop-spec.md)
 > - **Related ADR**: [docs/adrs/ADR-009-recognition-curation-refresh-and-person-review-projection.md](../adrs/ADR-009-recognition-curation-refresh-and-person-review-projection.md)
-> - **Marketing reference**: `/Users/daniel/Development/altcontext-marketing-monorepo/static`
+> - **Interaction reference**: pointer-driven face scrub preview with low-latency image switching; implement this behavior locally rather than depending on any external marketing-code path.
 
 This spec proposes a more usable Roster Management page for `wp-admin/admin.php?page=alt-context-roster#/roster`. The page should open on people and review work, not raw clusters. User curation should auto-populate roster entries, and every person entry should provide a scrub interface for reviewing and selecting faces across images.
 
@@ -48,7 +48,7 @@ Relevant implementation anchors:
 3. Let an operator review all images and face instances for one person without bouncing between tabs.
 4. Provide a fast scrub interface for comparing face instances and selecting representatives, rejects, split candidates, and hard examples.
 5. Preserve the cluster evidence needed by curriculum review queues without making raw clusters the first mental model.
-6. Reuse the interaction pattern from the marketing static face-pose scrubber where it helps: pointer-driven preview changes, low-latency frame switching, and compact metadata.
+6. Reuse the interaction pattern of pointer-driven preview changes, low-latency frame switching, and compact metadata where it helps, but implement it within the roster UI's own accessible component model.
 
 ---
 
@@ -247,7 +247,7 @@ Thumbnails should respect face crop aspect ratio and use consistent boxes. Circu
 
 ## Data Shape
 
-The UI needs a richer roster entry than the current `cluster_count` table.
+The canonical wire contract is `RCL-004` in [docs/specs/recognition-roster-curation-loop-spec.md](recognition-roster-curation-loop-spec.md). The UI types below describe the expected rendering shape after consuming that projection and may add clearly-labeled UI-derived fields, but they do not replace the shared schema as the source of truth.
 
 ```ts
 interface RosterPersonReview {
@@ -255,7 +255,7 @@ interface RosterPersonReview {
   person_uuid: string;
   name: string;
   tags: string[];
-  representative_face: FaceInstance | null;
+  representative_face: FaceInstance | null; // UI convenience view over RCL-004 representative evidence.
   review_state: "clean" | "needs_name" | "singleton_proposals" | "hard_examples" | "needs_confirmation";
   counts: {
     clusters: number;
@@ -292,6 +292,8 @@ interface FaceInstance {
 }
 ```
 
+UI-derived fields such as `review_state` are presentation helpers layered on top of the RCL-004 projection. Shared fields including `queue_memberships`, `projection_status`, and refresh state must remain aligned with the RCL-004/shared-schema contract rather than diverging in a TypeScript-only definition.
+
 ---
 
 ## Route Proposal
@@ -312,7 +314,7 @@ The route should deep-link the selected person and selected face. Cluster links 
 ## Migration Plan
 
 1. Keep the current Entries and Clusters tabs as secondary routes.
-2. Add the person review workspace behind a feature flag or alternate route.
+2. Add the person review workspace through an alternate route and compatibility navigation, not a feature flag.
 3. Teach `useRosterEntries()` to request the enriched projection when available.
 4. Build the scrubber using current thumbnails first.
 5. Add queue filters once RCL-008 projection data exists.

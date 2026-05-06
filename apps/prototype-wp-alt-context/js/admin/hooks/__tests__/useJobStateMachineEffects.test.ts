@@ -7,17 +7,16 @@ import { useJobStateMachineEffects, type ProjectionSyncState } from '../useJobSt
 
 describe('useJobStateMachineEffects', () => {
   const buildTerminalBatchRunStatus = (): BatchRunStatus => ({
-    batchRunId: 'batch-run-1',
-    status: 'completed',
+    id: 'batch-run-1',
     submitted_total: 14,
     accepted_total: 14,
     completed_total: 14,
     failed_total: 0,
+    cancelled_total: 0,
+    unreadable_media_ids: [],
+    failed_batches: [],
+    child_job_ids: [],
     terminal_state: true,
-    jobs: [],
-    started_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    finished_at: new Date().toISOString(),
   });
 
   const buildBaseOptions = () => ({
@@ -36,6 +35,7 @@ describe('useJobStateMachineEffects', () => {
       source_job_id: 'job-2',
       projection_acknowledged_at: null,
     },
+    batchRunStatus: undefined,
     queryClient: { invalidateQueries: vi.fn() } as never,
     activeJobs: [{ id: 'job-2', type: 'clustering' as const, startedAt: Date.now(), totalItems: 10 }],
     isWaitingForScanCompletion: false,

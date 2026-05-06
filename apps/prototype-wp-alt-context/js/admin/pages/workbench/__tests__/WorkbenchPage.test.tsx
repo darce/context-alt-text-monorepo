@@ -8,13 +8,15 @@ import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { resetConfigCache } from '../../../api/config';
 import { queryKeys } from '../../../api/queryKeys';
 import type {
-  AnalyzeResponse,
+  BatchAnalyzeResponse,
+  BatchRunStatus,
   ClusterResponse,
   JobStatusResponse,
   MediaIdentitiesResponse,
 } from '../../../api/recognition';
 import { createMockMutation, createMockQuery } from '../../../test-utils/mockHooks';
 import type { WorkbenchMediaDetailResponse } from '../../../api/workbenchMediaApi';
+import type { JobProgressStream } from '../../../hooks/useJobProgressStream';
 import { WorkbenchPage } from '../../WorkbenchPage';
 import { useWorkbenchMedia, type WorkbenchMediaResponse } from '../../../hooks/useWorkbenchMedia';
 import { useMediaSelectionState } from '../../../hooks/useMediaSelectionState';
@@ -160,6 +162,12 @@ describe('WorkbenchPage', () => {
   let setCurrentPage: Dispatch<SetStateAction<number>>;
   let setPerPage: Mock<(nextPerPage: number) => void>;
 
+  const createBatchRunStatusQuery = (data?: BatchRunStatus) =>
+    createMockQuery<BatchRunStatus>({
+      data,
+      refetch: vi.fn(),
+    });
+
   const setupScanMutation = (outcome: ScanOutcome) => {
     mockUseScanIdentities.mockImplementation((options) => {
       const mutate = (mediaIds: number[]) => {
@@ -168,16 +176,19 @@ describe('WorkbenchPage', () => {
         options?.onMutate?.(mediaIds, mockContext);
         if (outcome === 'success') {
           options?.onSuccess?.(
-            [
-              {
-                id: 'job-123',
-                type: 'analyze' as const,
-                status: 'pending' as const,
-                progress: { completed: 0, total: mediaIds.length },
-                started_at: new Date().toISOString(),
-                finished_at: null,
-              },
-            ],
+            {
+              batchRunId: 'batch-run-123',
+              jobs: [
+                {
+                  id: 'job-123',
+                  type: 'analyze' as const,
+                  status: 'pending' as const,
+                  progress: { completed: 0, total: mediaIds.length },
+                  started_at: new Date().toISOString(),
+                  finished_at: null,
+                },
+              ],
+            },
             mediaIds,
             undefined,
             mockContext,
@@ -187,7 +198,7 @@ describe('WorkbenchPage', () => {
         }
       };
 
-      return createMockMutation<AnalyzeResponse[], Error, number[]>({
+      return createMockMutation<BatchAnalyzeResponse, Error, number[]>({
         mutate,
       });
     });
@@ -244,7 +255,10 @@ describe('WorkbenchPage', () => {
       isOnline: true,
       etaSeconds: null,
       isPrimary: true,
-    });
+      lastEventAt: null,
+      stalledForSeconds: null,
+      retry: vi.fn(),
+    } satisfies JobProgressStream);
     mockUseSyncStatus.mockReturnValue(
       createMockQuery({
         data: {
@@ -323,6 +337,7 @@ describe('WorkbenchPage', () => {
         refetch: vi.fn(),
       }),
       multiScanStatus: [],
+      batchRunStatusQuery: createBatchRunStatusQuery(),
     });
 
     mockUseCancelScanJobs.mockReturnValue(
@@ -428,6 +443,7 @@ describe('WorkbenchPage', () => {
         refetch: vi.fn(),
       }),
       multiScanStatus: [],
+      batchRunStatusQuery: createBatchRunStatusQuery(),
     });
 
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -452,6 +468,7 @@ describe('WorkbenchPage', () => {
         refetch: vi.fn(),
       }),
       multiScanStatus: [],
+      batchRunStatusQuery: createBatchRunStatusQuery(),
     });
 
     renderWorkbench();
@@ -625,6 +642,7 @@ describe('WorkbenchPage', () => {
         refetch: vi.fn(),
       }),
       multiScanStatus: [],
+      batchRunStatusQuery: createBatchRunStatusQuery(),
     });
 
     renderWorkbench();
@@ -647,6 +665,7 @@ describe('WorkbenchPage', () => {
         refetch: vi.fn(),
       }),
       multiScanStatus: [],
+      batchRunStatusQuery: createBatchRunStatusQuery(),
     });
 
     renderWorkbench();

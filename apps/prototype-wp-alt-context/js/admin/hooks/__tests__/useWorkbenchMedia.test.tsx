@@ -123,6 +123,9 @@ describe('useWorkbenchMedia', () => {
             xmpPersistence: null,
           },
         },
+        limit: 100,
+        total: 2,
+        truncated: false,
       });
       await fetchDetailDeferred.promise;
     });

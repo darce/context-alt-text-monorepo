@@ -239,25 +239,25 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded the deploy, readiness, and plugin settings/runtime surfaces before editing.
-- [ ] Confirmed no external dependency lookup is required.
-- [ ] Kept transport-mode work out of this task except where needed to preserve contract boundaries.
+- [x] Loaded the deploy, readiness, and plugin settings/runtime surfaces before editing.
+- [x] Confirmed no external dependency lookup is required.
+- [x] Kept transport-mode work out of this task except where needed to preserve contract boundaries.
 
 ### Checklist for Slice 1: Scope the Recognition Source Contract
 
-- [ ] Settings API exposes the persisted recognition-source field with only `service|local` values.
-- [ ] Proxy/runtime resolution no longer relies on an accidental blank-URL fallback.
-- [ ] Settings and workbench UI copy reflect explicit local mode versus service mode.
-- [ ] Constant/filter-managed installs keep deterministic read-only precedence for the selector and dependent fields.
-- [ ] Service-mode probe behavior remains covered by tests in the same slice.
+- [x] Settings API exposes the persisted recognition-source field with only `service|local` values.
+- [x] Proxy/runtime resolution no longer relies on an accidental blank-URL fallback.
+- [x] Settings and workbench UI copy reflect explicit local mode versus service mode.
+- [x] Constant/filter-managed installs keep deterministic read-only precedence for the selector and dependent fields.
+- [x] Service-mode probe behavior remains covered by tests in the same slice.
 
 ### Checklist for Slice 2: Add Remote Reset as a First-Class Operator Workflow
 
-- [ ] `mk/deploy.mk` exposes `reset-remote` with clear help text and confirmation requirements.
-- [ ] The deploy script owns env validation, stop/reset/start sequencing, and `/ready` verification.
-- [ ] The remote reset flow includes an executable post-reset dev bootstrap step before plugin-side service verification.
-- [ ] Reset scope is environment-specific and does not touch unrelated OCI stacks.
-- [ ] Operator docs describe the destructive contract and prod guardrails.
+- [x] `mk/deploy.mk` exposes `reset-remote` with clear help text and confirmation requirements.
+- [x] The deploy script owns env validation, stop/reset/start sequencing, and `/ready` verification.
+- [x] The remote reset flow includes an executable post-reset dev bootstrap step before plugin-side service verification.
+- [x] Reset scope is environment-specific and does not touch unrelated OCI stacks.
+- [x] Operator docs describe the destructive contract and prod guardrails.
 
 ### Checklist for Slice 3: Align Local and Remote Verification Ergonomics
 
@@ -268,10 +268,12 @@ Proof:
 
 ## Review Readiness
 
-- [ ] No reset workflow change lands without matching operator documentation.
+- [x] No reset workflow change lands without matching operator documentation.
 - [ ] No plugin mode change lands without matching runtime-resolution and UI tests.
-- [ ] Destructive reset completion is proven with `/ready`, not `/health` alone.
+- [x] Destructive reset completion is proven with `/ready`, not `/health` alone.
 - [ ] The final handoff records the selector contract, reset verification, and any prod guard decision.
+
+Validation note: the implementation surfaces are present, but this checkout still has two follow-up validation gaps before the remaining review-readiness boxes can close: `js/admin/pages/workbench/__tests__/WorkbenchPage.test.tsx` currently fails in the workbench test harness (`useJobStateMachine` reads an undefined query object), and `scripts/test_make_reset_remote_target.py` still expects dry-run success without the now-required `ACX_RESET_SITE_URL` bootstrap input.
 
 ## Stretch Goals
 
@@ -279,7 +281,7 @@ Proof:
 
 ## Success Criteria
 
-- [ ] Operators can deploy code to OCI dev and reset OCI dev state through explicit, documented commands.
-- [ ] The plugin can intentionally target either the hosted description service or the local development service from the admin UI.
-- [ ] Localhost is no longer framed as an accidental fallback when the operator has intentionally selected local mode.
-- [ ] Post-reset verification proves dependency readiness and plugin connectivity, not just process liveness.
+- [x] Operators can deploy code to OCI dev and reset OCI dev state through explicit, documented commands.
+- [x] The plugin can intentionally target either the hosted description service or the local development service from the admin UI.
+- [x] Localhost is no longer framed as an accidental fallback when the operator has intentionally selected local mode.
+- [x] Post-reset verification proves dependency readiness and plugin connectivity, not just process liveness.

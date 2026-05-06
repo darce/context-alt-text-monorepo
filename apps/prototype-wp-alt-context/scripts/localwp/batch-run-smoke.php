@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/batch-run-smoke-args.php';
+require_once __DIR__ . '/batch-run-smoke-diagnostics.php';
 
 if ( ! defined( 'WP_CLI' ) || ! WP_CLI ) {
 	fwrite( STDERR, "This script must be run via WP-CLI.\n" );
@@ -36,7 +37,8 @@ function acx_collect_batch_run_child_job_statuses( array $job_ids ): array {
 		$response = rest_do_request( $request );
 
 		if ( is_wp_error( $response ) ) {
-			$statuses[ $job_id ] = array(
+			$statuses[] = array(
+				'job_id'  => $job_id,
 				'status'  => 'unavailable',
 				'message' => $response->get_error_message(),
 			);
@@ -47,20 +49,16 @@ function acx_collect_batch_run_child_job_statuses( array $job_ids ): array {
 		$data        = $response->get_data();
 
 		if ( $status_code >= 200 && $status_code < 300 && is_array( $data ) ) {
-			$status_payload = array(
+			$statuses[] = array(
+				'job_id'  => $job_id,
 				'status' => trim( (string) ( $data['status'] ?? 'unknown' ) ),
+				'message' => trim( (string) ( $data['message'] ?? '' ) ),
 			);
-
-			$message = trim( (string) ( $data['message'] ?? '' ) );
-			if ( '' !== $message ) {
-				$status_payload['message'] = $message;
-			}
-
-			$statuses[ $job_id ] = $status_payload;
 			continue;
 		}
 
-		$statuses[ $job_id ] = array(
+		$statuses[] = array(
+			'job_id'      => $job_id,
 			'status'      => 'unavailable',
 			'http_status' => $status_code,
 			'message'     => is_array( $data ) ? trim( (string) ( $data['message'] ?? 'Job status lookup failed.' ) ) : 'Job status lookup failed.',
@@ -68,27 +66,6 @@ function acx_collect_batch_run_child_job_statuses( array $job_ids ): array {
 	}
 
 	return $statuses;
-}
-
-function acx_format_batch_run_timeout_message( array $child_job_statuses ): string {
-	if ( array() === $child_job_statuses ) {
-		return 'BatchRun did not reach a terminal state before timeout.';
-	}
-
-	$parts = array();
-	foreach ( $child_job_statuses as $job_id => $job_status ) {
-		$status = trim( (string) ( $job_status['status'] ?? 'unknown' ) );
-		if ( '' === $status ) {
-			$status = 'unknown';
-		}
-
-		$message = trim( (string) ( $job_status['message'] ?? '' ) );
-		$parts[] = '' !== $message
-			? sprintf( '%s=%s (%s)', $job_id, $status, $message )
-			: sprintf( '%s=%s', $job_id, $status );
-	}
-
-	return 'BatchRun did not reach a terminal state before timeout. Child jobs: ' . implode( ', ', $parts ) . '.';
 }
 
 $admin_ids = get_users(

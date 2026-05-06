@@ -33,24 +33,6 @@
         "-y",
         "@upstash/context7-mcp@2.1.4"
       ]
-    },
-    "agent-handoff-mcp": {
-      "command": "uvx",
-      "args": [
-        "mcp-agent-handoff",
-        "--workspace-root",
-        ".",
-        "serve-stdio"
-      ]
-    },
-    "agent-orchestrator-mcp": {
-      "command": "uvx",
-      "args": [
-        "mcp-agent-orchestrator",
-        "--workspace-root",
-        ".",
-        "serve-stdio"
-      ]
     }
   }
 }

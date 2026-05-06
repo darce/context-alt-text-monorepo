@@ -43,24 +43,6 @@
         "PYENV_ROOT": "${env:PYENV_ROOT}",
         "AGENT_HANDOFF_ENFORCE_BRANCH": "1"
       }
-    },
-    "agent-handoff-mcp": {
-      "command": "uvx",
-      "args": [
-        "mcp-agent-handoff",
-        "--workspace-root",
-        ".",
-        "serve-stdio"
-      ]
-    },
-    "agent-orchestrator-mcp": {
-      "command": "uvx",
-      "args": [
-        "mcp-agent-orchestrator",
-        "--workspace-root",
-        ".",
-        "serve-stdio"
-      ]
     }
   }
 }

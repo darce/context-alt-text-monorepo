@@ -305,6 +305,12 @@ lint-all:
 			echo "=== Linting TypeScript (frontend) ==="; \
 			( cd apps/prototype-wp-alt-context && make lint ); \
 			echo ""; \
+			echo "=== Typechecking TypeScript (frontend) ==="; \
+			( cd apps/prototype-wp-alt-context && make typecheck ); \
+			echo ""; \
+			echo "=== Checking frontend architecture ==="; \
+			( cd apps/prototype-wp-alt-context && make arch ); \
+			echo ""; \
 		echo "=== Linting PHP (plugin) ==="; \
 		$(MAKE) -C apps/prototype-wp-alt-context php-cs; \
 		echo ""; \

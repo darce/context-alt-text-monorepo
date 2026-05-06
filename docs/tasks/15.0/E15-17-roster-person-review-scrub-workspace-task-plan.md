@@ -1,0 +1,233 @@
+# E15-17. Roster Person Review Scrub Workspace
+
+> **Metadata**
+>
+> - **Date**: 2026-05-05 21:15 EST
+> - **Author**: GitHub Copilot
+> - **Owning Epic**: [docs/epics/v0.4.0/public-demo-launch-readiness-epic.md](../../epics/v0.4.0/public-demo-launch-readiness-epic.md)
+> - **Epic Short ID**: E15
+> - **Task ID**: E15-17
+> - **Target Branch**: `feature/e15-17-roster-person-review-scrub-workspace`
+> - **Review Coverage Target**: 2
+
+---
+
+## Objective
+
+Build the person-first roster review workspace that sits on top of the ADR-009/E15-13 projection model. When this task is complete, the Roster page opens on people and review queues, one curated person owns all related face evidence, and operators can scrub, select, and act on face instances without using raw clusters as the primary identity model.
+
+## Problem Statement
+
+[docs/specs/roster-management-person-review-scrub-ui-spec.md](../../specs/roster-management-person-review-scrub-ui-spec.md) shows that the current Roster page has the ingredients for person review but the wrong center of gravity. E15-13 owns the curation loop, post-curation refresh, roster entry projection, and curriculum queue contracts. This task owns the larger UI follow-through once those projection contracts exist: the person workspace, scrub interface, route model, and cluster-as-evidence migration.
+
+## Constraints
+
+- Implementation depends on ADR-009 and E15-13 projection/queue contract work passing planning review and landing enough data.
+- Do not replace ADR-009 or change `wp_acx_persons` authority.
+- Do not introduce new similarity score semantics beyond fields supplied by E15-13/RCL-009.
+- Build the scrubber as a roster-local component under `apps/prototype-wp-alt-context/js/admin/pages/roster/`; do not import UI code from outside that path without explicit accessibility, keyboard, and curation-state adaptation review.
+
+## Workflow Principles
+
+- Person is the local source-of-truth entity; roster review data is a derived projection.
+- Clusters are evidence and topology, not the primary operator identity model after curation.
+- Face review should be fast, keyboard-accessible, aspect-correct, and stable under background refresh.
+
+## Terminology
+
+- **Person workspace**: The default Roster surface with queue strip, people list, selected person review, and optional evidence drawer.
+- **Face scrubber**: A low-latency review control for moving through face instances and selecting representative, accepted, rejected, split, or hard-example states.
+- **Cluster evidence mode**: A secondary route/drawer for raw cluster details, unresolved clusters, and topology evidence.
+
+## Current State Analysis
+
+- The current Entries tab can be empty after cluster curation because roster entries are count-only.
+- The Clusters tab can show duplicate named cluster cards and unresolved singleton cards as separate primary identities.
+- Cluster thumbnails and similarity copy do not provide enough person/face review context.
+- E15-13 already plans the post-curation event, refresh status, person review projection, and curriculum queues that this UI needs.
+
+## Target Outcome
+
+The default Roster route shows a review queue strip and a person workspace. A curated Tory Guzman cluster becomes one Tory Guzman person row with supporting clusters and face instances. Operators can scrub all instances, choose representative faces, accept/reject/split/flag hard examples, and deep-link to a person, face, or unresolved cluster.
+
+## Context Loading
+
+- Rules: `docs/agentic/rules/development-workflow.md`
+- Rules: `docs/agentic/rules/frontend-guidelines.md`
+- Rules: `docs/agentic/rules/testing-typescript.md`
+- Spec: `docs/specs/roster-management-person-review-scrub-ui-spec.md`
+- Spec: `docs/specs/recognition-roster-curation-loop-spec.md`
+- ADR: `docs/adrs/ADR-009-recognition-curation-refresh-and-person-review-projection.md`
+- Prerequisite task: `docs/tasks/15.0/E15-13-roster-curation-loop-task-plan.md`
+- Handoff/MCP state: E15-13 decisions/findings, active task `E15-17`, open planning findings
+- External docs via `ctx7` only if: React interaction/testing behavior blocks a concrete implementation decision.
+
+## Contract and Boundary Impact
+
+| Boundary | Owner | Current Contract | Expected Change | Compatibility Needed? | Verification |
+| --- | --- | --- | --- | --- | --- |
+| Roster entry projection -> UI | plugin + shared contracts + frontend | E15-13 enriched `RosterPersonReview` projection | consume projection as default person workspace | Yes; E15-13 must land projection before full UI | shared contract checks + Vitest |
+| Roster routes | frontend | Entries/Clusters tabs and cluster drawer deep links | person/queue/face/cluster deep links | Existing routes remain during migration | React route tests/manual browser |
+| Curation actions | plugin REST + frontend | existing accept/bind/dismiss actions plus E15-13 review actions | scrubber controls call existing/new review actions | No fabricated actions; actions must map to API | Vitest + PHPUnit where API changes |
+
+## Proposed Solution
+
+Use E15-13 as the data-contract prerequisite, then build the person-first Roster workspace in four slices: route shell and queue strip, person list/detail projection rendering, face scrubber interactions, and cluster evidence migration. Keep raw Entries/Clusters routes as secondary compatibility paths until the workspace handles assigned and unresolved cases.
+
+## Dependency Gate
+
+| Slice | Minimum upstream contract before work begins | Why |
+| --- | --- | --- |
+| Slice 1: Workspace Shell and Route Model | RCL-004 shared projection schema and generated types landed with `person_uuid`, representative evidence, and counts; queue route params may parse early, but the person workspace shell does not render until those fields exist | Prevent empty route shells that imply a person workspace without the projection data to populate it |
+| Slice 2: Person Projection Rendering | RCL-004 person review projection API and RCL-005 person-aware cluster grouping implemented | Person rows and grouped evidence need the canonical projection and grouping contract |
+| Slice 3: Face Scrubber and Selection Controls | RCL-002 per-event refresh status available if refresh badges are shown, and every enabled control has a real API/action row in the action matrix below; RCL-009 remains optional unless enhanced score evidence is rendered | Prevent scrubber controls from outrunning the underlying action/status contracts |
+| Slice 4: Cluster Evidence Migration | RCL-005 topology state and RCL-008 queue membership labels implemented | Assigned, unresolved, merged, superseded, and curriculum-queue evidence all depend on those upstream fields |
+
+## Action-to-API Matrix
+
+| Scrubber control | Owning endpoint or contract | Availability |
+| --- | --- | --- |
+| Representative face | `PATCH /acx/v1/recognition/clusters/{cluster_id}/representatives/{representative_id}/pin` via `ClusterMutationsController` | Exists today |
+| Accept suggestion | `POST /acx/v1/recognition/suggestions/{suggestion_id}/accept` plus merge/name variants in `SuggestionsController` | Exists today |
+| Reject suggestion | `POST /acx/v1/recognition/suggestions/{suggestion_id}/reject` plus merge/name variants in `SuggestionsController` | Exists today |
+| Split selected faces | `POST /acx/v1/recognition/clusters/{cluster_id}/split` via `ClusterMutationsController` | Exists today, but the scrubber can only call it after E15-13 defines the face-selection payload it should send |
+| Merge target | `POST /acx/v1/recognition/clusters/{source_id}/merge` via `ClusterMutationsController` | Exists today, but the person-review UI depends on E15-13 for target-cluster selection context |
+| Hard-example flag | E15-13 / RCL-008 review-action contract | Not available today; keep disabled or hidden until that contract lands |
+
+## Files and Surfaces to Change
+
+| Surface | File | Change |
+| --- | --- | --- |
+| roster page shell | `apps/prototype-wp-alt-context/js/admin/pages/RosterPage.tsx` | Make person workspace the default route when projection data exists |
+| roster entries | `apps/prototype-wp-alt-context/js/admin/pages/roster/RosterEntriesSection.tsx` | Migrate from table-only view to person list/workspace |
+| person review UI | `apps/prototype-wp-alt-context/js/admin/pages/roster/` | Add person workspace, face scrubber, queue strip, evidence drawer integration |
+| cluster drawer | `apps/prototype-wp-alt-context/js/admin/pages/roster/ClusterDrawerPanel.tsx` | Link to person review by `person_uuid`; keep unresolved cluster mode |
+| roster styles | `apps/prototype-wp-alt-context/js/admin/styles/components/_cluster-grid.scss` and adjacent roster styles | Aspect-correct, stable review layout with existing tokens |
+| tests | `apps/prototype-wp-alt-context/js/admin/pages/roster/**/__tests__` | Cover routes, queues, scrubber, and evidence modes |
+
+## Related Files
+
+| File | Note |
+| --- | --- |
+| `packages/shared-contracts/schemas/roster-entry.schema.json` | E15-13 projection contract consumed here |
+| `apps/prototype-wp-alt-context/src/api/class-api.php` | Roster entry/API actions owner, primarily E15-13 |
+| `docs/specs/recognition-roster-curation-loop-spec.md` | RCL-004, RCL-005, RCL-008, RCL-009 define data dependencies |
+| `docs/tasks/15.0/E15-13-roster-curation-loop-task-plan.md` | Must provide projection, queues, and action contracts before full UI polish |
+
+## Verification Strategy
+
+- Deterministic tests:
+  - `cd apps/prototype-wp-alt-context && npm test -- --run js/admin/pages/roster`
+- Runtime-parity / environment checks:
+  - Open `http://localhost:10010/wp-admin/admin.php?page=alt-context-roster#/roster` after seeded curation and verify person workspace defaults.
+- Contract/fixture verification:
+  - Shared roster-entry schema/codegen checks from E15-13 are green before consuming enriched projection fields.
+- Manual verification:
+  - Deep links for `#/roster?queue=singleton-proposals`, `#/roster?person={person_uuid}`, `#/roster?person={person_uuid}&face={identity_id}`, and `#/roster?cluster={cluster_id}` behave as specified.
+
+## Slice Delivery
+
+### Slice 1: Workspace Shell and Route Model
+
+**Goal**: Introduce the person-first Roster route without removing existing tabs.
+
+Changes:
+
+- Add route parsing for queue, person, face, and cluster query params.
+- Render queue strip and people workspace shell only after the Slice 1 dependency gate is satisfied; otherwise keep the current Entries/Clusters routes as the default surface.
+- Keep current Entries/Clusters modes reachable as secondary paths during migration.
+
+Proof:
+
+- Vitest covers default route, queue route, person route, face route, and unresolved cluster route.
+
+### Slice 2: Person Projection Rendering
+
+**Goal**: Render one person row/detail surface from the E15-13 projection.
+
+Changes:
+
+- Show representative face, counts, review state, queue memberships, projection status, and refresh status.
+- Collapse clusters under person context instead of separate primary identity cards.
+- Preserve raw cluster IDs in evidence details.
+
+Proof:
+
+- Vitest proves duplicate Tory Guzman clusters render as one person with multiple evidence clusters.
+
+### Slice 3: Face Scrubber and Selection Controls
+
+**Goal**: Let operators review and select face instances quickly and accessibly.
+
+Changes:
+
+- Add aspect-correct preview, filmstrip, scrub rail, metadata panel, and keyboard controls.
+- Wire representative, accept, reject, split, merge target, and hard-example controls only when the matching action-matrix row is available; hidden or disabled controls stay documented as E15-13 dependencies.
+- Preserve selected face and scroll position across background refreshes.
+
+Proof:
+
+- Vitest covers pointer/keyboard navigation, selection, representative action, refresh stability, and no layout-shift regressions at the component level.
+
+### Slice 4: Cluster Evidence Migration
+
+**Goal**: Keep clusters useful as evidence while removing them as the default identity model.
+
+Changes:
+
+- Make cluster drawer person-aware with `Open person review` when `person_uuid` exists.
+- Render unresolved clusters in review mode without inventing a person link.
+- Show merged/superseded topology state instead of duplicate primary identities.
+
+Proof:
+
+- Vitest covers assigned, unresolved, singleton proposal, merged, and superseded cluster drawer states.
+
+## Consolidated Checklist
+
+## Context and Ownership
+
+- [ ] Loaded ADR-009, E15-13, the roster scrub spec, and frontend/testing rules before editing.
+- [ ] Confirmed E15-13 projection fields and action contracts exist before consuming them.
+- [ ] Recorded any boundary ownership changes if the UI needs fields/actions beyond E15-13.
+
+### Checklist for Slice 1: Workspace Shell and Route Model
+
+- [ ] Person, queue, face, and cluster routes parse deterministically.
+- [ ] Existing Entries/Clusters routes remain reachable during migration.
+- [ ] Route tests captured.
+
+### Checklist for Slice 2: Person Projection Rendering
+
+- [ ] Person rows render representative evidence, counts, review state, queue memberships, and projection status.
+- [ ] Bound clusters collapse under one person context.
+- [ ] Duplicate person cluster fixture covered.
+
+### Checklist for Slice 3: Face Scrubber and Selection Controls
+
+- [ ] Scrubber supports pointer and keyboard navigation.
+- [ ] Face crop dimensions are stable and aspect-correct.
+- [ ] Selection actions map only to real API actions and are tested.
+
+### Checklist for Slice 4: Cluster Evidence Migration
+
+- [ ] Assigned cluster drawer links to person review by `person_uuid`.
+- [ ] Unresolved clusters stay in unresolved review mode.
+- [ ] Merged/superseded clusters explain topology state.
+
+## Review Readiness
+
+- [ ] No UI field or action is consumed before the owning projection/API contract exists.
+- [ ] Runtime roster check proves a curated person opens in the person workspace.
+- [ ] Handoff decision records ADR-009/E15-13 dependency status and verification.
+
+## Stretch Goals
+
+- [ ] Retire the old cluster grid as the default route once assigned and unresolved cases are covered.
+
+## Success Criteria
+
+- [ ] The default Roster route is person-first after projection data exists.
+- [ ] A curated Tory Guzman cluster appears as one person with all supporting face evidence.
+- [ ] Operators can scrub, select, and act on face instances from one surface.
+- [ ] Raw cluster evidence remains available without being the primary identity model.

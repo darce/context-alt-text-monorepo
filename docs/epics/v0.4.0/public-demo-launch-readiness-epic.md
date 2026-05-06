@@ -16,7 +16,7 @@ The MVP for E15 is **public WP demo URL live + one manual end-to-end pass**. Eve
 - Phase 2 — Observability Baseline (E15-2) — merged to `main`
 - Phase 3 — WordPress Demo Provisioning (E15-3) — provider-agnostic plan
 - Phase 4 — End-to-End Verification (E15-4 in progress, E15-5 manual remote E2E)
-- Phase 6 — Local Sync Correctness (E15-7 in progress)
+- Phase 6 — Local Sync Correctness, operator hardening, and audit closure (E15-7 in progress; E15-13, E15-14, E15-15, E15-16, and E15-17 staged under the same phase with explicit dependency order below)
 
 **Deferred to v0.4.1:**
 
@@ -86,32 +86,37 @@ The recognition service, Docker stack, Caddy TLS proxy, persistent model cache, 
 
 ### Production Gaps (What This Epic Closes)
 
-| Gap                                                       | Source                             | Status                                                                              |
-| --------------------------------------------------------- | ---------------------------------- | ----------------------------------------------------------------------------------- |
-| API key validation + tenant isolation                     | Production Readiness Phase 4       | **Complete** (`require_auth`, `api_key_repository.py`) — pre-existing               |
-| Browser origin allowlist (CORS)                           | Production Readiness Phase 4       | **Complete — E15-1 Slice 1** (merged to `main`)        |
-| Per-key rate limiting + deterministic 429                 | Production Readiness Phase 4       | **Complete — E15-1 Slice 2** (merged to `main`)        |
-| Key rotation / lifecycle surface                          | Production Readiness Phase 4       | **Complete — E15-1 Slice 3** (merged to `main`)        |
-| Plugin Settings UX (backend URL + key validation)         | Production Readiness Phase 4       | **Complete — E15-1b** (merged to `main`)               |
-| `/health`, `/ready`, `/health/detailed` endpoints         | Production Readiness Phase 5       | **Complete — E15-2 Slice 2 + 2.5** (merged to `main`)            |
-| Structured JSON logs + correlation IDs                    | Production Readiness Phase 5       | **Complete — E15-2 Slice 1** (merged to `main`)                  |
-| Request latency metrics + `/metrics` endpoint             | Production Readiness Phase 5       | **Complete — E15-2 Slice 3a** (merged to `main`)                 |
-| Operations runbook                                        | Production Readiness Phase 5       | **Complete — E15-2 Slice 3b** (merged to `main`)                 |
-| WordPress demo page                                       | Production Readiness Phase 6 / E14 | Not started — **E15-3** (provider-agnostic, this epic)                              |
-| Manual remote E2E verification                            | Production Readiness Phase 6 / E14 | Not started — **E15-5** (this epic)                                                 |
-| OCI budget alerts not verified                            | E14 / Production Readiness Phase 6 | Not started — folded into **E15-5**                                                 |
-| ARM compatibility verification                            | E14                                | Not started — folded into **E15-5** (de facto verified by running A1 instance)      |
-| Dynamic IP SSH access drift                               | Tech debt                          | Folded into **E15-4 / E15-5** (Tailscale)                                           |
-| Local reset bootstrap contract mismatch                   | E15-4 (in progress)                | In progress                                                                         |
-| Local-sync correctness and audit closure                  | New for E15                        | In progress -- **E15-7**                                                            |
-| Worker/queue correlation propagation                      | E15-2 follow-on                    | **Deferred → v0.4.1 (E15-2b)**                                                      |
-| CI E2E smoke gate automation                              | Production Readiness Phase 2       | **Deferred → v0.4.1 (E15-6)**                                                       |
-| Auth transaction isolation core                           | E15-1 follow-on                    | **Deferred → v0.4.1 (E15-8)**                                                       |
-| API key usage telemetry                                   | E15-1 follow-on                    | **Deferred → v0.4.1 (E15-9)**                                                       |
-| API key baseline schema alignment                         | E15-1 follow-on                    | **Deferred → v0.4.1 (E15-10)**                                                      |
-| Session-lifecycle resilience (slr-1..4)                   | Reliability follow-on              | **Deferred → v0.4.1**                                                               |
-| Cross-tenant correlation dashboards                       | E15-2 follow-on                    | **Deferred → v0.4.1 (td-correlation-dashboards)**                                   |
-| Retry/attempt-level observability                         | E15-2 follow-on                    | **Deferred → v0.4.1 (td-retry-attempt-observability)**                              |
+| Gap                                                       | Source                             | Status                                                                                 |
+| --------------------------------------------------------- | ---------------------------------- | -------------------------------------------------------------------------------------- |
+| API key validation + tenant isolation                     | Production Readiness Phase 4       | **Complete** (`require_auth`, `api_key_repository.py`) — pre-existing                  |
+| Browser origin allowlist (CORS)                           | Production Readiness Phase 4       | **Complete — E15-1 Slice 1** (merged to `main`)                                        |
+| Per-key rate limiting + deterministic 429                 | Production Readiness Phase 4       | **Complete — E15-1 Slice 2** (merged to `main`)                                        |
+| Key rotation / lifecycle surface                          | Production Readiness Phase 4       | **Complete — E15-1 Slice 3** (merged to `main`)                                        |
+| Plugin Settings UX (backend URL + key validation)         | Production Readiness Phase 4       | **Complete — E15-1b** (merged to `main`)                                               |
+| `/health`, `/ready`, `/health/detailed` endpoints         | Production Readiness Phase 5       | **Complete — E15-2 Slice 2 + 2.5** (merged to `main`)                                  |
+| Structured JSON logs + correlation IDs                    | Production Readiness Phase 5       | **Complete — E15-2 Slice 1** (merged to `main`)                                        |
+| Request latency metrics + `/metrics` endpoint             | Production Readiness Phase 5       | **Complete — E15-2 Slice 3a** (merged to `main`)                                       |
+| Operations runbook                                        | Production Readiness Phase 5       | **Complete — E15-2 Slice 3b** (merged to `main`)                                       |
+| WordPress demo page                                       | Production Readiness Phase 6 / E14 | Not started — **E15-3** (provider-agnostic, this epic)                                 |
+| Manual remote E2E verification                            | Production Readiness Phase 6 / E14 | Not started — **E15-5** (this epic)                                                    |
+| OCI budget alerts not verified                            | E14 / Production Readiness Phase 6 | Not started — folded into **E15-5**                                                    |
+| ARM compatibility verification                            | E14                                | Not started — folded into **E15-5** (de facto verified by running A1 instance)         |
+| Dynamic IP SSH access drift                               | Tech debt                          | Folded into **E15-4 / E15-5** (Tailscale)                                              |
+| Local reset bootstrap contract mismatch                   | E15-4 (in progress)                | In progress                                                                            |
+| Local-sync correctness and audit closure                  | New for E15                        | In progress -- **E15-7**                                                               |
+| Roster curation loop + person review projection contracts | Phase 6 follow-on                  | Planned -- **E15-13**, gated by ADR-009 and sequenced after E15-7 correctness work     |
+| LocalWP batch smoke argument plumbing                     | Phase 6 verification hardening     | Planned -- **E15-14**                                                                  |
+| Dashboard operator triage with existing fields            | Phase 6 operator UX hardening      | Planned -- **E15-15**                                                                  |
+| Dashboard durable activity and diagnostics                | Phase 6 operator UX hardening      | Planned -- **E15-16**, after E15-15 and a recorded durable-source decision             |
+| Roster person review scrub workspace                      | Phase 6 operator UX hardening      | Planned -- **E15-17**, after E15-13 projection + queue contracts land                  |
+| Worker/queue correlation propagation                      | E15-2 follow-on                    | **Deferred → v0.4.1 (E15-2b)**                                                         |
+| CI E2E smoke gate automation                              | Production Readiness Phase 2       | **Deferred → v0.4.1 (E15-6)**                                                          |
+| Auth transaction isolation core                           | E15-1 follow-on                    | **Deferred → v0.4.1 (E15-8)**                                                          |
+| API key usage telemetry                                   | E15-1 follow-on                    | **Deferred → v0.4.1 (E15-9)**                                                          |
+| API key baseline schema alignment                         | E15-1 follow-on                    | **Deferred → v0.4.1 (E15-10)**                                                         |
+| Session-lifecycle resilience (slr-1..4)                   | Reliability follow-on              | **Deferred → v0.4.1**                                                                  |
+| Cross-tenant correlation dashboards                       | E15-2 follow-on                    | **Deferred → v0.4.1 (td-correlation-dashboards)**                                      |
+| Retry/attempt-level observability                         | E15-2 follow-on                    | **Deferred → v0.4.1 (td-retry-attempt-observability)**                                 |
 
 ## Design Decisions
 
@@ -250,7 +255,7 @@ Rationale: MVP completion signal is "demo URL live + manual E2E pass once". CI s
 ### Phase 6: Local Sync Correctness and Audit Closure -- in-progress
 
 > **Status**: in-progress
-> **Task plans**: [E15-7. Local Sync Completion and Audit Closure](../../tasks/15.0/E15-7-local-sync-completion-and-audit-closure-task-plan.md)
+> **Task plans**: [E15-7. Local Sync Completion and Audit Closure](../../tasks/15.0/E15-7-local-sync-completion-and-audit-closure-task-plan.md), [E15-13. Recognition Roster Curation Loop](../../tasks/15.0/E15-13-roster-curation-loop-task-plan.md), [E15-14. LocalWP Batch Smoke Argument Plumbing](../../tasks/15.0/E15-14-localwp-batch-smoke-argument-plumbing-task-plan.md), [E15-15. Dashboard Operator Triage with Existing Fields](../../tasks/15.0/E15-15-dashboard-operator-triage-existing-fields-task-plan.md), [E15-16. Dashboard Durable Activity and Diagnostics](../../tasks/15.0/E15-16-dashboard-durable-activity-and-diagnostics-task-plan.md), [E15-17. Roster Person Review Scrub Workspace](../../tasks/15.0/E15-17-roster-person-review-scrub-workspace-task-plan.md)
 > **Source**: runtime investigation follow-up on sovereign local-read correctness
 
 **Goal**: Finish the remaining local-sync work so completed analyze/clustering flows produce durable local state, fallback envelopes stay contract-honest, and the sovereign read path can be merged with clean review evidence.
@@ -261,6 +266,17 @@ Deliverables:
 - Truthful fallback response metadata and bounded projection-trigger behavior during polling.
 - Explicit handling or surfacing of snapshot/auth failure state when backend-side auth regressions would otherwise leave local-sync degradation silent.
 - Review/audit closure for the remaining local-sync findings, with commit-backed evidence and a passing close check.
+- ADR-009-gated curation-loop planning and implementation ordering for E15-13 and E15-17, so person-review and curriculum-queue work stays attached to the same sovereign correctness track.
+- Phase-6 verification and operator-hardening follow-ons: E15-14 for trustworthy LocalWP smoke evidence, E15-15 for existing-field dashboard triage, and E15-16 for durable dashboard activity/diagnostics.
+
+Phase 6 execution order:
+
+1. E15-7 closes the sovereign local-sync correctness and audit findings.
+2. E15-13 starts after ADR-009 review acceptance and lands the roster curation loop, person projection, and queue contracts.
+3. E15-14 can run independently once LocalWP smoke evidence is prioritized, but still reports under Phase 6 because it hardens demo-readiness correctness proof.
+4. E15-15 reshapes dashboard triage using existing fields only.
+5. E15-16 follows E15-15 and records a durable activity-source decision before changing dashboard activity authority.
+6. E15-17 follows E15-13 and consumes the landed RCL-002, RCL-004, RCL-005, and RCL-008 contracts rather than inventing parallel roster-review surfaces.
 
 Exit criteria:
 
@@ -271,29 +287,29 @@ Exit criteria:
 
 ## External Dependencies
 
-| Dependency                              | Owner   | Status      | Blocks  |
-| --------------------------------------- | ------- | ----------- | ------- |
-| WP shared hosting provisioning + domain | @daniel | Not started | Phase 3 |
-| API key / origin policy decisions       | @daniel | Not started | Phase 1 |
-| OCI budget alert verification           | @daniel | Not started | Phase 4 |
-| Tailscale installation on OCI VM        | @daniel | Implemented/documented | Phase 4 |
-| CI secret provisioning for smoke tests  | @daniel | Not started | Phase 5 |
+| Dependency                              | Owner   | Status                  | Blocks  |
+| --------------------------------------- | ------- | ----------------------- | ------- |
+| WP shared hosting provisioning + domain | @daniel | Not started             | Phase 3 |
+| API key / origin policy decisions       | @daniel | Not started             | Phase 1 |
+| OCI budget alert verification           | @daniel | Not started             | Phase 4 |
+| Tailscale installation on OCI VM        | @daniel | Implemented/documented  | Phase 4 |
+| CI secret provisioning for smoke tests  | @daniel | Not started             | Phase 5 |
 
 ## Code Anchors
 
-| Layer              | File                                                                       | Note                                        |
-| ------------------ | -------------------------------------------------------------------------- | ------------------------------------------- |
-| Backend API entry  | `apps/prototype-description-service/api/main.py`                           | Security middleware, health/ready endpoints |
-| Backend deploy     | `apps/prototype-description-service/docker-compose.prod.yml`               | Production stack definition                 |
-| Backend Caddy      | `apps/prototype-description-service/Caddyfile`                             | Reverse proxy + TLS config                  |
-| Backend env        | `apps/prototype-description-service/.env.prod.example`                     | Production env contract                     |
-| Backend reset      | `apps/prototype-description-service/scripts/reset_dev_db.sh`               | Local reset (E15-4 scope)                   |
-| Infra              | `infra/oci/`                                                               | Terraform module, cloud-init, retry tooling |
-| Plugin sync        | `apps/prototype-wp-alt-context/src/sovereign/sync/class-sync-pull-job.php` | WP-to-backend sync path                     |
-| Plugin API         | `apps/prototype-wp-alt-context/src/api/class-sync-status-controller.php`   | Sync status for E2E verification            |
-| Frontend workbench | `apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx`           | Demo UX surface                             |
-| QA automation      | `apps/prototype-wp-alt-context/tests/e2e/`                                 | Proposed smoke gate location                |
-| Tech debt          | `docs/tasks/tech-debt/archive-or-transfer-candidates/dynamic-ip-ssh-access.md` | SSH drift resolution                        |
+| Layer              | File                                                                                  | Note                                        |
+| ------------------ | ------------------------------------------------------------------------------------- | ------------------------------------------- |
+| Backend API entry  | `apps/prototype-description-service/api/main.py`                                      | Security middleware, health/ready endpoints |
+| Backend deploy     | `apps/prototype-description-service/docker-compose.prod.yml`                          | Production stack definition                 |
+| Backend Caddy      | `apps/prototype-description-service/Caddyfile`                                        | Reverse proxy + TLS config                  |
+| Backend env        | `apps/prototype-description-service/.env.prod.example`                                | Production env contract                     |
+| Backend reset      | `apps/prototype-description-service/scripts/reset_dev_db.sh`                          | Local reset (E15-4 scope)                   |
+| Infra              | `infra/oci/`                                                                          | Terraform module, cloud-init, retry tooling |
+| Plugin sync        | `apps/prototype-wp-alt-context/src/sovereign/sync/class-sync-pull-job.php`            | WP-to-backend sync path                     |
+| Plugin API         | `apps/prototype-wp-alt-context/src/api/class-sync-status-controller.php`              | Sync status for E2E verification            |
+| Frontend workbench | `apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx`                      | Demo UX surface                             |
+| QA automation      | `apps/prototype-wp-alt-context/tests/e2e/`                                            | Proposed smoke gate location                |
+| Tech debt          | `docs/tasks/tech-debt/archive-or-transfer-candidates/dynamic-ip-ssh-access.md`        | SSH drift resolution                        |
 
 ## Risks and Mitigations
 
@@ -316,7 +332,7 @@ Exit criteria:
 
 ---
 
-# Consolidated Checklist
+## Consolidated Checklist
 
 ## Phase 1: Security Baseline -- SHIPPED → [E15-1](../../tasks/15.0/E15-1-security-baseline-task-plan.md), [E15-1b](../../tasks/15.0/E15-1b-plugin-settings-ux-task-plan.md)
 

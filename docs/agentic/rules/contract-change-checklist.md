@@ -91,6 +91,10 @@ No external HTTP contract shape changed for E15-2b. The `/recognition/analyze` r
 
 No external HTTP, worker, or persistence contract shape changed for MAINT-PDS-LINT-CLEANUP-20260429. The branch only fixes internal lint regressions in adapter timeout helpers, scan-task type imports, and formatter-altered import/whitespace surfaces under `apps/prototype-description-service/recognition/`. Downstream consumers may continue to assume byte-identical request/response payloads, unchanged job-status vocabulary, and unchanged worker/runtime semantics. Verification stays local to unit coverage plus lint/diagnostic checks; no shared schema or contract fixture changes are required for this maintenance slice.
 
+## E15-18 LocalWP Smoke Proof
+
+No cross-service API contract changed for E15-18. The branch is limited to the LocalWP smoke harness under `apps/prototype-wp-alt-context/scripts/localwp/` and its adjacent focused tests. The operator-facing smoke JSON payload remains local to the WordPress proof gate; this branch hardens it by reporting effective arguments, adding a stable `child_job_statuses` list shape for timeout diagnostics, and keeping the timeout message text centralized in one helper. Downstream consumers may assume the field remains a JSON array of objects on both timeout and terminal paths, while shared backend, REST, and MCP contracts remain unchanged.
+
 ## Remediation-Plan Finding IDs
 
 Cited `finding_id` values must resolve to a real MCP finding or concrete code site before implementation. Fix/archive/defer existing findings through MCP. Record a decision for non-existent IDs. Do not carry unverifiable IDs as assumed debt.

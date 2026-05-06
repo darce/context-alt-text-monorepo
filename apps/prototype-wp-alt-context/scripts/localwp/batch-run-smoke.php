@@ -23,6 +23,74 @@ $batch_size = $smoke_args['batch_size'];
 $timeout_seconds = $smoke_args['timeout_seconds'];
 $poll_interval_ms = $smoke_args['poll_interval_ms'];
 
+function acx_collect_batch_run_child_job_statuses( array $job_ids ): array {
+	$statuses = array();
+
+	foreach ( $job_ids as $job_id ) {
+		$job_id = trim( (string) $job_id );
+		if ( '' === $job_id ) {
+			continue;
+		}
+
+		$request = new WP_REST_Request( 'GET', '/acx/v1/recognition/jobs/' . $job_id );
+		$response = rest_do_request( $request );
+
+		if ( is_wp_error( $response ) ) {
+			$statuses[ $job_id ] = array(
+				'status'  => 'unavailable',
+				'message' => $response->get_error_message(),
+			);
+			continue;
+		}
+
+		$status_code = (int) $response->get_status();
+		$data        = $response->get_data();
+
+		if ( $status_code >= 200 && $status_code < 300 && is_array( $data ) ) {
+			$status_payload = array(
+				'status' => trim( (string) ( $data['status'] ?? 'unknown' ) ),
+			);
+
+			$message = trim( (string) ( $data['message'] ?? '' ) );
+			if ( '' !== $message ) {
+				$status_payload['message'] = $message;
+			}
+
+			$statuses[ $job_id ] = $status_payload;
+			continue;
+		}
+
+		$statuses[ $job_id ] = array(
+			'status'      => 'unavailable',
+			'http_status' => $status_code,
+			'message'     => is_array( $data ) ? trim( (string) ( $data['message'] ?? 'Job status lookup failed.' ) ) : 'Job status lookup failed.',
+		);
+	}
+
+	return $statuses;
+}
+
+function acx_format_batch_run_timeout_message( array $child_job_statuses ): string {
+	if ( array() === $child_job_statuses ) {
+		return 'BatchRun did not reach a terminal state before timeout.';
+	}
+
+	$parts = array();
+	foreach ( $child_job_statuses as $job_id => $job_status ) {
+		$status = trim( (string) ( $job_status['status'] ?? 'unknown' ) );
+		if ( '' === $status ) {
+			$status = 'unknown';
+		}
+
+		$message = trim( (string) ( $job_status['message'] ?? '' ) );
+		$parts[] = '' !== $message
+			? sprintf( '%s=%s (%s)', $job_id, $status, $message )
+			: sprintf( '%s=%s', $job_id, $status );
+	}
+
+	return 'BatchRun did not reach a terminal state before timeout. Child jobs: ' . implode( ', ', $parts ) . '.';
+}
+
 $admin_ids = get_users(
 	array(
 		'role'   => 'administrator',
@@ -139,6 +207,9 @@ $completed_total = (int) ( $batch_run_status['completed_total'] ?? 0 );
 $failed_total = (int) ( $batch_run_status['failed_total'] ?? 0 );
 $cancelled_total = (int) ( $batch_run_status['cancelled_total'] ?? 0 );
 $reconciled_total = $completed_total + $failed_total + $cancelled_total;
+$child_job_statuses = empty( $batch_run_status['terminal_state'] )
+	? acx_collect_batch_run_child_job_statuses( $dispatched_jobs )
+	: array();
 
 $payload = array(
 	'site_url'          => get_site_url(),
@@ -154,6 +225,7 @@ $payload = array(
 	'terminal_state'    => (bool) ( $batch_run_status['terminal_state'] ?? false ),
 	'reconciled'        => $reconciled_total === count( $media_ids ),
 	'child_job_ids'     => array_values( array_map( 'strval', is_array( $batch_run_status['child_job_ids'] ?? null ) ? $batch_run_status['child_job_ids'] : array() ) ),
+	'child_job_statuses'=> $child_job_statuses,
 	'failed_batches'    => is_array( $batch_run_status['failed_batches'] ?? null ) ? $batch_run_status['failed_batches'] : array(),
 	'unreadable_media_ids' => is_array( $batch_run_status['unreadable_media_ids'] ?? null ) ? $batch_run_status['unreadable_media_ids'] : array(),
 	'dispatch_failures' => $dispatch_failures,
@@ -165,7 +237,7 @@ $payload = array(
 echo wp_json_encode( $payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) . PHP_EOL;
 
 if ( empty( $batch_run_status['terminal_state'] ) ) {
-	fwrite( STDERR, "BatchRun did not reach a terminal state before timeout.\n" );
+	fwrite( STDERR, acx_format_batch_run_timeout_message( $child_job_statuses ) . "\n" );
 	exit( 2 );
 }
 

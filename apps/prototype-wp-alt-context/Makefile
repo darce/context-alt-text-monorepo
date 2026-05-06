@@ -317,4 +317,4 @@ localwp-batch-run-smoke:
 		echo "Switching LocalWP recognition source to local for smoke verification (was: $${CURRENT_SOURCE:-<empty>})."; \
 		_run_wp --path="$(WP_PATH)" option update acx_recognition_source local >/dev/null; \
 	fi; \
-	_run_wp --path="$(WP_PATH)" eval-file "$(CURDIR)/scripts/localwp/batch-run-smoke.php" -- "$(if $(SMOKE_LIMIT),$(SMOKE_LIMIT),100)" "$(if $(BATCH_SIZE),$(BATCH_SIZE),5)" "$(if $(TIMEOUT_SECONDS),$(TIMEOUT_SECONDS),240)" "$(if $(POLL_INTERVAL_MS),$(POLL_INTERVAL_MS),1000)"
+	_run_wp --path="$(WP_PATH)" eval-file "$(CURDIR)/scripts/localwp/batch-run-smoke.php" "$(if $(SMOKE_LIMIT),$(SMOKE_LIMIT),100)" "$(if $(BATCH_SIZE),$(BATCH_SIZE),5)" "$(if $(TIMEOUT_SECONDS),$(TIMEOUT_SECONDS),240)" "$(if $(POLL_INTERVAL_MS),$(POLL_INTERVAL_MS),1000)"

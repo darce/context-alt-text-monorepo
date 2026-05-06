@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/batch-run-smoke-args.php';
+
 if ( ! defined( 'WP_CLI' ) || ! WP_CLI ) {
 	fwrite( STDERR, "This script must be run via WP-CLI.\n" );
 	exit( 1 );
@@ -9,10 +11,17 @@ if ( ! defined( 'WP_CLI' ) || ! WP_CLI ) {
 
 $args = is_array( $args ?? null ) ? $args : array();
 
-$limit = isset( $args[0] ) ? max( 1, (int) $args[0] ) : 100;
-$batch_size = isset( $args[1] ) ? max( 1, (int) $args[1] ) : 5;
-$timeout_seconds = isset( $args[2] ) ? max( 1, (int) $args[2] ) : 240;
-$poll_interval_ms = isset( $args[3] ) ? max( 100, (int) $args[3] ) : 1000;
+try {
+	$smoke_args = acx_parse_batch_run_smoke_args( $args );
+} catch ( RuntimeException $exception ) {
+	fwrite( STDERR, $exception->getMessage() . "\n" );
+	exit( 1 );
+}
+
+$limit = $smoke_args['limit'];
+$batch_size = $smoke_args['batch_size'];
+$timeout_seconds = $smoke_args['timeout_seconds'];
+$poll_interval_ms = $smoke_args['poll_interval_ms'];
 
 $admin_ids = get_users(
 	array(
@@ -135,6 +144,8 @@ $payload = array(
 	'site_url'          => get_site_url(),
 	'recognition_source'=> $recognition_source,
 	'batch_run_id'      => $batch_run_id,
+	'limit'             => $limit,
+	'batch_size'        => $batch_size,
 	'submitted_total'   => count( $media_ids ),
 	'accepted_total'    => (int) ( $batch_run_status['accepted_total'] ?? 0 ),
 	'completed_total'   => $completed_total,

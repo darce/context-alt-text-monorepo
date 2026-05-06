@@ -2,7 +2,7 @@ import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '../../../api/queryKeys';
-import type { AnalyzeResponse } from '../../../api/recognition';
+import type { BatchAnalyzeResponse } from '../../../api/recognition';
 import { commitClusterToRosterEntry } from '../../../api/rosterApi';
 import { dismissCluster, mergeCluster, reassignClusterIdentity, scanFacesBatched } from '../../../api/recognition';
 import { useToast } from '../../../context/ToastContext';
@@ -38,17 +38,21 @@ export const useClusterActions = ({
   });
 
   const rescanMutation = useMutation<
-    AnalyzeResponse[],
+    BatchAnalyzeResponse,
     Error,
     { cluster: { id: string; sample_identities: { media_id: number }[] }; mediaIds: number[] }
   >({
     mutationFn: ({ cluster, mediaIds }) => scanFacesBatched({ mediaIds, sensitivity: 'high', clusterId: cluster.id }),
     onSuccess: (data) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
-      const firstJob = data[0];
+      const firstJob = data.jobs[0];
       const msg = firstJob?.id
-        ? data.length > 1
-          ? sprintf(__('Started sensitive rescan (%d batches, first job %s).', 'alt-context'), data.length, firstJob.id)
+        ? data.jobs.length > 1
+          ? sprintf(
+              __('Started sensitive rescan (%d batches, first job %s).', 'alt-context'),
+              data.jobs.length,
+              firstJob.id,
+            )
           : sprintf(__('Started sensitive rescan (job %s).', 'alt-context'), firstJob.id)
         : __('Started sensitive rescan.', 'alt-context');
       success(msg);

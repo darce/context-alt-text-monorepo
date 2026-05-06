@@ -85,8 +85,10 @@ class MirrorIntegrityCommand extends \WP_CLI_Command {
 		}
 		$query_args[] = $limit;
 
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query template is assembled from fixed SQL fragments and prepared immediately below.
 		$query = $wpdb->prepare( $query_template, ...$query_args );
 
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$rows = $wpdb->get_results( $query, ARRAY_A );
 		if ( ! \is_array( $rows ) ) {
 			$rows = array();

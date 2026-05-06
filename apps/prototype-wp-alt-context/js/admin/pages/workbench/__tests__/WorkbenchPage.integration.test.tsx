@@ -27,6 +27,9 @@ vi.mock('../../../hooks/useJobProgressStream', () => ({
     isOnline: true,
     etaSeconds: null,
     isPrimary: true,
+    lastEventAt: null,
+    stalledForSeconds: null,
+    retry: vi.fn(),
   }),
 }));
 
@@ -37,6 +40,8 @@ vi.mock('../../../hooks/useRecognitionHooks', async (importOriginal) => {
     ...actual,
     useCombinedScanStatus: () => ({
       scanStatusQuery: { data: null, isLoading: false, isError: false },
+      multiScanStatus: [],
+      batchRunStatusQuery: { data: undefined, isLoading: false, isError: false },
     }),
   };
 });
@@ -179,16 +184,19 @@ describe('WorkbenchPage (integration-lite)', () => {
       offset: 0,
     });
 
-    vi.mocked(recognitionApi.scanFacesBatched).mockResolvedValue([
-      {
-        id: 'job-123',
-        type: 'analyze',
-        status: 'pending',
-        progress: { completed: 0, total: 1 },
-        started_at: new Date().toISOString(),
-        finished_at: null,
-      },
-    ]);
+    vi.mocked(recognitionApi.scanFacesBatched).mockResolvedValue({
+      batchRunId: 'batch-run-123',
+      jobs: [
+        {
+          id: 'job-123',
+          type: 'analyze',
+          status: 'pending',
+          progress: { completed: 0, total: 1 },
+          started_at: new Date().toISOString(),
+          finished_at: null,
+        },
+      ],
+    });
 
     vi.mocked(recognitionApi.fetchScanStatus).mockResolvedValue({
       id: 'job-123',

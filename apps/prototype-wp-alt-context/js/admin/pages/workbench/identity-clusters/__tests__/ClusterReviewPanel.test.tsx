@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { fetchClusterMembers, removeClusterMember } from '../../../../api/recognition';
 import { queryKeys } from '../../../../api/queryKeys';
+import type { ClusterMembersResponse } from '../../../../api/recognition';
 import { ClusterReviewPanel } from '../ClusterReviewPanel';
 
 const reactQueryState = vi.hoisted(() => ({
@@ -54,7 +55,7 @@ const renderPanel = (clusterId = 'cluster-123', onClose: () => void = () => unde
   return { queryClient, ...utils };
 };
 
-const makeClusterMembersResponse = (members = []) => ({
+const makeClusterMembersResponse = (members: ClusterMembersResponse['members'] = []): ClusterMembersResponse => ({
   members,
   limit: 500,
   total: members.length,

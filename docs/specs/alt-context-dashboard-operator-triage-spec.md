@@ -6,7 +6,7 @@
 > - **Author**: Codex
 > - **Status**: Draft
 > - **Assessment**: [docs/assessments/current/alt-context-dashboard-ux-assessment-2026-05-05.md](../assessments/current/alt-context-dashboard-ux-assessment-2026-05-05.md)
-> - **Owning epic**: Unscheduled follow-on; create or link an epic before implementation
+> - **Owning epic**: [E15 Phase 6 - Local Sync Correctness and Audit Closure](../epics/v0.4.0/public-demo-launch-readiness-epic.md)
 > - **Package version target**: n/a
 
 This spec turns the dashboard assessment into a dashboard operator-triage contract. The dashboard should remain the Alt Context home surface, but it should prioritize blocking health, review queues, and durable activity over generic onboarding and broad navigation cards.
@@ -202,6 +202,9 @@ DDIA's materialized-view model is the contract anchor: if Recent Activity is dis
 
 **Done when:**
 
+- A handoff decision records the durable-source choice before any UI change demotes or replaces browser-local history.
+- The recorded decision names the chosen authority: existing batch-run/job rows or an ADR-gated new authority.
+- If no durable source is approved, the spec requires the labeled current-browser fallback path instead of implicit authoritative history.
 - Primary Recent Activity is backed by durable WordPress/local job or batch-run records, not only local storage.
 - If local storage remains, it is labeled as current-browser recent jobs and moved out of the primary triage band.
 - Empty activity states do not contradict known durable batch runs.

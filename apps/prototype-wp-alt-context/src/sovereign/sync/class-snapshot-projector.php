@@ -47,7 +47,6 @@ class SnapshotProjector implements SnapshotProjectorInterface {
 	/**
 	 * @param array<string,mixed> $snapshot
 	 * @throws RuntimeException When transaction support is unavailable.
-	 * @throws Throwable Re-throws repository errors after rollback.
 	 */
 	public function project( string $tenant_id, array $snapshot ): void {
 		global $wpdb;

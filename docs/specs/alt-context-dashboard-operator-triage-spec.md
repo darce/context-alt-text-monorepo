@@ -388,5 +388,10 @@ Verify that healthy/empty first-run state can still show onboarding.
 | F6 | DASH-007, DASH-008 |
 | F7 | DASH-007, DASH-008 |
 | F8 | DASH-002, DASH-003, DASH-009 |
+| R1 | DASH-001, DASH-002, DASH-003 |
+| R2 | DASH-005 |
+| R3 | DASH-003, DASH-004 |
+| R4 | DASH-006 |
+| R5 | DASH-007, DASH-008 |
 | R-MISS-1 | DASH-002 |
 | R-MISS-2 | DASH-007 |

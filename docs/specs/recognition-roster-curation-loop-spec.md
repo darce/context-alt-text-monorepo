@@ -456,3 +456,32 @@ cd apps/prototype-wp-alt-context && npm test -- --run js/admin/pages/roster
 pyenv exec pytest apps/prototype-description-service/recognition/tests
 cd apps/prototype-wp-alt-context && npm test -- --run js/admin
 ```
+
+---
+
+## Traceability
+
+| Assessment item | Spec items |
+| --- | --- |
+| F1 | RCL-001, RCL-004 |
+| F2 | RCL-001, RCL-002, RCL-003 |
+| F3 | RCL-001, RCL-002, RCL-003, RCL-006 |
+| F4 | RCL-001, RCL-002 |
+| F5 | RCL-005 |
+| F6 | RCL-004 |
+| F7 | RCL-004, RCL-006 |
+| F8 | RCL-001, RCL-005, RCL-006, RCL-009 |
+| F9 | RCL-003, RCL-008, RCL-009 |
+| F10 | RCL-002, RCL-007 |
+| R1 | RCL-001, RCL-002 |
+| R2 | RCL-004 |
+| R3 | RCL-005 |
+| R4 | RCL-002, RCL-007 |
+| R5 | RCL-006, RCL-009 |
+| R6 | RCL-006 |
+| R7 | RCL-007 |
+| R-MISS-1 | RCL-003 |
+| R-MISS-2 | RCL-002 |
+| R-MISS-3 | RCL-001 |
+| R-MISS-4 | RCL-007 |
+| R-MISS-5 | RCL-002, RCL-007 |

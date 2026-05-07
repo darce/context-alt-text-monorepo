@@ -1,6 +1,7 @@
 import { __, _n, sprintf } from '@wordpress/i18n';
 
 import type { BatchRunStatus, JobProgress } from '../../api/recognition/types/scan';
+import type { RecognitionHistorySource } from '../../hooks/useRecognitionJobHistory';
 export { mediaEditUrl, rosterClustersUrl } from '../../utils/adminUrls';
 
 const isClusteringActive = (phase?: string | null): boolean => phase === 'clustering' || phase === 'retrying';
@@ -283,18 +284,32 @@ interface RecentJobsPanelProps {
   activeJobId: string | null;
   onSelect: (jobId: string) => void;
   onClear: () => void;
+  historySource?: RecognitionHistorySource;
 }
 
-export const RecentJobsPanel = ({ jobs, statuses, activeJobId, onSelect, onClear }: RecentJobsPanelProps) => (
+export const RecentJobsPanel = ({
+  jobs,
+  statuses,
+  activeJobId,
+  onSelect,
+  onClear,
+  historySource = 'unavailable',
+}: RecentJobsPanelProps) => (
   <div className="acx-apply-panel">
     <div className="acx-apply-panel__header">
       <strong>{__('Recent jobs', 'alt-context')}</strong>
-      {jobs.length > 0 && (
+      {jobs.length > 0 && historySource === 'browser_local_fallback' && (
         <button type="button" onClick={onClear} className="acx-link-button">
           {__('Clear history', 'alt-context')}
         </button>
       )}
     </div>
+    {historySource === 'browser_local_fallback' ? (
+      <p>{__('Showing jobs remembered in this browser only.', 'alt-context')}</p>
+    ) : null}
+    {historySource === 'unavailable' && jobs.length === 0 ? (
+      <p>{__('Durable recent activity is unavailable right now.', 'alt-context')}</p>
+    ) : null}
     {jobs.length === 0 ? (
       <p>{__('No previous jobs yet.', 'alt-context')}</p>
     ) : (

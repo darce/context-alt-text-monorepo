@@ -391,6 +391,35 @@ async def test_run_curation_job_retry_refresh_updates_attempt_timestamps(db_sess
 
 
 @pytest.mark.asyncio
+async def test_run_curation_job_stops_on_timeout_without_replay_persistence() -> None:
+    tenant_id = str(uuid.uuid4())
+    cluster_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+
+    mock_writer = Mock(spec=AssignmentWriter)
+    mock_writer.recompute_representatives = AsyncMock()
+    mock_writer.recompute_centroid = AsyncMock()
+
+    mock_repo = Mock(spec=ClusterRepository)
+    mock_repo.get_unclustered = AsyncMock(return_value=[])
+
+    refresh_service = Mock()
+    refresh_service.refresh_for_cluster = AsyncMock(side_effect=[TimeoutError("refresh timed out"), 1])
+
+    cluster_service = Mock()
+    cluster_service.suggestion_refresh_service = refresh_service
+
+    await run_curation_job(
+        tenant_id=tenant_id,
+        cluster_ids=cluster_ids,
+        assignment_writer=mock_writer,
+        cluster_repo=mock_repo,
+        cluster_service=cluster_service,
+    )
+
+    refresh_service.refresh_for_cluster.assert_awaited_once_with(cluster_ids[0])
+
+
+@pytest.mark.asyncio
 async def test_run_curation_job_marks_refresh_failed_when_executor_raises(db_session: AsyncSession) -> None:
     tenant_id = uuid.uuid4()
     cluster_id = str(uuid.uuid4())

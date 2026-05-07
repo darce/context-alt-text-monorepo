@@ -212,6 +212,9 @@ class JobService:
             payload_refresh_key = job.payload.get("refresh_idempotency_key")
             if payload_refresh_key:
                 refresh_idempotency_key = str(payload_refresh_key)
+        identity_ids_list = list(identity_ids or [])
+        if not identity_ids_list and job.payload:
+            identity_ids_list = _coerce_str_list(job.payload.get("identity_ids") if job.payload else None)
 
         job.progress_total = max(job.progress_total, len(cluster_ids_list))
         job = await self.start_job(job.id)
@@ -223,6 +226,7 @@ class JobService:
             result = await run_curation_job(
                 tenant_id=tenant_id,
                 cluster_ids=cluster_ids_list,
+                identity_ids=identity_ids_list,
                 assignment_writer=self.cluster_service.assignment_writer,
                 cluster_repo=self.cluster_service.assignment_writer.cluster_repository,
                 cluster_service=self.cluster_service,

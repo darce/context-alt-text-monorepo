@@ -122,6 +122,37 @@ async def test_batch_surfacing_handles_empty_clusters() -> None:
 
 
 @pytest.mark.asyncio
+async def test_batch_surfacing_requires_explicit_candidate_partition() -> None:
+    identity = _make_identity("identity-implicit-scan")
+    cluster_repo = StubClusterRepository({"cluster-2": [identity]})
+    suggestion_repo = StubSuggestionRepository()
+    settings = ClusteringSettings(
+        similarity_threshold=0.0,
+        suggestion_floor=0.0,
+        suggestion_ceiling=1.1,
+    )
+
+    service = SuggestionRefreshService(
+        repository=suggestion_repo,
+        tenant_id=TENANT_ID,
+        cluster_repository=cluster_repo,
+        session=object(),
+        settings=settings,
+    )
+
+    representatives_by_cluster: dict[str, Any] = {"cluster-1": [identity.embedding]}
+    created = await service.surface_for_newly_labeled_cluster(
+        "cluster-1",
+        cluster_label="Test Label",
+        representatives_by_cluster=representatives_by_cluster,
+    )
+
+    assert created == 0
+    assert cluster_repo.calls == []
+    assert suggestion_repo.payloads == []
+
+
+@pytest.mark.asyncio
 async def test_batch_surfacing_handles_large_cluster_sets() -> None:
     cluster_ids = [f"cluster-{i}" for i in range(1, 51)]
     identities_by_cluster: dict[str, list[MediaIdentity]] = {}

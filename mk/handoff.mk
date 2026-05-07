@@ -118,29 +118,20 @@ plan-review:
 		"Expected output: MCP findings (reported with finding_id / handoff gap ids) + review_runs(record) + verdict decision + DASHBOARD.txt refresh."
 
 slice-start:
-	@if [ -z "$(TASK)" ]; then \
-		echo "TASK is required."; \
-		echo "No active task could be inferred from MCP state."; \
-		echo "Example: make slice-start TASK=E17 TEST_CMD='pytest path/to/test -q'"; \
-		exit 1; \
-	fi
-	@if [ -z "$(TEST_CMD)" ]; then \
-		echo "TEST_CMD is required."; \
-		echo "Example: make slice-start TASK=$(TASK) TEST_CMD='pytest path/to/test -q'"; \
-		exit 1; \
-	fi
+	$(if $(strip $(TASK)),,@printf '%s\n' "TASK is required." "No active task could be inferred from MCP state." "Example: make slice-start TASK=E17 TEST_CMD='pytest path/to/test -q'"; exit 1)
+	$(if $(strip $(TEST_CMD)),,@printf '%s\n' "TEST_CMD is required." "Example: make slice-start TASK=$(TASK) TEST_CMD='pytest path/to/test -q'"; exit 1)
 	@SESSION_NAME="$(SESSION)"; \
 	if [ -z "$$SESSION_NAME" ] || [ "$$SESSION_NAME" = "$(TASK)-" ]; then \
 		SESSION_NAME="$(TASK)-slice-start"; \
 	fi; \
-	$(MCP_CMD) $(MCP_STATE_ARGS) event \
-		--event-kind test_result \
-		--task-ref "$(TASK)" \
-		--session "$$SESSION_NAME" \
-		--command "$(TEST_CMD)" \
-		--result "$(or $(RESULT),Expected failing test before implementation begins.)" \
-		--exit-code $(or $(EXIT_CODE),1) >/dev/null
-	@$(MCP_CMD) $(MCP_STATE_ARGS) render-handoff --kind dashboard >/dev/null
+	REPO_ROOT="$(WORKTREE_ROOT_REAL)" \
+	TASK="$(TASK)" \
+	SESSION_NAME="$$SESSION_NAME" \
+	TEST_CMD='$(TEST_CMD)' \
+	RESULT='$(or $(RESULT),Expected failing test before implementation begins.)' \
+	EXIT_CODE='$(or $(EXIT_CODE),1)' \
+	PYTHONPATH="$(WORKTREE_MCP_PYTHONPATH)" \
+		$(MCP_PYTHON) "$(WORKTREE_ROOT_REAL)/scripts/_slice_start_inline.py" >/dev/null
 	@echo "Recorded failing test gate for $(TASK)."
 
 slice-commit:

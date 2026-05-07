@@ -228,7 +228,7 @@ async def run_background_backfill_suggestions(
     cluster_service_builder: Callable[..., Awaitable[ClusterServiceProtocol]],
 ) -> None:
     """Backfill suggestions for newly created clusters with a fresh session."""
-    if not created_cluster_ids:
+    if not created_cluster_ids and fallback_window_minutes <= 0:
         logger.info("[suggestions] Background backfill skipped: no created cluster ids tenant_id=%s", tenant_id)
         return
 

@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
+from typing import Protocol
 from typing import Any, ClassVar, Literal
 from uuid import UUID
 
@@ -10,6 +12,22 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models.identity import CurationReplayRecord, IdentityCluster
+
+
+class CurationRefreshStatus(StrEnum):
+    """Foundation replay states for post-curation refresh work.
+
+    These values track the durable curation event lifecycle on replay rows.
+    Slice 4 owns the richer suggestion-refresh outcomes from the spec.
+    """
+
+    NOT_APPLICABLE = "not_applicable"
+    QUEUED = "queued"
+    RUNNING = "running"
+    NO_CANDIDATES = "no_candidates"
+    TIMED_OUT = "timed_out"
+    COMPLETED = "completed"
+    FAILED = "failed"
 
 
 @dataclass(frozen=True)
@@ -20,6 +38,18 @@ class CurationSyncResult:
     backend_version: int
     conflict_code: str | None = None
     machine_payload: dict[str, Any] | None = None
+
+
+class CurationFollowupQueue(Protocol):
+    async def queue_curation_followup(
+        self,
+        *,
+        tenant_id: str,
+        cluster_ids: list[str],
+        identity_ids: list[str] | None = None,
+        source_cluster_id: str | None = None,
+        refresh_idempotency_key: str | None = None,
+    ) -> Any: ...
 
 
 class CurationSyncService:
@@ -39,8 +69,9 @@ class CurationSyncService:
     }
     _SUPPORTED_OPERATION_TYPES: ClassVar[set[str]] = _PERSON_OPERATION_TYPES | _CLUSTER_OPERATION_TYPES
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, job_service: CurationFollowupQueue | None = None) -> None:
         self._session = session
+        self._job_service = job_service
 
     async def apply_batch(self, tenant_id: str, operations: list[Any]) -> list[CurationSyncResult]:
         return [await self.apply(tenant_id=tenant_id, operation=operation) for operation in operations]
@@ -64,7 +95,7 @@ class CurationSyncService:
 
         if operation_type in self._PERSON_OPERATION_TYPES:
             result = await self._apply_person_operation(tenant_uuid, operation_type, operation)
-            await self._store_replay_result(tenant_uuid, idempotency_key, result)
+            await self._store_replay_result(tenant_uuid, idempotency_key, operation_type, result)
             return result
 
         cluster_uuid = self._resolve_cluster_uuid(operation)
@@ -78,7 +109,7 @@ class CurationSyncService:
                 conflict_code="cluster_not_found",
                 machine_payload={"cluster_uuid": str(cluster_uuid), "reason": "cluster_not_found"},
             )
-            await self._store_replay_result(tenant_uuid, idempotency_key, result)
+            await self._store_replay_result(tenant_uuid, idempotency_key, operation_type, result)
             return result
 
         desired_dismissed = self._resolve_desired_dismissed(operation_type)
@@ -91,8 +122,23 @@ class CurationSyncService:
 
         dismissal_matches = desired_dismissed is None or current_dismissed == desired_dismissed
         if current_roster_id == desired_roster_id and dismissal_matches and current_label == desired_label:
-            result = CurationSyncResult(status="acknowledged", backend_version=cluster_backend_version)
-            await self._store_replay_result(tenant_uuid, idempotency_key, result)
+            result = CurationSyncResult(
+                status="acknowledged",
+                backend_version=cluster_backend_version,
+                machine_payload=self._acknowledged_machine_payload(
+                    operation_type=operation_type,
+                    cluster_uuid=cluster.id,
+                    roster_id=desired_roster_id,
+                    label=desired_label,
+                ),
+            )
+            await self._queue_and_store_acknowledged_cluster_result(
+                tenant_id=tenant_uuid,
+                operation_type=operation_type,
+                cluster_uuid=cluster.id,
+                idempotency_key=idempotency_key,
+                result=result,
+            )
             return result
 
         if expected_base_version < cluster_backend_version:
@@ -107,7 +153,7 @@ class CurationSyncService:
                     "label": current_label,
                 },
             )
-            await self._store_replay_result(tenant_uuid, idempotency_key, result)
+            await self._store_replay_result(tenant_uuid, idempotency_key, operation_type, result)
             return result
 
         cluster.roster_id = UUID(desired_roster_id) if desired_roster_id is not None else None
@@ -123,8 +169,20 @@ class CurationSyncService:
         result = CurationSyncResult(
             status="acknowledged",
             backend_version=acknowledged_version,
+            machine_payload=self._acknowledged_machine_payload(
+                operation_type=operation_type,
+                cluster_uuid=cluster.id,
+                roster_id=desired_roster_id,
+                label=desired_label,
+            ),
         )
-        await self._store_replay_result(tenant_uuid, idempotency_key, result)
+        await self._queue_and_store_acknowledged_cluster_result(
+            tenant_id=tenant_uuid,
+            operation_type=operation_type,
+            cluster_uuid=cluster.id,
+            idempotency_key=idempotency_key,
+            result=result,
+        )
         return result
 
     @classmethod
@@ -171,7 +229,13 @@ class CurationSyncService:
             machine_payload=machine_payload,
         )
 
-    async def _store_replay_result(self, tenant_id: UUID, idempotency_key: str, result: CurationSyncResult) -> None:
+    async def _store_replay_result(
+        self,
+        tenant_id: UUID,
+        idempotency_key: str,
+        operation_type: str,
+        result: CurationSyncResult,
+    ) -> None:
         existing = await self._load_replay_result(tenant_id, idempotency_key)
         if existing is not None:
             return
@@ -179,6 +243,9 @@ class CurationSyncService:
         machine_payload_json: str | None = None
         if isinstance(result.machine_payload, dict):
             machine_payload_json = json.dumps(result.machine_payload, sort_keys=True)
+
+        refresh_status = self._initial_refresh_status(operation_type, result)
+        refresh_requested_at = datetime.now(tz=UTC) if refresh_status is CurationRefreshStatus.QUEUED else None
 
         self._session.add(
             CurationReplayRecord(
@@ -188,9 +255,75 @@ class CurationSyncService:
                 backend_version=max(0, int(result.backend_version)),
                 conflict_code=result.conflict_code,
                 machine_payload_json=machine_payload_json,
+                refresh_status=refresh_status.value,
+                refresh_requested_at=refresh_requested_at,
             )
         )
         await self._session.flush()
+
+    def _initial_refresh_status(
+        self,
+        operation_type: str,
+        result: CurationSyncResult,
+    ) -> CurationRefreshStatus:
+        if result.status != "acknowledged":
+            return CurationRefreshStatus.NOT_APPLICABLE
+        if operation_type in self._PERSON_OPERATION_TYPES:
+            return CurationRefreshStatus.NOT_APPLICABLE
+        return CurationRefreshStatus.QUEUED
+
+    async def _queue_refresh_followup(
+        self,
+        *,
+        tenant_id: UUID,
+        operation_type: str,
+        cluster_uuid: UUID,
+        idempotency_key: str,
+    ) -> None:
+        if operation_type in self._PERSON_OPERATION_TYPES:
+            return
+        if self._job_service is None:
+            raise RuntimeError("curation follow-up queue unavailable")
+        await self._job_service.queue_curation_followup(
+            tenant_id=str(tenant_id),
+            cluster_ids=[str(cluster_uuid)],
+            refresh_idempotency_key=idempotency_key,
+        )
+
+    async def _queue_and_store_acknowledged_cluster_result(
+        self,
+        *,
+        tenant_id: UUID,
+        operation_type: str,
+        cluster_uuid: UUID,
+        idempotency_key: str,
+        result: CurationSyncResult,
+    ) -> None:
+        await self._queue_refresh_followup(
+            tenant_id=tenant_id,
+            operation_type=operation_type,
+            cluster_uuid=cluster_uuid,
+            idempotency_key=idempotency_key,
+        )
+        await self._store_replay_result(tenant_id, idempotency_key, operation_type, result)
+
+    def _acknowledged_machine_payload(
+        self,
+        *,
+        operation_type: str,
+        cluster_uuid: UUID,
+        roster_id: str | None,
+        label: str,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "operation_type": operation_type,
+            "cluster_uuid": str(cluster_uuid),
+        }
+        if roster_id is not None:
+            payload["person_uuid"] = roster_id
+        if label:
+            payload["label"] = label
+        return payload
 
     async def _load_cluster(self, tenant_id: UUID, cluster_id: UUID) -> IdentityCluster | None:
         result = await self._session.execute(
@@ -237,6 +370,12 @@ class CurationSyncService:
         return None
 
     def _resolve_desired_label(self, operation: Any, operation_type: str, current_label: str) -> str:
+        if operation_type == "cluster_person_bound":
+            payload = self._payload(operation)
+            person_name = payload.get("person_name")
+            if isinstance(person_name, str) and person_name.strip():
+                return person_name.strip()
+
         if operation_type != "cluster_label_updated":
             return current_label
 

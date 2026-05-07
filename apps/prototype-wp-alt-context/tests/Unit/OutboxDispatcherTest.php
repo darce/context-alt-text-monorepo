@@ -41,6 +41,7 @@ class OutboxDispatcherTest extends TestCase
         $this->assertStringContainsString('"local_revision":4', $body);
         $this->assertStringContainsString('"cluster_uuid":"cluster-1"', $body);
         $this->assertStringContainsString('"person_uuid":"person-1"', $body);
+        $this->assertStringContainsString('"person_name":"Person One"', $body);
     }
 
     public function testDispatchReturnsConflictFor409Response(): void
@@ -433,6 +434,7 @@ class OutboxDispatcherTest extends TestCase
             'payload' => [
                 'cluster_uuid' => 'cluster-1',
                 'person_uuid' => 'person-1',
+                'person_name' => 'Person One',
             ],
         ];
     }

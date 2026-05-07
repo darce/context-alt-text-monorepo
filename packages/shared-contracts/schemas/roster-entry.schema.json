@@ -4,12 +4,27 @@
   "title": "Roster Entry",
   "description": "A roster entry used in the admin UI.",
   "type": "object",
-  "required": ["id", "name", "tags", "cluster_count", "updated_at"],
+  "required": [
+    "id",
+    "person_uuid",
+    "name",
+    "tags",
+    "cluster_count",
+    "updated_at",
+    "source_version",
+    "projection_status",
+    "projection_refreshed_at"
+  ],
   "properties": {
     "id": {
       "type": "integer",
       "minimum": 1,
       "description": "Roster entry ID."
+    },
+    "person_uuid": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable UUID for the local person write model behind this derived roster projection."
     },
     "name": {
       "type": "string",
@@ -32,6 +47,20 @@
       "type": "string",
       "format": "date-time",
       "description": "Last update timestamp (ISO 8601)."
+    },
+    "source_version": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Latest mirrored cluster snapshot version used to build this derived roster projection."
+    },
+    "projection_status": {
+      "type": "string",
+      "enum": ["current", "refreshing", "stale", "failed"],
+      "description": "Freshness state of the local derived roster projection."
+    },
+    "projection_refreshed_at": {
+      "type": ["string", "null"],
+      "description": "Last local projection refresh timestamp, or null when the projection has never been refreshed."
     }
   }
 }

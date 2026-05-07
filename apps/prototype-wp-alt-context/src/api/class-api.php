@@ -5,11 +5,13 @@ declare(strict_types=1);
 namespace AltContext\Api;
 
 require_once __DIR__ . '/class-media-detail-controller.php';
+require_once __DIR__ . '/../sovereign/repositories/class-roster-entry-projection-repository.php';
 require_once __DIR__ . '/../sovereign/sync/class-outbox-drain.php';
 require_once __DIR__ . '/../sovereign/sync/class-outbox-writer.php';
 require_once __DIR__ . '/../sovereign/sync/class-split-topology-command-drain.php';
 
 use AltContext\Api\RecognitionController;
+use AltContext\Sovereign\Repositories\RosterEntryProjectionRepository;
 use AltContext\Sovereign\Sync\OutboxDrain;
 use AltContext\Sovereign\Sync\OutboxWriter;
 use AltContext\Sovereign\Sync\SplitTopologyCommandDrain;
@@ -327,37 +329,8 @@ class Api {
 	}
 
 	public function get_roster_entries( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		global $wpdb;
-
-		$table_persons  = $wpdb->prefix . 'acx_persons';
-		$table_clusters = $wpdb->prefix . 'acx_clusters';
-		$results = $wpdb->get_results(
-			$wpdb->prepare(
-				'SELECT p.*, (SELECT COUNT(*) FROM %i c WHERE c.person_id = p.id) AS cluster_count FROM %i p ORDER BY p.name ASC',
-				$table_clusters,
-				$table_persons
-			),
-			ARRAY_A
-		);
-
-		if ( ! is_array( $results ) ) {
-			return rest_ensure_response( array() );
-		}
-
-		// Decode tags for each person
-		$entries = array_map(
-			function ( $row ) {
-				if ( isset( $row['tags'] ) && is_string( $row['tags'] ) ) {
-					$decoded     = json_decode( $row['tags'], true );
-					$row['tags'] = is_array( $decoded ) ? $decoded : array();
-				}
-				$row['cluster_count'] = isset( $row['cluster_count'] ) ? (int) $row['cluster_count'] : 0;
-				return $row;
-			},
-			$results
-		);
-
-		return rest_ensure_response( $entries );
+		$projection_repository = new RosterEntryProjectionRepository();
+		return rest_ensure_response( $projection_repository->list_entries( $this->get_local_tenant_id() ) );
 	}
 
 	public function commit_roster_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -497,6 +470,7 @@ class Api {
 			array(
 				'cluster_uuid' => $cluster_id,
 				'person_uuid'  => ( null === $person_id ) ? null : ( is_string( $person_uuid ) ? $person_uuid : null ),
+				'person_name'  => ( null === $person_id || ! is_string( $resolved_person_name ) || '' === trim( $resolved_person_name ) ) ? null : trim( $resolved_person_name ),
 			)
 		);
 		if ( ! $queued ) {

@@ -9,6 +9,7 @@ from db.models.base_imports import (
     TIMESTAMP,
     UUID,
     Base,
+    BigInteger,
     Boolean,
     CheckConstraint,
     Float,
@@ -189,9 +190,16 @@ class CurationReplayRecord(Base):
     )
     idempotency_key: Mapped[str] = mapped_column(String(64), nullable=False)
     result_status: Mapped[str] = mapped_column(String(20), nullable=False)
-    backend_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    backend_version: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
     conflict_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     machine_payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    refresh_status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        server_default=text("'not_applicable'"),
+    )
+    refresh_requested_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    refresh_completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -200,6 +208,10 @@ class CurationReplayRecord(Base):
     tenant: Mapped[Tenant] = relationship(backref="curation_replay_records")
 
     __table_args__ = (
+        CheckConstraint(
+            "refresh_status IN ('not_applicable', 'queued', 'running', 'no_candidates', 'timed_out', 'completed', 'failed')",
+            name="ck_curation_replay_refresh_status",
+        ),
         UniqueConstraint("tenant_id", "idempotency_key", name="uq_curation_replay_tenant_idempotency"),
         Index("idx_curation_replay_tenant", "tenant_id"),
     )

@@ -256,10 +256,10 @@ make lane-manifest-init TASK=E15-19 LANE_IDS='docs-contracts backend-refresh wp-
 
 ### Checklist for Slice 5: Projection Integrity and Bounded Controller Extraction
 
-- [ ] Slices 1-4 are closed with a `close_slice` decision before Tier 2 Slice 5 starts.
-- [ ] Projection rebuild correctness tests pass.
-- [ ] Reset behavior is not expanded without reviewed contract.
-- [ ] Controller extraction is limited to changed roster/projection/outbox use cases.
+- [x] Slices 1-4 are closed with a `close_slice` decision before Tier 2 Slice 5 starts.
+- [x] Projection rebuild correctness tests pass.
+- [x] Reset behavior is not expanded without reviewed contract.
+- [x] Controller extraction is limited to changed roster/projection/outbox use cases.
 
 ## Review Readiness
 

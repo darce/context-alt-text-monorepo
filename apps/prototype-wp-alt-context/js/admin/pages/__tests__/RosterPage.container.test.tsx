@@ -242,6 +242,50 @@ describe('RosterPage route container', () => {
     expect(screen.getByText('Unassigned Person')).toBeInTheDocument();
   });
 
+  it('[PAG-M3] keeps person and face routes on the legacy entries surface until projection data lands', () => {
+    render(
+      <MemoryRouter initialEntries={['/?person=person-123&face=identity-9&tab=clusters']}>
+        <RosterPage />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('tab', { name: 'Entries' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Clusters' })).toHaveAttribute('aria-selected', 'false');
+    expect(
+      screen.getByText(
+        'This route is recognized, but the person workspace stays on the legacy Entries view until enriched roster projection data lands.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('[PAG-M3] keeps queue routes reachable without implying the person workspace exists', () => {
+    render(
+      <MemoryRouter initialEntries={['/?queue=needs-review&tab=clusters']}>
+        <RosterPage />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('tab', { name: 'Entries' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Clusters' })).toHaveAttribute('aria-selected', 'false');
+    expect(
+      screen.getByText(
+        'This route is recognized, but the person workspace stays on the legacy Entries view until enriched roster projection data lands.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('[PAG-M3] prioritizes cluster evidence routes over legacy tab params', async () => {
+    render(
+      <MemoryRouter initialEntries={['/?tab=entries&cluster=cluster-1']}>
+        <RosterPage />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('tab', { name: 'Clusters' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Entries' })).toHaveAttribute('aria-selected', 'false');
+    expect(await screen.findByRole('button', { name: /^Close$/i })).toBeInTheDocument();
+  });
+
   it('[PAG-M3] opens and closes the cluster drawer from the grid', async () => {
     render(
       <MemoryRouter>

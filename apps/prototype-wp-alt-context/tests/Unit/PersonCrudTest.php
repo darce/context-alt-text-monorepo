@@ -311,13 +311,33 @@ class PersonCrudTest extends TestCase
                 'id' => 1,
                 'name' => 'Alice',
                 'tags' => '["friend"]',
+                'person_uuid' => '11111111-1111-1111-1111-111111111111',
+                'local_revision' => 7,
             ],
             [
                 'id' => 2,
                 'name' => 'Bob',
                 'tags' => '[]',
+                'person_uuid' => '22222222-2222-2222-2222-222222222222',
+                'local_revision' => 3,
             ],
         ];
+        $stream_name = sprintf('tenant:%s:clusters', md5((string) get_site_url()));
+        $wpdb->queryResults[$wpdb->prepare(
+            'SELECT last_snapshot_version FROM %i WHERE stream_name = %s LIMIT 1',
+            'wp_acx_sync_state',
+            $stream_name
+        )] = 42;
+        $wpdb->queryResults[$wpdb->prepare(
+            'SELECT updated_at FROM %i WHERE stream_name = %s LIMIT 1',
+            'wp_acx_sync_state',
+            $stream_name
+        )] = '2026-05-07 15:00:00';
+        $wpdb->queryResults[$wpdb->prepare(
+            'SELECT last_sync_result FROM %i WHERE stream_name = %s LIMIT 1',
+            'wp_acx_sync_state',
+            $stream_name
+        )] = 'ok';
 
         $request = new WP_REST_Request('GET', '/acx/v1/roster/entries');
         $response = $this->api->get_roster_entries($request);
@@ -326,6 +346,10 @@ class PersonCrudTest extends TestCase
         $data = $response->get_data();
         $this->assertCount(2, $data);
         $this->assertSame('Alice', $data[0]['name']);
+        $this->assertSame('11111111-1111-1111-1111-111111111111', $data[0]['person_uuid']);
+        $this->assertSame(42, $data[0]['source_version']);
+        $this->assertSame('current', $data[0]['projection_status']);
+        $this->assertSame('2026-05-07 15:00:00', $data[0]['projection_refreshed_at']);
         $this->assertSame(['friend'], $data[0]['tags']);
     }
 

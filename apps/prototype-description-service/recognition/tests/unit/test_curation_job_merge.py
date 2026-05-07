@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 import uuid
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from db.models.identity import CurationReplayRecord
+from db.models.tenant import Tenant
 from recognition.application.orchestration.curation_job import run_curation_job
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.domain.cluster import IdentityCluster
@@ -133,3 +138,149 @@ async def test_run_curation_job_creates_merge_must_link_constraint() -> None:
     cluster_service.retry_matching.assert_awaited_once_with(target_cluster_id=target_cluster_id, tenant_id=tenant_id)
     suggestion_refresh_service.refresh_for_cluster.assert_awaited_once_with(target_cluster_id)
     mock_repo.delete.assert_awaited_once_with(source_cluster_id)
+
+
+@pytest.mark.asyncio
+async def test_run_curation_job_advances_refresh_status_for_replay_row(db_session: AsyncSession) -> None:
+    tenant_id = uuid.uuid4()
+    cluster_id = str(uuid.uuid4())
+    db_session.add(Tenant(id=tenant_id, site_url="http://example.test"))
+    await db_session.commit()
+    replay_row = CurationReplayRecord(
+        tenant_id=tenant_id,
+        idempotency_key="refresh-idem-1",
+        result_status="acknowledged",
+        backend_version=1,
+        refresh_status="queued",
+        refresh_requested_at=datetime.now(tz=UTC),
+    )
+    db_session.add(replay_row)
+    await db_session.commit()
+
+    mock_writer = Mock(spec=AssignmentWriter)
+    mock_writer.recompute_representatives = AsyncMock()
+    mock_writer.recompute_centroid = AsyncMock()
+
+    mock_repo = Mock(spec=ClusterRepository)
+    mock_repo.get_unclustered = AsyncMock(return_value=[])
+
+    refresh_service = Mock()
+    refresh_service.refresh_for_cluster = AsyncMock()
+
+    cluster_service = Mock()
+    cluster_service.suggestion_refresh_service = refresh_service
+
+    await run_curation_job(
+        tenant_id=str(tenant_id),
+        cluster_ids=[cluster_id],
+        assignment_writer=mock_writer,
+        cluster_repo=mock_repo,
+        cluster_service=cluster_service,
+        refresh_idempotency_key="refresh-idem-1",
+        session=db_session,
+    )
+
+    refreshed = await db_session.scalar(
+        select(CurationReplayRecord).where(CurationReplayRecord.idempotency_key == "refresh-idem-1")
+    )
+    assert isinstance(refreshed, CurationReplayRecord)
+    assert refreshed.refresh_status == "completed"
+    assert refreshed.refresh_completed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_run_curation_job_marks_refresh_failed_when_executor_raises(db_session: AsyncSession) -> None:
+    tenant_id = uuid.uuid4()
+    cluster_id = str(uuid.uuid4())
+    db_session.add(Tenant(id=tenant_id, site_url="http://example.test"))
+    await db_session.commit()
+    replay_row = CurationReplayRecord(
+        tenant_id=tenant_id,
+        idempotency_key="refresh-idem-fail",
+        result_status="acknowledged",
+        backend_version=1,
+        refresh_status="queued",
+        refresh_requested_at=datetime.now(tz=UTC),
+    )
+    db_session.add(replay_row)
+    await db_session.commit()
+
+    mock_writer = Mock(spec=AssignmentWriter)
+    mock_writer.recompute_representatives = AsyncMock()
+    mock_writer.recompute_centroid = AsyncMock()
+
+    mock_repo = Mock(spec=ClusterRepository)
+    mock_repo.get_unclustered = AsyncMock(return_value=[])
+
+    refresh_service = Mock()
+    refresh_service.refresh_for_cluster = AsyncMock(side_effect=RuntimeError("boom"))
+
+    cluster_service = Mock()
+    cluster_service.suggestion_refresh_service = refresh_service
+
+    await run_curation_job(
+        tenant_id=str(tenant_id),
+        cluster_ids=[cluster_id],
+        assignment_writer=mock_writer,
+        cluster_repo=mock_repo,
+        cluster_service=cluster_service,
+        refresh_idempotency_key="refresh-idem-fail",
+        session=db_session,
+    )
+
+    refreshed = await db_session.scalar(
+        select(CurationReplayRecord).where(CurationReplayRecord.idempotency_key == "refresh-idem-fail")
+    )
+    assert isinstance(refreshed, CurationReplayRecord)
+    assert refreshed.refresh_status == "failed"
+    assert refreshed.refresh_completed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_run_curation_job_leaves_refresh_row_queued_when_refresh_service_missing(
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    tenant_id = uuid.uuid4()
+    cluster_id = str(uuid.uuid4())
+    db_session.add(Tenant(id=tenant_id, site_url="http://example.test"))
+    await db_session.commit()
+    replay_row = CurationReplayRecord(
+        tenant_id=tenant_id,
+        idempotency_key="refresh-idem-missing-service",
+        result_status="acknowledged",
+        backend_version=1,
+        refresh_status="queued",
+        refresh_requested_at=datetime.now(tz=UTC),
+    )
+    db_session.add(replay_row)
+    await db_session.commit()
+
+    mock_writer = Mock(spec=AssignmentWriter)
+    mock_writer.recompute_representatives = AsyncMock()
+    mock_writer.recompute_centroid = AsyncMock()
+
+    mock_repo = Mock(spec=ClusterRepository)
+    mock_repo.get_unclustered = AsyncMock(return_value=[])
+
+    caplog.set_level("WARNING")
+
+    await run_curation_job(
+        tenant_id=str(tenant_id),
+        cluster_ids=[cluster_id],
+        assignment_writer=mock_writer,
+        cluster_repo=mock_repo,
+        cluster_service=Mock(suggestion_refresh_service=None),
+        refresh_idempotency_key="refresh-idem-missing-service",
+        session=db_session,
+    )
+
+    refreshed = await db_session.scalar(
+        select(CurationReplayRecord).where(
+            CurationReplayRecord.idempotency_key == "refresh-idem-missing-service"
+        )
+    )
+    assert isinstance(refreshed, CurationReplayRecord)
+    assert refreshed.refresh_status == "queued"
+    assert refreshed.refresh_completed_at is None
+    assert "refresh service unavailable" in caplog.text

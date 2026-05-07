@@ -239,7 +239,7 @@ make lane-manifest-init TASK=E15-19 LANE_IDS='docs-contracts backend-refresh wp-
 ### Checklist for Slice 2: Durable Post-Curation Event and Refresh Status
 
 - [x] `cluster_person_bound` carries or resolves authoritative person label.
-- [ ] Refresh status is durable and idempotent.
+- [x] Refresh status is durable and idempotent.
 - [x] Replay/idempotency tests captured.
 
 ### Checklist for Slice 3: RCL-004 Projection Schema and API

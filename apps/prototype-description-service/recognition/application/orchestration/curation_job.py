@@ -7,11 +7,18 @@ from __future__ import annotations
 import contextlib
 import logging
 from collections.abc import Sequence
+from datetime import UTC, datetime
+from uuid import UUID
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from db.models.identity import CurationReplayRecord
 from recognition.application.orchestration.cluster_service import ClusterService
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.domain.constraints import ConstraintSource, ConstraintType
 from recognition.domain.repositories import ClusterRepository
+from roster.application.curation_sync_service import CurationRefreshStatus
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +32,8 @@ async def run_curation_job(
     cluster_service: ClusterService | None = None,
     run_incremental_clustering: bool = True,
     source_cluster_id: str | None = None,
+    refresh_idempotency_key: str | None = None,
+    session: AsyncSession | None = None,
 ) -> dict[str, int]:
     """Execute post-curation cleanup tasks.
 
@@ -36,6 +45,8 @@ async def run_curation_job(
         cluster_service: Optional cluster service for incremental clustering.
         run_incremental_clustering: Whether to re-cluster orphans.
         source_cluster_id: Optional source cluster ID to delete after merge cleanup.
+        refresh_idempotency_key: Optional replay key for durable refresh lifecycle updates.
+        session: Optional session used to update replay-row refresh state.
 
     Returns:
         Dict with counts: {"clusters_recomputed": N, "identities_clustered": M}.
@@ -94,16 +105,50 @@ async def run_curation_job(
                 exc,
             )
 
-        try:
-            refresh_service = getattr(cluster_service, "suggestion_refresh_service", None)
-            if refresh_service is not None:
-                await refresh_service.refresh_for_cluster(target_cluster_id)
-        except Exception as exc:
-            logger.warning(
-                "[curation_job] refresh_for_cluster failed tenant_id=%s cluster_id=%s: %s",
-                tenant_id,
-                target_cluster_id,
-                exc,
+    refresh_service = getattr(cluster_service, "suggestion_refresh_service", None) if cluster_service is not None else None
+    replay_session = session
+    if replay_session is None and refresh_idempotency_key:
+        logger.warning(
+            "[curation_job] replay session unavailable tenant_id=%s idempotency_key=%s",
+            tenant_id,
+            refresh_idempotency_key,
+        )
+    if refresh_service is None:
+        logger.warning("[curation_job] refresh service unavailable tenant_id=%s cluster_ids=%s", tenant_id, unique_cluster_ids)
+    elif unique_cluster_ids:
+        if replay_session is not None and refresh_idempotency_key:
+            await _set_refresh_status(
+                session=replay_session,
+                tenant_id=tenant_id,
+                idempotency_key=refresh_idempotency_key,
+                status=CurationRefreshStatus.RUNNING,
+            )
+        refresh_failed = False
+        for cluster_id in unique_cluster_ids:
+            try:
+                await refresh_service.refresh_for_cluster(cluster_id)
+            except Exception as exc:
+                logger.warning(
+                    "[curation_job] refresh_for_cluster failed tenant_id=%s cluster_id=%s: %s",
+                    tenant_id,
+                    cluster_id,
+                    exc,
+                )
+                if replay_session is not None and refresh_idempotency_key:
+                    await _set_refresh_status(
+                        session=replay_session,
+                        tenant_id=tenant_id,
+                        idempotency_key=refresh_idempotency_key,
+                        status=CurationRefreshStatus.FAILED,
+                    )
+                    refresh_failed = True
+                    break
+        if replay_session is not None and refresh_idempotency_key and not refresh_failed:
+            await _set_refresh_status(
+                session=replay_session,
+                tenant_id=tenant_id,
+                idempotency_key=refresh_idempotency_key,
+                status=CurationRefreshStatus.COMPLETED,
             )
 
     logger.info(
@@ -134,3 +179,29 @@ async def run_curation_job(
         "clusters_recomputed": len(unique_cluster_ids),
         "identities_clustered": identities_clustered,
     }
+async def _set_refresh_status(
+    *,
+    session: AsyncSession,
+    tenant_id: str,
+    idempotency_key: str,
+    status: CurationRefreshStatus,
+) -> None:
+    result = await session.execute(
+        select(CurationReplayRecord).where(
+            CurationReplayRecord.tenant_id == UUID(tenant_id),
+            CurationReplayRecord.idempotency_key == idempotency_key,
+        )
+    )
+    record = result.scalar_one_or_none()
+    if not isinstance(record, CurationReplayRecord):
+        return
+
+    now = datetime.now(tz=UTC)
+    record.refresh_status = status.value
+    if status is CurationRefreshStatus.RUNNING:
+        if record.refresh_requested_at is None:
+            record.refresh_requested_at = now
+        record.refresh_completed_at = None
+    elif status in {CurationRefreshStatus.COMPLETED, CurationRefreshStatus.FAILED}:
+        record.refresh_completed_at = now
+    await session.flush()

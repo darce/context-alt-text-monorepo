@@ -111,6 +111,11 @@ Timeout expectations:
 - Idempotency survives service restarts and process restarts
 - Plugin MUST generate unique idempotency keys per outbox operation
 - Plugin MUST NOT retry with a different idempotency key for the same mutation
+- Acknowledged cluster mutations also persist durable refresh lifecycle state on the replay row:
+  - cluster operations start with `refresh_status = 'queued'`
+  - the worker advances replay rows through `running` and then `completed` or `failed`
+  - if the refresh executor is unavailable, the replay row stays `queued` so a later worker pass can retry instead of terminally failing the curation event
+- Person-only operations and conflict responses keep `refresh_status = 'not_applicable'`
 
 ### Version Conflict Detection
 
@@ -122,7 +127,7 @@ Backend compares `expected_base_version` against current cluster state:
 Version calculation:
 
 ```python
-backend_version = int(cluster.updated_at.timestamp())
+backend_version = int(cluster.updated_at.timestamp() * 1_000_000)
 ```
 
 ## Response (200) - Acknowledged

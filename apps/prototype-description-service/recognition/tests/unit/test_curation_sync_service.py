@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models.identity import CurationReplayRecord, IdentityCluster
 from db.models.tenant import Tenant
+from recognition.tests.fakes import FakeJobService
 from roster.application.curation_sync_service import CurationSyncService
 
 
@@ -37,6 +39,23 @@ async def _create_tenant(session: AsyncSession) -> Tenant:
     session.add(tenant)
     await session.commit()
     return tenant
+
+
+async def _load_replay_record(
+    session: AsyncSession,
+    *,
+    tenant_id,
+    idempotency_key: str,
+) -> CurationReplayRecord:
+    result = await session.execute(
+        select(CurationReplayRecord).where(
+            CurationReplayRecord.tenant_id == tenant_id,
+            CurationReplayRecord.idempotency_key == idempotency_key,
+        )
+    )
+    record = result.scalar_one_or_none()
+    assert isinstance(record, CurationReplayRecord)
+    return record
 
 
 @pytest.mark.asyncio
@@ -79,7 +98,8 @@ async def test_cluster_bind_acknowledges_and_is_idempotent(db_session: AsyncSess
         payload={"cluster_uuid": str(cluster.id), "person_uuid": person_uuid},
     )
 
-    service = CurationSyncService(session=db_session)
+    job_service = FakeJobService()
+    service = CurationSyncService(session=db_session, job_service=job_service)
     first_result = await service.apply(tenant_id=str(tenant.id), operation=operation)
     await db_session.commit()
 
@@ -91,11 +111,65 @@ async def test_cluster_bind_acknowledges_and_is_idempotent(db_session: AsyncSess
     assert first_result.status == "acknowledged"
     assert second_result == first_result
     assert str(cluster.roster_id) == person_uuid
+    assert cluster.label == "Unassigned"
 
     replay_count = await db_session.scalar(
         select(func.count()).select_from(CurationReplayRecord).where(CurationReplayRecord.tenant_id == tenant.id)
     )
     assert replay_count == 1
+
+    replay_record = await _load_replay_record(
+        db_session,
+        tenant_id=tenant.id,
+        idempotency_key="bind-idem-key",
+    )
+    assert replay_record.machine_payload_json == json.dumps(
+        {
+            "cluster_uuid": str(cluster.id),
+            "label": "Unassigned",
+            "operation_type": "cluster_person_bound",
+            "person_uuid": person_uuid,
+        },
+        sort_keys=True,
+    )
+    assert replay_record.refresh_status == "queued"
+    assert replay_record.refresh_requested_at is not None
+    assert replay_record.refresh_completed_at is None
+
+
+@pytest.mark.asyncio
+async def test_cluster_bind_queues_refresh_followup_with_idempotency_key(db_session: AsyncSession) -> None:
+    tenant = await _create_tenant(db_session)
+    cluster = IdentityCluster(id=uuid4(), tenant_id=tenant.id, label="Unassigned", identity_count=0)
+    db_session.add(cluster)
+    await db_session.commit()
+    await db_session.refresh(cluster)
+
+    base_version = int(cluster.updated_at.timestamp() * 1_000_000) if cluster.updated_at else 0
+    fake_job_service = FakeJobService()
+
+    result = await CurationSyncService(session=db_session, job_service=fake_job_service).apply(
+        tenant_id=str(tenant.id),
+        operation=_operation(
+            "cluster_person_bound",
+            entity_key=str(cluster.id),
+            idempotency_key="bind-refresh-queue-idem",
+            expected_base_version=base_version,
+            payload={"cluster_uuid": str(cluster.id), "person_uuid": str(uuid4())},
+        ),
+    )
+
+    assert result.status == "acknowledged"
+    assert fake_job_service.calls == [
+        {
+            "method": "queue_curation_followup",
+            "tenant_id": str(tenant.id),
+            "cluster_ids": [str(cluster.id)],
+            "identity_ids": [],
+            "source_cluster_id": None,
+            "refresh_idempotency_key": "bind-refresh-queue-idem",
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -109,7 +183,7 @@ async def test_cluster_bind_replay_uses_authoritative_person_name_when_provided(
     base_version = int(cluster.updated_at.timestamp() * 1_000_000) if cluster.updated_at else 0
     person_uuid = str(uuid4())
 
-    result = await CurationSyncService(session=db_session).apply(
+    result = await CurationSyncService(session=db_session, job_service=FakeJobService()).apply(
         tenant_id=str(tenant.id),
         operation=_operation(
             "cluster_person_bound",
@@ -129,6 +203,46 @@ async def test_cluster_bind_replay_uses_authoritative_person_name_when_provided(
     assert result.status == "acknowledged"
     assert str(cluster.roster_id) == person_uuid
     assert cluster.label == "Known Person"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "person_name_payload",
+    [{}, {"person_name": ""}, {"person_name": "   "}],
+)
+async def test_cluster_bind_preserves_existing_label_when_person_name_missing_or_blank(
+    db_session: AsyncSession,
+    person_name_payload: dict[str, str],
+) -> None:
+    tenant = await _create_tenant(db_session)
+    cluster = IdentityCluster(id=uuid4(), tenant_id=tenant.id, label="Frank", identity_count=1)
+    db_session.add(cluster)
+    await db_session.commit()
+    await db_session.refresh(cluster)
+
+    base_version = int(cluster.updated_at.timestamp() * 1_000_000) if cluster.updated_at else 0
+    person_uuid = str(uuid4())
+
+    result = await CurationSyncService(session=db_session, job_service=FakeJobService()).apply(
+        tenant_id=str(tenant.id),
+        operation=_operation(
+            "cluster_person_bound",
+            entity_key=str(cluster.id),
+            idempotency_key=f"bind-person-name-fallback-{person_name_payload.get('person_name', 'missing') or 'blank'}",
+            expected_base_version=base_version,
+            payload={
+                "cluster_uuid": str(cluster.id),
+                "person_uuid": person_uuid,
+                **person_name_payload,
+            },
+        ),
+    )
+    await db_session.commit()
+    await db_session.refresh(cluster)
+
+    assert result.status == "acknowledged"
+    assert str(cluster.roster_id) == person_uuid
+    assert cluster.label == "Frank"
 
 
 @pytest.mark.asyncio
@@ -165,6 +279,46 @@ async def test_cluster_bind_conflicts_when_expected_base_is_stale(db_session: As
         "dismissed": False,
         "label": "Assigned",
     }
+
+
+@pytest.mark.asyncio
+async def test_cluster_bind_does_not_persist_replay_row_when_queue_enqueue_fails(db_session: AsyncSession) -> None:
+    class ExplodingJobService:
+        async def queue_curation_followup(self, **kwargs):  # noqa: ANN003
+            raise RuntimeError("queue boom")
+
+    tenant = await _create_tenant(db_session)
+    tenant_id = tenant.id
+    cluster = IdentityCluster(id=uuid4(), tenant_id=tenant.id, label="Unassigned", identity_count=0)
+    db_session.add(cluster)
+    await db_session.commit()
+    await db_session.refresh(cluster)
+
+    base_version = int(cluster.updated_at.timestamp() * 1_000_000) if cluster.updated_at else 0
+
+    with pytest.raises(RuntimeError, match="queue boom"):
+        await CurationSyncService(session=db_session, job_service=ExplodingJobService()).apply(
+            tenant_id=str(tenant.id),
+            operation=_operation(
+                "cluster_person_bound",
+                entity_key=str(cluster.id),
+                idempotency_key="bind-enqueue-fail-idem",
+                expected_base_version=base_version,
+                payload={"cluster_uuid": str(cluster.id), "person_uuid": str(uuid4())},
+            ),
+        )
+
+    await db_session.rollback()
+    replay_count = await db_session.scalar(
+        select(func.count()).select_from(CurationReplayRecord).where(
+            CurationReplayRecord.tenant_id == tenant_id,
+            CurationReplayRecord.idempotency_key == "bind-enqueue-fail-idem",
+        )
+    )
+    await db_session.refresh(cluster)
+
+    assert replay_count == 0
+    assert cluster.roster_id is None
 
 
 @pytest.mark.asyncio
@@ -211,7 +365,7 @@ async def test_cluster_dismiss_and_undismiss_replay_mutate_backend_state(db_sess
     await db_session.refresh(cluster)
 
     base_version = int(cluster.updated_at.timestamp() * 1_000_000) if cluster.updated_at else 0
-    service = CurationSyncService(session=db_session)
+    service = CurationSyncService(session=db_session, job_service=FakeJobService())
 
     dismissed = await service.apply(
         tenant_id=str(tenant.id),
@@ -257,7 +411,7 @@ async def test_cluster_label_updated_replay_mutates_backend_label(db_session: As
     await db_session.refresh(cluster)
 
     base_version = int(cluster.updated_at.timestamp() * 1_000_000) if cluster.updated_at else 0
-    service = CurationSyncService(session=db_session)
+    service = CurationSyncService(session=db_session, job_service=FakeJobService())
 
     result = await service.apply(
         tenant_id=str(tenant.id),
@@ -293,7 +447,9 @@ async def test_cluster_label_updated_is_idempotent(db_session: AsyncSession) -> 
         payload={"cluster_uuid": str(cluster.id), "label": "Known Person"},
     )
 
-    first_result = await CurationSyncService(session=db_session).apply(tenant_id=str(tenant.id), operation=operation)
+    first_result = await CurationSyncService(session=db_session, job_service=FakeJobService()).apply(
+        tenant_id=str(tenant.id), operation=operation
+    )
     await db_session.commit()
     await db_session.refresh(cluster)
     first_updated_at = cluster.updated_at

@@ -106,8 +106,10 @@ async def test_queue_curation_followup_includes_merge_cleanup_payload() -> None:
         tenant_id="tenant-1",
         cluster_ids=["cluster-1"],
         source_cluster_id="cluster-source",
+        refresh_idempotency_key="refresh-idem-1",
     )
 
     assert job.type is JobType.CURATION
     assert job.payload
     assert job.payload["source_cluster_id"] == "cluster-source"
+    assert job.payload["refresh_idempotency_key"] == "refresh-idem-1"

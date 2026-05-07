@@ -20,6 +20,10 @@ class SqlAlchemyJobRepository(JobRepository):
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
+    @property
+    def session(self) -> AsyncSession:
+        return self._session
+
     async def save(self, job: Job) -> Job:
         """Create a new job record."""
         if job.type is JobType.ANALYZE:

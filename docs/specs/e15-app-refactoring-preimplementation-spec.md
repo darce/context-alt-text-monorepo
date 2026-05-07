@@ -49,7 +49,7 @@ This spec turns the E15 preimplementation refactoring assessment into a stable c
 | 8 | PREIMPL-008 metrics/source ownership | E15-19 Slice 5 for roster metrics, E15-20 Slice 4 for dashboard diagnostics only after source rows are named | New diagnostics or SLO dashboard panels |
 | 9 | PREIMPL-009 bounded controller use-case extraction | E15-19 Slice 5, E15-20 Slice 4, and E15-21 Slice 4 only when touching those surfaces | Any feature work that would add more unrelated logic to the named controllers |
 
-The canonical preimplementation implementation tracks are E15-18, E15-19, E15-20, and E15-21. They supersede E15-14, E15-13, E15-15/E15-16, and E15-17 respectively once the newer task records a superseding decision and updates the older task status to `superseded` before Slice 1 code edits begin.
+The canonical preimplementation implementation tracks are E15-18, E15-19, E15-20, and E15-21. Each newer task should record its superseding decision before Slice 1 code edits begin. The displaced E15-14, E15-13, E15-15/E15-16, and E15-17 tasks stay on their documented lifecycle until their existing branch/worktree is closed, then retire through the normal done/archive flow.
 
 ---
 
@@ -60,7 +60,7 @@ The canonical preimplementation implementation tracks are E15-18, E15-19, E15-20
 **Trace:** Assessment P0 #1; `E15-PREIMPL-PLAN-04`; [E15-14](../tasks/15.0/E15-14-localwp-batch-smoke-argument-plumbing-task-plan.md)  
 **Priority:** P0  
 **ADR gate:** No  
-**Owner:** E15-14 Slice 1 for parser/command tests; E15-14 Slice 2 for runtime LocalWP proof.
+**Owner:** E15-18 Slice 1 for parser/command tests; E15-18 Slice 2 for runtime LocalWP proof.
 
 `make localwp-batch-run-smoke` must not silently coerce malformed positional arguments or pass a literal `--` into the PHP smoke script. The smoke result must include the effective `limit`, `batch_size`, `timeout_seconds`, and `poll_interval_ms` values so operators can see what was actually exercised.
 
@@ -78,7 +78,7 @@ The canonical preimplementation implementation tracks are E15-18, E15-19, E15-20
 **Trace:** Assessment P0 #2; `E15-PREIMPL-PLAN-01`; `E15-PREIMPL-PLAN-02`; `E15-PREIMPL-PLAN-03`; RCL-004; RSU-001 through RSU-004  
 **Priority:** P0  
 **ADR gate:** Yes - ADR-009 must accept or conditionally accept the local-authority, derived-projection boundary.  
-**Owner:** E15-13 Slice 3 for shared contract/API/projection; E15-17 consumes it only after the fields exist.
+**Owner:** E15-19 Slice 3 for shared contract/API/projection; E15-21 consumes it only after the fields exist.
 
 The canonical projection name is the RCL-004 enriched roster-entry projection represented through `packages/shared-contracts/schemas/roster-entry.schema.json`. UI specs may call the rendered object a person review surface, but they must not introduce an independent `RosterPersonReview` source of truth.
 
@@ -89,14 +89,14 @@ The canonical projection name is the RCL-004 enriched roster-entry projection re
 - `packages/shared-contracts/schemas/roster-entry.schema.json` distinguishes source fields from derived projection fields.
 - The projection exposes `person_uuid`, representative evidence, clusters, face instances, media references, bboxes, queue memberships, projection freshness/status, and allowed actions.
 - `apps/prototype-wp-alt-context/src/api/class-api.php` no longer owns a mixed curation write plus projection assembly path for this contract; a named repository/mapper owns projection reads.
-- E15-17 route/workspace rendering refuses to imply a person workspace when the RCL-004 fields are absent.
+- E15-21 route/workspace rendering refuses to imply a person workspace when the RCL-004 fields are absent.
 
 ### PREIMPL-003: Post-curation refresh is durable, idempotent, and status-backed
 
 **Trace:** Assessment P0 #3; `E15-PREIMPL-PLAN-01`; `E15-PREIMPL-PLAN-02`; RCL-001; RCL-002; [E15-13](../tasks/15.0/E15-13-roster-curation-loop-task-plan.md)  
 **Priority:** P0  
 **ADR gate:** Yes - ADR-009 must settle replay/event semantics.  
-**Owner:** E15-13 Slice 2.
+**Owner:** E15-19 Slice 2.
 
 Every curation path that affects a cluster/person binding must map to one post-curation event contract and one durable refresh lifecycle. `cluster_person_bound` must carry or resolve the authoritative person label, and refresh work must record per-event status instead of relying on logs or synchronous request behavior.
 
@@ -108,14 +108,14 @@ Every curation path that affects a cluster/person binding must map to one post-c
 - Backend replay records a stable operation/idempotency key for refresh work.
 - `SuggestionRefreshStatus` or equivalent records `queued`, `running`, `completed`, `no_candidates`, `timed_out`, and `failed`.
 - Repeated outbox delivery does not duplicate refresh work.
-- E15-13 queue UI and E15-17 refresh badges consume status rows, not log side effects.
+- E15-19 queue UI and E15-21 refresh badges consume status rows, not log side effects.
 
 ### PREIMPL-004: Suggestion refresh has candidate bounds and explicit latency outcomes
 
 **Trace:** Assessment P0 #4; `E15-PREIMPL-PLAN-05`; RCL-002; RCL-007; RCL-008  
 **Priority:** P0  
 **ADR gate:** No for internal bounds; yes if queue/replay ownership changes.  
-**Owner:** E15-13 Slice 2 for bounded execution/status; E15-13 Slice 5 for aggregate metrics.
+**Owner:** E15-19 Slice 4 for bounded execution/status; E15-19 Slice 5 for aggregate metrics.
 
 Post-curation refresh must use candidate partitioning where possible and reserve full-tenant scans for explicit backfill jobs. Queue UI must not depend on a hidden path that can scan up to 1,000 clusters and then fan out through identity checks without timeout/status outcomes.
 
@@ -134,7 +134,7 @@ Post-curation refresh must use candidate partitioning where possible and reserve
 **Trace:** Assessment P0 #5; DASH-007; `E15-PREIMPL-PLAN-01`; [E15-16](../tasks/15.0/E15-16-dashboard-durable-activity-and-diagnostics-task-plan.md)  
 **Priority:** P0 for source decision; P1 for full migration  
 **ADR gate:** No if the durable source is `BatchRunRepository` plus existing analysis-jobs rows; yes if a new cross-service emitter, new persistence table, or new tenancy/visibility scope is introduced.  
-**Owner:** E15-16 Slice 1 source decision; E15-16 Slice 2 migration/demotion.
+**Owner:** E15-20 Slice 2 source decision; E15-20 Slice 3 migration/demotion.
 
 The dashboard must not present browser-local job memory as system-level history. It must either use durable WordPress/local job or batch-run records, or clearly label and demote the local-storage feed as this-browser history.
 
@@ -142,7 +142,7 @@ The dashboard must not present browser-local job memory as system-level history.
 
 **Done when:**
 
-- E15-16 records a handoff decision naming the durable source or choosing labeled browser-local fallback.
+- E15-20 records a handoff decision naming the durable source or choosing labeled browser-local fallback.
 - If durable, the source returns at least the 10 most recent tenant-scoped rows with creation time and current/terminal status.
 - Dashboard rows include provenance such as `durable_batch_run`, `remote_job_status`, or `browser_local_fallback`.
 - `useRecognitionJobHistory` and Workbench consumers do not fork incompatible history semantics.
@@ -154,7 +154,7 @@ The dashboard must not present browser-local job memory as system-level history.
 **Trace:** Assessment P0 #6; DASH-002; DASH-003; DASH-005; DASH-006; DASH-008; DASH-009; [E15-15](../tasks/15.0/E15-15-dashboard-operator-triage-existing-fields-task-plan.md)  
 **Priority:** P0  
 **ADR gate:** No  
-**Owner:** E15-15 Slice 1.
+**Owner:** E15-20 Slice 1.
 
 The dashboard priority order must be represented by a deterministic pure model before JSX layout changes. Tier 1 must use existing REST/hook fields only and must not add diagnostics or durable activity fields as a shortcut.
 
@@ -172,7 +172,7 @@ The dashboard priority order must be represented by a deterministic pure model b
 **Trace:** Assessment P0 #7; RSU-001 through RSU-004; [E15-17](../tasks/15.0/E15-17-roster-person-review-scrub-workspace-task-plan.md)  
 **Priority:** P0 for route parsing; P1 for cluster-grid migration after data contracts land  
 **ADR gate:** Yes for projection semantics through ADR-009/RCL-004; no for route parsing alone.  
-**Owner:** E15-17 Slice 1 for route model; E15-17 Slices 2-4 after E15-13 contracts land.
+**Owner:** E15-21 Slice 1 for route model; E15-21 Slices 2-4 after E15-19 contracts land.
 
 The Roster page must parse `person`, `queue`, `face`, and `cluster` routes deterministically, keep legacy entries/clusters routes reachable during migration, and make raw clusters supporting evidence instead of the default identity model once RCL-004 projection data exists.
 
@@ -191,7 +191,7 @@ The Roster page must parse `person`, `queue`, `face`, and `cluster` routes deter
 **Trace:** Assessment P1 #9/#10; `E15-PREIMPL-SPEC-ANALYZE-03`; DASH-004; RCL-007  
 **Priority:** P1  
 **ADR gate:** Yes if a new cross-service diagnostic or metric authority is introduced.  
-**Owner:** E15-13 Slice 5 for refresh/projection metrics; E15-16 Slice 3 for optional sync diagnostics.
+**Owner:** E15-19 Slice 5 for refresh/projection metrics; E15-20 Slice 4 for optional sync diagnostics.
 
 Projection freshness, refresh queue depth, p95/p99 refresh latency, failure rate, recovery time, and label-to-visible-suggestion lead time must not become dashboard claims until the source rows and ownership are named.
 
@@ -212,7 +212,7 @@ Projection freshness, refresh queue depth, p95/p99 refresh latency, failure rate
 **Trace:** Assessment P1 #8; `E15-PREIMPL-SPEC-ANALYZE-01`  
 **Priority:** P1  
 **ADR gate:** No for internal controller extraction; yes if an extraction changes cross-service ownership or payload contracts.  
-**Owner:** E15-13 for roster write/projection/outbox controller seams; E15-16 for batch-run listing/projection acknowledgement helpers; E15-15/E15-17 only if their implementation touches the named dashboard or roster controller surfaces.
+**Owner:** E15-19 for roster write/projection/outbox controller seams; E15-20 for batch-run listing/projection acknowledgement and sync-controller helpers; E15-21 only when roster UI implementation touches the named controller-adjacent surfaces.
 
 Large PHP controllers must not absorb more unrelated orchestration while E15 adds projection, activity, and diagnostics behavior. Extraction is required only where the implementing task already changes the behavior: `class-api.php` roster person write operations, roster review projection reads, and curation outbox enqueueing; `class-analysis-jobs-controller.php` batch-run listing and projection acknowledgement helpers; and `class-sync-status-controller.php` diagnostics assembled from named repository methods.
 
@@ -220,9 +220,9 @@ Large PHP controllers must not absorb more unrelated orchestration while E15 add
 
 **Done when:**
 
-- E15-13 moves RCL-004 projection assembly and curation outbox enqueueing out of the broad `class-api.php` path into named repository/mapper/use-case helpers.
-- E15-16 adds durable recent activity through a narrow `BatchRunRepository`/controller helper instead of expanding by-ID controller methods into dashboard-specific branching.
-- Optional E15-16 diagnostics come from named repository methods before `class-sync-status-controller.php` renders them.
+- E15-19 moves RCL-004 projection assembly and curation outbox enqueueing out of the broad `class-api.php` path into named repository/mapper/use-case helpers.
+- E15-20 adds durable recent activity through a narrow `BatchRunRepository`/controller helper instead of expanding by-ID controller methods into dashboard-specific branching.
+- Optional E15-20 diagnostics come from named repository methods before `class-sync-status-controller.php` renders them.
 - No task performs broad controller decomposition outside the behavior it owns.
 - Tests cover the extracted use case through the same public API surface the UI or replay path uses.
 
@@ -264,13 +264,13 @@ Tier 2 should land only when source rows and owners are named. It is not a reaso
 
 ## Deferred or Rejected Directions
 
-- Do not fold broad `apps/prototype-description-service` modularization into E15-13. Only bounded use-case extractions needed for event, refresh, and projection contracts are in scope.
+- Do not fold broad `apps/prototype-description-service` modularization into E15-19. Only bounded use-case extractions needed for event, refresh, and projection contracts are in scope.
 - Do not create a second person write model for roster review. Review data remains derived from local person authority and recognition state.
 - Do not use browser local storage as authoritative dashboard activity.
 - Do not add sync diagnostic fields before existing `SyncStatusResponse` recency/topology fields have been rendered and tested.
 - Do not let curriculum queues depend on frontend-only scans or hidden refresh fanout.
-- Do not introduce new similarity-score semantics in the scrubber before E15-13 and [RCL-009](recognition-roster-curation-loop-spec.md#rcl-009-add-enhanced-score-evidence-after-refresh-contracts-land) supply those fields.
-- Do not give the dashboard ownership of curriculum queues unless E15-13 explicitly assigns dashboard entry ownership.
+- Do not introduce new similarity-score semantics in the scrubber before E15-19 and [RCL-009](recognition-roster-curation-loop-spec.md#rcl-009-add-enhanced-score-evidence-after-refresh-contracts-land) supply those fields.
+- Do not give the dashboard ownership of curriculum queues unless E15-19 explicitly assigns dashboard entry ownership.
 - Do not remove legacy Entries/Clusters routes until person and unresolved cluster cases are covered by the new roster workspace.
 
 ---
@@ -310,6 +310,6 @@ Open http://localhost:10010/wp-admin/admin.php?page=alt-context-roster#/roster a
 ## Downstream Artifact Guidance
 
 - ADR required: ADR-009 must be accepted or conditionally accepted before PREIMPL-002/PREIMPL-003 implementation changes contracts.
-- Task plans: E15-18 is the canonical PREIMPL-001 implementation plan and supersedes E15-14; E15-19 is the canonical PREIMPL-002/PREIMPL-003/PREIMPL-004 and roster-owned PREIMPL-008/PREIMPL-009 plan and supersedes E15-13; E15-20 is the canonical PREIMPL-005/PREIMPL-006 and dashboard-owned PREIMPL-008/PREIMPL-009 plan and supersedes E15-15 plus E15-16; E15-21 is the canonical PREIMPL-007 and roster-UI guardrail plan and supersedes E15-17. Record the superseding decision first, then update the older task status to `superseded`, then archive the older task only after its existing branch/worktree is confirmed closed.
+- Task plans: E15-18 is the canonical PREIMPL-001 implementation plan and supersedes E15-14; E15-19 is the canonical PREIMPL-002/PREIMPL-003/PREIMPL-004 and roster-owned PREIMPL-008/PREIMPL-009 plan and supersedes E15-13; E15-20 is the canonical PREIMPL-005/PREIMPL-006 and dashboard-owned PREIMPL-008/PREIMPL-009 plan and supersedes E15-15 plus E15-16; E15-21 is the canonical PREIMPL-007 and roster-UI guardrail plan and supersedes E15-17. Record the superseding decision first, keep the displaced task on its documented lifecycle while its existing branch/worktree is still active, then retire it through the normal done/archive flow once that branch/worktree is actually closed.
 - Specs to keep aligned: [recognition-roster-curation-loop-spec.md](recognition-roster-curation-loop-spec.md), [alt-context-dashboard-operator-triage-spec.md](alt-context-dashboard-operator-triage-spec.md), and [roster-management-person-review-scrub-ui-spec.md](roster-management-person-review-scrub-ui-spec.md).
 - Findings closed by this artifact: `E15-PREIMPL-PLAN-01`, `E15-PREIMPL-PLAN-02`, `E15-PREIMPL-PLAN-03`, `E15-PREIMPL-PLAN-04`, `E15-PREIMPL-PLAN-05`, `E15-PREIMPL-SPEC-ANALYZE-01`, `E15-PREIMPL-SPEC-ANALYZE-02`, `E15-PREIMPL-SPEC-ANALYZE-03`, `E15-PREIMPL-SPEC-ANALYZE-04`, and `E15-PREIMPL-SPEC-ANALYZE-05`.

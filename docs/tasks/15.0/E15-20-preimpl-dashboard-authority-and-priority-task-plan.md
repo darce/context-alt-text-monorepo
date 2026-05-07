@@ -21,7 +21,7 @@ Implement PREIMPL-005, PREIMPL-006, the dashboard-owned part of PREIMPL-008, and
 
 The dashboard currently mixes blocking health, onboarding, generic navigation, retention posture, and browser-local job history without a durable priority model. E15-15 and E15-16 already describe the work; this PREIMPL plan adds the source-decision gate, ADR boundary, provenance requirement, and bounded controller extraction needed before dashboard polish expands the surface.
 
-This plan supersedes [E15-15](E15-15-dashboard-operator-triage-existing-fields-task-plan.md) and [E15-16](E15-16-dashboard-durable-activity-and-diagnostics-task-plan.md) as the canonical PREIMPL dashboard implementation track. Before Slice 1 code edits, record the superseding handoff decision for E15-20, run `update_task_status(task_ref='E15-15', status='superseded')` and `update_task_status(task_ref='E15-16', status='superseded')`, and archive the older tasks only after their existing branch/worktree state is confirmed closed.
+This plan supersedes [E15-15](E15-15-dashboard-operator-triage-existing-fields-task-plan.md) and [E15-16](E15-16-dashboard-durable-activity-and-diagnostics-task-plan.md) as the canonical PREIMPL dashboard implementation track. Before Slice 1 code edits, record the superseding handoff decision for E15-20 so reviews have an explicit retirement link. Leave E15-15 and E15-16 on their documented lifecycle while their existing branch/worktree state remains active, then retire them through the normal done/archive flow after those branch/worktree states are actually closed.
 
 ## Constraints
 

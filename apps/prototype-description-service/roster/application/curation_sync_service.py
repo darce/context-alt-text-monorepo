@@ -25,6 +25,7 @@ class CurationRefreshStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
     NO_CANDIDATES = "no_candidates"
+    TIMED_OUT = "timed_out"
     COMPLETED = "completed"
     FAILED = "failed"
 

@@ -187,9 +187,12 @@ def upgrade() -> None:
         ),
         sa.Column("idempotency_key", sa.String(length=64), nullable=False),
         sa.Column("result_status", sa.String(length=20), nullable=False),
-        sa.Column("backend_version", sa.Integer(), nullable=False, server_default=sa.text("0")),
+        sa.Column("backend_version", sa.BigInteger(), nullable=False, server_default=sa.text("0")),
         sa.Column("conflict_code", sa.String(length=64), nullable=True),
         sa.Column("machine_payload_json", sa.Text(), nullable=True),
+        sa.Column("refresh_status", sa.String(length=20), nullable=False, server_default=sa.text("'not_applicable'")),
+        sa.Column("refresh_requested_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("refresh_completed_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column(
             "updated_at",
@@ -197,6 +200,10 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             onupdate=sa.func.now(),
             nullable=False,
+        ),
+        sa.CheckConstraint(
+            "refresh_status IN ('not_applicable', 'queued', 'running', 'completed', 'failed')",
+            name="ck_curation_replay_refresh_status",
         ),
         sa.UniqueConstraint("tenant_id", "idempotency_key", name="uq_curation_replay_tenant_idempotency"),
     )

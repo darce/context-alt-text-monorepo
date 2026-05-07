@@ -7,6 +7,7 @@ from uuid import UUID
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from recognition.interface_adapters.http.deps import get_persisted_cluster_job_service
 from roster.application.curation_sync_service import CurationSyncResult
 from roster.interface_adapters.http import curation_router
 
@@ -20,7 +21,11 @@ def _build_client() -> TestClient:
     async def _session_override() -> AsyncIterator[object]:
         yield object()
 
+    async def _job_service_override() -> object:
+        return object()
+
     app.dependency_overrides[curation_router.get_session] = _session_override
+    app.dependency_overrides[get_persisted_cluster_job_service] = _job_service_override
     return TestClient(app)
 
 

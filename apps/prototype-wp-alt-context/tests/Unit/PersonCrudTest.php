@@ -16,6 +16,48 @@ class PersonCrudTest extends TestCase
 {
     private Api $api;
 
+    /**
+     * @return array<string, mixed>
+     */
+    private function latestOutboxPayload(): array
+    {
+        global $wpdb;
+
+        $rows = $wpdb->tableRows['wp_acx_sync_outbox'] ?? [];
+        $this->assertNotEmpty($rows);
+        $row = $rows[\array_key_last($rows)];
+        $this->assertIsArray($row);
+
+        $payload = $row['payload'] ?? null;
+        $this->assertIsString($payload);
+
+        $decoded = \json_decode($payload, true);
+        $this->assertIsArray($decoded);
+
+        return $decoded;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function outboxPayloadAt(int $index): array
+    {
+        global $wpdb;
+
+        $rows = $wpdb->tableRows['wp_acx_sync_outbox'] ?? [];
+        $this->assertArrayHasKey($index, $rows);
+        $row = $rows[$index];
+        $this->assertIsArray($row);
+
+        $payload = $row['payload'] ?? null;
+        $this->assertIsString($payload);
+
+        $decoded = \json_decode($payload, true);
+        $this->assertIsArray($decoded);
+
+        return $decoded;
+    }
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -204,7 +246,8 @@ class PersonCrudTest extends TestCase
         $outboxInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_outbox');
         $this->assertStringContainsString("'cluster_person_bound'", $outboxInsert);
         $this->assertStringContainsString('cluster-123', $outboxInsert);
-        $this->assertStringContainsString('Roster Name', $outboxInsert);
+        $outboxPayload = $this->latestOutboxPayload();
+        $this->assertSame('Roster Name', $outboxPayload['person_name']);
         $this->assertStringContainsString(', 27, 3,', $outboxInsert);
         $this->assertContains('START TRANSACTION', $wpdb->queries);
         $this->assertContains('COMMIT', $wpdb->queries);
@@ -252,7 +295,8 @@ class PersonCrudTest extends TestCase
         $this->assertCount(2, $outboxInserts);
         $this->assertStringContainsString("'person_created'", $outboxInserts[0]);
         $this->assertStringContainsString("'cluster_person_bound'", $outboxInserts[1]);
-        $this->assertStringContainsString('Inline Person', $outboxInserts[1]);
+        $outboxPayload = $this->outboxPayloadAt(1);
+        $this->assertSame('Inline Person', $outboxPayload['person_name']);
         $this->assertStringContainsString(', 44, 4,', $outboxInserts[1]);
         $this->assertContains('COMMIT', $wpdb->queries);
     }

@@ -423,6 +423,7 @@ class FakeJobService:
         cluster_ids: list[str],
         identity_ids: list[str] | None = None,
         source_cluster_id: str | None = None,
+        refresh_idempotency_key: str | None = None,
     ) -> None:
         self.calls.append(
             {
@@ -431,6 +432,7 @@ class FakeJobService:
                 "cluster_ids": list(cluster_ids),
                 "identity_ids": list(identity_ids) if identity_ids else [],
                 "source_cluster_id": source_cluster_id,
+                "refresh_idempotency_key": refresh_idempotency_key,
             }
         )
 

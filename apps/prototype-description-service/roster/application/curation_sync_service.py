@@ -18,13 +18,13 @@ class CurationRefreshStatus(StrEnum):
     """Foundation replay states for post-curation refresh work.
 
     These values track the durable curation event lifecycle on replay rows.
-    Slice 4 owns the richer suggestion-refresh outcomes from the spec
-    (`no_candidates`, `candidates_created`, `candidates_refreshed`, `timed_out`).
+    Slice 4 owns the richer suggestion-refresh outcomes from the spec.
     """
 
     NOT_APPLICABLE = "not_applicable"
     QUEUED = "queued"
     RUNNING = "running"
+    NO_CANDIDATES = "no_candidates"
     COMPLETED = "completed"
     FAILED = "failed"
 

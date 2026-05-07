@@ -190,6 +190,54 @@ async def test_run_curation_job_advances_refresh_status_for_replay_row(db_sessio
 
 
 @pytest.mark.asyncio
+async def test_run_curation_job_marks_refresh_no_candidates_when_nothing_is_created(db_session: AsyncSession) -> None:
+    tenant_id = uuid.uuid4()
+    cluster_id = str(uuid.uuid4())
+    db_session.add(Tenant(id=tenant_id, site_url="http://example.test"))
+    await db_session.commit()
+    replay_row = CurationReplayRecord(
+        tenant_id=tenant_id,
+        idempotency_key="refresh-idem-no-candidates",
+        result_status="acknowledged",
+        backend_version=1,
+        refresh_status="queued",
+        refresh_requested_at=datetime.now(tz=UTC),
+    )
+    db_session.add(replay_row)
+    await db_session.commit()
+
+    mock_writer = Mock(spec=AssignmentWriter)
+    mock_writer.recompute_representatives = AsyncMock()
+    mock_writer.recompute_centroid = AsyncMock()
+
+    mock_repo = Mock(spec=ClusterRepository)
+    mock_repo.get_unclustered = AsyncMock(return_value=[])
+
+    refresh_service = Mock()
+    refresh_service.refresh_for_cluster = AsyncMock(return_value=0)
+
+    cluster_service = Mock()
+    cluster_service.suggestion_refresh_service = refresh_service
+
+    await run_curation_job(
+        tenant_id=str(tenant_id),
+        cluster_ids=[cluster_id],
+        assignment_writer=mock_writer,
+        cluster_repo=mock_repo,
+        cluster_service=cluster_service,
+        refresh_idempotency_key="refresh-idem-no-candidates",
+        session=db_session,
+    )
+
+    refreshed = await db_session.scalar(
+        select(CurationReplayRecord).where(CurationReplayRecord.idempotency_key == "refresh-idem-no-candidates")
+    )
+    assert isinstance(refreshed, CurationReplayRecord)
+    assert refreshed.refresh_status == "no_candidates"
+    assert refreshed.refresh_completed_at is not None
+
+
+@pytest.mark.asyncio
 async def test_run_curation_job_marks_refresh_failed_when_executor_raises(db_session: AsyncSession) -> None:
     tenant_id = uuid.uuid4()
     cluster_id = str(uuid.uuid4())

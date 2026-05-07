@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 import uuid
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, call
 
 import pytest
 from sqlalchemy import select
@@ -16,6 +16,7 @@ from recognition.application.orchestration.curation_job import run_curation_job
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.repositories import ClusterRepository
+from recognition.domain.suggestion import SuggestionRefreshReason
 
 
 @pytest.mark.asyncio
@@ -234,6 +235,43 @@ async def test_run_curation_job_marks_refresh_failed_when_executor_raises(db_ses
     assert isinstance(refreshed, CurationReplayRecord)
     assert refreshed.refresh_status == "failed"
     assert refreshed.refresh_completed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_run_curation_job_surfaces_missing_candidates_for_bound_identity_ids() -> None:
+    tenant_id = str(uuid.uuid4())
+    cluster_id = str(uuid.uuid4())
+
+    mock_writer = Mock(spec=AssignmentWriter)
+    mock_writer.recompute_representatives = AsyncMock()
+    mock_writer.recompute_centroid = AsyncMock()
+
+    mock_repo = Mock(spec=ClusterRepository)
+    mock_repo.get_unclustered = AsyncMock(return_value=[])
+
+    refresh_service = Mock()
+    refresh_service.refresh_for_cluster = AsyncMock(return_value=0)
+    refresh_service.refresh_for_identity = AsyncMock(side_effect=[[object()], [object()]])
+
+    cluster_service = Mock()
+    cluster_service.suggestion_refresh_service = refresh_service
+
+    await run_curation_job(
+        tenant_id=tenant_id,
+        cluster_ids=[cluster_id],
+        identity_ids=["identity-1", "identity-2"],
+        assignment_writer=mock_writer,
+        cluster_repo=mock_repo,
+        cluster_service=cluster_service,
+    )
+
+    refresh_service.refresh_for_cluster.assert_awaited_once_with(cluster_id)
+    refresh_service.refresh_for_identity.assert_has_awaits(
+        [
+            call(identity_id="identity-1", reason=SuggestionRefreshReason.MANUAL_ASSIGN),
+            call(identity_id="identity-2", reason=SuggestionRefreshReason.MANUAL_ASSIGN),
+        ]
+    )
 
 
 @pytest.mark.asyncio

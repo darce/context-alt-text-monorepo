@@ -18,6 +18,7 @@ from recognition.application.orchestration.cluster_service import ClusterService
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.domain.constraints import ConstraintSource, ConstraintType
 from recognition.domain.repositories import ClusterRepository
+from recognition.domain.suggestion import SuggestionRefreshReason
 from roster.application.curation_sync_service import CurationRefreshStatus
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ async def run_curation_job(
     *,
     tenant_id: str,
     cluster_ids: Sequence[str],
+    identity_ids: Sequence[str] | None = None,
     assignment_writer: AssignmentWriter,
     cluster_repo: ClusterRepository,
     cluster_service: ClusterService | None = None,
@@ -52,6 +54,7 @@ async def run_curation_job(
         Dict with counts: {"clusters_recomputed": N, "identities_clustered": M}.
     """
     unique_cluster_ids = list(dict.fromkeys(cluster_ids))
+    unique_identity_ids = list(dict.fromkeys(identity_ids or []))
     logger.info(
         "[curation_job] START tenant_id=%s cluster_ids=%s",
         tenant_id,
@@ -124,9 +127,16 @@ async def run_curation_job(
                 status=CurationRefreshStatus.RUNNING,
             )
         refresh_failed = False
+        refresh_for_identity = getattr(refresh_service, "refresh_for_identity", None)
         for cluster_id in unique_cluster_ids:
             try:
-                await refresh_service.refresh_for_cluster(cluster_id)
+                refreshed = await refresh_service.refresh_for_cluster(cluster_id)
+                if refreshed == 0 and unique_identity_ids and callable(refresh_for_identity):
+                    for identity_id in unique_identity_ids:
+                        await refresh_for_identity(
+                            identity_id=identity_id,
+                            reason=SuggestionRefreshReason.MANUAL_ASSIGN,
+                        )
             except Exception as exc:
                 logger.warning(
                     "[curation_job] refresh_for_cluster failed tenant_id=%s cluster_id=%s: %s",

@@ -111,11 +111,15 @@ Timeout expectations:
 - Idempotency survives service restarts and process restarts
 - Plugin MUST generate unique idempotency keys per outbox operation
 - Plugin MUST NOT retry with a different idempotency key for the same mutation
-- Acknowledged cluster mutations also persist durable refresh lifecycle state on the replay row:
-  - cluster operations start with `refresh_status = 'queued'`
-  - the worker advances replay rows through `running` and then `completed` or `failed`
-  - if the refresh executor is unavailable, the replay row stays `queued` so a later worker pass can retry instead of terminally failing the curation event
-- Person-only operations and conflict responses keep `refresh_status = 'not_applicable'`
+- Acknowledged cluster mutations also persist durable refresh lifecycle state on the replay row. The canonical `refresh_status` set is:
+  - `queued`: cluster operations start here when refresh is required
+  - `running`: worker has begun executing the refresh
+  - `completed`: refresh executed and produced new candidate suggestions
+  - `no_candidates`: refresh executed successfully but produced no candidates (terminal success, distinct from `completed`)
+  - `timed_out`: refresh aborted by the bounded timeout guard before producing a result; eligible for retry
+  - `failed`: refresh executor returned a non-recoverable error
+  - `not_applicable`: person-only operations and conflict responses never enter the refresh lifecycle
+- If the refresh executor is unavailable when the replay row would advance to `running`, the row stays `queued` so a later worker pass can retry instead of terminally failing the curation event.
 
 ### Version Conflict Detection
 

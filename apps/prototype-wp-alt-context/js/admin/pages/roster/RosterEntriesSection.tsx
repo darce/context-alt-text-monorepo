@@ -15,9 +15,10 @@ export interface RosterEntriesQuery {
 
 export interface RosterEntriesSectionProps {
   query: RosterEntriesQuery;
+  routeNotice?: string | null;
 }
 
-export const RosterEntriesSection = ({ query }: RosterEntriesSectionProps): React.JSX.Element => {
+export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntriesSectionProps): React.JSX.Element => {
   const [isAdding, setIsAdding] = useState(false);
   const [newName, setNewName] = useState('');
   const [searchParams, setSearchParams] = useSearchParams();
@@ -94,6 +95,12 @@ export const RosterEntriesSection = ({ query }: RosterEntriesSectionProps): Reac
           <button type="button" className="acx-link-button" onClick={clearFilter}>
             {__('Clear filter', 'alt-context')}
           </button>
+        </div>
+      )}
+
+      {routeNotice && (
+        <div className="acx-roster-section__filter" role="status">
+          <p>{routeNotice}</p>
         </div>
       )}
 

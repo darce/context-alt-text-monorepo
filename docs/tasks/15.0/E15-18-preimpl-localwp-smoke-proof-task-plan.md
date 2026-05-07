@@ -138,26 +138,26 @@ Proof:
 
 - [ ] Loaded the PREIMPL spec, E15-14 related plan, LocalWP wrapper tests, and handoff state before editing.
 - [ ] Recorded the disposition of E15-14 (superseded by E15-18 with a handoff decision id) before Slice 1 implementation starts.
-- [ ] Confirmed no broad E2E automation is added.
-- [ ] Confirmed WP-CLI docs are only needed if local reproduction is inconclusive.
+- [x] Confirmed no broad E2E automation is added.
+- [x] Confirmed WP-CLI docs are only needed if local reproduction is inconclusive.
 
 ### Checklist for Slice 1: Command and Parser Proof
 
-- [ ] Regression test proves `--` is not passed to the PHP smoke script.
-- [ ] PHP argument parser rejects separators, missing values, non-integers, and out-of-range values.
-- [ ] JSON payload reports effective smoke parameters.
+- [x] Regression test proves `--` is not passed to the PHP smoke script.
+- [x] PHP argument parser rejects separators, missing values, non-integers, and out-of-range values.
+- [x] JSON payload reports effective smoke parameters.
 
 ### Checklist for Slice 2: Runtime LocalWP Confirmation
 
-- [ ] Runtime smoke uses explicit operator values.
+- [x] Runtime smoke uses explicit operator values.
 - [ ] Runtime payload proves effective values.
-- [ ] Handoff records runtime proof or explains why LocalWP was unavailable.
+- [x] Handoff records runtime proof or explains why LocalWP was unavailable.
 
 ## Review Readiness
 
-- [ ] Deterministic test passes before runtime proof is claimed.
-- [ ] Documented commands remain runnable as written.
-- [ ] Handoff decision records parser changes, command changes, and verification.
+- [x] Deterministic test passes before runtime proof is claimed.
+- [x] Documented commands remain runnable as written.
+- [x] Handoff decision records parser changes, command changes, and verification.
 
 ## Stretch Goals
 
@@ -165,6 +165,6 @@ Proof:
 
 ## Success Criteria
 
-- [ ] `SMOKE_LIMIT=10 BATCH_SIZE=5` cannot become a one-image pass because of argument shifting.
-- [ ] Invalid smoke arguments fail before batch submission.
-- [ ] The final smoke payload contains effective values an operator can verify.
+- [x] `SMOKE_LIMIT=10 BATCH_SIZE=5` cannot become a one-image pass because of argument shifting.
+- [x] Invalid smoke arguments fail before batch submission.
+- [x] The final smoke payload contains effective values an operator can verify.

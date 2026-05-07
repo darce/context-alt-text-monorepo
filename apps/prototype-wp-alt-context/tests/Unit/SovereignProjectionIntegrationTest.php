@@ -279,6 +279,92 @@ class SovereignProjectionIntegrationTest extends TestCase
         $this->assertStringNotContainsString("SELECT 'identity-curated-local', 'cluster-machine-target', 701", $sql);
     }
 
+    public function testProjectionReplayDeletesStaleNonCuratedMembersAndPreservesCuratedOnes(): void
+    {
+        $projector = new SnapshotProjector(
+            new ClustersRepository(),
+            new IdentityMembersRepository(),
+            new SyncStateRepository()
+        );
+
+        // First projection seeds M1 and M2 under cluster C1.
+        $projector->project(
+            'tenant-rebuild',
+            [
+                'snapshot_version' => 50,
+                'clusters' => [
+                    [
+                        'cluster_uuid' => 'cluster-rebuild-1',
+                        'label' => 'Rebuild Cluster',
+                        'curation_state' => 'auto',
+                        'is_user_confirmed' => false,
+                        'identity_count' => 2,
+                        'representative_media_id' => 600,
+                    ],
+                ],
+                'members' => [
+                    [
+                        'identity_uuid' => 'identity-stale-1',
+                        'cluster_uuid' => 'cluster-rebuild-1',
+                        'attachment_id' => 601,
+                    ],
+                    [
+                        'identity_uuid' => 'identity-stale-2',
+                        'cluster_uuid' => 'cluster-rebuild-1',
+                        'attachment_id' => 602,
+                    ],
+                ],
+            ]
+        );
+
+        // Reset query log between projections so we only inspect the replay scope.
+        global $wpdb;
+        $wpdb->queries = [];
+
+        // Replay snapshot keeps cluster C1 but only retains M3 (drops M1 and M2).
+        $projector->project(
+            'tenant-rebuild',
+            [
+                'snapshot_version' => 51,
+                'clusters' => [
+                    [
+                        'cluster_uuid' => 'cluster-rebuild-1',
+                        'label' => 'Rebuild Cluster',
+                        'curation_state' => 'auto',
+                        'is_user_confirmed' => false,
+                        'identity_count' => 1,
+                        'representative_media_id' => 603,
+                    ],
+                ],
+                'members' => [
+                    [
+                        'identity_uuid' => 'identity-fresh-3',
+                        'cluster_uuid' => 'cluster-rebuild-1',
+                        'attachment_id' => 603,
+                    ],
+                ],
+            ]
+        );
+
+        $deleteQuery = $this->findQueryContaining(
+            $wpdb->queries,
+            'DELETE m FROM `wp_acx_identity_members` m'
+        );
+
+        // Stale-member DELETE must exclude only the surviving identity uuid.
+        $this->assertStringContainsString("'identity-fresh-3'", $deleteQuery);
+        $this->assertStringNotContainsString("'identity-stale-1'", $deleteQuery);
+        $this->assertStringNotContainsString("'identity-stale-2'", $deleteQuery);
+        $this->assertStringContainsString('NOT IN', $deleteQuery);
+
+        // Curation guards must remain in place so curated rows survive replay.
+        $this->assertStringContainsString('c.is_user_confirmed = 0', $deleteQuery);
+        $this->assertStringContainsString('m.is_curated = 0', $deleteQuery);
+
+        // Tenant scope must be enforced on the rebuild DELETE.
+        $this->assertStringContainsString("c.tenant_id = 'tenant-rebuild'", $deleteQuery);
+    }
+
     /**
      * @param array<int,string> $queries
      */

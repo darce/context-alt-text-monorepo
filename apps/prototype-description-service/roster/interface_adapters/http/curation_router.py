@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from recognition.interface_adapters.http.deps import get_persisted_cluster_job_service
 from recognition.interface_adapters.http.deps.session import get_session
 from recognition.interface_adapters.http.deps.tenant import get_tenant_id
 from roster.application.curation_sync_service import CurationSyncService
@@ -50,11 +51,12 @@ async def sync_curation_operation(
     request: CurationSyncRequest | CurationSyncBatchRequest,
     tenant_id: str = Depends(get_tenant_id),
     session: AsyncSession = Depends(get_session),
+    job_service=Depends(get_persisted_cluster_job_service),
 ) -> Any:
     """
     Accept one or more idempotent curation operations.
     """
-    service = CurationSyncService(session=session)
+    service = CurationSyncService(session=session, job_service=job_service)
 
     try:
         if isinstance(request, CurationSyncBatchRequest):

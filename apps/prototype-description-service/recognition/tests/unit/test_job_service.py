@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from recognition.application.orchestration.job_service import JobService
@@ -17,6 +19,11 @@ class StubClusterService:
 class StubScanService:
     async def analyze_media(self, tenant_id: str, media_ids: list[str], media_sources: list[str] | None = None):
         return None
+
+
+class StubCurationClusterService:
+    def __init__(self) -> None:
+        self.assignment_writer = SimpleNamespace(cluster_repository=object())
 
 
 def _make_service(repo: InMemoryJobRepo | None = None) -> JobService:
@@ -106,8 +113,42 @@ async def test_queue_curation_followup_includes_merge_cleanup_payload() -> None:
         tenant_id="tenant-1",
         cluster_ids=["cluster-1"],
         source_cluster_id="cluster-source",
+        refresh_idempotency_key="refresh-idem-1",
     )
 
     assert job.type is JobType.CURATION
     assert job.payload
     assert job.payload["source_cluster_id"] == "cluster-source"
+    assert job.payload["refresh_idempotency_key"] == "refresh-idem-1"
+
+
+@pytest.mark.asyncio
+async def test_process_curation_job_passes_payload_identity_ids_to_runner(monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = InMemoryJobRepo()
+    service = JobService(
+        repository=repo,
+        cluster_service=StubCurationClusterService(),
+        scan_service=StubScanService(),
+    )
+
+    job = await service.queue_curation_followup(
+        tenant_id="tenant-1",
+        cluster_ids=["cluster-1"],
+        identity_ids=["identity-1", "identity-2"],
+    )
+
+    captured: dict[str, object] = {}
+
+    async def fake_run_curation_job(**kwargs):
+        captured.update(kwargs)
+        return {"clusters_recomputed": 1}
+
+    import recognition.application.orchestration.curation_job as curation_job_module
+
+    monkeypatch.setattr(curation_job_module, "run_curation_job", fake_run_curation_job)
+
+    completed = await service.process_curation_job(job.id, "tenant-1", cluster_ids=[])
+
+    assert completed.status is JobStatus.COMPLETED
+    assert captured["cluster_ids"] == ["cluster-1"]
+    assert captured["identity_ids"] == ["identity-1", "identity-2"]

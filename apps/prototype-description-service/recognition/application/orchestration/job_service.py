@@ -6,6 +6,8 @@ import uuid
 from collections.abc import Iterable
 from datetime import datetime
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from recognition.domain.job import Job, JobStatus, JobType, ProjectionStatus, SplitJobPayload
 from recognition.domain.repositories import JobRepository
 from recognition.shared.ids import generate_id
@@ -87,6 +89,7 @@ class JobService:
         cluster_ids: Iterable[str],
         identity_ids: Iterable[str] | None = None,
         source_cluster_id: str | None = None,
+        refresh_idempotency_key: str | None = None,
     ) -> Job:
         """Queue curation follow-up work after split or wrong-person removal.
 
@@ -117,6 +120,7 @@ class JobService:
                 "cluster_ids": cluster_ids_list,
                 "identity_ids": identity_ids_list,
                 "source_cluster_id": source_cluster_id,
+                "refresh_idempotency_key": refresh_idempotency_key,
             },
         )
         return await self.repository.save(job)
@@ -185,6 +189,8 @@ class JobService:
         cluster_ids: Iterable[str],
         identity_ids: Iterable[str] | None = None,
         source_cluster_id: str | None = None,
+        refresh_idempotency_key: str | None = None,
+        session: AsyncSession | None = None,
     ) -> Job:
         """Background-friendly wrapper to process a curation follow-up job by ID."""
         from recognition.application.orchestration.curation_job import run_curation_job
@@ -193,26 +199,41 @@ class JobService:
         if not self.cluster_service:
             return await self.fail_job(job.id, "cluster service not available")
         cluster_ids_list = list(cluster_ids)
+        payload = job.payload or {}
         if not cluster_ids_list:
-            cluster_ids_list = _coerce_str_list(job.payload.get("cluster_ids") if job.payload else None)
+            cluster_ids_list = _coerce_str_list(payload.get("cluster_ids"))
         if not cluster_ids_list:
             return await self.fail_job(job.id, "missing cluster ids")
 
-        if source_cluster_id is None and job.payload:
-            payload_source = job.payload.get("source_cluster_id")
+        if source_cluster_id is None:
+            payload_source = payload.get("source_cluster_id")
             if payload_source:
                 source_cluster_id = str(payload_source)
+        if refresh_idempotency_key is None:
+            payload_refresh_key = payload.get("refresh_idempotency_key")
+            if payload_refresh_key:
+                refresh_idempotency_key = str(payload_refresh_key)
+        identity_ids_list = list(identity_ids or [])
+        if not identity_ids_list:
+            identity_ids_list = _coerce_str_list(payload.get("identity_ids"))
 
         job.progress_total = max(job.progress_total, len(cluster_ids_list))
         job = await self.start_job(job.id)
+        replay_session = session
+        if replay_session is None:
+            repository_session = getattr(self.repository, "session", None)
+            replay_session = repository_session if isinstance(repository_session, AsyncSession) else None
         try:
             result = await run_curation_job(
                 tenant_id=tenant_id,
                 cluster_ids=cluster_ids_list,
+                identity_ids=identity_ids_list,
                 assignment_writer=self.cluster_service.assignment_writer,
                 cluster_repo=self.cluster_service.assignment_writer.cluster_repository,
                 cluster_service=self.cluster_service,
                 source_cluster_id=source_cluster_id,
+                refresh_idempotency_key=refresh_idempotency_key,
+                session=replay_session,
             )
             completed = int(result.get("clusters_recomputed", 0))
             job = await self.update_progress(job.id, completed=completed, total=job.progress_total)

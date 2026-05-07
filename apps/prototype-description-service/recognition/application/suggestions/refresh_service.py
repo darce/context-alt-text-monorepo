@@ -525,35 +525,18 @@ class SuggestionRefreshService:
         _t_start = _time.perf_counter()
 
         if candidate_cluster_ids is None:
-            all_clusters = await self._cluster_repository.get_by_tenant(self._tenant_id, limit=1000)
-            _t_get_clusters = _time.perf_counter()
             logger.info(
-                "[suggestions] surface: loaded %d total clusters in %.3fs",
-                len(all_clusters),
-                _t_get_clusters - _t_start,
+                "[suggestions] surface_for_newly_labeled_cluster: skipped implicit full scan cluster_id=%s reason=explicit_backfill_required",
+                cluster_id,
             )
+            return 0
 
-            unlabeled_clusters = [
-                c
-                for c in all_clusters
-                if c.id != cluster_id and (not c.user_confirmed or not c.label or c.label.startswith("cluster-"))
-            ]
-            unlabeled_cluster_ids = list(dict.fromkeys(c.id for c in unlabeled_clusters if c.id))
-            logger.info(
-                "[suggestions] surface: found %d unlabeled clusters to scan (out of %d total)",
-                len(unlabeled_clusters),
-                len(all_clusters),
-            )
-            unlabeled_count = len(unlabeled_clusters)
-        else:
-            unlabeled_cluster_ids = list(
-                dict.fromkeys(cid for cid in candidate_cluster_ids if cid and cid != cluster_id)
-            )
-            unlabeled_count = len(unlabeled_cluster_ids)
-            logger.info(
-                "[suggestions] surface: using %d provided unlabeled clusters to scan",
-                unlabeled_count,
-            )
+        unlabeled_cluster_ids = list(dict.fromkeys(cid for cid in candidate_cluster_ids if cid and cid != cluster_id))
+        unlabeled_count = len(unlabeled_cluster_ids)
+        logger.info(
+            "[suggestions] surface: using %d provided unlabeled clusters to scan",
+            unlabeled_count,
+        )
 
         if not unlabeled_cluster_ids:
             logger.info(

@@ -37,6 +37,69 @@ class AnalysisJobsControllerTest extends TestCase
 
         $batchRoute = $this->findRegisteredRoute('/recognition/batch-runs/(?P<run_id>[a-f0-9-]+)', 'GET');
         $this->assertNotNull($batchRoute);
+
+        $recentBatchRoute = $this->findRegisteredRoute('/recognition/batch-runs', 'GET');
+        $this->assertNotNull($recentBatchRoute);
+    }
+
+    public function testGetRecentBatchRunsReturnsDurableItemsForCurrentTenant(): void
+    {
+        $runId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+        $jobId = '11111111-1111-1111-1111-111111111111';
+        $failedRunId = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+
+        $GLOBALS['__ac_attachment_urls'][101] = 'http://example.test/media/101.jpg';
+        $GLOBALS['__ac_attachment_urls'][102] = 'http://example.test/media/102.jpg';
+
+        add_filter('acx_recognition_transport', static fn(string $current): string => 'url');
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'id' => $jobId,
+                'status' => 'pending',
+                'type' => 'analyze',
+                'progress' => ['completed' => 0, 'total' => 2],
+            ]),
+        ]);
+
+        $analyzeRequest = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $analyzeRequest->set_param('batch_run_id', $runId);
+        $analyzeRequest->set_param('batch_index', 0);
+        $analyzeRequest->set_param('submitted_total', 2);
+        $analyzeRequest->set_param('media_ids', [101, 102]);
+        $this->controller->analyze_media($analyzeRequest);
+
+        $failureRequest = new WP_REST_Request('POST', '/acx/v1/recognition/batch-runs/' . $failedRunId . '/client-failures');
+        $failureRequest->set_param('run_id', $failedRunId);
+        $failureRequest->set_param('batch_index', 0);
+        $failureRequest->set_param('submitted_total', 2);
+        $failureRequest->set_param('media_ids', [301, 302]);
+        $this->controller->record_client_batch_failure($failureRequest);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/batch-runs');
+        $request->set_param('limit', 5);
+
+        $response = $this->controller->get_recent_batch_runs($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertIsArray($data['items'] ?? null);
+
+        $itemsByRunId = [];
+        foreach ($data['items'] as $item) {
+            $itemsByRunId[$item['run_id']] = $item;
+        }
+
+        $this->assertArrayHasKey($runId, $itemsByRunId);
+        $this->assertArrayHasKey($failedRunId, $itemsByRunId);
+        $this->assertSame($jobId, $itemsByRunId[$runId]['latest_job_id']);
+        $this->assertSame([$jobId], $itemsByRunId[$runId]['child_job_ids']);
+        $this->assertSame(2, $itemsByRunId[$runId]['submitted_total']);
+        $this->assertSame('', $itemsByRunId[$failedRunId]['latest_job_id']);
+        $this->assertSame([], $itemsByRunId[$failedRunId]['child_job_ids']);
+        $this->assertSame(2, $itemsByRunId[$failedRunId]['failed_total']);
+        $this->assertCount(1, $itemsByRunId[$failedRunId]['failed_batches']);
     }
 
     public function testAnalyzeMediaRecordsBatchRunAndReturnsBatchRunId(): void

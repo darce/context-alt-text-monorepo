@@ -3,7 +3,8 @@ import { RecentJobsPanel } from './Panels';
 import { useWorkbenchContext } from './WorkbenchContext';
 
 export const BatchTabContent = (): React.JSX.Element => {
-  const { jobHistory, jobStatuses, jobId, handleSelectJobFromHistory, clearHistory } = useWorkbenchContext();
+  const { jobHistory, jobStatuses, jobId, historySource, handleSelectJobFromHistory, clearHistory } =
+    useWorkbenchContext();
   return (
     <>
       <div className="acx-apply-panel acx-apply-panel--empty">
@@ -28,6 +29,7 @@ export const BatchTabContent = (): React.JSX.Element => {
         jobs={jobHistory}
         statuses={jobStatuses}
         activeJobId={jobId ?? null}
+        historySource={historySource}
         onSelect={handleSelectJobFromHistory}
         onClear={clearHistory}
       />

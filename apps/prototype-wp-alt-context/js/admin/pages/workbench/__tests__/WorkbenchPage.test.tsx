@@ -290,6 +290,8 @@ describe('WorkbenchPage', () => {
       jobHistory: ['job-initial'],
       jobStatuses: { 'job-initial': 'completed' },
       jobDetails: {},
+      recentActivity: [],
+      historySource: 'durable',
       rememberJob,
       selectJob,
       forgetJob: vi.fn(),

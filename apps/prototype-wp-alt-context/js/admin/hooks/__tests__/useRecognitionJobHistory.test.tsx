@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 
-import { fetchScanStatus } from '../../api/recognition';
+import { fetchRecentBatchRuns, fetchScanStatus } from '../../api/recognition';
 import { useRecognitionJobHistory } from '../useRecognitionJobHistory';
 
 vi.mock('@wordpress/i18n', () => ({
@@ -10,6 +10,7 @@ vi.mock('@wordpress/i18n', () => ({
 }));
 
 vi.mock('../../api/recognition', () => ({
+  fetchRecentBatchRuns: vi.fn(),
   fetchScanStatus: vi.fn(),
 }));
 
@@ -25,6 +26,7 @@ const createDeferred = <T,>() => {
 
 describe('useRecognitionJobHistory', () => {
   const fetchScanStatusMock = vi.mocked(fetchScanStatus);
+  const fetchRecentBatchRunsMock = vi.mocked(fetchRecentBatchRuns);
 
   const createWrapper = () => {
     const queryClient = new QueryClient({
@@ -39,10 +41,28 @@ describe('useRecognitionJobHistory', () => {
   beforeEach(() => {
     window.localStorage.clear();
     fetchScanStatusMock.mockReset();
+    fetchRecentBatchRunsMock.mockReset();
   });
 
-  it('records jobs and fetches their statuses', async () => {
+  it('prefers durable recent batch runs and fetches their latest job statuses', async () => {
     const { wrapper, queryClient } = createWrapper();
+    const recentBatchRunsDeferred = createDeferred<{
+      items: {
+        run_id: string;
+        latest_job_id: string;
+        latest_job_status: string;
+        child_job_ids: string[];
+        submitted_total: number;
+        accepted_total: number;
+        completed_total: number;
+        failed_total: number;
+        cancelled_total: number;
+        terminal_state: boolean;
+        failed_batches: [];
+        created_at: string;
+        updated_at: string;
+      }[];
+    }>();
     const statusDeferred = createDeferred<{
       id: string;
       type: 'analyze' | 'clustering' | 'curation' | 'split';
@@ -52,6 +72,25 @@ describe('useRecognitionJobHistory', () => {
       finished_at: string;
     }>();
     fetchScanStatusMock.mockReturnValue(statusDeferred.promise);
+    const recentBatchRunsResponse = {
+      items: [
+        {
+          run_id: 'run-1',
+          latest_job_id: 'job-1',
+          latest_job_status: 'completed',
+          child_job_ids: ['job-1'],
+          submitted_total: 1,
+          accepted_total: 1,
+          completed_total: 1,
+          failed_total: 0,
+          cancelled_total: 0,
+          terminal_state: true,
+          failed_batches: [],
+          created_at: '2025-01-01 00:00:00',
+          updated_at: '2025-01-01 00:00:01',
+        },
+      ],
+    };
     const statusResponse = {
       id: 'job-1',
       type: 'analyze' as const,
@@ -60,14 +99,25 @@ describe('useRecognitionJobHistory', () => {
       started_at: '2025-01-01T00:00:00Z',
       finished_at: '2025-01-01T00:00:01Z',
     };
+    fetchRecentBatchRunsMock.mockReturnValue(recentBatchRunsDeferred.promise);
     const { result } = renderHook(() => useRecognitionJobHistory(), { wrapper });
 
-    act(() => {
-      result.current.rememberJob('job-1');
+    await waitFor(() => expect(fetchRecentBatchRunsMock).toHaveBeenCalledWith(5));
+
+    await act(async () => {
+      recentBatchRunsDeferred.resolve(recentBatchRunsResponse);
+      await recentBatchRunsDeferred.promise;
     });
 
-    expect(result.current.jobId).toBe('job-1');
-    expect(result.current.jobHistory).toEqual(['job-1']);
+    await waitFor(() => {
+      expect(result.current.historySource).toBe('durable');
+      expect(result.current.jobHistory).toEqual(['job-1']);
+      expect(result.current.recentActivity[0]).toMatchObject({
+        runId: 'run-1',
+        jobId: 'job-1',
+        provenance: 'durable_batch_run',
+      });
+    });
 
     await waitFor(() => expect(fetchScanStatusMock).toHaveBeenCalledWith('job-1'));
 
@@ -83,9 +133,11 @@ describe('useRecognitionJobHistory', () => {
     queryClient.clear();
   });
 
-  it('hydrates from stored history and supports job selection', async () => {
+  it('falls back to browser-local history when durable activity is unavailable', async () => {
     const { wrapper, queryClient } = createWrapper();
     window.localStorage.setItem('acx-recognition-jobs', JSON.stringify(['stored-job']));
+    const recentBatchRunsDeferred = createDeferred<never>();
+    fetchRecentBatchRunsMock.mockReturnValue(recentBatchRunsDeferred.promise);
     const statusDeferred = createDeferred<{
       id: string;
       type: 'analyze' | 'clustering' | 'curation' | 'split';
@@ -97,7 +149,19 @@ describe('useRecognitionJobHistory', () => {
     fetchScanStatusMock.mockReturnValue(statusDeferred.promise);
     const { result } = renderHook(() => useRecognitionJobHistory(), { wrapper });
 
+    await waitFor(() => expect(fetchRecentBatchRunsMock).toHaveBeenCalledWith(5));
+
+    await act(async () => {
+      recentBatchRunsDeferred.reject(new Error('offline'));
+      await expect(recentBatchRunsDeferred.promise).rejects.toThrow('offline');
+    });
+
     await waitFor(() => {
+      expect(result.current.historySource).toBe('browser_local_fallback');
+      expect(result.current.recentActivity[0]).toMatchObject({
+        jobId: 'stored-job',
+        provenance: 'browser_local_fallback',
+      });
       expect(result.current.jobHistory).toEqual(['stored-job']);
       expect(result.current.jobId).toBe('stored-job');
     });
@@ -122,6 +186,30 @@ describe('useRecognitionJobHistory', () => {
 
     expect(result.current.jobId).toBe('another-job');
 
+    queryClient.clear();
+  });
+
+  it('reports unavailable when durable activity cannot load and no local history exists', async () => {
+    const { wrapper, queryClient } = createWrapper();
+    const recentBatchRunsDeferred = createDeferred<never>();
+    fetchRecentBatchRunsMock.mockReturnValue(recentBatchRunsDeferred.promise);
+
+    const { result } = renderHook(() => useRecognitionJobHistory(), { wrapper });
+
+    await waitFor(() => expect(fetchRecentBatchRunsMock).toHaveBeenCalledWith(5));
+
+    await act(async () => {
+      recentBatchRunsDeferred.reject(new Error('offline'));
+      await expect(recentBatchRunsDeferred.promise).rejects.toThrow('offline');
+    });
+
+    await waitFor(() => {
+      expect(result.current.historySource).toBe('unavailable');
+      expect(result.current.jobHistory).toEqual([]);
+      expect(result.current.recentActivity).toEqual([]);
+    });
+
+    expect(fetchScanStatusMock).not.toHaveBeenCalled();
     queryClient.clear();
   });
 });

@@ -244,9 +244,9 @@ make lane-manifest-init TASK=E15-19 LANE_IDS='docs-contracts backend-refresh wp-
 
 ### Checklist for Slice 3: RCL-004 Projection Schema and API
 
-- [ ] Shared schema exposes source and derived projection fields.
-- [ ] Projection freshness/source version is present.
-- [ ] API/schema/codegen tests pass.
+- [x] Shared schema exposes source and derived projection fields.
+- [x] Projection freshness/source version is present.
+- [x] API/schema/codegen tests pass.
 
 ### Checklist for Slice 4: Bounded Suggestion Refresh
 

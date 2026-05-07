@@ -180,6 +180,7 @@ async def run_curation_job(
                     cluster_id,
                     exc,
                 )
+                refresh_failed = True
                 if replay_session is not None and refresh_idempotency_key:
                     await _set_refresh_status(
                         session=replay_session,
@@ -187,8 +188,7 @@ async def run_curation_job(
                         idempotency_key=refresh_idempotency_key,
                         status=CurationRefreshStatus.TIMED_OUT,
                     )
-                    refresh_failed = True
-                    break
+                break
             except Exception as exc:
                 logger.warning(
                     "[curation_job] refresh_for_cluster failed tenant_id=%s cluster_id=%s: %s",

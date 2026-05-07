@@ -24,6 +24,16 @@ from roster.application.curation_sync_service import CurationRefreshStatus
 logger = logging.getLogger(__name__)
 
 
+def _refresh_result_created_candidates(result: object) -> bool:
+    if isinstance(result, bool):
+        return result
+    if isinstance(result, int):
+        return result > 0
+    if isinstance(result, Sequence) and not isinstance(result, (str, bytes, bytearray)):
+        return len(result) > 0
+    return result is not None
+
+
 async def run_curation_job(
     *,
     tenant_id: str,
@@ -127,16 +137,22 @@ async def run_curation_job(
                 status=CurationRefreshStatus.RUNNING,
             )
         refresh_failed = False
+        refresh_created_candidates = False
         refresh_for_identity = getattr(refresh_service, "refresh_for_identity", None)
         for cluster_id in unique_cluster_ids:
             try:
                 refreshed = await refresh_service.refresh_for_cluster(cluster_id)
-                if refreshed == 0 and unique_identity_ids and callable(refresh_for_identity):
+                cluster_refresh_created = _refresh_result_created_candidates(refreshed)
+                if cluster_refresh_created:
+                    refresh_created_candidates = True
+                if not cluster_refresh_created and unique_identity_ids and callable(refresh_for_identity):
                     for identity_id in unique_identity_ids:
-                        await refresh_for_identity(
+                        identity_refreshed = await refresh_for_identity(
                             identity_id=identity_id,
                             reason=SuggestionRefreshReason.MANUAL_ASSIGN,
                         )
+                        if _refresh_result_created_candidates(identity_refreshed):
+                            refresh_created_candidates = True
             except Exception as exc:
                 logger.warning(
                     "[curation_job] refresh_for_cluster failed tenant_id=%s cluster_id=%s: %s",
@@ -158,7 +174,11 @@ async def run_curation_job(
                 session=replay_session,
                 tenant_id=tenant_id,
                 idempotency_key=refresh_idempotency_key,
-                status=CurationRefreshStatus.COMPLETED,
+                status=(
+                    CurationRefreshStatus.COMPLETED
+                    if refresh_created_candidates
+                    else CurationRefreshStatus.NO_CANDIDATES
+                ),
             )
 
     logger.info(
@@ -212,6 +232,6 @@ async def _set_refresh_status(
         if record.refresh_requested_at is None:
             record.refresh_requested_at = now
         record.refresh_completed_at = None
-    elif status in {CurationRefreshStatus.COMPLETED, CurationRefreshStatus.FAILED}:
+    elif status in {CurationRefreshStatus.NO_CANDIDATES, CurationRefreshStatus.COMPLETED, CurationRefreshStatus.FAILED}:
         record.refresh_completed_at = now
     await session.flush()

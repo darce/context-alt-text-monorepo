@@ -151,6 +151,36 @@ async def test_background_backfill_suggestions_commits_session() -> None:
 
 
 @pytest.mark.asyncio
+async def test_background_backfill_suggestions_allows_fallback_recovery_without_created_ids() -> None:
+    session = AsyncMock()
+
+    @asynccontextmanager
+    async def _session_factory():
+        yield session
+
+    refresh_service = SimpleNamespace(backfill_for_new_unlabeled_clusters=AsyncMock(return_value=2))
+    cluster_service = SimpleNamespace(suggestion_refresh_service=refresh_service)
+
+    async def _builder(*, session, tenant_id):  # noqa: ANN001
+        return cluster_service
+
+    await run_background_backfill_suggestions(
+        "tenant-1",
+        [],
+        fallback_window_minutes=15,
+        session_factory=_session_factory,
+        cluster_service_builder=_builder,
+    )
+
+    refresh_service.backfill_for_new_unlabeled_clusters.assert_awaited_once_with(
+        tenant_id="tenant-1",
+        created_cluster_ids=[],
+        fallback_window_minutes=15,
+    )
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_background_surface_suggestions_limits_parallel_sessions(monkeypatch) -> None:
     from recognition.application.tasks import clustering as clustering_tasks
 

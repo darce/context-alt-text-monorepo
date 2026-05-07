@@ -202,7 +202,7 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.CheckConstraint(
-            "refresh_status IN ('not_applicable', 'queued', 'running', 'completed', 'failed')",
+            "refresh_status IN ('not_applicable', 'queued', 'running', 'no_candidates', 'timed_out', 'completed', 'failed')",
             name="ck_curation_replay_refresh_status",
         ),
         sa.UniqueConstraint("tenant_id", "idempotency_key", name="uq_curation_replay_tenant_idempotency"),

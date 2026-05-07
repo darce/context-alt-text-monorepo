@@ -76,14 +76,14 @@ class RosterEntryProjectionRepository {
 	}
 
 	private function resolve_projection_status( string $tenant_id, ?string $projection_refreshed_at ): string {
-		if ( $this->sync_state_repository->get_pending_curation_operations( $tenant_id ) > 0
-			|| $this->sync_state_repository->get_pending_topology_commands( $tenant_id ) > 0 ) {
-			return 'refreshing';
-		}
-
 		$last_sync_result = $this->sync_state_repository->get_last_sync_result( $tenant_id );
 		if ( 'failed' === $last_sync_result || 'unreachable' === $last_sync_result ) {
 			return 'failed';
+		}
+
+		if ( $this->sync_state_repository->get_pending_curation_operations( $tenant_id ) > 0
+			|| $this->sync_state_repository->get_pending_topology_commands( $tenant_id ) > 0 ) {
+			return 'refreshing';
 		}
 
 		if ( null === $projection_refreshed_at || 'skipped' === $last_sync_result ) {

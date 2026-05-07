@@ -24,6 +24,12 @@ from roster.application.curation_sync_service import CurationRefreshStatus
 logger = logging.getLogger(__name__)
 
 
+_REFRESH_SUCCESS_TERMINAL_STATUSES = {
+    CurationRefreshStatus.COMPLETED.value,
+    CurationRefreshStatus.NO_CANDIDATES.value,
+}
+
+
 def _refresh_result_created_candidates(result: object) -> bool:
     if isinstance(result, bool):
         return result
@@ -126,8 +132,22 @@ async def run_curation_job(
             tenant_id,
             refresh_idempotency_key,
         )
+    replay_record: CurationReplayRecord | None = None
+    if replay_session is not None and refresh_idempotency_key:
+        replay_record = await _load_replay_record(
+            session=replay_session,
+            tenant_id=tenant_id,
+            idempotency_key=refresh_idempotency_key,
+        )
     if refresh_service is None:
         logger.warning("[curation_job] refresh service unavailable tenant_id=%s cluster_ids=%s", tenant_id, unique_cluster_ids)
+    elif replay_record is not None and replay_record.refresh_status in _REFRESH_SUCCESS_TERMINAL_STATUSES:
+        logger.info(
+            "[curation_job] refresh already settled tenant_id=%s idempotency_key=%s refresh_status=%s",
+            tenant_id,
+            refresh_idempotency_key,
+            replay_record.refresh_status,
+        )
     elif unique_cluster_ids:
         if replay_session is not None and refresh_idempotency_key:
             await _set_refresh_status(
@@ -225,13 +245,14 @@ async def run_curation_job(
         "clusters_recomputed": len(unique_cluster_ids),
         "identities_clustered": identities_clustered,
     }
-async def _set_refresh_status(
+
+
+async def _load_replay_record(
     *,
     session: AsyncSession,
     tenant_id: str,
     idempotency_key: str,
-    status: CurationRefreshStatus,
-) -> None:
+) -> CurationReplayRecord | None:
     result = await session.execute(
         select(CurationReplayRecord).where(
             CurationReplayRecord.tenant_id == UUID(tenant_id),
@@ -239,14 +260,28 @@ async def _set_refresh_status(
         )
     )
     record = result.scalar_one_or_none()
-    if not isinstance(record, CurationReplayRecord):
+    return record if isinstance(record, CurationReplayRecord) else None
+
+
+async def _set_refresh_status(
+    *,
+    session: AsyncSession,
+    tenant_id: str,
+    idempotency_key: str,
+    status: CurationRefreshStatus,
+) -> None:
+    record = await _load_replay_record(
+        session=session,
+        tenant_id=tenant_id,
+        idempotency_key=idempotency_key,
+    )
+    if record is None:
         return
 
     now = datetime.now(tz=UTC)
     record.refresh_status = status.value
     if status is CurationRefreshStatus.RUNNING:
-        if record.refresh_requested_at is None:
-            record.refresh_requested_at = now
+        record.refresh_requested_at = now
         record.refresh_completed_at = None
     elif status in {
         CurationRefreshStatus.NO_CANDIDATES,

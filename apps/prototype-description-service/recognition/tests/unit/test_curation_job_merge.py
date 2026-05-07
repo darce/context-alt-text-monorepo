@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import uuid
 from unittest.mock import AsyncMock, Mock, call
 
@@ -283,6 +283,111 @@ async def test_run_curation_job_marks_refresh_timed_out_when_executor_times_out(
     assert isinstance(refreshed, CurationReplayRecord)
     assert refreshed.refresh_status == "timed_out"
     assert refreshed.refresh_completed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_run_curation_job_skips_refresh_when_replay_row_already_completed(db_session: AsyncSession) -> None:
+    tenant_id = uuid.uuid4()
+    cluster_id = str(uuid.uuid4())
+    completed_at = datetime.now(tz=UTC)
+    db_session.add(Tenant(id=tenant_id, site_url="http://example.test"))
+    await db_session.commit()
+    replay_row = CurationReplayRecord(
+        tenant_id=tenant_id,
+        idempotency_key="refresh-idem-completed",
+        result_status="acknowledged",
+        backend_version=1,
+        refresh_status="completed",
+        refresh_requested_at=completed_at,
+        refresh_completed_at=completed_at,
+    )
+    db_session.add(replay_row)
+    await db_session.commit()
+
+    mock_writer = Mock(spec=AssignmentWriter)
+    mock_writer.recompute_representatives = AsyncMock()
+    mock_writer.recompute_centroid = AsyncMock()
+
+    mock_repo = Mock(spec=ClusterRepository)
+    mock_repo.get_unclustered = AsyncMock(return_value=[])
+
+    refresh_service = Mock()
+    refresh_service.refresh_for_cluster = AsyncMock(return_value=1)
+
+    cluster_service = Mock()
+    cluster_service.suggestion_refresh_service = refresh_service
+
+    await run_curation_job(
+        tenant_id=str(tenant_id),
+        cluster_ids=[cluster_id],
+        assignment_writer=mock_writer,
+        cluster_repo=mock_repo,
+        cluster_service=cluster_service,
+        refresh_idempotency_key="refresh-idem-completed",
+        session=db_session,
+    )
+
+    refresh_service.refresh_for_cluster.assert_not_awaited()
+    refreshed = await db_session.scalar(
+        select(CurationReplayRecord).where(CurationReplayRecord.idempotency_key == "refresh-idem-completed")
+    )
+    assert isinstance(refreshed, CurationReplayRecord)
+    assert refreshed.refresh_status == "completed"
+    assert refreshed.refresh_completed_at == completed_at
+
+
+@pytest.mark.asyncio
+async def test_run_curation_job_retry_refresh_updates_attempt_timestamps(db_session: AsyncSession) -> None:
+    tenant_id = uuid.uuid4()
+    cluster_id = str(uuid.uuid4())
+    first_requested_at = datetime.now(tz=UTC) - timedelta(minutes=5)
+    first_completed_at = first_requested_at + timedelta(seconds=30)
+    db_session.add(Tenant(id=tenant_id, site_url="http://example.test"))
+    await db_session.commit()
+    replay_row = CurationReplayRecord(
+        tenant_id=tenant_id,
+        idempotency_key="refresh-idem-retry",
+        result_status="acknowledged",
+        backend_version=1,
+        refresh_status="timed_out",
+        refresh_requested_at=first_requested_at,
+        refresh_completed_at=first_completed_at,
+    )
+    db_session.add(replay_row)
+    await db_session.commit()
+
+    mock_writer = Mock(spec=AssignmentWriter)
+    mock_writer.recompute_representatives = AsyncMock()
+    mock_writer.recompute_centroid = AsyncMock()
+
+    mock_repo = Mock(spec=ClusterRepository)
+    mock_repo.get_unclustered = AsyncMock(return_value=[])
+
+    refresh_service = Mock()
+    refresh_service.refresh_for_cluster = AsyncMock(return_value=1)
+
+    cluster_service = Mock()
+    cluster_service.suggestion_refresh_service = refresh_service
+
+    await run_curation_job(
+        tenant_id=str(tenant_id),
+        cluster_ids=[cluster_id],
+        assignment_writer=mock_writer,
+        cluster_repo=mock_repo,
+        cluster_service=cluster_service,
+        refresh_idempotency_key="refresh-idem-retry",
+        session=db_session,
+    )
+
+    refreshed = await db_session.scalar(
+        select(CurationReplayRecord).where(CurationReplayRecord.idempotency_key == "refresh-idem-retry")
+    )
+    assert isinstance(refreshed, CurationReplayRecord)
+    assert refreshed.refresh_status == "completed"
+    assert refreshed.refresh_requested_at is not None
+    assert refreshed.refresh_requested_at > first_requested_at
+    assert refreshed.refresh_completed_at is not None
+    assert refreshed.refresh_completed_at > first_completed_at
 
 
 @pytest.mark.asyncio

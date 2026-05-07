@@ -41,7 +41,11 @@ type ProjectionAwareRosterEntry = RosterEntry & {
 
 const getRouteParam = (searchParams: URLSearchParams, key: string): string | null => {
   const value = searchParams.get(key)?.trim();
-  return value ? value : null;
+  if (!value) {
+    return null;
+  }
+
+  return value;
 };
 
 const getLegacyTab = (searchParams: URLSearchParams): RosterTab => {
@@ -132,10 +136,6 @@ export const RosterPage = (): React.JSX.Element => {
   }, [activeTab, clusterIds, clustersQuery.data, retainVisibleSelection]);
 
   React.useEffect(() => {
-    if (parsedRoute.selectedClusterId === null) {
-      return;
-    }
-
     setSelectedClusterId(parsedRoute.selectedClusterId);
   }, [parsedRoute.selectedClusterId]);
 
@@ -154,7 +154,7 @@ export const RosterPage = (): React.JSX.Element => {
   );
   const mediaMap = useClusterMediaMap(clusters, drawerMediaIds);
   const entriesQuery = useRosterEntries();
-  const rosterEntries = entriesQuery.data ?? [];
+  const rosterEntries = React.useMemo(() => entriesQuery.data ?? [], [entriesQuery.data]);
   const personWorkspaceAvailable = React.useMemo(
     () => hasPersonWorkspaceProjection(rosterEntries),
     [rosterEntries],

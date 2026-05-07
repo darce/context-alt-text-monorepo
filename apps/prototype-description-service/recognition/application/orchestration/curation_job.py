@@ -150,11 +150,12 @@ async def run_curation_job(
         )
     elif unique_cluster_ids:
         if replay_session is not None and refresh_idempotency_key:
-            await _set_refresh_status(
+            replay_record = await _set_refresh_status(
                 session=replay_session,
                 tenant_id=tenant_id,
                 idempotency_key=refresh_idempotency_key,
                 status=CurationRefreshStatus.RUNNING,
+                record=replay_record,
             )
         refresh_failed = False
         refresh_created_candidates = False
@@ -182,11 +183,12 @@ async def run_curation_job(
                 )
                 refresh_failed = True
                 if replay_session is not None and refresh_idempotency_key:
-                    await _set_refresh_status(
+                    replay_record = await _set_refresh_status(
                         session=replay_session,
                         tenant_id=tenant_id,
                         idempotency_key=refresh_idempotency_key,
                         status=CurationRefreshStatus.TIMED_OUT,
+                        record=replay_record,
                     )
                 break
             except Exception as exc:
@@ -197,16 +199,17 @@ async def run_curation_job(
                     exc,
                 )
                 if replay_session is not None and refresh_idempotency_key:
-                    await _set_refresh_status(
+                    replay_record = await _set_refresh_status(
                         session=replay_session,
                         tenant_id=tenant_id,
                         idempotency_key=refresh_idempotency_key,
                         status=CurationRefreshStatus.FAILED,
+                        record=replay_record,
                     )
                     refresh_failed = True
                     break
         if replay_session is not None and refresh_idempotency_key and not refresh_failed:
-            await _set_refresh_status(
+            replay_record = await _set_refresh_status(
                 session=replay_session,
                 tenant_id=tenant_id,
                 idempotency_key=refresh_idempotency_key,
@@ -215,6 +218,7 @@ async def run_curation_job(
                     if refresh_created_candidates
                     else CurationRefreshStatus.NO_CANDIDATES
                 ),
+                record=replay_record,
             )
 
     logger.info(
@@ -269,14 +273,16 @@ async def _set_refresh_status(
     tenant_id: str,
     idempotency_key: str,
     status: CurationRefreshStatus,
-) -> None:
-    record = await _load_replay_record(
-        session=session,
-        tenant_id=tenant_id,
-        idempotency_key=idempotency_key,
-    )
+    record: CurationReplayRecord | None = None,
+) -> CurationReplayRecord | None:
     if record is None:
-        return
+        record = await _load_replay_record(
+            session=session,
+            tenant_id=tenant_id,
+            idempotency_key=idempotency_key,
+        )
+    if record is None:
+        return None
 
     now = datetime.now(tz=UTC)
     record.refresh_status = status.value
@@ -291,3 +297,4 @@ async def _set_refresh_status(
     }:
         record.refresh_completed_at = now
     await session.flush()
+    return record

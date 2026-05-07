@@ -199,22 +199,23 @@ class JobService:
         if not self.cluster_service:
             return await self.fail_job(job.id, "cluster service not available")
         cluster_ids_list = list(cluster_ids)
+        payload = job.payload or {}
         if not cluster_ids_list:
-            cluster_ids_list = _coerce_str_list(job.payload.get("cluster_ids") if job.payload else None)
+            cluster_ids_list = _coerce_str_list(payload.get("cluster_ids"))
         if not cluster_ids_list:
             return await self.fail_job(job.id, "missing cluster ids")
 
-        if source_cluster_id is None and job.payload:
-            payload_source = job.payload.get("source_cluster_id")
+        if source_cluster_id is None:
+            payload_source = payload.get("source_cluster_id")
             if payload_source:
                 source_cluster_id = str(payload_source)
-        if refresh_idempotency_key is None and job.payload:
-            payload_refresh_key = job.payload.get("refresh_idempotency_key")
+        if refresh_idempotency_key is None:
+            payload_refresh_key = payload.get("refresh_idempotency_key")
             if payload_refresh_key:
                 refresh_idempotency_key = str(payload_refresh_key)
         identity_ids_list = list(identity_ids or [])
-        if not identity_ids_list and job.payload:
-            identity_ids_list = _coerce_str_list(job.payload.get("identity_ids") if job.payload else None)
+        if not identity_ids_list:
+            identity_ids_list = _coerce_str_list(payload.get("identity_ids"))
 
         job.progress_total = max(job.progress_total, len(cluster_ids_list))
         job = await self.start_job(job.id)

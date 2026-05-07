@@ -234,8 +234,9 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 						$multipart_result->get_error_message()
 					)
 				);
+			} else {
+				$this->record_batch_run_success_from_response( $batch_context, $multipart_result, $media_items, $unreadable_media_ids );
 			}
-			$this->record_batch_run_success_from_response( $batch_context, $multipart_result, $media_items, $unreadable_media_ids );
 			return $multipart_result;
 		}
 

@@ -225,22 +225,22 @@ make lane-manifest-init TASK=E15-19 LANE_IDS='docs-contracts backend-refresh wp-
 
 ## Context and Ownership
 
-- [ ] Loaded PREIMPL spec, RCL spec, ADR-009, E15-13 related plan, and handoff state before editing.
-- [ ] Recorded the disposition of E15-13 (superseded by E15-19 with a handoff decision id) before Slice 1 implementation starts.
-- [ ] Confirmed ADR-009 state before event/projection code changes.
-- [ ] Recorded boundary ownership and compatibility expectations for every payload/schema change.
+- [x] Loaded PREIMPL spec, RCL spec, ADR-009, E15-13 related plan, and handoff state before editing.
+- [x] Recorded the disposition of E15-13 (superseded by E15-19 with a handoff decision id) before Slice 1 implementation starts.
+- [x] Confirmed ADR-009 state before event/projection code changes.
+- [x] Recorded boundary ownership and compatibility expectations for every payload/schema change.
 
 ### Checklist for Slice 1: ADR and Contract Gate
 
-- [ ] ADR-009 status and decision id recorded.
-- [ ] RCL-004 canonical projection confirmed.
-- [ ] Conditional ADR constraints copied into task handoff if applicable.
+- [x] ADR-009 status and decision id recorded.
+- [x] RCL-004 canonical projection confirmed.
+- [x] Conditional ADR constraints copied into task handoff if applicable.
 
 ### Checklist for Slice 2: Durable Post-Curation Event and Refresh Status
 
-- [ ] `cluster_person_bound` carries or resolves authoritative person label.
+- [x] `cluster_person_bound` carries or resolves authoritative person label.
 - [ ] Refresh status is durable and idempotent.
-- [ ] Replay/idempotency tests captured.
+- [x] Replay/idempotency tests captured.
 
 ### Checklist for Slice 3: RCL-004 Projection Schema and API
 

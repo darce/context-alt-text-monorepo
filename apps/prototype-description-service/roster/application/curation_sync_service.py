@@ -237,6 +237,12 @@ class CurationSyncService:
         return None
 
     def _resolve_desired_label(self, operation: Any, operation_type: str, current_label: str) -> str:
+        if operation_type == "cluster_person_bound":
+            payload = self._payload(operation)
+            person_name = payload.get("person_name")
+            if isinstance(person_name, str) and person_name.strip():
+                return person_name.strip()
+
         if operation_type != "cluster_label_updated":
             return current_label
 

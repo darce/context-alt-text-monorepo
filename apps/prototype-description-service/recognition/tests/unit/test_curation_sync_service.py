@@ -99,6 +99,39 @@ async def test_cluster_bind_acknowledges_and_is_idempotent(db_session: AsyncSess
 
 
 @pytest.mark.asyncio
+async def test_cluster_bind_replay_uses_authoritative_person_name_when_provided(db_session: AsyncSession) -> None:
+    tenant = await _create_tenant(db_session)
+    cluster = IdentityCluster(id=uuid4(), tenant_id=tenant.id, label="Stale Label", identity_count=1)
+    db_session.add(cluster)
+    await db_session.commit()
+    await db_session.refresh(cluster)
+
+    base_version = int(cluster.updated_at.timestamp() * 1_000_000) if cluster.updated_at else 0
+    person_uuid = str(uuid4())
+
+    result = await CurationSyncService(session=db_session).apply(
+        tenant_id=str(tenant.id),
+        operation=_operation(
+            "cluster_person_bound",
+            entity_key=str(cluster.id),
+            idempotency_key="bind-person-name-idem",
+            expected_base_version=base_version,
+            payload={
+                "cluster_uuid": str(cluster.id),
+                "person_uuid": person_uuid,
+                "person_name": "Known Person",
+            },
+        ),
+    )
+    await db_session.commit()
+    await db_session.refresh(cluster)
+
+    assert result.status == "acknowledged"
+    assert str(cluster.roster_id) == person_uuid
+    assert cluster.label == "Known Person"
+
+
+@pytest.mark.asyncio
 async def test_cluster_bind_conflicts_when_expected_base_is_stale(db_session: AsyncSession) -> None:
     tenant = await _create_tenant(db_session)
     cluster = IdentityCluster(id=uuid4(), tenant_id=tenant.id, label="Assigned", identity_count=1)

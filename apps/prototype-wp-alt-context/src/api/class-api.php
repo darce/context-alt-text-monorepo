@@ -497,6 +497,7 @@ class Api {
 			array(
 				'cluster_uuid' => $cluster_id,
 				'person_uuid'  => ( null === $person_id ) ? null : ( is_string( $person_uuid ) ? $person_uuid : null ),
+				'person_name'  => ( null === $person_id || ! is_string( $resolved_person_name ) || '' === trim( $resolved_person_name ) ) ? null : trim( $resolved_person_name ),
 			)
 		);
 		if ( ! $queued ) {

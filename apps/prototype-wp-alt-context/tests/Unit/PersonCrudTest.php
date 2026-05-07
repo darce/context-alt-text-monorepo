@@ -204,6 +204,7 @@ class PersonCrudTest extends TestCase
         $outboxInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_outbox');
         $this->assertStringContainsString("'cluster_person_bound'", $outboxInsert);
         $this->assertStringContainsString('cluster-123', $outboxInsert);
+        $this->assertStringContainsString('Roster Name', $outboxInsert);
         $this->assertStringContainsString(', 27, 3,', $outboxInsert);
         $this->assertContains('START TRANSACTION', $wpdb->queries);
         $this->assertContains('COMMIT', $wpdb->queries);
@@ -251,6 +252,7 @@ class PersonCrudTest extends TestCase
         $this->assertCount(2, $outboxInserts);
         $this->assertStringContainsString("'person_created'", $outboxInserts[0]);
         $this->assertStringContainsString("'cluster_person_bound'", $outboxInserts[1]);
+        $this->assertStringContainsString('Inline Person', $outboxInserts[1]);
         $this->assertStringContainsString(', 44, 4,', $outboxInserts[1]);
         $this->assertContains('COMMIT', $wpdb->queries);
     }

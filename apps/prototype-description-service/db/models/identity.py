@@ -209,7 +209,7 @@ class CurationReplayRecord(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "refresh_status IN ('not_applicable', 'queued', 'running', 'no_candidates', 'completed', 'failed')",
+            "refresh_status IN ('not_applicable', 'queued', 'running', 'no_candidates', 'timed_out', 'completed', 'failed')",
             name="ck_curation_replay_refresh_status",
         ),
         UniqueConstraint("tenant_id", "idempotency_key", name="uq_curation_replay_tenant_idempotency"),

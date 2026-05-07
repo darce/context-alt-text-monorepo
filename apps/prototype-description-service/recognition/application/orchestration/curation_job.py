@@ -153,6 +153,22 @@ async def run_curation_job(
                         )
                         if _refresh_result_created_candidates(identity_refreshed):
                             refresh_created_candidates = True
+            except TimeoutError as exc:
+                logger.warning(
+                    "[curation_job] refresh_for_cluster timed out tenant_id=%s cluster_id=%s: %s",
+                    tenant_id,
+                    cluster_id,
+                    exc,
+                )
+                if replay_session is not None and refresh_idempotency_key:
+                    await _set_refresh_status(
+                        session=replay_session,
+                        tenant_id=tenant_id,
+                        idempotency_key=refresh_idempotency_key,
+                        status=CurationRefreshStatus.TIMED_OUT,
+                    )
+                    refresh_failed = True
+                    break
             except Exception as exc:
                 logger.warning(
                     "[curation_job] refresh_for_cluster failed tenant_id=%s cluster_id=%s: %s",
@@ -232,6 +248,11 @@ async def _set_refresh_status(
         if record.refresh_requested_at is None:
             record.refresh_requested_at = now
         record.refresh_completed_at = None
-    elif status in {CurationRefreshStatus.NO_CANDIDATES, CurationRefreshStatus.COMPLETED, CurationRefreshStatus.FAILED}:
+    elif status in {
+        CurationRefreshStatus.NO_CANDIDATES,
+        CurationRefreshStatus.TIMED_OUT,
+        CurationRefreshStatus.COMPLETED,
+        CurationRefreshStatus.FAILED,
+    }:
         record.refresh_completed_at = now
     await session.flush()

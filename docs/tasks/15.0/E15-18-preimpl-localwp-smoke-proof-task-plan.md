@@ -21,7 +21,7 @@ Implement PREIMPL-001 from [docs/specs/e15-app-refactoring-preimplementation-spe
 
 The current LocalWP smoke harness can accept a literal `--` separator as a PHP argument and silently coerce it into a one-image smoke pass. That makes later LocalWP/public-demo validation evidence unreliable before any roster, dashboard, or curation work starts.
 
-This plan supersedes [E15-14](E15-14-localwp-batch-smoke-argument-plumbing-task-plan.md) as the canonical PREIMPL-001 implementation track. Before Slice 1 code edits, record the superseding handoff decision for E15-18, run `update_task_status(task_ref='E15-14', status='superseded')`, and archive E15-14 only after its existing branch/worktree is confirmed closed.
+This plan supersedes [E15-14](E15-14-localwp-batch-smoke-argument-plumbing-task-plan.md) as the canonical PREIMPL-001 implementation track. Before Slice 1 code edits, record the superseding handoff decision for E15-18 so reviews have an explicit retirement link. Leave E15-14 on its documented lifecycle while its existing branch/worktree remains active, then retire it through the normal done/archive flow after that branch/worktree is actually closed.
 
 ## Constraints
 

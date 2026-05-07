@@ -21,7 +21,7 @@ Implement PREIMPL-007 and the roster-UI guardrails from PREIMPL-002/PREIMPL-009 
 
 The current Roster page centers Entries and Clusters tabs, while E15-17 wants a person-first review workspace. The PREIMPL spec requires route parsing to land before UI expansion, but rendering must wait for the RCL-004 enriched roster-entry projection. Without that gate, the UI could ship an empty shell that implies person review exists while source-backed data is absent.
 
-This plan supersedes [E15-17](E15-17-roster-person-review-scrub-workspace-task-plan.md) as the canonical PREIMPL roster UI implementation track. Before Slice 1 code edits, record the superseding handoff decision for E15-21, run `update_task_status(task_ref='E15-17', status='superseded')`, and archive E15-17 only after its existing branch/worktree is confirmed closed.
+This plan supersedes [E15-17](E15-17-roster-person-review-scrub-workspace-task-plan.md) as the canonical PREIMPL roster UI implementation track. Before Slice 1 code edits, record the superseding handoff decision for E15-21 so reviews have an explicit retirement link. Leave E15-17 on its documented lifecycle while its existing branch/worktree remains active, then retire it through the normal done/archive flow after that branch/worktree is actually closed.
 
 ## Constraints
 

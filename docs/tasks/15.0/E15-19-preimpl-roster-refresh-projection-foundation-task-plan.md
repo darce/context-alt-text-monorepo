@@ -21,7 +21,7 @@ Implement Tier 0 PREIMPL-002, PREIMPL-003, and PREIMPL-004 in Slices 1-4, then l
 
 The current curation loop mixes person writes, count-only roster reads, backend replay, and suggestion refresh across different surfaces. E15-13 already owns much of this behavior, but the PREIMPL spec adds stricter gates: ADR-009 must be accepted, RCL-004 must be canonical, refresh must be durable and bounded, projection freshness must be source-backed, and controller extraction must stay tied to changed behavior.
 
-This plan supersedes [E15-13](E15-13-roster-curation-loop-task-plan.md) as the canonical PREIMPL roster/refresh implementation track. Before Slice 1 code edits, record the superseding handoff decision for E15-19, run `update_task_status(task_ref='E15-13', status='superseded')`, and archive E15-13 only after its existing branch/worktree is confirmed closed.
+This plan supersedes [E15-13](E15-13-roster-curation-loop-task-plan.md) as the canonical PREIMPL roster/refresh implementation track. Before Slice 1 code edits, record the superseding handoff decision for E15-19 so reviews have an explicit retirement link. Leave E15-13 on its documented lifecycle while its existing branch/worktree remains active, then retire it through the normal done/archive flow after that branch/worktree is actually closed.
 
 ## Constraints
 

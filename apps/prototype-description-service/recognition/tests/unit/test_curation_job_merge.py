@@ -142,7 +142,10 @@ async def test_run_curation_job_creates_merge_must_link_constraint() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_curation_job_advances_refresh_status_for_replay_row(db_session: AsyncSession) -> None:
+async def test_run_curation_job_advances_refresh_status_for_replay_row(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tenant_id = uuid.uuid4()
     cluster_id = str(uuid.uuid4())
     db_session.add(Tenant(id=tenant_id, site_url="http://example.test"))
@@ -171,6 +174,18 @@ async def test_run_curation_job_advances_refresh_status_for_replay_row(db_sessio
     cluster_service = Mock()
     cluster_service.suggestion_refresh_service = refresh_service
 
+    import recognition.application.orchestration.curation_job as curation_job_module
+
+    original_load_replay_record = curation_job_module._load_replay_record
+    load_call_count = 0
+
+    async def counting_load_replay_record(**kwargs):
+        nonlocal load_call_count
+        load_call_count += 1
+        return await original_load_replay_record(**kwargs)
+
+    monkeypatch.setattr(curation_job_module, "_load_replay_record", counting_load_replay_record)
+
     await run_curation_job(
         tenant_id=str(tenant_id),
         cluster_ids=[cluster_id],
@@ -187,6 +202,7 @@ async def test_run_curation_job_advances_refresh_status_for_replay_row(db_sessio
     assert isinstance(refreshed, CurationReplayRecord)
     assert refreshed.refresh_status == "completed"
     assert refreshed.refresh_completed_at is not None
+    assert load_call_count == 1
 
 
 @pytest.mark.asyncio

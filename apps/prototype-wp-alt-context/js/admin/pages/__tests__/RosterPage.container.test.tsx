@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useSearchParams } from 'react-router-dom';
 
 import type { BatchAnalyzeResponse, ClusterListResponse, ClusterSummary } from '../../api/recognition';
 import { useRecognitionCluster, useRecognitionClusters } from '../../hooks/useRecognitionHooks';
@@ -76,6 +76,21 @@ const makeClusterListResponse = (overrides: Partial<ClusterListResponse> = {}): 
   truncated: false,
   ...overrides,
 });
+
+const ClusterRouteReset = (): React.JSX.Element => {
+  const [, setSearchParams] = useSearchParams();
+
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        setSearchParams(new URLSearchParams('tab=clusters'), { replace: true });
+      }}
+    >
+      Reset cluster route
+    </button>
+  );
+};
 
 describe('RosterPage route container', () => {
   const mockedUseRecognitionClusters = vi.mocked(useRecognitionClusters);
@@ -284,6 +299,21 @@ describe('RosterPage route container', () => {
     expect(screen.getByRole('tab', { name: 'Clusters' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('tab', { name: 'Entries' })).toHaveAttribute('aria-selected', 'false');
     expect(await screen.findByRole('button', { name: /^Close$/i })).toBeInTheDocument();
+  });
+
+  it('[PAG-M3] clears cluster drawer state when the cluster route is removed', async () => {
+    render(
+      <MemoryRouter initialEntries={['/?tab=clusters&cluster=cluster-1']}>
+        <ClusterRouteReset />
+        <RosterPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByRole('button', { name: /^Close$/i })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Reset cluster route' }));
+
+    expect(screen.queryByRole('button', { name: /^Close$/i })).not.toBeInTheDocument();
   });
 
   it('[PAG-M3] opens and closes the cluster drawer from the grid', async () => {

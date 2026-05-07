@@ -185,9 +185,9 @@ Proof:
 
 ### Checklist for Slice 1: Route Parser and Compatibility Gate
 
-- [ ] Queue/person/face/cluster routes parse deterministically.
-- [ ] Entries/Clusters routes remain reachable.
-- [ ] Projection-absent gate tests pass.
+- [x] Queue/person/face/cluster routes parse deterministically.
+- [x] Entries/Clusters routes remain reachable.
+- [x] Projection-absent gate tests pass.
 
 ### Checklist for Slice 2: Projection-Aware Person Workspace Shell
 

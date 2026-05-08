@@ -67,6 +67,9 @@ class CurationSyncService:
         "cluster_undismissed",
         "cluster_label_updated",
     }
+    _NO_REFRESH_CLUSTER_OPERATION_TYPES: ClassVar[set[str]] = {
+        "cluster_person_unbound",
+    }
     _SUPPORTED_OPERATION_TYPES: ClassVar[set[str]] = _PERSON_OPERATION_TYPES | _CLUSTER_OPERATION_TYPES
 
     def __init__(self, session: AsyncSession, job_service: CurationFollowupQueue | None = None) -> None:
@@ -273,6 +276,8 @@ class CurationSyncService:
             return CurationRefreshStatus.NOT_APPLICABLE
         if operation_type in self._PERSON_OPERATION_TYPES:
             return CurationRefreshStatus.NOT_APPLICABLE
+        if operation_type in self._NO_REFRESH_CLUSTER_OPERATION_TYPES:
+            return CurationRefreshStatus.NOT_APPLICABLE
         return CurationRefreshStatus.QUEUED
 
     async def _queue_refresh_followup(
@@ -284,6 +289,8 @@ class CurationSyncService:
         idempotency_key: str,
     ) -> None:
         if operation_type in self._PERSON_OPERATION_TYPES:
+            return
+        if operation_type in self._NO_REFRESH_CLUSTER_OPERATION_TYPES:
             return
         if self._job_service is None:
             raise RuntimeError("curation follow-up queue unavailable")

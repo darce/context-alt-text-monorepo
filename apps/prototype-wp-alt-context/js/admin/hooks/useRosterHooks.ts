@@ -26,10 +26,14 @@ export const useCreatePerson = () => {
       const previousEntries = queryClient.getQueryData<RosterEntry[]>(rosterEntriesKey);
       const optimisticEntry: RosterEntry = {
         id: -Date.now(),
+        person_uuid: `optimistic-${Date.now()}`,
         name,
         tags: tags ?? [],
         cluster_count: 0,
         updated_at: new Date().toISOString(),
+        source_version: 0,
+        projection_status: 'refreshing',
+        projection_refreshed_at: null,
       };
       queryClient.setQueryData<RosterEntry[]>(rosterEntriesKey, (current) => [...(current ?? []), optimisticEntry]);
       return { previousEntries, optimisticId: optimisticEntry.id };

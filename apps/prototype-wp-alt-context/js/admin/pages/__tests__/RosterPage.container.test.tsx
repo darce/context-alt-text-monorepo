@@ -232,10 +232,14 @@ describe('RosterPage route container', () => {
         data: [
           {
             id: 7,
+            person_uuid: 'person-uuid-unassigned',
             name: 'Unassigned Person',
             tags: [],
             cluster_count: 0,
             updated_at: new Date().toISOString(),
+            source_version: 1,
+            projection_status: 'current',
+            projection_refreshed_at: new Date().toISOString(),
           },
         ],
         isLoading: false,

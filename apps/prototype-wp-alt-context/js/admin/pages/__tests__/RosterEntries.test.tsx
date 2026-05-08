@@ -21,20 +21,28 @@ vi.mock('../../hooks/useRosterHooks', () => ({
   useDeletePerson: vi.fn(),
 }));
 
-const entries = [
+const entries: RosterEntry[] = [
   {
     id: 1,
+    person_uuid: 'person-uuid-alice',
     name: 'Alice',
     tags: ['tag-a'],
     cluster_count: 2,
     updated_at: new Date().toISOString(),
+    source_version: 1,
+    projection_status: 'current',
+    projection_refreshed_at: new Date().toISOString(),
   },
   {
     id: 2,
+    person_uuid: 'person-uuid-bob',
     name: 'Bob',
     tags: [],
     cluster_count: 0,
     updated_at: new Date().toISOString(),
+    source_version: 1,
+    projection_status: 'current',
+    projection_refreshed_at: new Date().toISOString(),
   },
 ];
 
@@ -179,10 +187,14 @@ describe('RosterEntriesSection', () => {
       data: [
         {
           id: 3,
+          person_uuid: 'person-uuid-chris',
           name: 'Chris',
           tags: [],
           cluster_count: 1,
           updated_at: new Date().toISOString(),
+          source_version: 1,
+          projection_status: 'current',
+          projection_refreshed_at: new Date().toISOString(),
         },
       ],
       refetch: vi.fn(),

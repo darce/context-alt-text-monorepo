@@ -191,11 +191,11 @@ Proof:
 
 ### Checklist for Slice 2: Projection-Aware Person Workspace Shell
 
-- [ ] E15-19 Slice 3 is closed before Slice 2 starts.
-- [ ] Generated `roster-entry` projection types are present before enriched workspace rendering begins.
-- [ ] Person rows render only from canonical projection fields.
-- [ ] Projection status/freshness states render honestly.
-- [ ] Empty states do not imply unavailable data exists.
+- [x] E15-19 Slice 3 is closed before Slice 2 starts.
+- [x] Generated `roster-entry` projection types are present before enriched workspace rendering begins.
+- [x] Person rows render only from canonical projection fields.
+- [x] Projection status/freshness states render honestly.
+- [x] Empty states do not imply unavailable data exists.
 
 ### Checklist for Slice 3: Cluster Evidence Migration
 

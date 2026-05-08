@@ -177,7 +177,7 @@ Changes:
 
 Proof:
 
-- Backend tests cover bounded and backfill paths with status outcomes.
+- Backend tests cover bounded and backfill paths with status outcomes, including aborting the refresh loop after a failure when no replay row exists.
 
 ### Slice 5: Projection Integrity and Bounded Controller Extraction
 

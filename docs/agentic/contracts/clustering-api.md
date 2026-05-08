@@ -80,6 +80,45 @@ and forwards events to the client.
 
 Cancel a running scan job (proxy to `/recognition/jobs/{job_id}/cancel`).
 
+## GET /recognition/batch-runs
+
+List recent durable batch runs for the current tenant. Reads tenant-scoped rows from `acx_batch_runs` via `BatchRunRepository::list_recent_runs`; does not proxy to the recognition service.
+
+Query params:
+
+- `limit` (optional): integer 1–10, default `5`. Out-of-range values clamp to the bounds.
+
+Permission callback: `can_manage_recognition`.
+
+Response:
+
+```json
+{
+  "items": [
+    {
+      "run_id": "run-1",
+      "latest_job_id": "job-1",
+      "latest_job_status": "completed",
+      "child_job_ids": ["job-1"],
+      "submitted_total": 1,
+      "accepted_total": 1,
+      "completed_total": 1,
+      "failed_total": 0,
+      "cancelled_total": 0,
+      "terminal_state": true,
+      "failed_batches": [],
+      "created_at": "2025-01-01 00:00:00",
+      "updated_at": "2025-01-01 00:00:01"
+    }
+  ]
+}
+```
+
+Notes:
+
+- Backs the dashboard "Recent Activity" panel with durable, tenant-scoped provenance (`provenance: 'durable_batch_run'`); falls back to browser-local job ids only when this route is unavailable or empty (`provenance: 'browser_local_fallback'` / `'unavailable'`).
+- TypeScript shape mirrored at `apps/prototype-wp-alt-context/js/admin/api/recognition/types/scan.ts` (`RecentBatchRunsResponse`, `RecentBatchRunActivity`). No shared-contracts schema yet; lift to `packages/shared-contracts/schemas/` if a second consumer needs codegen parity.
+
 ## POST /recognition/cluster
 
 Trigger clustering for unclustered identities (proxy to `/recognition/clustering/jobs`).

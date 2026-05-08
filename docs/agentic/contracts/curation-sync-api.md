@@ -120,6 +120,7 @@ Timeout expectations:
   - `failed`: refresh executor returned a non-recoverable error
   - `not_applicable`: person-only operations and conflict responses never enter the refresh lifecycle
 - If the refresh executor is unavailable when the replay row would advance to `running`, the row stays `queued` so a later worker pass can retry instead of terminally failing the curation event.
+- If the refresh executor raises a non-timeout failure before replay-state persistence is available, the bounded refresh loop still aborts after that first failure; this is a control-flow guarantee only and does not add a new `refresh_status` value or alter the existing terminal status contract.
 
 ### Version Conflict Detection
 

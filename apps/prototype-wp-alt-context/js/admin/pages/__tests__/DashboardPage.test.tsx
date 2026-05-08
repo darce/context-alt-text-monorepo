@@ -60,6 +60,10 @@ describe('DashboardPage', () => {
   const mockedUseResetMirror = vi.mocked(useResetMirror);
   const mockedUseRetentionStatus = vi.mocked(useRetentionStatus);
 
+  const expectBefore = (first: HTMLElement, second: HTMLElement) => {
+    expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockedUseMediaStats.mockReturnValue({
@@ -72,6 +76,8 @@ describe('DashboardPage', () => {
       jobHistory: [],
       jobStatuses: {},
       jobDetails: {},
+      recentActivity: [],
+      historySource: 'durable',
       jobId: null,
       rememberJob: vi.fn(),
       selectJob: vi.fn(),
@@ -199,6 +205,16 @@ describe('DashboardPage', () => {
           message: null,
         },
       },
+      recentActivity: [
+        {
+          id: 'run-1',
+          jobId: 'job-1',
+          runId: 'run-1',
+          provenance: 'durable_batch_run',
+          statusText: 'completed',
+        },
+      ],
+      historySource: 'durable',
       jobId: 'job-1',
       rememberJob: vi.fn(),
       selectJob: vi.fn(),
@@ -209,8 +225,49 @@ describe('DashboardPage', () => {
     render(<DashboardPage />);
 
     expect(screen.getByText('Duration: 2m 05s')).toBeInTheDocument();
+    expect(screen.getByText('Durable batch run: run-1')).toBeInTheDocument();
     const link = screen.getByRole('link', { name: 'View Results' });
     expect(link).toHaveAttribute('href', '#/workbench?tab=confirm&jobId=job-1');
+  });
+
+  it('labels browser-local fallback activity explicitly', () => {
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 4,
+          assigned_clusters_count: 4,
+          pending_clusters_count: 0,
+          media_with_faces_count: 10,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
+    mockedUseRecognitionJobHistory.mockReturnValue({
+      jobHistory: ['job-local-1'],
+      jobStatuses: { 'job-local-1': 'Unknown' },
+      jobDetails: {},
+      recentActivity: [
+        {
+          id: 'job-local-1',
+          jobId: 'job-local-1',
+          runId: null,
+          provenance: 'browser_local_fallback',
+          statusText: 'Remembered in this browser only',
+        },
+      ],
+      historySource: 'browser_local_fallback',
+      jobId: 'job-local-1',
+      rememberJob: vi.fn(),
+      selectJob: vi.fn(),
+      forgetJob: vi.fn(),
+      clearHistory: vi.fn(),
+    });
+
+    render(<DashboardPage />);
+
+    expect(screen.getByText('Showing jobs remembered in this browser only.')).toBeInTheDocument();
+    expect(screen.getByText('Current browser memory')).toBeInTheDocument();
   });
 
   it('shows status unavailable copy and keeps results link when job details are missing', () => {
@@ -230,6 +287,16 @@ describe('DashboardPage', () => {
       jobHistory: ['job-unavailable'],
       jobStatuses: {},
       jobDetails: {},
+      recentActivity: [
+        {
+          id: 'job-unavailable',
+          jobId: 'job-unavailable',
+          runId: null,
+          provenance: 'browser_local_fallback',
+          statusText: 'Status unavailable. Refresh to retry.',
+        },
+      ],
+      historySource: 'browser_local_fallback',
       jobId: 'job-unavailable',
       rememberJob: vi.fn(),
       selectJob: vi.fn(),
@@ -316,6 +383,16 @@ describe('DashboardPage', () => {
       jobHistory: ['job-batch-9'],
       jobStatuses: { 'job-batch-9': 'completed' },
       jobDetails: {},
+      recentActivity: [
+        {
+          id: 'run-batch-9',
+          jobId: 'job-batch-9',
+          runId: 'run-batch-9',
+          provenance: 'durable_batch_run',
+          statusText: 'completed',
+        },
+      ],
+      historySource: 'durable',
       jobId: 'job-batch-9',
       rememberJob: vi.fn(),
       selectJob: vi.fn(),
@@ -523,6 +600,45 @@ describe('DashboardPage', () => {
     );
   });
 
+  it('renders source-backed replay recency details when conflicts and failures are present', () => {
+    const expectedConflictDate = new Date('2026-03-07T02:15:00Z').toLocaleDateString();
+    const expectedFailureDate = new Date('2026-03-07T02:25:00Z').toLocaleDateString();
+
+    mockedUseSyncStatus.mockReturnValue(
+      createMockQuery({
+        data: {
+          last_snapshot_version: 1,
+          last_synced_at: '2026-03-10T10:00:00Z',
+          is_stale: false,
+          sync_health: 'conflicts',
+          last_sync_result: 'ok',
+          pending_curation_operations: 3,
+          conflict_count: 2,
+          failed_curation_operations: 1,
+          last_curation_conflict_at: '2026-03-07T02:15:00Z',
+          last_curation_failed_at: '2026-03-07T02:25:00Z',
+        },
+      }),
+    );
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 4,
+          assigned_clusters_count: 4,
+          pending_clusters_count: 0,
+          media_with_faces_count: 10,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(<DashboardPage />);
+
+    expect(screen.getByText(`Last conflict: ${expectedConflictDate}`)).toBeInTheDocument();
+    expect(screen.getByText(`Last failure: ${expectedFailureDate}`)).toBeInTheDocument();
+  });
+
   it('renders healthy sync summary copy without conflict or dead-letter links when counts are zero', () => {
     mockedUseIdentityStats.mockReturnValue(
       createMockQuery<DashboardStats>({
@@ -543,6 +659,66 @@ describe('DashboardPage', () => {
     expect(screen.getByText('Pending Replay')).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Open Conflict Inbox/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Open Dead-Letter Queue/ })).not.toBeInTheDocument();
+  });
+
+  it('renders sync health before review work and orientation when sync needs attention', () => {
+    mockedUseSyncStatus.mockReturnValue(
+      createMockQuery({
+        data: {
+          last_snapshot_version: 1,
+          last_synced_at: '2026-03-10T10:00:00Z',
+          is_stale: false,
+          sync_health: 'conflicts',
+          last_sync_result: 'ok',
+          pending_curation_operations: 2,
+          conflict_count: 1,
+          failed_curation_operations: 0,
+        },
+      }),
+    );
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 4,
+          assigned_clusters_count: 2,
+          pending_clusters_count: 3,
+          media_with_faces_count: 10,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(<DashboardPage />);
+
+    expectBefore(
+      screen.getByRole('heading', { name: 'Sync Health' }),
+      screen.getByRole('heading', { name: 'Identity Recognition' }),
+    );
+    expectBefore(screen.getByRole('heading', { name: 'Sync Health' }), screen.getByText('Orientation'));
+  });
+
+  it('renders review work before sync health when sync is healthy', () => {
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 4,
+          assigned_clusters_count: 2,
+          pending_clusters_count: 3,
+          media_with_faces_count: 10,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(<DashboardPage />);
+
+    expectBefore(
+      screen.getByRole('heading', { name: 'Identity Recognition' }),
+      screen.getByRole('heading', { name: 'Sync Health' }),
+    );
+    expectBefore(screen.getByRole('heading', { name: 'Identity Recognition' }), screen.getByText('Orientation'));
   });
 
   it('renders queued sync summary copy with pending replay count', () => {

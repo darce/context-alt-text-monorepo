@@ -10,6 +10,26 @@ export type { JobProgress, RecognitionJob };
 export type BatchRunStatus = WpBatchRun;
 export type FailedBatchStatus = WpBatchRunFailedBatch;
 
+export interface RecentBatchRunActivity {
+  run_id: string;
+  latest_job_id: string;
+  latest_job_status: string;
+  child_job_ids: string[];
+  submitted_total: number;
+  accepted_total: number;
+  completed_total: number;
+  failed_total: number;
+  cancelled_total: number;
+  terminal_state: boolean;
+  failed_batches: FailedBatchStatus[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RecentBatchRunsResponse {
+  items: RecentBatchRunActivity[];
+}
+
 export interface AnalyzeRequest {
   mediaIds: number[];
   sensitivity?: 'standard' | 'high';

@@ -169,6 +169,52 @@ class BatchRunRepository {
 	}
 
 	/**
+	 * @return array<int,array<string,mixed>>
+	 */
+	public function list_recent_runs( string $tenant_id, int $limit = 5 ): array {
+		$rows = $this->get_recent_run_rows( trim( $tenant_id ), max( 1, $limit ) );
+		if ( array() === $rows ) {
+			return array();
+		}
+
+		$recent_runs = array();
+		foreach ( $rows as $row ) {
+			if ( ! is_array( $row ) ) {
+				continue;
+			}
+
+			$run_id     = trim( (string) ( $row['run_id'] ?? '' ) );
+			$tenant_key = trim( (string) ( $row['tenant_id'] ?? '' ) );
+			if ( '' === $run_id || '' === $tenant_key ) {
+				continue;
+			}
+
+			$failures   = $this->get_failure_rows( $tenant_key, $run_id );
+			$child_jobs = $this->decode_child_jobs( (string) ( $row['child_jobs_json'] ?? '' ) );
+			$this->refresh_aggregate_fields( $row, $failures );
+			$latest_job = $this->select_latest_child_job( $child_jobs );
+
+			$recent_runs[] = array(
+				'run_id'           => $run_id,
+				'latest_job_id'    => is_array( $latest_job ) ? trim( (string) ( $latest_job['job_id'] ?? '' ) ) : '',
+				'latest_job_status' => is_array( $latest_job ) ? trim( (string) ( $latest_job['status'] ?? '' ) ) : '',
+				'child_job_ids'    => array_keys( $child_jobs ),
+				'submitted_total'  => max( 0, (int) ( $row['submitted_total'] ?? 0 ) ),
+				'accepted_total'   => max( 0, (int) ( $row['accepted_total'] ?? 0 ) ),
+				'completed_total'  => max( 0, (int) ( $row['completed_total'] ?? 0 ) ),
+				'failed_total'     => max( 0, (int) ( $row['failed_total'] ?? 0 ) ),
+				'cancelled_total'  => max( 0, (int) ( $row['cancelled_total'] ?? 0 ) ),
+				'terminal_state'   => (bool) ( $row['terminal_state'] ?? false ),
+				'failed_batches'   => array_map( array( $this, 'format_failure_row' ), $failures ),
+				'created_at'       => trim( (string) ( $row['created_at'] ?? '' ) ),
+				'updated_at'       => trim( (string) ( $row['updated_at'] ?? '' ) ),
+			);
+		}
+
+		return $recent_runs;
+	}
+
+	/**
 	 * @return string[]
 	 */
 	public function get_stale_non_terminal_job_ids( string $tenant_id, string $run_id, int $max_age_seconds ): array {
@@ -270,6 +316,34 @@ class BatchRunRepository {
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$row = $wpdb->get_row( $sql, ARRAY_A );
 		return is_array( $row ) ? $row : null;
+	}
+
+	/**
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function get_recent_run_rows( string $tenant_id, int $limit ): array {
+		global $wpdb;
+
+		if ( '' === $tenant_id ) {
+			return array();
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_results' ) ) {
+			return array();
+		}
+
+		$sql = $this->prepare_query(
+			'SELECT * FROM %i WHERE tenant_id = %s ORDER BY updated_at DESC, created_at DESC, run_id DESC LIMIT %d',
+			array( $this->runs_table_name, $tenant_id, max( 1, $limit ) )
+		);
+
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return array();
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$rows = $wpdb->get_results( $sql, ARRAY_A );
+		return is_array( $rows ) ? $rows : array();
 	}
 
 	/**
@@ -440,6 +514,34 @@ class BatchRunRepository {
 			'error_code'    => trim( (string) ( $failure_row['error_code'] ?? '' ) ),
 			'error_message' => trim( (string) ( $failure_row['error_message'] ?? '' ) ),
 		);
+	}
+
+	/**
+	 * @param array<string,array<string,mixed>> $child_jobs
+	 * @return array<string,mixed>|null
+	 */
+	private function select_latest_child_job( array $child_jobs ): ?array {
+		$latest_job = null;
+		$latest_batch_index = -1;
+		$latest_observed_at = '';
+
+		foreach ( $child_jobs as $job_id => $child_job ) {
+			if ( ! is_array( $child_job ) ) {
+				continue;
+			}
+
+			$batch_index = max( 0, (int) ( $child_job['batch_index'] ?? 0 ) );
+			$observed_at = trim( (string) ( $child_job['last_status_observed_at'] ?? '' ) );
+
+			if ( null === $latest_job || $batch_index > $latest_batch_index || ( $batch_index === $latest_batch_index && $observed_at > $latest_observed_at ) ) {
+				$latest_batch_index = $batch_index;
+				$latest_observed_at = $observed_at;
+				$latest_job = $child_job;
+				$latest_job['job_id'] = (string) $job_id;
+			}
+		}
+
+		return is_array( $latest_job ) ? $latest_job : null;
 	}
 
 	/**

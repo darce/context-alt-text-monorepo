@@ -16,6 +16,7 @@ export const ConfirmTabContent = (): React.JSX.Element => {
     latestJobId,
     jobHistory,
     jobStatuses,
+    historySource,
     handleSelectJobFromHistory,
     clearHistory,
   } = useWorkbenchContext();
@@ -45,6 +46,7 @@ export const ConfirmTabContent = (): React.JSX.Element => {
         jobs={jobHistory}
         statuses={jobStatuses}
         activeJobId={jobId ?? null}
+        historySource={historySource}
         onSelect={handleSelectJobFromHistory}
         onClear={clearHistory}
       />

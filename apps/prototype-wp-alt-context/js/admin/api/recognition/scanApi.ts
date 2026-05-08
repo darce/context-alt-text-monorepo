@@ -11,6 +11,7 @@ import type {
   AnalyzeResponse,
   BatchAnalyzeResponse,
   BatchRunStatus,
+  RecentBatchRunsResponse,
   JobStatusResponse,
   ClusterResponse,
 } from './types';
@@ -140,6 +141,17 @@ export const fetchBatchRunStatus = async (runId: string): Promise<BatchRunStatus
   const separator = base.endsWith('/') ? '' : '/';
 
   return fetchRequiredApi<BatchRunStatus>(`${base}${separator}${runId}`, {
+    method: 'GET',
+    restNonce: getConfig().nonce,
+    signal: createRecognitionTimeoutSignal(15_000),
+  });
+};
+
+export const fetchRecentBatchRuns = async (limit = 5): Promise<RecentBatchRunsResponse> => {
+  const base = getEndpoint('recognitionBatchRuns');
+  const query = limit > 0 ? `?limit=${encodeURIComponent(String(limit))}` : '';
+
+  return fetchRequiredApi<RecentBatchRunsResponse>(`${base}${query}`, {
     method: 'GET',
     restNonce: getConfig().nonce,
     signal: createRecognitionTimeoutSignal(15_000),

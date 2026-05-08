@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useSearchParams } from 'react-router-dom';
 
 import type { BatchAnalyzeResponse, ClusterListResponse, ClusterSummary } from '../../api/recognition';
 import { useRecognitionCluster, useRecognitionClusters } from '../../hooks/useRecognitionHooks';
@@ -76,6 +76,21 @@ const makeClusterListResponse = (overrides: Partial<ClusterListResponse> = {}): 
   truncated: false,
   ...overrides,
 });
+
+const ClusterRouteReset = (): React.JSX.Element => {
+  const [, setSearchParams] = useSearchParams();
+
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        setSearchParams(new URLSearchParams('tab=clusters'), { replace: true });
+      }}
+    >
+      Reset cluster route
+    </button>
+  );
+};
 
 describe('RosterPage route container', () => {
   const mockedUseRecognitionClusters = vi.mocked(useRecognitionClusters);
@@ -217,10 +232,14 @@ describe('RosterPage route container', () => {
         data: [
           {
             id: 7,
+            person_uuid: 'person-uuid-unassigned',
             name: 'Unassigned Person',
             tags: [],
             cluster_count: 0,
             updated_at: new Date().toISOString(),
+            source_version: 1,
+            projection_status: 'current',
+            projection_refreshed_at: new Date().toISOString(),
           },
         ],
         isLoading: false,
@@ -240,6 +259,81 @@ describe('RosterPage route container', () => {
     expect(screen.getByText('Filtered: Unassigned')).toBeInTheDocument();
     expect(screen.getByText('Showing unassigned people only.')).toBeInTheDocument();
     expect(screen.getByText('Unassigned Person')).toBeInTheDocument();
+  });
+
+  it('[PAG-M3] keeps person and face routes on the legacy entries surface until projection data lands', () => {
+    render(
+      <MemoryRouter initialEntries={['/?person=person-123&face=identity-9&tab=clusters']}>
+        <RosterPage />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('tab', { name: 'Entries' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Clusters' })).toHaveAttribute('aria-selected', 'false');
+    expect(
+      screen.getByText(
+        'This route is recognized, but the person workspace stays on the legacy Entries view until enriched roster projection data lands.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('[PAG-M3] keeps face-only routes on the legacy entries surface and shows the gate notice', () => {
+    render(
+      <MemoryRouter initialEntries={['/?face=identity-9&tab=clusters']}>
+        <RosterPage />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('tab', { name: 'Entries' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Clusters' })).toHaveAttribute('aria-selected', 'false');
+    expect(
+      screen.getByText(
+        'This route is recognized, but the person workspace stays on the legacy Entries view until enriched roster projection data lands.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('[PAG-M3] keeps queue routes reachable without implying the person workspace exists', () => {
+    render(
+      <MemoryRouter initialEntries={['/?queue=needs-review&tab=clusters']}>
+        <RosterPage />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('tab', { name: 'Entries' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Clusters' })).toHaveAttribute('aria-selected', 'false');
+    expect(
+      screen.getByText(
+        'This route is recognized, but the person workspace stays on the legacy Entries view until enriched roster projection data lands.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('[PAG-M3] prioritizes cluster evidence routes over legacy tab params', async () => {
+    render(
+      <MemoryRouter initialEntries={['/?tab=entries&cluster=cluster-1']}>
+        <RosterPage />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('tab', { name: 'Clusters' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Entries' })).toHaveAttribute('aria-selected', 'false');
+    expect(await screen.findByRole('button', { name: /^Close$/i })).toBeInTheDocument();
+  });
+
+  it('[PAG-M3] clears cluster drawer state when the cluster route is removed', async () => {
+    render(
+      <MemoryRouter initialEntries={['/?tab=clusters&cluster=cluster-1']}>
+        <ClusterRouteReset />
+        <RosterPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByRole('button', { name: /^Close$/i })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Reset cluster route' }));
+
+    expect(screen.queryByRole('button', { name: /^Close$/i })).not.toBeInTheDocument();
   });
 
   it('[PAG-M3] opens and closes the cluster drawer from the grid', async () => {

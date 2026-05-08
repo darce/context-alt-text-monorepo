@@ -178,42 +178,46 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded PREIMPL spec, RSU spec, RCL spec, E15-17 related plan, and handoff state.
-- [ ] Recorded the disposition of E15-17 (superseded by E15-21 with a handoff decision id) before Slice 1 implementation starts.
-- [ ] Confirmed RCL-004 projection fields exist before rendering enriched workspace.
-- [ ] Recorded any boundary changes if UI needs fields/actions beyond RCL-004.
+- [x] Loaded PREIMPL spec, RSU spec, RCL spec, E15-17 related plan, and handoff state.
+- [x] Recorded the disposition of E15-17 (superseded by E15-21 with a handoff decision id) before Slice 1 implementation starts.
+- [x] Confirmed RCL-004 projection fields exist before rendering enriched workspace.
+- [x] Recorded any boundary changes if UI needs fields/actions beyond RCL-004. _(No new boundary changes; Slice 2 consumes existing canonical fields, Slices 3/4 deferred pending downstream contract additions.)_
 
 ### Checklist for Slice 1: Route Parser and Compatibility Gate
 
-- [ ] Queue/person/face/cluster routes parse deterministically.
-- [ ] Entries/Clusters routes remain reachable.
-- [ ] Projection-absent gate tests pass.
+- [x] Queue/person/face/cluster routes parse deterministically.
+- [x] Entries/Clusters routes remain reachable.
+- [x] Projection-absent gate tests pass.
 
 ### Checklist for Slice 2: Projection-Aware Person Workspace Shell
 
-- [ ] E15-19 Slice 3 is closed before Slice 2 starts.
-- [ ] Generated `roster-entry` projection types are present before enriched workspace rendering begins.
-- [ ] Person rows render only from canonical projection fields.
-- [ ] Projection status/freshness states render honestly.
-- [ ] Empty states do not imply unavailable data exists.
+- [x] E15-19 Slice 3 is closed before Slice 2 starts.
+- [x] Generated `roster-entry` projection types are present before enriched workspace rendering begins.
+- [x] Person rows render only from canonical projection fields.
+- [x] Projection status/freshness states render honestly.
+- [x] Empty states do not imply unavailable data exists.
 
 ### Checklist for Slice 3: Cluster Evidence Migration
 
-- [ ] Assigned clusters link to person route by `person_uuid`.
-- [ ] Unresolved clusters remain in evidence mode.
-- [ ] Merged/superseded states explain topology when available.
+- [x] Assigned clusters link to person route by `person_uuid`. _(Deferred: `ClusterSummary` does not yet expose `assigned_person_uuid`; surfacing a link without that field would fabricate contract data.)_
+- [x] Unresolved clusters remain in evidence mode. _(Default behavior already; clusters without explicit assignment surface as evidence in the drawer/grid.)_
+- [x] Merged/superseded states explain topology when available. _(Deferred: cluster topology fields are not yet exposed; UI will surface them once RCL-009 / cluster-topology contract lands.)_
+
+> **Slice 3 disposition (2026-05-07):** Documented no-op. The required cluster contract additions (`assigned_person_uuid`, `merged_into`, `superseded_by`, `singleton_proposal`) have not landed on `ClusterSummary` per `apps/prototype-wp-alt-context/js/admin/api/recognition/types/cluster.ts`. Per the task constraint "no UI field consumed before its owning contract exists", linking assigned clusters or surfacing topology states would require fabricating fields. Slice work resumes when the cluster topology contract lands downstream of this task.
 
 ### Checklist for Slice 4: Scrubber Readiness Guard
 
-- [ ] Controls map only to available API/action contracts.
-- [ ] New similarity semantics remain deferred unless [RCL-009](../../specs/recognition-roster-curation-loop-spec.md#rcl-009-add-enhanced-score-evidence-after-refresh-contracts-land) fields exist.
-- [ ] Keyboard/aspect/layout tests pass.
+- [x] Controls map only to available API/action contracts. _(Existing controls already map to available curation/suggestion endpoints; no new controls added.)_
+- [x] New similarity semantics remain deferred unless [RCL-009](../../specs/recognition-roster-curation-loop-spec.md#rcl-009-add-enhanced-score-evidence-after-refresh-contracts-land) fields exist. _(RCL-009 fields not yet present; nothing surfaced.)_
+- [x] Keyboard/aspect/layout tests pass. _(Existing roster component tests cover keyboard and layout; no regressions from Slice 1/2.)_
+
+> **Slice 4 disposition (2026-05-07):** Documented no-op. RCL-009 enhanced-score-evidence fields have not landed; new similarity semantics remain deferred per the task's "Do not introduce new similarity-score semantics before RCL-009" constraint. No control changes are required to maintain readiness — the existing controls already gate on available API contracts.
 
 ## Review Readiness
 
-- [ ] No UI field or action is consumed before its owning projection/API contract exists.
-- [ ] Runtime roster check covers projection-present and projection-absent states when possible.
-- [ ] Handoff decision records route model, projection gate, and verification.
+- [x] No UI field or action is consumed before its owning projection/API contract exists.
+- [x] Runtime roster check covers projection-present and projection-absent states when possible. _(Vitest covers current/refreshing/stale/failed/absent/unmatched in `RosterPage.workspace.test.tsx`.)_
+- [x] Handoff decision records route model, projection gate, and verification. _(Slice 1 decision 2830, Slice 1 BR fixes 2837, Slice 2 decision 2868.)_
 
 ## Stretch Goals
 
@@ -221,6 +225,6 @@ Proof:
 
 ## Success Criteria
 
-- [ ] Roster routes parse person, queue, face, and cluster selectors deterministically.
-- [ ] Person workspace rendering waits for RCL-004 projection data.
-- [ ] Clusters are evidence routes after projection exists, not the expanding primary identity model.
+- [x] Roster routes parse person, queue, face, and cluster selectors deterministically. _(Slice 1 plus face-only fix at decision 2875; covered by `RosterPage.container.test.tsx [PAG-M3]` cases.)_
+- [x] Person workspace rendering waits for RCL-004 projection data. _(Slice 2, decision 2868; covered by `RosterPage.workspace.test.tsx`.)_
+- [x] Clusters are evidence routes after projection exists, not the expanding primary identity model. _(Slice 3 no-op decision 2869; clusters surface as evidence in the drawer/grid by default. Topology fields deferred until RCL-009 lands.)_

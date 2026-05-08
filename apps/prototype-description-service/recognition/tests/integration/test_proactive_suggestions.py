@@ -578,6 +578,124 @@ async def test_replayed_cluster_bind_curation_job_surfaces_singleton_suggestions
 
 
 @pytest.mark.asyncio
+async def test_merge_cleanup_curation_job_surfaces_singleton_suggestions_and_deletes_source_cluster(
+    db_session, tenant
+) -> None:
+    cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
+    cluster_repo = cluster_service.assignment_writer.cluster_repository
+    member_repo = cluster_service.assignment_writer.member_repository
+    suggestion_repo = SqlAlchemySuggestionRepository(db_session)
+    job_service = JobService(
+        repository=InMemoryJobRepo(),
+        cluster_service=cluster_service,
+        scan_service=SimpleNamespace(analyze_media=AsyncMock()),
+    )
+
+    target_embedding = [0.0] * 512
+    target_embedding[0] = 1.0
+    target_identity = MediaIdentityModel(
+        tenant_id=tenant.id,
+        media_id=3007,
+        media_url="http://example.test/3007.jpg",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=120,
+        bbox_height=120,
+        confidence=0.99,
+        embedding=target_embedding,
+    )
+    source_embedding = [0.0] * 512
+    source_embedding[1] = 1.0
+    source_identity = MediaIdentityModel(
+        tenant_id=tenant.id,
+        media_id=3008,
+        media_url="http://example.test/3008.jpg",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=72,
+        bbox_height=72,
+        confidence=0.95,
+        embedding=source_embedding,
+    )
+    db_session.add_all([target_identity, source_identity])
+    await db_session.flush()
+
+    target_cluster = await cluster_service.create_cluster_for_identity(
+        identity_id=str(target_identity.id),
+        label="Confirmed Label",
+        tenant_id=str(tenant.id),
+    )
+    source_cluster = await cluster_service.create_cluster_for_identity(
+        identity_id=str(source_identity.id),
+        label="Source Label",
+        tenant_id=str(tenant.id),
+    )
+
+    unlabeled_cluster = await cluster_repo.save(
+        IdentityCluster(
+            id=None,
+            tenant_id=str(tenant.id),
+            label=None,
+            is_labeled=False,
+            identity_count=1,
+            created_at=None,
+            user_confirmed=False,
+        )
+    )
+    match_component = math.sqrt(1.0 - 0.5**2)
+    candidate_embedding = [0.0] * 512
+    candidate_embedding[0] = 0.5
+    candidate_embedding[1] = match_component
+    candidate_identity = MediaIdentityModel(
+        tenant_id=tenant.id,
+        media_id=3009,
+        media_url="http://example.test/3009.jpg",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=48,
+        bbox_height=48,
+        confidence=0.5,
+        embedding=candidate_embedding,
+    )
+    db_session.add(candidate_identity)
+    await db_session.flush()
+    await member_repo.add_member(unlabeled_cluster.id, identity_id=str(candidate_identity.id), similarity=0.5)
+    await db_session.commit()
+
+    merged = await cluster_service.merge_cluster(
+        source_cluster_id=source_cluster.id,
+        tenant_id=str(tenant.id),
+        target_cluster_id=target_cluster.id,
+        target_label="Confirmed Label",
+        defer_recompute=True,
+    )
+
+    assert merged is not None
+
+    job = await job_service.queue_curation_followup(
+        tenant_id=str(tenant.id),
+        cluster_ids=[target_cluster.id],
+        source_cluster_id=source_cluster.id,
+    )
+
+    processed = await job_service.process_curation_job(
+        job.id,
+        str(tenant.id),
+        cluster_ids=[],
+        session=db_session,
+    )
+
+    assert processed.status.name == "COMPLETED"
+    assert await cluster_repo.get_by_id(source_cluster.id) is None
+
+    suggestions = await suggestion_repo.list_pending_with_details(tenant_id=str(tenant.id), limit=10, offset=0)
+    assert any(
+        suggestion.identity_id == str(candidate_identity.id) and suggestion.cluster_id == target_cluster.id
+        for suggestion in suggestions
+    )
+
+
+@pytest.mark.asyncio
 async def test_background_backfill_surfaces_suggestions_for_later_batch_cluster(db_session, tenant) -> None:
     """Later-batch unlabeled clusters should receive suggestions against existing confirmed labels."""
     cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))

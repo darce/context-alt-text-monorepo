@@ -178,40 +178,40 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded PREIMPL spec, dashboard spec, E15-15/E15-16 related plans, frontend/backend rules, and handoff state.
-- [ ] Recorded the disposition of E15-15 and E15-16 (superseded by E15-20 with a handoff decision id) before Slice 1 implementation starts.
-- [ ] Confirmed no new REST fields are used in Slice 1.
-- [ ] Recorded durable activity source decision before Recent Activity UI migration.
+- [x] Loaded PREIMPL spec, dashboard spec, E15-15/E15-16 related plans, frontend/backend rules, and handoff state.
+- [x] Recorded the disposition of E15-15 and E15-16 (superseded by E15-20 with a handoff decision id) before Slice 1 implementation starts.
+- [x] Confirmed no new REST fields are used in Slice 1.
+- [x] Recorded durable activity source decision before Recent Activity UI migration.
 
 ### Checklist for Slice 1: Existing-Field Priority Model
 
-- [ ] Priority model implemented as pure function/helper.
-- [ ] Sync health, review work, onboarding, retention, and utility ordering covered.
-- [ ] Existing-field-only tests pass.
+- [x] Priority model implemented as pure function/helper.
+- [x] Sync health, review work, onboarding, retention, and utility ordering covered.
+- [x] Existing-field-only tests pass.
 
 ### Checklist for Slice 2: Durable Activity Source Decision
 
-- [ ] `BatchRunRepository` evaluated first.
-- [ ] Decision records no-ADR or ADR-required boundary.
-- [ ] Browser-local fallback selected only if durable rubric fails.
+- [x] `BatchRunRepository` evaluated first.
+- [x] Decision records no-ADR or ADR-required boundary.
+- [x] Browser-local fallback selected only if durable rubric fails.
 
 ### Checklist for Slice 3: Recent Activity Migration
 
-- [ ] Activity rows include provenance.
-- [ ] Dashboard and Workbench consumers migrate together.
-- [ ] Durable/fallback/empty/unavailable tests pass.
+- [x] Activity rows include provenance.
+- [x] Dashboard and Workbench consumers migrate together.
+- [x] Durable/fallback/empty/unavailable tests pass.
 
 ### Checklist for Slice 4: Optional Diagnostics and Controller Boundaries
 
-- [ ] Existing fields proved insufficient before diagnostics.
-- [ ] Diagnostic fields are source-backed and additive.
-- [ ] Controller extraction stays limited to named helpers.
+- [x] Existing fields proved insufficient before diagnostics. (Rubric evaluated: existing `SyncStatusResponse` fields proved sufficient — `sync_health`, `is_stale`, `last_sync_result`, `pending/failed_curation_operations`, `conflict_count`, `last_curation_*_at`, and `topology_commands` already drive the priority model and dashboard rendering. No insufficiency demonstrated, so no diagnostics added.)
+- [x] Diagnostic fields are source-backed and additive. (N/A — none added; rubric not met.)
+- [x] Controller extraction stays limited to named helpers. (Slice 3 added the one named helper `BatchRunRepository::list_recent_runs` and the narrow `AnalysisJobsController::get_recent_batch_runs` route; no further extraction in Slice 4.)
 
 ## Review Readiness
 
-- [ ] No dashboard metadata is fabricated from convenience guesses.
-- [ ] Runtime dashboard check confirms priority and activity provenance.
-- [ ] Handoff decision records source, ADR boundary, diagnostics decision, and verification.
+- [x] No dashboard metadata is fabricated from convenience guesses.
+- [x] Runtime dashboard check confirms priority and activity provenance.
+- [x] Handoff decision records source, ADR boundary, diagnostics decision, and verification.
 
 ## Stretch Goals
 

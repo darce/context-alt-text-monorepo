@@ -7,50 +7,53 @@
 > - **Owning Epic**: [docs/epics/v0.4.0/public-demo-launch-readiness-epic.md](../../epics/v0.4.0/public-demo-launch-readiness-epic.md)
 > - **Epic Short ID**: E15
 > - **Task ID**: E15-15
-> - **Target Branch**: `feature/e15-15-dashboard-operator-triage-existing-fields`
+> - **Target Branch**: `feature/e15-15`
 > - **Review Coverage Target**: 2
 
 ---
 
 ## Objective
 
-Turn the dashboard into an operator triage surface using only fields that already exist. When this task is complete, blocking sync health and review work outrank onboarding and generic navigation, and the dashboard renders actionable healthy, failure, empty, partial, and loading states without adding new REST response fields.
+Close out the original Tier 1 dashboard triage plan without duplicating the canonical PREIMPL track. When this task is complete, E15-15 explicitly points operators and implementers at [E15-20](E15-20-preimpl-dashboard-authority-and-priority-task-plan.md), documents which dashboard triage pieces have already landed, and limits any remaining E15-15 work to residual lifecycle cleanup rather than fresh implementation scope.
 
 ## Problem Statement
 
-[docs/assessments/current/alt-context-dashboard-ux-assessment-2026-05-05.md](../../assessments/current/alt-context-dashboard-ux-assessment-2026-05-05.md) reports that the dashboard already exposes useful facts, but urgent sync failures and pending identity work compete with first-run onboarding, unavailable retention, local-only recent activity, and generic navigation panels. [docs/specs/alt-context-dashboard-operator-triage-spec.md](../../specs/alt-context-dashboard-operator-triage-spec.md) Tier 1 defines the low-contract implementation path: preserve the useful notice and existing panels while changing hierarchy, state handling, and existing-field copy.
+[docs/assessments/current/alt-context-dashboard-ux-assessment-2026-05-05.md](../../assessments/current/alt-context-dashboard-ux-assessment-2026-05-05.md) and [docs/specs/alt-context-dashboard-operator-triage-spec.md](../../specs/alt-context-dashboard-operator-triage-spec.md) captured the original Tier 1 dashboard triage direction. Since this plan was drafted, the dashboard priority work landed in code and the broader PREIMPL implementation path moved to [E15-20](E15-20-preimpl-dashboard-authority-and-priority-task-plan.md), which explicitly supersedes E15-15 and E15-16 as the canonical implementation track. Leaving E15-15 in its original state creates duplicate implementation instructions and stale claims about missing behavior.
+
+The superseding handoff decision is recorded as `cdx_decision_E15-20_supersede_e15_15_e15_16_dashboard_preimpl_tracks` (decision `2823`). E15-15 should therefore remain as a narrow closeout and redirection artifact, not as an active implementation plan.
 
 ## Constraints
 
-- Tier 1 must not introduce new REST response fields.
-- Keep the WordPress admin dashboard as an authenticated operator surface.
-- Use existing design tokens and status indicators that pair icon/meaning with color.
-- Do not fold curriculum queue ownership into the dashboard unless E15-13 explicitly selects it as an entry point.
+- Do not re-open dashboard implementation scope that [E15-20](E15-20-preimpl-dashboard-authority-and-priority-task-plan.md) now owns.
+- Do not describe already-landed dashboard behavior as missing work.
+- Keep any residual E15-15 follow-up limited to lifecycle cleanup, redirects, and documentation alignment.
+- Preserve the original Tier 1 constraint that no new REST response fields are justified solely for this retired plan.
 
 ## Workflow Principles
 
-- Blocking health first, review queues second, progress context third, utilities last.
-- Existing local/proxy state should be rendered honestly before proposing new contracts.
-- Onboarding should help empty installs without obscuring real work.
+- Canonical implementation guidance lives in one plan, not two competing task plans.
+- Residual task plans should describe current code honestly before asking for more work.
+- Retirement notes should point to the owning successor task and the handoff decision that performed the supersession.
 
 ## Terminology
 
 - **Blocking health**: sync failures, conflicts, offline/stale state, and mirror divergence that require operator action.
 - **Review work**: pending identity clusters, unassigned persons, or E15-13 curriculum queues if already projected.
-- **Utility panel**: a secondary dashboard affordance such as retention, generic batch navigation, or onboarding.
+- **Residual closeout**: narrow task-plan work that documents supersession, lifecycle follow-up, or remaining cleanup after the primary implementation track moved elsewhere.
+- **Canonical PREIMPL track**: [E15-20](E15-20-preimpl-dashboard-authority-and-priority-task-plan.md), plus its linked spec/ADR work, which now owns dashboard priority and durable-activity implementation decisions.
 
 ## Current State Analysis
 
-- `DashboardPage` renders `OrientationCard` before operational panels.
-- Sync Health shows counts and remediation links, but not all available recency/topology fields.
-- The Tier 1 `topology-backlog` state is already derivable from `SyncStatusResponse.topology_commands`; treat any non-zero `pending`, `failed`, or `conflict` count as backlog that should be surfaced before utilities.
-- Retention unavailable state can occupy a dashboard card without a useful action.
-- Batch Operations duplicates Workbench navigation even when no durable job data exists.
-- Panel loading/failure states are independent, but the page lacks a deterministic priority model.
+- `DashboardPage` already imports `buildDashboardPriorityModel`, renders sections from `priorityModel.gridSectionOrder`, and renders `OrientationCard` after the dashboard grid rather than before it.
+- `buildDashboardPriorityModel.ts` already exists as a pure ordering helper, so the old “missing deterministic priority model” claim is no longer accurate.
+- Sync Health already renders topology backlog counts plus last-conflict and last-failure dates from existing fields.
+- `useRecognitionJobHistory` and `DashboardPage` already distinguish recent activity with durable data and browser-local fallback labels, so the original “local-only recent activity” framing is incomplete.
+- [E15-20](E15-20-preimpl-dashboard-authority-and-priority-task-plan.md) now owns the remaining implementation work for dashboard priority, durable activity authority, and optional diagnostics.
+- The remaining gap for E15-15 is documentation and lifecycle alignment: retire this plan as an implementation source, point readers to E15-20, and avoid reopening already-landed work.
 
 ## Target Outcome
 
-The dashboard behaves like an action console. If sync failures, conflicts, stale state, or pending review work exists, those states appear first and include direct links. First-run onboarding appears only when the product state is truly empty or non-actionable. Retention and batch navigation are concise unless they have current work to show.
+E15-15 becomes an honest historical/residual task plan. Readers can see which Tier 1 dashboard behaviors already landed, which successor task owns the remaining PREIMPL implementation, and what limited E15-15 lifecycle work remains before the task can be retired cleanly.
 
 ## Context Loading
 
@@ -59,7 +62,8 @@ The dashboard behaves like an action console. If sync failures, conflicts, stale
 - Rules: `docs/agentic/rules/testing-typescript.md`
 - Spec: `docs/specs/alt-context-dashboard-operator-triage-spec.md`
 - Assessment: `docs/assessments/current/alt-context-dashboard-ux-assessment-2026-05-05.md`
-- Related: `docs/tasks/15.0/E15-13-roster-curation-loop-task-plan.md` only if curriculum queues become dashboard inputs
+- Related: `docs/tasks/15.0/E15-20-preimpl-dashboard-authority-and-priority-task-plan.md`
+- Related: `docs/tasks/15.0/E15-16-dashboard-durable-activity-and-diagnostics-task-plan.md`
 - Handoff/MCP state: active task `E15-15`, open planning findings for this plan/spec
 - External docs via `ctx7` only if: React/Vitest behavior blocks a concrete implementation decision.
 
@@ -67,127 +71,122 @@ The dashboard behaves like an action console. If sync failures, conflicts, stale
 
 | Boundary | Owner | Current Contract | Expected Change | Compatibility Needed? | Verification |
 | --- | --- | --- | --- | --- | --- |
-| Dashboard React view -> existing hooks | frontend | existing media stats, identity stats, sync status, retention, job history hooks | reorder and render existing values honestly | Yes; no API field changes in this task | Vitest with mocked hooks |
-| Sync status payload | plugin REST | existing `last_curation_*` and `topology_commands` fields | consume existing fields only | No response shape change | TypeScript render tests |
-| Retention status payload | plugin REST | existing available/unavailable/error states | render lower priority or actionable copy | No response shape change | TypeScript render tests |
+| E15-15 task plan -> E15-20 task plan | docs/planning | stale parallel implementation guidance | redirect to canonical PREIMPL implementation owner | Yes; keep links explicit | planning review + doc inspection |
+| E15-15 current-state notes -> dashboard code | docs/planning | outdated claims about missing UI behavior | document the landed `DashboardPage`/priority model state accurately | Yes | doc-to-code comparison |
+| Handoff findings -> revised task plan | handoff/docs | two open planning findings | resolve by updating the plan to reflect supersession and current code | Yes | review-finding closure evidence |
 
 ## Proposed Solution
 
-Implement the Tier 1 spec items as a single frontend-focused dashboard plan. Introduce a small priority model over existing hook data, move orientation into state-aware rendering, enrich Sync Health copy from already-available fields, demote unavailable retention and generic batch navigation, and add mixed-state tests.
+Rewrite E15-15 as a residual closeout task plan. Keep the original dashboard-triage context, but explicitly mark implementation ownership as superseded by E15-20, replace stale “to build” claims with current-state notes anchored to the existing dashboard code, and scope any remaining E15-15 work to lifecycle closure rather than fresh UI implementation.
 
 ## Files and Surfaces to Change
 
 | Surface | File | Change |
 | --- | --- | --- |
-| dashboard page | `apps/prototype-wp-alt-context/js/admin/pages/DashboardPage.tsx` | Apply priority model and existing-field triage layout |
-| onboarding | `apps/prototype-wp-alt-context/js/admin/pages/dashboard/OrientationCard.tsx` | Make visibility product-state aware or controlled by dashboard state |
-| sync types/rendering | `apps/prototype-wp-alt-context/js/admin/api/recognition/types/sync.ts` | Consume existing recency/topology fields, type cleanup if needed |
-| dashboard tests | `apps/prototype-wp-alt-context/js/admin/pages/__tests__/DashboardPage.test.tsx` | Cover priority ordering and partial states |
-| dashboard styles | `apps/prototype-wp-alt-context/js/admin/styles/` | Adjust layout using `--acx-*` tokens only |
+| residual task plan | `docs/tasks/15.0/E15-15-dashboard-operator-triage-existing-fields-task-plan.md` | Mark supersession, refresh current-state claims, and constrain remaining scope |
+| successor implementation plan | `docs/tasks/15.0/E15-20-preimpl-dashboard-authority-and-priority-task-plan.md` | Reference only; no edit required for this closeout |
+| dashboard implementation anchor | `apps/prototype-wp-alt-context/js/admin/pages/DashboardPage.tsx` | Reference only; evidence for landed priority/orientation behavior |
+| priority helper | `apps/prototype-wp-alt-context/js/admin/pages/dashboard/buildDashboardPriorityModel.ts` | Reference only; evidence that the pure ordering model already exists |
 
 ## Related Files
 
 | File | Note |
 | --- | --- |
-| `apps/prototype-wp-alt-context/src/api/class-sync-status-controller.php` | Existing sync-status payload owner; verify before assuming fields |
-| `apps/prototype-wp-alt-context/js/admin/hooks/useSyncStatus.ts` | Existing sync polling hook |
-| `apps/prototype-wp-alt-context/js/admin/hooks/useRetentionStatus.ts` | Existing retention hook |
-| `apps/prototype-wp-alt-context/js/admin/hooks/useRecognitionJobHistory.ts` | Local-storage job history remains secondary in this task |
+| `apps/prototype-wp-alt-context/js/admin/hooks/useRecognitionJobHistory.ts` | Existing recent-activity source/fallback behavior that makes the old “local-only” wording stale |
+| `docs/specs/e15-app-refactoring-preimplementation-spec.md` | Upstream PREIMPL scope that E15-20 implements |
+| `docs/specs/alt-context-dashboard-operator-triage-spec.md` | Original Tier 1 dashboard intent retained here as historical context |
 
 ## Verification Strategy
 
-- Deterministic tests:
-  - `cd apps/prototype-wp-alt-context && npm test -- --run js/admin/pages/__tests__/DashboardPage.test.tsx js/admin/pages/dashboard`
-- Runtime-parity / environment checks:
-  - Open `http://localhost:10010/wp-admin/admin.php?page=alt-context-dashboard#/dashboard` and verify failure/review priority before onboarding.
-- Contract/fixture verification:
-  - Tests assert no Tier 1 behavior requires new REST fields beyond current `SyncStatusResponse` and existing dashboard stats.
-- Manual verification:
-  - Healthy/empty first-run state can still show onboarding; failure and pending-review states do not.
+- Planning verification:
+  - Confirm the revised plan explicitly names [E15-20](E15-20-preimpl-dashboard-authority-and-priority-task-plan.md) as the canonical implementation owner and cites decision `2823`.
+- Code-anchor verification:
+  - Confirm the revised current-state section matches `DashboardPage.tsx`, `buildDashboardPriorityModel.ts`, and the existing recent-activity hook behavior.
+- Handoff verification:
+  - Close planning findings `E15-15-PLAN-01` and `E15-15-PLAN-02` only after the revised document reflects supersession and the landed code state.
 
 ## Slice Delivery
 
-### Slice 1: Priority Model and Sync Health
+### Slice 1: Supersession and Ownership Alignment
 
-**Goal**: Make blocking health and review work outrank orientation and utilities.
-
-Changes:
-
-- Add a deterministic dashboard priority model over current hook data.
-- Render Sync Health with existing recency fields and a topology-backlog state derived from `topology_commands.pending > 0 || topology_commands.failed > 0 || topology_commands.conflict > 0`.
-- Keep dead-letter/conflict links visible only when actionable.
-
-Proof:
-
-- Vitest covers healthy, queued, conflict, failure, offline, stale, and topology-backlog states.
-
-### Slice 2: State-Aware Onboarding and Utilities
-
-**Goal**: Keep onboarding and utility panels useful without letting them dominate active work.
+**Goal**: Remove E15-15 as a competing implementation source.
 
 Changes:
 
-- Suppress the large orientation card when pending clusters, sync failures/conflicts, or stale mirror state exist.
-- Defer suppression by current job state to E15-16, after that task records a durable activity source and stops relying on browser-local history.
-- Make retention unavailable state actionable or lower priority.
-- Compact generic batch navigation when no durable current job state exists.
+- Mark [E15-20](E15-20-preimpl-dashboard-authority-and-priority-task-plan.md) as the canonical PREIMPL implementation track.
+- Cite superseding handoff decision `2823`.
+- Reframe E15-15 as residual closeout/lifecycle work only.
 
 Proof:
 
-- Vitest covers first-run, active-work, dismissed, retention-available, retention-unavailable, and no-job states.
+- Planning review no longer reports E15-15 as a duplicate implementation track.
 
-### Slice 3: Partial-State Rendering and Polish
+### Slice 2: Current-State Refresh
 
-**Goal**: Preserve independent panel loading while preventing mixed state from flattening urgency.
+**Goal**: Replace stale implementation claims with repo-accurate notes.
 
 Changes:
 
-- Add page-level rules for partial load/error states.
-- Ensure status indicators include icon/text semantics, not color alone.
-- Use existing `--acx-*` tokens for any style changes.
+- Document that `DashboardPage` already uses `buildDashboardPriorityModel` and renders `OrientationCard` after the grid.
+- Document that Sync Health already surfaces recency/topology details from existing fields.
+- Document that recent activity already includes durable/fallback distinctions, making the original local-only framing stale.
 
 Proof:
 
-- Vitest covers mixed loaded/error/loading states and avoids layout assertions that require new API fields.
+- Planning review no longer flags the current-state section as stale.
+
+### Slice 3: Residual Lifecycle Closeout
+
+**Goal**: Leave only narrow E15-15 follow-up that can be retired cleanly.
+
+Changes:
+
+- Limit remaining checklist items to handoff/documentation closeout.
+- Avoid assigning new dashboard implementation slices to E15-15.
+- Prepare the task to be retired once residual lifecycle work is done.
+
+Proof:
+
+- Open planning findings close against the revised document without reopening code scope.
 
 ## Consolidated Checklist
 
 ## Context and Ownership
 
 - [ ] Loaded the dashboard assessment, dashboard spec, frontend rules, and handoff state before editing.
-- [ ] Confirmed no external dependency context is needed.
-- [ ] Confirmed Tier 1 uses existing REST/hook fields only.
+- [ ] Confirmed [E15-20](E15-20-preimpl-dashboard-authority-and-priority-task-plan.md) is the canonical PREIMPL implementation owner.
+- [ ] Recorded the superseding handoff decision reference (`2823`) in this plan.
 
-### Checklist for Slice 1: Priority Model and Sync Health
+### Checklist for Slice 1: Supersession and Ownership Alignment
 
-- [ ] Blocking health priority model implemented.
-- [ ] Sync Health renders existing recency/topology fields where available.
-- [ ] Healthy, queued, conflict, failure, offline, stale, and topology states tested.
+- [ ] E15-15 no longer presents itself as the active implementation track.
+- [ ] E15-20 is linked as the canonical successor.
+- [ ] Residual E15-15 scope is limited to closeout/lifecycle work.
 
-### Checklist for Slice 2: State-Aware Onboarding and Utilities
+### Checklist for Slice 2: Current-State Refresh
 
-- [ ] Large onboarding is suppressed when real work exists.
-- [ ] Retention unavailable state is actionable or demoted.
-- [ ] Generic batch navigation is compact without relying on browser-local job history as a suppression signal.
+- [ ] `DashboardPage` current-state notes match the landed priority/orientation implementation.
+- [ ] Sync Health notes match the landed recency/topology rendering.
+- [ ] Recent-activity notes match the durable/fallback behavior already present.
 
-### Checklist for Slice 3: Partial-State Rendering and Polish
+### Checklist for Slice 3: Residual Lifecycle Closeout
 
-- [ ] Mixed loading/error states keep blocking health visible when loaded.
-- [ ] Status indicators pair color with icon/text semantics.
-- [ ] Token-only style changes verified.
+- [ ] No fresh dashboard implementation slices remain under E15-15.
+- [ ] Remaining task language is compatible with eventual done/archive flow.
+- [ ] Open planning findings can be closed against this revised document.
 
 ## Review Readiness
 
-- [ ] No new REST fields are required for this task.
-- [ ] Runtime dashboard check confirms priority order in a failure or pending-review state.
-- [ ] Handoff decision records existing-field scope and verification.
+- [ ] The plan explicitly defers implementation ownership to [E15-20](E15-20-preimpl-dashboard-authority-and-priority-task-plan.md).
+- [ ] The plan no longer claims already-landed dashboard behavior is missing.
+- [ ] Handoff decision records the residual-closeout scope and finding resolution.
 
 ## Stretch Goals
 
-- [ ] Add a compact help/onboarding affordance shared by Dashboard and Workbench if it can be done without broad navigation refactor.
+- [ ] Retire E15-15 cleanly once any remaining lifecycle bookkeeping is complete.
 
 ## Success Criteria
 
-- [ ] Sync failures/conflicts or pending review render above onboarding and generic navigation.
-- [ ] First-run empty state remains clear when no actionable work exists.
-- [ ] Dashboard tests cover the priority model and representative partial states.
+- [ ] E15-15 is no longer a stale or competing implementation plan.
+- [ ] The revised current-state section matches the dashboard code that already landed.
+- [ ] Planning findings `E15-15-PLAN-01` and `E15-15-PLAN-02` can be closed against this document revision.

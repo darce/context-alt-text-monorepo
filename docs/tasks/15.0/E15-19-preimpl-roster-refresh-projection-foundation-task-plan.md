@@ -253,6 +253,7 @@ make lane-manifest-init TASK=E15-19 LANE_IDS='docs-contracts backend-refresh wp-
 - [x] Candidate partitioning is required where possible.
 - [x] Full scan is explicit backfill only.
 - [x] No-candidate, timeout, failure, retry, and idempotency tests pass.
+- [x] Refresh failure without replay state still aborts the bounded refresh loop.
 
 ### Checklist for Slice 5: Projection Integrity and Bounded Controller Extraction
 

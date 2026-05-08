@@ -206,8 +206,8 @@ async def run_curation_job(
                         status=CurationRefreshStatus.FAILED,
                         record=replay_record,
                     )
-                    refresh_failed = True
-                    break
+                refresh_failed = True
+                break
         if replay_session is not None and refresh_idempotency_key and not refresh_failed:
             replay_record = await _set_refresh_status(
                 session=replay_session,

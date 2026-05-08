@@ -227,6 +227,51 @@ async def test_cluster_bind_queues_refresh_followup_with_bound_identity_ids(db_s
 
 
 @pytest.mark.asyncio
+async def test_cluster_unbind_marks_refresh_not_applicable_and_skips_followup_queue(db_session: AsyncSession) -> None:
+    tenant = await _create_tenant(db_session)
+    person_uuid = uuid4()
+    cluster = IdentityCluster(
+        id=uuid4(),
+        tenant_id=tenant.id,
+        label="Known Person",
+        identity_count=1,
+        roster_id=person_uuid,
+    )
+    db_session.add(cluster)
+    await db_session.commit()
+    await db_session.refresh(cluster)
+
+    base_version = int(cluster.updated_at.timestamp() * 1_000_000) if cluster.updated_at else 0
+    fake_job_service = FakeJobService()
+
+    result = await CurationSyncService(session=db_session, job_service=fake_job_service).apply(
+        tenant_id=str(tenant.id),
+        operation=_operation(
+            "cluster_person_unbound",
+            entity_key=str(cluster.id),
+            idempotency_key="unbind-refresh-status-idem",
+            expected_base_version=base_version,
+            payload={"cluster_uuid": str(cluster.id), "person_uuid": str(person_uuid)},
+        ),
+    )
+    await db_session.commit()
+    await db_session.refresh(cluster)
+
+    replay_record = await _load_replay_record(
+        db_session,
+        tenant_id=tenant.id,
+        idempotency_key="unbind-refresh-status-idem",
+    )
+
+    assert result.status == "acknowledged"
+    assert cluster.roster_id is None
+    assert replay_record.refresh_status == "not_applicable"
+    assert replay_record.refresh_requested_at is None
+    assert replay_record.refresh_completed_at is None
+    assert fake_job_service.calls == []
+
+
+@pytest.mark.asyncio
 async def test_cluster_bind_replay_uses_authoritative_person_name_when_provided(db_session: AsyncSession) -> None:
     tenant = await _create_tenant(db_session)
     cluster = IdentityCluster(id=uuid4(), tenant_id=tenant.id, label="Stale Label", identity_count=1)

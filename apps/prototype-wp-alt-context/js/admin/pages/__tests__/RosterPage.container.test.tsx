@@ -277,6 +277,22 @@ describe('RosterPage route container', () => {
     ).toBeInTheDocument();
   });
 
+  it('[PAG-M3] keeps face-only routes on the legacy entries surface and shows the gate notice', () => {
+    render(
+      <MemoryRouter initialEntries={['/?face=identity-9&tab=clusters']}>
+        <RosterPage />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('tab', { name: 'Entries' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Clusters' })).toHaveAttribute('aria-selected', 'false');
+    expect(
+      screen.getByText(
+        'This route is recognized, but the person workspace stays on the legacy Entries view until enriched roster projection data lands.',
+      ),
+    ).toBeInTheDocument();
+  });
+
   it('[PAG-M3] keeps queue routes reachable without implying the person workspace exists', () => {
     render(
       <MemoryRouter initialEntries={['/?queue=needs-review&tab=clusters']}>

@@ -1,5 +1,6 @@
 # E15-14. LocalWP Batch Smoke Argument Plumbing
 
+> **Status**: review -- Slice 1 landed on the branch base before this session; Slice 2 runtime smoke passed locally on 2026-05-08.
 > **Metadata**
 >
 > - **Date**: 2026-05-05 22:00 EST
@@ -7,7 +8,7 @@
 > - **Owning Epic**: [docs/epics/v0.4.0/public-demo-launch-readiness-epic.md](../../epics/v0.4.0/public-demo-launch-readiness-epic.md)
 > - **Epic Short ID**: E15
 > - **Task ID**: E15-14
-> - **Target Branch**: `feature/e15-14-localwp-batch-smoke-argument-plumbing`
+> - **Target Branch**: `feature/e15-14`
 > - **Review Coverage Target**: 2
 
 ---
@@ -15,6 +16,13 @@
 ## Objective
 
 Make `make localwp-batch-run-smoke` prove the operator-requested LocalWP batch size, limit, timeout, and polling settings. When this task is complete, the smoke harness rejects malformed positional arguments instead of silently scanning one image while reporting a pass.
+
+## Closure Update
+
+- The branch base already contained the Slice 1 plumbing when this task was started: the plugin Makefile now forwards four positional values without the leaked `--`, the PHP parser rejects invalid integers and separators through `scripts/localwp/batch-run-smoke-args.php`, and the smoke payload reports effective `limit`, `batch_size`, `timeout_seconds`, and `poll_interval_ms` values.
+- Deterministic proof passed on 2026-05-08: `pyenv exec python -m pytest scripts/test_localwp_batch_run_smoke.py scripts/test_localwp_wp.py -q` reported `7 passed in 6.19s`.
+- Runtime proof passed on 2026-05-08 after starting the local recognition backend and verifying `/health` plus `/ready`: `make localwp-batch-run-smoke ... SMOKE_LIMIT=10 BATCH_SIZE=5 TIMEOUT_SECONDS=60 POLL_INTERVAL_MS=500` emitted `limit=10`, `batch_size=5`, `accepted_total=10`, `completed_total=10`, `failed_total=0`, `timeout_seconds=60`, and `poll_interval_ms=500`.
+- `docs/tasks/15.0/E15-3-wordpress-demo-provisioning-task-plan.md` and the plugin Makefile help text were rechecked against the repaired invocation during Slice 2; no follow-up doc changes were needed.
 
 ## Execution Priority
 
@@ -79,7 +87,7 @@ Patch the Makefile target so the final WP-CLI `eval-file` invocation passes only
 | --- | --- | --- |
 | LocalWP Make target | `apps/prototype-wp-alt-context/Makefile` | Remove the literal `--` from the smoke invocation and preserve defaults |
 | PHP smoke script | `apps/prototype-wp-alt-context/scripts/localwp/batch-run-smoke.php` | Validate positional arguments and include effective parameters in JSON output |
-| Tests | `scripts/test_localwp_batch_smoke.py` (new) | Assert the generated command has no separator and maps values directly |
+| Tests | `scripts/test_localwp_batch_run_smoke.py` | Assert the generated command has no separator and maps values directly |
 | Docs verification | `docs/tasks/15.0/E15-3-wordpress-demo-provisioning-task-plan.md`, `apps/prototype-wp-alt-context/Makefile` help text | Verify they still match the repaired `make localwp-batch-run-smoke` invocation; update only if a mismatch is found |
 
 ## Related Files
@@ -93,7 +101,7 @@ Patch the Makefile target so the final WP-CLI `eval-file` invocation passes only
 ## Verification Strategy
 
 - Deterministic tests:
-  - `pyenv exec python -m pytest scripts/test_localwp_batch_smoke.py -q`
+  - `pyenv exec python -m pytest scripts/test_localwp_batch_run_smoke.py -q`
   - `pyenv exec python -m pytest scripts/test_localwp_wp.py -q`
 - Runtime-parity / environment checks:
   - `cd apps/prototype-wp-alt-context && make localwp-batch-run-smoke WP_PATH="${LOCAL_WP_ROOT:-$HOME/Development/wp-context-alt-text}/app/public" SMOKE_LIMIT=10 BATCH_SIZE=5 TIMEOUT_SECONDS=60 POLL_INTERVAL_MS=500`
@@ -117,7 +125,7 @@ Changes:
 
 Proof:
 
-- `pyenv exec python -m pytest scripts/test_localwp_batch_smoke.py -q`
+- `pyenv exec python -m pytest scripts/test_localwp_batch_run_smoke.py -q`
 
 ### Slice 2: Runtime Smoke Confirmation
 
@@ -137,30 +145,30 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded the LocalWP smoke assessment and adjacent E15 demo verification plans before editing.
-- [ ] Confirmed the smoke target remains a LocalWP proof, not a public-demo CI replacement.
-- [ ] Confirmed no external dependency docs are needed unless WP-CLI argument behavior is disputed.
+- [x] Loaded the LocalWP smoke assessment and adjacent E15 demo verification plans before editing.
+- [x] Confirmed the smoke target remains a LocalWP proof, not a public-demo CI replacement.
+- [x] Confirmed no external dependency docs are needed unless WP-CLI argument behavior is disputed.
 
 ### Checklist for Slice 1: Command and Parser Regression
 
-- [ ] Regression coverage proves the Makefile invocation does not pass `--` to the PHP script.
-- [ ] PHP argument parsing rejects separators and non-integer values.
-- [ ] JSON output reports the effective smoke parameters.
+- [x] Regression coverage proves the Makefile invocation does not pass `--` to the PHP script.
+- [x] PHP argument parsing rejects separators and non-integer values.
+- [x] JSON output reports the effective smoke parameters.
 
 ### Checklist for Slice 2: Runtime Smoke Confirmation
 
-- [ ] LocalWP smoke run uses explicit operator parameters.
-- [ ] Output confirms the effective parameters and expected submitted count.
-- [ ] `docs/tasks/15.0/E15-3-wordpress-demo-provisioning-task-plan.md` and plugin Makefile help text were verified against the repaired invocation, and only drifted text was updated.
+- [x] LocalWP smoke run uses explicit operator parameters.
+- [x] Output confirms the effective parameters and expected submitted count.
+- [x] `docs/tasks/15.0/E15-3-wordpress-demo-provisioning-task-plan.md` and plugin Makefile help text were verified against the repaired invocation, and only drifted text was updated.
 
 ## Review Readiness
 
-- [ ] The deterministic test proves the wrapper no longer shifts positional arguments.
-- [ ] Runtime-parity evidence is recorded when a LocalWP site is available.
-- [ ] Handoff decision records the command fix, parser hardening, and verification evidence.
+- [x] The deterministic test proves the wrapper no longer shifts positional arguments.
+- [x] Runtime-parity evidence is recorded when a LocalWP site is available.
+- [x] Handoff decision records the command fix, parser hardening, and verification evidence.
 
 ## Success Criteria
 
-- [ ] `SMOKE_LIMIT=10 BATCH_SIZE=5` no longer submits one image because of argument shifting.
-- [ ] Invalid smoke arguments fail with clear errors before batch submission.
-- [ ] The smoke payload includes effective parameter values an operator can verify.
+- [x] `SMOKE_LIMIT=10 BATCH_SIZE=5` no longer submits one image because of argument shifting.
+- [x] Invalid smoke arguments fail with clear errors before batch submission.
+- [x] The smoke payload includes effective parameter values an operator can verify.

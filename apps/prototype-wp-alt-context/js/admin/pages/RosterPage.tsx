@@ -1,5 +1,6 @@
 import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
+import { useSearchParams } from 'react-router-dom';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import type { ClusterIdentity, ClusterSummary } from '../api/recognition';
 import { useRecognitionCluster, useRecognitionClusters } from '../hooks/useRecognitionHooks';
@@ -12,21 +13,27 @@ import { ClusterGrid } from './roster/ClusterGrid';
 import { BulkActionBar } from './roster/BulkActionBar';
 import { ClusterDrawerPanel } from './roster/ClusterDrawerPanel';
 import { RosterEntriesSection } from './roster/RosterEntriesSection';
-import { useTabParam } from '../hooks/useTabParam';
+import { PersonWorkspacePanel } from './roster/PersonWorkspacePanel';
 import { Checkbox } from '../../components/ui/checkbox';
 import { ConfirmDialog } from './roster/ConfirmDialog';
-const ROSTER_TABS = {
-  entries: { id: 'entries' as const, label: __('Entries', 'alt-context') },
-  clusters: { id: 'clusters' as const, label: __('Clusters', 'alt-context') },
-} as const;
-
-type RosterTab = (typeof ROSTER_TABS)[keyof typeof ROSTER_TABS]['id'];
+import {
+  ROSTER_TABS,
+  ROSTER_ROUTE_PARAM_KEYS,
+  type RosterTab,
+  parseRosterRoute,
+  getRouteParam,
+  getEntryPersonUuid,
+  hasCanonicalProjectionShape,
+  aggregateProjectionStatus,
+  PERSON_WORKSPACE_GATE_NOTICE,
+  PROJECTION_REFRESHING_NOTICE,
+  PROJECTION_STALE_NOTICE,
+  PROJECTION_FAILED_NOTICE,
+  PERSON_ROUTE_UNMATCHED_NOTICE,
+} from './roster/rosterRoute';
 
 export const RosterPage = (): React.JSX.Element => {
-  const [activeTab, setActiveTab] = useTabParam<RosterTab>('tab', ROSTER_TABS.entries.id, [
-    ROSTER_TABS.entries.id,
-    ROSTER_TABS.clusters.id,
-  ]);
+  const [searchParams, setSearchParams] = useSearchParams();
   const [selectedClusterId, setSelectedClusterId] = React.useState<string | null>(null);
   const [confirmAction, setConfirmAction] = React.useState<'merge' | 'dismiss' | null>(null);
 
@@ -40,6 +47,8 @@ export const RosterPage = (): React.JSX.Element => {
   const clusterList = clustersQuery.data;
   const clusters = React.useMemo(() => clusterList?.clusters ?? [], [clusterList]);
   const clusterIds = React.useMemo(() => clusters.map((cluster) => cluster.id), [clusters]);
+  const parsedRoute = React.useMemo(() => parseRosterRoute(searchParams), [searchParams]);
+  const activeTab = parsedRoute.activeTab;
 
   // Clear selection when switching tabs to avoid stale state
   React.useEffect(() => {
@@ -53,6 +62,10 @@ export const RosterPage = (): React.JSX.Element => {
 
     retainVisibleSelection(clusterIds);
   }, [activeTab, clusterIds, clustersQuery.data, retainVisibleSelection]);
+
+  React.useEffect(() => {
+    setSelectedClusterId(parsedRoute.selectedClusterId);
+  }, [parsedRoute.selectedClusterId]);
 
   const selectedCluster = React.useMemo(
     () => clusters.find((cluster) => cluster.id === selectedClusterId) ?? null,
@@ -69,7 +82,52 @@ export const RosterPage = (): React.JSX.Element => {
   );
   const mediaMap = useClusterMediaMap(clusters, drawerMediaIds);
   const entriesQuery = useRosterEntries();
-  const rosterEntries = entriesQuery.data ?? [];
+  const rosterEntries = React.useMemo(() => entriesQuery.data ?? [], [entriesQuery.data]);
+  const personRouteUuid = React.useMemo(() => getRouteParam(searchParams, 'person'), [searchParams]);
+  const projectionShapeAvailable = React.useMemo(
+    () => hasCanonicalProjectionShape(rosterEntries),
+    [rosterEntries],
+  );
+  const projectionStatus = React.useMemo(
+    () => aggregateProjectionStatus(rosterEntries),
+    [rosterEntries],
+  );
+  const personWorkspaceEntry = React.useMemo(() => {
+    if (!personRouteUuid || !projectionShapeAvailable || projectionStatus !== 'current') {
+      return null;
+    }
+    return (
+      rosterEntries.find((entry) => getEntryPersonUuid(entry) === personRouteUuid) ?? null
+    );
+  }, [personRouteUuid, projectionShapeAvailable, projectionStatus, rosterEntries]);
+  const projectionStateNotice = React.useMemo(() => {
+    if (!parsedRoute.requiresProjectionGateNotice) {
+      return null;
+    }
+    if (!projectionShapeAvailable) {
+      return PERSON_WORKSPACE_GATE_NOTICE;
+    }
+    if (projectionStatus === 'refreshing') {
+      return PROJECTION_REFRESHING_NOTICE;
+    }
+    if (projectionStatus === 'stale') {
+      return PROJECTION_STALE_NOTICE;
+    }
+    if (projectionStatus === 'failed') {
+      return PROJECTION_FAILED_NOTICE;
+    }
+    if (personRouteUuid && projectionStatus === 'current' && personWorkspaceEntry === null) {
+      return PERSON_ROUTE_UNMATCHED_NOTICE;
+    }
+    return null;
+  }, [
+    parsedRoute.requiresProjectionGateNotice,
+    projectionShapeAvailable,
+    projectionStatus,
+    personRouteUuid,
+    personWorkspaceEntry,
+  ]);
+  const routeGateNotice = personWorkspaceEntry === null ? projectionStateNotice : null;
 
   const dragDrop = useClusterDragDrop();
 
@@ -113,11 +171,36 @@ export const RosterPage = (): React.JSX.Element => {
     setSelectedClusterId(null);
     dragDrop.resetDragState();
     actions.resetAll();
+    setSearchParams(
+      (previous) => {
+        const next = new URLSearchParams(previous);
+        next.delete('cluster');
+        return next;
+      },
+      { replace: true },
+    );
   };
+
+  const handleTabChange = React.useCallback(
+    (value: RosterTab) => {
+      setSearchParams(
+        (previous) => {
+          const next = new URLSearchParams(previous);
+          next.set('tab', value);
+          for (const key of ROSTER_ROUTE_PARAM_KEYS) {
+            next.delete(key);
+          }
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
 
   const handleSelectCluster = (cluster: ClusterSummary): void => {
     setSelectedClusterId(cluster.id);
-    setActiveTab(ROSTER_TABS.clusters.id);
+    handleTabChange(ROSTER_TABS.clusters.id);
   };
 
   const handleBulkMerge = () => {
@@ -222,7 +305,7 @@ export const RosterPage = (): React.JSX.Element => {
         </p>
       </header>
 
-      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as RosterTab)}>
+      <Tabs value={activeTab} onValueChange={(value) => handleTabChange(value as RosterTab)}>
         <TabsList className="acx-roster__tabs" aria-label={__('Roster sections', 'alt-context')}>
           {Object.values(ROSTER_TABS).map((tab) => (
             <TabsTrigger key={tab.id} value={tab.id}>
@@ -233,7 +316,8 @@ export const RosterPage = (): React.JSX.Element => {
 
         <TabsContent value={ROSTER_TABS.entries.id} className="acx-roster__panel">
           <h2>{ROSTER_TABS.entries.label}</h2>
-          <RosterEntriesSection query={entriesQuery} />
+          {personWorkspaceEntry !== null && <PersonWorkspacePanel entry={personWorkspaceEntry} />}
+          <RosterEntriesSection query={entriesQuery} routeNotice={routeGateNotice} />
         </TabsContent>
 
         <TabsContent value={ROSTER_TABS.clusters.id} className="acx-roster__panel">

@@ -2,7 +2,11 @@ import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 
-import { fetchRecentBatchRuns, fetchScanStatus } from '../../api/recognition';
+import {
+  fetchRecentBatchRuns,
+  fetchScanStatus,
+  type RecentBatchRunsResponse,
+} from '../../api/recognition';
 import { useRecognitionJobHistory } from '../useRecognitionJobHistory';
 
 vi.mock('@wordpress/i18n', () => ({
@@ -46,23 +50,7 @@ describe('useRecognitionJobHistory', () => {
 
   it('prefers durable recent batch runs and fetches their latest job statuses', async () => {
     const { wrapper, queryClient } = createWrapper();
-    const recentBatchRunsDeferred = createDeferred<{
-      items: {
-        run_id: string;
-        latest_job_id: string;
-        latest_job_status: string;
-        child_job_ids: string[];
-        submitted_total: number;
-        accepted_total: number;
-        completed_total: number;
-        failed_total: number;
-        cancelled_total: number;
-        terminal_state: boolean;
-        failed_batches: [];
-        created_at: string;
-        updated_at: string;
-      }[];
-    }>();
+    const recentBatchRunsDeferred = createDeferred<RecentBatchRunsResponse>();
     const statusDeferred = createDeferred<{
       id: string;
       type: 'analyze' | 'clustering' | 'curation' | 'split';
@@ -72,7 +60,7 @@ describe('useRecognitionJobHistory', () => {
       finished_at: string;
     }>();
     fetchScanStatusMock.mockReturnValue(statusDeferred.promise);
-    const recentBatchRunsResponse = {
+    const recentBatchRunsResponse: RecentBatchRunsResponse = {
       items: [
         {
           run_id: 'run-1',

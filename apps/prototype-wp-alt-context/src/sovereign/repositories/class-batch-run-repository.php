@@ -198,7 +198,7 @@ class BatchRunRepository {
 				'run_id'           => $run_id,
 				'latest_job_id'    => is_array( $latest_job ) ? trim( (string) ( $latest_job['job_id'] ?? '' ) ) : '',
 				'latest_job_status' => is_array( $latest_job ) ? trim( (string) ( $latest_job['status'] ?? '' ) ) : '',
-				'child_job_ids'    => array_values( array_keys( $child_jobs ) ),
+				'child_job_ids'    => array_keys( $child_jobs ),
 				'submitted_total'  => max( 0, (int) ( $row['submitted_total'] ?? 0 ) ),
 				'accepted_total'   => max( 0, (int) ( $row['accepted_total'] ?? 0 ) ),
 				'completed_total'  => max( 0, (int) ( $row['completed_total'] ?? 0 ) ),

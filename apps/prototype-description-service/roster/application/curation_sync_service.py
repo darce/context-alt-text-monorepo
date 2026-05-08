@@ -11,7 +11,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models.identity import CurationReplayRecord, IdentityCluster
+from db.models.identity import CurationReplayRecord, IdentityCluster, IdentityMember
 
 
 class CurationRefreshStatus(StrEnum):
@@ -284,11 +284,21 @@ class CurationSyncService:
             return
         if self._job_service is None:
             raise RuntimeError("curation follow-up queue unavailable")
+        identity_ids = await self._load_cluster_identity_ids(tenant_id=tenant_id, cluster_uuid=cluster_uuid)
         await self._job_service.queue_curation_followup(
             tenant_id=str(tenant_id),
             cluster_ids=[str(cluster_uuid)],
+            identity_ids=identity_ids,
             refresh_idempotency_key=idempotency_key,
         )
+
+    async def _load_cluster_identity_ids(self, *, tenant_id: UUID, cluster_uuid: UUID) -> list[str]:
+        result = await self._session.execute(
+            select(IdentityMember.identity_id)
+            .where(IdentityMember.tenant_id == tenant_id, IdentityMember.cluster_id == cluster_uuid)
+            .order_by(IdentityMember.assigned_at.asc(), IdentityMember.id.asc())
+        )
+        return [str(identity_id) for identity_id in result.scalars().all() if identity_id is not None]
 
     async def _queue_and_store_acknowledged_cluster_result(
         self,

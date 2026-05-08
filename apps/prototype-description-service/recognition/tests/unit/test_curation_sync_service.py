@@ -9,7 +9,8 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models.identity import CurationReplayRecord, IdentityCluster
+from db.models.identity import CurationReplayRecord, IdentityCluster, IdentityMember
+from db.models import MediaIdentity as MediaIdentityModel
 from db.models.tenant import Tenant
 from recognition.tests.fakes import FakeJobService
 from roster.application.curation_sync_service import CurationSyncService
@@ -168,6 +169,59 @@ async def test_cluster_bind_queues_refresh_followup_with_idempotency_key(db_sess
             "identity_ids": [],
             "source_cluster_id": None,
             "refresh_idempotency_key": "bind-refresh-queue-idem",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_cluster_bind_queues_refresh_followup_with_bound_identity_ids(db_session: AsyncSession) -> None:
+    tenant = await _create_tenant(db_session)
+    cluster = IdentityCluster(id=uuid4(), tenant_id=tenant.id, label="Unassigned", identity_count=1)
+    bound_identity = MediaIdentityModel(
+        id=uuid4(),
+        tenant_id=tenant.id,
+        media_id=101,
+        media_url="http://example.test/media/101.jpg",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=1,
+        bbox_height=1,
+        confidence=1.0,
+        embedding=[0.0] * 512,
+    )
+    cluster_member = IdentityMember(
+        tenant_id=tenant.id,
+        cluster_id=cluster.id,
+        identity_id=bound_identity.id,
+        similarity=0.99,
+    )
+    db_session.add_all([cluster, bound_identity, cluster_member])
+    await db_session.commit()
+    await db_session.refresh(cluster)
+
+    base_version = int(cluster.updated_at.timestamp() * 1_000_000) if cluster.updated_at else 0
+    fake_job_service = FakeJobService()
+
+    result = await CurationSyncService(session=db_session, job_service=fake_job_service).apply(
+        tenant_id=str(tenant.id),
+        operation=_operation(
+            "cluster_person_bound",
+            entity_key=str(cluster.id),
+            idempotency_key="bind-refresh-identity-idem",
+            expected_base_version=base_version,
+            payload={"cluster_uuid": str(cluster.id), "person_uuid": str(uuid4())},
+        ),
+    )
+
+    assert result.status == "acknowledged"
+    assert fake_job_service.calls == [
+        {
+            "method": "queue_curation_followup",
+            "tenant_id": str(tenant.id),
+            "cluster_ids": [str(cluster.id)],
+            "identity_ids": [str(bound_identity.id)],
+            "source_cluster_id": None,
+            "refresh_idempotency_key": "bind-refresh-identity-idem",
         }
     ]
 

@@ -10,12 +10,16 @@ import math
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import numpy as np
 import pytest
+from sqlalchemy import select
 
+from db.models.identity import IdentityCluster as IdentityClusterModel
 from db.models import MediaIdentity as MediaIdentityModel
+from recognition.application.orchestration.job_service import JobService
 from recognition.application.tasks.clustering import (
     run_background_backfill_suggestions,
     run_background_surface_suggestions,
@@ -27,6 +31,8 @@ from recognition.domain.suggestion import SuggestionStatus
 from recognition.infrastructure.repositories import SqlAlchemySuggestionRepository
 from recognition.interface_adapters.http import dependencies
 from recognition.interface_adapters.http.routers.clusters import get_top_unlabeled_clusters
+from recognition.tests.unit.job_repo_stub import InMemoryJobRepo
+from roster.application.curation_sync_service import CurationSyncService
 
 
 @pytest.mark.asyncio
@@ -436,6 +442,133 @@ async def test_update_cluster_surfaces_suggestions_for_existing_unlabeled_single
     )
 
     assert updated is not None
+
+    suggestions = await suggestion_repo.list_pending_with_details(tenant_id=str(tenant.id), limit=10, offset=0)
+    assert any(
+        suggestion.identity_id == str(candidate_identity.id) and suggestion.cluster_id == labeled_cluster.id
+        for suggestion in suggestions
+    )
+
+
+@pytest.mark.asyncio
+async def test_replayed_cluster_bind_curation_job_surfaces_singleton_suggestions(db_session, tenant) -> None:
+    cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
+    cluster_repo = cluster_service.assignment_writer.cluster_repository
+    member_repo = cluster_service.assignment_writer.member_repository
+    suggestion_repo = SqlAlchemySuggestionRepository(db_session)
+    job_service = JobService(
+        repository=InMemoryJobRepo(),
+        cluster_service=cluster_service,
+        scan_service=SimpleNamespace(analyze_media=AsyncMock()),
+    )
+
+    labeled_cluster = await cluster_repo.save(
+        IdentityCluster(
+            id=None,
+            tenant_id=str(tenant.id),
+            label=None,
+            is_labeled=False,
+            identity_count=1,
+            created_at=None,
+            user_confirmed=False,
+        )
+    )
+
+    rep_embedding = [0.0] * 512
+    rep_embedding[0] = 1.0
+    rep_identity = MediaIdentityModel(
+        tenant_id=tenant.id,
+        media_id=3005,
+        media_url="http://example.test/3005.jpg",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=120,
+        bbox_height=120,
+        confidence=0.99,
+        embedding=rep_embedding,
+    )
+    db_session.add(rep_identity)
+    await db_session.flush()
+    await member_repo.add_member(labeled_cluster.id, identity_id=str(rep_identity.id), similarity=0.9)
+
+    await cluster_repo.add_representative(
+        ClusterRepresentative(
+            id=str(uuid.uuid4()),
+            cluster_id=labeled_cluster.id,
+            identity_id=str(rep_identity.id),
+            embedding=np.asarray(rep_identity.embedding, dtype=np.float32),
+            created_at=datetime.now(tz=UTC),
+            tenant_id=str(tenant.id),
+        )
+    )
+
+    unlabeled_cluster = await cluster_repo.save(
+        IdentityCluster(
+            id=None,
+            tenant_id=str(tenant.id),
+            label=None,
+            is_labeled=False,
+            identity_count=1,
+            created_at=None,
+            user_confirmed=False,
+        )
+    )
+
+    match_component = math.sqrt(1.0 - 0.5**2)
+    candidate_embedding = [0.0] * 512
+    candidate_embedding[0] = 0.5
+    candidate_embedding[1] = match_component
+    candidate_identity = MediaIdentityModel(
+        tenant_id=tenant.id,
+        media_id=3006,
+        media_url="http://example.test/3006.jpg",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=48,
+        bbox_height=48,
+        confidence=0.5,
+        embedding=candidate_embedding,
+    )
+    db_session.add(candidate_identity)
+    await db_session.flush()
+    await member_repo.add_member(unlabeled_cluster.id, identity_id=str(candidate_identity.id), similarity=0.5)
+    await db_session.commit()
+
+    persisted_cluster = await db_session.scalar(
+        select(IdentityClusterModel).where(IdentityClusterModel.id == uuid.UUID(labeled_cluster.id))
+    )
+    assert persisted_cluster is not None
+    base_version = int(persisted_cluster.updated_at.timestamp() * 1_000_000) if persisted_cluster.updated_at else 0
+    result = await CurationSyncService(session=db_session, job_service=job_service).apply(
+        tenant_id=str(tenant.id),
+        operation=SimpleNamespace(
+            operation_type="cluster_person_bound",
+            entity_type="cluster",
+            entity_key=labeled_cluster.id,
+            idempotency_key="bind-curation-loop-singleton-idem",
+            expected_base_version=base_version,
+            local_revision=1,
+            payload={
+                "cluster_uuid": labeled_cluster.id,
+                "person_uuid": str(uuid.uuid4()),
+                "person_name": "Confirmed Label",
+            },
+        ),
+    )
+
+    assert result.status == "acknowledged"
+
+    queued_jobs = list(job_service.repository.jobs.values())
+    assert len(queued_jobs) == 1
+
+    processed = await job_service.process_curation_job(
+        queued_jobs[0].id,
+        str(tenant.id),
+        cluster_ids=[],
+        session=db_session,
+    )
+
+    assert processed.status.name == "COMPLETED"
 
     suggestions = await suggestion_repo.list_pending_with_details(tenant_id=str(tenant.id), limit=10, offset=0)
     assert any(

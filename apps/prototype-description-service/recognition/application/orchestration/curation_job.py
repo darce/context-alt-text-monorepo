@@ -5,6 +5,7 @@ Post-curation recompute job runner.
 from __future__ import annotations
 
 import contextlib
+import inspect
 import logging
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -160,12 +161,33 @@ async def run_curation_job(
         refresh_failed = False
         refresh_created_candidates = False
         refresh_for_identity = getattr(refresh_service, "refresh_for_identity", None)
+        surface_for_newly_labeled_cluster = getattr(refresh_service, "surface_for_newly_labeled_cluster", None)
+        get_top_unlabeled = getattr(cluster_repo, "get_top_unlabeled", None)
         for cluster_id in unique_cluster_ids:
             try:
                 refreshed = await refresh_service.refresh_for_cluster(cluster_id)
                 cluster_refresh_created = _refresh_result_created_candidates(refreshed)
                 if cluster_refresh_created:
                     refresh_created_candidates = True
+                if (
+                    not cluster_refresh_created
+                    and callable(surface_for_newly_labeled_cluster)
+                    and inspect.iscoroutinefunction(surface_for_newly_labeled_cluster)
+                    and callable(get_top_unlabeled)
+                    and inspect.iscoroutinefunction(get_top_unlabeled)
+                ):
+                    candidate_clusters = await get_top_unlabeled(
+                        tenant_id,
+                        limit=1000,
+                        min_identity_count=1,
+                    )
+                    surfaced = await surface_for_newly_labeled_cluster(
+                        cluster_id,
+                        candidate_cluster_ids=[candidate.id for candidate in candidate_clusters if candidate.id],
+                    )
+                    if surfaced > 0:
+                        refresh_created_candidates = True
+                        cluster_refresh_created = True
                 if not cluster_refresh_created and unique_identity_ids and callable(refresh_for_identity):
                     for identity_id in unique_identity_ids:
                         identity_refreshed = await refresh_for_identity(

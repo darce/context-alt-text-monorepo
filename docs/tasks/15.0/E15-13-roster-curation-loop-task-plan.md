@@ -3,11 +3,13 @@
 > **Metadata**
 >
 > - **Date**: 2026-05-05 19:30 EST
+> - **Revised**: 2026-05-08 (re-anchor + finding closure for E15-13-PR-01..PR-10)
 > - **Author**: Codex
 > - **Owning Epic**: [docs/epics/v0.4.0/public-demo-launch-readiness-epic.md](../../epics/v0.4.0/public-demo-launch-readiness-epic.md)
 > - **Epic Short ID**: E15
 > - **Task ID**: E15-13
 > - **Target Branch**: `feature/e15-13-roster-curation-loop`
+> - **HEAD anchor for current-state analysis**: `7340db43` (local `main` at review time; includes the post-E15-21 curation-sync contract wording and curation-job failure-loop fix)
 > - **Review Coverage Target**: 2
 
 ---
@@ -48,12 +50,24 @@ The assessment and spec show that WordPress roster curation, backend curation re
 
 ## Current State Analysis
 
-- `commit_roster_cluster` creates/binds local persons and emits `cluster_person_bound`, but the payload lacks the authoritative person label.
-- Backend `curation_sync_service` applies `roster_id` but does not turn `cluster_person_bound` into the same newly-labeled-cluster suggestion workflow.
-- `refresh_for_cluster` updates existing pending suggestions only; it does not create missing suggestions after merge cleanup.
-- Roster entries return `id`, `name`, `tags`, `cluster_count`, and `updated_at` only.
-- Cluster cards list raw cluster rows and do not collapse by person or explain curriculum review state.
-- Existing adapter timeouts, circuit breakers, session timeouts, and pool isolation should be preserved.
+Anchored to local `main` HEAD `7340db43` (2026-05-08 review-time baseline). Predecessor task plans `E15-19-preimpl-roster-refresh-projection-foundation-task-plan.md` and `E15-21-preimpl-roster-routes-and-evidence-task-plan.md` (both merged) plus the post-merge fix series shipped most of the projection envelope and durable replay scaffolding. This baseline also includes the newer curation-sync contract wording and curation-job failure-loop fix that were not present at `5a3d6ac1`. E15-13 closes the *residual gaps* listed below.
+
+### Already shipped (do NOT re-do)
+
+- **`cluster_person_bound` implementation now carries authoritative person label, but the canonical contract doc still needs co-change in E15-13.** `apps/prototype-wp-alt-context/src/api/class-api.php` resolves `$resolved_person_name` and emits `person_name` in the bind payload (api.php:345, 363-364, 401-402, 472-473). Commit `c8339027 feat(roster): carry person_name in cluster bind replay`. Backend `_resolve_desired_label` reads `payload["person_name"]` for `cluster_person_bound` (`roster/application/curation_sync_service.py:373-377`). `docs/agentic/contracts/curation-sync-api.md` is still the source-of-truth contract surface that Slice 2 must update so the documented payload matches the shipped emitter/reader behavior.
+- **Per-event durable refresh lifecycle.** `apps/prototype-description-service/recognition/application/orchestration/curation_job.py:135-222` records `CurationRefreshStatus` transitions (`RUNNING → TIMED_OUT | FAILED | COMPLETED | NO_CANDIDATES`) against the replay session, with fallback to `refresh_for_identity`. Commits `c9cfb532 feat(roster): persist refresh followup lifecycle`, `3e650bc2 feat(refresh): persist no-candidate replay status`, `c9093c33 feat(refresh): persist timeout replay status`, `4420dbd6 feat(refresh): restamp retry replay attempt timestamps`, `65ae2c74 fix(refresh): sync migration replay statuses`.
+- **Roster-entry projection envelope.** `packages/shared-contracts/schemas/roster-entry.schema.json` already requires `person_uuid`, `source_version`, `projection_status` (`current | refreshing | stale | failed`), and `projection_refreshed_at`. The generated TS type is at `apps/prototype-wp-alt-context/js/admin/api/generated/roster-entry.ts`. `RosterEntryProjectionRepository` and its PHPUnit test exist (`apps/prototype-wp-alt-context/src/sovereign/repositories/class-roster-entry-projection-repository.php`, `apps/prototype-wp-alt-context/tests/Unit/RosterEntryProjectionRepositoryTest.php`).
+- **`cluster_person_unbound` outbox path.** `apps/prototype-wp-alt-context/src/api/class-api.php:466` emits `cluster_person_unbound` when `person_id` is null. Backend `roster/application/curation_sync_service.py:65, 355` registers and resolves the unbind path.
+
+### Residual gaps E15-13 closes
+
+- **Backend `curation_sync_service.py` does not yet branch `cluster_person_bound` into the same newly-labeled-cluster suggestion-surfacing workflow** that backend direct label edits use; replay only updates the cluster label, then `curation_job.run_curation_job` calls `refresh_for_cluster` per cluster. The plan's RCL-001 / RCL-002 work formalises a single `PostCurationEvent` mapping for both bind and unbind (see RCL-001 done-when extensions in Slice 2), updates `docs/agentic/contracts/curation-sync-api.md` so `cluster_person_bound` documents authoritative `person_name` semantics, and routes through a `refresh_after_curation`-style entrypoint that creates *missing* suggestions, not only refreshes existing ones (`refresh_service.py:377` `refresh_for_cluster` returns 0 when no pending suggestions exist).
+- **No nested `clusters[].instances[]` review payload on roster entries.** The projection envelope is in place but `clusters`, `representative_identity`, and per-instance `bbox/media_url/similarity` arrays from RCL-004 are still absent from the schema and the WP API response.
+- **Cluster cards still list raw cluster rows** and do not collapse by `person_uuid`, mark merged/superseded topology, or distinguish unresolved-machine-cluster from curated-person-cluster (RCL-005). The cluster drawer does not yet navigate to a person review surface by `person_uuid`.
+- **Curriculum review queues are not surfaced as product UI** (RCL-008): no `singleton-proposals`, `hard-examples`, or `needs-confirmation-after-merge` queues with counts, evidence, and accept/dismiss/defer wiring.
+- **Enhanced score evidence (RCL-009)** depends on RCL-002/RCL-004 fields landing first; no Slice currently consumes `score.type`, threshold/floor, or recomputation timestamps.
+- **Spec terminology drift.** Spec and plan use `SuggestionRefreshStatus`; the implemented enum is `CurationRefreshStatus`. Slice 2 reconciles.
+- **Aggregate refresh metrics/SLOs are not split out from per-event status (RCL-007).** Existing adapter timeouts, circuit breakers, session timeouts, and pool isolation must be preserved unchanged.
 
 ## Target Outcome
 
@@ -68,6 +82,7 @@ A successful cluster label or person bind immediately creates a local person rev
 - Rules: `docs/agentic/rules/backend-python-guidelines.md`
 - Spec: `docs/specs/recognition-roster-curation-loop-spec.md`
 - ADR: `docs/adrs/ADR-009-recognition-curation-refresh-and-person-review-projection.md`
+- Contract: `docs/agentic/contracts/curation-sync-api.md`
 - Assessment: `docs/assessments/current/recognition-roster-suggestion-workflow-assessment-2026-05-05.md`
 - Epic: `docs/epics/v0.4.0/public-demo-launch-readiness-epic.md`
 - Literature: `literature/extracted/recognition/apple/Recognizing People in Photos Through Private On-Device Machine Learning - Apple Machine Learning Research.txt`
@@ -85,7 +100,7 @@ A successful cluster label or person bind immediately creates a local person rev
 
 | Boundary | Owner | Current Contract | Expected Change | Compatibility Needed? | Verification |
 | --- | --- | --- | --- | --- | --- |
-| WordPress outbox -> backend curation replay | plugin + backend | ADR-003 and curation sync payloads | `cluster_person_bound` carries or resolves authoritative local person label and maps to a post-curation event | No compatibility shim required in greenfield, but idempotency semantics must remain | PHP outbox tests + backend curation sync tests |
+| WordPress outbox -> backend curation replay | plugin + backend | ADR-003 plus `docs/agentic/contracts/curation-sync-api.md` | `cluster_person_bound` documents and carries authoritative local `person_name`, both bind/unbind map to the same `PostCurationEvent`, and replay remains idempotent | No compatibility shim required in greenfield, but idempotency semantics must remain | PHP outbox tests + backend curation sync tests + contract/fixture proof that the doc matches emitter/reader payloads |
 | Roster entry shared schema | plugin + frontend | `packages/shared-contracts/schemas/roster-entry.schema.json` count-only entry | Person review projection with clusters, identity instances, media, bboxes, and actions | Existing UI callers must migrate in the same slice | schema fixture/codegen + Vitest/PHPUnit |
 | Suggestion refresh status | backend + plugin projection | transient logs/background task status | durable per-event refresh status projected locally | New contract; no old consumer dependency expected | backend unit tests + projection/API tests |
 | Curriculum review queues | frontend + local projection | no named queues | singleton proposals, hard examples, needs-confirmation-after-merge | Additive UI/API surface | Vitest/PHPUnit queue tests |
@@ -97,16 +112,21 @@ Deliver the curation loop in five slices. Start with deterministic proof and no 
 
 ## Files and Surfaces to Change
 
-| Surface | File | Change |
-| --- | --- | --- |
-| backend fixtures/tests | `apps/prototype-description-service/recognition/tests/fixtures/recognition/` | Add Tory Guzman and curriculum queue fixture data |
-| backend curation replay | `apps/prototype-description-service/roster/application/curation_sync_service.py` | Map curation replay to post-curation events |
-| backend suggestion refresh | `apps/prototype-description-service/recognition/application/suggestions/refresh_service.py` | Create missing suggestions, refresh existing suggestions, record per-event status |
-| backend orchestration | `apps/prototype-description-service/recognition/application/tasks/clustering.py` | Replace transient-only refresh with durable refresh entrypoint where required |
-| plugin outbox/API | `apps/prototype-wp-alt-context/src/api/class-api.php` | Include/resolves person context and expand roster entry API |
-| plugin projection/repos | `apps/prototype-wp-alt-context/src/sovereign/` | Persist/project person review and curriculum queue state |
-| shared contracts | `packages/shared-contracts/schemas/roster-entry.schema.json` | Expand roster entry schema and regenerate TS types |
-| roster UI | `apps/prototype-wp-alt-context/js/admin/pages/roster/` | Person review surface, curriculum queues, navigation, thumbnail evidence |
+State key: **(open)** = E15-13 still needs to land this. **(extend)** = predecessor work landed scaffolding; E15-13 closes residual behavior. **(preserve)** = touched only to keep working.
+
+| Surface | File | Change | State |
+| --- | --- | --- | --- |
+| backend fixtures/tests | `apps/prototype-description-service/recognition/tests/fixtures/recognition/` | Add Tory Guzman regression fixture + curriculum queue fixtures (singleton, hard examples, post-merge confirmations) | **(open)** |
+| curation sync contract doc | `docs/agentic/contracts/curation-sync-api.md` | Update `cluster_person_bound` payload semantics to include authoritative `person_name`, clarify bind/unbind `PostCurationEvent` mapping, and keep doc examples aligned with PHP emitter + backend replay reader | **(open)** |
+| backend curation replay | `apps/prototype-description-service/roster/application/curation_sync_service.py` | Branch `cluster_person_bound` and `cluster_person_unbound` into the post-curation event mapping; current `_resolve_desired_label` already reads `person_name`, but neither bind nor unbind drives the newly-labeled-cluster surfacing path | **(extend)** |
+| backend suggestion refresh | `apps/prototype-description-service/recognition/application/suggestions/refresh_service.py` | Add a `refresh_after_curation` entrypoint that creates missing singleton/cluster suggestions and refreshes existing pending ones; today `refresh_for_cluster` returns when no pending suggestions exist (refresh_service.py:377) | **(extend)** |
+| backend orchestration | `apps/prototype-description-service/recognition/application/orchestration/curation_job.py` | Route through the `PostCurationEvent` + `refresh_after_curation` boundary instead of per-cluster `refresh_for_cluster`; preserve existing replay-status persistence (curation_job.py:135-222 already does the status writes) | **(extend)** |
+| plugin outbox/API | `apps/prototype-wp-alt-context/src/api/class-api.php` | Expand `get_roster_entries` to return person clusters + identity instances + bboxes for review (projection envelope already exists; nested arrays do not) | **(extend)** |
+| plugin projection/repos | `apps/prototype-wp-alt-context/src/sovereign/` | Add curriculum-queue membership projection on top of the existing `RosterEntryProjectionRepository` | **(extend)** |
+| shared contracts | `packages/shared-contracts/schemas/roster-entry.schema.json` | Extend with `clusters[]`, `clusters[].instances[]`, and `queue_memberships` in the same RCL-004 projection slice; regenerate TS via `cd apps/prototype-wp-alt-context && npm run generate:contracts` | **(extend)** |
+| roster UI | `apps/prototype-wp-alt-context/js/admin/pages/roster/` | Add person review review surface, curriculum queue panels, cluster-drawer navigation by `person_uuid`, thumbnail evidence; `PersonWorkspacePanel.tsx` shell already exists from E15-21 | **(extend)** |
+| naming reconciliation | `apps/prototype-description-service/roster/application/curation_sync_service.py` + spec/plan | Either rename `CurationRefreshStatus` → `SuggestionRefreshStatus` (impl + migrations) or update spec/plan + ADR-009 to adopt `CurationRefreshStatus`; pick a direction in Slice 2 | **(open)** |
+| ADR-009 owners' conditions | `docs/adrs/ADR-009-recognition-curation-refresh-and-person-review-projection.md` and `docs/specs/recognition-roster-curation-loop-spec.md` | Confirm RCL-008 queue-membership predicates remain consistent with this plan's Slice 4 ownership; no new spec edit unless RCL-009 contract widens | **(preserve)** |
 
 ## Related Files
 
@@ -126,8 +146,9 @@ Deliver the curation loop in five slices. Start with deterministic proof and no 
   - `cd apps/prototype-wp-alt-context && vendor/bin/phpunit tests/Unit`
   - `cd apps/prototype-wp-alt-context && npm test -- --run js/admin/pages/roster`
 - Contract/fixture verification:
-  - shared contract schema/codegen check for `roster-entry`
-  - fixture proof that Tory Guzman singleton becomes a suggestion after curation
+  - curation-sync contract/doc parity: update `docs/agentic/contracts/curation-sync-api.md` in the same slice that wires bind/unbind `PostCurationEvent`, then prove the documented payload matches the PHP emitter and backend replay reader.
+  - shared contract regen + consumer tests: `cd apps/prototype-wp-alt-context && npm run generate:contracts && vendor/bin/phpunit tests/Unit/RosterEntryProjectionRepositoryTest.php && npm test -- --run js/admin/pages/roster` (replaces the prior docs-only `plan-analyze` proof for contract drift)
+  - fixture proof that Tory Guzman singleton becomes a suggestion after curation (failing in Slice 1, passing in Slice 2)
   - fixture proof for singleton proposals, hard examples, and needs-confirmation-after-merge queues
 - Runtime-parity / environment checks:
   - local WordPress roster clusters tab shows person-aware grouping and curriculum queues after a seeded curation flow
@@ -163,10 +184,14 @@ Literature guardrail: DDIA's message-queue/event processing model and Release It
 
 Changes:
 
-- Implement post-curation event mapping from backend label edits, WordPress outbox replay, merge cleanup, and batch job completion.
-- Carry or resolve authoritative local person label for `cluster_person_bound`.
-- Add per-event `SuggestionRefreshStatus`.
-- Ensure refresh creates missing suggestions and refreshes existing pending suggestions.
+- **Confirm ADR-009 conditional accept** (`codex_conditional_accept_adr009_e15_planning_gate_20260506`) before any RCL-001 contract edit; record the confirmation as a `record_event(event_kind="decision", ...)` entry on this task ref.
+- Implement post-curation event mapping from backend label edits, WordPress outbox replay (`cluster_person_bound` **and `cluster_person_unbound`**), merge cleanup, and batch job completion. Both bind and unbind must route through the same `PostCurationEvent` envelope; unbind clears person association without dropping suggestion-refresh durability.
+- Update `docs/agentic/contracts/curation-sync-api.md` in the same slice that wires replay behavior so `cluster_person_bound` documents authoritative local `person_name` semantics and the bind/unbind payload examples match the PHP emitter and backend replay reader.
+- Carry or resolve authoritative local person label for `cluster_person_bound` (already shipped in `class-api.php`; Slice 2 wires the backend branch into the surfacing path and co-changes the canonical contract doc).
+- **Resolve naming drift between `CurationRefreshStatus` (impl) and `SuggestionRefreshStatus` (spec)**: pick one direction in this slice — either rename the Python enum + migrations or amend ADR-009 and the spec to adopt `CurationRefreshStatus`. Record the decision as a slice decision and update the Terminology section to drop the dual-name disclaimer.
+- Persist per-event refresh status using the chosen name, including the `not_applicable` branch for unbind events that have no candidate work.
+- Ensure refresh creates missing suggestions (new `refresh_after_curation` entrypoint) and refreshes existing pending suggestions (today's `refresh_for_cluster` short-circuits at `refresh_service.py:377`).
+- **Flip Slice 1's Tory Guzman fixture from failing to passing** as the slice's green gate; record the passing `record_event(event_kind="test_result", passed=true, ...)` against the implementing commit.
 
 Proof:
 
@@ -181,7 +206,7 @@ Literature guardrail: DDIA's materialized-view framing requires the person revie
 
 Changes:
 
-- Expand roster entry schema/API to include person UUID, clusters, identity instances, media, bboxes, representative evidence, and review actions.
+- Expand roster entry schema/API to include person UUID, clusters, identity instances, media, bboxes, representative evidence, `queue_memberships`, and review actions.
 - Regenerate shared TypeScript types.
 - Make cluster drawer navigation link to person review by `person_uuid`.
 - Group/collapse cluster list by person where appropriate.
@@ -200,7 +225,7 @@ Literature guardrail: Modern Software Engineering's empirical feedback loop maps
 
 Changes:
 
-- Add singleton proposals, hard examples, and needs-confirmation-after-merge queues.
+- Add singleton proposals, hard examples, and needs-confirmation-after-merge queues by consuming the `queue_memberships` projection landed in Slice 3/RCL-004 (RCL-008 only — enhanced score evidence moves to Slice 5).
 - Show queue counts, candidate evidence, target person/cluster context, and empty states.
 - Wire accept/dismiss/defer to existing or new review actions.
 - Add enhanced score evidence only after backend/shared fields exist.
@@ -235,8 +260,8 @@ Proof:
 | Lane ID | Owned Paths | Upstream Dependencies | Required Tests |
 | --- | --- | --- | --- |
 | `backend-refresh` | `apps/prototype-description-service/**` | Slice 1 fixture decisions, ADR-009 | `pyenv exec pytest apps/prototype-description-service/recognition/tests apps/prototype-description-service/roster` |
-| `wp-projection-ui` | `apps/prototype-wp-alt-context/**`, `packages/shared-contracts/**` | ADR-009, Slice 2 contract shape | `cd apps/prototype-wp-alt-context && vendor/bin/phpunit tests/Unit && npm test -- --run js/admin/pages/roster` |
-| `docs-contracts` | `docs/**`, shared schema docs | All slices | `make plan-analyze DOC=docs/tasks/15.0/E15-13-roster-curation-loop-task-plan.md` |
+| `wp-projection-ui` | `apps/prototype-wp-alt-context/src/**`, `apps/prototype-wp-alt-context/tests/Unit/**`, `apps/prototype-wp-alt-context/js/admin/pages/roster/**`, `apps/prototype-wp-alt-context/js/admin/components/**` | `docs-contracts` schema/codegen handoff, ADR-009, Slice 2 contract shape | `cd apps/prototype-wp-alt-context && vendor/bin/phpunit tests/Unit && npm test -- --run js/admin/pages/roster` |
+| `docs-contracts` | `docs/**`, `packages/shared-contracts/**`, `apps/prototype-wp-alt-context/js/admin/api/generated/**` | ADR-009 owners' conditions, Slice 2 naming/contract decision | `cd apps/prototype-wp-alt-context && npm run generate:contracts && vendor/bin/phpunit tests/Unit/RosterEntryProjectionRepositoryTest.php && npm test -- --run js/admin/pages/roster && make plan-review DOC=docs/tasks/15.0/E15-13-roster-curation-loop-task-plan.md` (regenerate shared TS types from JSON Schema, prove PHP + TS consumers compile/test against the regenerated artifacts, and re-run planning review once the contract/doc surfaces converge) |
 
 ### Merge Order
 

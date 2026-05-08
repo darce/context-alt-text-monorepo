@@ -257,10 +257,14 @@ describe('ClusterDrawerPanel', () => {
         rosterEntries={[
           {
             id: 42,
+            person_uuid: 'person-uuid-alex',
             name: 'Alex Carter',
             tags: ['event'],
             cluster_count: 3,
             updated_at: '2026-01-01T00:00:00Z',
+            source_version: 1,
+            projection_status: 'current',
+            projection_refreshed_at: '2026-01-01T00:00:00Z',
           },
         ]}
         isDetailLoading={false}
@@ -300,10 +304,14 @@ describe('ClusterDrawerPanel', () => {
         rosterEntries={[
           {
             id: 42,
+            person_uuid: 'person-uuid-alex',
             name: 'Alex Carter',
             tags: ['event'],
             cluster_count: 3,
             updated_at: '2026-01-01T00:00:00Z',
+            source_version: 1,
+            projection_status: 'current',
+            projection_refreshed_at: '2026-01-01T00:00:00Z',
           },
         ]}
         isDetailLoading={false}
@@ -339,10 +347,14 @@ describe('ClusterDrawerPanel', () => {
         rosterEntries={[
           {
             id: 42,
+            person_uuid: 'person-uuid-alex',
             name: 'Alex Carter',
             tags: ['event'],
             cluster_count: 3,
             updated_at: '2026-01-01T00:00:00Z',
+            source_version: 1,
+            projection_status: 'current',
+            projection_refreshed_at: '2026-01-01T00:00:00Z',
           },
         ]}
         isDetailLoading={false}
@@ -376,10 +388,14 @@ describe('ClusterDrawerPanel', () => {
         rosterEntries={[
           {
             id: 42,
+            person_uuid: 'person-uuid-alex',
             name: 'Alex Carter',
             tags: ['event'],
             cluster_count: 3,
             updated_at: '2026-01-01T00:00:00Z',
+            source_version: 1,
+            projection_status: 'current',
+            projection_refreshed_at: '2026-01-01T00:00:00Z',
           },
         ]}
         isDetailLoading={false}

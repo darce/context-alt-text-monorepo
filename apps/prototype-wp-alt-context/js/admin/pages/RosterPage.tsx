@@ -32,12 +32,9 @@ interface ParsedRosterRoute {
   requiresProjectionGateNotice: boolean;
 }
 
-type ProjectionAwareRosterEntry = RosterEntry & {
-  person_uuid?: unknown;
-  projection_status?: unknown;
-  representative_face?: unknown;
-  queue_memberships?: unknown;
-};
+type ProjectionStatus = RosterEntry['projection_status'];
+
+const PROJECTION_STATUSES = new Set<ProjectionStatus>(['current', 'refreshing', 'stale', 'failed']);
 
 const getRouteParam = (searchParams: URLSearchParams, key: string): string | null => {
   const value = searchParams.get(key)?.trim();
@@ -46,6 +43,21 @@ const getRouteParam = (searchParams: URLSearchParams, key: string): string | nul
   }
 
   return value;
+};
+
+// Tolerate fixtures and legacy callers that omit the canonical RCL-004 fields by treating
+// missing/non-string values as 'no projection'. Strict typecheck handles new code paths.
+const getEntryProjectionStatus = (entry: RosterEntry): ProjectionStatus | null => {
+  const raw: unknown = entry.projection_status;
+  if (typeof raw !== 'string') {
+    return null;
+  }
+  return PROJECTION_STATUSES.has(raw as ProjectionStatus) ? (raw as ProjectionStatus) : null;
+};
+
+const getEntryPersonUuid = (entry: RosterEntry): string | null => {
+  const raw: unknown = entry.person_uuid;
+  return typeof raw === 'string' && raw.length > 0 ? raw : null;
 };
 
 const getLegacyTab = (searchParams: URLSearchParams): RosterTab => {
@@ -86,21 +98,52 @@ const parseRosterRoute = (searchParams: URLSearchParams): ParsedRosterRoute => {
   };
 };
 
-const hasPersonWorkspaceProjection = (entries: readonly RosterEntry[]): boolean =>
-  entries.some((entry) => {
-    const candidate = entry as ProjectionAwareRosterEntry;
-    return (
-      typeof candidate.person_uuid === 'string' &&
-      candidate.person_uuid.length > 0 &&
-      typeof candidate.projection_status === 'string' &&
-      candidate.projection_status.length > 0 &&
-      candidate.representative_face !== undefined &&
-      candidate.queue_memberships !== undefined
-    );
-  });
+const hasCanonicalProjectionShape = (entries: readonly RosterEntry[]): boolean =>
+  entries.some((entry) => getEntryPersonUuid(entry) !== null && getEntryProjectionStatus(entry) !== null);
+
+const PROJECTION_PRIORITY: Record<ProjectionStatus, number> = {
+  failed: 3,
+  stale: 2,
+  refreshing: 1,
+  current: 0,
+};
+
+const aggregateProjectionStatus = (entries: readonly RosterEntry[]): ProjectionStatus | null => {
+  let aggregate: ProjectionStatus | null = null;
+  for (const entry of entries) {
+    const status = getEntryProjectionStatus(entry);
+    if (status === null) {
+      continue;
+    }
+    if (aggregate === null || PROJECTION_PRIORITY[status] > PROJECTION_PRIORITY[aggregate]) {
+      aggregate = status;
+    }
+  }
+  return aggregate;
+};
 
 const PERSON_WORKSPACE_GATE_NOTICE = __(
   'This route is recognized, but the person workspace stays on the legacy Entries view until enriched roster projection data lands.',
+  'alt-context',
+);
+
+const PROJECTION_REFRESHING_NOTICE = __(
+  'Roster projection is refreshing. Retry once the refresh completes.',
+  'alt-context',
+);
+
+const PROJECTION_STALE_NOTICE = __(
+  'Roster projection is stale. Person workspace will resume after the next refresh.',
+  'alt-context',
+);
+
+const PROJECTION_FAILED_NOTICE = __(
+  'Roster projection failed to refresh. Person workspace is unavailable until the projection recovers.',
+  'alt-context',
+);
+
+const PERSON_ROUTE_UNMATCHED_NOTICE = __(
+  'No roster entry matches this person route yet. The workspace will appear once a matching projection row is available.',
   'alt-context',
 );
 
@@ -155,12 +198,51 @@ export const RosterPage = (): React.JSX.Element => {
   const mediaMap = useClusterMediaMap(clusters, drawerMediaIds);
   const entriesQuery = useRosterEntries();
   const rosterEntries = React.useMemo(() => entriesQuery.data ?? [], [entriesQuery.data]);
-  const personWorkspaceAvailable = React.useMemo(
-    () => hasPersonWorkspaceProjection(rosterEntries),
+  const personRouteUuid = React.useMemo(() => getRouteParam(searchParams, 'person'), [searchParams]);
+  const projectionShapeAvailable = React.useMemo(
+    () => hasCanonicalProjectionShape(rosterEntries),
     [rosterEntries],
   );
-  const routeGateNotice =
-    parsedRoute.requiresProjectionGateNotice && !personWorkspaceAvailable ? PERSON_WORKSPACE_GATE_NOTICE : null;
+  const projectionStatus = React.useMemo(
+    () => aggregateProjectionStatus(rosterEntries),
+    [rosterEntries],
+  );
+  const personWorkspaceEntry = React.useMemo(() => {
+    if (!personRouteUuid || !projectionShapeAvailable || projectionStatus !== 'current') {
+      return null;
+    }
+    return (
+      rosterEntries.find((entry) => getEntryPersonUuid(entry) === personRouteUuid) ?? null
+    );
+  }, [personRouteUuid, projectionShapeAvailable, projectionStatus, rosterEntries]);
+  const projectionStateNotice = React.useMemo(() => {
+    if (!parsedRoute.requiresProjectionGateNotice) {
+      return null;
+    }
+    if (!projectionShapeAvailable) {
+      return PERSON_WORKSPACE_GATE_NOTICE;
+    }
+    if (projectionStatus === 'refreshing') {
+      return PROJECTION_REFRESHING_NOTICE;
+    }
+    if (projectionStatus === 'stale') {
+      return PROJECTION_STALE_NOTICE;
+    }
+    if (projectionStatus === 'failed') {
+      return PROJECTION_FAILED_NOTICE;
+    }
+    if (personRouteUuid && projectionStatus === 'current' && personWorkspaceEntry === null) {
+      return PERSON_ROUTE_UNMATCHED_NOTICE;
+    }
+    return null;
+  }, [
+    parsedRoute.requiresProjectionGateNotice,
+    projectionShapeAvailable,
+    projectionStatus,
+    personRouteUuid,
+    personWorkspaceEntry,
+  ]);
+  const routeGateNotice = personWorkspaceEntry === null ? projectionStateNotice : null;
 
   const dragDrop = useClusterDragDrop();
 
@@ -349,6 +431,28 @@ export const RosterPage = (): React.JSX.Element => {
 
         <TabsContent value={ROSTER_TABS.entries.id} className="acx-roster__panel">
           <h2>{ROSTER_TABS.entries.label}</h2>
+          {personWorkspaceEntry !== null && (
+            <section
+              className="acx-roster__person-workspace"
+              role="region"
+              aria-label={sprintf(
+                // translators: %s: person display name
+                __('Person workspace: %s', 'alt-context'),
+                personWorkspaceEntry.name,
+              )}
+            >
+              <header className="acx-roster__person-workspace-header">
+                <h3>{personWorkspaceEntry.name}</h3>
+                <p className="acx-roster__person-workspace-meta">
+                  {sprintf(
+                    // translators: %d: cluster count assigned to this person
+                    __('%d clusters assigned', 'alt-context'),
+                    personWorkspaceEntry.cluster_count,
+                  )}
+                </p>
+              </header>
+            </section>
+          )}
           <RosterEntriesSection query={entriesQuery} routeNotice={routeGateNotice} />
         </TabsContent>
 

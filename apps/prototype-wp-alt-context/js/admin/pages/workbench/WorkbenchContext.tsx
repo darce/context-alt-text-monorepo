@@ -13,6 +13,7 @@ import type { ClusterResponse, WorkbenchOverlay } from '../../api/recognition';
 import type { WorkbenchMediaStatus } from '../../api/workbenchMediaApi';
 import type { PipelinePhase } from '../../hooks/jobStateMachineUtils';
 import type { ProjectionSyncState } from '../../hooks/useJobStateMachineEffects';
+import type { RecognitionHistorySource } from '../../hooks/useRecognitionJobHistory';
 
 export const TAB_IDS = {
   scan: 'scan',
@@ -58,6 +59,7 @@ interface WorkbenchContextValue {
   jobId: string | undefined | null;
   jobHistory: string[];
   jobStatuses: Record<string, string>;
+  historySource: RecognitionHistorySource;
   rememberJob: (id: string) => void;
   selectJob: (id: string) => void;
   forgetJob: (id: string) => void;
@@ -139,8 +141,16 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     clusterId: null,
   });
 
-  const { jobId, jobHistory, jobStatuses, rememberJob, selectJob, forgetJob, clearHistory } =
-    useRecognitionJobHistory();
+  const {
+    jobId,
+    jobHistory,
+    jobStatuses,
+    historySource = 'unavailable',
+    rememberJob,
+    selectJob,
+    forgetJob,
+    clearHistory,
+  } = useRecognitionJobHistory();
   const { selection, selectedMedia, toggleRow, toggleAll, isPageFullySelected } = useMediaSelectionState();
   const {
     searchQuery,
@@ -285,6 +295,7 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       jobId,
       jobHistory,
       jobStatuses,
+      historySource,
       rememberJob,
       selectJob,
       forgetJob,
@@ -343,6 +354,7 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       jobId,
       jobHistory,
       jobStatuses,
+      historySource,
       rememberJob,
       selectJob,
       forgetJob,

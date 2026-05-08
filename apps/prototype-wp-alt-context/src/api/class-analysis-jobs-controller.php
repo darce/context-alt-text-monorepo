@@ -104,6 +104,16 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 
 		register_rest_route(
 			'acx/v1',
+			'/recognition/batch-runs',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'get_recent_batch_runs' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
 			'/recognition/batch-runs/(?P<run_id>[a-f0-9-]+)',
 			array(
 				'methods'             => 'GET',
@@ -234,8 +244,9 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 						$multipart_result->get_error_message()
 					)
 				);
+			} else {
+				$this->record_batch_run_success_from_response( $batch_context, $multipart_result, $media_items, $unreadable_media_ids );
 			}
-			$this->record_batch_run_success_from_response( $batch_context, $multipart_result, $media_items, $unreadable_media_ids );
 			return $multipart_result;
 		}
 
@@ -449,6 +460,20 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 		}
 
 		return $response;
+	}
+
+	public function get_recent_batch_runs( WP_REST_Request $request ): WP_REST_Response {
+		$limit = max( 1, min( 10, absint( $request->get_param( 'limit' ) ) ) );
+		if ( 0 === absint( $request->get_param( 'limit' ) ) ) {
+			$limit = 5;
+		}
+
+		return new WP_REST_Response(
+			array(
+				'items' => $this->batch_run_repository->list_recent_runs( $this->get_tenant_id(), $limit ),
+			),
+			200
+		);
 	}
 
 	public function get_batch_run_status( WP_REST_Request $request ): WP_REST_Response|WP_Error {

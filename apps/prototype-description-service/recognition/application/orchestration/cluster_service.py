@@ -323,7 +323,17 @@ class ClusterService:
             and self.suggestion_refresh_service is not None
         ):
             try:
-                surfaced = await self.suggestion_refresh_service.surface_for_newly_labeled_cluster(cluster_id)
+                candidate_clusters = await cluster_repo.get_top_unlabeled(
+                    tenant_id,
+                    limit=1000,
+                    min_identity_count=1,
+                )
+                candidate_cluster_ids = [candidate.id for candidate in candidate_clusters if candidate.id]
+                surfaced = await self.suggestion_refresh_service.surface_for_newly_labeled_cluster(
+                    cluster_id,
+                    cluster_label=label,
+                    candidate_cluster_ids=candidate_cluster_ids,
+                )
                 if surfaced > 0:
                     logger.info(
                         "[curation] Surfaced %d suggestions after labeling cluster_id=%s label='%s'",

@@ -356,6 +356,103 @@ async def test_infer_suggested_label_from_accepted_member_suggestion_without_rep
 
 
 @pytest.mark.asyncio
+async def test_infer_suggested_label_prefers_accepted_member_signal_over_conflicting_merge_suggestion(
+    db_session: AsyncSession,
+    tenant: Tenant,
+) -> None:
+    """Accepted member evidence should win over a stronger conflicting merge suggestion."""
+    tenant_id = tenant.id
+
+    source_cluster = IdentityCluster(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        label=None,
+        identity_count=1,
+        representative_identity_id=None,
+    )
+    accepted_cluster = IdentityCluster(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        label="Accepted Label",
+        identity_count=8,
+        user_confirmed=True,
+    )
+    conflicting_cluster = IdentityCluster(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        label="Conflicting Label",
+        identity_count=9,
+        user_confirmed=True,
+    )
+    db_session.add_all([source_cluster, accepted_cluster, conflicting_cluster])
+
+    member_identity = MediaIdentity(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        media_id=12,
+        media_url="url",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=1,
+        bbox_height=1,
+        confidence=1.0,
+        embedding=[0.0] * 512,
+    )
+    db_session.add(member_identity)
+    db_session.add(
+        IdentityMember(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            cluster_id=source_cluster.id,
+            identity_id=member_identity.id,
+            similarity=0.72,
+        )
+    )
+
+    db_session.add(
+        IdentitySuggestion(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            identity_id=member_identity.id,
+            suggested_cluster_id=accepted_cluster.id,
+            representative_similarity=0.42,
+            avg_member_similarity=0.42,
+            confidence_score=0.42,
+            resolution="accepted",
+        )
+    )
+
+    merge_a = source_cluster.id
+    merge_b = conflicting_cluster.id
+    if merge_a > merge_b:
+        merge_a, merge_b = merge_b, merge_a
+
+    db_session.add(
+        ClusterMergeSuggestion(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            cluster_a_id=merge_a,
+            cluster_b_id=merge_b,
+            similarity=0.97,
+            resolution="pending",
+        )
+    )
+    await db_session.commit()
+
+    result = await infer_suggested_label(
+        tenant_id=str(tenant_id),
+        cluster_id=str(source_cluster.id),
+        session=db_session,
+    )
+
+    assert result is not None
+    assert result.label == "Accepted Label"
+    assert result.source == SuggestedLabelSource.IDENTITY
+    assert result.confidence == 0.42
+    assert result.target_cluster_id == str(accepted_cluster.id)
+
+
+@pytest.mark.asyncio
 async def test_infer_suggested_label_from_roster_match(
     db_session: AsyncSession,
     tenant: Tenant,

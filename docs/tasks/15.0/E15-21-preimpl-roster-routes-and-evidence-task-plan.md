@@ -225,6 +225,6 @@ Proof:
 
 ## Success Criteria
 
-- [ ] Roster routes parse person, queue, face, and cluster selectors deterministically.
-- [ ] Person workspace rendering waits for RCL-004 projection data.
-- [ ] Clusters are evidence routes after projection exists, not the expanding primary identity model.
+- [x] Roster routes parse person, queue, face, and cluster selectors deterministically. _(Slice 1 plus face-only fix at decision 2875; covered by `RosterPage.container.test.tsx [PAG-M3]` cases.)_
+- [x] Person workspace rendering waits for RCL-004 projection data. _(Slice 2, decision 2868; covered by `RosterPage.workspace.test.tsx`.)_
+- [x] Clusters are evidence routes after projection exists, not the expanding primary identity model. _(Slice 3 no-op decision 2869; clusters surface as evidence in the drawer/grid by default. Topology fields deferred until RCL-009 lands.)_

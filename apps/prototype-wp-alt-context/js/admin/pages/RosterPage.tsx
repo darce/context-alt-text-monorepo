@@ -3,7 +3,6 @@ import { __, sprintf } from '@wordpress/i18n';
 import { useSearchParams } from 'react-router-dom';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import type { ClusterIdentity, ClusterSummary } from '../api/recognition';
-import type { RosterEntry } from '../api/rosterApi';
 import { useRecognitionCluster, useRecognitionClusters } from '../hooks/useRecognitionHooks';
 import { useRosterEntries } from '../hooks/useRosterHooks';
 import { useClusterSelection } from '../hooks/useClusterSelection';
@@ -14,138 +13,24 @@ import { ClusterGrid } from './roster/ClusterGrid';
 import { BulkActionBar } from './roster/BulkActionBar';
 import { ClusterDrawerPanel } from './roster/ClusterDrawerPanel';
 import { RosterEntriesSection } from './roster/RosterEntriesSection';
+import { PersonWorkspacePanel } from './roster/PersonWorkspacePanel';
 import { Checkbox } from '../../components/ui/checkbox';
 import { ConfirmDialog } from './roster/ConfirmDialog';
-
-const ROSTER_TABS = {
-  entries: { id: 'entries' as const, label: __('Entries', 'alt-context') },
-  clusters: { id: 'clusters' as const, label: __('Clusters', 'alt-context') },
-} as const;
-
-type RosterTab = (typeof ROSTER_TABS)[keyof typeof ROSTER_TABS]['id'];
-
-const ROSTER_ROUTE_PARAM_KEYS = ['person', 'queue', 'face', 'cluster'] as const;
-
-interface ParsedRosterRoute {
-  activeTab: RosterTab;
-  selectedClusterId: string | null;
-  requiresProjectionGateNotice: boolean;
-}
-
-type ProjectionStatus = RosterEntry['projection_status'];
-
-const PROJECTION_STATUSES = new Set<ProjectionStatus>(['current', 'refreshing', 'stale', 'failed']);
-
-const getRouteParam = (searchParams: URLSearchParams, key: string): string | null => {
-  const value = searchParams.get(key)?.trim();
-  if (!value) {
-    return null;
-  }
-
-  return value;
-};
-
-// Tolerate fixtures and legacy callers that omit the canonical RCL-004 fields by treating
-// missing/non-string values as 'no projection'. Strict typecheck handles new code paths.
-const getEntryProjectionStatus = (entry: RosterEntry): ProjectionStatus | null => {
-  const raw: unknown = entry.projection_status;
-  if (typeof raw !== 'string') {
-    return null;
-  }
-  return PROJECTION_STATUSES.has(raw as ProjectionStatus) ? (raw as ProjectionStatus) : null;
-};
-
-const getEntryPersonUuid = (entry: RosterEntry): string | null => {
-  const raw: unknown = entry.person_uuid;
-  return typeof raw === 'string' && raw.length > 0 ? raw : null;
-};
-
-const getLegacyTab = (searchParams: URLSearchParams): RosterTab => {
-  const rawTab = getRouteParam(searchParams, 'tab');
-  return rawTab === ROSTER_TABS.clusters.id ? ROSTER_TABS.clusters.id : ROSTER_TABS.entries.id;
-};
-
-const parseRosterRoute = (searchParams: URLSearchParams): ParsedRosterRoute => {
-  if (getRouteParam(searchParams, 'person')) {
-    return {
-      activeTab: ROSTER_TABS.entries.id,
-      selectedClusterId: null,
-      requiresProjectionGateNotice: true,
-    };
-  }
-
-  if (getRouteParam(searchParams, 'queue')) {
-    return {
-      activeTab: ROSTER_TABS.entries.id,
-      selectedClusterId: null,
-      requiresProjectionGateNotice: true,
-    };
-  }
-
-  const clusterId = getRouteParam(searchParams, 'cluster');
-  if (clusterId) {
-    return {
-      activeTab: ROSTER_TABS.clusters.id,
-      selectedClusterId: clusterId,
-      requiresProjectionGateNotice: false,
-    };
-  }
-
-  return {
-    activeTab: getLegacyTab(searchParams),
-    selectedClusterId: null,
-    requiresProjectionGateNotice: false,
-  };
-};
-
-const hasCanonicalProjectionShape = (entries: readonly RosterEntry[]): boolean =>
-  entries.some((entry) => getEntryPersonUuid(entry) !== null && getEntryProjectionStatus(entry) !== null);
-
-const PROJECTION_PRIORITY: Record<ProjectionStatus, number> = {
-  failed: 3,
-  stale: 2,
-  refreshing: 1,
-  current: 0,
-};
-
-const aggregateProjectionStatus = (entries: readonly RosterEntry[]): ProjectionStatus | null => {
-  let aggregate: ProjectionStatus | null = null;
-  for (const entry of entries) {
-    const status = getEntryProjectionStatus(entry);
-    if (status === null) {
-      continue;
-    }
-    if (aggregate === null || PROJECTION_PRIORITY[status] > PROJECTION_PRIORITY[aggregate]) {
-      aggregate = status;
-    }
-  }
-  return aggregate;
-};
-
-const PERSON_WORKSPACE_GATE_NOTICE = __(
-  'This route is recognized, but the person workspace stays on the legacy Entries view until enriched roster projection data lands.',
-  'alt-context',
-);
-
-const PROJECTION_REFRESHING_NOTICE = __(
-  'Roster projection is refreshing. Retry once the refresh completes.',
-  'alt-context',
-);
-
-const PROJECTION_STALE_NOTICE = __(
-  'Roster projection is stale. Person workspace will resume after the next refresh.',
-  'alt-context',
-);
-
-const PROJECTION_FAILED_NOTICE = __(
-  'Roster projection failed to refresh. Person workspace is unavailable until the projection recovers.',
-  'alt-context',
-);
-
-const PERSON_ROUTE_UNMATCHED_NOTICE = __(
-  'No roster entry matches this person route yet. The workspace will appear once a matching projection row is available.',
-  'alt-context',
-);
+import {
+  ROSTER_TABS,
+  ROSTER_ROUTE_PARAM_KEYS,
+  type RosterTab,
+  parseRosterRoute,
+  getRouteParam,
+  getEntryPersonUuid,
+  hasCanonicalProjectionShape,
+  aggregateProjectionStatus,
+  PERSON_WORKSPACE_GATE_NOTICE,
+  PROJECTION_REFRESHING_NOTICE,
+  PROJECTION_STALE_NOTICE,
+  PROJECTION_FAILED_NOTICE,
+  PERSON_ROUTE_UNMATCHED_NOTICE,
+} from './roster/rosterRoute';
 
 export const RosterPage = (): React.JSX.Element => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -431,28 +316,7 @@ export const RosterPage = (): React.JSX.Element => {
 
         <TabsContent value={ROSTER_TABS.entries.id} className="acx-roster__panel">
           <h2>{ROSTER_TABS.entries.label}</h2>
-          {personWorkspaceEntry !== null && (
-            <section
-              className="acx-roster__person-workspace"
-              role="region"
-              aria-label={sprintf(
-                // translators: %s: person display name
-                __('Person workspace: %s', 'alt-context'),
-                personWorkspaceEntry.name,
-              )}
-            >
-              <header className="acx-roster__person-workspace-header">
-                <h3>{personWorkspaceEntry.name}</h3>
-                <p className="acx-roster__person-workspace-meta">
-                  {sprintf(
-                    // translators: %d: cluster count assigned to this person
-                    __('%d clusters assigned', 'alt-context'),
-                    personWorkspaceEntry.cluster_count,
-                  )}
-                </p>
-              </header>
-            </section>
-          )}
+          {personWorkspaceEntry !== null && <PersonWorkspacePanel entry={personWorkspaceEntry} />}
           <RosterEntriesSection query={entriesQuery} routeNotice={routeGateNotice} />
         </TabsContent>
 

@@ -294,26 +294,26 @@ make lane-manifest-init TASK=E15-13 LANE_IDS='backend-refresh wp-projection-ui d
 
 ### Checklist for Slice 1: Reproduction and Curriculum Fixtures
 
-- [ ] Replayed-bind singleton regression coverage exists.
-- [ ] Curriculum fixture states cover singleton proposals, hard examples, and needs-confirmation-after-merge.
-- [ ] Existing-field UI cleanup does not change backend/shared contracts.
-- [ ] Verification evidence captured.
+- [x] Replayed-bind singleton regression coverage exists.
+- [x] Curriculum fixture states cover singleton proposals, hard examples, and needs-confirmation-after-merge.
+- [x] Existing-field UI cleanup does not change backend/shared contracts.
+- [x] Verification evidence captured.
 
 ### Checklist for Slice 2: ADR-Backed Event and Refresh Status Contract
 
-- [ ] Post-curation event mapping exists for all curation paths.
-- [ ] `cluster_person_bound` carries or resolves authoritative local person label.
-- [ ] Per-event `CurationRefreshStatus` is persisted or otherwise durable.
-- [ ] Missing suggestions are created and existing suggestions are refreshed.
-- [ ] Replay/idempotency tests pass.
+- [x] Post-curation event mapping exists for all curation paths.
+- [x] `cluster_person_bound` carries or resolves authoritative local person label.
+- [x] Per-event `CurationRefreshStatus` is persisted or otherwise durable.
+- [x] Missing suggestions are created and existing suggestions are refreshed.
+- [x] Replay/idempotency tests pass.
 
 ### Checklist for Slice 3: Person Review Projection and Cluster Navigation
 
-- [ ] Roster entry schema/API returns person clusters and identity instances.
-- [ ] Shared generated TypeScript types are updated.
+- [x] Roster entry schema/API returns person clusters and identity instances.
+- [x] Shared generated TypeScript types are updated.
 - [ ] Entries tab can review all images/instances for a curated person.
-- [ ] Cluster drawer navigates by `person_uuid`.
-- [ ] Person-aware cluster grouping is covered by tests.
+- [x] Cluster drawer navigates by `person_uuid`.
+- [x] Person-aware cluster grouping is covered by tests.
 
 ### Checklist for Slice 4: Curriculum Review Queue UI
 

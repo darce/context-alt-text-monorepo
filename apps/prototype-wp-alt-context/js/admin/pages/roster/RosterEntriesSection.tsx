@@ -26,6 +26,13 @@ const QUEUE_FILTERS: Record<QueueFilterId, { badge: string; status: string; empt
   },
 };
 
+const QUEUE_REVIEW_ROUTES: Partial<Record<QueueFilterId, { href: string; label: string }>> = {
+  'singleton-proposals': {
+    href: '#/workbench?tab=scan',
+    label: __('Review singleton proposals in Workbench', 'alt-context'),
+  },
+};
+
 const isQueueFilterId = (value: string | null): value is QueueFilterId =>
   value !== null && Object.hasOwn(QUEUE_FILTERS, value);
 
@@ -62,6 +69,7 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
   const activeFilterBadge = queueFilter !== null ? QUEUE_FILTERS[queueFilter].badge : isUnassignedFilter ? __('Filtered: Unassigned', 'alt-context') : null;
   const activeFilterStatus = queueFilter !== null ? QUEUE_FILTERS[queueFilter].status : isUnassignedFilter ? __('Showing unassigned people only.', 'alt-context') : null;
   const emptyFilterMessage = queueFilter !== null ? QUEUE_FILTERS[queueFilter].empty : isUnassignedFilter ? __('No unassigned people found.', 'alt-context') : null;
+  const queueReviewRoute = queueFilter !== null ? QUEUE_REVIEW_ROUTES[queueFilter] ?? null : null;
 
   const clearFilter = () => {
     setSearchParams(
@@ -126,6 +134,11 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
       {activeFilterStatus && (
         <div className="acx-roster-section__filter" role="status">
           <p>{activeFilterStatus}</p>
+          {queueReviewRoute && (
+            <a href={queueReviewRoute.href} className="acx-link-button">
+              {queueReviewRoute.label}
+            </a>
+          )}
           <button type="button" className="acx-link-button" onClick={clearFilter}>
             {__('Clear filter', 'alt-context')}
           </button>

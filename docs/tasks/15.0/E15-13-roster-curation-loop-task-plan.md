@@ -311,7 +311,7 @@ make lane-manifest-init TASK=E15-13 LANE_IDS='backend-refresh wp-projection-ui d
 
 - [x] Roster entry schema/API returns person clusters and identity instances.
 - [x] Shared generated TypeScript types are updated.
-- [ ] Entries tab can review all images/instances for a curated person.
+- [x] Entries tab can review all images/instances for a curated person.
 - [x] Cluster drawer navigates by `person_uuid`.
 - [x] Person-aware cluster grouping is covered by tests.
 

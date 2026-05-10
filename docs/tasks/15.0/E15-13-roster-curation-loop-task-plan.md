@@ -44,7 +44,7 @@ The assessment and spec show that WordPress roster curation, backend curation re
 ## Terminology
 
 - **Post-curation event**: Durable event emitted after a label, person bind, merge cleanup, or batch clustering completion that can drive suggestion refresh.
-- **SuggestionRefreshStatus**: Per-event refresh lifecycle state: queued, running, completed, no candidates, timed out, or failed.
+- **CurationRefreshStatus**: Per-event replay refresh lifecycle state: `not_applicable`, `queued`, `running`, `completed`, `no_candidates`, `timed_out`, or `failed`.
 - **Curriculum review queue**: User-visible queue for singleton proposals, hard examples, or needs-confirmation-after-merge candidates.
 - **Person review projection**: Derived roster entry surface showing a person with clusters, identity instances, images, bboxes, and review actions.
 
@@ -66,7 +66,7 @@ Anchored to local `main` HEAD `7340db43` (2026-05-08 review-time baseline). Pred
 - **Cluster cards still list raw cluster rows** and do not collapse by `person_uuid`, mark merged/superseded topology, or distinguish unresolved-machine-cluster from curated-person-cluster (RCL-005). The cluster drawer does not yet navigate to a person review surface by `person_uuid`.
 - **Curriculum review queues are not surfaced as product UI** (RCL-008): no `singleton-proposals`, `hard-examples`, or `needs-confirmation-after-merge` queues with counts, evidence, and accept/dismiss/defer wiring.
 - **Enhanced score evidence (RCL-009)** depends on RCL-002/RCL-004 fields landing first; no Slice currently consumes `score.type`, threshold/floor, or recomputation timestamps.
-- **Spec terminology drift.** Spec and plan use `SuggestionRefreshStatus`; the implemented enum is `CurationRefreshStatus`. Slice 2 reconciles.
+- **Refresh-status terminology drift.** Slice 2 standardizes the spec, ADR, contract, and task plan on the implemented `CurationRefreshStatus` name.
 - **Aggregate refresh metrics/SLOs are not split out from per-event status (RCL-007).** Existing adapter timeouts, circuit breakers, session timeouts, and pool isolation must be preserved unchanged.
 
 ## Target Outcome
@@ -125,7 +125,7 @@ State key: **(open)** = E15-13 still needs to land this. **(extend)** = predeces
 | plugin projection/repos | `apps/prototype-wp-alt-context/src/sovereign/` | Add curriculum-queue membership projection on top of the existing `RosterEntryProjectionRepository` | **(extend)** |
 | shared contracts | `packages/shared-contracts/schemas/roster-entry.schema.json` | Extend with `clusters[]`, `clusters[].instances[]`, and `queue_memberships` in the same RCL-004 projection slice; regenerate TS via `cd apps/prototype-wp-alt-context && npm run generate:contracts` | **(extend)** |
 | roster UI | `apps/prototype-wp-alt-context/js/admin/pages/roster/` | Add person review review surface, curriculum queue panels, cluster-drawer navigation by `person_uuid`, thumbnail evidence; `PersonWorkspacePanel.tsx` shell already exists from E15-21 | **(extend)** |
-| naming reconciliation | `apps/prototype-description-service/roster/application/curation_sync_service.py` + spec/plan | Either rename `CurationRefreshStatus` → `SuggestionRefreshStatus` (impl + migrations) or update spec/plan + ADR-009 to adopt `CurationRefreshStatus`; pick a direction in Slice 2 | **(open)** |
+| naming reconciliation | `apps/prototype-description-service/roster/application/curation_sync_service.py` + spec/plan | Keep `CurationRefreshStatus` as the implementation/schema canon and align the spec, ADR-009, contract, and task plan on that name in Slice 2 | **(open)** |
 | ADR-009 owners' conditions | `docs/adrs/ADR-009-recognition-curation-refresh-and-person-review-projection.md` and `docs/specs/recognition-roster-curation-loop-spec.md` | Confirm RCL-008 queue-membership predicates remain consistent with this plan's Slice 4 ownership; no new spec edit unless RCL-009 contract widens | **(preserve)** |
 
 ## Related Files
@@ -185,11 +185,11 @@ Literature guardrail: DDIA's message-queue/event processing model and Release It
 Changes:
 
 - **Confirm ADR-009 conditional accept** (`codex_conditional_accept_adr009_e15_planning_gate_20260506`) before any RCL-001 contract edit; record the confirmation as a `record_event(event_kind="decision", ...)` entry on this task ref.
-- Implement post-curation event mapping from backend label edits, WordPress outbox replay (`cluster_person_bound` **and `cluster_person_unbound`**), merge cleanup, and batch job completion. Both bind and unbind must route through the same `PostCurationEvent` envelope; unbind clears person association without dropping suggestion-refresh durability.
+- Implement post-curation event mapping from backend label edits, WordPress outbox replay (`cluster_person_bound` **and `cluster_person_unbound`**), merge cleanup, and batch job completion. Both bind and unbind must route through the same `PostCurationEvent` envelope; unbind clears person association while keeping the replay row durable and visible as `not_applicable`.
 - Update `docs/agentic/contracts/curation-sync-api.md` in the same slice that wires replay behavior so `cluster_person_bound` documents authoritative local `person_name` semantics and the bind/unbind payload examples match the PHP emitter and backend replay reader.
 - Carry or resolve authoritative local person label for `cluster_person_bound` (already shipped in `class-api.php`; Slice 2 wires the backend branch into the surfacing path and co-changes the canonical contract doc).
-- **Resolve naming drift between `CurationRefreshStatus` (impl) and `SuggestionRefreshStatus` (spec)**: pick one direction in this slice — either rename the Python enum + migrations or amend ADR-009 and the spec to adopt `CurationRefreshStatus`. Record the decision as a slice decision and update the Terminology section to drop the dual-name disclaimer.
-- Persist per-event refresh status using the chosen name, including the `not_applicable` branch for unbind events that have no candidate work.
+- **Standardize the docs on `CurationRefreshStatus`**: keep the implementation/schema name as canon, update ADR-009 plus the spec/contract/task-plan terminology, and drop the retired name from this slice.
+- Persist per-event `CurationRefreshStatus`, including the `not_applicable` branch for unbind events that have no candidate work.
 - Ensure refresh creates missing suggestions (new `refresh_after_curation` entrypoint) and refreshes existing pending suggestions (today's `refresh_for_cluster` short-circuits at `refresh_service.py:377`).
 - **Flip Slice 1's Tory Guzman fixture from failing to passing** as the slice's green gate; record the passing `record_event(event_kind="test_result", passed=true, ...)` against the implementing commit.
 
@@ -303,7 +303,7 @@ make lane-manifest-init TASK=E15-13 LANE_IDS='backend-refresh wp-projection-ui d
 
 - [ ] Post-curation event mapping exists for all curation paths.
 - [ ] `cluster_person_bound` carries or resolves authoritative local person label.
-- [ ] Per-event `SuggestionRefreshStatus` is persisted or otherwise durable.
+- [ ] Per-event `CurationRefreshStatus` is persisted or otherwise durable.
 - [ ] Missing suggestions are created and existing suggestions are refreshed.
 - [ ] Replay/idempotency tests pass.
 

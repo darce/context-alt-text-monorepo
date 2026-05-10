@@ -44,7 +44,8 @@ Timeout expectations:
   "local_revision": 5,
   "payload": {
     "cluster_uuid": "d290f1ee-6c54-4b01-90e6-d701748f0851",
-    "person_uuid": "a1b2c3d4-5e6f-7g8h-9i0j-k1l2m3n4o5p6"
+    "person_uuid": "a1b2c3d4-5e6f-7g8h-9i0j-k1l2m3n4o5p6",
+    "person_name": "Tory Guzman"
   }
 }
 ```
@@ -94,7 +95,8 @@ Timeout expectations:
 - Payload fields:
   - `cluster_uuid` (string): UUID of the cluster
   - `person_uuid` (string): UUID of the person being bound
-- Backend behavior: Sets `identity_clusters.roster_id = person_uuid`, increments `updated_at`
+  - `person_name` (string): Authoritative local person label captured at bind time
+- Backend behavior: Sets `identity_clusters.roster_id = person_uuid`, updates the cluster label from `person_name` when present, increments `updated_at`
 
 **`cluster_person_unbound`**
 
@@ -102,7 +104,8 @@ Timeout expectations:
 - Payload fields:
   - `cluster_uuid` (string): UUID of the cluster
   - `person_uuid` (null): Explicit null to signal unbinding
-- Backend behavior: Sets `identity_clusters.roster_id = NULL`, increments `updated_at`
+  - `person_name` (null): Explicit null because unbind does not carry a local label target
+- Backend behavior: Sets `identity_clusters.roster_id = NULL`, increments `updated_at`, and leaves the replay row at `not_applicable` because no suggestion refresh work is queued
 
 ### Idempotency Semantics
 
@@ -111,14 +114,14 @@ Timeout expectations:
 - Idempotency survives service restarts and process restarts
 - Plugin MUST generate unique idempotency keys per outbox operation
 - Plugin MUST NOT retry with a different idempotency key for the same mutation
-- Acknowledged cluster mutations also persist durable refresh lifecycle state on the replay row. The canonical `refresh_status` set is:
+- Acknowledged cluster mutations also persist durable refresh lifecycle state on the replay row. The canonical `CurationRefreshStatus` set is:
+  - `not_applicable`: person-only operations, unbind operations, and conflict responses never enter refresh execution
   - `queued`: cluster operations start here when refresh is required
   - `running`: worker has begun executing the refresh
   - `completed`: refresh executed and produced new candidate suggestions
   - `no_candidates`: refresh executed successfully but produced no candidates (terminal success, distinct from `completed`)
   - `timed_out`: refresh aborted by the bounded timeout guard before producing a result; eligible for retry
   - `failed`: refresh executor returned a non-recoverable error
-  - `not_applicable`: person-only operations and conflict responses never enter the refresh lifecycle
 - If the refresh executor is unavailable when the replay row would advance to `running`, the row stays `queued` so a later worker pass can retry instead of terminally failing the curation event.
 - If the refresh executor raises a non-timeout failure before replay-state persistence is available, the bounded refresh loop still aborts after that first failure; this is a control-flow guarantee only and does not add a new `refresh_status` value or alter the existing terminal status contract.
 

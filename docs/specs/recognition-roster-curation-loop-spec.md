@@ -109,7 +109,7 @@ await suggestion_refresh_status.record(result)
 
 - A post-curation refresh creates missing singleton/cluster suggestions when no pending suggestion exists.
 - Existing pending suggestions for the same target are recomputed after curation.
-- `SuggestionRefreshStatus` distinguishes queued, running, completed, no candidates, candidates created, candidates refreshed, timed out, and failed for one event.
+- `CurationRefreshStatus` distinguishes `not_applicable`, `queued`, `running`, `completed`, `no_candidates`, `timed_out`, and `failed` for one replayed curation event.
 - Long-running refreshes expose async status instead of blocking the user path.
 
 ---
@@ -355,17 +355,13 @@ Enhanced score evidence is separated from Tier 1 UI cleanup. It may use `score.t
 }
 ```
 
-### SuggestionRefreshStatus
+### CurationRefreshStatus
 
 ```json
 {
-  "refresh_id": "string",
-  "event_id": "string",
-  "status": "queued | running | completed | no_candidates | timed_out | failed",
-  "created_count": "integer",
-  "refreshed_count": "integer",
-  "error": "string | null",
-  "updated_at": "datetime"
+  "refresh_status": "not_applicable | queued | running | completed | no_candidates | timed_out | failed",
+  "refresh_requested_at": "datetime | null",
+  "refresh_completed_at": "datetime | null"
 }
 ```
 

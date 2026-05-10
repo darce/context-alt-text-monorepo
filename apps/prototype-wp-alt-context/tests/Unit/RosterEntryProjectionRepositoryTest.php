@@ -75,17 +75,77 @@ class RosterEntryProjectionRepositoryTest extends TestCase
 		$this->assertSame(34, $data[0]['source_version']);
 	}
 
-	private function seedRosterRows(): void
+	public function testListEntriesIncludesProjectedClustersAndInstances(): void
 	{
 		global $wpdb;
 
-		$wpdb->mockResults = [
+		$wpdb->tableRows['wp_acx_persons'] = [
 			[
 				'id' => 1,
 				'person_uuid' => '11111111-1111-1111-1111-111111111111',
 				'name' => 'Alice',
 				'tags' => '["friend"]',
-				'cluster_count' => 2,
+				'updated_at' => '2026-05-07 14:00:00',
+			],
+		];
+		$wpdb->tableRows['wp_acx_clusters'] = [
+			[
+				'cluster_uuid' => 'cluster-1',
+				'person_id' => 1,
+				'identity_count' => 2,
+				'representative_id' => 'identity-1',
+				'updated_at' => '2026-05-07 14:30:00',
+			],
+		];
+		$wpdb->tableRows['wp_acx_identity_members'] = [
+			[
+				'identity_uuid' => 'identity-1',
+				'cluster_uuid' => 'cluster-1',
+				'attachment_id' => 101,
+				'bbox_json' => '[0, 0, 10, 10]',
+				'thumb_path' => 'http://example.test/101.jpg',
+				'similarity' => '0.98',
+				'updated_at' => '2026-05-07 14:31:00',
+			],
+			[
+				'identity_uuid' => 'identity-2',
+				'cluster_uuid' => 'cluster-1',
+				'attachment_id' => 102,
+				'bbox_json' => '[5, 5, 12, 12]',
+				'thumb_path' => 'http://example.test/102.jpg',
+				'similarity' => '0.84',
+				'updated_at' => '2026-05-07 14:32:00',
+			],
+		];
+
+		$repository = new RosterEntryProjectionRepository(
+			new RosterEntryProjectionSyncStateSpy(
+				snapshotVersion: 55,
+				lastUpdated: '2026-05-07 18:00:00',
+				lastSyncResult: 'ok'
+			)
+		);
+
+		$data = $repository->list_entries(self::currentTenantId());
+
+		$this->assertCount(1, $data);
+		$this->assertSame(1, $data[0]['cluster_count']);
+		$this->assertCount(1, $data[0]['clusters']);
+		$this->assertSame('cluster-1', $data[0]['clusters'][0]['cluster_id']);
+		$this->assertCount(2, $data[0]['clusters'][0]['instances']);
+		$this->assertSame('identity-1', $data[0]['clusters'][0]['representative_identity']['identity_id']);
+	}
+
+	private function seedRosterRows(): void
+	{
+		global $wpdb;
+
+		$wpdb->tableRows['wp_acx_persons'] = [
+			[
+				'id' => 1,
+				'person_uuid' => '11111111-1111-1111-1111-111111111111',
+				'name' => 'Alice',
+				'tags' => '["friend"]',
 				'updated_at' => '2026-05-07 14:00:00',
 			],
 			[
@@ -93,8 +153,43 @@ class RosterEntryProjectionRepositoryTest extends TestCase
 				'person_uuid' => '22222222-2222-2222-2222-222222222222',
 				'name' => 'Bob',
 				'tags' => '[]',
-				'cluster_count' => 0,
 				'updated_at' => '2026-05-07 14:30:00',
+			],
+		];
+		$wpdb->tableRows['wp_acx_clusters'] = [
+			[
+				'cluster_uuid' => 'cluster-a',
+				'person_id' => 1,
+				'identity_count' => 1,
+				'representative_id' => 'identity-a',
+				'updated_at' => '2026-05-07 14:10:00',
+			],
+			[
+				'cluster_uuid' => 'cluster-b',
+				'person_id' => 1,
+				'identity_count' => 1,
+				'representative_id' => 'identity-b',
+				'updated_at' => '2026-05-07 14:20:00',
+			],
+		];
+		$wpdb->tableRows['wp_acx_identity_members'] = [
+			[
+				'identity_uuid' => 'identity-a',
+				'cluster_uuid' => 'cluster-a',
+				'attachment_id' => 201,
+				'bbox_json' => '[0, 0, 10, 10]',
+				'thumb_path' => 'http://example.test/201.jpg',
+				'similarity' => '0.91',
+				'updated_at' => '2026-05-07 14:11:00',
+			],
+			[
+				'identity_uuid' => 'identity-b',
+				'cluster_uuid' => 'cluster-b',
+				'attachment_id' => 202,
+				'bbox_json' => '[1, 1, 12, 12]',
+				'thumb_path' => 'http://example.test/202.jpg',
+				'similarity' => '0.88',
+				'updated_at' => '2026-05-07 14:21:00',
 			],
 		];
 	}

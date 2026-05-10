@@ -10,6 +10,7 @@
     "name",
     "tags",
     "cluster_count",
+    "clusters",
     "updated_at",
     "source_version",
     "projection_status",
@@ -42,6 +43,99 @@
       "type": "integer",
       "minimum": 0,
       "description": "Number of clusters assigned to this entry."
+    },
+    "clusters": {
+      "type": "array",
+      "description": "Projected clusters and identity instances for this person review surface.",
+      "items": {
+        "type": "object",
+        "required": [
+          "cluster_id",
+          "identity_count",
+          "representative_identity",
+          "instances"
+        ],
+        "properties": {
+          "cluster_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Stable cluster UUID." 
+          },
+          "identity_count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Number of identities currently assigned to this cluster."
+          },
+          "representative_identity": {
+            "type": ["object", "null"],
+            "description": "Representative face evidence for the cluster when available.",
+            "required": [
+              "identity_id",
+              "media_id",
+              "media_url",
+              "bbox",
+              "similarity"
+            ],
+            "properties": {
+              "identity_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "media_id": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "media_url": {
+                "type": ["string", "null"]
+              },
+              "bbox": {
+                "type": ["array", "null"],
+                "items": {
+                  "type": "number"
+                }
+              },
+              "similarity": {
+                "type": ["number", "null"]
+              }
+            }
+          },
+          "instances": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "identity_id",
+                "media_id",
+                "media_url",
+                "bbox",
+                "similarity"
+              ],
+              "properties": {
+                "identity_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "media_id": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "media_url": {
+                  "type": ["string", "null"]
+                },
+                "bbox": {
+                  "type": ["array", "null"],
+                  "items": {
+                    "type": "number"
+                  }
+                },
+                "similarity": {
+                  "type": ["number", "null"]
+                }
+              }
+            }
+          }
+        }
+      }
     },
     "updated_at": {
       "type": "string",

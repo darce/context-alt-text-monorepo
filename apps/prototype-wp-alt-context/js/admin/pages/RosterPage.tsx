@@ -25,6 +25,7 @@ import {
   getEntryPersonUuid,
   hasCanonicalProjectionShape,
   aggregateProjectionStatus,
+  selectDeterministicDefaultWorkspaceEntry,
   PERSON_WORKSPACE_GATE_NOTICE,
   PROJECTION_REFRESHING_NOTICE,
   PROJECTION_STALE_NOTICE,
@@ -84,22 +85,33 @@ export const RosterPage = (): React.JSX.Element => {
   const entriesQuery = useRosterEntries();
   const rosterEntries = React.useMemo(() => entriesQuery.data ?? [], [entriesQuery.data]);
   const personRouteUuid = React.useMemo(() => getRouteParam(searchParams, 'person'), [searchParams]);
-  const projectionShapeAvailable = React.useMemo(
-    () => hasCanonicalProjectionShape(rosterEntries),
-    [rosterEntries],
-  );
-  const projectionStatus = React.useMemo(
-    () => aggregateProjectionStatus(rosterEntries),
-    [rosterEntries],
-  );
+  const projectionShapeAvailable = React.useMemo(() => hasCanonicalProjectionShape(rosterEntries), [rosterEntries]);
+  const projectionStatus = React.useMemo(() => aggregateProjectionStatus(rosterEntries), [rosterEntries]);
   const personWorkspaceEntry = React.useMemo(() => {
     if (!personRouteUuid || !projectionShapeAvailable || projectionStatus !== 'current') {
       return null;
     }
-    return (
-      rosterEntries.find((entry) => getEntryPersonUuid(entry) === personRouteUuid) ?? null
-    );
+    return rosterEntries.find((entry) => getEntryPersonUuid(entry) === personRouteUuid) ?? null;
   }, [personRouteUuid, projectionShapeAvailable, projectionStatus, rosterEntries]);
+  const hasEntriesFilter = searchParams.get('personFilter') !== null;
+  const defaultWorkspaceRoute = React.useMemo(
+    () =>
+      activeTab === ROSTER_TABS.entries.id &&
+      parsedRoute.selectedClusterId === null &&
+      !parsedRoute.requiresProjectionGateNotice &&
+      !hasEntriesFilter,
+    [activeTab, hasEntriesFilter, parsedRoute.requiresProjectionGateNotice, parsedRoute.selectedClusterId],
+  );
+  const defaultWorkspaceEntry = React.useMemo(() => {
+    if (!defaultWorkspaceRoute) {
+      return null;
+    }
+    if (!projectionShapeAvailable || projectionStatus !== 'current') {
+      return null;
+    }
+    return selectDeterministicDefaultWorkspaceEntry(rosterEntries);
+  }, [defaultWorkspaceRoute, projectionShapeAvailable, projectionStatus, rosterEntries]);
+  const resolvedWorkspaceEntry = personWorkspaceEntry ?? defaultWorkspaceEntry;
   const projectionStateNotice = React.useMemo(() => {
     if (!parsedRoute.requiresProjectionGateNotice) {
       return null;
@@ -127,7 +139,8 @@ export const RosterPage = (): React.JSX.Element => {
     personRouteUuid,
     personWorkspaceEntry,
   ]);
-  const routeGateNotice = personWorkspaceEntry === null ? projectionStateNotice : null;
+  const routeGateNotice = resolvedWorkspaceEntry === null ? projectionStateNotice : null;
+  const defaultWorkspaceMode = defaultWorkspaceEntry !== null;
 
   const dragDrop = useClusterDragDrop();
 
@@ -186,7 +199,11 @@ export const RosterPage = (): React.JSX.Element => {
       setSearchParams(
         (previous) => {
           const next = new URLSearchParams(previous);
-          next.set('tab', value);
+          if (value === ROSTER_TABS.entries.id) {
+            next.delete('tab');
+          } else {
+            next.set('tab', value);
+          }
           for (const key of ROSTER_ROUTE_PARAM_KEYS) {
             next.delete(key);
           }
@@ -316,8 +333,8 @@ export const RosterPage = (): React.JSX.Element => {
 
         <TabsContent value={ROSTER_TABS.entries.id} className="acx-roster__panel">
           <h2>{ROSTER_TABS.entries.label}</h2>
-          {personWorkspaceEntry !== null && <PersonWorkspacePanel entry={personWorkspaceEntry} />}
-          <RosterEntriesSection query={entriesQuery} routeNotice={routeGateNotice} />
+          {resolvedWorkspaceEntry !== null && <PersonWorkspacePanel entry={resolvedWorkspaceEntry} />}
+          {!defaultWorkspaceMode && <RosterEntriesSection query={entriesQuery} routeNotice={routeGateNotice} />}
         </TabsContent>
 
         <TabsContent value={ROSTER_TABS.clusters.id} className="acx-roster__panel">

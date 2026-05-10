@@ -84,7 +84,6 @@ export const RosterPage = (): React.JSX.Element => {
   const entriesQuery = useRosterEntries();
   const rosterEntries = React.useMemo(() => entriesQuery.data ?? [], [entriesQuery.data]);
   const personRouteUuid = React.useMemo(() => getRouteParam(searchParams, 'person'), [searchParams]);
-  const bareDefaultRoute = React.useMemo(() => searchParams.toString().length === 0, [searchParams]);
   const projectionShapeAvailable = React.useMemo(
     () => hasCanonicalProjectionShape(rosterEntries),
     [rosterEntries],
@@ -101,15 +100,22 @@ export const RosterPage = (): React.JSX.Element => {
       rosterEntries.find((entry) => getEntryPersonUuid(entry) === personRouteUuid) ?? null
     );
   }, [personRouteUuid, projectionShapeAvailable, projectionStatus, rosterEntries]);
+  const defaultWorkspaceRoute = React.useMemo(
+    () =>
+      activeTab === ROSTER_TABS.entries.id &&
+      parsedRoute.selectedClusterId === null &&
+      !parsedRoute.requiresProjectionGateNotice,
+    [activeTab, parsedRoute.requiresProjectionGateNotice, parsedRoute.selectedClusterId],
+  );
   const defaultWorkspaceEntry = React.useMemo(() => {
-    if (!bareDefaultRoute) {
+    if (!defaultWorkspaceRoute) {
       return null;
     }
     if (!projectionShapeAvailable || projectionStatus !== 'current') {
       return null;
     }
     return rosterEntries.find((entry) => getEntryPersonUuid(entry) !== null) ?? null;
-  }, [bareDefaultRoute, projectionShapeAvailable, projectionStatus, rosterEntries]);
+  }, [defaultWorkspaceRoute, projectionShapeAvailable, projectionStatus, rosterEntries]);
   const resolvedWorkspaceEntry = personWorkspaceEntry ?? defaultWorkspaceEntry;
   const projectionStateNotice = React.useMemo(() => {
     if (!parsedRoute.requiresProjectionGateNotice) {
@@ -198,7 +204,11 @@ export const RosterPage = (): React.JSX.Element => {
       setSearchParams(
         (previous) => {
           const next = new URLSearchParams(previous);
-          next.set('tab', value);
+          if (value === ROSTER_TABS.entries.id) {
+            next.delete('tab');
+          } else {
+            next.set('tab', value);
+          }
           for (const key of ROSTER_ROUTE_PARAM_KEYS) {
             next.delete(key);
           }

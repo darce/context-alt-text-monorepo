@@ -361,6 +361,52 @@ class TestRefreshForIdentity:
         assert len(suggestions) == 1
         suggestion_repo.upsert_by_identity_cluster.assert_awaited_once()
 
+
+@pytest.mark.asyncio
+async def test_refresh_after_curation_surfaces_missing_candidates_before_identity_fallback(monkeypatch) -> None:
+    tenant_id = str(uuid.uuid4())
+    cluster_repo = AsyncMock()
+    cluster_repo.get_top_unlabeled = AsyncMock(
+        return_value=[MagicMock(id="candidate-1"), MagicMock(id="candidate-2")]
+    )
+
+    service = SuggestionRefreshService(
+        repository=AsyncMock(),
+        tenant_id=tenant_id,
+        cluster_repository=cluster_repo,
+        session=AsyncMock(),
+    )
+
+    refresh_cluster = AsyncMock(return_value=0)
+    surface_missing = AsyncMock(return_value=2)
+    refresh_identity = AsyncMock(return_value=[AssignmentSuggestion(
+        id="s-identity",
+        identity_id="identity-1",
+        cluster_id="cluster-1",
+        representative_similarity=0.8,
+        member_similarity=0.8,
+        status=SuggestionStatus.PENDING,
+        created_at=None,
+    )])
+
+    monkeypatch.setattr(service, "refresh_for_cluster", refresh_cluster)
+    monkeypatch.setattr(service, "surface_for_newly_labeled_cluster", surface_missing)
+    monkeypatch.setattr(service, "refresh_for_identity", refresh_identity)
+
+    refreshed = await service.refresh_after_curation(
+        cluster_id="cluster-1",
+        identity_ids=["identity-1"],
+        reason=SuggestionRefreshReason.MANUAL_ASSIGN,
+    )
+
+    assert refreshed == 2
+    refresh_cluster.assert_awaited_once_with("cluster-1")
+    surface_missing.assert_awaited_once_with(
+        "cluster-1",
+        candidate_cluster_ids=["candidate-1", "candidate-2"],
+    )
+    refresh_identity.assert_not_awaited()
+
     @pytest.mark.asyncio
     async def test_refresh_respects_gate_rejection(self) -> None:
         tenant_id = str(uuid.uuid4())

@@ -12,6 +12,24 @@
 
 ---
 
+## Disposition
+
+E15-16 is **superseded by [E15-20](E15-20-preimpl-dashboard-authority-and-priority-task-plan.md)** as the canonical PREIMPL implementation track for dashboard priority, durable activity authority, and optional diagnostics. The supersession was recorded in handoff as `cdx_decision_E15-20_supersede_e15_15_e15_16_dashboard_preimpl_tracks` (decision `2823`).
+
+The full E15-16 scope landed under E15-20 and is reachable from `main`:
+
+- **Slice 1 (Durable Activity Source Decision)** and **Slice 2 (Recent Activity Migration)** were delivered by `feat(dashboard): durable recent activity from BatchRunRepository (Slice 3)` (`a3fbee3d`, merged via `006de8c0`). Implementation surfaces:
+  - `BatchRunRepository::list_recent_runs( string $tenant_id, int $limit = 5 )` (`apps/prototype-wp-alt-context/src/sovereign/repositories/class-batch-run-repository.php`).
+  - `AnalysisJobsController::get_recent_batch_runs` exposing `GET /acx/v1/recognition/batch-runs` returning `{ items: [...] }` (`apps/prototype-wp-alt-context/src/api/class-analysis-jobs-controller.php`).
+  - `useRecognitionJobHistory` exposing `historySource` of `'durable' | 'browser_local_fallback' | 'unavailable'` and per-row `provenance: 'durable_batch_run' | 'browser_local_fallback'` (`apps/prototype-wp-alt-context/js/admin/hooks/useRecognitionJobHistory.ts`).
+  - `DashboardPage` rendering durable rows with `Durable batch run: <run_id>`, fallback rows with `Current browser memory`, and an explicit `Showing jobs remembered in this browser only.` notice (`apps/prototype-wp-alt-context/js/admin/pages/DashboardPage.tsx`).
+- **Slice 3 (Optional Sync Diagnostics Extension)** was explicitly evaluated and **not implemented**. E15-20's checklist for Slice 4 records that existing `SyncStatusResponse` fields (`sync_health`, `is_stale`, `last_sync_result`, `pending/failed_curation_operations`, `conflict_count`, `last_curation_*_at`, `topology_commands`) proved sufficient for operator triage, so no `SyncDiagnosticSummary` was added. The optionality is preserved by Slice 3's plain-language rubric (`operator question -> existing-field gap -> source rows`) for any future need.
+- **Verification**: `AnalysisJobsControllerTest::testGetRecentBatchRunsReturnsDurableItemsForCurrentTenant` covers tenant-scoped durable items; `useRecognitionJobHistory.test.tsx` covers the durable / browser-local fallback / unavailable states; `DashboardPage.test.tsx` covers the rendered Recent Activity surfaces. The covering branch review for E15-20 is review run `branch-review-e15-20-20260508-claude` (verdict `pass`, decision `claude_branch_review_e15_20_pass_after_fixes`) at SHA `df8ea24328cac8e5ae7a09e7cd2f1c48d7bfa788`.
+
+The Consolidated Checklist below is therefore ticked against landed E15-20 evidence rather than fresh E15-16 work. Any residual follow-up should re-open the relevant E15-20 surface, not this superseded plan.
+
+---
+
 ## Objective
 
 Replace misleading browser-local dashboard activity with durable job state and add sync diagnostics only where existing fields are insufficient. When this task is complete, Recent Activity has an authoritative local source or is explicitly labeled as browser-local fallback, and any new diagnostic fields have a named owner and tests.
@@ -44,7 +62,7 @@ Dashboard Tier 1 can improve hierarchy using existing fields, but [docs/specs/al
 - `useRecognitionJobHistory` reads remembered job IDs from local storage and fetches status only for those IDs.
 - `DashboardPage` renders Recent Activity as if it represents system activity.
 - The plugin has job and batch-run status endpoints by ID, but no clearly named dashboard job index in the current spec packet.
-- `wp_acx_batch_runs`, persisted through `AltContext\Sovereign\Repositories\BatchRunRepository`, is the first durable source to evaluate because it already stores `created_at`, `updated_at`, `terminal_state`, aggregate totals, and child job IDs, even though it does not yet expose a recent-runs list helper or REST endpoint.
+- `wp_acx_batch_runs`, persisted through `AltContext\Sovereign\Repositories\BatchRunRepository`, is the first durable source to evaluate because it already stores `created_at`, `updated_at`, `terminal_state`, aggregate totals, and child job IDs, and the repository already exposes `list_recent_runs( string $tenant_id, int $limit = 5 )`; the remaining open question is whether that helper meets the dashboard rubric and what REST shape should wrap it.
 - Existing sync status exposes `last_curation_acknowledged_at`, `last_curation_conflict_at`, `last_curation_failed_at`, and topology counts; it does not expose oldest failure age, dominant entity/operation, or failure trend.
 
 ## Target Outcome
@@ -73,7 +91,7 @@ Recent Activity is either backed by durable WordPress/local job records or clear
 
 ## Proposed Solution
 
-First inspect existing job and batch-run persistence to choose a durable local source. If it can support Recent Activity, add a narrow dashboard activity endpoint or hook that lists recent jobs with provenance and status. If it cannot, demote and label the local-storage feed while recording a follow-on. Add sync diagnostics only as an explicit extension with PHP tests and TypeScript rendering tests.
+First confirm whether `BatchRunRepository::list_recent_runs()` already satisfies the durable-activity rubric and choose the REST shape that would wrap it. If that helper can support Recent Activity, add a narrow dashboard activity endpoint or hook that lists recent jobs with provenance and status. If it cannot, demote and label the local-storage feed while recording a follow-on. Add sync diagnostics only as an explicit extension with PHP tests and TypeScript rendering tests.
 
 ## Files and Surfaces to Change
 
@@ -110,23 +128,25 @@ First inspect existing job and batch-run persistence to choose a durable local s
 
 ### Slice 1: Durable Activity Source Decision
 
-**Goal**: Decide and prove whether current WordPress/local job state can back Recent Activity.
+**Goal**: Confirm whether the existing recent-runs repository helper can back Recent Activity and choose the REST contract shape or fallback path.
 
 Changes:
 
-- Inspect current job/batch-run persistence and controller capabilities, starting with `wp_acx_batch_runs` via `BatchRunRepository` as the first durable-source candidate.
-- Add tests around the chosen source or demote local-storage history if no durable source exists.
-- Record an implementation decision in handoff before changing the dashboard activity contract.
+- Confirm `BatchRunRepository::list_recent_runs()` against the durability rubric, including tenant scoping, limit behavior, and the existing row fields it returns.
+- Choose the REST response shape that would wrap the helper if it qualifies, including provenance labeling and any field omissions that remain unresolved.
+- Record the implementation decision in handoff before changing the dashboard activity contract; if the helper fails the rubric, record the labeled browser-local fallback path instead.
 
 Decision rubric:
 
 - A durable source is acceptable only if it exposes `(a)` `created_at` plus current/terminal status, `(b)` per-tenant scoping consistent with the existing REST handlers, and `(c)` at least the 10 most-recent rows without relying on browser-local memory.
-- Evaluate sources in order: existing `wp_acx_batch_runs` storage via `BatchRunRepository`, an additive recent-runs controller surface layered on that storage, then a new authority only if both options fail.
+- Evaluate sources in order: existing `BatchRunRepository::list_recent_runs()` output, an additive recent-runs controller surface layered on that helper, then a new authority only if both options fail.
+- If the helper meets the rubric, Slice 1 must choose the dashboard REST shape to build on top of it, including the row fields and provenance marker needed by the UI.
 - If no durable source satisfies the rubric, Slice 1 must choose the labeled browser-local fallback path and record that decision in handoff before any UI change demotes or repaints Recent Activity.
 
 Proof:
 
-- PHP or TypeScript tests prove the chosen source/fallback behavior.
+- Handoff decision cites the helper/rubric evaluation and records the chosen REST shape or fallback path.
+- Slice 2 carries the PHP and TypeScript test obligation because Slice 1 lands a decision, not production code.
 
 ### Slice 2: Recent Activity Migration
 
@@ -150,6 +170,7 @@ Proof:
 Changes:
 
 - Name the diagnostic owner and source rows before adding fields.
+- For each proposed diagnostic field, document `operator question -> existing-field gap -> source rows / derivation owner` before adding the payload field.
 - Add optional `SyncDiagnosticSummary` payload fields if justified.
 - Render diagnostics only when present; keep counts and existing links intact.
 
@@ -160,43 +181,45 @@ Proof:
 
 ## Consolidated Checklist
 
+> All boxes below are ticked against landed E15-20 evidence per the Disposition above. Code references in parentheses point to the landed surface; verification is anchored to E15-20 review run `branch-review-e15-20-20260508-claude` (verdict `pass`).
+
 ## Context and Ownership
 
-- [ ] Loaded the dashboard spec, dashboard assessment, E15-15 plan, and handoff state before editing.
-- [ ] Confirmed whether a new ADR is required for durable job or diagnostic ownership.
-- [ ] Named the source of every new activity/diagnostic field before implementation.
+- [x] Loaded the dashboard spec, dashboard assessment, E15-15 plan, and handoff state before editing. (Done in E15-20 PREIMPL planning; superseding decision `2823`.)
+- [x] Confirmed whether a new ADR is required for durable job or diagnostic ownership. (E15-20 confirmed no new ADR; helper + narrow REST route stayed inside existing plugin ownership.)
+- [x] Named the source of every new activity/diagnostic field before implementation. (Source named: `wp_acx_batch_runs` rows via `BatchRunRepository::list_recent_runs`. Diagnostics: none added; existing `SyncStatusResponse` fields proved sufficient.)
 
 ### Checklist for Slice 1: Durable Activity Source Decision
 
-- [ ] Existing job/batch-run persistence inspected.
-- [ ] Activity source or browser-local fallback decision recorded in handoff.
-- [ ] The recorded decision applies the explicit durability rubric (`created_at` + status, tenant scoping, 10 recent rows).
-- [ ] Initial source/fallback tests captured.
+- [x] Existing job/batch-run persistence inspected. (`BatchRunRepository::list_recent_runs` evaluated and chosen as the durable source.)
+- [x] Activity source or browser-local fallback decision recorded in handoff. (E15-20 Slice 2 decision named the durable source; superseding decision `2823`.)
+- [x] The recorded decision applies the explicit durability rubric (`created_at` + status, tenant scoping, 10 recent rows). (Helper returns `created_at`/`updated_at`, `terminal_state`, `latest_job_status`, tenant-scoped rows; controller passes `MAX_JOB_HISTORY` from the UI.)
+- [x] Slice 1 proof records the chosen REST shape or fallback path without promising tests for non-shipped code. (Chosen shape: `GET /acx/v1/recognition/batch-runs` -> `{ items: RecentBatchRunActivity[] }`; tests landed alongside Slice 2 in E15-20.)
 
 ### Checklist for Slice 2: Recent Activity Migration
 
-- [ ] Recent Activity renders durable job state or explicit browser-local fallback.
-- [ ] Dashboard and Workbench hook consumers migrate together, including `jobHistory`, `jobStatuses`, `rememberJob`, `selectJob`, `forgetJob`, `clearHistory`, and `handleSelectJobFromHistory`.
-- [ ] Tests cover durable, empty, fallback, and unavailable states.
+- [x] Recent Activity renders durable job state or explicit browser-local fallback. (`DashboardPage.tsx` renders `Durable batch run: <run_id>` rows or the labeled `Showing jobs remembered in this browser only.` fallback.)
+- [x] Dashboard and Workbench hook consumers migrate together, including `jobHistory`, `jobStatuses`, `rememberJob`, `selectJob`, `forgetJob`, `clearHistory`, and `handleSelectJobFromHistory`. (`useRecognitionJobHistory` returns the full inventory; Workbench `BatchTabContent`, `ConfirmTabContent`, panels, and `WorkbenchContext` migrated in `a3fbee3d`.)
+- [x] Tests cover durable, empty, fallback, and unavailable states. (`useRecognitionJobHistory.test.tsx` exercises durable-with-rows, browser-local fallback, and unavailable; `AnalysisJobsControllerTest::testGetRecentBatchRunsReturnsDurableItemsForCurrentTenant` covers the empty/durable PHP path.)
 
 ### Checklist for Slice 3: Optional Sync Diagnostics Extension
 
-- [ ] Existing fields proved insufficient before adding diagnostics.
-- [ ] Diagnostic owner and source rows documented.
-- [ ] PHP and TypeScript tests cover optional diagnostics.
+- [x] Existing fields proved insufficient before adding diagnostics, using `operator question -> existing-field gap -> source rows / derivation owner` for each new field. (E15-20 Slice 4 evaluated the rubric and concluded existing `SyncStatusResponse` fields satisfy operator triage. No diagnostic field was added.)
+- [x] Diagnostic owner and source rows documented. (N/A — none added; the rubric remains the gating contract for any future addition.)
+- [x] PHP and TypeScript tests cover optional diagnostics. (N/A — none added; existing sync-status tests continue to cover the unchanged surface.)
 
 ## Review Readiness
 
-- [ ] No dashboard metadata is fabricated from convenience guesses such as `count(payload)` unless the contract says so.
-- [ ] Any new payload fields are additive and source-backed.
-- [ ] Handoff decision records activity source, diagnostics decision, and verification.
+- [x] No dashboard metadata is fabricated from convenience guesses such as `count(payload)` unless the contract says so. (Activity rows are mapped 1:1 from durable rows; provenance is set explicitly per source path.)
+- [x] Any new payload fields are additive and source-backed. (`{ items: RecentBatchRunActivity[] }` is a new additive route; per-row fields come from `wp_acx_batch_runs` columns.)
+- [x] Handoff decision records activity source, diagnostics decision, and verification. (Superseding decision `2823`; E15-20 review run `branch-review-e15-20-20260508-claude` records verdict `pass` at SHA `df8ea24328cac8e5ae7a09e7cd2f1c48d7bfa788`.)
 
 ## Stretch Goals
 
-- [ ] Add a small operator copy distinction between active jobs, recent durable jobs, and this-browser remembered jobs.
+- [x] Add a small operator copy distinction between active jobs, recent durable jobs, and this-browser remembered jobs. (`DashboardPage.tsx` distinguishes `Durable batch run: <run_id>` vs `Current browser memory` per row, plus the section-level `Showing jobs remembered in this browser only.` notice.)
 
 ## Success Criteria
 
-- [ ] Dashboard Recent Activity no longer presents local storage as authoritative system history.
-- [ ] Sync diagnostics, if added, are source-backed and optional.
-- [ ] Tests cover both authoritative and fallback activity behavior.
+- [x] Dashboard Recent Activity no longer presents local storage as authoritative system history. (Durable path is preferred; browser-local rows are explicitly labeled as such.)
+- [x] Sync diagnostics, if added, are source-backed and optional. (N/A vacuously — none added; rubric remains in the plan as gating for any future addition.)
+- [x] Tests cover both authoritative and fallback activity behavior. (`useRecognitionJobHistory.test.tsx` plus `AnalysisJobsControllerTest::testGetRecentBatchRunsReturnsDurableItemsForCurrentTenant`.)

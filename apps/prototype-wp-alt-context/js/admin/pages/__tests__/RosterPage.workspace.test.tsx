@@ -256,6 +256,75 @@ describe('RosterPage projection-aware workspace shell', () => {
     expect(screen.getByRole('region', { name: 'Person workspace: Alice' })).toBeInTheDocument();
   });
 
+  it('[PAG-M3-S3] renders assigned cluster evidence and all projected instances for the selected person', () => {
+    mockedUseRosterEntries.mockReturnValue(
+      createMockQuery({
+        data: [
+          projectionEntry({
+            projection_status: 'current',
+            person_uuid: 'person-uuid-1',
+            name: 'Alice',
+            clusters: [
+              {
+                cluster_id: 'cluster-alpha',
+                identity_count: 2,
+                representative_identity: {
+                  identity_id: 'identity-1',
+                  media_id: 101,
+                  media_url: 'https://example.com/rep-alpha.jpg',
+                  bbox: [0.1, 0.2, 0.3, 0.4],
+                  similarity: 0.97,
+                },
+                instances: [
+                  {
+                    identity_id: 'identity-1',
+                    media_id: 101,
+                    media_url: 'https://example.com/instance-101.jpg',
+                    bbox: [0.1, 0.2, 0.3, 0.4],
+                    similarity: 0.97,
+                  },
+                  {
+                    identity_id: 'identity-2',
+                    media_id: 102,
+                    media_url: 'https://example.com/instance-102.jpg',
+                    bbox: [0.2, 0.3, 0.4, 0.5],
+                    similarity: 0.89,
+                  },
+                ],
+              },
+            ],
+          }),
+        ],
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(
+      <MemoryRouter initialEntries={['/?person=person-uuid-1']}>
+        <RosterPage />
+      </MemoryRouter>,
+    );
+
+    const evidenceSection = screen.getByRole('region', { name: 'Assigned cluster evidence' });
+    const clusterRegion = within(evidenceSection).getByRole('region', { name: 'Cluster cluster-alpha' });
+
+    expect(within(clusterRegion).getByText('2 projected instances')).toBeInTheDocument();
+    expect(within(clusterRegion).getByRole('img', { name: 'Representative face for cluster cluster-alpha' })).toHaveAttribute(
+      'src',
+      'https://example.com/rep-alpha.jpg',
+    );
+    expect(within(clusterRegion).getByRole('img', { name: 'Instance 101 for cluster cluster-alpha' })).toHaveAttribute(
+      'src',
+      'https://example.com/instance-101.jpg',
+    );
+    expect(within(clusterRegion).getByRole('img', { name: 'Instance 102 for cluster cluster-alpha' })).toHaveAttribute(
+      'src',
+      'https://example.com/instance-102.jpg',
+    );
+  });
+
   it('[PAG-M3-S2] keeps the gate notice when projection_status is refreshing', () => {
     mockedUseRosterEntries.mockReturnValue(
       createMockQuery({

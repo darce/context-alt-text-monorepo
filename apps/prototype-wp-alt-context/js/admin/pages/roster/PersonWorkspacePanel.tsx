@@ -45,6 +45,51 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
         </p>
       </header>
 
+      <section aria-label={__('Assigned cluster evidence', 'alt-context')} role="region">
+        <h4>{__('Assigned cluster evidence', 'alt-context')}</h4>
+        {entry.clusters.length > 0 ? (
+          <div>
+            {entry.clusters.map((cluster) => (
+              <section
+                key={cluster.cluster_id}
+                role="region"
+                aria-label={sprintf(__('Cluster %s', 'alt-context'), cluster.cluster_id)}
+              >
+                <h5>{cluster.cluster_id}</h5>
+                <p>{sprintf(__('%d projected instances', 'alt-context'), cluster.instances.length)}</p>
+                {cluster.representative_identity?.media_url ? (
+                  <img
+                    src={cluster.representative_identity.media_url}
+                    alt={sprintf(__('Representative face for cluster %s', 'alt-context'), cluster.cluster_id)}
+                  />
+                ) : (
+                  <p>{__('Representative face unavailable until the next projection refresh.', 'alt-context')}</p>
+                )}
+                <div>
+                  {cluster.instances.map((instance) => (
+                    <figure key={`${cluster.cluster_id}-${instance.identity_id}-${instance.media_id}`}>
+                      {instance.media_url ? (
+                        <img
+                          src={instance.media_url}
+                          alt={sprintf(__('Instance %d for cluster %s', 'alt-context'), instance.media_id, cluster.cluster_id)}
+                        />
+                      ) : (
+                        <div aria-label={sprintf(__('Instance %d for cluster %s', 'alt-context'), instance.media_id, cluster.cluster_id)} />
+                      )}
+                      <figcaption>
+                        {sprintf(__('Identity %s · media %d', 'alt-context'), instance.identity_id, instance.media_id)}
+                      </figcaption>
+                    </figure>
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        ) : (
+          <p>{__('Assigned cluster evidence will appear after the next projection refresh.', 'alt-context')}</p>
+        )}
+      </section>
+
       <section aria-labelledby="acx-person-workspace-queues-title">
         <h4 id="acx-person-workspace-queues-title">{__('Curriculum review queues', 'alt-context')}</h4>
         <div>

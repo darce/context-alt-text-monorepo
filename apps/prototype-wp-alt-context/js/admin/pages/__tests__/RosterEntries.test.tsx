@@ -194,6 +194,17 @@ describe('RosterEntriesSection', () => {
     expect(screen.getByText('Showing singleton proposals queue only.')).toBeInTheDocument();
   });
 
+  it('routes singleton-proposals review actions to the workbench scan tab', () => {
+    const query: RosterEntriesQuery = { isLoading: false, isError: false, data: entries, refetch: vi.fn() };
+
+    renderSection(query, '/?tab=entries&queue=singleton-proposals');
+
+    expect(screen.getByRole('link', { name: 'Review singleton proposals in Workbench' })).toHaveAttribute(
+      'href',
+      '#/workbench?tab=scan',
+    );
+  });
+
   it('shows filtered empty state and allows clearing the filter', async () => {
     const query: RosterEntriesQuery = {
       isLoading: false,

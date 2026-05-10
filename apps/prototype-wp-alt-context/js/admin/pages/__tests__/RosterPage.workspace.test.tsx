@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 
 import type { RosterEntry } from '../../api/rosterApi';
@@ -197,7 +198,32 @@ describe('RosterPage projection-aware workspace shell', () => {
     );
 
     expect(screen.getByRole('region', { name: /Person workspace: Alice/i })).toBeInTheDocument();
-    expect(screen.queryByText('Managed Identities')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('roster-entries-section')).not.toBeInTheDocument();
+  });
+
+  it('[PAG-M3-S2] keeps the default workspace visible after switching to clusters and back to entries', async () => {
+    mockedUseRosterEntries.mockReturnValue(
+      createMockQuery({
+        data: [projectionEntry({ projection_status: 'current', person_uuid: 'person-uuid-1', name: 'Alice' })],
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <RosterPage />
+      </MemoryRouter>,
+    );
+
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('tab', { name: 'Clusters' }));
+    await user.click(screen.getByRole('tab', { name: 'Entries' }));
+
+    expect(screen.getByRole('region', { name: /Person workspace: Alice/i })).toBeInTheDocument();
+    expect(screen.queryByTestId('roster-entries-section')).not.toBeInTheDocument();
   });
 
   it('[PAG-M3-S2] keeps the gate notice when projection_status is refreshing', () => {

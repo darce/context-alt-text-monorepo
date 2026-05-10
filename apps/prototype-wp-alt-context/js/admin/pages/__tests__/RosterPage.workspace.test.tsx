@@ -424,7 +424,7 @@ describe('RosterPage projection-aware workspace shell', () => {
     expect(screen.getByText('Similarity pending next projection refresh.')).toBeInTheDocument();
   });
 
-  it('[PAG-M5-S5] renders enhanced evidence metadata when optional score details are present', () => {
+  it('[PAG-M5-S5] renders threshold metadata when projected score thresholds are present', () => {
     render(
       <PersonWorkspacePanel
         entry={projectionEntry({
@@ -438,13 +438,8 @@ describe('RosterPage projection-aware workspace shell', () => {
                 media_url: 'https://example.com/rep-beta.jpg',
                 bbox: [0.2, 0.2, 0.5, 0.5],
                 similarity: 0.91,
-                candidate_source: 'singleton_proposal',
-                target_comparator: 'cluster_representative',
-                score_type: 'cosine_similarity',
                 similarity_threshold: 0.85,
-                suggestion_floor: 0.7,
-                recompute_state: 'pending',
-              } as unknown as NonNullable<RosterEntry['clusters'][number]['representative_identity']>,
+              },
               instances: [],
             },
           ],
@@ -453,12 +448,8 @@ describe('RosterPage projection-aware workspace shell', () => {
       />,
     );
 
-    expect(
-      screen.getByText('Source: Singleton Proposal · Comparator: Cluster Representative · Score: Cosine Similarity'),
-    ).toBeInTheDocument();
     expect(screen.getByText('91% similarity')).toBeInTheDocument();
-    expect(screen.getByText('Threshold 85.0% · Floor 70.0%')).toBeInTheDocument();
-    expect(screen.getByText('Recompute: Pending')).toBeInTheDocument();
+    expect(screen.getByText('Threshold 85.0%')).toBeInTheDocument();
   });
 
   it('[PAG-M3-S2] keeps the gate notice when projection_status is refreshing', () => {

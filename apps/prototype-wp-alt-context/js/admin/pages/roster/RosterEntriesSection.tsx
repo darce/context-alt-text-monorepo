@@ -33,14 +33,14 @@ const QUEUE_REVIEW_ROUTES: Partial<Record<QueueFilterId, { href: string; label: 
     href: WORKBENCH_SCAN_ROUTE,
     label: __('Review singleton proposals in Workbench', 'alt-context'),
   },
-  'hard-examples': {
-    href: WORKBENCH_SCAN_ROUTE,
-    label: __('Review hard examples in Workbench', 'alt-context'),
-  },
   'needs-confirmation-after-merge': {
     href: WORKBENCH_SCAN_ROUTE,
     label: __('Review merge confirmations in Workbench', 'alt-context'),
   },
+};
+
+const QUEUE_ACTION_NOTICES: Partial<Record<QueueFilterId, string>> = {
+  'hard-examples': __('Hard-examples review actions stay unavailable here until the dedicated review contract lands.', 'alt-context'),
 };
 
 const isQueueFilterId = (value: string | null): value is QueueFilterId =>
@@ -80,6 +80,7 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
   const activeFilterStatus = queueFilter !== null ? QUEUE_FILTERS[queueFilter].status : isUnassignedFilter ? __('Showing unassigned people only.', 'alt-context') : null;
   const emptyFilterMessage = queueFilter !== null ? QUEUE_FILTERS[queueFilter].empty : isUnassignedFilter ? __('No unassigned people found.', 'alt-context') : null;
   const queueReviewRoute = queueFilter !== null ? QUEUE_REVIEW_ROUTES[queueFilter] ?? null : null;
+  const queueActionNotice = queueFilter !== null ? QUEUE_ACTION_NOTICES[queueFilter] ?? null : null;
 
   const clearFilter = () => {
     setSearchParams(
@@ -149,6 +150,7 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
               {queueReviewRoute.label}
             </a>
           )}
+          {queueActionNotice && <p>{queueActionNotice}</p>}
           <button type="button" className="acx-link-button" onClick={clearFilter}>
             {__('Clear filter', 'alt-context')}
           </button>

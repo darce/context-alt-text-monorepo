@@ -122,7 +122,7 @@ suggestion refresh status.
    internals.
 
 6. **Aggregate metrics are separate from per-event status.** Per-event
-   `SuggestionRefreshStatus` belongs to the refresh workflow. Queue depth,
+   `CurationRefreshStatus` belongs to the durable replay workflow. Queue depth,
    p95/p99 latency, failure rate, recovery time, and lead-time SLOs belong to
    orchestration metrics.
 

@@ -25,10 +25,12 @@ const QUEUE_SECTIONS = [
 
 interface PersonWorkspacePanelProps {
   entry: RosterEntry;
+  onOpenQueue: (personUuid: string, queueId: string) => void;
 }
 
-export const PersonWorkspacePanel = ({ entry }: PersonWorkspacePanelProps): React.JSX.Element => {
+export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePanelProps): React.JSX.Element => {
   const queueMemberships = new Set(entry.queue_memberships);
+  const personUuid = typeof entry.person_uuid === 'string' && entry.person_uuid.length > 0 ? entry.person_uuid : null;
 
   return (
     <section
@@ -56,7 +58,17 @@ export const PersonWorkspacePanel = ({ entry }: PersonWorkspacePanelProps): Reac
                     ? __('Queued for review in this workspace.', 'alt-context')
                     : __('No queued items for this person yet.', 'alt-context')}
                 </p>
-                <p>{isQueued ? queueSection.queuedAction : queueSection.emptyMessage}</p>
+                {isQueued && personUuid ? (
+                  <button
+                    type="button"
+                    className="acx-link-button"
+                    onClick={() => onOpenQueue(personUuid, queueSection.id)}
+                  >
+                    {queueSection.queuedAction}
+                  </button>
+                ) : (
+                  <p>{isQueued ? queueSection.queuedAction : queueSection.emptyMessage}</p>
+                )}
               </section>
             );
           })}

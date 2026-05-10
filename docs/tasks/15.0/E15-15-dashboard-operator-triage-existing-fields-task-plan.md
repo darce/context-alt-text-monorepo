@@ -153,40 +153,40 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded the dashboard assessment, dashboard spec, frontend rules, and handoff state before editing.
-- [ ] Confirmed [E15-20](E15-20-preimpl-dashboard-authority-and-priority-task-plan.md) is the canonical PREIMPL implementation owner.
-- [ ] Recorded the superseding handoff decision reference (`2823`) in this plan.
+- [x] Loaded the dashboard assessment, dashboard spec, frontend rules, and handoff state before editing.
+- [x] Confirmed [E15-20](E15-20-preimpl-dashboard-authority-and-priority-task-plan.md) is the canonical PREIMPL implementation owner.
+- [x] Recorded the superseding handoff decision reference (`2823`) in this plan.
 
 ### Checklist for Slice 1: Supersession and Ownership Alignment
 
-- [ ] E15-15 no longer presents itself as the active implementation track.
-- [ ] E15-20 is linked as the canonical successor.
-- [ ] Residual E15-15 scope is limited to closeout/lifecycle work.
+- [x] E15-15 no longer presents itself as the active implementation track.
+- [x] E15-20 is linked as the canonical successor.
+- [x] Residual E15-15 scope is limited to closeout/lifecycle work.
 
 ### Checklist for Slice 2: Current-State Refresh
 
-- [ ] `DashboardPage` current-state notes match the landed priority/orientation implementation.
-- [ ] Sync Health notes match the landed recency/topology rendering.
-- [ ] Recent-activity notes match the durable/fallback behavior already present.
+- [x] `DashboardPage` current-state notes match the landed priority/orientation implementation.
+- [x] Sync Health notes match the landed recency/topology rendering.
+- [x] Recent-activity notes match the durable/fallback behavior already present.
 
 ### Checklist for Slice 3: Residual Lifecycle Closeout
 
-- [ ] No fresh dashboard implementation slices remain under E15-15.
-- [ ] Remaining task language is compatible with eventual done/archive flow.
-- [ ] Open planning findings can be closed against this revised document.
+- [x] No fresh dashboard implementation slices remain under E15-15.
+- [x] Remaining task language is compatible with eventual done/archive flow.
+- [x] Open planning findings can be closed against this revised document.
 
 ## Review Readiness
 
-- [ ] The plan explicitly defers implementation ownership to [E15-20](E15-20-preimpl-dashboard-authority-and-priority-task-plan.md).
-- [ ] The plan no longer claims already-landed dashboard behavior is missing.
-- [ ] Handoff decision records the residual-closeout scope and finding resolution.
+- [x] The plan explicitly defers implementation ownership to [E15-20](E15-20-preimpl-dashboard-authority-and-priority-task-plan.md).
+- [x] The plan no longer claims already-landed dashboard behavior is missing.
+- [x] Handoff decision records the residual-closeout scope and finding resolution.
 
 ## Stretch Goals
 
-- [ ] Retire E15-15 cleanly once any remaining lifecycle bookkeeping is complete.
+- [x] Retire E15-15 cleanly once any remaining lifecycle bookkeeping is complete.
 
 ## Success Criteria
 
-- [ ] E15-15 is no longer a stale or competing implementation plan.
-- [ ] The revised current-state section matches the dashboard code that already landed.
-- [ ] Planning findings `E15-15-PLAN-01` and `E15-15-PLAN-02` can be closed against this document revision.
+- [x] E15-15 is no longer a stale or competing implementation plan.
+- [x] The revised current-state section matches the dashboard code that already landed.
+- [x] Planning findings `E15-15-PLAN-01` and `E15-15-PLAN-02` can be closed against this document revision.

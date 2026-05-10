@@ -116,7 +116,7 @@ State key: **(open)** = E15-13 still needs to land this. **(extend)** = predeces
 
 | Surface | File | Change | State |
 | --- | --- | --- | --- |
-| backend fixtures/tests | `apps/prototype-description-service/recognition/tests/fixtures/recognition/` | Add Tory Guzman regression fixture + curriculum queue fixtures (singleton, hard examples, post-merge confirmations) | **(open)** |
+| backend fixtures/tests | `apps/prototype-description-service/recognition/tests/fixtures/recognition/` | Add replayed-bind singleton regression coverage + curriculum queue fixtures (singleton, hard examples, post-merge confirmations) | **(open)** |
 | curation sync contract doc | `docs/agentic/contracts/curation-sync-api.md` | Update `cluster_person_bound` payload semantics to include authoritative `person_name`, clarify bind/unbind `PostCurationEvent` mapping, and keep doc examples aligned with PHP emitter + backend replay reader | **(open)** |
 | backend curation replay | `apps/prototype-description-service/roster/application/curation_sync_service.py` | Branch `cluster_person_bound` and `cluster_person_unbound` into the post-curation event mapping; current `_resolve_desired_label` already reads `person_name`, but neither bind nor unbind drives the newly-labeled-cluster surfacing path | **(extend)** |
 | backend suggestion refresh | `apps/prototype-description-service/recognition/application/suggestions/refresh_service.py` | Add a `refresh_after_curation` entrypoint that creates missing singleton/cluster suggestions and refreshes existing pending ones; today `refresh_for_cluster` returns when no pending suggestions exist (refresh_service.py:377) | **(extend)** |
@@ -141,7 +141,7 @@ State key: **(open)** = E15-13 still needs to land this. **(extend)** = predeces
 ## Verification Strategy
 
 - Deterministic tests:
-  - `pyenv exec pytest apps/prototype-description-service/recognition/tests -k "tory or post_curation or suggestion or curriculum"`
+  - `pyenv exec pytest apps/prototype-description-service/recognition/tests -k "replayed_cluster_bind or post_curation or suggestion or curriculum"`
   - `pyenv exec pytest apps/prototype-description-service/roster`
   - `cd apps/prototype-wp-alt-context && vendor/bin/phpunit tests/Unit`
   - `cd apps/prototype-wp-alt-context && npm test -- --run js/admin/pages/roster`
@@ -191,7 +191,7 @@ Changes:
 - **Standardize the docs on `CurationRefreshStatus`**: keep the implementation/schema name as canon, update ADR-009 plus the spec/contract/task-plan terminology, and drop the retired name from this slice.
 - Persist per-event `CurationRefreshStatus`, including the `not_applicable` branch for unbind events that have no candidate work.
 - Ensure refresh creates missing suggestions (new `refresh_after_curation` entrypoint) and refreshes existing pending suggestions (today's `refresh_for_cluster` short-circuits at `refresh_service.py:377`).
-- **Flip Slice 1's Tory Guzman fixture from failing to passing** as the slice's green gate; record the passing `record_event(event_kind="test_result", passed=true, ...)` against the implementing commit.
+- **Flip Slice 1's replayed-bind singleton regression proof from failing to passing** as the slice's green gate; record the passing `record_event(event_kind="test_result", passed=true, ...)` against the implementing commit.
 
 Proof:
 

@@ -114,35 +114,35 @@ await suggestion_refresh_status.record(result)
 
 ---
 
-### RCL-003: Reproduce the Tory Guzman singleton regression as an acceptance fixture
+### RCL-003: Reproduce the replayed-bind singleton regression as an acceptance fixture
 
 **Trace:** F2, F3, F4, F9, R-MISS-1  
 **Priority:** P0  
 **ADR gate:** No
 
-The reported batch job must become a deterministic acceptance case before implementation proceeds. The repo contains historical Tory Guzman references, but the exact job `4f7236f5-55ed-4b55-8eae-51e5b7d256f4` and singleton `cluster-e22d355c86504443896d9bd73c54b80e` require DB/API reproduction or a faithful synthetic fixture.
+The replayed cluster-bind regression must become a deterministic acceptance case before implementation proceeds. Historical named examples may exist in notes or incident context, but the implementation requirement is generic replayed-bind singleton coverage rather than one specific person, job ID, or cluster ID.
 
 **Fixture strategy:**
 
 - Prefer a captured snapshot fixture if DB/API state for the exact job is available.
-- If live job state is unavailable, create a synthetic fixture under `apps/prototype-description-service/recognition/tests/fixtures/recognition/` that preserves the observed labels, job ID, singleton ID string, target label, curation sequence, and similarity ordering.
-- Keep the reported `cluster-e22d355c86504443896d9bd73c54b80e` string as fixture metadata even if internal repositories store cluster IDs without the `cluster-` prefix.
+- If live state is unavailable, create a synthetic fixture under `apps/prototype-description-service/recognition/tests/fixtures/recognition/` that preserves the relevant curation sequence, singleton evidence, target-cluster context, and similarity ordering.
+- Keep the fixture focused on the regression class: replayed bind -> queued curation follow-up -> surfaced singleton suggestion.
 
 **After:**
 
 ```python
 assert_refresh_candidate(
-    job_id="4f7236f5-55ed-4b55-8eae-51e5b7d256f4",
-    singleton_cluster_id="cluster-e22d355c86504443896d9bd73c54b80e",
-    expected_target_label="Tory Guzman",
+  refresh_reason="replayed_cluster_bind",
+  singleton_candidate=True,
+  expected_target_label="Confirmed Label",
 )
 ```
 
 **Done when:**
 
-- A fixture or scripted reproduction loads the job, singleton, target cluster, and similarity evidence.
+- A fixture or scripted reproduction loads the singleton candidate, target cluster, and similarity evidence for a replayed bind.
 - The failing current behavior is captured before code changes.
-- The fixed behavior proves the singleton is suggested into the Tory Guzman person/cluster after curation.
+- The fixed behavior proves the singleton is suggested into the bound target person/cluster after curation.
 - The fixture verifies similarity context after user curation, not only initial clustering.
 
 ---
@@ -374,7 +374,7 @@ Enhanced score evidence is separated from Tier 1 UI cleanup. It may use `score.t
 Task plan: [docs/tasks/15.0/E15-13-roster-curation-loop-task-plan.md](../tasks/15.0/E15-13-roster-curation-loop-task-plan.md)
 
 ```text
-RCL-003  Tory Guzman singleton reproduction and acceptance fixture
+RCL-003  Replayed-bind singleton reproduction and acceptance fixture
 RCL-006  Existing-field thumbnail/similarity-copy cleanup
 ```
 

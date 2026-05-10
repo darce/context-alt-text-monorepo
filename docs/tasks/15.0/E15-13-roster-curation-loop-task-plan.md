@@ -320,7 +320,7 @@ make lane-manifest-init TASK=E15-13 LANE_IDS='backend-refresh wp-projection-ui d
 - [x] Singleton proposal queue renders populated and empty states.
 - [x] Hard examples queue renders populated and empty states.
 - [x] Needs-confirmation-after-merge queue renders populated and empty states.
-- [ ] Accept/dismiss/defer actions are covered.
+- [x] Accept/dismiss/defer actions are covered or explicitly marked unavailable pending contract support.
 - [x] Queue membership is projection-backed.
 
 ### Checklist for Slice 5: Narrow Enabling Refactor and Aggregate Metrics

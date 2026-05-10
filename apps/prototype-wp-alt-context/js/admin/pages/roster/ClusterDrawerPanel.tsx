@@ -18,6 +18,7 @@ interface Props {
   onRescanCluster: (cluster: ClusterSummary, identities: ClusterIdentity[]) => void;
   isRescanning: boolean;
   onCommitCluster: (cluster: ClusterSummary, assignment: { rosterEntryId?: number; newEntryName?: string }) => void;
+  onOpenPersonWorkspace: (personUuid: string) => void;
   isCommitting: boolean;
   rosterEntries: RosterEntry[];
   isDetailLoading: boolean;
@@ -39,6 +40,7 @@ export const ClusterDrawerPanel = ({
   onRescanCluster,
   isRescanning,
   onCommitCluster,
+  onOpenPersonWorkspace,
   isCommitting,
   rosterEntries,
   isDetailLoading,
@@ -120,12 +122,18 @@ export const ClusterDrawerPanel = ({
     activeKey: cluster?.id ?? null,
   });
 
+  const selectedEntry = React.useMemo(
+    () => rosterEntries.find((entry) => entry.id.toString() === selectedEntryId) ?? null,
+    [rosterEntries, selectedEntryId],
+  );
+
   if (!cluster) {
     return null;
   }
 
   const isCreatingEntry = selectedEntryId === 'create';
   const canCommit = (isCreatingEntry && newEntryName.trim().length > 0) || (!isCreatingEntry && selectedEntryId !== '');
+  const selectedPersonUuid = selectedEntry?.person_uuid ?? null;
   const identitiesToDisplay = identities ?? [];
   const hasIdentities = identitiesToDisplay.length > 0;
 
@@ -279,6 +287,18 @@ export const ClusterDrawerPanel = ({
                   {__('Confirm Assignment', 'alt-context')}
                 </>
               )}
+            </button>
+            <button
+              type="button"
+              className="acx-button acx-cluster-drawer__workspace-btn"
+              onClick={() => {
+                if (selectedPersonUuid) {
+                  onOpenPersonWorkspace(selectedPersonUuid);
+                }
+              }}
+              disabled={!selectedPersonUuid}
+            >
+              {__('Open person workspace', 'alt-context')}
             </button>
           </div>
         </div>

@@ -58,3 +58,12 @@ if (!globalThis.ResizeObserver) {
 if (typeof window !== 'undefined') {
   Object.defineProperty(window, 'scrollTo', { value: () => {}, writable: true });
 }
+
+// jsdom does not implement Element.prototype.scrollIntoView. cmdk (used by the
+// Combobox component) calls it in a layout effect when the highlighted item
+// changes, which crashes any test that opens the command list.
+if (typeof Element !== 'undefined' && typeof Element.prototype.scrollIntoView !== 'function') {
+  Element.prototype.scrollIntoView = function scrollIntoView(): void {
+    // no-op for test environment
+  };
+}

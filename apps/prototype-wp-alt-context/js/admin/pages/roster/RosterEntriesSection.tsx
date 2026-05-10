@@ -31,6 +31,10 @@ const QUEUE_REVIEW_ROUTES: Partial<Record<QueueFilterId, { href: string; label: 
     href: '#/workbench?tab=scan',
     label: __('Review singleton proposals in Workbench', 'alt-context'),
   },
+  'needs-confirmation-after-merge': {
+    href: '#/workbench?tab=scan',
+    label: __('Review merge confirmations in Workbench', 'alt-context'),
+  },
 };
 
 const isQueueFilterId = (value: string | null): value is QueueFilterId =>

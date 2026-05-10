@@ -181,7 +181,7 @@ describe('RosterPage projection-aware workspace shell', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('[PAG-M3-S2] renders the first current projection entry as the default workspace when no route params are present', () => {
+  it('[PAG-M3-S2] renders a deterministic default workspace when no route params are present', () => {
     mockedUseRosterEntries.mockReturnValue(
       createMockQuery({
         data: [projectionEntry({ projection_status: 'current', person_uuid: 'person-uuid-1', name: 'Alice' })],
@@ -224,6 +224,45 @@ describe('RosterPage projection-aware workspace shell', () => {
 
     expect(screen.getByRole('region', { name: /Person workspace: Alice/i })).toBeInTheDocument();
     expect(screen.queryByTestId('roster-entries-section')).not.toBeInTheDocument();
+  });
+
+  it('[PAG-M3-S3] chooses a deterministic default workspace entry and shows baseline projection metadata', () => {
+    mockedUseRosterEntries.mockReturnValue(
+      createMockQuery({
+        data: [
+          projectionEntry({
+            id: 2,
+            person_uuid: 'person-uuid-2',
+            name: 'Tory',
+            cluster_count: 4,
+            source_version: 22,
+            projection_refreshed_at: '2026-05-08T18:30:00Z',
+          }),
+          projectionEntry({
+            id: 1,
+            person_uuid: 'person-uuid-1',
+            name: 'Alice',
+            cluster_count: 2,
+            source_version: 11,
+            projection_refreshed_at: '2026-05-07T12:00:00Z',
+          }),
+        ],
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <RosterPage />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('region', { name: /Person workspace: Alice/i })).toBeInTheDocument();
+    expect(screen.getByText('Projection status: current')).toBeInTheDocument();
+    expect(screen.getByText('Projection refreshed: 2026-05-07T12:00:00Z')).toBeInTheDocument();
+    expect(screen.getByText('Source version: 11')).toBeInTheDocument();
   });
 
   it('[PAG-M3-S2] keeps the gate notice when projection_status is refreshing', () => {

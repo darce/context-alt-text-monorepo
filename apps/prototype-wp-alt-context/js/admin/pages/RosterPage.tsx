@@ -25,6 +25,7 @@ import {
   getEntryPersonUuid,
   hasCanonicalProjectionShape,
   aggregateProjectionStatus,
+  selectDeterministicDefaultWorkspaceEntry,
   PERSON_WORKSPACE_GATE_NOTICE,
   PROJECTION_REFRESHING_NOTICE,
   PROJECTION_STALE_NOTICE,
@@ -114,7 +115,7 @@ export const RosterPage = (): React.JSX.Element => {
     if (!projectionShapeAvailable || projectionStatus !== 'current') {
       return null;
     }
-    return rosterEntries.find((entry) => getEntryPersonUuid(entry) !== null) ?? null;
+    return selectDeterministicDefaultWorkspaceEntry(rosterEntries);
   }, [defaultWorkspaceRoute, projectionShapeAvailable, projectionStatus, rosterEntries]);
   const resolvedWorkspaceEntry = personWorkspaceEntry ?? defaultWorkspaceEntry;
   const projectionStateNotice = React.useMemo(() => {

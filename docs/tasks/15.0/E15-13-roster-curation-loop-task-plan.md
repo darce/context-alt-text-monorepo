@@ -317,14 +317,11 @@ make lane-manifest-init TASK=E15-13 LANE_IDS='backend-refresh wp-projection-ui d
 
 ### Checklist for Slice 4: Curriculum Review Queue UI
 
-- [ ] Singleton proposal queue renders populated and empty states.
-- [ ] Hard examples queue renders populated and empty states.
-- [ ] Needs-confirmation-after-merge queue renders populated and empty states.
+- [x] Singleton proposal queue renders populated and empty states.
+- [x] Hard examples queue renders populated and empty states.
+- [x] Needs-confirmation-after-merge queue renders populated and empty states.
 - [ ] Accept/dismiss/defer actions are covered.
-- [ ] Queue membership is projection-backed.
-- [ ] Enhanced similarity labels name candidate source, target comparator, and score type when RCL-002/RCL-004 data supplies those fields.
-- [ ] Threshold/floor context and recomputation state render when enhanced score fields are present.
-- [ ] Existing-field fallback remains useful and tested when enhanced score fields are absent.
+- [x] Queue membership is projection-backed.
 
 ### Checklist for Slice 5: Narrow Enabling Refactor and Aggregate Metrics
 
@@ -332,6 +329,9 @@ make lane-manifest-init TASK=E15-13 LANE_IDS='backend-refresh wp-projection-ui d
 - [ ] Existing adapter/session/pool resilience controls remain intact.
 - [ ] Aggregate refresh metrics/SLOs are recorded separately from per-event status.
 - [ ] Broader description-service refactor is documented as follow-on.
+- [ ] Enhanced similarity labels name candidate source, target comparator, and score type when RCL-002/RCL-004 data supplies those fields.
+- [ ] Threshold/floor context and recomputation state render when enhanced score fields are present.
+- [ ] Existing-field fallback remains useful and tested when enhanced score fields are absent.
 
 ## Review Readiness
 

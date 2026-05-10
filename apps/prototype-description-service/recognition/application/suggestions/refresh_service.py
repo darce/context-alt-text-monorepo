@@ -374,6 +374,47 @@ class SuggestionRefreshService:
 
         return suggestions
 
+    async def refresh_after_curation(
+        self,
+        *,
+        cluster_id: str,
+        identity_ids: Sequence[str] | None = None,
+        reason: SuggestionRefreshReason,
+    ) -> int:
+        """Refresh cluster suggestions after a curation event.
+
+        This entrypoint keeps the curation-specific refresh path in one place:
+        first refresh existing pending suggestions for the curated cluster, then
+        surface missing candidates from current unlabeled clusters, and finally
+        fall back to the explicitly affected identity IDs.
+        """
+        refreshed = await self.refresh_for_cluster(cluster_id)
+        total = refreshed
+
+        if total == 0 and self._cluster_repository is not None:
+            get_top_unlabeled = getattr(self._cluster_repository, "get_top_unlabeled", None)
+            if callable(get_top_unlabeled):
+                candidate_clusters = await get_top_unlabeled(
+                    self._tenant_id,
+                    limit=1000,
+                    min_identity_count=1,
+                )
+                surfaced = await self.surface_for_newly_labeled_cluster(
+                    cluster_id,
+                    candidate_cluster_ids=[candidate.id for candidate in candidate_clusters if getattr(candidate, "id", None)],
+                )
+                total += surfaced
+
+        if total == 0:
+            for identity_id in dict.fromkeys(identity_ids or []):
+                suggestions = await self.refresh_for_identity(
+                    identity_id=identity_id,
+                    reason=reason,
+                )
+                total += len(suggestions)
+
+        return total
+
     async def refresh_for_cluster(self, cluster_id: str) -> int:
         """Refresh similarity scores for all pending suggestions targeting a cluster."""
         if self._session is None or self._cluster_repository is None:

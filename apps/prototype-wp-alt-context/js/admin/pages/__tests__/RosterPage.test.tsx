@@ -222,6 +222,7 @@ describe('ClusterDrawerPanel', () => {
         onRescanCluster={vi.fn()}
         isRescanning={false}
         onCommitCluster={vi.fn()}
+        onOpenPersonWorkspace={vi.fn()}
         isCommitting={false}
         rosterEntries={[]}
         isDetailLoading={false}
@@ -253,6 +254,7 @@ describe('ClusterDrawerPanel', () => {
         onRescanCluster={vi.fn()}
         isRescanning={false}
         onCommitCluster={onCommitCluster}
+        onOpenPersonWorkspace={vi.fn()}
         isCommitting={false}
         rosterEntries={[
           {
@@ -300,6 +302,7 @@ describe('ClusterDrawerPanel', () => {
         onRescanCluster={vi.fn()}
         isRescanning={false}
         onCommitCluster={onCommitCluster}
+        onOpenPersonWorkspace={vi.fn()}
         isCommitting={false}
         rosterEntries={[
           {
@@ -343,6 +346,7 @@ describe('ClusterDrawerPanel', () => {
         onRescanCluster={vi.fn()}
         isRescanning={false}
         onCommitCluster={onCommitCluster}
+        onOpenPersonWorkspace={vi.fn()}
         isCommitting={false}
         rosterEntries={[
           {
@@ -384,6 +388,7 @@ describe('ClusterDrawerPanel', () => {
         onRescanCluster={vi.fn()}
         isRescanning={false}
         onCommitCluster={vi.fn()}
+        onOpenPersonWorkspace={vi.fn()}
         isCommitting={false}
         rosterEntries={[
           {
@@ -412,11 +417,72 @@ describe('ClusterDrawerPanel', () => {
     expect(closeButton).toHaveFocus();
 
     await userEvent.selectOptions(screen.getByRole('combobox', { name: /Commit to roster entry/i }), '42');
-    const commitButton = screen.getByRole('button', { name: /^Confirm Assignment$/i });
-    commitButton.focus();
-    expect(commitButton).toHaveFocus();
+
+    // Tab from the LAST focusable element in the drawer wraps back to the first
+    // focusable (the close button). This pins the trap-wrap semantics rather
+    // than the identity of any specific button, so adding/removing buttons
+    // (e.g. "Open person workspace") does not silently invalidate the assertion.
+    const drawer = closeButton.closest('aside');
+    if (!drawer) {
+      throw new Error('expected drawer aside to be present in DOM');
+    }
+    const focusables = drawer.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    );
+    const last = focusables[focusables.length - 1];
+    last.focus();
+    expect(last).toHaveFocus();
 
     await userEvent.keyboard('{Tab}');
     expect(closeButton).toHaveFocus();
+  });
+
+  it('opens the selected person workspace when the roster entry has a person_uuid', async () => {
+    const onOpenPersonWorkspace = vi.fn();
+
+    render(
+      <ClusterDrawerPanel
+        cluster={makeCluster()}
+        identities={[]}
+        mediaMap={{}}
+        onClose={vi.fn()}
+        onRescanCluster={vi.fn()}
+        isRescanning={false}
+        onCommitCluster={vi.fn()}
+        onOpenPersonWorkspace={onOpenPersonWorkspace}
+        isCommitting={false}
+        rosterEntries={[
+          {
+            id: 42,
+            person_uuid: 'person-uuid-alex',
+            name: 'Alex Carter',
+            tags: ['event'],
+            cluster_count: 3,
+            updated_at: '2026-01-01T00:00:00Z',
+            source_version: 1,
+            projection_status: 'current',
+            projection_refreshed_at: '2026-01-01T00:00:00Z',
+            queue_memberships: [],
+            clusters: [],
+          },
+        ]}
+        isDetailLoading={false}
+        onFaceDragStart={vi.fn()}
+        onFaceDragEnd={vi.fn()}
+        onDropTargetChange={vi.fn()}
+        dropTarget={null}
+        isDragging={false}
+        onDiscardDrop={vi.fn()}
+      />,
+    );
+
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: /Commit to roster entry/i }), '42');
+    const openWorkspaceButton = screen.getByRole('button', { name: /Open person workspace/i });
+
+    expect(openWorkspaceButton).toBeEnabled();
+
+    await userEvent.click(openWorkspaceButton);
+
+    expect(onOpenPersonWorkspace).toHaveBeenCalledWith('person-uuid-alex');
   });
 });

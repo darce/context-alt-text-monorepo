@@ -84,21 +84,13 @@ export const RosterPage = (): React.JSX.Element => {
   const entriesQuery = useRosterEntries();
   const rosterEntries = React.useMemo(() => entriesQuery.data ?? [], [entriesQuery.data]);
   const personRouteUuid = React.useMemo(() => getRouteParam(searchParams, 'person'), [searchParams]);
-  const projectionShapeAvailable = React.useMemo(
-    () => hasCanonicalProjectionShape(rosterEntries),
-    [rosterEntries],
-  );
-  const projectionStatus = React.useMemo(
-    () => aggregateProjectionStatus(rosterEntries),
-    [rosterEntries],
-  );
+  const projectionShapeAvailable = React.useMemo(() => hasCanonicalProjectionShape(rosterEntries), [rosterEntries]);
+  const projectionStatus = React.useMemo(() => aggregateProjectionStatus(rosterEntries), [rosterEntries]);
   const personWorkspaceEntry = React.useMemo(() => {
     if (!personRouteUuid || !projectionShapeAvailable || projectionStatus !== 'current') {
       return null;
     }
-    return (
-      rosterEntries.find((entry) => getEntryPersonUuid(entry) === personRouteUuid) ?? null
-    );
+    return rosterEntries.find((entry) => getEntryPersonUuid(entry) === personRouteUuid) ?? null;
   }, [personRouteUuid, projectionShapeAvailable, projectionStatus, rosterEntries]);
   const projectionStateNotice = React.useMemo(() => {
     if (!parsedRoute.requiresProjectionGateNotice) {
@@ -180,6 +172,27 @@ export const RosterPage = (): React.JSX.Element => {
       { replace: true },
     );
   };
+
+  const handleOpenPersonWorkspace = React.useCallback(
+    (personUuid: string) => {
+      setSelectedClusterId(null);
+      dragDrop.resetDragState();
+      actions.resetAll();
+      setSearchParams(
+        (previous) => {
+          const next = new URLSearchParams(previous);
+          next.set('tab', ROSTER_TABS.entries.id);
+          for (const key of ROSTER_ROUTE_PARAM_KEYS) {
+            next.delete(key);
+          }
+          next.set('person', personUuid);
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [actions, dragDrop, setSearchParams],
+  );
 
   const handleTabChange = React.useCallback(
     (value: RosterTab) => {
@@ -391,6 +404,7 @@ export const RosterPage = (): React.JSX.Element => {
         onRescanCluster={handleRescanCluster}
         isRescanning={actions.rescanMutation.isPending}
         onCommitCluster={handleCommitCluster}
+        onOpenPersonWorkspace={handleOpenPersonWorkspace}
         isCommitting={actions.commitMutation.isPending}
         rosterEntries={rosterEntries}
         onFaceDragStart={dragDrop.handleFaceDragStart}

@@ -356,6 +356,47 @@ describe('RosterPage route container', () => {
     expect(dragDropState.resetDragState).toHaveBeenCalledTimes(1);
   });
 
+  it('[PAG-M3-S3] navigates from the cluster drawer into the selected person workspace', async () => {
+    mockedUseRosterEntries.mockReturnValue(
+      createMockQuery({
+        data: [
+          {
+            id: 42,
+            person_uuid: 'person-uuid-alex',
+            name: 'Alex Carter',
+            tags: ['event'],
+            cluster_count: 3,
+            clusters: [],
+            queue_memberships: [],
+            updated_at: '2026-01-01T00:00:00Z',
+            source_version: 1,
+            projection_status: 'current',
+            projection_refreshed_at: '2026-01-01T00:00:00Z',
+          },
+        ],
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(
+      <MemoryRouter initialEntries={['/?tab=clusters&cluster=cluster-1']}>
+        <RosterPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByRole('button', { name: /^Close$/i })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
+    await userEvent.click(screen.getByText('Alex Carter'));
+    await userEvent.click(screen.getByRole('button', { name: /Open person workspace/i }));
+
+    expect(screen.getByRole('tab', { name: 'Entries' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('region', { name: /Person workspace: Alex Carter/i })).toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: /Commit to roster entry/i })).not.toBeInTheDocument();
+  });
+
   it('surfaces a partial-state notice when the cluster list is truncated', () => {
     mockedUseRecognitionClusters.mockReturnValue(
       createMockQuery({

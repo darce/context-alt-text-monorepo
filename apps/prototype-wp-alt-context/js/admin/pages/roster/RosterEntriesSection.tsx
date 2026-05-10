@@ -8,6 +8,8 @@ import { UserPlus, Plus, X } from 'lucide-react';
 
 type QueueFilterId = RosterEntry['queue_memberships'][number];
 
+const WORKBENCH_SCAN_ROUTE = '#/workbench?tab=scan';
+
 const QUEUE_FILTERS: Record<QueueFilterId, { badge: string; status: string; empty: string }> = {
   'singleton-proposals': {
     badge: __('Filtered: Singleton proposals', 'alt-context'),
@@ -28,11 +30,11 @@ const QUEUE_FILTERS: Record<QueueFilterId, { badge: string; status: string; empt
 
 const QUEUE_REVIEW_ROUTES: Partial<Record<QueueFilterId, { href: string; label: string }>> = {
   'singleton-proposals': {
-    href: '#/workbench?tab=scan',
+    href: WORKBENCH_SCAN_ROUTE,
     label: __('Review singleton proposals in Workbench', 'alt-context'),
   },
   'needs-confirmation-after-merge': {
-    href: '#/workbench?tab=scan',
+    href: WORKBENCH_SCAN_ROUTE,
     label: __('Review merge confirmations in Workbench', 'alt-context'),
   },
 };

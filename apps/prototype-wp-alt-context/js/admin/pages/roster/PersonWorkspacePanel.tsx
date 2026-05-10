@@ -23,6 +23,8 @@ const QUEUE_SECTIONS = [
   },
 ] as const;
 
+const EVIDENCE_IMAGE_SIZE = 96;
+
 interface PersonWorkspacePanelProps {
   entry: RosterEntry;
   onOpenQueue: (personUuid: string, queueId: string) => void;
@@ -61,6 +63,9 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
                   <img
                     src={cluster.representative_identity.media_url}
                     alt={sprintf(__('Representative face for cluster %s', 'alt-context'), cluster.cluster_id)}
+                    width={EVIDENCE_IMAGE_SIZE}
+                    height={EVIDENCE_IMAGE_SIZE}
+                    loading="lazy"
                   />
                 ) : (
                   <p>{__('Representative face unavailable until the next projection refresh.', 'alt-context')}</p>
@@ -72,6 +77,9 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
                         <img
                           src={instance.media_url}
                           alt={sprintf(__('Instance %d for cluster %s', 'alt-context'), instance.media_id, cluster.cluster_id)}
+                          width={EVIDENCE_IMAGE_SIZE}
+                          height={EVIDENCE_IMAGE_SIZE}
+                          loading="lazy"
                         />
                       ) : (
                         <div aria-label={sprintf(__('Instance %d for cluster %s', 'alt-context'), instance.media_id, cluster.cluster_id)} />
@@ -111,8 +119,15 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
                   >
                     {queueSection.queuedAction}
                   </button>
+                ) : isQueued ? (
+                  <>
+                    <button type="button" className="acx-link-button" disabled>
+                      {queueSection.queuedAction}
+                    </button>
+                    <p>{__('Person identifier unavailable until the next projection refresh.', 'alt-context')}</p>
+                  </>
                 ) : (
-                  <p>{isQueued ? queueSection.queuedAction : queueSection.emptyMessage}</p>
+                  <p>{queueSection.emptyMessage}</p>
                 )}
               </section>
             );

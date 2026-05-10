@@ -22,7 +22,7 @@ Build the person-first roster review workspace that sits on top of the ADR-009/E
 
 ## Constraints
 
-- Implementation depends on ADR-009 and E15-13 projection/queue contract work passing planning review and landing enough data.
+- Implementation depends on ADR-009 and E15-13 projection/queue contract work passing planning review and landing enough data. Slice 1 stays blocked until E15-13 records the Slice 3 `close_slice` decision for the person-review projection landing and the regenerated `packages/shared-contracts/schemas/roster-entry.schema.json` plus generated types expose the representative evidence / queue-membership fields this workspace shell consumes in addition to today's `person_uuid`, `source_version`, `projection_status`, and `projection_refreshed_at` baseline.
 - Do not replace ADR-009 or change `wp_acx_persons` authority.
 - Do not introduce new similarity score semantics beyond fields supplied by E15-13/RCL-009.
 - Build the scrubber as a roster-local component under `apps/prototype-wp-alt-context/js/admin/pages/roster/`; do not import UI code from outside that path without explicit accessibility, keyboard, and curation-state adaptation review.
@@ -74,12 +74,14 @@ The default Roster route shows a review queue strip and a person workspace. A cu
 
 Use E15-13 as the data-contract prerequisite, then build the person-first Roster workspace in four slices: route shell and queue strip, person list/detail projection rendering, face scrubber interactions, and cluster evidence migration. Keep raw Entries/Clusters routes as secondary compatibility paths until the workspace handles assigned and unresolved cases.
 
+Implementation may begin route parsing earlier, but the default person workspace remains gated on concrete upstream artifacts: E15-13 Slice 3 must record a slice-complete decision for the projection/navigation landing, `packages/shared-contracts/schemas/roster-entry.schema.json` must be regenerated with the representative evidence and queue-membership fields consumed here, and generated TypeScript types must refresh from that schema before Slice 1 enables the shell.
+
 ## Dependency Gate
 
 | Slice | Minimum upstream contract before work begins | Why |
 | --- | --- | --- |
-| Slice 1: Workspace Shell and Route Model | RCL-004 shared projection schema and generated types landed with `person_uuid`, representative evidence, and counts; queue route params may parse early, but the person workspace shell does not render until those fields exist | Prevent empty route shells that imply a person workspace without the projection data to populate it |
-| Slice 2: Person Projection Rendering | RCL-004 person review projection API and RCL-005 person-aware cluster grouping implemented | Person rows and grouped evidence need the canonical projection and grouping contract |
+| Slice 1: Workspace Shell and Route Model | E15-13 Slice 3 has a recorded `close_slice` decision for the person-review projection/navigation landing, and the regenerated `packages/shared-contracts/schemas/roster-entry.schema.json` plus generated TS types expose `person_uuid`, `source_version`, `projection_status`, `projection_refreshed_at`, representative evidence, and queue-membership fields; queue route params may parse early, but the person workspace shell does not render until those artifacts exist | Prevent empty route shells that imply a person workspace without the projection data or generated types to populate it |
+| Slice 2: Person Projection Rendering | The Slice 1 gate is satisfied, and E15-13's RCL-005 person-aware cluster grouping / navigation contract is implemented in the roster payload and cluster drawer | Person rows and grouped evidence need the canonical projection and grouping contract |
 | Slice 3: Face Scrubber and Selection Controls | RCL-002 per-event refresh status available if refresh badges are shown, and every enabled control has a real API/action row in the action matrix below; RCL-009 remains optional unless enhanced score evidence is rendered | Prevent scrubber controls from outrunning the underlying action/status contracts |
 | Slice 4: Cluster Evidence Migration | RCL-005 topology state and RCL-008 queue membership labels implemented | Assigned, unresolved, merged, superseded, and curriculum-queue evidence all depend on those upstream fields |
 
@@ -163,6 +165,7 @@ Changes:
 
 - Add aspect-correct preview, filmstrip, scrub rail, metadata panel, and keyboard controls.
 - Wire representative, accept, reject, split, merge target, and hard-example controls only when the matching action-matrix row is available; hidden or disabled controls stay documented as E15-13 dependencies.
+- Keep the metadata panel on RSU-006 conservative copy until RCL-009 lands: name score context as current-cluster evidence compared with the selected person, forbid bare percentages that imply threshold/floor semantics, and only show enhanced score metadata after the upstream contract exists.
 - Preserve selected face and scroll position across background refreshes.
 
 Proof:
@@ -208,6 +211,7 @@ Proof:
 - [ ] Scrubber supports pointer and keyboard navigation.
 - [ ] Face crop dimensions are stable and aspect-correct.
 - [ ] Selection actions map only to real API actions and are tested.
+- [ ] Metadata panel follows RSU-006 conservative labels until RCL-009 fields land and does not overclaim similarity semantics.
 
 ### Checklist for Slice 4: Cluster Evidence Migration
 

@@ -6,14 +6,20 @@ const QUEUE_SECTIONS = [
   {
     id: 'singleton-proposals',
     label: __('Singleton proposals', 'alt-context'),
+    queuedAction: __('Open singleton proposals queue', 'alt-context'),
+    emptyMessage: __('Singleton proposals will appear after the next projection refresh.', 'alt-context'),
   },
   {
     id: 'hard-examples',
     label: __('Hard examples', 'alt-context'),
+    queuedAction: __('Open hard examples queue', 'alt-context'),
+    emptyMessage: __('Hard examples will appear after the next projection refresh.', 'alt-context'),
   },
   {
     id: 'needs-confirmation-after-merge',
     label: __('Needs confirmation after merge', 'alt-context'),
+    queuedAction: __('Open needs confirmation after merge queue', 'alt-context'),
+    emptyMessage: __('Confirmation requests will appear after the next projection refresh.', 'alt-context'),
   },
 ] as const;
 
@@ -39,17 +45,22 @@ export const PersonWorkspacePanel = ({ entry }: PersonWorkspacePanelProps): Reac
 
       <section aria-labelledby="acx-person-workspace-queues-title">
         <h4 id="acx-person-workspace-queues-title">{__('Curriculum review queues', 'alt-context')}</h4>
-        <dl>
+        <div>
           {QUEUE_SECTIONS.map((queueSection) => {
             const isQueued = queueMemberships.has(queueSection.id);
             return (
-              <div key={queueSection.id}>
-                <dt>{queueSection.label}</dt>
-                <dd>{isQueued ? __('Queued', 'alt-context') : __('Not queued', 'alt-context')}</dd>
-              </div>
+              <section key={queueSection.id} role="region" aria-label={sprintf(__('%s queue', 'alt-context'), queueSection.label)}>
+                <h5>{queueSection.label}</h5>
+                <p>
+                  {isQueued
+                    ? __('Queued for review in this workspace.', 'alt-context')
+                    : __('No queued items for this person yet.', 'alt-context')}
+                </p>
+                <p>{isQueued ? queueSection.queuedAction : queueSection.emptyMessage}</p>
+              </section>
             );
           })}
-        </dl>
+        </div>
       </section>
     </section>
   );

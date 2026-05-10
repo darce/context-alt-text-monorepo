@@ -11,6 +11,7 @@
     "tags",
     "cluster_count",
     "clusters",
+    "queue_memberships",
     "updated_at",
     "source_version",
     "projection_status",
@@ -59,7 +60,7 @@
           "cluster_id": {
             "type": "string",
             "minLength": 1,
-            "description": "Stable cluster UUID." 
+            "description": "Stable cluster UUID."
           },
           "identity_count": {
             "type": "integer",
@@ -135,6 +136,18 @@
             }
           }
         }
+      }
+    },
+    "queue_memberships": {
+      "type": "array",
+      "description": "Curriculum review queues currently assigned by the local roster projection.",
+      "items": {
+        "type": "string",
+        "enum": [
+          "singleton-proposals",
+          "hard-examples",
+          "needs-confirmation-after-merge"
+        ]
       }
     },
     "updated_at": {

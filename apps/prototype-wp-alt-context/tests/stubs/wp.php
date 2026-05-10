@@ -1950,7 +1950,7 @@ if (!isset($GLOBALS['wpdb'])) {
             );
         }
 
-        /** @return array{select:string,table:string,conditions:array<int,array<string,string>>,orderBy:?string,orderDirection:string,limit:?int}|null */
+        /** @return array{select:string,table:string,conditions:array<int,array<string,mixed>>,orderBy:?string,orderDirection:string,limit:?int}|null */
         private function parseSelectQuery(string $query): ?array
         {
             $matches = [];
@@ -1964,6 +1964,15 @@ if (!isset($GLOBALS['wpdb'])) {
                 if (is_array($parts)) {
                     foreach ($parts as $part) {
                         $condition = trim($part);
+                        if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s+IN\s*\((?P<values>.+)\)$/i', $condition, $conditionMatches) === 1) {
+                            $values = array_map(
+                                static fn(string $value): string => trim($value, " '\t\n\r\0\x0B"),
+                                explode(',', $conditionMatches['values'])
+                            );
+                            $values = array_values(array_filter($values, static fn(string $value): bool => $value !== ''));
+                            $conditions[] = ['type' => 'in', 'column' => $conditionMatches['column'], 'values' => $values];
+                            continue;
+                        }
                         if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s*=\s*\'(?P<value>.*)\'$/', $condition, $conditionMatches) === 1) {
                             $conditions[] = ['type' => 'eq', 'column' => $conditionMatches['column'], 'value' => stripslashes($conditionMatches['value'])];
                             continue;
@@ -1993,12 +2002,18 @@ if (!isset($GLOBALS['wpdb'])) {
             ];
         }
 
-        /** @param array<int,array<string,string>> $conditions */
+        /** @param array<int,array<string,mixed>> $conditions */
         private function rowMatchesParsedConditions(array $row, array $conditions): bool
         {
             foreach ($conditions as $condition) {
                 $column = $condition['column'];
                 $value = $row[$column] ?? null;
+                if ($condition['type'] === 'in') {
+                    $values = $condition['values'] ?? [];
+                    if (!is_array($values) || !in_array((string) $value, array_map('strval', $values), true)) {
+                        return false;
+                    }
+                }
                 if ($condition['type'] === 'eq' && (string) $value !== $condition['value']) {
                     return false;
                 }

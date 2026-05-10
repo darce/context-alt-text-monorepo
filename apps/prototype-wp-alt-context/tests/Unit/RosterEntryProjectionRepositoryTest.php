@@ -136,6 +136,90 @@ class RosterEntryProjectionRepositoryTest extends TestCase
 		$this->assertSame('identity-1', $data[0]['clusters'][0]['representative_identity']['identity_id']);
 	}
 
+	public function testListEntriesBatchesProjectionQueriesAndIncludesQueueMemberships(): void
+	{
+		global $wpdb;
+
+		$wpdb->tableRows['wp_acx_persons'] = [
+			[
+				'id' => 1,
+				'person_uuid' => '11111111-1111-1111-1111-111111111111',
+				'name' => 'Alice',
+				'tags' => '["friend"]',
+				'queue_memberships_json' => '["hard-examples","needs-confirmation-after-merge"]',
+				'updated_at' => '2026-05-07 14:00:00',
+			],
+			[
+				'id' => 2,
+				'person_uuid' => '22222222-2222-2222-2222-222222222222',
+				'name' => 'Bob',
+				'tags' => '[]',
+				'updated_at' => '2026-05-07 14:30:00',
+			],
+		];
+		$wpdb->tableRows['wp_acx_clusters'] = [
+			[
+				'cluster_uuid' => 'cluster-a',
+				'person_id' => 1,
+				'identity_count' => 1,
+				'representative_id' => 'identity-a',
+				'updated_at' => '2026-05-07 14:10:00',
+			],
+			[
+				'cluster_uuid' => 'cluster-b',
+				'person_id' => 2,
+				'identity_count' => 1,
+				'representative_id' => 'identity-b',
+				'updated_at' => '2026-05-07 14:20:00',
+			],
+		];
+		$wpdb->tableRows['wp_acx_identity_members'] = [
+			[
+				'identity_uuid' => 'identity-a',
+				'cluster_uuid' => 'cluster-a',
+				'attachment_id' => 201,
+				'bbox_json' => '[0, 0, 10, 10]',
+				'thumb_path' => 'http://example.test/201.jpg',
+				'similarity' => '0.91',
+				'updated_at' => '2026-05-07 14:11:00',
+			],
+			[
+				'identity_uuid' => 'identity-b',
+				'cluster_uuid' => 'cluster-b',
+				'attachment_id' => 202,
+				'bbox_json' => '[1, 1, 12, 12]',
+				'thumb_path' => 'http://example.test/202.jpg',
+				'similarity' => '0.88',
+				'updated_at' => '2026-05-07 14:21:00',
+			],
+		];
+
+		$repository = new RosterEntryProjectionRepository(
+			new RosterEntryProjectionSyncStateSpy(
+				snapshotVersion: 89,
+				lastUpdated: '2026-05-07 18:00:00',
+				lastSyncResult: 'ok'
+			)
+		);
+
+		$data = $repository->list_entries(self::currentTenantId());
+		$selectQueries = array_values(
+			array_filter(
+				$wpdb->queries,
+				static fn (string $sql): bool => str_starts_with($sql, 'SELECT')
+			)
+		);
+
+		$this->assertCount(2, $data);
+		$this->assertSame(['hard-examples', 'needs-confirmation-after-merge'], $data[0]['queue_memberships']);
+		$this->assertSame([], $data[1]['queue_memberships']);
+		$this->assertCount(3, $selectQueries);
+		$this->assertStringContainsString('person_id IN (1, 2)', $selectQueries[1]);
+		$this->assertStringContainsString('cluster_uuid IN (', $selectQueries[2]);
+		$this->assertStringContainsString("'cluster-a'", $selectQueries[2]);
+		$this->assertStringContainsString("'cluster-b'", $selectQueries[2]);
+	}
+
 	private function seedRosterRows(): void
 	{
 		global $wpdb;

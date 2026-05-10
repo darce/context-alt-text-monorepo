@@ -84,6 +84,7 @@ export const RosterPage = (): React.JSX.Element => {
   const entriesQuery = useRosterEntries();
   const rosterEntries = React.useMemo(() => entriesQuery.data ?? [], [entriesQuery.data]);
   const personRouteUuid = React.useMemo(() => getRouteParam(searchParams, 'person'), [searchParams]);
+  const bareDefaultRoute = React.useMemo(() => searchParams.toString().length === 0, [searchParams]);
   const projectionShapeAvailable = React.useMemo(
     () => hasCanonicalProjectionShape(rosterEntries),
     [rosterEntries],
@@ -100,6 +101,16 @@ export const RosterPage = (): React.JSX.Element => {
       rosterEntries.find((entry) => getEntryPersonUuid(entry) === personRouteUuid) ?? null
     );
   }, [personRouteUuid, projectionShapeAvailable, projectionStatus, rosterEntries]);
+  const defaultWorkspaceEntry = React.useMemo(() => {
+    if (!bareDefaultRoute) {
+      return null;
+    }
+    if (!projectionShapeAvailable || projectionStatus !== 'current') {
+      return null;
+    }
+    return rosterEntries.find((entry) => getEntryPersonUuid(entry) !== null) ?? null;
+  }, [bareDefaultRoute, projectionShapeAvailable, projectionStatus, rosterEntries]);
+  const resolvedWorkspaceEntry = personWorkspaceEntry ?? defaultWorkspaceEntry;
   const projectionStateNotice = React.useMemo(() => {
     if (!parsedRoute.requiresProjectionGateNotice) {
       return null;
@@ -127,7 +138,8 @@ export const RosterPage = (): React.JSX.Element => {
     personRouteUuid,
     personWorkspaceEntry,
   ]);
-  const routeGateNotice = personWorkspaceEntry === null ? projectionStateNotice : null;
+  const routeGateNotice = resolvedWorkspaceEntry === null ? projectionStateNotice : null;
+  const defaultWorkspaceMode = defaultWorkspaceEntry !== null;
 
   const dragDrop = useClusterDragDrop();
 
@@ -316,8 +328,8 @@ export const RosterPage = (): React.JSX.Element => {
 
         <TabsContent value={ROSTER_TABS.entries.id} className="acx-roster__panel">
           <h2>{ROSTER_TABS.entries.label}</h2>
-          {personWorkspaceEntry !== null && <PersonWorkspacePanel entry={personWorkspaceEntry} />}
-          <RosterEntriesSection query={entriesQuery} routeNotice={routeGateNotice} />
+          {resolvedWorkspaceEntry !== null && <PersonWorkspacePanel entry={resolvedWorkspaceEntry} />}
+          {!defaultWorkspaceMode && <RosterEntriesSection query={entriesQuery} routeNotice={routeGateNotice} />}
         </TabsContent>
 
         <TabsContent value={ROSTER_TABS.clusters.id} className="acx-roster__panel">

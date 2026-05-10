@@ -180,6 +180,26 @@ describe('RosterPage projection-aware workspace shell', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('[PAG-M3-S2] renders the first current projection entry as the default workspace when no route params are present', () => {
+    mockedUseRosterEntries.mockReturnValue(
+      createMockQuery({
+        data: [projectionEntry({ projection_status: 'current', person_uuid: 'person-uuid-1', name: 'Alice' })],
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <RosterPage />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('region', { name: /Person workspace: Alice/i })).toBeInTheDocument();
+    expect(screen.queryByText('Managed Identities')).not.toBeInTheDocument();
+  });
+
   it('[PAG-M3-S2] keeps the gate notice when projection_status is refreshing', () => {
     mockedUseRosterEntries.mockReturnValue(
       createMockQuery({

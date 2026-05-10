@@ -6,6 +6,7 @@ export interface RosterEntryInstance {
   media_url: string | null;
   bbox: number[] | null;
   similarity: number | null;
+  similarity_threshold?: number | null;
 }
 
 export interface RosterEntryCluster {

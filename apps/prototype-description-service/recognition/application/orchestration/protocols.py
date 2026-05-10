@@ -114,6 +114,18 @@ class SuggestionRefreshServiceProtocol(Protocol):
         ...
 
 
+class CurationRefreshMetricsProtocol(Protocol):
+    """Protocol for aggregate post-curation refresh attempt metrics."""
+
+    def attempt_started(self) -> None:
+        """Mark the beginning of one refresh attempt."""
+        ...
+
+    def attempt_finished(self, *, outcome: str, duration_seconds: float | None) -> None:
+        """Record the terminal outcome for one refresh attempt."""
+        ...
+
+
 class MergeSuggestionServiceProtocol(Protocol):
     """Protocol for generating cluster-to-cluster merge suggestions."""
 

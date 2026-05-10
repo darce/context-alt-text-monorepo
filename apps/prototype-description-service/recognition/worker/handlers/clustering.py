@@ -17,6 +17,8 @@ from recognition.application.orchestration.job_service import JobService
 from recognition.domain.job import JobStatus
 from recognition.infrastructure.repositories.job_repository import SqlAlchemyJobRepository
 from recognition.interface_adapters.http.dependencies import build_cluster_service
+from recognition.interface_adapters.http.middleware.metrics import get_default_metrics
+from recognition.observability.curation_refresh_metrics import get_default_curation_refresh_metrics
 from recognition.worker.handlers.base import JobHandler
 from recognition.worker.handlers.utils import (
     coerce_int,
@@ -196,6 +198,7 @@ class SplitJobHandler(JobHandler[IdentityClusteringJob]):
                 repository=SqlAlchemyJobRepository(session),
                 cluster_service=cluster_service,
                 scan_service=None,
+                curation_refresh_metrics=get_default_curation_refresh_metrics(get_default_metrics().registry),
             )
             await job_service.queue_curation_followup(
                 tenant_id=str(job.tenant_id),

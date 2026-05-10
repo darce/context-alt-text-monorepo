@@ -263,12 +263,18 @@ class RosterEntryProjectionRepository {
 			$similarity = (float) $row['similarity'];
 		}
 
+		$similarity_threshold = null;
+		if ( isset( $row['similarity_threshold'] ) && '' !== \trim( (string) $row['similarity_threshold'] ) ) {
+			$similarity_threshold = (float) $row['similarity_threshold'];
+		}
+
 		return array(
-			'identity_id' => \trim( (string) ( $row['identity_uuid'] ?? '' ) ),
-			'media_id'    => isset( $row['attachment_id'] ) ? (int) $row['attachment_id'] : 0,
-			'media_url'   => isset( $row['thumb_path'] ) ? \trim( (string) $row['thumb_path'] ) : null,
-			'bbox'        => $bbox,
-			'similarity'  => $similarity,
+			'identity_id'           => \trim( (string) ( $row['identity_uuid'] ?? '' ) ),
+			'media_id'              => isset( $row['attachment_id'] ) ? (int) $row['attachment_id'] : 0,
+			'media_url'             => isset( $row['thumb_path'] ) ? \trim( (string) $row['thumb_path'] ) : null,
+			'bbox'                  => $bbox,
+			'similarity'            => $similarity,
+			'similarity_threshold'  => $similarity_threshold,
 		);
 	}
 

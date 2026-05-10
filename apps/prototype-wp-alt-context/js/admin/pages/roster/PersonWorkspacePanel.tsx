@@ -25,6 +25,73 @@ const QUEUE_SECTIONS = [
 
 const EVIDENCE_IMAGE_SIZE = 96;
 
+type EvidenceMetadata = {
+  similarity: number | null;
+  candidate_source?: string | null;
+  target_comparator?: string | null;
+  score_type?: string | null;
+  similarity_threshold?: number | null;
+  suggestion_floor?: number | null;
+  recompute_state?: string | null;
+};
+
+const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
+
+const isNonEmptyString = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
+
+const humanizeEvidenceToken = (value: string): string =>
+  value
+    .trim()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+
+const formatEvidencePercent = (value: number, fractionDigits = 0): string => `${(value * 100).toFixed(fractionDigits)}%`;
+
+const getEvidenceMetadataLines = (evidence: EvidenceMetadata | null | undefined): string[] => {
+  if (!evidence) {
+    return [];
+  }
+
+  const summaryParts: string[] = [];
+  if (isNonEmptyString(evidence.candidate_source)) {
+    summaryParts.push(`${__('Source', 'alt-context')}: ${humanizeEvidenceToken(evidence.candidate_source)}`);
+  }
+  if (isNonEmptyString(evidence.target_comparator)) {
+    summaryParts.push(`${__('Comparator', 'alt-context')}: ${humanizeEvidenceToken(evidence.target_comparator)}`);
+  }
+  if (isNonEmptyString(evidence.score_type)) {
+    summaryParts.push(`${__('Score', 'alt-context')}: ${humanizeEvidenceToken(evidence.score_type)}`);
+  }
+
+  const lines: string[] = [];
+  if (summaryParts.length > 0) {
+    lines.push(summaryParts.join(' · '));
+  }
+
+  if (isFiniteNumber(evidence.similarity)) {
+    lines.push(`${formatEvidencePercent(evidence.similarity)} ${__('similarity', 'alt-context')}`);
+  } else {
+    lines.push(__('Similarity pending next projection refresh.', 'alt-context'));
+  }
+
+  const thresholdParts: string[] = [];
+  if (isFiniteNumber(evidence.similarity_threshold)) {
+    thresholdParts.push(`${__('Threshold', 'alt-context')} ${formatEvidencePercent(evidence.similarity_threshold, 1)}`);
+  }
+  if (isFiniteNumber(evidence.suggestion_floor)) {
+    thresholdParts.push(`${__('Floor', 'alt-context')} ${formatEvidencePercent(evidence.suggestion_floor, 1)}`);
+  }
+  if (thresholdParts.length > 0) {
+    lines.push(thresholdParts.join(' · '));
+  }
+
+  if (isNonEmptyString(evidence.recompute_state)) {
+    lines.push(`${__('Recompute', 'alt-context')}: ${humanizeEvidenceToken(evidence.recompute_state)}`);
+  }
+
+  return lines;
+};
+
 interface PersonWorkspacePanelProps {
   entry: RosterEntry;
   onOpenQueue: (personUuid: string, queueId: string) => void;
@@ -70,6 +137,9 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
                 ) : (
                   <p>{__('Representative face unavailable until the next projection refresh.', 'alt-context')}</p>
                 )}
+                {getEvidenceMetadataLines(cluster.representative_identity as EvidenceMetadata | null).map((line) => (
+                  <p key={`${cluster.cluster_id}-representative-${line}`}>{line}</p>
+                ))}
                 <div>
                   {cluster.instances.map((instance) => (
                     <figure key={`${cluster.cluster_id}-${instance.identity_id}-${instance.media_id}`}>
@@ -87,6 +157,9 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
                       <figcaption>
                         {sprintf(__('Identity %s · media %d', 'alt-context'), instance.identity_id, instance.media_id)}
                       </figcaption>
+                      {getEvidenceMetadataLines(instance as EvidenceMetadata).map((line) => (
+                        <div key={`${cluster.cluster_id}-${instance.identity_id}-${instance.media_id}-${line}`}>{line}</div>
+                      ))}
                     </figure>
                   ))}
                 </div>

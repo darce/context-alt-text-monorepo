@@ -97,6 +97,10 @@
               },
               "similarity": {
                 "type": ["number", "null"]
+              },
+              "similarity_threshold": {
+                "type": ["number", "null"],
+                "description": "Threshold used for this projected evidence item when available."
               }
             }
           },
@@ -131,6 +135,10 @@
                 },
                 "similarity": {
                   "type": ["number", "null"]
+                },
+                "similarity_threshold": {
+                  "type": ["number", "null"],
+                  "description": "Threshold used for this projected evidence item when available."
                 }
               }
             }

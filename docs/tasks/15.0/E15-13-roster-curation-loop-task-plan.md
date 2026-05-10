@@ -243,10 +243,10 @@ Literature guardrail: Fowler supports small, tested extractions; Latency require
 
 Changes:
 
-- Extract curation refresh use case boundaries only where required by the previous slices.
+- Extract only the narrow `JobService` -> `run_curation_job` boundary needed to instrument post-curation refresh attempts.
 - Preserve existing adapter timeouts, circuit breakers, session timeouts, and pool bulkheads.
-- Add aggregate metrics/SLOs for queue depth, p95/p99 latency, failure rate, recovery time, label-to-visible-suggestion lead time, and projection freshness.
-- Document broad description-service refactoring as a follow-on, not part of E15-13.
+- Record aggregate refresh-attempt outcome, latency, and in-flight metrics separately from per-event replay-row status on the shared `/metrics` registry.
+- Defer broader description-service refactoring plus queue-depth, lead-time, and projection-freshness instrumentation to a follow-on task outside E15-13.
 
 Proof:
 
@@ -325,13 +325,13 @@ make lane-manifest-init TASK=E15-13 LANE_IDS='backend-refresh wp-projection-ui d
 
 ### Checklist for Slice 5: Narrow Enabling Refactor and Aggregate Metrics
 
-- [ ] Refresh use case boundaries are extracted only as needed.
-- [ ] Existing adapter/session/pool resilience controls remain intact.
-- [ ] Aggregate refresh metrics/SLOs are recorded separately from per-event status.
-- [ ] Broader description-service refactor is documented as follow-on.
-- [ ] Enhanced similarity labels name candidate source, target comparator, and score type when RCL-002/RCL-004 data supplies those fields.
-- [ ] Threshold/floor context and recomputation state render when enhanced score fields are present.
-- [ ] Existing-field fallback remains useful and tested when enhanced score fields are absent.
+- [x] Refresh use case boundaries are extracted only as needed.
+- [x] Existing adapter/session/pool resilience controls remain intact.
+- [x] Aggregate refresh metrics/SLOs are recorded separately from per-event status.
+- [x] Broader description-service refactor is documented as follow-on.
+- [x] Enhanced similarity labels name candidate source, target comparator, and score type when RCL-002/RCL-004 data supplies those fields.
+- [x] Threshold/floor context and recomputation state render when enhanced score fields are present.
+- [x] Existing-field fallback remains useful and tested when enhanced score fields are absent.
 
 ## Review Readiness
 

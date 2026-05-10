@@ -35,6 +35,7 @@ from recognition.interface_adapters.http.middleware.metrics import (
     MetricsMiddleware,
     get_default_metrics,
 )
+from recognition.observability.curation_refresh_metrics import get_default_curation_refresh_metrics
 from recognition.interface_adapters.http.middleware.upload_size import UploadSizeLimitMiddleware
 from roster.interface_adapters.http.curation_router import router as roster_curation_router
 from shared.health import HealthStatus
@@ -205,6 +206,7 @@ def register_metrics_route(app: FastAPI) -> None:
     from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
     metrics = get_default_metrics()
+    get_default_curation_refresh_metrics(metrics.registry)
 
     @app.get("/metrics", summary="Prometheus metrics (PA-05 / Slice 3a)")
     def metrics_endpoint(_: object = Depends(require_auth)) -> Response:

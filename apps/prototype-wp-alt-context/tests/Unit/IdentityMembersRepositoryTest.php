@@ -105,6 +105,7 @@ class IdentityMembersRepositoryTest extends TestCase
                         ],
                     ],
                     'match_similarity' => 0.41,
+                    'similarity_threshold' => 0.85,
                 ],
             ],
             10
@@ -115,6 +116,8 @@ class IdentityMembersRepositoryTest extends TestCase
 
         $this->assertStringContainsString('\\"normalized\\":{\\"x\\":0.1,\\"y\\":0.2,\\"width\\":0.3,\\"height\\":0.4}', $sql);
         $this->assertStringContainsString('0.41', $sql);
+        $this->assertStringContainsString('0.85', $sql);
+        $this->assertStringContainsString('similarity_threshold', $sql);
     }
 
     public function testMergeSnapshotStoresDatabaseNullSimilarityWhenMissing(): void

@@ -55,6 +55,8 @@ const projectionEntry = (overrides: Partial<RosterEntry> = {}): RosterEntry => (
   name: 'Alice',
   tags: [],
   cluster_count: 2,
+  clusters: [],
+  queue_memberships: [],
   updated_at: '2026-05-07T12:00:00Z',
   source_version: 11,
   projection_status: 'current',
@@ -178,6 +180,37 @@ describe('RosterPage projection-aware workspace shell', () => {
         'This route is recognized, but the person workspace stays on the legacy Entries view until enriched roster projection data lands.',
       ),
     ).not.toBeInTheDocument();
+  });
+
+  it('[PAG-M4-S4] renders curriculum queue membership statuses in the person workspace', () => {
+    mockedUseRosterEntries.mockReturnValue(
+      createMockQuery({
+        data: [
+          projectionEntry({
+            projection_status: 'current',
+            person_uuid: 'person-uuid-1',
+            name: 'Alice',
+            queue_memberships: ['singleton-proposals', 'needs-confirmation-after-merge'],
+          }),
+        ],
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(
+      <MemoryRouter initialEntries={['/?person=person-uuid-1']}>
+        <RosterPage />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('heading', { name: 'Curriculum review queues' })).toBeInTheDocument();
+    expect(screen.getByText('Singleton proposals')).toBeInTheDocument();
+    expect(screen.getByText('Hard examples')).toBeInTheDocument();
+    expect(screen.getByText('Needs confirmation after merge')).toBeInTheDocument();
+    expect(screen.getAllByText('Queued')).toHaveLength(2);
+    expect(screen.getByText('Not queued')).toBeInTheDocument();
   });
 
   it('[PAG-M3-S2] keeps the gate notice when projection_status is refreshing', () => {

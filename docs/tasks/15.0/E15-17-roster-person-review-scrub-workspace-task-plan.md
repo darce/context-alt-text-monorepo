@@ -193,23 +193,23 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded ADR-009, E15-13, the roster scrub spec, and frontend/testing rules before editing.
-- [ ] Confirmed E15-13 projection fields and action contracts exist before consuming them.
-- [ ] Recorded any boundary ownership changes if the UI needs fields/actions beyond E15-13.
+- [x] Loaded ADR-009, E15-13, the roster scrub spec, and frontend/testing rules before editing.
+- [x] Confirmed E15-13 projection fields and action contracts exist before consuming them.
+- [x] Recorded any boundary ownership changes if the UI needs fields/actions beyond E15-13. _No new boundary fields needed; consumed existing RosterEntry shape._
 
 ### Checklist for Slice 1: Workspace Shell and Route Model
 
-- [ ] Person, queue, face, and cluster routes parse deterministically.
-- [ ] Existing Entries/Clusters routes remain reachable during migration.
-- [ ] Route tests captured.
-- [ ] Slice 1 baseline default-shell fallback is explicitly temporary and documented.
+- [x] Person, queue, face, and cluster routes parse deterministically. _`parseRosterRoute` + URLSearchParams gating; tests in `rosterRoute.test.ts`._
+- [x] Existing Entries/Clusters routes remain reachable during migration. _`?personFilter=...` and `?cluster=...` keep the prior surfaces; verified by `RosterPage.container.test.tsx [PAG-M3]` and `RosterPage.test.tsx`._
+- [x] Route tests captured. _`apps/prototype-wp-alt-context/js/admin/pages/roster/__tests__/rosterRoute.test.ts`._
+- [x] Slice 1 baseline default-shell fallback is explicitly temporary and documented. _Dependency-gate carve-out updated; rendering enrichment moved to Slice 2._
 
 ### Checklist for Slice 2: Person Projection Rendering
 
-- [ ] Person rows render representative evidence, counts, review state, queue memberships, and projection status.
-- [ ] Bound clusters collapse under one person context.
-- [ ] Duplicate person cluster fixture covered.
-- [ ] Default workspace selection follows a documented deterministic rule rather than first projection-row order.
+- [ ] Person rows render representative evidence, counts, review state, queue memberships, and projection status. _Partial: name, cluster_count, projection_status, projection_refreshed_at, source_version, and tags rendered; review-state and queue-membership rendering deferred until those projection fields land._
+- [ ] Bound clusters collapse under one person context. _Pending Slice 4 cluster-evidence migration; current panel shows the count but not the per-cluster collapse._
+- [x] Duplicate person cluster fixture covered. _`rosterRoute.test.ts` covers duplicate-name UUID tiebreak and numeric-id tiebreak cases for `selectDeterministicDefaultWorkspaceEntry`._
+- [x] Default workspace selection follows a documented deterministic rule rather than first projection-row order. _Sorted by lowercased name → person_uuid → numeric id with locale-stable `localeCompare('en', { sensitivity: 'base' })`._
 
 ### Checklist for Slice 3: Face Scrubber and Selection Controls
 
@@ -226,9 +226,9 @@ Proof:
 
 ## Review Readiness
 
-- [ ] No UI field or action is consumed before the owning projection/API contract exists.
-- [ ] Runtime roster check proves a curated person opens in the person workspace.
-- [ ] Handoff decision records ADR-009/E15-13 dependency status and verification.
+- [x] No UI field or action is consumed before the owning projection/API contract exists. _Only consumed pre-existing `RosterEntry` schema fields._
+- [ ] Runtime roster check proves a curated person opens in the person workspace. _Pending live-WordPress verification once Slice 3/4 ships._
+- [x] Handoff decision records ADR-009/E15-13 dependency status and verification. _Recorded in slice_complete decisions for the four slices that landed on this branch._
 
 ## Stretch Goals
 

@@ -28,6 +28,8 @@ const entries: RosterEntry[] = [
     name: 'Alice',
     tags: ['tag-a'],
     cluster_count: 2,
+    clusters: [],
+    queue_memberships: ['singleton-proposals'],
     updated_at: new Date().toISOString(),
     source_version: 1,
     projection_status: 'current',
@@ -39,6 +41,8 @@ const entries: RosterEntry[] = [
     name: 'Bob',
     tags: [],
     cluster_count: 0,
+    clusters: [],
+    queue_memberships: ['hard-examples'],
     updated_at: new Date().toISOString(),
     source_version: 1,
     projection_status: 'current',
@@ -180,6 +184,16 @@ describe('RosterEntriesSection', () => {
     expect(screen.queryByText('Alice')).not.toBeInTheDocument();
   });
 
+  it('filters to queue members when queue=singleton-proposals', () => {
+    const query: RosterEntriesQuery = { isLoading: false, isError: false, data: entries, refetch: vi.fn() };
+
+    renderSection(query, '/?tab=entries&queue=singleton-proposals');
+
+    expect(screen.getByText('Alice')).toBeInTheDocument();
+    expect(screen.queryByText('Bob')).not.toBeInTheDocument();
+    expect(screen.getByText('Showing singleton proposals queue only.')).toBeInTheDocument();
+  });
+
   it('shows filtered empty state and allows clearing the filter', async () => {
     const query: RosterEntriesQuery = {
       isLoading: false,
@@ -191,6 +205,8 @@ describe('RosterEntriesSection', () => {
           name: 'Chris',
           tags: [],
           cluster_count: 1,
+          clusters: [],
+          queue_memberships: [],
           updated_at: new Date().toISOString(),
           source_version: 1,
           projection_status: 'current',

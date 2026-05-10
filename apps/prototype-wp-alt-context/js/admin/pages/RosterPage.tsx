@@ -174,7 +174,7 @@ export const RosterPage = (): React.JSX.Element => {
   };
 
   const handleOpenPersonWorkspace = React.useCallback(
-    (personUuid: string) => {
+    (personUuid: string, queueId?: string) => {
       setSelectedClusterId(null);
       dragDrop.resetDragState();
       actions.resetAll();
@@ -186,28 +186,9 @@ export const RosterPage = (): React.JSX.Element => {
             next.delete(key);
           }
           next.set('person', personUuid);
-          return next;
-        },
-        { replace: true },
-      );
-    },
-    [actions, dragDrop, setSearchParams],
-  );
-
-  const handleOpenQueueWorkspace = React.useCallback(
-    (personUuid: string, queueId: string) => {
-      setSelectedClusterId(null);
-      dragDrop.resetDragState();
-      actions.resetAll();
-      setSearchParams(
-        (previous) => {
-          const next = new URLSearchParams(previous);
-          next.set('tab', ROSTER_TABS.entries.id);
-          for (const key of ROSTER_ROUTE_PARAM_KEYS) {
-            next.delete(key);
+          if (queueId) {
+            next.set('queue', queueId);
           }
-          next.set('person', personUuid);
-          next.set('queue', queueId);
           return next;
         },
         { replace: true },
@@ -352,7 +333,7 @@ export const RosterPage = (): React.JSX.Element => {
         <TabsContent value={ROSTER_TABS.entries.id} className="acx-roster__panel">
           <h2>{ROSTER_TABS.entries.label}</h2>
           {personWorkspaceEntry !== null && (
-            <PersonWorkspacePanel entry={personWorkspaceEntry} onOpenQueue={handleOpenQueueWorkspace} />
+            <PersonWorkspacePanel entry={personWorkspaceEntry} onOpenQueue={handleOpenPersonWorkspace} />
           )}
           <RosterEntriesSection query={entriesQuery} routeNotice={routeGateNotice} />
         </TabsContent>

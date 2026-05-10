@@ -50,10 +50,10 @@ export const getEntryPersonUuid = (entry: RosterEntry): string | null => {
   return typeof raw === 'string' && raw.length > 0 ? raw : null;
 };
 
-const getSortableEntryName = (entry: RosterEntry): string => {
-  const raw: unknown = entry.name;
-  return typeof raw === 'string' ? raw.trim().toLocaleLowerCase() : '';
-};
+const DETERMINISTIC_COMPARE_LOCALE = 'en';
+const DETERMINISTIC_COMPARE_OPTIONS = { sensitivity: 'base' } as const;
+
+const getSortableEntryName = (entry: RosterEntry): string => entry.name.trim().toLowerCase();
 
 export const selectDeterministicDefaultWorkspaceEntry = (
   entries: readonly RosterEntry[],
@@ -64,19 +64,27 @@ export const selectDeterministicDefaultWorkspaceEntry = (
   }
 
   return [...candidates].sort((left, right) => {
-    const nameComparison = getSortableEntryName(left).localeCompare(getSortableEntryName(right));
+    const nameComparison = getSortableEntryName(left).localeCompare(
+      getSortableEntryName(right),
+      DETERMINISTIC_COMPARE_LOCALE,
+      DETERMINISTIC_COMPARE_OPTIONS,
+    );
     if (nameComparison !== 0) {
       return nameComparison;
     }
 
     const leftPersonUuid = getEntryPersonUuid(left) ?? '';
     const rightPersonUuid = getEntryPersonUuid(right) ?? '';
-    const personComparison = leftPersonUuid.localeCompare(rightPersonUuid);
+    const personComparison = leftPersonUuid.localeCompare(
+      rightPersonUuid,
+      DETERMINISTIC_COMPARE_LOCALE,
+      DETERMINISTIC_COMPARE_OPTIONS,
+    );
     if (personComparison !== 0) {
       return personComparison;
     }
 
-    return String(left.id).localeCompare(String(right.id));
+    return left.id - right.id;
   })[0] ?? null;
 };
 

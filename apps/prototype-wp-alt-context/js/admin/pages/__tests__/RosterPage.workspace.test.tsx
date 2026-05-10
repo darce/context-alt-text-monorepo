@@ -227,6 +227,8 @@ describe('RosterPage projection-aware workspace shell', () => {
   });
 
   it('[PAG-M3-S3] chooses a deterministic default workspace entry and shows baseline projection metadata', () => {
+    const refreshedAt = '2026-05-07T12:00:00Z';
+
     mockedUseRosterEntries.mockReturnValue(
       createMockQuery({
         data: [
@@ -234,6 +236,7 @@ describe('RosterPage projection-aware workspace shell', () => {
             id: 2,
             person_uuid: 'person-uuid-2',
             name: 'Tory',
+            tags: ['Needs review'],
             cluster_count: 4,
             source_version: 22,
             projection_refreshed_at: '2026-05-08T18:30:00Z',
@@ -242,9 +245,10 @@ describe('RosterPage projection-aware workspace shell', () => {
             id: 1,
             person_uuid: 'person-uuid-1',
             name: 'Alice',
+            tags: ['Primary'],
             cluster_count: 2,
             source_version: 11,
-            projection_refreshed_at: '2026-05-07T12:00:00Z',
+            projection_refreshed_at: refreshedAt,
           }),
         ],
         isLoading: false,
@@ -261,8 +265,11 @@ describe('RosterPage projection-aware workspace shell', () => {
 
     expect(screen.getByRole('region', { name: /Person workspace: Alice/i })).toBeInTheDocument();
     expect(screen.getByText('Projection status: current')).toBeInTheDocument();
-    expect(screen.getByText('Projection refreshed: 2026-05-07T12:00:00Z')).toBeInTheDocument();
+    expect(screen.getByText(`Projection refreshed: ${new Date(refreshedAt).toLocaleString()}`)).toBeInTheDocument();
     expect(screen.getByText('Source version: 11')).toBeInTheDocument();
+    expect(screen.getByText('Grouped cluster detail')).toBeInTheDocument();
+    expect(screen.getByText('2 curated clusters are currently grouped under this person.')).toBeInTheDocument();
+    expect(screen.getByText('Primary')).toBeInTheDocument();
   });
 
   it('[PAG-M3-S2] keeps the gate notice when projection_status is refreshing', () => {

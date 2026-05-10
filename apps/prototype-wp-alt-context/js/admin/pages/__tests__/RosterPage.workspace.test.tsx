@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 import type { RosterEntry } from '../../api/rosterApi';
@@ -182,7 +182,7 @@ describe('RosterPage projection-aware workspace shell', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('[PAG-M4-S4] renders curriculum queue membership statuses in the person workspace', () => {
+  it('[PAG-M4-S4] renders populated and empty curriculum queue states in the person workspace', () => {
     mockedUseRosterEntries.mockReturnValue(
       createMockQuery({
         data: [
@@ -205,12 +205,18 @@ describe('RosterPage projection-aware workspace shell', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole('heading', { name: 'Curriculum review queues' })).toBeInTheDocument();
-    expect(screen.getByText('Singleton proposals')).toBeInTheDocument();
-    expect(screen.getByText('Hard examples')).toBeInTheDocument();
-    expect(screen.getByText('Needs confirmation after merge')).toBeInTheDocument();
-    expect(screen.getAllByText('Queued')).toHaveLength(2);
-    expect(screen.getByText('Not queued')).toBeInTheDocument();
+    const singletonQueue = screen.getByRole('region', { name: 'Singleton proposals queue' });
+    const hardExamplesQueue = screen.getByRole('region', { name: 'Hard examples queue' });
+    const confirmationQueue = screen.getByRole('region', { name: 'Needs confirmation after merge queue' });
+
+    expect(within(singletonQueue).getByText('Queued for review in this workspace.')).toBeInTheDocument();
+    expect(within(singletonQueue).getByText('Open singleton proposals queue')).toBeInTheDocument();
+
+    expect(within(hardExamplesQueue).getByText('No queued items for this person yet.')).toBeInTheDocument();
+    expect(within(hardExamplesQueue).getByText('Hard examples will appear after the next projection refresh.')).toBeInTheDocument();
+
+    expect(within(confirmationQueue).getByText('Queued for review in this workspace.')).toBeInTheDocument();
+    expect(within(confirmationQueue).getByText('Open needs confirmation after merge queue')).toBeInTheDocument();
   });
 
   it('[PAG-M3-S2] keeps the gate notice when projection_status is refreshing', () => {

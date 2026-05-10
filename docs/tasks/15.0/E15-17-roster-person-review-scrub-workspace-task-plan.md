@@ -154,6 +154,7 @@ Changes:
 - Collapse clusters under person context instead of separate primary identity cards.
 - Preserve raw cluster IDs in evidence details.
 - Replace the temporary Slice 1 "first current projected person" fallback with a deterministic default-selection rule (queue head once queue data lands; until then, use a stable alphabetical-by-name fallback with person UUID / row ID tiebreakers) and cover it in Vitest.
+- Before the person-aware cluster payload lands from RCL-005, Slice 2 may still enrich the workspace with person-summary evidence sourced only from `RosterEntry` fields (formatted projection freshness, tags, grouped cluster count summary), but must not invent person-linked cluster grouping from raw cluster labels alone.
 
 Proof:
 

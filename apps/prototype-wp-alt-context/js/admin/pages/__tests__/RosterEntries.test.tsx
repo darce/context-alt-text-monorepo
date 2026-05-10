@@ -205,6 +205,17 @@ describe('RosterEntriesSection', () => {
     );
   });
 
+  it('routes needs-confirmation-after-merge review actions to the workbench scan tab', () => {
+    const query: RosterEntriesQuery = { isLoading: false, isError: false, data: entries, refetch: vi.fn() };
+
+    renderSection(query, '/?tab=entries&queue=needs-confirmation-after-merge');
+
+    expect(screen.getByRole('link', { name: 'Review merge confirmations in Workbench' })).toHaveAttribute(
+      'href',
+      '#/workbench?tab=scan',
+    );
+  });
+
   it('shows filtered empty state and allows clearing the filter', async () => {
     const query: RosterEntriesQuery = {
       isLoading: false,

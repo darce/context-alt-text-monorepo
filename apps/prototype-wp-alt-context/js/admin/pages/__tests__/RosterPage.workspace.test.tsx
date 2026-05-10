@@ -9,6 +9,7 @@ import { useCreatePerson, useDeletePerson, useRosterEntries, useUpdatePerson } f
 import { useClusterSelection } from '../../hooks/useClusterSelection';
 import { createMockMutation, createMockQuery } from '../../test-utils/mockHooks';
 import { RosterPage } from '../RosterPage';
+import { PersonWorkspacePanel } from '../roster/PersonWorkspacePanel';
 import { useClusterActions } from '../roster/hooks/useClusterActions';
 import { useClusterDragDrop } from '../roster/hooks/useClusterDragDrop';
 import { useClusterMediaMap } from '../roster/hooks/useClusterMediaMap';
@@ -256,6 +257,25 @@ describe('RosterPage projection-aware workspace shell', () => {
     expect(screen.getByRole('region', { name: 'Person workspace: Alice' })).toBeInTheDocument();
   });
 
+  it('[PAG-M4-S4] disables queued actions when the person identifier is unavailable', () => {
+    const onOpenQueue = vi.fn();
+
+    render(
+      <PersonWorkspacePanel
+        entry={projectionEntry({
+          person_uuid: '',
+          name: 'Alice',
+          queue_memberships: ['hard-examples'],
+        })}
+        onOpenQueue={onOpenQueue}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Open hard examples queue' })).toBeDisabled();
+    expect(screen.getByText('Person identifier unavailable until the next projection refresh.')).toBeInTheDocument();
+    expect(onOpenQueue).not.toHaveBeenCalled();
+  });
+
   it('[PAG-M3-S3] renders assigned cluster evidence and all projected instances for the selected person', () => {
     mockedUseRosterEntries.mockReturnValue(
       createMockQuery({
@@ -315,13 +335,49 @@ describe('RosterPage projection-aware workspace shell', () => {
       'src',
       'https://example.com/rep-alpha.jpg',
     );
+    expect(within(clusterRegion).getByRole('img', { name: 'Representative face for cluster cluster-alpha' })).toHaveAttribute(
+      'loading',
+      'lazy',
+    );
+    expect(within(clusterRegion).getByRole('img', { name: 'Representative face for cluster cluster-alpha' })).toHaveAttribute(
+      'width',
+      '96',
+    );
+    expect(within(clusterRegion).getByRole('img', { name: 'Representative face for cluster cluster-alpha' })).toHaveAttribute(
+      'height',
+      '96',
+    );
     expect(within(clusterRegion).getByRole('img', { name: 'Instance 101 for cluster cluster-alpha' })).toHaveAttribute(
       'src',
       'https://example.com/instance-101.jpg',
     );
+    expect(within(clusterRegion).getByRole('img', { name: 'Instance 101 for cluster cluster-alpha' })).toHaveAttribute(
+      'loading',
+      'lazy',
+    );
+    expect(within(clusterRegion).getByRole('img', { name: 'Instance 101 for cluster cluster-alpha' })).toHaveAttribute(
+      'width',
+      '96',
+    );
+    expect(within(clusterRegion).getByRole('img', { name: 'Instance 101 for cluster cluster-alpha' })).toHaveAttribute(
+      'height',
+      '96',
+    );
     expect(within(clusterRegion).getByRole('img', { name: 'Instance 102 for cluster cluster-alpha' })).toHaveAttribute(
       'src',
       'https://example.com/instance-102.jpg',
+    );
+    expect(within(clusterRegion).getByRole('img', { name: 'Instance 102 for cluster cluster-alpha' })).toHaveAttribute(
+      'loading',
+      'lazy',
+    );
+    expect(within(clusterRegion).getByRole('img', { name: 'Instance 102 for cluster cluster-alpha' })).toHaveAttribute(
+      'width',
+      '96',
+    );
+    expect(within(clusterRegion).getByRole('img', { name: 'Instance 102 for cluster cluster-alpha' })).toHaveAttribute(
+      'height',
+      '96',
     );
   });
 

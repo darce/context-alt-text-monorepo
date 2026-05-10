@@ -148,7 +148,7 @@ State key: **(open)** = E15-13 still needs to land this. **(extend)** = predeces
 - Contract/fixture verification:
   - curation-sync contract/doc parity: update `docs/agentic/contracts/curation-sync-api.md` in the same slice that wires bind/unbind `PostCurationEvent`, then prove the documented payload matches the PHP emitter and backend replay reader.
   - shared contract regen + consumer tests: `cd apps/prototype-wp-alt-context && npm run generate:contracts && vendor/bin/phpunit tests/Unit/RosterEntryProjectionRepositoryTest.php && npm test -- --run js/admin/pages/roster` (replaces the prior docs-only `plan-analyze` proof for contract drift)
-  - fixture proof that Tory Guzman singleton becomes a suggestion after curation (failing in Slice 1, passing in Slice 2)
+  - fixture proof that a replayed cluster bind surfaces singleton suggestions after curation (failing in Slice 1, passing in Slice 2)
   - fixture proof for singleton proposals, hard examples, and needs-confirmation-after-merge queues
 - Runtime-parity / environment checks:
   - local WordPress roster clusters tab shows person-aware grouping and curriculum queues after a seeded curation flow
@@ -163,17 +163,17 @@ State key: **(open)** = E15-13 still needs to land this. **(extend)** = predeces
 
 **Goal**: Capture the failing curation/suggestion behavior before changing contracts.
 
-Literature guardrail: Apple describes gallery formation from clustered face observations plus explicit user input, and CurricularFace frames hard examples as curriculum material; fixtures must therefore cover singleton proposals, hard examples, and post-merge confirmations rather than only the happy-path Tory label (`literature/extracted/recognition/apple/Recognizing People in Photos Through Private On-Device Machine Learning - Apple Machine Learning Research.txt:95`, `literature/extracted/recognition/apple/Recognizing People in Photos Through Private On-Device Machine Learning - Apple Machine Learning Research.txt:212`, `literature/extracted/recognition/apple/CurricularFace--Adaptive-Curriculum-Learning-Loss-for-Deep-Face-Recognition.txt:30`).
+Literature guardrail: Apple describes gallery formation from clustered face observations plus explicit user input, and CurricularFace frames hard examples as curriculum material; fixtures must therefore cover singleton proposals, hard examples, and post-merge confirmations rather than only one happy-path named identity (`literature/extracted/recognition/apple/Recognizing People in Photos Through Private On-Device Machine Learning - Apple Machine Learning Research.txt:95`, `literature/extracted/recognition/apple/Recognizing People in Photos Through Private On-Device Machine Learning - Apple Machine Learning Research.txt:212`, `literature/extracted/recognition/apple/CurricularFace--Adaptive-Curriculum-Learning-Loss-for-Deep-Face-Recognition.txt:30`).
 
 Changes:
 
-- Add Tory Guzman singleton regression fixture or scripted reproduction.
+- Add replayed-bind singleton regression coverage or scripted reproduction.
 - Add fixture coverage for singleton proposals, hard examples, and post-merge confirmations.
 - Limit UI cleanup to thumbnail policy and existing-field similarity copy from RCL-006.
 
 Proof:
 
-- `pyenv exec pytest apps/prototype-description-service/recognition/tests -k "tory or curriculum"`
+- `pyenv exec pytest apps/prototype-description-service/recognition/tests -k "replayed_cluster_bind or curriculum"`
 - `cd apps/prototype-wp-alt-context && npm test -- --run js/admin/pages/roster`
 
 ### Slice 2: ADR-Backed Event and Refresh Status Contract
@@ -294,7 +294,7 @@ make lane-manifest-init TASK=E15-13 LANE_IDS='backend-refresh wp-projection-ui d
 
 ### Checklist for Slice 1: Reproduction and Curriculum Fixtures
 
-- [ ] Tory Guzman singleton regression fixture exists.
+- [ ] Replayed-bind singleton regression coverage exists.
 - [ ] Curriculum fixture states cover singleton proposals, hard examples, and needs-confirmation-after-merge.
 - [ ] Existing-field UI cleanup does not change backend/shared contracts.
 - [ ] Verification evidence captured.
@@ -350,5 +350,5 @@ make lane-manifest-init TASK=E15-13 LANE_IDS='backend-refresh wp-projection-ui d
 - [ ] Labeling or binding a cluster creates a reviewable roster entry with person instances.
 - [ ] Post-curation refresh creates or updates suggestions after local curation, merge cleanup, and batch completion.
 - [ ] Singleton proposals, hard examples, and needs-confirmation-after-merge queues are visible and actionable.
-- [ ] Tory Guzman singleton fixture passes.
+- [ ] Replayed-bind singleton regression coverage passes.
 - [ ] Broad description-service refactor remains deferred outside E15-13.

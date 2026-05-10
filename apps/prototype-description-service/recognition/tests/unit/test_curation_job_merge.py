@@ -8,6 +8,8 @@ import uuid
 from unittest.mock import AsyncMock, Mock, call
 
 import pytest
+from prometheus_client import CollectorRegistry, generate_latest
+from prometheus_client.parser import text_string_to_metric_families
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +20,16 @@ from recognition.application.persistence.assignment_writer import AssignmentWrit
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.repositories import ClusterRepository
 from recognition.domain.suggestion import SuggestionRefreshReason
+from recognition.observability.curation_refresh_metrics import CurationRefreshMetrics
+
+
+def _collect_metric_samples(text: str, sample_name: str) -> list[tuple[dict[str, str], float]]:
+    samples: list[tuple[dict[str, str], float]] = []
+    for family in text_string_to_metric_families(text):
+        for sample in family.samples:
+            if sample.name == sample_name:
+                samples.append((dict(sample.labels), sample.value))
+    return samples
 
 
 @pytest.mark.asyncio
@@ -262,6 +274,60 @@ async def test_run_curation_job_marks_refresh_no_candidates_when_nothing_is_crea
 
 
 @pytest.mark.asyncio
+async def test_run_curation_job_records_aggregate_refresh_metrics_on_completion(db_session: AsyncSession) -> None:
+    tenant_id = uuid.uuid4()
+    cluster_id = str(uuid.uuid4())
+    db_session.add(Tenant(id=tenant_id, site_url="http://example.test"))
+    await db_session.commit()
+    replay_row = CurationReplayRecord(
+        tenant_id=tenant_id,
+        idempotency_key="refresh-idem-metrics-complete",
+        result_status="acknowledged",
+        backend_version=1,
+        refresh_status="queued",
+        refresh_requested_at=datetime.now(tz=UTC),
+    )
+    db_session.add(replay_row)
+    await db_session.commit()
+
+    mock_writer = Mock(spec=AssignmentWriter)
+    mock_writer.recompute_representatives = AsyncMock()
+    mock_writer.recompute_centroid = AsyncMock()
+
+    mock_repo = Mock(spec=ClusterRepository)
+    mock_repo.get_unclustered = AsyncMock(return_value=[])
+
+    refresh_after_curation = AsyncMock(return_value=1)
+    cluster_service = Mock()
+    cluster_service.suggestion_refresh_service = SimpleNamespace(
+        refresh_after_curation=refresh_after_curation
+    )
+
+    registry = CollectorRegistry()
+    refresh_metrics = CurationRefreshMetrics(registry=registry)
+
+    await run_curation_job(
+        tenant_id=str(tenant_id),
+        cluster_ids=[cluster_id],
+        assignment_writer=mock_writer,
+        cluster_repo=mock_repo,
+        cluster_service=cluster_service,
+        refresh_idempotency_key="refresh-idem-metrics-complete",
+        session=db_session,
+        refresh_metrics=refresh_metrics,
+    )
+
+    metrics_text = generate_latest(registry).decode("utf-8")
+    completed_total = _collect_metric_samples(metrics_text, "curation_refresh_attempts_total")
+    completed_duration = _collect_metric_samples(metrics_text, "curation_refresh_attempt_duration_seconds_count")
+    in_flight = _collect_metric_samples(metrics_text, "curation_refresh_attempts_in_flight")
+
+    assert any(labels.get("outcome") == "completed" and value == 1.0 for labels, value in completed_total)
+    assert any(labels.get("outcome") == "completed" and value == 1.0 for labels, value in completed_duration)
+    assert in_flight == [({}, 0.0)]
+
+
+@pytest.mark.asyncio
 async def test_run_curation_job_marks_refresh_timed_out_when_executor_times_out(db_session: AsyncSession) -> None:
     tenant_id = uuid.uuid4()
     cluster_id = str(uuid.uuid4())
@@ -308,6 +374,60 @@ async def test_run_curation_job_marks_refresh_timed_out_when_executor_times_out(
     assert isinstance(refreshed, CurationReplayRecord)
     assert refreshed.refresh_status == "timed_out"
     assert refreshed.refresh_completed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_run_curation_job_records_aggregate_refresh_metrics_on_timeout(db_session: AsyncSession) -> None:
+    tenant_id = uuid.uuid4()
+    cluster_id = str(uuid.uuid4())
+    db_session.add(Tenant(id=tenant_id, site_url="http://example.test"))
+    await db_session.commit()
+    replay_row = CurationReplayRecord(
+        tenant_id=tenant_id,
+        idempotency_key="refresh-idem-metrics-timeout",
+        result_status="acknowledged",
+        backend_version=1,
+        refresh_status="queued",
+        refresh_requested_at=datetime.now(tz=UTC),
+    )
+    db_session.add(replay_row)
+    await db_session.commit()
+
+    mock_writer = Mock(spec=AssignmentWriter)
+    mock_writer.recompute_representatives = AsyncMock()
+    mock_writer.recompute_centroid = AsyncMock()
+
+    mock_repo = Mock(spec=ClusterRepository)
+    mock_repo.get_unclustered = AsyncMock(return_value=[])
+
+    refresh_after_curation = AsyncMock(side_effect=TimeoutError("refresh timed out"))
+    cluster_service = Mock()
+    cluster_service.suggestion_refresh_service = SimpleNamespace(
+        refresh_after_curation=refresh_after_curation
+    )
+
+    registry = CollectorRegistry()
+    refresh_metrics = CurationRefreshMetrics(registry=registry)
+
+    await run_curation_job(
+        tenant_id=str(tenant_id),
+        cluster_ids=[cluster_id],
+        assignment_writer=mock_writer,
+        cluster_repo=mock_repo,
+        cluster_service=cluster_service,
+        refresh_idempotency_key="refresh-idem-metrics-timeout",
+        session=db_session,
+        refresh_metrics=refresh_metrics,
+    )
+
+    metrics_text = generate_latest(registry).decode("utf-8")
+    timeout_total = _collect_metric_samples(metrics_text, "curation_refresh_attempts_total")
+    timeout_duration = _collect_metric_samples(metrics_text, "curation_refresh_attempt_duration_seconds_count")
+    in_flight = _collect_metric_samples(metrics_text, "curation_refresh_attempts_in_flight")
+
+    assert any(labels.get("outcome") == "timed_out" and value == 1.0 for labels, value in timeout_total)
+    assert any(labels.get("outcome") == "timed_out" and value == 1.0 for labels, value in timeout_duration)
+    assert in_flight == [({}, 0.0)]
 
 
 @pytest.mark.asyncio

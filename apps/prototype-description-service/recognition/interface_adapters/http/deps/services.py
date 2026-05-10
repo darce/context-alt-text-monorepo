@@ -55,7 +55,9 @@ from recognition.interface_adapters.http.deps.stores import (
     get_mem_job_repo,
 )
 from recognition.interface_adapters.http.deps.tenant import get_tenant_id_optional
+from recognition.interface_adapters.http.middleware.metrics import get_default_metrics
 from recognition.observability import ClusteringLogger
+from recognition.observability.curation_refresh_metrics import get_default_curation_refresh_metrics
 from recognition.observability.persistence import ObservabilityRepository
 from recognition.observability.visualization import ClusterVisualizer
 
@@ -566,7 +568,13 @@ async def get_job_service(
     if callable(scan_service_builder) and tenant_id:
         maybe_scan = scan_service_builder(tenant_id)
         scan_service = await maybe_scan if hasattr(maybe_scan, "__await__") else maybe_scan
-    return JobService(repository=repo, cluster_service=cluster_service, scan_service=scan_service)
+    refresh_metrics = get_default_curation_refresh_metrics(get_default_metrics().registry)
+    return JobService(
+        repository=repo,
+        cluster_service=cluster_service,
+        scan_service=scan_service,
+        curation_refresh_metrics=refresh_metrics,
+    )
 
 
 async def get_job_service_dependency() -> JobService:

@@ -125,10 +125,12 @@ async def test_queue_curation_followup_includes_merge_cleanup_payload() -> None:
 @pytest.mark.asyncio
 async def test_process_curation_job_passes_payload_identity_ids_to_runner(monkeypatch: pytest.MonkeyPatch) -> None:
     repo = InMemoryJobRepo()
+    refresh_metrics = object()
     service = JobService(
         repository=repo,
         cluster_service=StubCurationClusterService(),
         scan_service=StubScanService(),
+        curation_refresh_metrics=refresh_metrics,
     )
 
     job = await service.queue_curation_followup(
@@ -152,3 +154,4 @@ async def test_process_curation_job_passes_payload_identity_ids_to_runner(monkey
     assert completed.status is JobStatus.COMPLETED
     assert captured["cluster_ids"] == ["cluster-1"]
     assert captured["identity_ids"] == ["identity-1", "identity-2"]
+    assert captured["refresh_metrics"] is refresh_metrics

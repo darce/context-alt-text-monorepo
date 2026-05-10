@@ -381,6 +381,86 @@ describe('RosterPage projection-aware workspace shell', () => {
     );
   });
 
+  it('[PAG-M5-S5] keeps evidence useful when only fallback similarity fields are available', () => {
+    render(
+      <PersonWorkspacePanel
+        entry={projectionEntry({
+          clusters: [
+            {
+              cluster_id: 'cluster-alpha',
+              identity_count: 2,
+              representative_identity: {
+                identity_id: 'identity-1',
+                media_id: 101,
+                media_url: 'https://example.com/rep-alpha.jpg',
+                bbox: [0.1, 0.2, 0.3, 0.4],
+                similarity: 0.97,
+              },
+              instances: [
+                {
+                  identity_id: 'identity-1',
+                  media_id: 101,
+                  media_url: 'https://example.com/instance-101.jpg',
+                  bbox: [0.1, 0.2, 0.3, 0.4],
+                  similarity: 0.89,
+                },
+                {
+                  identity_id: 'identity-2',
+                  media_id: 102,
+                  media_url: null,
+                  bbox: [0.2, 0.3, 0.4, 0.5],
+                  similarity: null,
+                },
+              ],
+            },
+          ],
+        })}
+        onOpenQueue={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('97% similarity')).toBeInTheDocument();
+    expect(screen.getByText('89% similarity')).toBeInTheDocument();
+    expect(screen.getByText('Similarity pending next projection refresh.')).toBeInTheDocument();
+  });
+
+  it('[PAG-M5-S5] renders enhanced evidence metadata when optional score details are present', () => {
+    render(
+      <PersonWorkspacePanel
+        entry={projectionEntry({
+          clusters: [
+            {
+              cluster_id: 'cluster-beta',
+              identity_count: 1,
+              representative_identity: {
+                identity_id: 'identity-9',
+                media_id: 201,
+                media_url: 'https://example.com/rep-beta.jpg',
+                bbox: [0.2, 0.2, 0.5, 0.5],
+                similarity: 0.91,
+                candidate_source: 'singleton_proposal',
+                target_comparator: 'cluster_representative',
+                score_type: 'cosine_similarity',
+                similarity_threshold: 0.85,
+                suggestion_floor: 0.7,
+                recompute_state: 'pending',
+              } as unknown as NonNullable<RosterEntry['clusters'][number]['representative_identity']>,
+              instances: [],
+            },
+          ],
+        })}
+        onOpenQueue={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByText('Source: Singleton Proposal · Comparator: Cluster Representative · Score: Cosine Similarity'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('91% similarity')).toBeInTheDocument();
+    expect(screen.getByText('Threshold 85.0% · Floor 70.0%')).toBeInTheDocument();
+    expect(screen.getByText('Recompute: Pending')).toBeInTheDocument();
+  });
+
   it('[PAG-M3-S2] keeps the gate notice when projection_status is refreshing', () => {
     mockedUseRosterEntries.mockReturnValue(
       createMockQuery({

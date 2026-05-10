@@ -109,13 +109,14 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 
 			$attachment_id    = absint( $member['attachment_id'] ?? $member['media_id'] ?? 0 );
 			$similarity_value = $this->normalize_similarity_value( $member );
+			$similarity_threshold_value = $this->normalize_optional_float_value( $member['similarity_threshold'] ?? null );
 			$thumb_path       = $this->normalize_thumb_path( $member, $identity_uuid, $attachment_id );
 			$bbox_json        = $this->encode_bbox_json( $member );
 
 			$sql = $this->prepare_query(
 				"INSERT INTO %i
-					(identity_uuid, cluster_uuid, attachment_id, bbox_json, thumb_path, similarity, is_curated, projection_version, created_at, updated_at)
-				SELECT %s, %s, %d, %s, %s, NULLIF(%s, ''), %d, %d, %s, %s
+					(identity_uuid, cluster_uuid, attachment_id, bbox_json, thumb_path, similarity, similarity_threshold, is_curated, projection_version, created_at, updated_at)
+				SELECT %s, %s, %d, %s, %s, NULLIF(%s, ''), NULLIF(%s, ''), %d, %d, %s, %s
 				FROM DUAL
 				WHERE EXISTS (
 					SELECT 1
@@ -129,6 +130,7 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 					bbox_json = VALUES(bbox_json),
 					thumb_path = VALUES(thumb_path),
 					similarity = NULLIF(%s, ''),
+					similarity_threshold = NULLIF(%s, ''),
 					projection_version = IF(is_curated = 1, projection_version, VALUES(projection_version)),
 					updated_at = VALUES(updated_at)",
 				array(
@@ -139,6 +141,7 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 					$bbox_json,
 					$thumb_path,
 					$similarity_value,
+					$similarity_threshold_value,
 					0,
 					max( 0, $snapshot_version ),
 					$now_utc,
@@ -147,6 +150,7 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 					$cluster_uuid,
 					$normalized_tenant_id,
 					$similarity_value,
+					$similarity_threshold_value,
 				)
 			);
 
@@ -917,6 +921,10 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 	 */
 	private function normalize_similarity_value( array $member ): string {
 		$value = $member['similarity'] ?? $member['match_similarity'] ?? null;
+		return $this->normalize_optional_float_value( $value );
+	}
+
+	private function normalize_optional_float_value( mixed $value ): string {
 		if ( ! is_numeric( $value ) ) {
 			return '';
 		}

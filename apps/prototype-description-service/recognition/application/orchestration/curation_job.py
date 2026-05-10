@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import time
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from uuid import UUID
@@ -15,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models.identity import CurationReplayRecord
 from recognition.application.orchestration.cluster_service import ClusterService
+from recognition.application.orchestration.protocols import CurationRefreshMetricsProtocol
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.domain.constraints import ConstraintSource, ConstraintType
 from recognition.domain.repositories import ClusterRepository
@@ -52,6 +54,7 @@ async def run_curation_job(
     source_cluster_id: str | None = None,
     refresh_idempotency_key: str | None = None,
     session: AsyncSession | None = None,
+    refresh_metrics: CurationRefreshMetricsProtocol | None = None,
 ) -> dict[str, int]:
     """Execute post-curation cleanup tasks.
 
@@ -149,6 +152,7 @@ async def run_curation_job(
             replay_record.refresh_status,
         )
     elif unique_cluster_ids:
+        refresh_attempt_started_at: float | None = None
         if replay_session is not None and refresh_idempotency_key:
             replay_record = await _set_refresh_status(
                 session=replay_session,
@@ -167,6 +171,10 @@ async def run_curation_job(
                 unique_cluster_ids,
             )
             refresh_failed = True
+        else:
+            refresh_attempt_started_at = time.perf_counter()
+            if refresh_metrics is not None:
+                refresh_metrics.attempt_started()
         for cluster_id in unique_cluster_ids:
             if refresh_after_curation is None:
                 break
@@ -197,6 +205,11 @@ async def run_curation_job(
                         status=CurationRefreshStatus.TIMED_OUT,
                         record=replay_record,
                     )
+                _record_refresh_metrics(
+                    refresh_metrics=refresh_metrics,
+                    started_at=refresh_attempt_started_at,
+                    outcome=CurationRefreshStatus.TIMED_OUT,
+                )
                 break
             except Exception as exc:
                 logger.warning(
@@ -213,19 +226,41 @@ async def run_curation_job(
                         status=CurationRefreshStatus.FAILED,
                         record=replay_record,
                     )
+                _record_refresh_metrics(
+                    refresh_metrics=refresh_metrics,
+                    started_at=refresh_attempt_started_at,
+                    outcome=CurationRefreshStatus.FAILED,
+                )
                 refresh_failed = True
                 break
         if replay_session is not None and refresh_idempotency_key and not refresh_failed:
+            final_status = (
+                CurationRefreshStatus.COMPLETED
+                if refresh_created_candidates
+                else CurationRefreshStatus.NO_CANDIDATES
+            )
             replay_record = await _set_refresh_status(
                 session=replay_session,
                 tenant_id=tenant_id,
                 idempotency_key=refresh_idempotency_key,
-                status=(
-                    CurationRefreshStatus.COMPLETED
-                    if refresh_created_candidates
-                    else CurationRefreshStatus.NO_CANDIDATES
-                ),
+                status=final_status,
                 record=replay_record,
+            )
+            _record_refresh_metrics(
+                refresh_metrics=refresh_metrics,
+                started_at=refresh_attempt_started_at,
+                outcome=final_status,
+            )
+        elif refresh_metrics is not None and not refresh_failed and refresh_attempt_started_at is not None:
+            final_status = (
+                CurationRefreshStatus.COMPLETED
+                if refresh_created_candidates
+                else CurationRefreshStatus.NO_CANDIDATES
+            )
+            _record_refresh_metrics(
+                refresh_metrics=refresh_metrics,
+                started_at=refresh_attempt_started_at,
+                outcome=final_status,
             )
 
     logger.info(
@@ -305,3 +340,15 @@ async def _set_refresh_status(
         record.refresh_completed_at = now
     await session.flush()
     return record
+
+
+def _record_refresh_metrics(
+    *,
+    refresh_metrics: CurationRefreshMetricsProtocol | None,
+    started_at: float | None,
+    outcome: CurationRefreshStatus,
+) -> None:
+    if refresh_metrics is None or started_at is None:
+        return
+    duration_seconds = max(0.0, time.perf_counter() - started_at)
+    refresh_metrics.attempt_finished(outcome=outcome.value, duration_seconds=duration_seconds)

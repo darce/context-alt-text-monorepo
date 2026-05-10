@@ -8,6 +8,7 @@ from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from recognition.application.orchestration.protocols import CurationRefreshMetricsProtocol
 from recognition.domain.job import Job, JobStatus, JobType, ProjectionStatus, SplitJobPayload
 from recognition.domain.repositories import JobRepository
 from recognition.shared.ids import generate_id
@@ -16,10 +17,17 @@ from recognition.shared.ids import generate_id
 class JobService:
     """Coordinates background job lifecycle for analyze and clustering tasks."""
 
-    def __init__(self, repository: JobRepository, cluster_service, scan_service) -> None:
+    def __init__(
+        self,
+        repository: JobRepository,
+        cluster_service,
+        scan_service,
+        curation_refresh_metrics: CurationRefreshMetricsProtocol | None = None,
+    ) -> None:
         self.repository = repository
         self.cluster_service = cluster_service
         self.scan_service = scan_service
+        self.curation_refresh_metrics = curation_refresh_metrics
 
     async def create_job(self, job_type: JobType, tenant_id: str, total: int = 0) -> Job:
         """Create a pending job."""
@@ -234,6 +242,7 @@ class JobService:
                 source_cluster_id=source_cluster_id,
                 refresh_idempotency_key=refresh_idempotency_key,
                 session=replay_session,
+                refresh_metrics=self.curation_refresh_metrics,
             )
             completed = int(result.get("clusters_recomputed", 0))
             job = await self.update_progress(job.id, completed=completed, total=job.progress_total)

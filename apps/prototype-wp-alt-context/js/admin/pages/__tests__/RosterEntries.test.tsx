@@ -216,15 +216,15 @@ describe('RosterEntriesSection', () => {
     );
   });
 
-  it('explains that hard-examples review actions are unavailable until the contract lands', () => {
+  it('routes hard-examples review actions to the workbench scan tab', () => {
     const query: RosterEntriesQuery = { isLoading: false, isError: false, data: entries, refetch: vi.fn() };
 
     renderSection(query, '/?tab=entries&queue=hard-examples');
 
-    expect(
-      screen.getByText('Hard-examples review actions stay unavailable here until the dedicated review contract lands.'),
-    ).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: /Workbench/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Review hard examples in Workbench' })).toHaveAttribute(
+      'href',
+      '#/workbench?tab=scan',
+    );
   });
 
   it('shows filtered empty state and allows clearing the filter', async () => {

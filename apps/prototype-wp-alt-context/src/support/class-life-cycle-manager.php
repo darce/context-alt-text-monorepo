@@ -504,6 +504,7 @@ class LifecycleManager {
 			bbox_json longtext NOT NULL,
 			thumb_path text NULL,
 			similarity double NULL,
+			similarity_threshold double NULL,
 			is_curated tinyint(1) NOT NULL DEFAULT 0,
 			projection_version bigint(20) unsigned NOT NULL DEFAULT 0,
 			created_at datetime NOT NULL,

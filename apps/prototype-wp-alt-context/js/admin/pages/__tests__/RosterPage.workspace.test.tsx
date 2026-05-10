@@ -1,5 +1,6 @@
 import { render, screen, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import userEvent from '@testing-library/user-event';
+import { MemoryRouter, useSearchParams } from 'react-router-dom';
 
 import type { RosterEntry } from '../../api/rosterApi';
 import type { BatchAnalyzeResponse, ClusterListResponse, ClusterSummary } from '../../api/recognition';
@@ -128,6 +129,12 @@ const selectionState = {
   count: 0,
 };
 
+const RouteStateProbe = (): React.JSX.Element => {
+  const [searchParams] = useSearchParams();
+
+  return <output aria-label="route-state">{searchParams.toString()}</output>;
+};
+
 describe('RosterPage projection-aware workspace shell', () => {
   const mockedUseRecognitionClusters = vi.mocked(useRecognitionClusters);
   const mockedUseRecognitionCluster = vi.mocked(useRecognitionCluster);
@@ -217,6 +224,36 @@ describe('RosterPage projection-aware workspace shell', () => {
 
     expect(within(confirmationQueue).getByText('Queued for review in this workspace.')).toBeInTheDocument();
     expect(within(confirmationQueue).getByText('Open needs confirmation after merge queue')).toBeInTheDocument();
+  });
+
+  it('[PAG-M4-S4] opens the queued singleton proposals route from the person workspace', async () => {
+    mockedUseRosterEntries.mockReturnValue(
+      createMockQuery({
+        data: [
+          projectionEntry({
+            projection_status: 'current',
+            person_uuid: 'person-uuid-1',
+            name: 'Alice',
+            queue_memberships: ['singleton-proposals'],
+          }),
+        ],
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(
+      <MemoryRouter initialEntries={['/?person=person-uuid-1']}>
+        <RouteStateProbe />
+        <RosterPage />
+      </MemoryRouter>,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Open singleton proposals queue' }));
+
+    expect(screen.getByLabelText('route-state')).toHaveTextContent('tab=entries&person=person-uuid-1&queue=singleton-proposals');
+    expect(screen.getByRole('region', { name: 'Person workspace: Alice' })).toBeInTheDocument();
   });
 
   it('[PAG-M3-S2] keeps the gate notice when projection_status is refreshing', () => {

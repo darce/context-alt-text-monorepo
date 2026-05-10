@@ -85,28 +85,22 @@ export const RosterPage = (): React.JSX.Element => {
   const entriesQuery = useRosterEntries();
   const rosterEntries = React.useMemo(() => entriesQuery.data ?? [], [entriesQuery.data]);
   const personRouteUuid = React.useMemo(() => getRouteParam(searchParams, 'person'), [searchParams]);
-  const projectionShapeAvailable = React.useMemo(
-    () => hasCanonicalProjectionShape(rosterEntries),
-    [rosterEntries],
-  );
-  const projectionStatus = React.useMemo(
-    () => aggregateProjectionStatus(rosterEntries),
-    [rosterEntries],
-  );
+  const projectionShapeAvailable = React.useMemo(() => hasCanonicalProjectionShape(rosterEntries), [rosterEntries]);
+  const projectionStatus = React.useMemo(() => aggregateProjectionStatus(rosterEntries), [rosterEntries]);
   const personWorkspaceEntry = React.useMemo(() => {
     if (!personRouteUuid || !projectionShapeAvailable || projectionStatus !== 'current') {
       return null;
     }
-    return (
-      rosterEntries.find((entry) => getEntryPersonUuid(entry) === personRouteUuid) ?? null
-    );
+    return rosterEntries.find((entry) => getEntryPersonUuid(entry) === personRouteUuid) ?? null;
   }, [personRouteUuid, projectionShapeAvailable, projectionStatus, rosterEntries]);
+  const hasEntriesFilter = searchParams.get('personFilter') !== null;
   const defaultWorkspaceRoute = React.useMemo(
     () =>
       activeTab === ROSTER_TABS.entries.id &&
       parsedRoute.selectedClusterId === null &&
-      !parsedRoute.requiresProjectionGateNotice,
-    [activeTab, parsedRoute.requiresProjectionGateNotice, parsedRoute.selectedClusterId],
+      !parsedRoute.requiresProjectionGateNotice &&
+      !hasEntriesFilter,
+    [activeTab, hasEntriesFilter, parsedRoute.requiresProjectionGateNotice, parsedRoute.selectedClusterId],
   );
   const defaultWorkspaceEntry = React.useMemo(() => {
     if (!defaultWorkspaceRoute) {

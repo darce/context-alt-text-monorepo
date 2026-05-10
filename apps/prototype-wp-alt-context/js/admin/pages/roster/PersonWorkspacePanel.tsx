@@ -33,15 +33,17 @@ export const PersonWorkspacePanel = ({ entry }: PersonWorkspacePanelProps): Reac
       <section aria-labelledby="acx-person-workspace-clusters">
         <h4 id="acx-person-workspace-clusters">{__('Grouped cluster detail', 'alt-context')}</h4>
         <p>
-          {sprintf(
-            _n(
-              '%d curated cluster is currently grouped under this person.',
-              '%d curated clusters are currently grouped under this person.',
-              entry.cluster_count,
-              'alt-context',
-            ),
-            entry.cluster_count,
-          )}
+          {entry.cluster_count === 0
+            ? __('No curated clusters are grouped under this person yet.', 'alt-context')
+            : sprintf(
+                _n(
+                  '%d curated cluster is currently grouped under this person.',
+                  '%d curated clusters are currently grouped under this person.',
+                  entry.cluster_count,
+                  'alt-context',
+                ),
+                entry.cluster_count,
+              )}
         </p>
       </section>
 

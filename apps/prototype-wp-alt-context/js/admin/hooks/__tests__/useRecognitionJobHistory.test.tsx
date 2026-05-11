@@ -2,11 +2,7 @@ import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 
-import {
-  fetchRecentBatchRuns,
-  fetchScanStatus,
-  type RecentBatchRunsResponse,
-} from '../../api/recognition';
+import { fetchRecentBatchRuns, fetchScanStatus, type RecentBatchRunsResponse } from '../../api/recognition';
 import { useRecognitionJobHistory } from '../useRecognitionJobHistory';
 
 vi.mock('@wordpress/i18n', () => ({

@@ -113,13 +113,13 @@ For the E17-13 cleanup path, verify `agent-handoff-mcp` and `agent-orchestrator-
 ```bash
 python3 -m venv /tmp/e17-13-external-mcp
 /tmp/e17-13-external-mcp/bin/pip install --quiet \
-    "git+ssh://git@github.com/darce/mcp-agent-handoff.git@v0.4.3" \
-    "git+ssh://git@github.com/darce/mcp-agent-orchestrator.git@v0.1.4"
+    "mcp-agent-handoff==0.11.2" \
+    "mcp-agent-orchestrator==0.4.6"
 /tmp/e17-13-external-mcp/bin/mcp-agent-handoff --workspace-root . doctor
 /tmp/e17-13-external-mcp/bin/mcp-agent-orchestrator --workspace-root . --help
 ```
 
-This is the external-install verification convention that replaces the package-local conftest/Makefile guard guidance for the cleanup task. The proof must run in a scratch venv with no editable installs from this monorepo, so the result reflects the published `git+ssh://` artifacts rather than a worktree-local import path.
+This is the external-install verification convention that replaces the package-local conftest/Makefile guard guidance for the cleanup task. The proof must run in a scratch venv with no editable installs from this monorepo, so the result reflects the published PyPI artifacts rather than a worktree-local import path.
 
 ### Background
 

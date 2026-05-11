@@ -95,14 +95,12 @@ const clusterActionState = {
     mutate: vi.fn(),
     isPending: false,
   }),
-  commitMutation: createMockMutation<
-    void,
-    Error,
-    { clusterId: string; rosterEntryId?: number; newEntryName?: string }
-  >({
-    mutate: vi.fn(),
-    isPending: false,
-  }),
+  commitMutation: createMockMutation<void, Error, { clusterId: string; rosterEntryId?: number; newEntryName?: string }>(
+    {
+      mutate: vi.fn(),
+      isPending: false,
+    },
+  ),
   bulkMergeMutation: createMockMutation<void, Error, { clusterIds: string[] }>({
     mutate: vi.fn(),
     mutateAsync: vi.fn().mockResolvedValue(undefined),
@@ -312,7 +310,9 @@ describe('RosterPage projection-aware workspace shell', () => {
     expect(within(singletonQueue).getByText('Open singleton proposals queue')).toBeInTheDocument();
 
     expect(within(hardExamplesQueue).getByText('No queued items for this person yet.')).toBeInTheDocument();
-    expect(within(hardExamplesQueue).getByText('Hard examples will appear after the next projection refresh.')).toBeInTheDocument();
+    expect(
+      within(hardExamplesQueue).getByText('Hard examples will appear after the next projection refresh.'),
+    ).toBeInTheDocument();
 
     expect(within(confirmationQueue).getByText('Queued for review in this workspace.')).toBeInTheDocument();
     expect(within(confirmationQueue).getByText('Open needs confirmation after merge queue')).toBeInTheDocument();
@@ -344,7 +344,9 @@ describe('RosterPage projection-aware workspace shell', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Open singleton proposals queue' }));
 
-    expect(screen.getByLabelText('route-state')).toHaveTextContent('tab=entries&person=person-uuid-1&queue=singleton-proposals');
+    expect(screen.getByLabelText('route-state')).toHaveTextContent(
+      'tab=entries&person=person-uuid-1&queue=singleton-proposals',
+    );
     expect(screen.getByRole('region', { name: 'Person workspace: Alice' })).toBeInTheDocument();
   });
 
@@ -422,22 +424,18 @@ describe('RosterPage projection-aware workspace shell', () => {
     const clusterRegion = within(evidenceSection).getByRole('region', { name: 'Cluster cluster-alpha' });
 
     expect(within(clusterRegion).getByText('2 projected instances')).toBeInTheDocument();
-    expect(within(clusterRegion).getByRole('img', { name: 'Representative face for cluster cluster-alpha' })).toHaveAttribute(
-      'src',
-      'https://example.com/rep-alpha.jpg',
-    );
-    expect(within(clusterRegion).getByRole('img', { name: 'Representative face for cluster cluster-alpha' })).toHaveAttribute(
-      'loading',
-      'lazy',
-    );
-    expect(within(clusterRegion).getByRole('img', { name: 'Representative face for cluster cluster-alpha' })).toHaveAttribute(
-      'width',
-      '96',
-    );
-    expect(within(clusterRegion).getByRole('img', { name: 'Representative face for cluster cluster-alpha' })).toHaveAttribute(
-      'height',
-      '96',
-    );
+    expect(
+      within(clusterRegion).getByRole('img', { name: 'Representative face for cluster cluster-alpha' }),
+    ).toHaveAttribute('src', 'https://example.com/rep-alpha.jpg');
+    expect(
+      within(clusterRegion).getByRole('img', { name: 'Representative face for cluster cluster-alpha' }),
+    ).toHaveAttribute('loading', 'lazy');
+    expect(
+      within(clusterRegion).getByRole('img', { name: 'Representative face for cluster cluster-alpha' }),
+    ).toHaveAttribute('width', '96');
+    expect(
+      within(clusterRegion).getByRole('img', { name: 'Representative face for cluster cluster-alpha' }),
+    ).toHaveAttribute('height', '96');
     expect(within(clusterRegion).getByRole('img', { name: 'Instance 101 for cluster cluster-alpha' })).toHaveAttribute(
       'src',
       'https://example.com/instance-101.jpg',
@@ -602,7 +600,9 @@ describe('RosterPage projection-aware workspace shell', () => {
     );
 
     expect(
-      screen.getByText('Roster projection failed to refresh. Person workspace is unavailable until the projection recovers.'),
+      screen.getByText(
+        'Roster projection failed to refresh. Person workspace is unavailable until the projection recovers.',
+      ),
     ).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: /Person workspace/i })).not.toBeInTheDocument();
   });

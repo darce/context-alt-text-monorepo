@@ -7,6 +7,8 @@ const projectionEntry = (overrides: Partial<RosterEntry> = {}): RosterEntry => (
   name: 'Alice',
   tags: [],
   cluster_count: 2,
+  clusters: [],
+  queue_memberships: [],
   updated_at: '2026-05-07T12:00:00Z',
   source_version: 11,
   projection_status: 'current',

@@ -4,7 +4,7 @@ Cross-project scripts for the monorepo. App-specific scripts live under each app
 
 ## Structure
 
-```
+```text
 scripts/
 ├── localwp-runtime.sh     # Resolve LocalWP socket/php paths without hard-coded hashes
 ├── localwp-wp.sh          # Run WP-CLI with LocalWP-aware php/socket resolution
@@ -18,6 +18,29 @@ scripts/
 The orchestration helpers in this repo now execute the installed `agent-orchestrator-mcp`
 package directly, including `python -m agent_orchestrator_mcp.orchestration.lane_config`
 for lane/task manifest resolution.
+
+## Test Placement Policy
+
+Root-level doc-lock tests stay in `scripts/` when they validate monorepo-wide
+operator surfaces rather than one app. Examples include
+`test_consumer_setup_doc.py`, `test_current_task_demotion_surfaces.py`,
+`test_rg014_external_package_scope.py`, and `test_shared_agentic_surface_doc.py`.
+These tests cover shared setup guides, harness contracts, constitution rules,
+MCP launcher behavior, or cross-repo naming policy, so moving them into an app
+test tree would hide their ownership.
+
+App-owned script tests should live with the app when the script and all of its
+runtime assumptions are app-local. The description service keeps script CLI
+tests under `apps/prototype-description-service/recognition/tests/scripts/`;
+WordPress plugin-only helpers should follow the plugin's test tree instead of
+adding new root-level tests.
+
+Hook tests belong beside their hooks in `scripts/hooks/test_*.py`.
+
+Task-ephemeral guards: these should not remain as live root tests after the
+task is closed; either generalize the assertion into a durable doc/tooling
+contract or remove the guard once it only protects a historical task plan or
+run log.
 
 ## localwp-runtime.sh
 
@@ -43,6 +66,7 @@ depending on the shell's default PHP.
 ```
 
 Behavior:
+
 - prefers `wp-nightly` when available for PHP 8.5+ compatibility
 - otherwise runs stable `wp` under `php@8.4` when present
 - otherwise falls back to the default PHP resolved by `localwp-runtime.sh`

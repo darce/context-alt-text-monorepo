@@ -6,7 +6,7 @@ Use this guide when you want another private Daniel-owned repository to consume 
 
 - macOS or Linux with `git`, `python3`, and `pyenv`
 - Access to the private `darce/*` GitHub repositories over SSH
-- A project-local virtual environment or other Python 3.11+ environment on your PATH
+- A project-local Python 3.11+ virtual environment; the commands below use `./.venv/bin/...` explicitly to avoid pyenv-shim shadowing
 - A clean consumer repository root where the overlay should live
 
 ## Install
@@ -14,19 +14,21 @@ Use this guide when you want another private Daniel-owned repository to consume 
 Install the three package surfaces from PyPI, then materialize the shared overlay into the current repo:
 
 ```bash
-pip install "mcp-agent-handoff>=0.6.0,<0.7"
-pip install "mcp-agent-orchestrator>=0.3.0,<0.4"
-pip install "agentic-bootstrap>=0.2.0,<0.3"
+python3 -m venv .venv
+./.venv/bin/pip install "mcp-agent-handoff==0.11.2"
+./.venv/bin/pip install "mcp-agent-orchestrator==0.4.6"
+./.venv/bin/pip install "agentic-bootstrap==0.5.1"
 
-agentic-bootstrap install --target .
+./.venv/bin/agentic-bootstrap install --target . --remote-ref v0.1.14
 ```
 
 The install flow clones the shared agentic surface into `.agentic/remote/`, creates the overlay symlinks, writes `.agentic-overlay.json`, and wires the local MCP config files.
+Keep the overlay ref pinned to the reviewed monorepo tag (`v0.1.14`) until a newer release set is explicitly promoted.
 
 After install, run one sanity check from the consumer root:
 
 ```bash
-agentic-bootstrap doctor
+./.venv/bin/agentic-bootstrap doctor
 ```
 
 ## State Paths
@@ -57,14 +59,14 @@ If you set explicit relative paths, they resolve from `AGENT_HANDOFF_WORKSPACE_R
 Use the package manager for MCP package upgrades and `agentic-bootstrap update` for the overlay clone:
 
 ```bash
-pip install --upgrade "mcp-agent-handoff"
-pip install --upgrade "mcp-agent-orchestrator"
-pip install --upgrade "agentic-bootstrap"
+./.venv/bin/pip install --upgrade "mcp-agent-handoff==0.11.2"
+./.venv/bin/pip install --upgrade "mcp-agent-orchestrator==0.4.6"
+./.venv/bin/pip install --upgrade "agentic-bootstrap==0.5.1"
 
-agentic-bootstrap update
+./.venv/bin/agentic-bootstrap update --remote-ref v0.1.14
 ```
 
-Keep the install step pinned to a reviewed tag. The upgrade step intentionally omits a tag so pip can resolve the latest published release for each package.
+Keep both the package versions and the overlay ref pinned to the reviewed release set. When a newer release set is approved, bump the exact package versions and the `--remote-ref` together.
 
 `agentic-bootstrap update` fetches the shared clone, checks out the requested ref, re-validates symlinks, and refreshes `.agentic-overlay.json` with the new remote SHA.
 
@@ -73,7 +75,7 @@ Keep the install step pinned to a reviewed tag. The upgrade step intentionally o
 Use `agentic-bootstrap doctor` when the overlay looks wrong but you want diagnosis first:
 
 ```bash
-agentic-bootstrap doctor
+./.venv/bin/agentic-bootstrap doctor
 ```
 
 Doctor should verify:
@@ -86,7 +88,7 @@ Doctor should verify:
 Use `agentic-bootstrap repair` when the overlay is missing, corrupt, or drifted:
 
 ```bash
-agentic-bootstrap repair
+./.venv/bin/agentic-bootstrap repair
 ```
 
 If the shared clone contains uncommitted files, repair must stop and name the dirty files unless you pass the explicit dirty-worktree override supported by the tool.
@@ -139,7 +141,7 @@ This means the runtime could not infer a git-backed consumer root and you did no
 
 Broken overlay symlinks
 
-Run `agentic-bootstrap doctor` first. If the clone or symlinks are broken, use `agentic-bootstrap repair` instead of manually recreating links.
+Run `./.venv/bin/agentic-bootstrap doctor` first. If the clone or symlinks are broken, use `./.venv/bin/agentic-bootstrap repair` instead of manually recreating links.
 
 Wrong MCP launcher path
 

@@ -2,7 +2,7 @@
 
 ## Goal
 
-Use this note when you need to prove that a scratch consumer repo can discover active task plans from its root workspace while keeping `CURRENT_TASK.json` on-demand. This is the operator-facing runbook that pairs with `docs/tasks/17.0/E17-14-slice2-verification-proof.md`.
+Use this note when you need to prove that a scratch consumer repo can discover active task plans from its root workspace while keeping `CURRENT_TASK.json` on-demand.
 
 ## Fixture
 
@@ -13,8 +13,10 @@ rm -rf /tmp/e17-14-scratch-consumer /tmp/e17-14-scratch-consumer-task-a /tmp/e17
 mkdir -p /tmp/e17-14-scratch-consumer /tmp/e17-14-scratch-consumer-task-a/docs/tasks /tmp/e17-14-scratch-consumer-task-b/docs/tasks
 cd /tmp/e17-14-scratch-consumer
 git init
-agentic-bootstrap install --target /tmp/e17-14-scratch-consumer --remote-ref v0.1.4
-agentic-bootstrap doctor
+python3 -m venv .venv
+./.venv/bin/pip install "mcp-agent-handoff==0.11.2" "mcp-agent-orchestrator==0.4.6" "agentic-bootstrap==0.5.1"
+./.venv/bin/agentic-bootstrap install --target /tmp/e17-14-scratch-consumer --remote-ref v0.1.14
+./.venv/bin/agentic-bootstrap doctor
 ```
 
 Seed two active tasks after install. Each active row must carry a distinct `task_plan_path` plus the matching `target_worktree_path`.
@@ -40,6 +42,6 @@ Then verify three things:
 
 ## Recording Results
 
-Record the resolved reviewed SHA, the exact command lines, the `DASHBOARD.txt` excerpt, the `render_handoff(kind='current_task'` excerpt, and the no-auto-write result in `docs/tasks/17.0/E17-14-slice2-verification-proof.md`.
+Record the resolved reviewed SHA, the exact command lines, the `DASHBOARD.txt` excerpt, the `render_handoff(kind='current_task'` excerpt, and the no-auto-write result in the owning task's proof artifact or slice-complete handoff decision.
 
 Do not treat the probe as complete until the proof artifact includes the real runtime excerpts for all pass criteria.

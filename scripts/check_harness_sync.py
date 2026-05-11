@@ -70,6 +70,7 @@ REQUIRED_VSCODE_SETTINGS = {
     "files.autoSave": "off",
     "files.refactoring.autoSave": False,
     "editor.formatOnSave": False,
+    "terminal.integrated.agentHostProfile.osx": {"path": "/bin/bash"},
 }
 REQUIRED_PROTECTED_MAIN_PATTERNS = (
     "docs/tasks/**/*.md",

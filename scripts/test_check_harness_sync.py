@@ -369,6 +369,7 @@ def test_workspace_settings_pass_with_safe_defaults(tmp_path: Path) -> None:
     payload["files.autoSave"] = "off"
     payload["files.refactoring.autoSave"] = False
     payload["editor.formatOnSave"] = False
+    payload["terminal.integrated.agentHostProfile.osx"] = {"path": "/bin/bash"}
     settings_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
     errors = _check_workspace_settings(repo_root=repo)
@@ -381,11 +382,26 @@ def test_workspace_settings_fail_when_format_on_save_is_enabled(tmp_path: Path) 
     payload = json.loads(settings_path.read_text(encoding="utf-8"))
     payload["files.autoSave"] = "off"
     payload["files.refactoring.autoSave"] = False
+    payload["terminal.integrated.agentHostProfile.osx"] = {"path": "/bin/bash"}
     payload["editor.formatOnSave"] = True
     settings_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
     errors = _check_workspace_settings(repo_root=repo)
     assert any("editor.formatOnSave" in err for err in errors)
+
+
+def test_workspace_settings_fail_when_agent_host_profile_is_missing(tmp_path: Path) -> None:
+    repo = _write_repo(tmp_path)
+    settings_path = repo / ".vscode" / "settings.json"
+    payload = json.loads(settings_path.read_text(encoding="utf-8"))
+    payload["files.autoSave"] = "off"
+    payload["files.refactoring.autoSave"] = False
+    payload["editor.formatOnSave"] = False
+    payload.pop("terminal.integrated.agentHostProfile.osx", None)
+    settings_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    errors = _check_workspace_settings(repo_root=repo)
+    assert any("terminal.integrated.agentHostProfile.osx" in err for err in errors)
 
 
 def test_branch_isolation_requires_vscode_main_guard_matcher(tmp_path: Path) -> None:

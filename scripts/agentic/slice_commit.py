@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any, Callable
 
 from agent_handoff_mcp.api import close_slice, get_handoff_state
 from agent_handoff_mcp.config import RuntimeConfig
@@ -45,6 +46,69 @@ def _build_rationale(message: str, commit_sha: str, changed_files: list[str]) ->
     )
 
 
+def record_slice_commit(
+    *,
+    repo_root: Path,
+    workspace_root: str,
+    state_dir: str,
+    current_task_path: str,
+    exports_dir: str,
+    task_ref: str,
+    session: str,
+    message: str,
+    focus: str | None = None,
+    decision: str | None = None,
+    runtime_factory: Callable[..., Any] = RuntimeConfig.for_workspace,
+    configure_runtime_fn: Callable[[Any], Any] = configure_runtime,
+    git_fn: Callable[..., str] = _git,
+    get_handoff_state_fn: Callable[..., dict[str, Any]] = get_handoff_state,
+    close_slice_fn: Callable[..., dict[str, Any]] = close_slice,
+) -> dict[str, Any]:
+    configure_runtime_fn(
+        runtime_factory(
+            workspace_root,
+            state_dir=state_dir,
+            current_task_path=current_task_path,
+            exports_dir=exports_dir,
+        )
+    )
+
+    changed_files = [line for line in git_fn(repo_root, "diff", "--cached", "--name-only").splitlines() if line]
+    if not changed_files:
+        raise ValueError("slice-commit requires staged changes. Stage files first.")
+
+    git_fn(repo_root, "commit", "-m", message)
+    commit_sha = git_fn(repo_root, "rev-parse", "HEAD")
+    branch = git_fn(repo_root, "rev-parse", "--abbrev-ref", "HEAD")
+    identity = get_handoff_state_fn(task_ref=task_ref, sections="identity", detail="summary")
+    revision = None
+    active = ((identity or {}).get("data") or {}).get("active") or {}
+    if active.get("task_ref") == task_ref:
+        revision = active.get("revision")
+
+    resolved_decision = decision or f"cdx_slice_complete_{task_ref}_{_slugify(message)}"
+    rationale = _build_rationale(message, commit_sha, changed_files)
+    result = close_slice_fn(
+        session=session,
+        decision=resolved_decision,
+        rationale=rationale,
+        expected_revision=revision,
+        task_ref=task_ref,
+        focus=focus,
+        changed_files=changed_files,
+        actor={"branch": branch, "commit_sha": commit_sha},
+    )
+    if not result.get("ok"):
+        raise RuntimeError(str(result))
+
+    return {
+        "decision": resolved_decision,
+        "commit_sha": commit_sha,
+        "changed_files": changed_files,
+        "close_slice": result,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-root", required=True)
@@ -60,44 +124,30 @@ def main() -> int:
     args = parser.parse_args()
 
     repo_root = Path(args.repo_root).resolve()
-    configure_runtime(
-        RuntimeConfig.for_workspace(
-            args.workspace_root,
+    try:
+        result = record_slice_commit(
+            repo_root=repo_root,
+            workspace_root=args.workspace_root,
             state_dir=args.state_dir,
             current_task_path=args.current_task_path,
             exports_dir=args.exports_dir,
+            task_ref=args.task_ref,
+            session=args.session,
+            message=args.message,
+            focus=args.focus,
+            decision=args.decision,
         )
-    )
-
-    changed_files = [line for line in _git(repo_root, "diff", "--cached", "--name-only").splitlines() if line]
-    if not changed_files:
-        print("slice-commit requires staged changes. Stage files first.", file=sys.stderr)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
         return 1
 
-    _git(repo_root, "commit", "-m", args.message)
-    commit_sha = _git(repo_root, "rev-parse", "HEAD")
-    identity = get_handoff_state(task_ref=args.task_ref, sections="identity", detail="summary")
-    revision = None
-    active = ((identity or {}).get("data") or {}).get("active") or {}
-    if active.get("task_ref") == args.task_ref:
-        revision = active.get("revision")
-
-    decision = args.decision or f"cdx_slice_complete_{args.task_ref}_{_slugify(args.message)}"
-    rationale = _build_rationale(args.message, commit_sha, changed_files)
-    result = close_slice(
-        session=args.session,
-        decision=decision,
-        rationale=rationale,
-        expected_revision=revision,
-        task_ref=args.task_ref,
-        focus=args.focus,
-        changed_files=changed_files,
+    print(
+        "Committed and recorded slice-complete decision "
+        f"`{result['decision']}` at {result['commit_sha']}."
     )
-    if not result.get("ok"):
-        print(result, file=sys.stderr)
-        return 1
-
-    print(f"Committed and recorded slice-complete decision `{decision}` at {commit_sha}.")
     return 0
 
 

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from db.models import IdentityClusteringJob
-from recognition.worker.handlers.clustering import ClusteringJobHandler
+from recognition.worker.handlers.clustering import ClusteringJobHandler, CurationJobHandler
 
 
 class _FakeSession:
@@ -306,4 +306,63 @@ async def test_clustering_job_handler_calls_ensure_job_context_before_clustering
     first_cluster_idx = call_order.index("cluster_unclustered_identities")
     assert first_context_idx < first_cluster_idx, (
         f"ensure_job_context must be called before cluster_unclustered_identities; actual call order: {call_order}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# CurationJobHandler: refresh_metrics wiring (E15-13-BR-20)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_curation_job_handler_passes_refresh_metrics_into_run_curation_job(monkeypatch) -> None:
+    """Queued curation jobs must wire refresh_metrics so /metrics counters increment."""
+
+    async def _noop_context(*, session, job):  # noqa: ANN001
+        return None
+
+    monkeypatch.setattr("recognition.worker.handlers.clustering.ensure_job_context", _noop_context)
+
+    async def _fake_build_cluster_service(*, session, tenant_id):  # noqa: ANN001
+        return SimpleNamespace(
+            assignment_writer=SimpleNamespace(cluster_repository=object()),
+        )
+
+    monkeypatch.setattr(
+        "recognition.worker.handlers.clustering.build_cluster_service",
+        _fake_build_cluster_service,
+    )
+
+    captured: dict[str, object] = {}
+
+    async def _fake_run_curation_job(**kwargs):
+        captured.update(kwargs)
+        return {"clusters_recomputed": 1}
+
+    monkeypatch.setattr(
+        "recognition.worker.handlers.clustering.run_curation_job",
+        _fake_run_curation_job,
+    )
+
+    handler = CurationJobHandler()
+    job = IdentityClusteringJob(
+        id=uuid.uuid4(),
+        tenant_id=uuid.uuid4(),
+        job_type="curation",
+        status="running",
+        progress=0.0,
+        total_identities=0,
+        processed_identities=0,
+        message="Curation",
+        payload={"cluster_ids": [str(uuid.uuid4())]},
+    )
+
+    await handler.handle(job, _FakeSession())
+
+    assert "refresh_metrics" in captured, (
+        "CurationJobHandler must pass refresh_metrics into run_curation_job so queued "
+        "curation jobs increment curation_refresh_attempts_total/_duration/_in_flight."
+    )
+    assert captured["refresh_metrics"] is not None, (
+        "refresh_metrics must be a non-null collector — run_curation_job skips metric writes when it is None."
     )

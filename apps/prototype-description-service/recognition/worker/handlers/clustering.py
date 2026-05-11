@@ -59,6 +59,7 @@ class CurationJobHandler(JobHandler[IdentityClusteringJob]):
             source_cluster_id=coerce_optional_str(job.payload.get("source_cluster_id")),
             refresh_idempotency_key=coerce_optional_str(job.payload.get("refresh_idempotency_key")),
             session=session,
+            refresh_metrics=get_default_curation_refresh_metrics(get_default_metrics().registry),
         )
         await ensure_job_context(session=session, job=job)
         completed = int(result_counts.get("clusters_recomputed", 0))

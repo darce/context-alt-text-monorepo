@@ -127,7 +127,9 @@ async def run_curation_job(
                 exc,
             )
 
-    refresh_service = getattr(cluster_service, "suggestion_refresh_service", None) if cluster_service is not None else None
+    refresh_service = (
+        getattr(cluster_service, "suggestion_refresh_service", None) if cluster_service is not None else None
+    )
     replay_session = session
     if replay_session is None and refresh_idempotency_key:
         logger.warning(
@@ -143,7 +145,9 @@ async def run_curation_job(
             idempotency_key=refresh_idempotency_key,
         )
     if refresh_service is None:
-        logger.warning("[curation_job] refresh service unavailable tenant_id=%s cluster_ids=%s", tenant_id, unique_cluster_ids)
+        logger.warning(
+            "[curation_job] refresh service unavailable tenant_id=%s cluster_ids=%s", tenant_id, unique_cluster_ids
+        )
     elif replay_record is not None and replay_record.refresh_status in _REFRESH_SUCCESS_TERMINAL_STATUSES:
         logger.info(
             "[curation_job] refresh already settled tenant_id=%s idempotency_key=%s refresh_status=%s",
@@ -235,9 +239,7 @@ async def run_curation_job(
                 break
         if replay_session is not None and refresh_idempotency_key and not refresh_failed:
             final_status = (
-                CurationRefreshStatus.COMPLETED
-                if refresh_created_candidates
-                else CurationRefreshStatus.NO_CANDIDATES
+                CurationRefreshStatus.COMPLETED if refresh_created_candidates else CurationRefreshStatus.NO_CANDIDATES
             )
             replay_record = await _set_refresh_status(
                 session=replay_session,
@@ -253,9 +255,7 @@ async def run_curation_job(
             )
         elif refresh_metrics is not None and not refresh_failed and refresh_attempt_started_at is not None:
             final_status = (
-                CurationRefreshStatus.COMPLETED
-                if refresh_created_candidates
-                else CurationRefreshStatus.NO_CANDIDATES
+                CurationRefreshStatus.COMPLETED if refresh_created_candidates else CurationRefreshStatus.NO_CANDIDATES
             )
             _record_refresh_metrics(
                 refresh_metrics=refresh_metrics,

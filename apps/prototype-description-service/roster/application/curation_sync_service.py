@@ -4,8 +4,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Protocol
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal, Protocol
 from uuid import UUID
 
 from sqlalchemy import func, select

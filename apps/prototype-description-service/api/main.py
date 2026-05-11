@@ -35,8 +35,8 @@ from recognition.interface_adapters.http.middleware.metrics import (
     MetricsMiddleware,
     get_default_metrics,
 )
-from recognition.observability.curation_refresh_metrics import get_default_curation_refresh_metrics
 from recognition.interface_adapters.http.middleware.upload_size import UploadSizeLimitMiddleware
+from recognition.observability.curation_refresh_metrics import get_default_curation_refresh_metrics
 from roster.interface_adapters.http.curation_router import router as roster_curation_router
 from shared.health import HealthStatus
 

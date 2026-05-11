@@ -401,7 +401,9 @@ class SuggestionRefreshService:
                 )
                 surfaced = await self.surface_for_newly_labeled_cluster(
                     cluster_id,
-                    candidate_cluster_ids=[candidate.id for candidate in candidate_clusters if getattr(candidate, "id", None)],
+                    candidate_cluster_ids=[
+                        candidate.id for candidate in candidate_clusters if getattr(candidate, "id", None)
+                    ],
                 )
                 total += surfaced
 

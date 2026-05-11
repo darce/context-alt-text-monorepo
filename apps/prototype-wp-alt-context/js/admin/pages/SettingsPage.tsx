@@ -14,6 +14,7 @@ import {
   type TestConnectionOutcomeValue,
   type TestConnectionResponse,
 } from '../api/settingsApi';
+import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group';
 
 type BannerTone = 'success' | 'warning' | 'error';
 
@@ -274,30 +275,21 @@ export const SettingsPage = (): React.JSX.Element => {
               <td>
                 <fieldset>
                   <legend className="screen-reader-text">{__('Recognition Source', 'alt-context')}</legend>
-                  <label htmlFor="acx-settings-source-service" style={{ marginRight: '16px' }}>
-                    <input
-                      id="acx-settings-source-service"
-                      type="radio"
-                      name="acx-recognition-source"
-                      value={RecognitionSource.SERVICE}
-                      checked={recognitionSource === RecognitionSource.SERVICE}
-                      onChange={() => setRecognitionSource(RecognitionSource.SERVICE)}
-                      disabled={sourceReadOnly}
-                    />{' '}
-                    {__('Service', 'alt-context')}
-                  </label>
-                  <label htmlFor="acx-settings-source-local">
-                    <input
-                      id="acx-settings-source-local"
-                      type="radio"
-                      name="acx-recognition-source"
-                      value={RecognitionSource.LOCAL}
-                      checked={recognitionSource === RecognitionSource.LOCAL}
-                      onChange={() => setRecognitionSource(RecognitionSource.LOCAL)}
-                      disabled={sourceReadOnly}
-                    />{' '}
-                    {__('Local', 'alt-context')}
-                  </label>
+                  <RadioGroup
+                    aria-label={__('Recognition Source', 'alt-context')}
+                    value={recognitionSource}
+                    onValueChange={(value) => setRecognitionSource(value as RecognitionSourceValue)}
+                    disabled={sourceReadOnly}
+                  >
+                    <label htmlFor="acx-settings-source-service" style={{ marginRight: '16px' }}>
+                      <RadioGroupItem id="acx-settings-source-service" value={RecognitionSource.SERVICE} />{' '}
+                      {__('Service', 'alt-context')}
+                    </label>
+                    <label htmlFor="acx-settings-source-local">
+                      <RadioGroupItem id="acx-settings-source-local" value={RecognitionSource.LOCAL} />{' '}
+                      {__('Local', 'alt-context')}
+                    </label>
+                  </RadioGroup>
                 </fieldset>
                 <p className="description">
                   {SOURCE_LABELS[data.recognition_source_source] ?? data.recognition_source_source}

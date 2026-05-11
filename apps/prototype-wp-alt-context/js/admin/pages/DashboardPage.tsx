@@ -14,6 +14,8 @@ import { useResetMirror } from '../hooks/useSyncTrigger';
 import { useSyncStatus } from '../hooks/useSyncStatus';
 import { useRetentionStatus } from '../hooks/useRetentionStatus';
 import { GuidanceCard } from './dashboard/GuidanceCard';
+import { DashboardRecentActivitySection } from './dashboard/DashboardRecentActivitySection';
+import { DashboardSyncHealthSection } from './dashboard/DashboardSyncHealthSection';
 import { OrientationCard } from './dashboard/OrientationCard';
 import { buildDashboardPriorityModel, type DashboardSectionId } from './dashboard/buildDashboardPriorityModel';
 import { rosterClustersUrl } from './workbench/Panels';
@@ -32,11 +34,7 @@ const formatDiagnosticDate = (value: string | null | undefined): string | null =
   }
 
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return null;
-  }
-
-  return date.toLocaleDateString();
+  return Number.isNaN(date.getTime()) ? null : date.toLocaleDateString();
 };
 
 export const DashboardPage = (): React.JSX.Element => {
@@ -98,136 +96,25 @@ export const DashboardPage = (): React.JSX.Element => {
     unassignedPersonsCount: normalizeCount(identityStats?.unassigned_persons_count),
   });
 
-  const formatDuration = (startedAt: string, finishedAt: string | null): string | null => {
-    if (!startedAt || !finishedAt) {
-      return null;
-    }
-
-    const started = new Date(startedAt).getTime();
-    const finished = new Date(finishedAt).getTime();
-
-    if (!Number.isFinite(started) || !Number.isFinite(finished) || finished <= started) {
-      return null;
-    }
-
-    const totalSeconds = Math.round((finished - started) / 1000);
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-
-    if (minutes <= 0) {
-      return sprintf(
-        /* translators: %d: duration in seconds */
-        __('Duration: %ds', 'alt-context'),
-        seconds,
-      );
-    }
-
-    const paddedSeconds = String(seconds).padStart(2, '0');
-
-    return sprintf(
-      /* translators: 1: duration minutes, 2: duration seconds */
-      __('Duration: %dm %ss', 'alt-context'),
-      minutes,
-      paddedSeconds,
-    );
-  };
-
   const gridSections: Record<DashboardSectionId, React.JSX.Element> = {
     syncHealth: (
-      <section className="acx-dashboard__panel">
-        <h2>{__('Sync Health', 'alt-context')}</h2>
-        {isSyncStatusLoading ? (
-          <p>{__('Loading sync health…', 'alt-context')}</p>
-        ) : isSyncStatusError || !syncStatus ? (
-          <p>{__('Sync health is unavailable right now.', 'alt-context')}</p>
-        ) : (
-          <>
-            {showMirrorDivergenceBanner ? (
-              <div className="acx-dashboard__mirror-warning" role="status">
-                <p>
-                  {sprintf(
-                    __(
-                      'Mirror is out of sync with the backend — %1$d stale clusters, %2$d failed sync events.',
-                      'alt-context',
-                    ),
-                    localClusterCount,
-                    failedReplayCount,
-                  )}
-                </p>
-                <button
-                  type="button"
-                  className="acx-button acx-button--secondary"
-                  disabled={resetMirror.isPending}
-                  onClick={() => resetMirror.mutate()}
-                >
-                  {resetMirror.isPending ? __('Resetting…', 'alt-context') : __('Reset mirror', 'alt-context')}
-                </button>
-              </div>
-            ) : null}
-            <p>
-              {syncStatus.sync_health === 'healthy'
-                ? __('Machine sync is healthy and curation replay is caught up.', 'alt-context')
-                : syncStatus.sync_health === 'queued'
-                  ? __('Local curation changes are queued for replay.', 'alt-context')
-                  : syncStatus.sync_health === 'conflicts'
-                    ? __('Conflict resolution is blocking part of the replay queue.', 'alt-context')
-                    : syncStatus.sync_health === 'failures'
-                      ? __('Some replay operations failed and need operator attention.', 'alt-context')
-                      : syncStatus.sync_health === 'offline'
-                        ? __('The recognition backend is currently unreachable.', 'alt-context')
-                        : __('Machine state is stale and should be refreshed.', 'alt-context')}
-            </p>
-            <div className="acx-dashboard__stats-grid">
-              <div className="acx-dashboard__stat">
-                <span className="acx-dashboard__stat-value">{pendingReplayCount}</span>
-                <span className="acx-dashboard__stat-label">{__('Pending Replay', 'alt-context')}</span>
-              </div>
-              <div className="acx-dashboard__stat">
-                <span className="acx-dashboard__stat-value">{conflictCount}</span>
-                <span className="acx-dashboard__stat-label">{__('Conflicts', 'alt-context')}</span>
-              </div>
-              <div className="acx-dashboard__stat">
-                <span className="acx-dashboard__stat-value">{failedReplayCount}</span>
-                <span className="acx-dashboard__stat-label">{__('Failed Replay', 'alt-context')}</span>
-              </div>
-            </div>
-            {topologyPending > 0 || topologyFailed > 0 || topologyConflicts > 0 ? (
-              <p>
-                {sprintf(
-                  __('Topology backlog: pending %1$d, failed %2$d, conflicts %3$d', 'alt-context'),
-                  topologyPending,
-                  topologyFailed,
-                  topologyConflicts,
-                )}
-              </p>
-            ) : null}
-            {conflictCount > 0 && lastConflictDate ? (
-              <p>{sprintf(__('Last conflict: %s', 'alt-context'), lastConflictDate)}</p>
-            ) : null}
-            {failedReplayCount > 0 && lastFailureDate ? (
-              <p>{sprintf(__('Last failure: %s', 'alt-context'), lastFailureDate)}</p>
-            ) : null}
-            <div className="acx-dashboard__actions">
-              <a href="#/workbench?tab=scan" className="acx-dashboard__action-card">
-                <h3>{__('Open Workbench', 'alt-context')}</h3>
-                <p>{__('Inspect sync status, scans, and queued replay work.', 'alt-context')}</p>
-              </a>
-              {conflictCount > 0 ? (
-                <a href="#/workbench?tab=scan&panel=conflicts" className="acx-dashboard__action-card">
-                  <h3>{__('Open Conflict Inbox', 'alt-context')}</h3>
-                  <p>{__('Review and resolve recorded sync conflicts.', 'alt-context')}</p>
-                </a>
-              ) : null}
-              {failedReplayCount > 0 ? (
-                <a href="#/workbench?tab=scan&panel=dead-letter" className="acx-dashboard__action-card">
-                  <h3>{__('Open Dead-Letter Queue', 'alt-context')}</h3>
-                  <p>{__('Retry or discard failed replay operations.', 'alt-context')}</p>
-                </a>
-              ) : null}
-            </div>
-          </>
-        )}
-      </section>
+      <DashboardSyncHealthSection
+        isLoading={isSyncStatusLoading}
+        isError={isSyncStatusError}
+        syncStatus={syncStatus}
+        localClusterCount={localClusterCount}
+        showMirrorDivergenceBanner={showMirrorDivergenceBanner}
+        pendingReplayCount={pendingReplayCount}
+        conflictCount={conflictCount}
+        failedReplayCount={failedReplayCount}
+        topologyPending={topologyPending}
+        topologyFailed={topologyFailed}
+        topologyConflicts={topologyConflicts}
+        lastConflictDate={lastConflictDate}
+        lastFailureDate={lastFailureDate}
+        resetPending={resetMirror.isPending}
+        onResetMirror={() => resetMirror.mutate()}
+      />
     ),
     identityRecognition: (
       <section className="acx-dashboard__panel">
@@ -320,47 +207,13 @@ export const DashboardPage = (): React.JSX.Element => {
       </section>
     ),
     recentActivity: (
-      <section className="acx-dashboard__panel">
-        <h2>{__('Recent Activity', 'alt-context')}</h2>
-        {historySource === 'browser_local_fallback' ? (
-          <p>{__('Showing jobs remembered in this browser only.', 'alt-context')}</p>
-        ) : null}
-        {historySource === 'unavailable' && recentActivity.length === 0 ? (
-          <p>{__('Durable recent activity is unavailable right now.', 'alt-context')}</p>
-        ) : recentActivity.length === 0 ? (
-          <p>{__('No recent recognition jobs found.', 'alt-context')}</p>
-        ) : (
-          <ul className="acx-dashboard__activity-list">
-            {recentActivity.map((item) => {
-              const jobDetail = item.jobId ? jobDetails[item.jobId] : undefined;
-              const statusLabel = jobDetail
-                ? item.jobId
-                  ? (jobStatuses[item.jobId] ?? __('Checking status…', 'alt-context'))
-                  : item.statusText
-                : item.statusText;
-              const durationLabel = formatDuration(jobDetail?.started_at ?? '', jobDetail?.finished_at ?? null);
-
-              return (
-                <li key={item.id} className="acx-dashboard__activity-item">
-                  <span className="acx-dashboard__activity-id">{item.jobId ?? item.runId ?? item.id}</span>
-                  <span className="acx-dashboard__activity-status">{statusLabel}</span>
-                  <span className="acx-dashboard__activity-status">
-                    {item.provenance === 'durable_batch_run'
-                      ? sprintf(__('Durable batch run: %s', 'alt-context'), item.runId ?? __('Unknown', 'alt-context'))
-                      : __('Current browser memory', 'alt-context')}
-                  </span>
-                  {durationLabel ? <span className="acx-dashboard__activity-duration">{durationLabel}</span> : null}
-                  {item.jobId ? (
-                    <a href={`#/workbench?tab=confirm&jobId=${item.jobId}`} className="acx-link-button">
-                      {__('View Results', 'alt-context')}
-                    </a>
-                  ) : null}
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </section>
+      <DashboardRecentActivitySection
+        historySource={historySource}
+        recentActivity={recentActivity}
+        jobHistory={jobHistory}
+        jobStatuses={jobStatuses}
+        jobDetails={jobDetails}
+      />
     ),
     retentionPosture: (
       <section className="acx-dashboard__panel">

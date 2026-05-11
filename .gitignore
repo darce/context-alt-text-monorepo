@@ -103,3 +103,9 @@ DASHBOARD.md
 
 # Per-user Claude Code permissions allowlist (machine-specific paths)
 .claude/settings.local.json
+
+# Local linked Claude worktrees are ephemeral per-machine artifacts.
+.claude/worktrees/
+
+# Local branch/worktree inventory files are ephemeral operator notes.
+local/*-worktrees.txt

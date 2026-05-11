@@ -30,6 +30,8 @@ export const useCreatePerson = () => {
         name,
         tags: tags ?? [],
         cluster_count: 0,
+        clusters: [],
+        queue_memberships: [],
         updated_at: new Date().toISOString(),
         source_version: 0,
         projection_status: 'refreshing',

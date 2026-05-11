@@ -18,7 +18,7 @@ Supported config inputs:
 
 - `--workspace-root` or `AGENT_HANDOFF_WORKSPACE_ROOT`
 - `--state-dir` or `AGENT_HANDOFF_STATE_DIR`
-- `--current-task-path` or `AGENT_HANDOFF_CURRENT_TASK_PATH`
+- optional explicit current-task export: `--current-task-path` or `AGENT_HANDOFF_CURRENT_TASK_PATH`
 - `--exports-dir` or `AGENT_HANDOFF_EXPORTS_DIR`
 
 Default workspace-owned state:
@@ -32,8 +32,8 @@ Default workspace-owned state:
 Runtime bootstrap:
 
 ```bash
-uv tool install "mcp-agent-handoff>=0.6.0,<0.7"
-uv tool install "mcp-agent-orchestrator>=0.3.0,<0.4"
+uv tool install "mcp-agent-handoff==0.11.2"
+uv tool install "mcp-agent-orchestrator==0.4.6"
 
 # Validate runtime wiring and orchestration/ directory resolution
 mcp-agent-orchestrator --workspace-root "$(pwd)" doctor

@@ -16,7 +16,7 @@ Supported config inputs:
 
 - `--workspace-root` or `AGENT_HANDOFF_WORKSPACE_ROOT`
 - `--state-dir` or `AGENT_HANDOFF_STATE_DIR`
-- `--current-task-path` or `AGENT_HANDOFF_CURRENT_TASK_PATH`
+- optional explicit current-task export: `--current-task-path` or `AGENT_HANDOFF_CURRENT_TASK_PATH`
 - `--exports-dir` or `AGENT_HANDOFF_EXPORTS_DIR`
 - `--tool-profile` or `AGENT_HANDOFF_TOOL_PROFILE` — legacy compatibility input. The installed server exposes the unified `all` surface.
 - `AGENT_HANDOFF_DEFAULT_AGENT`
@@ -28,12 +28,12 @@ Default workspace-owned state:
 - DB: `.task-state/handoff.db`
 - artifact DB: `.task-state/mcp-artifacts.db`
 - exports: `.task-state/exports/`
-- generated machine-readable snapshot: `CURRENT_TASK.json` (JSON, active-task-only)
+- optional machine-readable snapshot: `CURRENT_TASK.json` (JSON, active-task-only, only when explicitly rendered)
 - generated human-readable dashboard: `DASHBOARD.txt` (pure ASCII, human-scoped observatory view)
 
-`CURRENT_TASK.json` is a deterministic JSON snapshot of the active task state (objective, status, findings, decisions, tests, blockers, actions, lanes). `DASHBOARD.txt` is the human-readable ASCII observatory: Needs Attention summary, All Tasks table, cross-task open findings, deferred/wontfix findings, and registered extension sections (e.g. Lane Health from agent-orchestrator-mcp). Use `render_handoff(kind='current_task')` to refresh the JSON snapshot and `render_handoff(kind='dashboard')` to refresh the ASCII dashboard.
+`CURRENT_TASK.json` is a deterministic JSON snapshot of the active task state (objective, status, findings, decisions, tests, blockers, actions, lanes) when an explicit render writes it. `DASHBOARD.txt` is the human-readable ASCII observatory: Needs Attention summary, All Tasks table, cross-task open findings, deferred/wontfix findings, and registered extension sections (e.g. Lane Health from agent-orchestrator-mcp). Use `render_handoff(kind='current_task')` to refresh the JSON snapshot on demand and `render_handoff(kind='dashboard')` to refresh the ASCII dashboard.
 
-The monorepo now consumes `agent-handoff-mcp` from the private git+ssh source for `darce/mcp-agent-handoff`; the installed binary shape stays the same.
+The monorepo now consumes the reviewed PyPI release for `mcp-agent-handoff`; the installed binary shape stays the same.
 
 Runtime bootstrap:
 
@@ -41,10 +41,10 @@ Runtime bootstrap:
 cd "${REPO_ROOT:-$PWD}"
 
 # Core ledger server
-uv tool install "mcp-agent-handoff>=0.6.0,<0.7"
+uv tool install "mcp-agent-handoff==0.11.2"
 
 # Orchestration server (daemons, workers, lanes, metrics)
-uv tool install "mcp-agent-orchestrator>=0.3.0,<0.4"
+uv tool install "mcp-agent-orchestrator==0.4.6"
 
 # Codex subagent bridge for BACKEND=codex-subagent
 uv tool install "codex-subagent-bridge>=0.1.0,<0.2"

@@ -9,6 +9,7 @@ MCP_CONFIG_PATH = REPO_ROOT / ".vscode" / "mcp.json"
 INSTRUCTIONS_PATH = REPO_ROOT / "docs" / "agentic" / "instructions.md"
 CLAUDE_PATH = REPO_ROOT / "CLAUDE.md"
 HANDOFF_MK_PATH = REPO_ROOT / "mk" / "handoff.mk"
+SLICE_START_INLINE_PATH = REPO_ROOT / "scripts" / "_slice_start_inline.py"
 
 
 def test_root_mcp_launchers_do_not_require_current_task_path() -> None:
@@ -45,6 +46,9 @@ def test_shared_docs_describe_current_task_as_on_demand_export() -> None:
 
 def test_slice_start_refreshes_dashboard_instead_of_current_task() -> None:
     handoff_mk_text = HANDOFF_MK_PATH.read_text(encoding="utf-8")
+    slice_start_inline_text = SLICE_START_INLINE_PATH.read_text(encoding="utf-8")
 
-    assert 'render-handoff --kind dashboard' in handoff_mk_text
-    assert 'render-handoff --kind current_task --task-ref "$(TASK)"' not in handoff_mk_text
+    assert 'scripts/_slice_start_inline.py' in handoff_mk_text
+    assert 'render_handoff_fn(kind="dashboard")' in slice_start_inline_text
+    assert 'render_handoff(kind=\'dashboard\')' in slice_start_inline_text
+    assert 'kind="current_task"' not in slice_start_inline_text

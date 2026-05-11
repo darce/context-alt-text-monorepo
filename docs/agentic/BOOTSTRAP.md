@@ -87,7 +87,7 @@ Non-interactive harness rule: committed MCP configs use `PYENV_VERSION=descripti
 Handles task state, review findings, exports/imports, close checks, and artifacts. Run `doctor` to inspect the live registered tool list from the installed package.
 
 ```text
-.vscode/mcp.json  →  env { PYENV_VERSION=description-service, PYENV_ROOT, PATH, AGENT_HANDOFF_ENFORCE_BRANCH=1 }  →  mcp-agent-handoff --workspace-root ${workspaceFolder} --state-dir ${workspaceFolder}/.task-state --current-task-path ${workspaceFolder}/CURRENT_TASK.json --exports-dir ${workspaceFolder}/.task-state/exports serve-stdio
+.vscode/mcp.json  →  env { PYENV_VERSION=description-service, PYENV_ROOT, PATH, AGENT_HANDOFF_ENFORCE_BRANCH=1 }  →  mcp-agent-handoff --workspace-root ${workspaceFolder} --state-dir ${workspaceFolder}/.task-state --exports-dir ${workspaceFolder}/.task-state/exports serve-stdio
 ```
 
 ### Orchestration Server (`agent-orchestrator-mcp`)
@@ -95,14 +95,14 @@ Handles task state, review findings, exports/imports, close checks, and artifact
 Handles daemons, workers, lane management, plan cursors, and turn metrics. Run `doctor` to inspect the live registered tool list from the installed package.
 
 ```text
-.vscode/mcp.json  →  env { PYENV_VERSION=description-service, PYENV_ROOT, PATH, AGENT_HANDOFF_ENFORCE_BRANCH=1 }  →  mcp-agent-orchestrator --workspace-root ${workspaceFolder} --state-dir ${workspaceFolder}/.task-state --current-task-path ${workspaceFolder}/CURRENT_TASK.json --exports-dir ${workspaceFolder}/.task-state/exports serve-stdio
+.vscode/mcp.json  →  env { PYENV_VERSION=description-service, PYENV_ROOT, PATH, AGENT_HANDOFF_ENFORCE_BRANCH=1 }  →  mcp-agent-orchestrator --workspace-root ${workspaceFolder} --state-dir ${workspaceFolder}/.task-state --exports-dir ${workspaceFolder}/.task-state/exports serve-stdio
 ```
 
 Both servers share `handoff.db` and `mcp-artifacts.db` on disk; SQLite WAL mode makes concurrent readers safe. Install both from PyPI:
 
 ```bash
-uv tool install "mcp-agent-handoff>=0.6.0,<0.7"
-uv tool install "mcp-agent-orchestrator>=0.3.0,<0.4"
+uv tool install "mcp-agent-handoff==0.11.2"
+uv tool install "mcp-agent-orchestrator==0.4.6"
 ```
 
 The old repo-intel helpers remain a separate decomposition task and are not part of either package.
@@ -121,8 +121,8 @@ The old repo-intel helpers remain a separate decomposition task and are not part
 Install from PyPI:
 
 ```bash
-uv tool install "mcp-agent-handoff>=0.6.0,<0.7"
-uv tool install "mcp-agent-orchestrator>=0.3.0,<0.4"
+uv tool install "mcp-agent-handoff==0.11.2"
+uv tool install "mcp-agent-orchestrator==0.4.6"
 ```
 
 ### Validation

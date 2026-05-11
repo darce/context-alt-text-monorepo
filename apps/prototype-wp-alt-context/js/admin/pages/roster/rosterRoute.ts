@@ -55,37 +55,37 @@ const DETERMINISTIC_COMPARE_OPTIONS = { sensitivity: 'base' } as const;
 
 const getSortableEntryName = (entry: RosterEntry): string => entry.name.trim().toLowerCase();
 
-export const selectDeterministicDefaultWorkspaceEntry = (
-  entries: readonly RosterEntry[],
-): RosterEntry | null => {
+export const selectDeterministicDefaultWorkspaceEntry = (entries: readonly RosterEntry[]): RosterEntry | null => {
   const candidates = entries.filter((entry) => getEntryPersonUuid(entry) !== null);
   if (candidates.length === 0) {
     return null;
   }
 
-  return [...candidates].sort((left, right) => {
-    const nameComparison = getSortableEntryName(left).localeCompare(
-      getSortableEntryName(right),
-      DETERMINISTIC_COMPARE_LOCALE,
-      DETERMINISTIC_COMPARE_OPTIONS,
-    );
-    if (nameComparison !== 0) {
-      return nameComparison;
-    }
+  return (
+    [...candidates].sort((left, right) => {
+      const nameComparison = getSortableEntryName(left).localeCompare(
+        getSortableEntryName(right),
+        DETERMINISTIC_COMPARE_LOCALE,
+        DETERMINISTIC_COMPARE_OPTIONS,
+      );
+      if (nameComparison !== 0) {
+        return nameComparison;
+      }
 
-    const leftPersonUuid = getEntryPersonUuid(left) ?? '';
-    const rightPersonUuid = getEntryPersonUuid(right) ?? '';
-    const personComparison = leftPersonUuid.localeCompare(
-      rightPersonUuid,
-      DETERMINISTIC_COMPARE_LOCALE,
-      DETERMINISTIC_COMPARE_OPTIONS,
-    );
-    if (personComparison !== 0) {
-      return personComparison;
-    }
+      const leftPersonUuid = getEntryPersonUuid(left) ?? '';
+      const rightPersonUuid = getEntryPersonUuid(right) ?? '';
+      const personComparison = leftPersonUuid.localeCompare(
+        rightPersonUuid,
+        DETERMINISTIC_COMPARE_LOCALE,
+        DETERMINISTIC_COMPARE_OPTIONS,
+      );
+      if (personComparison !== 0) {
+        return personComparison;
+      }
 
-    return left.id - right.id;
-  })[0] ?? null;
+      return left.id - right.id;
+    })[0] ?? null
+  );
 };
 
 const getLegacyTab = (searchParams: URLSearchParams): RosterTab => {

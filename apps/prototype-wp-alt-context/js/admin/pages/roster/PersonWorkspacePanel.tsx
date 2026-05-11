@@ -26,14 +26,15 @@ const QUEUE_SECTIONS = [
 
 const EVIDENCE_IMAGE_SIZE = 96;
 
-type EvidenceMetadata = {
+interface EvidenceMetadata {
   similarity: number | null;
   similarity_threshold?: number | null;
-};
+}
 
 const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 
-const formatEvidencePercent = (value: number, fractionDigits = 0): string => `${(value * 100).toFixed(fractionDigits)}%`;
+const formatEvidencePercent = (value: number, fractionDigits = 0): string =>
+  `${(value * 100).toFixed(fractionDigits)}%`;
 
 const getEvidenceMetadataLines = (evidence: EvidenceMetadata | null | undefined): string[] => {
   if (!evidence) {
@@ -154,19 +155,31 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
                       {instance.media_url ? (
                         <img
                           src={instance.media_url}
-                          alt={sprintf(__('Instance %d for cluster %s', 'alt-context'), instance.media_id, cluster.cluster_id)}
+                          alt={sprintf(
+                            __('Instance %d for cluster %s', 'alt-context'),
+                            instance.media_id,
+                            cluster.cluster_id,
+                          )}
                           width={EVIDENCE_IMAGE_SIZE}
                           height={EVIDENCE_IMAGE_SIZE}
                           loading="lazy"
                         />
                       ) : (
-                        <div aria-label={sprintf(__('Instance %d for cluster %s', 'alt-context'), instance.media_id, cluster.cluster_id)} />
+                        <div
+                          aria-label={sprintf(
+                            __('Instance %d for cluster %s', 'alt-context'),
+                            instance.media_id,
+                            cluster.cluster_id,
+                          )}
+                        />
                       )}
                       <figcaption>
                         {sprintf(__('Identity %s · media %d', 'alt-context'), instance.identity_id, instance.media_id)}
                       </figcaption>
                       {getEvidenceMetadataLines(instance).map((line) => (
-                        <div key={`${cluster.cluster_id}-${instance.identity_id}-${instance.media_id}-${line}`}>{line}</div>
+                        <div key={`${cluster.cluster_id}-${instance.identity_id}-${instance.media_id}-${line}`}>
+                          {line}
+                        </div>
                       ))}
                     </figure>
                   ))}
@@ -185,7 +198,11 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
           {QUEUE_SECTIONS.map((queueSection) => {
             const isQueued = queueMemberships.has(queueSection.id);
             return (
-              <section key={queueSection.id} role="region" aria-label={sprintf(__('%s queue', 'alt-context'), queueSection.label)}>
+              <section
+                key={queueSection.id}
+                role="region"
+                aria-label={sprintf(__('%s queue', 'alt-context'), queueSection.label)}
+              >
                 <h5>{queueSection.label}</h5>
                 <p>
                   {isQueued

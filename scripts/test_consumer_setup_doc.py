@@ -20,13 +20,13 @@ REQUIRED_HEADINGS = (
 )
 
 REQUIRED_SNIPPETS = (
-    'git+ssh://git@github.com/darce/mcp-agent-handoff.git@v0.4.3',
-    'git+ssh://git@github.com/darce/mcp-agent-orchestrator.git@v0.1.4',
-    'git+ssh://git@github.com/darce/agentic-bootstrap.git@v0.2.0',
-    "agentic-bootstrap install --target .",
-    "agentic-bootstrap update",
-    "agentic-bootstrap doctor",
-    "agentic-bootstrap repair",
+    './.venv/bin/pip install "mcp-agent-handoff==0.11.2"',
+    './.venv/bin/pip install "mcp-agent-orchestrator==0.4.6"',
+    './.venv/bin/pip install "agentic-bootstrap==0.5.1"',
+    "./.venv/bin/agentic-bootstrap install --target . --remote-ref v0.1.14",
+    "./.venv/bin/agentic-bootstrap update --remote-ref v0.1.14",
+    "./.venv/bin/agentic-bootstrap doctor",
+    "./.venv/bin/agentic-bootstrap repair",
     "AGENT_HANDOFF_WORKSPACE_ROOT",
     "AGENT_HANDOFF_STATE_DIR",
     "AGENT_HANDOFF_DASHBOARD_PATH",
@@ -43,9 +43,10 @@ REQUIRED_SNIPPETS = (
 )
 
 REQUIRED_UPDATE_SNIPPETS = (
-    'pip install --upgrade "git+ssh://git@github.com/darce/mcp-agent-handoff.git"',
-    'pip install --upgrade "git+ssh://git@github.com/darce/mcp-agent-orchestrator.git"',
-    'pip install --upgrade "git+ssh://git@github.com/darce/agentic-bootstrap.git"',
+    './.venv/bin/pip install --upgrade "mcp-agent-handoff==0.11.2"',
+    './.venv/bin/pip install --upgrade "mcp-agent-orchestrator==0.4.6"',
+    './.venv/bin/pip install --upgrade "agentic-bootstrap==0.5.1"',
+    "./.venv/bin/agentic-bootstrap update --remote-ref v0.1.14",
 )
 
 
@@ -66,13 +67,15 @@ def test_consumer_setup_doc_exists_and_is_standalone() -> None:
     for snippet in REQUIRED_UPDATE_SNIPPETS:
         assert snippet in update_section, f"consumer-setup doc is missing required update snippet: {snippet}"
 
-    assert "--upgrade \"git+ssh://git@github.com/darce/mcp-agent-handoff.git@v0.4.3\"" not in update_section
-    assert "--upgrade \"git+ssh://git@github.com/darce/mcp-agent-orchestrator.git@v0.1.4\"" not in update_section
-    assert "--upgrade \"git+ssh://git@github.com/darce/agentic-bootstrap.git@v0.2.0\"" not in update_section
-
     # Standalone-ness: live instructions must not reference the task plan or task IDs.
     # Historical retros under "## Lessons Learned" are exempt (they are dated, append-only
     # change-log entries that name the slice that produced them).
     pre_lessons = text.split("## Lessons Learned", 1)[0]
+    assert 'mcp-agent-handoff>=0.6.0,<0.7' not in pre_lessons
+    assert 'mcp-agent-orchestrator>=0.3.0,<0.4' not in pre_lessons
+    assert 'agentic-bootstrap>=0.2.0,<0.3' not in pre_lessons
+    assert 'git+ssh://git@github.com/darce/mcp-agent-handoff.git@v0.4.3' not in pre_lessons
+    assert 'git+ssh://git@github.com/darce/mcp-agent-orchestrator.git@v0.1.4' not in pre_lessons
+    assert 'git+ssh://git@github.com/darce/agentic-bootstrap.git@v0.2.0' not in pre_lessons
     assert "E17-10" not in pre_lessons, "consumer-setup live instructions must be standalone, not task-plan dependent"
     assert "task plan" not in pre_lessons.lower(), "consumer-setup live instructions must not tell readers to consult the task plan"

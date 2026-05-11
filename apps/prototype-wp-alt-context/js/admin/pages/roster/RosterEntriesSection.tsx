@@ -8,43 +8,74 @@ import { UserPlus, Plus, X } from 'lucide-react';
 
 type QueueFilterId = RosterEntry['queue_memberships'][number];
 
+interface QueueFilterDetails {
+  badge: string;
+  status: string;
+  empty: string;
+}
+
+interface QueueReviewRoute {
+  href: string;
+  label: string;
+}
+
 const WORKBENCH_SCAN_ROUTE = '#/workbench?tab=scan';
 
-const QUEUE_FILTERS: Record<QueueFilterId, { badge: string; status: string; empty: string }> = {
-  'singleton-proposals': {
-    badge: __('Filtered: Singleton proposals', 'alt-context'),
-    status: __('Showing singleton proposals queue only.', 'alt-context'),
-    empty: __('No people in singleton proposals queue.', 'alt-context'),
-  },
-  'hard-examples': {
-    badge: __('Filtered: Hard examples', 'alt-context'),
-    status: __('Showing hard examples queue only.', 'alt-context'),
-    empty: __('No people in hard examples queue.', 'alt-context'),
-  },
-  'needs-confirmation-after-merge': {
-    badge: __('Filtered: Needs confirmation after merge', 'alt-context'),
-    status: __('Showing needs confirmation after merge queue only.', 'alt-context'),
-    empty: __('No people in needs confirmation after merge queue.', 'alt-context'),
-  },
-};
-
-const QUEUE_REVIEW_ROUTES: Partial<Record<QueueFilterId, { href: string; label: string }>> = {
-  'singleton-proposals': {
-    href: WORKBENCH_SCAN_ROUTE,
-    label: __('Review singleton proposals in Workbench', 'alt-context'),
-  },
-  'needs-confirmation-after-merge': {
-    href: WORKBENCH_SCAN_ROUTE,
-    label: __('Review merge confirmations in Workbench', 'alt-context'),
-  },
-};
-
-const QUEUE_ACTION_NOTICES: Partial<Record<QueueFilterId, string>> = {
-  'hard-examples': __('Hard-examples review actions stay unavailable here until the dedicated review contract lands.', 'alt-context'),
-};
-
 const isQueueFilterId = (value: string | null): value is QueueFilterId =>
-  value !== null && Object.hasOwn(QUEUE_FILTERS, value);
+  value === 'singleton-proposals' || value === 'hard-examples' || value === 'needs-confirmation-after-merge';
+
+const getQueueFilterDetails = (queueFilter: QueueFilterId | null): QueueFilterDetails | null => {
+  switch (queueFilter) {
+    case 'singleton-proposals':
+      return {
+        badge: __('Filtered: Singleton proposals', 'alt-context'),
+        status: __('Showing singleton proposals queue only.', 'alt-context'),
+        empty: __('No people in singleton proposals queue.', 'alt-context'),
+      };
+    case 'hard-examples':
+      return {
+        badge: __('Filtered: Hard examples', 'alt-context'),
+        status: __('Showing hard examples queue only.', 'alt-context'),
+        empty: __('No people in hard examples queue.', 'alt-context'),
+      };
+    case 'needs-confirmation-after-merge':
+      return {
+        badge: __('Filtered: Needs confirmation after merge', 'alt-context'),
+        status: __('Showing needs confirmation after merge queue only.', 'alt-context'),
+        empty: __('No people in needs confirmation after merge queue.', 'alt-context'),
+      };
+    default:
+      return null;
+  }
+};
+
+const getQueueReviewRoute = (queueFilter: QueueFilterId | null): QueueReviewRoute | null => {
+  switch (queueFilter) {
+    case 'singleton-proposals':
+      return {
+        href: WORKBENCH_SCAN_ROUTE,
+        label: __('Review singleton proposals in Workbench', 'alt-context'),
+      };
+    case 'needs-confirmation-after-merge':
+      return {
+        href: WORKBENCH_SCAN_ROUTE,
+        label: __('Review merge confirmations in Workbench', 'alt-context'),
+      };
+    default:
+      return null;
+  }
+};
+
+const getQueueActionNotice = (queueFilter: QueueFilterId | null): string | null => {
+  if (queueFilter === 'hard-examples') {
+    return __(
+      'Hard-examples review actions stay unavailable here until the dedicated review contract lands.',
+      'alt-context',
+    );
+  }
+
+  return null;
+};
 
 export interface RosterEntriesQuery {
   isLoading: boolean;
@@ -64,7 +95,9 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
   const [searchParams, setSearchParams] = useSearchParams();
   const createPerson = useCreatePerson();
   const personFilter = searchParams.get('personFilter');
-  const queueFilter = isQueueFilterId(searchParams.get('queue')) ? searchParams.get('queue') : null;
+  const queueParam = searchParams.get('queue');
+  const queueFilter: QueueFilterId | null = isQueueFilterId(queueParam) ? queueParam : null;
+  const queueFilterDetails = getQueueFilterDetails(queueFilter);
   const isUnassignedFilter = personFilter === 'unassigned';
   const entries = query.data ?? [];
   const visibleEntries = entries.filter((entry) => {
@@ -76,11 +109,26 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
     }
     return true;
   });
-  const activeFilterBadge = queueFilter !== null ? QUEUE_FILTERS[queueFilter].badge : isUnassignedFilter ? __('Filtered: Unassigned', 'alt-context') : null;
-  const activeFilterStatus = queueFilter !== null ? QUEUE_FILTERS[queueFilter].status : isUnassignedFilter ? __('Showing unassigned people only.', 'alt-context') : null;
-  const emptyFilterMessage = queueFilter !== null ? QUEUE_FILTERS[queueFilter].empty : isUnassignedFilter ? __('No unassigned people found.', 'alt-context') : null;
-  const queueReviewRoute = queueFilter !== null ? QUEUE_REVIEW_ROUTES[queueFilter] ?? null : null;
-  const queueActionNotice = queueFilter !== null ? QUEUE_ACTION_NOTICES[queueFilter] ?? null : null;
+  const activeFilterBadge =
+    queueFilterDetails !== null
+      ? queueFilterDetails.badge
+      : isUnassignedFilter
+        ? __('Filtered: Unassigned', 'alt-context')
+        : null;
+  const activeFilterStatus =
+    queueFilterDetails !== null
+      ? queueFilterDetails.status
+      : isUnassignedFilter
+        ? __('Showing unassigned people only.', 'alt-context')
+        : null;
+  const emptyFilterMessage =
+    queueFilterDetails !== null
+      ? queueFilterDetails.empty
+      : isUnassignedFilter
+        ? __('No unassigned people found.', 'alt-context')
+        : null;
+  const queueReviewRoute = getQueueReviewRoute(queueFilter);
+  const queueActionNotice = getQueueActionNotice(queueFilter);
 
   const clearFilter = () => {
     setSearchParams(

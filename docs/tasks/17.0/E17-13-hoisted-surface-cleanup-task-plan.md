@@ -119,7 +119,7 @@ Use a gated, incremental cleanup. Slice 1 verifies and, if needed, repairs the e
 | `scripts/check_skills.py` | must work against overlay-resolved shared/local skill surface |
 | `scripts/check_harness_sync.py` | must work after contract and hook surface externalization |
 | `scripts/test_consumer_setup_doc.py` | doc-lock for consumer install URLs |
-| `scripts/test_dev_workflow_shared_agentic_surface.py` | guards canonical external repo names |
+| `scripts/test_shared_agentic_surface_doc.py` | guards canonical external repo names |
 | `packages/agent-handoff-mcp/tests/test_adapters.py` | currently references `scripts/mcp/mcp-server.sh` |
 | `packages/agent-handoff-mcp/tests/conftest.py`, `packages/agent-orchestrator-mcp/tests/conftest.py` | package-local pytest guards that must be replaced by external-install verification before package deletion |
 | `packages/codex-subagent-bridge/`, `packages/shared-contracts/` | non-hoisted-family package dirs that Slice 1 must classify explicitly |
@@ -129,7 +129,7 @@ Use a gated, incremental cleanup. Slice 1 verifies and, if needed, repairs the e
 ## Verification Strategy
 
 - Deterministic tests:
-  - `python3 -m pytest scripts/test_consumer_setup_doc.py scripts/test_dev_workflow_shared_agentic_surface.py -q`
+  - `python3 -m pytest scripts/test_consumer_setup_doc.py scripts/test_shared_agentic_surface_doc.py -q`
   - `python3 -m pytest scripts/test_check_skills.py scripts/test_check_harness_sync.py scripts/test_lint_hoisted_paths.py -q`
 - Runtime-parity / environment checks:
   - `git ls-remote --heads --tags git@github.com:darce/mcp-agent-handoff.git`
@@ -204,7 +204,7 @@ Proof:
 
 - `rg 'packages/agent-(handoff|orchestrator)-mcp|scripts/mcp/mcp-server.sh'` returns only hits under the archived-reference allow-list or lines marked `HISTORICAL-REFERENCE:` / documented transitional wrappers.
 - External package runtime smoke from Slice 2 still passes after the local package dirs are absent.
-- `python3 -m pytest scripts/test_consumer_setup_doc.py scripts/test_dev_workflow_shared_agentic_surface.py -q` passes.
+- `python3 -m pytest scripts/test_consumer_setup_doc.py scripts/test_shared_agentic_surface_doc.py -q` passes.
 
 ### Slice 4: Monorepo Shared-Surface Overlay Cutover
 

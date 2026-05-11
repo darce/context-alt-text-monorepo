@@ -236,6 +236,8 @@ describe('RosterPage route container', () => {
             name: 'Unassigned Person',
             tags: [],
             cluster_count: 0,
+            clusters: [],
+            queue_memberships: [],
             updated_at: new Date().toISOString(),
             source_version: 1,
             projection_status: 'current',

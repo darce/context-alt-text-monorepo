@@ -6,8 +6,9 @@ command = "npx"
 args = ["-y", "@upstash/context7-mcp@2.1.4"]
 
 [mcp_servers."mcp-agent-handoff"]
-command = "mcp-agent-handoff"
+command = "uvx"
 args = [
+  "mcp-agent-handoff==0.11.2",
   "--workspace-root",
   ".",
   "--state-dir",
@@ -23,8 +24,9 @@ PYENV_VERSION = "description-service"
 AGENT_HANDOFF_ENFORCE_BRANCH = "1"
 
 [mcp_servers."mcp-agent-orchestrator"]
-command = "mcp-agent-orchestrator"
+command = "uvx"
 args = [
+  "mcp-agent-orchestrator==0.4.6",
   "--workspace-root",
   ".",
   "--state-dir",
@@ -39,10 +41,3 @@ cwd = "."
 PYENV_VERSION = "description-service"
 AGENT_HANDOFF_ENFORCE_BRANCH = "1"
 
-[mcp_servers.agent-handoff-mcp]
-command = "uvx"
-args = ["mcp-agent-handoff", "--workspace-root", ".", "serve-stdio"]
-
-[mcp_servers.agent-orchestrator-mcp]
-command = "uvx"
-args = ["mcp-agent-orchestrator", "--workspace-root", ".", "serve-stdio"]

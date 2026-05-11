@@ -2,8 +2,9 @@
   "mcpServers": {
     "mcp-agent-handoff": {
       "type": "stdio",
-      "command": "mcp-agent-handoff",
+      "command": "uvx",
       "args": [
+        "mcp-agent-handoff==0.11.2",
         "--workspace-root",
         ".",
         "serve-stdio"
@@ -15,8 +16,9 @@
     },
     "mcp-agent-orchestrator": {
       "type": "stdio",
-      "command": "mcp-agent-orchestrator",
+      "command": "uvx",
       "args": [
+        "mcp-agent-orchestrator==0.4.6",
         "--workspace-root",
         ".",
         "serve-stdio"

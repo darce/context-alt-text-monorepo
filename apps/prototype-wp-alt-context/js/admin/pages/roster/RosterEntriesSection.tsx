@@ -128,7 +128,7 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
   }
 
   return (
-    <div className="acx-roster-section">
+    <div className="acx-roster-section" data-testid="roster-entries-section">
       <header className="acx-roster-section__header">
         <div className="acx-roster-section__title-group">
           <h2>{__('Managed Identities', 'alt-context')}</h2>

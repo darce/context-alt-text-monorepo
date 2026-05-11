@@ -50,6 +50,44 @@ export const getEntryPersonUuid = (entry: RosterEntry): string | null => {
   return typeof raw === 'string' && raw.length > 0 ? raw : null;
 };
 
+const DETERMINISTIC_COMPARE_LOCALE = 'en';
+const DETERMINISTIC_COMPARE_OPTIONS = { sensitivity: 'base' } as const;
+
+const getSortableEntryName = (entry: RosterEntry): string => entry.name.trim().toLowerCase();
+
+export const selectDeterministicDefaultWorkspaceEntry = (
+  entries: readonly RosterEntry[],
+): RosterEntry | null => {
+  const candidates = entries.filter((entry) => getEntryPersonUuid(entry) !== null);
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  return [...candidates].sort((left, right) => {
+    const nameComparison = getSortableEntryName(left).localeCompare(
+      getSortableEntryName(right),
+      DETERMINISTIC_COMPARE_LOCALE,
+      DETERMINISTIC_COMPARE_OPTIONS,
+    );
+    if (nameComparison !== 0) {
+      return nameComparison;
+    }
+
+    const leftPersonUuid = getEntryPersonUuid(left) ?? '';
+    const rightPersonUuid = getEntryPersonUuid(right) ?? '';
+    const personComparison = leftPersonUuid.localeCompare(
+      rightPersonUuid,
+      DETERMINISTIC_COMPARE_LOCALE,
+      DETERMINISTIC_COMPARE_OPTIONS,
+    );
+    if (personComparison !== 0) {
+      return personComparison;
+    }
+
+    return left.id - right.id;
+  })[0] ?? null;
+};
+
 const getLegacyTab = (searchParams: URLSearchParams): RosterTab => {
   const rawTab = getRouteParam(searchParams, 'tab');
   return rawTab === ROSTER_TABS.clusters.id ? ROSTER_TABS.clusters.id : ROSTER_TABS.entries.id;

@@ -1,4 +1,4 @@
-.PHONY: help check fix format lint typecheck arch test test-watch check-php php-cs php-cs-fix php-test phpstan mcp projection-reset localwp-link localwp-verify-activation localwp-mirror-integrity localwp-batch-run-smoke gate-package worker-daemon _php-deps FORCE
+.PHONY: help check fix format lint typecheck arch test test-watch check-php php-cs php-cs-fix php-test phpstan mcp projection-reset localwp-link localwp-verify-activation localwp-mirror-integrity localwp-batch-run-smoke gate-package worker-daemon _js-deps _php-deps FORCE
 
 help:
 	@echo "Available commands:"
@@ -22,35 +22,43 @@ help:
 	@echo "  make lane-*     - Worktree lane commands (forwarded to root Makefile; run 'make help' from repo root for full list)"
 	@echo "  make worker-daemon* - Worker daemon controls (run/status/stop/resume/tail) forwarded to root Makefile"
 
-check:
+check: _js-deps
 	@npm run check
 	@$(MAKE) php-test
 	@$(MAKE) check-php
 
-format:
+format: _js-deps
 	@npm run lint:fix
 	@npm run format:fix
 	@$(MAKE) php-cs-fix
 
 fix: format check
 
-lint:
+lint: _js-deps
 	@npm run lint
 
-typecheck:
+typecheck: _js-deps
 	@npm run typecheck
 
-arch:
+arch: _js-deps
 	@npm run arch
 
-test:
+test: _js-deps
 	@npm run test -- --run
 
-test-watch:
+test-watch: _js-deps
 	@npm run test:watch
 
 check-php: php-cs phpstan
 	@echo "✓ PHP checks passed"
+
+# Pre-flight installer: if the plugin's Node dev dependencies are missing,
+# install them once so local make targets work in fresh linked worktrees.
+_js-deps:
+	@if [ ! -x node_modules/.bin/eslint ] || [ ! -x node_modules/.bin/prettier ] || [ ! -x node_modules/.bin/tsc ] || [ ! -x node_modules/.bin/vitest ]; then \
+		echo "Plugin Node dev dependencies missing; installing..."; \
+		npm install --no-fund --no-audit; \
+	fi
 
 # Pre-flight installer: if the plugin's composer dev dependencies are missing,
 # install them once so PHPCS/PHPCBF/PHPUnit are on disk before the target runs.

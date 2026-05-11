@@ -42,6 +42,9 @@
   },
   "python.terminal.useEnvFile": true,
   "python.terminal.activateEnvironment": false,
+  "terminal.integrated.agentHostProfile.osx": {
+    "path": "/bin/bash"
+  },
   "python.defaultInterpreterPath": "${env:HOME}/.pyenv/versions/description-service/bin/python",
   "makefile.configureOnOpen": false
 }

@@ -9,13 +9,10 @@ import { useClusterSelection } from '../hooks/useClusterSelection';
 import { useClusterMediaMap } from './roster/hooks/useClusterMediaMap';
 import { useClusterDragDrop } from './roster/hooks/useClusterDragDrop';
 import { useClusterActions } from './roster/hooks/useClusterActions';
-import { ClusterGrid } from './roster/ClusterGrid';
-import { BulkActionBar } from './roster/BulkActionBar';
 import { ClusterDrawerPanel } from './roster/ClusterDrawerPanel';
 import { RosterEntriesSection } from './roster/RosterEntriesSection';
 import { PersonWorkspacePanel } from './roster/PersonWorkspacePanel';
-import { Checkbox } from '../../components/ui/checkbox';
-import { ConfirmDialog } from './roster/ConfirmDialog';
+import { RosterClustersTab } from './roster/RosterClustersTab';
 import {
   ROSTER_TABS,
   ROSTER_ROUTE_PARAM_KEYS,
@@ -36,13 +33,10 @@ import {
 export const RosterPage = (): React.JSX.Element => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [selectedClusterId, setSelectedClusterId] = React.useState<string | null>(null);
-  const [confirmAction, setConfirmAction] = React.useState<'merge' | 'dismiss' | null>(null);
 
   const selection = useClusterSelection();
   const clearSelection = selection.clear;
   const retainVisibleSelection = selection.retainVisible;
-  const isClusterSelected = selection.isSelected;
-  const areAllVisibleClustersSelected = selection.isAllSelected;
 
   const clustersQuery = useRecognitionClusters({ limit: 20 });
   const clusterList = clustersQuery.data;
@@ -244,93 +238,6 @@ export const RosterPage = (): React.JSX.Element => {
     handleTabChange(ROSTER_TABS.clusters.id);
   };
 
-  const handleBulkMerge = () => {
-    const ids = Array.from(selection.selectedIds);
-    if (ids.length < 2) {
-      return;
-    }
-    setConfirmAction('merge');
-  };
-
-  const handleBulkDismiss = () => {
-    const ids = Array.from(selection.selectedIds);
-    if (ids.length === 0) {
-      return;
-    }
-    setConfirmAction('dismiss');
-  };
-
-  const handleConfirm = React.useCallback(() => {
-    const ids = Array.from(selection.selectedIds);
-    void (async () => {
-      let shouldClose = false;
-      try {
-        if (confirmAction === 'merge') {
-          await actions.bulkMergeMutation.mutateAsync({ clusterIds: ids });
-          shouldClose = true;
-        } else if (confirmAction === 'dismiss') {
-          await actions.bulkDismissMutation.mutateAsync({ clusterIds: ids });
-          shouldClose = true;
-        }
-      } catch {
-        // Mutation-level error handlers already surface feedback.
-      } finally {
-        if (shouldClose) {
-          setConfirmAction(null);
-        }
-      }
-    })();
-  }, [actions.bulkDismissMutation, actions.bulkMergeMutation, confirmAction, selection.selectedIds]);
-
-  const handleConfirmOpenChange = React.useCallback(
-    (open: boolean) => {
-      if (!open) {
-        setConfirmAction(null);
-      }
-    },
-    [setConfirmAction],
-  );
-
-  const selectedVisibleCount = React.useMemo(
-    () => clusterIds.reduce((count, id) => (isClusterSelected(id) ? count + 1 : count), 0),
-    [clusterIds, isClusterSelected],
-  );
-  const selectAllState = areAllVisibleClustersSelected(clusterIds)
-    ? true
-    : selectedVisibleCount > 0
-      ? 'indeterminate'
-      : false;
-  const handleSelectAllClusters = React.useCallback(() => {
-    if (areAllVisibleClustersSelected(clusterIds)) {
-      selection.clear();
-      return;
-    }
-    selection.selectAll(clusterIds);
-  }, [areAllVisibleClustersSelected, clusterIds, selection]);
-
-  const confirmDialogCopy =
-    confirmAction === 'merge'
-      ? {
-          title: __('Confirm merge', 'alt-context'),
-          description: sprintf(
-            // translators: %d: number of clusters to merge
-            __('Are you sure you want to merge %d clusters? This action cannot be undone.', 'alt-context'),
-            selection.count,
-          ),
-          confirmLabel: __('Merge', 'alt-context'),
-        }
-      : confirmAction === 'dismiss'
-        ? {
-            title: __('Confirm dismiss', 'alt-context'),
-            description: sprintf(
-              // translators: %d: number of clusters to dismiss
-              __('Are you sure you want to dismiss %d clusters?', 'alt-context'),
-              selection.count,
-            ),
-            confirmLabel: __('Dismiss', 'alt-context'),
-          }
-        : null;
-
   return (
     <section className="acx-roster" aria-labelledby="acx-roster-title">
       <header className="acx-roster__hero">
@@ -364,58 +271,19 @@ export const RosterPage = (): React.JSX.Element => {
         </TabsContent>
 
         <TabsContent value={ROSTER_TABS.clusters.id} className="acx-roster__panel">
-          <div className="acx-roster-help-card">
-            <p>
-              {__(
-                'Clusters are groups of similar face identities detected across your media library. When you label a cluster, all associated images are automatically updated with the correct alt text.',
-                'alt-context',
-              )}
-            </p>
-          </div>
-          <div className="acx-roster__tab-header">
-            <div className="acx-roster__tab-header-main">
-              <Checkbox
-                checked={selectAllState}
-                onCheckedChange={handleSelectAllClusters}
-                ariaLabel={__('Select all clusters', 'alt-context')}
-              />
-              <h2>{ROSTER_TABS.clusters.label}</h2>
-            </div>
-            {selection.count > 0 && (
-              <BulkActionBar
-                count={selection.count}
-                onMerge={handleBulkMerge}
-                onDismiss={handleBulkDismiss}
-                onClear={selection.clear}
-                isMerging={actions.bulkMergeMutation.isPending}
-                isDismissing={actions.bulkDismissMutation.isPending}
-                mergeProgress={actions.bulkMergeProgress}
-              />
-            )}
-          </div>
-          {clusterList?.truncated && (
-            <p className="acx-roster-help-card" role="status">
-              {sprintf(
-                __('Showing %d of %d clusters. Refine the list to review the remaining matches.', 'alt-context'),
-                clusters.length,
-                clusterList.total,
-              )}
-            </p>
-          )}
-          <ClusterGrid
+          <RosterClustersTab
+            clusterList={clusterList}
             clusters={clusters}
+            clusterIds={clusterIds}
+            selection={selection}
+            actions={actions}
+            mediaMap={mediaMap}
+            dragDrop={dragDrop}
             isLoading={clustersQuery.isLoading}
             isError={clustersQuery.isError}
             onRetry={() => void clustersQuery.refetch()}
-            mediaMap={mediaMap}
             onSelectCluster={handleSelectCluster}
-            selection={selection}
-            onIdentityDragStart={dragDrop.handleFaceDragStart}
-            onFaceDragEnd={dragDrop.handleFaceDragEnd}
-            onDropTargetChange={dragDrop.handleDropTargetChange}
             onDropFace={handleDropFace}
-            dropTarget={dragDrop.dropTarget}
-            isDragging={dragDrop.isDragging}
           />
         </TabsContent>
       </Tabs>
@@ -444,18 +312,6 @@ export const RosterPage = (): React.JSX.Element => {
         isDragging={dragDrop.isDragging}
         onDiscardDrop={() => handleDropFace(null)}
       />
-      {confirmDialogCopy && (
-        <ConfirmDialog
-          open={confirmAction !== null}
-          onOpenChange={handleConfirmOpenChange}
-          onConfirm={handleConfirm}
-          onCancel={() => setConfirmAction(null)}
-          title={confirmDialogCopy.title}
-          description={confirmDialogCopy.description}
-          confirmLabel={confirmDialogCopy.confirmLabel}
-          isPending={actions.bulkMergeMutation.isPending || actions.bulkDismissMutation.isPending}
-        />
-      )}
     </section>
   );
 };

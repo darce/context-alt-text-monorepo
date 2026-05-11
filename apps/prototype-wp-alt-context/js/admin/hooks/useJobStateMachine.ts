@@ -5,15 +5,12 @@ import { queryKeys } from '../api/queryKeys';
 import type { ClusterResponse } from '../api/recognition';
 import { useSyncTrigger } from './useSyncTrigger';
 import {
-  buildClusterProgress,
-  buildScanProgress,
-  buildStatusText,
   derivePipelinePhase,
   deriveLatestJobId,
   getLatestJobByType,
-  isScanRunning as getIsScanRunning,
   type PipelinePhase,
 } from './jobStateMachineUtils';
+import { useJobStateMachineDerivedState } from './useJobStateMachineDerivedState';
 import { useJobStateMachineEffects, type ProjectionSyncState } from './useJobStateMachineEffects';
 import { useJobStateMachineMutations } from './useJobStateMachineMutations';
 import { useJobPersistence } from './useJobPersistence';
@@ -134,83 +131,22 @@ export const useJobStateMachine = ({
     setProjectionError,
   });
 
-  // Status Text
-  const statusText = useMemo(
-    () =>
-      buildStatusText({
-        clusterPending: clusterMutation.isPending,
-        sseStatus,
-        sseProgress,
-        activeJobIds,
-        scanStatus: scanStatusQuery.data,
-        batchRunStatus: batchRunStatusQuery.data,
-        latestJobId,
-        scanPending: scanMutation.isPending,
-      }),
-    [
-      activeJobIds,
-      batchRunStatusQuery.data,
-      clusterMutation.isPending,
-      sseProgress,
-      sseStatus,
-      latestJobId,
-      scanMutation.isPending,
-      scanStatusQuery.data,
-    ],
-  );
-
-  // Progress aggregation
-  const scanProgress = useMemo(
-    () =>
-      buildScanProgress({
-        currentPhase,
-        activeJobIds,
-        activeJobs,
-        sseProgress,
-        latestScanJob,
-        batchRunStatus: batchRunStatusQuery.data,
-        fallbackProgress: scanStatusQuery.data?.progress,
-      }),
-    [
-      batchRunStatusQuery.data,
+  const { statusText, scanProgress, clusterProgress, isScanRunning, scanStallSeconds } =
+    useJobStateMachineDerivedState({
       currentPhase,
       activeJobIds,
       activeJobs,
-      sseProgress,
       latestScanJob,
-      scanStatusQuery.data?.progress,
-    ],
-  );
-
-  const clusterProgress = useMemo(() => buildClusterProgress(currentPhase, sseProgress), [currentPhase, sseProgress]);
-
-  const isScanRunning = useMemo(
-    () =>
-      getIsScanRunning({
-        scanPending: scanMutation.isPending,
-        waitingForCompletion: isWaitingForScanCompletion,
-        activeJobIds,
-        sseStatus,
-        scanStatus: scanStatusQuery.data,
-        batchRunStatus: batchRunStatusQuery.data,
-      }),
-    [
-      activeJobIds,
-      batchRunStatusQuery.data,
-      isWaitingForScanCompletion,
-      scanMutation.isPending,
-      scanStatusQuery.data,
+      latestJobId,
+      scanPending: scanMutation.isPending,
+      clusterPending: clusterMutation.isPending,
+      waitingForCompletion: isWaitingForScanCompletion,
+      scanStatus: scanStatusQuery.data,
+      batchRunStatus: batchRunStatusQuery.data,
       sseStatus,
-    ],
-  );
-
-  const scanStallSeconds = useMemo(() => {
-    if (typeof stalledForSeconds !== 'number') {
-      return null;
-    }
-
-    return currentPhase === 'idle' ? null : stalledForSeconds;
-  }, [currentPhase, stalledForSeconds]);
+      sseProgress,
+      stalledForSeconds,
+    });
 
   const handleScan = useCallback(
     (mediaIds: number[]) => {

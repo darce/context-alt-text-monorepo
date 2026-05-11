@@ -1,80 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
-import { __ } from '@wordpress/i18n';
-
-import { fetchRecentBatchRuns, fetchScanStatus } from '../api/recognition';
-import type { JobStatusResponse, RecentBatchRunActivity } from '../api/recognition/types/scan';
-
-const JOB_HISTORY_KEY = 'acx-recognition-jobs';
-const MAX_JOB_HISTORY = 5;
-
-export type RecognitionHistorySource = 'durable' | 'browser_local_fallback' | 'unavailable';
-
-export interface RecognitionActivityItem {
-  id: string;
-  jobId: string | null;
-  runId: string | null;
-  provenance: 'durable_batch_run' | 'browser_local_fallback';
-  statusText: string;
-}
-
-const toStringArray = (value: unknown): string[] =>
-  Array.isArray(value) && value.every((item) => typeof item === 'string') ? value : [];
-
-const readStoredHistory = (): string[] => {
-  if (typeof window === 'undefined') {
-    return [];
-  }
-
-  try {
-    const stored = window.localStorage.getItem(JOB_HISTORY_KEY);
-    const parsed: unknown = stored ? JSON.parse(stored) : [];
-    return toStringArray(parsed);
-  } catch {
-    return [];
-  }
-};
-
-const persistHistory = (history: string[]): void => {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  window.localStorage.setItem(JOB_HISTORY_KEY, JSON.stringify(history));
-};
-
-const buildDurableStatusText = (item: RecentBatchRunActivity): string => {
-  if (item.latest_job_status) {
-    return item.latest_job_status;
-  }
-
-  if (item.failed_total > 0 && item.accepted_total === 0) {
-    return __('Submission failed', 'alt-context');
-  }
-
-  if (item.terminal_state) {
-    return __('Completed', 'alt-context');
-  }
-
-  return __('Pending', 'alt-context');
-};
-
-const buildDurableActivity = (items: RecentBatchRunActivity[]): RecognitionActivityItem[] =>
-  items.map((item) => ({
-    id: item.run_id,
-    jobId: item.latest_job_id || null,
-    runId: item.run_id,
-    provenance: 'durable_batch_run',
-    statusText: buildDurableStatusText(item),
-  }));
-
-const buildFallbackActivity = (jobIds: string[]): RecognitionActivityItem[] =>
-  jobIds.map((jobId) => ({
-    id: jobId,
-    jobId,
-    runId: null,
-    provenance: 'browser_local_fallback',
-    statusText: __('Remembered in this browser only', 'alt-context'),
-  }));
+import type { JobStatusResponse } from '../api/recognition/types/scan';
+import {
+  buildFallbackActivity,
+  fetchRecognitionStatusEntries,
+  hydrateRecognitionHistory,
+  persistHistory,
+  type RecognitionActivityItem,
+  type RecognitionHistorySource,
+} from './recognitionJobHistoryUtils';
 
 export const useRecognitionJobHistory = () => {
   const [jobId, setJobId] = useState<string | null>(null);
@@ -85,52 +18,11 @@ export const useRecognitionJobHistory = () => {
   const [historySource, setHistorySource] = useState<RecognitionHistorySource>('unavailable');
 
   const hydrateHistory = useCallback(async (): Promise<void> => {
-    const stored = readStoredHistory();
-
-    try {
-      const response = await fetchRecentBatchRuns(MAX_JOB_HISTORY);
-      const durableActivity = buildDurableActivity(response.items);
-      const durableJobHistory = durableActivity
-        .map((item) => item.jobId)
-        .filter((value): value is string => typeof value === 'string' && value.length > 0);
-
-      if (durableActivity.length > 0) {
-        setRecentActivity(durableActivity);
-        setJobHistory(durableJobHistory);
-        setJobId((current) =>
-          current && durableJobHistory.includes(current) ? current : (durableJobHistory[0] ?? null),
-        );
-        setHistorySource('durable');
-        return;
-      }
-    } catch {
-      if (stored.length > 0) {
-        setRecentActivity(buildFallbackActivity(stored));
-        setJobHistory(stored);
-        setJobId((current) => current ?? stored[0] ?? null);
-        setHistorySource('browser_local_fallback');
-        return;
-      }
-
-      setRecentActivity([]);
-      setJobHistory([]);
-      setJobId(null);
-      setHistorySource('unavailable');
-      return;
-    }
-
-    if (stored.length > 0) {
-      setRecentActivity(buildFallbackActivity(stored));
-      setJobHistory(stored);
-      setJobId((current) => current ?? stored[0] ?? null);
-      setHistorySource('browser_local_fallback');
-      return;
-    }
-
-    setRecentActivity([]);
-    setJobHistory([]);
-    setJobId(null);
-    setHistorySource('durable');
+    const next = await hydrateRecognitionHistory();
+    setRecentActivity(next.recentActivity);
+    setJobHistory(next.jobHistory);
+    setHistorySource(next.historySource);
+    setJobId((current) => (current && next.jobHistory.includes(current) ? current : next.selectedJobId));
   }, []);
 
   useEffect(() => {
@@ -145,18 +37,7 @@ export const useRecognitionJobHistory = () => {
     let cancelled = false;
 
     const fetchStatuses = async (): Promise<void> => {
-      const entries = await Promise.all(
-        jobHistory.map(async (id) => {
-          try {
-            const response = await fetchScanStatus(id);
-            return { id, status: response.status, detail: response, notFound: false } as const;
-          } catch (error) {
-            const message = error instanceof Error ? error.message : '';
-            const notFound = message.includes('(404)');
-            return { id, status: __('Unknown', 'alt-context'), detail: null, notFound } as const;
-          }
-        }),
-      );
+      const entries = await fetchRecognitionStatusEntries(jobHistory);
 
       if (cancelled) {
         return;

@@ -398,11 +398,7 @@ format-all:
 	@echo "=== Formatting description-service ==="
 	@( cd apps/prototype-description-service && $(MAKE) format )
 	@echo "=== Formatting WordPress plugin (TS/JS + PHP) ==="
-	@if [ -d apps/prototype-wp-alt-context/node_modules ]; then \
-		( cd apps/prototype-wp-alt-context && $(MAKE) format ); \
-	else \
-		echo "⏭️  Skipping WordPress plugin format (run 'npm install' in apps/prototype-wp-alt-context first)"; \
-	fi
+	@( cd apps/prototype-wp-alt-context && $(MAKE) format )
 	@echo "✅ All components formatted!"
 # Clean all cache files
 clean-all:

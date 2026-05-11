@@ -17,8 +17,8 @@ import numpy as np
 import pytest
 from sqlalchemy import select
 
-from db.models.identity import IdentityCluster as IdentityClusterModel
 from db.models import MediaIdentity as MediaIdentityModel
+from db.models.identity import IdentityCluster as IdentityClusterModel
 from recognition.application.orchestration.job_service import JobService
 from recognition.application.tasks.clustering import (
     run_background_backfill_suggestions,

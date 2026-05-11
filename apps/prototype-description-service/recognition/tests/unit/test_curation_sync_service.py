@@ -9,8 +9,8 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models.identity import CurationReplayRecord, IdentityCluster, IdentityMember
 from db.models import MediaIdentity as MediaIdentityModel
+from db.models.identity import CurationReplayRecord, IdentityCluster, IdentityMember
 from db.models.tenant import Tenant
 from recognition.tests.fakes import FakeJobService
 from roster.application.curation_sync_service import CurationSyncService
@@ -453,7 +453,9 @@ async def test_cluster_bind_does_not_persist_replay_row_when_queue_enqueue_fails
 
     await db_session.rollback()
     replay_count = await db_session.scalar(
-        select(func.count()).select_from(CurationReplayRecord).where(
+        select(func.count())
+        .select_from(CurationReplayRecord)
+        .where(
             CurationReplayRecord.tenant_id == tenant_id,
             CurationReplayRecord.idempotency_key == "bind-enqueue-fail-idem",
         )

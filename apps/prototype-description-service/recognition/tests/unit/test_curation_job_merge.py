@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-import uuid
 from unittest.mock import AsyncMock, Mock, call
 
 import pytest
@@ -135,9 +135,7 @@ async def test_run_curation_job_creates_merge_must_link_constraint() -> None:
     cluster_service = Mock()
     cluster_service.constraint_repository = constraint_repo
     cluster_service.retry_matching = AsyncMock()
-    cluster_service.suggestion_refresh_service = SimpleNamespace(
-        refresh_after_curation=refresh_after_curation
-    )
+    cluster_service.suggestion_refresh_service = SimpleNamespace(refresh_after_curation=refresh_after_curation)
 
     await run_curation_job(
         tenant_id=tenant_id,
@@ -189,9 +187,7 @@ async def test_run_curation_job_advances_refresh_status_for_replay_row(
     refresh_after_curation = AsyncMock(return_value=1)
 
     cluster_service = Mock()
-    cluster_service.suggestion_refresh_service = SimpleNamespace(
-        refresh_after_curation=refresh_after_curation
-    )
+    cluster_service.suggestion_refresh_service = SimpleNamespace(refresh_after_curation=refresh_after_curation)
 
     import recognition.application.orchestration.curation_job as curation_job_module
 
@@ -251,9 +247,7 @@ async def test_run_curation_job_marks_refresh_no_candidates_when_nothing_is_crea
     refresh_after_curation = AsyncMock(return_value=0)
 
     cluster_service = Mock()
-    cluster_service.suggestion_refresh_service = SimpleNamespace(
-        refresh_after_curation=refresh_after_curation
-    )
+    cluster_service.suggestion_refresh_service = SimpleNamespace(refresh_after_curation=refresh_after_curation)
 
     await run_curation_job(
         tenant_id=str(tenant_id),
@@ -299,9 +293,7 @@ async def test_run_curation_job_records_aggregate_refresh_metrics_on_completion(
 
     refresh_after_curation = AsyncMock(return_value=1)
     cluster_service = Mock()
-    cluster_service.suggestion_refresh_service = SimpleNamespace(
-        refresh_after_curation=refresh_after_curation
-    )
+    cluster_service.suggestion_refresh_service = SimpleNamespace(refresh_after_curation=refresh_after_curation)
 
     registry = CollectorRegistry()
     refresh_metrics = CurationRefreshMetrics(registry=registry)
@@ -354,9 +346,7 @@ async def test_run_curation_job_marks_refresh_timed_out_when_executor_times_out(
     refresh_after_curation = AsyncMock(side_effect=TimeoutError("refresh timed out"))
 
     cluster_service = Mock()
-    cluster_service.suggestion_refresh_service = SimpleNamespace(
-        refresh_after_curation=refresh_after_curation
-    )
+    cluster_service.suggestion_refresh_service = SimpleNamespace(refresh_after_curation=refresh_after_curation)
 
     await run_curation_job(
         tenant_id=str(tenant_id),
@@ -402,9 +392,7 @@ async def test_run_curation_job_records_aggregate_refresh_metrics_on_timeout(db_
 
     refresh_after_curation = AsyncMock(side_effect=TimeoutError("refresh timed out"))
     cluster_service = Mock()
-    cluster_service.suggestion_refresh_service = SimpleNamespace(
-        refresh_after_curation=refresh_after_curation
-    )
+    cluster_service.suggestion_refresh_service = SimpleNamespace(refresh_after_curation=refresh_after_curation)
 
     registry = CollectorRegistry()
     refresh_metrics = CurationRefreshMetrics(registry=registry)
@@ -445,9 +433,7 @@ async def test_run_curation_job_stops_refresh_loop_after_failure_without_replay_
     refresh_after_curation = AsyncMock(side_effect=[RuntimeError("boom"), 1])
 
     cluster_service = Mock()
-    cluster_service.suggestion_refresh_service = SimpleNamespace(
-        refresh_after_curation=refresh_after_curation
-    )
+    cluster_service.suggestion_refresh_service = SimpleNamespace(refresh_after_curation=refresh_after_curation)
 
     await run_curation_job(
         tenant_id=tenant_id,
@@ -489,9 +475,7 @@ async def test_run_curation_job_skips_refresh_when_replay_row_already_completed(
     refresh_after_curation = AsyncMock(return_value=1)
 
     cluster_service = Mock()
-    cluster_service.suggestion_refresh_service = SimpleNamespace(
-        refresh_after_curation=refresh_after_curation
-    )
+    cluster_service.suggestion_refresh_service = SimpleNamespace(refresh_after_curation=refresh_after_curation)
 
     await run_curation_job(
         tenant_id=str(tenant_id),
@@ -542,9 +526,7 @@ async def test_run_curation_job_retry_refresh_updates_attempt_timestamps(db_sess
     refresh_after_curation = AsyncMock(return_value=1)
 
     cluster_service = Mock()
-    cluster_service.suggestion_refresh_service = SimpleNamespace(
-        refresh_after_curation=refresh_after_curation
-    )
+    cluster_service.suggestion_refresh_service = SimpleNamespace(refresh_after_curation=refresh_after_curation)
 
     await run_curation_job(
         tenant_id=str(tenant_id),
@@ -582,9 +564,7 @@ async def test_run_curation_job_stops_on_timeout_without_replay_persistence() ->
     refresh_after_curation = AsyncMock(side_effect=[TimeoutError("refresh timed out"), 1])
 
     cluster_service = Mock()
-    cluster_service.suggestion_refresh_service = SimpleNamespace(
-        refresh_after_curation=refresh_after_curation
-    )
+    cluster_service.suggestion_refresh_service = SimpleNamespace(refresh_after_curation=refresh_after_curation)
 
     await run_curation_job(
         tenant_id=tenant_id,
@@ -628,9 +608,7 @@ async def test_run_curation_job_marks_refresh_failed_when_executor_raises(db_ses
     refresh_after_curation = AsyncMock(side_effect=RuntimeError("boom"))
 
     cluster_service = Mock()
-    cluster_service.suggestion_refresh_service = SimpleNamespace(
-        refresh_after_curation=refresh_after_curation
-    )
+    cluster_service.suggestion_refresh_service = SimpleNamespace(refresh_after_curation=refresh_after_curation)
 
     await run_curation_job(
         tenant_id=str(tenant_id),
@@ -665,9 +643,7 @@ async def test_run_curation_job_surfaces_missing_candidates_for_bound_identity_i
     refresh_after_curation = AsyncMock(return_value=[object()])
 
     cluster_service = Mock()
-    cluster_service.suggestion_refresh_service = SimpleNamespace(
-        refresh_after_curation=refresh_after_curation
-    )
+    cluster_service.suggestion_refresh_service = SimpleNamespace(refresh_after_curation=refresh_after_curation)
 
     await run_curation_job(
         tenant_id=tenant_id,
@@ -699,9 +675,7 @@ async def test_run_curation_job_delegates_curation_refresh_to_single_entrypoint(
 
     refresh_after_curation = AsyncMock(return_value=1)
     cluster_service = Mock()
-    cluster_service.suggestion_refresh_service = SimpleNamespace(
-        refresh_after_curation=refresh_after_curation
-    )
+    cluster_service.suggestion_refresh_service = SimpleNamespace(refresh_after_curation=refresh_after_curation)
 
     await run_curation_job(
         tenant_id=tenant_id,
@@ -759,9 +733,7 @@ async def test_run_curation_job_leaves_refresh_row_queued_when_refresh_service_m
     )
 
     refreshed = await db_session.scalar(
-        select(CurationReplayRecord).where(
-            CurationReplayRecord.idempotency_key == "refresh-idem-missing-service"
-        )
+        select(CurationReplayRecord).where(CurationReplayRecord.idempotency_key == "refresh-idem-missing-service")
     )
     assert isinstance(refreshed, CurationReplayRecord)
     assert refreshed.refresh_status == "queued"

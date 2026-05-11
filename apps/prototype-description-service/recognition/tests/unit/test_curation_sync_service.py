@@ -174,6 +174,50 @@ async def test_cluster_bind_queues_refresh_followup_with_idempotency_key(db_sess
 
 
 @pytest.mark.asyncio
+async def test_replayed_bind_queues_followup_once(db_session: AsyncSession) -> None:
+    tenant = await _create_tenant(db_session)
+    cluster = IdentityCluster(id=uuid4(), tenant_id=tenant.id, label="Unassigned", identity_count=0)
+    db_session.add(cluster)
+    await db_session.commit()
+    await db_session.refresh(cluster)
+
+    base_version = int(cluster.updated_at.timestamp() * 1_000_000) if cluster.updated_at else 0
+    operation = _operation(
+        "cluster_person_bound",
+        entity_key=str(cluster.id),
+        idempotency_key="bind-refresh-replay-idem",
+        expected_base_version=base_version,
+        payload={"cluster_uuid": str(cluster.id), "person_uuid": str(uuid4())},
+    )
+
+    first_job_service = FakeJobService()
+    first_result = await CurationSyncService(session=db_session, job_service=first_job_service).apply(
+        tenant_id=str(tenant.id),
+        operation=operation,
+    )
+    await db_session.commit()
+
+    replay_job_service = FakeJobService()
+    replay_result = await CurationSyncService(session=db_session, job_service=replay_job_service).apply(
+        tenant_id=str(tenant.id),
+        operation=operation,
+    )
+
+    assert replay_result == first_result
+    assert first_job_service.calls == [
+        {
+            "method": "queue_curation_followup",
+            "tenant_id": str(tenant.id),
+            "cluster_ids": [str(cluster.id)],
+            "identity_ids": [],
+            "source_cluster_id": None,
+            "refresh_idempotency_key": "bind-refresh-replay-idem",
+        }
+    ]
+    assert replay_job_service.calls == []
+
+
+@pytest.mark.asyncio
 async def test_cluster_bind_queues_refresh_followup_with_bound_identity_ids(db_session: AsyncSession) -> None:
     tenant = await _create_tenant(db_session)
     cluster = IdentityCluster(id=uuid4(), tenant_id=tenant.id, label="Unassigned", identity_count=1)

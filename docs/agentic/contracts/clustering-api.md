@@ -23,6 +23,10 @@ Blob auth note:
 - The blob proxy continues to use the same `/wp-json/acx/v1/recognition/blobs/...` route and response surface.
 - Hotfix slice `HOTFIX-blob-nonce-bypass-20260427` only tightened the nonce-bypass path check so query-string values that mention the blob route no longer bypass auth; no request or response payload changed.
 
+Maintenance note:
+
+- Maintenance slice `MAINT-architecture-compliance-20260511` refactored the React admin recognition/dashboard/roster/settings surfaces and split oversized client helpers without changing any request payload, response envelope, status vocabulary, query parameter contract, or permission behavior on this WordPress REST surface.
+
 Base path: `/wp-json/acx/v1/recognition`
 
 ## POST /recognition/analyze

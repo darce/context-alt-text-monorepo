@@ -13,13 +13,15 @@
 
 Stand up a publicly accessible WordPress instance running the ACX plugin, pointed at the live recognition backend, such that a product demo URL can be shared and a curator can trigger a scan that round-trips through the backend.
 
+This task does not claim demo readiness from request success alone. Before the public demo is treated as ready, the manual run log must also carry the avatar/progress proof bundle defined by [E15-22](./E15-22-workbench-avatar-and-progress-readiness-task-plan.md): representative avatar rendering or explicit fallback state, a monotonic processed indicator, and `Scan complete` appearing only when the Workbench is actually UI-ready.
+
 ## MVP Exit Criteria
 
 The task is complete when all of the following are true:
 
 1. A public URL loads a WordPress site with the ACX plugin installed and active.
 2. The plugin Settings page shows a successful backend connection probe against `api.altcontext.com` with a production API key.
-3. A curator can open the plugin Workbench, trigger a scan against seeded media, and see a recognition result returned.
+3. A curator can open the plugin Workbench, trigger a scan against seeded media, and see a recognition result returned, with the run log carrying the avatar/progress proof bundle required by [E15-22](./E15-22-workbench-avatar-and-progress-readiness-task-plan.md).
 4. HTTPS is enforced (Cloudflare Full/Strict or host-native TLS).
 5. The host selection and configuration is captured in a short decision record co-located with this plan.
 
@@ -79,14 +81,16 @@ Exit: Settings page reports a successful probe against the live backend.
 - Seed ~5-10 images into the WP media library using a recognizable sample set (non-sensitive, non-copyrighted; document provenance).
 - Open the plugin Workbench, trigger a scan, observe recognition results rendered for the seed media.
 - Capture a short run log (`E15-3-mvp-run-log.md`) with: scan timestamp, number of images, observed latency, any errors, and a screenshot or annotated transcript.
+- Include the [E15-22](./E15-22-workbench-avatar-and-progress-readiness-task-plan.md) proof bundle in that run log: at least one representative avatar render or explicit fallback screenshot/transcript, the processed-count progression, and the point at which `Scan complete` appears.
 - Verify the sovereign local-read path renders cached state when the backend is intentionally unreachable by temporarily setting the plugin backend URL to an RFC5737 address (for example `https://192.0.2.1`) to force a deterministic connect timeout; confirm the plugin renders cached state and surfaces the expected degraded-sync indicator; revert the URL before finishing.
 
-Exit: run log filed; local-read path verified; Phase 3 MVP exit criteria fully satisfied.
+Exit: run log filed with the E15-22 avatar/progress proof bundle; local-read path verified; Phase 3 MVP exit criteria fully satisfied.
 
 ## Deliverables
 
 - `docs/tasks/15.0/E15-3-host-decision-record.md` (host selection ADR-lite)
-- `docs/tasks/15.0/E15-3-mvp-run-log.md` (manual round-trip evidence)
+- `docs/tasks/15.0/E15-3-mvp-run-log.md` (manual round-trip evidence, including the E15-22 avatar/progress proof bundle that E15-5 reuses during live-demo execution)
+- Host decision record (or adjacent operator note) includes the plugin update/rollback procedure used after initial provisioning.
 - Demo URL + WP admin URL recorded in the handoff (as task state, not checked into the repo)
 - Production API key fingerprint logged against the key lifecycle surface from E15-1
 
@@ -128,18 +132,23 @@ Exit: run log filed; local-read path verified; Phase 3 MVP exit criteria fully s
 
 - [ ] Seed the demo media library with the provenance-tracked image set and run a manual Workbench scan.
 - [ ] File `E15-3-mvp-run-log.md` with timestamp, image count, latency, errors, and screenshot or annotated transcript evidence.
+- [ ] Include the E15-22 avatar/progress proof bundle in that run log: representative avatar render/fallback evidence, monotonic processed-count evidence, and the `Scan complete` timing.
 - [ ] Verify the deterministic local-read fallback via an RFC5737 backend URL, then restore the production backend URL before closing the slice.
 
 ## Review Readiness
 
 - [ ] The decision record, run log, and handoff state together capture host choice, live probe success, and manual round-trip proof.
 - [ ] No public-demo boundary is left undocumented when a host, TLS, DNS, or API-key choice changes.
+- [ ] The public-demo operations surface includes a tested plugin hotfix/rollback path, not just the initial install command.
+- [ ] E15-5 is expected to consume the same E15-3/E15-22 proof bundle during live-demo execution instead of redefining avatar/progress success criteria.
 - [ ] E15-5 is notified only after all five MVP exit criteria are evidenced.
 
 ## Success Criteria
 
 - [ ] A public WordPress demo URL is live with the ACX plugin active and successfully probing `api.altcontext.com`.
 - [ ] A curator can run the seeded-media demo path and see recognition results on the live site with the evidence checked into the named docs.
+- [ ] Operators can promote a plugin hotfix to the live demo and roll back to the prior ZIP using the documented procedure captured during Slice 2.
+- [ ] The demo proof bundle is strong enough that E15-5 can reuse it for live-demo execution without redefining avatar/progress correctness.
 
 ## Handoff
 

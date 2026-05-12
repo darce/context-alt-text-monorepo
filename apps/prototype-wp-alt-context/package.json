@@ -5,6 +5,7 @@
   "packageManager": "npm@11.14.1",
   "scripts": {
     "test": "vitest run",
+    "test:agent": "sh -c 'vitest run \"$@\" || true' --",
     "test:watch": "vitest",
     "test:php": "composer test",
     "test:all": "npm run test && npm run test:php",

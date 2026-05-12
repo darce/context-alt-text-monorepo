@@ -17,6 +17,8 @@ def test_harness_terminal_stall_doc_records_public_signals_and_fix() -> None:
         "does **not** confirm that zsh is the root cause",
         'terminal.integrated.agentHostProfile.osx',
         '"path": "/bin/bash"',
+        'npm run test:agent -- <path>',
+        'raw `npx vitest run` reliable',
         "single focused terminal command per invocation",
     )
 

@@ -110,6 +110,8 @@ export const buildScanProgress = ({
   batchRunStatus,
   fallbackProgress,
 }: ScanProgressParams): JobProgress | null => {
+  const scanJobs = activeJobs.filter((job) => job.type === 'scan');
+
   if (batchRunStatus && batchRunStatus.submitted_total > 0) {
     const processedTotal =
       batchRunStatus.completed_total + batchRunStatus.failed_total + batchRunStatus.cancelled_total;
@@ -122,13 +124,31 @@ export const buildScanProgress = ({
   }
 
   if (currentPhase === 'clustering' || currentPhase === 'projecting') {
+    const fallbackIsCompletedScan =
+      fallbackProgress?.phase === 'complete' || fallbackProgress?.phase === 'awaiting_projection';
+
+    if (!fallbackIsCompletedScan) {
+      const persistedScanTotal =
+        scanJobs.length > 0
+          ? scanJobs.reduce((sum, job) => sum + job.totalItems, 0)
+          : (latestScanJob?.totalItems ?? 0);
+
+      if (persistedScanTotal > 0) {
+        return {
+          completed: persistedScanTotal,
+          total: persistedScanTotal,
+          phase: currentPhase === 'projecting' ? 'awaiting_projection' : 'complete',
+          images_processed: persistedScanTotal,
+        };
+      }
+    }
+
     return fallbackProgress ?? null;
   }
   if (activeJobIds.length === 0) {
     return fallbackProgress ?? null;
   }
 
-  const scanJobs = activeJobs.filter((job) => job.type === 'scan');
   if (scanJobs.length > 1 && sseProgress) {
     const totalItems = scanJobs.reduce((sum, job) => sum + job.totalItems, 0);
     const currentJobIndex = scanJobs.findIndex((job) => job.id === latestScanJob?.id);

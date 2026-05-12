@@ -1,6 +1,4 @@
-import { __, sprintf } from '@wordpress/i18n';
-
-import type { BatchRunStatus, JobProgress, JobStatusResponse } from '../api/recognition/types/scan';
+import type { BatchRunStatus, JobStatusResponse } from '../api/recognition/types/scan';
 import type { PersistedJob } from './useJobPersistence';
 
 export type PipelinePhase = 'idle' | 'scanning' | 'clustering' | 'projecting';

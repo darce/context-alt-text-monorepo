@@ -112,6 +112,7 @@ export const TopClusterCard = ({
   const gridClassName =
     columnCount === 1 ? 'acx-top-cluster-card__grid acx-top-cluster-card__grid--single' : 'acx-top-cluster-card__grid';
   const isBusy = isDismissing || isConfirming;
+  const unavailableImageLabel = __('Representative image unavailable', 'alt-context');
 
   const handleConfirmSuggestedLabelClick = () => {
     if (!suggestedLabel || !onConfirmSuggestedLabel) {
@@ -155,7 +156,15 @@ export const TopClusterCard = ({
                       alt=""
                       className="acx-top-cluster-card__thumb-image"
                     />
-                  ) : null}
+                  ) : (
+                    <span
+                      className="acx-top-cluster-card__thumb-image acx-top-cluster-card__thumb-image--unavailable"
+                      role="img"
+                      aria-label={unavailableImageLabel}
+                    >
+                      <span className="acx-top-cluster-card__thumb-fallback-label">{__('No image', 'alt-context')}</span>
+                    </span>
+                  )}
                 </div>
               );
             })}

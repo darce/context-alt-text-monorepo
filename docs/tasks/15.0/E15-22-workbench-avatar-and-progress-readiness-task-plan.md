@@ -1,11 +1,12 @@
 # E15-22. Workbench Avatar and Progress Readiness (MVP-critical demo gate)
 
 > **Task Short ID**: E15-22
-> **Status**: scoped -- not started
+> **Status**: in_progress -- frontend variant + scan-complete tightening shipped on `feature/e15-22`; backend prerequisite slices pending under plan-analyze revision 2026-05-12
 > **Epic**: [E15. Public Demo Launch Readiness](../../epics/v0.4.0/public-demo-launch-readiness-epic.md) Phase 4 (pre-demo workbench gate)
-> **Predecessors**: E15-1 (security baseline) merged; E15-2 (observability baseline) merged. [E15-11](./E15-11-image-upload-transport-task-plan.md) hosted multipart proof is only a predecessor for Slice 3 demo-proof handoff and the private-media LocalWP gate, not for Slices 1 and 2 Workbench implementation.
+> **Predecessors**: E15-1 (security baseline) merged; E15-2 (observability baseline) merged. [E15-11](./E15-11-image-upload-transport-task-plan.md) hosted multipart proof is only a predecessor for the demo-proof-bundle slice and the private-media LocalWP gate, not for the backend or frontend Workbench slices.
 > **Blocks**: [E15-3](./E15-3-wordpress-demo-provisioning-task-plan.md) completion and [E15-5](./E15-5-manual-remote-e2e-task-plan.md) live-demo sign-off.
 > **Source intake**: MCP decision `copilot_scope_workbench_avatar_progress_intake` under `MAINT-workbench-avatar-progress-20260511`
+> **Plan-analyze revision (2026-05-12)**: decision `plan_analyze_e15_avatar_gate_20260512_revise_first` reopened `E15-PA-AVATAR-GATE-20260512-01` and added backend prerequisite slices (Slices 1 and 2 below) to address findings `E15-AVATAR-PA-20260512-01` (cluster-members envelope mismatch) and `E15-AVATAR-PA-20260512-02` (missing backend face-thumbnail surface). Concrete browser HTML showed an 8-face cluster rendering placeholder thumbs, identity preview rendering `acx-face-thumbnail--error`, and Review Cluster drawer rendering "No members found." even after the frontend-only changes landed.
 
 ---
 
@@ -103,7 +104,37 @@ Land a focused Workbench-correctness slice before public demo sign-off. The impl
 
 ## Slice Delivery
 
-### Slice 1: Representative Avatar Truthfulness
+### Slice 1: Cluster-Members Contract Envelope (backend prerequisite)
+
+**Goal**: `GET /clusters/{cluster_id}/members` returns the envelope `{members, limit, total, truncated}` the WP client already requires, so the Review Cluster drawer can populate instead of falling back to "No members found." (finding `E15-AVATAR-PA-20260512-01`).
+
+Changes:
+
+- Update `apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters.py` so the `/clusters/{cluster_id}/members` route returns a Pydantic envelope model with `members: list[ClusterMemberResponse]`, `limit: int`, `total: int`, `truncated: bool` instead of the current `response_model=list[ClusterMemberResponse]`.
+- Mirror the envelope model in `recognition/interface_adapters/http/routers/responses.py` so OpenAPI and the generated client agree.
+- Update or add deterministic tests for the route to assert the envelope shape and the truncation flag at the documented page limit.
+- Verify the WP client `apps/prototype-wp-alt-context/js/admin/api/recognition/clusterApiMembers.ts` no longer throws on a real backend response (its requires already match the new shape; the test is that no extra client edit is needed).
+
+Proof:
+
+- Pytest coverage proving the envelope shape and `truncated=true` boundary, plus a Vitest run against a recorded backend fixture that walks through `clusterApiMembers.ts` without throwing.
+
+### Slice 2: Backend Face-Thumbnail Surface (backend prerequisite)
+
+**Goal**: The Workbench can render representative faces from a backend-served, admin-reachable thumbnail surface instead of relying on WP attachment URLs that error inside the admin context (finding `E15-AVATAR-PA-20260512-02`).
+
+Changes:
+
+- Add a `thumb_url: BlobUrl | None` field to both `RepresentativeResponse` and `ClusterMemberResponse` in `recognition/interface_adapters/http/routers/responses.py`.
+- Populate `thumb_url` from the existing tenant-scoped image store via either (a) a new `/faces/{identity_id}/thumb` route that streams a cropped JPEG/PNG, or (b) a signed-URL helper that issues short-lived URLs against the existing media-blob path. Pick whichever path the backend already supports; do not invent a new storage tier.
+- Update `apps/prototype-wp-alt-context/js/components/ui/FaceThumbnail.tsx` (and the resolvers in `TopClusterCard.tsx` / `ClusterPreview.tsx`) to prefer `thumb_url` over `media_url + bbox`.
+- Add a pytest covering the new response field and route/signed-URL path, plus a Vitest case proving `FaceThumbnail` prefers `thumb_url` when both are present and only falls back to `media_url + bbox` when `thumb_url` is null.
+
+Proof:
+
+- Pytest + Vitest coverage for the new field + preference order, plus a LocalWP transcript showing an authenticated admin session loading thumbs without `acx-face-thumbnail--error` against seeded media.
+
+### Slice 3: Representative Avatar Truthfulness (frontend, was Slice 1)
 
 **Goal**: The Workbench renders representative crops when the data exists and shows an explicit fallback/error state when it does not.
 
@@ -118,7 +149,7 @@ Proof:
 
 - Vitest coverage in `TopClusterCard.test.tsx` and `ClusterPreview.test.tsx` for representative-crop rendering and the explicit unavailable-image variant.
 
-### Slice 2: Honest Scan/Clustering Progress
+### Slice 4: Honest Scan/Clustering Progress (was Slice 2)
 
 **Goal**: The Workbench processed counter and `Scan complete` label are trustworthy during the demo path.
 
@@ -133,7 +164,7 @@ Proof:
 
 - Vitest coverage proving `clustering` and `projecting` no longer render `Scan complete` by default, plus monotonic processed-count coverage at the aggregation layer.
 
-### Slice 3: Demo Proof Bundle + Regression Handoff
+### Slice 5: Demo Proof Bundle + Regression Handoff (was Slice 3)
 
 **Goal**: E15-3a and E15-3 require explicit proof before sign-off, and E15-6 has a clear regression target after MVP.
 
@@ -157,19 +188,31 @@ Proof:
 - [ ] Confirmed the hosted/private-media proof surface from E15-11 is available before treating the LocalWP demo gate as green.
 - [ ] Kept the broader scan-pipeline trust/canonicalization work scoped to v0.4.1 unless a defect is proven demo-blocking.
 
-### Checklist for Slice 1: Representative Avatar Truthfulness
+### Checklist for Slice 1: Cluster-Members Contract Envelope
+
+- [ ] `/clusters/{cluster_id}/members` returns the `{members, limit, total, truncated}` envelope through a Pydantic model shared by route and OpenAPI.
+- [ ] Pytest coverage proves the envelope shape and the `truncated=true` boundary at the documented page limit.
+- [ ] WP client `clusterApiMembers.ts` is exercised against a recorded backend fixture without throwing, and no extra client edit is required.
+
+### Checklist for Slice 2: Backend Face-Thumbnail Surface
+
+- [ ] `RepresentativeResponse` and `ClusterMemberResponse` carry an admin-reachable `thumb_url` (route or signed URL), populated from the existing tenant-scoped image store.
+- [ ] `FaceThumbnail` and the top-cluster/cluster-preview resolvers prefer `thumb_url`, falling back to `media_url + bbox` only when `thumb_url` is null.
+- [ ] Pytest + Vitest coverage proves the field shape and preference order; a LocalWP transcript shows seeded-media thumbs loading without `acx-face-thumbnail--error`.
+
+### Checklist for Slice 3: Representative Avatar Truthfulness (frontend)
 
 - [ ] Representative crop rendering is proven for top clusters and cluster previews.
 - [ ] Explicit unavailable-image variants remain visible and accessible when images are unavailable.
 - [ ] Focused avatar rendering tests land in `TopClusterCard.test.tsx` and `ClusterPreview.test.tsx`.
 
-### Checklist for Slice 2: Honest Scan/Clustering Progress
+### Checklist for Slice 4: Honest Scan/Clustering Progress
 
 - [ ] `Scan complete` no longer appears in `clustering` or `projecting` unless the pinned completion predicate is satisfied.
 - [ ] Processed count is monotonic for the seeded-media demo path at the aggregation seam that owns the displayed total.
 - [ ] Focused progress/timeline tests land in `JobTimeline.test.tsx` and, when needed, `jobStateMachineProgress.test.ts`.
 
-### Checklist for Slice 3: Demo Proof Bundle + Regression Handoff
+### Checklist for Slice 5: Demo Proof Bundle + Regression Handoff
 
 - [ ] E15-3a run-log requirements include avatar/progress screenshots or transcript evidence.
 - [ ] E15-3 planning surface consumes the proof bundle before demo sign-off, and E15-5 execution reuses that artifact instead of redefining it.

@@ -14,8 +14,8 @@ The MVP for E15 is **public WP demo URL live + one manual end-to-end pass**. Eve
 
 - Phase 1 — Security Baseline (E15-1, E15-1b) — merged to `main`
 - Phase 2 — Observability Baseline (E15-2) — merged to `main`
-- Phase 3 — WordPress Demo Provisioning (E15-3) — provider-agnostic plan
-- Phase 4 — End-to-End Verification (E15-4 in progress, E15-5 manual remote E2E)
+- Phase 3 — WordPress Demo Provisioning (E15-3) — provider-agnostic plan; **gated on [E15-22](../../tasks/15.0/E15-22-workbench-avatar-and-progress-readiness-task-plan.md) landing first** (cluster-members envelope + backend face-thumbnail surface + frontend unavailable variant) so a paid WP host is never purchased while the Workbench still renders placeholder thumbs or an empty Review Cluster drawer — see plan-analyze decision `plan_analyze_e15_avatar_gate_20260512_revise_first` and finding `E15-PA-AVATAR-GATE-20260512-01`
+- Phase 4 — End-to-End Verification (E15-4 in progress, E15-5 manual remote E2E, E15-22 Workbench avatar/progress readiness)
 - Phase 6 — Local Sync Correctness, operator hardening, and audit closure (E15-7 in progress; E15-13, E15-14, E15-15, E15-16, and E15-17 staged under the same phase with explicit dependency order below)
 
 **Deferred to v0.4.1:**
@@ -196,6 +196,7 @@ Exit criteria:
 
 > **Status**: not-started — task plan drafted Apr 2026
 > **Task plans**: [E15-3. WordPress Demo Provisioning](../../tasks/15.0/E15-3-wordpress-demo-provisioning-task-plan.md)
+> **Predecessor gate**: [E15-22](../../tasks/15.0/E15-22-workbench-avatar-and-progress-readiness-task-plan.md) must land first (cluster-members envelope, backend face-thumbnail surface, explicit unavailable variant) so LocalWP proof shows truthful avatars and a populated Review Cluster drawer before any paid WP host is purchased. See plan-analyze decision `plan_analyze_e15_avatar_gate_20260512_revise_first`.
 > **Source**: Production Readiness Phase 6, E14 remaining (subsumes E14 checklist items: provision WP demo hosting, install + configure ACX plugin)
 
 **Goal**: A publicly accessible WordPress page demonstrates the ACX plugin against the live backend.

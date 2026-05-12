@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from _harness_protocol import is_branch_isolation_protected_path
+from _harness_protocol import find_permitted_main_surface, is_branch_isolation_protected_path
 
 
 _EDIT_TOOLS = {
@@ -121,6 +121,8 @@ def check_file_edit(
     for raw_path in extract_candidate_paths(tool_name, tool_input):
         relative_path = to_repo_relative(raw_path, repo_root)
         if not is_branch_isolation_protected_path(relative_path, policy):
+            continue
+        if find_permitted_main_surface(relative_path, policy) is not None:
             continue
         per_path_branch = resolve_path_branch(raw_path)
         effective_branch = per_path_branch if per_path_branch else branch

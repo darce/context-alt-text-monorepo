@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess
 import sys
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -121,3 +123,74 @@ class TestEdgeCases:
         }
         resp = run_hook(payload)
         assert get_context(resp) is None
+
+
+# ---------------------------------------------------------------------------
+# Metrics recording: _record_advisory_metric unit tests
+# ---------------------------------------------------------------------------
+
+
+def _load_hook_module():
+    """Import the hook by file path (hyphen in filename prevents normal import)."""
+    spec = importlib.util.spec_from_file_location("slim_handoff_response", HOOK)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class TestMetricsRecording:
+    def test_record_turn_metrics_args(self):
+        mod = _load_hook_module()
+        with (
+            mock.patch("agent_handoff_mcp.configure_runtime"),
+            mock.patch("agent_handoff_mcp.RuntimeConfig"),
+            mock.patch("agent_orchestrator_mcp.lanes.record_turn_metric") as mock_record,
+        ):
+            mod._record_advisory_metric(12_000, 3_000, {"decisions": 5})
+
+        mock_record.assert_called_once()
+        kw = mock_record.call_args.kwargs
+        assert kw["session"] == "slim_handoff_advisory"
+        assert kw["phase"] == "handoff_read_advisory"
+        assert kw["backend"] == "slim_handoff_hook"
+        pm = kw["prompt_metrics"]
+        assert pm.prompt_chars == 12_000
+        assert pm.prompt_tokens == 3_000
+        assert pm.pressure_level == "high"
+        assert pm.prompt_token_source == "char_estimate"
+        assert kw["section_sizes"] == {"decisions": 5}
+
+    def test_record_survives_package_unavailable(self):
+        mod = _load_hook_module()
+        with mock.patch.dict(sys.modules, {
+            "agent_handoff_mcp": None,
+            "agent_orchestrator_mcp": None,
+            "agent_orchestrator_mcp.lanes": None,
+        }):
+            mod._record_advisory_metric(10_000, 2_500, {})  # must not raise
+
+    def test_main_calls_record_above_threshold(self):
+        import io
+        mod = _load_hook_module()
+        payload = json.dumps(make_handoff_payload(10_000))
+        with mock.patch.object(mod, "_record_advisory_metric") as mock_rec:
+            sys.stdin, orig_in = io.StringIO(payload), sys.stdin
+            sys.stdout, orig_out = io.StringIO(), sys.stdout
+            try:
+                mod.main()
+            finally:
+                sys.stdin, sys.stdout = orig_in, orig_out
+        mock_rec.assert_called_once()
+
+    def test_main_skips_record_below_threshold(self):
+        import io
+        mod = _load_hook_module()
+        payload = json.dumps(make_handoff_payload(100))
+        with mock.patch.object(mod, "_record_advisory_metric") as mock_rec:
+            sys.stdin, orig_in = io.StringIO(payload), sys.stdin
+            sys.stdout, orig_out = io.StringIO(), sys.stdout
+            try:
+                mod.main()
+            finally:
+                sys.stdin, sys.stdout = orig_in, orig_out
+        mock_rec.assert_not_called()

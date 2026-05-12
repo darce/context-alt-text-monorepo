@@ -25,8 +25,23 @@
     background-color: #f1f5f9; // slate-100
 
     &--placeholder {
-      display: inline-block;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
     }
+
+    &--unavailable {
+      padding: var(--acx-space-4);
+      border: 1px dashed var(--acx-color-border);
+      color: var(--acx-color-text-muted);
+      text-align: center;
+      line-height: 1.1;
+    }
+  }
+
+  &__thumb-fallback-label {
+    display: inline-block;
+    overflow-wrap: anywhere;
   }
 
   &__count {

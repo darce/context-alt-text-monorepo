@@ -33,6 +33,7 @@ export const ClusterPreview = ({
   const representativeId = representative?.representative_id ?? representative?.identity_id ?? null;
   const isPinned = Boolean(representative?.is_pinned);
   const toggleLabel = isPinned ? __('Unpin representative', 'alt-context') : __('Pin representative', 'alt-context');
+  const unavailableImageLabel = __('Representative image unavailable', 'alt-context');
 
   return (
     <div className="acx-identity-cluster__preview">
@@ -45,7 +46,13 @@ export const ClusterPreview = ({
           className="acx-identity-cluster__thumb"
         />
       ) : (
-        <span className="acx-identity-cluster__thumb acx-identity-cluster__thumb--placeholder" />
+        <span
+          className="acx-identity-cluster__thumb acx-identity-cluster__thumb--placeholder acx-identity-cluster__thumb--unavailable"
+          role="img"
+          aria-label={unavailableImageLabel}
+        >
+          <span className="acx-identity-cluster__thumb-fallback-label">{__('No image', 'alt-context')}</span>
+        </span>
       )}
       {memberCount > 1 && <span className="acx-identity-cluster__count">+{memberCount - 1}</span>}
       {representative && representativeId && onTogglePin && (

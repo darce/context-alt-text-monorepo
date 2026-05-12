@@ -1075,6 +1075,23 @@
     height: 100%;
     object-fit: cover;
     display: block;
+
+    &--unavailable {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: var(--acx-space-4);
+      border: 1px dashed var(--acx-color-border);
+      color: var(--acx-color-text-muted);
+      text-align: center;
+      line-height: 1.1;
+      background-color: var(--acx-color-surface);
+    }
+  }
+
+  &__thumb-fallback-label {
+    display: inline-block;
+    overflow-wrap: anywhere;
   }
 
   &__content {

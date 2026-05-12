@@ -88,6 +88,8 @@ branch_isolation:
       reason: "Generated agentic artifacts can update on main"
     - pattern: "docs/tasks/**"
       reason: "Task plans are operator-facing planning docs visible on main"
+    - pattern: "scripts/hooks/**"
+      reason: "Hook scripts are harness infrastructure maintainable on main"
     - pattern: "DASHBOARD.txt"
       reason: "Dashboard artifact is regenerated on main"
     - pattern: "CURRENT_TASK.json"

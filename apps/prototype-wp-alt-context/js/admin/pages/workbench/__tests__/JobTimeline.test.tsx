@@ -31,13 +31,38 @@ describe('buildMilestones', () => {
     expect(scanM?.label).toBe('Scanning\u2026');
   });
 
-  it('shows completed scan milestone when phase advances to clustering', () => {
-    const scan: JobProgress = { completed: 10, total: 10, images_processed: 10, faces_found: 3 };
+  it('keeps scan active during clustering until the scan job reports a completed phase', () => {
+    const scan: JobProgress = { completed: 10, total: 10, images_processed: 10, faces_found: 3, phase: 'detecting' };
+    const milestones = buildMilestones(scan, null, 'clustering', 'idle');
+    const scanM = milestones.find((m) => m.id === 'scan');
+    expect(scanM?.status).toBe('active');
+    expect(scanM?.label).toBe('Scanning\u2026');
+    expect(scanM?.detail).toContain('10 images');
+  });
+
+  it('shows completed scan milestone during clustering when the scan job reports a completed phase', () => {
+    const scan: JobProgress = {
+      completed: 10,
+      total: 10,
+      images_processed: 10,
+      faces_found: 3,
+      phase: 'awaiting_projection',
+    };
     const milestones = buildMilestones(scan, null, 'clustering', 'idle');
     const scanM = milestones.find((m) => m.id === 'scan');
     expect(scanM?.status).toBe('completed');
+    expect(scanM?.label).toBe('Scan complete');
     expect(scanM?.detail).toContain('10 images');
     expect(scanM?.detail).toContain('3 faces found');
+  });
+
+  it('keeps scan active during projecting until the scan job reports a completed phase', () => {
+    const scan: JobProgress = { completed: 10, total: 10, images_processed: 10, phase: 'detecting' };
+    const milestones = buildMilestones(scan, null, 'projecting', 'syncing');
+    const scanM = milestones.find((m) => m.id === 'scan');
+    expect(scanM?.status).toBe('active');
+    expect(scanM?.label).toBe('Scanning\u2026');
+    expect(scanM?.detail).toContain('10 images');
   });
 
   it('shows active clustering milestone while clustering', () => {
@@ -137,11 +162,11 @@ describe('JobTimeline', () => {
     expect(screen.getByRole('list', { name: 'Job progress milestones' })).toBeTruthy();
   });
 
-  it('renders scan-complete and clustering-active milestones', () => {
-    const scan: JobProgress = { completed: 10, total: 10, images_processed: 10, faces_found: 2 };
+  it('renders scanning and clustering-active milestones until the scan job reports completion', () => {
+    const scan: JobProgress = { completed: 10, total: 10, images_processed: 10, faces_found: 2, phase: 'detecting' };
     const cluster: JobProgress = { completed: 3, total: 15, phase: 'clustering' };
     render(<JobTimeline scanProgress={scan} clusterProgress={cluster} phase="clustering" />);
-    expect(screen.getByText('Scan complete')).toBeTruthy();
+    expect(screen.getByText('Scanning\u2026')).toBeTruthy();
     expect(screen.getByText('Clustering\u2026')).toBeTruthy();
   });
 

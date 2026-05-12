@@ -47,8 +47,6 @@ branch_isolation:
   root_protected_files:
     - Makefile
   protected_main_surfaces:
-    - pattern: "docs/tasks/**/*.md"
-      reason: "Top-level task plans must live on a task branch from the first edit"
     - pattern: "docs/assessments/**"
       reason: "Top-level assessments must live on a task branch from the first edit"
     - pattern: "docs/scopes/**"
@@ -88,8 +86,8 @@ branch_isolation:
       reason: "Routing and map artifacts stay editable on main"
     - pattern: "docs/agentic/generated/**"
       reason: "Generated agentic artifacts can update on main"
-    - pattern: "docs/tasks/archive/**"
-      reason: "Archived task snapshots stay editable on main"
+    - pattern: "docs/tasks/**"
+      reason: "Task plans are operator-facing planning docs visible on main"
     - pattern: "DASHBOARD.txt"
       reason: "Dashboard artifact is regenerated on main"
     - pattern: "CURRENT_TASK.json"

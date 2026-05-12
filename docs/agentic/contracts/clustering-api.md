@@ -27,6 +27,11 @@ Maintenance note:
 
 - Maintenance slice `MAINT-architecture-compliance-20260511` refactored the React admin recognition/dashboard/roster/settings surfaces and split oversized client helpers without changing any request payload, response envelope, status vocabulary, query parameter contract, or permission behavior on this WordPress REST surface.
 
+Maintenance tooling note:
+
+- Maintenance slice `MAINT-FORMAT-BOOTSTRAP-20260511` updated the root and plugin `Makefile` formatter/bootstrap flow so fresh linked worktrees install missing local Node tool binaries before running WordPress plugin formatting and review gates.
+- No `acx/v1/recognition` route, request payload, response payload, status code, or nonce/capability requirement changed in this slice.
+
 Base path: `/wp-json/acx/v1/recognition`
 
 ## POST /recognition/analyze

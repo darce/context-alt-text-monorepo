@@ -21,14 +21,11 @@ interface Milestone {
   detail?: string;
 }
 
-const isScanComplete = (scanProgress: JobProgress | null, phase: PipelinePhase): boolean => {
+const isScanComplete = (scanProgress: JobProgress | null): boolean => {
   if (!scanProgress) {
     return false;
   }
-  if (scanProgress.phase === 'complete' || scanProgress.phase === 'awaiting_projection') {
-    return true;
-  }
-  return phase === 'clustering' || phase === 'projecting';
+  return scanProgress.phase === 'complete' || scanProgress.phase === 'awaiting_projection';
 };
 
 const buildScanDetail = (scanProgress: JobProgress, scanDone: boolean): string | undefined => {
@@ -105,7 +102,7 @@ const buildMilestones = (
   projectionSyncState: ProjectionSyncState,
 ): Milestone[] => {
   const milestones: Milestone[] = [];
-  const scanDone = isScanComplete(scanProgress, phase);
+  const scanDone = isScanComplete(scanProgress);
   const projectionReady = projectionSyncState === 'ready';
 
   // --- Scan milestone ---

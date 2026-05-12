@@ -3,7 +3,8 @@
 
 Fires after get_handoff_state and load_session MCP calls.  When the
 response exceeds the character threshold, injects a note reminding the
-model to use bounded-read levers on the *next* call.
+model to use bounded-read levers on the *next* call.  Also records a
+turn_metrics row in handoff.db so advisory frequency is observable.
 
 This addresses the pattern found in handoff.db where heavy tasks produce
 get_handoff_state responses of 15-30K chars (~4-7.5K tokens), mostly from
@@ -19,11 +20,15 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 
 # Threshold: ~2K tokens.  The handoff server's own oversize_response
 # advisory fires at ~20KB / ~5K tokens.  This hook fires earlier to
 # steer behavior before the expensive call.
 CHAR_THRESHOLD = 8_000
+
+# Repo root is two levels up from scripts/hooks/.
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 def _estimate_tokens(text: str) -> int:
@@ -35,11 +40,32 @@ def _count_sections(response_text: str) -> dict[str, int]:
     counts: dict[str, int] = {}
     for key in ("decisions", "verified_tests", "findings_open",
                 "findings_all", "blockers", "next_actions"):
-        # Count occurrences of the key as a rough proxy for list length
         occurrences = response_text.count(f'"{key}"')
         if occurrences:
             counts[key] = occurrences
     return counts
+
+
+def _record_advisory_metric(char_count: int, token_est: int, sections: dict[str, int]) -> None:
+    """Best-effort: write advisory event to turn_metrics in handoff.db."""
+    try:
+        from agent_handoff_mcp import RuntimeConfig, configure_runtime
+        from agent_orchestrator_mcp.lanes import PromptMetrics, record_turn_metric
+        configure_runtime(RuntimeConfig.for_repo(_REPO_ROOT))
+        record_turn_metric(
+            session="slim_handoff_advisory",
+            phase="handoff_read_advisory",
+            backend="slim_handoff_hook",
+            prompt_metrics=PromptMetrics(
+                prompt_chars=char_count,
+                prompt_tokens=token_est,
+                pressure_level="high",
+                prompt_token_source="char_estimate",
+            ),
+            section_sizes=sections if sections else None,
+        )
+    except Exception:
+        pass  # never block the hook's primary advisory output
 
 
 def main() -> None:
@@ -65,6 +91,8 @@ def main() -> None:
 
     token_est = _estimate_tokens(response_text)
     sections = _count_sections(response_text)
+
+    _record_advisory_metric(char_count, token_est, sections)
 
     lines = [
         f"Handoff response: ~{char_count:,} chars (~{token_est:,} tokens).",

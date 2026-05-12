@@ -21,7 +21,7 @@ export default defineConfig(({ mode }) => ({
     environment: 'jsdom',
     setupFiles: './vitest.setup.ts',
     globals: true,
-    pool: 'threads',
+    pool: 'forks',
     minWorkers: 1,
     maxWorkers: 1,
   },

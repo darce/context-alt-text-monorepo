@@ -226,7 +226,7 @@ Reserve terminal for operations with no native-tool equivalent: test execution, 
 - **Test runs (MANDATORY):** Capture to `/tmp/`, then `read_file` the capture. Do NOT rely on terminal output alone.
   - Python (apps): `cd <app-dir> && VIRTUAL_ENV= uv run --locked pytest <path> -q > /tmp/pytest_<suite>.txt 2>&1`
   - Python (external MCP package verification): create a scratch venv, install the reviewed PyPI releases, then run CLI/import smoke from that environment. Example: `python3 -m venv /tmp/e17-13-external-mcp && /tmp/e17-13-external-mcp/bin/pip install --quiet "mcp-agent-handoff==0.11.2" "mcp-agent-orchestrator==0.4.6" > /tmp/pytest_external_mcp.txt 2>&1 && /tmp/e17-13-external-mcp/bin/mcp-agent-handoff --workspace-root . doctor >> /tmp/pytest_external_mcp.txt 2>&1 && /tmp/e17-13-external-mcp/bin/mcp-agent-orchestrator --workspace-root . --help >> /tmp/pytest_external_mcp.txt 2>&1`. Do not use `make test-handoff` or `make test-orchestrator` for this cleanup verification path.
-  - Vitest: `cd <app-dir> && npx vitest run <path> > /tmp/vitest_<suite>.txt 2>&1`
+  - Vitest in VS Code agent chat: `cd <app-dir> && npm run test:agent -- <path> > /tmp/vitest_<suite>.txt 2>&1`, then inspect the captured output because the wrapper returns control to chat even for RED tests. Use normal `npm run test -- <path>` only outside the agent chat workflow when failing exit codes can propagate safely.
   - PHP: `cd <app-dir> && vendor/bin/phpunit <path> > /tmp/phpunit_<suite>.txt 2>&1`
   - Then: `read_file("/tmp/pytest_<suite>.txt")`. Never `cat` in terminal. If output is truncated/polluted, just `read_file` the capture.
 - Excess output → redirect to `/tmp/<name>.txt` and `read_file` (VS Code) or `sed -n` (Codex); do not re-run.

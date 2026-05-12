@@ -1,37 +1,26 @@
-# Tool Selection — Mandatory Decision Tree
+# Tool Selection
 
-> This rule is enforced by `.github/hooks/terminal-guard.py`. Violations are blocked or flagged at the point of tool call.
+`.github/hooks/terminal-guard.py` is intentionally narrow: it only blocks raw `vitest run` / `npx vitest run` because that command can finish and still strand the VS Code chat terminal. Other terminal commands are not blocked by this hook; use normal judgment and prefer native VS Code tools when they give fresher state.
 
-**Run this decision tree EVERY time before calling `run_in_terminal`. No exceptions.**
-
-Is the task one of these exact four categories?
-
-- Running tests (`pytest`, `npm test`, `phpunit`, `vitest`, `playwright`)
-- Running `make` targets
-- `git commit` / `git push` / `git rebase` / `git cherry-pick` / `git worktree`
-- `pyenv` commands
-
-**YES** — Terminal is allowed. Prefer direct, focused test runs. Use `| tail -n 40` only when the command is noisy.
-
-**TEST RUNS (MANDATORY):** Run the narrowest direct test command that proves the change. Do not use `tee`; it can freeze the integrated terminal in this workspace.
+**TEST RUNS:** Run the narrowest direct test command that proves the change. Do not use `tee`; it can freeze the integrated terminal in this workspace.
 
 - Python: `cd <app-dir> && pyenv exec python -m pytest <path> -q`
-- Vitest: `cd <app-dir> && npx vitest run <path>`
+- Vitest in VS Code agent chat: `cd <app-dir> && npm run test:agent -- <path>`; inspect the output for failures because this wrapper intentionally returns control to chat even for RED tests. Use normal `npm run test -- <path>` only outside the agent chat workflow when the shell can safely propagate failing exit codes.
 - PHP: `cd <app-dir> && vendor/bin/phpunit <path>`
 - If a test run needs captured output, redirect once to `/tmp/<suite>.txt` with `> /tmp/<suite>.txt 2>&1`, then inspect it with `read_file`. Never `cat` the file in terminal.
 - Background terminals lack pyenv; only use the foreground terminal for Python tests.
 - Never hardcode user-local absolute filesystem paths such as `/Users/...` in commands, docs, or settings. Use environment variables such as `${env:HOME}`, `${workspaceFolder}`, `${PYENV_ROOT:-$HOME/.pyenv}`, and `${REPO_ROOT:-$PWD}` instead.
 - For external MCP package verification and runtime flows, do not invoke IDE Python environment-configuration tools. Use the foreground terminal with `PYENV_VERSION=description-service`, `pyenv exec python`, or `${PYENV_ROOT:-$HOME/.pyenv}/versions/description-service/bin/python`. If the harness stalls at `Configuring a Python Environment` or `Preparing`, stop retrying and ask the user to run the terminal command directly.
 
-**NO** — Stop. Use the native tool:
+Prefer native tools when they fit. These rows are agent-conduct conventions enforced by review and judgment, not by the narrow raw-Vitest terminal hook:
 
-| Task                        | Native tool                        | NEVER use terminal                          |
-| --------------------------- | ---------------------------------- | ------------------------------------------- |
-| Read file contents          | `read_file`                        | `cat`, `sed -n`, `head`, `tail`             |
-| Search / grep code          | `grep_search` or `search_subagent` | `grep -rn`, `rg`                            |
-| List changed files or diffs | `get_changed_files`                | `git diff`, `git status`                    |
-| Lint / type-check errors    | `get_errors`                       | `npm run lint`, `mypy`, `phpstan`, `eslint` |
-| Explore multiple files      | `Explore` subagent                 | chained terminal reads                      |
+| Task                        | Prefer                            | Avoid in routine VS Code use                |
+| --------------------------- | --------------------------------- | ------------------------------------------- |
+| Read file contents          | `read_file`                       | `cat`, `sed -n`, `head`, `tail`             |
+| Search / grep code          | `grep_search` or `Explore`        | `grep -rn`, `rg`                            |
+| List changed files or diffs | `get_changed_files`               | `git diff`, `git status`                    |
+| Lint / type-check errors    | `get_errors`                      | `npm run lint`, `mypy`, `phpstan`, `eslint` |
+| Explore multiple files      | `Explore` subagent                | chained terminal reads                      |
 
 Terminal output is **stale**. Native tools read live IDE state and never accumulate scrollback. When in doubt, use the native tool.
 

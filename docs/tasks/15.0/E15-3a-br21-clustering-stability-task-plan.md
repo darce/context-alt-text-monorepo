@@ -265,63 +265,63 @@ Proof:
 
 ### Context and Ownership
 
-- [ ] Loaded scope v2 and backing assessment before editing.
-- [ ] Confirmed the clustering breaker and the SLR-3 session-dependency breaker are separate modules with separate state.
-- [ ] Confirmed `get_session()` is not modified for any non-clustering router.
-- [ ] Confirmed atomicity of `SELECT FOR UPDATE -> lookup -> INSERT` under one `session.begin()` on one connection.
-- [ ] Audited all deps injected into `POST /recognition/clustering/jobs` (`session`, `cluster_service_builder`, `job_service`) and confirmed each resolves to the clustering session via FastAPI DI cache.
-- [ ] Confirmed `get_clustering_session` yields a bare session with no autobegun transaction so the route's `async with session.begin():` is the first transaction on that session (PLAN-10).
-- [ ] Confirmed `get_persisted_cluster_job_service_clustering` does NOT call the shared `get_job_service()` helper (no `SELECT 1` probe, no `set_tenant_context`) so the clustering session is still bare when the route enters `async with session.begin():` (PLAN-11).
-- [ ] Confirmed `get_persisted_cluster_job_service_clustering` does NOT pre-await `cluster_service_builder(tenant_id)` during dep resolution (no `build_cluster_service`-driven SQL on the clustering session); the route invokes the builder inside its own owned txn block (PLAN-12).
+- [x] Loaded scope v2 and backing assessment before editing.
+- [x] Confirmed the clustering breaker and the SLR-3 session-dependency breaker are separate modules with separate state.
+- [x] Confirmed `get_session()` is not modified for any non-clustering router.
+- [x] Confirmed atomicity of `SELECT FOR UPDATE -> lookup -> INSERT` under one `session.begin()` on one connection.
+- [x] Audited all deps injected into `POST /recognition/clustering/jobs` (`session`, `cluster_service_builder`, `job_service`) and confirmed each resolves to the clustering session via FastAPI DI cache.
+- [x] Confirmed `get_clustering_session` yields a bare session with no autobegun transaction so the route's `async with session.begin():` is the first transaction on that session (PLAN-10).
+- [x] Confirmed `get_persisted_cluster_job_service_clustering` does NOT call the shared `get_job_service()` helper (no `SELECT 1` probe, no `set_tenant_context`) so the clustering session is still bare when the route enters `async with session.begin():` (PLAN-11).
+- [x] Confirmed `get_persisted_cluster_job_service_clustering` does NOT pre-await `cluster_service_builder(tenant_id)` during dep resolution (no `build_cluster_service`-driven SQL on the clustering session); the route invokes the builder inside its own owned txn block (PLAN-12).
 
 ### Slice 1 -- Observability floor
 
-- [ ] `deps/session.py` adds `_resolve_pg_backend_pid()` and emits new `pg_backend_pid` field alongside existing `conn_id` in `session_dependency_timing` log record.
-- [ ] `clusters.py` records `clustering_admission_latency_ms` histogram.
-- [ ] Log-snapshot test asserts both `correlation_id` and the new `pg_backend_pid` field (not `conn_id`) are present.
+- [x] `deps/session.py` adds `_resolve_pg_backend_pid()` and emits new `pg_backend_pid` field alongside existing `conn_id` in `session_dependency_timing` log record.
+- [x] `clusters.py` records `clustering_admission_latency_ms` histogram.
+- [x] Log-snapshot test asserts both `correlation_id` and the new `pg_backend_pid` field (not `conn_id`) are present.
 
 ### Slice 2 -- Admission fail-fast
 
-- [ ] `pg_locks` pre-flight probe added before write unit-of-work.
-- [ ] Narrow `SET LOCAL statement_timeout='<clustering_tenant_lock_timeout_ms>ms'` issued immediately before `SELECT FOR UPDATE`, rolled back to `10s` immediately after the SELECT so INSERT keeps the default budget.
-- [ ] `503 Retry-After: 5` returned on probe-positive or `QueryCanceledError`.
-- [ ] Integration test asserts `<1,000 ms` backend-measured.
+- [x] `pg_locks` pre-flight probe added before write unit-of-work.
+- [x] Narrow `SET LOCAL statement_timeout='<clustering_tenant_lock_timeout_ms>ms'` issued immediately before `SELECT FOR UPDATE`, rolled back to `10s` immediately after the SELECT so INSERT keeps the default budget.
+- [x] `503 Retry-After: 5` returned on probe-positive or `QueryCanceledError`.
+- [x] Integration test asserts `<1,000 ms` backend-measured.
 
 ### Slice 3 -- Clustering circuit breaker
 
-- [ ] New `clustering_circuit_breaker.py` with deterministic state machine and injectable clock.
-- [ ] Settings `clustering_breaker_*` added.
-- [ ] Breaker initialized on `app.state` at startup.
-- [ ] Handler consults breaker on entry; records failure on `QueryCanceledError`; records success on `202`.
-- [ ] Unit tests exercise closed -> open -> half-open -> closed with fake clock.
-- [ ] Open-state fast-path returns `503` in `<10 ms` without calling repository.
+- [x] New `clustering_circuit_breaker.py` with deterministic state machine and injectable clock.
+- [x] Settings `clustering_breaker_*` added.
+- [x] Breaker initialized on `app.state` at startup.
+- [x] Handler consults breaker on entry; records failure on `QueryCanceledError`; records success on `202`.
+- [x] Unit tests exercise closed -> open -> half-open -> closed with fake clock.
+- [x] Open-state fast-path returns `503` in `<10 ms` without calling repository.
 
 ### Slice 4 -- Bulkhead + owned transaction
 
-- [ ] `clustering_engine` + `clustering_async_session_factory` added in `db/session.py`.
-- [ ] `get_clustering_session()` dep added; yields a bare session **without issuing any execute** so the route owns the first transaction (PLAN-10); does NOT invoke SLR-3 `_get_session_dependency_breaker` (PLAN-09); does NOT call `_apply_postgres_session_safety_settings` at the dep level (PLAN-10).
-- [ ] `get_cluster_service_builder_clustering` and `get_persisted_cluster_job_service_clustering` added in `deps/services.py`; existing non-clustering factories untouched. `get_persisted_cluster_job_service_clustering` does NOT call `get_job_service()` (no `SELECT 1`/`set_tenant_context`) AND does NOT pre-await `cluster_service_builder(tenant_id)` (no `build_cluster_service` SQL); it constructs `JobService(..., cluster_service=None, scan_service=None)` directly so the route owns the first transaction (PLAN-11, PLAN-12).
-- [ ] `clusters.py` swaps all three deps on `POST /recognition/clustering/jobs` (`session`, `cluster_service_builder`, `job_service`) to the clustering-flavored factories.
-- [ ] Handler wrapped in `async with session.begin():` covering full unit-of-work; the block's first statements (in order) are `_apply_postgres_session_safety_settings`, `set_tenant_context`, `_resolve_pg_backend_pid`, `await cluster_service_builder(tenant_id)` + reassign onto `job_service` (PLAN-12), `pg_locks` admission probe, narrow `SET LOCAL`, `SELECT FOR UPDATE`, restore `SET LOCAL 10s`, lookup, INSERT (PLAN-10/PLAN-12 ordering).
-- [ ] Integration test asserts all three deps share the same `AsyncSession` instance inside the handler.
-- [ ] `job_repository.py` verified not to commit internally.
-- [ ] `recognition/tests/unit/test_clustering_pool_isolation.py` passes and proves the shipped bulkhead invariants.
-- [ ] Unit-of-work atomicity integration test passes.
-- [ ] Full backend pytest suite passes.
+- [x] `clustering_engine` + `clustering_async_session_factory` added in `db/session.py`.
+- [x] `get_clustering_session()` dep added; yields a bare session **without issuing any execute** so the route owns the first transaction (PLAN-10); does NOT invoke SLR-3 `_get_session_dependency_breaker` (PLAN-09); does NOT call `_apply_postgres_session_safety_settings` at the dep level (PLAN-10).
+- [x] `get_cluster_service_builder_clustering` and `get_persisted_cluster_job_service_clustering` added in `deps/services.py`; existing non-clustering factories untouched. `get_persisted_cluster_job_service_clustering` does NOT call `get_job_service()` (no `SELECT 1`/`set_tenant_context`) AND does NOT pre-await `cluster_service_builder(tenant_id)` (no `build_cluster_service` SQL); it constructs `JobService(..., cluster_service=None, scan_service=None)` directly so the route owns the first transaction (PLAN-11, PLAN-12).
+- [x] `clusters.py` swaps all three deps on `POST /recognition/clustering/jobs` (`session`, `cluster_service_builder`, `job_service`) to the clustering-flavored factories.
+- [x] Handler wrapped in `async with session.begin():` covering full unit-of-work; the block's first statements (in order) are `_apply_postgres_session_safety_settings`, `set_tenant_context`, `_resolve_pg_backend_pid`, `await cluster_service_builder(tenant_id)` + reassign onto `job_service` (PLAN-12), `pg_locks` admission probe, narrow `SET LOCAL`, `SELECT FOR UPDATE`, restore `SET LOCAL 10s`, lookup, INSERT (PLAN-10/PLAN-12 ordering).
+- [x] Integration test asserts all three deps share the same `AsyncSession` instance inside the handler.
+- [x] `job_repository.py` verified not to commit internally.
+- [x] `recognition/tests/unit/test_clustering_pool_isolation.py` passes and proves the shipped bulkhead invariants.
+- [x] Unit-of-work atomicity integration test passes.
+- [x] Full backend pytest suite passes.
 
 ### Slice 5 -- WP proxy policy
 
-- [ ] `class-abstract-recognition-proxy-controller.php` short-circuits on `503 Retry-After`.
-- [ ] Retry behavior preserved for 502, 504, transport errors.
-- [ ] PHPUnit assertions cover all four cases.
-- [ ] `composer check` passes.
+- [x] `class-abstract-recognition-proxy-controller.php` short-circuits on `503 Retry-After`.
+- [x] Retry behavior preserved for 502, 504, transport errors.
+- [x] PHPUnit assertions cover all four cases.
+- [x] `composer check` passes.
 
 ## Review Readiness
 
-- [ ] Clustering breaker and SLR-3 breaker are unambiguously separate in code and docs.
-- [ ] Pool isolation proven by the shipped separate-engine / narrower-pool executable invariants in `recognition/tests/unit/test_clustering_pool_isolation.py`.
-- [ ] `<1 s` backend-measured latency assertion present in an integration test, not just a comment.
-- [ ] WP retry-policy change is paired with a direct PHPUnit assertion, not a manual-run expectation.
+- [x] Clustering breaker and SLR-3 breaker are unambiguously separate in code and docs.
+- [x] Pool isolation proven by the shipped separate-engine / narrower-pool executable invariants in `recognition/tests/unit/test_clustering_pool_isolation.py`.
+- [x] `<1 s` backend-measured latency assertion present in an integration test, not just a comment.
+- [x] WP retry-policy change is paired with a direct PHPUnit assertion, not a manual-run expectation.
 - [ ] Handoff records fresh verification on the merged commit; `handoff_close_check(enforce=True)` passes; BR-21 and `E15-3a-PLAN-01..03` close `fixed` with `verified_commit_sha`.
 
 ## Stretch Goals
@@ -331,12 +331,12 @@ Proof:
 
 ## Success Criteria
 
-- [ ] Integration test: zombie-lock + `POST /recognition/clustering/jobs` returns `503 Retry-After` in `<1,000 ms` backend-measured.
-- [ ] Unit test: 3 `QueryCanceledError`s in 30 s open the breaker; next call returns `503` in `<10 ms` without calling the repository; cooldown elapses, half-open admits a trial.
-- [ ] Executable bulkhead evidence proves `engine is not clustering_engine`, the clustering session factory stays distinct, and pool sizing remains narrower than the business pool; the full unit-of-work runs on one connection inside one `session.begin()`.
-- [ ] PHPUnit test: backend `503 Retry-After` surfaces on first attempt; 502/504/transport still retry.
+- [x] Integration test: zombie-lock + `POST /recognition/clustering/jobs` returns `503 Retry-After` in `<1,000 ms` backend-measured.
+- [x] Unit test: 3 `QueryCanceledError`s in 30 s open the breaker; next call returns `503` in `<10 ms` without calling the repository; cooldown elapses, half-open admits a trial.
+- [x] Executable bulkhead evidence proves `engine is not clustering_engine`, the clustering session factory stays distinct, and pool sizing remains narrower than the business pool; the full unit-of-work runs on one connection inside one `session.begin()`.
+- [x] PHPUnit test: backend `503 Retry-After` surfaces on first attempt; 502/504/transport still retry.
 - [ ] E15-3a Slice 2 roundtrip gate captures a green clustering-jobs round trip from LocalWP.
-- [ ] Every clustering-jobs request's log record contains both `correlation_id` and the new `pg_backend_pid` field (distinct from the existing Python-object-id `conn_id`), joinable against `pg_stat_activity`.
+- [x] Every clustering-jobs request's log record contains both `correlation_id` and the new `pg_backend_pid` field (distinct from the existing Python-object-id `conn_id`), joinable against `pg_stat_activity`.
 - [ ] `handoff_close_check(enforce=True)` passes on `feature/e15-3a-br-21` with zero open findings; BR-21 and `E15-3a-PLAN-01..03` close against the verified closeout commit.
 
 ## Handoff

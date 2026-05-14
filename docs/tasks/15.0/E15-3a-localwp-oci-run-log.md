@@ -13,6 +13,20 @@ This run log is the single evidence surface for the full LocalWP plugin ->
 OCI backend -> recognition round trip. Record only key fingerprints, never raw
 API keys or secrets.
 
+## Run Metadata
+
+| Field | Value |
+| --- | --- |
+| Run date | Slice 1 `2026-04-23`; Slices 2-4 `<pending>` |
+| Operator | `Daniel` |
+| Task ref | `E15-3a` |
+| Branch / build under test | `feature/e15-22` / plugin build `28d78e6a` |
+| LocalWP site URL | `http://localhost:10010` |
+| Backend base URL | `https://api.altcontext.com` |
+| Production API key fingerprint | `short_id=7592` / UI `****I-xM` |
+| Seeded-media set identifier | `<pending>` |
+| E15-11 hosted transport proof reference | `<pending>` |
+
 ## Evidence Index
 
 | Artifact | Status | Notes |
@@ -93,7 +107,7 @@ behavior for real browser-origin XHRs is exercised in Slice 3A.
 
 ### OCI log excerpt
 
-```
+```text
 api-1  | INFO:     172.18.0.2:55556 - "GET /health/detailed HTTP/1.1" 200 OK
 api-1  | {"correlation_id": "req-069ea56c-bb67-7398-8000-58009f0df015",
          "name": "recognition.interface_adapters.http.deps.session",
@@ -108,7 +122,7 @@ api-1  | {"correlation_id": "req-069ea56c-bb67-7398-8000-58009f0df015",
                      conn_id=0xe941ebc84620"}
 ```
 
-### Notes
+### Slice 1 Notes
 
 Slice 1 was initially blocked because the plugin was probing the removed
 endpoint `/recognition/health/pool` (consolidated into `/health/detailed` in
@@ -171,7 +185,44 @@ query aligned with `docs/operations/observability-runbook.md`.
 | After screenshot | `<path or note>` |
 | Redacted payload snapshot | `<path or inline summary>` |
 
-### Notes
+## E15-22 Proof Bundle
+
+### Representative Avatar Evidence
+
+| Field | Value |
+| --- | --- |
+| Surface shown | `<top-cluster card / review drawer / other>` |
+| Representative source | `<thumb_url / explicit fallback>` |
+| Screenshot / transcript path | `<path or note>` |
+| Reusable in E15-3 | `<yes / no>` |
+| Reusable in E15-5 | `<yes / no>` |
+
+### Monotonic Processed-Count Evidence
+
+| Field | Value |
+| --- | --- |
+| Screenshot / transcript path | `<path or note>` |
+| Processed-count checkpoints | `<list or summary>` |
+| Notes | `<pending>` |
+
+### Scan Complete Timing Evidence
+
+| Field | Value |
+| --- | --- |
+| Screenshot / transcript path | `<path or note>` |
+| `scanProgress.phase` / UI-ready state | `<pending>` |
+| Notes | `<pending>` |
+
+### Reuse Metadata
+
+| Field | Value |
+| --- | --- |
+| Artifact bundle ID | `<pending>` |
+| Reused by E15-3 | `<yes / no>` |
+| Reused by E15-5 | `<yes / no>` |
+| Reasons to recapture | `<none or summary>` |
+
+### Slice 2 Notes
 
 ```text
 <scan transcript / plugin observations / OCI observations>
@@ -192,7 +243,7 @@ query aligned with `docs/operations/observability-runbook.md`.
 Per `docs/agentic/contracts/security.md`, the rejection evidence is that the
 response omits `Access-Control-Allow-Origin` for the non-allowlisted origin.
 
-### Captured Evidence
+### CORS Captured Evidence
 
 | Field | Value |
 | --- | --- |
@@ -252,7 +303,7 @@ response omits `Access-Control-Allow-Origin` for the non-allowlisted origin.
 The current UI contract expects the degraded status to surface as
 `sync_health=offline` with the label `Waiting for service…`.
 
-### Captured Evidence
+### Fallback Captured Evidence
 
 | Field | Value |
 | --- | --- |

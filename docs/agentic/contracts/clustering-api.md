@@ -32,6 +32,13 @@ Maintenance tooling note:
 - Maintenance slice `MAINT-FORMAT-BOOTSTRAP-20260511` updated the root and plugin `Makefile` formatter/bootstrap flow so fresh linked worktrees install missing local Node tool binaries before running WordPress plugin formatting and review gates.
 - No `acx/v1/recognition` route, request payload, response payload, status code, or nonce/capability requirement changed in this slice.
 
+Face thumbnail crop contract:
+
+- Backend-emitted `/recognition/face-thumbs/<job>/<media>?x=...&y=...&width=...&height=...` URLs use a shared max crop component of `32768`.
+- `x` and `y` must be integers in `0..32768`; `width` and `height` must be integers in `1..32768`.
+- This bound is enforced across the backend emitter in `apps/prototype-description-service/recognition/interface_adapters/http/blob_url.py`, the backend reader in `apps/prototype-description-service/recognition/interface_adapters/http/routers/blobs.py`, and the WordPress proxy signer in `apps/prototype-wp-alt-context/src/api/class-blob-url-rewriter.php`.
+- If the crop bound changes, update all three surfaces in the same slice so WordPress never signs a face-thumb URL the backend will reject.
+
 Base path: `/wp-json/acx/v1/recognition`
 
 ## POST /recognition/analyze

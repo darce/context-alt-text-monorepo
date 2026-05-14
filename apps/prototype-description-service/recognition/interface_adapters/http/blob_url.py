@@ -25,6 +25,10 @@ from pydantic import AfterValidator
 
 _FILE_SCHEME = "file://"
 _BLOB_SUFFIX = ".bin"
+# Keep this bound aligned with docs/agentic/contracts/clustering-api.md
+# "Face thumbnail crop contract" and the WordPress proxy signer in
+# apps/prototype-wp-alt-context/src/api/class-blob-url-rewriter.php.
+FACE_THUMB_MAX_COMPONENT = 32_768
 
 
 def rewrite_blob_uri_to_path(value: str | None) -> str | None:
@@ -69,6 +73,34 @@ def rewrite_blob_uri_to_path(value: str | None) -> str | None:
     return f"/recognition/blobs/{job_id}/{media_id}"
 
 
+def build_face_thumb_path(
+    value: str | None,
+    *,
+    x: int | None,
+    y: int | None,
+    width: int | None,
+    height: int | None,
+) -> str | None:
+    """Return a same-origin cropped-face URL for a blob-backed media URL."""
+    blob_path = rewrite_blob_uri_to_path(value)
+    if blob_path is None or blob_path == value:
+        return None
+    if x is None or y is None or width is None or height is None:
+        return None
+    if width <= 0 or height <= 0 or x < 0 or y < 0:
+        return None
+    if x > FACE_THUMB_MAX_COMPONENT or y > FACE_THUMB_MAX_COMPONENT:
+        return None
+    if width > FACE_THUMB_MAX_COMPONENT or height > FACE_THUMB_MAX_COMPONENT:
+        return None
+
+    prefix = "/recognition/blobs/"
+    if not blob_path.startswith(prefix):
+        return None
+    suffix = blob_path[len(prefix) :]
+    return f"/recognition/face-thumbs/{suffix}?x={x}&y={y}&width={width}&height={height}"
+
+
 BlobUrl = Annotated[str | None, AfterValidator(rewrite_blob_uri_to_path)]
 """Pydantic field type that rewrites file:// blob URIs to public blob paths.
 
@@ -82,4 +114,4 @@ URL) still works.
 """
 
 
-__all__ = ["BlobUrl", "rewrite_blob_uri_to_path"]
+__all__ = ["BlobUrl", "FACE_THUMB_MAX_COMPONENT", "build_face_thumb_path", "rewrite_blob_uri_to_path"]

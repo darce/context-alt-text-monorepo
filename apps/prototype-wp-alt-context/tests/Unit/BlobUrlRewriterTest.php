@@ -102,6 +102,46 @@ class BlobUrlRewriterTest extends TestCase
         $this->assertSame($expected, $query['token']);
     }
 
+    public function testRewritesRecognitionFaceThumbPathToSignedRestUrlWithCropQuery(): void
+    {
+        $rewritten = BlobUrlRewriter::rewrite_string('/recognition/face-thumbs/job-x/42?x=1&y=2&width=30&height=40');
+
+        $parts = \parse_url($rewritten);
+        $this->assertSame('http', $parts['scheme']);
+        $this->assertSame('example.test', $parts['host']);
+        $this->assertSame('/wp-json/acx/v1/recognition/face-thumbs/job-x/42', $parts['path']);
+
+        $query = [];
+        \parse_str($parts['query'] ?? '', $query);
+        $this->assertSame('1', $query['x']);
+        $this->assertSame('2', $query['y']);
+        $this->assertSame('30', $query['width']);
+        $this->assertSame('40', $query['height']);
+        $this->assertArrayHasKey('expires', $query);
+        $this->assertArrayHasKey('token', $query);
+
+        $expected = BlobUrlRewriter::sign(
+            'job-x',
+            '42',
+            (int) $query['expires'],
+            'face-thumbs',
+            ['x' => 1, 'y' => 2, 'width' => 30, 'height' => 40]
+        );
+        $this->assertSame($expected, $query['token']);
+    }
+
+    public function testDoesNotRewriteIncompleteFaceThumbPath(): void
+    {
+        $value = '/recognition/face-thumbs/job-x/42?x=1&y=2&width=30';
+        $this->assertSame($value, BlobUrlRewriter::rewrite_string($value));
+    }
+
+    public function testDoesNotRewriteFaceThumbPathWhenCropExceedsMaxGeometry(): void
+    {
+        $value = '/recognition/face-thumbs/job-x/42?x=1&y=2&width=40000&height=40';
+        $this->assertSame($value, BlobUrlRewriter::rewrite_string($value));
+    }
+
     public function testPassesThroughHttpUrlUnchanged(): void
     {
         $url = 'https://example.com/wp-content/uploads/foo.jpg';
@@ -187,5 +227,21 @@ class BlobUrlRewriterTest extends TestCase
         $this->assertNotSame($base, BlobUrlRewriter::sign('job-b', '99', 1761600000));
         $this->assertNotSame($base, BlobUrlRewriter::sign('job-a', '100', 1761600000));
         $this->assertNotSame($base, BlobUrlRewriter::sign('job-a', '99', 1761600001));
+        $this->assertNotSame($base, BlobUrlRewriter::sign('job-a', '99', 1761600000, 'face-thumbs'));
+        $thumb = BlobUrlRewriter::sign('job-a', '99', 1761600000, 'face-thumbs', [
+            'x' => 1,
+            'y' => 2,
+            'width' => 30,
+            'height' => 40,
+        ]);
+        $this->assertNotSame(
+            $thumb,
+            BlobUrlRewriter::sign('job-a', '99', 1761600000, 'face-thumbs', [
+                'x' => 1,
+                'y' => 2,
+                'width' => 31,
+                'height' => 40,
+            ])
+        );
     }
 }

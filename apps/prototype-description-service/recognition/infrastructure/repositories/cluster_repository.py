@@ -865,17 +865,38 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         result = await self._session.execute(stmt)
         return [self._to_domain(model) for model in result.scalars().all()]
 
-    async def get_member_identities_with_similarity(self, cluster_id: str) -> list[tuple[MediaIdentity, float]]:
+    async def get_member_identity_count(self, cluster_id: str) -> int:
+        """Return the number of identities currently assigned to a cluster."""
+        cluster_uuid = _coerce_uuid(cluster_id)
+        if cluster_uuid is None:
+            return 0
+
+        stmt = select(func.count()).select_from(IdentityMemberModel).where(IdentityMemberModel.cluster_id == cluster_uuid)
+        result = await self._session.execute(stmt)
+        return int(result.scalar_one() or 0)
+
+    async def get_member_identities_with_similarity(
+        self,
+        cluster_id: str,
+        *,
+        limit: int | None = None,
+    ) -> list[tuple[MediaIdentity, float]]:
         """Return identity ORM records with their membership similarity for a cluster.
 
         Unlike get_member_identities, this returns the raw ORM model
         and the similarity score from the member record, for API responses.
         """
+        if limit is not None and limit <= 0:
+            return []
+
         stmt = (
             select(MediaIdentity, IdentityMemberModel.similarity)
             .join(IdentityMemberModel, IdentityMemberModel.identity_id == MediaIdentity.id)
             .where(IdentityMemberModel.cluster_id == _coerce_uuid(cluster_id))
+            .order_by(IdentityMemberModel.assigned_at, IdentityMemberModel.identity_id)
         )
+        if limit is not None:
+            stmt = stmt.limit(limit)
         result = await self._session.execute(stmt)
         return [(row[0], float(row[1])) for row in result.all()]
 

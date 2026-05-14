@@ -158,6 +158,34 @@ describe('ClusterLabelingPanel', () => {
     });
   });
 
+  it('prefers backend thumbnail URLs before client-side crop data', async () => {
+    vi.mocked(fetchClusterMembers).mockResolvedValue(
+      makeClusterMembersResponse([
+        {
+          identity_id: 'identity-thumb',
+          media_id: 101,
+          similarity: 0.97,
+          confidence: 0.99,
+          thumb_url: '/recognition/face-thumbs/job-1/101?x=1&y=2&width=20&height=20',
+          media_url: '/recognition/blobs/job-1/101',
+          bbox: { x: 1, y: 2, width: 20, height: 20 },
+        },
+      ]),
+    );
+
+    const { container } = renderPanel();
+
+    await waitFor(() => {
+      expect(fetchClusterMembers).toHaveBeenCalledWith('source-cluster-id');
+    });
+
+    await waitFor(() => {
+      expect(container.querySelector('.acx-avatar')).not.toBeNull();
+    });
+
+    expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
+  });
+
   it('renders loading state while members query is pending', () => {
     vi.mocked(fetchClusterMembers).mockImplementationOnce(
       () =>

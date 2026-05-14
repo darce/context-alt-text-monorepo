@@ -23,19 +23,19 @@ from _branch_isolation_guard import (  # noqa: E402
     check_file_edit,
     resolve_path_branch,
 )
-from _harness_protocol import BranchIsolationPolicy  # noqa: E402
+from _harness_protocol import BranchIsolationPolicy, MainSurfacePattern  # noqa: E402
 
 
 _PROTECTED = frozenset({"main", "master"})
 
 
-def _policy() -> BranchIsolationPolicy:
+def _policy(*, permitted_main_surfaces: tuple[MainSurfacePattern, ...] = ()) -> BranchIsolationPolicy:
     return BranchIsolationPolicy(
         code_roots=("apps/", "packages/", "scripts/", ".github/hooks/", ".claude/", "mk/"),
         protected_extensions=(".py", ".ts", ".sh"),
         root_protected_files=("Makefile",),
         protected_main_surfaces=(),
-        permitted_main_surfaces=(),
+        permitted_main_surfaces=permitted_main_surfaces,
     )
 
 
@@ -114,6 +114,27 @@ def test_check_file_edit_still_blocks_main_worktree_file(tmp_path: Path) -> None
     branch, blocked = result
     assert branch == "main"
     assert any(p.endswith("scripts/thing.py") for p in blocked), blocked
+
+
+def test_check_file_edit_allows_permitted_main_surface_on_main(tmp_path: Path) -> None:
+    primary, _ = _make_repo_with_feature_worktree(tmp_path)
+    target = primary / "scripts" / "hooks" / "thing.py"
+    policy = _policy(
+        permitted_main_surfaces=(
+            MainSurfacePattern(pattern="scripts/hooks/**", reason="Guard helpers stay editable on main"),
+        )
+    )
+
+    result = check_file_edit(
+        "Edit",
+        {"file_path": str(target)},
+        branch="main",
+        repo_root=str(primary),
+        policy=policy,
+        protected_branches=_PROTECTED,
+    )
+
+    assert result is None, f"expected allow for permitted main surface, got {result!r}"
 
 
 def test_scan_bash_command_allows_write_to_feature_worktree(tmp_path: Path) -> None:

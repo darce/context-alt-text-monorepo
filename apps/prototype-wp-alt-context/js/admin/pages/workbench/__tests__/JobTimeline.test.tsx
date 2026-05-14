@@ -170,6 +170,14 @@ describe('JobTimeline', () => {
     expect(screen.getByText('Clustering\u2026')).toBeTruthy();
   });
 
+  it('keeps the scan milestone active during projecting until scanProgress reaches a completed phase', () => {
+    const scan: JobProgress = { completed: 10, total: 10, images_processed: 10, faces_found: 2, phase: 'detecting' };
+    render(<JobTimeline scanProgress={scan} clusterProgress={null} phase="projecting" projectionSyncState="syncing" />);
+    expect(screen.getByText('Scanning\u2026')).toBeTruthy();
+    expect(screen.queryByText('Scan complete')).toBeNull();
+    expect(screen.getByText('Syncing results\u2026')).toBeTruthy();
+  });
+
   it('renders retry milestone with error detail', () => {
     const cluster: JobProgress = {
       completed: 2,

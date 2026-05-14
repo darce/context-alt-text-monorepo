@@ -695,6 +695,244 @@ def test_revert_merge_cluster_via_api(api_client, tenant_id, fake_cluster_servic
     assert "backend_version" in body
 
 
+def test_list_cluster_members_returns_canonical_envelope(
+    api_client, tenant_id, fake_cluster_service, fake_cluster_repository
+) -> None:
+    cluster = seed_cluster(
+        fake_cluster_service,
+        tenant_id,
+        label="members",
+        fake_cluster_repository=fake_cluster_repository,
+    )
+    fake_cluster_service.cluster_repository = fake_cluster_repository
+    identity_id = str(uuid.uuid4())
+    fake_cluster_repository.seed_member(
+        tenant_id=tenant_id,
+        cluster_id=cluster.id,
+        identity_id=identity_id,
+        media_id="101",
+    )
+    fake_cluster_repository.clusters[cluster.id].representative_identity_id = identity_id
+
+    resp = api_client.get(f"/recognition/clusters/{cluster.id}/members", headers={"X-Tenant-ID": tenant_id})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["limit"] == 500
+    assert body["total"] == 1
+    assert body["truncated"] is False
+    assert len(body["members"]) == 1
+    assert body["members"][0]["identity_id"] == identity_id
+    assert body["members"][0]["media_id"] == 101
+    assert body["members"][0]["clustering_pending"] is False
+    assert body["members"][0]["cluster_id"] == cluster.id
+    assert body["members"][0]["cluster_label"] == "members"
+    assert body["members"][0]["is_auto_label"] is False
+    assert body["members"][0]["is_pinned"] is False
+    assert body["members"][0]["detected_at"] is None
+    assert body["members"][0]["representative_id"] is None
+    assert body["members"][0]["debug_metrics"] is None
+
+
+def test_list_cluster_members_marks_representative_member_as_pinned(
+    api_client, tenant_id, fake_cluster_service, fake_cluster_repository
+) -> None:
+    cluster = seed_cluster(
+        fake_cluster_service,
+        tenant_id,
+        label="members",
+        fake_cluster_repository=fake_cluster_repository,
+    )
+    fake_cluster_service.cluster_repository = fake_cluster_repository
+    identity_id = str(uuid.uuid4())
+    fake_cluster_repository.seed_member(
+        tenant_id=tenant_id,
+        cluster_id=cluster.id,
+        identity_id=identity_id,
+        media_id="101",
+    )
+    fake_cluster_repository.clusters[cluster.id].representative_identity_id = identity_id
+
+    resp = api_client.get(f"/recognition/clusters/{cluster.id}/members", headers={"X-Tenant-ID": tenant_id})
+
+    assert resp.status_code == 200
+    member = resp.json()["members"][0]
+    assert member["is_pinned"] is True
+    assert member["representative_id"] == identity_id
+
+
+def test_list_cluster_members_marks_truncated_at_page_limit(
+    api_client, tenant_id, fake_cluster_service, fake_cluster_repository
+) -> None:
+    cluster = seed_cluster(
+        fake_cluster_service,
+        tenant_id,
+        label="members",
+        fake_cluster_repository=fake_cluster_repository,
+        identity_count=501,
+    )
+    fake_cluster_service.cluster_repository = fake_cluster_repository
+
+    for index in range(501):
+        fake_cluster_repository.seed_member(
+            tenant_id=tenant_id,
+            cluster_id=cluster.id,
+            identity_id=str(uuid.uuid4()),
+            media_id=str(index + 1),
+        )
+
+    resp = api_client.get(f"/recognition/clusters/{cluster.id}/members", headers={"X-Tenant-ID": tenant_id})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["limit"] == 500
+    assert body["total"] == 501
+    assert body["truncated"] is True
+    assert len(body["members"]) == 500
+
+
+def test_list_cluster_members_includes_face_thumb_url_for_blob_backed_members(
+    api_client, tenant_id, fake_cluster_service, fake_cluster_repository
+) -> None:
+    cluster = seed_cluster(
+        fake_cluster_service,
+        tenant_id,
+        label="members",
+        fake_cluster_repository=fake_cluster_repository,
+        identity_count=1,
+    )
+    fake_cluster_service.cluster_repository = fake_cluster_repository
+
+    fake_cluster_repository.members_by_cluster[cluster.id] = [
+        (
+            SimpleNamespace(similarity=0.9),
+            SimpleNamespace(
+                id=str(uuid.uuid4()),
+                media_id="909",
+                confidence=0.97,
+                bbox_x=5,
+                bbox_y=6,
+                bbox_width=20,
+                bbox_height=24,
+                media_url=f"file:///tmp/blob-root/{tenant_id}/job-24/909.bin",
+            ),
+        )
+    ]
+
+    resp = api_client.get(f"/recognition/clusters/{cluster.id}/members", headers={"X-Tenant-ID": tenant_id})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["members"][0]["thumb_url"] == "/recognition/face-thumbs/job-24/909?x=5&y=6&width=20&height=24"
+
+
+def test_list_cluster_members_does_not_synthesize_missing_crop_coordinates(
+    api_client, tenant_id, fake_cluster_service, fake_cluster_repository
+) -> None:
+    cluster = seed_cluster(
+        fake_cluster_service,
+        tenant_id,
+        label="members",
+        fake_cluster_repository=fake_cluster_repository,
+        identity_count=1,
+    )
+    fake_cluster_service.cluster_repository = fake_cluster_repository
+
+    fake_cluster_repository.members_by_cluster[cluster.id] = [
+        (
+            SimpleNamespace(similarity=0.9),
+            SimpleNamespace(
+                id=str(uuid.uuid4()),
+                media_id="909",
+                confidence=0.97,
+                bbox_x=None,
+                bbox_y=6,
+                bbox_width=20,
+                bbox_height=24,
+                media_url=f"file:///tmp/blob-root/{tenant_id}/job-24/909.bin",
+            ),
+        )
+    ]
+
+    resp = api_client.get(f"/recognition/clusters/{cluster.id}/members", headers={"X-Tenant-ID": tenant_id})
+
+    assert resp.status_code == 200
+    member = resp.json()["members"][0]
+    assert member["bbox"] is None
+    assert member["thumb_url"] is None
+
+
+def test_list_cluster_members_omits_face_thumb_url_when_crop_exceeds_max_geometry(
+    api_client, tenant_id, fake_cluster_service, fake_cluster_repository
+) -> None:
+    cluster = seed_cluster(
+        fake_cluster_service,
+        tenant_id,
+        label="members",
+        fake_cluster_repository=fake_cluster_repository,
+        identity_count=1,
+    )
+    fake_cluster_service.cluster_repository = fake_cluster_repository
+
+    fake_cluster_repository.members_by_cluster[cluster.id] = [
+        (
+            SimpleNamespace(similarity=0.9),
+            SimpleNamespace(
+                id=str(uuid.uuid4()),
+                media_id="909",
+                confidence=0.97,
+                bbox_x=5,
+                bbox_y=6,
+                bbox_width=40_000,
+                bbox_height=24,
+                media_url=f"file:///tmp/blob-root/{tenant_id}/job-24/909.bin",
+            ),
+        )
+    ]
+
+    resp = api_client.get(f"/recognition/clusters/{cluster.id}/members", headers={"X-Tenant-ID": tenant_id})
+
+    assert resp.status_code == 200
+    member = resp.json()["members"][0]
+    assert member["thumb_url"] is None
+
+
+def test_top_unlabeled_omits_invalid_representative_bbox_and_thumb_url(
+    api_client, tenant_id, fake_cluster_service, fake_cluster_repository
+) -> None:
+    cluster = seed_cluster(
+        fake_cluster_service,
+        tenant_id,
+        label=None,
+        fake_cluster_repository=fake_cluster_repository,
+        identity_count=2,
+    )
+    fake_cluster_repository.clusters[cluster.id].user_confirmed = False
+    fake_cluster_repository.clusters[cluster.id].representatives = [
+        SimpleNamespace(
+            id=str(uuid.uuid4()),
+            media_id="909",
+            media_url=f"file:///tmp/blob-root/{tenant_id}/job-24/909.bin",
+            bbox_x=5,
+            bbox_y=6,
+            bbox_width=0,
+            bbox_height=24,
+            is_user_selected=True,
+        )
+    ]
+
+    resp = api_client.get(
+        "/recognition/clusters/top-unlabeled",
+        headers={"X-Tenant-ID": tenant_id},
+    )
+
+    assert resp.status_code == 200
+    returned_cluster = next(item for item in resp.json() if item["id"] == cluster.id)
+    representative = returned_cluster["representatives"][0]
+    assert representative["bbox"] is None
+    assert representative["thumb_url"] is None
+
+
 def test_include_outliers_flag_is_passed_to_service(api_client, tenant_id, fake_cluster_service) -> None:
     resp = api_client.get(
         "/recognition/clusters",

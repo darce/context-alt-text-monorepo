@@ -28,6 +28,7 @@ Both are required. Partial completion does not unlock E15-5.
 - From the public WP URL, trigger a recognition scan against the seeded media.
 - Capture: timestamp, WP origin, backend correlation IDs (pulled from `/metrics` or log tail), observed latency percentiles, any errors.
 - File the evidence as `docs/tasks/15.0/E15-5-mvp-round-trip-log.md`.
+- Reuse the `E15-22 proof bundle` headings from `docs/tasks/15.0/E15-3a-localwp-oci-run-log.md` or `docs/tasks/15.0/E15-3-mvp-run-log.md` when the build and seeded-media set match; if the live site requires recapture, keep the same headings so avatar/progress success criteria are not redefined.
 - Capture the ARM compatibility evidence that E14 delegated into this task: `uname -m`, container image architecture, a representative `pip freeze` or install transcript showing `aarch64` wheels where relevant, and a passing integration-test transcript against the live A1 instance. File it as `docs/tasks/15.0/E15-5-arm-compat-evidence.md`.
 - If the round-trip fails, open a blocker against the active handoff and stop here; resolve before continuing.
 
@@ -37,6 +38,7 @@ Exit: run log filed; green round-trip confirmed.
 
 - `docs/tasks/15.0/E15-5-mvp-round-trip-log.md`
 - `docs/tasks/15.0/E15-5-arm-compat-evidence.md`
+- `docs/tasks/15.0/E15-5-mvp-round-trip-log.md` preserves the named `E15-22 proof bundle` sections for representative avatar evidence, monotonic processed-count evidence, and `Scan complete` timing evidence.
 
 ## Dependencies Not Owned Here
 
@@ -62,17 +64,20 @@ Exit: run log filed; green round-trip confirmed.
 
 - [ ] Trigger a live recognition scan from the public WP demo against the seeded media set.
 - [ ] Capture timestamp, WP origin, backend correlation IDs, latency evidence, and any errors in `E15-5-mvp-round-trip-log.md`.
+- [ ] Reuse or recapture the same `E15-22 proof bundle` headings that E15-3a and E15-3 use, so live-demo execution does not redefine avatar/progress success.
 - [ ] File `E15-5-arm-compat-evidence.md` with `uname -m`, image architecture, dependency evidence, and a passing live A1 integration-test transcript.
 
 ## Review Readiness
 
 - [ ] A failed live round-trip opens a blocker immediately and stops task closure.
 - [ ] The ARM evidence artifact is complete enough to satisfy the E14 delegation without follow-up archaeology.
+- [ ] The remote pass consumes the same E15-22 proof bundle headings used by E15-3a/E15-3, even if screenshots or transcripts are recaptured on the live site.
 - [ ] Handoff records the slice-complete decision only after both deliverables are attached.
 
 ## Success Criteria
 
 - [ ] The live public-demo round-trip succeeds and is documented in `E15-5-mvp-round-trip-log.md`.
+- [ ] The live run log preserves the seeded-media avatar/progress proof bundle contract inherited from E15-22.
 - [ ] The ARM compatibility evidence artifact is captured, linked, and sufficient to close the outstanding E14 follow-on.
 
 ## Handoff

@@ -11,10 +11,12 @@ use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
 
+use function add_query_arg;
 use function add_filter;
 use function esc_url_raw;
 use function hash_equals;
 use function header;
+use function in_array;
 use function is_string;
 use function is_wp_error;
 use function nocache_headers;
@@ -26,13 +28,19 @@ use function sprintf;
 use function sanitize_text_field;
 use function status_header;
 use function str_contains;
+use function strlen;
+use function strpos;
+use function strtolower;
+use function substr;
 use function time;
+use function trim;
 use function untrailingslashit;
 use function wp_unslash;
 use function wp_remote_get;
 use function wp_remote_retrieve_body;
 use function wp_remote_retrieve_header;
 use function wp_remote_retrieve_response_code;
+use const PHP_URL_PATH;
 
 /**
  * Streaming proxy for recognition-service blob bytes.
@@ -61,7 +69,10 @@ class BlobsController extends AbstractRecognitionProxyController {
 		'application/octet-stream',
 	);
 
-	private const ROUTE_PREFIX = '/wp-json/acx/v1/recognition/blobs/';
+	private const ROUTE_PREFIXES = array(
+		'/wp-json/acx/v1/recognition/blobs/',
+		'/wp-json/acx/v1/recognition/face-thumbs/',
+	);
 
 	public function register_routes(): void {
 		register_rest_route(
@@ -70,6 +81,16 @@ class BlobsController extends AbstractRecognitionProxyController {
 			array(
 				'methods'             => 'GET',
 				'callback'            => array( $this, 'serve_blob' ),
+				'permission_callback' => array( $this, 'verify_blob_token' ),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/recognition/face-thumbs/(?P<job_id>[A-Za-z0-9._-]+)/(?P<media_id>[A-Za-z0-9._-]+)',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'serve_face_thumb' ),
 				'permission_callback' => array( $this, 'verify_blob_token' ),
 			)
 		);
@@ -111,8 +132,10 @@ class BlobsController extends AbstractRecognitionProxyController {
 		if ( ! is_string( $path ) || '' === $path ) {
 			return $errors;
 		}
-		if ( str_contains( $path, self::ROUTE_PREFIX ) ) {
-			return null;
+		foreach ( self::ROUTE_PREFIXES as $route_prefix ) {
+			if ( str_contains( $path, $route_prefix ) ) {
+				return null;
+			}
 		}
 		return $errors;
 	}
@@ -134,6 +157,18 @@ class BlobsController extends AbstractRecognitionProxyController {
 		$media_id = (string) $request->get_param( 'media_id' );
 		$expires  = (int) $request->get_param( 'expires' );
 		$token    = (string) $request->get_param( 'token' );
+		$route    = $this->is_face_thumb_request( $request ) ? 'face-thumbs' : 'blobs';
+		$query    = array();
+		if ( 'face-thumbs' === $route ) {
+			$query = BlobUrlRewriter::normalize_face_thumb_query_args( $request->get_params() );
+			if ( null === $query ) {
+				return new WP_Error(
+					'recognition_blob_token_missing',
+					'Missing or invalid face thumbnail crop parameters.',
+					array( 'status' => 401 )
+				);
+			}
+		}
 
 		if ( '' === $token || $expires <= 0 ) {
 			return new WP_Error(
@@ -150,7 +185,7 @@ class BlobsController extends AbstractRecognitionProxyController {
 			);
 		}
 
-		$expected = BlobUrlRewriter::sign( $job_id, $media_id, $expires );
+		$expected = BlobUrlRewriter::sign( $job_id, $media_id, $expires, $route, $query );
 		if ( ! hash_equals( $expected, $token ) ) {
 			return new WP_Error(
 				'recognition_blob_token_invalid',
@@ -163,6 +198,14 @@ class BlobsController extends AbstractRecognitionProxyController {
 	}
 
 	public function serve_blob( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		return $this->serve_recognition_image( $request, 'blobs' );
+	}
+
+	public function serve_face_thumb( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		return $this->serve_recognition_image( $request, 'face-thumbs' );
+	}
+
+	private function serve_recognition_image( WP_REST_Request $request, string $route_kind ): WP_REST_Response|WP_Error {
 		$job_id   = (string) $request->get_param( 'job_id' );
 		$media_id = (string) $request->get_param( 'media_id' );
 
@@ -184,9 +227,20 @@ class BlobsController extends AbstractRecognitionProxyController {
 			);
 		}
 
-		$url      = esc_url_raw(
-			untrailingslashit( $base_url ) . sprintf( '/recognition/blobs/%s/%s', $job_id, $media_id )
+		$url = esc_url_raw(
+			untrailingslashit( $base_url ) . sprintf( '/recognition/%s/%s/%s', $route_kind, $job_id, $media_id )
 		);
+		if ( 'face-thumbs' === $route_kind ) {
+			$crop_args = BlobUrlRewriter::normalize_face_thumb_query_args( $request->get_params() );
+			if ( null === $crop_args ) {
+				return new WP_Error(
+					'recognition_blob_invalid_crop',
+					'Missing or invalid face thumbnail crop parameters.',
+					array( 'status' => 400 )
+				);
+			}
+			$url = esc_url_raw( add_query_arg( $crop_args, $url ) );
+		}
 		$response = wp_remote_get(
 			$url,
 			array(
@@ -244,6 +298,10 @@ class BlobsController extends AbstractRecognitionProxyController {
 		$placeholder = new WP_REST_Response( null, 200 );
 		$placeholder->header( 'Content-Type', $safe_type );
 		return $placeholder;
+	}
+
+	private function is_face_thumb_request( WP_REST_Request $request ): bool {
+		return str_contains( $request->get_route(), '/recognition/face-thumbs/' );
 	}
 
 	private function normalize_content_type( string $value ): string {

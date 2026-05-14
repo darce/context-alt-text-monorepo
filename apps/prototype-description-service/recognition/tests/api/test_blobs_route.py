@@ -8,11 +8,13 @@ documented boundaries.
 
 from __future__ import annotations
 
+import io
 import uuid
 from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
+from PIL import Image
 from starlette.testclient import TestClient
 
 from recognition.config.settings import RecognitionSettings
@@ -22,6 +24,13 @@ from recognition.interface_adapters.http.routers.blobs import router
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\nfake-png-bytes-for-tests"
 JPEG_BYTES = b"\xff\xd8\xff\xe0\x00\x10JFIFfake-jpeg-bytes"
+
+
+def _make_png(width: int, height: int, *, color: tuple[int, int, int] = (20, 40, 60)) -> bytes:
+    image = Image.new("RGB", (width, height), color)
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    return output.getvalue()
 
 
 @pytest.fixture
@@ -74,6 +83,37 @@ def test_sniffs_jpeg_mime(app_factory, tenant_id: str) -> None:
     response = TestClient(app).get(f"/recognition/blobs/{job_id}/9")
     assert response.status_code == 200
     assert response.headers["content-type"] == "image/jpeg"
+
+
+def test_serves_face_thumb_crop_as_jpeg(app_factory, tenant_id: str) -> None:
+    auth = AuthContext(token="t", tenant_claim=tenant_id, enabled=True)
+    app, settings = app_factory(auth=auth)
+    job_id = str(uuid.uuid4())
+    _seed_blob(settings, tenant_id, job_id, "7", _make_png(48, 36))
+
+    response = TestClient(app).get(
+        f"/recognition/face-thumbs/{job_id}/7",
+        params={"x": 5, "y": 6, "width": 12, "height": 10},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/jpeg"
+    thumbnail = Image.open(io.BytesIO(response.content))
+    assert thumbnail.size == (12, 10)
+
+
+def test_rejects_face_thumb_crop_component_above_max_geometry(app_factory, tenant_id: str) -> None:
+    auth = AuthContext(token="t", tenant_claim=tenant_id, enabled=True)
+    app, settings = app_factory(auth=auth)
+    job_id = str(uuid.uuid4())
+    _seed_blob(settings, tenant_id, job_id, "7", _make_png(48, 36))
+
+    response = TestClient(app).get(
+        f"/recognition/face-thumbs/{job_id}/7",
+        params={"x": 5, "y": 6, "width": 40_000, "height": 10},
+    )
+
+    assert response.status_code == 422
 
 
 def test_returns_404_when_blob_missing(app_factory, tenant_id: str) -> None:

@@ -42,10 +42,28 @@ class ClusterMemberResponse(BaseModel):
 
     identity_id: str
     media_id: int
-    similarity: float
-    confidence: float
-    bbox: FaceBoxResponse
+    similarity: float | None
+    confidence: float | None
+    clustering_pending: bool = False
+    bbox: FaceBoxResponse | None = None
+    thumb_url: BlobUrl = None
     media_url: BlobUrl = None
+    cluster_id: str | None = None
+    cluster_label: str | None = None
+    is_auto_label: bool = False
+    is_pinned: bool = False
+    detected_at: datetime | None = None
+    representative_id: str | None = None
+    debug_metrics: dict[str, Any] | None = None
+
+
+class ClusterMembersEnvelopeResponse(BaseModel):
+    """Canonical envelope returned by the cluster-members endpoint."""
+
+    members: list[ClusterMemberResponse] = Field(default_factory=list)
+    limit: int
+    total: int
+    truncated: bool
 
 
 class IdentityResponse(BaseModel):
@@ -103,6 +121,7 @@ class RepresentativeResponse(BaseModel):
 
     id: str
     media_id: str | int
+    thumb_url: BlobUrl = None
     media_url: BlobUrl = None
     bbox: FaceBoxResponse | None = None
     is_pinned: bool = Field(False, alias="is_user_selected")
@@ -624,6 +643,7 @@ __all__ = [
     "ClusterDeltaResponse",
     "ClusterResponse",
     "ClusterMemberResponse",
+    "ClusterMembersEnvelopeResponse",
     "ClusterSuggestionMatch",
     "ClusteringJobStatusResponse",
     "ClusterSnapshotClusterResponse",

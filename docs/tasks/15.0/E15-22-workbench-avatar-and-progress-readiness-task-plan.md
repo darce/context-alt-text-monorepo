@@ -1,7 +1,8 @@
 # E15-22. Workbench Avatar and Progress Readiness (MVP-critical demo gate)
 
 > **Task Short ID**: E15-22
-> **Status**: in_progress -- frontend variant + scan-complete tightening shipped on `feature/e15-22`; backend prerequisite slices pending under plan-analyze revision 2026-05-12
+> **Status**: in_progress -- backend avatar surfaces, cluster-members envelope, frontend thumbnail/progress regressions, and proof-bundle doc hooks shipped on `feature/e15-22`; remaining work is commit-backed finding closure plus seeded-media proof capture
+> **Target Branch**: feature/e15-22
 > **Epic**: [E15. Public Demo Launch Readiness](../../epics/v0.4.0/public-demo-launch-readiness-epic.md) Phase 4 (pre-demo workbench gate)
 > **Predecessors**: E15-1 (security baseline) merged; E15-2 (observability baseline) merged. [E15-11](./E15-11-image-upload-transport-task-plan.md) hosted multipart proof is only a predecessor for the demo-proof-bundle slice and the private-media LocalWP gate, not for the backend or frontend Workbench slices.
 > **Blocks**: [E15-3](./E15-3-wordpress-demo-provisioning-task-plan.md) completion and [E15-5](./E15-5-manual-remote-e2e-task-plan.md) live-demo sign-off.
@@ -40,9 +41,9 @@ The current Workbench can show blank cluster/entity avatars and misleading progr
 ## Current State Analysis
 
 - `TopClusterCard.tsx` and `ClusterPreview.tsx` support representative crop rendering, but the public-demo plans do not currently require evidence that this data path is populated and visible.
-- `ClusterPreview.tsx` currently falls back to a silent placeholder `<span>` when `representative.media_url` or `representative.bbox` is missing, so the plan must define an explicit unavailable-image variant instead of leaving the blank-box behavior implicit.
-- `JobTimeline.tsx` derives `Scan complete` from pipeline phase in a way that can mark the scan complete when the phase reaches `clustering` or `projecting`, before clustering/projection is actually UI-ready.
-- Processed-count aggregation currently flows through `jobStateMachineProgress.ts`; the plan should treat that helper as the primary monotonicity enforcement layer, with `jobStateMachineUtils.ts` limited to phase derivation unless the implementation proves otherwise.
+- `ClusterPreview.tsx` on `feature/e15-22` already renders an explicit unavailable-image variant when representative crop data is missing; the remaining task is to prove that branch behavior on the real naming-queue surfaces and keep it from regressing.
+- `JobTimeline.tsx` on `feature/e15-22` already keeps the scan milestone active until `scanProgress.phase` reaches `complete` or `awaiting_projection`; the remaining task is to preserve that truthfulness with direct regression coverage plus seeded-media proof.
+- Processed-count aggregation in this branch flows through `useJobStateMachine.ts`, which calls `buildScanProgress()` in `jobStateMachineUtils.ts`; remaining work should target those live seams rather than the stale `jobStateMachineProgress.ts` anchor.
 - The broader scan-pipeline trust debt doc records larger batch-run/data-plane problems; this task needs only the pre-demo subset required to avoid a misleading Workbench during the MVP demo path.
 
 ## Target Outcome
@@ -61,25 +62,28 @@ The demo Workbench shows representative faces when the backend returns crop data
 | Boundary | Owner | Current Contract | Expected Change | Compatibility Needed? | Verification |
 | --- | --- | --- | --- | --- | --- |
 | Workbench top-cluster payload | plugin/shared contracts | top-unlabeled response includes `thumb_url`, `media_url`, `bbox` | tighten demo proof so representative crop/fallback semantics are evidenced | Yes -- existing payload shape stays compatible | Vitest + run-log screenshot |
-| Workbench job-status semantics | plugin frontend | progress UI reads per-job scan/clustering state | refine phase/completion semantics for demo truthfulness | Yes -- no backend contract widening unless unavoidable | Vitest + LocalWP/manual proof |
+| Workbench job-status semantics | plugin frontend | progress UI reads per-job scan/clustering state | preserve truthful scan/projection semantics and close the remaining monotonic-progress proof gap | Yes -- no backend contract widening unless unavoidable | Vitest + LocalWP/manual proof |
 | Demo gate evidence | E15 planning docs | run logs prove request success only | add explicit avatar/progress proof bundle | N/A -- planning-only boundary | E15-3a / E15-3 run-log checklist |
 
 ## Proposed Solution
 
-Land a focused Workbench-correctness slice before public demo sign-off. The implementation should verify representative crop rendering for top clusters and cluster previews, replace silent placeholders with an explicit unavailable-image variant, fix progress/completion semantics so `Scan complete` is no longer derived from `phase === 'clustering' || phase === 'projecting'`, and capture a proof bundle that E15-3a and E15-3 require before E15-5 executes against the live demo. Broader batch-run canonicalization, stale-cluster reconciliation, and smoke automation remain follow-ons outside this task unless they are required to make the 5-10 image demo path trustworthy.
+Land a focused Workbench-correctness slice before public demo sign-off. The remaining work is to finish the backend prerequisites (`/clusters/{cluster_id}/members` envelope and backend-served face thumbnails), pin the already-landed avatar/progress frontend behavior with branch-local regression coverage, and capture the proof bundle that E15-3a and E15-3 require before E15-5 executes against the live demo. Broader batch-run canonicalization, stale-cluster reconciliation, and smoke automation remain follow-ons outside this task unless they are required to make the 5-10 image demo path trustworthy.
 
 ## Files and Surfaces to Change
 
 | Surface | File | Change |
 | --- | --- | --- |
-| frontend | `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/TopClusterCard.tsx` | Ensure representative crop/fallback path matches demo contract |
-| frontend | `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/ClusterPreview.tsx` | Replace the current silent placeholder fallback with the named unavailable-image variant used by the demo contract |
-| frontend | `apps/prototype-wp-alt-context/js/admin/pages/workbench/JobTimeline.tsx` | Align `Scan complete` with UI-ready completion |
-| frontend | `apps/prototype-wp-alt-context/js/admin/hooks/jobStateMachineProgress.ts` | Make processed count semantics monotonic for the demo path; only touch `jobStateMachineUtils.ts` if phase derivation must change alongside the timeline predicate |
-| tests | `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/TopClusterCard.test.tsx` | Add representative-crop vs unavailable-image assertions for top-cluster cards |
-| tests | `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ClusterPreview.test.tsx` | Add representative-crop vs unavailable-image assertions for cluster previews |
+| frontend | `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/TopClusterCard.tsx` | Touch only if regression-proof work exposes a mismatch in representative selection or explicit fallback semantics |
+| frontend | `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/ClusterPreview.tsx` | Touch only if regression-proof work exposes a mismatch in the shipped unavailable-image variant |
+| frontend | `apps/prototype-wp-alt-context/js/admin/pages/workbench/JobTimeline.tsx` | Touch only if progress-proof coverage exposes a remaining mismatch in the scan-complete predicate |
+| frontend | `apps/prototype-wp-alt-context/js/admin/hooks/useJobStateMachine.ts` | Keep the displayed scan progress sourced from the live aggregation seam when clustering/projecting begins |
+| frontend | `apps/prototype-wp-alt-context/js/admin/hooks/jobStateMachineUtils.ts` | Keep `buildScanProgress()` and phase derivation aligned with the timeline predicate |
+| tests | `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/TopClustersSection.test.tsx` | Extend top-cluster coverage for representative/thumb precedence and explicit unavailable-image fallback on the real rendered section |
+| tests | `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/SuggestionReviewPanel.test.tsx` | Extend integrated naming-queue coverage for pinned representative selection and avatar fallback on the real feature branch surface |
 | tests | `apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/JobTimeline.test.tsx` | Add `Scan complete` phase-predicate regressions for `clustering`, `projecting`, and projection-ready completion |
-| tests | `apps/prototype-wp-alt-context/js/admin/hooks/__tests__/jobStateMachineProgress.test.ts` | Add monotonic processed-count coverage if Slice 2 changes land in the progress aggregation helper |
+| tests | `apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useJobStateMachine.test.ts` | Add monotonic processed-count coverage at the live aggregation seam used by the Workbench UI |
+| tests | `apps/prototype-wp-alt-context/js/admin/api/__tests__/recognitionApi.test.ts` | Keep the cluster-members envelope contract pinned from the WP client side |
+| tests | `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ClusterReviewPanel.test.tsx` | Verify the review drawer consumes the canonical members envelope without falling back to `No members found.` |
 | planning/docs | `docs/tasks/15.0/E15-3a-localwp-oci-roundtrip-task-plan.md`, `docs/tasks/15.0/E15-3-wordpress-demo-provisioning-task-plan.md`, `docs/tasks/15.0/E15-6-e2e-smoke-gate-automation-stub.md` | Consume the proof bundle and regression guard outputs; `E15-5` consumes the artifact at execution time but is not a required doc-edit surface in this branch |
 
 ## Related Files
@@ -94,9 +98,11 @@ Land a focused Workbench-correctness slice before public demo sign-off. The impl
 ## Verification Strategy
 
 - Deterministic tests:
-  - `cd apps/prototype-wp-alt-context && npx vitest run js/admin/pages/workbench/identity-clusters/__tests__/TopClusterCard.test.tsx js/admin/pages/workbench/identity-clusters/__tests__/ClusterPreview.test.tsx`
+  - `cd apps/prototype-description-service && pyenv exec python -m pytest recognition/tests/api/test_api_clusters.py -q`
+  - `cd apps/prototype-wp-alt-context && npx vitest run js/admin/api/__tests__/recognitionApi.test.ts js/admin/pages/workbench/identity-clusters/__tests__/ClusterReviewPanel.test.tsx`
+  - `cd apps/prototype-wp-alt-context && npx vitest run js/admin/pages/workbench/identity-clusters/__tests__/TopClustersSection.test.tsx js/admin/pages/workbench/identity-clusters/__tests__/SuggestionReviewPanel.test.tsx`
   - `cd apps/prototype-wp-alt-context && npx vitest run js/admin/pages/workbench/__tests__/JobTimeline.test.tsx`
-  - `cd apps/prototype-wp-alt-context && npx vitest run js/admin/hooks/__tests__/jobStateMachineProgress.test.ts`
+  - `cd apps/prototype-wp-alt-context && npx vitest run js/admin/hooks/__tests__/useJobStateMachine.test.ts`
 - Runtime-parity / environment checks:
   - LocalWP seeded-media scan against hosted API after E15-11 proof is green for the Slice 3 demo-gate handoff
 - Manual verification:
@@ -111,7 +117,8 @@ Land a focused Workbench-correctness slice before public demo sign-off. The impl
 Changes:
 
 - Update `apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters.py` so the `/clusters/{cluster_id}/members` route returns a Pydantic envelope model with `members: list[ClusterMemberResponse]`, `limit: int`, `total: int`, `truncated: bool` instead of the current `response_model=list[ClusterMemberResponse]`.
-- Mirror the envelope model in `recognition/interface_adapters/http/routers/responses.py` so OpenAPI and the generated client agree.
+- Keep the members query bounded at the documented page limit and compute `total` separately, so the envelope does not preserve the old all-members fetch cost for large clusters.
+- Mirror the envelope model in `recognition/interface_adapters/http/schemas/responses.py` so OpenAPI and the generated client agree.
 - Update or add deterministic tests for the route to assert the envelope shape and the truncation flag at the documented page limit.
 - Verify the WP client `apps/prototype-wp-alt-context/js/admin/api/recognition/clusterApiMembers.ts` no longer throws on a real backend response (its requires already match the new shape; the test is that no extra client edit is needed).
 
@@ -125,44 +132,42 @@ Proof:
 
 Changes:
 
-- Add a `thumb_url: BlobUrl | None` field to both `RepresentativeResponse` and `ClusterMemberResponse` in `recognition/interface_adapters/http/routers/responses.py`.
+- Add a `thumb_url: BlobUrl | None` field to both `RepresentativeResponse` and `ClusterMemberResponse` in `recognition/interface_adapters/http/schemas/responses.py`.
 - Populate `thumb_url` from the existing tenant-scoped image store via either (a) a new `/faces/{identity_id}/thumb` route that streams a cropped JPEG/PNG, or (b) a signed-URL helper that issues short-lived URLs against the existing media-blob path. Pick whichever path the backend already supports; do not invent a new storage tier.
-- Update `apps/prototype-wp-alt-context/js/components/ui/FaceThumbnail.tsx` (and the resolvers in `TopClusterCard.tsx` / `ClusterPreview.tsx`) to prefer `thumb_url` over `media_url + bbox`.
+- Update `apps/prototype-wp-alt-context/js/components/ui/FaceThumbnail.tsx` and the Workbench member/representative renderers (`TopClusterCard.tsx`, `ClusterReviewPanel.tsx`, `ClusterLabelingPanel.tsx`, and `ClusterPreview.tsx` where applicable) to prefer `thumb_url` over `media_url + bbox`.
 - Add a pytest covering the new response field and route/signed-URL path, plus a Vitest case proving `FaceThumbnail` prefers `thumb_url` when both are present and only falls back to `media_url + bbox` when `thumb_url` is null.
 
 Proof:
 
 - Pytest + Vitest coverage for the new field + preference order, plus a LocalWP transcript showing an authenticated admin session loading thumbs without `acx-face-thumbnail--error` against seeded media.
 
-### Slice 3: Representative Avatar Truthfulness (frontend, was Slice 1)
+### Slice 3: Representative Avatar Regression Proof (frontend proof)
 
-**Goal**: The Workbench renders representative crops when the data exists and shows an explicit fallback/error state when it does not.
-
-Changes:
-
-- Verify top-cluster cards and cluster previews prefer `media_url + bbox` representative crops.
-- Replace the current silent `ClusterPreview.tsx` placeholder span with an explicit unavailable-image variant that exposes visible placeholder text or icon treatment plus an accessible label explaining that no representative image is available.
-- Keep thumbnail fallback/error states explicit; do not silently render blank placeholders when valid crop data is unavailable.
-- Add focused tests in `TopClusterCard.test.tsx` and `ClusterPreview.test.tsx` for representative crop vs unavailable-image fallback behavior.
-
-Proof:
-
-- Vitest coverage in `TopClusterCard.test.tsx` and `ClusterPreview.test.tsx` for representative-crop rendering and the explicit unavailable-image variant.
-
-### Slice 4: Honest Scan/Clustering Progress (was Slice 2)
-
-**Goal**: The Workbench processed counter and `Scan complete` label are trustworthy during the demo path.
+**Goal**: Lock in the representative-avatar behavior that already shipped on `feature/e15-22` with regression coverage on the real naming-queue surfaces.
 
 Changes:
 
-- Redefine the scan-complete predicate so the scan milestone is complete only when `scanProgress.phase` is `complete` or `awaiting_projection`; entering `clustering` or `projecting` must no longer mark the scan milestone complete by phase alone.
-- Treat UI-ready completion as projection-ready review data, not merely the start of `projecting`; if the implementation needs a second completion gate, pin it to the projection-sync state rather than the pipeline phase name.
-- Make the processed indicator monotonic for the seeded-media demo run in `jobStateMachineProgress.ts` unless the implementation proves a different aggregation seam is required.
-- Add focused tests in `JobTimeline.test.tsx` and `jobStateMachineProgress.test.ts` around phase transitions, processed-count behavior, and the no-early-`Scan complete` rule.
+- Add focused regression coverage in `TopClustersSection.test.tsx` and/or `SuggestionReviewPanel.test.tsx` proving the shipped top-cluster card path prefers the best representative (`thumb_url` first when present, otherwise representative crop data) on the surfaces that actually render in this branch.
+- Add explicit unavailable-image assertions on the same rendered surfaces so the shipped `No image` variant and `Representative image unavailable` accessible label cannot regress back to a silent placeholder.
+- Only touch `TopClusterCard.tsx` or `ClusterPreview.tsx` if the proof work exposes a real mismatch between the branch implementation and the documented demo contract.
 
 Proof:
 
-- Vitest coverage proving `clustering` and `projecting` no longer render `Scan complete` by default, plus monotonic processed-count coverage at the aggregation layer.
+- Vitest coverage in the existing Workbench rendering suites (`TopClustersSection.test.tsx`, `SuggestionReviewPanel.test.tsx`, or another existing branch-local surface) for representative selection and explicit unavailable-image fallback.
+
+### Slice 4: Honest Progress Regression Proof
+
+**Goal**: Lock in the scan/projection truthfulness already tightened on `feature/e15-22` and close the remaining proof gap around monotonic displayed progress.
+
+Changes:
+
+- Extend `JobTimeline.test.tsx` so the shipped predicate remains pinned: `clustering` and `projecting` keep the scan milestone active until `scanProgress.phase` reaches `complete` or `awaiting_projection`, and projection-ready review remains separate from the raw pipeline phase.
+- Extend `useJobStateMachine.test.ts` around the live `useJobStateMachine.ts` / `buildScanProgress()` seam so the displayed processed count stays monotonic when batch runs hand off from scanning to backend-driven clustering/projecting.
+- Only change `useJobStateMachine.ts`, `jobStateMachineUtils.ts`, or `JobTimeline.tsx` if those new tests expose a real regression or an uncovered monotonicity bug.
+
+Proof:
+
+- Vitest coverage proving the no-early-`Scan complete` rule in `JobTimeline.test.tsx`, plus monotonic processed-count coverage in `useJobStateMachine.test.ts` at the live aggregation seam.
 
 ### Slice 5: Demo Proof Bundle + Regression Handoff (was Slice 3)
 
@@ -190,40 +195,40 @@ Proof:
 
 ### Checklist for Slice 1: Cluster-Members Contract Envelope
 
-- [ ] `/clusters/{cluster_id}/members` returns the `{members, limit, total, truncated}` envelope through a Pydantic model shared by route and OpenAPI.
-- [ ] Pytest coverage proves the envelope shape and the `truncated=true` boundary at the documented page limit.
-- [ ] WP client `clusterApiMembers.ts` is exercised against a recorded backend fixture without throwing, and no extra client edit is required.
+- [x] `/clusters/{cluster_id}/members` returns the `{members, limit, total, truncated}` envelope through a Pydantic model shared by route and OpenAPI.
+- [x] Pytest coverage proves the envelope shape and the `truncated=true` boundary at the documented page limit.
+- [x] WP client `clusterApiMembers.ts` is exercised against a recorded backend fixture without throwing, and no extra client edit is required.
 
 ### Checklist for Slice 2: Backend Face-Thumbnail Surface
 
-- [ ] `RepresentativeResponse` and `ClusterMemberResponse` carry an admin-reachable `thumb_url` (route or signed URL), populated from the existing tenant-scoped image store.
-- [ ] `FaceThumbnail` and the top-cluster/cluster-preview resolvers prefer `thumb_url`, falling back to `media_url + bbox` only when `thumb_url` is null.
+- [x] `RepresentativeResponse` and `ClusterMemberResponse` carry an admin-reachable `thumb_url` (route or signed URL), populated from the existing tenant-scoped image store.
+- [x] `FaceThumbnail` and the top-cluster/cluster-preview resolvers prefer `thumb_url`, falling back to `media_url + bbox` only when `thumb_url` is null.
 - [ ] Pytest + Vitest coverage proves the field shape and preference order; a LocalWP transcript shows seeded-media thumbs loading without `acx-face-thumbnail--error`.
 
 ### Checklist for Slice 3: Representative Avatar Truthfulness (frontend)
 
-- [ ] Representative crop rendering is proven for top clusters and cluster previews.
-- [ ] Explicit unavailable-image variants remain visible and accessible when images are unavailable.
-- [ ] Focused avatar rendering tests land in `TopClusterCard.test.tsx` and `ClusterPreview.test.tsx`.
+- [x] Existing Workbench rendering suites prove the shipped top-cluster representative-selection path on the actual naming-queue surfaces.
+- [x] Explicit unavailable-image variants remain visible and accessible when images are unavailable.
+- [x] Focused avatar regression coverage lands in existing branch-local suites such as `TopClustersSection.test.tsx` and/or `SuggestionReviewPanel.test.tsx`.
 
 ### Checklist for Slice 4: Honest Scan/Clustering Progress
 
-- [ ] `Scan complete` no longer appears in `clustering` or `projecting` unless the pinned completion predicate is satisfied.
-- [ ] Processed count is monotonic for the seeded-media demo path at the aggregation seam that owns the displayed total.
-- [ ] Focused progress/timeline tests land in `JobTimeline.test.tsx` and, when needed, `jobStateMachineProgress.test.ts`.
+- [x] `Scan complete` no longer appears in `clustering` or `projecting` unless the pinned completion predicate is satisfied.
+- [x] Processed count is monotonic for the seeded-media demo path at the live `useJobStateMachine.ts` / `buildScanProgress()` seam that owns the displayed total.
+- [x] Focused progress/timeline tests land in `JobTimeline.test.tsx` and `useJobStateMachine.test.ts`.
 
 ### Checklist for Slice 5: Demo Proof Bundle + Regression Handoff
 
-- [ ] E15-3a run-log requirements include avatar/progress screenshots or transcript evidence.
-- [ ] E15-3 planning surface consumes the proof bundle before demo sign-off, and E15-5 execution reuses that artifact instead of redefining it.
-- [ ] E15-6 names this proof bundle as the first post-demo regression target.
+- [x] E15-3a run-log requirements include avatar/progress screenshots or transcript evidence.
+- [x] E15-3 planning surface consumes the proof bundle before demo sign-off, and E15-5 execution reuses that artifact instead of redefining it.
+- [x] E15-6 names this proof bundle as the first post-demo regression target.
 
 ## Review Readiness
 
-- [ ] No Workbench-correctness change lands without matching proof in tests or the seeded-media run log.
-- [ ] Demo sign-off docs do not treat request success alone as sufficient once avatar/progress proof is required.
-- [ ] Slice 2 includes an explicit `JobTimeline.test.tsx` case proving `clustering` and `projecting` do not imply `Scan complete`.
-- [ ] Handoff records the avatar/progress contract implications for the public demo path.
+- [x] No Workbench-correctness change lands without matching proof in tests or the seeded-media run log.
+- [x] Demo sign-off docs do not treat request success alone as sufficient once avatar/progress proof is required.
+- [x] Slice 4 includes an explicit `JobTimeline.test.tsx` case proving `clustering` and `projecting` do not imply `Scan complete`.
+- [x] Handoff records the avatar/progress contract implications for the public demo path.
 
 ## Stretch Goals
 

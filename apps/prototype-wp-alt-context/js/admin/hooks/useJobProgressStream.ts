@@ -5,7 +5,15 @@ import { getConfig, getEndpoint } from '../api/config';
 import { useJobCoordination } from './useJobCoordination';
 import { broadcastJobProgress, parseDoneEvent, parseProgressEvent } from './useJobProgressStreamHelpers';
 
-export type JobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'clustering';
+export const JOB_STATUS = {
+  PENDING: 'pending',
+  RUNNING: 'running',
+  COMPLETED: 'completed',
+  FAILED: 'failed',
+  CLUSTERING: 'clustering',
+} as const;
+
+export type JobStatus = (typeof JOB_STATUS)[keyof typeof JOB_STATUS];
 
 export const JOB_PROGRESS_STALL_THRESHOLD_MS = 30_000;
 
@@ -25,7 +33,7 @@ export interface JobProgressStream {
  */
 export const useJobProgressStream = (jobId: string | null): JobProgressStream => {
   const [progress, setProgress] = useState<JobProgress | null>(null);
-  const [status, setStatus] = useState<JobStatus>('pending');
+  const [status, setStatus] = useState<JobStatus>(JOB_STATUS.PENDING);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
   const [lastEventAt, setLastEventAt] = useState<number | null>(null);
@@ -61,7 +69,7 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
 
   useEffect(() => {
     setProgress(null);
-    setStatus('pending');
+    setStatus(JOB_STATUS.PENDING);
     setEtaSeconds(null);
     setLastEventAt(null);
     setStalledForSeconds(null);
@@ -76,7 +84,7 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
       return;
     }
 
-    if (status === 'completed' || status === 'failed') {
+    if (status === JOB_STATUS.COMPLETED || status === JOB_STATUS.FAILED) {
       setStalledForSeconds(null);
       return;
     }
@@ -204,7 +212,7 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
         try {
           const errorData = JSON.parse(event.data as string) as { message?: string };
           if (errorData.message?.includes('not found')) {
-            setStatus('failed');
+            setStatus(JOB_STATUS.FAILED);
             close();
             return;
           }

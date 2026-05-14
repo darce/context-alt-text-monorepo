@@ -19,12 +19,19 @@ export interface RepresentativeBounds {
 export interface ClusterIdentity {
   identity_id: string;
   media_id: number;
-  similarity: number;
-  confidence: number;
+  similarity: number | null;
+  confidence: number | null;
   clustering_pending?: boolean;
-  bbox: BoundingBox;
+  bbox: BoundingBox | null;
   thumb_url?: string | null;
   media_url?: string | null;
+  cluster_id?: string | null;
+  cluster_label?: string | null;
+  is_auto_label?: boolean;
+  is_pinned?: boolean;
+  detected_at?: string | null;
+  representative_id?: string | null;
+  debug_metrics?: DebugMetrics | null;
 }
 
 /**

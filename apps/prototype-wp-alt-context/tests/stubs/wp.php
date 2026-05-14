@@ -1508,6 +1508,15 @@ if (!function_exists('wp_remote_retrieve_headers')) {
     }
 }
 
+if (!function_exists('wp_remote_retrieve_header')) {
+    function wp_remote_retrieve_header($response, $header)
+    {
+        $headers = wp_remote_retrieve_headers($response);
+
+        return $headers[$header] ?? '';
+    }
+}
+
 if (!function_exists('is_wp_error')) {
     function is_wp_error($thing): bool
     {

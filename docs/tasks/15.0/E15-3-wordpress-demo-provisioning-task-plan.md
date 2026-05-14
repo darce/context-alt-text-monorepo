@@ -13,7 +13,7 @@
 
 Stand up a publicly accessible WordPress instance running the ACX plugin, pointed at the live recognition backend, such that a product demo URL can be shared and a curator can trigger a scan that round-trips through the backend.
 
-This task does not claim demo readiness from request success alone. Before the public demo is treated as ready, the manual run log must also carry the avatar/progress proof bundle defined by [E15-22](./E15-22-workbench-avatar-and-progress-readiness-task-plan.md): representative avatar rendering or explicit fallback state, a monotonic processed indicator, and `Scan complete` appearing only when the Workbench is actually UI-ready.
+This task does not claim demo readiness from request success alone. Before the public demo is treated as ready, the manual run log must also carry the avatar/progress proof bundle defined by [E15-22](./E15-22-workbench-avatar-and-progress-readiness-task-plan.md): representative avatar rendering from the backend `thumb_url` path or an explicit fallback state, a monotonic processed indicator, and `Scan complete` appearing only when the Workbench is actually UI-ready.
 
 ## MVP Exit Criteria
 
@@ -81,7 +81,8 @@ Exit: Settings page reports a successful probe against the live backend.
 - Seed ~5-10 images into the WP media library using a recognizable sample set (non-sensitive, non-copyrighted; document provenance).
 - Open the plugin Workbench, trigger a scan, observe recognition results rendered for the seed media.
 - Capture a short run log (`E15-3-mvp-run-log.md`) with: scan timestamp, number of images, observed latency, any errors, and a screenshot or annotated transcript.
-- Include the [E15-22](./E15-22-workbench-avatar-and-progress-readiness-task-plan.md) proof bundle in that run log: at least one representative avatar render or explicit fallback screenshot/transcript, the processed-count progression, and the point at which `Scan complete` appears.
+- Include the [E15-22](./E15-22-workbench-avatar-and-progress-readiness-task-plan.md) proof bundle in that run log: at least one representative avatar render from the backend `thumb_url` path or an explicit fallback screenshot/transcript, the processed-count progression, and the point at which `Scan complete` appears.
+- Reuse the E15-3a seeded-media proof artifacts when they still match the public-demo build; if any artifact must be recaptured on the public site, keep the same proof-bundle headings so E15-5 can consume the public-demo evidence without redefining acceptance criteria.
 - Verify the sovereign local-read path renders cached state when the backend is intentionally unreachable by temporarily setting the plugin backend URL to an RFC5737 address (for example `https://192.0.2.1`) to force a deterministic connect timeout; confirm the plugin renders cached state and surfaces the expected degraded-sync indicator; revert the URL before finishing.
 
 Exit: run log filed with the E15-22 avatar/progress proof bundle; local-read path verified; Phase 3 MVP exit criteria fully satisfied.
@@ -90,6 +91,7 @@ Exit: run log filed with the E15-22 avatar/progress proof bundle; local-read pat
 
 - `docs/tasks/15.0/E15-3-host-decision-record.md` (host selection ADR-lite)
 - `docs/tasks/15.0/E15-3-mvp-run-log.md` (manual round-trip evidence, including the E15-22 avatar/progress proof bundle that E15-5 reuses during live-demo execution)
+- `docs/tasks/15.0/E15-3-mvp-run-log.md` keeps a named `E15-22 proof bundle` section with: representative avatar evidence (`thumb_url` or explicit fallback), monotonic processed-count evidence, `Scan complete` timing evidence, and the run identifier/correlation notes tying the screenshots/transcript to the seeded-media scan.
 - Host decision record (or adjacent operator note) includes the plugin update/rollback procedure used after initial provisioning.
 - Demo URL + WP admin URL recorded in the handoff (as task state, not checked into the repo)
 - Production API key fingerprint logged against the key lifecycle surface from E15-1
@@ -132,7 +134,8 @@ Exit: run log filed with the E15-22 avatar/progress proof bundle; local-read pat
 
 - [ ] Seed the demo media library with the provenance-tracked image set and run a manual Workbench scan.
 - [ ] File `E15-3-mvp-run-log.md` with timestamp, image count, latency, errors, and screenshot or annotated transcript evidence.
-- [ ] Include the E15-22 avatar/progress proof bundle in that run log: representative avatar render/fallback evidence, monotonic processed-count evidence, and the `Scan complete` timing.
+- [ ] Include the E15-22 avatar/progress proof bundle in that run log: representative avatar render from `thumb_url` or explicit fallback evidence, monotonic processed-count evidence, and the `Scan complete` timing.
+- [ ] Preserve the E15-22 proof-bundle headings so E15-5 can reuse the artifact without redefining avatar/progress success criteria.
 - [ ] Verify the deterministic local-read fallback via an RFC5737 backend URL, then restore the production backend URL before closing the slice.
 
 ## Review Readiness
@@ -148,7 +151,7 @@ Exit: run log filed with the E15-22 avatar/progress proof bundle; local-read pat
 - [ ] A public WordPress demo URL is live with the ACX plugin active and successfully probing `api.altcontext.com`.
 - [ ] A curator can run the seeded-media demo path and see recognition results on the live site with the evidence checked into the named docs.
 - [ ] Operators can promote a plugin hotfix to the live demo and roll back to the prior ZIP using the documented procedure captured during Slice 2.
-- [ ] The demo proof bundle is strong enough that E15-5 can reuse it for live-demo execution without redefining avatar/progress correctness.
+- [ ] The demo proof bundle is strong enough that E15-5 can reuse it for live-demo execution without redefining avatar/progress correctness, including the backend-`thumb_url` representative evidence.
 
 ## Handoff
 

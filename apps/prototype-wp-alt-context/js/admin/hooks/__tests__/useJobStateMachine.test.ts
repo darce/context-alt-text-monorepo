@@ -439,6 +439,55 @@ describe('useJobStateMachine', () => {
     expect(result.current.isScanRunning).toBe(true);
   });
 
+  it('keeps the displayed scan total complete when clustering starts after a terminal batch run', async () => {
+    const { useCombinedScanStatus } = await import('../useRecognitionHooks');
+
+    (useJobPersistence as Mock).mockReturnValue({
+      activeJobs: [
+        { id: 'scan-1', type: 'scan', totalItems: 10, batchRunId: 'batch-1' },
+        { id: 'cluster-1', type: 'clustering', totalItems: 0 },
+      ],
+      addJob: vi.fn(),
+      removeJob: vi.fn(),
+    });
+    (useCombinedScanStatus as Mock).mockReturnValue({
+      scanStatusQuery: {
+        data: {
+          id: 'cluster-1',
+          type: 'clustering',
+          status: 'running',
+          progress: { completed: 3, total: 20, phase: 'clustering' },
+          started_at: new Date().toISOString(),
+          finished_at: null,
+        },
+      },
+      batchRunStatusQuery: {
+        data: {
+          id: 'batch-1',
+          submitted_total: 10,
+          accepted_total: 10,
+          completed_total: 10,
+          failed_total: 0,
+          cancelled_total: 0,
+          unreadable_media_ids: [],
+          failed_batches: [],
+          child_job_ids: ['scan-1'],
+          terminal_state: true,
+        },
+      },
+    });
+
+    const { result } = renderHook(() => useJobStateMachine());
+
+    expect(result.current.currentPhase).toBe('clustering');
+    expect(result.current.scanProgress).toEqual({
+      completed: 10,
+      total: 10,
+      phase: 'complete',
+      images_processed: 10,
+    });
+  });
+
   it('connects SSE to the backend job id when in backend-driven clustering', async () => {
     const { useCombinedScanStatus } = await import('../useRecognitionHooks');
     (useCombinedScanStatus as Mock).mockReturnValue({

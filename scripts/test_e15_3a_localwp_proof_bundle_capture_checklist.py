@@ -8,6 +8,7 @@ CHECKLIST = REPO_ROOT / "docs" / "tasks" / "15.0" / "E15-3a-localwp-proof-bundle
 RUN_LOG = REPO_ROOT / "docs" / "tasks" / "15.0" / "E15-3a-localwp-oci-run-log.md"
 
 REQUIRED_HEADINGS = (
+    "## Phase 0: Local PostgreSQL First",
     "## Before You Start",
     "## Slice 2 Capture Sequence",
     "## Checkpoint 1: Pre-Scan State",
@@ -22,6 +23,10 @@ REQUIRED_SNIPPETS = (
     "proof-bundle artifact bundle ID",
     "source scan run identifier",
     "Seeded-Media Proof-Bundle Capture Packet",
+    "localhost:5432",
+    "make postgres-start",
+    "./scripts/db_shell.sh --admin",
+    "PGPORT=55432 make reset",
     "cd /opt/acx-backend/prod && docker compose -f docker-compose.env.yml logs -f",
     "GET /metrics",
     "representative avatar",

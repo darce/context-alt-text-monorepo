@@ -11,7 +11,10 @@
 
 This run log is the single evidence surface for the full LocalWP plugin ->
 OCI backend -> recognition round trip. Record only key fingerprints, never raw
-API keys or secrets.
+API keys or secrets. MCP handoff remains the durable task-state surface for
+slice-complete decisions, test results, and final gate verdicts; this markdown
+log carries the redacted operator evidence and artifact locations that those
+handoff entries should reference.
 
 ## Run Metadata
 

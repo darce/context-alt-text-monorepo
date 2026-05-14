@@ -1,7 +1,7 @@
 # E15-3a LocalWP Proof-Bundle Capture Checklist
 
 > **Purpose**: Execute the pending E15-3a Slice 2 seeded-media proof run directly from the `Seeded-Media Proof-Bundle Capture Packet` already defined in [E15-3a-localwp-oci-run-log.md](./E15-3a-localwp-oci-run-log.md).
-> **Primary record**: Update [E15-3a-localwp-oci-run-log.md](./E15-3a-localwp-oci-run-log.md) as you go; this checklist is the operator sequence, not a second source of truth.
+> **Primary record**: Update [E15-3a-localwp-oci-run-log.md](./E15-3a-localwp-oci-run-log.md) as you go, and record slice completion/final verdicts in MCP handoff; this checklist is the operator sequence, not a second source of truth.
 
 Use this checklist for one seeded-media Workbench scan that produces the reusable E15-22 proof bundle. Keep one `proof-bundle artifact bundle ID` and one `source scan run identifier` for the whole run.
 

@@ -16,6 +16,8 @@ slice-complete decisions, test results, and final gate verdicts; this markdown
 log carries the redacted operator evidence and artifact locations that those
 handoff entries should reference.
 
+Run the local PostgreSQL preflight in [E15-3a-localwp-proof-bundle-capture-checklist.md](./E15-3a-localwp-proof-bundle-capture-checklist.md) before opening OCI log tails or metrics for Slice 2. The remote proof packet starts only after the local DB path is green.
+
 ## Run Metadata
 
 | Field | Value |
@@ -36,6 +38,7 @@ handoff entries should reference.
 
 | Artifact | Status | Notes |
 | --- | --- | --- |
+| Local PostgreSQL preflight complete | [ ] | Record whether native `localhost:5432` or Docker `localhost:55432` was used before OCI capture |
 | Production API key fingerprint recorded | [x] | `short_id=7592`, UI `****I-xM`, `key_id=3a5d9583-25f8-4dfb-a07b-4129708bd4ef` |
 | Slice 1 successful `/settings/test` probe | [x] | outcome=`connected`, 200, correlation_id `req-069ea56c-bb67-7398-8000-58009f0df015` |
 | Slice 2 green scan round-trip | [ ] | Include screenshots + redacted payload snapshot |
@@ -71,6 +74,7 @@ Use the operator checklist in [E15-3a-localwp-proof-bundle-capture-checklist.md]
 | Production API key fingerprint | `short_id=7592` / UI `****I-xM` / `key_id=3a5d9583-25f8-4dfb-a07b-4129708bd4ef` |
 | Throwaway rate-limit test key fingerprint | `<fill during Slice 3>` |
 | Throwaway rate-limit test key id | `<fill during Slice 3>` |
+| Local PostgreSQL mode | `<native localhost:5432 / docker localhost:55432 / pending>` |
 | OCI environment | `prod` |
 | OCI log surface used | `cd /opt/acx-backend/prod && docker compose -f docker-compose.env.yml logs -f` |
 | Metrics surface used | `GET /metrics` with production API key |

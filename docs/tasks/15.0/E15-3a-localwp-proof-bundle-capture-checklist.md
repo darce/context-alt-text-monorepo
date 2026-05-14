@@ -5,26 +5,44 @@
 
 Use this checklist for one seeded-media Workbench scan that produces the reusable E15-22 proof bundle. Keep one `proof-bundle artifact bundle ID` and one `source scan run identifier` for the whole run.
 
+## Phase 0: Local PostgreSQL First
+
+1. Verify the local description-service database path before touching OCI.
+2. From `apps/prototype-description-service`, use the default native local PostgreSQL contract on `localhost:5432` first:
+   - `cp .env.example .env`
+   - `make postgres-start`
+   - `make reset`
+3. Use the repo-native database shell instead of raw `psql` when you need to inspect the local DB:
+   - `./scripts/db_shell.sh --admin -c "SELECT current_database(), current_user;"`
+   - `./scripts/db_shell.sh --admin -c "SELECT COUNT(*) FROM tenants;"`
+4. If native local PostgreSQL is unavailable, fall back to the disposable Docker database and keep that mode explicit in the run log:
+   - `docker compose -f docker-compose.db.yml up -d postgres`
+   - `PGPORT=55432 make reset`
+5. Record the local DB mode (`localhost:5432` native or `localhost:55432` Docker) in [E15-3a-localwp-oci-run-log.md](./E15-3a-localwp-oci-run-log.md) before continuing.
+6. Only after the local DB path is green should you open OCI stdout, `GET /metrics`, and the remote proof-capture flow below.
+
 ## Before You Start
 
-1. Open [E15-3a-localwp-oci-run-log.md](./E15-3a-localwp-oci-run-log.md) and fill the pending header fields before touching the UI:
+1. Complete the local PostgreSQL preflight above and record whether you used native `localhost:5432` or Docker `localhost:55432`.
+2. Open [E15-3a-localwp-oci-run-log.md](./E15-3a-localwp-oci-run-log.md) and fill the pending header fields before touching the UI:
    - `proof-bundle artifact bundle ID`
    - `source scan run identifier`
    - `seeded-media set identifier`
    - `E15-11 hosted transport proof reference`
-2. Confirm the LocalWP site and plugin build still match the packet assumptions:
+   - `Local PostgreSQL mode`
+3. Confirm the LocalWP site and plugin build still match the packet assumptions:
    - LocalWP origin `http://localhost:10010`
    - backend `https://api.altcontext.com`
    - build under test `feature/e15-22`
-3. Open the two backend evidence surfaces before starting the scan:
+4. Open the two backend evidence surfaces before starting the scan:
    - OCI stdout log tail: `cd /opt/acx-backend/prod && docker compose -f docker-compose.env.yml logs -f`
    - metrics endpoint: `GET /metrics`
-4. Keep one browser session for the Workbench capture so the screenshot/transcript sequence stays tied to the same `source scan run identifier`.
-5. Decide whether the avatar proof is expected to show a representative avatar or an explicit unavailable-image fallback so you know which path to capture if the UI degrades.
+5. Keep one browser session for the Workbench capture so the screenshot/transcript sequence stays tied to the same `source scan run identifier`.
+6. Decide whether the avatar proof is expected to show a representative avatar or an explicit unavailable-image fallback so you know which path to capture if the UI degrades.
 
 ## Slice 2 Capture Sequence
 
-1. Capture the pre-scan Workbench state before starting the seeded-media scan.
+1. After the local PostgreSQL preflight is green, capture the pre-scan Workbench state before starting the seeded-media scan.
 2. Start the scan and stay on the same Workbench route until the UI reaches the review-ready completion state.
 3. During the run, capture one avatar checkpoint and one mid-run progress checkpoint before the UI shows `Scan complete`.
 4. After the UI reaches the ready state, capture the completion checkpoint and then collect the backend evidence packet from OCI stdout and `GET /metrics`.

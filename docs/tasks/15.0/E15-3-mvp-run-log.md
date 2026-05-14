@@ -4,7 +4,7 @@ Status: template for operator capture
 Task: E15-3
 Proof bundle source: E15-22, reusing E15-3a artifacts where valid
 
-Use this run log for the public demo site. Reuse the E15-3a proof bundle when the build and seeded-media set still match; otherwise recapture with the same headings so E15-5 can consume the exact same contract.
+Use this run log for the public demo site. Reuse the E15-3a proof bundle when the build and seeded-media set still match; otherwise recapture with the same headings so E15-5 can consume the exact same contract. Preserve the same artifact-bundle ID when reusing LocalWP evidence; mint a new bundle ID only when the build or seeded-media set changes.
 
 ## Run Metadata
 
@@ -16,6 +16,8 @@ Use this run log for the public demo site. Reuse the E15-3a proof bundle when th
 - Host decision record:
 - Plugin build / ZIP:
 - Production API key fingerprint:
+- Proof-bundle artifact bundle ID:
+- Source scan run identifier:
 - Seeded-media set identifier:
 - Reused E15-3a artifact bundle ID, if any:
 
@@ -38,6 +40,8 @@ Use this run log for the public demo site. Reuse the E15-3a proof bundle when th
 
 ### Representative Avatar Evidence
 
+- Proof-bundle artifact bundle ID:
+- Source scan run identifier:
 - Surface shown: top-cluster card / review drawer / other
 - Representative source: `thumb_url` / explicit fallback
 - Screenshot or transcript path:
@@ -46,14 +50,20 @@ Use this run log for the public demo site. Reuse the E15-3a proof bundle when th
 
 ### Monotonic Processed-Count Evidence
 
+- Proof-bundle artifact bundle ID:
+- Source scan run identifier:
 - Screenshot or transcript path:
+- Capture checkpoints: submitted -> mid-run -> clustering/projecting -> complete
 - Processed-count checkpoints:
 - Reused from E15-3a? yes/no:
 - Notes:
 
 ### Scan Complete Timing Evidence
 
-- Screenshot or transcript path:
+- Proof-bundle artifact bundle ID:
+- Source scan run identifier:
+- Pre-completion checkpoint path:
+- Completion checkpoint path:
 - UI-ready state at capture:
 - Reused from E15-3a? yes/no:
 - Notes:
@@ -76,6 +86,7 @@ Use this run log for the public demo site. Reuse the E15-3a proof bundle when th
 ## Outcome
 
 - MVP round-trip verdict: pass / fail
+- Proof-bundle reuse verdict:
 - E15-5 reusable artifact bundle ID:
 - Remaining blockers:
 - Handoff decision reference:

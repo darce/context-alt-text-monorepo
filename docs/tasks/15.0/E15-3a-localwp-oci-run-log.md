@@ -24,6 +24,8 @@ API keys or secrets.
 | LocalWP site URL | `http://localhost:10010` |
 | Backend base URL | `https://api.altcontext.com` |
 | Production API key fingerprint | `short_id=7592` / UI `****I-xM` |
+| Proof-bundle artifact bundle ID | `<pending>` |
+| Source scan run identifier | `<pending>` |
 | Seeded-media set identifier | `<pending>` |
 | E15-11 hosted transport proof reference | `<pending>` |
 
@@ -40,6 +42,18 @@ API keys or secrets.
 | Representative backend correlation IDs captured from OCI stdout | [x] (Slice 1) / [ ] (Slices 2-3) | Plugin proxy does not surface these in-browser |
 | Representative latency evidence captured from `/metrics` | [ ] | P50/P95 at minimum (Slice 2) |
 | Final gate verdict recorded | [ ] | Pass only when all six MVP exit criteria are met |
+
+## Seeded-Media Proof-Bundle Capture Packet
+
+Use one seeded-media Workbench scan to populate every E15-22 proof row below. Record the same `proof-bundle artifact bundle ID` and `source scan run identifier` in each subsection so E15-3 and E15-5 can reuse the packet without redefining avatar/progress success.
+
+| Step | Required capture | Status | Notes |
+| --- | --- | --- | --- |
+| 1 | Pre-scan state showing build, seeded-media set, and the Workbench route under test | [ ] | Same operator session as the scan below |
+| 2 | Representative avatar visible on a top-cluster card or review drawer, or the explicit unavailable-image fallback on that same surface | [ ] | Capture from the same seeded-media scan run |
+| 3 | Mid-run progress checkpoint showing the processed count increasing and no `Scan complete` state yet | [ ] | Keep the visible count/checkpoint text in-frame |
+| 4 | UI-ready completion checkpoint showing `Scan complete` only after clustering/projection is ready | [ ] | Pair with the prior mid-run checkpoint |
+| 5 | Backend correlation IDs, latency evidence, and a redacted payload snapshot tied to the same scan run | [ ] | OCI stdout + `/metrics` + redacted payload summary |
 
 ## Operator Setup
 
@@ -164,6 +178,7 @@ the successful response above.
 | --- | --- |
 | Scan start time | `<timestamp>` |
 | Scan completion time | `<timestamp>` |
+| Source scan run identifier | `<pending>` |
 | Representative backend correlation IDs | `<req-...>, <req-...>` |
 | Recognition result summary | `<counts + labels only>` |
 | Errors observed | `<none or summary>` |
@@ -191,8 +206,12 @@ query aligned with `docs/operations/observability-runbook.md`.
 
 | Field | Value |
 | --- | --- |
+| Proof-bundle artifact bundle ID | `<pending>` |
+| Source scan run identifier | `<pending>` |
+| Capture checkpoint | `<top-cluster visible / review drawer open / explicit fallback>` |
 | Surface shown | `<top-cluster card / review drawer / other>` |
 | Representative source | `<thumb_url / explicit fallback>` |
+| Representative cluster / media reference | `<cluster id / media id / note>` |
 | Screenshot / transcript path | `<path or note>` |
 | Reusable in E15-3 | `<yes / no>` |
 | Reusable in E15-5 | `<yes / no>` |
@@ -201,7 +220,10 @@ query aligned with `docs/operations/observability-runbook.md`.
 
 | Field | Value |
 | --- | --- |
+| Proof-bundle artifact bundle ID | `<pending>` |
+| Source scan run identifier | `<pending>` |
 | Screenshot / transcript path | `<path or note>` |
+| Capture checkpoints | `<submitted -> mid-run -> clustering/projecting -> complete>` |
 | Processed-count checkpoints | `<list or summary>` |
 | Notes | `<pending>` |
 
@@ -209,8 +231,11 @@ query aligned with `docs/operations/observability-runbook.md`.
 
 | Field | Value |
 | --- | --- |
-| Screenshot / transcript path | `<path or note>` |
-| `scanProgress.phase` / UI-ready state | `<pending>` |
+| Proof-bundle artifact bundle ID | `<pending>` |
+| Source scan run identifier | `<pending>` |
+| Pre-completion checkpoint path | `<path or note>` |
+| Completion checkpoint path | `<path or note>` |
+| `scanProgress.phase` / UI-ready state at completion capture | `<pending>` |
 | Notes | `<pending>` |
 
 ### Reuse Metadata
@@ -218,6 +243,7 @@ query aligned with `docs/operations/observability-runbook.md`.
 | Field | Value |
 | --- | --- |
 | Artifact bundle ID | `<pending>` |
+| Source scan run identifier | `<pending>` |
 | Reused by E15-3 | `<yes / no>` |
 | Reused by E15-5 | `<yes / no>` |
 | Reasons to recapture | `<none or summary>` |

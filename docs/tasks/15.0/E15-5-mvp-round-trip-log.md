@@ -4,7 +4,7 @@ Status: template for operator capture
 Task: E15-5
 Required predecessor artifacts: E15-3a / E15-3 / E15-22 proof bundle
 
-Use this run log for the live public-demo verification pass. Prefer reusing the existing E15-22 proof bundle headings from E15-3a or E15-3; only recapture when the live site build or seeded-media set changed.
+Use this run log for the live public-demo verification pass. Prefer reusing the existing E15-22 proof bundle headings from E15-3a or E15-3; only recapture when the live site build or seeded-media set changed. Preserve the incoming artifact-bundle ID when reusing proof, and mint a new one only when live-demo evidence genuinely diverges.
 
 ## Run Metadata
 
@@ -13,6 +13,8 @@ Use this run log for the live public-demo verification pass. Prefer reusing the 
 - Task ref: E15-5
 - Public WP origin:
 - Backend base URL:
+- Proof-bundle artifact bundle ID:
+- Source scan run identifier:
 - Seeded-media set identifier:
 - Reused proof bundle source: E15-3a / E15-3 / mixed / recaptured
 
@@ -28,6 +30,8 @@ Use this run log for the live public-demo verification pass. Prefer reusing the 
 
 ### Representative Avatar Evidence
 
+- Proof-bundle artifact bundle ID:
+- Source scan run identifier:
 - Surface shown: top-cluster card / review drawer / other
 - Representative source: `thumb_url` / explicit fallback
 - Screenshot or transcript path:
@@ -36,14 +40,20 @@ Use this run log for the live public-demo verification pass. Prefer reusing the 
 
 ### Monotonic Processed-Count Evidence
 
+- Proof-bundle artifact bundle ID:
+- Source scan run identifier:
 - Screenshot or transcript path:
+- Capture checkpoints: submitted -> mid-run -> clustering/projecting -> complete
 - Processed-count checkpoints:
 - Reused artifact reference:
 - Notes:
 
 ### Scan Complete Timing Evidence
 
-- Screenshot or transcript path:
+- Proof-bundle artifact bundle ID:
+- Source scan run identifier:
+- Pre-completion checkpoint path:
+- Completion checkpoint path:
 - UI-ready state at capture:
 - Reused artifact reference:
 - Notes:
@@ -58,5 +68,6 @@ Use this run log for the live public-demo verification pass. Prefer reusing the 
 ## Outcome
 
 - Remote round-trip verdict: pass / fail
+- Proof-bundle reuse verdict:
 - Remaining blockers:
 - Handoff decision reference:

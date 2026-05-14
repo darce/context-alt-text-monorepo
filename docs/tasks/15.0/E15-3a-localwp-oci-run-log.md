@@ -47,6 +47,8 @@ API keys or secrets.
 
 Use one seeded-media Workbench scan to populate every E15-22 proof row below. Record the same `proof-bundle artifact bundle ID` and `source scan run identifier` in each subsection so E15-3 and E15-5 can reuse the packet without redefining avatar/progress success.
 
+Use the operator checklist in [E15-3a-localwp-proof-bundle-capture-checklist.md](./E15-3a-localwp-proof-bundle-capture-checklist.md) to execute this packet directly in capture order.
+
 | Step | Required capture | Status | Notes |
 | --- | --- | --- | --- |
 | 1 | Pre-scan state showing build, seeded-media set, and the Workbench route under test | [ ] | Same operator session as the scan below |

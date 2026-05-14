@@ -728,9 +728,9 @@ def test_list_cluster_members_returns_canonical_envelope(
     assert body["members"][0]["cluster_id"] == cluster.id
     assert body["members"][0]["cluster_label"] == "members"
     assert body["members"][0]["is_auto_label"] is False
-    assert body["members"][0]["is_pinned"] is False
+    assert body["members"][0]["is_pinned"] is True
     assert body["members"][0]["detected_at"] is None
-    assert body["members"][0]["representative_id"] is None
+    assert body["members"][0]["representative_id"] == identity_id
     assert body["members"][0]["debug_metrics"] is None
 
 

@@ -38,6 +38,7 @@ class _FakeClusterRecord:
         self.backend_version = int(getattr(cluster, "backend_version", 0) or 0)
         self.user_confirmed = bool(cluster.label)
         self.identity_count = int(getattr(cluster, "identity_count", 0) or 0)
+        self.representative_identity_id = getattr(cluster, "representative_identity_id", None)
 
 
 class _FakeClusterRepository:

@@ -119,6 +119,76 @@ describe('TopClustersSection', () => {
     expect(onReview).toHaveBeenCalledWith('cluster-1');
   });
 
+  it('renders an explicit unavailable-image fallback when the representative has no thumb or crop data', async () => {
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue(
+      topUnlabeledResponse([
+        {
+          id: 'cluster-no-image',
+          tenant_id: 'tenant-1',
+          label: null,
+          is_labeled: false,
+          is_auto_label: false,
+          identity_count: 2,
+          user_confirmed: false,
+          representatives: [
+            {
+              id: 'rep-no-image',
+              media_id: 10,
+              thumb_url: null,
+              media_url: null,
+              bbox: null,
+              is_pinned: false,
+            },
+          ],
+        },
+      ]),
+    );
+
+    renderSection();
+
+    await waitFor(() => {
+      expect(fetchTopUnlabeledClusters).toHaveBeenCalledWith('tenant-1', 20);
+    });
+
+    expect(screen.getByRole('img', { name: 'Representative image unavailable' })).toBeInTheDocument();
+    expect(screen.getByText('No image')).toBeInTheDocument();
+  });
+
+  it('prefers thumb_url over crop data when both are available', async () => {
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue(
+      topUnlabeledResponse([
+        {
+          id: 'cluster-thumb-preferred',
+          tenant_id: 'tenant-1',
+          label: null,
+          is_labeled: false,
+          is_auto_label: false,
+          identity_count: 2,
+          user_confirmed: false,
+          representatives: [
+            {
+              id: 'rep-thumb-preferred',
+              media_id: 10,
+              thumb_url: '/recognition/face-thumbs/job-42/10?x=1&y=2&width=30&height=40',
+              media_url: 'http://example.test/source-10.jpg',
+              bbox: { x: 1, y: 2, width: 30, height: 40 },
+              is_pinned: false,
+            },
+          ],
+        },
+      ]),
+    );
+
+    const { container } = renderSection();
+
+    await waitFor(() => {
+      expect(fetchTopUnlabeledClusters).toHaveBeenCalledWith('tenant-1', 20);
+    });
+
+    expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
+    expect(container.querySelector('.acx-avatar')).not.toBeNull();
+  });
+
   it('returns null while loading and on query error', async () => {
     vi.mocked(fetchTopUnlabeledClusters).mockImplementationOnce(
       () =>

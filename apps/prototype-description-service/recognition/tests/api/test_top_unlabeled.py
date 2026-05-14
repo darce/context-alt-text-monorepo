@@ -144,6 +144,45 @@ async def test_get_top_unlabeled_includes_representative_crop_fields(
 
 
 @pytest.mark.asyncio
+async def test_get_top_unlabeled_includes_face_thumb_url_for_blob_backed_representative(
+    api_client: TestClient,
+    tenant_id: str,
+    fake_cluster_repository,
+) -> None:
+    cluster_id = str(uuid.uuid4())
+    fake_cluster_repository.seed(cluster_id, label=None, identity_count=3)
+
+    fake_cluster_repository.clusters[cluster_id].representatives = [
+        ClusterRepresentative(
+            id=str(uuid.uuid4()),
+            cluster_id=cluster_id,
+            identity_id=str(uuid.uuid4()),
+            embedding=np.zeros(512, dtype=np.float32),
+            created_at=datetime.now(tz=UTC),
+            media_id=101,
+            media_url=f"file:///tmp/blob-root/{tenant_id}/job-42/101.bin",
+            bbox_x=12,
+            bbox_y=8,
+            bbox_width=40,
+            bbox_height=30,
+            is_user_selected=False,
+        )
+    ]
+
+    resp = api_client.get(
+        "/recognition/clusters/top-unlabeled",
+        params={"tenant_id": tenant_id, "limit": 1},
+        headers={"X-Tenant-ID": tenant_id},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 1
+    rep = body[0]["representatives"][0]
+    assert rep["thumb_url"] == "/recognition/face-thumbs/job-42/101?x=12&y=8&width=40&height=30"
+
+
+@pytest.mark.asyncio
 async def test_get_top_unlabeled_includes_suggested_label_fields(
     api_client: TestClient,
     tenant_id: str,

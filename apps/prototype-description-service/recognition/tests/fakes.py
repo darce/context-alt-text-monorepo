@@ -124,6 +124,8 @@ class FakeClusterRepository:
             media_id=media_id,
             embedding=np.zeros(512, dtype=np.float32),
             confidence=0.99,
+            bbox_x=0,
+            bbox_y=0,
             bbox_width=1,
             bbox_height=1,
             cluster_id=cluster_id,
@@ -257,6 +259,20 @@ class FakeClusterRepository:
                 if identity.tenant_id == tenant_id:
                     rows.append((member, identity))
         return rows
+
+    async def get_member_identity_count(self, cluster_id: str) -> int:
+        return len(self.members_by_cluster.get(cluster_id, []))
+
+    async def get_member_identities_with_similarity(
+        self,
+        cluster_id: str,
+        *,
+        limit: int | None = None,
+    ) -> list[tuple[MediaIdentity, float]]:
+        rows = self.members_by_cluster.get(cluster_id, [])
+        if limit is not None:
+            rows = rows[:limit]
+        return [(identity, member.similarity) for member, identity in rows]
 
     async def get_clusters_by_ids(self, tenant_id: str, cluster_ids: Sequence[str]) -> list[IdentityCluster]:
         return [

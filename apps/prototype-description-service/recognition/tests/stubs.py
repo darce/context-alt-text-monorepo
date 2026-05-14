@@ -117,8 +117,18 @@ class NullClusterRepository(ClusterRepository):
     async def get_member_identities(self, cluster_id: str) -> Sequence[MediaIdentity]:
         return list(self._member_identities_by_cluster.get(cluster_id, []))
 
-    async def get_member_identities_with_similarity(self, cluster_id: str) -> list[tuple[MediaIdentity, float]]:
+    async def get_member_identity_count(self, cluster_id: str) -> int:
+        return len(self._member_identities_by_cluster.get(cluster_id, []))
+
+    async def get_member_identities_with_similarity(
+        self,
+        cluster_id: str,
+        *,
+        limit: int | None = None,
+    ) -> list[tuple[MediaIdentity, float]]:
         identities = list(self._member_identities_by_cluster.get(cluster_id, []))
+        if limit is not None:
+            identities = identities[:limit]
         return [(identity, 0.0) for identity in identities]
 
     async def get_member_identities_for_clusters(

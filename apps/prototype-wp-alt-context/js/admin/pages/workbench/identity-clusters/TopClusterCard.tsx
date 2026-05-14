@@ -139,18 +139,18 @@ export const TopClusterCard = ({
               const thumbUrl = resolveRepresentativeThumbUrl(rep);
               return (
                 <div key={rep.id} className="acx-top-cluster-card__thumb acx-top-cluster-card__thumb--frame">
-                  {cropData ? (
-                    <FaceThumbnail
-                      mediaUrl={cropData.mediaUrl}
-                      bbox={cropData.bbox}
+                  {thumbUrl ? (
+                    <Avatar
+                      src={thumbUrl}
                       sizePx={cellSize}
                       shape="square"
                       alt=""
                       className="acx-top-cluster-card__thumb-image"
                     />
-                  ) : thumbUrl ? (
-                    <Avatar
-                      src={thumbUrl}
+                  ) : cropData ? (
+                    <FaceThumbnail
+                      mediaUrl={cropData.mediaUrl}
+                      bbox={cropData.bbox}
                       sizePx={cellSize}
                       shape="square"
                       alt=""

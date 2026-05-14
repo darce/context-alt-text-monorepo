@@ -5,11 +5,14 @@ declare(strict_types=1);
 namespace AltContext\Api;
 
 use function add_query_arg;
+use function array_merge;
 use function ctype_digit;
+use function str_contains;
 use function str_starts_with;
 use function rest_url;
 use function wp_get_attachment_url;
 use function wp_salt;
+use const PHP_QUERY_RFC3986;
 
 /**
  * Rewrites recognition-service blob paths to a signed WP REST proxy URL so
@@ -25,8 +28,8 @@ use function wp_salt;
  * cannot guard the proxy route with the standard cookie+nonce permission
  * callback. Instead, this rewriter mints a self-authenticating capability
  * URL: the rewritten URL carries `expires` + `token` query args, where
- * `token = HMAC-SHA256(wp_salt('auth'), "<job>:<media>:<expires>")`. The
- * matching `BlobsController::verify_blob_token` permission callback
+ * `token = HMAC-SHA256(wp_salt('auth'), "<route>:<job>:<media>:<expires>:<query>")`.
+ * The matching `BlobsController::verify_blob_token` permission callback
  * recomputes the HMAC and compares it in constant time, only allowing the
  * fetch when the signature matches and `expires` is in the future.
  *
@@ -35,7 +38,14 @@ use function wp_salt;
  */
 class BlobUrlRewriter {
 	private const RECOGNITION_BLOB_PREFIX = '/recognition/blobs/';
+	private const RECOGNITION_FACE_THUMB_PREFIX = '/recognition/face-thumbs/';
 	private const TOKEN_TTL_SECONDS       = 3600;
+	private const FACE_THUMB_QUERY_KEYS  = array( 'x', 'y', 'width', 'height' );
+	// Keep this bound aligned with docs/agentic/contracts/clustering-api.md
+	// "Face thumbnail crop contract" and the backend emitter/reader in
+	// apps/prototype-description-service/recognition/interface_adapters/http/blob_url.py
+	// and apps/prototype-description-service/recognition/interface_adapters/http/routers/blobs.py.
+	private const FACE_THUMB_MAX_COMPONENT = 32768;
 
 	/**
 	 * Recursively rewrite `/recognition/blobs/<job>/<media>` strings inside
@@ -64,10 +74,22 @@ class BlobUrlRewriter {
 	 * field without walking a structure.
 	 */
 	public static function rewrite_string( string $value ): string {
-		if ( ! str_starts_with( $value, self::RECOGNITION_BLOB_PREFIX ) ) {
+		$route_kind = 'blobs';
+		$prefix     = self::RECOGNITION_BLOB_PREFIX;
+		if ( str_starts_with( $value, self::RECOGNITION_FACE_THUMB_PREFIX ) ) {
+			$route_kind = 'face-thumbs';
+			$prefix     = self::RECOGNITION_FACE_THUMB_PREFIX;
+		} elseif ( ! str_starts_with( $value, self::RECOGNITION_BLOB_PREFIX ) ) {
 			return $value;
 		}
-		$rest = \substr( $value, \strlen( self::RECOGNITION_BLOB_PREFIX ) );
+		$rest = \substr( $value, \strlen( $prefix ) );
+		$query_args = array();
+		$query_pos  = \strpos( $rest, '?' );
+		if ( false !== $query_pos ) {
+			$query_string = \substr( $rest, $query_pos + 1 );
+			$rest         = \substr( $rest, 0, $query_pos );
+			\parse_str( $query_string, $query_args );
+		}
 		if ( false === \strpos( $rest, '/' ) ) {
 			return $value;
 		}
@@ -75,28 +97,41 @@ class BlobUrlRewriter {
 		if ( '' === $job_id || '' === $media_id ) {
 			return $value;
 		}
+		if ( str_contains( $media_id, '/' ) ) {
+			return $value;
+		}
+		$signature_args = array();
+		if ( 'face-thumbs' === $route_kind ) {
+			$signature_args = self::normalize_face_thumb_query_args( $query_args );
+			if ( null === $signature_args ) {
+				return $value;
+			}
+		}
 
 		// Prefer the direct WP media URL when the recognition `media_id` matches
 		// a real WP attachment. Bypasses the signed proxy entirely, so `<img>`
 		// loads hit the same uploads URL that cluster-card thumbnails use and
 		// avoid the recognition-service tenant-claim requirement on blob serve.
-		if ( ctype_digit( $media_id ) && \function_exists( 'wp_get_attachment_url' ) ) {
+		if ( 'blobs' === $route_kind && ctype_digit( $media_id ) && \function_exists( 'wp_get_attachment_url' ) ) {
 			$wp_url = wp_get_attachment_url( (int) $media_id );
 			if ( \is_string( $wp_url ) && '' !== $wp_url ) {
 				return $wp_url;
 			}
 		}
 
-		$relative = 'acx/v1' . $value;
+		$relative = 'acx/v1/' . 'recognition/' . $route_kind . '/' . $job_id . '/' . $media_id;
 		$base_url = \function_exists( 'rest_url' ) ? rest_url( $relative ) : '/' . $relative;
 
 		$expires = self::current_time() + self::TOKEN_TTL_SECONDS;
-		$token   = self::sign( $job_id, $media_id, $expires );
+		$token   = self::sign( $job_id, $media_id, $expires, $route_kind, $signature_args );
 
 		return add_query_arg(
-			array(
-				'expires' => $expires,
-				'token'   => $token,
+			array_merge(
+				$signature_args,
+				array(
+					'expires' => $expires,
+					'token'   => $token,
+				)
 			),
 			$base_url
 		);
@@ -108,8 +143,51 @@ class BlobUrlRewriter {
 	 * Public so the controller permission callback can recompute the same
 	 * signature and compare it in constant time.
 	 */
-	public static function sign( string $job_id, string $media_id, int $expires ): string {
-		return \hash_hmac( 'sha256', $job_id . ':' . $media_id . ':' . $expires, self::secret() );
+	public static function sign(
+		string $job_id,
+		string $media_id,
+		int $expires,
+		string $route_kind = 'blobs',
+		array $query_args = array()
+	): string {
+		$payload = \implode(
+			':',
+			array(
+				$route_kind,
+				$job_id,
+				$media_id,
+				(string) $expires,
+				self::canonical_query_string( $query_args ),
+			)
+		);
+		return \hash_hmac( 'sha256', $payload, self::secret() );
+	}
+
+	public static function normalize_face_thumb_query_args( array $query_args ): ?array {
+		$normalized = array();
+		foreach ( self::FACE_THUMB_QUERY_KEYS as $key ) {
+			$value = $query_args[ $key ] ?? null;
+			if ( ! \is_scalar( $value ) || '' === (string) $value || ! ctype_digit( (string) $value ) ) {
+				return null;
+			}
+			$integer = (int) $value;
+			if ( ( 'width' === $key || 'height' === $key ) && $integer <= 0 ) {
+				return null;
+			}
+			if ( $integer > self::FACE_THUMB_MAX_COMPONENT ) {
+				return null;
+			}
+			$normalized[ $key ] = $integer;
+		}
+		return $normalized;
+	}
+
+	private static function canonical_query_string( array $query_args ): string {
+		if ( empty( $query_args ) ) {
+			return '';
+		}
+		\ksort( $query_args );
+		return \http_build_query( $query_args, '', '&', PHP_QUERY_RFC3986 );
 	}
 
 	private static function secret(): string {

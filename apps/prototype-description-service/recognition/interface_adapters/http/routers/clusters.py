@@ -57,6 +57,7 @@ from recognition.interface_adapters.http.deps.session import (
     _resolve_pg_backend_pid,
 )
 from recognition.interface_adapters.http.deps.tenant import get_authenticated_tenant_id
+from recognition.interface_adapters.http.blob_url import build_face_thumb_path
 from recognition.interface_adapters.http.job_utils import (
     job_to_clustering_response as _job_to_clustering_response,
 )
@@ -79,6 +80,7 @@ from recognition.interface_adapters.http.schemas.responses import (
     ClusterDeltaResponse,
     ClusteringJobStatusResponse,
     ClusterMemberResponse,
+    ClusterMembersEnvelopeResponse,
     ClusterResponse,
     ClusterSnapshotClusterResponse,
     ClusterSnapshotMemberResponse,
@@ -100,6 +102,8 @@ from recognition.shared.db.dialect import is_postgres
 from recognition.shared.ids import generate_id
 
 _logger = logging.getLogger(__name__)
+
+CLUSTER_MEMBERS_PAGE_LIMIT = 500
 
 _INFERENCE_CAP = 20
 
@@ -134,6 +138,42 @@ LIMIT 1
 # pg_cancel_backend). We match by SQLSTATE rather than by asyncpg exception
 # type to keep the branch driver-agnostic.
 _QUERY_CANCELED_SQLSTATE = "57014"
+
+
+def _face_box_from_components(
+    bbox_x, bbox_y, bbox_width, bbox_height
+) -> FaceBoxResponse | None:
+    values = (bbox_x, bbox_y, bbox_width, bbox_height)
+    if any(value is None for value in values):
+        return None
+    try:
+        x, y, width, height = (int(value) for value in values)
+    except (TypeError, ValueError):
+        return None
+    if x < 0 or y < 0 or width <= 0 or height <= 0:
+        return None
+    return FaceBoxResponse(x=x, y=y, width=width, height=height)
+
+
+def _face_box_from_identity(identity) -> FaceBoxResponse | None:
+    return _face_box_from_components(
+        getattr(identity, "bbox_x", None),
+        getattr(identity, "bbox_y", None),
+        getattr(identity, "bbox_width", None),
+        getattr(identity, "bbox_height", None),
+    )
+
+
+def _face_thumb_url_for_identity(identity, bbox: FaceBoxResponse | None) -> str | None:
+    if bbox is None:
+        return None
+    return build_face_thumb_path(
+        getattr(identity, "media_url", None),
+        x=bbox.x,
+        y=bbox.y,
+        width=bbox.width,
+        height=bbox.height,
+    )
 
 
 def _is_query_canceled(exc: DBAPIError) -> bool:
@@ -806,26 +846,27 @@ async def get_top_unlabeled_clusters(
                     RepresentativeResponse(
                         id=str(rep.id),
                         media_id=rep.media_id or 0,
-                        thumb_url=None,
-                        media_url=rep.media_url,
-                        bbox=(
-                            FaceBoxResponse(
-                                x=int(rep.bbox_x),
-                                y=int(rep.bbox_y),
-                                width=int(rep.bbox_width),
-                                height=int(rep.bbox_height),
+                        thumb_url=(
+                            build_face_thumb_path(
+                                rep.media_url,
+                                x=rep_bbox.x,
+                                y=rep_bbox.y,
+                                width=rep_bbox.width,
+                                height=rep_bbox.height,
                             )
-                            if (
-                                rep.bbox_x is not None
-                                and rep.bbox_y is not None
-                                and rep.bbox_width is not None
-                                and rep.bbox_height is not None
-                            )
+                            if rep_bbox is not None
                             else None
                         ),
+                        media_url=rep.media_url,
+                        bbox=rep_bbox,
                         is_pinned=rep.is_user_selected,
                     )
                     for rep in (c.representatives or [])
+                    for rep_bbox in (
+                        _face_box_from_components(
+                            rep.bbox_x, rep.bbox_y, rep.bbox_width, rep.bbox_height
+                        ),
+                    )
                 ],
                 suggested_label=suggested_label,
                 suggested_label_source=suggested_label_source,
@@ -865,12 +906,12 @@ async def undismiss_cluster(
     return Response(status_code=204)
 
 
-@router.get("/clusters/{cluster_id}/members", response_model=list[ClusterMemberResponse])
+@router.get("/clusters/{cluster_id}/members", response_model=ClusterMembersEnvelopeResponse)
 async def list_cluster_members(
     cluster_id: str,
     tenant_id: str = Depends(get_authenticated_tenant_id),
     cluster_service_builder=Depends(get_cluster_service_builder),
-) -> list[ClusterMemberResponse]:
+) -> ClusterMembersEnvelopeResponse:
     """List all identities in a cluster with membership data.
 
     Returns identity details combined with membership similarity scores,
@@ -880,25 +921,43 @@ async def list_cluster_members(
     cluster_service = await cluster_service_builder(tenant_id)
     cluster_repo = cluster_service.cluster_repository
 
-    # Get identities with their membership similarity in a single query
-    members_with_similarity = await cluster_repo.get_member_identities_with_similarity(cluster_id)
+    cluster = await cluster_repo.get_by_id(cluster_id)
+    cluster_label = getattr(cluster, "label", None) if cluster else None
+    cluster_is_auto_label = bool(getattr(cluster, "is_auto_label", False)) if cluster else False
+    representative_id = getattr(cluster, "representative_identity_id", None) if cluster else None
+    representative_id = str(representative_id) if representative_id else None
 
-    return [
-        ClusterMemberResponse(
-            identity_id=str(identity.id),
-            media_id=int(identity.media_id),
-            similarity=similarity,
-            confidence=float(identity.confidence),
-            bbox=FaceBoxResponse(
-                x=int(identity.bbox_x),
-                y=int(identity.bbox_y),
-                width=int(identity.bbox_width),
-                height=int(identity.bbox_height),
-            ),
-            media_url=identity.media_url,
-        )
-        for identity, similarity in members_with_similarity
-    ]
+    total = await cluster_repo.get_member_identity_count(cluster_id)
+    truncated = total > CLUSTER_MEMBERS_PAGE_LIMIT
+    visible_members = await cluster_repo.get_member_identities_with_similarity(
+        cluster_id,
+        limit=CLUSTER_MEMBERS_PAGE_LIMIT,
+    )
+
+    return ClusterMembersEnvelopeResponse(
+        members=[
+            ClusterMemberResponse(
+                identity_id=str(identity.id),
+                media_id=int(identity.media_id),
+                similarity=similarity,
+                confidence=float(identity.confidence),
+                bbox=(bbox := _face_box_from_identity(identity)),
+                thumb_url=_face_thumb_url_for_identity(identity, bbox),
+                media_url=getattr(identity, "media_url", None),
+                cluster_id=cluster_id,
+                cluster_label=cluster_label,
+                is_auto_label=cluster_is_auto_label,
+                is_pinned=representative_id == str(identity.id) if representative_id else False,
+                detected_at=getattr(identity, "created_at", None),
+                representative_id=representative_id,
+                debug_metrics=getattr(identity, "debug_metrics", None),
+            )
+            for identity, similarity in visible_members
+        ],
+        limit=CLUSTER_MEMBERS_PAGE_LIMIT,
+        total=total,
+        truncated=truncated,
+    )
 
 
 @router.patch("/clusters/{cluster_id}", response_model=ClusterResponse)

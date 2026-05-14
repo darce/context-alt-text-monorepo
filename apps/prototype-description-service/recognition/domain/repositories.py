@@ -150,7 +150,16 @@ class ClusterRepository(Protocol):
         """Fetch identities that are members of a cluster."""
         ...
 
-    async def get_member_identities_with_similarity(self, cluster_id: str) -> list[tuple[Any, float]]:
+    async def get_member_identity_count(self, cluster_id: str) -> int:
+        """Count identities that are members of a cluster."""
+        ...
+
+    async def get_member_identities_with_similarity(
+        self,
+        cluster_id: str,
+        *,
+        limit: int | None = None,
+    ) -> list[tuple[Any, float]]:
         """Fetch cluster members and similarity scores for review UIs."""
         ...
 

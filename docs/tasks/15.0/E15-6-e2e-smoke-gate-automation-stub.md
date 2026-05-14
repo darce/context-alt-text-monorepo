@@ -18,6 +18,8 @@ Deferring the smoke gate to E16 keeps v0.4.0 shippable on a short timeline and p
 
 The same surface originally drafted in the epic:
 
+- Promote and absorb the operator path from `docs/tasks/tech-debt/e2e-smoke-automation-path.md` instead of inventing a second automation shape.
+- Carry forward the public-demo proof bundle from [E15-3](./E15-3-wordpress-demo-provisioning-task-plan.md), [E15-3a](./E15-3a-localwp-oci-roundtrip-task-plan.md), and [E15-22](./E15-22-workbench-avatar-and-progress-readiness-task-plan.md), preserving the same named evidence headings so automation asserts the already-approved demo contract instead of inventing a new one.
 - Playwright test harness for plugin E2E flows.
 - WP-CLI seed/reset helpers for deterministic fixtures.
 - Reproducible runtime path for CI (`wp-env` or Docker-based WP runtime).
@@ -28,6 +30,7 @@ Required scenarios once automated:
 - Offline label persistence.
 - Local-read resilience with backend down.
 - Sync-status transitions through outage/recovery.
+- Workbench avatar/progress truthfulness: representative face visibility through the backend `thumb_url` path or explicit fallback, monotonic processed indicator, and `Scan complete` only at UI-ready completion.
 - Flow does not depend on LocalWP private APIs.
 
 ## Acceptance bar (when picked up under E16)
@@ -59,6 +62,7 @@ Pick up under E16 once:
 - [ ] Convert this deferred stub into a full task plan using `docs/agentic/templates/TASK_PLAN.template.md`.
 - [ ] Carry forward the Playwright, WP reset/seed, deterministic outage, and CI artifact surfaces listed in Scope.
 - [ ] Define the proof bundle so offline persistence, local-read resilience, and sync-transition assertions are executable in CI.
+- [ ] Include the public-demo avatar/progress proof bundle as the first regression target after MVP, with explicit assertions for backend-`thumb_url` representative rendering/fallback, monotonic processed counts, and honest `Scan complete` timing.
 
 ## Review Readiness
 

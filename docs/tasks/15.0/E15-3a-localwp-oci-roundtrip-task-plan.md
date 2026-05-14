@@ -20,7 +20,7 @@ Prove the full **LocalWP plugin -> `api.altcontext.com` -> recognition -> respon
 3. CORS correctly rejects a non-allowlisted browser origin for privileged endpoints.
 4. Per-key rate limiting produces deterministic HTTP 429 under sustained load against a single key.
 5. Sovereign local-read path renders cached state when the backend is unreachable via a deterministic connect-timeout simulation.
-6. A run log captures: API key fingerprint, **backend-side** correlation IDs for representative requests (sourced from OCI stdout — the plugin proxy does not currently forward `X-Request-ID` to the browser; see Non-Goals), observed latency, CORS rejection evidence, rate-limit 429 evidence, and the fallback-render screenshot / transcript.
+6. A run log captures: API key fingerprint, **backend-side** correlation IDs for representative requests (sourced from OCI stdout — the plugin proxy does not currently forward `X-Request-ID` to the browser; see Non-Goals), observed latency, CORS rejection evidence, rate-limit 429 evidence, the fallback-render screenshot / transcript, and the full E15-22 proof bundle for the same seeded-media run.
 
 All six are required. Partial completion does not unblock E15-3.
 
@@ -53,6 +53,9 @@ Exit: Settings page reports a successful probe; connection attempt logged with a
   - Backend correlation IDs for representative requests (grep the OCI stdout logs per `docs/operations/observability-runbook.md#tracing-a-request-by-correlation-id`). The plugin proxy does not currently forward `X-Request-ID` to the browser, so backend stdout is the sole source for this gate — see Non-Goals.
   - Observed P50/P95 latency for the representative calls, derived from `/metrics` histogram buckets with the PromQL examples in `docs/operations/observability-runbook.md#promql-quantiles-from-the-histogram`.
   - Recognition result payload snapshot (redact any face embeddings; keep counts + labels).
+  - Screenshot or annotated transcript proving at least one visible top-cluster card or review-drawer avatar renders from the backend-served `thumb_url` surface in the authenticated admin session, or that the explicit unavailable-image fallback is what the operator sees when no representative image is available.
+  - Screenshot or annotated transcript showing the processed counter increasing without decreasing and showing `Scan complete` only after the Workbench enters the UI-ready completion state.
+  - Enough metadata to reuse the same artifact bundle in E15-3 and E15-5 without recapturing a second definition of avatar/progress success.
 
 Exit: green round-trip; run log has before/after screenshots of plugin state.
 
@@ -77,6 +80,7 @@ Exit: fallback behavior verified; plugin restored to production URL.
 ## Deliverables
 
 - `docs/tasks/15.0/E15-3a-localwp-oci-run-log.md` (single run log covering all four slices; redacted where appropriate).
+- `docs/tasks/15.0/E15-3a-localwp-oci-run-log.md` contains an explicit `E15-22 proof bundle` subsection naming: representative avatar evidence (`thumb_url` or explicit fallback), monotonic processed-count evidence, `Scan complete` timing evidence, and the seeded-media scan identifier/correlation IDs tying those artifacts to the backend run.
 - If a CORS-allowlist addition was needed for the LocalWP origin, a decision record under `docs/tasks/15.0/E15-3a-cors-origin-decision.md` capturing the exact origin added, who approved it, and its lifetime (temporary vs. permanent).
 - Production API key fingerprint logged against the E15-1 key lifecycle surface.
 - A slice-complete MCP handoff write after each slice (`close_slice` or `record_event` with a `slice_complete_*` decision), not just at task end.
@@ -114,7 +118,8 @@ Exit: fallback behavior verified; plugin restored to production URL.
 
 - [ ] Seed the LocalWP media library with the provenance-tracked demo image set and run a Workbench scan.
 - [ ] Capture backend correlation IDs, latency evidence, and a redacted recognition payload snapshot in `E15-3a-localwp-oci-run-log.md` (backend-only source per the Non-Goals note).
-- [ ] Record before/after screenshots showing the green round-trip state.
+- [ ] Record before/after screenshots showing the green round-trip state, representative avatar rendering from `thumb_url` or the explicit fallback state, and monotonic progress/completion semantics.
+- [ ] Package those screenshots/transcripts as the named E15-22 proof bundle so E15-3 and E15-5 can reuse the exact same evidence set.
 
 ### Checklist for Slice 3: Security boundary checks
 
@@ -137,6 +142,7 @@ Exit: fallback behavior verified; plugin restored to production URL.
 ## Success Criteria
 
 - [ ] All six E15-3a MVP exit criteria are satisfied with one redacted run log covering all four slices.
+- [ ] The run log proves representative avatar visibility via the backend `thumb_url` path or explicit fallback behavior, plus a monotonic processed indicator with `Scan complete` appearing only at UI-ready completion.
 - [ ] E15-3 is explicitly unblocked only after the LocalWP -> OCI gate passes end to end.
 
 ## Handoff

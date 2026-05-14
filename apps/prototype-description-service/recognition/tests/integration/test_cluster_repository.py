@@ -52,7 +52,15 @@ class DummyClusterRepository(ClusterRepository):
     async def get_members(self, cluster_id: str) -> list[IdentityMember]:
         raise NotImplementedError
 
-    async def get_member_identities_with_similarity(self, cluster_id: str) -> list[tuple[MediaIdentity, float]]:
+    async def get_member_identity_count(self, cluster_id: str) -> int:
+        raise NotImplementedError
+
+    async def get_member_identities_with_similarity(
+        self,
+        cluster_id: str,
+        *,
+        limit: int | None = None,
+    ) -> list[tuple[MediaIdentity, float]]:
         raise NotImplementedError
 
     async def get_member_identities_for_clusters(self, cluster_ids: Sequence[str]) -> dict[str, list[MediaIdentity]]:
@@ -92,6 +100,7 @@ def test_cluster_repository_methods_are_async() -> None:
         "save",
         "update",
         "delete",
+        "get_member_identity_count",
         "get_curriculum_t",
         "set_curriculum_t",
         "get_singleton_identities",
@@ -246,6 +255,33 @@ async def test_get_member_identities_for_clusters_groups_by_cluster(db_session, 
     assert identity_a1_domain.pose_pitch == pytest.approx(25.0)
     assert identity_a1_domain.pose_yaw == pytest.approx(-30.0)
     assert identity_a1_domain.pose_roll == pytest.approx(-20.0)
+
+
+@pytest.mark.asyncio
+async def test_get_member_identities_with_similarity_can_count_and_limit(db_session, tenant) -> None:
+    repo = SqlAlchemyClusterRepository(db_session)
+    member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
+
+    cluster = await repo.save(
+        IdentityCluster(
+            id=None,
+            tenant_id=str(tenant.id),
+            label="Limited members",
+            is_labeled=False,
+            identity_count=3,
+            created_at=datetime.now(tz=UTC),
+        )
+    )
+    identity_ids = [str(uuid.uuid4()) for _ in range(3)]
+    for index, identity_id in enumerate(identity_ids):
+        await member_repo.add_member(cluster.id, identity_id=identity_id, similarity=0.9 + index * 0.01)
+
+    assert await repo.get_member_identity_count(cluster.id) == 3
+
+    limited = await repo.get_member_identities_with_similarity(cluster.id, limit=2)
+
+    assert len(limited) == 2
+    assert {round(similarity, 2) for _identity, similarity in limited}.issubset({0.9, 0.91, 0.92})
 
 
 @pytest.mark.asyncio

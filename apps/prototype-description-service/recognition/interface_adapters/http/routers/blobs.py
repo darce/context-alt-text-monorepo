@@ -24,10 +24,14 @@ is a single FastAPI route.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+import io
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from PIL import Image, UnidentifiedImageError
 
 from recognition.application.storage import ObjectStoreError
 from recognition.config.settings import RecognitionSettings
+from recognition.interface_adapters.http.blob_url import FACE_THUMB_MAX_COMPONENT
 from recognition.interface_adapters.http.deps.auth import AuthContext, require_auth
 from recognition.interface_adapters.http.deps.object_store import (
     ObjectStoreFactory,
@@ -106,6 +110,61 @@ async def serve_blob(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
     return Response(content=data, media_type=_sniff_media_type(data))
+
+
+@router.get("/face-thumbs/{job_id}/{media_id}")
+async def serve_face_thumb(
+    job_id: str,
+    media_id: str,
+    # Importing the shared bound from blob_url.py keeps the backend reader
+    # aligned with the backend emitter, contract doc, and WP signer.
+    x: int = Query(..., ge=0, le=FACE_THUMB_MAX_COMPONENT),
+    y: int = Query(..., ge=0, le=FACE_THUMB_MAX_COMPONENT),
+    width: int = Query(..., gt=0, le=FACE_THUMB_MAX_COMPONENT),
+    height: int = Query(..., gt=0, le=FACE_THUMB_MAX_COMPONENT),
+    auth: AuthContext = Depends(require_auth),
+    store_factory: ObjectStoreFactory = Depends(get_object_store_factory_for_request),
+    settings: RecognitionSettings = Depends(_settings_default),
+) -> Response:
+    """Stream a cropped face thumbnail from a tenant-scoped blob."""
+    if not auth.tenant_claim:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="face thumbnail serving requires a tenant-scoped API key",
+        )
+
+    _validate_segment(job_id, label="job_id")
+    _validate_segment(media_id, label="media_id")
+
+    store = store_factory(auth.tenant_claim)
+    blob_uri = f"file://{settings.blob_root}/{auth.tenant_claim}/{job_id}/{media_id}.bin"
+    try:
+        with store.open(blob_uri) as fh:
+            data = fh.read()
+    except ObjectStoreError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    try:
+        image = Image.open(io.BytesIO(data)).convert("RGB")
+    except (UnidentifiedImageError, OSError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="blob is not a supported image",
+        ) from exc
+
+    left = min(x, image.width)
+    top = min(y, image.height)
+    right = min(x + width, image.width)
+    bottom = min(y + height, image.height)
+    if right <= left or bottom <= top:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="face crop is outside image bounds",
+        )
+
+    output = io.BytesIO()
+    image.crop((left, top, right, bottom)).save(output, format="JPEG", quality=85)
+    return Response(content=output.getvalue(), media_type="image/jpeg")
 
 
 __all__ = ["router"]

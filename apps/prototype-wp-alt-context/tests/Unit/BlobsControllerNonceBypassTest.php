@@ -29,6 +29,16 @@ class BlobsControllerNonceBypassTest extends TestCase
         $this->assertNull($result);
     }
 
+    public function testReturnsNullWhenNonceErrorAndUriMatchesFaceThumbRoute(): void
+    {
+        $_SERVER['REQUEST_URI'] = '/wp-json/acx/v1/recognition/face-thumbs/job-x/42?x=1&y=2&width=30&height=40&expires=1&token=abc';
+        $error = new WP_Error('rest_cookie_invalid_nonce', 'Cookie check failed', ['status' => 403]);
+
+        $result = BlobsController::maybe_bypass_nonce_for_blob_route($error);
+
+        $this->assertNull($result);
+    }
+
     public function testReturnsErrorUntouchedWhenUriDoesNotMatchBlobRoute(): void
     {
         $_SERVER['REQUEST_URI'] = '/wp-json/acx/v1/recognition/jobs/123';

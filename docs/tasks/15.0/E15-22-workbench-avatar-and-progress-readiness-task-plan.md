@@ -1,7 +1,7 @@
 # E15-22. Workbench Avatar and Progress Readiness (MVP-critical demo gate)
 
 > **Task Short ID**: E15-22
-> **Status**: in_progress -- backend avatar surfaces, cluster-members envelope, frontend thumbnail/progress regressions, and proof-bundle doc hooks shipped on `feature/e15-22`; remaining work is commit-backed finding closure plus seeded-media proof capture
+> **Status**: in_progress -- backend avatar surfaces, cluster-members envelope, frontend thumbnail/progress regressions, and proof-bundle doc hooks shipped on `feature/e15-22`; remaining work is seeded-media/LocalWP proof capture for the manual gate
 > **Target Branch**: feature/e15-22
 > **Epic**: [E15. Public Demo Launch Readiness](../../epics/v0.4.0/public-demo-launch-readiness-epic.md) Phase 4 (pre-demo workbench gate)
 > **Predecessors**: E15-1 (security baseline) merged; E15-2 (observability baseline) merged. [E15-11](./E15-11-image-upload-transport-task-plan.md) hosted multipart proof is only a predecessor for the demo-proof-bundle slice and the private-media LocalWP gate, not for the backend or frontend Workbench slices.
@@ -203,7 +203,8 @@ Proof:
 
 - [x] `RepresentativeResponse` and `ClusterMemberResponse` carry an admin-reachable `thumb_url` (route or signed URL), populated from the existing tenant-scoped image store.
 - [x] `FaceThumbnail` and the top-cluster/cluster-preview resolvers prefer `thumb_url`, falling back to `media_url + bbox` only when `thumb_url` is null.
-- [ ] Pytest + Vitest coverage proves the field shape and preference order; a LocalWP transcript shows seeded-media thumbs loading without `acx-face-thumbnail--error`.
+- [x] Pytest + Vitest coverage proves the field shape and preference order.
+- [ ] A LocalWP transcript shows seeded-media thumbs loading without `acx-face-thumbnail--error` and records the reusable proof-bundle artifact for downstream demo gates.
 
 ### Checklist for Slice 3: Representative Avatar Truthfulness (frontend)
 
@@ -222,6 +223,7 @@ Proof:
 - [x] E15-3a run-log requirements include avatar/progress screenshots or transcript evidence.
 - [x] E15-3 planning surface consumes the proof bundle before demo sign-off, and E15-5 execution reuses that artifact instead of redefining it.
 - [x] E15-6 names this proof bundle as the first post-demo regression target.
+- [x] E15-3a, E15-3, and E15-5 run-log templates carry a shared artifact-bundle ID and source scan identifier so one seeded-media proof packet can flow forward unchanged.
 
 ## Review Readiness
 
@@ -238,4 +240,4 @@ Proof:
 
 - [ ] The seeded-media Workbench demo shows representative avatars from crop data when available, with explicit unavailable-image states otherwise.
 - [ ] The processed counter does not decrease during the demo run, and `Scan complete` appears only after clustering/projection is UI-ready.
-- [ ] E15-3a and E15-3 require a run-log proof bundle that captures the avatar/progress behavior the public demo will rely on, and E15-5 reuses that artifact during live-demo execution.
+- [ ] E15-3a and E15-3 require one named run-log proof bundle from the seeded-media LocalWP run that captures the avatar/progress behavior the public demo will rely on, and E15-5 reuses that same artifact during live-demo execution.

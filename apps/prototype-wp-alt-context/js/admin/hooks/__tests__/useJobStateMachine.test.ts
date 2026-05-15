@@ -2,6 +2,9 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { useJobStateMachine } from '../useJobStateMachine';
 import { useJobPersistence } from '../useJobPersistence';
+import { useJobProgressStream } from '../useJobProgressStream';
+import { useCombinedScanStatus } from '../useRecognitionHooks';
+import { useSyncTrigger } from '../useSyncTrigger';
 import { useQueryClient } from '@tanstack/react-query';
 
 const createDeferred = <T>() => {
@@ -64,6 +67,21 @@ describe('useJobStateMachine', () => {
     (useQueryClient as Mock).mockReturnValue({
       invalidateQueries: vi.fn(),
     });
+    (useJobProgressStream as Mock).mockReturnValue({
+      progress: null,
+      status: 'pending',
+      isOnline: true,
+      etaSeconds: null,
+      isPrimary: true,
+      lastEventAt: null,
+      stalledForSeconds: null,
+      retry: vi.fn(),
+    });
+    (useCombinedScanStatus as Mock).mockReturnValue({
+      scanStatusQuery: { data: null },
+      batchRunStatusQuery: { data: null },
+    });
+    (useSyncTrigger as Mock).mockReturnValue({ mutateAsync: vi.fn() });
   });
 
   it('initializes with idle phase', () => {
@@ -169,6 +187,58 @@ describe('useJobStateMachine', () => {
       completed: 750,
       total: 750,
       phase: 'complete',
+    });
+  });
+
+  it('keeps completed scan totals when clustering starts before scan fallback progress catches up', async () => {
+    const { useJobProgressStream } = await import('../useJobProgressStream');
+    const { useCombinedScanStatus } = await import('../useRecognitionHooks');
+
+    (useJobPersistence as Mock).mockReturnValue({
+      activeJobs: [
+        { id: 'scan-1', type: 'scan', totalItems: 10 },
+        { id: 'cluster-1', type: 'clustering', totalItems: 0 },
+      ],
+      addJob: vi.fn(),
+      removeJob: vi.fn(),
+    });
+    (useJobProgressStream as Mock).mockReturnValue({
+      progress: { completed: 15, total: 21, phase: 'clustering' },
+      status: 'running',
+      isOnline: true,
+      etaSeconds: 52,
+      isPrimary: true,
+      lastEventAt: null,
+      stalledForSeconds: null,
+      retry: vi.fn(),
+    });
+    (useCombinedScanStatus as Mock).mockReturnValue({
+      scanStatusQuery: {
+        data: {
+          id: 'cluster-1',
+          type: 'clustering',
+          status: 'running',
+          progress: { completed: 0, total: 10, phase: 'detecting', images_processed: 0 },
+          started_at: new Date().toISOString(),
+          finished_at: null,
+        },
+      },
+      batchRunStatusQuery: { data: null },
+    });
+
+    const { result } = renderHook(() => useJobStateMachine());
+
+    expect(result.current.currentPhase).toBe('clustering');
+    expect(result.current.scanProgress).toEqual({
+      completed: 10,
+      total: 10,
+      phase: 'complete',
+      images_processed: 10,
+    });
+    expect(result.current.clusterProgress).toEqual({
+      completed: 15,
+      total: 21,
+      phase: 'clustering',
     });
   });
 

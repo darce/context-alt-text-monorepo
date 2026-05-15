@@ -10,7 +10,7 @@
 
 ## Objective
 
-Convert the reviewed plugin-distribution spec into an implementation-ready package that can be landed in this monorepo, then ported to `agentic-protocol-monorepo` as the executable work plan for the shared plugin system. The task finishes when this repo has durable planning/ADR surfaces on `main`, the remote implementation scope is explicit, and the monorepo consumer-cleanup slice is ready to run after the remote plugin tree exists.
+Convert the reviewed plugin-distribution spec into a durable planning bundle that can land in this monorepo, then be ported to `agentic-protocol-monorepo` as the executable work plan for the shared plugin system. This monorepo task finishes when the spec, ADR, and task plan are reviewed on `main` with explicit downstream ownership for remote implementation and later consumer cleanup.
 
 ## Intake
 
@@ -53,7 +53,7 @@ The shared agentic workflow surface is still split across repo-local skill bodie
 
 ## Target Outcome
 
-This branch lands a complete, reviewed planning bundle for E17-15 on `main`: spec, ADR, and task plan. That bundle becomes the source packet for creating equivalent implementation work in `agentic-protocol-monorepo`, where the plugin generator and emitted plugin manifests are built. Once the remote plugin tree is reviewed and installable, a later slice migrates this monorepo to consume it and removes duplicated cross-harness skill surfaces.
+This branch lands a complete, reviewed planning bundle for E17-15 on `main`: spec, ADR, and task plan. That bundle becomes the source packet for creating equivalent implementation work in `agentic-protocol-monorepo`, where the plugin generator and emitted plugin manifests are built. Once the remote plugin tree is reviewed and installable, a separate follow-up task migrates this monorepo to consume it and removes duplicated cross-harness skill surfaces.
 
 ## Context Loading
 
@@ -84,7 +84,7 @@ Deliver E17-15 in three implementation layers. First, complete the monorepo plan
 | --- | --- | --- |
 | Spec | `docs/specs/agentic-plugin-distribution-spec.md` | reviewed source contract for plugin distribution |
 | Task plan | `docs/tasks/17.0/E17-15-agentic-plugin-distribution-task-plan.md` | this implementation and porting plan |
-| ADR | `docs/adrs/ADR-NNN-agentic-plugin-distribution.md` | decide plugin-native distribution over symlink/bootstrap model |
+| ADR | `docs/adrs/ADR-010-agentic-plugin-distribution.md` | decide plugin-native distribution over symlink/bootstrap model |
 | Remote implementation | `agentic-protocol-monorepo/packages/agentic-system/**` | canonical skills, manifest schema, generator, emitted plugin trees, docs |
 | Consumer cleanup | `.claude/skills/`, `.claude/commands/`, `.codex/prompts/`, `.claude/plugins.json` or equivalent | remove shared copies and add plugin pin after remote plugin tree exists |
 | Validation docs/tests | `scripts/test_*`, `docs/agentic/**` as needed | update only when consumer migration changes local behavior |
@@ -107,14 +107,12 @@ Deliver E17-15 in three implementation layers. First, complete the monorepo plan
   - `make plan-analyze DOC=docs/tasks/17.0/E17-15-agentic-plugin-distribution-task-plan.md TASK=E17-15`
   - `make plan-review DOC=docs/tasks/17.0/E17-15-agentic-plugin-distribution-task-plan.md TASK=E17-15`
 - Runtime-parity / environment checks:
-  - remote `make plugins-build` in `agentic-protocol-monorepo` once the plan is ported
-  - `claude /skills` and Codex skill discovery after this monorepo consumes the plugin tree
+  - none for this monorepo planning-bundle task; remote runtime checks are downstream gates in `agentic-protocol-monorepo` and the later consumer-migration task.
 - Contract/fixture verification:
-  - emitted manifests contain `uvx` package pins for both MCP servers
-  - Claude and Codex emitted skill bodies are byte-identical
-  - plugin install/uninstall leaves no orphan shared skill copies in this monorepo
+  - spec and ADR state that emitted manifests preserve `uvx` package pins for both MCP servers.
+  - task plan identifies remote tests for deterministic plugin generation and later consumer migration.
 - Manual verification:
-  - operator can install/update the private plugin from the selected remote ref and still run `make context`, planning review, and branch review flows.
+  - operator can open the reviewed spec, ADR, and task plan from `main` and use them as the source packet for remote task creation.
 
 ## Slice Delivery
 
@@ -135,7 +133,9 @@ Proof:
 - ADR review passes with no open planning findings.
 - `make review-ready TASK=E17-15` reports ready or only code-review steps that are intentionally deferred until remote implementation.
 
-### Slice 2: Port Reviewed Work Package to agentic-protocol-monorepo
+## Downstream Work After This Task
+
+### Downstream 1: Port Reviewed Work Package to agentic-protocol-monorepo
 
 **Goal**: Create the remote implementation task from the reviewed monorepo packet.
 
@@ -152,7 +152,7 @@ Proof:
 - Remote handoff state identifies the plugin implementation task, branch, and worktree.
 - No remote MCP server repo change is queued unless the remote plugin implementation records a concrete launch incompatibility.
 
-### Slice 3: Remote Plugin Generator and Manifests
+### Downstream 2: Remote Plugin Generator and Manifests
 
 **Goal**: Implement the canonical plugin distribution system in `agentic-protocol-monorepo`.
 
@@ -171,7 +171,7 @@ Proof:
 - Claude and Codex emitted skill bodies are byte-identical.
 - Emitted `mcpServers` entries launch `mcp-agent-handoff==0.11.2` and `mcp-agent-orchestrator==0.4.6` through `uvx`.
 
-### Slice 4: This Monorepo Consumer Migration
+### Downstream 3: This Monorepo Consumer Migration
 
 **Goal**: Replace in-repo shared skill/command/prompt copies with the private plugin install once the remote plugin tree is ready.
 
@@ -201,11 +201,11 @@ This task spans more than one repository, so do not initialize all work as lanes
 | `remote-plugin-generator` | `agentic-protocol-monorepo` | `packages/agentic-system/**` | `planning-bundle` landed on main | remote `make plugins-build`, generator tests |
 | `consumer-migration` | this monorepo | `.claude/**`, `.codex/**`, `.github/**`, `config/agent-workflows/**`, `docs/agentic/**` | remote plugin tree installable | `make check-agent-workflows`, harness discovery smoke |
 
-### Merge Order
+### Downstream Order
 
-1. `planning-bundle`
-2. `remote-plugin-generator`
-3. `consumer-migration`
+1. This task lands `planning-bundle` on `main`.
+2. A remote `agentic-protocol-monorepo` task handles `remote-plugin-generator`.
+3. A later monorepo task handles `consumer-migration` after the remote plugin tree is installable.
 
 ### Task Registration
 
@@ -237,14 +237,14 @@ This task spans more than one repository, so do not initialize all work as lanes
 - [ ] E17-15 handoff state records the task-plan path.
 - [ ] Planning bundle lands on this repo's `main` with the source commit recorded for porting.
 
-### Checklist for Slice 2: Port Reviewed Work Package to agentic-protocol-monorepo
+### Checklist for Downstream 1: Port Reviewed Work Package to agentic-protocol-monorepo
 
 - [ ] Remote planning artifact references the source monorepo commit and E17-15 paths.
 - [ ] Remote task branch/worktree and handoff state are created.
 - [ ] Remote planning review records any repo-specific findings before implementation starts.
 - [ ] MCP server repos remain untouched unless a concrete incompatibility is recorded.
 
-### Checklist for Slice 3: Remote Plugin Generator and Manifests
+### Checklist for Downstream 2: Remote Plugin Generator and Manifests
 
 - [ ] Canonical skill bodies live under `agentic-protocol-monorepo/packages/agentic-system/skills/`.
 - [ ] Plugin registration manifest is validated at load/build time.
@@ -252,7 +252,7 @@ This task spans more than one repository, so do not initialize all work as lanes
 - [ ] MCP server entries preserve current `uvx` package pins.
 - [ ] Plugin distribution docs cover add-skill, add-MCP-entry, version bump, install, and uninstall workflows.
 
-### Checklist for Slice 4: This Monorepo Consumer Migration
+### Checklist for Downstream 3: This Monorepo Consumer Migration
 
 - [ ] Plugin pin/reference is present for Claude and Codex consumption.
 - [ ] Cross-harness shared skill bodies and generated adapters are removed or gitignored emitted artifacts.
@@ -273,6 +273,6 @@ This task spans more than one repository, so do not initialize all work as lanes
 ## Success Criteria
 
 - [ ] This monorepo has a reviewed E17-15 spec, ADR, and task plan on `main`.
-- [ ] `agentic-protocol-monorepo` has a remote implementation task that cites the landed monorepo planning bundle.
-- [ ] Remote plugin generator emits deterministic Claude and Codex plugin trees from one canonical skill body source.
-- [ ] This monorepo consumes the private plugin tree and no longer authors duplicated cross-harness shared skill bodies.
+- [ ] The planning bundle explicitly identifies `agentic-protocol-monorepo` as the implementation owner for generator/manifests/docs.
+- [ ] The planning bundle explicitly identifies remote MCP server repos as referenced runtime package owners only, not required code-change targets.
+- [ ] The planning bundle names the later monorepo consumer-migration task boundary after the remote plugin tree is installable.

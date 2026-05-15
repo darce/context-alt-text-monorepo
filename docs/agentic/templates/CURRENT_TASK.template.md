@@ -61,7 +61,7 @@ cd apps/prototype-description-service
 pytest tests/unit/test_relevant_file.py -v
 
 # Type checking
-PYENV_VERSION=description-service mypy .
+make typecheck
 ```
 
 ## Next Agent Instructions

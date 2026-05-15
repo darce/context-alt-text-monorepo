@@ -3,17 +3,26 @@ name: Architecture Compliance
 on:
   pull_request:
     paths:
-      - "apps/wp-context-alt-text/js/**"
-      - "apps/wp-context-alt-text/scripts/**"
-      - "apps/wp-context-alt-text/package.json"
-      - "apps/wp-context-alt-text/eslint.config.mjs"
+      - "apps/prototype-wp-alt-context/js/**"
+      - "apps/prototype-wp-alt-context/scripts/**"
+      - "apps/prototype-wp-alt-context/.npmrc"
+      - "apps/prototype-wp-alt-context/Makefile"
+      - "apps/prototype-wp-alt-context/package.json"
+      - "apps/prototype-wp-alt-context/package-lock.json"
+      - "apps/prototype-wp-alt-context/eslint.config.mjs"
   push:
     branches:
       - main
       - master
       - develop
     paths:
-      - "apps/wp-context-alt-text/js/**"
+      - "apps/prototype-wp-alt-context/js/**"
+      - "apps/prototype-wp-alt-context/scripts/**"
+      - "apps/prototype-wp-alt-context/.npmrc"
+      - "apps/prototype-wp-alt-context/Makefile"
+      - "apps/prototype-wp-alt-context/package.json"
+      - "apps/prototype-wp-alt-context/package-lock.json"
+      - "apps/prototype-wp-alt-context/eslint.config.mjs"
 
 jobs:
   architecture-compliance:
@@ -22,7 +31,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: apps/wp-context-alt-text
+        working-directory: apps/prototype-wp-alt-context
 
     steps:
       - name: Checkout code
@@ -33,7 +42,10 @@ jobs:
         with:
           node-version: "22.x"
           cache: "npm"
-          cache-dependency-path: apps/wp-context-alt-text/package-lock.json
+          cache-dependency-path: apps/prototype-wp-alt-context/package-lock.json
+
+      - name: Upgrade npm
+        run: npm install --global npm@11.14.1
 
       - name: Install dependencies
         run: npm ci
@@ -43,7 +55,7 @@ jobs:
         continue-on-error: false
 
       - name: Check Architecture Compliance
-        run: npm run check:architecture
+        run: npm run arch
         continue-on-error: false
 
       - name: Run Tests
@@ -51,7 +63,7 @@ jobs:
         continue-on-error: false
 
       - name: Check TypeScript
-        run: npx tsc --noEmit
+        run: npm run typecheck
         continue-on-error: false
 
       - name: Architecture Check Summary
@@ -72,7 +84,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: apps/wp-context-alt-text
+        working-directory: apps/prototype-wp-alt-context
 
     steps:
       - name: Checkout code
@@ -83,11 +95,14 @@ jobs:
         with:
           node-version: "22.x"
           cache: "npm"
-          cache-dependency-path: apps/wp-context-alt-text/package-lock.json
+          cache-dependency-path: apps/prototype-wp-alt-context/package-lock.json
+
+      - name: Upgrade npm
+        run: npm install --global npm@11.14.1
 
       - name: Install dependencies
         run: npm ci
 
       - name: Check Prettier formatting
-        run: npm run format:check
+        run: npm run format
         continue-on-error: false

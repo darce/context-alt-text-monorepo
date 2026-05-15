@@ -8,13 +8,11 @@ It uses a hexagonal-inspired layout with explicit application layers and HTTP in
 ```bash
 cd apps/prototype-description-service
 pyenv install 3.12.7  # if you don't have it yet
-pyenv virtualenv 3.12.7 description-service
-pyenv activate description-service  # optional interactive shell convenience
-pip install -e ".[dev]"
-uvicorn api.main:app --reload
+uv sync --locked --extra dev
+uv run --locked uvicorn api.main:app --reload
 ```
 
-For non-interactive harnesses and scripted commands, the canonical runtime selector is `PYENV_VERSION=description-service`; use `pyenv exec` only when the command launches Python directly.
+The checked-in `.python-version` pins the interpreter to Python 3.12.7, while `uv` manages the project-local `.venv` from `uv.lock`.
 
 ### Face Detection (InsightFace)
 
@@ -23,16 +21,16 @@ Face detection requires InsightFace which has platform-specific installation:
 **Linux x86_64** (including Hugging Face Spaces):
 
 ```bash
-pip install -e ".[face]"      # CPU
-pip install -e ".[gpu]"       # GPU (CUDA)
+uv sync --locked --extra dev --extra face      # CPU
+uv sync --locked --extra dev --extra gpu       # GPU (CUDA)
 ```
 
 **macOS Apple Silicon**:
 
 ```bash
 # InsightFace requires compilation with correct SDK paths
+uv sync --locked --extra dev
 ./scripts/install_insightface_mac.sh
-pip install -e ".[dev]"
 ```
 
 Without InsightFace installed, the service falls back to stub detectors that generate synthetic embeddings (useful for testing, not production).
@@ -106,7 +104,7 @@ scripts/start_prototype_local.sh start
 ```
 
 The script mirrors the recognition service helper (installs the editable
-package with dev extras, sources `.env`, enforces the cache paths, and
+package from `uv.lock`, sources `.env`, enforces the cache paths, and
 manages the uvicorn lifecycle).
 
 ## Cache Configuration
@@ -190,10 +188,8 @@ make help
 
 ### Available health endpoints
 
-| Endpoint                  | Description                                                                            |
-| ------------------------- | -------------------------------------------------------------------------------------- |
-| `GET /health`             | Liveness probe (PR-01). No I/O — returns `{status: "ok", timestamp}` as long as the process can respond. Used by the Caddy active probe on a 10s interval. |
-| `GET /ready`              | Readiness probe (PR-01). Runs DB (via the observability session dependency), session-dependency circuit breaker, and InsightFace model-cache checks and aggregates them. Returns 200 when all pass; 503 with `status: "unhealthy"` otherwise so load balancers can pull the pod. |
-| `GET /health/detailed`    | Auth-gated operator diagnostic (PA-01 / Slice 2.5). Returns full `get_pool_stats` for both engines, circuit-breaker state, and InsightFace model-cache inventory. Requires a valid API key via the `Authorization` header. |
+- `GET /health` — Liveness probe (PR-01). No I/O; returns `{status: "ok", timestamp}` as long as the process can respond. Used by the Caddy active probe on a 10s interval.
+- `GET /ready` — Readiness probe (PR-01). Runs DB (via the observability session dependency), session-dependency circuit breaker, and InsightFace model-cache checks and aggregates them. Returns 200 when all pass; 503 with `status: "unhealthy"` otherwise so load balancers can pull the pod.
+- `GET /health/detailed` — Auth-gated operator diagnostic (PA-01 / Slice 2.5). Returns full `get_pool_stats` for both engines, circuit-breaker state, and InsightFace model-cache inventory. Requires a valid API key via the `Authorization` header.
 
 The previous per-subsystem probes (`/recognition/health`, `/recognition/health/pool`, `/roster/health`, `/scene/health`) were consolidated into the three endpoints above in Slice 2.5; pool stats now live on `/health/detailed`.

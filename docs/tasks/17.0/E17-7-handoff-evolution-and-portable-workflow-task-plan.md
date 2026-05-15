@@ -32,7 +32,7 @@ Five follow-on gaps remain once the E17-6 core is separated:
 2. **Cold starts lose failure detail**: `verified_tests.result` preserves only a 280-character summary, not raw trace content.
 3. **The MCP tool surface is larger than necessary**: several read/write tool pairs can be merged into compound tools without changing the Python API. An [investigation into a missing `review_runs` tool](../../assessments/review-runs-tool-bridge-gap-investigation-2026-04-16.md) confirmed that the VS Code/Copilot MCP session bridge may deprioritize or drop tools when the advertised tool count is high; compressing the surface reduces that risk. A second [CLI-vs-native-tools investigation](../../assessments/agent-handoff-mcp-cli-vs-native-tools-investigation-2026-04-16.md) confirmed that tool-count and per-call response size are the only levers that actually move the _agent's_ token bill — shell-hook call sites (CLI, Python-in-shell) cost zero agent tokens regardless — so "minimize MCP token usage without breaking functionality" maps directly to this slice plus the existing bounded-read envelope (`sections=`, `detail=`, `top_n_*`). Slice 4 must preserve functionality including correct dashboard rendering at the authoritative `DASHBOARD.txt` path throughout the rename.
 4. **Codex portable-command parity is incomplete**: `portable_commands.json` already generates Claude and VS Code adapters, but Codex's `/command` routing still depends on generator-emitted router text inside marker-delimited blocks in `instructions.md` and `CLAUDE.md`. That leaves `/branch-review`, `/planning-review`, and the other workflow ids in this harness dependent on the model reading the router prose correctly. **Status update (E17-12 Slice 2)**: the separate `$skill` surface is now wired in Codex via generated `.codex/skills/<slug>` symlinks, closing the `$skill` half of the parity gap; `/command` routing remains prose-based.
-5. **Python runtime selection is not normalized across harnesses**: the repo already assumes the `description-service` pyenv, but the non-interactive contract is fragmented across `PYENV_VERSION=description-service`, `pyenv exec`, `.python-version`, and older config surfaces such as `.mcp.json`. That makes Python/MCP startup behavior drift-prone across hosts.
+5. **Python runtime selection is not normalized across harnesses**: the description-service app now uses a uv-managed project `.venv`, while repo automation and MCP tooling still use the `description-service` pyenv. Older config and doc surfaces mix those two contracts, which makes Python/MCP startup behavior drift-prone across hosts.
 
 ## Constraints
 
@@ -60,11 +60,11 @@ Five follow-on gaps remain once the E17-6 core is separated:
 **Python runtime contract**:
 
 - Root automation already assumes the `description-service` pyenv through `MCP_PYENV_VERSION ?= description-service` and `env PYENV_VERSION=... pyenv exec python3` in the root `Makefile`.
-- App-local Python commands already assume `pyenv exec python` in `apps/prototype-description-service/Makefile`.
+- App-local Python commands now run through the uv-managed project `.venv` in `apps/prototype-description-service/Makefile`.
 - VS Code MCP and Codex MCP configs already set `PYENV_VERSION=description-service` in `.vscode/mcp.json` and `.codex/config.toml`.
 - `.mcp.json` still omits the same runtime env, so one committed harness surface remains out of parity.
 - `.codex/config.toml` and `.mcp.json` still hardcode user-local repo paths rooted at `/Users/daniel/Development/context-alt-text-monorepo`, so committed harness startup is not yet portable across machines or clones.
-- Docs still mix interactive setup guidance (`pyenv activate description-service`) with the non-interactive harness rule (`PYENV_VERSION=description-service`), and that rule is not front-loaded as a single canonical contract for all hosts.
+- Docs still mix the app-local uv workflow with the non-interactive MCP harness rule (`PYENV_VERSION=description-service`), and that split is not yet front-loaded as a single canonical contract for all hosts.
 
 **Conflicting review routing still exists before the E17-6 prerequisite lands**:
 

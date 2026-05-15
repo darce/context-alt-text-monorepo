@@ -130,9 +130,9 @@ The deployed API at `api.altcontext.com` enforces per-key rate limits (429 with 
 ## Verification Strategy
 
 - Deterministic tests:
-  - `PYENV_VERSION=description-service pyenv exec python -m pytest recognition/tests/api/test_rate_limiting.py -v`
-  - `PYENV_VERSION=description-service pyenv exec python -m pytest recognition/tests/api/test_cors.py -v`
-  - `PYENV_VERSION=description-service pyenv exec python -m pytest recognition/tests/api/test_key_rotation.py -v`
+  - `VIRTUAL_ENV= uv run --locked python -m pytest recognition/tests/api/test_rate_limiting.py -v`
+  - `VIRTUAL_ENV= uv run --locked python -m pytest recognition/tests/api/test_cors.py -v`
+  - `VIRTUAL_ENV= uv run --locked python -m pytest recognition/tests/api/test_key_rotation.py -v`
 - Runtime-parity (must exercise **protected** endpoints — the `/health` root is intentionally unauthenticated and would pass even if auth/rate-limit wiring regressed):
   - `curl -H "X-Api-Key: <key>" -H "X-Tenant-ID: <tenant>" https://api.altcontext.com/recognition/health/pool` returns 200
   - Repeated rapid requests against `/recognition/clusters` (a protected route under `enforce_rate_limit`) trigger 429 with `Retry-After` header

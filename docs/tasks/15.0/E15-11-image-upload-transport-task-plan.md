@@ -126,10 +126,10 @@ Hardening (per scope MVP bullet, line 23 of scope note):
 ## Verification Strategy
 
 - Deterministic tests:
-  - `cd apps/prototype-description-service && pyenv exec python -m pytest recognition/tests/api/test_analyze_multipart.py recognition/tests/application/test_object_store_filesystem.py -q`
+  - `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked python -m pytest recognition/tests/api/test_analyze_multipart.py recognition/tests/application/test_object_store_filesystem.py -q`
   - `cd apps/prototype-wp-alt-context && composer test -- --filter AnalysisJobsControllerTransportTest`
 - Runtime-parity / environment checks:
-  - `cd apps/prototype-description-service && pyenv exec uvicorn recognition.main:app --port 8001` then `curl -F 'request=@req.json;type=application/json' -F 'image_42=@./fixture.jpg'` against the new multipart endpoint with a known-good auth header
+  - `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked uvicorn api.main:app --port 8001` then `curl -F 'request=@req.json;type=application/json' -F 'image_42=@./fixture.jpg'` against the new multipart endpoint with a known-good auth header
 - Contract/fixture verification:
   - If a `/recognition/analyze` fixture exists under `docs/agentic/contracts/`, refresh it in the same slice as the route change
 - Manual verification:
@@ -155,7 +155,7 @@ Changes:
 
 Proof:
 
-- `cd apps/prototype-description-service && pyenv exec python -m pytest recognition/tests/api/test_analyze_multipart.py recognition/tests/application/test_object_store_filesystem.py -q` exits 0 with the multi-part suite green
+- `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked python -m pytest recognition/tests/api/test_analyze_multipart.py recognition/tests/application/test_object_store_filesystem.py -q` exits 0 with the multi-part suite green
 - Local `curl` multipart submission against a `uvicorn`-launched service returns `202` and the resulting job completes; the per-job tempdir is gone after completion (verified by `ls`)
 
 ### Slice 2: Plugin transport switch + `acx_recognition_transport` filter + URL fallback

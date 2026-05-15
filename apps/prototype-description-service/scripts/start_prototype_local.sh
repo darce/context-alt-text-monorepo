@@ -7,7 +7,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-PYTHON_BIN="${PYTHON_BIN:-python}"
+DEFAULT_PROJECT_PYTHON="${PROJECT_ROOT}/.venv/bin/python"
+if [[ -x "${DEFAULT_PROJECT_PYTHON}" ]]; then
+  PYTHON_BIN="${PYTHON_BIN:-${DEFAULT_PROJECT_PYTHON}}"
+else
+  PYTHON_BIN="${PYTHON_BIN:-python}"
+fi
+BOOTSTRAP_PYTHON_BIN="${BOOTSTRAP_PYTHON_BIN:-python3}"
+UV_BIN="${UV_BIN:-uv}"
 DEFAULT_HOST="0.0.0.0"
 DEFAULT_PORT="8000"
 ENV_FILE="${PROJECT_ROOT}/.env"
@@ -47,7 +54,7 @@ has_network_access() {
     return 1
   fi
 
-  "${PYTHON_BIN}" - <<'PY' >/dev/null 2>&1
+  "${BOOTSTRAP_PYTHON_BIN}" - <<'PY' >/dev/null 2>&1
 import socket
 
 try:
@@ -87,6 +94,8 @@ Commands:
 
 Environment variables:
   PYTHON_BIN           Python executable to use (default: python)
+  BOOTSTRAP_PYTHON_BIN Python executable used for pre-sync network checks (default: python3)
+  UV_BIN               uv executable used for lockfile-backed dependency sync (default: uv)
   SKIP_INSTALL         Set to 1 to skip dependency installation during start
   SKIP_DB_CHECK        Set to 1 to skip PostgreSQL readiness check
   HOST                 Uvicorn host binding (default: 0.0.0.0)
@@ -103,9 +112,9 @@ USAGE
 }
 
 install_deps() {
-  echo "[prototype-local] Installing editable package and dev extras..." >&2
-  "${PYTHON_BIN}" -m pip install --upgrade pip
-  "${PYTHON_BIN}" -m pip install -e "${PROJECT_ROOT}[dev]"
+  echo "[prototype-local] Syncing locked dev dependencies..." >&2
+  VIRTUAL_ENV= "${UV_BIN}" sync --locked --extra dev
+  PYTHON_BIN="${PROJECT_ROOT}/.venv/bin/python"
 }
 
 load_env() {

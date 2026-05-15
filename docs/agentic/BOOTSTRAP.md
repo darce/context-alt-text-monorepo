@@ -8,13 +8,13 @@
 ## Testing Commands
 
 ```bash
-# Backend (Python; PYENV_VERSION pin avoids silent env mismatch in ruff/mypy)
+# Backend (Python app; use the uv-managed project `.venv`)
 cd apps/prototype-description-service
-PYENV_VERSION=description-service pytest recognition/tests/api/         # API tests
-PYENV_VERSION=description-service pytest recognition/tests/integration/ # Integration tests (DB)
-PYENV_VERSION=description-service pytest recognition/tests/unit/        # Unit tests
-PYENV_VERSION=description-service ruff check .                          # Lint
-PYENV_VERSION=description-service mypy .                                # Types
+VIRTUAL_ENV= uv run --locked pytest recognition/tests/api/         # API tests
+VIRTUAL_ENV= uv run --locked pytest recognition/tests/integration/ # Integration tests (DB)
+VIRTUAL_ENV= uv run --locked pytest recognition/tests/unit/        # Unit tests
+VIRTUAL_ENV= uv run --locked ruff check .                          # Lint
+VIRTUAL_ENV= uv run --locked mypy .                                # Types
 
 # Frontend (TypeScript/React)
 cd apps/prototype-wp-alt-context
@@ -80,7 +80,7 @@ See [maps/tech-stack.md](maps/tech-stack.md) for the full library manifest.
 
 Two MCP servers are registered for this workspace. VS Code and Claude Code manage their lifecycles automatically via `.vscode/mcp.json` and `.mcp.json`.
 
-Non-interactive harness rule: committed MCP configs use `PYENV_VERSION=description-service`; use `pyenv activate description-service` only for optional interactive shells.
+Non-interactive harness rule: description-service app commands use `VIRTUAL_ENV= uv run --locked ...`; committed MCP configs still use `PYENV_VERSION=description-service`. Use `pyenv activate description-service` only for optional interactive MCP-tool shells.
 
 ### Core Ledger Server (`agent-handoff-mcp`)
 
@@ -165,7 +165,9 @@ mcp-agent-orchestrator --workspace-root "$(pwd)" dispatch \
 For Codex app sessions on the same machine, prefer the checked-in project-scoped
 adapter at [`../../.codex/config.toml`](../../.codex/config.toml),
 which registers the local stdio server as `mcp-agent-handoff` with the required
-`PYENV_VERSION=description-service` contract and repo-relative startup paths.
+MCP-toolchain `PYENV_VERSION=description-service` contract and repo-relative
+startup paths; description-service app commands themselves run from the
+uv-managed project `.venv`.
 
 ### HTTP Transport (Codex Custom MCP)
 

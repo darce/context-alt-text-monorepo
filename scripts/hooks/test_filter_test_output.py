@@ -273,7 +273,7 @@ class TestCommandDetection:
         "make test-handoff",
         "make test-orchestrator",
         "pytest tests/test_core.py",
-        "PYENV_VERSION=description-service pytest tests/",
+        "VIRTUAL_ENV= uv run --locked pytest tests/",
         "cd packages/agent-handoff-mcp && make test-handoff",
         "npm test",
         "npm run test",

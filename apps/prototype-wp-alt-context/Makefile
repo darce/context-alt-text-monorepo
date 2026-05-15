@@ -57,7 +57,7 @@ check-php: php-cs phpstan
 _js-deps:
 	@if [ ! -x node_modules/.bin/eslint ] || [ ! -x node_modules/.bin/prettier ] || [ ! -x node_modules/.bin/tsc ] || [ ! -x node_modules/.bin/vitest ]; then \
 		echo "Plugin Node dev dependencies missing; installing..."; \
-		npm install --no-fund --no-audit; \
+		npm ci --no-fund --no-audit; \
 	fi
 
 # Pre-flight installer: if the plugin's composer dev dependencies are missing,

@@ -84,6 +84,8 @@ export const useJobStateMachineEffects = ({
   useEffect(() => {
     if (scanStatus?.status === 'completed') {
       void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.all });
     }
   }, [scanStatus?.status, queryClient]);
 

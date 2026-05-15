@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace AltContext\Sovereign\Mappers;
 
 require_once dirname( __DIR__, 2 ) . '/support/trait-detects-system-defined-labels.php';
+require_once dirname( __DIR__, 2 ) . '/api/class-blob-url-rewriter.php';
 
+use AltContext\Api\BlobUrlRewriter;
 use AltContext\Support\DetectsSystemDefinedLabels;
 use function absint;
 use function is_array;
@@ -32,6 +34,11 @@ trait MapsResponseFields {
 	 * @param array<string,mixed> $member_row
 	 */
 	private function resolve_thumb_url( array $member_row, int $media_id ): ?string {
+		$blob_backed_url = $this->resolve_blob_backed_url( $member_row['thumb_path'] ?? null );
+		if ( is_string( $blob_backed_url ) && '' !== trim( $blob_backed_url ) && false !== strpos( $blob_backed_url, '/recognition/face-thumbs/' ) ) {
+			return $blob_backed_url;
+		}
+
 		if ( $media_id > 0 ) {
 			$attachment_url = wp_get_attachment_url( $media_id );
 			if ( is_string( $attachment_url ) && '' !== trim( $attachment_url ) ) {
@@ -39,7 +46,7 @@ trait MapsResponseFields {
 			}
 		}
 
-		return null;
+		return $blob_backed_url;
 	}
 
 	/**
@@ -53,6 +60,24 @@ trait MapsResponseFields {
 		$attachment_url = wp_get_attachment_url( $media_id );
 		if ( is_string( $attachment_url ) && '' !== trim( $attachment_url ) ) {
 			return $attachment_url;
+		}
+
+		return null;
+	}
+
+	private function resolve_blob_backed_url( mixed $value ): ?string {
+		if ( ! is_string( $value ) || '' === trim( $value ) ) {
+			return null;
+		}
+
+		$trimmed = trim( $value );
+		$rewritten = BlobUrlRewriter::rewrite_string( $trimmed );
+		if ( '' === trim( $rewritten ) ) {
+			return null;
+		}
+
+		if ( $rewritten !== $trimmed || str_starts_with( $rewritten, 'http://' ) || str_starts_with( $rewritten, 'https://' ) || str_starts_with( $rewritten, '/' ) ) {
+			return $rewritten;
 		}
 
 		return null;

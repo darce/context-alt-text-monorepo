@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace AltContext\Sovereign\Repositories;
 
+require_once dirname( __DIR__, 2 ) . '/api/class-blob-url-rewriter.php';
 require_once __DIR__ . '/interface-sync-state-repository.php';
 require_once __DIR__ . '/class-sync-state-repository.php';
+
+use AltContext\Api\BlobUrlRewriter;
 
 class RosterEntryProjectionRepository {
 	private SyncStateRepositoryInterface $sync_state_repository;
@@ -128,13 +131,14 @@ class RosterEntryProjectionRepository {
 		}
 
 		$table_clusters = $wpdb->prefix . 'acx_clusters';
-		$placeholders   = \implode( ', ', \array_fill( 0, \count( $person_ids ), '%d' ) );
-		$query          = $wpdb->prepare(
-			\sprintf( 'SELECT * FROM %%i WHERE person_id IN (%s) ORDER BY updated_at DESC', $placeholders ),
-			$table_clusters,
-			...$person_ids
+		$rows           = $wpdb->get_results(
+			$wpdb->prepare(
+				'SELECT * FROM %i WHERE person_id IN (' . \implode( ', ', \array_fill( 0, \count( $person_ids ), '%d' ) ) . ') ORDER BY updated_at DESC',
+				$table_clusters,
+				...$person_ids
+			),
+			ARRAY_A
 		);
-		$rows           = $wpdb->get_results( $query, ARRAY_A );
 
 		if ( ! \is_array( $rows ) ) {
 			return array();
@@ -169,13 +173,14 @@ class RosterEntryProjectionRepository {
 		}
 
 		$table_members = $wpdb->prefix . 'acx_identity_members';
-		$placeholders  = \implode( ', ', \array_fill( 0, \count( $cluster_uuids ), '%s' ) );
-		$query         = $wpdb->prepare(
-			\sprintf( 'SELECT * FROM %%i WHERE cluster_uuid IN (%s) ORDER BY updated_at DESC', $placeholders ),
-			$table_members,
-			...$cluster_uuids
+		$rows          = $wpdb->get_results(
+			$wpdb->prepare(
+				'SELECT * FROM %i WHERE cluster_uuid IN (' . \implode( ', ', \array_fill( 0, \count( $cluster_uuids ), '%s' ) ) . ') ORDER BY updated_at DESC',
+				$table_members,
+				...$cluster_uuids
+			),
+			ARRAY_A
 		);
-		$rows          = $wpdb->get_results( $query, ARRAY_A );
 
 		if ( ! \is_array( $rows ) ) {
 			return array();
@@ -271,11 +276,40 @@ class RosterEntryProjectionRepository {
 		return array(
 			'identity_id'           => \trim( (string) ( $row['identity_uuid'] ?? '' ) ),
 			'media_id'              => isset( $row['attachment_id'] ) ? (int) $row['attachment_id'] : 0,
-			'media_url'             => isset( $row['thumb_path'] ) ? \trim( (string) $row['thumb_path'] ) : null,
+			'media_url'             => $this->resolve_projected_media_url( $row ),
 			'bbox'                  => $bbox,
 			'similarity'            => $similarity,
 			'similarity_threshold'  => $similarity_threshold,
 		);
+	}
+
+	/**
+	 * @param array<string,mixed> $row
+	 */
+	private function resolve_projected_media_url( array $row ): ?string {
+		$media_id = isset( $row['attachment_id'] ) ? (int) $row['attachment_id'] : 0;
+		if ( $media_id > 0 && \function_exists( 'wp_get_attachment_url' ) ) {
+			$attachment_url = \wp_get_attachment_url( $media_id );
+			if ( \is_string( $attachment_url ) && '' !== \trim( $attachment_url ) ) {
+				return $attachment_url;
+			}
+		}
+
+		$thumb_path = isset( $row['thumb_path'] ) ? \trim( (string) $row['thumb_path'] ) : '';
+		if ( '' === $thumb_path ) {
+			return null;
+		}
+
+		$rewritten = BlobUrlRewriter::rewrite_string( $thumb_path );
+		if ( '' === \trim( $rewritten ) ) {
+			return null;
+		}
+
+		if ( $rewritten !== $thumb_path || \str_starts_with( $rewritten, 'http://' ) || \str_starts_with( $rewritten, 'https://' ) || \str_starts_with( $rewritten, '/' ) ) {
+			return $rewritten;
+		}
+
+		return null;
 	}
 
 	/**

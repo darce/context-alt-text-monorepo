@@ -906,7 +906,7 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 
 	/**
 	 * @param array{id:string,batch_index:int,submitted_total:int}|null $batch_context
-	 * @param int[] $media_ids
+	 * @param array<int,array<string,mixed>> $media_items
 	 * @param int[] $unreadable_media_ids
 	 */
 	private function record_batch_run_success_from_response( ?array $batch_context, WP_REST_Response $response, array $media_items, array $unreadable_media_ids ): void {

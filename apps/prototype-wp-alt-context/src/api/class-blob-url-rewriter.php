@@ -7,9 +7,10 @@ namespace AltContext\Api;
 use function add_query_arg;
 use function array_merge;
 use function ctype_digit;
-use function str_contains;
-use function str_starts_with;
 use function rest_url;
+use function str_contains;
+use function str_ends_with;
+use function str_starts_with;
 use function wp_get_attachment_url;
 use function wp_salt;
 use const PHP_QUERY_RFC3986;
@@ -37,10 +38,12 @@ use const PHP_QUERY_RFC3986;
  * spinning up WordPress.
  */
 class BlobUrlRewriter {
-	private const RECOGNITION_BLOB_PREFIX = '/recognition/blobs/';
+	private const RECOGNITION_BLOB_PREFIX       = '/recognition/blobs/';
 	private const RECOGNITION_FACE_THUMB_PREFIX = '/recognition/face-thumbs/';
-	private const TOKEN_TTL_SECONDS       = 3600;
-	private const FACE_THUMB_QUERY_KEYS  = array( 'x', 'y', 'width', 'height' );
+	private const FILE_SCHEME                   = 'file://';
+	private const BLOB_SUFFIX                   = '.bin';
+	private const TOKEN_TTL_SECONDS             = 3600;
+	private const FACE_THUMB_QUERY_KEYS         = array( 'x', 'y', 'width', 'height' );
 	// Keep this bound aligned with docs/agentic/contracts/clustering-api.md
 	// "Face thumbnail crop contract" and the backend emitter/reader in
 	// apps/prototype-description-service/recognition/interface_adapters/http/blob_url.py
@@ -48,8 +51,8 @@ class BlobUrlRewriter {
 	private const FACE_THUMB_MAX_COMPONENT = 32768;
 
 	/**
-	 * Recursively rewrite `/recognition/blobs/<job>/<media>` strings inside
-	 * a decoded JSON structure to absolute, signed WP REST proxy URLs.
+	 * Recursively rewrite blob strings inside a decoded JSON structure to
+	 * absolute, signed WP REST proxy URLs.
 	 *
 	 * @param mixed $value Decoded JSON value (array, scalar, null).
 	 * @return mixed The same shape with blob paths rewritten in place.
@@ -74,6 +77,14 @@ class BlobUrlRewriter {
 	 * field without walking a structure.
 	 */
 	public static function rewrite_string( string $value ): string {
+		if ( str_starts_with( $value, self::FILE_SCHEME ) ) {
+			$blob_path = self::rewrite_file_uri_to_blob_path( $value );
+			if ( null === $blob_path ) {
+				return '';
+			}
+			$value = $blob_path;
+		}
+
 		$route_kind = 'blobs';
 		$prefix     = self::RECOGNITION_BLOB_PREFIX;
 		if ( str_starts_with( $value, self::RECOGNITION_FACE_THUMB_PREFIX ) ) {
@@ -119,7 +130,7 @@ class BlobUrlRewriter {
 			}
 		}
 
-		$relative = 'acx/v1/' . 'recognition/' . $route_kind . '/' . $job_id . '/' . $media_id;
+		$relative = 'acx/v1/recognition/' . $route_kind . '/' . $job_id . '/' . $media_id;
 		$base_url = \function_exists( 'rest_url' ) ? rest_url( $relative ) : '/' . $relative;
 
 		$expires = self::current_time() + self::TOKEN_TTL_SECONDS;
@@ -135,6 +146,40 @@ class BlobUrlRewriter {
 			),
 			$base_url
 		);
+	}
+
+	private static function rewrite_file_uri_to_blob_path( string $value ): ?string {
+		$raw_path = \substr( $value, \strlen( self::FILE_SCHEME ) );
+		if ( '' === $raw_path ) {
+			return null;
+		}
+
+		$parts = \array_values(
+			\array_filter(
+				\explode( '/', $raw_path ),
+				static fn ( string $part ): bool => '' !== $part
+			)
+		);
+		if ( \count( $parts ) < 3 ) {
+			return null;
+		}
+
+		$media_filename = $parts[ \count( $parts ) - 1 ];
+		if ( ! str_ends_with( $media_filename, self::BLOB_SUFFIX ) ) {
+			return null;
+		}
+
+		$job_id   = $parts[ \count( $parts ) - 2 ];
+		$media_id = \substr( $media_filename, 0, -\strlen( self::BLOB_SUFFIX ) );
+		if ( ! self::is_safe_route_segment( $job_id ) || ! self::is_safe_route_segment( $media_id ) ) {
+			return null;
+		}
+
+		return self::RECOGNITION_BLOB_PREFIX . $job_id . '/' . $media_id;
+	}
+
+	private static function is_safe_route_segment( string $value ): bool {
+		return 1 === \preg_match( '/^[A-Za-z0-9._-]+$/', $value );
 	}
 
 	/**
@@ -194,7 +239,6 @@ class BlobUrlRewriter {
 		if ( \function_exists( 'wp_salt' ) ) {
 			return wp_salt( 'auth' );
 		}
-		// Test fallback: deterministic so unit tests can recompute signatures.
 		return 'acx-test-salt';
 	}
 

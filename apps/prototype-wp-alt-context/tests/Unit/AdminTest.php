@@ -147,6 +147,16 @@ class AdminTest extends TestCase
         $this->assertSame('local', $localized['recognitionSource'] ?? null);
     }
 
+    public function testLocalizeSpaConfigUsesCanonicalTenantIdentity(): void
+    {
+        $this->invokePrivateMethod($this->admin, 'localize_spa_config', ['test-handle']);
+
+        $localized = $GLOBALS['__ac_localized_scripts']['test-handle']['AltContextAdmin'] ?? null;
+
+        $this->assertIsArray($localized);
+        $this->assertSame(self::currentTenantId(), $localized['tenant_id'] ?? null);
+    }
+
     /**
      * Test enqueue_scripts enqueues and localizes build assets in production.
      */
@@ -160,6 +170,14 @@ class AdminTest extends TestCase
 
         $this->assertArrayHasKey('alt-context-admin', $GLOBALS['__ac_scripts']);
         $this->assertArrayHasKey('alt-context-admin', $GLOBALS['__ac_localized_scripts']);
+        $this->assertSame(
+            'http://example.test/wp-content/plugins/alt-context/public/assets/dist/assets/admin-test.js',
+            $GLOBALS['__ac_scripts']['alt-context-admin']['src'] ?? null
+        );
+        $this->assertSame(
+            'http://example.test/wp-content/plugins/alt-context/public/assets/dist/assets/admin-test.css',
+            $GLOBALS['__ac_styles']['alt-context-admin-0']['src'] ?? null
+        );
         $this->assertArrayNotHasKey('admin_notices', $GLOBALS['__ac_actions']);
     }
 

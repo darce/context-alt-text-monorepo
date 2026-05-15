@@ -10,16 +10,22 @@ Use this checklist for one seeded-media Workbench scan that produces the reusabl
 1. Verify the local description-service database path before touching OCI.
 2. From `apps/prototype-description-service`, use the default native local PostgreSQL contract on `localhost:5432` first:
    - `cp .env.example .env`
+   - confirm `.env` keeps `RECOGNITION_RUNTIME_MODE=development`, `RECOGNITION_API_KEY_HEADER=X-API-Key`, and `RECOGNITION_ALLOWED_API_KEYS=acx-local-dev-key`
    - `make postgres-start`
    - `make reset`
 3. Use the repo-native database shell instead of raw `psql` when you need to inspect the local DB:
    - `./scripts/db_shell.sh --admin -c "SELECT current_database(), current_user;"`
    - `./scripts/db_shell.sh --admin -c "SELECT COUNT(*) FROM tenants;"`
-4. If native local PostgreSQL is unavailable, fall back to the disposable Docker database and keep that mode explicit in the run log:
+4. Point the LocalWP site-local constants at the local backend for this preflight pass:
+   - `define('ACX_RECOGNITION_URL', 'http://localhost:8000');`
+   - `define('ACX_RECOGNITION_API_KEY', 'acx-local-dev-key');`
+5. Run the plugin `/settings/test` probe against `http://localhost:8000` and stop on any `403` until the probe returns `outcome="connected"`.
+6. Run the seeded-media scan once against the local backend and record the local scan result before opening OCI logs.
+7. If native local PostgreSQL is unavailable, fall back to the disposable Docker database and keep that mode explicit in the run log:
    - `docker compose -f docker-compose.db.yml up -d postgres`
    - `PGPORT=55432 make reset`
-5. Record the local DB mode (`localhost:5432` native or `localhost:55432` Docker) in [E15-3a-localwp-oci-run-log.md](./E15-3a-localwp-oci-run-log.md) before continuing.
-6. Only after the local DB path is green should you open OCI stdout, `GET /metrics`, and the remote proof-capture flow below.
+8. Record the local DB mode (`localhost:5432` native or `localhost:55432` Docker), local backend URL, and local probe result in [E15-3a-localwp-oci-run-log.md](./E15-3a-localwp-oci-run-log.md) before continuing.
+9. Only after the local DB path and local scan are green should you switch LocalWP back to the OCI URL/key, open OCI stdout, `GET /metrics`, and run the remote proof-capture flow below.
 
 ## Before You Start
 
@@ -32,7 +38,8 @@ Use this checklist for one seeded-media Workbench scan that produces the reusabl
    - `Local PostgreSQL mode`
 3. Confirm the LocalWP site and plugin build still match the packet assumptions:
    - LocalWP origin `http://localhost:10010`
-   - backend `https://api.altcontext.com`
+   - local preflight backend `http://localhost:8000`
+   - remote proof backend `https://api.altcontext.com`
    - build under test `feature/e15-22`
 4. Open the two backend evidence surfaces before starting the scan:
    - OCI stdout log tail: `cd /opt/acx-backend/prod && docker compose -f docker-compose.env.yml logs -f`

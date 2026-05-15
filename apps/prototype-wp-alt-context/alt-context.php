@@ -57,11 +57,23 @@ if (!defined('ACX_PLUGIN_DIR')) {
 }
 
 if (!defined('ACX_PLUGIN_URL')) {
-    define('ACX_PLUGIN_URL', plugin_dir_url(__FILE__));
+    $acxPluginUrl = '';
+    $pluginsUrlFunction = 'plugins_url';
+    if (defined('WPINC') && function_exists($pluginsUrlFunction)) {
+        $acxPluginUrl = $pluginsUrlFunction('', 'alt-context/alt-context.php');
+    } elseif (function_exists('plugin_dir_url')) {
+        $acxPluginUrl = plugin_dir_url(__FILE__);
+    }
+    define(
+        'ACX_PLUGIN_URL',
+        '' === $acxPluginUrl
+            ? ''
+            : (function_exists('trailingslashit') ? trailingslashit($acxPluginUrl) : rtrim((string) $acxPluginUrl, '/') . '/')
+    );
 }
 
 if (!defined('ACX_PLUGIN_BASENAME')) {
-    define('ACX_PLUGIN_BASENAME', plugin_basename(__FILE__));
+    define('ACX_PLUGIN_BASENAME', 'alt-context/alt-context.php');
 }
 
 if (!defined('ACX_VERSION')) {
@@ -221,7 +233,7 @@ function acx_load_textdomain(): void
     load_plugin_textdomain(
         'alt-context',
         false,
-        dirname(plugin_basename(__FILE__)) . '/public/languages'
+        dirname(ACX_PLUGIN_BASENAME) . '/public/languages'
     );
 }
 

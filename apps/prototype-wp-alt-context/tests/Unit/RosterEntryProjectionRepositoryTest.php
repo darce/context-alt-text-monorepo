@@ -136,6 +136,54 @@ class RosterEntryProjectionRepositoryTest extends TestCase
 		$this->assertSame('identity-1', $data[0]['clusters'][0]['representative_identity']['identity_id']);
 	}
 
+	public function testListEntriesRewritesBlobThumbPathWhenAttachmentUrlMissing(): void
+	{
+		global $wpdb;
+
+		$wpdb->tableRows['wp_acx_persons'] = [
+			[
+				'id' => 1,
+				'person_uuid' => '11111111-1111-1111-1111-111111111111',
+				'name' => 'Alice',
+				'tags' => '[]',
+				'updated_at' => '2026-05-07 14:00:00',
+			],
+		];
+		$wpdb->tableRows['wp_acx_clusters'] = [
+			[
+				'cluster_uuid' => 'cluster-1',
+				'person_id' => 1,
+				'identity_count' => 1,
+				'representative_id' => 'identity-1',
+				'updated_at' => '2026-05-07 14:30:00',
+			],
+		];
+		$wpdb->tableRows['wp_acx_identity_members'] = [
+			[
+				'identity_uuid' => 'identity-1',
+				'cluster_uuid' => 'cluster-1',
+				'attachment_id' => 6731,
+				'bbox_json' => '[0, 0, 10, 10]',
+				'thumb_path' => 'file:///private/tmp/acx-recognition-blobs/tenant-x/job-y/6731.bin',
+				'similarity' => '0.98',
+				'updated_at' => '2026-05-07 14:31:00',
+			],
+		];
+
+		$repository = new RosterEntryProjectionRepository(
+			new RosterEntryProjectionSyncStateSpy(
+				snapshotVersion: 55,
+				lastUpdated: '2026-05-07 18:00:00',
+				lastSyncResult: 'ok'
+			)
+		);
+
+		$data = $repository->list_entries(self::currentTenantId());
+		$parts = \parse_url($data[0]['clusters'][0]['instances'][0]['media_url']);
+
+		$this->assertSame('/wp-json/acx/v1/recognition/blobs/job-y/6731', $parts['path']);
+	}
+
 	public function testListEntriesIncludesOptionalSimilarityThresholdWhenProjected(): void
 	{
 		global $wpdb;

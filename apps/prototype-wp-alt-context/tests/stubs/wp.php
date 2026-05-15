@@ -164,6 +164,23 @@ if (!class_exists('WP_REST_Request')) {
     }
 }
 
+if (!function_exists('plugins_url')) {
+    function plugins_url(string $path = '', string $plugin = ''): string
+    {
+        $base = 'http://example.test/wp-content/plugins';
+
+        if ($plugin !== '' && str_contains($plugin, '/')) {
+            $base .= '/' . trim(dirname($plugin), '/');
+        }
+
+        if ($path === '') {
+            return $base;
+        }
+
+        return $base . '/' . ltrim($path, '/');
+    }
+}
+
 if (!class_exists('WP_REST_Response')) {
     class WP_REST_Response
     {

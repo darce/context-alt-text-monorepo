@@ -83,6 +83,10 @@ const withTimeout = async <T,>(
   }
 };
 
+const isDedicatedFaceThumbUrl = (thumbUrl: string | null | undefined): boolean => {
+  return typeof thumbUrl === 'string' && thumbUrl.includes('recognition/face-thumbs/');
+};
+
 export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLabelingPanelProps): React.JSX.Element => {
   const [labelInput, setLabelInput] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -216,10 +220,17 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
           ) : members.length > 0 ? (
             members.map((member) => (
               <div key={member.identity_id} className="acx-cluster-labeling-panel__face">
-                {member.thumb_url ? (
-                  <Avatar src={member.thumb_url} size="lg" alt="" />
+                {member.thumb_url && isDedicatedFaceThumbUrl(member.thumb_url) ? (
+                  <Avatar src={member.thumb_url} size="lg" alt={__('Face to label', 'alt-context')} />
                 ) : member.media_url && member.bbox ? (
-                  <FaceThumbnail mediaUrl={member.media_url} bbox={member.bbox} size="lg" />
+                  <FaceThumbnail
+                    mediaUrl={member.media_url}
+                    bbox={member.bbox}
+                    size="lg"
+                    alt={__('Face to label', 'alt-context')}
+                  />
+                ) : member.thumb_url ? (
+                  <Avatar src={member.thumb_url} size="lg" alt={__('Face to label', 'alt-context')} />
                 ) : (
                   <div className="acx-face-thumbnail acx-face-thumbnail--placeholder" />
                 )}

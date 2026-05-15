@@ -7,6 +7,7 @@ namespace AltContext\Sovereign\Sync;
 require_once __DIR__ . '/../repositories/interface-sync-state-repository.php';
 require_once __DIR__ . '/class-sync-pull-result.php';
 require_once __DIR__ . '/interface-snapshot-client.php';
+require_once __DIR__ . '/interface-targeted-sync-pull-job.php';
 
 use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
 use RuntimeException;
@@ -15,12 +16,17 @@ use Throwable;
 use function do_action;
 use function esc_html;
 use function is_wp_error;
+use function array_filter;
+use function array_map;
+use function array_unique;
+use function array_values;
 use function get_transient;
 use function md5;
 use function sanitize_text_field;
 use function set_transient;
+use function trim;
 
-class SyncPullJob implements SyncPullJobInterface {
+class SyncPullJob implements TargetedSyncPullJobInterface {
 	/** Cooldown after projection or auth failures. */
 	private const FAILED_SYNC_COOLDOWN_SECONDS = 30;
 	/** Short cooldown after transient connectivity failures to speed recovery. */
@@ -100,6 +106,77 @@ class SyncPullJob implements SyncPullJobInterface {
 				array(
 					'tenant_id' => $tenant_id,
 					'context' => 'projection_acknowledgement_failed',
+					'message' => $throwable->getMessage(),
+				)
+			);
+		}
+
+		return SyncPullResult::ok();
+	}
+
+	/**
+	 * @param string[] $cluster_ids
+	 */
+	public function perform_targeted_snapshot( string $tenant_id, array $cluster_ids ): SyncPullResult {
+		$normalized_cluster_ids = array_values(
+			array_unique(
+				array_filter(
+					array_map(
+						static function ( $cluster_id ): string {
+							return sanitize_text_field( trim( (string) $cluster_id ) );
+						},
+						$cluster_ids
+					),
+					static function ( string $cluster_id ): bool {
+						return '' !== $cluster_id;
+					}
+				)
+			)
+		);
+
+		if ( empty( $normalized_cluster_ids ) ) {
+			return SyncPullResult::skipped();
+		}
+
+		$snapshot = $this->client->fetch_targeted_snapshot( $tenant_id, $normalized_cluster_ids );
+		if ( is_wp_error( $snapshot ) ) {
+			$this->sync_state_repository->set_last_sync_result( $tenant_id, SyncPullResult::UNREACHABLE );
+			do_action(
+				'acx_sync_pull_failed',
+				array(
+					'tenant_id' => $tenant_id,
+					'context' => 'targeted_snapshot_fetch_failed',
+					'message' => $snapshot->get_error_message(),
+				)
+			);
+			return SyncPullResult::unreachable();
+		}
+
+		try {
+			$this->projector->project_delta( $tenant_id, $snapshot );
+		} catch ( Throwable $throwable ) {
+			$this->sync_state_repository->set_last_sync_result( $tenant_id, SyncPullResult::FAILED );
+			do_action(
+				'acx_sync_pull_failed',
+				array(
+					'tenant_id' => $tenant_id,
+					'context' => 'targeted_projection_failed',
+					'message' => $throwable->getMessage(),
+				)
+			);
+			return SyncPullResult::failed();
+		}
+
+		$this->sync_state_repository->set_last_sync_result( $tenant_id, SyncPullResult::OK );
+
+		try {
+			$this->maybe_acknowledge_projection( $snapshot );
+		} catch ( Throwable $throwable ) {
+			do_action(
+				'acx_sync_pull_failed',
+				array(
+					'tenant_id' => $tenant_id,
+					'context' => 'targeted_projection_acknowledgement_failed',
 					'message' => $throwable->getMessage(),
 				)
 			);

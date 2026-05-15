@@ -30,6 +30,8 @@ export interface JobStateMachineOptions {
   onJobNotFound?: (jobId: string) => void;
 }
 
+const isNotFoundError = (error: unknown): boolean => error instanceof Error && error.message.includes('(404)');
+
 export const useJobStateMachine = ({
   onScanStart,
   onScanComplete,
@@ -77,17 +79,33 @@ export const useJobStateMachine = ({
   const batchRunId = activeBatchRunId ?? latestScanJob?.batchRunId ?? null;
 
   // Poll for history / external updates
-  const { scanStatusQuery, batchRunStatusQuery } = useCombinedScanStatus(jobId ?? null, activeJobIds, batchRunId);
+  const { scanStatusQuery, multiScanStatus = [], batchRunStatusQuery } = useCombinedScanStatus(
+    jobId ?? null,
+    activeJobIds,
+    batchRunId,
+  );
 
   useEffect(() => {
     if (!jobId) {
       return;
     }
-    const message = scanStatusQuery.error instanceof Error ? scanStatusQuery.error.message : '';
-    if (message.includes('(404)')) {
+    if (isNotFoundError(scanStatusQuery.error)) {
       onJobNotFound?.(jobId);
     }
   }, [jobId, onJobNotFound, scanStatusQuery.error]);
+
+  useEffect(() => {
+    if (activeJobIds.length === 0) {
+      return;
+    }
+
+    multiScanStatus.forEach((statusQuery, index) => {
+      const staleJobId = activeJobIds[index];
+      if (staleJobId && isNotFoundError(statusQuery.error)) {
+        removeJob(staleJobId);
+      }
+    });
+  }, [activeJobIds, multiScanStatus, removeJob]);
 
   // Derive phase
   const currentPhase = useMemo<PipelinePhase>(

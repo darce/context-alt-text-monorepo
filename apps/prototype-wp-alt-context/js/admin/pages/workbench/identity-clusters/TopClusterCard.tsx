@@ -20,6 +20,10 @@ const resolveRepresentativeThumbUrl = (
   return rawUrl;
 };
 
+const isDedicatedFaceThumbUrl = (thumbUrl: string | null): boolean => {
+  return typeof thumbUrl === 'string' && thumbUrl.includes('recognition/face-thumbs/');
+};
+
 const resolveRepresentativeCrop = (
   representative: TopUnlabeledCluster['representatives'][number],
 ): { mediaUrl: string; bbox: BoundingBox } | null => {
@@ -108,10 +112,18 @@ export const TopClusterCard = ({
       : []
     : (cluster.representatives ?? []).slice(0, maxThumbs);
   const columnCount = reps.length <= 1 ? 1 : 2;
+  const rowCount = reps.length <= 2 ? 1 : 2;
   const cellSize = (gridSizePx - gapPx * (columnCount - 1)) / columnCount;
+  const gridHeight = cellSize * rowCount + gapPx * (rowCount - 1);
   const gridClassName =
     columnCount === 1 ? 'acx-top-cluster-card__grid acx-top-cluster-card__grid--single' : 'acx-top-cluster-card__grid';
+  const gridStyle: React.CSSProperties = {
+    height: gridHeight,
+    gridTemplateColumns: `repeat(${columnCount}, 1fr)`,
+    gridTemplateRows: `repeat(${rowCount}, 1fr)`,
+  };
   const isBusy = isDismissing || isConfirming;
+  const faceAltText = __('Face to label', 'alt-context');
   const unavailableImageLabel = __('Representative image unavailable', 'alt-context');
 
   const handleConfirmSuggestedLabelClick = () => {
@@ -133,18 +145,19 @@ export const TopClusterCard = ({
     <div className="acx-top-cluster-card">
       <div className="acx-top-cluster-card__faces">
         {reps.length > 0 ? (
-          <div className={gridClassName}>
+          <div className={gridClassName} style={gridStyle}>
             {reps.map((rep) => {
               const cropData = resolveRepresentativeCrop(rep);
               const thumbUrl = resolveRepresentativeThumbUrl(rep);
+              const useDedicatedThumb = isDedicatedFaceThumbUrl(thumbUrl);
               return (
                 <div key={rep.id} className="acx-top-cluster-card__thumb acx-top-cluster-card__thumb--frame">
-                  {thumbUrl ? (
+                  {useDedicatedThumb && thumbUrl ? (
                     <Avatar
                       src={thumbUrl}
                       sizePx={cellSize}
                       shape="square"
-                      alt=""
+                      alt={faceAltText}
                       className="acx-top-cluster-card__thumb-image"
                     />
                   ) : cropData ? (
@@ -153,7 +166,15 @@ export const TopClusterCard = ({
                       bbox={cropData.bbox}
                       sizePx={cellSize}
                       shape="square"
-                      alt=""
+                      alt={faceAltText}
+                      className="acx-top-cluster-card__thumb-image"
+                    />
+                  ) : thumbUrl ? (
+                    <Avatar
+                      src={thumbUrl}
+                      sizePx={cellSize}
+                      shape="square"
+                      alt={faceAltText}
                       className="acx-top-cluster-card__thumb-image"
                     />
                   ) : (

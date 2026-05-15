@@ -47,6 +47,28 @@ class BlobUrlRewriterTest extends TestCase
         $this->assertArrayHasKey('token', $query);
     }
 
+    public function testRewritesFileUriBlobToSignedRestUrl(): void
+    {
+        $rewritten = BlobUrlRewriter::rewrite_string(
+            'file:///private/tmp/acx-recognition-blobs/tenant-x/job-y/6731.bin'
+        );
+
+        $parts = \parse_url($rewritten);
+        $this->assertSame('/wp-json/acx/v1/recognition/blobs/job-y/6731', $parts['path']);
+        $query = [];
+        \parse_str($parts['query'] ?? '', $query);
+        $this->assertArrayHasKey('expires', $query);
+        $this->assertSame(
+            BlobUrlRewriter::sign('job-y', '6731', (int) $query['expires']),
+            $query['token']
+        );
+    }
+
+    public function testReturnsEmptyStringForMalformedFileUriBlob(): void
+    {
+        $this->assertSame('', BlobUrlRewriter::rewrite_string('file:///private/tmp/acx-recognition-blobs/tenant-x/job-y/6731.txt'));
+    }
+
     public function testFallsBackToSignedUrlWhenMediaIdNotNumeric(): void
     {
         $GLOBALS['__ac_attachment_urls']['abc'] = 'http://should-not-be-used.test/x.jpg';

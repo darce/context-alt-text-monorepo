@@ -20,6 +20,10 @@ import {
   DialogTitle,
 } from '../../../../components/ui/dialog';
 
+const isDedicatedFaceThumbUrl = (thumbUrl: string | null | undefined): boolean => {
+  return typeof thumbUrl === 'string' && thumbUrl.includes('recognition/face-thumbs/');
+};
+
 interface ClusterReviewPanelProps {
   clusterId: string;
   onClose: () => void;
@@ -87,7 +91,7 @@ export const ClusterReviewPanel = ({ clusterId, onClose }: ClusterReviewPanelPro
             {members.map((member) => (
               <div key={member.identity_id} className="acx-cluster-member-card">
                 <div className="acx-cluster-member-card__thumbnail">
-                  {member.thumb_url ? (
+                  {member.thumb_url && isDedicatedFaceThumbUrl(member.thumb_url) ? (
                     <img
                       src={member.thumb_url}
                       alt={__('Cluster member', 'alt-context')}
@@ -99,6 +103,12 @@ export const ClusterReviewPanel = ({ clusterId, onClose }: ClusterReviewPanelPro
                       bbox={member.bbox}
                       size="lg"
                       alt={__('Cluster member', 'alt-context')}
+                    />
+                  ) : member.thumb_url ? (
+                    <img
+                      src={member.thumb_url}
+                      alt={__('Cluster member', 'alt-context')}
+                      className="acx-cluster-member-card__image"
                     />
                   ) : (
                     <div className="acx-placeholder" />

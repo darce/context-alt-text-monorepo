@@ -4,14 +4,26 @@ import {
   buildFallbackActivity,
   fetchRecognitionStatusEntries,
   hydrateRecognitionHistory,
+  MAX_JOB_HISTORY,
   persistHistory,
   type RecognitionActivityItem,
   type RecognitionHistorySource,
 } from './recognitionJobHistoryUtils';
 
+const buildDurableStatusMap = (items: RecognitionActivityItem[]): Record<string, string> => {
+  const statuses: Record<string, string> = {};
+  items.forEach((item) => {
+    if (item.jobId) {
+      statuses[item.jobId] = item.statusText;
+    }
+  });
+  return statuses;
+};
+
 export const useRecognitionJobHistory = () => {
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobHistory, setJobHistory] = useState<string[]>([]);
+  const [pollableJobIds, setPollableJobIds] = useState<string[]>([]);
   const [jobStatuses, setJobStatuses] = useState<Record<string, string>>({});
   const [jobDetails, setJobDetails] = useState<Record<string, JobStatusResponse>>({});
   const [recentActivity, setRecentActivity] = useState<RecognitionActivityItem[]>([]);
@@ -21,8 +33,15 @@ export const useRecognitionJobHistory = () => {
     const next = await hydrateRecognitionHistory();
     setRecentActivity(next.recentActivity);
     setJobHistory(next.jobHistory);
+    setPollableJobIds(next.pollableJobIds);
     setHistorySource(next.historySource);
-    setJobId((current) => (current && next.jobHistory.includes(current) ? current : next.selectedJobId));
+    setJobStatuses(next.historySource === 'durable' ? buildDurableStatusMap(next.recentActivity) : {});
+    if (next.historySource === 'durable' && next.pollableJobIds.length === 0) {
+      setJobDetails({});
+    }
+    setJobId((current) =>
+      current && next.pollableJobIds.includes(current) ? current : next.selectedJobId,
+    );
   }, []);
 
   useEffect(() => {
@@ -30,14 +49,14 @@ export const useRecognitionJobHistory = () => {
   }, [hydrateHistory]);
 
   useEffect(() => {
-    if (jobHistory.length === 0) {
+    if (pollableJobIds.length === 0) {
       return;
     }
 
     let cancelled = false;
 
     const fetchStatuses = async (): Promise<void> => {
-      const entries = await fetchRecognitionStatusEntries(jobHistory);
+      const entries = await fetchRecognitionStatusEntries(pollableJobIds);
 
       if (cancelled) {
         return;
@@ -46,8 +65,13 @@ export const useRecognitionJobHistory = () => {
       const staleIds = entries.filter((entry) => entry.notFound).map((entry) => entry.id);
       if (staleIds.length > 0) {
         const nextHistory = jobHistory.filter((id) => !staleIds.includes(id));
+        const nextPollableJobIds = pollableJobIds.filter((id) => !staleIds.includes(id));
         setJobHistory(nextHistory);
-        persistHistory(nextHistory);
+        setPollableJobIds(nextPollableJobIds);
+        setRecentActivity((prev) => prev.filter((item) => !item.jobId || !staleIds.includes(item.jobId)));
+        if (historySource === 'browser_local_fallback') {
+          persistHistory(nextHistory);
+        }
         setJobStatuses((prev) => {
           const next = { ...prev };
           staleIds.forEach((id) => {
@@ -62,8 +86,8 @@ export const useRecognitionJobHistory = () => {
           });
           return next;
         });
-        setJobId((current) => (current && staleIds.includes(current) ? (nextHistory[0] ?? null) : current));
-        if (nextHistory.length === 0) {
+        setJobId((current) => (current && staleIds.includes(current) ? (nextPollableJobIds[0] ?? null) : current));
+        if (nextPollableJobIds.length === 0) {
           return;
         }
       }
@@ -95,13 +119,14 @@ export const useRecognitionJobHistory = () => {
     return () => {
       cancelled = true;
     };
-  }, [jobHistory]);
+  }, [historySource, jobHistory, pollableJobIds]);
 
   const rememberJob = useCallback(
     (nextJobId: string) => {
       setJobHistory((prev) => {
         const next = [nextJobId, ...prev.filter((id) => id !== nextJobId)].slice(0, MAX_JOB_HISTORY);
         persistHistory(next);
+        setPollableJobIds(next);
         if (historySource !== 'durable') {
           setRecentActivity(buildFallbackActivity(next));
         }
@@ -113,9 +138,12 @@ export const useRecognitionJobHistory = () => {
     [historySource, hydrateHistory],
   );
 
-  const selectJob = useCallback((id: string) => {
-    setJobId(id);
-  }, []);
+  const selectJob = useCallback(
+    (id: string) => {
+      setJobId((current) => (pollableJobIds.includes(id) ? id : current));
+    },
+    [pollableJobIds],
+  );
 
   const clearHistory = useCallback(() => {
     persistHistory([]);
@@ -124,6 +152,7 @@ export const useRecognitionJobHistory = () => {
     }
 
     setJobHistory([]);
+    setPollableJobIds([]);
     setJobStatuses({});
     setJobDetails({});
     setRecentActivity([]);
@@ -132,16 +161,19 @@ export const useRecognitionJobHistory = () => {
 
   const forgetJob = useCallback(
     (staleJobId: string) => {
-      if (historySource !== 'browser_local_fallback') {
-        return;
-      }
-
       setJobHistory((prev) => {
         const next = prev.filter((id) => id !== staleJobId);
-        persistHistory(next);
-        setRecentActivity(buildFallbackActivity(next));
+        if (historySource === 'browser_local_fallback') {
+          persistHistory(next);
+          setRecentActivity(buildFallbackActivity(next));
+        } else {
+          setRecentActivity((previousActivity) =>
+            previousActivity.filter((item) => !item.jobId || item.jobId !== staleJobId),
+          );
+        }
         return next;
       });
+      setPollableJobIds((prev) => prev.filter((id) => id !== staleJobId));
       setJobStatuses((prev) => {
         const next = { ...prev };
         delete next[staleJobId];

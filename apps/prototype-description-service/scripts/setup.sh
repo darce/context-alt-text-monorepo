@@ -10,7 +10,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-PYTHON_BIN="${PYTHON_BIN:-python}"
+UV_BIN="${UV_BIN:-uv}"
+PROJECT_VENV_PYTHON="${PROJECT_ROOT}/.venv/bin/python"
 
 # Parse arguments
 INSTALL_FACE=1
@@ -23,19 +24,19 @@ for arg in "$@"; do
   esac
 done
 
-echo "[setup] Installing core dependencies via pyproject.toml..."
+echo "[setup] Syncing locked core dependencies via uv.lock..."
 cd "${PROJECT_ROOT}"
-"${PYTHON_BIN}" -m pip install -e ".[dev]"
+VIRTUAL_ENV= "${UV_BIN}" sync --locked --extra dev
 
 if [[ "${INSTALL_FACE}" -eq 1 ]]; then
   echo "[setup] Installing face detection dependencies..."
   
   if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]]; then
     echo "[setup] Detected macOS Apple Silicon - using specialized install script..."
-    "${SCRIPT_DIR}/install_insightface_mac.sh"
+    PYTHON_BIN="${PROJECT_VENV_PYTHON}" "${SCRIPT_DIR}/install_insightface_mac.sh"
   else
-    echo "[setup] Installing insightface via pip..."
-    "${PYTHON_BIN}" -m pip install -e ".[face]"
+    echo "[setup] Syncing locked InsightFace dependencies..."
+    VIRTUAL_ENV= "${UV_BIN}" sync --locked --extra dev --extra face
   fi
 else
   echo "[setup] Skipping face detection dependencies (--no-face specified)"

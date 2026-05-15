@@ -13,7 +13,7 @@ face-scan/clustering plan:
 
 - PostgreSQL user with rights to create/drop databases and extensions.
 - `pgvector` extension installed on the server (`CREATE EXTENSION vector;`).
-- Python 3.11+ virtual environment.
+- Python 3.12+ plus `uv`.
 
 ## 2. Environment Variables
 
@@ -24,11 +24,9 @@ cd apps/prototype-description-service
 cp .env.example .env
 ```
 
-| Variable            | Purpose                                                                                                 | Default                                                                |
-| ------------------- | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `POSTGRES_DSN`      | Async SQLAlchemy DSN used by the FastAPI app                                                            | `postgresql+asyncpg://context:context@localhost:5432/alt_context_service` |
-| `POSTGRES_SYNC_DSN` | Optional sync DSN for Alembic. If omitted we derive it from `POSTGRES_DSN`.                             | same host/DB via psycopg                                               |
-| `PGVECTOR_DIM`      | Embedding dimension stored in `media_faces.embedding`. Keep at 1024 unless the embedding model changes. | `1024`                                                                 |
+- `POSTGRES_DSN` — Async SQLAlchemy DSN used by the FastAPI app. Default: `postgresql+asyncpg://context:context@localhost:5432/alt_context_service`
+- `POSTGRES_SYNC_DSN` — Optional sync DSN for Alembic. If omitted we derive it from `POSTGRES_DSN`. Default: same host/DB via psycopg
+- `PGVECTOR_DIM` — Embedding dimension stored in `media_faces.embedding`. Keep at 1024 unless the embedding model changes. Default: `1024`
 
 > 💡 Both the runtime and Alembic automatically load `.env` when present.
 
@@ -37,23 +35,22 @@ cp .env.example .env
 These steps take a completely clean workstation to a running API with the
 baseline schema applied.
 
-````bash
-# 1. Create & enter a virtual environment
+```bash
+# 1. Ensure Python 3.12.7 is available
 cd apps/prototype-description-service
-pyenv install 3.11.9  # if you don't have it yet
-pyenv virtualenv 3.11.9 description-service
-pyenv shell description-service
+pyenv install 3.12.7  # if you don't have it yet
 
-# 2. Install dependencies (includes SQLAlchemy, alembic, pgvector bindings)
-pip install -e .
+# 2. Sync locked dependencies (includes SQLAlchemy, alembic, pgvector bindings)
+uv sync --locked --extra dev
 
 # 3. Prepare PostgreSQL
 createdb alt_context_service             # or use psql -c "CREATE DATABASE ..."
 psql -d alt_context_service -c 'CREATE EXTENSION IF NOT EXISTS vector;'
 
 # 4. Apply the baseline migration and verify the schema footprint
-alembic -c db/alembic.ini upgrade head
-python -m scripts.verify_identity_schema
+uv run --locked alembic -c db/alembic.ini upgrade head
+uv run --locked python -m scripts.verify_identity_schema
+```
 
 ## 3.1 Dedicated database owner (optional but recommended)
 
@@ -65,17 +62,17 @@ PostgreSQL user. After creating the database above, switch the owner with:
 CREATE ROLE context_service WITH LOGIN PASSWORD 'change-me' CREATEDB;
 GRANT ALL PRIVILEGES ON DATABASE alt_context_service TO context_service;
 ALTER DATABASE alt_context_service OWNER TO context_service;
-````
+```
 
 When you run `psql postgres` afterwards, `\\l` should show the new owner in
 the `Owner` column. Update `.env` so the DSNs use `context_service`/`change-me`
 before rerunning Alembic or starting the API.
 
-# 5. Run the API
+## 3.2 Run the API
 
-uvicorn api.main:app --reload
-
-````
+```bash
+uv run --locked uvicorn api.main:app --reload
+```
 
 At the end of step 4 the baseline auth/identity tables will exist, including
 `tenants`, `api_keys`, `media_identities`, `identity_clusters`,
@@ -89,7 +86,6 @@ Only do this when you intentionally want to blow away **all** face-scan data.
 
 ```bash
 cd apps/prototype-description-service
-pyenv shell description-service                   # if not already active
 
 # (Option A) Drop & recreate the database completely
 psql -c 'DROP DATABASE IF EXISTS alt_context_service;'
@@ -97,10 +93,10 @@ psql -c 'CREATE DATABASE alt_context_service;'
 psql -d alt_context_service -c 'CREATE EXTENSION IF NOT EXISTS vector;'
 
 # (Option B) Keep the DB but rollback objects
-alembic -c db/alembic.ini downgrade base
-alembic -c db/alembic.ini upgrade head
-python -m scripts.verify_identity_schema
-````
+uv run --locked alembic -c db/alembic.ini downgrade base
+uv run --locked alembic -c db/alembic.ini upgrade head
+uv run --locked python -m scripts.verify_identity_schema
+```
 
 > ⚠️ Dropping the database requires a superuser or a role that owns the DB.
 > Disconnect any active sessions first (`SELECT pg_terminate_backend(pid) ...`).
@@ -109,22 +105,20 @@ python -m scripts.verify_identity_schema
 
 1. **Clone repo & install deps** – follow the bootstrap workflow above.
 2. **Verify env vars** – `cat .env` and ensure DSNs point to the right host.
-3. **Run migrations** – `alembic -c db/alembic.ini upgrade head`.
-4. **Verify schema footprint** – `python -m scripts.verify_identity_schema` must report the baseline table set before the service boots.
-5. **Smoke test** – `uvicorn api.main:app --reload` then hit `GET /health`.
+3. **Run migrations** – `uv run --locked alembic -c db/alembic.ini upgrade head`.
+4. **Verify schema footprint** – `uv run --locked python -m scripts.verify_identity_schema` must report the baseline table set before the service boots.
+5. **Smoke test** – `uv run --locked uvicorn api.main:app --reload` then hit `GET /health`.
 
 If you see errors similar to `type "vector" does not exist`, confirm that the
 extension was installed in the target database **before** running migrations.
 
 ## 6. Handy Commands
 
-| Task                            | Command                                                                            |
-| ------------------------------- | ---------------------------------------------------------------------------------- |
-| Generate a new Alembic revision | `alembic -c db/alembic.ini revision -m "describe change"`                          |
-| Autogenerate models diff        | `alembic -c db/alembic.ini revision --autogenerate -m "..."`                       |
-| Inspect current head            | `alembic -c db/alembic.ini current`                                                |
-| Re-run latest migration         | `alembic -c db/alembic.ini downgrade -1 && alembic -c db/alembic.ini upgrade head` |
-| Verify baseline schema footprint | `python -m scripts.verify_identity_schema`                                         |
+- Generate a new Alembic revision: `uv run --locked alembic -c db/alembic.ini revision -m "describe change"`
+- Autogenerate models diff: `uv run --locked alembic -c db/alembic.ini revision --autogenerate -m "..."`
+- Inspect current head: `uv run --locked alembic -c db/alembic.ini current`
+- Re-run latest migration: `uv run --locked alembic -c db/alembic.ini downgrade -1 && uv run --locked alembic -c db/alembic.ini upgrade head`
+- Verify baseline schema footprint: `uv run --locked python -m scripts.verify_identity_schema`
 
 Keep this guide close whenever you need to rebuild or reseed the prototype
 environment.

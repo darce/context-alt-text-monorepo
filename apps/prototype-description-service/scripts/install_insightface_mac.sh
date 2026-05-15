@@ -6,14 +6,19 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-PYTHON_BIN="${PYTHON_BIN:-python}"
+DEFAULT_PROJECT_PYTHON="${PROJECT_ROOT}/.venv/bin/python"
+if [[ -x "${DEFAULT_PROJECT_PYTHON}" ]]; then
+  PYTHON_BIN="${PYTHON_BIN:-${DEFAULT_PROJECT_PYTHON}}"
+else
+  PYTHON_BIN="${PYTHON_BIN:-python}"
+fi
 
 # Extract insightface version from pyproject.toml (e.g., "insightface>=0.7.3,<1.0.0" -> "insightface>=0.7.3")
 INSIGHTFACE_SPEC="${INSIGHTFACE_SPEC:-$(grep -o '"insightface[^"]*"' "${PROJECT_ROOT}/pyproject.toml" | head -1 | tr -d '"' | sed 's/,<.*//')}"
 
 if [[ $(uname -s) != "Darwin" || $(uname -m) != "arm64" ]]; then
   echo "[install-insightface] Apple Silicon macOS not detected; skipping specialized build." >&2
-  echo "[install-insightface] Run '${PYTHON_BIN} -m pip install ${INSIGHTFACE_SPEC}' directly instead." >&2
+  echo "[install-insightface] Run 'uv sync --locked --extra dev --extra face' directly instead." >&2
   exit 0
 fi
 

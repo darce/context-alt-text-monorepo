@@ -61,6 +61,7 @@ literature/
 !.env*.example
 node_modules/
 package-lock.json
+!apps/prototype-wp-alt-context/package-lock.json
 public/assets/dist/
 storybook-static/
 vendor/

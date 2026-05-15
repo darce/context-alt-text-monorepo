@@ -116,7 +116,9 @@ uv tool install "mcp-agent-handoff>=0.6.0,<0.7"
 uv tool install "codex-subagent-bridge>=0.1.0,<0.2"
 
 # Optional dashboard dependencies for richer monitoring UI
-PYENV_VERSION=description-service python3 -m pip install -e "apps/prototype-description-service[dashboard,dev]"
+cd apps/prototype-description-service
+uv sync --locked --extra dev --extra dashboard
+cd "${REPO_ROOT:-$PWD}"
 
 # Verify writable state dirs, bridge import paths, and SQLite FTS5 support
 mcp-agent-handoff --workspace-root "$(pwd)" doctor
@@ -422,7 +424,7 @@ Notes:
 - `make lane-check` is not a full lint/format gate. Before submitting `merge_ready=1`, run lint + format checks for touched stacks (or `make check-all` if your slice spans multiple stacks). This prevents "tests green, check-all red" handoffs caused by formatter/import-order regressions.
 - `make lane-handoff` will refuse to proceed if there are no unique lane commits or if out-of-scope files are present.
 - If you need a custom commit message: `make lane-handoff COMMIT_MSG="implement retention policy service"`.
-- For backend Python lanes, prefer commands that embed `PYENV_VERSION=description-service` instead of relying on `pyenv activate description-service` in subprocesses. If you need an interactive shell activation, load pyenv first with `eval "$$(pyenv init -)"` and `eval "$$(pyenv virtualenv-init -)"`.
+- For backend Python lanes inside `apps/prototype-description-service`, prefer the app Makefile targets or `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked <command>` instead of relying on `pyenv activate`. MCP-toolchain/package work may still use the committed `PYENV_VERSION=description-service` contract where configured.
 
 ### Recipe: Run a continuous worker daemon
 

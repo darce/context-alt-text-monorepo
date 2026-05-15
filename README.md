@@ -2,13 +2,13 @@
 
 AI-powered alternative text generation for WordPress media, with facial recognition and roster management.
 
-[![PHP](https://img.shields.io/badge/PHP-8.2%2B-777BB4)]() [![WordPress](https://img.shields.io/badge/WordPress-6.0%2B-21759B)]() [![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB)]() [![Node](https://img.shields.io/badge/Node-22%2B-339933)]()
+![PHP](https://img.shields.io/badge/PHP-8.2%2B-777BB4) ![WordPress](https://img.shields.io/badge/WordPress-6.0%2B-21759B) ![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB) ![Node](https://img.shields.io/badge/Node-22%2B-339933)
 
 ---
 
 ## Monorepo Structure
 
-```
+```text
 context-alt-text-monorepo/
     apps/
         prototype-wp-alt-context/       # WordPress plugin (PHP + TypeScript/React)
@@ -32,7 +32,7 @@ context-alt-text-monorepo/
 
 ```bash
 cd apps/prototype-wp-alt-context
-npm install && composer install
+npm ci && composer install
 npm run dev
 ```
 
@@ -42,8 +42,8 @@ See [apps/prototype-wp-alt-context/README.md](apps/prototype-wp-alt-context/READ
 
 ```bash
 cd apps/prototype-description-service
-pip install -e ".[dev]"
-make run
+uv sync --locked --extra dev
+make serve
 ```
 
 See [apps/prototype-description-service/README.md](apps/prototype-description-service/README.md)
@@ -53,8 +53,10 @@ See [apps/prototype-description-service/README.md](apps/prototype-description-se
 ## Prerequisites
 
 - Node.js >= 22.18.0
+- npm 11.x
 - PHP >= 8.2 + Composer
 - Python >= 3.12
+- uv
 - WordPress >= 6.0 (LocalWP recommended)
 
 ---

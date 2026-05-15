@@ -1,6 +1,7 @@
 .PHONY: help test lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready logs-tail logs-rotate logs-clean logs-archive worker-daemon db-reset reset FORCE
 
-PYTHON := pyenv exec python
+UV := VIRTUAL_ENV= uv
+UV_RUN := $(UV) run --locked
 
 # Default target
 help:
@@ -105,31 +106,31 @@ check: lint typecheck test
 # Lint only
 lint:
 	@echo "Running Ruff checks..."
-	@$(PYTHON) -m ruff check .
-	@$(PYTHON) -m ruff format --check .
+	@$(UV_RUN) ruff check .
+	@$(UV_RUN) ruff format --check .
 
 # Type check only
 typecheck:
 	@echo "Running mypy type checks..."
-	@$(PYTHON) -m mypy .
+	@$(UV_RUN) mypy .
 
 # Format code
 format:
 	@echo "Auto-fixing code..."
-	@$(PYTHON) -m ruff check --fix --unsafe-fixes .
-	@$(PYTHON) -m ruff format .
+	@$(UV_RUN) ruff check --fix --unsafe-fixes .
+	@$(UV_RUN) ruff format .
 
 # Test only
 test:
 	@echo "Running tests..."
-	@$(PYTHON) -m pytest
+	@$(UV_RUN) pytest
 
 # Auto-fix and test (for CI)
 ci: format typecheck test
 
 # Install core dependencies only (no face detection)
 install:
-	@$(PYTHON) -m pip install -e ".[dev]"
+	@$(UV) sync --locked --extra dev
 
 # Full setup with platform-aware face detection
 setup:

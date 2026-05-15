@@ -100,8 +100,8 @@ Patched the Makefile target so the WP-CLI `eval-file` invocation passes only the
 ## Verification Strategy
 
 - Deterministic tests:
-  - `pyenv exec python -m pytest scripts/test_localwp_batch_run_smoke.py -q`
-  - `pyenv exec python -m pytest scripts/test_localwp_wp.py -q`
+  - `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked python -m pytest ../../scripts/test_localwp_batch_run_smoke.py -q`
+  - `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked python -m pytest ../../scripts/test_localwp_wp.py -q`
   - `cd apps/prototype-wp-alt-context && composer test -- --filter BatchRunSmokeArgsTest`
   - `cd apps/prototype-wp-alt-context && composer test -- --filter BatchRunSmokeDiagnosticsTest`
 - Runtime-parity / environment checks:
@@ -127,7 +127,7 @@ Changes:
 
 Proof:
 
-- `pyenv exec python -m pytest scripts/test_localwp_batch_run_smoke.py -q`
+- `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked python -m pytest ../../scripts/test_localwp_batch_run_smoke.py -q`
 - `cd apps/prototype-wp-alt-context && composer test -- --filter BatchRunSmokeArgsTest`
 
 ### Slice 2: Runtime Smoke Confirmation (landed)

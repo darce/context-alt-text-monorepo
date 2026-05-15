@@ -224,13 +224,13 @@ Reserve terminal for operations with no native-tool equivalent: test execution, 
 
 - Pipe through `tail -n 30`, `head -n 50`, or `grep -E '<pattern>'` for unbounded output.
 - **Test runs (MANDATORY):** Capture to `/tmp/`, then `read_file` the capture. Do NOT rely on terminal output alone.
-  - Python (apps): `cd <app-dir> && pyenv exec python -m pytest <path> -q > /tmp/pytest_<suite>.txt 2>&1`
+  - Python (apps): `cd <app-dir> && VIRTUAL_ENV= uv run --locked pytest <path> -q > /tmp/pytest_<suite>.txt 2>&1`
   - Python (external MCP package verification): create a scratch venv, install the reviewed PyPI releases, then run CLI/import smoke from that environment. Example: `python3 -m venv /tmp/e17-13-external-mcp && /tmp/e17-13-external-mcp/bin/pip install --quiet "mcp-agent-handoff==0.11.2" "mcp-agent-orchestrator==0.4.6" > /tmp/pytest_external_mcp.txt 2>&1 && /tmp/e17-13-external-mcp/bin/mcp-agent-handoff --workspace-root . doctor >> /tmp/pytest_external_mcp.txt 2>&1 && /tmp/e17-13-external-mcp/bin/mcp-agent-orchestrator --workspace-root . --help >> /tmp/pytest_external_mcp.txt 2>&1`. Do not use `make test-handoff` or `make test-orchestrator` for this cleanup verification path.
   - Vitest: `cd <app-dir> && npx vitest run <path> > /tmp/vitest_<suite>.txt 2>&1`
   - PHP: `cd <app-dir> && vendor/bin/phpunit <path> > /tmp/phpunit_<suite>.txt 2>&1`
   - Then: `read_file("/tmp/pytest_<suite>.txt")`. Never `cat` in terminal. If output is truncated/polluted, just `read_file` the capture.
 - Excess output → redirect to `/tmp/<name>.txt` and `read_file` (VS Code) or `sed -n` (Codex); do not re-run.
-- **Background terminals lack pyenv virtualenv activation.** Use foreground terminal for Python tests. Stale scrollback → `tee /tmp/` pattern.
+- **Foreground terminals for Python app tests.** Background sessions can drift from the description-service project's uv-managed `.venv`. Use the foreground terminal for app test runs.
 - **Use env vars**, not hardcoded paths. Prefer `${workspaceFolder}`, `${env:HOME}`, `${PYENV_ROOT:-$HOME/.pyenv}`, `${REPO_ROOT:-$PWD}`.
 - **Package-test Python harness workaround.** For `agent-orchestrator-mcp` / `agent-handoff-mcp`, do not invoke IDE Python environment setup. Pin `${PYENV_ROOT:-$HOME/.pyenv}/versions/description-service/bin/python`; run from foreground terminal with `PYENV_VERSION=description-service`. If IDE shows `Configuring a Python Environment`, stop and ask the user to run the terminal command.
 

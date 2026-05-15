@@ -7,12 +7,10 @@
 
 ## Automated Checks
 
-Run inside the `description-service` pyenv. Prefer `PYENV_VERSION=description-service <command>` over `pyenv activate` (subprocess shells may lack pyenv init hooks).
+Run from `apps/prototype-description-service` using the uv-managed project environment. Prefer app Make targets or `VIRTUAL_ENV= uv run --locked ...` over `pyenv activate`.
 
-| Check                    | Command                                                      |
-| ------------------------ | ------------------------------------------------------------ |
-| Lint + types + tests     | `cd apps/prototype-description-service && PYENV_VERSION=description-service make check`        |
-| Cyclomatic complexity    | `cd apps/prototype-description-service && PYENV_VERSION=description-service python -m radon cc --min C --show-complexity --average recognition/` |
+- `Lint + types + tests`: `cd apps/prototype-description-service && make check`
+- `Cyclomatic complexity`: `cd apps/prototype-description-service && uv tool run radon cc --min C --show-complexity --average recognition/`
 
 Require fresh evidence (`make check` or targeted `pytest` slice) for any claimed fix. Stale, missing, or partial evidence → `GAP` finding.
 
@@ -112,5 +110,5 @@ Makefile target:
 
 ```makefile
 complexity:
-	$(ACTIVATE) && python -m radon cc --min C --show-complexity --average recognition/
+    $(ACTIVATE) && python -m radon cc --min C --show-complexity --average recognition/
 ```

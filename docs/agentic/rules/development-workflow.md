@@ -383,7 +383,7 @@ For TDD-compatible scaffolding, the order is:
 - [ ] All public function/method signatures exist with full type hints
 - [ ] Docstrings describe Args, Returns, Raises (no implementation details)
 - [ ] Bodies contain only `raise NotImplementedError("TODO: <specific task>")`
-- [ ] `PYENV_VERSION=description-service mypy .` (from `apps/prototype-description-service/`) or `npm run typecheck` (TS) passes with zero errors
+- [ ] `make typecheck` (from `apps/prototype-description-service/`) or `npm run typecheck` (TS) passes with zero errors
 - [ ] Test file exists with `@pytest.mark.skip("scaffold")` or `it.todo()` stubs
 - [ ] Cross-layer contracts (if any) are documented in `docs/agentic/contracts/`
 
@@ -653,7 +653,7 @@ The handoff provenance guard blocks two classes of writes before they land in MC
 When the guard fires with `handoff provenance drift`, recover by switching to the owning worktree and retrying there:
 
 - `cd <target_worktree_path>`
-- rerun the MCP write, or for the Bash fallback rerun it as `cd <target_worktree_path> && pyenv exec python -c "... task_ref='<task-ref>' ..."`
+- rerun the MCP write, or for the Bash fallback rerun it as `cd <target_worktree_path> && ${PYENV_ROOT:-$HOME/.pyenv}/versions/description-service/bin/python -c "... task_ref='<task-ref>' ..."`
 
 The guard is fail-open when it cannot resolve task identity or git metadata; validation failures should not become write outages. There is no bypass marker for normal implementation work. If a legitimate cross-worktree write is required, stop and route that operation through the owning task worktree instead of forcing it from the wrong cwd.
 

@@ -154,7 +154,7 @@ Worker fallback path (row with `correlation_id IS NULL`, e.g., from a pre-E15-2b
 ## Verification Strategy
 
 - **TDD**: RED tests first for each slice. Per `docs/agentic/rules/testing-python.md`.
-- **Command**: `PYENV_VERSION=description-service pyenv exec python -m pytest recognition/tests/unit/test_scan_queue_correlation.py recognition/tests/unit/test_scan_handler_correlation.py recognition/tests/unit/test_scan_queue_service.py recognition/tests/api/test_correlation.py -v`
+- **Command**: `VIRTUAL_ENV= uv run --locked python -m pytest recognition/tests/unit/test_scan_queue_correlation.py recognition/tests/unit/test_scan_handler_correlation.py recognition/tests/unit/test_scan_queue_service.py recognition/tests/api/test_correlation.py -v`
 - **Manual smoke**: With worker running locally (`make run-worker` or equivalent), enqueue via `POST /recognition/analyze`, grep logs for the `correlation_id` from the response; expect API enqueue line + one worker line per item, all sharing the id.
 
 ## Success Criteria

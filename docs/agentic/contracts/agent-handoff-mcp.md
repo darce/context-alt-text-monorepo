@@ -362,7 +362,7 @@ get_verified_tests(
       "lane_id": "backend-domain",
       "branch": "feature/my-task",
       "commit_sha": "0123456789abcdef0123456789abcdef01234567",
-      "command": "PYENV_VERSION=description-service pytest tests/test_schema_migrations.py -q",
+      "command": "pytest tests/test_schema_migrations.py -q",
       "passed": true,
       "verified_at": "2026-04-10 03:20:23"
     }

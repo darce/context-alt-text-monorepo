@@ -166,7 +166,7 @@ The selector must not absorb transport concerns. `acx_recognition_transport` rem
 - Runtime-parity / environment checks:
   - `make deploy-dev`
   - `make reset-remote ENV=dev CONFIRM_REMOTE_RESET=RESET`
-  - `cd apps/prototype-description-service && PYENV_VERSION=description-service pyenv exec python scripts/manage_api_keys.py create --tenant-id <dev-tenant> --name e15-12-reset-smoke`
+  - `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked python scripts/manage_api_keys.py create --tenant-id <dev-tenant> --name e15-12-reset-smoke`
   - `curl -fsS https://dev.api.altcontext.com/ready`
   - `make reset-local WP_PATH="${LOCAL_WP_ROOT:-$HOME/Development/wp-context-alt-text}/app/public" CONFIRM_LOCAL_RESET=RESET`
 - Contract/fixture verification:

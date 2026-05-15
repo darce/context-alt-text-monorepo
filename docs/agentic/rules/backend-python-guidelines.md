@@ -12,11 +12,12 @@
 ## Environment Setup
 
 ```bash
-# Use pyenv for Python version + virtualenv management
-pyenv shell description-service
+cd apps/prototype-description-service
+
+# Ensure the pinned interpreter exists; uv manages the project-local .venv
+pyenv install 3.12.7  # if you don't have it yet
 
 # Full setup (recommended) - handles platform-specific dependencies
-cd apps/prototype-description-service
 make setup
 ```
 
@@ -98,7 +99,7 @@ Calling the guard first lets branch enforcement or workspace drift checks bind t
 ruff check .              # Lint (pycodestyle, pyflakes, isort, bugbear, etc.)
 ruff format .             # Format (replaces black)
 ruff check --fix .        # Auto-fix safe issues
-PYENV_VERSION=description-service mypy .  # Type checking (run from apps/prototype-description-service/)
+VIRTUAL_ENV= uv run --locked mypy .  # Type checking (run from apps/prototype-description-service/)
 ```
 
 ---
@@ -200,14 +201,13 @@ async def get_cluster(
 
 ```bash
 cd apps/prototype-description-service
-# Non-interactive pyenv contract — pin PYENV_VERSION per invocation.
-# For optional interactive shells only: `pyenv activate description-service`.
-PYENV_VERSION=description-service make check                            # ruff + mypy + pytest (all three)
-PYENV_VERSION=description-service pyenv exec python -m pytest                                # Run all tests
-PYENV_VERSION=description-service pyenv exec python -m pytest recognition/tests/api/         # API tests only
-PYENV_VERSION=description-service pyenv exec python -m pytest recognition/tests/integration/ # Integration tests (DB)
-PYENV_VERSION=description-service pyenv exec python -m pytest recognition/tests/unit/        # Unit tests
-PYENV_VERSION=description-service pyenv exec python -m ruff check .                          # Lint
-PYENV_VERSION=description-service pyenv exec python -m ruff format .                         # Format
-PYENV_VERSION=description-service pyenv exec python -m mypy .                                # Type checking
+# Prefer the app Makefile targets; use uv directly for targeted commands.
+make check                                               # ruff + mypy + pytest (all three)
+VIRTUAL_ENV= uv run --locked python -m pytest            # Run all tests
+VIRTUAL_ENV= uv run --locked python -m pytest recognition/tests/api/         # API tests only
+VIRTUAL_ENV= uv run --locked python -m pytest recognition/tests/integration/ # Integration tests (DB)
+VIRTUAL_ENV= uv run --locked python -m pytest recognition/tests/unit/        # Unit tests
+VIRTUAL_ENV= uv run --locked ruff check .                # Lint
+VIRTUAL_ENV= uv run --locked ruff format .               # Format
+VIRTUAL_ENV= uv run --locked mypy .                      # Type checking
 ```

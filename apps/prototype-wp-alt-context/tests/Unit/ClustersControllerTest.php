@@ -12,6 +12,7 @@ use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
 use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
 use AltContext\Sovereign\Sync\SyncPullJobInterface;
 use AltContext\Sovereign\Sync\SyncPullResult;
+use AltContext\Sovereign\Sync\TargetedSyncPullJobInterface;
 use AltContext\Tests\Stubs\NullClustersRepository;
 use AltContext\Tests\Stubs\NullIdentityMembersRepository;
 use AltContext\Tests\Stubs\NullSyncStateRepository;
@@ -160,6 +161,110 @@ class ClustersControllerTest extends TestCase
             ],
             $response->get_data()
         );
+    }
+
+    public function testTopUnlabeledClustersRepairMissingLocalMembersBeforeServing(): void
+    {
+        $GLOBALS['__ac_attachment_urls'][202] = 'http://example.test/media/202.jpg';
+        $projectionState = new \stdClass();
+        $projectionState->membersByCluster = [];
+        $projectionState->targetedClusterIds = [];
+
+        $clustersRepo = new class() extends NullClustersRepository {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
+
+            public function list_top_unlabeled(string $tenant_id, int $limit = 10): array
+            {
+                return [
+                    [
+                        'cluster_uuid' => 'cluster-needs-members',
+                        'label' => null,
+                        'identity_count' => 7,
+                    ],
+                ];
+            }
+        };
+
+        $membersRepo = new class($projectionState) extends NullIdentityMembersRepository {
+            private \stdClass $projectionState;
+
+            public function __construct(\stdClass $projectionState)
+            {
+                $this->projectionState = $projectionState;
+            }
+
+            public function list_for_cluster_uuids(array $cluster_uuids, int $limit_per_cluster): array
+            {
+                return $this->projectionState->membersByCluster;
+            }
+        };
+
+        $syncJob = new class($projectionState) implements TargetedSyncPullJobInterface {
+            private \stdClass $projectionState;
+
+            public function __construct(\stdClass $projectionState)
+            {
+                $this->projectionState = $projectionState;
+            }
+
+            public function perform(string $tenant_id): SyncPullResult
+            {
+                return SyncPullResult::ok();
+            }
+
+            public function perform_bypass_cooldown(string $tenant_id): SyncPullResult
+            {
+                return SyncPullResult::ok();
+            }
+
+            public function perform_projection_payload(string $tenant_id, array $payload): SyncPullResult
+            {
+                return SyncPullResult::ok();
+            }
+
+            public function perform_targeted_snapshot(string $tenant_id, array $cluster_ids): SyncPullResult
+            {
+                $this->projectionState->targetedClusterIds = $cluster_ids;
+                $this->projectionState->membersByCluster = [
+                    'cluster-needs-members' => [
+                        [
+                            'identity_uuid' => 'identity-repaired',
+                            'cluster_uuid' => 'cluster-needs-members',
+                            'attachment_id' => 202,
+                            'media_id' => 202,
+                            'distance' => 0.0,
+                        ],
+                    ],
+                ];
+                return SyncPullResult::ok();
+            }
+        };
+
+        $controller = new ClustersController(
+            $clustersRepo,
+            $membersRepo,
+            new class() extends NullSyncStateRepository {
+                public function get_snapshot_version(string $tenant_id): int
+                {
+                    return 1;
+                }
+            },
+            $syncJob,
+            new ClusterResponseMapper(),
+            new MemberResponseMapper()
+        );
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled');
+        $response = $controller->list_top_unlabeled_clusters($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertSame(['cluster-needs-members'], $projectionState->targetedClusterIds);
+        $this->assertSame('identity-repaired', $data['clusters'][0]['representatives'][0]['id']);
+        $this->assertSame('http://example.test/media/202.jpg', $data['clusters'][0]['representatives'][0]['thumb_url']);
     }
 
     public function testTopUnlabeledClustersClampExcessiveRequestLimit(): void
@@ -910,6 +1015,111 @@ class ClustersControllerTest extends TestCase
         $this->assertSame(IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT + 1, $data['total']);
         $this->assertTrue($data['truncated']);
         $this->assertSame('identity-local-1', $data['members'][0]['identity_id']);
+    }
+
+    public function testGetClusterMembersRepairsMissingLocalMembersBeforeServing(): void
+    {
+        $projectionState = new \stdClass();
+        $projectionState->membersByCluster = [];
+        $projectionState->targetedClusterIds = [];
+
+        $clustersRepo = new class() extends NullClustersRepository {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
+
+            public function find_by_uuid(string $cluster_uuid): ?array
+            {
+                return [
+                    'cluster_uuid' => $cluster_uuid,
+                    'label' => null,
+                    'identity_count' => 7,
+                ];
+            }
+        };
+
+        $membersRepo = new class($projectionState) extends NullIdentityMembersRepository {
+            private \stdClass $projectionState;
+
+            public function __construct(\stdClass $projectionState)
+            {
+                $this->projectionState = $projectionState;
+            }
+
+            public function list_for_cluster(string $cluster_uuid, int $limit = 500, int $offset = 0, ?string $tenant_id = null): array
+            {
+                return $this->projectionState->membersByCluster[$cluster_uuid] ?? [];
+            }
+
+            public function count_for_cluster(string $cluster_uuid): int
+            {
+                return count($this->projectionState->membersByCluster[$cluster_uuid] ?? []);
+            }
+        };
+
+        $syncJob = new class($projectionState) implements TargetedSyncPullJobInterface {
+            private \stdClass $projectionState;
+
+            public function __construct(\stdClass $projectionState)
+            {
+                $this->projectionState = $projectionState;
+            }
+
+            public function perform(string $tenant_id): SyncPullResult
+            {
+                return SyncPullResult::ok();
+            }
+
+            public function perform_bypass_cooldown(string $tenant_id): SyncPullResult
+            {
+                return SyncPullResult::ok();
+            }
+
+            public function perform_projection_payload(string $tenant_id, array $payload): SyncPullResult
+            {
+                return SyncPullResult::ok();
+            }
+
+            public function perform_targeted_snapshot(string $tenant_id, array $cluster_ids): SyncPullResult
+            {
+                $this->projectionState->targetedClusterIds = $cluster_ids;
+                $this->projectionState->membersByCluster['cluster-needs-members'] = [
+                    [
+                        'identity_uuid' => 'identity-repaired',
+                        'cluster_uuid' => 'cluster-needs-members',
+                        'attachment_id' => 202,
+                        'similarity' => 0.99,
+                    ],
+                ];
+                return SyncPullResult::ok();
+            }
+        };
+
+        $controller = new ClustersController(
+            $clustersRepo,
+            $membersRepo,
+            new class() extends NullSyncStateRepository {
+                public function get_snapshot_version(string $tenant_id): int
+                {
+                    return 1;
+                }
+            },
+            $syncJob,
+            new ClusterResponseMapper(),
+            new MemberResponseMapper()
+        );
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cluster-needs-members/members');
+        $request->set_param('cluster_id', 'cluster-needs-members');
+        $response = $controller->get_cluster_members($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertSame(['cluster-needs-members'], $projectionState->targetedClusterIds);
+        $this->assertSame('identity-repaired', $data['members'][0]['identity_id']);
+        $this->assertSame(1, $data['total']);
+        $this->assertFalse($data['truncated']);
     }
 
     public function testGetClusterMembersUsesRepositoryTotalMetadataBeforeFallbackCount(): void

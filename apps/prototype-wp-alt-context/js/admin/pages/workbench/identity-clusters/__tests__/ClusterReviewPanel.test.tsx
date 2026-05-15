@@ -170,6 +170,37 @@ describe('ClusterReviewPanel', () => {
     expect(screen.getByRole('img', { name: 'Cluster member' })).not.toHaveClass('acx-cluster-member-card__image');
   });
 
+  it('prefers a face crop over a generic media thumbnail when bbox data is available', async () => {
+    const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
+
+    fetchClusterMembersMock.mockResolvedValue(
+      makeClusterMembersResponse([
+        {
+          identity_id: 'identity-2b',
+          media_id: 22,
+          similarity: 0.9,
+          confidence: 0.97,
+          bbox: { x: 8, y: 12, width: 44, height: 44 },
+          thumb_url: 'http://example.test/uploads/member-2b.jpg',
+          media_url: 'http://example.test/media/member-2b.jpg',
+        },
+      ]),
+    );
+
+    const { container } = renderPanel('cluster-456b');
+
+    await waitFor(() => {
+      expect(fetchClusterMembersMock).toHaveBeenCalledWith('cluster-456b');
+    });
+
+    expect(container.querySelector('.acx-face-thumbnail')).not.toBeNull();
+    expect(screen.getByRole('img', { name: 'Cluster member' })).toHaveAttribute(
+      'src',
+      'http://example.test/media/member-2b.jpg',
+    );
+    expect(container.querySelector('.acx-cluster-member-card__image')).toBeNull();
+  });
+
   it('shows loading state while fetching members', () => {
     const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
     fetchClusterMembersMock.mockReturnValue(new Promise(() => undefined));

@@ -389,6 +389,32 @@ class SyncPullJobTest extends TestCase
         $this->assertSame(24, $client->acknowledgedSnapshotVersion);
     }
 
+    public function testPerformTargetedSnapshotProjectsDeltaForRequestedClusters(): void
+    {
+        $client = new SyncPullJobSnapshotClient([
+            'snapshot_version' => 31,
+            'source_job_id' => 'job-targeted',
+            'clusters' => [['cluster_uuid' => 'cluster-targeted']],
+            'members' => [['identity_uuid' => 'identity-targeted', 'cluster_uuid' => 'cluster-targeted']],
+        ]);
+        $projector = new SyncPullJobProjectorSpy();
+
+        $syncRepo = new SyncPullJobSyncStateSpy();
+        $job = new SyncPullJob($client, $projector, $syncRepo);
+
+        $result = $job->perform_targeted_snapshot('tenant-targeted', ['cluster-targeted', ' ', 'cluster-targeted']);
+
+        $this->assertSame(SyncPullResult::OK, $result->status());
+        $this->assertSame(1, $client->fetchTargetedSnapshotCalls);
+        $this->assertSame('tenant-targeted', $client->targetedTenantId);
+        $this->assertSame(['cluster-targeted'], $client->targetedClusterIds);
+        $this->assertSame('tenant-targeted', $projector->deltaTenantId);
+        $this->assertSame(31, $projector->deltaSnapshotVersion);
+        $this->assertSame('job-targeted', $client->acknowledgedJobId);
+        $this->assertSame(31, $client->acknowledgedSnapshotVersion);
+        $this->assertSame('ok', $syncRepo->get_last_sync_result('tenant-targeted'));
+    }
+
     public function testTriggerSyncEndToEndReturnsConflictCountAfterProjection(): void
     {
         global $wpdb;
@@ -517,6 +543,9 @@ class SyncPullJobSnapshotClient extends SnapshotClient
     private WP_Error|WP_REST_Response|null $acknowledgeResponse;
     public int $fetchSnapshotCalls = 0;
     public int $fetchDeltaCalls = 0;
+    public int $fetchTargetedSnapshotCalls = 0;
+    public string $targetedTenantId = '';
+    public array $targetedClusterIds = [];
     public string $acknowledgedJobId = '';
     public int $acknowledgedSnapshotVersion = 0;
     public ?string $acknowledgedSnapshotGenerationId = null;
@@ -554,6 +583,14 @@ class SyncPullJobSnapshotClient extends SnapshotClient
             'clusters' => [],
             'members' => [],
         ];
+    }
+
+    public function fetch_targeted_snapshot(string $tenant_id, array $cluster_ids): array|WP_Error
+    {
+        ++$this->fetchTargetedSnapshotCalls;
+        $this->targetedTenantId = $tenant_id;
+        $this->targetedClusterIds = $cluster_ids;
+        return $this->payload;
     }
 
     public function acknowledge_projection(

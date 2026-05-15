@@ -79,9 +79,16 @@ export const buildFallbackActivity = (jobIds: string[]): RecognitionActivityItem
     statusText: __('Remembered in this browser only', 'alt-context'),
   }));
 
+const getPollableDurableJobIds = (items: RecentBatchRunActivity[]): string[] =>
+  items
+    .filter((item) => !item.terminal_state)
+    .map((item) => item.latest_job_id)
+    .filter((value): value is string => typeof value === 'string' && value.length > 0);
+
 export const hydrateRecognitionHistory = async (): Promise<{
   recentActivity: RecognitionActivityItem[];
   jobHistory: string[];
+  pollableJobIds: string[];
   selectedJobId: string | null;
   historySource: RecognitionHistorySource;
 }> => {
@@ -95,18 +102,33 @@ export const hydrateRecognitionHistory = async (): Promise<{
       .filter((value): value is string => typeof value === 'string' && value.length > 0);
 
     if (durableActivity.length > 0) {
+      const pollableJobIds = getPollableDurableJobIds(response.items);
       return {
         recentActivity: durableActivity,
         jobHistory: durableJobHistory,
-        selectedJobId: durableJobHistory[0] ?? null,
+        pollableJobIds,
+        selectedJobId: pollableJobIds[0] ?? null,
         historySource: 'durable',
       };
     }
+
+    if (stored.length > 0) {
+      persistHistory([]);
+    }
+
+    return {
+      recentActivity: [],
+      jobHistory: [],
+      pollableJobIds: [],
+      selectedJobId: null,
+      historySource: 'durable',
+    };
   } catch {
     if (stored.length > 0) {
       return {
         recentActivity: buildFallbackActivity(stored),
         jobHistory: stored,
+        pollableJobIds: stored,
         selectedJobId: stored[0] ?? null,
         historySource: 'browser_local_fallback',
       };
@@ -115,26 +137,11 @@ export const hydrateRecognitionHistory = async (): Promise<{
     return {
       recentActivity: [],
       jobHistory: [],
+      pollableJobIds: [],
       selectedJobId: null,
       historySource: 'unavailable',
     };
   }
-
-  if (stored.length > 0) {
-    return {
-      recentActivity: buildFallbackActivity(stored),
-      jobHistory: stored,
-      selectedJobId: stored[0] ?? null,
-      historySource: 'browser_local_fallback',
-    };
-  }
-
-  return {
-    recentActivity: [],
-    jobHistory: [],
-    selectedJobId: null,
-    historySource: 'durable',
-  };
 };
 
 export const fetchRecognitionStatusEntries = async (jobHistory: string[]): Promise<RecognitionStatusEntry[]> =>

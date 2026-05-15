@@ -16,6 +16,7 @@ require_once __DIR__ . '/../sovereign/sync/interface-snapshot-projector.php';
 require_once __DIR__ . '/../sovereign/sync/class-snapshot-client.php';
 require_once __DIR__ . '/../sovereign/sync/class-snapshot-projector.php';
 require_once __DIR__ . '/../sovereign/sync/interface-sync-pull-job.php';
+require_once __DIR__ . '/../sovereign/sync/interface-targeted-sync-pull-job.php';
 require_once __DIR__ . '/../sovereign/sync/class-sync-pull-job.php';
 require_once __DIR__ . '/../sovereign/sync/class-sync-pull-result.php';
 require_once __DIR__ . '/../sovereign/sync/class-sync-pull-job-factory.php';
@@ -34,6 +35,7 @@ use AltContext\Sovereign\Sync\SnapshotClient;
 use AltContext\Sovereign\Sync\SyncPullJobFactory;
 use AltContext\Sovereign\Sync\SyncPullJob;
 use AltContext\Sovereign\Sync\SyncPullJobInterface;
+use AltContext\Sovereign\Sync\TargetedSyncPullJobInterface;
 use Throwable;
 use WP_Error;
 use WP_REST_Request;
@@ -41,6 +43,8 @@ use WP_REST_Response;
 
 use function add_action;
 use function absint;
+use function array_unique;
+use function array_values;
 use function count;
 use function do_action;
 use function is_array;
@@ -271,6 +275,14 @@ class ClustersController extends AbstractRecognitionProxyController {
 		}
 
 		$sovereign_data = $this->cluster_facade->list_top_unlabeled( $tenant_id, $limit );
+		$cluster_ids_to_repair = $this->find_clusters_missing_projected_members(
+			$sovereign_data['clusters'],
+			$sovereign_data['members']
+		);
+		if ( ! empty( $cluster_ids_to_repair ) && $this->repair_targeted_projection( $tenant_id, $cluster_ids_to_repair ) ) {
+			$sovereign_data = $this->cluster_facade->list_top_unlabeled( $tenant_id, $limit );
+		}
+
 		$has_clusters = $this->clusters_repository->has_projection_rows_for_tenant( $tenant_id );
 		$unlabeled_items = $this->cluster_mapper->map_top_unlabeled_clusters(
 			$sovereign_data['clusters'],
@@ -378,6 +390,10 @@ class ClustersController extends AbstractRecognitionProxyController {
 			}
 
 			$member_rows = $this->members_repository->list_for_cluster( $cluster_id, self::GET_CLUSTER_MEMBERS_MAX_LIMIT, 0, $tenant_id );
+			if ( empty( $member_rows ) && $this->cluster_row_should_have_members( $cluster_row ) && $this->repair_targeted_projection( $tenant_id, array( $cluster_id ) ) ) {
+				$member_rows = $this->members_repository->list_for_cluster( $cluster_id, self::GET_CLUSTER_MEMBERS_MAX_LIMIT, 0, $tenant_id );
+			}
+
 			$members = $this->member_mapper->map_cluster_members( $member_rows );
 			if ( isset( $member_rows[0]['total_count'] ) && is_numeric( $member_rows[0]['total_count'] ) ) {
 				$total = max( 0, (int) $member_rows[0]['total_count'] );
@@ -489,6 +505,67 @@ class ClustersController extends AbstractRecognitionProxyController {
 		}
 
 		return $response;
+	}
+
+	/**
+	 * @param array<int,array<string,mixed>> $clusters
+	 * @param array<string,array<int,array<string,mixed>>> $members_by_cluster
+	 * @return string[]
+	 */
+	private function find_clusters_missing_projected_members( array $clusters, array $members_by_cluster ): array {
+		$cluster_ids = array();
+		foreach ( $clusters as $cluster ) {
+			if ( ! is_array( $cluster ) ) {
+				continue;
+			}
+
+			$cluster_id = sanitize_text_field( (string) ( $cluster['cluster_uuid'] ?? '' ) );
+			if ( '' === $cluster_id || ! $this->cluster_row_should_have_members( $cluster ) ) {
+				continue;
+			}
+
+			if ( empty( $members_by_cluster[ $cluster_id ] ) ) {
+				$cluster_ids[] = $cluster_id;
+			}
+		}
+
+		return array_values( array_unique( $cluster_ids ) );
+	}
+
+	/**
+	 * @param array<string,mixed> $cluster_row
+	 */
+	private function cluster_row_should_have_members( array $cluster_row ): bool {
+		if ( ! isset( $cluster_row['identity_count'] ) || ! is_numeric( $cluster_row['identity_count'] ) ) {
+			return false;
+		}
+
+		return (int) $cluster_row['identity_count'] > 0;
+	}
+
+	/**
+	 * @param string[] $cluster_ids
+	 */
+	private function repair_targeted_projection( string $tenant_id, array $cluster_ids ): bool {
+		$sync_pull_job = $this->resolve_sync_pull_job();
+		if ( ! ( $sync_pull_job instanceof TargetedSyncPullJobInterface ) ) {
+			return false;
+		}
+
+		try {
+			$result = $sync_pull_job->perform_targeted_snapshot( $tenant_id, $cluster_ids );
+			return $result->is_success();
+		} catch ( Throwable $throwable ) {
+			do_action(
+				'acx_sync_pull_failed',
+				array(
+					'tenant_id' => $tenant_id,
+					'context' => 'targeted_projection_read_repair',
+					'message' => $throwable->getMessage(),
+				)
+			);
+			return false;
+		}
 	}
 
 	/**
@@ -619,25 +696,6 @@ class ClustersController extends AbstractRecognitionProxyController {
 			$this->build_cluster_members_envelope( $members, $requested_limit, count( $members ) ),
 			$response->get_status()
 		);
-	}
-
-	/**
-	 * @param array<int,string> $labels
-	 * @return array<int,string>
-	 */
-	private function filter_cluster_labels( array $labels, string $search ): array {
-		if ( '' === $search ) {
-			return $labels;
-		}
-
-		$filtered = array();
-		foreach ( $labels as $label ) {
-			if ( false !== stripos( $label, $search ) ) {
-				$filtered[] = $label;
-			}
-		}
-
-		return $filtered;
 	}
 
 	private function normalize_cluster_labels_response( WP_REST_Response|WP_Error $response, int $requested_limit ): WP_REST_Response|WP_Error {

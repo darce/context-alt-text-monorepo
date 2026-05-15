@@ -163,6 +163,65 @@ class ClusterResponseMapperTest extends TestCase
         $this->assertFalse($payload[0]['representatives'][0]['is_pinned']);
     }
 
+    public function testMapTopUnlabeledClustersRewritesBlobThumbPathWhenAttachmentUrlMissing(): void
+    {
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-top',
+                'label' => '',
+                'identity_count' => 2,
+                'is_user_confirmed' => 0,
+            ],
+        ];
+
+        $members = [
+            'cluster-top' => [
+                [
+                    'identity_uuid' => 'identity-99',
+                    'attachment_id' => 6731,
+                    'thumb_path' => 'file:///private/tmp/acx-recognition-blobs/tenant-x/job-y/6731.bin',
+                    'bbox_json' => '{"pixels":{"x":1,"y":2,"width":3,"height":4}}',
+                ],
+            ],
+        ];
+
+        $payload = $this->mapper->map_top_unlabeled_clusters($clusters, $members, 'tenant-1');
+
+        $parts = \parse_url($payload[0]['representatives'][0]['thumb_url']);
+        $this->assertSame('/wp-json/acx/v1/recognition/blobs/job-y/6731', $parts['path']);
+    }
+
+    public function testMapTopUnlabeledClustersPrefersFaceThumbPathOverAttachmentUrl(): void
+    {
+        $GLOBALS['__ac_attachment_urls'][6731] = 'http://example.test/uploads/6731.jpg';
+
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-top',
+                'label' => '',
+                'identity_count' => 2,
+                'is_user_confirmed' => 0,
+            ],
+        ];
+
+        $members = [
+            'cluster-top' => [
+                [
+                    'identity_uuid' => 'identity-99',
+                    'attachment_id' => 6731,
+                    'thumb_path' => '/recognition/face-thumbs/job-y/6731?x=1&y=2&width=30&height=40',
+                    'bbox_json' => '{"pixels":{"x":1,"y":2,"width":30,"height":40}}',
+                ],
+            ],
+        ];
+
+        $payload = $this->mapper->map_top_unlabeled_clusters($clusters, $members, 'tenant-1');
+
+        $parts = \parse_url($payload[0]['representatives'][0]['thumb_url']);
+        $this->assertSame('/wp-json/acx/v1/recognition/face-thumbs/job-y/6731', $parts['path']);
+        $this->assertStringNotContainsString('/uploads/6731.jpg', $payload[0]['representatives'][0]['thumb_url']);
+    }
+
     public function testMapTopUnlabeledClustersFallsBackToClusterRepresentativeMetadata(): void
     {
         $clusters = [

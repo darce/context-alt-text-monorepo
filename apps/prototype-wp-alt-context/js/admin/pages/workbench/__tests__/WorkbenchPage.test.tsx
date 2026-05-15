@@ -94,6 +94,13 @@ vi.mock('../../../hooks/useJobPersistence', () => ({
 }));
 
 vi.mock('../../../hooks/useJobProgressStream', () => ({
+  JOB_STATUS: {
+    PENDING: 'pending',
+    RUNNING: 'running',
+    COMPLETED: 'completed',
+    FAILED: 'failed',
+    CLUSTERING: 'clustering',
+  },
   useJobProgressStream: vi.fn(),
 }));
 
@@ -430,7 +437,7 @@ describe('WorkbenchPage', () => {
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.media.identities() });
   });
 
-  it('refreshes identities automatically when a job completes', () => {
+  it('refreshes dependent recognition queries automatically when a job completes', () => {
     setupScanMutation('success');
     mockUseCombinedScanStatus.mockReturnValue({
       scanStatusQuery: createMockQuery<JobStatusResponse>({
@@ -453,6 +460,8 @@ describe('WorkbenchPage', () => {
 
     renderWorkbench(queryClient);
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.media.identities() });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.clusters.all });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.all });
   });
 
   it('uses backend job messages when available', () => {

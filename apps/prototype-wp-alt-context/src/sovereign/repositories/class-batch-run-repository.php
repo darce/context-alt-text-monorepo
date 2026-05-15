@@ -163,7 +163,7 @@ class BatchRunRepository {
 			'cancelled_total'      => max( 0, (int) $row['cancelled_total'] ),
 			'unreadable_media_ids' => $this->decode_int_list( (string) ( $row['unreadable_media_ids_json'] ?? '' ) ),
 			'failed_batches'       => array_map( array( $this, 'format_failure_row' ), $failures ),
-			'child_job_ids'        => array_values( array_keys( $this->decode_child_jobs( (string) ( $row['child_jobs_json'] ?? '' ) ) ) ),
+			'child_job_ids'        => array_keys( $this->decode_child_jobs( (string) ( $row['child_jobs_json'] ?? '' ) ) ),
 			'terminal_state'       => (bool) $row['terminal_state'],
 		);
 	}

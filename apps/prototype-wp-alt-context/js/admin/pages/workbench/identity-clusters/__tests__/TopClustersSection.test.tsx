@@ -154,7 +154,7 @@ describe('TopClustersSection', () => {
     expect(screen.getByText('No image')).toBeInTheDocument();
   });
 
-  it('prefers thumb_url over crop data when both are available', async () => {
+  it('prefers a face crop over a generic media thumbnail when bbox data is available', async () => {
     vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue(
       topUnlabeledResponse([
         {
@@ -169,8 +169,44 @@ describe('TopClustersSection', () => {
             {
               id: 'rep-thumb-preferred',
               media_id: 10,
-              thumb_url: '/recognition/face-thumbs/job-42/10?x=1&y=2&width=30&height=40',
+              thumb_url: 'http://example.test/uploads/source-10.jpg',
               media_url: 'http://example.test/source-10.jpg',
+              bbox: { x: 1, y: 2, width: 30, height: 40 },
+              is_pinned: false,
+            },
+          ],
+        },
+      ]),
+    );
+
+    const { container } = renderSection();
+
+    await waitFor(() => {
+      expect(fetchTopUnlabeledClusters).toHaveBeenCalledWith('tenant-1', 20);
+    });
+
+    expect(container.querySelector('.acx-face-thumbnail')).not.toBeNull();
+    expect(container.querySelector('.acx-avatar')).toBeNull();
+    expect(screen.getByRole('img', { name: 'Face to label' })).toHaveAttribute('src', 'http://example.test/source-10.jpg');
+  });
+
+  it('keeps using a dedicated face-thumb URL when one is already provided', async () => {
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue(
+      topUnlabeledResponse([
+        {
+          id: 'cluster-face-thumb',
+          tenant_id: 'tenant-1',
+          label: null,
+          is_labeled: false,
+          is_auto_label: false,
+          identity_count: 2,
+          user_confirmed: false,
+          representatives: [
+            {
+              id: 'rep-face-thumb',
+              media_id: 11,
+              thumb_url: '/wp-json/acx/v1/recognition/face-thumbs/job-42/11?x=1&y=2&width=30&height=40',
+              media_url: 'http://example.test/source-11.jpg',
               bbox: { x: 1, y: 2, width: 30, height: 40 },
               is_pinned: false,
             },
@@ -187,6 +223,41 @@ describe('TopClustersSection', () => {
 
     expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
     expect(container.querySelector('.acx-avatar')).not.toBeNull();
+  });
+
+  it('sets explicit grid rows so four representative crops are not clipped', async () => {
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue(
+      topUnlabeledResponse([
+        {
+          id: 'cluster-four-reps',
+          tenant_id: 'tenant-1',
+          label: null,
+          is_labeled: false,
+          is_auto_label: false,
+          identity_count: 4,
+          user_confirmed: false,
+          representatives: [1, 2, 3, 4].map((index) => ({
+            id: `rep-${index}`,
+            media_id: index,
+            thumb_url: `http://example.test/uploads/${index}.jpg`,
+            media_url: `http://example.test/source-${index}.jpg`,
+            bbox: { x: index, y: index, width: 30, height: 40 },
+            is_pinned: false,
+          })),
+        },
+      ]),
+    );
+
+    const { container } = renderSection();
+
+    await waitFor(() => {
+      expect(fetchTopUnlabeledClusters).toHaveBeenCalledWith('tenant-1', 20);
+    });
+
+    const grid = container.querySelector<HTMLElement>('.acx-top-cluster-card__grid');
+    expect(grid).not.toBeNull();
+    expect(grid).toHaveStyle({ gridTemplateRows: 'repeat(2, 1fr)' });
+    expect(container.querySelectorAll('.acx-face-thumbnail')).toHaveLength(4);
   });
 
   it('returns null while loading and on query error', async () => {

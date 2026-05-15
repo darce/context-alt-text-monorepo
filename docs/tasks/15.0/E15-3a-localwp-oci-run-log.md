@@ -28,6 +28,8 @@ Run the local PostgreSQL preflight in [E15-3a-localwp-proof-bundle-capture-check
 | Branch / build under test | `feature/e15-22` / plugin build `28d78e6a` |
 | LocalWP site URL | `http://localhost:10010` |
 | Backend base URL | `https://api.altcontext.com` |
+| Local preflight backend base URL | `http://localhost:8000` |
+| Local preflight API key | `acx-local-dev-key` |
 | Production API key fingerprint | `short_id=7592` / UI `****I-xM` |
 | Proof-bundle artifact bundle ID | `<pending>` |
 | Source scan run identifier | `<pending>` |
@@ -39,6 +41,8 @@ Run the local PostgreSQL preflight in [E15-3a-localwp-proof-bundle-capture-check
 | Artifact | Status | Notes |
 | --- | --- | --- |
 | Local PostgreSQL preflight complete | [ ] | Record whether native `localhost:5432` or Docker `localhost:55432` was used before OCI capture |
+| Local `/settings/test` probe | [ ] | Must use `http://localhost:8000` with `acx-local-dev-key`; stop on 403 before OCI capture |
+| Local seeded-media scan | [ ] | Must pass locally before switching LocalWP constants back to OCI URL/key |
 | Production API key fingerprint recorded | [x] | `short_id=7592`, UI `****I-xM`, `key_id=3a5d9583-25f8-4dfb-a07b-4129708bd4ef` |
 | Slice 1 successful `/settings/test` probe | [x] | outcome=`connected`, 200, correlation_id `req-069ea56c-bb67-7398-8000-58009f0df015` |
 | Slice 2 green scan round-trip | [ ] | Include screenshots + redacted payload snapshot |

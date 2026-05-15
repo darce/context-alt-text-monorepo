@@ -158,7 +158,7 @@ describe('ClusterLabelingPanel', () => {
     });
   });
 
-  it('prefers backend thumbnail URLs before client-side crop data', async () => {
+  it('prefers dedicated face-thumb URLs before client-side crop data', async () => {
     vi.mocked(fetchClusterMembers).mockResolvedValue(
       makeClusterMembersResponse([
         {
@@ -184,6 +184,35 @@ describe('ClusterLabelingPanel', () => {
     });
 
     expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
+  });
+
+  it('prefers a face crop over a generic media thumbnail when bbox data is available', async () => {
+    vi.mocked(fetchClusterMembers).mockResolvedValue(
+      makeClusterMembersResponse([
+        {
+          identity_id: 'identity-generic-thumb',
+          media_id: 102,
+          similarity: 0.94,
+          confidence: 0.98,
+          thumb_url: 'http://example.test/uploads/102.jpg',
+          media_url: 'http://example.test/media/source-102.jpg',
+          bbox: { x: 3, y: 4, width: 26, height: 28 },
+        },
+      ]),
+    );
+
+    const { container } = renderPanel();
+
+    await waitFor(() => {
+      expect(fetchClusterMembers).toHaveBeenCalledWith('source-cluster-id');
+    });
+
+    expect(container.querySelector('.acx-face-thumbnail')).not.toBeNull();
+    expect(container.querySelector('.acx-avatar')).toBeNull();
+    expect(screen.getByRole('img', { name: 'Face to label' })).toHaveAttribute(
+      'src',
+      'http://example.test/media/source-102.jpg',
+    );
   });
 
   it('renders loading state while members query is pending', () => {

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Admin;
 
+use AltContext\Api\TenantIdentity;
 use AltContext\Support\BatchLimits;
 
 use function add_action;
@@ -21,6 +22,7 @@ use function is_readable;
 use function json_decode;
 use function get_option;
 use function parse_url;
+use function plugins_url;
 use function sanitize_key;
 use function strtolower;
 use function trailingslashit;
@@ -45,6 +47,7 @@ class Admin {
 	private const DASHBOARD_HOOK = 'toplevel_page_alt-context-dashboard';
 	private const SCRIPT_HANDLE = 'alt-context-admin';
 	private const ENTRY_POINT = 'js/admin/main.tsx';
+	private const CANONICAL_PLUGIN_FILE = 'alt-context/alt-context.php';
 
 	/**
 	 * Admin page slugs that should load the SPA bundle.
@@ -233,6 +236,12 @@ class Admin {
 	}
 
 	private function build_asset_url( string $relative ): string {
+		$asset_path = 'public/assets/dist/' . ltrim( $relative, '/' );
+
+		if ( \function_exists( 'plugins_url' ) ) {
+			return esc_url_raw( plugins_url( $asset_path, self::CANONICAL_PLUGIN_FILE ) );
+		}
+
 		$base = trailingslashit( ACX_PLUGIN_URL . 'public/assets/dist' );
 
 		return esc_url_raw( $base . ltrim( $relative, '/' ) );
@@ -305,7 +314,7 @@ class Admin {
 					'nonce'     => wp_create_nonce( 'wp_rest' ),
 					'devMode'   => $is_dev_mode,
 					'tier'      => $tier,
-					'tenant_id' => md5( (string) get_site_url() ), // v4.12.0: Keep query keys tenant-scoped
+					'tenant_id' => TenantIdentity::derive_from_site_url(),
 					'recognitionSource' => $this->get_recognition_source(),
 					'max_media_per_batch' => $this->get_tier_batch_limit_for( $tier ),
 					'adminUrls' => array(

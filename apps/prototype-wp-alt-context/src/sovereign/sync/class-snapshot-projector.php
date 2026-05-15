@@ -134,13 +134,13 @@ class SnapshotProjector implements SnapshotProjectorInterface {
 	 * @param array<int,array<string,mixed>> $clusters
 	 */
 	private function project_cluster_only_snapshot_in_batches( string $tenant_id, array $clusters, int $snapshot_version, int $pre_projection_conflict_count ): int {
-		$cluster_batches      = array_values( array_chunk( $clusters, self::MAX_SNAPSHOT_BATCH_SIZE ) );
+		$cluster_batches      = array_chunk( $clusters, self::MAX_SNAPSHOT_BATCH_SIZE );
 		$total_batches        = count( $cluster_batches );
 		$incoming_cluster_ids = array_values(
 			array_filter(
 				array_map(
-					static function ( $cluster ): string {
-						return trim( (string) ( is_array( $cluster ) ? ( $cluster['cluster_uuid'] ?? '' ) : '' ) );
+					static function ( array $cluster ): string {
+						return trim( (string) ( $cluster['cluster_uuid'] ?? '' ) );
 					},
 					$clusters
 				)
@@ -345,14 +345,14 @@ class SnapshotProjector implements SnapshotProjectorInterface {
 
 		$payload = array();
 		foreach ( $cluster_ids as $cluster_uuid ) {
-			if ( isset( $changed_cluster_ids[ $cluster_uuid ] ) ) {
-				foreach ( $changed_members_by_cluster[ $cluster_uuid ] ?? array() as $member ) {
+			if ( isset( $changed_cluster_ids[ $cluster_uuid ] ) && isset( $changed_members_by_cluster[ $cluster_uuid ] ) ) {
+				foreach ( $changed_members_by_cluster[ $cluster_uuid ] as $member ) {
 					$payload[] = $member;
 				}
 				continue;
 			}
 
-			foreach ( $existing_members_by_cluster[ $cluster_uuid ] ?? array() as $member ) {
+			foreach ( $existing_members_by_cluster[ $cluster_uuid ] as $member ) {
 				if ( is_array( $member ) ) {
 					$payload[] = $this->hydrate_existing_member_snapshot_row( $member );
 				}

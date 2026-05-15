@@ -21,6 +21,13 @@ vi.mock('@tanstack/react-query', () => ({
   useQueryClient: vi.fn(),
 }));
 vi.mock('../useJobProgressStream', () => ({
+  JOB_STATUS: {
+    PENDING: 'pending',
+    RUNNING: 'running',
+    COMPLETED: 'completed',
+    FAILED: 'failed',
+    CLUSTERING: 'clustering',
+  },
   useJobProgressStream: vi.fn(() => ({
     progress: null,
     status: 'pending',
@@ -36,7 +43,11 @@ vi.mock('../useRecognitionHooks', () => ({
   useScanIdentities: vi.fn(() => ({ mutate: vi.fn() })),
   useClusterIdentities: vi.fn(() => ({ mutate: vi.fn() })),
   useCancelScanJobs: vi.fn(() => ({ mutate: vi.fn() })),
-  useCombinedScanStatus: vi.fn(() => ({ scanStatusQuery: { data: null }, batchRunStatusQuery: { data: null } })),
+  useCombinedScanStatus: vi.fn(() => ({
+    scanStatusQuery: { data: null },
+    multiScanStatus: [],
+    batchRunStatusQuery: { data: null },
+  })),
 }));
 vi.mock('../useSyncTrigger', () => ({
   useSyncTrigger: vi.fn(() => ({ mutateAsync: vi.fn() })),
@@ -86,6 +97,28 @@ describe('useJobStateMachine', () => {
     expect(result.current.latestJobId).toBe('job-2');
   });
 
+  it('forgets persisted active jobs when status polling returns not found', async () => {
+    const { useCombinedScanStatus } = await import('../useRecognitionHooks');
+    const removeJob = vi.fn();
+
+    (useJobPersistence as Mock).mockReturnValue({
+      activeJobs: [{ id: 'missing-job', type: 'scan', startedAt: Date.now(), totalItems: 1 }],
+      addJob: vi.fn(),
+      removeJob,
+    });
+    (useCombinedScanStatus as Mock).mockReturnValue({
+      scanStatusQuery: { data: null, error: null },
+      multiScanStatus: [{ data: null, error: new Error('Request failed (404): Not found') }],
+      batchRunStatusQuery: { data: null },
+    });
+
+    renderHook(() => useJobStateMachine());
+
+    await waitFor(() => {
+      expect(removeJob).toHaveBeenCalledWith('missing-job');
+    });
+  });
+
   it('keeps scan progress separate from cluster progress', async () => {
     const { useJobProgressStream } = await import('../useJobProgressStream');
     const { useCombinedScanStatus } = await import('../useRecognitionHooks');
@@ -120,6 +153,7 @@ describe('useJobStateMachine', () => {
         },
       },
       batchRunStatusQuery: { data: null },
+      multiScanStatus: [],
     });
 
     const { result } = renderHook(() => useJobStateMachine());
@@ -171,6 +205,7 @@ describe('useJobStateMachine', () => {
           terminal_state: false,
         },
       },
+      multiScanStatus: [],
     });
 
     const { result } = renderHook(() => useJobStateMachine());
@@ -225,6 +260,7 @@ describe('useJobStateMachine', () => {
           terminal_state: true,
         },
       },
+      multiScanStatus: [],
     });
 
     const { result } = renderHook(() => useJobStateMachine());

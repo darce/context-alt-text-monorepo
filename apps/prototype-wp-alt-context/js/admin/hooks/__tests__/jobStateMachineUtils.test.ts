@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildScanProgress } from '../jobStateMachineUtils';
+import { buildScanProgress } from '../jobStateMachineProgress';
 import type { PersistedJob } from '../useJobPersistence';
 
 const scanJob = (overrides: Partial<PersistedJob> = {}): PersistedJob => ({

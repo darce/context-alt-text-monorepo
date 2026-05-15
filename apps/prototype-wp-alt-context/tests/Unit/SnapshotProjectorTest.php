@@ -604,6 +604,52 @@ class SnapshotProjectorTest extends TestCase
         $this->assertSame('cluster-changed', $membersRepo->mergedMembers[1]['cluster_uuid']);
     }
 
+    public function testProjectDeltaPreservesExistingMembersWhenChangedClusterOmitsMemberRows(): void
+    {
+        global $wpdb;
+
+        $clustersRepo = new SnapshotProjectorClustersSpy([
+            'cluster-changed' => [
+                'cluster_uuid' => 'cluster-changed',
+                'tenant_id' => 'tenant-delta',
+                'label' => '',
+                'identity_count' => 7,
+                'snapshot_version' => 20,
+            ],
+        ]);
+        $membersRepo = new SnapshotProjectorMembersSpy([
+            'cluster-changed' => [
+                [
+                    'identity_uuid' => 'identity-existing',
+                    'cluster_uuid' => 'cluster-changed',
+                    'attachment_id' => 202,
+                    'thumb_path' => 'acx://identity/identity-existing/attachment/202',
+                    'bbox_json' => '{"pixels":{"x":5,"y":6,"width":7,"height":8},"normalized":{"x":0.5,"y":0.6,"width":0.7,"height":0.8},"coordinate_space":"original_image"}',
+                ],
+            ],
+        ]);
+        $syncRepo = new SnapshotProjectorSyncStateSpy();
+        $projector = new SnapshotProjector($clustersRepo, $membersRepo, $syncRepo);
+
+        $projector->project_delta('tenant-delta', [
+            'snapshot_version' => 21,
+            'clusters' => [
+                [
+                    'cluster_uuid' => 'cluster-changed',
+                    'label' => '',
+                    'identity_count' => 7,
+                    'representative_thumb_path' => 'acx://cluster/cluster-changed/media/202',
+                ],
+            ],
+            'members' => [],
+        ]);
+
+        $this->assertContains('COMMIT', $wpdb->queries);
+        $this->assertSame(['identity-existing'], array_column($membersRepo->mergedMembers, 'identity_uuid'));
+        $this->assertSame('cluster-changed', $membersRepo->mergedMembers[0]['cluster_uuid']);
+        $this->assertSame(21, $syncRepo->snapshotVersion);
+    }
+
     public function testProjectDeltaPaginatesExistingProjectionRows(): void
     {
         global $wpdb;

@@ -61,14 +61,14 @@ describe('useRecognitionJobHistory', () => {
         {
           run_id: 'run-1',
           latest_job_id: 'job-1',
-          latest_job_status: 'completed',
+          latest_job_status: 'running',
           child_job_ids: ['job-1'],
           submitted_total: 1,
           accepted_total: 1,
-          completed_total: 1,
+          completed_total: 0,
           failed_total: 0,
           cancelled_total: 0,
-          terminal_state: true,
+          terminal_state: false,
           failed_batches: [],
           created_at: '2025-01-01 00:00:00',
           updated_at: '2025-01-01 00:00:01',
@@ -168,7 +168,7 @@ describe('useRecognitionJobHistory', () => {
       result.current.selectJob('another-job');
     });
 
-    expect(result.current.jobId).toBe('another-job');
+    expect(result.current.jobId).toBe('stored-job');
 
     queryClient.clear();
   });
@@ -191,6 +191,64 @@ describe('useRecognitionJobHistory', () => {
       expect(result.current.historySource).toBe('unavailable');
       expect(result.current.jobHistory).toEqual([]);
       expect(result.current.recentActivity).toEqual([]);
+    });
+
+    expect(fetchScanStatusMock).not.toHaveBeenCalled();
+    queryClient.clear();
+  });
+
+  it('does not revive browser-local history when durable activity loads successfully but is empty', async () => {
+    const { wrapper, queryClient } = createWrapper();
+    window.localStorage.setItem('acx-recognition-jobs', JSON.stringify(['stored-job']));
+    fetchRecentBatchRunsMock.mockResolvedValue({ items: [] });
+
+    const { result } = renderHook(() => useRecognitionJobHistory(), { wrapper });
+
+    await waitFor(() => expect(fetchRecentBatchRunsMock).toHaveBeenCalledWith(5));
+
+    await waitFor(() => {
+      expect(result.current.historySource).toBe('durable');
+      expect(result.current.jobHistory).toEqual([]);
+      expect(result.current.recentActivity).toEqual([]);
+      expect(result.current.jobId).toBeNull();
+    });
+
+    expect(fetchScanStatusMock).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem('acx-recognition-jobs')).toBe('[]');
+    queryClient.clear();
+  });
+
+  it('does not poll terminal durable job IDs through transient job-status endpoints', async () => {
+    const { wrapper, queryClient } = createWrapper();
+    fetchRecentBatchRunsMock.mockResolvedValue({
+      items: [
+        {
+          run_id: 'run-terminal',
+          latest_job_id: 'job-terminal',
+          latest_job_status: 'completed',
+          child_job_ids: ['job-terminal'],
+          submitted_total: 1,
+          accepted_total: 1,
+          completed_total: 1,
+          failed_total: 0,
+          cancelled_total: 0,
+          terminal_state: true,
+          failed_batches: [],
+          created_at: '2025-01-01 00:00:00',
+          updated_at: '2025-01-01 00:00:01',
+        },
+      ],
+    });
+
+    const { result } = renderHook(() => useRecognitionJobHistory(), { wrapper });
+
+    await waitFor(() => expect(fetchRecentBatchRunsMock).toHaveBeenCalledWith(5));
+
+    await waitFor(() => {
+      expect(result.current.historySource).toBe('durable');
+      expect(result.current.jobHistory).toEqual(['job-terminal']);
+      expect(result.current.jobStatuses['job-terminal']).toBe('completed');
+      expect(result.current.jobId).toBeNull();
     });
 
     expect(fetchScanStatusMock).not.toHaveBeenCalled();

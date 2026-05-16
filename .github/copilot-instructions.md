@@ -4,13 +4,13 @@
 
 **TEST RUNS:** Run the narrowest direct test command that proves the change. Do not use `tee`; it can freeze the integrated terminal in this workspace.
 
-- Python: `cd <app-dir> && pyenv exec python -m pytest <path> -q`
+- Python: `cd <app-dir> && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest <path> -q`
 - Vitest in VS Code agent chat: `cd <app-dir> && npm run test:agent -- <path>`; inspect the output for failures because this wrapper intentionally returns control to chat even for RED tests. Use normal `npm run test -- <path>` only outside the agent chat workflow when the shell can safely propagate failing exit codes.
 - PHP: `cd <app-dir> && vendor/bin/phpunit <path>`
 - If a test run needs captured output, redirect once to `/tmp/<suite>.txt` with `> /tmp/<suite>.txt 2>&1`, then inspect it with `read_file`. Never `cat` the file in terminal.
-- Background terminals lack pyenv; only use the foreground terminal for Python tests.
-- Never hardcode user-local absolute filesystem paths such as `/Users/...` in commands, docs, or settings. Use environment variables such as `${env:HOME}`, `${workspaceFolder}`, `${PYENV_ROOT:-$HOME/.pyenv}`, and `${REPO_ROOT:-$PWD}` instead.
-- For external MCP package verification and runtime flows, do not invoke IDE Python environment-configuration tools. Use the foreground terminal with `PYENV_VERSION=description-service`, `pyenv exec python`, or `${PYENV_ROOT:-$HOME/.pyenv}/versions/description-service/bin/python`. If the harness stalls at `Configuring a Python Environment` or `Preparing`, stop retrying and ask the user to run the terminal command directly.
+- Use the foreground terminal for Python tests so the app's uv-managed environment is the one being exercised.
+- Never hardcode user-local absolute filesystem paths such as `/Users/...` in commands, docs, or settings. Use environment variables such as `${env:HOME}`, `${workspaceFolder}`, and `${REPO_ROOT:-$PWD}` instead.
+- For external MCP package verification and runtime flows, do not invoke IDE Python environment-configuration tools. Use the foreground terminal with `uvx --from "mcp-agent-handoff==0.11.2" python3`, `uvx --from "mcp-agent-orchestrator==0.4.6" python3`, or a scratch-venv binary such as `/tmp/<env>/bin/python`. If the harness stalls at `Configuring a Python Environment` or `Preparing`, stop retrying and ask the user to run the terminal command directly.
 
 Prefer native tools when they fit. These rows are agent-conduct conventions enforced by review and judgment, not by the narrow raw-Vitest terminal hook:
 
@@ -96,7 +96,7 @@ state = get_handoff_state(sections="identity")
 **Running against the installed MCP package:**
 
 ```bash
-pyenv exec python -c "
+uvx --from "mcp-agent-handoff==0.11.2" python3 -c "
 from pathlib import Path
 from agent_handoff_mcp import RuntimeConfig, configure_runtime, get_handoff_state
 configure_runtime(RuntimeConfig.for_repo(Path('.')))
@@ -104,7 +104,7 @@ print(get_handoff_state(sections='identity'))
 "
 ```
 
-This fallback assumes the selected Python environment already has the standalone `agent-handoff-mcp` package installed from its external repo.
+This fallback resolves the standalone `agent-handoff-mcp` package through `uvx` without depending on an IDE-managed interpreter. Use a scratch venv instead when you need a persistent installed environment.
 
 When the missing surface is specifically review-run writes, prefer the repo-local wrapper over ad-hoc snippets: `make handoff-review-run TASK_REF=<task-ref> MODE=<branch|planning|release_audit> SUBJECT=<path-or-.> SUBJECT_KIND=<task_plan|epic|branch|adr|roadmap|other> VERDICT=<pass|pass_with_findings|fail|conditional_pass> DECISION=<decision-id> SESSION=<session> RUN_ID=<run-id>`. The target records the review run through the Python API fallback and refreshes `DASHBOARD.txt` plus `CURRENT_TASK.json`.
 
@@ -121,4 +121,4 @@ Key conventions at a glance:
 - Design tokens `--acx-*` — no raw hex/px literals in CSS
 - Greenfield project: no migrations, no backward-compat shims
 - MCP handoff required before/after every coding slice (`agent-handoff-mcp`)
-- `npm` for Node.js; `Composer` for PHP; `pyenv` for Python
+- `npm` for Node.js; `Composer` for PHP; `uv` for the backend Python app and `uvx` or scratch venvs for MCP/package verification

@@ -29,14 +29,14 @@ ORCHESTRATOR_BRANCH := $(shell git -C "$(ORCHESTRATOR_ROOT)" rev-parse --abbrev-
 IN_ORCHESTRATOR_ROOT := $(if $(filter $(WORKTREE_ROOT_REAL),$(ORCHESTRATOR_ROOT)),1,0)
 
 # --- MCP runtime ---
-MCP_PYENV_VERSION ?= description-service
-MCP_PYENV_BIN := $(shell command -v pyenv 2>/dev/null || true)
-MCP_PYTHON = $(if $(MCP_PYENV_BIN),env PYENV_VERSION="$(MCP_PYENV_VERSION)" "$(MCP_PYENV_BIN)" exec python3,env PYENV_VERSION="$(MCP_PYENV_VERSION)" python3)
-MCP_RUNTIME_ENV = env PYENV_VERSION="$(MCP_PYENV_VERSION)"
+UVX ?= uvx
+MCP_HANDOFF_PACKAGE ?= mcp-agent-handoff==0.11.2
+MCP_ORCHESTRATOR_PACKAGE ?= mcp-agent-orchestrator==0.4.6
+MCP_PYTHON = $(UVX) --from "$(MCP_ORCHESTRATOR_PACKAGE)" python3
 LANE_CONFIG_CMD = $(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.lane_config
 MCP_PYTHONPATH := $(ORCHESTRATOR_ROOT)/packages/codex-subagent-bridge/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
 WORKTREE_MCP_PYTHONPATH := $(WORKTREE_ROOT_REAL)/packages/codex-subagent-bridge/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
-MCP_CMD = $(MCP_RUNTIME_ENV) mcp-agent-handoff
+MCP_CMD = $(UVX) "$(MCP_HANDOFF_PACKAGE)"
 MCP_STATE_ARGS = --workspace-root "$(ORCHESTRATOR_ROOT)" --state-dir "$(ORCHESTRATOR_ROOT)/.task-state" --current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.json" --exports-dir "$(ORCHESTRATOR_ROOT)/.task-state/exports"
 PYTHON ?= $(MCP_PYTHON)
 

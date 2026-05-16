@@ -110,7 +110,7 @@ Land the work in five slices: accept or conditional-accept ADR-009, introduce th
 ## Verification Strategy
 
 - Deterministic tests:
-  - `pyenv exec pytest apps/prototype-description-service/recognition/tests apps/prototype-description-service/roster`
+  - `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests roster`
   - `cd apps/prototype-wp-alt-context && vendor/bin/phpunit tests/Unit`
   - shared contract schema/codegen check for `roster-entry`
 - Runtime-parity / environment checks:
@@ -200,7 +200,7 @@ Proof:
 
 | Lane ID | Owned Paths | Upstream Dependencies | Required Tests |
 | --- | --- | --- | --- |
-| `backend-refresh` | `apps/prototype-description-service/**` | Slice 1 ADR gate | `pyenv exec pytest apps/prototype-description-service/recognition/tests apps/prototype-description-service/roster` |
+| `backend-refresh` | `apps/prototype-description-service/**` | Slice 1 ADR gate | `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests roster` |
 | `wp-projection` | `apps/prototype-wp-alt-context/src/**`, `packages/shared-contracts/**` | Slice 1 ADR gate; backend event shape | `cd apps/prototype-wp-alt-context && vendor/bin/phpunit tests/Unit` |
 | `docs-contracts` | `docs/adrs/**`, `docs/specs/**`, `docs/tasks/**` | None | `make plan-review DOC=docs/specs/e15-app-refactoring-preimplementation-spec.md` |
 

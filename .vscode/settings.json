@@ -45,6 +45,6 @@
   "terminal.integrated.agentHostProfile.osx": {
     "path": "/bin/bash"
   },
-  "python.defaultInterpreterPath": "${env:HOME}/.pyenv/versions/description-service/bin/python",
+  "python.defaultInterpreterPath": "${workspaceFolder}/apps/prototype-description-service/.venv/bin/python",
   "makefile.configureOnOpen": false
 }

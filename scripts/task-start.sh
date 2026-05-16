@@ -68,11 +68,15 @@ if [[ -n "$OBJECTIVE" ]]; then
   # longer in the loop, so the AHMCP-17 apostrophe-in-comment bug class is
   # unrepresentable here. The lint guard at scripts/hooks/lint-no-inline-python-heredoc.py
   # prevents future heredocs from sneaking back in.
-  REPO_ROOT="$REPO_ROOT" TASK="$TASK" OBJECTIVE="$OBJECTIVE" BRANCH="$BRANCH" WORKTREE_PATH="$WORKTREE_PATH" \
-    PYENV_VERSION="${PYENV_VERSION:-description-service}" \
-    "${PYENV_ROOT:-$HOME/.pyenv}/versions/${PYENV_VERSION:-description-service}/bin/python" \
-    "${REPO_ROOT}/scripts/_task_start_inline.py" \
-    || echo "⚠ MCP registration skipped — register manually with set_handoff_state."
+  MCP_HANDOFF_PACKAGE="${MCP_HANDOFF_PACKAGE:-mcp-agent-handoff==0.11.2}"
+  if ! command -v uvx >/dev/null 2>&1; then
+    echo "⚠ uvx not on PATH — skipping MCP registration. Install uv (https://docs.astral.sh/uv/) and register manually with set_handoff_state." >&2
+  else
+    REPO_ROOT="$REPO_ROOT" TASK="$TASK" OBJECTIVE="$OBJECTIVE" BRANCH="$BRANCH" WORKTREE_PATH="$WORKTREE_PATH" \
+      uvx --from "$MCP_HANDOFF_PACKAGE" python3 \
+      "${REPO_ROOT}/scripts/_task_start_inline.py" \
+      || echo "⚠ MCP registration skipped — register manually with set_handoff_state."
+  fi
 else
   echo "→ Skipping MCP registration (no OBJECTIVE provided)"
   echo "  Register manually:"

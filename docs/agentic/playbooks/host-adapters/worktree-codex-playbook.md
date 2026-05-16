@@ -180,11 +180,11 @@ python3 scripts/mcp/generate_agent_config.py --task-ref <task> --lane-id <lane> 
 Important:
 
 - `codex-subagent` is only available when the current runtime has provisioned that bridge module.
-- The bridge should accept the lane/review prompt, output schema, worktree `cwd`, and may also receive an optional `env` map with lane-scoped runtime hints such as `TMPDIR` and `PYENV_VERSION`.
+- The bridge should accept the lane/review prompt, output schema, worktree `cwd`, and may also receive an optional `env` map with lane-scoped runtime hints such as `TMPDIR` and `PATH`.
 - If the bridge is unavailable, the daemon raises an error; it does not silently fall back to `codex-cli`.
 - The backend changes only the execution seam. MCP handoff, lane manifests, worktree isolation, and intake/merge flow stay the same.
 - The in-repo reference bridge now lives at `packages/codex-subagent-bridge/`. Install it editable (`pip install -e packages/codex-subagent-bridge`) or expose its `src/` directory on `PYTHONPATH` so `import codex_subagent_bridge` succeeds in the daemon runtime.
-- The bridge forwards runtime hints only as local process/session context. Today that means lane-scoped environment values such as `TMPDIR`, `PATH`, and `PYENV_VERSION` become subprocess environment for `codex app-server`, while reasoning effort may be forwarded from `CODEX_REASONING_EFFORT` or `REASONING_EFFORT` into `turn/start.effort`.
+- The bridge forwards runtime hints only as local process/session context. Today that means lane-scoped environment values such as `TMPDIR` and `PATH` become subprocess environment for `codex app-server`, while reasoning effort may be forwarded from `CODEX_REASONING_EFFORT` or `REASONING_EFFORT` into `turn/start.effort`.
 - MCP endpoints, credentials, and handoff writes are intentionally not forwarded through the bridge. Any MCP interaction stays in the parent daemon process.
 - Spawned app-server sessions discover repo instructions from the worktree root (`CLAUDE.md` / `GEMINI.md` symlinked to `docs/agentic/instructions.md` in this repo). There is no `AGENTS.md` here.
 - Build and test commands still need to be discoverable by the spawned agent. In practice that means keeping them in the repo instruction surface or rendering them directly into the lane/review prompt.
@@ -424,7 +424,7 @@ Notes:
 - `make lane-check` is not a full lint/format gate. Before submitting `merge_ready=1`, run lint + format checks for touched stacks (or `make check-all` if your slice spans multiple stacks). This prevents "tests green, check-all red" handoffs caused by formatter/import-order regressions.
 - `make lane-handoff` will refuse to proceed if there are no unique lane commits or if out-of-scope files are present.
 - If you need a custom commit message: `make lane-handoff COMMIT_MSG="implement retention policy service"`.
-- For backend Python lanes inside `apps/prototype-description-service`, prefer the app Makefile targets or `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked <command>` instead of relying on `pyenv activate`. MCP-toolchain/package work may still use the committed `PYENV_VERSION=description-service` contract where configured.
+- For backend Python lanes inside `apps/prototype-description-service`, prefer the app Makefile targets or `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev <command>` instead of relying on shell activation. MCP-toolchain/package work should use the pinned `uvx` launchers or scratch-venv binaries where configured.
 
 ### Recipe: Run a continuous worker daemon
 

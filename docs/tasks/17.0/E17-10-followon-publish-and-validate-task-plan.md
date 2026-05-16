@@ -384,7 +384,7 @@ If, on inspection of the published v0.1.0 surface, any file in the "Exclude" lis
   exits 0.
 - Confirm the consumer dir exists and is a git repo; record its current branch and working-tree state. If dirty, stop and ask the user how to proceed (constitution `rg-017` — never destroy uncommitted work).
 - Create a feature branch in the consumer: `git checkout -b feature/agentic-system-onboarding` (so the install does not pollute its `main`).
-- **Consumer Python environment** (PA-M-02 carryover): require Python ≥ 3.11. Prefer pyenv `description-service` if available; otherwise verify system `python3 --version` ≥ 3.11. If neither path works, STOP and record a blocker.
+- **Consumer Python environment** (PA-M-02 carryover): require Python ≥ 3.11. Verify `python3 --version` ≥ 3.11, then create or reuse a project-local `.venv` and run consumer install/doctor commands through `./.venv/bin/...`. If Python ≥ 3.11 is unavailable, STOP and record a blocker.
 - **`.gitignore` hygiene** (PA-M-02 carryover): append `.venv/` and `.task-state/` to `<consumer>/.gitignore` (create if absent), then `git add .gitignore && git commit -m "chore(agentic): ignore .venv and .task-state for agentic onboarding"`. Verify with `git check-ignore -v .venv/ .task-state/`.
 
 **Changes (per consumer)**:
@@ -516,7 +516,7 @@ All three sections MUST be present (use the explicit "none" / "clean for both" p
 - [x] `.gitignore` hygiene committed in each consumer.
 - [x] Per-consumer scratch venv (or recorded existing venv path) for each.
 - [x] `pip install` of all three packages succeeds for each consumer.
-- [x] `agentic-bootstrap install --target .` succeeds for each consumer. (NOTE: Must invoke via explicit `./.venv/bin/agentic-bootstrap` on consumers where pyenv shim shadows venv on PATH.)
+- [x] `agentic-bootstrap install --target .` succeeds for each consumer. (NOTE: Must invoke via explicit `./.venv/bin/agentic-bootstrap` on consumers where a global install shadows the venv on PATH.)
 - [x] First `load_session` succeeds for each consumer with consumer-scoped `task_ref`.
 - [x] Per-consumer handoff DB exists at consumer root; isolation between the three consumer DBs confirmed via public-API probe.
 - [x] `## Lessons Learned` section appended to `docs/agentic/consumer-setup.md` (in this monorepo) and committed on the task branch. (commit `907dfc46`.)

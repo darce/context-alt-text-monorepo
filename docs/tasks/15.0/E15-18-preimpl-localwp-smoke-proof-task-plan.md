@@ -92,8 +92,8 @@ Patch the Makefile invocation, harden the PHP argument parser, and add a focused
 ## Verification Strategy
 
 - Deterministic tests:
-  - `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked python -m pytest ../../scripts/test_localwp_batch_smoke.py -q`
-  - `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked python -m pytest ../../scripts/test_localwp_wp.py -q`
+  - `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest ../../scripts/test_localwp_batch_smoke.py -q`
+  - `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest ../../scripts/test_localwp_wp.py -q`
 - Runtime-parity / environment checks:
   - `cd apps/prototype-wp-alt-context && make localwp-batch-run-smoke WP_PATH="${LOCAL_WP_ROOT:-$HOME/Development/wp-context-alt-text}/app/public" SMOKE_LIMIT=10 BATCH_SIZE=5 TIMEOUT_SECONDS=60 POLL_INTERVAL_MS=500`
 - Contract/fixture verification:
@@ -116,7 +116,7 @@ Changes:
 
 Proof:
 
-- `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked python -m pytest ../../scripts/test_localwp_batch_smoke.py -q`
+- `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest ../../scripts/test_localwp_batch_smoke.py -q`
 
 ### Slice 2: Runtime LocalWP Confirmation
 

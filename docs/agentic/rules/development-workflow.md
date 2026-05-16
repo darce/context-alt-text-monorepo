@@ -340,7 +340,7 @@ External-install verification note:
 
 - For the E17-13 MCP cleanup path, verify `agent-handoff-mcp` and `agent-orchestrator-mcp` from pinned `pip install` commands against the standalone repos in a scratch venv, not the old package-local Makefile guard guidance.
 - The live verification contract is: pinned `pip install` from the standalone repos in a scratch venv, then `mcp-agent-handoff --workspace-root . doctor` plus `mcp-agent-orchestrator --workspace-root . --help` CLI/import smoke checks.
-- Do not hardcode absolute filesystem paths; prefer `${PYENV_ROOT:-$HOME/.pyenv}` and `${REPO_ROOT:-$PWD}`.
+- Do not hardcode absolute filesystem paths; prefer `${env:HOME}`, `${workspaceFolder}`, and `${REPO_ROOT:-$PWD}`.
 
 Commit SHA provenance discipline:
 
@@ -653,7 +653,7 @@ The handoff provenance guard blocks two classes of writes before they land in MC
 When the guard fires with `handoff provenance drift`, recover by switching to the owning worktree and retrying there:
 
 - `cd <target_worktree_path>`
-- rerun the MCP write, or for the Bash fallback rerun it as `cd <target_worktree_path> && ${PYENV_ROOT:-$HOME/.pyenv}/versions/description-service/bin/python -c "... task_ref='<task-ref>' ..."`
+- rerun the MCP write, or for the Bash fallback rerun it as `cd <target_worktree_path> && uvx --from "mcp-agent-handoff==0.11.2" python3 -c "... task_ref='<task-ref>' ..."`
 
 The guard is fail-open when it cannot resolve task identity or git metadata; validation failures should not become write outages. There is no bypass marker for normal implementation work. If a legitimate cross-worktree write is required, stop and route that operation through the owning task worktree instead of forcing it from the wrong cwd.
 

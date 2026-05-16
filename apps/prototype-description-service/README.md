@@ -7,9 +7,9 @@ It uses a hexagonal-inspired layout with explicit application layers and HTTP in
 
 ```bash
 cd apps/prototype-description-service
-pyenv install 3.12.7  # if you don't have it yet
+uv python install 3.12.7  # if you don't have it yet
 uv sync --locked --extra dev
-uv run --locked uvicorn api.main:app --reload
+uv run --locked --extra dev uvicorn api.main:app --reload
 ```
 
 The checked-in `.python-version` pins the interpreter to Python 3.12.7, while `uv` manages the project-local `.venv` from `uv.lock`.

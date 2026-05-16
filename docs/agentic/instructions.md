@@ -216,7 +216,7 @@ Two environments, different tool surfaces. Use the native tool for the environme
 | Lint / type errors              | `get_errors`                                          | `npm run lint` / `mypy` in terminal |
 | Multi-file exploration          | `Explore` subagent                                    | Sequential terminal commands        |
 
-Reserve terminal for operations with no native-tool equivalent: test execution, `make` targets, `pyenv` commands, `git commit`/`push`/`rebase`.
+Reserve terminal for operations with no native-tool equivalent: test execution, `make` targets, `uv`/`uvx` commands, `git commit`/`push`/`rebase`.
 
 **Codex agents** (OpenAI Codex harness, `codex exec`, `codex-subagent-bridge`) run in sandboxed Linux containers with terminal + filesystem + MCP only. They do not have VS Code extension tools. Terminal equivalents and output discipline for Codex: [playbooks/codex-custom-mcp-playbook.md](playbooks/codex-custom-mcp-playbook.md#tool-discipline).
 
@@ -224,15 +224,15 @@ Reserve terminal for operations with no native-tool equivalent: test execution, 
 
 - Pipe through `tail -n 30`, `head -n 50`, or `grep -E '<pattern>'` for unbounded output.
 - **Test runs (MANDATORY):** Capture to `/tmp/`, then `read_file` the capture. Do NOT rely on terminal output alone.
-  - Python (apps): `cd <app-dir> && VIRTUAL_ENV= uv run --locked pytest <path> -q > /tmp/pytest_<suite>.txt 2>&1`
+  - Python (apps): `cd <app-dir> && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest <path> -q > /tmp/pytest_<suite>.txt 2>&1`
   - Python (external MCP package verification): create a scratch venv, install the reviewed PyPI releases, then run CLI/import smoke from that environment. Example: `python3 -m venv /tmp/e17-13-external-mcp && /tmp/e17-13-external-mcp/bin/pip install --quiet "mcp-agent-handoff==0.11.2" "mcp-agent-orchestrator==0.4.6" > /tmp/pytest_external_mcp.txt 2>&1 && /tmp/e17-13-external-mcp/bin/mcp-agent-handoff --workspace-root . doctor >> /tmp/pytest_external_mcp.txt 2>&1 && /tmp/e17-13-external-mcp/bin/mcp-agent-orchestrator --workspace-root . --help >> /tmp/pytest_external_mcp.txt 2>&1`. Do not use `make test-handoff` or `make test-orchestrator` for this cleanup verification path.
   - Vitest in VS Code agent chat: `cd <app-dir> && npm run test:agent -- <path> > /tmp/vitest_<suite>.txt 2>&1`, then inspect the captured output because the wrapper returns control to chat even for RED tests. Use normal `npm run test -- <path>` only outside the agent chat workflow when failing exit codes can propagate safely.
   - PHP: `cd <app-dir> && vendor/bin/phpunit <path> > /tmp/phpunit_<suite>.txt 2>&1`
   - Then: `read_file("/tmp/pytest_<suite>.txt")`. Never `cat` in terminal. If output is truncated/polluted, just `read_file` the capture.
 - Excess output → redirect to `/tmp/<name>.txt` and `read_file` (VS Code) or `sed -n` (Codex); do not re-run.
 - **Foreground terminals for Python app tests.** Background sessions can drift from the description-service project's uv-managed `.venv`. Use the foreground terminal for app test runs.
-- **Use env vars**, not hardcoded paths. Prefer `${workspaceFolder}`, `${env:HOME}`, `${PYENV_ROOT:-$HOME/.pyenv}`, `${REPO_ROOT:-$PWD}`.
-- **Package-test Python harness workaround.** For `agent-orchestrator-mcp` / `agent-handoff-mcp`, do not invoke IDE Python environment setup. Pin `${PYENV_ROOT:-$HOME/.pyenv}/versions/description-service/bin/python`; run from foreground terminal with `PYENV_VERSION=description-service`. If IDE shows `Configuring a Python Environment`, stop and ask the user to run the terminal command.
+- **Use env vars**, not hardcoded paths. Prefer `${workspaceFolder}`, `${env:HOME}`, and `${REPO_ROOT:-$PWD}`.
+- **Package-test Python harness workaround.** For `agent-orchestrator-mcp` / `agent-handoff-mcp`, do not invoke IDE Python environment setup. Use pinned `uvx --from "mcp-agent-handoff==0.11.2" python3`, `uvx --from "mcp-agent-orchestrator==0.4.6" python3`, or scratch-venv binaries from the foreground terminal. If IDE shows `Configuring a Python Environment`, stop and ask the user to run the terminal command.
 
 ### Task Document Rules
 

@@ -214,7 +214,7 @@ def test_blocks_bash_python_api_fallback_without_explicit_task_ref(
         io.StringIO(
             json.dumps(
                 _bash_payload(
-                    "pyenv exec python -c \"from agent_handoff_mcp import record_event; record_event(event={'event_kind': 'decision'})\""
+                    "uvx --from 'mcp-agent-handoff==0.11.2' python3 -c \"from agent_handoff_mcp import record_event; record_event(event={'event_kind': 'decision'})\""
                 )
             )
         ),
@@ -244,7 +244,7 @@ def test_blocks_bash_python_api_fallback_without_explicit_cd(
         io.StringIO(
             json.dumps(
                 _bash_payload(
-                    "pyenv exec python -c \"from agent_handoff_mcp import record_event; record_event(task_ref='E16-1', event={'event_kind': 'decision'})\""
+                    "uvx --from 'mcp-agent-handoff==0.11.2' python3 -c \"from agent_handoff_mcp import record_event; record_event(task_ref='E16-1', event={'event_kind': 'decision'})\""
                 )
             )
         ),
@@ -271,7 +271,7 @@ def test_allows_bash_python_api_fallback_when_cd_matches_target_worktree(monkeyp
         io.StringIO(
             json.dumps(
                 _bash_payload(
-                    "cd /tmp/e16-1 && pyenv exec python -c \"from agent_handoff_mcp import record_event; record_event(task_ref='E16-1', event={'event_kind': 'decision'})\""
+                    "cd /tmp/e16-1 && uvx --from 'mcp-agent-handoff==0.11.2' python3 -c \"from agent_handoff_mcp import record_event; record_event(task_ref='E16-1', event={'event_kind': 'decision'})\""
                 )
             )
         ),

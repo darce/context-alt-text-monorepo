@@ -10,11 +10,11 @@
 ```bash
 # Backend (Python app; use the uv-managed project `.venv`)
 cd apps/prototype-description-service
-VIRTUAL_ENV= uv run --locked pytest recognition/tests/api/         # API tests
-VIRTUAL_ENV= uv run --locked pytest recognition/tests/integration/ # Integration tests (DB)
-VIRTUAL_ENV= uv run --locked pytest recognition/tests/unit/        # Unit tests
-VIRTUAL_ENV= uv run --locked ruff check .                          # Lint
-VIRTUAL_ENV= uv run --locked mypy .                                # Types
+VIRTUAL_ENV= uv run --locked --extra dev pytest recognition/tests/api/         # API tests
+VIRTUAL_ENV= uv run --locked --extra dev pytest recognition/tests/integration/ # Integration tests (DB)
+VIRTUAL_ENV= uv run --locked --extra dev pytest recognition/tests/unit/        # Unit tests
+VIRTUAL_ENV= uv run --locked --extra dev ruff check .                          # Lint
+VIRTUAL_ENV= uv run --locked --extra dev mypy .                                # Types
 
 # Frontend (TypeScript/React)
 cd apps/prototype-wp-alt-context
@@ -80,14 +80,14 @@ See [maps/tech-stack.md](maps/tech-stack.md) for the full library manifest.
 
 Two MCP servers are registered for this workspace. VS Code and Claude Code manage their lifecycles automatically via `.vscode/mcp.json` and `.mcp.json`.
 
-Non-interactive harness rule: description-service app commands use `VIRTUAL_ENV= uv run --locked ...`; committed MCP configs still use `PYENV_VERSION=description-service`. Use `pyenv activate description-service` only for optional interactive MCP-tool shells.
+Non-interactive harness rule: description-service app commands use `VIRTUAL_ENV= uv run --locked --extra dev ...`; committed MCP configs launch pinned packages via `uvx`. Use `.venv/bin/activate` only as optional interactive shell convenience.
 
 ### Core Ledger Server (`agent-handoff-mcp`)
 
 Handles task state, review findings, exports/imports, close checks, and artifacts. Run `doctor` to inspect the live registered tool list from the installed package.
 
 ```text
-.vscode/mcp.json  →  env { PYENV_VERSION=description-service, PYENV_ROOT, PATH, AGENT_HANDOFF_ENFORCE_BRANCH=1 }  →  mcp-agent-handoff --workspace-root ${workspaceFolder} --state-dir ${workspaceFolder}/.task-state --exports-dir ${workspaceFolder}/.task-state/exports serve-stdio
+.vscode/mcp.json  →  env { PATH, AGENT_HANDOFF_ENFORCE_BRANCH=1 }  →  uvx "mcp-agent-handoff==0.11.2" --workspace-root ${workspaceFolder} --state-dir ${workspaceFolder}/.task-state --exports-dir ${workspaceFolder}/.task-state/exports serve-stdio
 ```
 
 ### Orchestration Server (`agent-orchestrator-mcp`)
@@ -95,7 +95,7 @@ Handles task state, review findings, exports/imports, close checks, and artifact
 Handles daemons, workers, lane management, plan cursors, and turn metrics. Run `doctor` to inspect the live registered tool list from the installed package.
 
 ```text
-.vscode/mcp.json  →  env { PYENV_VERSION=description-service, PYENV_ROOT, PATH, AGENT_HANDOFF_ENFORCE_BRANCH=1 }  →  mcp-agent-orchestrator --workspace-root ${workspaceFolder} --state-dir ${workspaceFolder}/.task-state --exports-dir ${workspaceFolder}/.task-state/exports serve-stdio
+.vscode/mcp.json  →  env { PATH, AGENT_HANDOFF_ENFORCE_BRANCH=1 }  →  uvx "mcp-agent-orchestrator==0.4.6" --workspace-root ${workspaceFolder} --state-dir ${workspaceFolder}/.task-state --exports-dir ${workspaceFolder}/.task-state/exports serve-stdio
 ```
 
 Both servers share `handoff.db` and `mcp-artifacts.db` on disk; SQLite WAL mode makes concurrent readers safe. Install both from PyPI:
@@ -111,10 +111,9 @@ The old repo-intel helpers remain a separate decomposition task and are not part
 
 - VS Code 1.99+ with Copilot (or other MCP-capable client)
 - `.vscode/mcp.json` already committed to the repo
-- Python 3.11+ environment
+- Python 3.11+ plus `uv` / `uvx`
 - Installed `mcp-agent-handoff` and `mcp-agent-orchestrator` from PyPI
-- Python resolved through pyenv or another Python 3.11+ environment with the
-  package dependencies installed
+- Python 3.11+ plus `uvx`, or a scratch venv with the packaged MCP dependencies installed
 
 ### Install Options
 
@@ -165,7 +164,7 @@ mcp-agent-orchestrator --workspace-root "$(pwd)" dispatch \
 For Codex app sessions on the same machine, prefer the checked-in project-scoped
 adapter at [`../../.codex/config.toml`](../../.codex/config.toml),
 which registers the local stdio server as `mcp-agent-handoff` with the required
-MCP-toolchain `PYENV_VERSION=description-service` contract and repo-relative
+MCP-toolchain pinned-`uvx` launcher contract and repo-relative
 startup paths; description-service app commands themselves run from the
 uv-managed project `.venv`.
 

@@ -1,7 +1,7 @@
 .PHONY: help test lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready logs-tail logs-rotate logs-clean logs-archive worker-daemon db-reset reset FORCE
 
 UV := VIRTUAL_ENV= uv
-UV_RUN := $(UV) run --locked
+UV_RUN := $(UV) run --locked --extra dev
 
 # Default target
 help:

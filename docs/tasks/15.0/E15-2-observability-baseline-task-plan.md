@@ -162,9 +162,9 @@ Derived from `plan-analyze-e15-2-observability-20260419-run-01` (see MCP finding
 ## Verification Strategy
 
 - Deterministic tests:
-  - `VIRTUAL_ENV= uv run --locked python -m pytest recognition/tests/api/test_correlation.py -v`
-  - `VIRTUAL_ENV= uv run --locked python -m pytest recognition/tests/api/test_health_probes.py -v`
-  - `VIRTUAL_ENV= uv run --locked python -m pytest recognition/tests/api/test_metrics.py -v`
+  - `VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests/api/test_correlation.py -v`
+  - `VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests/api/test_health_probes.py -v`
+  - `VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests/api/test_metrics.py -v`
 - Runtime-parity:
   - `curl https://api.altcontext.com/health` returns `{"status":"ok"}` with 200 whenever the process is up (no dependency checks — liveness only, PR-01)
   - `curl https://api.altcontext.com/ready` returns JSON with DB + breaker + on-disk model cache checks (worker liveness intentionally excluded)

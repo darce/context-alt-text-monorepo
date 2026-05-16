@@ -444,17 +444,17 @@
         "docs/tasks/7.0/remaining-sync-workbench-and-retention-task-plan.md"
       ],
       "test_commands": [
-        "cd apps/prototype-description-service && PYENV_VERSION=description-service pytest recognition/tests/unit/",
-        "cd apps/prototype-description-service && PYENV_VERSION=description-service pytest recognition/tests/integration/test_retention_lifecycle.py",
-        "cd apps/prototype-description-service && PYENV_VERSION=description-service mypy recognition/domain recognition/infrastructure",
-        "PYENV_VERSION=description-service pytest packages/agent-handoff-mcp/tests/test_orchestrator_tools.py packages/agent-handoff-mcp/tests/test_worker_daemon.py packages/agent-handoff-mcp/tests/test_lane_exec.py packages/agent-handoff-mcp/tests/test_review_runner.py packages/codex-subagent-bridge/tests/test_bridge.py"
+        "cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests/unit/",
+        "cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests/integration/test_retention_lifecycle.py",
+        "cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev mypy recognition/domain recognition/infrastructure",
+        "python3 -m pytest packages/agent-handoff-mcp/tests/test_orchestrator_tools.py packages/agent-handoff-mcp/tests/test_worker_daemon.py packages/agent-handoff-mcp/tests/test_lane_exec.py packages/agent-handoff-mcp/tests/test_review_runner.py packages/codex-subagent-bridge/tests/test_bridge.py"
       ],
       "capability_tags": [
         "postgres-ready",
         "reset-bootstrap"
       ],
       "preflight_commands": [
-        "command -v pyenv >/dev/null || command -v python3 >/dev/null"
+        "command -v uv >/dev/null && command -v python3 >/dev/null"
       ],
       "preflight_failure_summary": "backend-domain runtime preflight failed; local description-service tooling is not ready for this lane.",
       "preflight_failure_details": "This lane owns both DB-sensitive and non-DB work. Phase 0 contracts, Python stubs, and orchestration tooling should still proceed when PostgreSQL is unavailable, but a Python-capable local backend environment is required. If later DB-specific verification is blocked, report that blocker in the lane handoff instead of failing preflight up front.",
@@ -507,8 +507,8 @@
         "docs/tasks/7.0/remaining-sync-workbench-and-retention-task-plan.md"
       ],
       "test_commands": [
-        "cd apps/prototype-description-service && PYENV_VERSION=description-service pytest recognition/tests/api/",
-        "cd apps/prototype-description-service && PYENV_VERSION=description-service mypy recognition/interface_adapters/http"
+        "cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests/api/",
+        "cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev mypy recognition/interface_adapters/http"
       ],
       "non_goals": [
         "Do not edit backend domain or repository files outside the HTTP layer.",

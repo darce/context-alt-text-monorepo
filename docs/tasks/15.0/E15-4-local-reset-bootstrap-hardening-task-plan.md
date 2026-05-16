@@ -25,7 +25,7 @@ The local reset flow currently drifts across multiple operator surfaces. The ope
 - Scope is local bootstrap and reset behavior inside `apps/prototype-description-service/`; no OCI, Terraform, SSH, or remote deployment changes belong in this task.
 - The direct reset script remains destructive and must keep an explicit confirmation gate; convenience in `make reset` must not silently remove safety for ad hoc script invocation.
 - The fix must preserve greenfield assumptions: reset is allowed to recreate the local database rather than layering compatibility shims over stale local state.
-- Verification commands for Python work should use the `description-service` pyenv environment.
+- Verification commands for description-service Python work should use the app's uv-managed `.venv` via `VIRTUAL_ENV= uv run --locked --extra dev ...`.
 
 ## Workflow Principles
 
@@ -93,7 +93,7 @@ Harden the local reset contract around one canonical env shape. The script shoul
 ## Verification Strategy
 
 - Deterministic tests:
-  - `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked python -m pytest recognition/tests/unit/test_database_settings.py -q`
+  - `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests/unit/test_database_settings.py -q`
 - Runtime-parity / environment checks:
   - `cd apps/prototype-description-service && cp .env.example .env && ALLOW_DEV_DB_RESET=1 ./scripts/reset_dev_db.sh --help` is not applicable; use the real reset path instead
   - `cd apps/prototype-description-service && make reset`
@@ -116,7 +116,7 @@ Changes:
 
 Proof:
 
-- `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked python -m pytest recognition/tests/unit/test_database_settings.py -q`
+- `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests/unit/test_database_settings.py -q`
 
 ### Slice 2: Sync Operator Docs and Bootstrap Guidance
 

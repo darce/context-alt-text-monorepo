@@ -35,34 +35,23 @@ require_command() {
 }
 
 resolve_python_command() {
-  local pyenv_version="${MCP_PYENV_VERSION:-description-service}"
-  if command -v pyenv >/dev/null 2>&1; then
-    PYTHON_CMD=(env "PYENV_VERSION=$pyenv_version" pyenv exec python3)
-    return
-  fi
-
   if command -v python3 >/dev/null 2>&1; then
     PYTHON_CMD=(python3)
     return
   fi
 
-  die "required command not found: pyenv or python3"
+  die "required command not found: python3"
 }
 
 resolve_mcp_command() {
   resolve_python_command
 
-  if command -v mcp-agent-handoff >/dev/null 2>&1; then
-    MCP_CMD=(mcp-agent-handoff)
+  if command -v uvx >/dev/null 2>&1; then
+    MCP_CMD=(uvx "${MCP_HANDOFF_PACKAGE:-mcp-agent-handoff==0.11.2}")
     return
   fi
 
-  if [ -x "$HOME/.local/bin/mcp-agent-handoff" ]; then
-    MCP_CMD=("$HOME/.local/bin/mcp-agent-handoff")
-    return
-  fi
-
-  die "required command not found: mcp-agent-handoff (install darce/mcp-agent-handoff first)"
+  die "required command not found: uvx"
 }
 
 git_root() {

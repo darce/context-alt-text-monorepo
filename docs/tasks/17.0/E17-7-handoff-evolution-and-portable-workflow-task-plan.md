@@ -32,7 +32,7 @@ Five follow-on gaps remain once the E17-6 core is separated:
 2. **Cold starts lose failure detail**: `verified_tests.result` preserves only a 280-character summary, not raw trace content.
 3. **The MCP tool surface is larger than necessary**: several read/write tool pairs can be merged into compound tools without changing the Python API. An [investigation into a missing `review_runs` tool](../../assessments/review-runs-tool-bridge-gap-investigation-2026-04-16.md) confirmed that the VS Code/Copilot MCP session bridge may deprioritize or drop tools when the advertised tool count is high; compressing the surface reduces that risk. A second [CLI-vs-native-tools investigation](../../assessments/agent-handoff-mcp-cli-vs-native-tools-investigation-2026-04-16.md) confirmed that tool-count and per-call response size are the only levers that actually move the _agent's_ token bill — shell-hook call sites (CLI, Python-in-shell) cost zero agent tokens regardless — so "minimize MCP token usage without breaking functionality" maps directly to this slice plus the existing bounded-read envelope (`sections=`, `detail=`, `top_n_*`). Slice 4 must preserve functionality including correct dashboard rendering at the authoritative `DASHBOARD.txt` path throughout the rename.
 4. **Codex portable-command parity is incomplete**: `portable_commands.json` already generates Claude and VS Code adapters, but Codex's `/command` routing still depends on generator-emitted router text inside marker-delimited blocks in `instructions.md` and `CLAUDE.md`. That leaves `/branch-review`, `/planning-review`, and the other workflow ids in this harness dependent on the model reading the router prose correctly. **Status update (E17-12 Slice 2)**: the separate `$skill` surface is now wired in Codex via generated `.codex/skills/<slug>` symlinks, closing the `$skill` half of the parity gap; `/command` routing remains prose-based.
-5. **Python runtime selection is not normalized across harnesses**: the description-service app now uses a uv-managed project `.venv`, while repo automation and MCP tooling still use the `description-service` pyenv. Older config and doc surfaces mix those two contracts, which makes Python/MCP startup behavior drift-prone across hosts.
+5. **Python runtime selection is not normalized across harnesses**: the description-service app now uses a uv-managed project `.venv`, while older config and doc surfaces still describe the retired named-environment and pre-`uvx` launcher contract. That stale guidance makes Python/MCP startup behavior drift-prone across hosts.
 
 ## Constraints
 
@@ -41,7 +41,7 @@ Five follow-on gaps remain once the E17-6 core is separated:
 - `make check-agent-workflows` must verify the Codex router artifact in addition to Claude and VS Code outputs.
 - `make check-codex-command-router` must fail on router drift between the manifest and the committed Codex instruction surfaces.
 - The Codex router consumers must use one mandatory generated-content contract: a single marker-delimited block in each consumer doc. `make check-codex-command-router` must validate only the content inside those markers; it must not rely on heuristic parsing of handwritten prose.
-- Non-interactive harnesses must not depend on `pyenv activate description-service`; the canonical runtime selector is `PYENV_VERSION=description-service`, with `pyenv exec` only where the harness launches Python directly.
+- Non-interactive harnesses must not depend on shell activation. The canonical runtime contract is app-local `VIRTUAL_ENV= uv run --locked --extra dev ...` for description-service commands, plus pinned `uvx` or scratch-venv binaries where the harness launches MCP/package Python directly.
 - Python runtime normalization belongs to committed harness configs, shell/Makefile entry points, and startup docs, not to generated workflow-adapter content.
 - Committed non-interactive harness configs must not hardcode user-local repository paths such as `/Users/.../context-alt-text-monorepo`; use env-driven or workspace-relative forms where the host allows them.
 - `make smoke-agent-workflows` should be optional and backend-aware; it must not become a flaky mandatory gate for environments that cannot execute the live backend check.
@@ -59,12 +59,10 @@ Five follow-on gaps remain once the E17-6 core is separated:
 
 **Python runtime contract**:
 
-- Root automation already assumes the `description-service` pyenv through `MCP_PYENV_VERSION ?= description-service` and `env PYENV_VERSION=... pyenv exec python3` in the root `Makefile`.
+- Root automation now launches MCP helpers through pinned `uvx --from ... python3` wrappers in the root `Makefile`, but older docs/task plans still describe the retired named-environment contract.
 - App-local Python commands now run through the uv-managed project `.venv` in `apps/prototype-description-service/Makefile`.
-- VS Code MCP and Codex MCP configs already set `PYENV_VERSION=description-service` in `.vscode/mcp.json` and `.codex/config.toml`.
-- `.mcp.json` still omits the same runtime env, so one committed harness surface remains out of parity.
-- `.codex/config.toml` and `.mcp.json` still hardcode user-local repo paths rooted at `/Users/daniel/Development/context-alt-text-monorepo`, so committed harness startup is not yet portable across machines or clones.
-- Docs still mix the app-local uv workflow with the non-interactive MCP harness rule (`PYENV_VERSION=description-service`), and that split is not yet front-loaded as a single canonical contract for all hosts.
+- VS Code MCP, Codex MCP, and `.mcp.json` now launch pinned `uvx` packages without user-local repo paths.
+- Docs still mix the app-local uv workflow with older legacy-environment examples, and that split is not yet front-loaded as a single canonical uv/uvx contract for all hosts.
 
 **Conflicting review routing still exists before the E17-6 prerequisite lands**:
 
@@ -95,8 +93,8 @@ Five follow-on gaps remain once the E17-6 core is separated:
 - `make check-agent-workflows` fails on Claude, VS Code, or Codex adapter drift.
 - `make check-codex-command-router` fails if the committed Codex router text diverges from the manifest.
 - `make smoke-agent-workflows` can validate live command resolution for `/branch-review` and `/planning-review`.
-- Every supported non-interactive harness sets `PYENV_VERSION=description-service`, uses portable env/workspace-relative startup paths in committed configs, and Python-launching surfaces use `pyenv exec` only where needed.
-- `pyenv activate description-service` is documented as an optional interactive shell convenience, not the harness contract.
+- Every supported non-interactive harness uses app-local `VIRTUAL_ENV= uv run --locked --extra dev ...` for description-service commands, uses pinned `uvx` or scratch-venv binaries for MCP/package launchers, and keeps committed startup paths portable.
+- Manual shell activation remains optional interactive convenience only; committed non-interactive docs/configs must not require it.
 - `handoff_state` supports concurrent in-progress tasks keyed by `task_ref`.
 - `load_session` / `get_handoff_state` can surface completed slices explicitly.
 - `get_verified_tests(include_traces=True)` returns raw stored traces.
@@ -134,7 +132,7 @@ Five slices deliver the follow-on. Slice 1 is independent of the handoff-schema 
 | `make check-agent-workflows`          | root `Makefile`                                                        | checks Claude + VS Code adapters                                                                         | also checks Codex router artifact                                                                                             | non-breaking stronger gate              | drift fails                                                             |
 | `make check-codex-command-router`     | root `Makefile` (new)                                                  | does not exist                                                                                           | static Codex router drift gate over marker-delimited generated blocks only                                                    | n/a — new target                        | handwritten/router drift fails                                          |
 | `make smoke-agent-workflows`          | root `Makefile` (new)                                                  | does not exist                                                                                           | optional runtime command-resolution smoke test                                                                                | n/a — new target                        | `/branch-review` + `/planning-review` resolve                           |
-| Python harness env                    | `.vscode/mcp.json`, `.codex/config.toml`, `.mcp.json`, Makefiles, docs | mixed `pyenv activate`, `pyenv exec`, partial `PYENV_VERSION` wiring, and user-local absolute repo paths | normalize on `PYENV_VERSION=description-service` and portable env/workspace-relative path forms for non-interactive harnesses | non-breaking runtime normalization      | all harnesses launch against the same env without user-local path drift |
+| Python harness env                    | `.vscode/mcp.json`, `.codex/config.toml`, `.mcp.json`, Makefiles, docs | mixed uv-managed app commands, pinned `uvx` launcher updates, and stale legacy-environment doc references | normalize on app-local `VIRTUAL_ENV= uv run --locked --extra dev ...`, pinned `uvx` or scratch-venv launchers for MCP/package tools, and portable env/workspace-relative path forms | non-breaking runtime normalization      | all harnesses launch against the same portable uv/uvx contract without user-local path drift |
 | `handoff_state`                       | `shared_schema.py`                                                     | singleton row                                                                                            | task-ref keyed multi-row state                                                                                                | breaking internal schema                | tests pass                                                              |
 | `load_session` / `get_handoff_state`  | `core.py`, `handoff_state.py`                                          | no explicit slice-status section                                                                         | add `slices_completed` section                                                                                                | non-breaking additive response          | cold-start status visible                                               |
 | `verified_tests` + `test_traces`      | `shared_schema.py`, `verified_tests.py`, `decisions.py`                | summary-only result                                                                                      | raw traces + correlated-file retrieval                                                                                        | non-breaking additive query params      | trace roundtrip works                                                   |
@@ -150,9 +148,9 @@ Five slices deliver the follow-on. Slice 1 is independent of the handoff-schema 
 | Workflow generator      | `scripts/generate_agent_workflows.py`                                                                                                                                                             | generate Codex router artifact in addition to Claude + VS Code adapters                                                             |
 | Generated Codex router  | `docs/agentic/generated/codex-command-router.md` (new)                                                                                                                                            | generated Codex command-routing artifact plus the canonical block content inserted into consumer docs                               |
 | Codex router consumers  | `docs/agentic/instructions.md`, `CLAUDE.md`                                                                                                                                                       | replace handwritten command-id lists with one required marker-delimited generated block per file                                    |
-| Harness runtime configs | `.vscode/mcp.json`, `.codex/config.toml`, `.mcp.json`                                                                                                                                             | normalize `PYENV_VERSION=description-service` and replace user-local absolute repo paths with portable env/workspace-relative forms |
-| Python command surfaces | root `Makefile`, `apps/prototype-description-service/Makefile`, package Makefiles where needed                                                                                                    | standardize non-interactive `description-service` selection                                                                         |
-| Startup docs            | `CLAUDE.md`, `docs/agentic/instructions.md`, `docs/agentic/BOOTSTRAP.md`, `.github/copilot-instructions.md`, `apps/prototype-description-service/README.md`                                       | front-load the canonical pyenv contract; demote `pyenv activate` to interactive-only guidance                                       |
+| Harness runtime configs | `.vscode/mcp.json`, `.codex/config.toml`, `.mcp.json`                                                                                                                                             | normalize on pinned `uvx` launcher commands and replace user-local absolute repo paths with portable env/workspace-relative forms |
+| Python command surfaces | root `Makefile`, `apps/prototype-description-service/Makefile`, package Makefiles where needed                                                                                                    | standardize app-local `VIRTUAL_ENV= uv run --locked --extra dev ...` and pinned `uvx --from ... python3` launchers               |
+| Startup docs            | `CLAUDE.md`, `docs/agentic/instructions.md`, `docs/agentic/BOOTSTRAP.md`, `.github/copilot-instructions.md`, `apps/prototype-description-service/README.md`                                       | front-load the canonical uv/uvx contract; keep manual activation as interactive-only guidance                                       |
 | Static drift gate       | root `Makefile`                                                                                                                                                                                   | expand `check-agent-workflows`; add `check-codex-command-router`                                                                    |
 | Runtime smoke test      | root `Makefile` and script(s)                                                                                                                                                                     | add optional `smoke-agent-workflows`                                                                                                |
 | Handoff schema          | `packages/agent-handoff-mcp/src/agent_handoff_mcp/shared_schema.py`                                                                                                                               | re-key `handoff_state`; add `test_traces`                                                                                           |
@@ -171,7 +169,7 @@ Five slices deliver the follow-on. Slice 1 is independent of the handoff-schema 
 - `make check-agent-workflows` passes with Claude, VS Code, and Codex generated artifacts in sync.
 - `make check-codex-command-router` fails when the marker-delimited generated block in `instructions.md` or `CLAUDE.md` diverges from the generated Codex router content.
 - `make smoke-agent-workflows` resolves `/branch-review` and `/planning-review` through the active backend and confirms skill/target parity with the manifest.
-- Committed harness configs all inject `PYENV_VERSION=description-service`, no committed non-interactive harness config retains a user-local absolute repo path, and non-interactive Python commands no longer rely on `pyenv activate`.
+- Committed harness configs all use pinned `uvx` launchers or app-local `VIRTUAL_ENV= uv run --locked --extra dev ...`, no committed non-interactive harness config retains a user-local absolute repo path, and non-interactive Python commands no longer rely on activation.
 - Concurrent active-task tests pass for the handoff schema redesign.
 - `load_session` and `get_handoff_state(sections="slices_completed")` surface completed slices correctly.
 - Trace roundtrip, correlated-file lookup, and bounded retention tests pass.
@@ -193,10 +191,10 @@ Changes:
 - Define one mandatory embedding contract for Codex router content in `docs/agentic/instructions.md` and `CLAUDE.md`: each file must contain exactly one generated router block delimited by repo-owned begin/end markers, and `check-codex-command-router` validates only the content inside those markers.
 - Replace handwritten portable-command lists in `docs/agentic/instructions.md` and `CLAUDE.md` with marker-delimited generated blocks sourced from that artifact.
 - Preserve the E17-6 skill-first routing redirect while replacing the remaining handwritten Codex command-routing content with generated content.
-- Normalize all committed non-interactive harness configs to set `PYENV_VERSION=description-service`; `.mcp.json` must reach parity with `.vscode/mcp.json` and `.codex/config.toml`.
+- Normalize all committed non-interactive harness configs to use pinned `uvx` launcher commands; `.mcp.json` must reach parity with `.vscode/mcp.json` and `.codex/config.toml`.
 - Replace user-local absolute repo paths in committed non-interactive harness configs with portable env-driven or workspace-relative forms. Where a host requires an absolute runtime path, derive it from existing host variables rather than committing `/Users/...` literals.
-- Preserve `pyenv activate description-service` only as optional interactive-shell setup guidance; front-load `PYENV_VERSION=description-service` as the canonical automation/harness rule in the startup docs.
-- Use `pyenv exec` only where the harness launches Python directly; installed console scripts should rely on the injected `PYENV_VERSION` env instead of interactive activation.
+- Preserve shell activation only as optional interactive setup guidance; front-load the uv-managed `.venv` plus pinned `uvx` launcher contract in the startup docs.
+- Use app-local `VIRTUAL_ENV= uv run --locked --extra dev ...` for description-service commands and `uvx --from ... python3` or scratch-venv binaries where the harness launches Python/package tools directly.
 - Keep the runtime contract outside `portable_commands.json`; if a shared runtime check is needed, implement it as a doc/config verification step rather than generated command-adapter content.
 - Expand `make check-agent-workflows` to verify the generated Codex router artifact too.
 - Add `make check-codex-command-router` to fail when the marker-delimited router block in either consumer doc disagrees with the manifest-generated Codex router content.
@@ -351,10 +349,10 @@ Proof:
 - [x] `docs/agentic/instructions.md` and `CLAUDE.md` consume generated Codex router content
 - [x] `docs/agentic/instructions.md` and `CLAUDE.md` use the required begin/end markers for the generated Codex router block
 - [x] Conflicting guide-first review routing is removed from those surfaces
-- [x] `.vscode/mcp.json`, `.codex/config.toml`, and `.mcp.json` all set `PYENV_VERSION=description-service`
+- [x] `.vscode/mcp.json`, `.codex/config.toml`, and `.mcp.json` all use the pinned `uvx` launcher contract
 - [x] `.codex/config.toml` and `.mcp.json` no longer hardcode user-local absolute repo paths
-- [x] Startup docs front-load `PYENV_VERSION=description-service` as the canonical non-interactive Python/MCP rule
-- [x] `pyenv activate description-service` remains documented only as optional interactive-shell setup
+- [x] Startup docs front-load the uv-managed `.venv` plus pinned `uvx` launcher contract as the canonical non-interactive Python/MCP rule
+- [x] Shell activation remains documented only as optional interactive-shell setup
 - [x] `make check-agent-workflows` validates Claude, VS Code, and Codex generated artifacts
 - [x] `make check-codex-command-router` exists and fails on drift
 - [x] `make smoke-agent-workflows` exists as an optional runtime validation
@@ -412,7 +410,7 @@ Proof:
 
 - [ ] Codex, Claude, and VS Code command routing all derive from `portable_commands.json`
 - [ ] `/branch-review` and `/planning-review` no longer rely on handwritten Codex-only router text
-- [ ] All supported harnesses resolve Python/MCP commands through the same `description-service` pyenv contract and portable committed startup paths
+- [ ] All supported harnesses resolve Python/MCP commands through the same uv-managed `.venv` plus pinned `uvx` contract and portable committed startup paths
 - [ ] Concurrent active tasks are supported without singleton eviction
 - [ ] Cold-start agents can retrieve raw test traces on demand
 - [ ] The MCP tool surface is compressed without breaking Python imports

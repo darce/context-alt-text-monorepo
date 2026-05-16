@@ -14,7 +14,7 @@ The MVP for E15 is **public WP demo URL live + one manual end-to-end pass**. Eve
 
 - Phase 1 — Security Baseline (E15-1, E15-1b) — merged to `main`
 - Phase 2 — Observability Baseline (E15-2) — merged to `main`
-- Phase 3 — WordPress Demo Provisioning (E15-3) — provider-agnostic plan; **gated on [E15-22](../../tasks/15.0/E15-22-workbench-avatar-and-progress-readiness-task-plan.md) landing first** (cluster-members envelope + backend face-thumbnail surface + frontend unavailable variant) so a paid WP host is never purchased while the Workbench still renders placeholder thumbs or an empty Review Cluster drawer — see plan-analyze decision `plan_analyze_e15_avatar_gate_20260512_revise_first` and finding `E15-PA-AVATAR-GATE-20260512-01`
+- Phase 3 — WordPress Demo Provisioning (E15-3) — provider-agnostic plan; gated on [E15-22](../../tasks/15.0/E15-22-workbench-avatar-and-progress-readiness-task-plan.md) landing first and on seeded local-media proof that entity avatars, Top Cluster face samples, and Review Cluster member rows render before paid/shared WP host provisioning begins, so a public host is never purchased while the Workbench still shows placeholder thumbs or an empty Review Cluster drawer
 - Phase 4 — End-to-End Verification (E15-4 in progress, E15-5 manual remote E2E, E15-22 Workbench avatar/progress readiness)
 - Phase 6 — Local Sync Correctness, operator hardening, and audit closure (E15-7 in progress; E15-13, E15-14, E15-15, E15-16, and E15-17 staged under the same phase with explicit dependency order below)
 
@@ -201,6 +201,8 @@ Exit criteria:
 
 **Goal**: A publicly accessible WordPress page demonstrates the ACX plugin against the live backend.
 
+**Pre-provisioning gate**: Do not purchase or provision shared WP hosting until the local/LocalWP Workbench demo path renders entity avatar thumbnails, Top Cluster face samples, and Review Cluster member rows from seeded media. Current placeholder/error thumbnails or an empty Review Cluster member list are MVP blockers because Phase 3 depends on a visibly truthful demo surface, not just a backend round trip.
+
 Deliverables:
 
 - Shared PHP hosting provisioned (Hostinger Premium or equivalent, ~$2-5/mo).
@@ -273,11 +275,12 @@ Deliverables:
 Phase 6 execution order:
 
 1. E15-7 closes the sovereign local-sync correctness and audit findings.
-2. E15-13 starts after ADR-009 review acceptance and lands the roster curation loop, person projection, and queue contracts.
-3. E15-14 can run independently once LocalWP smoke evidence is prioritized, but still reports under Phase 6 because it hardens demo-readiness correctness proof.
-4. E15-15 reshapes dashboard triage using existing fields only.
-5. E15-16 follows E15-15 and records a durable activity-source decision before changing dashboard activity authority.
-6. E15-17 follows E15-13 and consumes the landed RCL-002, RCL-004, RCL-005, and RCL-008 contracts rather than inventing parallel roster-review surfaces.
+2. Resolve the Workbench entity-avatar/review-drawer blocker before Phase 3 provisioning starts: seeded local media must show real avatar thumbnails, Top Cluster face samples, and Review Cluster member rows instead of placeholders, thumbnail errors, or "No members found" for populated clusters.
+3. E15-13 starts after ADR-009 review acceptance and lands the roster curation loop, person projection, and queue contracts.
+4. E15-14 can run independently once LocalWP smoke evidence is prioritized, but still reports under Phase 6 because it hardens demo-readiness correctness proof.
+5. E15-15 reshapes dashboard triage using existing fields only.
+6. E15-16 follows E15-15 and records a durable activity-source decision before changing dashboard activity authority.
+7. E15-17 follows E15-13 and consumes the landed RCL-002, RCL-004, RCL-005, and RCL-008 contracts rather than inventing parallel roster-review surfaces.
 
 Exit criteria:
 
@@ -358,6 +361,7 @@ Exit criteria:
 
 > Source: Production Readiness Phase 6 + E14 remaining
 
+- [ ] Confirm the Workbench entity-avatar/review-drawer gate passes locally before purchasing or provisioning shared PHP hosting ← _demo-critical Workbench UI gate_
 - [ ] Provision shared PHP hosting (provider-agnostic; vendor selected at provisioning time) ← _Prod Readiness P6_
 - [ ] Install WordPress + ACX plugin ← _Prod Readiness P6 + E14_
 - [ ] Configure plugin with production backend URL and API key ← _Prod Readiness P6 + E14_

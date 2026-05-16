@@ -32,6 +32,11 @@ Maintenance tooling note:
 - Maintenance slice `MAINT-FORMAT-BOOTSTRAP-20260511` updated the root and plugin `Makefile` formatter/bootstrap flow so fresh linked worktrees install missing local Node tool binaries before running WordPress plugin formatting and review gates.
 - No `acx/v1/recognition` route, request payload, response payload, status code, or nonce/capability requirement changed in this slice.
 
+Maintenance note:
+
+- Slice `BUG-WORKBENCH-SCAN-COUNT-20260512` adjusted frontend scan-progress derivation and focused hook tests so completed scan totals stay stable while clustering begins.
+- No `acx/v1/recognition` route, request payload, response payload, batch-run envelope, or status vocabulary changed in this slice; the runtime REST contract remains byte-identical.
+
 Face thumbnail crop contract:
 
 - Backend-emitted `/recognition/face-thumbs/<job>/<media>?x=...&y=...&width=...&height=...` URLs use a shared max crop component of `32768`.

@@ -101,6 +101,36 @@ interface ScanProgressParams {
   fallbackProgress: JobProgress | null | undefined;
 }
 
+const buildCompletedScanSnapshot = (
+  currentPhase: PipelinePhase,
+  scanJobs: PersistedJob[],
+  latestScanJob: PersistedJob | null,
+  fallbackProgress: JobProgress | null | undefined,
+): JobProgress | null => {
+  if (
+    fallbackProgress &&
+    (fallbackProgress.phase === 'complete' || fallbackProgress.phase === 'awaiting_projection')
+  ) {
+    return fallbackProgress;
+  }
+
+  const totalItems =
+    scanJobs.length > 0
+      ? scanJobs.reduce((sum, job) => sum + job.totalItems, 0)
+      : (latestScanJob?.totalItems ?? fallbackProgress?.total ?? 0);
+  if (totalItems <= 0) {
+    return fallbackProgress ?? null;
+  }
+
+  return {
+    completed: totalItems,
+    total: totalItems,
+    phase: currentPhase === 'projecting' ? 'awaiting_projection' : 'complete',
+    images_processed: totalItems,
+    ...(typeof fallbackProgress?.faces_found === 'number' ? { faces_found: fallbackProgress.faces_found } : {}),
+  };
+};
+
 export const buildScanProgress = ({
   currentPhase,
   activeJobIds,
@@ -124,26 +154,7 @@ export const buildScanProgress = ({
   }
 
   if (currentPhase === 'clustering' || currentPhase === 'projecting') {
-    const fallbackIsCompletedScan =
-      fallbackProgress?.phase === 'complete' || fallbackProgress?.phase === 'awaiting_projection';
-
-    if (!fallbackIsCompletedScan) {
-      const persistedScanTotal =
-        scanJobs.length > 0
-          ? scanJobs.reduce((sum, job) => sum + job.totalItems, 0)
-          : (latestScanJob?.totalItems ?? 0);
-
-      if (persistedScanTotal > 0) {
-        return {
-          completed: persistedScanTotal,
-          total: persistedScanTotal,
-          phase: currentPhase === 'projecting' ? 'awaiting_projection' : 'complete',
-          images_processed: persistedScanTotal,
-        };
-      }
-    }
-
-    return fallbackProgress ?? null;
+    return buildCompletedScanSnapshot(currentPhase, scanJobs, latestScanJob, fallbackProgress);
   }
   if (activeJobIds.length === 0) {
     return fallbackProgress ?? null;

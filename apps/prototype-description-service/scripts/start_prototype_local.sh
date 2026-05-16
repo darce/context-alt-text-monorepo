@@ -213,17 +213,71 @@ check_database_exists() {
   fi
 }
 
+find_project_process_pids() {
+  local needle="$1"
+  ps -ax -o pid=,command= | awk -v project_root="${PROJECT_ROOT}" -v needle="${needle}" '
+    index($0, needle) && index($0, project_root) { print $1 }
+  ' | sort -u
+}
+
 find_scan_worker_pids() {
-  if command -v pgrep >/dev/null 2>&1; then
-    pgrep -f "recognition/worker/scan_worker.py" 2>/dev/null || true
-    return
-  fi
-  ps -ax | awk '/recognition\/worker\/scan_worker\.py/ && !/awk/ {print $1}'
+  find_project_process_pids "recognition/worker/scan_worker.py"
 }
 
 find_port_listener_pids() {
   local port="$1"
   { lsof -ti tcp:"${port}" 2>/dev/null || true; } | sort -u
+}
+
+find_service_process_pids() {
+  find_project_process_pids "api.main:app"
+}
+
+send_signal() {
+  local signal_name="$1"
+  local pid="$2"
+  kill "-${signal_name}" "${pid}" >/dev/null 2>&1
+}
+
+find_live_pids() {
+  local pids="$1"
+  local pid
+  for pid in ${pids}; do
+    if send_signal 0 "${pid}"; then
+      printf '%s\n' "${pid}"
+    fi
+  done | sort -u
+}
+
+stop_pid_list() {
+  local label="$1"
+  local pids="$2"
+  local pass
+  local active_pids
+
+  active_pids="$(find_live_pids "${pids}")"
+  for pass in 1 2 3 4 5; do
+    if [[ -z "${active_pids}" ]]; then
+      break
+    fi
+
+    if (( pass <= 2 )); then
+      echo "[prototype-local] Sending SIGTERM to ${label}: ${active_pids}" >&2
+      for pid in ${active_pids}; do
+        send_signal TERM "${pid}" || true
+      done
+    else
+      echo "[prototype-local] Sending SIGKILL to ${label}: ${active_pids}" >&2
+      for pid in ${active_pids}; do
+        send_signal KILL "${pid}" || true
+      done
+    fi
+
+    sleep 1
+    active_pids="$(find_live_pids "${pids}")"
+  done
+
+  printf '%s' "${active_pids}"
 }
 
 start_scan_worker() {
@@ -293,30 +347,33 @@ stop_service() {
     if (( pass <= 2 )); then
       echo "[prototype-local] Sending SIGTERM to PID(s): ${listeners}" >&2
       for pid in ${listeners}; do
-        kill -TERM "${pid}" >/dev/null 2>&1 || true
+        send_signal TERM "${pid}" || true
       done
     else
       echo "[prototype-local] Sending SIGKILL to PID(s): ${listeners}" >&2
       for pid in ${listeners}; do
-        kill -KILL "${pid}" >/dev/null 2>&1 || true
+        send_signal KILL "${pid}" || true
       done
     fi
 
     sleep 1
   done
 
-  listeners="$(find_port_listener_pids "${port}")"
-  if [[ -n "${listeners}" ]]; then
-    echo "[prototype-local] Port ${port} still busy (PID(s): ${listeners}); trying uvicorn pattern cleanup." >&2
-    pkill -f "uvicorn api.main:app" >/dev/null 2>&1 || true
-    sleep 1
-    listeners="$(find_port_listener_pids "${port}")"
+  local service_pids
+  service_pids="$(find_service_process_pids)"
+  if [[ -n "${service_pids}" ]]; then
+    echo "[prototype-local] Cleaning up project-local uvicorn PID(s): ${service_pids}" >&2
+    service_pids="$(stop_pid_list "project-local uvicorn PID(s)" "${service_pids}")"
   fi
 
+  listeners="$(find_port_listener_pids "${port}")"
   if [[ -n "${listeners}" ]]; then
     echo "[prototype-local] Warning: port ${port} remains in use by PID(s): ${listeners}" >&2
   else
     echo "[prototype-local] Port ${port} is free." >&2
+  fi
+  if [[ -n "${service_pids}" ]]; then
+    echo "[prototype-local] Warning: project-local uvicorn PID(s) remain running: ${service_pids}" >&2
   fi
 
   local worker_pids
@@ -328,32 +385,41 @@ stop_service() {
 
   echo "[prototype-local] Stopping scan worker PID(s): ${worker_pids}" >&2
   local log_path="${SCAN_WORKER_LOG:-${PROJECT_ROOT}/logs/scan_worker.log}"
+  mkdir -p "$(dirname "${log_path}")"
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] Stopping scan worker PID(s): ${worker_pids}" >> "${log_path}"
-  for pid in ${worker_pids}; do
-    kill -TERM "${pid}" >/dev/null 2>&1 || true
-  done
+  local remaining_worker_pids
+  remaining_worker_pids="$(stop_pid_list "scan worker PID(s)" "${worker_pids}")"
+  if [[ -n "${remaining_worker_pids}" ]]; then
+    echo "[prototype-local] Warning: scan worker PID(s) remain running: ${remaining_worker_pids}" >&2
+  fi
 }
 
-COMMAND="${1:-start}"
+main() {
+  local command="${1:-start}"
 
-case "${COMMAND}" in
-  start)
-    maybe_install_deps
-    ensure_postgres
-    start_service
-    ;;
-  install)
-    FORCE_INSTALL=1 maybe_install_deps
-    ;;
-  stop)
-    stop_service
-    ;;
-  help|-h|--help)
-    print_usage
-    ;;
-  *)
-    echo "[prototype-local] Unknown command: ${COMMAND}" >&2
-    print_usage
-    exit 1
-    ;;
-esac
+  case "${command}" in
+    start)
+      maybe_install_deps
+      ensure_postgres
+      start_service
+      ;;
+    install)
+      FORCE_INSTALL=1 maybe_install_deps
+      ;;
+    stop)
+      stop_service
+      ;;
+    help|-h|--help)
+      print_usage
+      ;;
+    *)
+      echo "[prototype-local] Unknown command: ${command}" >&2
+      print_usage
+      exit 1
+      ;;
+  esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

@@ -451,14 +451,14 @@ rg -n "cluster_count|RosterEntry|roster-entry" packages/shared-contracts apps/pr
 ### Tier 1 validation
 
 ```bash
-pyenv exec pytest apps/prototype-description-service/recognition/tests -k "tory or post_curation or suggestion"
+cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests -k "tory or post_curation or suggestion"
 cd apps/prototype-wp-alt-context && npm test -- --run js/admin/pages/roster
 ```
 
 ### Tier 2 validation
 
 ```bash
-pyenv exec pytest apps/prototype-description-service/recognition/tests
+cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests
 cd apps/prototype-wp-alt-context && npm test -- --run js/admin
 ```
 

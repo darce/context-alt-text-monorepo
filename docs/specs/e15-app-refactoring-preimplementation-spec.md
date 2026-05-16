@@ -291,8 +291,8 @@ rg -n "RosterPersonReview|roster-entry.schema|RCL-004|ADR-009" docs/specs docs/t
 Implementation validation targets:
 
 ```bash
-pyenv exec python -m pytest scripts/test_localwp_batch_smoke.py -q
-pyenv exec pytest apps/prototype-description-service/recognition/tests apps/prototype-description-service/roster
+python3 -m pytest scripts/test_localwp_batch_smoke.py -q
+cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests roster
 cd apps/prototype-wp-alt-context && vendor/bin/phpunit tests/Unit tests/Integration
 cd apps/prototype-wp-alt-context && npm test -- --run js/admin/pages/__tests__/DashboardPage.test.tsx js/admin/pages/dashboard js/admin/hooks/__tests__/useRecognitionJobHistory.test.tsx js/admin/pages/roster
 ```

@@ -20,7 +20,6 @@ args = [
 cwd = "."
 
 [mcp_servers."mcp-agent-handoff".env]
-PYENV_VERSION = "description-service"
 AGENT_HANDOFF_ENFORCE_BRANCH = "1"
 
 [mcp_servers."mcp-agent-orchestrator"]
@@ -38,6 +37,5 @@ args = [
 cwd = "."
 
 [mcp_servers."mcp-agent-orchestrator".env]
-PYENV_VERSION = "description-service"
 AGENT_HANDOFF_ENFORCE_BRANCH = "1"
 

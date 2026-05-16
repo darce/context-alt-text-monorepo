@@ -107,8 +107,8 @@ The auth helper classifies database failures using structured error data, reject
 ## Verification Strategy
 
 - Deterministic tests:
-  - `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked python -m pytest recognition/tests/api/test_authentication.py -q`
-  - `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked python -m pytest recognition/tests/api/test_retention_api.py -q`
+  - `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests/api/test_authentication.py -q`
+  - `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests/api/test_retention_api.py -q`
 - Contract and failure-mode verification:
   - Verify `session is None` still fails through the existing breaker-open/auth-unavailable path before any nested transaction logic runs.
   - Verify the auth helper no longer calls `repo.touch(...)` on the success path.
@@ -133,7 +133,7 @@ Changes:
 
 Proof:
 
-- `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked python -m pytest recognition/tests/api/test_authentication.py -q`
+- `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests/api/test_authentication.py -q`
 
 ### Slice 2: Savepoint Containment for Auth DB Work
 
@@ -151,8 +151,8 @@ Changes:
 
 Proof:
 
-- `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked python -m pytest recognition/tests/api/test_authentication.py -q`
-- `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked python -m pytest recognition/tests/api/test_retention_api.py -q`
+- `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests/api/test_authentication.py -q`
+- `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests/api/test_retention_api.py -q`
 
 ## Consolidated Checklist
 

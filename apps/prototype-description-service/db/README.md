@@ -38,7 +38,7 @@ baseline schema applied.
 ```bash
 # 1. Ensure Python 3.12.7 is available
 cd apps/prototype-description-service
-pyenv install 3.12.7  # if you don't have it yet
+uv python install 3.12.7  # if you don't have it yet
 
 # 2. Sync locked dependencies (includes SQLAlchemy, alembic, pgvector bindings)
 uv sync --locked --extra dev
@@ -48,8 +48,8 @@ createdb alt_context_service             # or use psql -c "CREATE DATABASE ..."
 psql -d alt_context_service -c 'CREATE EXTENSION IF NOT EXISTS vector;'
 
 # 4. Apply the baseline migration and verify the schema footprint
-uv run --locked alembic -c db/alembic.ini upgrade head
-uv run --locked python -m scripts.verify_identity_schema
+uv run --locked --extra dev alembic -c db/alembic.ini upgrade head
+uv run --locked --extra dev python -m scripts.verify_identity_schema
 ```
 
 ## 3.1 Dedicated database owner (optional but recommended)
@@ -71,7 +71,7 @@ before rerunning Alembic or starting the API.
 ## 3.2 Run the API
 
 ```bash
-uv run --locked uvicorn api.main:app --reload
+uv run --locked --extra dev uvicorn api.main:app --reload
 ```
 
 At the end of step 4 the baseline auth/identity tables will exist, including
@@ -93,9 +93,9 @@ psql -c 'CREATE DATABASE alt_context_service;'
 psql -d alt_context_service -c 'CREATE EXTENSION IF NOT EXISTS vector;'
 
 # (Option B) Keep the DB but rollback objects
-uv run --locked alembic -c db/alembic.ini downgrade base
-uv run --locked alembic -c db/alembic.ini upgrade head
-uv run --locked python -m scripts.verify_identity_schema
+uv run --locked --extra dev alembic -c db/alembic.ini downgrade base
+uv run --locked --extra dev alembic -c db/alembic.ini upgrade head
+uv run --locked --extra dev python -m scripts.verify_identity_schema
 ```
 
 > ⚠️ Dropping the database requires a superuser or a role that owns the DB.
@@ -105,20 +105,20 @@ uv run --locked python -m scripts.verify_identity_schema
 
 1. **Clone repo & install deps** – follow the bootstrap workflow above.
 2. **Verify env vars** – `cat .env` and ensure DSNs point to the right host.
-3. **Run migrations** – `uv run --locked alembic -c db/alembic.ini upgrade head`.
-4. **Verify schema footprint** – `uv run --locked python -m scripts.verify_identity_schema` must report the baseline table set before the service boots.
-5. **Smoke test** – `uv run --locked uvicorn api.main:app --reload` then hit `GET /health`.
+3. **Run migrations** – `uv run --locked --extra dev alembic -c db/alembic.ini upgrade head`.
+4. **Verify schema footprint** – `uv run --locked --extra dev python -m scripts.verify_identity_schema` must report the baseline table set before the service boots.
+5. **Smoke test** – `uv run --locked --extra dev uvicorn api.main:app --reload` then hit `GET /health`.
 
 If you see errors similar to `type "vector" does not exist`, confirm that the
 extension was installed in the target database **before** running migrations.
 
 ## 6. Handy Commands
 
-- Generate a new Alembic revision: `uv run --locked alembic -c db/alembic.ini revision -m "describe change"`
-- Autogenerate models diff: `uv run --locked alembic -c db/alembic.ini revision --autogenerate -m "..."`
-- Inspect current head: `uv run --locked alembic -c db/alembic.ini current`
-- Re-run latest migration: `uv run --locked alembic -c db/alembic.ini downgrade -1 && uv run --locked alembic -c db/alembic.ini upgrade head`
-- Verify baseline schema footprint: `uv run --locked python -m scripts.verify_identity_schema`
+- Generate a new Alembic revision: `uv run --locked --extra dev alembic -c db/alembic.ini revision -m "describe change"`
+- Autogenerate models diff: `uv run --locked --extra dev alembic -c db/alembic.ini revision --autogenerate -m "..."`
+- Inspect current head: `uv run --locked --extra dev alembic -c db/alembic.ini current`
+- Re-run latest migration: `uv run --locked --extra dev alembic -c db/alembic.ini downgrade -1 && uv run --locked --extra dev alembic -c db/alembic.ini upgrade head`
+- Verify baseline schema footprint: `uv run --locked --extra dev python -m scripts.verify_identity_schema`
 
 Keep this guide close whenever you need to rebuild or reseed the prototype
 environment.

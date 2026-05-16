@@ -107,7 +107,7 @@ The hook exits non-zero, Claude Code logs the traceback to stderr, and the test 
    ```
 3. **Run regression tests on `main` post-merge:**
    ```bash
-    cd "${REPO_ROOT:-$PWD}" && pyenv exec python -m pytest scripts/hooks/test_filter_test_output.py -v
+    cd "${REPO_ROOT:-$PWD}" && python3 -m pytest scripts/hooks/test_filter_test_output.py -v
    # expected: 33 passed (4 of which are the new TestEdgeCases entries).
    ```
 
@@ -147,7 +147,7 @@ if not isinstance(stdout, str) or len(stdout) < 30:
 Recorded against `MAINT-FILTER-HOOK-20260420`:
 
 - Decision `#2161` — `claude_fix_filter_test_output_typecheck` (rationale, changed_files, commit_sha pinned).
-- Verification: `cd "${REPO_ROOT:-$PWD}" && pyenv exec python -m pytest scripts/hooks/test_filter_test_output.py -v` → 33 passed in 2.51s on the feature branch.
+- Verification: `cd "${REPO_ROOT:-$PWD}" && python3 -m pytest scripts/hooks/test_filter_test_output.py -v` → 33 passed in 2.51s on the feature branch.
 - The patched hook itself emitted a clean `[pytest] 33 passed (2.51s) -- all green` summary on the verification run, confirming the fix is operational on the feature branch.
 
 After cherry-picking, the implementor must record a `test_result` event against `MAINT-FILTER-HOOK-20260420` for the post-merge `main`-tip pytest run before closing the task.
@@ -229,7 +229,7 @@ Each subsection follows the same structure: **observed symptom → suspected cau
 
 ```
 $ cd "${REPO_ROOT:-$PWD}"
-$ pyenv exec python -m pytest scripts/hooks/test_filter_test_output.py -v
+$ python3 -m pytest scripts/hooks/test_filter_test_output.py -v
 ============================== 33 passed in 2.51s ==============================
 ```
 

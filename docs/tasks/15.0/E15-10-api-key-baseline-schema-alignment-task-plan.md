@@ -36,8 +36,8 @@ The merged auth isolation work now correctly treats SQLSTATE `42P01` as a hard a
 
 ## Verification Strategy
 
-- `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked python -m pytest recognition/tests/api/test_authentication.py -q`
-- `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked python -m pytest recognition/tests/api/test_retention_api.py -q`
+- `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests/api/test_authentication.py -q`
+- `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests/api/test_retention_api.py -q`
 
 ## Slice Delivery
 
@@ -53,8 +53,8 @@ Changes:
 
 Proof:
 
-- `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked python -m pytest recognition/tests/api/test_authentication.py -q`
-- `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked python -m pytest recognition/tests/api/test_retention_api.py -q`
+- `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests/api/test_authentication.py -q`
+- `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests/api/test_retention_api.py -q`
 
 ## Success Criteria
 

@@ -165,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
         "    3. Shell-execution test coverage is rare; bugs surface in production.\n"
         "\n"
         "  Promote the inline Python to a standalone .py file:\n"
-        "    \"${PYENV_ROOT}/versions/${PYENV_VERSION}/bin/python\" \\\n"
+        "    uvx --from \"$MCP_HANDOFF_PACKAGE\" python3 \\\n"
         "      \"${REPO_ROOT}/scripts/_my_inline_script.py\"\n"
         "\n"
         "  See scripts/_task_start_inline.py and scripts/_task_finish_inline.py\n"

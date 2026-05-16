@@ -93,7 +93,7 @@ Successful API-key authentication schedules a background telemetry task that upd
 ## Verification Strategy
 
 - Deterministic tests:
-  - `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked python -m pytest recognition/tests/api/test_authentication.py -q`
+  - `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests/api/test_authentication.py -q`
 - Contract and failure-mode verification:
   - Verify telemetry failure does not alter auth success or request status codes.
   - Verify the telemetry path does not reuse the request-scoped session.
@@ -116,7 +116,7 @@ Changes:
 
 Proof:
 
-- `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked python -m pytest recognition/tests/api/test_authentication.py -q`
+- `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests/api/test_authentication.py -q`
 
 ### Slice 2: Failure Semantics and Observability
 
@@ -131,7 +131,7 @@ Changes:
 
 Proof:
 
-- `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked python -m pytest recognition/tests/api/test_authentication.py -q`
+- `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests/api/test_authentication.py -q`
 
 ## Consolidated Checklist
 

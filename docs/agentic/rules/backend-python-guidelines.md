@@ -15,7 +15,7 @@
 cd apps/prototype-description-service
 
 # Ensure the pinned interpreter exists; uv manages the project-local .venv
-pyenv install 3.12.7  # if you don't have it yet
+uv python install 3.12.7  # if you don't have it yet
 
 # Full setup (recommended) - handles platform-specific dependencies
 make setup
@@ -99,7 +99,7 @@ Calling the guard first lets branch enforcement or workspace drift checks bind t
 ruff check .              # Lint (pycodestyle, pyflakes, isort, bugbear, etc.)
 ruff format .             # Format (replaces black)
 ruff check --fix .        # Auto-fix safe issues
-VIRTUAL_ENV= uv run --locked mypy .  # Type checking (run from apps/prototype-description-service/)
+VIRTUAL_ENV= uv run --locked --extra dev mypy .  # Type checking (run from apps/prototype-description-service/)
 ```
 
 ---
@@ -203,11 +203,11 @@ async def get_cluster(
 cd apps/prototype-description-service
 # Prefer the app Makefile targets; use uv directly for targeted commands.
 make check                                               # ruff + mypy + pytest (all three)
-VIRTUAL_ENV= uv run --locked python -m pytest            # Run all tests
-VIRTUAL_ENV= uv run --locked python -m pytest recognition/tests/api/         # API tests only
-VIRTUAL_ENV= uv run --locked python -m pytest recognition/tests/integration/ # Integration tests (DB)
-VIRTUAL_ENV= uv run --locked python -m pytest recognition/tests/unit/        # Unit tests
-VIRTUAL_ENV= uv run --locked ruff check .                # Lint
-VIRTUAL_ENV= uv run --locked ruff format .               # Format
-VIRTUAL_ENV= uv run --locked mypy .                      # Type checking
+VIRTUAL_ENV= uv run --locked --extra dev python -m pytest            # Run all tests
+VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests/api/         # API tests only
+VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests/integration/ # Integration tests (DB)
+VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests/unit/        # Unit tests
+VIRTUAL_ENV= uv run --locked --extra dev ruff check .                # Lint
+VIRTUAL_ENV= uv run --locked --extra dev ruff format .               # Format
+VIRTUAL_ENV= uv run --locked --extra dev mypy .                      # Type checking
 ```

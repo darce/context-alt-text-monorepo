@@ -142,7 +142,7 @@ def test_run_subagent_drives_protocol_and_returns_structured_payload() -> None:
 
     client = mod.AppServerClient(
         cwd="/tmp/worktree",
-        env={"CODEX_REASONING_EFFORT": "high", "PYENV_VERSION": "description-service"},
+        env={"CODEX_REASONING_EFFORT": "high", "BRIDGE_TEST_ENV": "enabled"},
         popen_factory=lambda *args, **kwargs: fake_proc,
     )
     client.start()
@@ -360,7 +360,7 @@ def test_run_subagent_public_entrypoint_launches_client_and_merges_env() -> None
                 prompt="Solve the task.",
                 schema={"type": "object"},
                 cwd="/tmp/worktree",
-                env={"TMPDIR": "/tmp/bridge", "PYENV_VERSION": "description-service"},
+                env={"TMPDIR": "/tmp/bridge", "BRIDGE_TEST_ENV": "enabled"},
             )
     finally:
         mod.AppServerClient = original_client
@@ -369,7 +369,7 @@ def test_run_subagent_public_entrypoint_launches_client_and_merges_env() -> None
     assert captured["args"][0] == ["/resolved/codex", "app-server", "--listen", "stdio://"]
     assert captured["kwargs"]["cwd"] == "/tmp/worktree"
     assert captured["kwargs"]["env"]["TMPDIR"] == "/tmp/bridge"
-    assert captured["kwargs"]["env"]["PYENV_VERSION"] == "description-service"
+    assert captured["kwargs"]["env"]["BRIDGE_TEST_ENV"] == "enabled"
     assert captured["kwargs"]["env"]["PATH"] == os.environ["PATH"]
 
 

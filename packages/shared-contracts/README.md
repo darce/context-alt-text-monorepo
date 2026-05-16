@@ -29,7 +29,7 @@ packages/shared-contracts/
 
 These canonical schema definitions and shared fixtures are used to keep cross-boundary payloads aligned across backend, WordPress, and frontend consumers. Until code generation tooling is in place, the schemas serve as the authoritative machine-readable specification.
 
-The repo-level guard `pyenv exec python scripts/check_shared_contract_fixtures.py` validates the shared list-response golden fixtures against their declared schemas so envelope drift is caught before review.
+The repo-level guard `python3 scripts/check_shared_contract_fixtures.py` validates the shared list-response golden fixtures against their declared schemas so envelope drift is caught before review.
 
 ## vs. docs/agentic/contracts/
 

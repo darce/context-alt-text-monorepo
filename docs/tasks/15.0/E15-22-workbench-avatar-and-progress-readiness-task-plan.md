@@ -98,7 +98,7 @@ Land a focused Workbench-correctness slice before public demo sign-off. The rema
 ## Verification Strategy
 
 - Deterministic tests:
-  - `cd apps/prototype-description-service && pyenv exec python -m pytest recognition/tests/api/test_api_clusters.py -q`
+  - `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests/api/test_api_clusters.py -q`
   - `cd apps/prototype-wp-alt-context && npx vitest run js/admin/api/__tests__/recognitionApi.test.ts js/admin/pages/workbench/identity-clusters/__tests__/ClusterReviewPanel.test.tsx`
   - `cd apps/prototype-wp-alt-context && npx vitest run js/admin/pages/workbench/identity-clusters/__tests__/TopClustersSection.test.tsx js/admin/pages/workbench/identity-clusters/__tests__/SuggestionReviewPanel.test.tsx`
   - `cd apps/prototype-wp-alt-context && npx vitest run js/admin/pages/workbench/__tests__/JobTimeline.test.tsx`

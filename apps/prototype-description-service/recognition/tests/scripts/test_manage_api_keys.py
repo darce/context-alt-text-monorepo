@@ -54,7 +54,7 @@ def test_cli_module_exec_help_succeeds() -> None:
         cwd=app_root,
         capture_output=True,
         text=True,
-        env={**os.environ, "PYENV_VERSION": os.environ.get("PYENV_VERSION", "description-service")},
+        env={**os.environ},
         check=False,
     )
     assert result.returncode == 0, result.stderr

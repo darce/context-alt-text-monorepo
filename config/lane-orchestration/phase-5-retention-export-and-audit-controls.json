@@ -97,8 +97,8 @@
         "docs/tasks/6.0/phase-5-retention-export-and-audit-controls-task-plan.md"
       ],
       "test_commands": [
-        "cd apps/prototype-description-service && PYENV_VERSION=description-service pytest recognition/tests/unit/test_retention_policy.py recognition/tests/unit/test_audit_events.py recognition/tests/unit/test_export_service.py recognition/tests/unit/test_purge_service.py",
-        "cd apps/prototype-description-service && PYENV_VERSION=description-service mypy recognition/domain/services recognition/infrastructure/repositories recognition/config/settings.py"
+        "cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests/unit/test_retention_policy.py recognition/tests/unit/test_audit_events.py recognition/tests/unit/test_export_service.py recognition/tests/unit/test_purge_service.py",
+        "cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev mypy recognition/domain/services recognition/infrastructure/repositories recognition/config/settings.py"
       ],
       "capability_tags": ["postgres-ready", "reset-bootstrap"],
       "preflight_commands": [
@@ -149,8 +149,8 @@
         "docs/tasks/6.0/phase-5-retention-export-and-audit-controls-task-plan.md"
       ],
       "test_commands": [
-        "cd apps/prototype-description-service && PYENV_VERSION=description-service pytest recognition/tests/api/test_retention_api.py",
-        "cd apps/prototype-description-service && PYENV_VERSION=description-service mypy recognition/interface_adapters/http"
+        "cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests/api/test_retention_api.py",
+        "cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev mypy recognition/interface_adapters/http"
       ],
       "non_goals": [
         "Do not edit backend domain/repository files outside the HTTP layer.",

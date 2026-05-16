@@ -141,8 +141,8 @@ State key: **(open)** = E15-13 still needs to land this. **(extend)** = predeces
 ## Verification Strategy
 
 - Deterministic tests:
-  - `pyenv exec pytest apps/prototype-description-service/recognition/tests -k "replayed_cluster_bind or post_curation or suggestion or curriculum"`
-  - `pyenv exec pytest apps/prototype-description-service/roster`
+  - `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests -k "replayed_cluster_bind or post_curation or suggestion or curriculum"`
+  - `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest roster`
   - `cd apps/prototype-wp-alt-context && vendor/bin/phpunit tests/Unit`
   - `cd apps/prototype-wp-alt-context && npm test -- --run js/admin/pages/roster`
 - Contract/fixture verification:
@@ -173,7 +173,7 @@ Changes:
 
 Proof:
 
-- `pyenv exec pytest apps/prototype-description-service/recognition/tests -k "replayed_cluster_bind or curriculum"`
+- `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests -k "replayed_cluster_bind or curriculum"`
 - `cd apps/prototype-wp-alt-context && npm test -- --run js/admin/pages/roster`
 
 ### Slice 2: ADR-Backed Event and Refresh Status Contract
@@ -259,7 +259,7 @@ Proof:
 
 | Lane ID | Owned Paths | Upstream Dependencies | Required Tests |
 | --- | --- | --- | --- |
-| `backend-refresh` | `apps/prototype-description-service/**` | Slice 1 fixture decisions, ADR-009 | `pyenv exec pytest apps/prototype-description-service/recognition/tests apps/prototype-description-service/roster` |
+| `backend-refresh` | `apps/prototype-description-service/**` | Slice 1 fixture decisions, ADR-009 | `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests roster` |
 | `wp-projection-ui` | `apps/prototype-wp-alt-context/src/**`, `apps/prototype-wp-alt-context/tests/Unit/**`, `apps/prototype-wp-alt-context/js/admin/pages/roster/**`, `apps/prototype-wp-alt-context/js/admin/components/**` | `docs-contracts` schema/codegen handoff, ADR-009, Slice 2 contract shape | `cd apps/prototype-wp-alt-context && vendor/bin/phpunit tests/Unit && npm test -- --run js/admin/pages/roster` |
 | `docs-contracts` | `docs/**`, `packages/shared-contracts/**`, `apps/prototype-wp-alt-context/js/admin/api/generated/**` | ADR-009 owners' conditions, Slice 2 naming/contract decision | `cd apps/prototype-wp-alt-context && npm run generate:contracts && vendor/bin/phpunit tests/Unit/RosterEntryProjectionRepositoryTest.php && npm test -- --run js/admin/pages/roster && make plan-review DOC=docs/tasks/15.0/E15-13-roster-curation-loop-task-plan.md` (regenerate shared TS types from JSON Schema, prove PHP + TS consumers compile/test against the regenerated artifacts, and re-run planning review once the contract/doc surfaces converge) |
 

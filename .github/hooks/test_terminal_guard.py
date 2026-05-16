@@ -39,7 +39,7 @@ def _run_hook(payload: dict, cwd: str | None = None) -> tuple[int, dict | None, 
         "cd apps/prototype-wp-alt-context && npx vitest run js/admin/pages/workbench/__tests__/JobTimeline.test.tsx",
         "pwd && npx vitest run js/admin/pages/workbench/__tests__/JobTimeline.test.tsx",
         "ls -la; vitest run js/admin/pages/workbench/__tests__/JobTimeline.test.tsx",
-        "PYENV_VERSION=description-service npx vitest run js/admin/pages/workbench/__tests__/JobTimeline.test.tsx",
+        "VIRTUAL_ENV= npx vitest run js/admin/pages/workbench/__tests__/JobTimeline.test.tsx",
         "export NODE_ENV=test && vitest run js/admin/pages/workbench/__tests__/JobTimeline.test.tsx",
     ],
 )

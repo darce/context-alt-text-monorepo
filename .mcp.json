@@ -10,7 +10,6 @@
         "serve-stdio"
       ],
       "env": {
-        "PYENV_VERSION": "description-service",
         "AGENT_HANDOFF_ENFORCE_BRANCH": "1"
       }
     },
@@ -24,7 +23,6 @@
         "serve-stdio"
       ],
       "env": {
-        "PYENV_VERSION": "description-service",
         "AGENT_HANDOFF_ENFORCE_BRANCH": "1"
       }
     },

@@ -21,9 +21,7 @@
         "serve-stdio"
       ],
       "env": {
-        "PATH": "${env:PYENV_ROOT}/bin:${env:PYENV_ROOT}/shims:/usr/local/bin:${env:PATH}",
-        "PYENV_VERSION": "description-service",
-        "PYENV_ROOT": "${env:PYENV_ROOT}",
+        "PATH": "${env:HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:${env:PATH}",
         "AGENT_HANDOFF_ENFORCE_BRANCH": "1"
       }
     },
@@ -40,9 +38,7 @@
         "serve-stdio"
       ],
       "env": {
-        "PATH": "${env:PYENV_ROOT}/bin:${env:PYENV_ROOT}/shims:/usr/local/bin:${env:PATH}",
-        "PYENV_VERSION": "description-service",
-        "PYENV_ROOT": "${env:PYENV_ROOT}",
+        "PATH": "${env:HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:${env:PATH}",
         "AGENT_HANDOFF_ENFORCE_BRANCH": "1"
       }
     }

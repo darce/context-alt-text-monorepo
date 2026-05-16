@@ -23,10 +23,13 @@ if [[ "$ROOT_BRANCH" != "main" && "$ROOT_BRANCH" != "master" ]]; then
 fi
 
 echo "→ Registering MAINT task on $ROOT_BRANCH"
+MCP_HANDOFF_PACKAGE="${MCP_HANDOFF_PACKAGE:-mcp-agent-handoff==0.11.2}"
+if ! command -v uvx >/dev/null 2>&1; then
+  echo "❌ uvx not on PATH. Install uv (https://docs.astral.sh/uv/) before running maint-start." >&2
+  exit 3
+fi
 REPO_ROOT="$REPO_ROOT" SLUG="$SLUG" OBJECTIVE="$OBJECTIVE" \
-PYTHONPATH="${REPO_ROOT}/packages/agent-handoff-mcp/src:${REPO_ROOT}/packages/agent-orchestrator-mcp/src" \
-  PYENV_VERSION="${PYENV_VERSION:-description-service}" \
-  "${PYENV_ROOT:-$HOME/.pyenv}/versions/${PYENV_VERSION:-description-service}/bin/python" \
+  uvx --from "$MCP_HANDOFF_PACKAGE" python3 \
   "${REPO_ROOT}/scripts/_maint_start_inline.py"
 
 echo

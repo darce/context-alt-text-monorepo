@@ -284,15 +284,15 @@ Validation snippets verified on 2026-04-11 against the current package surface: 
 
 ```bash
 # --- ATI-001 / ATI-002 / ATI-003: auth lookup semantics and request auth surface ---
-cd apps/prototype-description-service && pyenv exec python -m pytest recognition/tests/api/test_authentication.py -q
+cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests/api/test_authentication.py -q
 
 # --- ATI-003: downstream routes that patch auth lookup continue to pass with the new auth boundary ---
-cd apps/prototype-description-service && pyenv exec python -m pytest recognition/tests/api/test_retention_api.py -q
+cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests/api/test_retention_api.py -q
 ```
 
 ### Tier 2 validation
 
 ```bash
 # --- ATI-004: telemetry path remains non-blocking to auth correctness ---
-cd apps/prototype-description-service && pyenv exec python -m pytest recognition/tests/api/test_authentication.py -q
+cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests/api/test_authentication.py -q
 ```

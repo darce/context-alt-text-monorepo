@@ -3,7 +3,7 @@
 > **Task Short ID**: E15-3
 > **Status**: scoped -- not started
 > **Epic**: [E15. Public Demo Launch Readiness](../../epics/v0.4.0/public-demo-launch-readiness-epic.md) Phase 3
-> **Predecessors**: E15-1 (security baseline) merged; E15-2 (observability baseline) merged. Backend at `api.altcontext.com` verified.
+> **Predecessors**: E15-1 (security baseline) merged; E15-2 (observability baseline) merged; demo-critical Workbench UI gate passed locally, with entity avatars, Top Cluster face samples, and Review Cluster member rows rendering from seeded media. Backend at `api.altcontext.com` verified.
 > **Blocks**: E15-5 (remote E2E verification) -- needs a WP origin to round-trip against. MVP completion signal.
 > **Provider stance**: provider-agnostic. Concrete host selected at task-start via an ADR-lite decision record. Scope covers requirements, not a vendor.
 
@@ -13,6 +13,8 @@
 
 Stand up a publicly accessible WordPress instance running the ACX plugin, pointed at the live recognition backend, such that a product demo URL can be shared and a curator can trigger a scan that round-trips through the backend.
 
+Do not purchase or provision the shared WP host until local/LocalWP evidence shows the Workbench entity-avatar path is demo-ready: populated clusters must show real thumbnails in entity avatars and Top Cluster cards, and the Review Cluster drawer must list member faces instead of "No members found" for clusters with face counts.
+
 This task does not claim demo readiness from request success alone. Before the public demo is treated as ready, the manual run log must also carry the avatar/progress proof bundle defined by [E15-22](./E15-22-workbench-avatar-and-progress-readiness-task-plan.md): representative avatar rendering from the backend `thumb_url` path or an explicit fallback state, a monotonic processed indicator, and `Scan complete` appearing only when the Workbench is actually UI-ready.
 
 ## MVP Exit Criteria
@@ -21,7 +23,7 @@ The task is complete when all of the following are true:
 
 1. A public URL loads a WordPress site with the ACX plugin installed and active.
 2. The plugin Settings page shows a successful backend connection probe against `api.altcontext.com` with a production API key.
-3. A curator can open the plugin Workbench, trigger a scan against seeded media, and see a recognition result returned, with the run log carrying the avatar/progress proof bundle required by [E15-22](./E15-22-workbench-avatar-and-progress-readiness-task-plan.md).
+3. A curator can open the plugin Workbench, trigger a scan against seeded media, and see recognition results returned with entity avatar thumbnails, Top Cluster face samples, and Review Cluster member rows rendered, with the run log carrying the avatar/progress proof bundle required by [E15-22](./E15-22-workbench-avatar-and-progress-readiness-task-plan.md).
 4. HTTPS is enforced (Cloudflare Full/Strict or host-native TLS).
 5. The host selection and configuration is captured in a short decision record co-located with this plan.
 
@@ -41,7 +43,7 @@ Anything beyond these five items (CI smoke harness, multi-site, custom theme, pu
 The chosen host MUST satisfy all of the following. Vendor is decided at task-start by writing a one-page decision record (`docs/tasks/15.0/E15-3-host-decision-record.md`) that captures the chosen vendor, the plan tier, and how each criterion is met.
 
 | Criterion | Requirement |
-|-----------|-------------|
+| --------- | ----------- |
 | PHP | 8.1+ with `curl`, `json`, `mbstring`, `xml`, `gd` or `imagick` |
 | MySQL / MariaDB | 8.0+ / 10.6+ |
 | HTTPS | Let's Encrypt, Cloudflare, or host-native TLS |
@@ -57,6 +59,7 @@ Candidate pool documented in [self-hosting-epic.md § Frontend Tier](../../epics
 
 ### Slice 1 -- Host decision + provisioning
 
+- Confirm the local/LocalWP Workbench UI gate is already evidenced: seeded-media clusters render entity avatars, Top Cluster face samples, and Review Cluster member rows without placeholder/error thumbnails for populated clusters.
 - Write `E15-3-host-decision-record.md` capturing chosen vendor, plan, annual cost, and criterion matrix.
 - Purchase/provision hosting.
 - Confirm PHP version, MySQL version, cron mode, HTTPS, and egress to `api.altcontext.com` from host shell (`curl -sSf https://api.altcontext.com/health/detailed`).
@@ -115,11 +118,13 @@ Exit: run log filed with the E15-22 avatar/progress proof bundle; local-read pat
 ## Context and Ownership
 
 - [ ] Loaded the host-selection constraints, backend contract anchors, and handoff state before provisioning.
+- [ ] Verified the Workbench entity-avatar/review-drawer gate locally before any host purchase or provisioning work.
 - [ ] Confirmed no extra external dependency context is required beyond the cited self-hosting epic, backend health surface, and WP host constraints.
 - [ ] Kept task ownership clean: E15-3 provisions the public WP demo, while E15-5, E15-5a, E15-6, and E15-7 stay in their declared scopes.
 
 ### Checklist for Slice 1: Host decision + provisioning
 
+- [ ] Capture local/LocalWP seeded-media proof that entity avatars, Top Cluster face samples, and Review Cluster member rows render for populated clusters.
 - [ ] Write `E15-3-host-decision-record.md` with the vendor, plan tier, annual cost, and criterion matrix.
 - [ ] Provision the chosen host and verify PHP/MySQL/cron/HTTPS plus outbound reachability to `api.altcontext.com`.
 - [ ] Capture a valid-cert `curl -I https://<chosen-wp-host>/` success result before moving on.
@@ -149,7 +154,7 @@ Exit: run log filed with the E15-22 avatar/progress proof bundle; local-read pat
 ## Success Criteria
 
 - [ ] A public WordPress demo URL is live with the ACX plugin active and successfully probing `api.altcontext.com`.
-- [ ] A curator can run the seeded-media demo path and see recognition results on the live site with the evidence checked into the named docs.
+- [ ] A curator can run the seeded-media demo path and see recognition results, entity avatar thumbnails, Top Cluster face samples, and Review Cluster member rows on the live site with the evidence checked into the named docs.
 - [ ] Operators can promote a plugin hotfix to the live demo and roll back to the prior ZIP using the documented procedure captured during Slice 2.
 - [ ] The demo proof bundle is strong enough that E15-5 can reuse it for live-demo execution without redefining avatar/progress correctness, including the backend-`thumb_url` representative evidence.
 

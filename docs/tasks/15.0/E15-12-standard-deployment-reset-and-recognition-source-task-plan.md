@@ -269,11 +269,11 @@ Proof:
 ## Review Readiness
 
 - [x] No reset workflow change lands without matching operator documentation.
-- [ ] No plugin mode change lands without matching runtime-resolution and UI tests.
+- [x] No plugin mode change lands without matching runtime-resolution and UI tests.
 - [x] Destructive reset completion is proven with `/ready`, not `/health` alone.
-- [ ] The final handoff records the selector contract, reset verification, and any prod guard decision.
+- [x] The final handoff records the selector contract, reset verification, and any prod guard decision.
 
-Validation note: the implementation surfaces are present, but this checkout still has two follow-up validation gaps before the remaining review-readiness boxes can close: `js/admin/pages/workbench/__tests__/WorkbenchPage.test.tsx` currently fails in the workbench test harness (`useJobStateMachine` reads an undefined query object), and `scripts/test_make_reset_remote_target.py` still expects dry-run success without the now-required `ACX_RESET_SITE_URL` bootstrap input.
+Validation closeout (2026-05-17, MAINT-e15-12-validation-cleanup-20260517): the two follow-up validation gaps are resolved. `js/admin/pages/workbench/__tests__/WorkbenchPage.test.tsx` now passes 30/30 after `buildClusterProgress` / `useJobStateMachineDerivedState` / `ScanTabContent` were wired to surface backend-driven clustering progress in the scan panel. `scripts/test_make_reset_remote_target.py` now threads `ACX_RESET_SITE_URL` through its dev/prod dry-run fixtures and adds a fail-closed regression guard for the BR-06 site-URL requirement (6/6 pass).
 
 ## Stretch Goals
 

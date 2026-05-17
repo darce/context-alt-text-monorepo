@@ -1,6 +1,6 @@
 # E15-5a Hetzner CX22 Fallback Plan
 
-> **Status**: draft -- pending `/planning-review`
+> **Status**: see `DASHBOARD.txt` (MCP is the source of truth; planning-review run id captured in [the run log](./E15-5a-oci-hygiene-run-log.md#planning-review-outcome)).
 > **Parent**: [E15-5a OCI Operational Hygiene](./E15-5a-oci-operational-hygiene-task-plan.md) Slice 3
 > **Scope**: planning artifact only. This plan does not execute the migration; it documents the migration so an operator can execute it under pressure.
 > **Living-doc rule**: re-verify this plan whenever `apps/prototype-description-service/.env.prod.example`, `apps/prototype-description-service/docker-compose.env.yml`, or `apps/prototype-description-service/Caddyfile` change materially.
@@ -52,6 +52,7 @@ The CX22 (2 vCPU, 4 GB RAM, 40 GB disk, 20 TB traffic at time of writing) is the
 Capture a representative 15-minute window during typical operator usage (workbench browsing + at least one scan job) and record in [E15-5a-oci-hygiene-run-log.md](./E15-5a-oci-hygiene-run-log.md#memory-sampling-evidence-capture):
 
 ```bash
+# REPLACE before running: <tailnet> -> your tailnet name (e.g. tail1a44b8); confirm with `tailscale status`.
 # From the workstation, over the tailnet:
 ssh ubuntu@acx-backend.<tailnet>.ts.net '
   echo "=== free -m ===" && free -m
@@ -92,14 +93,29 @@ Any failure on these steps **forces** either CX32 review or an explicit architec
 
 ### Backup Baseline
 
-Per the parent task plan's Slice 3 first checklist item: the operator verifies whether a daily `pg_dump` cron is currently running on the OCI VM and records the result in the run log.
+The operator verifies whether a daily `pg_dump` cron is currently running on the OCI VM and records the result in [the run log § Postgres Backup Baseline Check](./E15-5a-oci-hygiene-run-log.md#postgres-backup-baseline-check).
 
-- If **yes**, the fallback uses the most recent nightly dump as the migration starting point and runs a fresh `pg_dump` immediately before cutover to capture the final delta.
-- If **no**, the fallback requires a one-off `pg_dump` as a prerequisite step and opens a separate follow-up to automate ongoing backups. The follow-up is not in scope for this plan; capture the follow-up task ref in the run log.
+**Lookup sequence** (run in order; first hit wins; record the outcome from each step):
+
+```bash
+# REPLACE before running: <tailnet> -> your tailnet name.
+ssh ubuntu@acx-backend.<tailnet>.ts.net '
+  echo "=== crontab (root) ===" && sudo crontab -l 2>/dev/null | grep -i "pg_dump\|postgres\|backup" || echo "(no matching root crontab entry)"
+  echo "=== crontab (ubuntu) ===" && crontab -l 2>/dev/null | grep -i "pg_dump\|postgres\|backup" || echo "(no matching user crontab entry)"
+  echo "=== /etc/cron.d ===" && sudo grep -RIl "pg_dump\|postgres\|backup" /etc/cron.d /etc/cron.daily /etc/cron.hourly 2>/dev/null || echo "(no matching files)"
+  echo "=== systemd timers ===" && systemctl list-timers --all 2>/dev/null | grep -i "pg\|postgres\|backup" || echo "(no matching timers)"
+  echo "=== docker backup sidecar ===" && sudo docker ps -a --format "table {{.Names}}\t{{.Image}}" | grep -i "backup\|dump\|barman\|pgbackrest" || echo "(no backup container)"
+  echo "=== local dump artifacts ===" && sudo ls -lah /var/backups/postgres /opt/acx-backend/backups 2>/dev/null || echo "(no standard backup dirs)"
+'
+```
+
+- If **any step shows a recurring `pg_dump` schedule**, record the schedule + output path in the run log. The fallback uses the most recent nightly dump as the migration starting point and runs a fresh `pg_dump` immediately before cutover to capture the final delta.
+- If **all steps show no backup mechanism**, the fallback requires a one-off `pg_dump` as a prerequisite step and opens a separate follow-up to automate ongoing backups. The follow-up is not in scope for this plan; capture the follow-up task ref in the run log.
 
 ### Migration Steps
 
 ```bash
+# REPLACE before running: <tailnet> -> your tailnet name; <hetzner-ip> -> Hetzner public IP.
 # 1. On OCI VM: capture final dump just before cutover.
 ssh ubuntu@acx-backend.<tailnet>.ts.net '
   sudo docker exec acx-prod-postgres-1 \
@@ -143,6 +159,7 @@ diff /tmp/oci-counts.txt /tmp/hetzner-counts.txt
 The `acx_blobs` named volume holds recognition blobs that are not in Postgres. Migrate via:
 
 ```bash
+# REPLACE before running: <tailnet> -> your tailnet name; <hetzner-ip> -> Hetzner public IP.
 # On OCI VM:
 ssh ubuntu@acx-backend.<tailnet>.ts.net '
   sudo docker run --rm -v acx-prod_acx_blobs:/from -v /tmp:/to alpine \
@@ -160,6 +177,15 @@ ssh root@<hetzner-ip> '
 
 The unified cache mount (`prod-models` -> `/data/cache`, which holds HuggingFace, InsightFace, transformers, and matplotlib caches per `apps/prototype-description-service/.env.prod.example`) is NOT migrated -- it re-downloads from Hugging Face / InsightFace on first container start. Add ~5 min to the cutover timing for the warm-up.
 
+### Post-Cutover Backup Continuity
+
+Migrating Postgres data once does not re-establish the standing backup mechanism on Hetzner. Cutover MUST NOT complete without one of the following:
+
+1. **Mirror the OCI cron on Hetzner** (preferred when the OCI baseline check found a working schedule). Reuse the same pg_dump invocation from the OCI VM (output path `/var/backups/postgres/<env>-<date>.dump`) and install it as a root crontab entry on the Hetzner host. Validate the next scheduled run produces a dump before declaring cutover stable.
+2. **Provision a one-off cron during cutover** (when the OCI baseline check found no schedule). Add a daily `@daily root sudo docker exec acx-prod-postgres-1 pg_dump -U acx_app -d alt_context_service -Fc --file=/var/lib/postgresql/data/auto-$(date -u +%%Y%%m%%dT%%H%%M%%SZ).dump` entry on the Hetzner host as part of the cutover, and open the same automation follow-up task referenced in the Backup Baseline section above. Note: cron requires `%` to be doubled to `%%` inside crontab entries.
+
+Off-host retention (Hetzner Storage Box, S3-compatible, or operator workstation pull) is out of scope for this plan but should be tracked in the same follow-up. Cutover is not "complete" until the next scheduled dump produces a fresh artifact on Hetzner.
+
 ---
 
 ## Env, Secrets, and Config Migration
@@ -169,6 +195,7 @@ The unified cache mount (`prod-models` -> `/data/cache`, which holds HuggingFace
 The full surface lives in [`apps/prototype-description-service/.env.prod.example`](../../../apps/prototype-description-service/.env.prod.example). The actual prod values live in `/opt/acx-backend/prod/secrets/.env` on the OCI VM. Migrate as a unit:
 
 ```bash
+# REPLACE before running: <tailnet> -> your tailnet name; <hetzner-ip> -> Hetzner public IP.
 ssh ubuntu@acx-backend.<tailnet>.ts.net 'sudo cat /opt/acx-backend/prod/secrets/.env' > prod.env.tmp
 # Move to Hetzner via password manager or short-lived scp; do NOT commit.
 scp prod.env.tmp root@<hetzner-ip>:/opt/acx-backend/prod/secrets/.env
@@ -194,7 +221,7 @@ shred -u prod.env.tmp
 | `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB` | Unchanged; the `pg_restore` above expects these to match. |
 | `POSTGRES_DSN`/`POSTGRES_SYNC_DSN`| Unchanged (container-internal `postgres:5432`). |
 | `RECOGNITION_AUTH_ENABLED=true`   | Unchanged.       |
-| `RECOGNITION_ALLOWED_API_KEYS`    | MUST remain empty; the prod startup guard refuses to boot otherwise. Provision real keys via `scripts/manage_api_keys.py` (same flow as OCI). |
+| `RECOGNITION_ALLOWED_API_KEYS`    | MUST remain empty (the prod startup guard refuses to boot otherwise). **WordPress plugin auth continuity is preserved by the Postgres dump**: real API keys live in the `api_keys` table and migrate via `pg_restore` above. No key rotation is required during cutover. Run `scripts/manage_api_keys.py list` post-boot only to confirm the expected keys are present; rotate via `scripts/manage_api_keys.py revoke`/`create` only if a leak is suspected. |
 | `RECOGNITION_ALLOWED_ORIGINS`     | Unchanged (commented out in `.env.prod.example`; uncomment + set only if the WP host is on a different origin from the API).       |
 | `TENANT_ID`                       | Unchanged (single-tenant prod). |
 | Cache dirs (`CACHE_BASE`, `HF_HOME`, etc.) | Unchanged (container-internal). |
@@ -207,18 +234,34 @@ Caddy is **not** declared in `docker-compose.env.yml`; it runs as a separate `do
 
 The Caddyfile also defines `staging.api.altcontext.com` and `dev.api.altcontext.com` routes targeting `staging-api`/`dev-api` aliases. **Prod-only Hetzner migration leaves those two routes pointing at services that do not exist on the Hetzner host** -- they will 502 until staging/dev migrate or until those Caddyfile blocks are removed/commented for the prod-only host. Either prune those blocks from the deployed `/opt/acx-backend/Caddyfile` during the cutover, or keep staging/dev resolving to the OCI IPs via separate A records.
 
+#### Let's Encrypt Rate-Limit Guard
+
+Let's Encrypt's production CA enforces a 5-duplicate-certs-per-week limit on `api.altcontext.com`. A bouncing cutover (Hetzner boots, fails, rollback to OCI, retry) can exhaust that limit and lock issuance for days. Mitigation:
+
+1. **First boot on Hetzner uses the LE staging CA.** Inject `acme_ca https://acme-staging-v02.api.letsencrypt.org/directory` into the global Caddyfile options block during the test boot (before DNS cutover). The staging CA has no per-week duplicate limit and issues untrusted certs that still prove the issuance path works.
+2. **Flip to production CA only after the host has booted cleanly twice in a row.** Remove the `acme_ca` line, restart Caddy, then proceed to DNS cutover.
+3. **If rollback is needed mid-cutover**, the OCI host still owns the production cert; no new prod issuance happens until Hetzner is retried. Document the rollback in the run log so the next attempt re-uses the staging-then-prod sequence.
+
 ### OCIR Authentication
 
 The image registry stays on OCI. Cache OCIR auth on the new Hetzner host once:
 
 ```bash
+# REPLACE before running: <hetzner-ip> -> Hetzner public IP; <operator-email> -> the OCI user that owns the auth token.
 ssh root@<hetzner-ip> 'docker login iad.ocir.io -u "idu2kqqe2jxy/<operator-email>"'
 # Token from OCI console -> User Settings -> Auth Tokens (or reuse the existing token).
 ```
 
 ### Tailscale (optional, recommended)
 
-Install Tailscale on the Hetzner host using the same pattern documented in [`infra/oci/README.md` § Tailscale](../../../infra/oci/README.md#tailscale-recommended-for-dynamic-ip-workstations). Use a fresh auth key with hostname `acx-backend-hetzner` so the OCI MagicDNS name doesn't collide while both hosts run in parallel during cutover. After cutover, the operator can rename `acx-backend` if desired.
+Install Tailscale on the Hetzner host using the same pattern documented in [`infra/oci/README.md` § Tailscale](../../../infra/oci/README.md#tailscale-recommended-for-dynamic-ip-workstations).
+
+**Auth-key lifecycle** (do not reuse the OCI host's auth key):
+
+1. In the Tailscale admin console, generate a **reusable, non-ephemeral** auth key scoped to the Hetzner host. Reusable is required because the Hetzner host may be re-imaged during cutover testing; ephemeral would deauthorize the node on each restart.
+2. Use hostname `acx-backend-hetzner` so the OCI MagicDNS name (`acx-backend`) does not collide while both hosts run in parallel during cutover.
+3. **Revoke the auth key once the Hetzner host has successfully joined the tailnet** (Tailscale admin console -> Settings -> Keys). The key only needs to exist for the duration of `tailscale up`; leaving it valid is the same as leaving a long-lived deploy credential.
+4. After cutover, the operator may rename `acx-backend-hetzner` to `acx-backend` in the Tailscale admin console if the OCI host is decommissioned.
 
 ---
 
@@ -249,7 +292,7 @@ If the Hetzner stack fails post-cutover, flip the A record back to the OCI IP. T
 |-------|----------|-------|
 | amd64 parity check (one-time, can be done now) | 30-60 min | Local rebuild + boot + smoke. |
 | Hetzner CX22 provisioning | 5 min | Includes initial SSH + docker install. |
-| One-time install (docker, OCIR login, Tailscale, directory layout) | 30 min | Mirrors the OCI cloud-init script; do it ahead of trigger. |
+| One-time install (docker, OCIR login, Tailscale, directory layout, `acx-prod.service` systemd unit) | 30 min | Mirrors the OCI cloud-init script (see `infra/oci/cloud-init.yaml`) including provisioning the `acx-prod.service` unit referenced by `systemctl stop acx-prod` / `start acx-prod` above. Do it ahead of trigger. |
 | Postgres dump + transfer + restore | 10-20 min | Depends on DB size; today << 1 GB. |
 | Blob volume tar + transfer + untar | 5-15 min | Depends on blob volume size. |
 | InsightFace model cache repopulation | ~5 min | First-request hit; can be pre-warmed via a synthetic scan after the stack starts. |

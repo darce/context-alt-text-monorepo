@@ -446,10 +446,12 @@ def get_scan_service_builder(
     from recognition.application.embedding.detector import (
         InsightFaceFaceDetector,
         StubFaceDetector,
+        UnavailableFaceDetector,
     )
     from recognition.application.embedding.generator import (
         InsightFaceEmbeddingGenerator,
         StubEmbeddingGenerator,
+        UnavailableEmbeddingGenerator,
     )
     from recognition.config import get_settings as get_recognition_settings
 
@@ -470,16 +472,17 @@ def get_scan_service_builder(
                 adapter = await get_shared_insightface_adapter()
                 detector = InsightFaceFaceDetector(adapter)
                 generator = InsightFaceEmbeddingGenerator(adapter)
-            except ImportError:
-                # InsightFace not installed, fall back to stubs with warning
+            except Exception as exc:
+                # Production must fail closed; deterministic stubs are test-only.
                 import logging
 
-                logging.getLogger(__name__).warning(
-                    "InsightFace not installed, using stub detectors. "
-                    "Install with: pip install 'prototype-description-service[local]'"
+                logging.getLogger(__name__).exception(
+                    "InsightFace runtime unavailable; scan service will fail closed. "
+                    "Install with: pip install 'prototype-description-service[local]'",
                 )
-                detector = StubFaceDetector()
-                generator = StubEmbeddingGenerator()
+                reason = str(exc) or exc.__class__.__name__
+                detector = UnavailableFaceDetector(reason)
+                generator = UnavailableEmbeddingGenerator(reason)
 
         return ScanService(
             session=session,

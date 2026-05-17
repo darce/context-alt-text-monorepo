@@ -159,6 +159,98 @@ class AnalysisJobsControllerTest extends TestCase
         $this->assertTrue($statusData['terminal_state']);
     }
 
+    public function testGetJobStatusMarksKnownMissingBatchChildAsFailed(): void
+    {
+        $runId = 'a0a0a0a0-a0a0-4a0a-8a0a-a0a0a0a0a0a0';
+        $jobId = '10101010-1010-4010-8010-101010101010';
+
+        $GLOBALS['__ac_attachment_urls'][151] = 'http://example.test/media/151.jpg';
+        $GLOBALS['__ac_attachment_urls'][152] = 'http://example.test/media/152.jpg';
+
+        add_filter('acx_recognition_transport', static fn(string $current): string => 'url');
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'id' => $jobId,
+                'status' => 'pending',
+                'type' => 'analyze',
+                'progress' => ['completed' => 0, 'total' => 2],
+            ]),
+        ]);
+
+        $analyzeRequest = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $analyzeRequest->set_param('batch_run_id', $runId);
+        $analyzeRequest->set_param('batch_index', 0);
+        $analyzeRequest->set_param('submitted_total', 2);
+        $analyzeRequest->set_param('media_ids', [151, 152]);
+        $this->controller->analyze_media($analyzeRequest);
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 404, 'message' => 'Not Found'],
+            'body' => json_encode(['detail' => 'Job not found']),
+        ]);
+
+        $jobStatusRequest = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/' . $jobId);
+        $jobStatusRequest->set_param('job_id', $jobId);
+        $jobStatusResponse = $this->controller->get_job_status($jobStatusRequest);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $jobStatusResponse);
+        $this->assertSame(404, $jobStatusResponse->get_status());
+
+        $statusRequest = new WP_REST_Request('GET', '/acx/v1/recognition/batch-runs/' . $runId);
+        $statusRequest->set_param('run_id', $runId);
+        $statusResponse = $this->controller->get_batch_run_status($statusRequest);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $statusResponse);
+        $statusData = $statusResponse->get_data();
+        $this->assertSame(0, $statusData['completed_total']);
+        $this->assertSame(2, $statusData['failed_total']);
+        $this->assertTrue($statusData['terminal_state']);
+    }
+
+    public function testBatchRunRefreshMarksKnownMissingChildAsFailed(): void
+    {
+        $runId = 'b0b0b0b0-b0b0-4b0b-8b0b-b0b0b0b0b0b0';
+        $jobId = '20202020-2020-4020-8020-202020202020';
+
+        $GLOBALS['__ac_attachment_urls'][161] = 'http://example.test/media/161.jpg';
+
+        add_filter('acx_recognition_transport', static fn(string $current): string => 'url');
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'id' => $jobId,
+                'status' => 'pending',
+                'type' => 'analyze',
+                'progress' => ['completed' => 0, 'total' => 1],
+            ]),
+        ]);
+
+        $analyzeRequest = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $analyzeRequest->set_param('batch_run_id', $runId);
+        $analyzeRequest->set_param('batch_index', 0);
+        $analyzeRequest->set_param('submitted_total', 1);
+        $analyzeRequest->set_param('media_ids', [161]);
+        $this->controller->analyze_media($analyzeRequest);
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 404, 'message' => 'Not Found'],
+            'body' => json_encode(['detail' => 'Job not found']),
+        ]);
+
+        $statusRequest = new WP_REST_Request('GET', '/acx/v1/recognition/batch-runs/' . $runId);
+        $statusRequest->set_param('run_id', $runId);
+        $statusResponse = $this->controller->get_batch_run_status($statusRequest);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $statusResponse);
+        $statusData = $statusResponse->get_data();
+        $this->assertSame(0, $statusData['completed_total']);
+        $this->assertSame(1, $statusData['failed_total']);
+        $this->assertTrue($statusData['terminal_state']);
+    }
+
     public function testAnalyzeMediaRecordsSubmitFailuresInsideBatchRun(): void
     {
         $runId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';

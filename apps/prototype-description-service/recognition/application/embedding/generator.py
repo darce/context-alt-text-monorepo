@@ -104,6 +104,21 @@ class StubEmbeddingGenerator(EmbeddingGeneratorProtocol):
         return results
 
 
+class UnavailableEmbeddingGenerator(EmbeddingGeneratorProtocol):
+    """Fail-closed generator for production runtime initialization failures."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+
+    async def generate(self, face_images: Iterable[bytes]) -> list[EmbeddingResult]:
+        media_id = "recognition-runtime"
+        for image in face_images:
+            if image:
+                media_id = hashlib.sha256(image).hexdigest()
+                break
+        raise EmbeddingAdapterError(media_id=media_id, error_message=self.reason)
+
+
 class InsightFaceEmbeddingGenerator(EmbeddingGeneratorProtocol):
     """Real embedding generator using InsightFace."""
 
@@ -178,6 +193,7 @@ __all__ = [
     "EmbeddingTimeoutError",
     "EmbeddingGeneratorProtocol",
     "StubEmbeddingGenerator",
+    "UnavailableEmbeddingGenerator",
     "InsightFaceEmbeddingGenerator",
     "EmbeddingGenerator",
 ]

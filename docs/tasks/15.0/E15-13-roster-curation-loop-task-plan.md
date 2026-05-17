@@ -50,7 +50,7 @@ The assessment and spec show that WordPress roster curation, backend curation re
 
 ## Current State Analysis
 
-Anchored to local `main` HEAD `7340db43` (2026-05-08 review-time baseline). Predecessor task plans `E15-19-preimpl-roster-refresh-projection-foundation-task-plan.md` and `E15-21-preimpl-roster-routes-and-evidence-task-plan.md` (both merged) plus the post-merge fix series shipped most of the projection envelope and durable replay scaffolding. This baseline also includes the newer curation-sync contract wording and curation-job failure-loop fix that were not present at `5a3d6ac1`. E15-13 closes the *residual gaps* listed below.
+Anchored to local `main` HEAD `7340db43` (2026-05-08 review-time baseline). Predecessor task plans `E15-19-preimpl-roster-refresh-projection-foundation-task-plan.md` and `E15-21-preimpl-roster-routes-and-evidence-task-plan.md` (both merged) plus the post-merge fix series shipped most of the projection envelope and durable replay scaffolding. **Supersession reconciliation:** E15-19 was originally written to supersede this plan, but in practice the two shipped as a paired Tier 0 split — E15-19 owned the PREIMPL Tier 0 contract work (ADR-009 gate, post-curation event, RCL-004 projection schema, bounded refresh, projection integrity) and E15-13 retained the UI surfacing scope that consumes E15-19's contract outputs. See `E15-19-preimpl-roster-refresh-projection-foundation-task-plan.md` L24 for the matching reconciliation note. This baseline also includes the newer curation-sync contract wording and curation-job failure-loop fix that were not present at `5a3d6ac1`. E15-13 closes the *residual gaps* listed below.
 
 ### Already shipped (do NOT re-do)
 

@@ -69,26 +69,26 @@ Exit: derived hook returns monotonic counts; existing consumers unchanged.
 
 ### Checklist for Slice 1: Monotonic guard + batch-run text fix
 
-- [ ] Add `enforceMonotonicProgress` helper to `jobStateMachineProgress.ts`.
-- [ ] Fix `ScanActionPanel` batch-run text to render processed total consistently with the progress bar.
-- [ ] Extend `jobStateMachineProgress.test.ts` with batch-run, SSE, and faces_found monotonic cases plus a zero-prev no-op case.
+- [x] Add `enforceMonotonicProgress` helper to `jobStateMachineProgress.ts`.
+- [x] Fix `ScanActionPanel` batch-run text to render processed total consistently with the progress bar.
+- [x] Extend `jobStateMachineProgress.test.ts` with batch-run, SSE, and faces_found monotonic cases plus a zero-prev no-op case.
 
 ### Checklist for Slice 2: Wire the guard into the derived-state hook
 
-- [ ] Add `useMonotonicScanProgress(rawProgress, runKey)` hook.
-- [ ] Wire it through `useJobStateMachineDerivedState` for `scanProgress` and `clusterProgress`.
-- [ ] Add a derived-state test proving monotonicity across renders and reset on `runKey` change.
+- [x] Add `useMonotonicScanProgress(rawProgress, runKey)` hook.
+- [x] Wire it through `useJobStateMachineDerivedState` for `scanProgress` and `clusterProgress`.
+- [x] Add a derived-state test proving monotonicity across renders and reset on `runKey` change.
 
 ## Review Readiness
 
-- [ ] All hook tests pass under the workspace vitest runner.
-- [ ] No type errors in the touched files.
-- [ ] No regressions to the existing `buildScanProgress` clustering/projecting completion snapshot test.
+- [x] All hook tests pass under the workspace vitest runner.
+- [x] No type errors in the touched files.
+- [x] No regressions to the existing `buildScanProgress` clustering/projecting completion snapshot test.
 
 ## Success Criteria
 
-- [ ] `ScanActionPanel` batch-run text and progress bar agree on the same denominator for a partial-failure run.
-- [ ] Displayed scan and clustering counts cannot regress within the same run id even under out-of-order SSE/batch-run updates.
+- [x] `ScanActionPanel` batch-run text and progress bar agree on the same denominator for a partial-failure run.
+- [x] Displayed scan and clustering counts cannot regress within the same run id even under out-of-order SSE/batch-run updates.
 
 ## Handoff
 

@@ -5,6 +5,7 @@ import { buildClusterProgress, buildScanProgress, buildStatusText, isScanRunning
 import type { PipelinePhase } from './jobStateMachineUtils';
 import type { PersistedJob } from './useJobPersistence';
 import type { JobStatus } from './useJobProgressStream';
+import { useMonotonicScanProgress } from './useMonotonicScanProgress';
 
 interface UseJobStateMachineDerivedStateOptions {
   currentPhase: PipelinePhase;
@@ -52,7 +53,7 @@ export const useJobStateMachineDerivedState = ({
     [activeJobIds, batchRunStatus, clusterPending, latestJobId, scanPending, scanStatus, sseProgress, sseStatus],
   );
 
-  const scanProgress = useMemo(
+  const rawScanProgress = useMemo(
     () =>
       buildScanProgress({
         currentPhase,
@@ -66,7 +67,16 @@ export const useJobStateMachineDerivedState = ({
     [activeJobIds, activeJobs, batchRunStatus, currentPhase, latestScanJob, scanStatus?.progress, sseProgress],
   );
 
-  const clusterProgress = useMemo(() => buildClusterProgress(currentPhase, sseProgress), [currentPhase, sseProgress]);
+  const rawClusterProgress = useMemo(
+    () => buildClusterProgress(currentPhase, sseProgress),
+    [currentPhase, sseProgress],
+  );
+
+  const scanRunKey = batchRunStatus?.id ?? latestScanJob?.id ?? activeJobIds[0] ?? null;
+  const clusterRunKey = activeJobIds.find((id) => id !== latestScanJob?.id) ?? activeJobIds[0] ?? null;
+
+  const scanProgress = useMonotonicScanProgress(rawScanProgress, scanRunKey);
+  const clusterProgress = useMonotonicScanProgress(rawClusterProgress, clusterRunKey);
 
   const currentIsScanRunning = useMemo(
     () =>

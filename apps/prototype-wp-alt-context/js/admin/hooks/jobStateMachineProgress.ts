@@ -183,9 +183,18 @@ export const buildScanProgress = ({
 export const buildClusterProgress = (
   currentPhase: PipelinePhase,
   sseProgress: JobProgress | null,
+  fallbackProgress?: JobProgress | null,
 ): JobProgress | null => {
   if (currentPhase === 'clustering' || currentPhase === 'projecting') {
-    return sseProgress;
+    if (sseProgress) {
+      return sseProgress;
+    }
+    if (
+      fallbackProgress &&
+      (fallbackProgress.phase === 'clustering' || fallbackProgress.phase === 'awaiting_projection')
+    ) {
+      return fallbackProgress;
+    }
   }
   return null;
 };

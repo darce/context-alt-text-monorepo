@@ -68,8 +68,8 @@ export const useJobStateMachineDerivedState = ({
   );
 
   const rawClusterProgress = useMemo(
-    () => buildClusterProgress(currentPhase, sseProgress),
-    [currentPhase, sseProgress],
+    () => buildClusterProgress(currentPhase, sseProgress, scanStatus?.progress),
+    [currentPhase, scanStatus?.progress, sseProgress],
   );
 
   const scanRunKey = batchRunStatus?.id ?? latestScanJob?.id ?? activeJobIds[0] ?? null;

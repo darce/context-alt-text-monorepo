@@ -78,7 +78,11 @@ export const ScanTabContent = (): React.JSX.Element => {
         statusText={statusText}
         jobId={latestJobId ?? jobId}
         errorMessage={scanError}
-        progress={scanProgress}
+        progress={
+          (currentPhase === 'clustering' || currentPhase === 'projecting') && clusterProgress
+            ? clusterProgress
+            : scanProgress
+        }
         batchRunStatus={batchRunStatus}
         stallSeconds={scanStallSeconds}
         onRetryStream={retryScanStream}

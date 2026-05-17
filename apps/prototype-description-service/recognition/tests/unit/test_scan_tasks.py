@@ -166,6 +166,59 @@ async def test_process_scan_job_inline_marks_job_failed_on_detector_breaker_open
     assert all(name != "saved" for name, _ in events)
 
 
+@pytest.mark.asyncio
+async def test_process_scan_job_inline_marks_job_failed_when_adapter_init_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tenant_id = str(uuid.uuid4())
+    job_id = str(uuid.uuid4())
+    events: list[tuple[str, str | None]] = []
+
+    class FakeScanService:
+        def __init__(self, session, detector=None, generator=None, object_store_factory=None) -> None:
+            self.session = session
+            self.detector = detector
+
+        async def mark_job_running(self, received_job_id):
+            events.append(("running", str(received_job_id)))
+            return SimpleNamespace(id=received_job_id)
+
+        async def mark_job_failed(self, received_job_id, error_message: str):
+            events.append(("failed", error_message))
+            return SimpleNamespace(id=received_job_id)
+
+        async def save_job_results(self, **kwargs):
+            events.append(("saved", None))
+            return SimpleNamespace(id=kwargs["job_id"])
+
+    import recognition.config as recognition_config
+
+    monkeypatch.setattr(recognition_config, "get_settings", lambda: SimpleNamespace(runtime_mode="prod"))
+    monkeypatch.setattr(scan_tasks, "set_tenant_context", AsyncMock())
+
+    import recognition.application.scan.service as scan_service_module
+
+    monkeypatch.setattr(scan_service_module, "ScanService", FakeScanService)
+
+    async def failing_adapter_provider():
+        raise RuntimeError("model cache missing")
+
+    with pytest.raises(DetectionAdapterError, match="model cache missing"):
+        await scan_tasks.process_scan_job_inline(
+            tenant_id=tenant_id,
+            job_id=job_id,
+            media_ids=["1"],
+            media_sources=["http://example.test/1.jpg"],
+            session_factory=lambda: _FakeSessionContext(),
+            adapter_provider=failing_adapter_provider,
+        )
+
+    assert events[0] == ("running", job_id)
+    assert events[1][0] == "failed"
+    assert "model cache missing" in (events[1][1] or "")
+    assert all(name != "saved" for name, _ in events)
+
+
 @pytest.mark.parametrize(
     ("exc", "expected_text", "stage"),
     [

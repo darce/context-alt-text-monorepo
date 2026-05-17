@@ -99,11 +99,8 @@ async def process_scan_job_inline(
         generator = StubEmbeddingGenerator()
     else:
         try:
-            from recognition.application.embedding.detector import InsightFaceFaceDetector, StubFaceDetector
-            from recognition.application.embedding.generator import (
-                InsightFaceEmbeddingGenerator,
-                StubEmbeddingGenerator,
-            )
+            from recognition.application.embedding.detector import InsightFaceFaceDetector
+            from recognition.application.embedding.generator import InsightFaceEmbeddingGenerator
 
             if adapter_provider is not None:
                 adapter: InsightFaceAdapter = await adapter_provider()
@@ -114,13 +111,14 @@ async def process_scan_job_inline(
 
             detector = InsightFaceFaceDetector(adapter)
             generator = InsightFaceEmbeddingGenerator(adapter)
-        except ImportError:
-            from recognition.application.embedding.detector import StubFaceDetector
-            from recognition.application.embedding.generator import StubEmbeddingGenerator
+        except Exception as exc:
+            from recognition.application.embedding.detector import UnavailableFaceDetector
+            from recognition.application.embedding.generator import UnavailableEmbeddingGenerator
 
-            logger.warning("InsightFace not installed, using stub detectors.")
-            detector = StubFaceDetector()
-            generator = StubEmbeddingGenerator()
+            logger.exception("InsightFace runtime unavailable; inline scan will fail closed.")
+            reason = str(exc) or exc.__class__.__name__
+            detector = UnavailableFaceDetector(reason)
+            generator = UnavailableEmbeddingGenerator(reason)
 
     sources_list = list(media_sources) if media_sources else (list(media_ids) if media_ids else [])
 

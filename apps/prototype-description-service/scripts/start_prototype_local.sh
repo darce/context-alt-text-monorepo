@@ -7,25 +7,37 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-DEFAULT_PROJECT_PYTHON="${PROJECT_ROOT}/.venv/bin/python"
-if [[ -x "${DEFAULT_PROJECT_PYTHON}" ]]; then
-  PYTHON_BIN="${PYTHON_BIN:-${DEFAULT_PROJECT_PYTHON}}"
-else
-  PYTHON_BIN="${PYTHON_BIN:-python}"
-fi
+PROJECT_PYTHON_BIN="${PROJECT_ROOT}/.venv/bin/python"
+PYTHON_BIN="${PYTHON_BIN:-}"
 BOOTSTRAP_PYTHON_BIN="${BOOTSTRAP_PYTHON_BIN:-python3}"
 UV_BIN="${UV_BIN:-uv}"
 DEFAULT_HOST="0.0.0.0"
 DEFAULT_PORT="8000"
 ENV_FILE="${PROJECT_ROOT}/.env"
 
+ensure_runtime_python() {
+  if [[ -z "${PYTHON_BIN}" && -x "${PROJECT_PYTHON_BIN}" ]]; then
+    PYTHON_BIN="${PROJECT_PYTHON_BIN}"
+  fi
+
+  if [[ -z "${PYTHON_BIN}" ]]; then
+    echo "[prototype-local] Project virtualenv is missing at ${PROJECT_PYTHON_BIN}." >&2
+    echo "[prototype-local] Run './scripts/start_prototype_local.sh install' first, or set PYTHON_BIN." >&2
+    return 1
+  fi
+
+  if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
+    echo "[prototype-local] Runtime python not found: ${PYTHON_BIN}" >&2
+    return 1
+  fi
+}
+
 canonicalize_local_db_name() {
   local env_mode="$1"
   local db_name="$2"
   local resolved_name
 
-  if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
-    echo "[prototype-local] canonicalize_local_db_name requires ${PYTHON_BIN} on PATH." >&2
+  if ! ensure_runtime_python; then
     return 1
   fi
 
@@ -67,6 +79,7 @@ PY
 maybe_install_deps() {
   if [[ "${SKIP_INSTALL:-0}" == "1" ]]; then
     echo "[prototype-local] SKIP_INSTALL=1: skipping dependency installation." >&2
+    ensure_runtime_python
     return 0
   fi
 
@@ -79,6 +92,7 @@ maybe_install_deps() {
     install_deps
   else
     echo "[prototype-local] No network detected; skipping dependency installation. Set FORCE_INSTALL=1 to override." >&2
+    ensure_runtime_python
   fi
 }
 
@@ -93,7 +107,7 @@ Commands:
   help         Show this help text
 
 Environment variables:
-  PYTHON_BIN           Python executable to use (default: python)
+  PYTHON_BIN           Python executable to use (default: project .venv after uv sync)
   BOOTSTRAP_PYTHON_BIN Python executable used for pre-sync network checks (default: python3)
   UV_BIN               uv executable used for lockfile-backed dependency sync (default: uv)
   SKIP_INSTALL         Set to 1 to skip dependency installation during start
@@ -113,8 +127,13 @@ USAGE
 
 install_deps() {
   echo "[prototype-local] Syncing locked dev dependencies..." >&2
-  VIRTUAL_ENV= "${UV_BIN}" sync --locked --extra dev
-  PYTHON_BIN="${PROJECT_ROOT}/.venv/bin/python"
+  if ! command -v "${UV_BIN}" >/dev/null 2>&1; then
+    echo "[prototype-local] uv not found: ${UV_BIN}" >&2
+    return 1
+  fi
+  (cd "${PROJECT_ROOT}" && VIRTUAL_ENV= "${UV_BIN}" sync --locked --extra dev)
+  PYTHON_BIN="${PROJECT_PYTHON_BIN}"
+  ensure_runtime_python
 }
 
 load_env() {
@@ -247,6 +266,7 @@ start_scan_worker() {
 
 start_service() {
   load_env
+  ensure_runtime_python
   export DB_NAME="$(canonicalize_local_db_name "${ENV_MODE:-local}" "${DB_NAME:-}")"
   export CACHE_BASE="${CACHE_BASE:-/Volumes/Butter/cache}"
 

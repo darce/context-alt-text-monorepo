@@ -6,6 +6,7 @@
 > **Predecessors**: None (pure OCI ops; the backend is already live).
 > **Sibling (runs in parallel)**: [E15-3a](./E15-3a-localwp-oci-roundtrip-task-plan.md) (LocalWP -> OCI round-trip verification).
 > **Relationship to E15-5**: E15-5's original Slices 2, 3, and 4 were split out to here so they can land before the public WP demo is provisioned. [E15-5](./E15-5-manual-remote-e2e-task-plan.md) now covers only the remote E2E round-trip against the public WP demo plus the ARM-compat evidence artifact.
+> **Format Note**: This is a condensed operator gate plan rather than a full feature-implementation task plan. It intentionally does not mirror every heading in `docs/agentic/templates/TASK_PLAN.template.md`; reviewers should evaluate it against the exit criteria, slice gates, and checklist evidence below.
 
 ---
 
@@ -33,7 +34,8 @@ All three are required.
 ### Slice 1 -- OCI budget alerts
 
 - Configure three **monthly** OCI budgets on the ACX compartment: `budget-1` = `$1`, `budget-5` = `$5`, `budget-10` = `$10`.
-- Each budget uses a `100% actual spend` threshold rule with email notifications to the operator address.
+- `budget-1` is the canary and uses a single `100% actual spend` threshold rule with email notifications to the operator address.
+- `budget-5` and `budget-10` also add `50%` and `75%` early-warning rules (forecast or actual spend, whichever OCI supports on the chosen rule type) so a slow-burn regression is visible before the hard ceiling is crossed.
 - Verify all tracked resources carry the same `project=acx` tag filter before attaching the budgets so the alert scope covers ACX-only resources.
 - Trigger a synthetic test alert (OCI notification topic "send test notification" affordance) and confirm delivery to the operator inbox.
 - Record the budget IDs and the test alert timestamp in the run log.
@@ -43,11 +45,12 @@ Exit: three alerts configured + one verified test delivery.
 ### Slice 2 -- Tailscale SSH drift fix
 
 - Reference: [tech-debt/dynamic-ip-ssh-access.md](../tech-debt/archive-or-transfer-candidates/dynamic-ip-ssh-access.md).
-- Install Tailscale on the OCI VM (single-machine tailnet acceptable for a solo operator).
-- Before tightening the OCI security list, capture and verify a break-glass recovery path: (a) OCI console serial-console access for this VM, and (b) the cloud-init / host-level procedure that would restore an IP-based SSH allowlist if Tailscale becomes unavailable. Document both in `infra/oci/README.md` alongside the Tailscale flow.
+- `infra/oci/README.md` already documents Tailscale as the canonical SSH path, including install, verification, and the post-verification removal of the public TCP/22 allowlist. This slice verifies that documented flow against the live OCI VM rather than introducing a second competing procedure.
+- Install Tailscale on the OCI VM (single-machine tailnet acceptable for a solo operator) if it is not already present, or verify the existing install if it is already active.
+- Before tightening the OCI security list, capture and verify a break-glass recovery path: (a) OCI console serial-console access for this VM, and (b) the cloud-init / host-level procedure that would restore an IP-based SSH allowlist if Tailscale becomes unavailable. Record the exact recovery commands and verification outcome in `docs/tasks/15.0/E15-5a-oci-hygiene-run-log.md`; update `infra/oci/README.md` only if the live procedure differs from the current documented flow.
 - Open SSH (22) on the Tailscale interface only; tighten the OCI security list to remove the prior home-IP CIDR allowlist.
 - Verify SSH works from two networks (home + tethered/mobile) without any `terraform apply` cycle.
-- Update `infra/oci/README.md` (or equivalent) to document the Tailscale flow as the canonical SSH path.
+- If any step, hostname, or break-glass detail diverges from the existing `infra/oci/README.md` guidance, update that README in the same slice so the run log and operator docs stay aligned.
 
 Exit: SSH works from two networks, security list scrubbed of stale CIDRs, and both the canonical Tailscale path and the verified break-glass recovery path are documented.
 
@@ -55,11 +58,12 @@ Exit: SSH works from two networks, security list scrubbed of stale CIDRs, and bo
 
 - Verify the current Postgres backup mechanism on the OCI host. Expected baseline: the E14 self-hosting epic's MVP recommendation of a daily `pg_dump` cron. If that backup flow is not currently running, document that the Hetzner migration starts with a one-off `pg_dump` before transfer/restore and open a separate follow-up to automate ongoing backups.
 - Produce `docs/tasks/15.0/E15-5a-hetzner-fallback-plan.md` covering:
-  - Hetzner sizing selection (CX22 as baseline candidate; escalate to CX32 if the current OCI A1.Flex memory high-water mark observed via `/metrics` exceeds 3 GB sustained, or if the image stack fails the A1.Flex-to-x86 workload parity check); document the measured memory/CPU baseline and the chosen SKU + estimated monthly cost.
+  - Hetzner sizing selection (CX22 as baseline candidate; escalate to CX32 if a representative 15-minute OCI sample using host/container stats shows the description-service + Postgres stack sustaining more than 3 GB combined memory usage, or if the image stack fails the A1.Flex-to-x86 workload parity check defined below); document the sampling commands, timestamps, measured memory/CPU baseline, and the chosen SKU + estimated monthly cost.
   - Which env vars + secrets move (`prod/.env` surface).
   - Which DNS records change (`api.altcontext.com` A record -> Hetzner IP).
   - Postgres data migration path (`pg_dump` + transfer + restore), including whether it uses the standing backup mechanism or a one-off backup prerequisite.
   - Estimated time-to-cutover and the trigger condition (e.g. two consecutive OCI capacity failures on reboot, or a 24h outage).
+- Define the parity check inline in the fallback plan: a `linux/amd64` rebuild of the current prod image stack via `docker buildx` must complete cleanly, the stack must boot with the current `docker-compose.env.yml` / `prod/.env` surfaces on an x86 target, and the same health / connection smoke used by the OCI gate must succeed without architecture-specific fixes. Failure on any of those steps is a parity miss and forces CX32 review or an explicit follow-up.
 - This is a plan, not an execution. The plan exits when it passes `/planning-review` against the current `prod/.env` and `docker-compose.env.yml` surfaces (same review bar as Slices 1 and 2).
 
 Exit: fallback plan merged.
@@ -95,20 +99,20 @@ Exit: fallback plan merged.
 
 ### Checklist for Slice 1: OCI budget alerts
 
-- [ ] Configure the `$1`, `$5`, and `$10` monthly OCI budgets with `100% actual spend` notification rules.
+- [ ] Configure the `$1`, `$5`, and `$10` monthly OCI budgets, with the `$1` canary at `100% actual spend` and the `$5` / `$10` budgets also carrying `50%` and `75%` early-warning rules.
 - [ ] Verify ACX resources carry the shared `project=acx` tag filter before attaching the budgets.
 - [ ] Trigger and acknowledge a synthetic test alert, then record the budget IDs and timestamp in the run log and handoff state.
 
 ### Checklist for Slice 2: Tailscale SSH drift fix
 
-- [ ] Install Tailscale on the OCI VM and verify the break-glass serial-console / allowlist recovery path before tightening SSH access.
+- [ ] Verify the existing canonical Tailscale flow against the live OCI VM (installing it first only if absent) and capture the break-glass serial-console / allowlist recovery path before tightening SSH access.
 - [ ] Remove the stale home-IP CIDR allowlist once Tailscale-only SSH access is confirmed.
-- [ ] Verify SSH from two networks and document the canonical path plus break-glass recovery in `infra/oci/README.md`.
+- [ ] Verify SSH from two networks and keep `infra/oci/README.md` aligned with the verified canonical path plus break-glass recovery details.
 
 ### Checklist for Slice 3: Hetzner fallback plan (CX22 baseline; sizing analysis required)
 
 - [ ] Verify the current Postgres backup mechanism and document any one-off `pg_dump` prerequisite if the standing backup flow is absent.
-- [ ] Produce `E15-5a-hetzner-fallback-plan.md` with sizing, secrets/env migration, DNS cutover, data migration path, cutover timing, and trigger conditions.
+- [ ] Produce `E15-5a-hetzner-fallback-plan.md` with explicit memory-sampling evidence, the amd64 parity-check definition, secrets/env migration, DNS cutover, data migration path, cutover timing, and trigger conditions.
 - [ ] Hold the fallback-plan slice open until it passes planning review against the current `prod/.env` and `docker-compose.env.yml` surfaces.
 
 ## Review Readiness

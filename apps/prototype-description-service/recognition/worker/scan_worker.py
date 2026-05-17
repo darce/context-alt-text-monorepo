@@ -19,11 +19,17 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from db.models import IdentityClusteringJob
 from db.settings import get_database_settings
 from db.tenant_context import enable_rls_bypass, set_tenant_context
-from recognition.application.embedding.detector import FaceDetectorProtocol, InsightFaceFaceDetector, StubFaceDetector
+from recognition.application.embedding.detector import (
+    FaceDetectorProtocol,
+    InsightFaceFaceDetector,
+    StubFaceDetector,
+    UnavailableFaceDetector,
+)
 from recognition.application.embedding.generator import (
     EmbeddingGeneratorProtocol,
     InsightFaceEmbeddingGenerator,
     StubEmbeddingGenerator,
+    UnavailableEmbeddingGenerator,
 )
 from recognition.application.scan.queue_repository import ScanQueueItem
 from recognition.config import get_settings as get_recognition_settings
@@ -189,10 +195,11 @@ class ScanWorker:
             self._generator = InsightFaceEmbeddingGenerator(adapter)
             self._embedding_retry_after = None
             self._embedding_runtime_ready = True
-        except Exception:
-            logger.exception("Failed to initialize InsightFace adapter, falling back to stubs.")
-            self._detector = StubFaceDetector()
-            self._generator = StubEmbeddingGenerator()
+        except Exception as exc:
+            logger.exception("Failed to initialize InsightFace adapter; scan items will fail closed until it recovers.")
+            reason = str(exc) or exc.__class__.__name__
+            self._detector = UnavailableFaceDetector(reason)
+            self._generator = UnavailableEmbeddingGenerator(reason)
             self._embedding_retry_after = now + timedelta(seconds=30)
 
         # BR-11: preserve the ObjectStore factory wired in __init__ so the

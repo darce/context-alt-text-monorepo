@@ -443,13 +443,9 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 		}
 
 		if ( $response instanceof WP_REST_Response ) {
+			$this->record_observed_job_status_from_response( $job_id, $response );
 			$data = $response->get_data();
 			if ( is_array( $data ) ) {
-				$this->batch_run_repository->record_observed_job_status(
-					$this->get_tenant_id(),
-					$job_id,
-					(string) ( $data['status'] ?? 'pending' )
-				);
 				$batch_run_id = $this->lookup_batch_run_id_for_job( $job_id );
 				if ( '' !== $batch_run_id ) {
 					$data['batch_run_id'] = $batch_run_id;
@@ -460,6 +456,24 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 		}
 
 		return $response;
+	}
+
+	private function record_observed_job_status_from_response( string $job_id, WP_REST_Response $response ): void {
+		$data   = $response->get_data();
+		$status = '';
+		if ( is_array( $data ) ) {
+			$status = sanitize_text_field( (string) ( $data['status'] ?? '' ) );
+		}
+
+		if ( '' === $status && 404 === $response->get_status() ) {
+			$status = 'failed';
+		}
+
+		if ( '' === $status ) {
+			return;
+		}
+
+		$this->batch_run_repository->record_observed_job_status( $this->get_tenant_id(), $job_id, $status );
 	}
 
 	public function get_recent_batch_runs( WP_REST_Request $request ): WP_REST_Response {
@@ -578,6 +592,7 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 
 			$status_code = $response->get_status();
 			if ( 404 === $status_code ) {
+				$this->record_observed_job_status_from_response( $job_id, $response );
 				echo "event: error\n";
 				echo 'data: ' . wp_json_encode( array( 'message' => 'Job not found.' ) ) . "\n\n";
 				@ob_flush();
@@ -1007,16 +1022,11 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 				continue;
 			}
 
+			$this->record_observed_job_status_from_response( $job_id, $response );
 			$data = $response->get_data();
 			if ( ! is_array( $data ) ) {
 				continue;
 			}
-
-			$this->batch_run_repository->record_observed_job_status(
-				$tenant_id,
-				$job_id,
-				(string) ( $data['status'] ?? 'pending' )
-			);
 		}
 	}
 

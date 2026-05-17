@@ -129,7 +129,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/logs.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends context dashboard worktree-audit worktree-prune task-plan-audit generate-agent-workflows check-agent-workflows check-skills check-harness-sync lint-hoisted-paths maint-start task-start task-finish check-main-clean install-git-hooks localwp-mirror-integrity
+.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends context dashboard worktree-audit worktree-prune task-plan-audit generate-agent-workflows check-agent-workflows check-skills check-harness-sync lint-hoisted-paths maint-start task-start task-finish check-main-clean install-git-hooks localwp-mirror-integrity
 
 # Default target
 help:
@@ -392,6 +392,8 @@ install-git-hooks:
 # Python: ruff check --fix --unsafe-fixes + ruff format
 # TypeScript/JS: npm run lint:fix + npm run format:fix
 # PHP: composer cs-fix
+format: format-all
+
 format-all:
 	@echo "=== Formatting codex-subagent-bridge ==="
 	@$(MAKE) -C packages/codex-subagent-bridge format-bridge PYTHON="$(PYTHON)"
@@ -615,3 +617,9 @@ task-finish:
 #   make integrity-watch ARGS="path1 path2" # watch explicit paths
 integrity-watch:
 	@./scripts/integrity-watcher.sh $(ARGS)
+# >>> AGENTIC_BOOTSTRAP LIFECYCLE INCLUDE >>>
+# context-alt-text-monorepo already owns these lifecycle targets in this
+# Makefile and mk/*.mk. Keep the bootstrap sentinel so future updates do not
+# re-inject a wildcard include that overrides repo-local harness recipes.
+# -include Makefile.d/*.mk
+# <<< AGENTIC_BOOTSTRAP LIFECYCLE INCLUDE <<<

@@ -23,7 +23,8 @@
       "env": {
         "PATH": "${env:HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:${env:PATH}",
         "AGENT_HANDOFF_ENFORCE_BRANCH": "1"
-      }
+      },
+      "type": "stdio"
     },
     "mcp-agent-orchestrator": {
       "command": "uvx",
@@ -40,7 +41,8 @@
       "env": {
         "PATH": "${env:HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:${env:PATH}",
         "AGENT_HANDOFF_ENFORCE_BRANCH": "1"
-      }
+      },
+      "type": "stdio"
     }
   }
 }

@@ -84,11 +84,13 @@ dev-ready: postgres-start
 
 # Start development server
 serve: dev-ready
+	@mkdir -p logs
 	@RECOGNITION_ASYNC_ANALYZE_INLINE=0 \
 	START_SCAN_WORKER=1 \
 	UVICORN_EXTRA_ARGS="--timeout-graceful-shutdown 1" \
 	SKIP_INSTALL=1 \
-	./scripts/start_prototype_local.sh start &
+	nohup ./scripts/start_prototype_local.sh start >> logs/prototype-local.log 2>&1 &
+	@echo "✓ Backend starting (log: logs/prototype-local.log)"
 
 # Stop development server
 stop:

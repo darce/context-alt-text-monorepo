@@ -78,14 +78,40 @@ Escalation beyond CX32 (to CX42/CX52) is not contemplated by this plan; if the w
 
 The parity check is the gating decision between "rebuild on x86 and ship" and "block on architecture-specific fix". It runs once, locally or on a throwaway CX22, before DNS cutover.
 
+> Run the build from `apps/prototype-description-service/` (where the `Dockerfile` lives) so the build context resolves correctly.
+
 | Step | Pass criterion |
 |------|----------------|
-| `docker buildx build --platform linux/amd64 --build-arg GIT_COMMIT_SHA=$(git rev-parse HEAD) -t iad.ocir.io/idu2kqqe2jxy/acx-backend:fallback-amd64 .` | Build completes with exit 0; no architecture-specific patches required to `Dockerfile`, `pyproject.toml`, or system package list. |
-| `docker compose -f docker-compose.env.yml up -d` against the rebuilt image on the x86 host | All four services (postgres, api, worker, caddy if attached) reach `healthy` within the same timeout as the OCI gate (~60s for postgres, ~120s for api). |
+| `cd apps/prototype-description-service && docker buildx build --platform linux/amd64 --build-arg GIT_COMMIT_SHA=$(git rev-parse HEAD) -t iad.ocir.io/idu2kqqe2jxy/acx-backend:fallback-amd64 --push .` | Build completes with exit 0 and the image is pushed to OCIR; no architecture-specific patches required to `Dockerfile`, `pyproject.toml`, or system package list. `--push` is required so the Hetzner host can `docker pull` it during Migration Steps below. |
+| `docker compose -f docker-compose.env.yml up -d` against the rebuilt image on the x86 host (override `ACX_IMAGE_TAG=fallback-amd64` for the parity boot) | All four services (postgres, api, worker, caddy if attached) reach `healthy` within the same timeout as the OCI gate (~60s for postgres, ~120s for api). |
 | `curl https://<test-host>/health` and `/recognition/health` | Returns the same JSON shape and the `commit_sha` field matches `GIT_COMMIT_SHA` build-arg passed above. |
 | `curl https://<test-host>/ready` | Returns 200 with `database: up` and `models: loaded`. The InsightFace cache must download cleanly on amd64. |
 
 Any failure on these steps **forces** either CX32 review or an explicit architecture-fix follow-up task before DNS cutover.
+
+### Image Promotion
+
+The parity-check build above pushes `:fallback-amd64`. The Hetzner production stack pulls `:latest` (per `ACX_IMAGE_TAG=latest` in the migrated env file). Promote the verified amd64 image to `:latest` before cutover so Hetzner's `docker compose pull` resolves to the verified artifact, not the stale arm64 `:latest`:
+
+```bash
+# REPLACE before running: <operator-email> -> the OCI user that owns the OCIR auth token.
+docker login iad.ocir.io -u "idu2kqqe2jxy/<operator-email>"
+
+# Tag the verified amd64 image as :latest and push.
+docker buildx imagetools create \
+  -t iad.ocir.io/idu2kqqe2jxy/acx-backend:latest \
+  iad.ocir.io/idu2kqqe2jxy/acx-backend:fallback-amd64
+```
+
+`buildx imagetools create` re-points the registry tag without re-uploading layers and works on the existing single-arch amd64 manifest (no local pull required). Confirm the promotion landed:
+
+```bash
+docker buildx imagetools inspect iad.ocir.io/idu2kqqe2jxy/acx-backend:latest \
+  | grep -E "Platform|MediaType" | head
+# Expect: Platform: linux/amd64
+```
+
+Note: the OCI host's `:latest` (arm64) is no longer accessible from Hetzner once `:latest` is re-pointed at amd64. Rollback to OCI (per the Rollback section) is unaffected because the OCI host already holds the running arm64 container; it does not re-pull on rollback.
 
 ---
 
@@ -218,7 +244,7 @@ shred -u prod.env.tmp
 | `COMPOSE_PROJECT_NAME=acx-prod`   | Unchanged.       |
 | `ACX_ENV=prod`                    | Unchanged.       |
 | `RECOGNITION_RUNTIME_MODE=production` | **Required, unchanged.** `api/main.py` refuses to start if `RECOGNITION_RUNTIME_MODE=production` **and** `RECOGNITION_ALLOWED_API_KEYS` is non-empty (the dev-keys-in-prod guard). Verify the value survived the `.env` copy and that `RECOGNITION_ALLOWED_API_KEYS` is empty before `docker compose up`; provision real keys via `scripts/manage_api_keys.py` post-boot. |
-| `ACX_IMAGE_TAG=latest`            | Unchanged once the amd64 `:latest` is pushed (see Image Promotion).      |
+| `ACX_IMAGE_TAG=latest`            | Unchanged once the amd64 `:latest` is pushed (see [§ Image Promotion](#image-promotion) above).      |
 | `ACX_PGDATA_PATH=/opt/acx-backend/data/prod-pgdata` | Same path; ensure directory exists on Hetzner before `docker compose up`. |
 | `ACX_MODELS_PATH=/opt/acx-backend/data/prod-models` | Same path; ensure directory exists; cache repopulates on first run. |
 | `ACX_NETWORK_NAME=acx-prod-net`   | Unchanged.       |
@@ -234,7 +260,27 @@ shred -u prod.env.tmp
 
 `apps/prototype-description-service/Caddyfile` is identical on both hosts; the only deploy artifact needed at `/opt/acx-backend/Caddyfile`. Let's Encrypt re-issues the cert on first request once DNS points at Hetzner.
 
-Caddy is **not** declared in `docker-compose.env.yml`; it runs as a separate `docker run` (or sibling compose) on the same host and must join `${ACX_NETWORK_NAME}` (`acx-prod-net`) to reach the `prod-api` service alias. Confirm Caddy is on that network before flipping DNS or the proxy returns connection refused.
+Caddy is **not** declared in `docker-compose.env.yml`; it runs from the sibling compose file `apps/prototype-description-service/docker-compose.caddy.yml`, managed by the `acx-caddy.service` systemd unit (`apps/prototype-description-service/systemd/acx-caddy.service`). The Caddy container must join `${ACX_NETWORK_NAME}` (`acx-prod-net`) to reach the `prod-api` service alias; the compose file already wires that. Confirm Caddy is on the network before flipping DNS or the proxy returns connection refused.
+
+#### Bring-Up On Hetzner
+
+```bash
+# REPLACE before running: <hetzner-ip> -> Hetzner public IP.
+# Mirror the OCI install: ship Caddyfile + compose + systemd unit, then start.
+scp apps/prototype-description-service/Caddyfile root@<hetzner-ip>:/opt/acx-backend/Caddyfile
+scp apps/prototype-description-service/docker-compose.caddy.yml root@<hetzner-ip>:/opt/acx-backend/docker-compose.caddy.yml
+scp apps/prototype-description-service/systemd/acx-caddy.service root@<hetzner-ip>:/tmp/acx-caddy.service
+ssh root@<hetzner-ip> '
+  sudo cp /tmp/acx-caddy.service /etc/systemd/system/acx-caddy.service
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now acx-caddy.service
+  sudo systemctl status --no-pager acx-caddy.service | head -20
+'
+```
+
+Or equivalently invoke `apps/prototype-description-service/scripts/deploy-env.sh prod root@<hetzner-ip>` -- that script already pushes `docker-compose.caddy.yml`, `Caddyfile`, and `acx-caddy.service` as part of an env deploy. See [§ Time-to-Cutover One-Time Install](#estimated-time-to-cutover) below for the parent install row.
+
+The Let's Encrypt staging-CA guard in the next subsection applies on first Caddy start.
 
 The Caddyfile also defines `staging.api.altcontext.com` and `dev.api.altcontext.com` routes targeting `staging-api`/`dev-api` aliases. **Prod-only Hetzner migration leaves those two routes pointing at services that do not exist on the Hetzner host** -- they will 502 until staging/dev migrate or until those Caddyfile blocks are removed/commented for the prod-only host. Either prune those blocks from the deployed `/opt/acx-backend/Caddyfile` during the cutover, or keep staging/dev resolving to the OCI IPs via separate A records.
 
@@ -296,7 +342,7 @@ If the Hetzner stack fails post-cutover, flip the A record back to the OCI IP. T
 |-------|----------|-------|
 | amd64 parity check (one-time, can be done now) | 30-60 min | Local rebuild + boot + smoke. |
 | Hetzner CX22 provisioning | 5 min | Includes initial SSH + docker install. |
-| One-time install (docker, OCIR login, Tailscale, directory layout, `acx-prod.service` systemd unit) | 30 min | Mirrors the OCI cloud-init script (see `infra/oci/cloud-init.yaml`) including provisioning the `acx-prod.service` unit referenced by `systemctl stop acx-prod` / `start acx-prod` above. Do it ahead of trigger. |
+| One-time install (docker, OCIR login, Tailscale, directory layout, per-env + caddy systemd units) | 30 min | Two-step install. Step (a) mirrors `infra/oci/cloud-init.yaml`: docker engine + buildx + compose plugin, `/opt/acx-backend/{secrets,logs,data}` layout, UFW (allow 22/443), fail2ban. Step (b) installs the per-env `acx-prod.service` unit and `acx-caddy.service` -- these are NOT in cloud-init; they are rendered from `apps/prototype-description-service/systemd/acx-env.service.template` and `apps/prototype-description-service/systemd/acx-caddy.service` by `apps/prototype-description-service/scripts/deploy-env.sh`. Override the script's default SSH target: `apps/prototype-description-service/scripts/deploy-env.sh prod root@<hetzner-ip>` (the script defaults to `ubuntu@<oci-ip>`). Do it ahead of trigger. |
 | Postgres dump + transfer + restore | 10-20 min | Depends on DB size; today << 1 GB. |
 | Blob volume tar + transfer + untar | 5-15 min | Depends on blob volume size. |
 | InsightFace model cache repopulation | ~5 min | First-request hit; can be pre-warmed via a synthetic scan after the stack starts. |

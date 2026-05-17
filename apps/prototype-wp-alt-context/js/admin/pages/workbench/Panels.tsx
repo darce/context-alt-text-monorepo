@@ -141,18 +141,24 @@ export const ScanActionPanel = ({
     {batchRunStatus && batchRunStatus.submitted_total > 0 && (
       <>
         <p className="acx-apply-panel__status">
-          {batchRunStatus.failed_total > 0
-            ? sprintf(
-                __('Processed %1$d/%2$d (%3$d failed)', 'alt-context'),
-                batchRunStatus.completed_total,
-                batchRunStatus.submitted_total,
-                batchRunStatus.failed_total,
-              )
-            : sprintf(
-                __('Processed %1$d/%2$d', 'alt-context'),
-                batchRunStatus.completed_total,
-                batchRunStatus.submitted_total,
-              )}
+          {(() => {
+            const processedTotal =
+              batchRunStatus.completed_total +
+              batchRunStatus.failed_total +
+              batchRunStatus.cancelled_total;
+            return batchRunStatus.failed_total > 0
+              ? sprintf(
+                  __('Processed %1$d/%2$d (%3$d failed)', 'alt-context'),
+                  processedTotal,
+                  batchRunStatus.submitted_total,
+                  batchRunStatus.failed_total,
+                )
+              : sprintf(
+                  __('Processed %1$d/%2$d', 'alt-context'),
+                  processedTotal,
+                  batchRunStatus.submitted_total,
+                );
+          })()}
         </p>
         {batchRunStatus.failed_batches.length > 0 && (
           <details className="acx-apply-panel__status">

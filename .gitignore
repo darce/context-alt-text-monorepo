@@ -95,6 +95,9 @@ CURRENT_TASK.md
 DASHBOARD.txt
 DASHBOARD.md
 .task-state/
+.agentic/remote/
+Makefile.d
+scripts/agentic/lifecycle/
 
 # local logs
 /docs/agentic/oci-example/*.log

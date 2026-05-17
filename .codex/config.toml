@@ -2,10 +2,12 @@
 codex_hooks = true
 
 [mcp_servers."context7"]
+type = "stdio"
 command = "npx"
 args = ["-y", "@upstash/context7-mcp@2.1.4"]
 
 [mcp_servers."mcp-agent-handoff"]
+type = "stdio"
 command = "uvx"
 args = [
   "mcp-agent-handoff==0.11.2",
@@ -23,6 +25,7 @@ cwd = "."
 AGENT_HANDOFF_ENFORCE_BRANCH = "1"
 
 [mcp_servers."mcp-agent-orchestrator"]
+type = "stdio"
 command = "uvx"
 args = [
   "mcp-agent-orchestrator==0.4.6",
@@ -38,4 +41,3 @@ cwd = "."
 
 [mcp_servers."mcp-agent-orchestrator".env]
 AGENT_HANDOFF_ENFORCE_BRANCH = "1"
-

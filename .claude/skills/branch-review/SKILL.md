@@ -14,7 +14,7 @@ mcp_tools:
 - review_findings
 - review_runs
 - record_event
-- handoff_close_check
+- integrity_check
 tdd_gate: false
 disable-model-invocation: false
 ---
@@ -62,7 +62,7 @@ This skill owns branch-review execution order. The guide owns the detailed check
 6. Decide the verdict: `pass`, `pass_with_findings`, `conditional_pass`, or `fail`.
 7. Record the verdict decision with `record_event(event_kind="decision", ...)`.
 8. Record the review run with `review_runs(operation="record", review_mode="branch", subject_kind="branch", subject_path="<base>...<head>", ...)`. `branch_diff` is only the honest review-scope label; it is not a valid persisted `subject_kind`.
-9. Re-check whether open findings remain. If none remain and the branch claims readiness, `handoff_close_check` should be able to pass.
+9. Re-check whether open findings remain. If none remain and the branch claims readiness, `integrity_check(payload={"kind":"close","enforce":true})` should be able to pass.
 
 When MCP tools are unavailable but the CLI wrapper is available, use the CLI wrapper as the fallback MCP surface (`mcp-agent-handoff --workspace-root <repo> review-findings ...`, `review-runs ...`, `event ...`). Do not write directly to `.task-state/handoff.db`; raw SQL bypasses validation, dashboard/event hooks, and future server-owned side effects. If neither MCP tools nor the CLI wrapper are available, stop and report the blocker instead of emitting untracked findings.
 

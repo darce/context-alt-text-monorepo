@@ -49,7 +49,7 @@
 #
 # Reset-specific environment overrides (see do_reset()):
 #   ACX_RESET_SITE_URL       REQUIRED for reset. WordPress site URL the plugin will hit
-#                              (e.g. https://altcontext.local). The bootstrap derives the
+#                              (e.g. http://localhost:10010 for LocalWP). The bootstrap derives the
 #                              per-site tenant UUID from this value via
 #                              scripts/deploy/_derive_tenant_id.py (mirror of
 #                              TenantIdentity::derive_from_site_url()). If the URL does
@@ -482,7 +482,7 @@ do_reset() {
   #
   # Operator contract:
   #   - ACX_RESET_SITE_URL is required and must be the WordPress site URL the
-  #     plugin will hit (e.g. https://altcontext.local for a LocalWP site).
+  #     plugin will hit (e.g. http://localhost:10010 for a LocalWP site).
   #     There is no safe default: the previous defaults were the recognition
   #     API URLs, which are NOT what the plugin sends as its origin tenant.
   #   - ACX_RESET_TENANT_ID is optional. When unset, the bootstrap derives the
@@ -490,7 +490,7 @@ do_reset() {
   #     (the Python mirror of TenantIdentity::derive_from_site_url()). When
   #     set, the explicit value wins — escape hatch for non-derived tenants.
   if [[ -z "${ACX_RESET_SITE_URL:-}" ]]; then
-    fail "ACX_RESET_SITE_URL must be set to the WordPress site URL the plugin will hit (e.g. https://altcontext.local). The bootstrap derives the per-site tenant UUID from this value to match the plugin's TenantIdentity::derive_from_site_url() (E15-12-BR-06). Set ACX_RESET_TENANT_ID as well only if you need to override derivation for a custom tenant."
+    fail "ACX_RESET_SITE_URL must be set to the WordPress site URL the plugin will hit (e.g. http://localhost:10010 for LocalWP, or https://staging.altcontext.com). The bootstrap derives the per-site tenant UUID from this value to match the plugin's TenantIdentity::derive_from_site_url() (E15-12-BR-06). Set ACX_RESET_TENANT_ID as well only if you need to override derivation for a custom tenant."
   fi
   local site_url="${ACX_RESET_SITE_URL}"
   local tenant_id

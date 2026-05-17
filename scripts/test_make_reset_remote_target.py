@@ -39,6 +39,23 @@ def test_reset_remote_target_is_listed_in_deploy_help() -> None:
     assert "CONFIRM_REMOTE_RESET=RESET" in result.stdout
 
 
+def test_deploy_help_advertises_canonical_localwp_url() -> None:
+    """The ACX_RESET_SITE_URL examples in deploy-help must use the canonical
+    LocalWP URL (http://localhost:10010), not the fictional altcontext.local
+    placeholder. LocalWP serves this repo's WordPress at localhost:10010."""
+    result = _run_make(["deploy-help"])
+    assert result.returncode == 0, result.stderr
+    assert "http://localhost:10010" in result.stdout, (
+        "deploy-help must advertise the canonical LocalWP URL "
+        "http://localhost:10010 for ACX_RESET_SITE_URL dev examples; "
+        f"got: {result.stdout!r}"
+    )
+    assert "altcontext.local" not in result.stdout, (
+        "deploy-help still references the stale altcontext.local placeholder; "
+        f"got: {result.stdout!r}"
+    )
+
+
 def test_reset_remote_without_env_fails_with_usage() -> None:
     result = _run_make(["reset-remote"])
     assert result.returncode != 0
@@ -52,7 +69,7 @@ def test_reset_remote_dev_dry_run_succeeds_and_summarizes_plan() -> None:
         env_overrides={
             "CONFIRM_REMOTE_RESET": "RESET",
             "ACX_RESET_DRY_RUN": "1",
-            "ACX_RESET_SITE_URL": "https://dev.altcontext.local",
+            "ACX_RESET_SITE_URL": "http://localhost:10010",
         },
     )
     assert result.returncode == 0, result.stderr

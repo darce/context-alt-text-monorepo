@@ -69,7 +69,7 @@ def test_reset_dev_dry_run_with_confirmation_succeeds_and_summarizes_plan() -> N
         env_overrides={
             "CONFIRM_REMOTE_RESET": "RESET",
             "ACX_RESET_DRY_RUN": "1",
-            "ACX_RESET_SITE_URL": "https://altcontext.local",
+            "ACX_RESET_SITE_URL": "http://localhost:10010",
         },
     )
     assert result.returncode == 0, result.stderr
@@ -87,7 +87,7 @@ def test_reset_prod_dry_run_with_both_confirmations_succeeds() -> None:
             "CONFIRM_REMOTE_RESET": "RESET",
             "CONFIRM": "PROMOTE",
             "ACX_RESET_DRY_RUN": "1",
-            "ACX_RESET_SITE_URL": "https://altcontext.local",
+            "ACX_RESET_SITE_URL": "http://localhost:10010",
         },
     )
     assert result.returncode == 0, result.stderr
@@ -105,7 +105,7 @@ def test_reset_dev_dry_run_prints_canonical_remote_command_sequence() -> None:
         env_overrides={
             "CONFIRM_REMOTE_RESET": "RESET",
             "ACX_RESET_DRY_RUN": "1",
-            "ACX_RESET_SITE_URL": "https://altcontext.local",
+            "ACX_RESET_SITE_URL": "http://localhost:10010",
         },
     )
     assert result.returncode == 0, result.stderr
@@ -130,7 +130,7 @@ def test_reset_dev_dry_run_includes_ready_verification_and_bootstrap_steps() -> 
         env_overrides={
             "CONFIRM_REMOTE_RESET": "RESET",
             "ACX_RESET_DRY_RUN": "1",
-            "ACX_RESET_SITE_URL": "https://altcontext.local",
+            "ACX_RESET_SITE_URL": "http://localhost:10010",
         },
     )
     assert result.returncode == 0, result.stderr
@@ -164,7 +164,7 @@ def test_reset_dev_dry_run_bootstrap_uses_canonical_cli_contract() -> None:
         env_overrides={
             "CONFIRM_REMOTE_RESET": "RESET",
             "ACX_RESET_DRY_RUN": "1",
-            "ACX_RESET_SITE_URL": "https://altcontext.local",
+            "ACX_RESET_SITE_URL": "http://localhost:10010",
         },
     )
     assert result.returncode == 0, result.stderr
@@ -219,7 +219,7 @@ def test_reset_dev_dry_run_bootstrap_redirects_exec_stdin() -> None:
         env_overrides={
             "CONFIRM_REMOTE_RESET": "RESET",
             "ACX_RESET_DRY_RUN": "1",
-            "ACX_RESET_SITE_URL": "https://altcontext.local",
+            "ACX_RESET_SITE_URL": "http://localhost:10010",
         },
     )
     assert result.returncode == 0, result.stderr
@@ -298,7 +298,7 @@ def test_reset_dev_dry_run_br06_derives_tenant_id_from_site_url() -> None:
     the WordPress plugin. This is what makes the bootstrap key actually usable
     by the plugin's first authenticated request post-reset.
     """
-    site_url = "https://altcontext.local"
+    site_url = "http://localhost:10010"
     expected_uuid = _derive_tenant_id_from_site_url(site_url)
     result = _run(
         ["reset", "dev"],
@@ -334,7 +334,7 @@ def test_reset_dev_dry_run_br06_explicit_tenant_id_overrides_derivation() -> Non
     such as a custom multi-site arrangement). Site URL is still required for
     `tenant create --site-url`.
     """
-    site_url = "https://altcontext.local"
+    site_url = "http://localhost:10010"
     explicit_uuid = "11111111-2222-7333-9444-555555555555"
     result = _run(
         ["reset", "dev"],
@@ -366,7 +366,7 @@ def test_reset_dev_dry_run_does_not_open_ssh_connection() -> None:
         env_overrides={
             "CONFIRM_REMOTE_RESET": "RESET",
             "ACX_RESET_DRY_RUN": "1",
-            "ACX_RESET_SITE_URL": "https://altcontext.local",
+            "ACX_RESET_SITE_URL": "http://localhost:10010",
             # If any code path tried to ssh, this fake host would fail loudly.
             "OCI_HOST": "definitely-not-a-real-host.invalid",
             "OCI_USER": "nobody",

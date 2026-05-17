@@ -166,9 +166,9 @@ Sampling commands (paste verbatim used commands here):
 
 ### Planning-Review Outcome
 
-- [ ] `make plan-review DOC=docs/tasks/15.0/E15-5a-hetzner-fallback-plan.md` returned `pass` / `pass_with_findings`.
-- Review run id: ____________________
-- Findings opened (if any): ____________________
+- [x] `/planning-review` run against `docs/tasks/15.0/E15-5a-hetzner-fallback-plan.md` returned `pass` on 2026-05-17.
+- Review run id: `planning-review-E15-5a-slice3-20260517` (MCP id 586; verdict decision `planning_review_e15_5a_slice3_pass`).
+- Findings opened (now all fixed): `E15-5a-PA-01..PA-10` (carried over from `plan-analyze-E15-5a-slice3-20260517`) plus net-new `E15-5a-PR-01`, `E15-5a-PR-02`. All closed at commit `1a66402e6a97f5c6bc13e743ccef077e10b4ead5`.
 
 Exit: fallback plan merged with planning-review approval recorded.
 

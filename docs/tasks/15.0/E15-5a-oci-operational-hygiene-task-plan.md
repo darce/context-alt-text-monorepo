@@ -112,7 +112,7 @@ Exit: fallback plan merged.
 ### Checklist for Slice 3: Hetzner fallback plan (CX22 baseline; sizing analysis required)
 
 - [x] Produce `E15-5a-hetzner-fallback-plan.md` with explicit memory-sampling evidence, the amd64 parity-check definition, secrets/env migration, DNS cutover, data migration path, cutover timing, and trigger conditions.
-- [ ] Fallback plan merged after passing `/planning-review` against the canonical surfaces (`apps/prototype-description-service/.env.prod.example`, `apps/prototype-description-service/docker-compose.env.yml`, `apps/prototype-description-service/Caddyfile`); review-run id recorded in the run log.
+- [x] Fallback plan merged after passing `/planning-review` against the canonical surfaces (`apps/prototype-description-service/.env.prod.example`, `apps/prototype-description-service/docker-compose.env.yml`, `apps/prototype-description-service/Caddyfile`); review-run id `planning-review-E15-5a-slice3-20260517` (MCP id 586) recorded in [the run log § Planning-Review Outcome](./E15-5a-oci-hygiene-run-log.md#planning-review-outcome).
 
 > The Postgres backup baseline + follow-up handling is owned by the fallback plan's Postgres section, and its run-log evidence row lives in the run log's Slice 3 block; both are gated by the planning-review checkbox above and do not need separate slice-checklist rows.
 

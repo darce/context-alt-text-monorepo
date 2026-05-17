@@ -34,19 +34,35 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ENV_FILE="${PROJECT_ROOT}/.env"
 EXAMPLE_ENV_FILE="${PROJECT_ROOT}/.env.example"
+UV_BIN="${UV_BIN:-uv}"
+PYTHON_BIN="${PYTHON_BIN:-}"
+
+run_project_python() {
+  if [[ -n "${PYTHON_BIN}" ]]; then
+    if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
+      echo "[reset-dev-db] Runtime python not found: ${PYTHON_BIN}" >&2
+      return 1
+    fi
+    PYTHONPATH="${PROJECT_ROOT}${PYTHONPATH:+:${PYTHONPATH}}" "${PYTHON_BIN}" "$@"
+    return
+  fi
+
+  if ! command -v "${UV_BIN}" >/dev/null 2>&1; then
+    echo "[reset-dev-db] uv not found: ${UV_BIN}" >&2
+    return 1
+  fi
+
+  PYTHONPATH="${PROJECT_ROOT}${PYTHONPATH:+:${PYTHONPATH}}" \
+    VIRTUAL_ENV= \
+    "${UV_BIN}" --project "${PROJECT_ROOT}" run --locked --extra dev python "$@"
+}
 
 canonicalize_local_db_name() {
   local env_mode="$1"
   local db_name="$2"
-  local python_bin="${PYTHON_BIN:-python}"
   local resolved_name
 
-  if ! command -v "${python_bin}" >/dev/null 2>&1; then
-    echo "[reset-dev-db] canonicalize_local_db_name requires ${python_bin} on PATH." >&2
-    return 1
-  fi
-
-  if ! resolved_name="$(PYTHONPATH="${PROJECT_ROOT}" "${python_bin}" - "${env_mode}" "${db_name}" <<'PY'
+  if ! resolved_name="$(run_project_python - "${env_mode}" "${db_name}" <<'PY'
 from __future__ import annotations
 
 import sys
@@ -197,7 +213,7 @@ PGHOST="${DB_HOST}" \
 PGPORT="${DB_PORT}" \
 PGUSER="${DB_USER}" \
 PGPASSWORD="${DB_PASS}" \
-python -m alembic -c db/alembic.ini upgrade head
+run_project_python -m alembic -c db/alembic.ini upgrade head
 
 echo "[reset-dev-db] Setting up test user for RLS testing..." >&2
 TEST_USER="${TEST_PGUSER:-recognition_test_user}"
@@ -216,7 +232,7 @@ if [[ "${WITH_SAMPLE_DATA}" == "1" ]]; then
     DB_USER="${DB_USER}" \
     DB_PASS="${DB_PASS}" \
     DB_NAME="${DB_NAME}" \
-    python <<'PY'
+    run_project_python <<'PY'
 import math
 import os
 import random
@@ -339,6 +355,6 @@ fi
 
 # Log the reset to the application log file
 echo "[reset-dev-db] Logging reset to application log..." >&2
-PYTHONPATH="${PROJECT_ROOT}" python -c "from api.logging_config import log_db_reset; log_db_reset('Database reset via reset_dev_db.sh')" 2>/dev/null || true
+run_project_python -c "from api.logging_config import log_db_reset; log_db_reset('Database reset via reset_dev_db.sh')" 2>/dev/null || true
 
 echo "[reset-dev-db] Done – database dropped, recreated, and migrated for development environment." >&2

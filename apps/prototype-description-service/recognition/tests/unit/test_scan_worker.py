@@ -7,6 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from recognition.application.embedding.detector import DetectionAdapterError, StubFaceDetector
+from recognition.application.embedding.generator import StubEmbeddingGenerator
 from recognition.worker import scan_worker as scan_worker_module
 
 
@@ -128,6 +130,11 @@ async def test_scan_worker_retries_runtime_init_after_failure(monkeypatch: pytes
     assert calls == 1
     assert worker._embedding_runtime_ready is False
     assert worker._embedding_retry_after is not None
+    assert not isinstance(worker._scan_handler._detector, StubFaceDetector)
+    assert not isinstance(worker._scan_handler._generator, StubEmbeddingGenerator)
+
+    with pytest.raises(DetectionAdapterError, match="transient load failure"):
+        await worker._scan_handler._detector.detect(["http://example.test/image.jpg"])
 
     worker._embedding_retry_after = None
     await worker._ensure_embedding_runtime()
@@ -291,8 +298,8 @@ async def test_scan_handler_factory_persists_through_embedding_failure_fallback(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     """When the InsightFace adapter fails to load, _ensure_embedding_runtime
-    falls back to stub detector/generator and rebuilds the handler. The
-    factory must survive that fallback rebuild as well — otherwise a
+    installs fail-closed detector/generator and rebuilds the handler. The
+    factory must survive that failure rebuild as well — otherwise a
     transient adapter failure permanently disables multipart support."""
 
     async def _failing_adapter() -> object:
@@ -312,7 +319,7 @@ async def test_scan_handler_factory_persists_through_embedding_failure_fallback(
     await worker._ensure_embedding_runtime()
 
     assert worker._scan_handler._object_store_factory is not None, (
-        "BR-11: factory must survive the stub-fallback rebuild on adapter failure"
+        "BR-11: factory must survive the fail-closed rebuild on adapter failure"
     )
 
     await worker.__aexit__(None, None, None)

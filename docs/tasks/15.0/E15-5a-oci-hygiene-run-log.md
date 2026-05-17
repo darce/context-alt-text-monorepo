@@ -123,8 +123,19 @@ Exit: SSH works from both networks, security list scrubbed of stale CIDRs, break
 
 ### Postgres Backup Baseline Check
 
-- [ ] Verified whether a daily `pg_dump` cron is currently running on the OCI VM. Result: ____________________
-- [ ] If absent, the fallback plan opens a follow-up task to automate backups. Follow-up task ref (if needed): ____________________
+> Lookup sequence is owned by [the fallback plan § Backup Baseline](./E15-5a-hetzner-fallback-plan.md#backup-baseline). Run those commands verbatim and record per-step outcomes here.
+
+| Lookup step | Output (recurring schedule found? path?) |
+|-------------|------------------------------------------|
+| `sudo crontab -l` on OCI VM (root + ubuntu) |                                          |
+| `/etc/cron.d` / `/etc/cron.daily` / `/etc/cron.hourly` |                                          |
+| `systemctl list-timers --all` (any pg/backup) |                                          |
+| Docker backup sidecar (`docker ps -a` filtered) |                                          |
+| `/var/backups/postgres` / `/opt/acx-backend/backups` |                                          |
+
+- Final result: standing backup found / absent (one-off `pg_dump` required) -- circle one.
+- If absent, follow-up task ref to automate backups: ____________________ (link in handoff state once filed).
+- Sample command output saved to (run log attachment or paste path): ____________________
 
 ### Memory-Sampling Evidence Capture
 

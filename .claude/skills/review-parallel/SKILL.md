@@ -12,7 +12,7 @@ mcp_tools:
 - review_runs
 - record_event
 - get_handoff_state
-- handoff_close_check
+- integrity_check
 tdd_gate: false
 disable-model-invocation: false
 ---

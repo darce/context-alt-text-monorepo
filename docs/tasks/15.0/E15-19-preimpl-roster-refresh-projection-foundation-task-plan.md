@@ -264,9 +264,9 @@ make lane-manifest-init TASK=E15-19 LANE_IDS='docs-contracts backend-refresh wp-
 
 ## Review Readiness
 
-- [ ] No boundary-touching implementation lacks matching contract/doc/fixture evidence.
-- [ ] Runtime-parity checks are included where unit tests can mask projection behavior.
-- [ ] Handoff decision records the ADR state, refresh/projection changes, and verification.
+- [x] No boundary-touching implementation lacks matching contract/doc/fixture evidence. _(Schema codegen for `roster-entry`, `RosterEntryProjectionRepository` + PHPUnit, refresh tests for queued/running/completed/no-candidates/timed-out/failed paths all shipped.)_
+- [x] Runtime-parity checks are included where unit tests can mask projection behavior. _(Projection rebuild tests in `apps/prototype-wp-alt-context/tests/Unit/RosterEntryProjectionRepositoryTest.php`; backend refresh tests under `recognition/tests`.)_
+- [x] Handoff decision records the ADR state, refresh/projection changes, and verification. _(Slice decisions 2810/2843/2851/2854/2856/2857; ADR-009 conditional-accept decision `codex_conditional_accept_adr009_e15_planning_gate_20260506`.)_
 
 ## Stretch Goals
 
@@ -274,6 +274,6 @@ make lane-manifest-init TASK=E15-19 LANE_IDS='docs-contracts backend-refresh wp-
 
 ## Success Criteria
 
-- [ ] Local curation triggers durable bounded refresh with visible status.
-- [ ] RCL-004 roster projection is source-backed, fresh/stale aware, and test-covered.
-- [ ] Suggestion refresh no longer depends on hidden unbounded scans for product paths.
+- [x] Local curation triggers durable bounded refresh with visible status. _(`refresh_service.refresh_after_curation` L377; `CurationRefreshStatus` lifecycle persisted via `curation_job.run_curation_job` and `curation_sync_service`.)_
+- [x] RCL-004 roster projection is source-backed, fresh/stale aware, and test-covered. _(Schema requires `person_uuid`, `source_version`, `projection_status` ∈ {current, refreshing, stale, failed}, `projection_refreshed_at`; `RosterEntryProjectionRepository` + tests in place.)_
+- [x] Suggestion refresh no longer depends on hidden unbounded scans for product paths. _(`surface_for_newly_labeled_cluster` L572 logs `skipped implicit full scan reason=explicit_backfill_required`; full scans reserved for explicit backfill.)_

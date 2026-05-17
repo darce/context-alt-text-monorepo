@@ -117,15 +117,19 @@ ssh ubuntu@acx-backend.<tailnet>.ts.net '
 ```bash
 # REPLACE before running: <tailnet> -> your tailnet name; <hetzner-ip> -> Hetzner public IP.
 # 1. On OCI VM: capture final dump just before cutover.
+#    The container path /var/lib/postgresql/data is bind-mounted from the host
+#    path ${ACX_PGDATA_PATH} = /opt/acx-backend/data/prod-pgdata (see
+#    apps/prototype-description-service/docker-compose.env.yml). pg_dump writes
+#    INSIDE the container; ls/scp on the host MUST use the host path.
 ssh ubuntu@acx-backend.<tailnet>.ts.net '
   sudo docker exec acx-prod-postgres-1 \
     pg_dump -U acx_app -d alt_context_service -Fc \
     --file=/var/lib/postgresql/data/prod-cutover-$(date -u +%Y%m%dT%H%M%SZ).dump
-  ls -lh /var/lib/postgresql/data/prod-cutover-*.dump
+  sudo ls -lh /opt/acx-backend/data/prod-pgdata/prod-cutover-*.dump
 '
 
-# 2. Workstation: pull the dump.
-scp ubuntu@acx-backend.<tailnet>.ts.net:/var/lib/postgresql/data/prod-cutover-*.dump \
+# 2. Workstation: pull the dump (host path on the OCI VM, not the container path).
+scp ubuntu@acx-backend.<tailnet>.ts.net:/opt/acx-backend/data/prod-pgdata/prod-cutover-*.dump \
     ./prod-cutover.dump
 
 # 3. Workstation: ship to Hetzner.

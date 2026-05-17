@@ -29,11 +29,11 @@ This plan migrates the **prod** environment only. Staging and dev remain on OCI 
 | Compute                  | A1.Flex (arm64, Always Free)                     | CX22 (x86, ~EUR 4.51/mo at time of writing)                  |
 | OS                       | Ubuntu 22.04 LTS                                 | Ubuntu 22.04 LTS                                             |
 | Container runtime        | Docker + compose (per-env units via systemd)     | Identical -- reuse [docker-compose.env.yml](../../../apps/prototype-description-service/docker-compose.env.yml) |
-| Reverse proxy            | Caddy 2 ([Caddyfile](../../../apps/prototype-description-service/Caddyfile)) | Same Caddy, same Caddyfile (Let's Encrypt re-issues on first request) |
+| Reverse proxy            | Caddy 2 ([Caddyfile](../../../apps/prototype-description-service/Caddyfile)) -- **not** in `docker-compose.env.yml`; runs as a separate container attached to `${ACX_NETWORK_NAME}` (`acx-prod-net`) so it can reach the `prod-api` service alias | Same Caddy, same Caddyfile (Let's Encrypt re-issues on first request); Caddy must join `acx-prod-net` to route to `prod-api:8000` |
 | Container registry       | `iad.ocir.io/idu2kqqe2jxy/acx-backend`           | Same (pull works cross-cloud; auth token portable)            |
 | Image architecture       | `linux/arm64` built natively on the A1.Flex VM   | **`linux/amd64`** -- requires rebuild via `docker buildx`     |
 | Persistent state         | `/opt/acx-backend/data/prod-pgdata` (Postgres)   | Same path layout on CX22 local disk                          |
-| Model cache              | `/opt/acx-backend/data/prod-models`              | Re-populated on first container start (not migrated)         |
+| Unified cache mount      | `/opt/acx-backend/data/prod-models` mounted to `/data/cache` in api+worker (HuggingFace, InsightFace, transformers, matplotlib caches all live under this single host directory per `ACX_MODELS_PATH`) | Re-populated on first container start (not migrated)         |
 | Object/blob state        | `acx_blobs` named volume                          | Migrated via `docker volume` export/import or `rsync`        |
 | DNS                      | `api.altcontext.com` A record -> OCI public IP   | Same A record -> Hetzner public IP                           |
 
@@ -158,7 +158,7 @@ ssh root@<hetzner-ip> '
 '
 ```
 
-The InsightFace model cache (`prod-models`) is NOT migrated -- it re-downloads from Hugging Face on first container start. Add ~5 min to the cutover timing for the warm-up.
+The unified cache mount (`prod-models` -> `/data/cache`, which holds HuggingFace, InsightFace, transformers, and matplotlib caches per `apps/prototype-description-service/.env.prod.example`) is NOT migrated -- it re-downloads from Hugging Face / InsightFace on first container start. Add ~5 min to the cutover timing for the warm-up.
 
 ---
 
@@ -186,6 +186,7 @@ shred -u prod.env.tmp
 |-----------------------------------|------------------|
 | `COMPOSE_PROJECT_NAME=acx-prod`   | Unchanged.       |
 | `ACX_ENV=prod`                    | Unchanged.       |
+| `RECOGNITION_RUNTIME_MODE=production` | **Required, unchanged.** `api/main.py` refuses to start if `RECOGNITION_RUNTIME_MODE=production` **and** `RECOGNITION_ALLOWED_API_KEYS` is non-empty (the dev-keys-in-prod guard). Verify the value survived the `.env` copy and that `RECOGNITION_ALLOWED_API_KEYS` is empty before `docker compose up`; provision real keys via `scripts/manage_api_keys.py` post-boot. |
 | `ACX_IMAGE_TAG=latest`            | Unchanged once the amd64 `:latest` is pushed (see Image Promotion).      |
 | `ACX_PGDATA_PATH=/opt/acx-backend/data/prod-pgdata` | Same path; ensure directory exists on Hetzner before `docker compose up`. |
 | `ACX_MODELS_PATH=/opt/acx-backend/data/prod-models` | Same path; ensure directory exists; cache repopulates on first run. |
@@ -194,13 +195,17 @@ shred -u prod.env.tmp
 | `POSTGRES_DSN`/`POSTGRES_SYNC_DSN`| Unchanged (container-internal `postgres:5432`). |
 | `RECOGNITION_AUTH_ENABLED=true`   | Unchanged.       |
 | `RECOGNITION_ALLOWED_API_KEYS`    | MUST remain empty; the prod startup guard refuses to boot otherwise. Provision real keys via `scripts/manage_api_keys.py` (same flow as OCI). |
-| `RECOGNITION_ALLOWED_ORIGINS`     | Unchanged.       |
+| `RECOGNITION_ALLOWED_ORIGINS`     | Unchanged (commented out in `.env.prod.example`; uncomment + set only if the WP host is on a different origin from the API).       |
 | `TENANT_ID`                       | Unchanged (single-tenant prod). |
 | Cache dirs (`CACHE_BASE`, `HF_HOME`, etc.) | Unchanged (container-internal). |
 
 ### Caddyfile
 
 `apps/prototype-description-service/Caddyfile` is identical on both hosts; the only deploy artifact needed at `/opt/acx-backend/Caddyfile`. Let's Encrypt re-issues the cert on first request once DNS points at Hetzner.
+
+Caddy is **not** declared in `docker-compose.env.yml`; it runs as a separate `docker run` (or sibling compose) on the same host and must join `${ACX_NETWORK_NAME}` (`acx-prod-net`) to reach the `prod-api` service alias. Confirm Caddy is on that network before flipping DNS or the proxy returns connection refused.
+
+The Caddyfile also defines `staging.api.altcontext.com` and `dev.api.altcontext.com` routes targeting `staging-api`/`dev-api` aliases. **Prod-only Hetzner migration leaves those two routes pointing at services that do not exist on the Hetzner host** -- they will 502 until staging/dev migrate or until those Caddyfile blocks are removed/commented for the prod-only host. Either prune those blocks from the deployed `/opt/acx-backend/Caddyfile` during the cutover, or keep staging/dev resolving to the OCI IPs via separate A records.
 
 ### OCIR Authentication
 

@@ -154,6 +154,21 @@ class StubFaceDetector(FaceDetectorProtocol):
         return detections
 
 
+class UnavailableFaceDetector(FaceDetectorProtocol):
+    """Fail-closed detector for production runtime initialization failures."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+
+    async def detect(self, sources: Iterable[bytes | str]) -> list[FaceDetection]:
+        media_id = "recognition-runtime"
+        for source in sources:
+            if source:
+                media_id = source if isinstance(source, str) else hashlib.sha256(source).hexdigest()
+                break
+        raise DetectionAdapterError(media_id=str(media_id), error_message=self.reason)
+
+
 class InsightFaceFaceDetector(FaceDetectorProtocol):
     """Real face detector using InsightFace."""
 
@@ -283,6 +298,7 @@ __all__ = [
     "DetectionTimeoutError",
     "FaceDetectorProtocol",
     "StubFaceDetector",
+    "UnavailableFaceDetector",
     "InsightFaceFaceDetector",
     "FaceDetector",
 ]

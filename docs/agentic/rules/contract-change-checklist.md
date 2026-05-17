@@ -99,6 +99,10 @@ No cross-service API contract changed for E15-17. The branch ships the person-fi
 
 No cross-service API contract changed for E15-18. The branch is limited to the LocalWP smoke harness under `apps/prototype-wp-alt-context/scripts/localwp/` and its adjacent focused tests. The operator-facing smoke JSON payload remains local to the WordPress proof gate; this branch hardens it by reporting effective arguments, adding a stable `child_job_statuses` list shape for timeout diagnostics, and keeping the timeout message text centralized in one helper. Downstream consumers may assume the field remains a JSON array of objects on both timeout and terminal paths, while shared backend, REST, and MCP contracts remain unchanged.
 
+## BUG-STOP-BACKEND-20260516 Prototype Stop Cleanup
+
+No external HTTP, worker, or persistence contract changed for BUG-STOP-BACKEND-20260516. The branch is limited to `apps/prototype-description-service/scripts/start_prototype_local.sh` and focused regression coverage in `apps/prototype-description-service/recognition/tests/scripts/test_start_prototype_local.py`. The stop helper now scopes uvicorn cleanup to project-local processes and ensures the scan-worker log directory exists before shutdown logging, but it does not change CLI arguments, request/response payloads, environment-variable names, or downstream service assumptions.
+
 ## Remediation-Plan Finding IDs
 
 Cited `finding_id` values must resolve to a real MCP finding or concrete code site before implementation. Fix/archive/defer existing findings through MCP. Record a decision for non-existent IDs. Do not carry unverifiable IDs as assumed debt.

@@ -88,11 +88,18 @@ This model must never derive a lower displayed count than it has previously emit
 
 ### S1: Frontend monotonic state selector
 
-- Extract a `useWorkbenchPipelineSnapshot()` selector or pure builder from `useJobStateMachineDerivedState`.
-- Make batch-run status the scan aggregate authority when a `batchRunId` exists.
-- Track `maxDisplayedScanCompleted` and `maxDisplayedClusterCompleted` per run in state, not in persistent storage.
-- Fix `ScanActionPanel` batch-run text to use processed total consistently.
-- Add tests for mixed success/failure, stale SSE fallback, and multi-batch out-of-order completion.
+> **Status (WB-MONOTONIC-S1, 2026-05-17):** Monotonic guard + batch-run text fix shipped on `feature/wb-monotonic-s1-20260517`. See [WB-MONOTONIC-S1 task plan](../tasks/15.0/WB-MONOTONIC-S1-workbench-pipeline-snapshot-task-plan.md). Selector extraction is deferred to WB-MONOTONIC-S1b.
+>
+> Anchors:
+> - `enforceMonotonicProgress` helper: `apps/prototype-wp-alt-context/js/admin/hooks/jobStateMachineProgress.ts`.
+> - `useMonotonicScanProgress(rawProgress, runKey)` wrapper: `apps/prototype-wp-alt-context/js/admin/hooks/useMonotonicScanProgress.ts`, wired through `useJobStateMachineDerivedState.ts`.
+> - `ScanActionPanel` denominator fix + `buildStatusText` failed-branch fix (BR-01): `apps/prototype-wp-alt-context/js/admin/pages/workbench/Panels.tsx`, `apps/prototype-wp-alt-context/js/admin/hooks/jobStateMachineProgress.ts`.
+
+- Extract a `useWorkbenchPipelineSnapshot()` selector or pure builder from `useJobStateMachineDerivedState`. *(Deferred to WB-MONOTONIC-S1b.)*
+- Make batch-run status the scan aggregate authority when a `batchRunId` exists. *(Existing `buildScanProgress` batch-run branch already aggregates `completed + failed + cancelled` against `submitted_total`.)*
+- Track `maxDisplayedScanCompleted` and `maxDisplayedClusterCompleted` per run in state, not in persistent storage. *(Done via `useMonotonicScanProgress` ref accumulator, keyed by run id; resets on run-id change.)*
+- Fix `ScanActionPanel` batch-run text to use processed total consistently. *(Done; same fix applied to `buildStatusText` under BR-01.)*
+- Add tests for mixed success/failure, stale SSE fallback, and multi-batch out-of-order completion. *(Helper + wrapper unit tests cover regression-clamp, SSE phase-forward, faces_found clamp, and batch-run-id reset; multi-batch out-of-order coverage is light and remains a WB-MONOTONIC-S1b candidate.)*
 
 ### S2: Submission throughput without request storming
 

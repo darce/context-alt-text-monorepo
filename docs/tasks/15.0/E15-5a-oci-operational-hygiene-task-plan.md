@@ -93,9 +93,9 @@ Exit: fallback plan merged.
 
 ## Context and Ownership
 
-- [ ] Loaded the OCI operational context, fallback-plan anchors, and handoff state before making changes.
-- [ ] Confirmed no extra external dependency context is required beyond OCI, Tailscale, and the current compose/env surfaces already cited in the plan.
-- [ ] Kept task ownership clean: E15-5a owns OCI hygiene only, while E15-3a and E15-5 retain their gate-specific responsibilities.
+- [x] Loaded the OCI operational context, fallback-plan anchors, and handoff state before making changes.
+- [x] Confirmed no extra external dependency context is required beyond OCI, Tailscale, and the current compose/env surfaces already cited in the plan.
+- [x] Kept task ownership clean: E15-5a owns OCI hygiene only, while E15-3a and E15-5 retain their gate-specific responsibilities.
 
 ### Checklist for Slice 1: OCI budget alerts
 
@@ -112,7 +112,7 @@ Exit: fallback plan merged.
 ### Checklist for Slice 3: Hetzner fallback plan (CX22 baseline; sizing analysis required)
 
 - [ ] Verify the current Postgres backup mechanism and document any one-off `pg_dump` prerequisite if the standing backup flow is absent.
-- [ ] Produce `E15-5a-hetzner-fallback-plan.md` with explicit memory-sampling evidence, the amd64 parity-check definition, secrets/env migration, DNS cutover, data migration path, cutover timing, and trigger conditions.
+- [x] Produce `E15-5a-hetzner-fallback-plan.md` with explicit memory-sampling evidence, the amd64 parity-check definition, secrets/env migration, DNS cutover, data migration path, cutover timing, and trigger conditions.
 - [ ] Hold the fallback-plan slice open until it passes planning review against the current `prod/.env` and `docker-compose.env.yml` surfaces.
 
 ## Review Readiness

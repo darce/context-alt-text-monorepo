@@ -7,7 +7,7 @@
 > - **Owning Epic**: [docs/epics/v0.4.0/public-demo-launch-readiness-epic.md](../../epics/v0.4.0/public-demo-launch-readiness-epic.md)
 > - **Epic Short ID**: E15
 > - **Task ID**: E15-19
-> - **Target Branch**: `feature/e15-19-preimpl-roster-refresh-projection-foundation`
+> - **Target Branch**: `feature/e15-19-preimpl-roster-refresh-projection-foundation` _(historical drift; canonical convention is `feature/<lowercase-task-id>`, i.e. `feature/e15-19`. Retained for shipped-branch audit traceability.)_
 > - **Review Coverage Target**: 2
 > - **Start Command**: `make task-start TASK=E15-19 OBJECTIVE="Implement PREIMPL Tier 0 roster refresh and projection gates"`
 
@@ -21,7 +21,7 @@ Implement Tier 0 PREIMPL-002, PREIMPL-003, and PREIMPL-004 in Slices 1-4, then l
 
 The current curation loop mixes person writes, count-only roster reads, backend replay, and suggestion refresh across different surfaces. E15-13 already owns much of this behavior, but the PREIMPL spec adds stricter gates: ADR-009 must be accepted, RCL-004 must be canonical, refresh must be durable and bounded, projection freshness must be source-backed, and controller extraction must stay tied to changed behavior.
 
-This plan supersedes [E15-13](E15-13-roster-curation-loop-task-plan.md) as the canonical PREIMPL roster/refresh implementation track. Before Slice 1 code edits, record the superseding handoff decision for E15-19 so reviews have an explicit retirement link. Leave E15-13 on its documented lifecycle while its existing branch/worktree remains active, then retire it through the normal done/archive flow after that branch/worktree is actually closed.
+This plan was originally written to supersede [E15-13](E15-13-roster-curation-loop-task-plan.md) as the canonical PREIMPL roster/refresh implementation track. In practice the two tasks shipped as a paired Tier 0 split: **E15-19 owned the PREIMPL Tier 0 contract work (ADR-009 gate, post-curation event, RCL-004 projection schema, bounded suggestion refresh, projection integrity)** and **E15-13 retained the UI surfacing scope on top of E15-19's contract outputs**. E15-13 was revised on 2026-05-08 and continued to ship slices after E15-19 closed, treating E15-19 as a merged predecessor (see `E15-13-roster-curation-loop-task-plan.md` L53). The original superseding handoff decision remains on file for retirement traceability; readers should treat E15-13 as the consumer of this plan's outputs rather than as deprecated.
 
 ## Constraints
 

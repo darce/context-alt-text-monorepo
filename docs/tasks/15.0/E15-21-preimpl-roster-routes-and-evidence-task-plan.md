@@ -7,7 +7,7 @@
 > - **Owning Epic**: [docs/epics/v0.4.0/public-demo-launch-readiness-epic.md](../../epics/v0.4.0/public-demo-launch-readiness-epic.md)
 > - **Epic Short ID**: E15
 > - **Task ID**: E15-21
-> - **Target Branch**: `feature/e15-21-preimpl-roster-routes-and-evidence`
+> - **Target Branch**: `feature/e15-21-preimpl-roster-routes-and-evidence` _(historical drift; canonical convention is `feature/<lowercase-task-id>`, i.e. `feature/e15-21`. Retained for shipped-branch audit traceability.)_
 > - **Review Coverage Target**: 2
 > - **Start Command**: `make task-start TASK=E15-21 OBJECTIVE="Implement PREIMPL roster route and evidence gates"`
 

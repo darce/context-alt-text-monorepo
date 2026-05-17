@@ -1,6 +1,21 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildScanProgress, enforceMonotonicProgress } from '../jobStateMachineProgress';
+import type { BatchRunStatus } from '../../api/recognition/types/scan';
+import { buildScanProgress, buildStatusText, enforceMonotonicProgress } from '../jobStateMachineProgress';
+
+const makeBatchRunStatus = (overrides: Partial<BatchRunStatus> = {}): BatchRunStatus => ({
+  id: 'run-1',
+  submitted_total: 20,
+  accepted_total: 20,
+  completed_total: 10,
+  failed_total: 0,
+  cancelled_total: 0,
+  unreadable_media_ids: [],
+  failed_batches: [],
+  child_job_ids: [],
+  terminal_state: false,
+  ...overrides,
+});
 
 describe('buildScanProgress', () => {
   it('keeps completed scan totals when clustering starts before the fallback scan payload catches up', () => {
@@ -28,6 +43,31 @@ describe('buildScanProgress', () => {
       phase: 'complete',
       images_processed: 10,
     });
+  });
+});
+
+describe('buildStatusText batch-run denominator', () => {
+  it('uses processed total (completed + failed + cancelled) when failures are present', () => {
+    const batchRunStatus = makeBatchRunStatus({
+      submitted_total: 20,
+      completed_total: 10,
+      failed_total: 3,
+      cancelled_total: 2,
+    });
+
+    const text = buildStatusText({
+      clusterPending: false,
+      sseStatus: 'running',
+      sseProgress: null,
+      activeJobIds: [],
+      scanStatus: undefined,
+      batchRunStatus,
+      latestJobId: null,
+      scanPending: false,
+    });
+
+    expect(text).toContain('15/20');
+    expect(text).toContain('3 failed');
   });
 });
 

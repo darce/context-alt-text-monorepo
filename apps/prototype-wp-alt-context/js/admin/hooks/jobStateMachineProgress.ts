@@ -38,17 +38,17 @@ export const buildStatusText = ({
   }
 
   if (batchRunStatus && batchRunStatus.submitted_total > 0) {
+    const processedTotal =
+      batchRunStatus.completed_total + batchRunStatus.failed_total + batchRunStatus.cancelled_total;
     if (batchRunStatus.failed_total > 0) {
       return sprintf(
         __('Processed %1$d/%2$d (%3$d failed)', 'alt-context'),
-        batchRunStatus.completed_total,
+        processedTotal,
         batchRunStatus.submitted_total,
         batchRunStatus.failed_total,
       );
     }
 
-    const processedTotal =
-      batchRunStatus.completed_total + batchRunStatus.failed_total + batchRunStatus.cancelled_total;
     if (!batchRunStatus.terminal_state) {
       return sprintf(__('Processed %1$d/%2$d images', 'alt-context'), processedTotal, batchRunStatus.submitted_total);
     }

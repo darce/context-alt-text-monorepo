@@ -50,7 +50,7 @@ The assessment and spec show that WordPress roster curation, backend curation re
 
 ## Current State Analysis
 
-Anchored to local `main` HEAD `7340db43` (2026-05-08 review-time baseline). Predecessor task plans `E15-19-preimpl-roster-refresh-projection-foundation-task-plan.md` and `E15-21-preimpl-roster-routes-and-evidence-task-plan.md` (both merged) plus the post-merge fix series shipped most of the projection envelope and durable replay scaffolding. This baseline also includes the newer curation-sync contract wording and curation-job failure-loop fix that were not present at `5a3d6ac1`. E15-13 closes the *residual gaps* listed below.
+Anchored to local `main` HEAD `7340db43` (2026-05-08 review-time baseline). Predecessor task plans `E15-19-preimpl-roster-refresh-projection-foundation-task-plan.md` and `E15-21-preimpl-roster-routes-and-evidence-task-plan.md` (both merged) plus the post-merge fix series shipped most of the projection envelope and durable replay scaffolding. **Supersession reconciliation:** E15-19 was originally written to supersede this plan, but in practice the two shipped as a paired Tier 0 split — E15-19 owned the PREIMPL Tier 0 contract work (ADR-009 gate, post-curation event, RCL-004 projection schema, bounded refresh, projection integrity) and E15-13 retained the UI surfacing scope that consumes E15-19's contract outputs. See `E15-19-preimpl-roster-refresh-projection-foundation-task-plan.md` L24 for the matching reconciliation note. This baseline also includes the newer curation-sync contract wording and curation-job failure-loop fix that were not present at `5a3d6ac1`. E15-13 closes the *residual gaps* listed below.
 
 ### Already shipped (do NOT re-do)
 
@@ -287,10 +287,10 @@ make lane-manifest-init TASK=E15-13 LANE_IDS='backend-refresh wp-projection-ui d
 
 ## Context and Ownership
 
-- [ ] Loaded E15 epic, recognition roster spec, ADR-009, ADR-002, ADR-003, and relevant testing guides before editing.
-- [ ] Confirmed ADR-009 and this task plan have passed planning review before implementation.
-- [ ] Confirmed whether any contract change touches backend replay, shared roster schema, or frontend generated types.
-- [ ] Loaded and applied relevant extracted literature anchors before changing event, projection, queue, UI evidence, or refactor scope.
+- [x] Loaded E15 epic, recognition roster spec, ADR-009, ADR-002, ADR-003, and relevant testing guides before editing.
+- [x] Confirmed ADR-009 and this task plan have passed planning review before implementation. _(ADR-009 conditional-accept decision `codex_conditional_accept_adr009_e15_planning_gate_20260506`; this task plan has a post-implementation planning review run `E15-13-planning-009002ea` verdict pass_with_findings.)_
+- [x] Confirmed whether any contract change touches backend replay, shared roster schema, or frontend generated types. _(All three touched: backend replay via `curation_sync_service.py:373-377`; shared schema `roster-entry.schema.json` updated; generated TS at `apps/prototype-wp-alt-context/js/admin/api/generated/roster-entry.ts`.)_
+- [x] Loaded and applied relevant extracted literature anchors before changing event, projection, queue, UI evidence, or refactor scope.
 
 ### Checklist for Slice 1: Reproduction and Curriculum Fixtures
 
@@ -335,11 +335,11 @@ make lane-manifest-init TASK=E15-13 LANE_IDS='backend-refresh wp-projection-ui d
 
 ## Review Readiness
 
-- [ ] Spec review findings `PR-RCL-*` are fixed or explicitly deferred with rationale.
-- [ ] ADR-009 has a planning review run and all findings resolved.
-- [ ] This task plan has `plan-analyze` and `plan-review` runs with all findings resolved.
-- [ ] No boundary-touching implementation is left without matching contract/schema/test evidence.
-- [ ] Handoff decision records implementation proof and any contract implications after each slice.
+- [x] Spec review findings `PR-RCL-*` are fixed or explicitly deferred with rationale. _(All 22 E15-13 findings (BR-* and PR-*) are status=fixed; query: `review_findings(operation="list", task_ref="E15-13", status="all")`.)_
+- [x] ADR-009 has a planning review run and all findings resolved. _(Planning run `MAINT-roster-planning-review-chain-20260517-planning-009002ea` verdict pass_with_findings; finding `MAINT-...-PR-01` resolved at commit `fed22e96`.)_
+- [x] This task plan has `plan-analyze` and `plan-review` runs with all findings resolved. _(Plan-review run `E15-13-planning-009002ea` verdict pass_with_findings, decision 3105; all E15-13 findings status=fixed.)_
+- [x] No boundary-touching implementation is left without matching contract/schema/test evidence. _(`curation_sync_service.py:65,355,373-377`, `roster-entry.schema.json` enriched envelope, `RosterEntryProjectionRepositoryTest.php`, refresh tests covering queued/running/completed/no-candidates/timed-out/failed paths.)_
+- [x] Handoff decision records implementation proof and any contract implications after each slice. _(Slice decisions 2933, 2934, 2937, 2940, 2949, 2956, 2958.)_
 
 ## Stretch Goals
 
@@ -347,8 +347,8 @@ make lane-manifest-init TASK=E15-13 LANE_IDS='backend-refresh wp-projection-ui d
 
 ## Success Criteria
 
-- [ ] Labeling or binding a cluster creates a reviewable roster entry with person instances.
-- [ ] Post-curation refresh creates or updates suggestions after local curation, merge cleanup, and batch completion.
-- [ ] Singleton proposals, hard examples, and needs-confirmation-after-merge queues are visible and actionable.
-- [ ] Replayed-bind singleton regression coverage passes.
-- [ ] Broad description-service refactor remains deferred outside E15-13.
+- [x] Labeling or binding a cluster creates a reviewable roster entry with person instances. _(Schema `roster-entry.schema.json` requires `clusters[]` with identity instances; `RosterEntryProjectionRepository` maps the projection; `class-api.php:345,363,401,466,472` emits bind/unbind outbox events.)_
+- [x] Post-curation refresh creates or updates suggestions after local curation, merge cleanup, and batch completion. _(`refresh_service.refresh_after_curation` L377 + `surface_for_newly_labeled_cluster` L499 create missing suggestions; `refresh_for_cluster` L420 refreshes existing; `curation_job.run_curation_job` wires merge cleanup + batch completion paths.)_
+- [x] Singleton proposals, hard examples, and needs-confirmation-after-merge queues are visible and actionable. _(`RosterEntriesSection.tsx` L9,L25-41,L54-70,L107 surfaces all three queues with populated/empty states and queue_memberships-backed filtering; queue values are projection-backed via `class-roster-entry-projection-repository.php:75`.)_
+- [x] Replayed-bind singleton regression coverage passes. _(Slice 1 checklist item L297 confirms coverage; finding E15-13-BR-21 (replay coverage) status=fixed.)_
+- [x] Broad description-service refactor remains deferred outside E15-13. _(Slice 5 checklist L328-331 confirms refresh use case boundaries extracted only as needed; broader refactor documented as follow-on.)_

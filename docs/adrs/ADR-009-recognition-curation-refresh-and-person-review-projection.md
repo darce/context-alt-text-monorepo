@@ -41,6 +41,26 @@ work begins:
 - `DASH-007` must require a recorded durable-activity source decision before
    the dashboard demotes or replaces browser-local recent-job history.
 
+## Conditions Satisfied (2026-05-17)
+
+Both conditions are now met in the owning specs:
+
+- `RCL-008` defines queue-membership predicates and names `RCL-004` as canonical
+   projection authority — see `docs/specs/recognition-roster-curation-loop-spec.md`
+   L304-310 (`singleton-proposals`, `hard-examples`,
+   `needs-confirmation-after-merge`).
+- `DASH-007` records the durable-activity source done-when —
+   `docs/specs/alt-context-dashboard-operator-triage-spec.md` L183-240 requires
+   a recorded handoff decision before any UI change demotes or replaces
+   browser-local history.
+
+Status remains `Conditional Accepted` in the metadata header for audit-trail
+continuity (the original conditional-acceptance decision is the authoritative
+acceptance event). This section is the operator-visible note that the
+conditions have since been satisfied. Planning-review verification run:
+`MAINT-roster-planning-review-chain-20260517-planning-009002ea` (verdict
+decision `3103`).
+
 ## Context
 
 The recognition roster assessment and spec identify a broken curation loop:

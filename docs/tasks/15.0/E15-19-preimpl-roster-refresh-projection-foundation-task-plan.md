@@ -7,7 +7,7 @@
 > - **Owning Epic**: [docs/epics/v0.4.0/public-demo-launch-readiness-epic.md](../../epics/v0.4.0/public-demo-launch-readiness-epic.md)
 > - **Epic Short ID**: E15
 > - **Task ID**: E15-19
-> - **Target Branch**: `feature/e15-19-preimpl-roster-refresh-projection-foundation`
+> - **Target Branch**: `feature/e15-19-preimpl-roster-refresh-projection-foundation` _(historical drift; canonical convention is `feature/<lowercase-task-id>`, i.e. `feature/e15-19`. Retained for shipped-branch audit traceability.)_
 > - **Review Coverage Target**: 2
 > - **Start Command**: `make task-start TASK=E15-19 OBJECTIVE="Implement PREIMPL Tier 0 roster refresh and projection gates"`
 
@@ -21,7 +21,7 @@ Implement Tier 0 PREIMPL-002, PREIMPL-003, and PREIMPL-004 in Slices 1-4, then l
 
 The current curation loop mixes person writes, count-only roster reads, backend replay, and suggestion refresh across different surfaces. E15-13 already owns much of this behavior, but the PREIMPL spec adds stricter gates: ADR-009 must be accepted, RCL-004 must be canonical, refresh must be durable and bounded, projection freshness must be source-backed, and controller extraction must stay tied to changed behavior.
 
-This plan supersedes [E15-13](E15-13-roster-curation-loop-task-plan.md) as the canonical PREIMPL roster/refresh implementation track. Before Slice 1 code edits, record the superseding handoff decision for E15-19 so reviews have an explicit retirement link. Leave E15-13 on its documented lifecycle while its existing branch/worktree remains active, then retire it through the normal done/archive flow after that branch/worktree is actually closed.
+This plan was originally written to supersede [E15-13](E15-13-roster-curation-loop-task-plan.md) as the canonical PREIMPL roster/refresh implementation track. In practice the two tasks shipped as a paired Tier 0 split: **E15-19 owned the PREIMPL Tier 0 contract work (ADR-009 gate, post-curation event, RCL-004 projection schema, bounded suggestion refresh, projection integrity)** and **E15-13 retained the UI surfacing scope on top of E15-19's contract outputs**. E15-13 was revised on 2026-05-08 and continued to ship slices after E15-19 closed, treating E15-19 as a merged predecessor (see `E15-13-roster-curation-loop-task-plan.md` L53). The original superseding handoff decision remains on file for retirement traceability; readers should treat E15-13 as the consumer of this plan's outputs rather than as deprecated.
 
 ## Constraints
 
@@ -264,9 +264,9 @@ make lane-manifest-init TASK=E15-19 LANE_IDS='docs-contracts backend-refresh wp-
 
 ## Review Readiness
 
-- [ ] No boundary-touching implementation lacks matching contract/doc/fixture evidence.
-- [ ] Runtime-parity checks are included where unit tests can mask projection behavior.
-- [ ] Handoff decision records the ADR state, refresh/projection changes, and verification.
+- [x] No boundary-touching implementation lacks matching contract/doc/fixture evidence. _(Schema codegen for `roster-entry`, `RosterEntryProjectionRepository` + PHPUnit, refresh tests for queued/running/completed/no-candidates/timed-out/failed paths all shipped.)_
+- [x] Runtime-parity checks are included where unit tests can mask projection behavior. _(Projection rebuild tests in `apps/prototype-wp-alt-context/tests/Unit/RosterEntryProjectionRepositoryTest.php`; backend refresh tests under `recognition/tests`.)_
+- [x] Handoff decision records the ADR state, refresh/projection changes, and verification. _(Slice decisions 2810/2843/2851/2854/2856/2857; ADR-009 conditional-accept decision `codex_conditional_accept_adr009_e15_planning_gate_20260506`.)_
 
 ## Stretch Goals
 
@@ -274,6 +274,6 @@ make lane-manifest-init TASK=E15-19 LANE_IDS='docs-contracts backend-refresh wp-
 
 ## Success Criteria
 
-- [ ] Local curation triggers durable bounded refresh with visible status.
-- [ ] RCL-004 roster projection is source-backed, fresh/stale aware, and test-covered.
-- [ ] Suggestion refresh no longer depends on hidden unbounded scans for product paths.
+- [x] Local curation triggers durable bounded refresh with visible status. _(`refresh_service.refresh_after_curation` L377; `CurationRefreshStatus` lifecycle persisted via `curation_job.run_curation_job` and `curation_sync_service`.)_
+- [x] RCL-004 roster projection is source-backed, fresh/stale aware, and test-covered. _(Schema requires `person_uuid`, `source_version`, `projection_status` ∈ {current, refreshing, stale, failed}, `projection_refreshed_at`; `RosterEntryProjectionRepository` + tests in place.)_
+- [x] Suggestion refresh no longer depends on hidden unbounded scans for product paths. _(`surface_for_newly_labeled_cluster` L572 logs `skipped implicit full scan reason=explicit_backfill_required`; full scans reserved for explicit backfill.)_

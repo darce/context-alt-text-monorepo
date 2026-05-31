@@ -81,7 +81,7 @@ make test              # pytest
 - Branch from `main`: `feature/<description>`, `fix/<description>`, `docs/<description>`
 - [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`
 - AI agents start at [docs/agentic/instructions.md](docs/agentic/instructions.md)
-- The canonical `agent-handoff-mcp` package now lives in the private `darce/mcp-agent-handoff` repository; this monorepo consumes it as an external dependency during the extraction rollout.
+- The canonical `workstate-handoff-mcp` and `workstate-orchestrator-mcp` packages now live outside this monorepo; this workspace consumes them as external dependencies during the extraction rollout.
 
 ---
 

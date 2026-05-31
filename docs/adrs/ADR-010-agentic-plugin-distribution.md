@@ -36,7 +36,7 @@ The E17-15 spec records the current constraints:
 
 - `agentic-protocol-monorepo` is the canonical remote implementation repo for shared skills, plugin manifests, generator code, emitted plugin trees, and distribution documentation.
 - `context-alt-text-monorepo` stages and reviews the planning bundle first because E17 handoff/review state lives here.
-- `darce/mcp-agent-handoff` and `darce/mcp-agent-orchestrator` remain private source repos, but plugin manifests launch the existing runtime packages through the current `uvx` pins: `mcp-agent-handoff==0.11.2` and `mcp-agent-orchestrator==0.4.6`.
+- `darce/workstate` remains the private source repo for the MCP runtime packages, and plugin manifests launch the existing runtime packages through the current `uvx` pins: `mcp-workstate-handoff==0.12.0` and `mcp-workstate-orchestrator==0.5.0`.
 - VS Code Copilot has no equivalent plugin manifest in scope; its current generated instruction path remains separate.
 
 ## Decision
@@ -113,7 +113,7 @@ Copilot has no equivalent first-party plugin manifest in this workflow. Its gene
 
 - `agentic-protocol-monorepo` generator emits Claude and Codex plugin trees deterministically.
 - Emitted Claude and Codex skill body copies are byte-identical.
-- Emitted `mcpServers` entries launch `mcp-agent-handoff==0.11.2` and `mcp-agent-orchestrator==0.4.6` through `uvx`.
+- Emitted `mcpServers` entries launch `mcp-workstate-handoff==0.12.0` and `mcp-workstate-orchestrator==0.5.0` through `uvx`.
 - Consumer monorepo migration verifies Claude and Codex discover each shared skill once from the plugin install path.
 
 ## Related Artifacts

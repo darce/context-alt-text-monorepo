@@ -39,7 +39,7 @@
       {
         "matcher": "mcp_altcontext-mc_record_event|mcp_altcontext-mc_close_slice|mcp__agent-handoff-mcp__record_event|mcp__agent-handoff-mcp__close_slice",
         "type": "command",
-        "command": "python3 scripts/hooks/guard-rationale-size.py",
+        "command": "python3 /Users/daniel/Development/context-alt-text-monorepo/scripts/hooks/guard-rationale-size.py",
         "timeout": 5
       },
       {

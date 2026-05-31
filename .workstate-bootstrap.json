@@ -1,0 +1,99 @@
+{
+  "schema_version": 2,
+  "remote_url": "git@github.com:darce/agentic-protocol-monorepo.git",
+  "remote_ref": "v0.1.20",
+  "remote_sha": "08bd7959483344905065db9d662e8393cd9f8bd9",
+  "profile": "all",
+  "surfaces": [
+    {
+      "path": ".github/hooks",
+      "source": "shared"
+    },
+    {
+      "path": "scripts/hooks",
+      "source": "shared"
+    },
+    {
+      "path": "docs/workstate/contracts",
+      "source": "local"
+    },
+    {
+      "path": "docs/workstate/rules",
+      "source": "local"
+    },
+    {
+      "path": "Makefile.d/compaction.mk",
+      "source": "shared"
+    },
+    {
+      "path": "Makefile.d/plans.mk",
+      "source": "shared"
+    },
+    {
+      "path": "Makefile.d/plugins.mk",
+      "source": "shared"
+    },
+    {
+      "path": "Makefile.d/workflows.mk",
+      "source": "shared"
+    },
+    {
+      "path": "scripts/workstate/git-plan-cat.sh",
+      "source": "shared"
+    },
+    {
+      "path": ".github/prompts",
+      "source": "generated"
+    },
+    {
+      "path": ".workstate/generated/plugins/workstate-system/base",
+      "source": "generated"
+    },
+    {
+      "path": "Makefile.d/lifecycle.mk",
+      "source": "lifecycle"
+    },
+    {
+      "path": "scripts/workstate/lifecycle",
+      "source": "lifecycle"
+    }
+  ],
+  "configs": [
+    {
+      "path": ".claude-plugin/marketplace.json",
+      "action": "unchanged"
+    },
+    {
+      "path": ".claude/settings.json",
+      "action": "unchanged"
+    },
+    {
+      "path": ".agents/plugins/marketplace.json",
+      "action": "unchanged"
+    },
+    {
+      "path": ".mcp.json",
+      "action": "merged"
+    },
+    {
+      "path": ".vscode/mcp.json",
+      "action": "merged"
+    },
+    {
+      "path": ".codex/config.toml",
+      "action": "merged"
+    },
+    {
+      "path": "Makefile",
+      "action": "already_present"
+    },
+    {
+      "path": "core.hooksPath",
+      "action": "set"
+    }
+  ],
+  "mcp_servers": [
+    "workstate-handoff-mcp",
+    "workstate-orchestrator-mcp"
+  ]
+}

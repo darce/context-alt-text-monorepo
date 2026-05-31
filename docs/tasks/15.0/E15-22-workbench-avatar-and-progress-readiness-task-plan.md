@@ -190,9 +190,9 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded the Workbench code anchors, planning findings, and demo-gate docs before implementation.
+- [x] Loaded the Workbench code anchors, planning findings, and demo-gate docs before implementation. *Anchored by the E15-3a proof-bundle run log/checklist and the existing avatar/progress code anchors referenced above.*
 - [ ] Confirmed the hosted/private-media proof surface from E15-11 is available before treating the LocalWP demo gate as green.
-- [ ] Kept the broader scan-pipeline trust/canonicalization work scoped to v0.4.1 unless a defect is proven demo-blocking.
+- [x] Kept the broader scan-pipeline trust/canonicalization work scoped to v0.4.1 unless a defect is proven demo-blocking. *The audit keeps E15-22 focused on avatar/progress proof readiness; hosted/private-media proof remains explicitly unchecked until E15-11 supplies the gate evidence.*
 
 ### Checklist for Slice 1: Cluster-Members Contract Envelope
 

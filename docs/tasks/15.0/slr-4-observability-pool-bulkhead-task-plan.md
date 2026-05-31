@@ -187,7 +187,7 @@ Proof:
 
 ## Stretch Goals
 
-- [ ] Add a tiny helper or selector API for `get_pool_stats()` if it improves downstream readability without expanding scope too far.
+- [x] Add a tiny helper or selector API for `get_pool_stats()` if it improves downstream readability without expanding scope too far. *`db/session.py::get_pool_stats()` is the shared helper consumed by `/health` and exception diagnostics; coverage lives in `test_connection_pool.py`.*
 
 ## Success Criteria
 

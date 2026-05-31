@@ -341,6 +341,6 @@ Remove the must-use plugin to restore default multipart behaviour.
 
 - [ ] A LocalWP install pointed at the hosted Alt Context API can submit a 5-image scan over multipart with no public-URL exposure of WordPress media, and the scan completes
 - [ ] The `acx_recognition_transport=url` opt-in path continues to work against a publicly-reachable site (no regression)
-- [ ] Per-job blob directory is empty after every scan completes or fails (no permanent storage residue)
-- [ ] No tenant-A request can read or reference a blob written by tenant B, asserted by a dedicated test
-- [ ] The `ObjectStore` protocol surface is the only seam Slice B (OCI) needs to swap; no plugin-side change is required for Slice B
+- [x] Per-job blob directory is empty after every scan completes or fails (no permanent storage residue). *Cleanup paths are covered by route pre-commit cleanup, `chain_populate_and_process`, and worker `_refresh_job_progress`; proof was recorded across decisions `#2349`-`#2382`.*
+- [x] No tenant-A request can read or reference a blob written by tenant B, asserted by a dedicated test. *Covered by `test_object_store_filesystem.py::test_open_rejects_uri_outside_active_tenant_prefix` and `test_scan_service_blob_uri.py::test_process_media_item_refuses_cross_tenant_blob_uri`.*
+- [x] The `ObjectStore` protocol surface is the only seam Slice B (OCI) needs to swap; no plugin-side change is required for Slice B. *The backend seam is isolated in `recognition/application/storage/object_store.py` with HTTP dependency wiring kept separate.*

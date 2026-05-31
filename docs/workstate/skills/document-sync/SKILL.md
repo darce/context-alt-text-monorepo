@@ -47,14 +47,14 @@ Identify documentation that has drifted from the codebase and apply factual corr
 
 Documentation surfaces in this monorepo, ordered by sync priority:
 
-1. **Contracts** (`docs/agentic/contracts/`) — MCP tool signatures, parameter shapes, return types
-2. **Context maps** (`docs/agentic/maps/`) — tech stack, file paths, module boundaries
+1. **Contracts** (`docs/workstate/contracts/`) — MCP tool signatures, parameter shapes, return types
+2. **Context maps** (`docs/workstate/maps/`) — tech stack, file paths, module boundaries
 3. **CLAUDE.md** — role table, naming conventions, short rules, key triggers
-4. **Instructions** (`docs/agentic/instructions.md`) — startup protocol, handoff contract
-5. **Rules** (`docs/agentic/rules/`) — review guides, development workflow, guidelines
-6. **Playbooks** (`docs/agentic/playbooks/`) — operating procedures
-7. **Skills** (`docs/agentic/skills/`) — skill triggers and phase descriptions
-8. **Templates** (`docs/agentic/templates/`) — structural templates
+4. **Instructions** (`docs/workstate/instructions.md`) — startup protocol, handoff contract
+5. **Rules** (`docs/workstate/rules/`) — review guides, development workflow, guidelines
+6. **Playbooks** (`docs/workstate/playbooks/`) — operating procedures
+7. **Skills** (`docs/workstate/skills/`) — skill triggers and phase descriptions
+8. **Templates** (`docs/workstate/templates/`) — structural templates
 9. **Package READMEs** (`packages/*/README.md`) — installation, usage, development
 10. **Task plans** (`docs/tasks/`) — only update status/completion markers, never rewrite scope
 
@@ -174,7 +174,7 @@ Present a doc health summary:
 
 ```
 Documentation sync complete:
-  contracts/agent-handoff-mcp.md  [Updated] (added new_tool signature)
+  contracts/workstate-handoff-mcp.md  [Updated] (added new_tool signature)
   maps/tech-stack.md              [Current] (no drift)
   CLAUDE.md                       [Updated] (fixed role table path)
   ...

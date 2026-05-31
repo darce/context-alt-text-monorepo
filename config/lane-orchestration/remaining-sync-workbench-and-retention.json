@@ -372,7 +372,7 @@
       "lane": "backend-domain"
     },
     {
-      "prefix": "docs/agentic/contracts/",
+      "prefix": "docs/workstate/contracts/",
       "lane": "backend-domain"
     },
     {
@@ -429,7 +429,7 @@
         "apps/prototype-description-service/recognition/domain/**",
         "apps/prototype-description-service/recognition/infrastructure/**",
         "apps/prototype-description-service/recognition/tests/unit/**",
-        "docs/agentic/contracts/**",
+        "docs/workstate/contracts/**",
         "docs/tasks/7.0/remaining-sync-workbench-and-retention-task-plan.md",
         "mk/lane-maintenance.mk",
         "scripts/worktree-lane",
@@ -437,10 +437,10 @@
         "packages/agent-handoff-mcp/**"
       ],
       "required_docs": [
-        "docs/agentic/instructions.md",
-        "docs/agentic/rules/backend-python-guidelines.md",
-        "docs/agentic/rules/testing-python.md",
-        "docs/agentic/rules/development-workflow.md",
+        "docs/workstate/instructions.md",
+        "docs/workstate/rules/backend-python-guidelines.md",
+        "docs/workstate/rules/testing-python.md",
+        "docs/workstate/rules/development-workflow.md",
         "docs/tasks/7.0/remaining-sync-workbench-and-retention-task-plan.md"
       ],
       "test_commands": [
@@ -467,7 +467,7 @@
         "apps/prototype-description-service/recognition/domain",
         "apps/prototype-description-service/recognition/infrastructure",
         "apps/prototype-description-service/recognition/tests/unit",
-        "docs/agentic/contracts",
+        "docs/workstate/contracts",
         "docs/tasks/7.0/remaining-sync-workbench-and-retention-task-plan.md",
         "mk/lane-maintenance.mk",
         "scripts/worktree-lane",
@@ -501,9 +501,9 @@
         "apps/prototype-description-service/recognition/tests/api/**"
       ],
       "required_docs": [
-        "docs/agentic/instructions.md",
-        "docs/agentic/rules/backend-python-guidelines.md",
-        "docs/agentic/rules/testing-python.md",
+        "docs/workstate/instructions.md",
+        "docs/workstate/rules/backend-python-guidelines.md",
+        "docs/workstate/rules/testing-python.md",
         "docs/tasks/7.0/remaining-sync-workbench-and-retention-task-plan.md"
       ],
       "test_commands": [
@@ -543,9 +543,9 @@
         "apps/prototype-wp-alt-context/tests/Unit/**"
       ],
       "required_docs": [
-        "docs/agentic/instructions.md",
-        "docs/agentic/rules/backend-php-guidelines.md",
-        "docs/agentic/rules/testing-php.md",
+        "docs/workstate/instructions.md",
+        "docs/workstate/rules/backend-php-guidelines.md",
+        "docs/workstate/rules/testing-php.md",
         "docs/tasks/7.0/remaining-sync-workbench-and-retention-task-plan.md"
       ],
       "test_commands": [
@@ -594,9 +594,9 @@
         "apps/prototype-wp-alt-context/js/**"
       ],
       "required_docs": [
-        "docs/agentic/instructions.md",
-        "docs/agentic/rules/frontend-guidelines.md",
-        "docs/agentic/rules/testing-typescript.md",
+        "docs/workstate/instructions.md",
+        "docs/workstate/rules/frontend-guidelines.md",
+        "docs/workstate/rules/testing-typescript.md",
         "docs/tasks/7.0/remaining-sync-workbench-and-retention-task-plan.md"
       ],
       "test_commands": [

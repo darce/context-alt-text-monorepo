@@ -33,32 +33,33 @@ Protected root files: `Makefile`.
 
 - `CLAUDE.md`: canonical agent dispatcher that stays editable on `main`
 - `.github/copilot-instructions.md`: VS Code harness mirror of `CLAUDE.md`
-- `docs/agentic/BOOTSTRAP.md`: operator-facing cold-start reference
-- `docs/agentic/instructions.md`: canonical agent instructions surface
-- `docs/agentic/contracts/**`: harness contracts that stay editable on `main`
-- `docs/agentic/rules/**`: workflow rules that stay editable on `main`
-- `docs/agentic/maps/**`: routing and map artifacts that stay editable on `main`
-- `docs/agentic/generated/**`: generated agentic artifacts that can update on `main`
+- `docs/workstate/BOOTSTRAP.md`: operator-facing cold-start reference
+- `docs/workstate/instructions.md`: canonical agent instructions surface
+- `docs/workstate/contracts/**`: harness contracts that stay editable on `main`
+- `docs/workstate/rules/**`: workflow rules that stay editable on `main`
+- `docs/workstate/maps/**`: routing and map artifacts that stay editable on `main`
+- `docs/workstate/generated/**`: generated workstate artifacts that can update on `main`
 - `docs/tasks/archive/**`: archived task snapshots that stay editable on `main`
 - `DASHBOARD.txt`: regenerated dashboard artifact on `main`
 - `CURRENT_TASK.json`: regenerated current-task snapshot on `main`
 
 Keep each allow-list entry narrow and explainable. If a surface exists only to support this repo's workflow, add it here with a reason in the contract. If a path is code or code-adjacent implementation, do not put it on this list just to bypass the guard.
 
-### Shared Agentic Surface
+### Shared Workstate Surface
 
-E17-10 hoists the shared agentic surface into four standalone private repos under the `darce` org:
+The shared workstate surface is installed from the private `darce/workstate` repo and its published package family:
 
-- `git@github.com:darce/agentic-system.git` — canonical shared surface repo for skills, hooks, prompts, commands, contracts, and workflow generators
-- `git@github.com:darce/mcp-agent-handoff.git` — standalone handoff MCP package repo (pre-existing; backs `agent-handoff-mcp`)
-- `git@github.com:darce/mcp-agent-orchestrator.git` — standalone orchestrator MCP package repo consumed by this monorepo through the installed `agent-orchestrator-mcp` entrypoint
-- `git@github.com:darce/agentic-bootstrap.git` — standalone bootstrap CLI repo that installs and updates the shared surface in consumer projects
+- `https://github.com/darce/workstate.git` — canonical shared surface and package source for skills, hooks, prompts, commands, contracts, lifecycle helpers, and workflow generators
+- `mcp-workstate-handoff` — handoff MCP package consumed by repo and consumer harnesses
+- `mcp-workstate-orchestrator` — orchestrator MCP package consumed by lane and worker tooling
+- `workstate-system` — passive shared surface installed into consumer repositories
+- `workstate-bootstrap` — bootstrap CLI that installs and updates the shared surface in consumer projects
 
-MCP-server packages keep the `mcp-` prefix (`mcp-agent-handoff`, `mcp-agent-orchestrator`); shared-surface and CLI repos do not (`agentic-system`, `agentic-bootstrap`). The four URLs above are the canonical names referenced by `docs/agentic/consumer-setup.md` and the doc-lock test in `scripts/test_consumer_setup_doc.py`; do not introduce alternate prefixes.
+MCP-server packages keep the `mcp-workstate-` prefix (`mcp-workstate-handoff`, `mcp-workstate-orchestrator`); shared-surface and CLI packages use `workstate-system` and `workstate-bootstrap`. These canonical names are referenced by `docs/workstate/consumer-setup.md` and the doc-lock test in `scripts/test_consumer_setup_doc.py`; do not introduce alternate prefixes.
 
-For the MVP, sync direction is one-way: this monorepo is the source of truth and Slice 0 extracts the shared surface into `darce/agentic-system`. Consumers clone the remote surface into `<consumer-root>/.agentic/remote/` and symlink from there; they do not install from `context-alt-text-monorepo` URLs.
+For the current migration, sync direction is one-way: the workstate package source is the source of truth. Consumers clone the remote surface into `<consumer-root>/.workstate/remote/`, materialize managed surfaces from `.workstate-bootstrap.json`, and do not install from `context-alt-text-monorepo` URLs.
 
-`TODO(E17-10-POST-MVP-SYNC)`: define the reverse-sync workflow for upstream edits made in `darce/agentic-system`, including how they are reviewed and merged back into this monorepo without drift.
+`TODO(E17-10-POST-MVP-SYNC)`: define the reverse-sync workflow for upstream edits made in `darce/workstate`, including how they are reviewed and merged back into this monorepo without drift.
 
 `TODO(E17-10-POST-MVP-CLEANUP)`: once Slice 5 proves the consumer flow end to end, delete the duplicated in-tree shared-surface copies from this monorepo or replace them with the agreed post-MVP sync model.
 
@@ -196,8 +197,8 @@ Escape hatch: `.task-state/dirty-allowlist` -- a newline-delimited list of repo-
 ```bash
 # Example .task-state/dirty-allowlist
 # Files I'm intentionally editing in parallel with task work:
-docs/agentic/instructions.md
-docs/agentic/rules/development-workflow.md
+docs/workstate/instructions.md
+docs/workstate/rules/development-workflow.md
 # Pre-existing repo-local work that pre-dates the active task:
 scripts/mcp/handoff_integrity_guard.py
 ```
@@ -338,8 +339,8 @@ For every unit of work (feature slice, bug fix, refactor):
 
 External-install verification note:
 
-- For the E17-13 MCP cleanup path, verify `agent-handoff-mcp` and `agent-orchestrator-mcp` from pinned `pip install` commands against the standalone repos in a scratch venv, not the old package-local Makefile guard guidance.
-- The live verification contract is: pinned `pip install` from the standalone repos in a scratch venv, then `mcp-agent-handoff --workspace-root . doctor` plus `mcp-agent-orchestrator --workspace-root . --help` CLI/import smoke checks.
+- For the E17-13 MCP cleanup path, verify `workstate-handoff-mcp` and `workstate-orchestrator-mcp` from pinned `pip install` commands against the standalone repos in a scratch venv, not the old package-local Makefile guard guidance.
+- The live verification contract is: pinned `pip install` from the standalone repos in a scratch venv, then `mcp-workstate-handoff --workspace-root . doctor` plus `mcp-workstate-orchestrator --workspace-root . --help` CLI/import smoke checks.
 - Do not hardcode absolute filesystem paths; prefer `${env:HOME}`, `${workspaceFolder}`, and `${REPO_ROOT:-$PWD}`.
 
 Commit SHA provenance discipline:
@@ -376,7 +377,7 @@ For TDD-compatible scaffolding, the order is:
 - **Verify scaffolds compile/type-check** before moving to implementation
 - Test scaffolding is required first: create test files, fixtures, and failing test stubs before any implementation
 
-**This applies to ALL new code**: Python functions/classes, TypeScript/React components/hooks, test signatures/fixtures, and cross-layer API schemas in `docs/agentic/contracts/`.
+**This applies to ALL new code**: Python functions/classes, TypeScript/React components/hooks, test signatures/fixtures, and cross-layer API schemas in `docs/workstate/contracts/`.
 
 ### Scaffolding Definition of Done
 
@@ -385,7 +386,7 @@ For TDD-compatible scaffolding, the order is:
 - [ ] Bodies contain only `raise NotImplementedError("TODO: <specific task>")`
 - [ ] `make typecheck` (from `apps/prototype-description-service/`) or `npm run typecheck` (TS) passes with zero errors
 - [ ] Test file exists with `@pytest.mark.skip("scaffold")` or `it.todo()` stubs
-- [ ] Cross-layer contracts (if any) are documented in `docs/agentic/contracts/`
+- [ ] Cross-layer contracts (if any) are documented in `docs/workstate/contracts/`
 
 **Enforcement**: Task checklists MUST include a "Phase 0: Scaffolding" section that is completed and verified before implementation phases begin.
 
@@ -398,8 +399,8 @@ Trigger paths:
 - `apps/prototype-description-service/`
 - `apps/prototype-wp-alt-context/src/`
 - `apps/prototype-wp-alt-context/js/`
-- Installed `agent-handoff-mcp`
-- `docs/agentic/contracts/`
+- Installed `workstate-handoff-mcp`
+- `docs/workstate/contracts/`
 
 1. **Discover the owning contract.** Check [../contracts/](../contracts/). If none exists for a new cross-boundary call, scaffold the contract first.
 2. **Validate contract parity.** If the contract is stale, update it in the same slice.
@@ -410,12 +411,12 @@ Trigger paths:
 
 ## Architecture Diagram Change Protocol
 
-Follow the [UML Change Checklist](uml-change-checklist.md) whenever a slice changes architecture represented in `docs/agentic/diagrams/`.
+Follow the [UML Change Checklist](uml-change-checklist.md) whenever a slice changes architecture represented in `docs/workstate/diagrams/`.
 
 Trigger paths:
 
-- `docs/agentic/diagrams/`
-- `docs/agentic/maps/`
+- `docs/workstate/diagrams/`
+- `docs/workstate/maps/`
 - `apps/prototype-description-service/recognition/`
 - `apps/prototype-wp-alt-context/src/api/`
 - `apps/prototype-wp-alt-context/js/admin/`
@@ -462,7 +463,7 @@ Operational notes:
 
 - Full playbook: [../playbooks/host-adapters/worktree-codex-playbook.md](../playbooks/host-adapters/worktree-codex-playbook.md)
 - Lane-scoped context and prompt budgets: [../playbooks/lane-scoped-context.md](../playbooks/lane-scoped-context.md)
-- Worker lifecycle MCP tools: [../contracts/agent-handoff-mcp.md](../contracts/agent-handoff-mcp.md)
+- Worker lifecycle MCP tools: [../contracts/workstate-handoff-mcp.md](../contracts/workstate-handoff-mcp.md)
 - Lane brief template: [../templates/WORKTREE_LANE_BRIEF.template.md](../templates/WORKTREE_LANE_BRIEF.template.md)
 
 ---
@@ -648,12 +649,12 @@ Source-of-truth policy:
 The handoff provenance guard blocks two classes of writes before they land in MCP:
 
 - MCP tool writes whose explicit `actor.branch` matches the active task `target_branch` but whose `actor.commit_sha` does not resolve to the task worktree HEAD.
-- Bash Python-API fallback writes (`from agent_handoff_mcp import ...`) that do not start with an explicit `cd <target_worktree_path> &&` or do not pass an explicit `task_ref=...`.
+- Bash Python-API fallback writes (`from workstate_handoff_mcp import ...`) that do not start with an explicit `cd <target_worktree_path> &&` or do not pass an explicit `task_ref=...`.
 
 When the guard fires with `handoff provenance drift`, recover by switching to the owning worktree and retrying there:
 
 - `cd <target_worktree_path>`
-- rerun the MCP write, or for the Bash fallback rerun it as `cd <target_worktree_path> && uvx --from "mcp-agent-handoff==0.11.2" python3 -c "... task_ref='<task-ref>' ..."`
+- rerun the MCP write, or for the Bash fallback rerun it as `cd <target_worktree_path> && uvx --from "mcp-workstate-handoff==0.12.0" python3 -c "... task_ref='<task-ref>' ..."`
 
 The guard is fail-open when it cannot resolve task identity or git metadata; validation failures should not become write outages. There is no bypass marker for normal implementation work. If a legitimate cross-worktree write is required, stop and route that operation through the owning task worktree instead of forcing it from the wrong cwd.
 

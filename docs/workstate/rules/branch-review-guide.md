@@ -40,7 +40,7 @@ The reviewer can be human or agentic. Agent reviewers must:
 
 ### Review Findings Placement (MANDATORY)
 
-Review findings live in `agent-handoff-mcp`. Record with `review_findings(review={"operation":"record"|"batch_record", ...})`, read with `review_findings(review={"operation":"list"|"get"})`. **Pasting a finding list into a task plan, epic, ADR, or any other markdown document is forbidden** -- it duplicates the source of truth and escapes the pre-merge gate.
+Review findings live in `workstate-handoff-mcp`. Record with `review_findings(review={"operation":"record"|"batch_record", ...})`, read with `review_findings(review={"operation":"list"|"get"})`. **Pasting a finding list into a task plan, epic, ADR, or any other markdown document is forbidden** -- it duplicates the source of truth and escapes the pre-merge gate.
 
 Reference findings by ID (`see AOMCP-3-BR-04 in handoff`), never by duplicating their bodies. `CURRENT_TASK.json` is the only sanctioned task-facing mirror.
 
@@ -93,7 +93,7 @@ Never reconstruct the "latest slice" from chat memory or recent commits when MCP
 
 ### Handoff-only Fallback
 
-When `agent-orchestrator-mcp` is not loaded, use this degraded path:
+When `workstate-orchestrator-mcp` is not loaded, use this degraded path:
 
 1. `load_session`
 2. `search_handoff(queries=["slice_complete"], record_types=["decision"], limit=1)`
@@ -140,7 +140,7 @@ Reference: [development-workflow.md](development-workflow.md#branch-isolation-pr
 - [ ] **Schema-column parity** — SQL `WHERE`/`JOIN` keys match actual schema columns (no stale key names).
 - [ ] **No unreachable code** — dead branches inside conditionals.
 - [ ] **No duplicate field declarations** — Pydantic models, dataclasses.
-- [ ] **API contract alignment** — response schemas match `docs/agentic/contracts/`. New fields have tests.
+- [ ] **API contract alignment** — response schemas match `docs/workstate/contracts/`. New fields have tests.
 - [ ] **Boundary metadata preservation** — adapters do not invent envelope metadata; every field traces to request, upstream payload, or documented fallback.
 - [ ] **Assertion intent matches layer** — assertions for internal invariants only, never boundary validation.
 - [ ] **Runtime dependency integrity** — no type-only shims masking missing runtime packages; verify with real build/test.
@@ -353,7 +353,7 @@ Pattern:
 Example:
 
 ```bash
-agent-handoff-mcp \
+workstate-handoff-mcp \
   --workspace-root /abs/path/to/repo \
   --state-dir /abs/path/to/repo/.task-state \
   --current-task-path /abs/path/to/repo/CURRENT_TASK.json \
@@ -456,12 +456,12 @@ Operational health states: `defined` (no log yet), `detecting` (pending entries)
 make ace-reflect TASK=<task-ref>
 ```
 
-Reads pending entries from `.task-state/ace_reflect_log.jsonl`, increments `helpful`/`harmful` counters in `docs/agentic/instructions.md`, deduplicates via `.ace_dedup.json`. All local, no model calls.
+Reads pending entries from `.task-state/ace_reflect_log.jsonl`, increments `helpful`/`harmful` counters in `docs/workstate/instructions.md`, deduplicates via `.ace_dedup.json`. All local, no model calls.
 
 For manual reviews outside daemon cycle:
 
 ```python
-from agent_handoff_mcp.orchestration.ace_reflect import ace_reflect_on_findings
+from workstate_handoff_mcp.orchestration.ace_reflect import ace_reflect_on_findings
 ace_reflect_on_findings(findings, instruction_files, state_dir=Path(".task-state"))
 ```
 

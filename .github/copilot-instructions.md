@@ -1,6 +1,8 @@
 # Tool Selection
 
-`.github/hooks/terminal-guard.py` is intentionally narrow: it only blocks raw `vitest run` / `npx vitest run` because that command can finish and still strand the VS Code chat terminal. Other terminal commands are not blocked by this hook; use normal judgment and prefer native VS Code tools when they give fresher state.
+VS Code hook loading is pinned in `.vscode/settings.json`: Copilot loads the single dispatcher hook in `.vscode/copilot-hooks.json` and does not load the Claude Code `.claude/settings*.json` hook files. This prevents Claude-only guards from appearing as extra VS Code hook approvals.
+
+The dispatcher routes to the targeted Workstate guards only when the current tool call needs them: worktree drift, main-branch edits, task-plan findings placement, MCP payload shape, and compact test-output summaries. Use normal judgment and prefer native VS Code tools when they give fresher state.
 
 **TEST RUNS:** Run the narrowest direct test command that proves the change. Do not use `tee`; it can freeze the integrated terminal in this workspace.
 
@@ -28,7 +30,7 @@ Terminal output is **stale**. Native tools read live IDE state and never accumul
 
 Code files under `apps/` or `packages/` must not be edited on `main`.
 
-- Enforced in the VS Code harness by `.github/hooks/guard-main-branch.py` via `.github/hooks/terminal-guard.json`
+- Enforced in the VS Code harness by `.github/hooks/guard-main-branch.py` via `.vscode/copilot-hooks.json`
 - Enforced in the Claude harness by `scripts/hooks/guard-main-branch.sh` via `.claude/settings.json`
 - Allowed on `main`: only explicitly permitted operator docs, settings, Makefiles, and other non-planning config surfaces; planning docs require a task branch from the first edit
 

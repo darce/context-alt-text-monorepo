@@ -14,9 +14,9 @@ mkdir -p /tmp/e17-14-scratch-consumer /tmp/e17-14-scratch-consumer-task-a/docs/t
 cd /tmp/e17-14-scratch-consumer
 git init
 python3 -m venv .venv
-./.venv/bin/pip install "mcp-agent-handoff==0.11.2" "mcp-agent-orchestrator==0.4.6" "agentic-bootstrap==0.5.1"
-./.venv/bin/agentic-bootstrap install --target /tmp/e17-14-scratch-consumer --remote-ref v0.1.14
-./.venv/bin/agentic-bootstrap doctor
+./.venv/bin/pip install "mcp-workstate-handoff==0.12.0" "mcp-workstate-orchestrator==0.5.0" "workstate-bootstrap==0.6.0"
+./.venv/bin/workstate-bootstrap install --target /tmp/e17-14-scratch-consumer --remote-ref v0.1.21
+./.venv/bin/workstate-bootstrap doctor
 ```
 
 Seed two active tasks after install. Each active row must carry a distinct `task_plan_path` plus the matching `target_worktree_path`.

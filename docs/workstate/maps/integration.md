@@ -6,13 +6,13 @@
 
 | Priority | File                                               | Purpose                       |
 | -------- | -------------------------------------------------- | ----------------------------- |
-| 1        | `docs/agentic/contracts/clustering-api.md`         | WP REST -> FastAPI endpoints  |
-| 2        | `docs/agentic/contracts/recognition-clustering.md` | FastAPI API spec              |
-| 3        | `docs/agentic/contracts/curation-sync-api.md`      | Outbox replay contract        |
-| 4        | `docs/agentic/contracts/cluster-snapshot-api.md`   | Snapshot pull contract        |
-| 5        | `docs/agentic/contracts/security.md`               | Auth, tenant isolation        |
+| 1        | `docs/workstate/contracts/clustering-api.md`         | WP REST -> FastAPI endpoints  |
+| 2        | `docs/workstate/contracts/recognition-clustering.md` | FastAPI API spec              |
+| 3        | `docs/workstate/contracts/curation-sync-api.md`      | Outbox replay contract        |
+| 4        | `docs/workstate/contracts/cluster-snapshot-api.md`   | Snapshot pull contract        |
+| 5        | `docs/workstate/contracts/security.md`               | Auth, tenant isolation        |
 | 6        | `packages/shared-contracts/schemas/`               | JSON Schema definitions       |
-| 7        | `docs/agentic/diagrams/system-overview.mmd`        | High-level architecture       |
+| 7        | `docs/workstate/diagrams/system-overview.mmd`        | High-level architecture       |
 
 ## Detection vs Identification Boundary
 
@@ -115,7 +115,7 @@ See [../contracts/security.md](../contracts/security.md) for full details.
 
 ### Add new endpoint (both sides)
 
-1. **Define contract** in `docs/agentic/contracts/`
+1. **Define contract** in `docs/workstate/contracts/`
 2. **FastAPI**: Add router in `recognition/interface_adapters/http/routers/` or `roster/`
 3. **PHP**: Add controller in `src/api/` or dispatch via `OutboxDispatcher`
 4. **Frontend**: Add API client in `js/admin/api/recognition/`
@@ -133,7 +133,7 @@ See [../contracts/security.md](../contracts/security.md) for full details.
 ### Change request/response shape
 
 1. Update JSON Schema in `packages/shared-contracts/schemas/`
-2. Update contract markdown in `docs/agentic/contracts/`
+2. Update contract markdown in `docs/workstate/contracts/`
 3. Update Python Pydantic model
 4. Update TypeScript types in `js/admin/api/recognition/types/`
 5. Update PHP DTO/response mapper if applicable

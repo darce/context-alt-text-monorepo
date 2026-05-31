@@ -11,8 +11,8 @@
 | 3        | `apps/prototype-description-service/recognition/application/`                     | Service layer (business logic)                      |
 | 4        | `apps/prototype-description-service/db/models.py`                                 | SQLAlchemy models                                   |
 | 5        | `apps/prototype-description-service/roster/`                                      | Curation sync (person/cluster-person operations)    |
-| 6        | `docs/agentic/contracts/recognition-clustering.md`                                | API contract specification                          |
-| 7        | `docs/agentic/contracts/curation-sync-api.md`                                     | Outbox replay contract                              |
+| 6        | `docs/workstate/contracts/recognition-clustering.md`                                | API contract specification                          |
+| 7        | `docs/workstate/contracts/curation-sync-api.md`                                     | Outbox replay contract                              |
 | 8        | `docs/adrs/ADR-001-face-identity-nomenclature.md`                         | Face* (infra) vs *Identity (domain) naming boundary |
 
 ## Architecture Layers
@@ -49,7 +49,7 @@
 
 ## Handoff Write Resolution
 
-For backend tooling that writes through the installed `agent-handoff-mcp`, resolve task context in this order only:
+For backend tooling that writes through the installed `workstate-handoff-mcp`, resolve task context in this order only:
 
 1. Explicit `task_ref`
 2. Workspace-path lookup via `_resolve_workspace_handoff_row`

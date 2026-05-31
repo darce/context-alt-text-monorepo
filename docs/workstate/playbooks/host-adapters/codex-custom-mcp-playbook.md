@@ -1,15 +1,15 @@
 # Codex Custom MCP Setup
 
 > **Classification: host-specific adapter (Codex)**
-> This document describes how to attach `agent-handoff-mcp` to a Codex session. It is a platform setup guide, not a canonical portable playbook.
+> This document describes how to attach `workstate-handoff-mcp` to a Codex session. It is a platform setup guide, not a canonical portable playbook.
 
-Attach `agent-handoff-mcp` to a Codex session as a custom MCP so handoff and orchestration tools appear as first-class tools.
+Attach `workstate-handoff-mcp` to a Codex session as a custom MCP so handoff and orchestration tools appear as first-class tools.
 
 ## Prerequisites
 
 - A machine with the authoritative repo checkout (the "authoritative checkout host")
 - Python 3.11+ with `fastmcp` and dependencies installed
-- The installed `agent-handoff-mcp` CLI available on the authoritative checkout host
+- The installed `workstate-handoff-mcp` CLI available on the authoritative checkout host
 - Network reachability between the Codex session and the host (localhost, SSH tunnel, or VPN)
 
 ## 1. Start the MCP server
@@ -29,7 +29,7 @@ make mcp-serve-http HOST=0.0.0.0 PORT=9000
 Or call the launcher directly:
 
 ```bash
-mcp-agent-handoff --workspace-root "$(pwd)" serve-http --host 127.0.0.1 --port 8741
+mcp-workstate-handoff --workspace-root "$(pwd)" serve-http --host 127.0.0.1 --port 8741
 ```
 
 The server binds to localhost only by default. See **Security** below if you need remote access.
@@ -70,20 +70,20 @@ Expected minimum tool list (handoff server only):
 
 Orchestration tools (`orchestrator_start`, `orchestrator_status`, `run_structured_turn`,
 `dispatch_lane_work`, `worker_start`, `worker_stop`, `switch_task`, etc.) are served by
-`agent-orchestrator-mcp`, not by `agent-handoff-mcp`. Attach `agent-orchestrator-mcp`
+`workstate-orchestrator-mcp`, not by `workstate-handoff-mcp`. Attach `workstate-orchestrator-mcp`
 separately when orchestration control is needed.
 
 ## 3. Attach in Codex
 
 For same-machine development, prefer the checked-in project-scoped Codex config in
 [`../../../.codex/config.toml`](../../../.codex/config.toml).
-It registers the stdio adapter as `mcp-agent-handoff` and pins the launcher to the
+It registers the stdio adapter as `mcp-workstate-handoff` and pins the launcher to the
 repo-local workspace state while exposing both the handoff MCP package and the
 Codex subagent bridge on `PYTHONPATH`.
 
 For the Codex / ChatGPT custom MCP settings UI over HTTP:
 
-- **Name**: `mcp-agent-handoff`
+- **Name**: `mcp-workstate-handoff`
 - **Server URL**: `http://<host>:8741/mcp`
 - **Transport**: Streamable HTTP
 
@@ -95,7 +95,7 @@ Custom MCP tools are loaded at session start. An already-running session will **
 
 ## 5. Confirm tools are visible
 
-In the new Codex session, the MCP tools should appear as first-class tools. Verify by asking the session to call `get_handoff_state()`. If orchestration tools are also needed, confirm `agent-orchestrator-mcp` is attached separately and call `orchestrator_status()` from that server.
+In the new Codex session, the MCP tools should appear as first-class tools. Verify by asking the session to call `get_handoff_state()`. If orchestration tools are also needed, confirm `workstate-orchestrator-mcp` is attached separately and call `orchestrator_status()` from that server.
 
 ## Security
 
@@ -111,7 +111,7 @@ A first-class auth layer may be added in a future task.
 
 ## Difference: MCP server vs MCP attached
 
-"MCP server implemented" means `mcp-agent-handoff serve-http` runs and exposes tools over HTTP. "MCP attached to Codex" means the Codex host product has been configured to connect to that server. This playbook covers both steps, but the attachment step is a host-app configuration action outside the repo.
+"MCP server implemented" means `mcp-workstate-handoff serve-http` runs and exposes tools over HTTP. "MCP attached to Codex" means the Codex host product has been configured to connect to that server. This playbook covers both steps, but the attachment step is a host-app configuration action outside the repo.
 
 ## Related
 

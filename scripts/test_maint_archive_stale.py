@@ -23,9 +23,9 @@ from typing import Any
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-HANDOFF_SRC = REPO_ROOT / "packages" / "agent-handoff-mcp" / "src"
-if str(HANDOFF_SRC) not in sys.path:
-    sys.path.insert(0, str(HANDOFF_SRC))
+# workstate_handoff_mcp is consumed as an installed package (the local
+# packages/agent-handoff-mcp/src tree was extracted upstream); no sys.path
+# insertion is needed.
 
 # The SHA validator otherwise tries to resolve synthetic commit SHAs
 # against the real git repo. Match the package's own conftest pattern.
@@ -48,7 +48,7 @@ def _load_script_module():
 
 @pytest.fixture()
 def isolated_runtime(tmp_path: Path) -> dict[str, Any]:
-    from agent_handoff_mcp import (  # noqa: PLC0415
+    from workstate_handoff_mcp import (  # noqa: PLC0415
         RuntimeConfig,
         configure_runtime,
         set_handoff_state,
@@ -97,7 +97,7 @@ def test_list_active_tasks_api_returns_all_three_rows(
     isolated_runtime: dict[str, Any],
 ) -> None:
     """Public API prerequisite: we need to enumerate active tasks without raw sqlite."""
-    from agent_handoff_mcp import list_active_tasks  # noqa: PLC0415
+    from workstate_handoff_mcp import list_active_tasks  # noqa: PLC0415
 
     result = list_active_tasks()
     refs = {row["task_ref"] for row in result}
@@ -123,7 +123,7 @@ def test_collect_stale_maint_returns_only_done_or_review_maint_rows(
 def test_archive_stale_maint_archives_done_leaves_live_and_non_maint(
     isolated_runtime: dict[str, Any],
 ) -> None:
-    from agent_handoff_mcp import get_archived_task, list_active_tasks  # noqa: PLC0415
+    from workstate_handoff_mcp import get_archived_task, list_active_tasks  # noqa: PLC0415
 
     mod = _load_script_module()
 
@@ -144,7 +144,7 @@ def test_archive_stale_maint_archives_done_leaves_live_and_non_maint(
 
 
 def test_dry_run_reports_without_mutating(isolated_runtime: dict[str, Any]) -> None:
-    from agent_handoff_mcp import list_active_tasks  # noqa: PLC0415
+    from workstate_handoff_mcp import list_active_tasks  # noqa: PLC0415
 
     mod = _load_script_module()
 
@@ -172,7 +172,7 @@ def missing_worktree_runtime(tmp_path: Path) -> dict[str, Any]:
       root). Should NOT be swept; a live row registered against the
       repo root is treated as potentially active.
     """
-    from agent_handoff_mcp import (  # noqa: PLC0415
+    from workstate_handoff_mcp import (  # noqa: PLC0415
         RuntimeConfig,
         configure_runtime,
         set_handoff_state,
@@ -286,7 +286,7 @@ def real_git_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[st
     _git("add", "README.md", cwd=repo_root)
     _git("commit", "-m", "seed", cwd=repo_root)
 
-    from agent_handoff_mcp import (  # noqa: PLC0415
+    from workstate_handoff_mcp import (  # noqa: PLC0415
         RuntimeConfig,
         configure_runtime,
         set_handoff_state,
@@ -328,7 +328,7 @@ def test_archive_stale_maint_scaffolds_then_archives_missing_worktree_row(
     Verifies the production sweep path works against a real git repo
     without leaking scaffold worktrees or branches.
     """
-    from agent_handoff_mcp import get_archived_task, list_active_tasks  # noqa: PLC0415
+    from workstate_handoff_mcp import get_archived_task, list_active_tasks  # noqa: PLC0415
 
     mod = _load_script_module()
     repo_root = real_git_runtime["repo_root"]

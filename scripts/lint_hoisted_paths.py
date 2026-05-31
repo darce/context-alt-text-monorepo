@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Detect portability leaks in hoisted agentic-system surfaces."""
+"""Detect portability leaks in hoisted workstate-system surfaces."""
 
 from __future__ import annotations
 

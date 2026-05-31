@@ -1,8 +1,16 @@
 # =============================================================================
 # Handoff / Task State / Daemons
 # =============================================================================
+#
+# Lifecycle targets (handoff-close-check, handoff-review-run, plan-analyze,
+# plan-review, slice-start, slice-commit, review-ready, review-run) were
+# removed in MAINT-workstate-migration-20260530: the repo is now a thin
+# consumer of the canonical Makefile.d/lifecycle.mk, which owns those names.
+# The orchestrator-lane variants of review-ready / review-run that previously
+# lived here are tracked as lost-functionality findings for the upstream
+# orchestrator package (see docs/workstate upstream-asks note).
 
-.PHONY: task state list-tasks lane-list mcp-serve-http handoff-close-check handoff-integrity-check handoff-inbox handoff-dispatch handoff-review-run review-dispatch review-run review-ready plan-analyze plan-review slice-start slice-commit
+.PHONY: task state list-tasks lane-list mcp-serve-http handoff-integrity-check handoff-inbox handoff-dispatch review-dispatch
 
 # Generate CURRENT_TASK.json from handoff DB
 task:
@@ -26,156 +34,6 @@ mcp-serve-http:
 # List available task manifests
 list-tasks:
 	@printf '%s\n' $(SUPPORTED_TASKS)
-
-# Validate that active handoff state is ready to close
-handoff-close-check:
-	@$(MCP_CMD) $(MCP_STATE_ARGS) handoff-close-check --enforce --current-commit-sha "$$(git rev-parse HEAD)"
-
-handoff-review-run:
-	@SUBJECT_PATH="$(or $(SUBJECT_PATH),$(SUBJECT))"; \
-	if [ -z "$(RUN_ID)" ]; then \
-		echo "RUN_ID is required."; \
-		echo "Example: make handoff-review-run TASK_REF=E15 MODE=planning SUBJECT=docs/tasks/15.0/example.md SUBJECT_KIND=task_plan VERDICT=pass DECISION=decision_id SESSION=session-id RUN_ID=planning-review-e15-example"; \
-		exit 1; \
-	fi; \
-	if [ -z "$(SESSION)" ]; then \
-		echo "SESSION is required."; \
-		exit 1; \
-	fi; \
-	if [ -z "$$SUBJECT_PATH" ]; then \
-		echo "SUBJECT or SUBJECT_PATH is required."; \
-		exit 1; \
-	fi; \
-	if [ -z "$(MODE)" ]; then \
-		echo "MODE is required (branch|planning|release_audit)."; \
-		exit 1; \
-	fi; \
-	if [ -z "$(VERDICT)" ]; then \
-		echo "VERDICT is required."; \
-		exit 1; \
-	fi; \
-	if [ -z "$(DECISION)" ]; then \
-		echo "DECISION is required."; \
-		exit 1; \
-	fi; \
-	bash ./scripts/handoff-review-run.sh \
-		--run-id "$(RUN_ID)" \
-		--session "$(SESSION)" \
-		--subject-path "$$SUBJECT_PATH" \
-		--subject-kind "$(or $(SUBJECT_KIND),other)" \
-		--review-mode "$(MODE)" \
-		--verdict "$(VERDICT)" \
-		--verdict-decision "$(DECISION)" \
-		$(if $(TASK_REF),--task-ref "$(TASK_REF)",$(if $(TASK),--task-ref "$(TASK)",)) \
-		$(if $(AGENT),--agent "$(AGENT)",) \
-		$(if $(MODEL),--model "$(MODEL)",) \
-		$(if $(MODEL_LABEL),--model-label "$(MODEL_LABEL)",) \
-		$(if $(REASONING_LEVEL),--reasoning-level "$(REASONING_LEVEL)",)
-
-plan-analyze:
-	@if [ -z "$(DOC)" ]; then \
-		echo "DOC is required."; \
-		echo "Example: make plan-analyze DOC=docs/tasks/17.0/E17-1-skill-anatomy-template-and-constitution-task-plan.md"; \
-		exit 1; \
-	fi
-	@if [ ! -f "$(DOC)" ]; then \
-		echo "Document not found: $(DOC)"; \
-		exit 1; \
-	fi
-	@printf '%s\n' \
-		"Agent-assisted target: plan-analyze" \
-		"Document: $(DOC)" \
-		"Skill: .claude/skills/plan-analyze/SKILL.md (Phase 2 deliverable)" \
-		"Constraint surface: docs/agentic/constitution.md" \
-		"Review checklist: docs/agentic/rules/planning-review-guide.md" \
-		"Expected output: MCP planning findings + a plan-analyze review_runs marker before planning review."
-
-plan-review:
-	@if [ -z "$(DOC)" ]; then \
-		echo "DOC is required."; \
-		echo "Example: make plan-review DOC=docs/epics/v0.4.0/skill-formalization-and-process-automation-epic.md"; \
-		exit 1; \
-	fi
-	@if [ ! -f "$(DOC)" ]; then \
-		echo "Document not found: $(DOC)"; \
-		exit 1; \
-	fi
-	@set +e; \
-		$(MCP_PYTHON) scripts/check_plan_analyze.py --doc "$(DOC)" $(if $(TASK),--task-ref $(TASK),); \
-		status=$$?; \
-		set -e; \
-		if [ "$$status" -eq 1 ]; then \
-			exit 1; \
-		fi; \
-		if [ "$$status" -eq 2 ] && [ "$(PLAN_ANALYZE_REQUIRED)" = "1" ]; then \
-			exit 2; \
-		fi
-	@printf '%s\n' \
-		"Agent-assisted target: plan-review" \
-		"Document: $(DOC)" \
-		"Skill: .claude/skills/planning-review/SKILL.md (Phase 2 deliverable)" \
-		"Checklist: docs/agentic/rules/planning-review-guide.md" \
-		"Expected output: MCP findings (reported with finding_id / handoff gap ids) + review_runs(record) + verdict decision + DASHBOARD.txt refresh."
-
-slice-start:
-	$(if $(strip $(TASK)),,@printf '%s\n' "TASK is required." "No active task could be inferred from MCP state." "Example: make slice-start TASK=E17 TEST_CMD='pytest path/to/test -q'"; exit 1)
-	$(if $(strip $(TEST_CMD)),,@printf '%s\n' "TEST_CMD is required." "Example: make slice-start TASK=$(TASK) TEST_CMD='pytest path/to/test -q'"; exit 1)
-	@SESSION_NAME="$(SESSION)"; \
-	if [ -z "$$SESSION_NAME" ] || [ "$$SESSION_NAME" = "$(TASK)-" ]; then \
-		SESSION_NAME="$(TASK)-slice-start"; \
-	fi; \
-	REPO_ROOT="$(WORKTREE_ROOT_REAL)" \
-	TASK="$(TASK)" \
-	SESSION_NAME="$$SESSION_NAME" \
-	TEST_CMD='$(TEST_CMD)' \
-	RESULT='$(or $(RESULT),Expected failing test before implementation begins.)' \
-	EXIT_CODE='$(or $(EXIT_CODE),1)' \
-	PYTHONPATH="$(WORKTREE_MCP_PYTHONPATH)" \
-		$(MCP_PYTHON) "$(WORKTREE_ROOT_REAL)/scripts/_slice_start_inline.py" >/dev/null
-	@echo "Recorded failing test gate for $(TASK)."
-
-slice-commit:
-	@if [ -z "$(TASK)" ]; then \
-		echo "TASK is required."; \
-		echo "No active task could be inferred from MCP state."; \
-		echo "Example: make slice-commit TASK=E17 MSG='docs(agentic): add lifecycle map'"; \
-		exit 1; \
-	fi
-	@if [ -z "$(or $(MSG),$(COMMIT_MSG))" ]; then \
-		echo "MSG or COMMIT_MSG is required."; \
-		echo "Example: make slice-commit TASK=$(TASK) MSG='feat(scope): add capability'"; \
-		exit 1; \
-	fi
-	@SESSION_NAME="$(SESSION)"; \
-	if [ -z "$$SESSION_NAME" ] || [ "$$SESSION_NAME" = "$(TASK)-" ]; then \
-		SESSION_NAME="$(TASK)-slice-commit"; \
-	fi; \
-	PYTHONPATH="$(WORKTREE_MCP_PYTHONPATH)" \
-		$(MCP_PYTHON) "$(WORKTREE_ROOT_REAL)/scripts/agentic/slice_commit.py" \
-		--repo-root "$(WORKTREE_ROOT_REAL)" \
-		--workspace-root "$(ORCHESTRATOR_ROOT)" \
-		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state" \
-		--current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.json" \
-		--exports-dir "$(ORCHESTRATOR_ROOT)/.task-state/exports" \
-		--task-ref "$(TASK)" \
-		--session "$$SESSION_NAME" \
-		--message "$(or $(MSG),$(COMMIT_MSG))" \
-		$(if $(FOCUS),--focus "$(FOCUS)",)
-
-review-ready:
-	@if [ -z "$(TASK)" ]; then \
-		echo "TASK is required."; \
-		echo "No active task could be inferred from MCP state."; \
-		echo "Example: make review-ready TASK=agentic-development-process-hardening-epic"; \
-		echo "Inspect current state: make state"; \
-		exit 1; \
-	fi
-	@PYTHONPATH="$(WORKTREE_MCP_PYTHONPATH)" \
-		$(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.review_ready \
-		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
-		--worktree-root "$(WORKTREE_ROOT_REAL)" \
-		--task-ref "$(TASK)" \
-		--review-base "$(or $(REVIEW_BASE),$(ORCHESTRATOR_BRANCH))"
 
 # CI/local guard for parser + lifecycle + close-check integrity
 handoff-integrity-check:
@@ -211,7 +69,7 @@ handoff-inbox:
 	@echo ""; \
 	echo "Guidance summary:"; \
 	PYTHONPATH="$(MCP_PYTHONPATH)" \
-		$(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.handoff_guidance_summary \
+		$(MCP_PYTHON) -m workstate_orchestrator_mcp.orchestration.handoff_guidance_summary \
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		--task-ref "$(TASK)" \
 		$(if $(LANE),--lane-id "$(LANE)",)
@@ -236,26 +94,9 @@ handoff-dispatch:
 		exit 1; \
 	fi
 	@PYTHONPATH="$(WORKTREE_MCP_PYTHONPATH)" \
-		$(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.review_dispatch \
+		$(MCP_PYTHON) -m workstate_orchestrator_mcp.orchestration.review_dispatch \
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		--task-ref "$(TASK)" \
-		$(if $(filter 1,$(DRY_RUN)),--dry-run,)
-
-review-run:
-	@if [ -z "$(LANE_WORKTREE_TARGET)" ] && [ -z "$(WORKTREE_PATH)" ]; then \
-		echo "review-run requires a lane worktree. Set WORKTREE_PATH or run from a lane."; \
-		exit 1; \
-	fi
-	@PYTHONPATH="$(WORKTREE_MCP_PYTHONPATH)" \
-		$(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.review_runner run \
-		--worktree-path "$(or $(WORKTREE_PATH),$(LANE_WORKTREE_TARGET))" \
-		$(if $(LANE),--lane-id "$(LANE)",) \
-		$(if $(TASK),--task-ref "$(TASK)",) \
-		$(if $(SESSION),--session "$(SESSION)",) \
-		$(if $(BACKEND),--backend "$(BACKEND)",) \
-		$(if $(filter 1,$(RECORD_FINDINGS)),--record-findings,) \
-		$(if $(filter 1,$(LATEST_SLICE)),--latest-slice,) \
-		$(if $(ORCHESTRATOR_ROOT),--orchestrator-root "$(ORCHESTRATOR_ROOT)",$(if $(filter 1,$(RECORD_FINDINGS)),--orchestrator-root "$(WORKTREE_ROOT_REAL)",)) \
 		$(if $(filter 1,$(DRY_RUN)),--dry-run,)
 
 review-dispatch: handoff-dispatch

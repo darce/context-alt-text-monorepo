@@ -39,7 +39,7 @@ lane-open: lane-guard
 	if [ "$(DRY_RUN)" != "1" ]; then \
 		echo ""; \
 		echo "Bootstrapping lane dependencies..."; \
-		PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.bootstrap_lane \
+		PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m workstate_orchestrator_mcp.orchestration.bootstrap_lane \
 			--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 			--task-ref "$(TASK)" \
 			--lane-id "$(LANE)" \
@@ -94,7 +94,7 @@ lane-inbox: lane-guard
 	echo ""; \
 	echo "Worker action summary:"; \
 	PYTHONPATH="$(MCP_PYTHONPATH)" \
-		$(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.lane_prompt \
+		$(MCP_PYTHON) -m workstate_orchestrator_mcp.orchestration.lane_prompt \
 			--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 			--task-ref "$(TASK)" \
 			--lane-id "$(LANE)" \
@@ -103,7 +103,7 @@ lane-inbox: lane-guard
 
 lane-prompt: lane-guard
 	@PYTHONPATH="$(MCP_PYTHONPATH)" \
-		$(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.lane_prompt \
+		$(MCP_PYTHON) -m workstate_orchestrator_mcp.orchestration.lane_prompt \
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		--task-ref "$(TASK)" \
 		--lane-id "$(LANE)" \
@@ -119,8 +119,8 @@ lane-dispatch: lane-guard lane-orchestrator-guard
 	@set -eu; \
 	DISPATCH_SESSION="$(TASK)-dispatch-$(LANE)-$$(date +%Y%m%d%H%M%S)"; \
 	if [ "$(DRY_RUN)" = "1" ]; then \
-		echo "[dry-run] mcp-agent-handoff lane-upsert --lane-id \"$(LANE)\" --worktree-path \"$(LANE_WORKTREE)\" --branch \"$(LANE_BRANCH)\" --status active"; \
-		echo "[dry-run] mcp-agent-handoff lane-message --lane-id \"$(LANE)\" --session \"$$DISPATCH_SESSION\" --direction orchestrator_to_worker --subject \"$(SUBJECT)\" --message \"$(MESSAGE)\" --status open"; \
+		echo "[dry-run] mcp-workstate-handoff lane-upsert --lane-id \"$(LANE)\" --worktree-path \"$(LANE_WORKTREE)\" --branch \"$(LANE_BRANCH)\" --status active"; \
+		echo "[dry-run] mcp-workstate-handoff lane-message --lane-id \"$(LANE)\" --session \"$$DISPATCH_SESSION\" --direction orchestrator_to_worker --subject \"$(SUBJECT)\" --message \"$(MESSAGE)\" --status open"; \
 		echo "[dry-run] $(MAKE) task"; \
 		echo "Dispatch preview ready for $(LANE)."; \
 		exit 0; \

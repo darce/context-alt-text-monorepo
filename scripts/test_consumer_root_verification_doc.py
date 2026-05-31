@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-WORKFLOW_PATH = REPO_ROOT / "docs" / "agentic" / "consumer-root-verification.md"
+WORKFLOW_PATH = REPO_ROOT / "docs" / "workstate" / "consumer-root-verification.md"
 
 REQUIRED_WORKFLOW_HEADINGS = (
     "# Consumer Root Verification",
@@ -17,8 +17,8 @@ REQUIRED_WORKFLOW_HEADINGS = (
 
 REQUIRED_WORKFLOW_SNIPPETS = (
     "/tmp/e17-14-scratch-consumer/",
-    './.venv/bin/pip install "mcp-agent-handoff==0.11.2" "mcp-agent-orchestrator==0.4.6" "agentic-bootstrap==0.5.1"',
-    "./.venv/bin/agentic-bootstrap install --target /tmp/e17-14-scratch-consumer --remote-ref v0.1.14",
+    './.venv/bin/pip install "mcp-workstate-handoff==0.12.0" "mcp-workstate-orchestrator==0.5.0" "workstate-bootstrap==0.6.0"',
+    "./.venv/bin/workstate-bootstrap install --target /tmp/e17-14-scratch-consumer --remote-ref v0.1.21",
     "task_plan_path",
     "DASHBOARD.txt",
     "render_handoff(kind='current_task'",

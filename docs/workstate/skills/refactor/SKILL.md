@@ -162,7 +162,7 @@ When a finding aligns with an existing short rule or regression guard, cite the 
    - Python backend: `apps/prototype-description-service/`
    - PHP plugin: `apps/prototype-wp-alt-context/src/`
    - TypeScript frontend: `apps/prototype-wp-alt-context/js/admin/`
-   - MCP packages: installed `agent-handoff-mcp` and `agent-orchestrator-mcp` external repos
+   - MCP packages: installed `workstate-handoff-mcp` and `workstate-orchestrator-mcp` external repos
    - CSS/SCSS tokens: `apps/prototype-wp-alt-context/js/admin/styles/`
 4. Check for existing evaluations: read `docs/tasks/tech-debt/refactoring-*.md` to avoid duplicating prior findings. Note whether prior findings have been resolved.
 

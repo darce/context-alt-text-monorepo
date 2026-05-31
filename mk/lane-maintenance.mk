@@ -128,12 +128,12 @@ lane-clean: lane-guard
 	TOOLING_FILES="$(LANE_TOOLING_PATHS) $(LANE_APP_TOOLING_PATHS)"; \
 	if [ "$(DRY_RUN)" = "1" ]; then \
 		echo "[dry-run] git -C \"$$TARGET_WORKTREE\" restore --source=HEAD --staged --worktree -- $$TOOLING_FILES"; \
-		echo "[dry-run] git -C \"$$TARGET_WORKTREE\" clean -fd -- docs/agentic/templates scripts/worktree-lane"; \
+		echo "[dry-run] git -C \"$$TARGET_WORKTREE\" clean -fd -- docs/workstate/templates scripts/worktree-lane"; \
 	else \
 		if [ -n "$$TOOLING_FILES" ]; then \
 			git -C "$$TARGET_WORKTREE" restore --source=HEAD --staged --worktree -- $$TOOLING_FILES 2>/dev/null || true; \
 		fi; \
-		git -C "$$TARGET_WORKTREE" clean -fd -- docs/agentic/templates scripts/worktree-lane 2>/dev/null || true; \
+		git -C "$$TARGET_WORKTREE" clean -fd -- docs/workstate/templates scripts/worktree-lane 2>/dev/null || true; \
 		git -C "$$TARGET_WORKTREE" status -sb; \
 	fi
 

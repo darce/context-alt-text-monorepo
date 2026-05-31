@@ -87,8 +87,8 @@ scripts/worktree-lane brief \
   --worktree-path /abs/path/to/worktree \
   --objective "Implement the retention router and HTTP schema slice." \
   --owned-path apps/prototype-description-service/recognition/interface_adapters/http/** \
-  --required-doc docs/agentic/instructions.md \
-  --required-doc docs/agentic/contracts/agent-handoff-mcp.md \
+  --required-doc docs/workstate/instructions.md \
+  --required-doc docs/workstate/contracts/workstate-handoff-mcp.md \
   --test-command "cd apps/prototype-description-service && pytest recognition/tests/api/test_retention_api.py" \
   --definition "Ready for orchestrator branch review with targeted tests passing."
 ```

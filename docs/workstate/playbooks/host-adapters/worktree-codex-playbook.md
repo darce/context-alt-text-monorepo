@@ -110,7 +110,7 @@ Bootstrap these pieces before relying on daemon-based orchestration or artifact 
 cd "${REPO_ROOT:-$PWD}"
 
 # MCP server package
-uv tool install "mcp-agent-handoff>=0.6.0,<0.7"
+uv tool install "mcp-workstate-handoff>=0.6.0,<0.7"
 
 # Codex app-server bridge used by BACKEND=codex-subagent
 uv tool install "codex-subagent-bridge>=0.1.0,<0.2"
@@ -121,7 +121,7 @@ uv sync --locked --extra dev --extra dashboard
 cd "${REPO_ROOT:-$PWD}"
 
 # Verify writable state dirs, bridge import paths, and SQLite FTS5 support
-mcp-agent-handoff --workspace-root "$(pwd)" doctor
+mcp-workstate-handoff --workspace-root "$(pwd)" doctor
 ```
 
 Notes:
@@ -140,7 +140,7 @@ Both daemons default to `BACKEND=codex-cli`.
 
 Backend dispatch is now registry-based, not duplicated per caller. The shared
 registry lives in the installed
-`agent_orchestrator_mcp.orchestration.backend_registry` module.
+`workstate_orchestrator_mcp.orchestration.backend_registry` module.
 `lane_exec.py`, `review_runner.py`, and the daemon CLI surfaces all read backend
 choices from that registry. New bridge backends should be added there instead of
 editing `if backend == ...` branches in multiple files.
@@ -156,7 +156,7 @@ The orchestrator can control the execution model and reasoning effort for each l
 These are typically set in the lane manifest but can be overridden via MCP:
 
 ```bash
-agent-orchestrator-mcp dispatch_lane_work --task-ref <task> --lane-id <lane> --model o3-mini --reasoning-effort high
+workstate-orchestrator-mcp dispatch_lane_work --task-ref <task> --lane-id <lane> --model o3-mini --reasoning-effort high
 ```
 
 ### Cost-Sensitive Lane Guidance
@@ -186,7 +186,7 @@ Important:
 - The in-repo reference bridge now lives at `packages/codex-subagent-bridge/`. Install it editable (`pip install -e packages/codex-subagent-bridge`) or expose its `src/` directory on `PYTHONPATH` so `import codex_subagent_bridge` succeeds in the daemon runtime.
 - The bridge forwards runtime hints only as local process/session context. Today that means lane-scoped environment values such as `TMPDIR` and `PATH` become subprocess environment for `codex app-server`, while reasoning effort may be forwarded from `CODEX_REASONING_EFFORT` or `REASONING_EFFORT` into `turn/start.effort`.
 - MCP endpoints, credentials, and handoff writes are intentionally not forwarded through the bridge. Any MCP interaction stays in the parent daemon process.
-- Spawned app-server sessions discover repo instructions from the worktree root (`CLAUDE.md` / `GEMINI.md` symlinked to `docs/agentic/instructions.md` in this repo). There is no `AGENTS.md` here.
+- Spawned app-server sessions discover repo instructions from the worktree root (`CLAUDE.md` / `GEMINI.md` symlinked to `docs/workstate/instructions.md` in this repo). There is no `AGENTS.md` here.
 - Build and test commands still need to be discoverable by the spawned agent. In practice that means keeping them in the repo instruction surface or rendering them directly into the lane/review prompt.
 - The reference bridge is safe for parallel daemon calls because each `run_subagent()` invocation starts its own short-lived `codex app-server` process; there is no shared in-process session state.
 
@@ -203,9 +203,9 @@ Important:
 
 ### MCP orchestration commands
 
-For in-app agents that can call MCP tools directly, `agent-orchestrator-mcp` serves
-the orchestration control surface. Attach `agent-orchestrator-mcp` **in addition to**
-`agent-handoff-mcp` when these tools are required. `agent-handoff-mcp` alone does not
+For in-app agents that can call MCP tools directly, `workstate-orchestrator-mcp` serves
+the orchestration control surface. Attach `workstate-orchestrator-mcp` **in addition to**
+`workstate-handoff-mcp` when these tools are required. `workstate-handoff-mcp` alone does not
 expose orchestration tools after the E12-5 server split.
 
 - `orchestrator_start(task_ref, backend, poll_interval, single_pass, model=None)`
@@ -356,8 +356,8 @@ Prompt-shaping note:
 
 Structured-brief note:
 
-- Orchestrators can now send compact dependency handoffs with `agent-handoff-mcp lane-brief ...` or the MCP tool `record_lane_brief(...)`.
-- Workers can inspect only those dependency briefs with `agent-handoff-mcp lane-brief-list ...` or `list_lane_briefs(...)` instead of scanning the full lane message history.
+- Orchestrators can now send compact dependency handoffs with `workstate-handoff-mcp lane-brief ...` or the MCP tool `record_lane_brief(...)`.
+- Workers can inspect only those dependency briefs with `workstate-handoff-mcp lane-brief-list ...` or `list_lane_briefs(...)` instead of scanning the full lane message history.
 - Only emit downstream briefs when the upstream lane already produced a merge-ready result with no unresolved blockers. If the upstream lane is blocked or the dependency is still ambiguous, escalate with orchestrator guidance instead of replaying partial transcripts downstream.
 
 To preview without writing:
@@ -381,8 +381,8 @@ Then fill the manifest from the task plan's lane table:
 1. Copy lane ids, owned paths, and required tests from the plan into `config/lane-orchestration/<task-ref>.json`.
 2. Set runtime defaults per lane: `preferred_model`, `preferred_reasoning_effort`, `token_burn_threshold`, and `model_context_window`.
 3. Open or refresh each lane with `make lane-open TASK=<task-ref> LANE=<lane>`.
-4. Use `agent-handoff-mcp dispatch-lane-work --task-ref <task-ref> --lane-id <lane> --backend codex-subagent --model gpt-5.4-mini --reasoning-effort auto` to set execution posture for that lane.
-5. Send the human-readable assignment with `make lane-dispatch ...` or a structured dependency summary with `agent-handoff-mcp lane-brief ...`.
+4. Use `workstate-handoff-mcp dispatch-lane-work --task-ref <task-ref> --lane-id <lane> --backend codex-subagent --model gpt-5.4-mini --reasoning-effort auto` to set execution posture for that lane.
+5. Send the human-readable assignment with `make lane-dispatch ...` or a structured dependency summary with `workstate-handoff-mcp lane-brief ...`.
 
 Dispatch content should come from the task plan, not from ad-hoc chat memory:
 
@@ -457,12 +457,12 @@ Phase 5 represents the final delivery and audit stage:
 
 1. **Sub-Phase 5.1: Cross-Lane Verification.** Once all lanes are merged, run full integration tests (`make check-all`) in the orchestrator root.
 2. **Sub-Phase 5.2: Documentation Audit.** Verify all `docs/`, `CURRENT_TASK.json`, and `CHANGELOG` are consistent with the implemented reality.
-3. **Sub-Phase 5.3: Handoff Closure.** Perform a final `mcp-agent-handoff handoff-close-check --task-ref <task>` to ensure all findings are resolved and provenance is complete.
+3. **Sub-Phase 5.3: Handoff Closure.** Perform a final `mcp-workstate-handoff handoff-close-check --task-ref <task>` to ensure all findings are resolved and provenance is complete.
 
 ### Recipe: In-app orchestration via MCP
 
 **Who:** Orchestrator or lead in-app agent. **When:** The host already exposes
-`agent-handoff-mcp` as MCP tools and you want to control orchestration without shell
+`workstate-handoff-mcp` as MCP tools and you want to control orchestration without shell
 commands.
 
 Typical flow:
@@ -522,12 +522,12 @@ make artifact-search TASK=<task-ref> QUERY="column missing" [LANE=<lane-id>]
 make artifact-list TASK=<task-ref> [LANE=<lane-id>]
 
 # Full-fidelity readback by source id
-mcp-agent-handoff --workspace-root "$(pwd)" artifact-get --source-id <id>
+mcp-workstate-handoff --workspace-root "$(pwd)" artifact-get --source-id <id>
 ```
 
 Operational guidance:
 
-- Attach artifact refs to lane messages with `agent-handoff-mcp lane-message --artifact <id> ...` when you want the next worker prompt to prioritize exact evidence.
+- Attach artifact refs to lane messages with `workstate-handoff-mcp lane-message --artifact <id> ...` when you want the next worker prompt to prioritize exact evidence.
 - `lane_prompt.py` currently consumes pinned artifact refs from lane-message payloads first, then falls back to scoped FTS search by lane message text, blockers, and findings.
 - Use `artifact-purge` or `purge_artifacts(...)` for retention cleanup after archival or when the cache grows too large.
 
@@ -606,14 +606,14 @@ List plan cursors directly:
 
 ```bash
 REPO_ROOT="${REPO_ROOT:-$PWD}"
-agent-handoff-mcp \
+workstate-handoff-mcp \
   --workspace-root "$REPO_ROOT" \
   --state-dir "$REPO_ROOT/.task-state" \
   --current-task-path "$REPO_ROOT/CURRENT_TASK.json" \
   --exports-dir "$REPO_ROOT/.task-state/exports" \
   review-summary --task-ref <task-ref>
 
-agent-handoff-mcp \
+workstate-handoff-mcp \
   --workspace-root "$REPO_ROOT" \
   --state-dir "$REPO_ROOT/.task-state" \
   --current-task-path "$REPO_ROOT/CURRENT_TASK.json" \
@@ -625,7 +625,7 @@ For direct cursor inspection or override, use the Python API helpers from the or
 
 ```bash
 python3 - <<'PY'
-from agent_handoff_mcp import list_plan_cursors, upsert_plan_cursor
+from workstate_handoff_mcp import list_plan_cursors, upsert_plan_cursor
 print(list_plan_cursors(task_ref="<task-ref>", state="all"))
 print(upsert_plan_cursor(task_ref="<task-ref>", plan_item_id="<plan-item-id>", state="skipped", summary="Operator skipped stuck item."))
 PY
@@ -932,7 +932,7 @@ make task                     # regenerate CURRENT_TASK.json
 Commit the tooling changes on the orchestrator branch first, then retry:
 
 ```bash
-git add Makefile scripts/worktree-lane docs/agentic/templates/
+git add Makefile scripts/worktree-lane docs/workstate/templates/
 git commit -m "update pipeline tooling"
 make lane-refresh TASK=<task-ref> LANE=<lane>
 ```

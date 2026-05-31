@@ -35,7 +35,7 @@ Use this skill when the request matches any of:
 
 If the target is source under `apps/`, `packages/`, `scripts/`, or `mk/`, treat it as a branch review.
 
-If the target is under `docs/tasks/`, `docs/epics/`, `docs/roadmaps/`, or `docs/agentic/contracts/`, treat it as a planning review.
+If the target is under `docs/tasks/`, `docs/epics/`, `docs/roadmaps/`, or `docs/workstate/contracts/`, treat it as a planning review.
 
 If the diff contains both code and planning docs, run separate passes for each review mode.
 

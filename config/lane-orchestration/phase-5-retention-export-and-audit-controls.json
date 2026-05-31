@@ -93,7 +93,7 @@
         "docs/tasks/6.0/phase-5-retention-export-and-audit-controls-task-plan.md"
       ],
       "required_docs": [
-        "docs/agentic/instructions.md",
+        "docs/workstate/instructions.md",
         "docs/tasks/6.0/phase-5-retention-export-and-audit-controls-task-plan.md"
       ],
       "test_commands": [
@@ -145,7 +145,7 @@
         "apps/prototype-description-service/recognition/tests/api/test_retention_api.py"
       ],
       "required_docs": [
-        "docs/agentic/instructions.md",
+        "docs/workstate/instructions.md",
         "docs/tasks/6.0/phase-5-retention-export-and-audit-controls-task-plan.md"
       ],
       "test_commands": [
@@ -176,7 +176,7 @@
         "apps/prototype-wp-alt-context/tests/Unit/**"
       ],
       "required_docs": [
-        "docs/agentic/instructions.md",
+        "docs/workstate/instructions.md",
         "docs/tasks/6.0/phase-5-retention-export-and-audit-controls-task-plan.md"
       ],
       "test_commands": [
@@ -210,7 +210,7 @@
       "objective": "Phase 5 retention admin UI slice.",
       "owned_paths": ["apps/prototype-wp-alt-context/js/**"],
       "required_docs": [
-        "docs/agentic/instructions.md",
+        "docs/workstate/instructions.md",
         "docs/tasks/6.0/phase-5-retention-export-and-audit-controls-task-plan.md"
       ],
       "test_commands": [

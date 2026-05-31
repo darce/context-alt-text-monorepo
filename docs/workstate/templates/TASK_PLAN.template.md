@@ -24,7 +24,7 @@
 > - **Slices** are reviewable implementation increments that can be completed, verified, and logged independently.
 >
 > Favor slices that each produce behavior plus proof. Avoid scaffold-only slices that add placeholders, skipped tests, or empty abstractions without executable value.
-> See `docs/agentic/instructions.md` and `docs/agentic/rules/planning-review-guide.md` for repo-wide planning rules.
+> See `docs/workstate/instructions.md` and `docs/workstate/rules/planning-review-guide.md` for repo-wide planning rules.
 > Use one identity model consistently:
 >
 > - **Epic-owned task plan**: title and references derive from the owning epic's declared `Epic Short ID`

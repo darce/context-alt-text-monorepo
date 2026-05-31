@@ -36,7 +36,7 @@ Choose your domain to load targeted context. Always load the matching testing gu
 | **Backend (Python)**            | [maps/backend.md](maps/backend.md)                                           | [rules/backend-python-guidelines.md](rules/backend-python-guidelines.md) | [rules/testing-python.md](rules/testing-python.md)         | [maps/tech-stack.md#backend-python](maps/tech-stack.md#backend-python)     | `apps/prototype-description-service/` |
 | **Frontend (React/TS)**         | [maps/frontend.md](maps/frontend.md)                                         | [rules/frontend-guidelines.md](rules/frontend-guidelines.md)             | [rules/testing-typescript.md](rules/testing-typescript.md) | [maps/tech-stack.md#frontend-reactts](maps/tech-stack.md#frontend-reactts) | `apps/prototype-wp-alt-context/js/`   |
 | **PHP Plugin**                  | [maps/php-plugin.md](maps/php-plugin.md)                                     | [rules/backend-php-guidelines.md](rules/backend-php-guidelines.md)       | [rules/testing-php.md](rules/testing-php.md)               | [maps/tech-stack.md#php-plugin](maps/tech-stack.md#php-plugin)             | `apps/prototype-wp-alt-context/src/`  |
-| **Cross-Service Integration**   | [maps/integration.md](maps/integration.md)                                   | [contracts/](contracts/)                                                 | [rules/testing-principles.md](rules/testing-principles.md) | [maps/tech-stack.md#orchestration](maps/tech-stack.md#orchestration)       | `docs/agentic/contracts/`             |
+| **Cross-Service Integration**   | [maps/integration.md](maps/integration.md)                                   | [contracts/](contracts/)                                                 | [rules/testing-principles.md](rules/testing-principles.md) | [maps/tech-stack.md#orchestration](maps/tech-stack.md#orchestration)       | `docs/workstate/contracts/`             |
 | **Infrastructure / Deployment** | [../epics/v0.3.1/self-hosting-epic.md](../epics/v0.3.1/self-hosting-epic.md) | [rules/development-workflow.md](rules/development-workflow.md)           | [rules/testing-principles.md](rules/testing-principles.md) | [maps/tech-stack.md#orchestration](maps/tech-stack.md#orchestration)       | `../../infra/oci/`                    |
 
 ### Additional Routing
@@ -173,7 +173,7 @@ Planning docs, contracts, and error messages need completeness — but still cut
 - `docs/`
 - `scripts/`
 
-If `agent-handoff-mcp` has been extracted into its standalone `darce/mcp-agent-handoff` repository, treat that repo as external and out of bounds unless the workspace is opened there directly.
+If `workstate-handoff-mcp` has been extracted into its standalone `darce/mcp-workstate-handoff` repository, treat that repo as external and out of bounds unless the workspace is opened there directly.
 
 **Never modify:**
 
@@ -196,12 +196,12 @@ If a task seems to require external changes, STOP and propose an alternative wit
 ### Short Rules
 
 - Canonical rule source: [constitution.md](constitution.md#short-rules).
-- Edit `[sr-NNN]` rules in `docs/agentic/constitution.md`; do not maintain an independent copy here.
+- Edit `[sr-NNN]` rules in `docs/workstate/constitution.md`; do not maintain an independent copy here.
 
 ### Cross-Branch Regression Guards
 
 - Canonical rule source: [constitution.md](constitution.md#cross-branch-regression-guards).
-- Edit `[rg-NNN]` guards in `docs/agentic/constitution.md`; do not maintain an independent copy here.
+- Edit `[rg-NNN]` guards in `docs/workstate/constitution.md`; do not maintain an independent copy here.
 
 ### Tool Selection Discipline
 
@@ -228,14 +228,14 @@ Reserve terminal for operations with no native-tool equivalent: test execution, 
 - Pipe through `tail -n 30`, `head -n 50`, or `grep -E '<pattern>'` for unbounded output.
 - **Test runs (MANDATORY):** Capture to `/tmp/`, then `read_file` the capture. Do NOT rely on terminal output alone.
   - Python (apps): `cd <app-dir> && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest <path> -q > /tmp/pytest_<suite>.txt 2>&1`
-  - Python (external MCP package verification): create a scratch venv, install the reviewed PyPI releases, then run CLI/import smoke from that environment. Example: `python3 -m venv /tmp/e17-13-external-mcp && /tmp/e17-13-external-mcp/bin/pip install --quiet "mcp-agent-handoff==0.11.2" "mcp-agent-orchestrator==0.4.6" > /tmp/pytest_external_mcp.txt 2>&1 && /tmp/e17-13-external-mcp/bin/mcp-agent-handoff --workspace-root . doctor >> /tmp/pytest_external_mcp.txt 2>&1 && /tmp/e17-13-external-mcp/bin/mcp-agent-orchestrator --workspace-root . --help >> /tmp/pytest_external_mcp.txt 2>&1`. Do not use `make test-handoff` or `make test-orchestrator` for this cleanup verification path.
+  - Python (external MCP package verification): create a scratch venv, install the reviewed PyPI releases, then run CLI/import smoke from that environment. Example: `python3 -m venv /tmp/e17-13-external-mcp && /tmp/e17-13-external-mcp/bin/pip install --quiet "mcp-workstate-handoff==0.12.0" "mcp-workstate-orchestrator==0.5.0" > /tmp/pytest_external_mcp.txt 2>&1 && /tmp/e17-13-external-mcp/bin/mcp-workstate-handoff --workspace-root . doctor >> /tmp/pytest_external_mcp.txt 2>&1 && /tmp/e17-13-external-mcp/bin/mcp-workstate-orchestrator --workspace-root . --help >> /tmp/pytest_external_mcp.txt 2>&1`. Do not use `make test-handoff` or `make test-orchestrator` for this cleanup verification path.
   - Vitest in VS Code agent chat: `cd <app-dir> && npm run test:agent -- <path> > /tmp/vitest_<suite>.txt 2>&1`, then inspect the captured output because the wrapper returns control to chat even for RED tests. Use normal `npm run test -- <path>` only outside the agent chat workflow when failing exit codes can propagate safely.
   - PHP: `cd <app-dir> && vendor/bin/phpunit <path> > /tmp/phpunit_<suite>.txt 2>&1`
   - Then: `read_file("/tmp/pytest_<suite>.txt")`. Never `cat` in terminal. If output is truncated/polluted, just `read_file` the capture.
 - Excess output → redirect to `/tmp/<name>.txt` and `read_file` (VS Code) or `sed -n` (Codex); do not re-run.
 - **Foreground terminals for Python app tests.** Background sessions can drift from the description-service project's uv-managed `.venv`. Use the foreground terminal for app test runs.
 - **Use env vars**, not hardcoded paths. Prefer `${workspaceFolder}`, `${env:HOME}`, and `${REPO_ROOT:-$PWD}`.
-- **Package-test Python harness workaround.** For `agent-orchestrator-mcp` / `agent-handoff-mcp`, do not invoke IDE Python environment setup. Use pinned `uvx --from "mcp-agent-handoff==0.11.2" python3`, `uvx --from "mcp-agent-orchestrator==0.4.6" python3`, or scratch-venv binaries from the foreground terminal. If IDE shows `Configuring a Python Environment`, stop and ask the user to run the terminal command.
+- **Package-test Python harness workaround.** For `workstate-orchestrator-mcp` / `workstate-handoff-mcp`, do not invoke IDE Python environment setup. Use pinned `uvx --from "mcp-workstate-handoff==0.12.0" python3`, `uvx --from "mcp-workstate-orchestrator==0.5.0" python3`, or scratch-venv binaries from the foreground terminal. If IDE shows `Configuring a Python Environment`, stop and ask the user to run the terminal command.
 
 ### Task Document Rules
 
@@ -329,16 +329,16 @@ Loading rules:
 
 Canonical handoff runtime:
 
-- `agent-handoff-mcp` exclusively.
-- Install reference: [contracts/agent-handoff-mcp.md](contracts/agent-handoff-mcp.md). After E13 extraction, canonical external source is `darce/mcp-agent-handoff` (private git+ssh).
+- `workstate-handoff-mcp` exclusively.
+- Install reference: [contracts/workstate-handoff-mcp.md](contracts/workstate-handoff-mcp.md). After E13 extraction, canonical external source is `darce/mcp-workstate-handoff` (private git+ssh).
 
 Primary binary shape:
 
-- `mcp-agent-handoff --workspace-root <repo> serve-stdio`
-- `mcp-agent-handoff --workspace-root <repo> doctor`
-- `mcp-agent-handoff --workspace-root <repo> state`
-- `mcp-agent-handoff --workspace-root <repo> task <task_ref>`
-- `mcp-agent-handoff --workspace-root <repo> switch <task_ref>`
+- `mcp-workstate-handoff --workspace-root <repo> serve-stdio`
+- `mcp-workstate-handoff --workspace-root <repo> doctor`
+- `mcp-workstate-handoff --workspace-root <repo> state`
+- `mcp-workstate-handoff --workspace-root <repo> task <task_ref>`
+- `mcp-workstate-handoff --workspace-root <repo> switch <task_ref>`
 
 ## ctx7 Entry Criteria
 
@@ -403,7 +403,7 @@ Read discipline:
 - Do not query `.task-state/handoff.db` directly when MCP tools are available.
 - `get_handoff_state` for active-task snapshot, `get_review_findings_summary` for counts, `review_findings(operation="list")` for detailed verification.
 - `finding_id` (e.g. `"H-OCI-28"`) for single-finding lookup. Optional `task_ref` on list/summary to query non-active tasks without switching.
-- Only supported handoff surface: `agent-handoff-mcp` per [contracts/agent-handoff-mcp.md](contracts/agent-handoff-mcp.md).
+- Only supported handoff surface: `workstate-handoff-mcp` per [contracts/workstate-handoff-mcp.md](contracts/workstate-handoff-mcp.md).
 
 State integrity invariants:
 
@@ -537,7 +537,7 @@ Remote-dependent UI states must remain recoverable when automation fails or stal
 
 ## Documentation Conventions
 
-> Templates and file organization are discoverable from `docs/agentic/templates/`. Formatting rules are in linter configs (`tsconfig`, `phpcs.xml`, `pyproject.toml`, `prettier`).
+> Templates and file organization are discoverable from `docs/workstate/templates/`. Formatting rules are in linter configs (`tsconfig`, `phpcs.xml`, `pyproject.toml`, `prettier`).
 
 - **`.mmd` files: raw Mermaid syntax only -- NO code fences**
 - `.md` files: use fenced code blocks

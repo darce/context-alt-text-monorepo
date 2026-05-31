@@ -7,7 +7,7 @@
 task-guard:
 	@RESOLVED_TASK="$(TASK)"; \
 	if [ -z "$$RESOLVED_TASK" ]; then \
-		RESOLVED_TASK="$$( $(LANE_CONFIG_CMD) choose-task --explicit-task "$(REQUESTED_TASK)" --active-task "$(ACTIVE_TASK)" --sole-task "$(SOLE_TASK)" --branch "$(CURRENT_BRANCH)" --worktree-path "$(WORKTREE_ROOT_REAL)" --orchestrator-root "$(ORCHESTRATOR_ROOT)" $(if $(REQUESTED_LANE),--lane-id "$(REQUESTED_LANE)",) $(if $(filter 1,$(IN_ORCHESTRATOR_ROOT)),--in-orchestrator-root,) )"; \
+		RESOLVED_TASK="$$( $(LANE_CONFIG_CMD) resolve-task --explicit-task "$(REQUESTED_TASK)" --active-task "$(ACTIVE_TASK)" --sole-task "$(SOLE_TASK)" --branch "$(CURRENT_BRANCH)" --worktree-path "$(WORKTREE_ROOT_REAL)" --orchestrator-root "$(ORCHESTRATOR_ROOT)" $(if $(REQUESTED_LANE),--lane-id "$(REQUESTED_LANE)",) $(if $(filter 1,$(IN_ORCHESTRATOR_ROOT)),--in-orchestrator-root,) )"; \
 	fi; \
 	if [ -z "$$RESOLVED_TASK" ]; then \
 		echo "TASK is required."; \
@@ -68,7 +68,7 @@ lane-manifest-init:
 		exit 1; \
 	fi
 	@set -eu; \
-	set -- $(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.generate_lane_manifest --task-ref "$(TASK)"; \
+	set -- $(MCP_PYTHON) -m workstate_orchestrator_mcp.orchestration.generate_lane_manifest --task-ref "$(TASK)"; \
 	for lane in $(LANE_IDS); do set -- "$$@" --lane "$$lane"; done; \
 	if [ -n "$(TASK_PLAN)" ]; then set -- "$$@" --task-plan "$(TASK_PLAN)"; fi; \
 	if [ "$(DRY_RUN)" = "1" ]; then \

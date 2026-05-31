@@ -10,8 +10,8 @@
 | 2        | `apps/prototype-wp-alt-context/js/admin/pages/`      | Page components                  |
 | 3        | `apps/prototype-wp-alt-context/js/admin/hooks/`      | Job, media, and sync hooks       |
 | 4        | `apps/prototype-wp-alt-context/js/admin/api/`        | API client layer                 |
-| 5        | `docs/agentic/contracts/clustering-api.md`           | WP REST API contract             |
-| 6        | `docs/agentic/contracts/curation-sync-api.md`        | Outbox replay contract           |
+| 5        | `docs/workstate/contracts/clustering-api.md`           | WP REST API contract             |
+| 6        | `docs/workstate/contracts/curation-sync-api.md`        | Outbox replay contract           |
 
 ## Page / Component Architecture
 

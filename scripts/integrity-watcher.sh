@@ -85,7 +85,7 @@ if [[ "${#ARGS[@]}" -eq 0 ]]; then
   WATCH_PATHS=(
     "$PRIMARY_ROOT/scripts"
     "$PRIMARY_ROOT/mk"
-    "$PRIMARY_ROOT/docs/agentic/contracts"
+    "$PRIMARY_ROOT/docs/workstate/contracts"
   )
 else
   WATCH_PATHS=("${ARGS[@]}")

@@ -29,15 +29,6 @@
         ]
       },
       {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/terminal-guard.py\""
-          }
-        ]
-      },
-      {
         "matcher": "Edit|Write",
         "hooks": [
           {
@@ -126,7 +117,7 @@
     "Stop": [
       {
         "_managed_by": "workstate-bootstrap",
-        "command": "/Users/daniel/Development/context-alt-text-monorepo/scripts/hooks/compact-session.py"
+        "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/compact-session.py\""
       }
     ]
   },

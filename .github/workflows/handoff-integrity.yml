@@ -3,9 +3,9 @@ name: Handoff Integrity
 on:
   pull_request:
     paths:
-      - "docs/agentic/BOOTSTRAP.md"
-      - "docs/agentic/instructions.md"
-      - "docs/agentic/rules/development-workflow.md"
+      - "docs/workstate/BOOTSTRAP.md"
+      - "docs/workstate/instructions.md"
+      - "docs/workstate/rules/development-workflow.md"
       - "Makefile"
       - ".github/workflows/handoff-integrity.yml"
   push:
@@ -14,9 +14,9 @@ on:
       - master
       - develop
     paths:
-      - "docs/agentic/BOOTSTRAP.md"
-      - "docs/agentic/instructions.md"
-      - "docs/agentic/rules/development-workflow.md"
+      - "docs/workstate/BOOTSTRAP.md"
+      - "docs/workstate/instructions.md"
+      - "docs/workstate/rules/development-workflow.md"
       - "Makefile"
 
 jobs:
@@ -34,11 +34,11 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
-      - name: Install mcp-agent-handoff
-        run: pip install "mcp-agent-handoff>=0.6.0,<0.7"
+      - name: Install mcp-workstate-handoff
+        run: pip install "mcp-workstate-handoff==0.12.0"
 
-      - name: Install mcp-agent-orchestrator
-        run: pip install "mcp-agent-orchestrator>=0.3.0,<0.4"
+      - name: Install mcp-workstate-orchestrator
+        run: pip install "mcp-workstate-orchestrator==0.5.0"
 
       - name: Run handoff integrity guard
-        run: python -m agent_orchestrator_mcp.orchestration.handoff_integrity_guard
+        run: python -m workstate_orchestrator_mcp.orchestration.handoff_integrity_guard

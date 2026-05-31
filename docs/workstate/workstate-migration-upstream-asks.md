@@ -74,6 +74,17 @@ root) broken. Fixed locally by symlinking the three scripts into `scripts/` →
 `.workstate-bootstrap.json` `surfaces`) like the `Makefile.d/*.mk` and
 `scripts/hooks` symlinks it already manages.
 
+## G. Shared Git hooks should resolve guards relative to the hook directory
+
+`scripts/hooks` is an ignored symlink to the canonical `workstate-system`
+surface. Its `git/post-checkout` hook resolves guard helpers through
+`GUARD_DIR`, but `git/pre-push`, `git/post-merge`, `git/post-rewrite`,
+`git/post-commit`, and `git/pre-commit` still resolve helpers via
+`$REPO_ROOT/scripts/hooks/...`. That misses in nested source or hoisted
+consumer layouts where the git root is not the shared hook source. **Ask:**
+update the canonical `workstate-system/scripts/hooks/git/*` hooks to use the
+same `HOOK_DIR` / `GUARD_DIR` pattern as `post-checkout`.
+
 ## Resolved during this migration (not an upstream ask)
 
 - `workstate_orchestrator_mcp.orchestration.lane_prompt` raised

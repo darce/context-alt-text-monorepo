@@ -392,10 +392,6 @@
       "lane": "backend-domain"
     },
     {
-      "prefix": "packages/agent-handoff-mcp/",
-      "lane": "backend-domain"
-    },
-    {
       "prefix": "apps/prototype-description-service/recognition/interface_adapters/http/",
       "lane": "backend-http"
     },
@@ -433,8 +429,7 @@
         "docs/tasks/7.0/remaining-sync-workbench-and-retention-task-plan.md",
         "mk/lane-maintenance.mk",
         "scripts/worktree-lane",
-        "scripts/mcp/**",
-        "packages/agent-handoff-mcp/**"
+        "scripts/mcp/**"
       ],
       "required_docs": [
         "docs/workstate/instructions.md",
@@ -447,7 +442,7 @@
         "cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests/unit/",
         "cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest recognition/tests/integration/test_retention_lifecycle.py",
         "cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev mypy recognition/domain recognition/infrastructure",
-        "python3 -m pytest packages/agent-handoff-mcp/tests/test_orchestrator_tools.py packages/agent-handoff-mcp/tests/test_worker_daemon.py packages/agent-handoff-mcp/tests/test_lane_exec.py packages/agent-handoff-mcp/tests/test_review_runner.py packages/codex-subagent-bridge/tests/test_bridge.py"
+        "python3 -m pytest packages/codex-subagent-bridge/tests/test_bridge.py"
       ],
       "capability_tags": [
         "postgres-ready",
@@ -471,8 +466,7 @@
         "docs/tasks/7.0/remaining-sync-workbench-and-retention-task-plan.md",
         "mk/lane-maintenance.mk",
         "scripts/worktree-lane",
-        "scripts/mcp",
-        "packages/agent-handoff-mcp"
+        "scripts/mcp"
       ],
       "commit_subject": "update sync/retention backend domain and tooling",
       "route_hints": [

@@ -547,12 +547,16 @@ task-plan-audit:
 	@$(MCP_PYTHON) scripts/task_plan_audit.py
 
 # generate-agent-workflows + check-agent-workflows are owned by the canonical
-# Makefile.d/workflows.mk (thin-consumer adoption). check-codex-command-router
-# stays repo-local: canonical check-agent-workflows does not run the codex
-# router-block check (recorded as an upstream finding); WORKFLOWS_PYTHON +
-# the symlinked generator are provided by the included workflows.mk.
+# Makefile.d/workflows.mk (thin-consumer adoption). Force the shared generator
+# to check this consumer's generated adapters by default; otherwise the
+# symlinked generator resolves its own shared package root.
+WORKFLOW_TARGET_ROOT ?= $(CURDIR)
+
+# check-codex-command-router stays repo-local: canonical check-agent-workflows
+# does not run the codex router-block check (recorded as an upstream finding);
+# WORKFLOWS_PYTHON + the symlinked generator are provided by workflows.mk.
 check-codex-command-router:
-	@$(WORKFLOWS_PYTHON) scripts/generate_agent_workflows.py --check-codex-router-blocks
+	@$(WORKFLOWS_PYTHON) scripts/generate_agent_workflows.py $(WORKFLOW_TARGET_ARG) --check-codex-router-blocks
 
 smoke-agent-workflows:
 	@$(MCP_PYTHON) scripts/smoke_agent_workflows.py $(if $(BACKEND),--backend $(BACKEND),)
@@ -585,7 +589,7 @@ lint-hoisted-paths:
 #   make integrity-watch ARGS="path1 path2" # watch explicit paths
 integrity-watch:
 	@./scripts/integrity-watcher.sh $(ARGS)
-# >>> AGENTIC_BOOTSTRAP LIFECYCLE INCLUDE >>>
+# >>> WORKSTATE_LIFECYCLE_INCLUDE >>>
 # context-alt-text-monorepo is a thin consumer of the canonical workstate
 # lifecycle/workflows/plans/compaction/plugins surfaces hoisted under
 # Makefile.d/. The repo-local duplicates of these targets were removed (see
@@ -593,4 +597,4 @@ integrity-watch:
 # LIFECYCLE_FORMATTER wires canonical `make format` to this repo's formatter.
 LIFECYCLE_FORMATTER = $(MAKE) format-all
 -include Makefile.d/*.mk
-# <<< AGENTIC_BOOTSTRAP LIFECYCLE INCLUDE <<<
+# <<< WORKSTATE_LIFECYCLE_INCLUDE <<<

@@ -31,9 +31,9 @@ These canonical schema definitions and shared fixtures are used to keep cross-bo
 
 The repo-level guard `python3 scripts/check_shared_contract_fixtures.py` validates the shared list-response golden fixtures against their declared schemas so envelope drift is caught before review.
 
-## vs. docs/agentic/contracts/
+## vs. docs/workstate/contracts/
 
-| This Package                 | docs/agentic/contracts/          |
+| This Package                 | docs/workstate/contracts/          |
 | ---------------------------- | -------------------------------- |
 | Machine-readable schemas     | Human-readable documentation     |
 | JSON Schema specs            | Markdown with rationale          |
@@ -41,7 +41,7 @@ The repo-level guard `python3 scripts/check_shared_contract_fixtures.py` validat
 
 ## Related
 
-- `docs/agentic/contracts/` -- human-readable contract documentation
-- `docs/agentic/rules/contract-change-checklist.md` -- boundary-owner, schema-evolution, and fixture expectations
+- `docs/workstate/contracts/` -- human-readable contract documentation
+- `docs/workstate/rules/contract-change-checklist.md` -- boundary-owner, schema-evolution, and fixture expectations
 - `apps/prototype-wp-alt-context/` -- WordPress plugin (consumer)
 - `apps/prototype-description-service/` -- description service (consumer)

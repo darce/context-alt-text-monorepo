@@ -105,9 +105,9 @@ Command map:
 
 ## Codex Parity
 
-The repo ships two portable invocation surfaces to Codex. Both are generated from `config/agent-workflows/portable_commands.json` by `scripts/generate_agent_workflows.py`; neither requires per-user config mutation.
+The repo ships portable invocation surfaces to Codex from the shared workflow manifest and plugin tree; neither requires per-user config mutation.
 
-**`$skill` resolution** — Codex natively scans `<repo>/.codex/skills/<slug>/SKILL.md` on every `skills/list` dispatch and surfaces each entry with `scope: "repo"`. The generator emits `.codex/skills/<slug>` as a symlink to `.claude/skills/<slug>` so skill bodies stay single-sourced. Drift is gated by `make check-agent-workflows`, which asserts every portable-manifest entry has a matching symlink whose target resolves to the canonical Claude skill directory. See [../../docs/assessments/e17-12-codex-skill-registration-discovery-2026-04-18.md](../assessments/e17-12-codex-skill-registration-discovery-2026-04-18.md) for the protocol-surface evidence behind this path.
+**`$skill` resolution** — Codex skills are materialized through the workstate plugin tree under `.workstate/generated/plugins/workstate-system/`. Drift is gated by `make check-agent-workflows`, which checks the generated prompt/router adapters against the shared manifest. See [../../docs/assessments/e17-12-codex-skill-registration-discovery-2026-04-18.md](../assessments/e17-12-codex-skill-registration-discovery-2026-04-18.md) for the protocol-surface evidence behind the original static-discovery path.
 
 **`/command` resolution** — the Codex harness has no native slash-command registry, so `/branch-review`, `/planning-review`, etc. are routed by model reading of the generator-owned router block above (BEGIN/END marker-delimited). The same block is mirrored into `CLAUDE.md`. Manual edits inside the markers are overwritten by the next `make generate-agent-workflows` run.
 

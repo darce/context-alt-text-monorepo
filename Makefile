@@ -30,10 +30,10 @@ IN_ORCHESTRATOR_ROOT := $(if $(filter $(WORKTREE_ROOT_REAL),$(ORCHESTRATOR_ROOT)
 
 # --- MCP runtime ---
 UVX ?= uvx
-MCP_HANDOFF_PACKAGE ?= mcp-agent-handoff==0.11.2
-MCP_ORCHESTRATOR_PACKAGE ?= mcp-agent-orchestrator==0.4.6
+MCP_HANDOFF_PACKAGE ?= mcp-workstate-handoff==0.12.0
+MCP_ORCHESTRATOR_PACKAGE ?= mcp-workstate-orchestrator==0.5.0
 MCP_PYTHON = $(UVX) --from "$(MCP_ORCHESTRATOR_PACKAGE)" python3
-LANE_CONFIG_CMD = $(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.lane_config
+LANE_CONFIG_CMD = $(MCP_PYTHON) -m workstate_orchestrator_mcp.orchestration.lane_config
 MCP_PYTHONPATH := $(ORCHESTRATOR_ROOT)/packages/codex-subagent-bridge/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
 WORKTREE_MCP_PYTHONPATH := $(WORKTREE_ROOT_REAL)/packages/codex-subagent-bridge/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
 MCP_CMD = $(UVX) "$(MCP_HANDOFF_PACKAGE)"
@@ -77,7 +77,7 @@ LANE_IDS ?=
 
 # --- Tooling paths (used by lane-commit, lane-clean, lane-refresh) ---
 LANE_WORKTREE_TARGET = $(if $(filter 1,$(IN_ORCHESTRATOR_ROOT)),$(LANE_WORKTREE),$(WORKTREE_ROOT_REAL))
-LANE_TOOLING_PATHS := Makefile mk docs/agentic/instructions.md docs/agentic/templates/WORKTREE_LANE_BRIEF.template.md docs/agentic/templates/WORKTREE_LANE_REPORT.template.md scripts/README.md scripts/worktree-lane
+LANE_TOOLING_PATHS := Makefile mk docs/workstate/instructions.md docs/workstate/templates/WORKTREE_LANE_BRIEF.template.md docs/workstate/templates/WORKTREE_LANE_REPORT.template.md scripts/README.md scripts/worktree-lane
 ROOT_REFRESH_PATHS := $(LANE_TOOLING_PATHS) config/lane-orchestration
 LANE_APP_TOOLING_PATHS :=
 
@@ -129,7 +129,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/logs.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends context dashboard worktree-audit worktree-prune task-plan-audit generate-agent-workflows check-agent-workflows check-skills check-harness-sync lint-hoisted-paths maint-start task-start task-finish check-main-clean install-git-hooks localwp-mirror-integrity
+.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity
 
 # Default target
 help:
@@ -232,7 +232,7 @@ help:
 	@echo "  make lane-path TASK=<task-ref> LANE=<lane>"
 	@echo "  make lane-commits TASK=<task-ref> LANE=<lane>"
 	@echo "  make lane-intake TASK=<task-ref> LANE=<lane> [DRY_RUN=1] [SKIP_TESTS=1] [SKIP_POST_INTAKE=1] [POST_INTAKE_CHECK_CMD='...']"
-	@echo "    Prints the latest merge-ready lane report, cherry-picks into a scratch worktree, runs lane-local verification there, fast-forwards root if clean, verifies CURRENT_TASK.json sync with mcp-agent-handoff handoff-close-check, then runs cross-lane post-intake verification from the orchestrator root."
+	@echo "    Prints the latest merge-ready lane report, cherry-picks into a scratch worktree, runs lane-local verification there, fast-forwards root if clean, verifies CURRENT_TASK.json sync with mcp-workstate-handoff handoff-close-check, then runs cross-lane post-intake verification from the orchestrator root."
 	@echo "    Use SKIP_TESTS=1 to bypass scratch-worktree test commands, SKIP_POST_INTAKE=1 to skip the cross-lane gate, or POST_INTAKE_CHECK_CMD to override the default post-intake check command."
 	@echo "  make orchestrator-daemon [TASK=<task-ref>] [BACKEND=codex-cli|codex-subagent]"
 	@echo "    Shared singleton orchestrator loop rooted at $(ORCHESTRATOR_ROOT). Start it from any worktree; pause/resume/status use the same shared root state."
@@ -260,6 +260,7 @@ check-all:
 			$(MAKE) check-harness-sync; \
 			$(MAKE) lint-hoisted-paths; \
 			$(MAKE) check-agent-workflows; \
+			$(MAKE) check-codex-command-router; \
 			$(MAKE) worktree-audit; \
 			$(MAKE) task-plan-audit; \
 			$(MAKE) test-all; \
@@ -337,7 +338,7 @@ test-all:
 		fi
 
 # Sweep every tracked task-plan / epic markdown for pasted review-finding
-# lists. Review findings live in agent-handoff-mcp; pasting them inline
+# lists. Review findings live in workstate-handoff-mcp; pasting them inline
 # duplicates the source of truth and bypasses the pre-merge gate. --scan-repo
 # enumerates `git ls-files '*.md'` and applies the same path scope used by
 # the Claude Code PreToolUse hook, so CI catches drift in any file the hook
@@ -392,8 +393,6 @@ install-git-hooks:
 # Python: ruff check --fix --unsafe-fixes + ruff format
 # TypeScript/JS: npm run lint:fix + npm run format:fix
 # PHP: composer cs-fix
-format: format-all
-
 format-all:
 	@echo "=== Formatting codex-subagent-bridge ==="
 	@$(MAKE) -C packages/codex-subagent-bridge format-bridge PYTHON="$(PYTHON)"
@@ -476,7 +475,7 @@ dev-stop:
 # Print a markdown metrics snapshot for the current task.
 # Usage: make ace-metrics TASK=<task-ref>
 ace-metrics:
-	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.ace_metrics \
+	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m workstate_orchestrator_mcp.orchestration.ace_metrics \
 		--task-ref "$(TASK)" \
 		--state-dir .task-state \
 		--logs-dir logs \
@@ -485,7 +484,7 @@ ace-metrics:
 # Print a JSON metrics snapshot (also appends to .task-state/metrics.jsonl).
 # Usage: make ace-metrics-json TASK=<task-ref>
 ace-metrics-json:
-	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.ace_metrics \
+	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m workstate_orchestrator_mcp.orchestration.ace_metrics \
 		--task-ref "$(TASK)" \
 		--state-dir .task-state \
 		--logs-dir logs \
@@ -497,20 +496,20 @@ ace-metrics-json:
 ace-reflect:
 	@$(MCP_PYTHON) scripts/ace/ace_reflect.py \
 		--state-dir .task-state \
-		--instruction-files docs/agentic/instructions.md
+		--instruction-files docs/workstate/instructions.md
 
 # Show pruning candidates across instruction files.
 # Usage: make ace-curation-report
 ace-curation-report:
 	@$(MCP_PYTHON) scripts/ace/ace_reflect.py \
 		--state-dir .task-state \
-		--instruction-files docs/agentic/instructions.md \
+		--instruction-files docs/workstate/instructions.md \
 		--curation-report-only
 
 # Print time-series sparklines from accumulated metrics history.
 # Usage: make ace-trends TASK=<task-ref>
 ace-trends:
-	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.ace_metrics \
+	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m workstate_orchestrator_mcp.orchestration.ace_metrics \
 		--task-ref "$(TASK)" \
 		--state-dir .task-state \
 		--sparklines
@@ -519,20 +518,8 @@ ace-trends:
 # Lane / worktree context discipline (E15-LANE-ORCH slice 2)
 # =============================================================================
 
-# Verify the current shell is aligned with the active task's target_branch and
-# target_worktree_path. Exits 0 on aligned or drift-warning paths, 1 on infra
-# error. Run at the start of every session before recording any handoff state.
-# Usage: make context
-context:
-	@$(MCP_PYTHON) scripts/check-task-context.py
-
-# Generate DASHBOARD.txt — the human-scoped observatory view.
-# Renders Needs Attention, All Tasks, Open Findings, and Deferred sections.
-# Extension sections (Lane Health, Worker Status) appear only when
-# agent-orchestrator-mcp is loaded and has registered its extension callback.
-# Usage: make dashboard
-dashboard:
-	@$(MCP_CMD) $(MCP_STATE_ARGS) render-handoff --kind dashboard
+# context + dashboard are owned by the canonical Makefile.d/lifecycle.mk
+# (thin-consumer adoption, MAINT-workstate-migration-20260530).
 
 worktree-audit:
 	@$(MCP_PYTHON) scripts/worktree_audit.py
@@ -559,15 +546,13 @@ maint-start:
 task-plan-audit:
 	@$(MCP_PYTHON) scripts/task_plan_audit.py
 
-generate-agent-workflows:
-	@$(MCP_PYTHON) scripts/generate_agent_workflows.py
-
-check-agent-workflows:
-	@$(MCP_PYTHON) scripts/generate_agent_workflows.py --check
-	@$(MCP_PYTHON) scripts/generate_agent_workflows.py --check-codex-router-blocks
-
+# generate-agent-workflows + check-agent-workflows are owned by the canonical
+# Makefile.d/workflows.mk (thin-consumer adoption). check-codex-command-router
+# stays repo-local: canonical check-agent-workflows does not run the codex
+# router-block check (recorded as an upstream finding); WORKFLOWS_PYTHON +
+# the symlinked generator are provided by the included workflows.mk.
 check-codex-command-router:
-	@$(MCP_PYTHON) scripts/generate_agent_workflows.py --check-codex-router-blocks
+	@$(WORKFLOWS_PYTHON) scripts/generate_agent_workflows.py --check-codex-router-blocks
 
 smoke-agent-workflows:
 	@$(MCP_PYTHON) scripts/smoke_agent_workflows.py $(if $(BACKEND),--backend $(BACKEND),)
@@ -581,27 +566,10 @@ check-harness-sync:
 lint-hoisted-paths:
 	@$(MCP_PYTHON) scripts/lint_hoisted_paths.py
 
-# Convenience wrapper that scaffolds a feature branch + worktree + MCP task in
-# one go. Computes the canonical path /Users/.../context-alt-text-monorepo-<task>
-# and registers it as target_worktree_path on the active handoff state.
-# Usage: make task-start TASK=<task-id> [OBJECTIVE="..."]
-task-start:
-	@./scripts/task-start.sh "$(TASK)" "$(OBJECTIVE)"
-
-# Run handoff_close_check, merge the feature branch (optional), return root
-# to main, remove the worktree, and delete the merged feature branch in a
-# single call.
-#
-# Without MERGE=1: expects main to already contain the work.
-# With    MERGE=1: stashes any uncommitted tracked changes on the root
-#                  worktree, merges feature/<task-lower> via --ff-only, pops
-#                  the stash, then runs the normal cleanup sequence.
-#
-# Usage:
-#   make task-finish TASK=<task-id>          # merge already done
-#   make task-finish TASK=<task-id> MERGE=1  # stash + merge + pop, then cleanup
-task-finish:
-	@./scripts/task-finish.sh "$(TASK)" $(if $(MERGE),--merge,)
+# task-start + task-finish are owned by the canonical Makefile.d/lifecycle.mk.
+# Canonical task-start derives the same context-alt-text-monorepo-<task-id>
+# worktree path generically (handlers/task_start.py _derive_worktree_path), so
+# no repo-local wrapper is needed (MAINT-workstate-migration-20260530).
 
 # Start the integrity-watcher daemon (AHMCP-19 / item I from the AHMCP-18
 # tech-debt assessment). Wraps fswatch (or inotifywait on Linux) over the
@@ -618,8 +586,11 @@ task-finish:
 integrity-watch:
 	@./scripts/integrity-watcher.sh $(ARGS)
 # >>> AGENTIC_BOOTSTRAP LIFECYCLE INCLUDE >>>
-# context-alt-text-monorepo already owns these lifecycle targets in this
-# Makefile and mk/*.mk. Keep the bootstrap sentinel so future updates do not
-# re-inject a wildcard include that overrides repo-local harness recipes.
-# -include Makefile.d/*.mk
+# context-alt-text-monorepo is a thin consumer of the canonical workstate
+# lifecycle/workflows/plans/compaction/plugins surfaces hoisted under
+# Makefile.d/. The repo-local duplicates of these targets were removed (see
+# MAINT-workstate-migration-20260530); canonical fragments own them now.
+# LIFECYCLE_FORMATTER wires canonical `make format` to this repo's formatter.
+LIFECYCLE_FORMATTER = $(MAKE) format-all
+-include Makefile.d/*.mk
 # <<< AGENTIC_BOOTSTRAP LIFECYCLE INCLUDE <<<

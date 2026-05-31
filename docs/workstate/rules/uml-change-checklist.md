@@ -1,15 +1,15 @@
 # UML Change Checklist
 
-> Checklist for architecture-diagram changes. Use when a change affects architecture, runtime boundaries, controller namespaces, page composition, workflow flow, or state-machine behavior represented in `docs/agentic/diagrams/`.
+> Checklist for architecture-diagram changes. Use when a change affects architecture, runtime boundaries, controller namespaces, page composition, workflow flow, or state-machine behavior represented in `docs/workstate/diagrams/`.
 
 ## Diagram Ownership Registry
 
 | Diagram Surface | Canonical Owner | Diagram Set | Adaptation Point | Primary Consumers |
 | --- | --- | --- | --- | --- |
-| Top-level system architecture | `architecture` | `docs/agentic/diagrams/system-overview.mmd` | Cross-stack routes, controllers, service boundaries, admin pages | Agents, reviewers, onboarding |
-| WordPress admin frontend architecture | `wp-proxy` | `docs/agentic/diagrams/frontend-uml/` | `apps/prototype-wp-alt-context/js/admin/` and `apps/prototype-wp-alt-context/src/api/` | Frontend and plugin contributors |
-| Recognition backend architecture | `backend` | `docs/agentic/diagrams/backend-uml/` | `apps/prototype-description-service/recognition/` | Backend contributors, review flows |
-| Sovereign sync/data projection flow | `wp-proxy` | `docs/agentic/diagrams/sovereign-data-flow.mmd` | WordPress sync pipeline and recognition export surfaces | Sync/debugging work |
+| Top-level system architecture | `architecture` | `docs/workstate/diagrams/system-overview.mmd` | Cross-stack routes, controllers, service boundaries, admin pages | Agents, reviewers, onboarding |
+| WordPress admin frontend architecture | `wp-proxy` | `docs/workstate/diagrams/frontend-uml/` | `apps/prototype-wp-alt-context/js/admin/` and `apps/prototype-wp-alt-context/src/api/` | Frontend and plugin contributors |
+| Recognition backend architecture | `backend` | `docs/workstate/diagrams/backend-uml/` | `apps/prototype-description-service/recognition/` | Backend contributors, review flows |
+| Sovereign sync/data projection flow | `wp-proxy` | `docs/workstate/diagrams/sovereign-data-flow.mmd` | WordPress sync pipeline and recognition export surfaces | Sync/debugging work |
 
 ## UML-Change Triggers
 
@@ -55,5 +55,5 @@ Handoff finding/decision id:
 - Relevant Mermaid files compared against code.
 - New pages/controllers/routes/transitions represented.
 - Removed/renamed surfaces no longer shown.
-- Related `docs/agentic/maps/` and `docs/agentic/contracts/` references still match.
+- Related `docs/workstate/maps/` and `docs/workstate/contracts/` references still match.
 - If no diagram changed, handoff decision explains why.

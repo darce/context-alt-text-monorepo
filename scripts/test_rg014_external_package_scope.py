@@ -5,12 +5,12 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CLAUDE_PATH = REPO_ROOT / "CLAUDE.md"
-CONSTITUTION_PATH = REPO_ROOT / "docs" / "agentic" / "constitution.md"
+CONSTITUTION_PATH = REPO_ROOT / "docs" / "workstate" / "constitution.md"
 
 REQUIRED_SCOPE = (
-    "Scope: the standalone `agent-orchestrator-mcp` package available to the active workspace."
+    "Scope: the standalone `workstate-orchestrator-mcp` package available to the active workspace."
 )
-FORBIDDEN_SCOPE = "Scope: `packages/agent-orchestrator-mcp/`."
+FORBIDDEN_SCOPE = "Scope: `packages/workstate-orchestrator-mcp/`."
 
 
 def test_rg014_scope_tracks_standalone_orchestrator_boundary() -> None:

@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DOC_PATH = REPO_ROOT / "docs" / "agentic" / "consumer-setup.md"
+DOC_PATH = REPO_ROOT / "docs" / "workstate" / "consumer-setup.md"
 
 REQUIRED_HEADINGS = (
     "## Prerequisites",
@@ -20,13 +20,13 @@ REQUIRED_HEADINGS = (
 )
 
 REQUIRED_SNIPPETS = (
-    './.venv/bin/pip install "mcp-agent-handoff==0.11.2"',
-    './.venv/bin/pip install "mcp-agent-orchestrator==0.4.6"',
-    './.venv/bin/pip install "agentic-bootstrap==0.5.1"',
-    "./.venv/bin/agentic-bootstrap install --target . --remote-ref v0.1.14",
-    "./.venv/bin/agentic-bootstrap update --remote-ref v0.1.14",
-    "./.venv/bin/agentic-bootstrap doctor",
-    "./.venv/bin/agentic-bootstrap repair",
+    './.venv/bin/pip install "mcp-workstate-handoff==0.12.0"',
+    './.venv/bin/pip install "mcp-workstate-orchestrator==0.5.0"',
+    './.venv/bin/pip install "workstate-bootstrap==0.6.0"',
+    "./.venv/bin/workstate-bootstrap install --target . --remote-ref v0.1.21",
+    "./.venv/bin/workstate-bootstrap update --remote-ref v0.1.21",
+    "./.venv/bin/workstate-bootstrap doctor",
+    "./.venv/bin/workstate-bootstrap repair",
     "AGENT_HANDOFF_WORKSPACE_ROOT",
     "AGENT_HANDOFF_STATE_DIR",
     "AGENT_HANDOFF_DASHBOARD_PATH",
@@ -43,15 +43,15 @@ REQUIRED_SNIPPETS = (
 )
 
 REQUIRED_UPDATE_SNIPPETS = (
-    './.venv/bin/pip install --upgrade "mcp-agent-handoff==0.11.2"',
-    './.venv/bin/pip install --upgrade "mcp-agent-orchestrator==0.4.6"',
-    './.venv/bin/pip install --upgrade "agentic-bootstrap==0.5.1"',
-    "./.venv/bin/agentic-bootstrap update --remote-ref v0.1.14",
+    './.venv/bin/pip install --upgrade "mcp-workstate-handoff==0.12.0"',
+    './.venv/bin/pip install --upgrade "mcp-workstate-orchestrator==0.5.0"',
+    './.venv/bin/pip install --upgrade "workstate-bootstrap==0.6.0"',
+    "./.venv/bin/workstate-bootstrap update --remote-ref v0.1.21",
 )
 
 
 def test_consumer_setup_doc_exists_and_is_standalone() -> None:
-    assert DOC_PATH.exists(), "docs/agentic/consumer-setup.md is missing"
+    assert DOC_PATH.exists(), "docs/workstate/consumer-setup.md is missing"
 
     text = DOC_PATH.read_text(encoding="utf-8")
 
@@ -77,5 +77,8 @@ def test_consumer_setup_doc_exists_and_is_standalone() -> None:
     assert 'git+ssh://git@github.com/darce/mcp-agent-handoff.git@v0.4.3' not in pre_lessons
     assert 'git+ssh://git@github.com/darce/mcp-agent-orchestrator.git@v0.1.4' not in pre_lessons
     assert 'git+ssh://git@github.com/darce/agentic-bootstrap.git@v0.2.0' not in pre_lessons
+    assert 'mcp-agent-handoff==' not in pre_lessons
+    assert 'mcp-agent-orchestrator==' not in pre_lessons
+    assert 'agentic-bootstrap' not in pre_lessons
     assert "E17-10" not in pre_lessons, "consumer-setup live instructions must be standalone, not task-plan dependent"
     assert "task plan" not in pre_lessons.lower(), "consumer-setup live instructions must not tell readers to consult the task plan"

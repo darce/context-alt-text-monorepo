@@ -6,7 +6,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MCP_CONFIG_PATH = REPO_ROOT / ".vscode" / "mcp.json"
-INSTRUCTIONS_PATH = REPO_ROOT / "docs" / "agentic" / "instructions.md"
+INSTRUCTIONS_PATH = REPO_ROOT / "docs" / "workstate" / "instructions.md"
 CLAUDE_PATH = REPO_ROOT / "CLAUDE.md"
 HANDOFF_MK_PATH = REPO_ROOT / "mk" / "handoff.mk"
 SLICE_START_INLINE_PATH = REPO_ROOT / "scripts" / "_slice_start_inline.py"
@@ -15,11 +15,13 @@ SLICE_START_INLINE_PATH = REPO_ROOT / "scripts" / "_slice_start_inline.py"
 def test_root_mcp_launchers_do_not_require_current_task_path() -> None:
     payload = json.loads(MCP_CONFIG_PATH.read_text(encoding="utf-8"))
 
-    for server_name in ("mcp-agent-handoff", "mcp-agent-orchestrator"):
+    for server_name in ("workstate-handoff-mcp", "workstate-orchestrator-mcp"):
         args = payload["servers"][server_name]["args"]
         assert "--current-task-path" not in args
         assert "${workspaceFolder}/CURRENT_TASK.json" not in args
-        assert "--exports-dir" in args
+        # Workspace-rooted launch: exports/current-task paths are derived from
+        # the workspace root on demand, never pinned at launch time.
+        assert "--workspace-root" in args
 
 
 def test_shared_docs_describe_current_task_as_on_demand_export() -> None:
@@ -44,11 +46,14 @@ def test_shared_docs_describe_current_task_as_on_demand_export() -> None:
         assert snippet not in instructions_text
 
 
-def test_slice_start_refreshes_dashboard_instead_of_current_task() -> None:
+def test_slice_start_owned_by_canonical_lifecycle_not_bespoke_inline() -> None:
+    # MAINT-workstate-migration-20260530: the bespoke `slice-start` target and
+    # scripts/_slice_start_inline.py were removed; canonical Makefile.d/lifecycle.mk
+    # owns slice-start now (its handler refreshes the dashboard, never
+    # CURRENT_TASK.json). Assert the bespoke surfaces are gone and canonical is wired.
     handoff_mk_text = HANDOFF_MK_PATH.read_text(encoding="utf-8")
-    slice_start_inline_text = SLICE_START_INLINE_PATH.read_text(encoding="utf-8")
+    makefile_text = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
 
-    assert 'scripts/_slice_start_inline.py' in handoff_mk_text
-    assert 'render_handoff_fn(kind="dashboard")' in slice_start_inline_text
-    assert 'render_handoff(kind=\'dashboard\')' in slice_start_inline_text
-    assert 'kind="current_task"' not in slice_start_inline_text
+    assert not SLICE_START_INLINE_PATH.exists()
+    assert "slice-start:" not in handoff_mk_text
+    assert "-include Makefile.d/*.mk" in makefile_text

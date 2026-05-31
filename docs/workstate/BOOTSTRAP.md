@@ -82,27 +82,27 @@ Two MCP servers are registered for this workspace. VS Code and Claude Code manag
 
 Non-interactive harness rule: description-service app commands use `VIRTUAL_ENV= uv run --locked --extra dev ...`; committed MCP configs launch pinned packages via `uvx`. Use `.venv/bin/activate` only as optional interactive shell convenience.
 
-### Core Ledger Server (`agent-handoff-mcp`)
+### Core Ledger Server (`workstate-handoff-mcp`)
 
 Handles task state, review findings, exports/imports, close checks, and artifacts. Run `doctor` to inspect the live registered tool list from the installed package.
 
 ```text
-.vscode/mcp.json  →  env { PATH, AGENT_HANDOFF_ENFORCE_BRANCH=1 }  →  uvx "mcp-agent-handoff==0.11.2" --workspace-root ${workspaceFolder} --state-dir ${workspaceFolder}/.task-state --exports-dir ${workspaceFolder}/.task-state/exports serve-stdio
+.vscode/mcp.json  →  env { PATH, AGENT_HANDOFF_ENFORCE_BRANCH=1 }  →  uvx "mcp-workstate-handoff==0.12.0" --workspace-root ${workspaceFolder} --state-dir ${workspaceFolder}/.task-state --exports-dir ${workspaceFolder}/.task-state/exports serve-stdio
 ```
 
-### Orchestration Server (`agent-orchestrator-mcp`)
+### Orchestration Server (`workstate-orchestrator-mcp`)
 
 Handles daemons, workers, lane management, plan cursors, and turn metrics. Run `doctor` to inspect the live registered tool list from the installed package.
 
 ```text
-.vscode/mcp.json  →  env { PATH, AGENT_HANDOFF_ENFORCE_BRANCH=1 }  →  uvx "mcp-agent-orchestrator==0.4.6" --workspace-root ${workspaceFolder} --state-dir ${workspaceFolder}/.task-state --exports-dir ${workspaceFolder}/.task-state/exports serve-stdio
+.vscode/mcp.json  →  env { PATH, AGENT_HANDOFF_ENFORCE_BRANCH=1 }  →  uvx "mcp-workstate-orchestrator==0.5.0" --workspace-root ${workspaceFolder} --state-dir ${workspaceFolder}/.task-state --exports-dir ${workspaceFolder}/.task-state/exports serve-stdio
 ```
 
 Both servers share `handoff.db` and `mcp-artifacts.db` on disk; SQLite WAL mode makes concurrent readers safe. Install both from PyPI:
 
 ```bash
-uv tool install "mcp-agent-handoff==0.11.2"
-uv tool install "mcp-agent-orchestrator==0.4.6"
+uv tool install "mcp-workstate-handoff==0.12.0"
+uv tool install "mcp-workstate-orchestrator==0.5.0"
 ```
 
 The old repo-intel helpers remain a separate decomposition task and are not part of either package.
@@ -112,7 +112,7 @@ The old repo-intel helpers remain a separate decomposition task and are not part
 - VS Code 1.99+ with Copilot (or other MCP-capable client)
 - `.vscode/mcp.json` already committed to the repo
 - Python 3.11+ plus `uv` / `uvx`
-- Installed `mcp-agent-handoff` and `mcp-agent-orchestrator` from PyPI
+- Installed `mcp-workstate-handoff` and `mcp-workstate-orchestrator` from PyPI
 - Python 3.11+ plus `uvx`, or a scratch venv with the packaged MCP dependencies installed
 
 ### Install Options
@@ -120,40 +120,40 @@ The old repo-intel helpers remain a separate decomposition task and are not part
 Install from PyPI:
 
 ```bash
-uv tool install "mcp-agent-handoff==0.11.2"
-uv tool install "mcp-agent-orchestrator==0.4.6"
+uv tool install "mcp-workstate-handoff==0.12.0"
+uv tool install "mcp-workstate-orchestrator==0.5.0"
 ```
 
 ### Validation
 
-Command Palette → `MCP: List Servers` → both "mcp-agent-handoff" and "mcp-agent-orchestrator" should appear.
+Command Palette → `MCP: List Servers` → both "mcp-workstate-handoff" and "mcp-workstate-orchestrator" should appear.
 
 ```bash
-mcp-agent-handoff --workspace-root "$(pwd)" doctor       # prints the live registered tool list
-mcp-agent-orchestrator --workspace-root "$(pwd)" doctor  # prints the live registered tool list
+mcp-workstate-handoff --workspace-root "$(pwd)" doctor       # prints the live registered tool list
+mcp-workstate-orchestrator --workspace-root "$(pwd)" doctor  # prints the live registered tool list
 ```
 
 ### Available Tools
 
-**`agent-handoff-mcp`** (core ledger): task state, decisions, findings, blockers, tests, actions, artifacts, export/import, close check, session loading, slice closure, and handoff search.
+**`workstate-handoff-mcp`** (core ledger): task state, decisions, findings, blockers, tests, actions, artifacts, export/import, close check, session loading, slice closure, and handoff search.
 
-**`agent-orchestrator-mcp`**: daemon lifecycle, workers, lane management, plan cursors, turn metrics, dispatch, backends, cross-task tools (`switch_task`, `get_review_findings_summary`, `reconcile_review_findings`, `get_latest_slice_review_packet`).
+**`workstate-orchestrator-mcp`**: daemon lifecycle, workers, lane management, plan cursors, turn metrics, dispatch, backends, cross-task tools (`switch_task`, `get_review_findings_summary`, `reconcile_review_findings`, `get_latest_slice_review_packet`).
 
 Example CLI equivalents:
 
 ```bash
 # Core ledger
-mcp-agent-handoff --workspace-root "$(pwd)" state
-mcp-agent-handoff --workspace-root "$(pwd)" dashboard
-mcp-agent-handoff --workspace-root "$(pwd)" handoff-close-check
+mcp-workstate-handoff --workspace-root "$(pwd)" state
+mcp-workstate-handoff --workspace-root "$(pwd)" dashboard
+mcp-workstate-handoff --workspace-root "$(pwd)" handoff-close-check
 
 # Orchestration
-mcp-agent-orchestrator --workspace-root "$(pwd)" orchestrator-start --task-ref <task-ref> --backend codex-cli --model o3-mini
-mcp-agent-orchestrator --workspace-root "$(pwd)" orchestrator-status
-mcp-agent-orchestrator --workspace-root "$(pwd)" orchestrator-pause
-mcp-agent-orchestrator --workspace-root "$(pwd)" orchestrator-resume
-mcp-agent-orchestrator --workspace-root "$(pwd)" orchestrator-stop
-mcp-agent-orchestrator --workspace-root "$(pwd)" dispatch \
+mcp-workstate-orchestrator --workspace-root "$(pwd)" orchestrator-start --task-ref <task-ref> --backend codex-cli --model o3-mini
+mcp-workstate-orchestrator --workspace-root "$(pwd)" orchestrator-status
+mcp-workstate-orchestrator --workspace-root "$(pwd)" orchestrator-pause
+mcp-workstate-orchestrator --workspace-root "$(pwd)" orchestrator-resume
+mcp-workstate-orchestrator --workspace-root "$(pwd)" orchestrator-stop
+mcp-workstate-orchestrator --workspace-root "$(pwd)" dispatch \
   --lane-id <lane-id> \
   --task-ref <task-ref> \
   --backend codex-subagent \
@@ -163,7 +163,7 @@ mcp-agent-orchestrator --workspace-root "$(pwd)" dispatch \
 
 For Codex app sessions on the same machine, prefer the checked-in project-scoped
 adapter at [`../../.codex/config.toml`](../../.codex/config.toml),
-which registers the local stdio server as `mcp-agent-handoff` with the required
+which registers the local stdio server as `mcp-workstate-handoff` with the required
 MCP-toolchain pinned-`uvx` launcher contract and repo-relative
 startup paths; description-service app commands themselves run from the
 uv-managed project `.venv`.
@@ -180,7 +180,7 @@ make mcp-serve-http HOST=0.0.0.0 PORT=9000      # custom bind
 Or directly:
 
 ```bash
-mcp-agent-handoff --workspace-root "$(pwd)" serve-http --host 127.0.0.1 --port 8741
+mcp-workstate-handoff --workspace-root "$(pwd)" serve-http --host 127.0.0.1 --port 8741
 ```
 
 Verify the endpoint is reachable:
@@ -199,7 +199,7 @@ If tools don't appear in VS Code:
 
 1. Check `MCP: List Servers` — server should be listed
 2. Ensure the selected Python environment has `fastmcp`
-3. Test manually: `mcp-agent-handoff --workspace-root "$(pwd)" serve-stdio` (should block on stdin)
+3. Test manually: `mcp-workstate-handoff --workspace-root "$(pwd)" serve-stdio` (should block on stdin)
 4. Check VS Code Output panel → "MCP" for error messages
 
 Handoff guard commands:
@@ -213,7 +213,7 @@ Phase 5 (Verification & Handoff) follows implementation:
 
 1. **5.1 Cross-Lane Verification**: `make check-all` from the root.
 2. **5.2 Documentation Audit**: Verify `docs/`, `CURRENT_TASK.json`, and `CHANGELOG`.
-3. **5.3 Handoff Closure**: `mcp-agent-handoff handoff-close-check --task-ref <task>`.
+3. **5.3 Handoff Closure**: `mcp-workstate-handoff handoff-close-check --task-ref <task>`.
 
 174: **BackendAdapter Protocol**: Handled in `scripts/mcp/backend_adapter.py`. All backends (Codex, Claude, Local) must implement this protocol for `execute()` and reasoning effort resolution. The `adapters/` directory contains specific implementations (e.g., `claude_code.py`).
 
@@ -227,14 +227,14 @@ Phase 5 (Verification & Handoff) follows implementation:
   - tests: `3`
   - findings: `10`
 - Write tools (`record_decision`, `update_next_actions`, `record_test_result`, `report_blocker`, `record_review_finding`, `update_review_finding`) target the active task only.
-- To switch between tasks, use `switch_task(task_ref)` on `agent-orchestrator-mcp`. It auto-archives the outgoing task and restores the target's objective from its archive. This replaces the multi-step `archive_task_state` + `set_handoff_state` workflow.
+- To switch between tasks, use `switch_task(task_ref)` on `workstate-orchestrator-mcp`. It auto-archives the outgoing task and restores the target's objective from its archive. This replaces the multi-step `archive_task_state` + `set_handoff_state` workflow.
 - For in-place updates to the _current_ task (status, objective change), use `set_handoff_state(...)` directly.
 - Optional write provenance is passed as `actor={ "agent"?: str, "branch"?: str, "commit_sha"?: str }`.
 - Optional review finding details are passed as `details={ "line_start"?: int, "line_end"?: int, "fix"?: str }`.
 - `record_review_finding` is unique per `(task_ref, finding_id)`; re-recording the same logical finding updates the existing row and reopens it.
 - `update_review_finding` accepts `finding_id` (preferred logical key) or legacy `finding_db_id`; optional `resolution_notes` is required for `wontfix` / `deferred`, and `reopen_reason` is required for non-open -> `open` transitions.
 - `update_review_finding` with `status="open"` and `reopen_reason` performs the reopen (the former `reopen_review_finding` wrapper is no longer MCP-exposed).
-- `reconcile_review_findings` (on `agent-orchestrator-mcp`) validates state integrity (duplicates, done+open mismatch, stale open findings, provenance completeness, reopen metadata coherence) and can apply safe dedupe fixes.
+- `reconcile_review_findings` (on `workstate-orchestrator-mcp`) validates state integrity (duplicates, done+open mismatch, stale open findings, provenance completeness, reopen metadata coherence) and can apply safe dedupe fixes.
 - `handoff_close_check` runs closure gates, including write-provenance checks and current-commit slice-summary presence, and can fail hard with `enforce=True`.
 - Review finding write operations auto-refresh `CURRENT_TASK.json`.
 - `CURRENT_TASK.json` is a generated view only; if drift is detected, regenerate from DB state.
@@ -247,11 +247,11 @@ over canonical handoff records without reading the full task snapshot.
 
 ```bash
 # CLI: search all record types for a keyword, scoped to a task
-mcp-agent-handoff --workspace-root "$(pwd)" handoff-search \
+mcp-workstate-handoff --workspace-root "$(pwd)" handoff-search \
   --query "retry policy" --task-ref <task-ref>
 
 # CLI: narrow to decisions and blockers, multiple OR terms
-mcp-agent-handoff --workspace-root "$(pwd)" handoff-search \
+mcp-workstate-handoff --workspace-root "$(pwd)" handoff-search \
   --query "retry" --query "timeout" \
   --record-types decision --record-types blocker \
   --task-ref <task-ref> --limit 10
@@ -265,7 +265,7 @@ A count of `-1` for any table means the table is absent and structured search is
 
 `make lane-run` automates worker execution via `codex exec`. The pipeline:
 
-1. `agent_orchestrator_mcp.orchestration.lane_prompt` renders an actionable worker prompt from MCP state (open lane messages, pending actions, open blockers, open findings).
+1. `workstate_orchestrator_mcp.orchestration.lane_prompt` renders an actionable worker prompt from MCP state (open lane messages, pending actions, open blockers, open findings).
 2. `codex exec` runs in the lane worktree with that prompt.
 3. The worker outputs a structured JSON result matching the schema from `scripts/mcp/lane_result.py schema`.
 4. `scripts/mcp/lane_result.py handoff` converts the result into a `scripts/worktree-lane report` call.

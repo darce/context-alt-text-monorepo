@@ -1,6 +1,6 @@
 # Consumer Setup
 
-Use this guide when you want another private Daniel-owned repository to consume the hoisted agentic system without copying files by hand.
+Use this guide when you want another private Daniel-owned repository to consume the hoisted workstate system without copying files by hand.
 
 ## Prerequisites
 
@@ -15,20 +15,20 @@ Install the three package surfaces from PyPI, then materialize the shared overla
 
 ```bash
 python3 -m venv .venv
-./.venv/bin/pip install "mcp-agent-handoff==0.11.2"
-./.venv/bin/pip install "mcp-agent-orchestrator==0.4.6"
-./.venv/bin/pip install "agentic-bootstrap==0.5.1"
+./.venv/bin/pip install "mcp-workstate-handoff==0.12.0"
+./.venv/bin/pip install "mcp-workstate-orchestrator==0.5.0"
+./.venv/bin/pip install "workstate-bootstrap==0.6.0"
 
-./.venv/bin/agentic-bootstrap install --target . --remote-ref v0.1.14
+./.venv/bin/workstate-bootstrap install --target . --remote-ref v0.1.21
 ```
 
-The install flow clones the shared agentic surface into `.agentic/remote/`, creates the overlay symlinks, writes `.agentic-overlay.json`, and wires the local MCP config files.
-Keep the overlay ref pinned to the reviewed monorepo tag (`v0.1.14`) until a newer release set is explicitly promoted.
+The install flow clones the shared workstate surface into `.workstate/remote/`, creates the overlay symlinks, writes `.workstate-bootstrap.json`, and wires the local MCP config files.
+Keep the overlay ref pinned to the reviewed workstate tag (`v0.1.21`) until a newer release set is explicitly promoted.
 
 After install, run one sanity check from the consumer root:
 
 ```bash
-./.venv/bin/agentic-bootstrap doctor
+./.venv/bin/workstate-bootstrap doctor
 ```
 
 ## State Paths
@@ -56,39 +56,39 @@ If you set explicit relative paths, they resolve from `AGENT_HANDOFF_WORKSPACE_R
 
 ## Update Workflow
 
-Use the package manager for MCP package upgrades and `agentic-bootstrap update` for the overlay clone:
+Use the package manager for MCP package upgrades and `workstate-bootstrap update` for the overlay clone:
 
 ```bash
-./.venv/bin/pip install --upgrade "mcp-agent-handoff==0.11.2"
-./.venv/bin/pip install --upgrade "mcp-agent-orchestrator==0.4.6"
-./.venv/bin/pip install --upgrade "agentic-bootstrap==0.5.1"
+./.venv/bin/pip install --upgrade "mcp-workstate-handoff==0.12.0"
+./.venv/bin/pip install --upgrade "mcp-workstate-orchestrator==0.5.0"
+./.venv/bin/pip install --upgrade "workstate-bootstrap==0.6.0"
 
-./.venv/bin/agentic-bootstrap update --remote-ref v0.1.14
+./.venv/bin/workstate-bootstrap update --remote-ref v0.1.21
 ```
 
 Keep both the package versions and the overlay ref pinned to the reviewed release set. When a newer release set is approved, bump the exact package versions and the `--remote-ref` together.
 
-`agentic-bootstrap update` fetches the shared clone, checks out the requested ref, re-validates symlinks, and refreshes `.agentic-overlay.json` with the new remote SHA.
+`workstate-bootstrap update` fetches the shared clone, checks out the requested ref, re-validates symlinks, and refreshes `.workstate-bootstrap.json` with the new remote SHA.
 
 ## Doctor and Repair
 
-Use `agentic-bootstrap doctor` when the overlay looks wrong but you want diagnosis first:
+Use `workstate-bootstrap doctor` when the overlay looks wrong but you want diagnosis first:
 
 ```bash
-./.venv/bin/agentic-bootstrap doctor
+./.venv/bin/workstate-bootstrap doctor
 ```
 
 Doctor should verify:
 
-- the clone exists at `.agentic/remote/`
+- the clone exists at `.workstate/remote/`
 - overlay symlinks resolve cleanly
 - `core.hooksPath` still points at `scripts/hooks/git`
 - the runtime can discover `AGENT_HANDOFF_WORKSPACE_ROOT` and `.task-state/handoff.db`
 
-Use `agentic-bootstrap repair` when the overlay is missing, corrupt, or drifted:
+Use `workstate-bootstrap repair` when the overlay is missing, corrupt, or drifted:
 
 ```bash
-./.venv/bin/agentic-bootstrap repair
+./.venv/bin/workstate-bootstrap repair
 ```
 
 If the shared clone contains uncommitted files, repair must stop and name the dirty files unless you pass the explicit dirty-worktree override supported by the tool.
@@ -141,7 +141,7 @@ This means the runtime could not infer a git-backed consumer root and you did no
 
 Broken overlay symlinks
 
-Run `./.venv/bin/agentic-bootstrap doctor` first. If the clone or symlinks are broken, use `./.venv/bin/agentic-bootstrap repair` instead of manually recreating links.
+Run `./.venv/bin/workstate-bootstrap doctor` first. If the clone or symlinks are broken, use `./.venv/bin/workstate-bootstrap repair` instead of manually recreating links.
 
 Wrong MCP launcher path
 
@@ -169,7 +169,7 @@ The overlay relies on symlinks and git-hook path wiring. Windows support is defe
 
 ### What needed manual intervention
 
-- The orchestrator's `pyproject.toml` pins `agent-handoff-mcp` by exact git URL (`@v0.4.1`). Publishing handoff `v0.4.2` without bumping that URL pin caused pip resolution conflicts when consumers installed all three packages explicitly. Resolution: published `mcp-agent-orchestrator@v0.1.3` with the URL bumped to `@v0.4.2`, then re-pinned the consumer-setup doc to `@v0.1.3`.
+- The orchestrator's `pyproject.toml` pins `workstate-handoff-mcp` by exact git URL (`@v0.4.1`). Publishing handoff `v0.4.2` without bumping that URL pin caused pip resolution conflicts when consumers installed all three packages explicitly. Resolution: published `mcp-agent-orchestrator@v0.1.3` with the URL bumped to `@v0.4.2`, then re-pinned the consumer-setup doc to `@v0.1.3`.
 - `agentic-bootstrap` resolved via `PATH` after `source .venv/bin/activate` matched a global `agentic-bootstrap` install instead of the venv binary on consumers where global script shims sat ahead of the venv on `PATH`. Workaround: always invoke via the explicit `./.venv/bin/agentic-bootstrap` path. Doc and bootstrap install instructions should prefer the explicit-path form.
 - `agentic-bootstrap` v0.2.0 has no `--version` flag (only subcommands `install | status | doctor | update | repair`). Use `pip show agentic-bootstrap` for version reporting until a `--version` flag is added.
 - `agentic-bootstrap doctor --target <empty-dir>` correctly exits 1 with `missing_manifest: .agentic-overlay.json`. Doctor is meant to flag drift, not to be used as a pre-install smoke. Only call `doctor` after `install`.

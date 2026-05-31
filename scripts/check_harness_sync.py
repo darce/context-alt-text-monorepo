@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check shared Claude/VS Code harness surfaces against harness-protocol.yaml.
 
-The contract at ``docs/agentic/contracts/harness-protocol.yaml`` defines four
+The contract at ``docs/workstate/contracts/harness-protocol.yaml`` defines four
 sections that every managed harness must keep in sync:
 
 * ``cold_start.shared_steps``   — phrases that must appear in each shared
@@ -48,15 +48,16 @@ except ModuleNotFoundError:
     from overlay_resolver import OverlayResolverError, resolve_surface
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CONTRACT_PATH = REPO_ROOT / "docs" / "agentic" / "contracts" / "harness-protocol.yaml"
+CONTRACT_PATH = REPO_ROOT / "docs" / "workstate" / "contracts" / "harness-protocol.yaml"
 VSCODE_SETTINGS_PATH = REPO_ROOT / ".vscode" / "settings.json"
-PYTHON_EXPORTS_RELATIVE = Path("agent_handoff_mcp/__init__.py")
-CONTRACT_RELATIVE = Path("docs/agentic/contracts/harness-protocol.yaml")
+PYTHON_EXPORTS_RELATIVE = Path("workstate_handoff_mcp/__init__.py")
+CONTRACT_RELATIVE = Path("docs/workstate/contracts/harness-protocol.yaml")
 FIXTURE_COPY_FILES = (
     Path(".vscode/settings.json"),
     Path(".claude/settings.json"),
     Path(".github/hooks/guard-main-branch.py"),
     Path(".github/hooks/guard-worktree-drift.py"),
+    Path("scripts/hooks/_active_task_context.py"),
     Path("scripts/hooks/_branch_isolation_guard.py"),
     Path("scripts/hooks/_guard_main_branch_inline.py"),
     Path("scripts/hooks/_harness_protocol.py"),
@@ -64,7 +65,7 @@ FIXTURE_COPY_FILES = (
     Path("scripts/hooks/guard-main-branch.sh"),
     Path("scripts/hooks/guard-worktree-drift.sh"),
 )
-FIXTURE_PACKAGE_SRC = Path(".test-fixtures/agent-handoff-mcp/src")
+FIXTURE_PACKAGE_SRC = Path(".test-fixtures/workstate-handoff-mcp/src")
 EDIT_TOOL_MATCHER = "Edit|Write|apply_patch|create_file|replace_string_in_file|multi_replace_string_in_file"
 REQUIRED_VSCODE_SETTINGS = {
     "files.autoSave": "off",
@@ -73,7 +74,6 @@ REQUIRED_VSCODE_SETTINGS = {
     "terminal.integrated.agentHostProfile.osx": {"path": "/bin/bash"},
 }
 REQUIRED_PROTECTED_MAIN_PATTERNS = (
-    "docs/tasks/**/*.md",
     "docs/assessments/**",
     "docs/scopes/**",
     "docs/epics/**",
@@ -150,20 +150,24 @@ def _copy_package_source_root(local_root: Path, destination: Path, *, package_na
     shutil.copytree(package_dir, destination / package_dir.name)
 
 
-def _has_contract_shaped_overlay_manifest(repo_root: Path) -> bool:
-    manifest_path = repo_root / ".agentic-overlay.json"
+def _has_workstate_bootstrap_manifest(repo_root: Path) -> bool:
+    manifest_path = repo_root / ".workstate-bootstrap.json"
     if not manifest_path.is_file():
         return False
     try:
         payload = json.loads(manifest_path.read_text())
-    except (OSError, json.JSONDecodeError):
+    except OSError:
         return False
-    return isinstance(payload, dict) and isinstance(payload.get("surfaces"), dict)
+    except json.JSONDecodeError as exc:
+        # A malformed manifest is an infrastructure error, not a resilient
+        # fall-through; only valid-but-non-contract-shaped payloads fall back.
+        raise OverlayResolverError(f"workstate bootstrap manifest is not valid JSON: {exc}") from exc
+    return isinstance(payload, dict) and "surfaces" in payload
 
 
 def _load_contract(*, repo_root: Path = REPO_ROOT) -> dict:
     contract_path = repo_root / CONTRACT_RELATIVE
-    if not _has_contract_shaped_overlay_manifest(repo_root):
+    if not _has_workstate_bootstrap_manifest(repo_root):
         payload = yaml.safe_load(contract_path.read_text()) or {}
         if not isinstance(payload, dict):
             raise ValueError("harness-protocol.yaml must parse to a mapping")
@@ -196,7 +200,7 @@ def _load_contract(*, repo_root: Path = REPO_ROOT) -> dict:
 
 
 def _format_success_message(*, repo_root: Path = REPO_ROOT) -> str:
-    if not _has_contract_shaped_overlay_manifest(repo_root):
+    if not _has_workstate_bootstrap_manifest(repo_root):
         return "check-harness-sync: OK"
 
     counts: Counter[str] = Counter(
@@ -256,7 +260,7 @@ def _load_hook_pairs(*, repo_root: Path = REPO_ROOT) -> tuple[set[tuple[str, str
 def _load_python_exports(*, repo_root: Path = REPO_ROOT) -> set[str]:
     exports_path = _resolve_package_file(
         repo_root / PYTHON_EXPORTS_RELATIVE,
-        package_name="agent_handoff_mcp",
+        package_name="workstate_handoff_mcp",
         relative_name="__init__.py",
     )
     module = ast.parse(exports_path.read_text(), filename=str(exports_path))
@@ -272,7 +276,7 @@ def _load_python_exports(*, repo_root: Path = REPO_ROOT) -> set[str]:
                             raise ValueError("__all__ must contain only string literals")
                         exports.add(elt.value)
                     return exports
-    raise ValueError("agent_handoff_mcp.__all__ not found")
+    raise ValueError("workstate_handoff_mcp.__all__ not found")
 
 
 def _check_hooks(contract: dict, *, repo_root: Path = REPO_ROOT) -> list[str]:
@@ -282,15 +286,21 @@ def _check_hooks(contract: dict, *, repo_root: Path = REPO_ROOT) -> list[str]:
     for stage in ("pre_tool_use", "post_tool_use"):
         for item in hook_spec.get(stage, []):
             matcher = item["matcher"]
+            # Harnesses may surface MCP tools under different names (e.g. VS Code
+            # uses `mcp_workstate-handoff-mcp_*`, Claude Code uses `mcp__workstate-handoff-mcp__*`).
+            # Per-harness matchers override the shared `matcher` when present.
+            claude_matcher = item.get("claude_matcher", matcher)
+            vscode_matcher = item.get("vscode_matcher", matcher)
+            codex_matcher = item.get("codex_matcher", matcher)
             claude_command = item["claude_command"]
             vscode_command = item["vscode_command"]
-            if (matcher, claude_command) not in claude_pairs:
+            if (claude_matcher, claude_command) not in claude_pairs:
                 errors.append(f"missing Claude hook `{item['id']}` ({stage})")
-            if (matcher, vscode_command) not in vscode_pairs:
+            if (vscode_matcher, vscode_command) not in vscode_pairs:
                 errors.append(f"missing VS Code hook `{item['id']}` ({stage})")
             codex_command = item.get("codex_command")
             if isinstance(codex_command, str) and codex_command:
-                if (matcher, codex_command) not in codex_pairs:
+                if (codex_matcher, codex_command) not in codex_pairs:
                     errors.append(f"missing Codex hook `{item['id']}` ({stage})")
     return errors
 
@@ -422,7 +432,7 @@ def _build_guard_fixture(contract: dict, *, repo_root: Path) -> tuple[tempfile.T
     _copy_package_source_root(
         repo_root / FIXTURE_PACKAGE_SRC,
         package_src,
-        package_name="agent_handoff_mcp",
+        package_name="workstate_handoff_mcp",
     )
 
     contract_path = repo / CONTRACT_RELATIVE
@@ -540,12 +550,13 @@ def _validate_surface_patterns(spec: dict, *, key: str, sample_paths: tuple[str,
 
 
 def _pattern_targets_planning_surface(pattern: str) -> bool:
-    if pattern.startswith("docs/tasks/archive/") or pattern == "docs/tasks/archive/**":
-        return False
+    # Top-level `docs/tasks/**` is an operator-facing planning surface that is
+    # explicitly permitted on main (see contract permitted_main_surfaces), so it
+    # is intentionally absent from the prefixes below. Package-local task plans
+    # (`packages/*/docs/tasks/`) remain protected.
     return any(
         pattern.startswith(prefix)
         for prefix in (
-            "docs/tasks/",
             "docs/assessments/",
             "docs/scopes/",
             "docs/epics/",
@@ -590,7 +601,7 @@ def _check_branch_isolation(contract: dict, *, repo_root: Path = REPO_ROOT) -> l
             sample_paths=(
                 "CLAUDE.md",
                 ".github/copilot-instructions.md",
-                "docs/agentic/contracts/harness-protocol.yaml",
+                "docs/workstate/contracts/harness-protocol.yaml",
                 "DASHBOARD.txt",
             ),
         )
@@ -759,7 +770,9 @@ def _check_branch_isolation(contract: dict, *, repo_root: Path = REPO_ROOT) -> l
             if shell_code != 2 or "BLOCKED" not in shell_stderr:
                 errors.append(f"branch_isolation: Claude guard did not block root protected file `{root_file}`")
 
-        planning_path = fixture_repo / "docs" / "tasks" / "12.0" / "fixture-task-plan.md"
+        # docs/tasks/** is now an operator-permitted surface on main; use a
+        # surface that remains protected (docs/specs/**) to exercise the guard.
+        planning_path = fixture_repo / "docs" / "specs" / "12.0" / "fixture-spec.md"
         _ensure_parent(planning_path)
         _, output, _ = _run_python_hook(
             vscode_guard,
@@ -865,7 +878,7 @@ def _seed_active_task(repo: Path, *, task_ref: str, branch: str, target_worktree
             (
                 "import json; "
                 "from pathlib import Path; "
-                "from agent_handoff_mcp import RuntimeConfig, configure_runtime, get_handoff_state, set_handoff_state; "
+                "from workstate_handoff_mcp import RuntimeConfig, configure_runtime, get_handoff_state, set_handoff_state; "
                 f"configure_runtime(RuntimeConfig.for_repo(Path({str(repo)!r}))); "
                 "identity = get_handoff_state(sections='identity'); "
                 "parsed = json.loads(identity) if isinstance(identity, str) else identity; "
@@ -970,7 +983,7 @@ _DASHBOARD_EXTRA_FILES = (
     Path("CLAUDE.md"),
     Path(".github/copilot-instructions.md"),
     Path("Makefile"),
-    Path("docs/agentic/contracts/agent-orchestrator-mcp.md"),
+    Path("docs/workstate/contracts/workstate-orchestrator-mcp.md"),
 )
 
 
@@ -1043,7 +1056,7 @@ def _check_python_api_surface(contract: dict, *, repo_root: Path = REPO_ROOT) ->
     exports = _load_python_exports(repo_root=repo_root)
     required = set(contract.get("python_api_fallback", {}).get("required_exports", []))
     missing = sorted(required - exports)
-    return [f"missing agent_handoff_mcp export `{name}`" for name in missing]
+    return [f"missing workstate_handoff_mcp export `{name}`" for name in missing]
 
 
 def run_checks(contract: dict, *, check_api_surface: bool = False, repo_root: Path = REPO_ROOT) -> list[str]:

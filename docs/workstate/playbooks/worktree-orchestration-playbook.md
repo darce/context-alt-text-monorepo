@@ -10,7 +10,7 @@ For Codex-specific bootstrap, backend configuration, model/reasoning-effort sett
 
 Three durable layers underpin lane orchestration:
 
-- **MCP shared state**: canonical truth for task state, lane registrations, assignments, findings, blockers, and worker reports. Accessed through `agent-handoff-mcp` and `agent-orchestrator-mcp`.
+- **MCP shared state**: canonical truth for task state, lane registrations, assignments, findings, blockers, and worker reports. Accessed through `workstate-handoff-mcp` and `workstate-orchestrator-mcp`.
 - **Lane manifest**: each task's orchestration config at `config/lane-orchestration/<task-ref>.json`. Source of truth for lane IDs, branch names, owned paths, commit scope, verification commands, merge order, and resource hints.
 - **Worktree isolation**: each lane runs on its own `codex/*` branch in a sibling worktree. Lanes cannot see each other's uncommitted work.
 
@@ -99,7 +99,7 @@ make lane-handoff                                              # Commit + report
 make lane-report STATUS=blocked MERGE_READY=0 SUMMARY="..." MESSAGE="..."
 ```
 
-For MCP-capable hosts, the orchestration control surface is available directly via `agent-orchestrator-mcp`:
+For MCP-capable hosts, the orchestration control surface is available directly via `workstate-orchestrator-mcp`:
 
 - `orchestrator_start(task_ref, backend, poll_interval, single_pass, model=None)`
 - `orchestrator_status()`, `orchestrator_stop()`, `orchestrator_pause()`, `orchestrator_resume()`

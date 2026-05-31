@@ -44,8 +44,8 @@ Produce a structured, MCP-recorded security assessment with actionable findings.
 
 This audit covers the monorepo content within the plugin boundary rule:
 
-- Installed `agent-handoff-mcp` — MCP server handling task state, review findings, decisions
-- Installed `agent-orchestrator-mcp` — MCP server handling orchestration, lane management, worker daemons
+- Installed `workstate-handoff-mcp` — MCP server handling task state, review findings, decisions
+- Installed `workstate-orchestrator-mcp` — MCP server handling orchestration, lane management, worker daemons
 - `packages/codex-subagent-bridge/` — Bridge for external agent integration
 - `apps/prototype-description-service/` — Python backend service
 - `apps/prototype-wp-alt-context/` — WordPress plugin (PHP + React/TS)
@@ -73,8 +73,8 @@ Out of scope: WordPress core, LocalWP config, `~/Local Sites/`, system config, `
 
 Before auditing, build understanding of the attack surface.
 
-1. Read the tech stack map: `docs/agentic/maps/tech-stack.md`.
-2. Read MCP contracts: `docs/agentic/contracts/agent-handoff-mcp.md` and `docs/agentic/contracts/agent-orchestrator-mcp.md`.
+1. Read the tech stack map: `docs/workstate/maps/tech-stack.md`.
+2. Read MCP contracts: `docs/workstate/contracts/workstate-handoff-mcp.md` and `docs/workstate/contracts/workstate-orchestrator-mcp.md`.
 3. Identify trust boundaries:
    - Agent ↔ MCP server (tool calls over stdio/HTTP)
    - MCP server ↔ SQLite database (local filesystem)
@@ -115,7 +115,7 @@ For Python packages:
 ls packages/*/requirements*.txt packages/*/poetry.lock packages/*/uv.lock 2>/dev/null
 
 # Review direct dependencies
-python -m pip show mcp-agent-handoff mcp-agent-orchestrator
+python -m pip show mcp-workstate-handoff mcp-workstate-orchestrator
 ```
 
 For Node.js:
@@ -163,11 +163,11 @@ This is the most critical phase for this monorepo. MCP servers handle cross-agen
 Read and audit these files:
 
 ```
-agent_handoff_mcp.api
-agent_handoff_mcp.core
-agent_handoff_mcp.shared_db_utils
-agent_orchestrator_mcp.api
-agent_orchestrator_mcp.lanes
+workstate_handoff_mcp.api
+workstate_handoff_mcp.core
+workstate_handoff_mcp.shared_db_utils
+workstate_orchestrator_mcp.api
+workstate_orchestrator_mcp.lanes
 ```
 
 ## Phase 4 — CI/CD Pipeline Security

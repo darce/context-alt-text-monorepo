@@ -14,8 +14,9 @@ DEFAULT_SURFACE_ROOTS: dict[SurfaceKind, Path] = {
     "hooks": Path(".github/hooks"),
     "commands": Path(".claude/commands"),
     "prompts": Path(".github/prompts"),
-    "contracts": Path("docs/agentic/contracts"),
+    "contracts": Path("docs/workstate/contracts"),
 }
+MISSING_OVERLAY_ROOT = Path(".workstate/__missing_overlay_root__")
 
 
 class OverlayResolverError(RuntimeError):
@@ -35,17 +36,56 @@ class ResolvedPath:
 
 
 def _load_overlay_manifest(project_root: Path) -> dict | None:
-    manifest_path = project_root / ".agentic-overlay.json"
+    manifest_path = project_root / ".workstate-bootstrap.json"
     if not manifest_path.is_file():
         return None
 
     try:
         payload = json.loads(manifest_path.read_text())
     except json.JSONDecodeError as exc:
-        raise OverlayResolverError(f"overlay manifest is not valid JSON: {exc}") from exc
+        raise OverlayResolverError(f"workstate bootstrap manifest is not valid JSON: {exc}") from exc
     if not isinstance(payload, dict):
-        raise OverlayResolverError("overlay manifest must parse to a mapping")
+        raise OverlayResolverError("workstate bootstrap manifest must parse to a mapping")
     return payload
+
+
+def _surface_path_matches_kind(path: str, kind: SurfaceKind) -> bool:
+    surface_path = Path(path)
+    if kind == "hooks":
+        return surface_path in {Path(".github/hooks"), Path("scripts/hooks")}
+
+    default_path = DEFAULT_SURFACE_ROOTS[kind]
+    default_parts = default_path.parts
+    return surface_path == default_path or surface_path.parts[-len(default_parts) :] == default_parts
+
+
+def _surface_roots_from_bootstrap_manifest(project_root: Path, surfaces: list[object], kind: SurfaceKind) -> tuple[Path, Path] | None:
+    shared_root: Path | None = None
+    local_root: Path | None = None
+
+    for surface in surfaces:
+        if not isinstance(surface, dict):
+            raise OverlayResolverError("workstate bootstrap manifest `surfaces` entries must be mappings")
+        path = surface.get("path")
+        source = surface.get("source")
+        if not isinstance(path, str) or not path.strip():
+            raise OverlayResolverError("workstate bootstrap manifest `surfaces[].path` must be a non-empty string")
+        if not isinstance(source, str) or not source.strip():
+            raise OverlayResolverError("workstate bootstrap manifest `surfaces[].source` must be a non-empty string")
+        if not _surface_path_matches_kind(path, kind):
+            continue
+
+        root = project_root / path
+        if source == "local":
+            local_root = root
+        elif source in {"shared", "generated", "lifecycle"}:
+            shared_root = shared_root or root
+        else:
+            raise OverlayResolverError(f"unsupported workstate bootstrap surface source: {source}")
+
+    if shared_root is None and local_root is None:
+        return None
+    return shared_root or project_root / MISSING_OVERLAY_ROOT, local_root or project_root / MISSING_OVERLAY_ROOT
 
 
 def _surface_roots(project_root: Path, kind: SurfaceKind) -> tuple[Path, Path] | None:
@@ -54,12 +94,12 @@ def _surface_roots(project_root: Path, kind: SurfaceKind) -> tuple[Path, Path] |
         return None
 
     surfaces = manifest.get("surfaces")
-    # `.agentic-overlay.json` is shared between two consumers with different
-    # schemas: agentic-bootstrap writes a state file with `surfaces: [list]`,
-    # the overlay-resolver contract expects `surfaces: {dict}`. When the
-    # manifest is not contract-shaped, fall back to local-only resolution
-    # rather than failing every caller. Resolved durably once the upstream
-    # bootstrap-state file is renamed to `.agentic-bootstrap.json`.
+    if isinstance(surfaces, list):
+        return _surface_roots_from_bootstrap_manifest(project_root, surfaces, kind)
+
+    # `.workstate-bootstrap.json` is usually the bootstrap ledger with
+    # `surfaces: [list]`. Some tests and older overlay contracts use
+    # `surfaces: {dict}` to exercise explicit shared/local root replacement.
     if not isinstance(surfaces, dict):
         return None
 
@@ -124,7 +164,7 @@ def _validate_entry(path: Path, *, project_root: Path, label: str) -> None:
     if path.is_symlink() and not path.exists():
         raise BrokenOverlayError(
             f"{path.relative_to(project_root)} points to a missing {label} overlay target. "
-            "Run agentic-bootstrap repair to restore the overlay."
+            "Run workstate-bootstrap repair to restore the overlay."
         )
 
 
@@ -133,7 +173,7 @@ def _is_declared_remote_root(path: Path, *, project_root: Path) -> bool:
         relative_path = path.relative_to(project_root)
     except ValueError:
         return False
-    return relative_path.parts[:2] == (".agentic", "remote")
+    return relative_path.parts[:2] == (".workstate", "remote")
 
 
 def _resolve_shared_root(kind: SurfaceKind, *, project_root: Path, declared_root: Path) -> Path:

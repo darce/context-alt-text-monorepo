@@ -217,7 +217,7 @@ Design tasks follow the same template but produce investigation and design artif
 
 ### Package-local tasks
 
-For single-package tasks, replace "Owning Epic" with "Project" and "Epic Short ID" with "Task ID". Use the package short name as prefix (e.g. `AHMCP` for `agent-handoff-mcp`).
+For single-package tasks, replace "Owning Epic" with "Project" and "Epic Short ID" with "Task ID". Use the package short name as prefix (e.g. `AHMCP` for `workstate-handoff-mcp`).
 
 ### Branch-per-task convention
 
@@ -289,9 +289,9 @@ Output-contract-v2 pipeline artifacts:
 
 | Stage | Artifact | Path |
 |-------|----------|------|
-| Assessment | Output state-keeping report | external `darce/mcp-agent-handoff` docs |
-| Spec | Output contract v2 spec | external `darce/mcp-agent-handoff` docs |
-| ADR | Typed tool surface consolidation | `docs/adrs/ADR-005-agent-handoff-mcp-typed-tool-surface-consolidation.md` |
-| Task plan (Tier 1) | Bounded rendering + mutation output | external `darce/mcp-agent-handoff` docs |
-| Task plan (Tier 2) | Response envelope rollout | external `darce/mcp-agent-handoff` docs |
-| Task plan (design) | Tool surface consolidation ADR | external `darce/mcp-agent-handoff` docs |
+| Assessment | Output state-keeping report | external `darce/mcp-workstate-handoff` docs |
+| Spec | Output contract v2 spec | external `darce/mcp-workstate-handoff` docs |
+| ADR | Typed tool surface consolidation | `docs/adrs/ADR-005-workstate-handoff-mcp-typed-tool-surface-consolidation.md` |
+| Task plan (Tier 1) | Bounded rendering + mutation output | external `darce/mcp-workstate-handoff` docs |
+| Task plan (Tier 2) | Response envelope rollout | external `darce/mcp-workstate-handoff` docs |
+| Task plan (design) | Tool surface consolidation ADR | external `darce/mcp-workstate-handoff` docs |

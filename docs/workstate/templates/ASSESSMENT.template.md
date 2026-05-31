@@ -4,7 +4,7 @@
 >
 > - **Date**: [YYYY-MM-DD]
 > - **Author**: {{MODEL_IDENTITY}}
-> - **Scope**: [package or surface being assessed, e.g. installed `agent-handoff-mcp`]
+> - **Scope**: [package or surface being assessed, e.g. installed `workstate-handoff-mcp`]
 > - **Status**: [Draft / Reviewed / Superseded]
 >
 > **Purpose:** Assessments surface problems and verify them against code.

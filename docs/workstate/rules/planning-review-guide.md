@@ -30,7 +30,7 @@ Review the planning document against: (1) the current codebase, (2) adjacent pla
 Hard rules:
 
 - Do not present a finding in chat unless it has a stable `finding_id` in MCP.
-- **Never paste a finding list into the planning document.** Findings live in `agent-handoff-mcp` (`review_findings(review={"operation":"record"|"batch_record", ...})`). The `scripts/hooks/guard-task-plan-findings.py` hook rejects inlined finding lists. See [branch-review-guide.md § Review Findings Placement](branch-review-guide.md#review-findings-placement-mandatory).
+- **Never paste a finding list into the planning document.** Findings live in `workstate-handoff-mcp` (`review_findings(review={"operation":"record"|"batch_record", ...})`). The `scripts/hooks/guard-task-plan-findings.py` hook rejects inlined finding lists. See [branch-review-guide.md § Review Findings Placement](branch-review-guide.md#review-findings-placement-mandatory).
 
 ---
 
@@ -60,7 +60,7 @@ When reviewing the latest completed planning slice, prefer the MCP-backed slice 
 
 ### Handoff-only Fallback
 
-When `agent-orchestrator-mcp` is not loaded:
+When `workstate-orchestrator-mcp` is not loaded:
 
 1. `load_session`
 2. `search_handoff(queries=["slice_complete"], record_types=["decision"], limit=1)`

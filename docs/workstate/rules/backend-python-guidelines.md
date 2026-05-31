@@ -80,7 +80,7 @@ recognition/
 
 ## Write Caller Ordering
 
-For `agent-handoff-mcp` write paths, resolve `task_ref` before calling `collect_target_context_warnings(...)`.
+For `workstate-handoff-mcp` write paths, resolve `task_ref` before calling `collect_target_context_warnings(...)`.
 
 Correct pattern:
 

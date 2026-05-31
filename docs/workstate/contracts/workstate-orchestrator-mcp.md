@@ -1,18 +1,18 @@
 ---
-boundary_owner: agentic-tooling
+boundary_owner: workstate-tooling
 ---
 
-# Agent Orchestrator MCP Contract
+# Workstate Orchestrator MCP Contract
 
 ## Purpose
 
-`agent-orchestrator-mcp` is the MCP server for orchestration, daemon lifecycle, lane management, worker coordination, plan cursors, and turn metrics. It was extracted from `agent-handoff-mcp` in E12-5 and shares `handoff.db` and `mcp-artifacts.db` with `agent-handoff-mcp`; SQLite WAL mode makes concurrent readers safe. Use `mcp-agent-orchestrator --workspace-root "$(pwd)" doctor` to inspect the live registered tool surface from the installed package.
+`workstate-orchestrator-mcp` is the MCP server for orchestration, daemon lifecycle, lane management, worker coordination, plan cursors, and turn metrics. It was extracted from `workstate-handoff-mcp` in E12-5 and shares `handoff.db` and `mcp-artifacts.db` with `workstate-handoff-mcp`; SQLite WAL mode makes concurrent readers safe. Use `mcp-workstate-orchestrator --workspace-root "$(pwd)" doctor` to inspect the live registered tool surface from the installed package.
 
-For task state, review findings, artifacts, and close checks see [`agent-handoff-mcp.md`](agent-handoff-mcp.md).
+For task state, review findings, artifacts, and close checks see [`workstate-handoff-mcp.md`](workstate-handoff-mcp.md).
 
 ## Runtime Configuration
 
-CLI args take precedence over env vars. Configuration follows the same shape as `agent-handoff-mcp`.
+CLI args take precedence over env vars. Configuration follows the same shape as `workstate-handoff-mcp`.
 
 Supported config inputs:
 
@@ -32,17 +32,17 @@ Default workspace-owned state:
 Runtime bootstrap:
 
 ```bash
-uv tool install "mcp-agent-handoff==0.11.2"
-uv tool install "mcp-agent-orchestrator==0.4.6"
+uv tool install "mcp-workstate-handoff==0.12.0"
+uv tool install "mcp-workstate-orchestrator==0.5.0"
 
 # Validate runtime wiring and orchestration/ directory resolution
-mcp-agent-orchestrator --workspace-root "$(pwd)" doctor
+mcp-workstate-orchestrator --workspace-root "$(pwd)" doctor
 ```
 
 Notes:
 
 - `doctor` verifies the `orchestration/` directory, daemon script presence, and DB accessibility.
-- When developing the external orchestrator repo from source, run its package tests from that checkout. This monorepo consumes the installed `agent-orchestrator-mcp` entrypoint.
+- When developing the external orchestrator repo from source, run its package tests from that checkout. This monorepo consumes the installed `workstate-orchestrator-mcp` entrypoint.
 
 ## MCP Tool Surface
 
@@ -133,7 +133,7 @@ Behavioral constraints:
 
 - The `identity` token in `sections` is a special override that requests only the `active` and `limits` envelope fields; it cancels all other section tokens. To request data sections alongside identity, omit the `identity` token since identity fields are always included unconditionally.
 - `evaluate_review_ready` reads test evidence from `state["data"]["tests_recent"]` (the nested envelope path). Callers that mock the state for testing must place `tests_recent` under `data`.
-- Boundary-file detection covers the monorepo-owned orchestration and contract surfaces reviewed from this checkout, for example `apps/`, `mk/`, `config/lane-orchestration/`, and `docs/agentic/contracts/`. The installed orchestrator package remains the source of truth for the exact prefix constants; external package implementation changes are reviewed in `darce/mcp-agent-orchestrator`.
+- Boundary-file detection covers the monorepo-owned orchestration and contract surfaces reviewed from this checkout, for example `apps/`, `mk/`, `config/lane-orchestration/`, and `docs/workstate/contracts/`. The installed orchestrator package remains the source of truth for the exact prefix constants; external package implementation changes are reviewed in `darce/mcp-workstate-orchestrator`.
 
 ## `get_metrics_summary` Snapshot Shape
 
@@ -324,7 +324,7 @@ Lane manifests at `config/lane-orchestration/<task-ref>.json` support these hard
 
 ## BackendAdapter Protocol
 
-All execution backends MUST implement the `BackendAdapter` protocol defined by the installed `agent_orchestrator_mcp.orchestration.backend_registry` module in the external orchestrator package. This ensures consistent handling of `execute()` and `resolve_reasoning_effort()` across Codex, Claude, and local models.
+All execution backends MUST implement the `BackendAdapter` protocol defined by the installed `workstate_orchestrator_mcp.orchestration.backend_registry` module in the external orchestrator package. This ensures consistent handling of `execute()` and `resolve_reasoning_effort()` across Codex, Claude, and local models.
 
 ## Tool Signatures (Key)
 
@@ -342,8 +342,8 @@ All execution backends MUST implement the `BackendAdapter` protocol defined by t
 
 Primary entrypoints:
 
-- `mcp-agent-orchestrator --workspace-root <repo> serve-stdio`
-- `mcp-agent-orchestrator --workspace-root <repo> doctor`
+- `mcp-workstate-orchestrator --workspace-root <repo> serve-stdio`
+- `mcp-workstate-orchestrator --workspace-root <repo> doctor`
 
 Operational subcommands (all require `--workspace-root`):
 
@@ -372,4 +372,4 @@ Operational subcommands (all require `--workspace-root`):
 
 ## HTTP Transport
 
-HTTP transport (`serve-http`) is not yet implemented for the orchestration server. Use `serve-stdio` for both VS Code and Codex sessions. The core ledger server (`agent-handoff-mcp`) provides `serve-http` on port `8741` if HTTP transport is needed.
+HTTP transport (`serve-http`) is not yet implemented for the orchestration server. Use `serve-stdio` for both VS Code and Codex sessions. The core ledger server (`workstate-handoff-mcp`) provides `serve-http` on port `8741` if HTTP transport is needed.

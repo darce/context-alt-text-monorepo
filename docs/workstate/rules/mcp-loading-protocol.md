@@ -4,11 +4,11 @@
 
 ## Why this exists
 
-Each loaded MCP server costs prompt tokens for the entire session. Most sessions need only one or two of the four servers (`agent-handoff-mcp`, `agent-orchestrator-mcp`, `context7`, `computer-use`). This protocol uses **declarative routing**: rules in a YAML file, applied mechanically at session start, reproducible across harnesses.
+Each loaded MCP server costs prompt tokens for the entire session. Most sessions need only one or two of the four servers (`workstate-handoff-mcp`, `workstate-orchestrator-mcp`, `context7`, `computer-use`). This protocol uses **declarative routing**: rules in a YAML file, applied mechanically at session start, reproducible across harnesses.
 
 ## Where the rules live
 
-- **Routing data**: [`docs/agentic/maps/mcp-tool-routing.yaml`](../maps/mcp-tool-routing.yaml) — the always/on-demand/exclude lists keyed by triggers.
+- **Routing data**: [`docs/workstate/maps/mcp-tool-routing.yaml`](../maps/mcp-tool-routing.yaml) — the always/on-demand/exclude lists keyed by triggers.
 - **This document**: the protocol and rationale.
 
 Harness entry files (`CLAUDE.md`, `AGENTS.md`) **link** here; they do not duplicate the rules.
@@ -64,7 +64,7 @@ Borrowed from CodeRabbit's `.coderabbit.yaml`: glob-gated instruction fragments 
 
 ## Maintaining the routing rules
 
-1. Edit [`docs/agentic/maps/mcp-tool-routing.yaml`](../maps/mcp-tool-routing.yaml).
+1. Edit [`docs/workstate/maps/mcp-tool-routing.yaml`](../maps/mcp-tool-routing.yaml).
 2. If the change reflects a new pattern, update rationale in this doc.
 3. Verify the agent loads the correct server set on next session.
 4. Record the change as a handoff `decision`.

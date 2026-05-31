@@ -108,15 +108,15 @@ make check          # All checks (ruff + mypy + pytest)
 
 ## External MCP Package Verification (E17-13)
 
-For the E17-13 cleanup path, verify `agent-handoff-mcp` and `agent-orchestrator-mcp` as packaged standalone installs, not via worktree-local package test targets.
+For the E17-13 cleanup path, verify `workstate-handoff-mcp` and `workstate-orchestrator-mcp` as packaged standalone installs, not via worktree-local package test targets.
 
 ```bash
 python3 -m venv /tmp/e17-13-external-mcp
 /tmp/e17-13-external-mcp/bin/pip install --quiet \
-    "mcp-agent-handoff==0.11.2" \
-    "mcp-agent-orchestrator==0.4.6"
-/tmp/e17-13-external-mcp/bin/mcp-agent-handoff --workspace-root . doctor
-/tmp/e17-13-external-mcp/bin/mcp-agent-orchestrator --workspace-root . --help
+    "mcp-workstate-handoff==0.12.0" \
+    "mcp-workstate-orchestrator==0.5.0"
+/tmp/e17-13-external-mcp/bin/mcp-workstate-handoff --workspace-root . doctor
+/tmp/e17-13-external-mcp/bin/mcp-workstate-orchestrator --workspace-root . --help
 ```
 
 This is the external-install verification convention that replaces the package-local conftest/Makefile guard guidance for the cleanup task. The proof must run in a scratch venv with no editable installs from this monorepo, so the result reflects the published PyPI artifacts rather than a worktree-local import path.

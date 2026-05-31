@@ -47,6 +47,7 @@ COPY_PATHS = (
     Path(".github/hooks/guard-main-branch.py"),
     Path(".github/hooks/terminal-guard.json"),
     Path(".github/hooks/guard-worktree-drift.py"),
+    Path("scripts/hooks/_active_task_context.py"),
     Path("scripts/hooks/_branch_isolation_guard.py"),
     Path("scripts/hooks/_guard_main_branch_inline.py"),
     Path("scripts/hooks/_harness_protocol.py"),
@@ -95,28 +96,35 @@ def _valid_contract() -> dict:
         },
         "hooks": {
             "pre_tool_use": [],
-            "post_tool_use": [
-                {
-                    "id": "regenerate-task-views",
-                    "matcher": "mcp_altcontext-mc_record_event|mcp_altcontext-mc_review_findings|mcp_altcontext-mc_review_runs|mcp_altcontext-mc_set_handoff_state|mcp_altcontext-mc_update_task_status|mcp__agent-handoff-mcp__record_event|mcp__agent-handoff-mcp__review_findings|mcp__agent-handoff-mcp__review_runs|mcp__agent-handoff-mcp__set_handoff_state|mcp__agent-handoff-mcp__update_task_status",
-                    "claude_command": 'bash "$CLAUDE_PROJECT_DIR/scripts/hooks/regenerate-task-views.sh"',
-                    "vscode_command": "bash scripts/hooks/regenerate-task-views.sh",
-                    "codex_command": 'bash "$(git rev-parse --show-toplevel)/scripts/hooks/regenerate-task-views.sh"',
-                }
-            ],
+            "post_tool_use": [],
         },
     }
 
 
+def _contract_with_codex_hook() -> dict:
+    """A contract that declares a codex-specific hook, for codex-detection tests."""
+    contract = _valid_contract()
+    contract["hooks"]["post_tool_use"] = [
+        {
+            "id": "regenerate-task-views",
+            "matcher": "mcp__workstate-handoff-mcp__record_event|mcp__workstate-handoff-mcp__review_findings|mcp__workstate-handoff-mcp__review_runs|mcp__workstate-handoff-mcp__set_handoff_state|mcp__workstate-handoff-mcp__update_task_status",
+            "claude_command": 'bash "$CLAUDE_PROJECT_DIR/scripts/hooks/regenerate-task-views.sh"',
+            "vscode_command": "bash scripts/hooks/regenerate-task-views.sh",
+            "codex_command": 'bash "$(git rev-parse --show-toplevel)/scripts/hooks/regenerate-task-views.sh"',
+        }
+    ]
+    return contract
+
+
 def _copy_handoff_package_src(destination: Path) -> None:
-    local_src = REPO_ROOT / "packages" / "agent-handoff-mcp" / "src"
+    local_src = REPO_ROOT / "packages" / "workstate-handoff-mcp" / "src"
     if local_src.exists():
         shutil.copytree(local_src, destination)
         return
 
-    spec = importlib.util.find_spec("agent_handoff_mcp")
+    spec = importlib.util.find_spec("workstate_handoff_mcp")
     if spec is None:
-        raise FileNotFoundError("agent_handoff_mcp package source is not available for fixture setup")
+        raise FileNotFoundError("workstate_handoff_mcp package source is not available for fixture setup")
 
     package_dir: Path | None = None
     if spec.submodule_search_locations:
@@ -125,9 +133,16 @@ def _copy_handoff_package_src(destination: Path) -> None:
         package_dir = Path(spec.origin).resolve().parent
 
     if package_dir is None:
-        raise FileNotFoundError("agent_handoff_mcp package source is not available for fixture setup")
+        raise FileNotFoundError("workstate_handoff_mcp package source is not available for fixture setup")
 
-    shutil.copytree(package_dir.parent, destination)
+    # Copy only the package directory itself — never `package_dir.parent`, which
+    # for an installed (non-vendored) package is the entire site-packages tree.
+    destination.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(
+        package_dir,
+        destination / package_dir.name,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "tests"),
+    )
 
 
 def _write_repo(tmp_path: Path) -> Path:
@@ -141,10 +156,10 @@ def _write_repo(tmp_path: Path) -> Path:
         shutil.copy2(REPO_ROOT / relative, destination)
         if destination.suffix == ".sh":
             destination.chmod(0o755)
-    package_src = repo / "packages" / "agent-handoff-mcp" / "src"
+    package_src = repo / "packages" / "workstate-handoff-mcp" / "src"
     package_src.parent.mkdir(parents=True, exist_ok=True)
     _copy_handoff_package_src(package_src)
-    contract_path = repo / "docs" / "agentic" / "contracts" / "harness-protocol.yaml"
+    contract_path = repo / "docs" / "workstate" / "contracts" / "harness-protocol.yaml"
     contract_path.parent.mkdir(parents=True, exist_ok=True)
     contract_path.write_text(yaml.safe_dump(_valid_contract(), sort_keys=False), encoding="utf-8")
     return repo
@@ -152,20 +167,20 @@ def _write_repo(tmp_path: Path) -> Path:
 
 def _write_overlay_manifest(repo: Path) -> None:
     manifest = {
-        "schema_version": 1,
-        "remote_clone_path": str(repo / ".agentic" / "remote"),
+        "schema_version": 2,
+        "remote_clone_path": str(repo / ".workstate" / "remote"),
         "surfaces": {
             "contracts": {
-                "shared_root": ".agentic/remote/docs/agentic/contracts",
-                "local_root": "local/docs/agentic/contracts",
+                "shared_root": ".workstate/remote/docs/workstate/contracts",
+                "local_root": "local/docs/workstate/contracts",
             }
         },
     }
-    (repo / ".agentic-overlay.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    (repo / ".workstate-bootstrap.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
 
 def _write_importable_handoff_package(site_packages: Path, *, exports: list[str]) -> None:
-    package_root = site_packages / "agent_handoff_mcp"
+    package_root = site_packages / "workstate_handoff_mcp"
     package_root.mkdir(parents=True, exist_ok=True)
     exported = ", ".join(repr(name) for name in exports)
     (package_root / "__init__.py").write_text(f"__all__ = [{exported}]\n", encoding="utf-8")
@@ -288,7 +303,7 @@ def test_branch_isolation_fails_when_planning_surface_is_permitted_on_main(tmp_p
     repo = _write_repo(tmp_path)
     contract = _valid_contract()
     contract["branch_isolation"]["permitted_main_surfaces"] = [
-        {"pattern": "docs/tasks/**/*.md", "reason": "stale policy"}
+        {"pattern": "docs/specs/**/*.md", "reason": "stale policy"}
     ]
     errors = _check_branch_isolation(contract, repo_root=repo)
     assert any("must not include planning pattern" in err for err in errors)
@@ -303,8 +318,8 @@ def test_worktree_drift_passes_fixture_harness(tmp_path: Path) -> None:
 
 def test_dashboard_naming_flags_live_surface_reference(tmp_path: Path) -> None:
     repo = _write_repo(tmp_path)
-    (repo / "docs" / "agentic" / "rules").mkdir(parents=True, exist_ok=True)
-    (repo / "docs" / "agentic" / "rules" / "workflow.md").write_text("Use DASHBOARD.md here\n", encoding="utf-8")
+    (repo / "docs" / "workstate" / "rules").mkdir(parents=True, exist_ok=True)
+    (repo / "docs" / "workstate" / "rules" / "workflow.md").write_text("Use DASHBOARD.md here\n", encoding="utf-8")
     _git_init_and_add(repo)
     errors = _check_dashboard_naming(repo_root=repo)
     assert any("workflow.md:1" in err for err in errors)
@@ -456,7 +471,7 @@ def test_hooks_fail_when_codex_regenerate_task_views_hook_is_missing(tmp_path: P
         encoding="utf-8",
     )
 
-    errors = _check_hooks(_valid_contract(), repo_root=repo)
+    errors = _check_hooks(_contract_with_codex_hook(), repo_root=repo)
     assert any("missing Codex hook `regenerate-task-views`" in err for err in errors)
 
 
@@ -481,10 +496,13 @@ def test_python_api_surface_falls_back_to_importable_package_when_local_source_i
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo = _write_repo(tmp_path)
-    shutil.rmtree(repo / "packages" / "agent-handoff-mcp")
+    shutil.rmtree(repo / "packages" / "workstate-handoff-mcp")
     site_packages = tmp_path / "site-packages"
     _write_importable_handoff_package(site_packages, exports=["RuntimeConfig", "configure_runtime"])
     monkeypatch.syspath_prepend(str(site_packages))
+    # The real package may already be imported by an earlier test; drop it so
+    # find_spec re-scans sys.path and resolves the prepended fake fixture.
+    monkeypatch.delitem(sys.modules, "workstate_handoff_mcp", raising=False)
 
     exports = _load_python_exports(repo_root=repo)
 
@@ -497,11 +515,11 @@ def test_python_api_surface_falls_back_to_importable_package_when_local_source_i
 
 def test_load_contract_uses_overlay_manifest_with_top_level_replace_semantics(tmp_path: Path) -> None:
     repo = _write_repo(tmp_path)
-    shared_contract = repo / ".agentic" / "remote" / "docs" / "agentic" / "contracts" / "harness-protocol.yaml"
+    shared_contract = repo / ".workstate" / "remote" / "docs" / "workstate" / "contracts" / "harness-protocol.yaml"
     shared_contract.parent.mkdir(parents=True, exist_ok=True)
     shared_contract.write_text(yaml.safe_dump(_valid_contract(), sort_keys=False), encoding="utf-8")
 
-    local_contract = repo / "local" / "docs" / "agentic" / "contracts" / "harness-protocol.yaml"
+    local_contract = repo / "local" / "docs" / "workstate" / "contracts" / "harness-protocol.yaml"
     local_contract.parent.mkdir(parents=True, exist_ok=True)
     local_contract.write_text(
         yaml.safe_dump(
@@ -568,7 +586,7 @@ def test_branch_isolation_allows_permitted_surface_when_unrelated_protected_path
 
 
 def test_overlay_manifest_contract_doc_example_round_trips_with_resolver(tmp_path: Path) -> None:
-    contract_doc = REPO_ROOT / "docs" / "agentic" / "contracts" / "overlay-manifest.yaml"
+    contract_doc = REPO_ROOT / "docs" / "workstate" / "contracts" / "overlay-manifest.yaml"
     assert contract_doc.exists(), "overlay-manifest contract doc missing"
 
     payload = yaml.safe_load(contract_doc.read_text(encoding="utf-8"))
@@ -577,16 +595,22 @@ def test_overlay_manifest_contract_doc_example_round_trips_with_resolver(tmp_pat
     assert isinstance(example_manifest, dict), "overlay-manifest contract doc must define example_manifest"
     assert isinstance(example_manifest.get("remote_sha"), str) and example_manifest["remote_sha"]
     surfaces = example_manifest.get("surfaces")
-    assert isinstance(surfaces, dict)
-    assert set(surfaces) == {"skills", "hooks", "commands", "prompts", "contracts"}
+    assert isinstance(surfaces, list)
+    assert {surface["path"] for surface in surfaces} >= {
+        ".claude/skills",
+        "local/.claude/skills",
+        ".github/hooks",
+        "scripts/hooks",
+        "docs/workstate/contracts",
+    }
 
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / ".agentic" / "remote" / ".claude" / "skills" / "shared-only").mkdir(parents=True)
-    (repo / ".agentic" / "remote" / ".claude" / "skills" / "shared-only" / "SKILL.md").write_text("# shared\n")
+    (repo / ".claude" / "skills" / "shared-only").mkdir(parents=True)
+    (repo / ".claude" / "skills" / "shared-only" / "SKILL.md").write_text("# shared\n")
     (repo / "local" / ".claude" / "skills" / "local-only").mkdir(parents=True)
     (repo / "local" / ".claude" / "skills" / "local-only" / "SKILL.md").write_text("# local\n")
-    (repo / ".agentic-overlay.json").write_text(json.dumps(example_manifest, indent=2) + "\n", encoding="utf-8")
+    (repo / ".workstate-bootstrap.json").write_text(json.dumps(example_manifest, indent=2) + "\n", encoding="utf-8")
 
     resolved = resolve_surface("skills", repo)
 
@@ -595,7 +619,7 @@ def test_overlay_manifest_contract_doc_example_round_trips_with_resolver(tmp_pat
 
 
 def test_overlay_manifest_hooks_surface_includes_all_hook_subtrees(tmp_path: Path) -> None:
-    contract_doc = REPO_ROOT / "docs" / "agentic" / "contracts" / "overlay-manifest.yaml"
+    contract_doc = REPO_ROOT / "docs" / "workstate" / "contracts" / "overlay-manifest.yaml"
     payload = yaml.safe_load(contract_doc.read_text(encoding="utf-8"))
     assert isinstance(payload, dict)
     example_manifest = payload.get("example_manifest")
@@ -603,13 +627,13 @@ def test_overlay_manifest_hooks_surface_includes_all_hook_subtrees(tmp_path: Pat
 
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / ".agentic" / "remote" / ".github" / "hooks").mkdir(parents=True)
-    (repo / ".agentic" / "remote" / ".github" / "hooks" / "terminal-guard.json").write_text("{}\n")
-    (repo / ".agentic" / "remote" / "scripts" / "hooks").mkdir(parents=True)
-    (repo / ".agentic" / "remote" / "scripts" / "hooks" / "guard-main-branch.sh").write_text("#!/usr/bin/env bash\n")
-    (repo / ".agentic" / "remote" / "scripts" / "hooks" / "git").mkdir(parents=True)
-    (repo / ".agentic" / "remote" / "scripts" / "hooks" / "git" / "pre-push").write_text("#!/bin/sh\n")
-    (repo / ".agentic-overlay.json").write_text(json.dumps(example_manifest, indent=2) + "\n", encoding="utf-8")
+    (repo / ".github" / "hooks").mkdir(parents=True)
+    (repo / ".github" / "hooks" / "terminal-guard.json").write_text("{}\n")
+    (repo / "scripts" / "hooks").mkdir(parents=True)
+    (repo / "scripts" / "hooks" / "guard-main-branch.sh").write_text("#!/usr/bin/env bash\n")
+    (repo / "scripts" / "hooks" / "git").mkdir(parents=True)
+    (repo / "scripts" / "hooks" / "git" / "pre-push").write_text("#!/bin/sh\n")
+    (repo / ".workstate-bootstrap.json").write_text(json.dumps(example_manifest, indent=2) + "\n", encoding="utf-8")
 
     resolved = resolve_surface("hooks", repo)
 
@@ -617,9 +641,9 @@ def test_overlay_manifest_hooks_surface_includes_all_hook_subtrees(tmp_path: Pat
         entry.effective_path.relative_to(repo).as_posix(): entry.source
         for entry in resolved
     } == {
-        ".agentic/remote/.github/hooks/terminal-guard.json": "shared",
-        ".agentic/remote/scripts/hooks/guard-main-branch.sh": "shared",
-        ".agentic/remote/scripts/hooks/git/pre-push": "shared",
+        ".github/hooks/terminal-guard.json": "shared",
+        "scripts/hooks/guard-main-branch.sh": "shared",
+        "scripts/hooks/git/pre-push": "shared",
     }
 
 
@@ -644,11 +668,11 @@ def test_hooks_surface_without_overlay_manifest_includes_github_and_scripts_hook
 
 def test_main_reports_overlay_contract_source_breakdown_when_manifest_exists(tmp_path: Path) -> None:
     repo = _write_repo(tmp_path)
-    shared_contract = repo / ".agentic" / "remote" / "docs" / "agentic" / "contracts" / "harness-protocol.yaml"
+    shared_contract = repo / ".workstate" / "remote" / "docs" / "workstate" / "contracts" / "harness-protocol.yaml"
     shared_contract.parent.mkdir(parents=True, exist_ok=True)
     shared_contract.write_text(yaml.safe_dump(_valid_contract(), sort_keys=False), encoding="utf-8")
 
-    local_contract = repo / "local" / "docs" / "agentic" / "contracts" / "harness-protocol.yaml"
+    local_contract = repo / "local" / "docs" / "workstate" / "contracts" / "harness-protocol.yaml"
     local_contract.parent.mkdir(parents=True, exist_ok=True)
     local_contract.write_text(yaml.safe_dump(_valid_contract(), sort_keys=False), encoding="utf-8")
     _write_overlay_manifest(repo)
@@ -678,7 +702,7 @@ def test_main_runs_by_absolute_path_outside_repo_root(tmp_path: Path) -> None:
 
 def test_main_reports_malformed_overlay_manifest_as_infrastructure_error(tmp_path: Path) -> None:
     repo = _write_repo(tmp_path)
-    (repo / ".agentic-overlay.json").write_text("{bad json\n", encoding="utf-8")
+    (repo / ".workstate-bootstrap.json").write_text("{bad json\n", encoding="utf-8")
     script_path = repo / "scripts" / "check_harness_sync.py"
     outside = tmp_path / "outside"
     outside.mkdir()

@@ -1,0 +1,32 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "type": "command",
+        "command": "python3 scripts/vscode_copilot_hook_dispatch.py pre-tool-use",
+        "timeout": 10
+      }
+    ],
+    "PostToolUse": [
+      {
+        "type": "command",
+        "command": "python3 scripts/vscode_copilot_hook_dispatch.py post-tool-use",
+        "timeout": 10
+      }
+    ],
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "python3 scripts/hooks/advise-worktree-cd.py",
+        "timeout": 5
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "type": "command",
+        "command": "python3 scripts/hooks/advise-worktree-cd.py",
+        "timeout": 5
+      }
+    ]
+  }
+}

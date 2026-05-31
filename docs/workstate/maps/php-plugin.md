@@ -11,8 +11,8 @@
 | 3        | `apps/prototype-wp-alt-context/src/sovereign/`  | Local state, sync, outbox, conflict resolution |
 | 4        | `apps/prototype-wp-alt-context/src/media/`      | XMP metadata embedding                         |
 | 5        | `apps/prototype-wp-alt-context/src/support/`    | Lifecycle, schema migrations                   |
-| 6        | `docs/agentic/contracts/clustering-api.md`      | WP REST API contract                           |
-| 7        | `docs/agentic/contracts/curation-sync-api.md`   | Outbox replay contract                         |
+| 6        | `docs/workstate/contracts/clustering-api.md`      | WP REST API contract                           |
+| 7        | `docs/workstate/contracts/curation-sync-api.md`   | Outbox replay contract                         |
 
 ## Architecture Layers
 

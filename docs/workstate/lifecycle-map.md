@@ -65,7 +65,7 @@
 | Task completion | `update_task_status(status="done")` then `archive_task_state` | In that order — **never archive while `in_progress`** |
 | Search history | `search_handoff(query=...)` | Find prior decisions/findings without reloading full state |
 
-**agent-orchestrator-mcp** (load via `ToolSearch select:mcp__agent-orchestrator-mcp__*`):
+**workstate-orchestrator-mcp** (load via `ToolSearch select:mcp__workstate-orchestrator-mcp__*`):
 
 | Domain | Tool | When |
 |--------|------|------|
@@ -93,4 +93,4 @@ Use `context7` (load via `ToolSearch select:mcp__context7__*`) when implementati
 | WordPress REST API, hook system | `wordpress` |
 | MCP SDK protocol, transport options | `modelcontextprotocol/python-sdk` |
 
-Static fallback when ctx7 is unavailable: [docs/agentic/maps/tech-stack.md](maps/tech-stack.md).
+Static fallback when ctx7 is unavailable: [docs/workstate/maps/tech-stack.md](maps/tech-stack.md).

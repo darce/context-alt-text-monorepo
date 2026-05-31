@@ -40,18 +40,18 @@ def test_lint_hoisted_paths_ignores_hook_test_fixtures(tmp_path: Path) -> None:
 def test_lint_hoisted_paths_scans_overlay_resolved_local_entries(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     manifest = {
-        "schema_version": 1,
-        "remote_clone_path": ".agentic/remote",
+        "schema_version": 2,
+        "remote_clone_path": ".workstate/remote",
         "remote_sha": "0123456789abcdef0123456789abcdef01234567",
         "surfaces": {
             "skills": {
-                "shared_root": ".agentic/remote/.claude/skills",
+                "shared_root": ".workstate/remote/.claude/skills",
                 "local_root": ".claude/skills",
             }
         },
     }
-    _write(repo / ".agentic-overlay.json", json.dumps(manifest))
-    _write(repo / ".agentic" / "remote" / ".claude" / "skills" / "demo" / "SKILL.md", "clean shared skill\n")
+    _write(repo / ".workstate-bootstrap.json", json.dumps(manifest))
+    _write(repo / ".workstate" / "remote" / ".claude" / "skills" / "demo" / "SKILL.md", "clean shared skill\n")
     _write(repo / ".claude" / "skills" / "demo" / "SKILL.md", "Use the context-alt-text-monorepo lane copy.\n")
 
     findings, exit_code = lint_hoisted_paths(repo_root=repo)
@@ -64,17 +64,17 @@ def test_lint_hoisted_paths_scans_overlay_resolved_local_entries(tmp_path: Path)
 def test_lint_hoisted_paths_falls_back_to_live_shared_surface_when_remote_root_is_missing(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     manifest = {
-        "schema_version": 1,
-        "remote_clone_path": ".agentic/remote",
+        "schema_version": 2,
+        "remote_clone_path": ".workstate/remote",
         "remote_sha": "0123456789abcdef0123456789abcdef01234567",
         "surfaces": {
             "skills": {
-                "shared_root": ".agentic/remote/.claude/skills",
+                "shared_root": ".workstate/remote/.claude/skills",
                 "local_root": "local/.claude/skills",
             }
         },
     }
-    _write(repo / ".agentic-overlay.json", json.dumps(manifest))
+    _write(repo / ".workstate-bootstrap.json", json.dumps(manifest))
     _write(repo / ".claude" / "skills" / "demo" / "SKILL.md", "clean shared skill\n")
     _write(repo / "local" / ".claude" / "skills" / "demo" / "SKILL.md", "Use the context-alt-text-monorepo lane copy.\n")
 
@@ -96,12 +96,12 @@ def test_lint_hoisted_paths_does_not_duplicate_hook_findings(tmp_path: Path) -> 
 
 def test_lint_hoisted_paths_reports_malformed_overlay_manifest_as_infrastructure_error(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
-    _write(repo / ".agentic-overlay.json", "{bad json\n")
+    _write(repo / ".workstate-bootstrap.json", "{bad json\n")
 
     findings, exit_code = lint_hoisted_paths(repo_root=repo)
 
     assert exit_code == 1
     assert findings == [
-        "infrastructure error: overlay manifest is not valid JSON: "
+        "infrastructure error: workstate bootstrap manifest is not valid JSON: "
         "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
     ]

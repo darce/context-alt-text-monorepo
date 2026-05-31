@@ -15,8 +15,8 @@ scripts/
     └── unified_server.py   # Legacy non-handoff/reference MCP implementation (deprecated)
 ```
 
-The orchestration helpers in this repo now execute the installed `agent-orchestrator-mcp`
-package directly, including `python -m agent_orchestrator_mcp.orchestration.lane_config`
+The orchestration helpers in this repo now execute the installed `mcp-workstate-orchestrator`
+package directly, including `python -m workstate_orchestrator_mcp.orchestration.lane_config`
 for lane/task manifest resolution.
 
 ## Test Placement Policy
@@ -120,7 +120,7 @@ VS Code now calls the installed console scripts directly via `.vscode/mcp.json`.
 
 ## worktree-lane
 
-Helper for the orchestrator/worker pattern described in [instructions.md](../docs/agentic/instructions.md).
+Helper for the orchestrator/worker pattern described in [instructions.md](../docs/workstate/instructions.md).
 
 Preferred entrypoint:
 
@@ -186,7 +186,7 @@ Notes:
 It wraps:
 
 - `git worktree add`
-- shared-state `agent-handoff-mcp lane-upsert`
+- shared-state `mcp-workstate-handoff lane-upsert` (note: lane-* verbs are dropped from mcp-workstate-handoff>=0.12.0; see upstream findings)
 - lane self-query via `state`, `lane-list`, `lane-activity`
 - merge-ready worker handback via `lane-report` and optional `lane-message`
 - brief/report template rendering
@@ -211,7 +211,7 @@ scripts/worktree-lane brief \
   --worktree-path /path/to/context-alt-text-monorepo-backend-http \
   --objective "Implement retention router and schema updates." \
   --owned-path apps/prototype-description-service/recognition/interface_adapters/http/** \
-  --required-doc docs/agentic/instructions.md \
+  --required-doc docs/workstate/instructions.md \
   --test-command "cd apps/prototype-description-service && pytest recognition/tests/api/test_retention_api.py"
 ```
 

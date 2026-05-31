@@ -1,12 +1,12 @@
 ---
-boundary_owner: agentic-tooling
+boundary_owner: workstate-tooling
 ---
 
-# Agent Handoff MCP Contract
+# Workstate Handoff MCP Contract
 
 ## Purpose
 
-`agent-handoff-mcp` is the portable MCP server for agent coordination state. After the AHMCP-6 event, review, next-action, and artifact-domain consolidation plus profile-removal stretch work, AHMCP-8 verified-test search/read support, and AHMCP-23 observatory dashboard split, it exposes a unified MCP surface for task state, review findings, verification evidence, artifacts, export/import, handoff close checks, and DASHBOARD.txt generation. Orchestration, daemon lifecycle, lane management, and turn metrics are served by [`agent-orchestrator-mcp`](agent-orchestrator-mcp.md). Use `mcp-agent-handoff --workspace-root "$(pwd)" doctor` to inspect the live registered tool surface from the installed package.
+`workstate-handoff-mcp` is the portable MCP server for agent coordination state. After the AHMCP-6 event, review, next-action, and artifact-domain consolidation plus profile-removal stretch work, AHMCP-8 verified-test search/read support, and AHMCP-23 observatory dashboard split, it exposes a unified MCP surface for task state, review findings, verification evidence, artifacts, export/import, handoff close checks, and DASHBOARD.txt generation. Orchestration, daemon lifecycle, lane management, and turn metrics are served by [`workstate-orchestrator-mcp`](workstate-orchestrator-mcp.md). Use `mcp-workstate-handoff --workspace-root "$(pwd)" doctor` to inspect the live registered tool surface from the installed package.
 
 ## Runtime Configuration
 
@@ -31,9 +31,9 @@ Default workspace-owned state:
 - optional machine-readable snapshot: `CURRENT_TASK.json` (JSON, active-task-only, only when explicitly rendered)
 - generated human-readable dashboard: `DASHBOARD.txt` (pure ASCII, human-scoped observatory view)
 
-`CURRENT_TASK.json` is a deterministic JSON snapshot of the active task state (objective, status, findings, decisions, tests, blockers, actions, lanes) when an explicit render writes it. `DASHBOARD.txt` is the human-readable ASCII observatory: Needs Attention summary, All Tasks table, cross-task open findings, deferred/wontfix findings, and registered extension sections (e.g. Lane Health from agent-orchestrator-mcp). Use `render_handoff(kind='current_task')` to refresh the JSON snapshot on demand and `render_handoff(kind='dashboard')` to refresh the ASCII dashboard.
+`CURRENT_TASK.json` is a deterministic JSON snapshot of the active task state (objective, status, findings, decisions, tests, blockers, actions, lanes) when an explicit render writes it. `DASHBOARD.txt` is the human-readable ASCII observatory: Needs Attention summary, All Tasks table, cross-task open findings, deferred/wontfix findings, and registered extension sections (e.g. Lane Health from workstate-orchestrator-mcp). Use `render_handoff(kind='current_task')` to refresh the JSON snapshot on demand and `render_handoff(kind='dashboard')` to refresh the ASCII dashboard.
 
-The monorepo now consumes the reviewed PyPI release for `mcp-agent-handoff`; the installed binary shape stays the same.
+The monorepo now consumes the reviewed PyPI release for `mcp-workstate-handoff`; the installed binary shape stays the same.
 
 Runtime bootstrap:
 
@@ -41,17 +41,17 @@ Runtime bootstrap:
 cd "${REPO_ROOT:-$PWD}"
 
 # Core ledger server
-uv tool install "mcp-agent-handoff==0.11.2"
+uv tool install "mcp-workstate-handoff==0.12.0"
 
 # Orchestration server (daemons, workers, lanes, metrics)
-uv tool install "mcp-agent-orchestrator==0.4.6"
+uv tool install "mcp-workstate-orchestrator==0.5.0"
 
 # Codex subagent bridge for BACKEND=codex-subagent
 uv tool install "codex-subagent-bridge>=0.1.0,<0.2"
 
 # Validate runtime wiring, writable state dirs, and FTS5 support
-mcp-agent-handoff --workspace-root "$(pwd)" doctor
-mcp-agent-orchestrator --workspace-root "$(pwd)" doctor
+mcp-workstate-handoff --workspace-root "$(pwd)" doctor
+mcp-workstate-orchestrator --workspace-root "$(pwd)" doctor
 ```
 
 Notes:
@@ -76,7 +76,7 @@ Surface classes:
 | `review_findings` | action | no | Typed review-findings domain surface. `review.operation` selects `record`, `batch_record`, `update`, or `list`. Preserves atomic batch semantics and list filters on one tool. |
 | `review_runs` | action | no | Typed review-runs domain surface. `review.operation` selects `record`, `list`, or `coverage`. |
 | `handoff_close_check` | generator | yes | Derived readiness verdict from current state. |
-| `render_handoff` | generator | no | Compound renderer. `kind="current_task"` writes machine-readable JSON to `CURRENT_TASK.json` by default (objective, status, recent decisions, tests, findings, and actions for the active task ref). `kind="dashboard"` renders the human observatory view and writes pure-ASCII `DASHBOARD.txt` by default (All Tasks table, Needs Attention, Open Findings, Deferred/Won't Fix, and registered extension sections such as Lane Health / Worker Status from `agent-orchestrator-mcp`). Pass `write_file=False` to return content without writing. |
+| `render_handoff` | generator | no | Compound renderer. `kind="current_task"` writes machine-readable JSON to `CURRENT_TASK.json` by default (objective, status, recent decisions, tests, findings, and actions for the active task ref). `kind="dashboard"` renders the human observatory view and writes pure-ASCII `DASHBOARD.txt` by default (All Tasks table, Needs Attention, Open Findings, Deferred/Won't Fix, and registered extension sections such as Lane Health / Worker Status from `workstate-orchestrator-mcp`). Pass `write_file=False` to return content without writing. |
 | `export_handoff_state` | generator | yes | Produces portable snapshot output. |
 | `import_handoff_state` | action | no | Imports snapshot into local DB; destructive in replace modes. |
 | `archive_task_state` | action | no | Moves active state into archive storage. |
@@ -90,7 +90,7 @@ Surface classes:
 | `artifacts` | action | no | Typed artifacts domain surface. `artifact.operation` selects `record`, `search`, `get`, or `purge`. Search mode supports both ranked hits and source-list mode when `queries` is omitted or empty; get mode supports `include_terms=true`. |
 | `search_handoff` | generator | yes | Returns ranked snippets over handoff FTS tables, including verified test evidence. `detail` accepts `full` (default) or `summary`, and `fields` accepts a comma-separated per-result projection. |
 
-Cross-task and review-summary tools (`switch_task`, `get_latest_slice_review_packet`, `get_review_findings_summary`, `reconcile_review_findings`) are registered on `agent-orchestrator-mcp`. See [`agent-orchestrator-mcp.md`](agent-orchestrator-mcp.md).
+Cross-task and review-summary tools (`switch_task`, `get_latest_slice_review_packet`, `get_review_findings_summary`, `reconcile_review_findings`) are registered on `workstate-orchestrator-mcp`. See [`workstate-orchestrator-mcp.md`](workstate-orchestrator-mcp.md).
 
 Preferred review-intake path when orchestrator is loaded:
 
@@ -104,7 +104,7 @@ Handoff-only fallback:
 3. `get_verified_tests(task_ref=..., commit_sha=...)`
 4. `review_findings(review={"operation":"list","status":"open"})`
 
-This is a degraded multi-call fallback for sessions where orchestrator is unavailable. `agent-handoff-mcp` does not expose a parallel compound `get_review_packet` surface.
+This is a degraded multi-call fallback for sessions where orchestrator is unavailable. `workstate-handoff-mcp` does not expose a parallel compound `get_review_packet` surface.
 
 Retry guidance:
 
@@ -118,7 +118,7 @@ Retry guidance:
 
 Symptoms:
 
-- `agent-handoff-mcp` binary not found
+- `workstate-handoff-mcp` binary not found
 - import or launcher failure
 - wrong `--workspace-root` / `--state-dir`
 - missing `.task-state` or unwritable `CURRENT_TASK.json` / `DASHBOARD.txt`
@@ -126,8 +126,8 @@ Symptoms:
 Checks:
 
 ```bash
-mcp-agent-handoff --workspace-root /path/to/repo doctor
-python3 -m agent_handoff_mcp --workspace-root /path/to/repo doctor
+mcp-workstate-handoff --workspace-root /path/to/repo doctor
+python3 -m workstate_handoff_mcp --workspace-root /path/to/repo doctor
 ls -ld /path/to/repo/.task-state /path/to/repo/.task-state/exports
 ```
 
@@ -148,14 +148,14 @@ Symptoms:
 Checks:
 
 ```python
-from agent_handoff_mcp.api import TOOL_DESCRIPTIONS
+from workstate_handoff_mcp.api import TOOL_DESCRIPTIONS
 print(len(TOOL_DESCRIPTIONS))
 print(sorted(TOOL_DESCRIPTIONS))
 ```
 
 Recovery:
 
-- treat the installed `agent-handoff-mcp` package and this contract as the live source of truth for the ledger surface in this monorepo
+- treat the installed `workstate-handoff-mcp` package and this contract as the live source of truth for the ledger surface in this monorepo
 - update stale docs, skills, or wrappers in the same slice
 - prefer minimal valid payloads when a write bounces on signature drift
 
@@ -169,8 +169,8 @@ Symptoms:
 Checks:
 
 ```bash
-mcp-agent-handoff --workspace-root /path/to/repo doctor
-mcp-agent-handoff --workspace-root /path/to/repo state
+mcp-workstate-handoff --workspace-root /path/to/repo doctor
+mcp-workstate-handoff --workspace-root /path/to/repo state
 ```
 
 Recovery:
@@ -189,9 +189,9 @@ Symptoms:
 Checks:
 
 ```bash
-mcp-agent-handoff --workspace-root /path/to/repo doctor
-mcp-agent-handoff --workspace-root /path/to/repo state
-mcp-agent-handoff --workspace-root /path/to/repo review-findings --operation list
+mcp-workstate-handoff --workspace-root /path/to/repo doctor
+mcp-workstate-handoff --workspace-root /path/to/repo state
+mcp-workstate-handoff --workspace-root /path/to/repo review-findings --operation list
 ```
 
 Recovery:
@@ -257,7 +257,7 @@ triggers use `CREATE TRIGGER IF NOT EXISTS` so they are schema-idempotent.
    empty, bulk-inserts all source rows into the FTS table (handles cold-start upgrades).
 
 FTS5 unavailability degrades silently so existing handoff operations are never blocked. Call
-`mcp-agent-handoff doctor` to verify FTS5 is available.
+`mcp-workstate-handoff doctor` to verify FTS5 is available.
 
 ### Tool Signature
 
@@ -309,7 +309,7 @@ search_handoff(
 ### CLI Subcommand
 
 ```bash
-mcp-agent-handoff --workspace-root <repo> handoff-search \
+mcp-workstate-handoff --workspace-root <repo> handoff-search \
     --query "retry policy" \
     --query "circuit breaker" \
     --task-ref my-task \
@@ -387,7 +387,7 @@ get_verified_tests(
 - Historical decision rows that predate the prefixed naming scheme are grandfathered. MCP read paths (close-check, slice-review packet, handoff search) recognize both formats. Do not plan retroactive renames of historical rows.
 - The structured rationale is mandatory even for docs-only slices. Use `- none.` for empty sections rather than omitting headings.
 - Handoff consumers should treat prose-only completion decisions as malformed process output that must be corrected before the slice is considered fully handed off.
-- To switch between tasks, use `switch_task(task_ref)` on `agent-orchestrator-mcp`. It auto-archives the outgoing task (full snapshot) and activates the target, restoring the objective from its archive when not provided. Idempotent if the target is already active.
+- To switch between tasks, use `switch_task(task_ref)` on `workstate-orchestrator-mcp`. It auto-archives the outgoing task (full snapshot) and activates the target, restoring the objective from its archive when not provided. Idempotent if the target is already active.
 - For in-place updates to the _current_ task (status, objective change, focus update), use `set_handoff_state(...)` directly.
 - `set_handoff_state` requires `expected_revision` for updates. Accepts optional `focus` for mutable per-slice working context. `objective` is optional on updates (preserved when omitted). `focus` is preserved when omitted on updates; pass an empty string to clear it explicitly.
 - `close_slice` is a slice-completion helper, not a task-closure helper. It keeps the target task `in_progress` and now preflights the active-task revision guard before recording a decision.
@@ -396,7 +396,7 @@ get_verified_tests(
 - `build_write_actor(agent=None, model=None, model_label=None, reasoning_level=None, branch=None, commit_sha=None, lane_id=None) -> WriteActor` is the public helper for constructing that normalized actor payload before passing it into write tools.
 - `build_write_actor` derives the canonical `agent` display identity from model provenance when available: `"{model_label} {reasoning_level}"` when both are present, `model_label` when only the label is known, and the caller-provided `agent` only as a legacy fallback.
 - Known model labels are normalized for common backends (`claude-opus-4-0520` -> `Opus 4.6`, `claude-sonnet-4-20250514` -> `Sonnet 4`); unknown models pass through unchanged.
-- Decision rows now persist nullable `model`, `model_label`, and `reasoning_level` columns alongside `agent`. Treat the turn-metrics ledger on `agent-orchestrator-mcp` as the canonical source for token consumption; decision rows carry model provenance only and do not duplicate per-turn token columns.
+- Decision rows now persist nullable `model`, `model_label`, and `reasoning_level` columns alongside `agent`. Treat the turn-metrics ledger on `workstate-orchestrator-mcp` as the canonical source for token consumption; decision rows carry model provenance only and do not duplicate per-turn token columns.
 - `record_event` and `next_actions` accept optional `task_ref`, matching the existing cross-task targeting pattern. For `record_event`, `task_ref` lives inside the typed `event` payload.
 - Write responses for `record_event` and `next_actions` echo the resolved `task_ref`. Treat that field as the authoritative write target in multi-agent flows.
 - `review_findings(review={"operation":"record", ...})` accepts optional `details={ line_start?, line_end?, fix? }`.
@@ -424,13 +424,13 @@ get_verified_tests(
 - `close_slice` requires a `session` string (same as the decision variant of `record_event`). Pass `task_ref` explicitly in multi-task flows. `focus` updates the active-task working context after the decision is recorded. `changed_files` passes through to the decision variant of `record_event` for structured review scope. The success response includes `decision` (full row) and `task_revision` (int) so callers can confirm state without a follow-up read.
 - `export_handoff_state` defaults to `include_markdown=False`. Pass `include_markdown=True` explicitly to embed CURRENT_TASK.json markdown in the export.
 - `render_handoff(kind="current_task")` renders active-task-only output; cross-task sections are produced by `render_handoff(kind="dashboard")`. The "All Review Findings History" section has been removed from the default render; historical findings are available via `review_findings(review={"operation":"list","status":"all"})`.
-- `render_handoff(kind="dashboard")` accepts `write_file` (default `True`) to control whether `DASHBOARD.txt` is written to disk. Pass `write_file=False` to get the text without writing a file (useful in tests and CI diff checks). Extension sections (Lane Health, Worker Status) are contributed by `agent-orchestrator-mcp` via `register_dashboard_extension`.
+- `render_handoff(kind="dashboard")` accepts `write_file` (default `True`) to control whether `DASHBOARD.txt` is written to disk. Pass `write_file=False` to get the text without writing a file (useful in tests and CI diff checks). Extension sections (Lane Health, Worker Status) are contributed by `workstate-orchestrator-mcp` via `register_dashboard_extension`.
 - `set_handoff_state` accepts an optional `target_branch` parameter. When provided, it sets the task's intended work branch. When omitted on subsequent calls, the existing value is preserved. The field appears in `get_handoff_state` responses and in the CURRENT_TASK.json Active Status section.
 - `set_handoff_state` accepts an optional `target_worktree_path` parameter (introduced in the lane-orchestration improvements slice). It records the absolute filesystem path of the linked worktree where the task should be implemented. Used by `make context` and write-side context-drift warnings to fail-fast when an agent runs from the wrong directory in a multi-agent / multi-worktree workflow. When omitted on subsequent calls, the existing value is preserved.
 - Write surfaces that resolve actor context (`set_handoff_state`, `record_event`, `next_actions`, `review_findings`, and `review_runs`) emit `context_drift` warnings when the resolved actor branch differs from the active task's `target_branch`, or when the current process working directory differs from the active task's `target_worktree_path`.
 - Branch drift is warning-only by default. When `AGENT_HANDOFF_ENFORCE_BRANCH` is truthy and `AGENT_HANDOFF_SKIP_BRANCH_ENFORCEMENT` is not, writes targeting enforceable branches fail before mutation with `BranchMismatchError` for direct Python callers.
 - MCP clients do not receive a transport exception for this case. The MCP wrapper converts `BranchMismatchError` into the normal v2 envelope with `ok=false` and `data.error`, `data.task_ref`, `data.expected_branch`, and `data.actual_branch` populated so agents can handle the failure as structured tool output.
-- `switch_task` (registered on `agent-orchestrator-mcp`) also accepts `target_branch`, set at task init time.
+- `switch_task` (registered on `workstate-orchestrator-mcp`) also accepts `target_branch`, set at task init time.
 
 ### v2 Response Envelope (OC-004)
 
@@ -460,9 +460,9 @@ Internal utility functions (`get_review_findings_summary`, `reconcile_review_fin
 
 Primary entrypoints:
 
-- `mcp-agent-handoff --workspace-root <repo> serve-stdio`
-- `mcp-agent-handoff --workspace-root <repo> serve-http`
-- `mcp-agent-handoff --workspace-root <repo> doctor`
+- `mcp-workstate-handoff --workspace-root <repo> serve-stdio`
+- `mcp-workstate-handoff --workspace-root <repo> serve-http`
+- `mcp-workstate-handoff --workspace-root <repo> doctor`
 
 Fallback subcommands:
 
@@ -472,7 +472,7 @@ Fallback subcommands:
 - `decision` — requires `--session` and `--decision`; `--rationale` is optional but mandatory for `slice_complete_*` decisions:
 
   ```bash
-  mcp-agent-handoff --workspace-root <repo> event \
+  mcp-workstate-handoff --workspace-root <repo> event \
     --event-kind decision \
     --session "<agent>-<task-slug>" \
     --decision "cdx_slice_complete_<work_ref>_<slug>" \
@@ -493,9 +493,9 @@ Fallback subcommands:
 - `artifacts`
 - `handoff-search`
 
-Orchestration subcommands (`orchestrator-start`, `worker-start`, `dispatch`, `orchestrator-cycle`, `worker-events`, `list-backends`, `metrics`, etc.) are served exclusively by `agent-orchestrator-mcp`. See [`agent-orchestrator-mcp.md`](agent-orchestrator-mcp.md).
+Orchestration subcommands (`orchestrator-start`, `worker-start`, `dispatch`, `orchestrator-cycle`, `worker-events`, `list-backends`, `metrics`, etc.) are served exclusively by `workstate-orchestrator-mcp`. See [`workstate-orchestrator-mcp.md`](workstate-orchestrator-mcp.md).
 
-**CLI surface note:** `agent-handoff-mcp` CLI is ledger-only. It exposes `serve-stdio`, `serve-http`, `doctor`, `render-handoff`, the ledger MCP tools as CLI wrappers, and two CLI-only artifact variants (`artifact-list`, `artifact-terms`). All orchestration and lane-management commands are exclusively on `agent-orchestrator-mcp`.
+**CLI surface note:** `workstate-handoff-mcp` CLI is ledger-only. It exposes `serve-stdio`, `serve-http`, `doctor`, `render-handoff`, the ledger MCP tools as CLI wrappers, and two CLI-only artifact variants (`artifact-list`, `artifact-terms`). All orchestration and lane-management commands are exclusively on `workstate-orchestrator-mcp`.
 
 ## HTTP Transport
 
@@ -511,7 +511,7 @@ Current runtime behavior:
 Example:
 
 ```bash
-mcp-agent-handoff --workspace-root /path/to/repo serve-http
+mcp-workstate-handoff --workspace-root /path/to/repo serve-http
 ```
 
 ## Portable Hook Semantics

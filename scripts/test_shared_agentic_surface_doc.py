@@ -1,4 +1,4 @@
-"""Doc-lock test for `development-workflow.md` shared agentic surface policy."""
+"""Doc-lock test for `development-workflow.md` shared workstate surface policy."""
 
 from __future__ import annotations
 
@@ -6,18 +6,15 @@ import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DOC_PATH = REPO_ROOT / "docs" / "agentic" / "rules" / "development-workflow.md"
+DOC_PATH = REPO_ROOT / "docs" / "workstate" / "rules" / "development-workflow.md"
 
 SECTION_HEADING_LEVEL = 3
-SECTION_HEADING_TEXT = "Shared Agentic Surface"
+SECTION_HEADING_TEXT = "Shared Workstate Surface"
 SECTION_HEADING_LINE = f"{'#' * SECTION_HEADING_LEVEL} {SECTION_HEADING_TEXT}"
 _HEADING_RE = re.compile(r"^(#{1,6})\s+\S", re.MULTILINE)
 
 REQUIRED_REMOTE_URLS = (
-    "git@github.com:darce/agentic-system.git",
-    "git@github.com:darce/mcp-agent-handoff.git",
-    "git@github.com:darce/mcp-agent-orchestrator.git",
-    "git@github.com:darce/agentic-bootstrap.git",
+    "https://github.com/darce/workstate.git",
 )
 
 REQUIRED_TODO_ANCHORS = (
@@ -31,10 +28,10 @@ REQUIRED_PHRASES = (
 )
 
 REQUIRED_NAMING_POLICY_PHRASES = (
-    "mcp-agent-handoff",
-    "mcp-agent-orchestrator",
-    "agentic-system",
-    "agentic-bootstrap",
+    "mcp-workstate-handoff",
+    "mcp-workstate-orchestrator",
+    "workstate-system",
+    "workstate-bootstrap",
 )
 
 
@@ -78,3 +75,5 @@ def test_shared_agentic_surface_section_present_and_complete() -> None:
 
     assert "mcp-agentic-system" not in section
     assert "mcp-agentic-bootstrap" not in section
+    assert "agentic-system" not in section
+    assert "agentic-bootstrap" not in section

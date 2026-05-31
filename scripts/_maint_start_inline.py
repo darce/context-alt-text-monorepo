@@ -15,7 +15,7 @@ import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from agent_handoff_mcp import (
+from workstate_handoff_mcp import (
     RuntimeConfig,
     configure_runtime,
     get_handoff_state,

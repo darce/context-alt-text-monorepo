@@ -23,7 +23,7 @@ must be MCP-recorded findings, not a chat summary.
 ## What to do
 
 1. Run the `branch-review` checklist against the diff. The checklist lives in
-   `docs/agentic/rules/branch-review-guide.md`; do not re-derive it.
+   `docs/workstate/rules/branch-review-guide.md`; do not re-derive it.
 2. Record every finding via `review_findings(review={"operation":"batch_record",
    "task_ref":"{{reviewer_task_ref}}", "findings":[...]})`. Use
    `review_mode="branch"`.

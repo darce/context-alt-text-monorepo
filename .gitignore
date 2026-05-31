@@ -104,7 +104,6 @@ DASHBOARD.md
 # tracked here (not gitignored) because they carry the consumer-specific
 # context7 server that the workstate generator does not manage.
 .workstate/
-.agentic/remote/
 /scripts/hooks
 /.github/hooks
 /scripts/workstate

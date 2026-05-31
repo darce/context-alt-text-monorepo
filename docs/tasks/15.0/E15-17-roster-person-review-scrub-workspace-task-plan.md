@@ -207,7 +207,7 @@ Proof:
 ### Checklist for Slice 2: Person Projection Rendering
 
 - [ ] Person rows render representative evidence, counts, review state, queue memberships, and projection status. _Partial: name, cluster_count, projection_status, projection_refreshed_at, source_version, and tags rendered; review-state and queue-membership rendering deferred until those projection fields land._
-- [x] Bound clusters collapse under one person context. _`PersonWorkspacePanel` renders assigned cluster evidence grouped under the selected person from the RCL-004 `clusters[]` projection._
+- [x] Bound clusters collapse under one person context. _`PersonWorkspacePanel` renders assigned cluster evidence grouped under the selected person from the RCL-004 `clusters[]` projection; review-state and queue-membership rendering remain tracked by the preceding unchecked row._
 - [x] Duplicate person cluster fixture covered. _`rosterRoute.test.ts` covers duplicate-name UUID tiebreak and numeric-id tiebreak cases for `selectDeterministicDefaultWorkspaceEntry`._
 - [x] Default workspace selection follows a documented deterministic rule rather than first projection-row order. _Sorted by lowercased name → person_uuid → numeric id with locale-stable `localeCompare('en', { sensitivity: 'base' })`._
 

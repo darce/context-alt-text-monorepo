@@ -72,7 +72,9 @@ root) broken. Fixed locally by symlinking the three scripts into `scripts/` →
 `.workstate/remote/packages/workstate-system/scripts/`. **Ask:**
 `workstate-bootstrap` should hoist these shared scripts (and track them in
 `.workstate-bootstrap.json` `surfaces`) like the `Makefile.d/*.mk` and
-`scripts/hooks` symlinks it already manages.
+`scripts/hooks` symlinks it already manages. This consumer now carries those
+local symlinks and ledger entries to keep the branch mergeable; the upstream ask
+is to make future installs materialize them without consumer-side repair.
 
 ## G. Shared Git hooks should resolve guards relative to the hook directory
 

@@ -17,7 +17,20 @@ def _repo_root() -> Path:
 
 
 def _default_manifest_path() -> Path:
-    return _repo_root() / "config" / "agent-workflows" / "portable_commands.json"
+    repo_root = _repo_root()
+    local_manifest = repo_root / "config" / "agent-workflows" / "portable_commands.json"
+    if local_manifest.is_file():
+        return local_manifest
+    return (
+        repo_root
+        / ".workstate"
+        / "remote"
+        / "packages"
+        / "workstate-system"
+        / "config"
+        / "agent-workflows"
+        / "portable_commands.json"
+    )
 
 
 def _parse_args() -> argparse.Namespace:
@@ -92,9 +105,9 @@ def _resolve_copilot(repo_root: Path, command_id: str) -> tuple[str, str]:
 
 
 def _resolve_codex(repo_root: Path, command_id: str) -> tuple[str, str]:
-    source = repo_root / "docs" / "agentic" / "generated" / "codex-command-router.md"
+    source = repo_root / "docs" / "workstate" / "generated" / "codex-command-router.md"
     content = source.read_text()
-    pattern = rf"^\- `/{re.escape(command_id)}` -> skill `([^`]+)` -> `([^`]+)`$"
+    pattern = rf"^\- `/{re.escape(command_id)}`(?: \([^)]+\))? -> skill `([^`]+)` -> `([^`]+)`$"
     match = re.search(pattern, content, re.MULTILINE)
     if match is None:
         raise ValueError(f"{source}: missing command map entry for /{command_id}")
@@ -141,7 +154,7 @@ def smoke_agent_workflows(
 
 def main() -> int:
     args = _parse_args()
-    repo_root = args.manifest.resolve().parents[2]
+    repo_root = _repo_root()
     failures, resolved_backend = smoke_agent_workflows(
         repo_root=repo_root,
         manifest_path=args.manifest,

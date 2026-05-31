@@ -215,10 +215,10 @@ Proof:
 
 ## Stretch Goals
 
-- [ ] Add compact copy distinguishing active jobs, recent durable jobs, and this-browser remembered jobs.
+- [x] Add compact copy distinguishing active jobs, recent durable jobs, and this-browser remembered jobs. *Copy now appears in `DashboardRecentActivitySection.tsx`, `Panels.tsx`, and `recognitionJobHistoryUtils.ts`.*
 
 ## Success Criteria
 
-- [ ] Dashboard Recent Activity no longer presents local storage as system history.
-- [ ] Dashboard priority is deterministic and test-covered.
-- [ ] Optional diagnostics, if present, are source-backed and additive.
+- [x] Dashboard Recent Activity no longer presents local storage as system history. *Backed by `BatchRunRepository::list_recent_runs`, `AnalysisJobsController::get_recent_batch_runs`, `recognitionJobHistoryUtils.ts`, and dashboard tests.*
+- [x] Dashboard priority is deterministic and test-covered. *Implemented in `buildDashboardPriorityModel.ts` with focused coverage in `buildDashboardPriorityModel.test.ts`.*
+- [x] Optional diagnostics, if present, are source-backed and additive. *No new diagnostics were needed; existing `SyncStatusResponse` fields remained the source-backed surface.*

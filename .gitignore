@@ -95,9 +95,24 @@ CURRENT_TASK.md
 DASHBOARD.txt
 DASHBOARD.md
 .task-state/
+
+# --- workstate-bootstrap-managed surfaces -------------------------------
+# Regenerate via `workstate-bootstrap install` from the pinned remote_sha in
+# .workstate-bootstrap.json (which IS tracked — it is the install ledger).
+# SHARED entries are symlinks into .workstate/remote/; committing them would
+# leave dangling symlinks on a fresh clone. GENERATED entries are deterministic
+# generator outputs. .mcp.json / .vscode/mcp.json / .codex/config.toml are kept
+# tracked here (not gitignored) because they carry the consumer-specific
+# context7 server that the workstate generator does not manage.
+.workstate/
 .agentic/remote/
-Makefile.d
-scripts/agentic/lifecycle/
+/scripts/hooks
+/.github/hooks
+/scripts/workstate
+/Makefile.d
+/.github/prompts/
+/.claude-plugin/
+/.agents/
 
 # local logs
 /docs/agentic/oci-example/*.log

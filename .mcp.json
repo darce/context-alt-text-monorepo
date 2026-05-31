@@ -1,37 +1,31 @@
 {
   "mcpServers": {
-    "mcp-agent-handoff": {
-      "type": "stdio",
-      "command": "uvx",
-      "args": [
-        "mcp-agent-handoff==0.11.2",
-        "--workspace-root",
-        ".",
-        "serve-stdio"
-      ],
-      "env": {
-        "AGENT_HANDOFF_ENFORCE_BRANCH": "1"
-      }
-    },
-    "mcp-agent-orchestrator": {
-      "type": "stdio",
-      "command": "uvx",
-      "args": [
-        "mcp-agent-orchestrator==0.4.6",
-        "--workspace-root",
-        ".",
-        "serve-stdio"
-      ],
-      "env": {
-        "AGENT_HANDOFF_ENFORCE_BRANCH": "1"
-      }
-    },
     "context7": {
       "type": "stdio",
       "command": "npx",
       "args": [
         "-y",
         "@upstash/context7-mcp@2.1.4"
+      ]
+    },
+    "workstate-handoff-mcp": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "mcp-workstate-handoff@0.12.0",
+        "--workspace-root",
+        ".",
+        "serve-stdio"
+      ]
+    },
+    "workstate-orchestrator-mcp": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "mcp-workstate-orchestrator@0.5.0",
+        "--workspace-root",
+        ".",
+        "serve-stdio"
       ]
     }
   }

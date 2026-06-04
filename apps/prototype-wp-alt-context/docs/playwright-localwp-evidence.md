@@ -8,7 +8,8 @@ This runbook is the operator path for the E15 Playwright harness. Scripts, confi
 - WordPress admin is available at `http://localhost:10010/wp-admin/`.
 - LocalWP language is English (the auth bootstrap uses the stable `#wp-submit` button id, but selectors elsewhere may assume English admin chrome).
 - The Alt Context plugin is activated in that LocalWP site.
-- App dependencies are installed under `apps/prototype-wp-alt-context`.
+- App dependencies are installed under `apps/prototype-wp-alt-context`, or available from the common git worktree's `node_modules` through the shared Playwright launcher.
+- Use the package-manager-pinned npm through Corepack if the shell npm is older than `11.14.1`.
 - Chromium is installed for Playwright: `npm run e2e:install` (or `make localwp-e2e-install` from the repo root).
 
 ## Credentials Setup
@@ -54,22 +55,57 @@ Behavior:
 
 Use `ACX_PLAYWRIGHT_TASK_REF` so the artifact bundle lands under the right task directory.
 
+The committed v1 evidence spec captures the ACX Dashboard. Workbench avatar/progress, LocalWP to OCI scan proof, and public-demo proof can use the same storage-state and artifact convention, but those richer captures still need either a headed operator flow or a task-specific evidence spec before they become fully repeatable.
+
+### No-secret harness checks
+
+These checks prove the Playwright harness is installed and discoverable without using WordPress credentials:
+
+```bash
+corepack npm install
+corepack npm run e2e:install
+ACX_PLAYWRIGHT_TASK_REF=E15-6 corepack npm run e2e:list
+```
+
+If package fetching is blocked by local policy, the launcher now falls back to the common git worktree's `apps/prototype-wp-alt-context/node_modules` when that sibling install already exists. If neither local nor common-worktree dependencies exist, stop there and record the blocker; do not relax the package engine or dependency rules.
+
+An unauthenticated reachability screenshot can be captured when LocalWP is running:
+
+```bash
+mkdir -p local/playwright/E15-6/cli
+ACX_PLAYWRIGHT_TASK_REF=E15-6 bash scripts/playwright-cli.sh screenshot --full-page http://localhost:10010/wp-admin/ local/playwright/E15-6/cli/wp-admin-entry.png
+```
+
+That screenshot proves the browser can reach WordPress admin. It does not prove plugin activation, auth, backend connectivity, or scan success.
+
 ### E15-3a LocalWP to OCI roundtrip
 
 - Bootstrap auth once.
 - Run the headed evidence project with `ACX_PLAYWRIGHT_TASK_REF=E15-3a`.
-- Capture the LocalWP action, backend-connected response, and any screenshots or trace files needed for the roundtrip proof bundle.
+- Use the committed dashboard evidence spec for admin/plugin reachability and artifact-shape proof.
+- Capture Workbench scan screenshots or traces with a headed operator flow until an E15-3a-specific evidence spec exists.
+- Keep OCI backend logs, correlation IDs, CORS/rate-limit evidence, fallback timeout proof, and redacted run-log entries in the E15-3a operator run log.
 
 ### E15-22 Workbench avatar and progress proof
 
 - Bootstrap auth once.
 - Run the headed evidence project with `ACX_PLAYWRIGHT_TASK_REF=E15-22`.
 - Capture the Workbench surfaces that show truthful avatar/progress rendering for the accepted demo scenario.
+- Until deterministic seed/reset helpers and a Workbench-specific evidence spec land, the operator still owns selecting the seeded-media run, starting the scan, confirming the representative `thumb_url` or fallback state, and copying redacted screenshots/transcripts into the proof bundle.
 
 ### E15-5 live-demo roundtrip placeholder
 
 - Use the same LocalWP harness shape with `ACX_PLAYWRIGHT_TASK_REF=E15-5` until public-demo auth exists.
 - Treat this as a LocalWP rehearsal path, not a substitute for the later public-demo storage-state work.
+- Public-demo browser proof starts only after the live site URL, credentials/storage state, and backend connection exist.
+
+## Operator Work That Remains
+
+- LocalWP must be running with the packaged plugin activated; Playwright does not install or configure the site.
+- Admin credentials stay in `.env.local` or the interactive browser prompt; do not send them through agent chat or command history.
+- OCI deployment, gate-key placement, backend logs, request IDs, CORS/rate-limit checks, and fallback timeout evidence remain shell/operator proof.
+- Seeded-media selection and proof-bundle curation remain operator-owned until v2 seed/reset helpers exist.
+- E15-5a operational hygiene has no useful browser surface; use shell/operator evidence.
 
 ## Artifact Redaction Rules
 

@@ -103,6 +103,62 @@ def test_component_missing_digest_fails_fast(tmp_path: Path) -> None:
     assert "upstream_digest" in errors[0]
 
 
+def test_non_dict_component_entry_fails_cleanly(tmp_path: Path) -> None:
+    """A structurally invalid components entry must produce a per-component
+    error, not an uncaught AttributeError traceback (rg-008)."""
+    plugin = tmp_path / "workstate-system"
+    plugin.mkdir(parents=True)
+    _write_lock(plugin, ["not-a-dict"])
+    errors = check_overrides_locks(tmp_path)
+    assert len(errors) == 1
+    assert "components[0]" in errors[0]
+    assert "not an object" in errors[0]
+
+
+def _write_overrides_yaml(plugin_dir: Path, digest: str) -> Path:
+    yaml_path = plugin_dir / "overrides.yaml"
+    yaml_path.write_text(
+        "schema_version: 1\n"
+        f"plugin: {plugin_dir.name}\n"
+        "components:\n"
+        "  skills:\n"
+        "    branch-review:\n"
+        "      mode: patch\n"
+        "      path: skills/branch-review/SKILL.md\n"
+        "      base_path: skills/branch-review/SKILL.base.md\n"
+        f"      upstream_digest: {digest}\n"
+        "      on_upstream_change: warn\n"
+    )
+    return yaml_path
+
+
+def test_yaml_digest_parity_match_passes(tmp_path: Path) -> None:
+    plugin = tmp_path / "workstate-system"
+    base = plugin / "skills" / "branch-review" / "SKILL.base.md"
+    base.parent.mkdir(parents=True)
+    base.write_text("body\n")
+    digest = _sha256(base)
+    _write_lock(plugin, [_component("skills/branch-review/SKILL.base.md", digest)])
+    _write_overrides_yaml(plugin, digest)
+    assert check_overrides_locks(tmp_path) == []
+
+
+def test_yaml_digest_parity_drift_fails(tmp_path: Path) -> None:
+    """overrides.yaml carrying a stale duplicate upstream_digest must fail —
+    the redundant copy may not silently drift from the canonical lock."""
+    plugin = tmp_path / "workstate-system"
+    base = plugin / "skills" / "branch-review" / "SKILL.base.md"
+    base.parent.mkdir(parents=True)
+    base.write_text("body\n")
+    _write_lock(plugin, [_component("skills/branch-review/SKILL.base.md", _sha256(base))])
+    _write_overrides_yaml(plugin, "sha256:" + "b" * 64)
+    errors = check_overrides_locks(tmp_path)
+    assert len(errors) == 1
+    assert "overrides.yaml" in errors[0]
+    assert "branch-review" in errors[0]
+    assert "canonical" in errors[0]
+
+
 def test_no_lock_files_is_ok(tmp_path: Path) -> None:
     assert check_overrides_locks(tmp_path) == []
 

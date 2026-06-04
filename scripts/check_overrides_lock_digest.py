@@ -23,6 +23,8 @@ import json
 import sys
 from pathlib import Path
 
+import yaml
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 OVERRIDES_ROOT = REPO_ROOT / "workstate-overrides"
 
@@ -47,6 +49,9 @@ def _check_lock(lock_path: Path) -> list[str]:
 
     errors: list[str] = []
     for index, component in enumerate(components):
+        if not isinstance(component, dict):
+            errors.append(f"{rel_lock}: components[{index}] is not an object")
+            continue
         label = component.get("name") or f"components[{index}]"
         base_rel = component.get("base_path")
         digest = component.get("upstream_digest")
@@ -69,6 +74,53 @@ def _check_lock(lock_path: Path) -> list[str]:
                 f"lock has {digest}, materialized {base_rel} hashes to {actual}. "
                 f"Re-run the overrides update flow or recompute the digest from "
                 f"the upstream base copy (whole-file sha256 of {base_rel})."
+            )
+    errors.extend(_check_yaml_digest_parity(lock_path, components))
+    return errors
+
+
+def _check_yaml_digest_parity(lock_path: Path, components: list) -> list[str]:
+    """Cross-check the redundant upstream_digest copy in overrides.yaml.
+
+    overrides.yaml duplicates each component's upstream_digest for human
+    readability; the lock is canonical. Without this parity check the two
+    can silently drift while check-overrides-digest still reports OK.
+    """
+    plugin_dir = lock_path.parent
+    yaml_path = plugin_dir / "overrides.yaml"
+    if not yaml_path.is_file():
+        return []
+    rel_yaml = (
+        yaml_path.relative_to(REPO_ROOT) if yaml_path.is_relative_to(REPO_ROOT) else yaml_path
+    )
+    try:
+        payload = yaml.safe_load(yaml_path.read_text())
+    except yaml.YAMLError as exc:
+        return [f"{rel_yaml}: invalid YAML: {exc}"]
+    yaml_components = payload.get("components") if isinstance(payload, dict) else None
+    if not isinstance(yaml_components, dict):
+        return []
+    errors: list[str] = []
+    for component in components:
+        if not isinstance(component, dict):
+            continue
+        kind = component.get("component_kind")
+        name = component.get("name")
+        lock_digest = component.get("upstream_digest")
+        if not kind or not name or not lock_digest:
+            continue
+        section = yaml_components.get(f"{kind}s")
+        if not isinstance(section, dict):
+            continue
+        entry = section.get(name)
+        if not isinstance(entry, dict):
+            continue
+        yaml_digest = entry.get("upstream_digest")
+        if yaml_digest is not None and yaml_digest != lock_digest:
+            errors.append(
+                f"{rel_yaml}: component '{name}' upstream_digest {yaml_digest} does not "
+                f"match overrides.lock.json {lock_digest}. The lock is canonical — "
+                f"re-sync the yaml copy."
             )
     return errors
 

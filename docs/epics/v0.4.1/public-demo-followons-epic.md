@@ -50,7 +50,7 @@ Theme C tasks operate on pool/session lifecycle state and do not depend on E15-7
 
 | Task | Status | Owning Doc | Why It's Here |
 | ---- | ------ | ---------- | ------------- |
-| **E15-6** E2E Smoke Gate Automation | Stub (to be promoted) | [E15-6 stub](../../tasks/15.0/E15-6-e2e-smoke-gate-automation-stub.md), [tech-debt/e2e-smoke-automation-path.md](../../tasks/tech-debt/e2e-smoke-automation-path.md) | Was E15 Phase 5. Replaces E15-5 manual passes with Playwright + WP-CLI fixtures + outage simulation in CI. Depends on the WP demo standing up (E15-3) and on the manual flow being well-understood (E15-5). |
+| **E15-6** E2E Smoke Gate Automation | Active v1 / deferred v2 envelope | [E15-6 plan](../../tasks/15.0/E15-6-playwright-operator-evidence-harness-task-plan.md) | Was E15 Phase 5. v1 now lands LocalWP Playwright scaffolding plus the operator-evidence/a11y lanes in E15; the remaining durable smoke + CI envelope can still split back here if E16 owns the follow-on. |
 
 ## Cross-Theme Ordering
 

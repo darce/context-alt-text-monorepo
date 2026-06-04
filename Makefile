@@ -129,7 +129,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/logs.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity
+.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke
 
 # Default target
 help:
@@ -146,6 +146,11 @@ help:
 	@echo "  make clean-all        - Clean cache files in all apps"
 	@echo "  make reset-local      - Reset local backend DB + WordPress projection data (destructive)"
 	@echo "  make localwp-mirror-integrity - Run the WordPress mirror integrity check through the plugin app wrapper"
+	@echo "  make localwp-e2e-install - Install Chromium for the LocalWP Playwright harness"
+	@echo "  make localwp-e2e-auth - Bootstrap shared Playwright auth state against LocalWP"
+	@echo "  make localwp-e2e-smoke - Run the LocalWP smoke Playwright project"
+	@echo "  make localwp-evidence - Run the headed LocalWP evidence Playwright project"
+	@echo "  make localwp-a11y-smoke - Run the LocalWP axe Playwright project"
 	@echo ""
 	@echo "App-Specific Commands:"
 	@echo "  cd apps/prototype-description-service && make help"
@@ -238,6 +243,23 @@ help:
 	@echo "    Shared singleton orchestrator loop rooted at $(ORCHESTRATOR_ROOT). Start it from any worktree; pause/resume/status use the same shared root state."
 	@echo "  Supported task manifests: $(SUPPORTED_TASKS)"
 	@echo "  Enumerated lanes for $(if $(TASK),$(TASK),the active task): $(TASK_LANES)"
+
+LOCALWP_PLAYWRIGHT_TASK_ENV = $(if $(ACX_PLAYWRIGHT_TASK_REF),ACX_PLAYWRIGHT_TASK_REF="$(ACX_PLAYWRIGHT_TASK_REF)",)
+
+localwp-e2e-install:
+	@cd apps/prototype-wp-alt-context && npm run e2e:install
+
+localwp-e2e-auth:
+	@cd apps/prototype-wp-alt-context && $(LOCALWP_PLAYWRIGHT_TASK_ENV) npm run e2e:auth
+
+localwp-e2e-smoke:
+	@cd apps/prototype-wp-alt-context && $(LOCALWP_PLAYWRIGHT_TASK_ENV) npm run e2e:localwp
+
+localwp-evidence:
+	@cd apps/prototype-wp-alt-context && $(LOCALWP_PLAYWRIGHT_TASK_ENV) npm run e2e:evidence
+
+localwp-a11y-smoke:
+	@cd apps/prototype-wp-alt-context && $(LOCALWP_PLAYWRIGHT_TASK_ENV) npm run a11y:localwp
 
 # =============================================================================
 # Cross-Repo Checks

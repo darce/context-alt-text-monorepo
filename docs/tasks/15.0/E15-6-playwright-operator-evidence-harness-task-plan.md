@@ -319,7 +319,7 @@ Absorbed-tech-debt Phase 3: remove dependency on LocalWP private GraphQL from re
 - [x] New `apps/prototype-wp-alt-context/tests/e2e/auth-setup/auth.setup.ts` reads `ACX_E2E_WP_ADMIN_USER`/`_PASS` env-first with `page.pause()` fallback; writes `tests/e2e/.auth/storageState.json`.
 - [x] New `apps/prototype-wp-alt-context/tests/e2e/fixtures/acx-routes.ts` exports ACX admin slugs as typed const, resolved from `src/admin/class-menu.php`.
 - [x] Root `Makefile` adds wrappers `localwp-e2e-install`, `localwp-e2e-auth`, `localwp-e2e-smoke`, `localwp-evidence`, `localwp-a11y-smoke`.
-- [ ] Verification: `corepack npm install`, `corepack npm run e2e:install`, `ACX_PLAYWRIGHT_TASK_REF=E15-6 corepack npm run e2e:list` succeed. 2026-06-04 attempt confirmed Corepack npm `11.14.1`; local `npm install` still stops at workstation `EALLOWREMOTE`, but `corepack npm run e2e:localwp -- --list` now succeeds from the linked `E15-6` worktree via the shared-worktree launcher. Browser-install and auth-backed runtime checks remain deferred to Slice 3 runtime verification.
+- [x] Verification: fresh clone at `/tmp/e15-6-proof/repo` completed `corepack npm install --allow-remote=all`, `corepack npm run e2e:install`, and `ACX_PLAYWRIGHT_TASK_REF=E15-6 corepack npm run e2e:list` on 2026-06-04. The workstation still needs `--allow-remote=all` because npm config sets `allow-remote=root`, but package fetch and Playwright discovery are proven from a fresh clone.
 - [x] Slice-complete bookkeeping is covered by `copilot_slice_complete_E15-6_shared_playwright_launcher` plus `copilot_slice_complete_E15-6_runtime_proof_lanes_a_c`; the strict fresh-clone install proof remains the only Slice 2 verification gap.
 
 ### Checklist for Slice 3: Lane A first proof test + tech-debt doc archival
@@ -354,11 +354,11 @@ Absorbed-tech-debt Phase 3: remove dependency on LocalWP private GraphQL from re
 
 ## Success Criteria
 
-- [ ] An operator with LocalWP running can, from a fresh clone, complete `npm install → npm run e2e:install → cp .env.local.example .env.local && edit → npm run e2e:auth → npm run e2e:localwp` and see a passing smoke test with a gitignored trace artifact. Current workstation proof remains blocked at `corepack npm install` by `EALLOWREMOTE`; linked-worktree execution is proven through the shared launcher, but it does not satisfy the strict fresh-clone criterion.
+- [x] An operator with LocalWP running can, from a fresh clone, complete `npm install --allow-remote=all → npm run e2e:install → cp .env.local.example .env.local && edit → npm run e2e:auth → npm run e2e:localwp` and see a passing smoke test with gitignored task-scoped artifacts. `--allow-remote=all` is required only on this workstation because npm config sets `allow-remote=root`.
 - [x] An operator can run `npm run a11y:localwp` and see four passing empty-state axe smoke specs against a clean LocalWP install with the plugin activated; the seeded-state checks remain intentionally skipped until `ACX_E2E_SEEDED` is set, and serious/critical violations still fail the run.
 - [x] A second agent capturing evidence for a different E15 task (e.g. E15-22 workbench avatar/progress) can read `apps/prototype-wp-alt-context/docs/playwright-localwp-evidence.md` and produce a proof bundle without out-of-band guidance.
 - [x] `docs/tasks/tech-debt/e2e-smoke-automation-path.md` archived; `docs/tasks/15.0/E15-6-e2e-smoke-gate-automation-stub.md` replaced by pointer to this plan; v0.4.0 epic reflects E15-6 un-deferred.
-- [ ] `handoff_close_check(enforce=True)` passes on `E15-6` with zero open findings after the remaining fresh-clone install proof is resolved and the active MCP row is marked `done`.
+- [ ] `handoff_close_check(enforce=True)` passes on `E15-6` with zero open findings after the fresh-clone blocker is resolved, the task is marked `done`, and root-worktree package-lock drift is cleared or merged.
 
 ## Risks
 

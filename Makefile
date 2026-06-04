@@ -129,7 +129,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/logs.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke
+.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest
 
 # Default target
 help:
@@ -397,6 +397,13 @@ lint-scripts:
 # this check, digest drift only surfaces on the next manual bootstrap update.
 check-overrides-digest:
 	@python3 scripts/check_overrides_lock_digest.py
+	@$(MAKE) test-overrides-digest
+
+# Unit tests backing check-overrides-digest (incl. the committed-lock
+# consistency regression guard). Top-level scripts/test_*.py are not
+# collected by any repo-wide runner, so wire these into check-all here.
+test-overrides-digest:
+	@python3 -m pytest scripts/test_check_overrides_lock_digest.py scripts/test_consumer_setup_doc.py -q --tb=short
 
 # Run unit tests for scripts/hooks and .github/hooks.
 # Addresses AHMCP-14-BR-02: hook tests were not reachable via package Makefiles.

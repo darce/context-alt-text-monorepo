@@ -328,11 +328,11 @@ Absorbed-tech-debt Phase 3: remove dependency on LocalWP private GraphQL from re
 
 - [ ] Loaded the minimum authoritative rules, contracts, and handoff state before editing (CLAUDE.md, `docs/workstate/rules/development-workflow.md`, scope note, intake decisions `#3186`–`#3191`, planning findings `E15-6-PA-01..08` + `E15-6-PR-01..03`).
 - [ ] Confirmed external dependency context for `@playwright/test` and `@axe-core/playwright` does not require `ctx7` (well-known APIs; pinned at Slice 2 write time).
-- [ ] Recorded boundary ownership and compatibility expectations: WP plugin dev tooling, root Makefile wrappers, root `.gitignore`, repo-local docs surface, E15 epic + stub — all owned by this task; existing Vitest + `vitest-axe` path unchanged.
+- [x] Recorded boundary ownership and compatibility expectations: WP plugin dev tooling, root Makefile wrappers, root `.gitignore`, repo-local docs surface, E15 epic + stub — all owned by this task; existing Vitest + `vitest-axe` path unchanged.
 
 ## Review Readiness
 
-- [ ] No boundary-touching implementation is left without matching contract/doc/fixture evidence: every npm script and Make wrapper added in Slice 2 is documented in Slice 1's `playwright-harness.md`; every artifact path is named in `.gitignore` and the operator playbook.
+- [x] No boundary-touching implementation is left without matching contract/doc/fixture evidence: every npm script and Make wrapper added in Slice 2 is documented in Slice 1's `playwright-harness.md`; every artifact path is named in `.gitignore` and the operator playbook.
 - [ ] Runtime-parity checks are included where tests can mask real behavior: Slice 3's `make localwp-e2e-smoke` exercises the real LocalWP admin; Slice 4 exercises real route empty-state markup. No mocked WP admin surface.
 - [ ] Handoff decision records the change, verification, and any contract implications for each slice (slice-complete decision id names captured per Slice 1–4 checklist above).
 
@@ -340,8 +340,8 @@ Absorbed-tech-debt Phase 3: remove dependency on LocalWP private GraphQL from re
 
 - [ ] An operator with LocalWP running can, from a fresh clone, complete `npm install → npm run e2e:install → cp .env.local.example .env.local && edit → npm run e2e:auth → npm run e2e:localwp` and see a passing smoke test with a gitignored trace artifact.
 - [ ] An operator can run `npm run a11y:localwp` and see four passing empty-state axe smoke specs against a clean LocalWP install with the plugin activated; serious/critical violations fail the run.
-- [ ] A second agent capturing evidence for a different E15 task (e.g. E15-22 workbench avatar/progress) can read `apps/prototype-wp-alt-context/docs/playwright-localwp-evidence.md` and produce a proof bundle without out-of-band guidance.
-- [ ] `docs/tasks/tech-debt/e2e-smoke-automation-path.md` archived; `docs/tasks/15.0/E15-6-e2e-smoke-gate-automation-stub.md` replaced by pointer to this plan; v0.4.0 epic reflects E15-6 un-deferred.
+- [x] A second agent capturing evidence for a different E15 task (e.g. E15-22 workbench avatar/progress) can read `apps/prototype-wp-alt-context/docs/playwright-localwp-evidence.md` and produce a proof bundle without out-of-band guidance.
+- [x] `docs/tasks/tech-debt/e2e-smoke-automation-path.md` archived; `docs/tasks/15.0/E15-6-e2e-smoke-gate-automation-stub.md` replaced by pointer to this plan; v0.4.0 epic reflects E15-6 un-deferred.
 - [ ] `handoff_close_check(enforce=True)` passes on `E15-6` with zero open findings; v1 slice-complete decisions for Slices 1–4 recorded; test_result evidence for the Slice 3 + Slice 4 verifications tied to current HEAD SHA.
 
 ## Risks

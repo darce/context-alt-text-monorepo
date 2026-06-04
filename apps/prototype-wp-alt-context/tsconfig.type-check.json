@@ -1,5 +1,5 @@
 {
   "extends": "./tsconfig.json",
-  "include": ["js/**/*.ts", "js/**/*.tsx", "vitest.setup.ts"],
+  "include": ["js/**/*.ts", "js/**/*.tsx", "tests/e2e/**/*.ts", "playwright.config.ts", "vitest.setup.ts"],
   "exclude": ["node_modules", "public", "vendor"]
 }

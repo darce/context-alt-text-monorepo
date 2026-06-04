@@ -59,6 +59,10 @@ literature/
 .env
 .env.*
 !.env*.example
+!apps/prototype-wp-alt-context/.env.local.example
+apps/prototype-wp-alt-context/.env.local
+apps/prototype-wp-alt-context/tests/e2e/.auth/
+apps/prototype-wp-alt-context/local/playwright/
 node_modules/
 package-lock.json
 !apps/prototype-wp-alt-context/package-lock.json

@@ -1,1 +1,1 @@
-../.workstate/remote/packages/workstate-system/scripts/validate_claude_settings_pin.py
+../.workstate/remote/packages/workstate-system/workstate_system/payload/scripts/validate_claude_settings_pin.py

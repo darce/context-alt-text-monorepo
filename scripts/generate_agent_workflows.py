@@ -1,1 +1,1 @@
-../.workstate/remote/packages/workstate-system/scripts/generate_agent_workflows.py
+../.workstate/remote/packages/workstate-system/workstate_system/payload/scripts/generate_agent_workflows.py

@@ -87,7 +87,7 @@ Non-interactive harness rule: description-service app commands use `VIRTUAL_ENV=
 Handles task state, review findings, exports/imports, close checks, and artifacts. Run `doctor` to inspect the live registered tool list from the installed package.
 
 ```text
-.vscode/mcp.json  →  env { PATH, AGENT_HANDOFF_ENFORCE_BRANCH=1 }  →  uvx "mcp-workstate-handoff==0.12.0" --workspace-root ${workspaceFolder} --state-dir ${workspaceFolder}/.task-state --exports-dir ${workspaceFolder}/.task-state/exports serve-stdio
+.vscode/mcp.json  →  env { PATH, AGENT_HANDOFF_ENFORCE_BRANCH=1 }  →  uvx "mcp-workstate-handoff==0.12.1" --workspace-root ${workspaceFolder} --state-dir ${workspaceFolder}/.task-state --exports-dir ${workspaceFolder}/.task-state/exports serve-stdio
 ```
 
 ### Orchestration Server (`workstate-orchestrator-mcp`)
@@ -95,14 +95,14 @@ Handles task state, review findings, exports/imports, close checks, and artifact
 Handles daemons, workers, lane management, plan cursors, and turn metrics. Run `doctor` to inspect the live registered tool list from the installed package.
 
 ```text
-.vscode/mcp.json  →  env { PATH, AGENT_HANDOFF_ENFORCE_BRANCH=1 }  →  uvx "mcp-workstate-orchestrator==0.5.0" --workspace-root ${workspaceFolder} --state-dir ${workspaceFolder}/.task-state --exports-dir ${workspaceFolder}/.task-state/exports serve-stdio
+.vscode/mcp.json  →  env { PATH, AGENT_HANDOFF_ENFORCE_BRANCH=1 }  →  uvx "mcp-workstate-orchestrator==0.5.2" --workspace-root ${workspaceFolder} --state-dir ${workspaceFolder}/.task-state --exports-dir ${workspaceFolder}/.task-state/exports serve-stdio
 ```
 
 Both servers share `handoff.db` and `mcp-artifacts.db` on disk; SQLite WAL mode makes concurrent readers safe. Install both from PyPI:
 
 ```bash
-uv tool install "mcp-workstate-handoff==0.12.0"
-uv tool install "mcp-workstate-orchestrator==0.5.0"
+uv tool install "mcp-workstate-handoff==0.12.1"
+uv tool install "mcp-workstate-orchestrator==0.5.2"
 ```
 
 The old repo-intel helpers remain a separate decomposition task and are not part of either package.
@@ -120,8 +120,8 @@ The old repo-intel helpers remain a separate decomposition task and are not part
 Install from PyPI:
 
 ```bash
-uv tool install "mcp-workstate-handoff==0.12.0"
-uv tool install "mcp-workstate-orchestrator==0.5.0"
+uv tool install "mcp-workstate-handoff==0.12.1"
+uv tool install "mcp-workstate-orchestrator==0.5.2"
 ```
 
 ### Validation

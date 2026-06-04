@@ -9,12 +9,12 @@ args = ["-y", "@upstash/context7-mcp@2.1.4"]
 [mcp_servers.workstate-handoff-mcp]
 type = "stdio"
 command = "uvx"
-args = ["mcp-workstate-handoff@0.12.0", "--workspace-root", ".", "serve-stdio"]
+args = ["mcp-workstate-handoff@0.12.1", "--workspace-root", ".", "serve-stdio"]
 
 [mcp_servers.workstate-orchestrator-mcp]
 type = "stdio"
 command = "uvx"
-args = ["mcp-workstate-orchestrator@0.5.0", "--workspace-root", ".", "serve-stdio"]
+args = ["mcp-workstate-orchestrator@0.5.2", "--workspace-root", ".", "serve-stdio"]
 
 [marketplaces.workstate-marketplace]
 source_type = "local"

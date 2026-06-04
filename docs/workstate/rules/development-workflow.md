@@ -654,7 +654,7 @@ The handoff provenance guard blocks two classes of writes before they land in MC
 When the guard fires with `handoff provenance drift`, recover by switching to the owning worktree and retrying there:
 
 - `cd <target_worktree_path>`
-- rerun the MCP write, or for the Bash fallback rerun it as `cd <target_worktree_path> && uvx --from "mcp-workstate-handoff==0.12.0" python3 -c "... task_ref='<task-ref>' ..."`
+- rerun the MCP write, or for the Bash fallback rerun it as `cd <target_worktree_path> && uvx --from "mcp-workstate-handoff==0.12.1" python3 -c "... task_ref='<task-ref>' ..."`
 
 The guard is fail-open when it cannot resolve task identity or git metadata; validation failures should not become write outages. There is no bypass marker for normal implementation work. If a legitimate cross-worktree write is required, stop and route that operation through the owning task worktree instead of forcing it from the wrong cwd.
 

@@ -20,11 +20,11 @@ REQUIRED_HEADINGS = (
 )
 
 REQUIRED_SNIPPETS = (
-    './.venv/bin/pip install "mcp-workstate-handoff==0.12.0"',
-    './.venv/bin/pip install "mcp-workstate-orchestrator==0.5.0"',
-    './.venv/bin/pip install "workstate-bootstrap==0.6.0"',
-    "./.venv/bin/workstate-bootstrap install --target . --remote-ref v0.1.21",
-    "./.venv/bin/workstate-bootstrap update --remote-ref v0.1.21",
+    './.venv/bin/pip install "mcp-workstate-handoff==0.12.1"',
+    './.venv/bin/pip install "mcp-workstate-orchestrator==0.5.2"',
+    './.venv/bin/pip install "workstate-bootstrap==0.7.3"',
+    "./.venv/bin/workstate-bootstrap install --target . --remote-ref v0.1.22",
+    "./.venv/bin/workstate-bootstrap update --remote-ref v0.1.22",
     "./.venv/bin/workstate-bootstrap doctor",
     "./.venv/bin/workstate-bootstrap repair",
     "AGENT_HANDOFF_WORKSPACE_ROOT",
@@ -43,10 +43,10 @@ REQUIRED_SNIPPETS = (
 )
 
 REQUIRED_UPDATE_SNIPPETS = (
-    './.venv/bin/pip install --upgrade "mcp-workstate-handoff==0.12.0"',
-    './.venv/bin/pip install --upgrade "mcp-workstate-orchestrator==0.5.0"',
-    './.venv/bin/pip install --upgrade "workstate-bootstrap==0.6.0"',
-    "./.venv/bin/workstate-bootstrap update --remote-ref v0.1.21",
+    './.venv/bin/pip install --upgrade "mcp-workstate-handoff==0.12.1"',
+    './.venv/bin/pip install --upgrade "mcp-workstate-orchestrator==0.5.2"',
+    './.venv/bin/pip install --upgrade "workstate-bootstrap==0.7.3"',
+    "./.venv/bin/workstate-bootstrap update --remote-ref v0.1.22",
 )
 
 

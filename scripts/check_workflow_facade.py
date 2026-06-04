@@ -1,1 +1,1 @@
-../.workstate/remote/packages/workstate-system/scripts/check_workflow_facade.py
+../.workstate/remote/packages/workstate-system/workstate_system/payload/scripts/check_workflow_facade.py

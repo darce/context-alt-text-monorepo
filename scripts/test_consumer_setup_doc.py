@@ -17,6 +17,7 @@ REQUIRED_HEADINGS = (
     "## Troubleshooting",
     "## Tenancy",
     "## Platform Support",
+    "## Plugin Overrides",
 )
 
 REQUIRED_SNIPPETS = (
@@ -40,6 +41,11 @@ REQUIRED_SNIPPETS = (
     "ConsumerRootResolutionError",
     "orchestrator.daemons.enabled",
     ".task-state/handoff.db",
+    "plugin_overrides_path",
+    "workstate-overrides/workstate-system",
+    "upstream_digest",
+    "make check-overrides-digest",
+    "SKILL.base.md",
 )
 
 REQUIRED_UPDATE_SNIPPETS = (
@@ -82,3 +88,25 @@ def test_consumer_setup_doc_exists_and_is_standalone() -> None:
     assert 'agentic-bootstrap' not in pre_lessons
     assert "E17-10" not in pre_lessons, "consumer-setup live instructions must be standalone, not task-plan dependent"
     assert "task plan" not in pre_lessons.lower(), "consumer-setup live instructions must not tell readers to consult the task plan"
+
+
+def test_overlay_manifest_contract_documents_plugin_overrides_path() -> None:
+    """MAINT-FB-B-02: plugin_overrides_path must be documented in the manifest contract.
+
+    The field is a forward-compat hook: workstate-bootstrap v0.1.22 does not
+    read it, the APD-07 recipe-overrides release adopts it. The contract must
+    name it as optional and state both facts so consumers do not mistake it
+    for dead config or a required key.
+    """
+    contract_path = REPO_ROOT / "docs" / "workstate" / "contracts" / "overlay-manifest.yaml"
+    text = contract_path.read_text(encoding="utf-8")
+    assert "optional_fields" in text, "contract must declare an optional_fields section"
+    assert "plugin_overrides_path" in text
+    assert "APD-07" in text, "contract must name the release that adopts the field"
+    assert "v0.1.22" in text, "contract must state the version that ignores the field"
+    optional_section = text.split("optional_fields", 1)[1]
+    assert "plugin_overrides_path" in optional_section, (
+        "plugin_overrides_path must be listed under optional_fields, not required_fields"
+    )
+    required_section = text.split("required_fields", 1)[1].split("optional_fields", 1)[0]
+    assert "plugin_overrides_path" not in required_section

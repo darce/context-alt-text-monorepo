@@ -47,6 +47,21 @@ required_fields:
     type: sequence
     item_type: string
 
+optional_fields:
+  plugin_overrides_path:
+    type: string
+    description: >-
+      Project-relative path to the consumer's plugin overrides tree (e.g.
+      workstate-overrides/workstate-system). Forward-compat hook for the
+      APD-07 durable-recipe-overrides release: workstate-bootstrap v0.1.22
+      does not read this field, so it is inert until the consumer updates to
+      an APD-07-capable bootstrap. Each plugin directory under this path
+      carries overrides.yaml, overrides.lock.json, and the materialized
+      upstream base copies (e.g. skills/<name>/SKILL.base.md). The
+      overrides.lock.json upstream_digest convention is the whole-file
+      sha256 of the materialized base copy; `make check-overrides-digest`
+      validates it in check-all.
+
 notes:
   - >-
     Surface paths are project-relative paths. Shared/generated/lifecycle entries
@@ -88,3 +103,4 @@ example_manifest:
   mcp_servers:
     - workstate-handoff-mcp
     - workstate-orchestrator-mcp
+  plugin_overrides_path: workstate-overrides/workstate-system

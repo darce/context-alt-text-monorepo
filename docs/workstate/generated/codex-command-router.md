@@ -2,6 +2,10 @@
 
 # Portable Command Router
 
+Global instructions:
+
+- when reporting information back to user, be extremely concise. sacrifice grammar for the sake of concision
+
 If a user prompt begins with a registered `/command_id`, treat that prefix as a portable workflow command routed through `config/agent-workflows/portable_commands.json`.
 
 Current managed ids: `/scope`, `/auto-fix`, `/branch-lifecycle`, `/branch-review`, `/handoff-lifecycle`, `/investigate`, `/incremental-implementation`, `/plan-analyze`, `/planning-review`, `/review-parallel`, `/tdd`.

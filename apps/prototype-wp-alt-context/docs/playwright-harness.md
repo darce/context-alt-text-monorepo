@@ -51,7 +51,7 @@ Nothing under `local/playwright/`, `tests/e2e/.auth/`, or `.env.local` is commit
 
 ## Script Catalogue
 
-These command names are part of the Slice 1 contract. Slice 2 wires them into `package.json` and the root `Makefile`.
+These commands are wired in `apps/prototype-wp-alt-context/package.json` and the root `Makefile`.
 
 - `npm run e2e:install`: install Chromium for the harness.
 - `npm run e2e:auth`: run the one-time auth bootstrap.

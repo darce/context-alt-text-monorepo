@@ -1,14 +1,15 @@
 # LocalWP Playwright Evidence
 
-This runbook is the operator path for the E15 Playwright harness. Slice 1 defines the workflow and file conventions here; Slice 2 adds the actual scripts and config.
+This runbook is the operator path for the E15 Playwright harness. Scripts, config, and Makefile targets ship in `apps/prototype-wp-alt-context` and the repo-root Makefile.
 
 ## Prerequisites
 
 - LocalWP site is running.
 - WordPress admin is available at `http://localhost:10010/wp-admin/`.
+- LocalWP language is English (the auth bootstrap uses the stable `#wp-submit` button id, but selectors elsewhere may assume English admin chrome).
 - The Alt Context plugin is activated in that LocalWP site.
 - App dependencies are installed under `apps/prototype-wp-alt-context`.
-- Chromium is installed for Playwright via the planned `npm run e2e:install` command.
+- Chromium is installed for Playwright: `npm run e2e:install` (or `make localwp-e2e-install` from the repo root).
 
 ## Credentials Setup
 
@@ -31,10 +32,16 @@ ACX_E2E_WP_ADMIN_PASS=...
 
 ## Auth Bootstrap
 
-Expected Slice 2 command:
+From `apps/prototype-wp-alt-context`:
 
 ```bash
 npm run e2e:auth
+```
+
+Or from the repo root:
+
+```bash
+make localwp-e2e-auth
 ```
 
 Behavior:
@@ -72,8 +79,8 @@ Before copying anything out of `local/playwright/<task-ref>/`:
 - Prefer cropped screenshots that show the proof surface only.
 - Keep raw local artifacts in the gitignored task-scoped directory; export redacted copies elsewhere only when needed for a proof bundle.
 
-## Notes For Slice 2 And Later
+## Notes
 
-- The command names in this runbook are contractual now even though the actual scripts land in Slice 2.
-- The first smoke spec in Slice 3 should reuse the same auth/bootstrap conventions documented here instead of inventing a second path.
+- The command names in this runbook are contractual and wired in `package.json` plus the root `Makefile`.
+- New smoke specs should reuse the same auth/bootstrap conventions documented here rather than inventing a second path.
 - The absorbed tech-debt durable smoke work stays out of this runbook until the v2 envelope starts shipping.

@@ -19,11 +19,21 @@ test('bootstrap WordPress admin auth state', async ({ page }) => {
 
   if (page.url().includes('wp-login.php')) {
     if (username && password) {
-      await page.getByLabel(/username or email address/i).fill(username);
-      await page.getByLabel(/password/i).fill(password);
+      const usernameField = page.locator('#user_login');
+      const passwordField = page.locator('#user_pass');
+
+      await usernameField.fill(username);
+      await expect(usernameField).toHaveValue(username);
+
+      await passwordField.click();
+      await passwordField.pressSequentially(password);
+      await expect(passwordField).toHaveValue(password);
+
+      await page.locator('#rememberme').check();
+
       await Promise.all([
-        page.waitForURL(/\/wp-admin\//),
-        page.getByRole('button', { name: /log in/i }).click(),
+        page.waitForURL(/\/wp-admin\//, { waitUntil: 'domcontentloaded' }),
+        page.getByRole('button', { name: /^log in$/i }).click(),
       ]);
     } else {
       await page.pause();

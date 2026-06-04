@@ -4,7 +4,12 @@ import reactHooksPlugin from 'eslint-plugin-react-hooks';
 import tseslint from 'typescript-eslint';
 import queryPlugin from '@tanstack/eslint-plugin-query';
 
-const sharedFiles = ['js/**/*.{ts,tsx}', '.storybook/**/*.{ts,tsx}'];
+const sharedFiles = [
+  'js/**/*.{ts,tsx}',
+  'tests/e2e/**/*.ts',
+  'playwright.config.ts',
+  '.storybook/**/*.{ts,tsx}',
+];
 
 export default tseslint.config(
   {

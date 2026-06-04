@@ -10,12 +10,21 @@ const storageStatePath = path.resolve(authSetupDir, '..', '.auth', 'storageState
 
 loadEnv({ path: path.resolve(appRoot, '.env.local') });
 
-const adminUrl = process.env.ACX_E2E_BASE_URL ?? 'http://localhost:10010/wp-admin/';
+const wpBaseUrl = process.env.WP_BASE_URL ?? process.env.ACX_E2E_BASE_URL ?? 'http://localhost:10010';
 const username = process.env.ACX_E2E_WP_ADMIN_USER?.trim() ?? '';
 const password = process.env.ACX_E2E_WP_ADMIN_PASS?.trim() ?? '';
 
+const resolveAdminUrl = (baseUrl: string): string => {
+  const url = new URL(baseUrl);
+  const pathname = url.pathname.endsWith('/') ? url.pathname : `${url.pathname}/`;
+
+  url.pathname = pathname.includes('/wp-admin/') ? pathname : `${pathname}wp-admin/`;
+
+  return url.toString();
+};
+
 test('bootstrap WordPress admin auth state', async ({ page }) => {
-  await page.goto(adminUrl);
+  await page.goto(resolveAdminUrl(wpBaseUrl));
 
   if (page.url().includes('wp-login.php')) {
     if (username && password) {
@@ -25,8 +34,7 @@ test('bootstrap WordPress admin auth state', async ({ page }) => {
       await usernameField.fill(username);
       await expect(usernameField).toHaveValue(username);
 
-      await passwordField.click();
-      await passwordField.pressSequentially(password);
+      await passwordField.fill(password);
       await expect(passwordField).toHaveValue(password);
 
       await page.locator('#rememberme').check();

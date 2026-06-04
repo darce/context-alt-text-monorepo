@@ -244,20 +244,22 @@ help:
 	@echo "  Supported task manifests: $(SUPPORTED_TASKS)"
 	@echo "  Enumerated lanes for $(if $(TASK),$(TASK),the active task): $(TASK_LANES)"
 
+LOCALWP_PLAYWRIGHT_TASK_ENV = $(if $(ACX_PLAYWRIGHT_TASK_REF),ACX_PLAYWRIGHT_TASK_REF="$(ACX_PLAYWRIGHT_TASK_REF)",)
+
 localwp-e2e-install:
 	@cd apps/prototype-wp-alt-context && npm run e2e:install
 
 localwp-e2e-auth:
-	@cd apps/prototype-wp-alt-context && npm run e2e:auth
+	@cd apps/prototype-wp-alt-context && $(LOCALWP_PLAYWRIGHT_TASK_ENV) npm run e2e:auth
 
 localwp-e2e-smoke:
-	@cd apps/prototype-wp-alt-context && npm run e2e:localwp
+	@cd apps/prototype-wp-alt-context && $(LOCALWP_PLAYWRIGHT_TASK_ENV) npm run e2e:localwp
 
 localwp-evidence:
-	@cd apps/prototype-wp-alt-context && npm run e2e:evidence
+	@cd apps/prototype-wp-alt-context && $(LOCALWP_PLAYWRIGHT_TASK_ENV) npm run e2e:evidence
 
 localwp-a11y-smoke:
-	@cd apps/prototype-wp-alt-context && npm run a11y:localwp
+	@cd apps/prototype-wp-alt-context && $(LOCALWP_PLAYWRIGHT_TASK_ENV) npm run a11y:localwp
 
 # =============================================================================
 # Cross-Repo Checks

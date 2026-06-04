@@ -4,12 +4,22 @@ import { config as loadEnv } from 'dotenv';
 import { defineConfig } from '@playwright/test';
 
 const appRoot = __dirname;
-const taskRef = process.env.ACX_PLAYWRIGHT_TASK_REF ?? 'E15-6';
-const adminUrl = process.env.ACX_E2E_BASE_URL ?? 'http://localhost:10010/wp-admin/';
+
+loadEnv({ path: path.resolve(appRoot, '.env.local') });
+
+const taskRef = process.env.ACX_PLAYWRIGHT_TASK_REF ?? 'adhoc';
+const wpBaseUrl = process.env.WP_BASE_URL ?? process.env.ACX_E2E_BASE_URL ?? 'http://localhost:10010';
 const artifactRoot = path.resolve(appRoot, 'local', 'playwright', taskRef);
 const storageStatePath = path.resolve(appRoot, 'tests', 'e2e', '.auth', 'storageState.json');
 
-loadEnv({ path: path.resolve(appRoot, '.env.local') });
+const resolveAdminUrl = (baseUrl: string): string => {
+  const url = new URL(baseUrl);
+  const pathname = url.pathname.endsWith('/') ? url.pathname : `${url.pathname}/`;
+
+  url.pathname = pathname.includes('/wp-admin/') ? pathname : `${pathname}wp-admin/`;
+
+  return url.toString();
+};
 
 export default defineConfig({
   testDir: path.resolve(appRoot, 'tests', 'e2e'),
@@ -17,45 +27,55 @@ export default defineConfig({
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,
   reporter: [['list']],
-  outputDir: path.join(artifactRoot, 'test-results'),
   use: {
-    baseURL: adminUrl,
+    baseURL: resolveAdminUrl(wpBaseUrl),
     ignoreHTTPSErrors: true,
     screenshot: 'only-on-failure',
-    trace: 'retain-on-failure',
   },
   projects: [
     {
       name: 'auth-setup',
       testMatch: /auth-setup\/.*\.setup\.ts/,
+      outputDir: path.join(artifactRoot, 'auth-setup'),
       use: {
         headless: false,
         storageState: undefined,
+        trace: 'retain-on-failure',
       },
     },
     {
       name: 'evidence',
       dependencies: ['auth-setup'],
       testMatch: /evidence\/.*\.spec\.ts/,
+      outputDir: path.join(artifactRoot, 'evidence'),
       use: {
         headless: false,
+        launchOptions: {
+          slowMo: 200,
+        },
         storageState: storageStatePath,
+        trace: 'on',
+        video: 'on',
       },
     },
     {
       name: 'smoke',
       dependencies: ['auth-setup'],
       testMatch: /smoke\/.*\.spec\.ts/,
+      outputDir: path.join(artifactRoot, 'smoke'),
       use: {
         storageState: storageStatePath,
+        trace: 'retain-on-failure',
       },
     },
     {
       name: 'a11y',
       dependencies: ['auth-setup'],
       testMatch: /a11y\/.*\.spec\.ts/,
+      outputDir: path.join(artifactRoot, 'a11y'),
       use: {
         storageState: storageStatePath,
+        trace: 'retain-on-failure',
       },
     },
   ],

@@ -138,6 +138,18 @@ orchestrator:
 
 The controlling key is `orchestrator.daemons.enabled`. When disabled, daemon start paths should fail fast with an actionable message. When enabled, expect a startup warning that names poll intervals, query pressure, and token-cost implications.
 
+## Plugin Overrides
+
+Consumers that locally patch plugin-distributed components (skills, prompts) keep those patches under a plugin overrides tree, by convention `workstate-overrides/<plugin>/` (this repo: `workstate-overrides/workstate-system`). Each plugin directory carries:
+
+- `overrides.yaml` — which components are overridden and in what mode.
+- `overrides.lock.json` — provenance ledger: `base_remote_sha` plus, per component, the `base_path` of the materialized upstream copy and its `upstream_digest`.
+- the materialized upstream base copy next to the local override, e.g. `skills/branch-review/SKILL.base.md` beside the patched `skills/branch-review/SKILL.md`.
+
+Digest convention: `upstream_digest` is the whole-file sha256 of the materialized upstream base copy (`SKILL.base.md`), not of the generated base surface under `.workstate/generated/` — the generator injects harness-specific sections (e.g. Global Instructions), so its hash legitimately differs. `make check-overrides-digest` (wired into `make check-all`) validates every lock entry against the materialized base copy, so digest drift fails CI instead of surfacing on the next manual bootstrap update.
+
+The `.workstate-bootstrap.json` manifest names this tree via the optional `plugin_overrides_path` field. The field is a forward-compat hook for the APD-07 durable-recipe-overrides release: workstate-bootstrap v0.1.22 does not read it, so it stays inert until the consumer updates to an APD-07-capable bootstrap. See `docs/workstate/contracts/overlay-manifest.yaml` for the contract entry.
+
 ## Troubleshooting
 
 `AmbiguousWorkspaceContextError`

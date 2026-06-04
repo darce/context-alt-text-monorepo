@@ -67,7 +67,7 @@ Additional routing: see [docs/workstate/instructions.md](docs/workstate/instruct
 
 ### Output Brevity Rule
 
-> **Terse output. Strip filler. State the result, not the journey.** Verbosity degrades reasoning accuracy ([Hakim 2025](https://arxiv.org/html/2604.00025v1)).
+> **Extremely concise user reports. Sacrifice grammar for concision. Strip filler. State the result, not the journey.** Verbosity degrades reasoning accuracy ([Hakim 2025](https://arxiv.org/html/2604.00025v1)).
 
 - Chat: one sentence per update. ≤2 sentence summary. No preamble.
 - Handoff: decision first. ≤1,500 chars. Cut recaps.

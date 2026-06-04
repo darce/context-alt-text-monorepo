@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "plugin": "workstate-system",
+  "base_remote_sha": "aa774a5fb0485f782b22c0c8a992684da1640c2b",
+  "components": [
+    {
+      "component_kind": "skill",
+      "name": "branch-review",
+      "mode": "patch",
+      "local_path": "skills/branch-review/SKILL.md",
+      "base_path": "skills/branch-review/SKILL.base.md",
+      "patch_path": null,
+      "upstream_digest": "sha256:f2ed63bd8819b816f3f5f57c3a1b130594c7cfe7d791e2233a354f484d3abfa8",
+      "last_accept_upstream": null
+    }
+  ]
+}

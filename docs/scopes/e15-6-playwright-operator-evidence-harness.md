@@ -5,7 +5,7 @@
 > **Parent epic**: [docs/epics/v0.4.0/public-demo-launch-readiness-epic.md](../epics/v0.4.0/public-demo-launch-readiness-epic.md) (E15)
 > **Branch**: `feature/e15-6`
 > **Worktree**: `context-alt-text-monorepo-e15-6`
-> **Supersedes**: [docs/tasks/15.0/E15-6-e2e-smoke-gate-automation-stub.md](../tasks/15.0/E15-6-e2e-smoke-gate-automation-stub.md) (un-deferred from E16 by this scope) and absorbs [docs/tasks/tech-debt/e2e-smoke-automation-path.md](../tasks/tech-debt/e2e-smoke-automation-path.md) (archived once Phase 0 lands).
+> **Supersedes**: [docs/tasks/15.0/E15-6-e2e-smoke-gate-automation-stub.md](../tasks/15.0/E15-6-e2e-smoke-gate-automation-stub.md) (un-deferred from E16 by this scope) and absorbs the former tech-debt plan now archived into [docs/tasks/15.0/E15-6-playwright-operator-evidence-harness-task-plan.md](../tasks/15.0/E15-6-playwright-operator-evidence-harness-task-plan.md).
 
 ## Problem
 
@@ -76,7 +76,7 @@ Draft the E15-6 task plan on `feature/e15-6` at `docs/tasks/15.0/E15-6-playwrigh
 - the single Phase 0 + Lane A first proof test (route-load against `/wp-admin/admin.php?page=acx-dashboard` or equivalent stable ACX route),
 - the repo-local docs (`apps/prototype-wp-alt-context/docs/playwright-localwp-evidence.md`, `playwright-harness.md`),
 - the Playwright MCP opt-in snippet (separate `--user-data-dir`, `--output-mode=file`, task-scoped output dir; explicit non-shareability with `@playwright/test`),
-- the archival path for `docs/tasks/tech-debt/e2e-smoke-automation-path.md` and the update to the deferred E15-6 stub at `docs/tasks/15.0/E15-6-e2e-smoke-gate-automation-stub.md`,
+- the archival path absorbed into `docs/tasks/15.0/E15-6-playwright-operator-evidence-harness-task-plan.md` and the update to the deferred E15-6 stub at `docs/tasks/15.0/E15-6-e2e-smoke-gate-automation-stub.md`,
 - the E15 epic update that un-defers E15-6 from E16 and lists the v1 scope.
 
 Phase 2 (Lane B durable smoke specs + CI + backend-outage helpers) gets its own slice inside E15-6 once v1 is verified, or splits back to E16 — the task plan picks.

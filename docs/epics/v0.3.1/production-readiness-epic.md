@@ -14,7 +14,7 @@ This epic was revised using:
 
 - [roadmap-v3.hybrid.md](../../roadmaps/roadmap-v3.hybrid.md)
 - [current-debt.md](../../tasks/tech-debt/current-debt.md)
-- [e2e-smoke-automation-path.md](../../tasks/tech-debt/e2e-smoke-automation-path.md)
+- [E15-6-playwright-operator-evidence-harness-task-plan.md](../../tasks/15.0/E15-6-playwright-operator-evidence-harness-task-plan.md)
 - Frontend codebase audit (Feb 2026): pattern/antipattern analysis across WorkbenchPage, RosterPage, identity-clusters module, and state management layer.
 
 Key corrections:
@@ -168,7 +168,7 @@ WordPress host                          App VPS
 
 > **Status**: planned
 > **Dependencies**: Phase 1 provides stable UX assertions
-> **Task plan**: [e2e-smoke-automation-path.md](../../tasks/tech-debt/e2e-smoke-automation-path.md)
+> **Task plan**: [E15-6-playwright-operator-evidence-harness-task-plan.md](../../tasks/15.0/E15-6-playwright-operator-evidence-harness-task-plan.md)
 > **Debt alignment**: promotes deferred item #12 from [current-debt.md](../../tasks/tech-debt/current-debt.md)
 
 **Goal**: Replace ad-hoc manual smoke checks with repeatable automation that validates sovereign behavior end-to-end.

@@ -14,7 +14,7 @@ Use `@playwright/test` as the only Playwright dependency. Do not add the standal
 
 - `Lane A` (`evidence`): headed operator-evidence runs that capture screenshots, transcripts, and traces for E15 manual gates.
 - `Lane B` (`smoke`): headless durable smoke specs. This lane is part of the v2 envelope and is not shipped in v1 beyond the shared scaffolding.
-- `Lane C` (`a11y`): headless route-level axe checks against the ACX admin routes.
+- `Lane C` (`a11y`): headless route-level axe checks against the ACX admin routes, scoped to the plugin shell rather than the full WordPress admin chrome.
 - `auth-setup`: one-time login bootstrap that writes shared storage state for the other projects.
 
 ## Planned Project Layout
@@ -63,6 +63,13 @@ These command names are part of the Slice 1 contract. Slice 2 wires them into `p
 - `make localwp-e2e-smoke`
 - `make localwp-evidence`
 - `make localwp-a11y-smoke`
+
+## Lane C Gate Shape
+
+- The v1 gate scans the empty-state shell for Dashboard, Workbench, Roster, and Settings on a clean LocalWP install.
+- Each spec is responsible for its own route-specific wait anchor before axe runs. Current anchors are the Dashboard `Identity Recognition` heading, the Workbench `Your analysis queue is empty` empty-state card, the Roster empty-state message, and the Settings form shell.
+- Only `serious` and `critical` axe violations fail the run by default. Lower-impact findings remain visible in the test output for triage, but they do not block the v1 gate.
+- Each route spec also carries an `ACX_E2E_SEEDED`-guarded populated-state block. Those seeded assertions are opt-in and skipped by default until deterministic seed data exists.
 
 ## Auth Bootstrap Shape
 

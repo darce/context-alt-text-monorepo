@@ -41,10 +41,10 @@ Runtime bootstrap:
 cd "${REPO_ROOT:-$PWD}"
 
 # Core ledger server
-uv tool install "mcp-workstate-handoff==0.12.0"
+uv tool install "mcp-workstate-handoff==0.12.1"
 
 # Orchestration server (daemons, workers, lanes, metrics)
-uv tool install "mcp-workstate-orchestrator==0.5.0"
+uv tool install "mcp-workstate-orchestrator==0.5.2"
 
 # Codex subagent bridge for BACKEND=codex-subagent
 uv tool install "codex-subagent-bridge>=0.1.0,<0.2"

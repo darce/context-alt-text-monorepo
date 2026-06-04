@@ -32,8 +32,8 @@ Default workspace-owned state:
 Runtime bootstrap:
 
 ```bash
-uv tool install "mcp-workstate-handoff==0.12.0"
-uv tool install "mcp-workstate-orchestrator==0.5.0"
+uv tool install "mcp-workstate-handoff==0.12.1"
+uv tool install "mcp-workstate-orchestrator==0.5.2"
 
 # Validate runtime wiring and orchestration/ directory resolution
 mcp-workstate-orchestrator --workspace-root "$(pwd)" doctor

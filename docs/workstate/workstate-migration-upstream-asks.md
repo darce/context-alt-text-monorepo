@@ -87,6 +87,19 @@ consumer layouts where the git root is not the shared hook source. **Ask:**
 update the canonical `workstate-system/scripts/hooks/git/*` hooks to use the
 same `HOOK_DIR` / `GUARD_DIR` pattern as `post-checkout`.
 
+## H. Bootstrap Stop-hook adapter should not require absolute consumer paths
+
+`workstate-bootstrap==0.7.3 doctor --target .` reports
+`hook_adapter_drift: .claude/settings.json` when this repo keeps the managed
+Claude Stop hook portable as
+`python3 "$CLAUDE_PROJECT_DIR/scripts/hooks/compact-session.py"`. Running repair
+would rewrite the checked-in hook adapter to an absolute consumer-root command
+such as `/Users/.../scripts/hooks/compact-session.py`, which conflicts with this
+repo's no-user-local-path policy and makes the committed settings non-portable.
+**Ask:** change the canonical compact-session adapter declaration to use an
+environment-relative or workspace-relative command, and teach doctor/repair to
+accept that portable form.
+
 ## Resolved during this migration (not an upstream ask)
 
 - `workstate_orchestrator_mcp.orchestration.lane_prompt` raised

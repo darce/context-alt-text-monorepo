@@ -12,7 +12,7 @@ The dispatcher routes to the targeted Workstate guards only when the current too
 - If a test run needs captured output, redirect once to `/tmp/<suite>.txt` with `> /tmp/<suite>.txt 2>&1`, then inspect it with `read_file`. Never `cat` the file in terminal.
 - Use the foreground terminal for Python tests so the app's uv-managed environment is the one being exercised.
 - Never hardcode user-local absolute filesystem paths such as `/Users/...` in commands, docs, or settings. Use environment variables such as `${env:HOME}`, `${workspaceFolder}`, and `${REPO_ROOT:-$PWD}` instead.
-- For external MCP package verification and runtime flows, do not invoke IDE Python environment-configuration tools. Use the foreground terminal with `uvx --from "mcp-workstate-handoff==0.11.2" python3`, `uvx --from "mcp-workstate-orchestrator==0.4.6" python3`, or a scratch-venv binary such as `/tmp/<env>/bin/python`. If the harness stalls at `Configuring a Python Environment` or `Preparing`, stop retrying and ask the user to run the terminal command directly.
+- For external MCP package verification and runtime flows, do not invoke IDE Python environment-configuration tools. Use the foreground terminal with `uvx --from "mcp-workstate-handoff==0.12.1" python3`, `uvx --from "mcp-workstate-orchestrator==0.5.2" python3`, or a scratch-venv binary such as `/tmp/<env>/bin/python`. If the harness stalls at `Configuring a Python Environment` or `Preparing`, stop retrying and ask the user to run the terminal command directly.
 
 Prefer native tools when they fit. These rows are agent-conduct conventions enforced by review and judgment, not by the narrow raw-Vitest terminal hook:
 
@@ -98,7 +98,7 @@ state = get_handoff_state(sections="identity")
 **Running against the installed MCP package:**
 
 ```bash
-uvx --from "mcp-workstate-handoff==0.11.2" python3 -c "
+uvx --from "mcp-workstate-handoff==0.12.1" python3 -c "
 from pathlib import Path
 from workstate_handoff_mcp import RuntimeConfig, configure_runtime, get_handoff_state
 configure_runtime(RuntimeConfig.for_repo(Path('.')))

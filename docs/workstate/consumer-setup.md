@@ -15,15 +15,15 @@ Install the three package surfaces from PyPI, then materialize the shared overla
 
 ```bash
 python3 -m venv .venv
-./.venv/bin/pip install "mcp-workstate-handoff==0.12.0"
-./.venv/bin/pip install "mcp-workstate-orchestrator==0.5.0"
-./.venv/bin/pip install "workstate-bootstrap==0.6.0"
+./.venv/bin/pip install "mcp-workstate-handoff==0.12.1"
+./.venv/bin/pip install "mcp-workstate-orchestrator==0.5.2"
+./.venv/bin/pip install "workstate-bootstrap==0.7.3"
 
-./.venv/bin/workstate-bootstrap install --target . --remote-ref v0.1.21
+./.venv/bin/workstate-bootstrap install --target . --remote-ref v0.1.22
 ```
 
 The install flow clones the shared workstate surface into `.workstate/remote/`, creates the overlay symlinks, writes `.workstate-bootstrap.json`, and wires the local MCP config files.
-Keep the overlay ref pinned to the reviewed workstate tag (`v0.1.21`) until a newer release set is explicitly promoted.
+Keep the overlay ref pinned to the reviewed workstate tag (`v0.1.22`) until a newer release set is explicitly promoted.
 
 After install, run one sanity check from the consumer root:
 
@@ -59,11 +59,11 @@ If you set explicit relative paths, they resolve from `AGENT_HANDOFF_WORKSPACE_R
 Use the package manager for MCP package upgrades and `workstate-bootstrap update` for the overlay clone:
 
 ```bash
-./.venv/bin/pip install --upgrade "mcp-workstate-handoff==0.12.0"
-./.venv/bin/pip install --upgrade "mcp-workstate-orchestrator==0.5.0"
-./.venv/bin/pip install --upgrade "workstate-bootstrap==0.6.0"
+./.venv/bin/pip install --upgrade "mcp-workstate-handoff==0.12.1"
+./.venv/bin/pip install --upgrade "mcp-workstate-orchestrator==0.5.2"
+./.venv/bin/pip install --upgrade "workstate-bootstrap==0.7.3"
 
-./.venv/bin/workstate-bootstrap update --remote-ref v0.1.21
+./.venv/bin/workstate-bootstrap update --remote-ref v0.1.22
 ```
 
 Keep both the package versions and the overlay ref pinned to the reviewed release set. When a newer release set is approved, bump the exact package versions and the `--remote-ref` together.
@@ -102,6 +102,15 @@ The consumer overlay must include both harness hook trees:
 - `scripts/hooks/git`
 
 Bootstrap wiring sets `core.hooksPath` to `scripts/hooks/git` so client-side hooks such as `post-checkout`, `post-merge`, `post-rewrite`, and `pre-push` run from the overlaid hook subtree.
+
+In `context-alt-text-monorepo`, these hook and prompt payloads are
+bootstrap-managed local/generated surfaces, not product source. Keep
+`.github/hooks/`, `.github/prompts/`, `scripts/hooks/`, `scripts/workstate/`,
+and `Makefile.d/` ignored here; fixes to reusable workflow behavior belong in
+the downstream workstate/agentic-protocol source and should flow back through a
+pinned `workstate-bootstrap update`. The tracked files in this repo should stay
+limited to the install ledger, client config pins, docs/tests that lock those
+pins, and the small Makefile shim needed to invoke the shared fragments.
 
 You can verify the wiring directly:
 

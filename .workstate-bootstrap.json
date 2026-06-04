@@ -1,17 +1,17 @@
 {
   "schema_version": 2,
   "remote_url": "https://github.com/darce/workstate.git",
-  "remote_ref": "v0.1.21",
-  "remote_sha": "2c0be82ddab01b027d418c192cb57a4e24ce6109",
+  "remote_ref": "v0.1.22",
+  "remote_sha": "df3188dc5a8b70151a37ac02623b29d033081f77",
   "profile": "all",
   "surfaces": [
     {
       "path": ".github/hooks",
-      "source": "shared"
+      "source": "local"
     },
     {
       "path": "scripts/hooks",
-      "source": "shared"
+      "source": "local"
     },
     {
       "path": "docs/workstate/contracts",
@@ -39,30 +39,6 @@
     },
     {
       "path": "scripts/workstate/git-plan-cat.sh",
-      "source": "shared"
-    },
-    {
-      "path": "scripts/generate_agent_workflows.py",
-      "source": "shared"
-    },
-    {
-      "path": "scripts/check_workflow_facade.py",
-      "source": "shared"
-    },
-    {
-      "path": "scripts/validate_claude_settings_pin.py",
-      "source": "shared"
-    },
-    {
-      "path": "config/agent-workflows/portable_commands.json",
-      "source": "shared"
-    },
-    {
-      "path": "config/agent-workflows/mcp_servers.yaml",
-      "source": "shared"
-    },
-    {
-      "path": "config/agent-workflows/prompts",
       "source": "shared"
     },
     {
@@ -114,9 +90,14 @@
     {
       "path": "core.hooksPath",
       "action": "set"
+    },
+    {
+      "path": ".gitignore",
+      "action": "skipped_self_managed"
     }
   ],
   "mcp_servers": [
+    "context7",
     "workstate-handoff-mcp",
     "workstate-orchestrator-mcp"
   ]

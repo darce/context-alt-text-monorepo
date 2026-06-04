@@ -64,7 +64,7 @@ notes:
 example_manifest:
   schema_version: 2
   remote_url: https://github.com/darce/workstate.git
-  remote_ref: v0.1.21
+  remote_ref: v0.1.22
   remote_sha: 0123456789abcdef0123456789abcdef01234567
   profile: all
   surfaces:

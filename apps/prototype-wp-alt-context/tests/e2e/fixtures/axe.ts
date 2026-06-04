@@ -21,7 +21,9 @@ const formatViolationSummary = (
 
 export const assertNoBlockingViolations = async (page: Page, scopeSelector: string): Promise<void> => {
   const results = await new AxeBuilder({ page }).include(scopeSelector).analyze();
-  const blockingViolations = results.violations.filter((violation) => isBlockingImpact(violation.impact));
+  const blockingViolations = results.violations.filter((violation) =>
+    isBlockingImpact(violation.impact ?? null),
+  );
 
   expect(
     blockingViolations,

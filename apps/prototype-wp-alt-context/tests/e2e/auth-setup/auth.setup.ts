@@ -2,29 +2,20 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { expect, test } from '@playwright/test';
-import { config as loadEnv } from 'dotenv';
 
 const authSetupDir = __dirname;
-const appRoot = path.resolve(authSetupDir, '..', '..', '..');
 const storageStatePath = path.resolve(authSetupDir, '..', '.auth', 'storageState.json');
 
-loadEnv({ path: path.resolve(appRoot, '.env.local') });
+const username = (process.env.ACX_E2E_WP_ADMIN_USER ?? '').trim();
+const password = (process.env.ACX_E2E_WP_ADMIN_PASS ?? '').trim();
+const isCI = Boolean(process.env.CI);
 
-const wpBaseUrl = process.env.WP_BASE_URL ?? process.env.ACX_E2E_BASE_URL ?? 'http://localhost:10010';
-const username = process.env.ACX_E2E_WP_ADMIN_USER?.trim() ?? '';
-const password = process.env.ACX_E2E_WP_ADMIN_PASS?.trim() ?? '';
+test('bootstrap WordPress admin auth state', async ({ page, baseURL }) => {
+  if (!baseURL) {
+    throw new Error('baseURL must be set on the playwright config for auth bootstrap.');
+  }
 
-const resolveAdminUrl = (baseUrl: string): string => {
-  const url = new URL(baseUrl);
-  const pathname = url.pathname.endsWith('/') ? url.pathname : `${url.pathname}/`;
-
-  url.pathname = pathname.includes('/wp-admin/') ? pathname : `${pathname}wp-admin/`;
-
-  return url.toString();
-};
-
-test('bootstrap WordPress admin auth state', async ({ page }) => {
-  await page.goto(resolveAdminUrl(wpBaseUrl));
+  await page.goto(baseURL);
 
   if (page.url().includes('wp-login.php')) {
     if (username && password) {
@@ -41,9 +32,14 @@ test('bootstrap WordPress admin auth state', async ({ page }) => {
 
       await Promise.all([
         page.waitForURL(/\/wp-admin\//, { waitUntil: 'domcontentloaded' }),
-        page.getByRole('button', { name: /^log in$/i }).click(),
+        page.locator('#wp-submit').click(),
       ]);
     } else {
+      if (isCI) {
+        throw new Error(
+          'ACX_E2E_WP_ADMIN_USER and ACX_E2E_WP_ADMIN_PASS are required in CI; interactive page.pause() is not supported.',
+        );
+      }
       await page.pause();
       await page.waitForURL(/\/wp-admin\//);
     }

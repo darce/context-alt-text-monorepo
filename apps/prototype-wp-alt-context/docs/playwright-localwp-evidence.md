@@ -23,6 +23,8 @@ Then edit `.env.local` and set:
 ```text
 ACX_E2E_WP_ADMIN_USER=...
 ACX_E2E_WP_ADMIN_PASS=...
+# Optional when LocalWP is not running on the default port:
+# WP_BASE_URL=http://localhost:10010
 ```
 
 `.env.local` stays on the operator workstation only. Do not paste credentials into committed files, shell history notes, or task plans.

@@ -3,8 +3,6 @@ import { expect, type Page } from '@playwright/test';
 
 type BlockingImpact = 'serious' | 'critical';
 
-const BLOCKING_IMPACTS: ReadonlySet<BlockingImpact> = new Set(['serious', 'critical']);
-
 const isBlockingImpact = (impact: string | null): impact is BlockingImpact => {
   return impact === 'serious' || impact === 'critical';
 };
@@ -23,9 +21,7 @@ const formatViolationSummary = (
 
 export const assertNoBlockingViolations = async (page: Page, scopeSelector: string): Promise<void> => {
   const results = await new AxeBuilder({ page }).include(scopeSelector).analyze();
-  const blockingViolations = results.violations.filter(
-    (violation) => isBlockingImpact(violation.impact) && BLOCKING_IMPACTS.has(violation.impact),
-  );
+  const blockingViolations = results.violations.filter((violation) => isBlockingImpact(violation.impact));
 
   expect(
     blockingViolations,

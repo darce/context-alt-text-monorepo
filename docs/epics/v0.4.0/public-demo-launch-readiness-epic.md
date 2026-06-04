@@ -1,10 +1,10 @@
 # E15. Public Demo Launch Readiness (v0.4.0)
 
 > **Epic Short ID**: E15
-> **Status**: active — Phase 1 + Phase 2 merged to `main` (via `b6a2e272` and predecessors); MVP narrowed to Phases 3, 4, and 6
+> **Status**: active — Phase 1 + Phase 2 merged to `main` (via `b6a2e272` and predecessors); MVP narrowed to Phases 3, 4, and 6 with E15-6 re-activated for a docs-first/operator-evidence v1 slice under this epic
 > **Predecessors**: [production-readiness-epic.md](../v0.3.1/production-readiness-epic.md) (Phases 2-6), [self-hosting-epic.md](../v0.3.1/self-hosting-epic.md) (remaining deliverables)
 > **Successor (deferred follow-ons)**: [v0.4.1/public-demo-followons-epic.md](../v0.4.1/public-demo-followons-epic.md)
-> **Revision**: Apr 2026 — MVP close-out scope locked under handoff decision `scope_e15_mvp_close_intake_202604`. CI smoke-gate (Phase 5) and observability/auth follow-ons demoted to v0.4.1.
+> **Revision**: Apr 2026 — MVP close-out scope locked under handoff decision `scope_e15_mvp_close_intake_202604`. CI smoke-gate and observability/auth follow-ons demoted to v0.4.1; Jun 2026 accepted plan [E15-6. Playwright Operator-Evidence Harness](../../tasks/15.0/E15-6-playwright-operator-evidence-harness-task-plan.md) pulls the docs-first/operator-evidence v1 slice back into v0.4.0 while leaving the durable CI smoke envelope deferred.
 
 ## MVP Scope (Apr 2026 close-out)
 
@@ -20,7 +20,7 @@ The MVP for E15 is **public WP demo URL live + one manual end-to-end pass**. Eve
 
 **Deferred to v0.4.1:**
 
-- Phase 5 — CI E2E smoke gate automation (was E15-6)
+- Phase 5 v2 envelope — durable CI E2E smoke gate automation follow-ons from E15-6
 - E15-2b worker/queue correlation propagation
 - E15-8 auth transaction isolation core
 - E15-9 API key usage telemetry deferral
@@ -110,7 +110,7 @@ The recognition service, Docker stack, Caddy TLS proxy, persistent model cache, 
 | Dashboard durable activity and diagnostics                | Phase 6 operator UX hardening      | Planned -- **E15-16**, after E15-15 and a recorded durable-source decision             |
 | Roster person review scrub workspace                      | Phase 6 operator UX hardening      | Planned -- **E15-17**, after E15-13 projection + queue contracts land                  |
 | Worker/queue correlation propagation                      | E15-2 follow-on                    | **Deferred → v0.4.1 (E15-2b)**                                                         |
-| CI E2E smoke gate automation                              | Production Readiness Phase 2       | **Deferred → v0.4.1 (E15-6)**                                                          |
+| CI E2E smoke gate automation / operator-evidence harness | Production Readiness Phase 2       | **Active in v0.4.0 for docs-first/operator-evidence v1 (E15-6); durable CI smoke envelope deferred to v0.4.1** |
 | Auth transaction isolation core                           | E15-1 follow-on                    | **Deferred → v0.4.1 (E15-8)**                                                          |
 | API key usage telemetry                                   | E15-1 follow-on                    | **Deferred → v0.4.1 (E15-9)**                                                          |
 | API key baseline schema alignment                         | E15-1 follow-on                    | **Deferred → v0.4.1 (E15-10)**                                                         |
@@ -245,13 +245,13 @@ Exit criteria:
 
 ---
 
-### Phase 5: E2E Smoke Gate Automation -- DEFERRED to v0.4.1
+### Phase 5: E2E Smoke Gate Automation / Operator Evidence -- active v1, deferred v2 envelope
 
-> **Status**: deferred — moved to [v0.4.1 follow-on epic](../v0.4.1/public-demo-followons-epic.md) under handoff decision `scope_e15_mvp_close_intake_202604` (Apr 2026 MVP narrowing)
-> **Task plans**: [E15-6. E2E Smoke Gate Automation (stub)](../../tasks/15.0/E15-6-e2e-smoke-gate-automation-stub.md) — promoted to full plan inside v0.4.1
+> **Status**: active in v0.4.0 for the accepted v1 docs/scaffolding/operator-evidence slice; durable CI smoke follow-ons remain deferred to [v0.4.1 follow-on epic](../v0.4.1/public-demo-followons-epic.md)
+> **Task plans**: [E15-6. Playwright Operator-Evidence Harness](../../tasks/15.0/E15-6-playwright-operator-evidence-harness-task-plan.md), [E15-6. E2E Smoke Gate Automation (stub superseded)](../../tasks/15.0/E15-6-e2e-smoke-gate-automation-stub.md)
 > **Source**: Production Readiness Phase 2
 
-Rationale: MVP completion signal is "demo URL live + manual E2E pass once". CI smoke automation is high-value follow-on but not blocking for the public-demo launch. Manual verification covered by E15-5.
+Rationale: MVP completion signal is still "demo URL live + manual E2E pass once", but the accepted E15-6 plan brings the docs-first harness contract, LocalWP operator-evidence path, and route-level a11y scaffolding back into v0.4.0 because that work unblocks demo proof generation now. The durable CI smoke envelope, outage helpers, and automation hardening remain deferred follow-on work.
 
 ---
 

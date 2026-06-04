@@ -598,3 +598,6 @@ integrity-watch:
 LIFECYCLE_FORMATTER = $(MAKE) format-all
 -include Makefile.d/*.mk
 # <<< WORKSTATE_LIFECYCLE_INCLUDE <<<
+# >>> WORKSTATE_BOOTSTRAP LIFECYCLE INCLUDE >>>
+-include Makefile.d/*.mk
+# <<< WORKSTATE_BOOTSTRAP LIFECYCLE INCLUDE <<<

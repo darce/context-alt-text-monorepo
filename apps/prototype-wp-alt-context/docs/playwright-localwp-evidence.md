@@ -23,7 +23,7 @@ Then edit `.env.local` and set:
 ```text
 ACX_E2E_WP_ADMIN_USER=...
 ACX_E2E_WP_ADMIN_PASS=...
-# Optional when LocalWP is not running on the default port:
+# Optional: override when LocalWP is not at the default site root:
 # WP_BASE_URL=http://localhost:10010
 ```
 

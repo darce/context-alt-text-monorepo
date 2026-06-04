@@ -1,8 +1,8 @@
 {
   "schema_version": 2,
-  "remote_url": "https://github.com/darce/workstate.git",
-  "remote_ref": "v0.1.22",
-  "remote_sha": "df3188dc5a8b70151a37ac02623b29d033081f77",
+  "remote_url": "/Users/daniel/Development/agentic-protocol-monorepo",
+  "remote_ref": "feature/apd-07-recipe-overrides",
+  "remote_sha": "aa774a5fb0485f782b22c0c8a992684da1640c2b",
   "profile": "all",
   "surfaces": [
     {
@@ -47,6 +47,10 @@
     },
     {
       "path": ".workstate/generated/plugins/workstate-system/base",
+      "source": "generated"
+    },
+    {
+      "path": ".workstate/generated/plugins/workstate-system/effective",
       "source": "generated"
     },
     {
@@ -100,5 +104,6 @@
     "context7",
     "workstate-handoff-mcp",
     "workstate-orchestrator-mcp"
-  ]
+  ],
+  "plugin_overrides_path": "workstate-overrides/workstate-system"
 }

@@ -50,6 +50,10 @@
       "source": "generated"
     },
     {
+      "path": ".workstate/generated/plugins/workstate-system/effective",
+      "source": "generated"
+    },
+    {
       "path": "Makefile.d/lifecycle.mk",
       "source": "lifecycle"
     },
@@ -100,5 +104,6 @@
     "context7",
     "workstate-handoff-mcp",
     "workstate-orchestrator-mcp"
-  ]
+  ],
+  "plugin_overrides_path": "workstate-overrides/workstate-system"
 }

@@ -55,7 +55,7 @@ The demo Workbench shows representative faces when the backend returns crop data
 - Rules: `docs/agentic/rules/frontend-guidelines.md`, `docs/agentic/rules/testing-typescript.md`, `docs/agentic/rules/development-workflow.md`
 - Contracts: `packages/shared-contracts/schemas/recognition-cluster-top-unlabeled-response.schema.json`, `docs/agentic/contracts/cluster-snapshot-api.md`, `docs/agentic/contracts/recognition-clustering.md`
 - Handoff/MCP state: task ref `E15-22`; intake findings `MAINT-WB-PROGRESS-PLAN-01..05`; planning-review findings `E15-22-PLAN-01..07`
-- Tech-debt inputs: `docs/tasks/tech-debt/scan-pipeline-trust-and-data-plane-canonicalization.md`, `docs/tasks/tech-debt/e2e-smoke-automation-path.md`
+- Tech-debt inputs: `docs/tasks/tech-debt/scan-pipeline-trust-and-data-plane-canonicalization.md`, `docs/tasks/15.0/E15-6-playwright-operator-evidence-harness-task-plan.md`
 
 ## Contract and Boundary Impact
 
@@ -91,7 +91,7 @@ Land a focused Workbench-correctness slice before public demo sign-off. The rema
 | File | Note |
 | --- | --- |
 | `docs/tasks/tech-debt/scan-pipeline-trust-and-data-plane-canonicalization.md` | Broader post-MVP scan trust work; this task takes only the public-demo subset |
-| `docs/tasks/tech-debt/e2e-smoke-automation-path.md` | Post-demo automation target E15-6 should absorb |
+| `docs/tasks/15.0/E15-6-playwright-operator-evidence-harness-task-plan.md` | Post-demo automation target E15-6 now absorbs and supersedes the former smoke-tech-debt plan |
 | `docs/tasks/15.0/E15-11-image-upload-transport-task-plan.md` | Hosted/private-media transport proof remains prerequisite evidence |
 | `docs/tasks/15.0/E15-5-manual-remote-e2e-task-plan.md` | Live-demo execution consumes the proof bundle, but this task does not require a parallel E15-5 planning-doc edit to start Slices 1 and 2 |
 

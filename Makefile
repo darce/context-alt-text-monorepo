@@ -278,6 +278,7 @@ check-all:
 			$(MAKE) lint-task-plans; \
 			$(MAKE) lint-dashboard-txt; \
 			$(MAKE) lint-scripts; \
+			$(MAKE) check-overrides-digest; \
 			$(MAKE) check-skills; \
 			$(MAKE) check-harness-sync; \
 			$(MAKE) lint-hoisted-paths; \
@@ -387,6 +388,15 @@ lint-dashboard-txt:
 lint-scripts:
 	@python3 scripts/hooks/lint-no-inline-python-heredoc.py
 	@python3 scripts/hooks/lint-expected-revision.py
+
+# MAINT-FB-B-05: validate every workstate-overrides/*/overrides.lock.json
+# component upstream_digest against the materialized upstream base copy
+# (whole-file sha256 of base_path, e.g. SKILL.base.md). The generated base
+# surface under .workstate/generated/ injects Global Instructions and is
+# deliberately not the digest subject (MAINT-FB-A-02 convention). Without
+# this check, digest drift only surfaces on the next manual bootstrap update.
+check-overrides-digest:
+	@python3 scripts/check_overrides_lock_digest.py
 
 # Run unit tests for scripts/hooks and .github/hooks.
 # Addresses AHMCP-14-BR-02: hook tests were not reachable via package Makefiles.

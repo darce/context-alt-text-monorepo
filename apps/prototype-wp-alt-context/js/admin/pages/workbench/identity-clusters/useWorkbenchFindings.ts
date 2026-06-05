@@ -5,8 +5,6 @@
  * clusters into one summary with a deterministic primary next action.
  */
 
-import { useMemo } from 'react';
-
 import { DATA_SOURCE, type DataSource } from '../../../api/recognition/types/dataSource';
 import type { PendingMergeSuggestion, PendingNameSuggestion } from '../../../api/recognition/types';
 import type { TopUnlabeledCluster } from '../../../api/recognition/types/cluster';
@@ -67,6 +65,7 @@ export interface WorkbenchFindingsQueues {
   nameSuggestions: PendingNameSuggestion[];
   nameTotal: number;
   topUnlabeledClusters: TopUnlabeledCluster[];
+  topUnlabeledTotal: number;
 }
 
 export interface WorkbenchFindingsSourceState {
@@ -200,10 +199,12 @@ export const buildWorkbenchFindings = (
     assignments: queues.assignmentTotal,
     merges: queues.mergeTotal,
     names: queues.nameTotal,
-    unlabeledClusters: queues.topUnlabeledClusters.length,
-    total: queues.assignmentTotal + queues.mergeTotal + queues.nameTotal + queues.topUnlabeledClusters.length,
+    unlabeledClusters: queues.topUnlabeledTotal,
+    total: queues.assignmentTotal + queues.mergeTotal + queues.nameTotal + queues.topUnlabeledTotal,
   };
 
+  // WHY: assignment + top-unlabeled are the canonical availability signals; merge/name
+  // outages degrade gracefully to a partial summary instead of hiding the panel.
   const isUnavailable =
     state.assignmentDataSource === DATA_SOURCE.UNAVAILABLE || state.topUnlabeledDataSource === DATA_SOURCE.UNAVAILABLE;
   const isReadOnly =
@@ -240,6 +241,7 @@ export const useWorkbenchFindings = (): WorkbenchFindingsViewModel => {
     nameSuggestions,
     nameDataSource,
     topUnlabeledClusters,
+    topUnlabeledTotal,
     topUnlabeledDataSource,
     reviewItems,
   } = useSuggestionReviewQueries();
@@ -248,33 +250,17 @@ export const useWorkbenchFindings = (): WorkbenchFindingsViewModel => {
   const isLoading =
     !hasAnyData &&
     (assignmentQuery.isLoading || mergeQuery.isLoading || nameQuery.isLoading || topUnlabeledQuery.isLoading);
+  // WHY: surface a hard error only when nothing rendered at all; partial query
+  // failures degrade gracefully to whatever findings did load.
   const isError = !hasAnyData && assignmentQuery.isError && mergeQuery.isError;
 
   const assignmentTotal = assignmentQuery.data?.total ?? 0;
   const mergeTotal = mergeQuery.data?.total ?? mergeSuggestions.length;
   const nameTotal = nameQuery.data?.total ?? nameSuggestions.length;
+  const resolvedTopUnlabeledTotal = topUnlabeledTotal ?? topUnlabeledClusters.length;
 
-  return useMemo(
-    () =>
-      buildWorkbenchFindings(
-        {
-          reviewItems,
-          assignmentTotal,
-          mergeSuggestions,
-          mergeTotal,
-          nameSuggestions,
-          nameTotal,
-          topUnlabeledClusters,
-        },
-        {
-          assignmentDataSource,
-          nameDataSource,
-          topUnlabeledDataSource,
-          isLoading,
-          isError,
-        },
-      ),
-    [
+  return buildWorkbenchFindings(
+    {
       reviewItems,
       assignmentTotal,
       mergeSuggestions,
@@ -282,11 +268,14 @@ export const useWorkbenchFindings = (): WorkbenchFindingsViewModel => {
       nameSuggestions,
       nameTotal,
       topUnlabeledClusters,
+      topUnlabeledTotal: resolvedTopUnlabeledTotal,
+    },
+    {
       assignmentDataSource,
       nameDataSource,
       topUnlabeledDataSource,
       isLoading,
       isError,
-    ],
+    },
   );
 };

@@ -48,7 +48,7 @@ export const WorkbenchFindingsPanel = ({
 
   if (!hasFindings && isLoading) {
     return (
-      <div className="acx-findings-panel acx-findings-panel--loading">
+      <div className="acx-findings-panel acx-findings-panel--loading" role="status" aria-live="polite">
         <p className="acx-findings-panel__status">{__('Checking recognition findings…', 'alt-context')}</p>
       </div>
     );
@@ -56,7 +56,7 @@ export const WorkbenchFindingsPanel = ({
 
   if (!hasFindings && isError) {
     return (
-      <div className="acx-findings-panel acx-findings-panel--error">
+      <div className="acx-findings-panel acx-findings-panel--error" role="status" aria-live="polite">
         <p className="acx-findings-panel__status">{__('Could not load recognition findings.', 'alt-context')}</p>
       </div>
     );
@@ -64,7 +64,7 @@ export const WorkbenchFindingsPanel = ({
 
   if (!hasFindings && isUnavailable) {
     return (
-      <div className="acx-findings-panel acx-findings-panel--unavailable">
+      <div className="acx-findings-panel acx-findings-panel--unavailable" role="status" aria-live="polite">
         <p className="acx-findings-panel__status">
           {__('Recognition findings are unavailable right now.', 'alt-context')}
         </p>
@@ -102,20 +102,23 @@ export const WorkbenchFindingsPanel = ({
         </p>
       )}
 
-      <ul className="acx-findings-panel__counts">
-        <li className="acx-findings-panel__count">
-          {counts.assignments} {__('to review', 'alt-context')}
-        </li>
-        <li className="acx-findings-panel__count">
-          {counts.merges} {__('merge candidates', 'alt-context')}
-        </li>
-        <li className="acx-findings-panel__count">
-          {counts.names} {__('suggested names', 'alt-context')}
-        </li>
-        <li className="acx-findings-panel__count">
-          {counts.unlabeledClusters} {__('unlabeled groups', 'alt-context')}
-        </li>
-      </ul>
+      {/* Live region: announces findings appearing/updating after a scan without a reload. */}
+      <div role="status" aria-live="polite">
+        <ul className="acx-findings-panel__counts">
+          <li className="acx-findings-panel__count">
+            {counts.assignments} {__('to review', 'alt-context')}
+          </li>
+          <li className="acx-findings-panel__count">
+            {counts.merges} {__('merge candidates', 'alt-context')}
+          </li>
+          <li className="acx-findings-panel__count">
+            {counts.names} {__('suggested names', 'alt-context')}
+          </li>
+          <li className="acx-findings-panel__count">
+            {counts.unlabeledClusters} {__('unlabeled groups', 'alt-context')}
+          </li>
+        </ul>
+      </div>
 
       {previews.length > 0 && (
         <div className="acx-findings-panel__previews">
@@ -133,7 +136,7 @@ export const WorkbenchFindingsPanel = ({
       )}
 
       {!hasFindings && (
-        <p className="acx-findings-panel__empty">
+        <p className="acx-findings-panel__empty" role="status" aria-live="polite">
           {__('No findings yet. Run a scan and new findings will appear here automatically.', 'alt-context')}
         </p>
       )}

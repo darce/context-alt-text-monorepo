@@ -47,7 +47,7 @@ resolve_mcp_command() {
   resolve_python_command
 
   if command -v uvx >/dev/null 2>&1; then
-    MCP_CMD=(uvx "${MCP_HANDOFF_PACKAGE:-mcp-workstate-handoff==0.12.1}")
+    MCP_CMD=(uvx "${MCP_HANDOFF_PACKAGE:-mcp-workstate-handoff==0.12.3}")
     return
   fi
 

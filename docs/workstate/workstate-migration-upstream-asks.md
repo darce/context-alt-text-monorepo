@@ -100,6 +100,82 @@ repo's no-user-local-path policy and makes the committed settings non-portable.
 environment-relative or workspace-relative command, and teach doctor/repair to
 accept that portable form.
 
+## I. MCP pin source-of-truth: overlay manifest drift + generation cutover (coordinate with E17-15)
+
+The workstate MCP runtime version (`mcp-workstate-handoff`,
+`mcp-workstate-orchestrator`) is hand-fanned across ~14 consumer references
+(`.mcp.json`, `.vscode/mcp.json`, `.codex/config.toml`, `Makefile`, CI, and
+operational docs/doc-tests). This is a single-source-of-truth violation that
+already produced live drift twice: `.github/copilot-instructions.md` lagged two
+minor versions, and the 2026-06-04 bootstrap pin sync bumped the three live
+harness configs to `0.12.3`/`0.6.0` while the Makefile canonical, CI workflow,
+and all doc/doc-test references stayed at `0.12.1`/`0.5.2` (fixed in this
+slice). Two halves, split by ownership:
+
+1. **Consumer-side (done here):** added `scripts/check_mcp_pins.py` +
+   `make check-mcp-pins` (wired into `check-all`). Canonical = the Makefile
+   `MCP_*_PACKAGE` pins; every editable current-pin reference must match.
+   Frozen records (`docs/adrs|specs|tasks/`) are exempt. This is the consumer
+   "manifest check" that the E17-15 verification table calls for
+   ([E17-15 task plan](../tasks/17.0/E17-15-agentic-plugin-distribution-task-plan.md)
+   line ~74). It also emits ADVISORIES for the overlay `mcp_servers.yaml`, the
+   `scripts/README.md` range mention, and the `CLAUDE.md` git+ssh tag refs.
+
+2. **Upstream/downstream (NOT fixed here — out of bounds):**
+   - The overlay `config/agent-workflows/mcp_servers.yaml` (symlink into
+     `.workstate/remote/`, `source: shared` from `workstate-system`) is
+     currently in lockstep (`0.12.3`/`0.6.0`) but only by hand. The bump
+     belongs upstream in `workstate-system` / `agentic-protocol-monorepo`, not
+     this checkout (Plugin Boundary Rule). **Ask:** keep the manifest pins in
+     lockstep with the consumer live-config pins (ideally derive/check one from
+     the other in the shared generator).
+   - The plugin generator (`scripts/generate_agent_workflows.py`, also overlay)
+     and the live-config↔plugin-manifest parity belong to E17-15's downstream
+     implementation in `agentic-protocol-monorepo`. Per ADR-010 / E17-15 the
+     live harness configs remain the pin source of truth and emitted plugin
+     manifests *preserve* them — so the consumer fix is the parity guard above,
+     **not** a second generator path in this repo. Do not build live-config
+     generation locally; it would duplicate and invert E17-15's decided model.
+
+## J. Linked git worktrees do not inherit the bootstrap overlay (out-of-box gap)
+
+`workstate-bootstrap install` materializes the gitignored overlay
+(`.workstate/`, `.claude-plugin/`, `Makefile.d`, `scripts/workstate`,
+`scripts/hooks`, …) once in the primary worktree. **Linked git worktrees**
+(`git worktree add`, and Claude Code's auto-worktrees under
+`.claude/worktrees/<name>/`) share the same `.git` but NOT gitignored files, so
+they start with the overlay entirely absent. Only tracked files survive — e.g.
+`.claude/settings.json` keeps `enabledPlugins: workstate-system@…=true`, so the
+plugin is *enabled but unresolvable* → zero skills load, and `make` workflow
+targets fail (missing `Makefile.d`). Today each worktree must be repaired by
+hand (this repo symlinked the four surfaces to the root's copy). This is the
+"works out of the box" gap: it should be solved once in the package, not
+re-patched per consumer per worktree.
+
+**Ask (capability — `workstate-bootstrap`):** a worktree-aware materialization
+path, e.g. `workstate-bootstrap adopt-worktree --target <wt>` (or making
+`install`/`repair` detect a linked worktree). It should **symlink the shared +
+generated surfaces to the primary worktree's already-materialized overlay**
+rather than re-cloning the remote per worktree (`.task-state/` stays
+per-worktree). The canonical surface list already lives in the ledger, so only
+the package can do this without a consumer hardcoding overlay-internal paths.
+
+**Ask (trigger):** git has no native post-worktree-add hook, and Claude Code
+auto-worktrees are created by the harness (knows nothing of workstate), so the
+robust catch-all is a **session-start self-heal** — this is exactly layer (3)
+of the WS-PKG-DELIVERY-01 durable direction (`make context` /
+`.claude/settings.json` SessionStart runs `workstate-bootstrap doctor` +
+auto-repair). Make that doctor+repair worktree-aware and it fixes every entry
+path (raw `git worktree add`, `make task-start`, Claude Code auto-worktree) the
+same way. For the `make task-start` path specifically, the shared
+`lifecycle.mk` can call the adopt step directly.
+
+**Consumer-template note:** if the upstream chooses symlink materialization, the
+consumer `.gitignore` must use slashless patterns (`/.workstate`,
+`/.claude-plugin`) — a dir-only pattern (`.workstate/`) does NOT match a
+symlink (git treats it as a file), so the symlink shows up untracked. The
+`workstate-bootstrap` `.gitignore` template should ship the slashless form.
+
 ## Resolved during this migration (not an upstream ask)
 
 - `workstate_orchestrator_mcp.orchestration.lane_prompt` raised

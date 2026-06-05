@@ -4,7 +4,12 @@ import { ErrorBoundary } from '../../../components/ErrorBoundary';
 import { useScrollRestoration } from '../../hooks/useScrollRestoration';
 import { ScanActionPanel } from './Panels';
 import { JobTimeline } from './JobTimeline';
-import { ClusterLabelingPanel, ClusterReviewPanel, SuggestionReviewPanel } from './identity-clusters';
+import {
+  ClusterLabelingPanel,
+  ClusterReviewPanel,
+  SuggestionReviewPanel,
+  WorkbenchFindingsPanel,
+} from './identity-clusters';
 import { MediaSelection } from './MediaSelection';
 import { useWorkbenchContext } from './WorkbenchContext';
 
@@ -51,6 +56,12 @@ export const ScanTabContent = (): React.JSX.Element => {
     activeJobIds,
   } = useWorkbenchContext();
 
+  const findingsDetailRef = React.useRef<HTMLDivElement>(null);
+
+  const handleTargetFindings = (): void => {
+    findingsDetailRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+  };
+
   const handleScanFaces = (): void => {
     const mediaIds = selectedMedia.map((item) => item.id);
     if (mediaIds.length === 0) {
@@ -95,28 +106,36 @@ export const ScanTabContent = (): React.JSX.Element => {
         phase={currentPhase}
         projectionSyncState={projectionSyncState}
       />
+      <ErrorBoundary>
+        <WorkbenchFindingsPanel
+          onLabel={(clusterId: string) => dispatchClusterPanel({ type: 'open_label', clusterId })}
+          onTargetFindings={handleTargetFindings}
+        />
+      </ErrorBoundary>
       <ScanScrollRestoration />
       {!isScanRunning && !hasIdentities && <NoMediaPanel />}
       <ErrorBoundary>
-        {clusterPanel.mode === 'label' && clusterPanel.clusterId ? (
-          <ClusterLabelingPanel
-            clusterId={clusterPanel.clusterId}
-            onClose={() => dispatchClusterPanel({ type: 'close' })}
-            onLabel={() => {
-              dispatchClusterPanel({ type: 'close' });
-            }}
-          />
-        ) : clusterPanel.mode === 'review' && clusterPanel.clusterId ? (
-          <ClusterReviewPanel
-            clusterId={clusterPanel.clusterId}
-            onClose={() => dispatchClusterPanel({ type: 'close' })}
-          />
-        ) : (
-          <SuggestionReviewPanel
-            onLabel={(clusterId: string) => dispatchClusterPanel({ type: 'open_label', clusterId })}
-            onReview={(clusterId: string) => dispatchClusterPanel({ type: 'open_review', clusterId })}
-          />
-        )}
+        <div ref={findingsDetailRef} className="acx-findings-detail-anchor">
+          {clusterPanel.mode === 'label' && clusterPanel.clusterId ? (
+            <ClusterLabelingPanel
+              clusterId={clusterPanel.clusterId}
+              onClose={() => dispatchClusterPanel({ type: 'close' })}
+              onLabel={() => {
+                dispatchClusterPanel({ type: 'close' });
+              }}
+            />
+          ) : clusterPanel.mode === 'review' && clusterPanel.clusterId ? (
+            <ClusterReviewPanel
+              clusterId={clusterPanel.clusterId}
+              onClose={() => dispatchClusterPanel({ type: 'close' })}
+            />
+          ) : (
+            <SuggestionReviewPanel
+              onLabel={(clusterId: string) => dispatchClusterPanel({ type: 'open_label', clusterId })}
+              onReview={(clusterId: string) => dispatchClusterPanel({ type: 'open_review', clusterId })}
+            />
+          )}
+        </div>
       </ErrorBoundary>
       <MediaSelection />
     </>

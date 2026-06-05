@@ -6,7 +6,6 @@ import logging
 import uuid
 from collections.abc import Awaitable, Callable, Iterable
 from datetime import UTC, datetime
-from typing import TypeVar
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,15 +35,14 @@ ObjectStoreFactory = Callable[[str], ObjectStore]
 logger = logging.getLogger(__name__)
 
 _DB_SETTINGS = get_database_settings()
-_PersistResult = TypeVar("_PersistResult")
 
 
 async def run_scan_three_phase[PersistResult](
     *,
     mark_running: Callable[[], Awaitable[object]],
     detect: Callable[[], Awaitable[list[FaceDetection]]],
-    persist: Callable[[list[FaceDetection]], Awaitable[_PersistResult]],
-) -> _PersistResult:
+    persist: Callable[[list[FaceDetection]], Awaitable[PersistResult]],
+) -> PersistResult:
     """Execute the canonical scan-job shape used by both sync and inline callers.
 
     The helper intentionally stays narrow: it centralizes the ordered phase

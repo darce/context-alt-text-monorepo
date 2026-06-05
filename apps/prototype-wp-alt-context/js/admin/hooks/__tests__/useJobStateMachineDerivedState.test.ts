@@ -20,7 +20,7 @@ const makeBatchRunStatus = (overrides: Partial<BatchRunStatus> = {}): BatchRunSt
 });
 
 const baseProps = {
-  currentPhase: 'detecting' as const,
+  currentPhase: 'scanning' as const,
   activeJobIds: ['scan-1'],
   activeJobs: [
     {

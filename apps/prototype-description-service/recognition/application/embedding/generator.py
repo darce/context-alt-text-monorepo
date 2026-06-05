@@ -29,7 +29,7 @@ from recognition.application.integrations import (
 )
 
 if TYPE_CHECKING:
-    from recognition.infrastructure.embeddings import InsightFaceAdapter
+    from recognition.infrastructure.embeddings import DetectedFace, InsightFaceAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -148,13 +148,14 @@ class InsightFaceEmbeddingGenerator(EmbeddingGeneratorProtocol):
 
             try:
                 # Run detection and embedding in one pass
-                face_results = await self._breaker.call(
-                    lambda image_bytes=image_bytes: wait_for_adapter(
-                        self._adapter.analyze(image_bytes),
+                async def analyze_current_image(current_image_bytes: bytes = image_bytes) -> list[DetectedFace]:
+                    return await wait_for_adapter(
+                        self._adapter.analyze(current_image_bytes),
                         timeout_s=self._timeout,
                         adapter_name="insightface.analyze",
                     )
-                )
+
+                face_results: list[DetectedFace] = await self._breaker.call(analyze_current_image)
 
                 for _face in face_results:
                     results.append(

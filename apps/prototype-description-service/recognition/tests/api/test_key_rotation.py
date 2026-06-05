@@ -97,7 +97,7 @@ async def test_unknown_key_classifies_unknown(db_session: AsyncSession, tenant_r
 
 
 @pytest.mark.asyncio
-async def test_lookup_raises_401_for_expired_key() -> None:
+async def test_lookup_raises_401_for_expired_key(monkeypatch) -> None:
     """_lookup_api_key surfaces 'api key expired' via HTTPException(401)."""
     from fastapi import HTTPException
 
@@ -119,23 +119,19 @@ async def test_lookup_raises_401_for_expired_key() -> None:
 
     import recognition.interface_adapters.http.deps.auth as auth_mod
 
-    orig = auth_mod.SqlAlchemyApiKeyRepository
-    auth_mod.SqlAlchemyApiKeyRepository = StubRepo
-    try:
-        with pytest.raises(HTTPException) as exc_info:
-            await auth_mod._lookup_api_key(
-                "raw",
-                SecuritySettings(auth_enabled=True, dev_api_keys=[]),
-                session,
-            )
-        assert exc_info.value.status_code == 401
-        assert exc_info.value.detail == "api key expired"
-    finally:
-        auth_mod.SqlAlchemyApiKeyRepository = orig
+    monkeypatch.setattr(auth_mod, "SqlAlchemyApiKeyRepository", StubRepo)
+    with pytest.raises(HTTPException) as exc_info:
+        await auth_mod._lookup_api_key(
+            "raw",
+            SecuritySettings(auth_enabled=True, dev_api_keys=[]),
+            session,
+        )
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "api key expired"
 
 
 @pytest.mark.asyncio
-async def test_lookup_raises_401_for_revoked_key() -> None:
+async def test_lookup_raises_401_for_revoked_key(monkeypatch) -> None:
     from fastapi import HTTPException
 
     from recognition.tests.api.conftest import FakeSession
@@ -154,19 +150,15 @@ async def test_lookup_raises_401_for_revoked_key() -> None:
 
     import recognition.interface_adapters.http.deps.auth as auth_mod
 
-    orig = auth_mod.SqlAlchemyApiKeyRepository
-    auth_mod.SqlAlchemyApiKeyRepository = StubRepo
-    try:
-        with pytest.raises(HTTPException) as exc_info:
-            await auth_mod._lookup_api_key(
-                "raw",
-                SecuritySettings(auth_enabled=True, dev_api_keys=[]),
-                session,
-            )
-        assert exc_info.value.status_code == 401
-        assert exc_info.value.detail == "api key revoked"
-    finally:
-        auth_mod.SqlAlchemyApiKeyRepository = orig
+    monkeypatch.setattr(auth_mod, "SqlAlchemyApiKeyRepository", StubRepo)
+    with pytest.raises(HTTPException) as exc_info:
+        await auth_mod._lookup_api_key(
+            "raw",
+            SecuritySettings(auth_enabled=True, dev_api_keys=[]),
+            session,
+        )
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "api key revoked"
 
 
 @pytest.mark.asyncio

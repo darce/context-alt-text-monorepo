@@ -1,7 +1,7 @@
 import { __, _n, sprintf } from '@wordpress/i18n';
 
 import type { BatchRunStatus, JobProgress } from '../../api/recognition/types/scan';
-import type { RecognitionHistorySource } from '../../hooks/useRecognitionJobHistory';
+import type { RecognitionHistorySource } from '../../hooks/recognitionJobHistoryUtils';
 export { mediaEditUrl, rosterClustersUrl } from '../../utils/adminUrls';
 
 const isClusteringActive = (phase?: string | null): boolean => phase === 'clustering' || phase === 'retrying';

@@ -7,7 +7,6 @@ import type { RecognitionActivityItem, RecognitionHistorySource } from '../../ho
 interface DashboardRecentActivitySectionProps {
   historySource: RecognitionHistorySource;
   recentActivity: RecognitionActivityItem[];
-  jobHistory: string[];
   jobStatuses: Record<string, string>;
   jobDetails: Record<string, JobStatusResponse>;
 }
@@ -36,7 +35,6 @@ const formatDuration = (startedAt: string, finishedAt: string | null): string | 
 export const DashboardRecentActivitySection = ({
   historySource,
   recentActivity,
-  jobHistory,
   jobStatuses,
   jobDetails,
 }: DashboardRecentActivitySectionProps): React.JSX.Element => (

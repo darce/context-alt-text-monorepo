@@ -34,6 +34,7 @@ from recognition.infrastructure.repositories import (
     SqlAlchemyConstraintRepository,
     SqlAlchemyIdentityClusterBlockRepository,
 )
+from recognition.interface_adapters.http.blob_url import build_face_thumb_path
 from recognition.interface_adapters.http.dependencies import (
     build_cluster_service,
     get_cluster_repository,
@@ -57,7 +58,6 @@ from recognition.interface_adapters.http.deps.session import (
     _resolve_pg_backend_pid,
 )
 from recognition.interface_adapters.http.deps.tenant import get_authenticated_tenant_id
-from recognition.interface_adapters.http.blob_url import build_face_thumb_path
 from recognition.interface_adapters.http.job_utils import (
     job_to_clustering_response as _job_to_clustering_response,
 )
@@ -140,9 +140,7 @@ LIMIT 1
 _QUERY_CANCELED_SQLSTATE = "57014"
 
 
-def _face_box_from_components(
-    bbox_x, bbox_y, bbox_width, bbox_height
-) -> FaceBoxResponse | None:
+def _face_box_from_components(bbox_x, bbox_y, bbox_width, bbox_height) -> FaceBoxResponse | None:
     values = (bbox_x, bbox_y, bbox_width, bbox_height)
     if any(value is None for value in values):
         return None
@@ -863,9 +861,7 @@ async def get_top_unlabeled_clusters(
                     )
                     for rep in (c.representatives or [])
                     for rep_bbox in (
-                        _face_box_from_components(
-                            rep.bbox_x, rep.bbox_y, rep.bbox_width, rep.bbox_height
-                        ),
+                        _face_box_from_components(rep.bbox_x, rep.bbox_y, rep.bbox_width, rep.bbox_height),
                     )
                 ],
                 suggested_label=suggested_label,

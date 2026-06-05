@@ -9,6 +9,9 @@ import {
   listRecognitionClusters,
   mergeCluster,
   updateClusterLabel,
+  type ClusterIdentity,
+  type ClusterListResponse,
+  type ClusterMembersResponse,
 } from '../../../../api/recognition';
 import { useRosterEntries } from '../../../../hooks/useRosterHooks';
 import { createMockQuery } from '../../../../test-utils/mockHooks';
@@ -67,14 +70,14 @@ const duplicateClusterMatch = {
   sample_identities: [],
 };
 
-const makeClusterListResponse = (clusters = [duplicateClusterMatch]) => ({
+const makeClusterListResponse = (clusters: ClusterListResponse['clusters'] = [duplicateClusterMatch]) => ({
   clusters,
   limit: 10,
   total: clusters.length,
   truncated: false,
 });
 
-const makeClusterMembersResponse = (members = []) => ({
+const makeClusterMembersResponse = (members: ClusterIdentity[] = []): ClusterMembersResponse => ({
   members,
   limit: 500,
   total: members.length,

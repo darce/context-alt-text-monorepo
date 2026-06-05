@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
-from starlette.datastructures import FormData, UploadFile
+from starlette.datastructures import FormData, Headers, UploadFile
 
 from recognition.application.storage import FilesystemObjectStore
 from recognition.interface_adapters.http.routers.analyze_multipart import (
@@ -49,7 +49,7 @@ def store(tmp_path: Path) -> FilesystemObjectStore:
 
 
 def _put_content_type(upload: UploadFile, content_type: str) -> UploadFile:
-    upload.headers = {"content-type": content_type}
+    upload.headers = Headers({"content-type": content_type})
     return upload
 
 

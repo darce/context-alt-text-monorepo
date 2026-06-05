@@ -1,7 +1,7 @@
 # E15-5a. OCI Operational Hygiene (runs with the LocalWP gate)
 
 > **Task Short ID**: E15-5a
-> **Status**: scoped -- not started
+> **Status**: see `DASHBOARD.txt` (MCP is the source of truth).
 > **Epic**: [E15. Public Demo Launch Readiness](../../epics/v0.4.0/public-demo-launch-readiness-epic.md) Phase 4 (pre-public-demo hygiene)
 > **Predecessors**: None (pure OCI ops; the backend is already live).
 > **Sibling (runs in parallel)**: [E15-3a](./E15-3a-localwp-oci-roundtrip-task-plan.md) (LocalWP -> OCI round-trip verification).
@@ -59,12 +59,12 @@ Exit: SSH works from two networks, security list scrubbed of stale CIDRs, and bo
 - Verify the current Postgres backup mechanism on the OCI host. Expected baseline: the E14 self-hosting epic's MVP recommendation of a daily `pg_dump` cron. If that backup flow is not currently running, document that the Hetzner migration starts with a one-off `pg_dump` before transfer/restore and open a separate follow-up to automate ongoing backups.
 - Produce `docs/tasks/15.0/E15-5a-hetzner-fallback-plan.md` covering:
   - Hetzner sizing selection (CX22 as baseline candidate; escalate to CX32 if a representative 15-minute OCI sample using host/container stats shows the description-service + Postgres stack sustaining more than 3 GB combined memory usage, or if the image stack fails the A1.Flex-to-x86 workload parity check defined below); document the sampling commands, timestamps, measured memory/CPU baseline, and the chosen SKU + estimated monthly cost.
-  - Which env vars + secrets move (`prod/.env` surface).
+  - Which env vars + secrets move (canonical surface: `apps/prototype-description-service/.env.prod.example`; deployed file on the OCI VM is `/opt/acx-backend/prod/secrets/.env`).
   - Which DNS records change (`api.altcontext.com` A record -> Hetzner IP).
-  - Postgres data migration path (`pg_dump` + transfer + restore), including whether it uses the standing backup mechanism or a one-off backup prerequisite.
+  - Postgres data migration path (`pg_dump` + transfer + restore), including whether it uses the standing backup mechanism or a one-off backup prerequisite. The pg_dump baseline verification itself is performed inside the fallback plan's Postgres section; the run log captures the outcome.
   - Estimated time-to-cutover and the trigger condition (e.g. two consecutive OCI capacity failures on reboot, or a 24h outage).
-- Define the parity check inline in the fallback plan: a `linux/amd64` rebuild of the current prod image stack via `docker buildx` must complete cleanly, the stack must boot with the current `docker-compose.env.yml` / `prod/.env` surfaces on an x86 target, and the same health / connection smoke used by the OCI gate must succeed without architecture-specific fixes. Failure on any of those steps is a parity miss and forces CX32 review or an explicit follow-up.
-- This is a plan, not an execution. The plan exits when it passes `/planning-review` against the current `prod/.env` and `docker-compose.env.yml` surfaces (same review bar as Slices 1 and 2).
+- Define the parity check inline in the fallback plan: a `linux/amd64` rebuild of the current prod image stack via `docker buildx` must complete cleanly, the stack must boot with the current `apps/prototype-description-service/docker-compose.env.yml` and `apps/prototype-description-service/.env.prod.example` surfaces on an x86 target, and the same health / connection smoke used by the OCI gate must succeed without architecture-specific fixes. Failure on any of those steps is a parity miss and forces CX32 review or an explicit follow-up.
+- This is a plan, not an execution. The plan exits when it passes `/planning-review` against the canonical surfaces above (same review bar as Slices 1 and 2). The reviewer invokes `make plan-review DOC=docs/tasks/15.0/E15-5a-hetzner-fallback-plan.md` and cross-checks against `apps/prototype-description-service/.env.prod.example`, `apps/prototype-description-service/docker-compose.env.yml`, and `apps/prototype-description-service/Caddyfile` in the same pass.
 
 Exit: fallback plan merged.
 
@@ -85,7 +85,7 @@ Exit: fallback plan merged.
 
 - **OCI alert delivery dropped as spam** -- silent failure mode for cost protection. Mitigation: Slice 1 test delivery is explicit; if the primary inbox drops it, route to a second address as secondary.
 - **Tailscale bypass of corporate network** -- n/a for solo operator, but documented as a future constraint if a second operator joins.
-- **Fallback-plan rot** -- the plan references `prod/.env` and `docker-compose.env.yml`; both change over time. Mitigation: Slice 3 exit criterion is "reviews cleanly against the current files"; revisit whenever either file changes materially.
+- **Fallback-plan rot** -- the plan references `apps/prototype-description-service/.env.prod.example`, `apps/prototype-description-service/docker-compose.env.yml`, and `apps/prototype-description-service/Caddyfile`; all three change over time. Mitigation: Slice 3 exit criterion is "reviews cleanly against the current files"; revisit whenever any of the three changes materially.
 
 ## Consolidated Checklist
 
@@ -111,9 +111,10 @@ Exit: fallback plan merged.
 
 ### Checklist for Slice 3: Hetzner fallback plan (CX22 baseline; sizing analysis required)
 
-- [ ] Verify the current Postgres backup mechanism and document any one-off `pg_dump` prerequisite if the standing backup flow is absent.
 - [x] Produce `E15-5a-hetzner-fallback-plan.md` with explicit memory-sampling evidence, the amd64 parity-check definition, secrets/env migration, DNS cutover, data migration path, cutover timing, and trigger conditions.
-- [ ] Hold the fallback-plan slice open until it passes planning review against the current `prod/.env` and `docker-compose.env.yml` surfaces.
+- [x] Fallback plan passing `/planning-review` against the canonical surfaces (`apps/prototype-description-service/.env.prod.example`, `apps/prototype-description-service/docker-compose.env.yml`, `apps/prototype-description-service/Caddyfile`); planning-review fixes landed in commit `1a66402e` (see [the run log § Planning-Review Outcome](./E15-5a-oci-hygiene-run-log.md#planning-review-outcome)). Live finding status via `review_findings(operation="list", task_ref="E15-5A")`.
+
+> The Postgres backup baseline + follow-up handling is owned by the fallback plan's Postgres section, and its run-log evidence row lives in the run log's Slice 3 block; both are gated by the planning-review checkbox above and do not need separate slice-checklist rows.
 
 ## Review Readiness
 

@@ -232,8 +232,7 @@ class InsightFaceFaceDetector(FaceDetectorProtocol):
                 media_id = hashlib.sha256(source).hexdigest()
                 image_bytes = source
 
-            current_source_bytes = image_bytes
-            assert current_source_bytes is not None
+            current_source_bytes: bytes = image_bytes
 
             # Compute image phash once per image
             image_phash = self._compute_phash(current_source_bytes)

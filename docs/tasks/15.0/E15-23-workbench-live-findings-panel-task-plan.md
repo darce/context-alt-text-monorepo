@@ -215,48 +215,48 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded frontend rules, testing guide, source scope, existing Workbench components, and MCP planning findings before editing.
-- [ ] Confirmed no backend/shared-contract change is required; if implementation proves otherwise, contract/schema/fixture work lands in the same slice.
-- [ ] Confirmed E15-22 avatar proof availability before treating LocalWP screenshot proof as an E15-23 gate.
+- [x] Loaded frontend rules, testing guide, source scope, existing Workbench components, and MCP planning findings before editing.
+- [x] Confirmed no backend/shared-contract change is required; if implementation proves otherwise, contract/schema/fixture work lands in the same slice.
+- [x] Confirmed E15-22 avatar proof availability before treating LocalWP screenshot proof as an E15-23 gate.
 
 ### Checklist for Slice 1: Findings View Model
 
-- [ ] `useWorkbenchFindings` combines assignment, merge, name, and top-unlabeled data.
-- [ ] Summary counts, representative preview data, and state flags are typed and covered.
-- [ ] Next-action priority and read-only behavior are deterministic and tested.
+- [x] `useWorkbenchFindings` combines assignment, merge, name, and top-unlabeled data.
+- [x] Summary counts, representative preview data, and state flags are typed and covered.
+- [x] Next-action priority and read-only behavior are deterministic and tested.
 
 ### Checklist for Slice 2: Projection-Ready Refresh
 
-- [ ] Projection-ready forces targeted refetch for assignment, merge, name, top-unlabeled, and current-page identities.
-- [ ] Refresh logic avoids broad-only invalidation as the dynamic-findings happy path.
-- [ ] Tests prove every visible findings queue refreshes without remount.
+- [x] Projection-ready forces targeted refetch for assignment, merge, name, top-unlabeled, and current-page identities.
+- [x] Refresh logic avoids broad-only invalidation as the dynamic-findings happy path.
+- [x] Tests prove every visible findings queue refreshes without remount.
 
 ### Checklist for Slice 3: Live Findings Panel UI
 
-- [ ] `WorkbenchFindingsPanel` renders after `JobTimeline` and before `MediaSelection`.
-- [ ] Panel shows summary counts, representative previews, primary `Review next`, and secondary actions.
-- [ ] Empty/loading/error/read-only states are explicit and tested.
+- [x] `WorkbenchFindingsPanel` renders after `JobTimeline` and before `MediaSelection`.
+- [x] Panel shows summary counts, representative previews, primary `Review next`, and secondary actions.
+- [x] Empty/loading/error/read-only states are explicit and tested.
 
 ### Checklist for Slice 4: Retire Accordion Flow
 
-- [ ] Top-level suggestion accordion no longer owns the scan-tab findings workflow.
-- [ ] Assignment, merge, name, and top-cluster content are reusable panel sections.
-- [ ] Existing label/review drawers and curation mutations keep working.
-- [ ] Bulk accept is secondary and does not precede the main review queues.
+- [x] Top-level suggestion accordion no longer owns the scan-tab findings workflow.
+- [x] Assignment, merge, name, and top-cluster content are reusable panel sections.
+- [x] Existing label/review drawers and curation mutations keep working.
+- [x] Bulk accept is secondary and does not precede the main review queues.
 
 ### Checklist for Slice 5: Dynamic Proof and E15-24 Gate
 
-- [ ] Workbench integration test proves findings appear after projection-ready without reload/remount.
-- [ ] Handoff decision records E15-24 as required or deferred with evidence.
-- [ ] LocalWP/manual screenshot proof is captured only if demo gate requires it.
+- [x] Workbench integration test proves findings appear after projection-ready without reload/remount.
+- [x] Handoff decision records E15-24 as required or deferred with evidence.
+- [x] LocalWP/manual screenshot proof is captured only if demo gate requires it.
 
 ## Review Readiness
 
-- [ ] Expected post-implementation review path is ordinary branch review, with frontend UI/query-refresh focus; escalate to release-style audit only if LocalWP demo proof becomes an E15 public-demo gate.
-- [ ] No boundary-touching implementation is left without matching contract/doc/fixture evidence.
-- [ ] Deterministic tests cover view-model priority, projection-ready refresh, and dynamic panel rendering.
+- [x] Expected post-implementation review path is ordinary branch review, with frontend UI/query-refresh focus; escalate to release-style audit only if LocalWP demo proof becomes an E15 public-demo gate.
+- [x] No boundary-touching implementation is left without matching contract/doc/fixture evidence.
+- [x] Deterministic tests cover view-model priority, projection-ready refresh, and dynamic panel rendering.
 - [ ] Runtime-parity proof is included if E15 demo gating depends on this surface.
-- [ ] Handoff decision records change, verification, and E15-24 decision.
+- [x] Handoff decision records change, verification, and E15-24 decision.
 
 ## Stretch Goals
 
@@ -266,8 +266,8 @@ Proof:
 
 ## Success Criteria
 
-- [ ] The scan tab displays a live findings panel after `JobTimeline` and before the media queue.
-- [ ] Found clusters/suggestions appear dynamically after projection-ready without page reload, remount, manual cache clear, or delayed passive read.
-- [ ] The primary `Review next` action follows the documented priority order and opens/targets the correct existing review surface.
-- [ ] The old top-level accordion is removed or no longer controls the primary findings workflow.
-- [ ] E15-24 is either created/blocking with evidence or explicitly deferred with passing dynamic-proof evidence.
+- [x] The scan tab displays a live findings panel after `JobTimeline` and before the media queue.
+- [x] Found clusters/suggestions appear dynamically after projection-ready without page reload, remount, manual cache clear, or delayed passive read.
+- [x] The primary `Review next` action follows the documented priority order and opens/targets the correct existing review surface.
+- [x] The old top-level accordion is removed or no longer controls the primary findings workflow.
+- [x] E15-24 is either created/blocking with evidence or explicitly deferred with passing dynamic-proof evidence.

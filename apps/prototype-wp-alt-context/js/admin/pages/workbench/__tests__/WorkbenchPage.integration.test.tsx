@@ -8,8 +8,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetConfigCache } from '../../../api/config';
 import { queryKeys } from '../../../api/queryKeys';
 import * as recognitionApi from '../../../api/recognition';
-import type { SyncStatusResponse } from '../../../api/recognition';
+import type { SyncStatusResponse, SyncTriggerResponse } from '../../../api/recognition';
+import { DATA_SOURCE } from '../../../api/recognition/types';
+import type { JobStatusResponse } from '../../../api/recognition/types/scan';
 import { WorkbenchPage } from '../../WorkbenchPage';
+
+// Mutable ref consumed by the hoisted useCombinedScanStatus mock so individual
+// tests can drive the pipeline phase (e.g. awaiting_projection) before render.
+const scanStatusRef = vi.hoisted(() => ({ data: null as JobStatusResponse | null }));
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -39,7 +45,7 @@ vi.mock('../../../hooks/useRecognitionHooks', async (importOriginal) => {
   return {
     ...actual,
     useCombinedScanStatus: () => ({
-      scanStatusQuery: { data: null, isLoading: false, isError: false },
+      scanStatusQuery: { data: scanStatusRef.data, isLoading: false, isError: false },
       multiScanStatus: [],
       batchRunStatusQuery: { data: undefined, isLoading: false, isError: false },
     }),
@@ -56,6 +62,10 @@ vi.mock('../../../api/recognition', async () => {
     clusterFaces: vi.fn(),
     fetchMediaIdentities: vi.fn(),
     fetchPendingSuggestions: vi.fn(),
+    fetchPendingMergeSuggestions: vi.fn(),
+    fetchPendingNameSuggestions: vi.fn(),
+    fetchTopUnlabeledClusters: vi.fn(),
+    triggerSync: vi.fn(),
   };
 });
 
@@ -117,6 +127,30 @@ describe('WorkbenchPage (integration-lite)', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    scanStatusRef.data = null;
+    vi.mocked(recognitionApi.fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [],
+      total: 0,
+      limit: 10,
+      offset: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    vi.mocked(recognitionApi.fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: [],
+      total: 0,
+      limit: 25,
+      offset: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    vi.mocked(recognitionApi.fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 0,
+      truncated: false,
+      singleton_count: 0,
+      has_clusters: false,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
     window.localStorage.clear();
     window.EventSource = MockEventSource as unknown as typeof EventSource;
     window.AltContextAdmin = {
@@ -530,5 +564,123 @@ describe('WorkbenchPage (integration-lite)', () => {
 
     expect(await screen.findByText('Photo Page Two')).toBeInTheDocument();
     expect(screen.queryByText('Photo Page One')).not.toBeInTheDocument();
+  });
+
+  it('paints new findings after projection-ready without reload or remount (E15-23 / E15-24 gate)', async () => {
+    vi.mocked(recognitionApi.fetchMediaIdentities).mockResolvedValue({
+      identities_by_media: { '11': [] },
+    });
+    vi.mocked(recognitionApi.fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      total: 0,
+      limit: 25,
+      offset: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    // Projection sync stays pending until the test resolves it explicitly.
+    let resolveSync!: (value: SyncTriggerResponse) => void;
+    vi.mocked(recognitionApi.triggerSync).mockImplementation(
+      () =>
+        new Promise<SyncTriggerResponse>((resolve) => {
+          resolveSync = resolve;
+        }),
+    );
+
+    // Backend reports the pipeline is awaiting projection for snapshot 7.
+    scanStatusRef.data = {
+      id: 'job-9',
+      type: 'clustering',
+      status: 'completed',
+      progress: { completed: 10, total: 10, phase: 'awaiting_projection' },
+      started_at: '2026-06-05T10:00:00Z',
+      finished_at: '2026-06-05T10:01:00Z',
+      snapshot_version: 7,
+      source_job_id: 'job-9',
+    } satisfies JobStatusResponse;
+
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+          staleTime: Infinity,
+          refetchOnMount: false,
+          refetchOnWindowFocus: false,
+          refetchOnReconnect: false,
+        },
+      },
+    });
+    client.setQueryData(
+      queryKeys.media.workbenchPage({ page: 1, perPage: 10, search: '', status: 'all' }),
+      baseMediaResponse,
+    );
+    client.setQueryData(queryKeys.media.identitiesByIds([11]), {
+      identities_by_media: { '11': [] },
+    });
+
+    renderWithClient(client);
+
+    // Initial paint: queues are empty and the panel says so explicitly.
+    expect(
+      await screen.findByText('No findings yet. Run a scan and new findings will appear here automatically.'),
+    ).toBeInTheDocument();
+
+    // The projected results become available server-side only now.
+    vi.mocked(recognitionApi.fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-ready',
+          identity_id: 'identity-ready',
+          suggested_cluster_id: 'cluster-ready',
+          representative_similarity: 0.92,
+          avg_member_similarity: 0.9,
+          cluster_label: 'Alex',
+          cluster_identity_count: 2,
+        },
+      ],
+      total: 1,
+      limit: 25,
+      offset: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    vi.mocked(recognitionApi.fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [
+        {
+          id: 'top-ready',
+          tenant_id: 'test-tenant',
+          label: null,
+          is_labeled: false,
+          is_auto_label: false,
+          identity_count: 5,
+          user_confirmed: false,
+          representatives: [],
+        },
+      ],
+      limit: 20,
+      total: 1,
+      truncated: false,
+      singleton_count: 0,
+      has_clusters: true,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    // Projection sync succeeds; no reload, remount, manual cache clear, or
+    // delayed passive read happens after this point.
+    resolveSync({
+      synced: true,
+      reason: 'ok',
+      last_snapshot_version: 7,
+      last_synced_at: '2026-06-05T10:02:00Z',
+      is_stale: false,
+      sync_health: 'healthy',
+      last_sync_result: 'ok',
+    });
+
+    expect(await screen.findByText('1 to review')).toBeInTheDocument();
+    expect(await screen.findByText('1 unlabeled group')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Review next/ })).toBeEnabled();
+    expect(
+      screen.queryByText('No findings yet. Run a scan and new findings will appear here automatically.'),
+    ).not.toBeInTheDocument();
   });
 });

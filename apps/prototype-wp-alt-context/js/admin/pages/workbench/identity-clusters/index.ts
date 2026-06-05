@@ -26,6 +26,7 @@ export { ClusterReviewPanel } from './ClusterReviewPanel';
 export { InlineSuggestionPrompt } from './InlineSuggestionPrompt';
 export { AnchorSelectionModal } from './AnchorSelectionModal';
 export { TopClustersSection } from './TopClustersSection';
+export { WorkbenchFindingsPanel } from './WorkbenchFindingsPanel';
 
 // Hooks
 export { useClusterEditState } from './useClusterEditState';

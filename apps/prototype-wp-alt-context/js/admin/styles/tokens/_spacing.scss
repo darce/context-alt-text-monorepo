@@ -7,9 +7,4 @@
   --acx-space-24: 1.5rem;
   --acx-space-32: 2rem;
   --acx-space-48: 3rem;
-
-  // Sticky workbench offset: WP admin bar (32px) + visual breathing room (14px).
-  --acx-admin-bar-height: 32px;
-  --acx-workbench-sticky-breathing-room: 14px;
-  --acx-workbench-sticky-top: calc(var(--acx-admin-bar-height) + var(--acx-workbench-sticky-breathing-room));
 }

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import type { QueryClient, UseMutationResult } from '@tanstack/react-query';
 
+import { getConfig } from '../api/config';
 import { queryKeys } from '../api/queryKeys';
 import type { SyncTriggerResponse } from '../api/recognition';
 import type { BatchRunStatus, JobStatusResponse } from '../api/recognition/types/scan';
@@ -9,6 +10,35 @@ import type { PersistedJob } from './useJobPersistence';
 import type { JobStatus } from './useJobProgressStream';
 
 export type ProjectionSyncState = 'idle' | 'syncing' | 'ready' | 'acknowledging' | 'error';
+
+/**
+ * E15-23: projection-ready must force visible findings data to refresh, not
+ * merely invalidate broad caches. Targets every findings queue the Workbench
+ * renders plus the current page's active media-identity queries
+ * (refetchQueries on the `media.identities()` prefix only re-runs mounted
+ * queries, so the active `identitiesByIds(mediaIds)` page refetches without
+ * threading media ids through this boundary).
+ */
+const refetchFindingsQueries = (queryClient: QueryClient): Promise<unknown> => {
+  let tenantId = '';
+  try {
+    tenantId = getConfig().tenant_id ?? '';
+  } catch {
+    tenantId = '';
+  }
+
+  const refetches = [
+    queryClient.refetchQueries({ queryKey: queryKeys.suggestions.pending() }),
+    queryClient.refetchQueries({ queryKey: queryKeys.suggestions.mergePending() }),
+    queryClient.refetchQueries({ queryKey: queryKeys.suggestions.namePending() }),
+    queryClient.refetchQueries({ queryKey: queryKeys.media.identities() }),
+  ];
+  if (tenantId !== '') {
+    refetches.push(queryClient.refetchQueries({ queryKey: queryKeys.clusters.topUnlabeled(tenantId) }));
+  }
+
+  return Promise.allSettled(refetches);
+};
 
 interface JobStateMachineEffectsOptions {
   scanStatus: JobStatusResponse | undefined;
@@ -154,6 +184,7 @@ export const useJobStateMachineEffects = ({
         }
 
         setProjectionSyncState('ready');
+        void refetchFindingsQueries(queryClient);
       } catch (error) {
         if (lastProjectionAttemptRef.current !== projectionTarget.attemptKey) {
           return;
@@ -169,6 +200,7 @@ export const useJobStateMachineEffects = ({
     currentPhase,
     projectionTarget,
     projectionSyncState,
+    queryClient,
     setProjectionError,
     setProjectionSyncState,
     projectionSyncNonce,

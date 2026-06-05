@@ -12,6 +12,7 @@ import pathlib
 import subprocess
 import sys
 import uuid
+from types import ModuleType
 
 import pytest
 import pytest_asyncio
@@ -30,14 +31,15 @@ async def tenant_row(db_session: AsyncSession) -> Tenant:
     return t
 
 
-def _import_cli():
+def _import_cli() -> ModuleType:
     import importlib.util
     import pathlib
 
     path = pathlib.Path(__file__).resolve().parents[3] / "scripts" / "manage_api_keys.py"
     spec = importlib.util.spec_from_file_location("manage_api_keys_cli", path)
-    module = importlib.util.module_from_spec(spec)
+    assert spec is not None
     assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 

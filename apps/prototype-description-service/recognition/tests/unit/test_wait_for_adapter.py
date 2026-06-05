@@ -15,7 +15,7 @@ async def test_wait_for_adapter_returns_result_before_timeout() -> None:
         await asyncio.sleep(0)
         return "ok"
 
-    result = await wait_for_adapter(fast_call(), timeout_s=0.1, adapter_name="insightface")
+    result: str = await wait_for_adapter(fast_call(), timeout_s=0.1, adapter_name="insightface")
 
     assert result == "ok"
 

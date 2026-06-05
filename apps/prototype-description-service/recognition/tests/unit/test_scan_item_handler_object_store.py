@@ -99,7 +99,7 @@ class _FakeSession:
     def __init__(self, repo, queue) -> None:
         self._repo = repo
         self._queue = queue
-        self.added = []
+        self.added: list[object] = []
 
     async def __aenter__(self):
         return self

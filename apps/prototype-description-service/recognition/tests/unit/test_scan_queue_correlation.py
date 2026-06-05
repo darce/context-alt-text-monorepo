@@ -35,9 +35,9 @@ from recognition.interface_adapters.http.middleware.correlation import (
 def test_correlation_source_enum_members() -> None:
     assert CorrelationSource.API.value == "api"
     assert CorrelationSource.WORKER.value == "worker"
-    # StrEnum: equal to its string value.
-    assert CorrelationSource.API == "api"
-    assert CorrelationSource.WORKER == "worker"
+    # StrEnum stores the wire value used by persisted scan queue rows.
+    assert CorrelationSource.API.value == "api"
+    assert CorrelationSource.WORKER.value == "worker"
 
 
 def test_scan_queue_item_has_correlation_fields() -> None:
@@ -69,7 +69,9 @@ class _RecordingRepo:
     async def create_job(self, *, tenant_id, media_ids, created_by_user_id=None):  # noqa: ANN001
         return uuid.uuid4()
 
-    async def create_job_with_message(self, *, tenant_id, media_ids, total, message, created_by_user_id=None):  # noqa: ANN001
+    async def create_job_with_message(  # noqa: ANN001
+        self, *, tenant_id, media_ids, total, message, created_by_user_id=None, job_id=None
+    ):
         jid = uuid.uuid4()
         self.messages[jid] = message or ""
         return jid
@@ -97,7 +99,7 @@ class _RecordingRepo:
 @pytest.mark.asyncio
 async def test_populate_threads_correlation_id_through_chunk_loop() -> None:
     repo = _RecordingRepo()
-    queue = ScanQueueService(repo)  # type: ignore[arg-type]
+    queue = ScanQueueService(repo)
     media_items = [(i, f"http://u/{i}.jpg") for i in range(1, 6)]
 
     await queue.populate_scan_job_items(
@@ -116,7 +118,7 @@ async def test_populate_threads_correlation_id_through_chunk_loop() -> None:
 @pytest.mark.asyncio
 async def test_populate_without_correlation_passes_none() -> None:
     repo = _RecordingRepo()
-    queue = ScanQueueService(repo)  # type: ignore[arg-type]
+    queue = ScanQueueService(repo)
 
     await queue.populate_scan_job_items(
         job_id=uuid.uuid4(),
@@ -142,7 +144,7 @@ async def test_populate_scan_job_items_async_forwards_correlation_id() -> None:
         tenant_id=str(uuid.uuid4()),
         job_id=str(uuid.uuid4()),
         media_items=[(1, "u")],
-        scan_queue=_CaptureQueue(),  # type: ignore[arg-type]
+        scan_queue=_CaptureQueue(),
         correlation_id="req-captured-xyz",
     )
     assert captured["correlation_id"] == "req-captured-xyz"

@@ -211,7 +211,10 @@ export const ClusterDrawerPanel = ({
                   <IdentityThumbnail identity={identity} mediaMeta={mediaMap[identity.media_id]} size={128} />
                 </a>
                 <figcaption>
-                  {sprintf(__('Similarity: %s', 'alt-context'), identity.similarity.toFixed(2))}
+                  {sprintf(
+                    __('Similarity: %s', 'alt-context'),
+                    identity.similarity === null ? __('Unknown', 'alt-context') : identity.similarity.toFixed(2),
+                  )}
                   <br />
                   {sprintf(__('Media %d', 'alt-context'), identity.media_id)}
                 </figcaption>

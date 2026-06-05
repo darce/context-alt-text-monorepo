@@ -8,7 +8,6 @@ import shlex
 import subprocess
 import textwrap
 
-
 APP_ROOT = pathlib.Path(__file__).resolve().parents[3]
 SCRIPT_PATH = APP_ROOT / "scripts" / "start_prototype_local.sh"
 

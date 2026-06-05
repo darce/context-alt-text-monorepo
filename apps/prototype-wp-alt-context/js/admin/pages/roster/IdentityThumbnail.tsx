@@ -30,7 +30,12 @@ export const IdentityThumbnail = ({
       setCroppedSrc(null);
       return;
     }
+    if (!identity.bbox) {
+      setCroppedSrc(mediaMeta.url);
+      return;
+    }
     let cancelled = false;
+    const bbox = identity.bbox;
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.src = mediaMeta.url;
@@ -57,10 +62,10 @@ export const IdentityThumbnail = ({
       const scaleX = naturalWidth / originalWidth;
       const scaleY = naturalHeight / originalHeight;
 
-      const scaledX = identity.bbox.x * scaleX;
-      const scaledY = identity.bbox.y * scaleY;
-      const scaledWidth = identity.bbox.width * scaleX;
-      const scaledHeight = identity.bbox.height * scaleY;
+      const scaledX = bbox.x * scaleX;
+      const scaledY = bbox.y * scaleY;
+      const scaledWidth = bbox.width * scaleX;
+      const scaledHeight = bbox.height * scaleY;
 
       const paddingX = scaledWidth * PADDING_RATIO;
       const paddingY = scaledHeight * PADDING_RATIO;

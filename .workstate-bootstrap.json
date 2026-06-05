@@ -1,17 +1,17 @@
 {
   "schema_version": 2,
   "remote_url": "https://github.com/darce/workstate.git",
-  "remote_ref": "v0.1.22",
-  "remote_sha": "df3188dc5a8b70151a37ac02623b29d033081f77",
+  "remote_ref": "v0.1.23",
+  "remote_sha": "83065f197c10353420035859f993ab827e359258",
   "profile": "all",
   "surfaces": [
     {
       "path": ".github/hooks",
-      "source": "local"
+      "source": "shared"
     },
     {
       "path": "scripts/hooks",
-      "source": "local"
+      "source": "shared"
     },
     {
       "path": "docs/workstate/contracts",
@@ -89,7 +89,7 @@
     },
     {
       "path": "Makefile",
-      "action": "already_present"
+      "action": "appended"
     },
     {
       "path": "core.hooksPath",
@@ -101,7 +101,6 @@
     }
   ],
   "mcp_servers": [
-    "context7",
     "workstate-handoff-mcp",
     "workstate-orchestrator-mcp"
   ],

@@ -59,6 +59,7 @@ export const useSuggestionReviewQueries = () => {
     nameSuggestions: nameQuery.data?.suggestions ?? [],
     nameDataSource: nameQuery.data?.data_source,
     topUnlabeledClusters: topUnlabeledQuery.data?.clusters ?? [],
+    topUnlabeledTotal: topUnlabeledQuery.data?.total,
     topUnlabeledHasClusters: topUnlabeledQuery.data?.has_clusters,
     topUnlabeledDataSource: topUnlabeledQuery.data?.data_source,
     reviewItems: buildSuggestionReviewItems(assignmentSuggestions),

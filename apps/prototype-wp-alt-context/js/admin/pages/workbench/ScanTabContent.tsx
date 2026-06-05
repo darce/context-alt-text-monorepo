@@ -59,7 +59,13 @@ export const ScanTabContent = (): React.JSX.Element => {
   const findingsDetailRef = React.useRef<HTMLDivElement>(null);
 
   const handleTargetFindings = (): void => {
-    findingsDetailRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+    const anchor = findingsDetailRef.current;
+    if (!anchor) {
+      return;
+    }
+    anchor.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+    // WHY: move keyboard/SR focus with the scroll so "Review next" lands users on the queues.
+    anchor.focus({ preventScroll: true });
   };
 
   const handleScanFaces = (): void => {
@@ -115,7 +121,7 @@ export const ScanTabContent = (): React.JSX.Element => {
       <ScanScrollRestoration />
       {!isScanRunning && !hasIdentities && <NoMediaPanel />}
       <ErrorBoundary>
-        <div ref={findingsDetailRef} className="acx-findings-detail-anchor">
+        <div ref={findingsDetailRef} className="acx-findings-detail-anchor" tabIndex={-1}>
           {clusterPanel.mode === 'label' && clusterPanel.clusterId ? (
             <ClusterLabelingPanel
               clusterId={clusterPanel.clusterId}

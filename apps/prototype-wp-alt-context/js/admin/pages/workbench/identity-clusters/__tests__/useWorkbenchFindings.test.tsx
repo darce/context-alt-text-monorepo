@@ -86,6 +86,8 @@ const makeQueues = (overrides: Partial<WorkbenchFindingsQueues> = {}): Workbench
   nameSuggestions: [],
   nameTotal: 0,
   topUnlabeledClusters: [],
+  // Mirrors the hook fallback: server total defaults to the fetched page length.
+  topUnlabeledTotal: overrides.topUnlabeledClusters?.length ?? 0,
   ...overrides,
 });
 
@@ -121,6 +123,21 @@ describe('buildWorkbenchFindings', () => {
       total: 8,
     });
     expect(model.hasFindings).toBe(true);
+  });
+
+  it('reports the server-side unlabeled total when it exceeds the fetched page', () => {
+    const model = buildWorkbenchFindings(
+      makeQueues({
+        topUnlabeledClusters: [makeCluster()],
+        topUnlabeledTotal: 25,
+      }),
+      makeState(),
+    );
+
+    expect(model.counts.unlabeledClusters).toBe(25);
+    expect(model.counts.total).toBe(25);
+    // Next action still targets the loaded page.
+    expect(model.nextAction).toEqual({ kind: NEXT_ACTION_KIND.CLUSTER, clusterId: 'top-1' });
   });
 
   it('prioritizes the highest-score assignment suggestion as next action', () => {
@@ -364,5 +381,51 @@ describe('useWorkbenchFindings', () => {
       label: null,
     });
     expect(result.current.isReadOnly).toBe(false);
+  });
+
+  it('degrades gracefully on partial query failure instead of surfacing an error', async () => {
+    // Locks the isError gate: assignment fails but top-unlabeled data renders,
+    // so the panel shows partial findings with no error affordance.
+    vi.mocked(fetchPendingSuggestions).mockRejectedValue(new Error('assignment endpoint down'));
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [],
+      total: 0,
+      limit: 10,
+      offset: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: [],
+      total: 0,
+      limit: 25,
+      offset: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [makeCluster()],
+      limit: 20,
+      total: 1,
+      truncated: false,
+      singleton_count: 0,
+      has_clusters: true,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient = client;
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+
+    const { result } = renderHook(() => useWorkbenchFindings(), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    expect(result.current.isError).toBe(false);
+    expect(result.current.hasFindings).toBe(true);
+    expect(result.current.counts.unlabeledClusters).toBe(1);
+    expect(result.current.nextAction).toEqual({ kind: NEXT_ACTION_KIND.CLUSTER, clusterId: 'top-1' });
   });
 });

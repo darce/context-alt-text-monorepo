@@ -30,8 +30,8 @@ IN_ORCHESTRATOR_ROOT := $(if $(filter $(WORKTREE_ROOT_REAL),$(ORCHESTRATOR_ROOT)
 
 # --- MCP runtime ---
 UVX ?= uvx
-MCP_HANDOFF_PACKAGE ?= mcp-workstate-handoff==0.12.1
-MCP_ORCHESTRATOR_PACKAGE ?= mcp-workstate-orchestrator==0.5.2
+MCP_HANDOFF_PACKAGE ?= mcp-workstate-handoff==0.12.3
+MCP_ORCHESTRATOR_PACKAGE ?= mcp-workstate-orchestrator==0.6.0
 MCP_PYTHON = $(UVX) --from "$(MCP_ORCHESTRATOR_PACKAGE)" python3
 LANE_CONFIG_CMD = $(MCP_PYTHON) -m workstate_orchestrator_mcp.orchestration.lane_config
 MCP_PYTHONPATH := $(ORCHESTRATOR_ROOT)/packages/codex-subagent-bridge/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
@@ -129,7 +129,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/logs.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest
+.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest
 
 # Default target
 help:
@@ -281,6 +281,7 @@ check-all:
 			$(MAKE) check-overrides-digest; \
 			$(MAKE) check-skills; \
 			$(MAKE) check-harness-sync; \
+			$(MAKE) check-mcp-pins; \
 			$(MAKE) lint-hoisted-paths; \
 			$(MAKE) check-agent-workflows; \
 			$(MAKE) check-codex-command-router; \
@@ -290,6 +291,12 @@ check-all:
 			echo ""; \
 			echo "✅ All monorepo checks passed!"; \
 		fi
+
+# Guard: every editable current-pin reference to the workstate MCP packages must
+# match the Makefile MCP_*_PACKAGE canonical. Frozen records (docs/adrs|specs|tasks)
+# are exempt; overlay manifest + range/git+ssh forms surface as advisories.
+check-mcp-pins:
+	@python3 "$(WORKTREE_ROOT_REAL)/scripts/check_mcp_pins.py"
 
 localwp-mirror-integrity:
 	@$(MAKE) -C apps/prototype-wp-alt-context localwp-mirror-integrity \

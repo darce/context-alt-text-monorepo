@@ -15,8 +15,8 @@ Install the three package surfaces from PyPI, then materialize the shared overla
 
 ```bash
 python3 -m venv .venv
-./.venv/bin/pip install "mcp-workstate-handoff==0.12.1"
-./.venv/bin/pip install "mcp-workstate-orchestrator==0.5.2"
+./.venv/bin/pip install "mcp-workstate-handoff==0.12.3"
+./.venv/bin/pip install "mcp-workstate-orchestrator==0.6.0"
 ./.venv/bin/pip install "workstate-bootstrap==0.7.3"
 
 ./.venv/bin/workstate-bootstrap install --target . --remote-ref v0.1.22
@@ -59,8 +59,8 @@ If you set explicit relative paths, they resolve from `AGENT_HANDOFF_WORKSPACE_R
 Use the package manager for MCP package upgrades and `workstate-bootstrap update` for the overlay clone:
 
 ```bash
-./.venv/bin/pip install --upgrade "mcp-workstate-handoff==0.12.1"
-./.venv/bin/pip install --upgrade "mcp-workstate-orchestrator==0.5.2"
+./.venv/bin/pip install --upgrade "mcp-workstate-handoff==0.12.3"
+./.venv/bin/pip install --upgrade "mcp-workstate-orchestrator==0.6.0"
 ./.venv/bin/pip install --upgrade "workstate-bootstrap==0.7.3"
 
 ./.venv/bin/workstate-bootstrap update --remote-ref v0.1.22

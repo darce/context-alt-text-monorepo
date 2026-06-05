@@ -166,11 +166,11 @@ Sampling commands (paste verbatim used commands here):
 
 ### Planning-Review Outcome
 
-- [x] `/planning-review` run against `docs/tasks/15.0/E15-5a-hetzner-fallback-plan.md` returned `pass` on 2026-05-17.
-- Review run id: `planning-review-E15-5a-slice3-20260517` (MCP id 586; verdict decision `planning_review_e15_5a_slice3_pass`).
-- Findings opened (now all fixed): `E15-5a-PA-01..PA-10` (carried over from `plan-analyze-E15-5a-slice3-20260517`) plus net-new `E15-5a-PR-01`, `E15-5a-PR-02`. All closed at commit `1a66402e6a97f5c6bc13e743ccef077e10b4ead5`.
+- [x] `/planning-review` + `plan-analyze` fixes for the fallback plan landed on 2026-05-17 in commit `1a66402e6a97f5c6bc13e743ccef077e10b4ead5`.
+- Evidence: `git show 1a66402e6a97f5c6bc13e743ccef077e10b4ead5` -- "docs(e15-5a): planning-review fixes for fallback plan (PA-01..PA-10 + PR-01..02)" -- enumerates the parent-plan, fallback-plan, and run-log fixes from that review pass. The commit is the authoritative record of the slice-3 planning-review work.
+- Live finding status (open/fixed/deferred) is owned by the handoff DB, not this file: query `review_findings(operation="list", task_ref="E15-5A")` or read `DASHBOARD.txt`. Do not mirror finding status here.
 
-Exit: fallback plan merged with planning-review approval recorded.
+Exit: fallback plan planning-review fixes recorded in commit `1a66402e`; finding status tracked live in MCP.
 
 ---
 

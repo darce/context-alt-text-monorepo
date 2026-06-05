@@ -1,6 +1,6 @@
 # E15-5a Hetzner CX22 Fallback Plan
 
-> **Status**: see `DASHBOARD.txt` (MCP is the source of truth; planning-review run id captured in [the run log](./E15-5a-oci-hygiene-run-log.md#planning-review-outcome)).
+> **Status**: see `DASHBOARD.txt` and `review_findings(operation="list", task_ref="E15-5A")` (MCP is the source of truth; planning-review fix commit `1a66402e` recorded in [the run log](./E15-5a-oci-hygiene-run-log.md#planning-review-outcome)).
 > **Parent**: [E15-5a OCI Operational Hygiene](./E15-5a-oci-operational-hygiene-task-plan.md) Slice 3
 > **Scope**: planning artifact only. This plan does not execute the migration; it documents the migration so an operator can execute it under pressure.
 > **Living-doc rule**: re-verify this plan whenever `apps/prototype-description-service/.env.prod.example`, `apps/prototype-description-service/docker-compose.env.yml`, or `apps/prototype-description-service/Caddyfile` change materially.
@@ -83,9 +83,9 @@ The parity check is the gating decision between "rebuild on x86 and ship" and "b
 | Step | Pass criterion |
 |------|----------------|
 | `cd apps/prototype-description-service && docker buildx build --platform linux/amd64 --build-arg GIT_COMMIT_SHA=$(git rev-parse HEAD) -t iad.ocir.io/idu2kqqe2jxy/acx-backend:fallback-amd64 --push .` | Build completes with exit 0 and the image is pushed to OCIR; no architecture-specific patches required to `Dockerfile`, `pyproject.toml`, or system package list. `--push` is required so the Hetzner host can `docker pull` it during Migration Steps below. |
-| `docker compose -f docker-compose.env.yml up -d` against the rebuilt image on the x86 host (override `ACX_IMAGE_TAG=fallback-amd64` for the parity boot) | All four services (postgres, api, worker, caddy if attached) reach `healthy` within the same timeout as the OCI gate (~60s for postgres, ~120s for api). |
+| `docker compose -f docker-compose.env.yml up -d` against the rebuilt image on the x86 host (override `ACX_IMAGE_TAG=fallback-amd64` for the parity boot) | The 3 services in `docker-compose.env.yml` (postgres, api, worker) boot; only `postgres` declares a compose `healthcheck` (it reaches `healthy` within ~60s, which gates api/worker startup via `depends_on: service_healthy`). api/worker have no compose healthcheck, so do not gate api readiness on compose `healthy` status — gate it on the `/health` + `/ready` endpoint smoke rows below (~120s for api). Caddy is not in this compose; it comes from the separate `docker-compose.caddy.yml`. |
 | `curl https://<test-host>/health` and `/recognition/health` | Returns the same JSON shape and the `commit_sha` field matches `GIT_COMMIT_SHA` build-arg passed above. |
-| `curl https://<test-host>/ready` | Returns 200 with `database: up` and `models: loaded`. The InsightFace cache must download cleanly on amd64. |
+| `curl https://<test-host>/ready` | Returns 200 with `{status, checks: [...], timestamp}` where top-level `status` is `ok`/`degraded` (unhealthy flips to 503) and the `checks[]` array carries `database`, `breaker`, and `model_cache` entries (each `{name, status, detail}` with `status` one of `ok`/`degraded`/`unhealthy`). There are no top-level `database`/`models` keys. The InsightFace cache must download cleanly on amd64 so the `model_cache` check reports `ok`. |
 
 Any failure on these steps **forces** either CX32 review or an explicit architecture-fix follow-up task before DNS cutover.
 
@@ -139,6 +139,8 @@ ssh ubuntu@acx-backend.<tailnet>.ts.net '
 - If **all steps show no backup mechanism**, the fallback requires a one-off `pg_dump` as a prerequisite step and opens a separate follow-up to automate ongoing backups. The follow-up is not in scope for this plan; capture the follow-up task ref in the run log.
 
 ### Migration Steps
+
+> **Fresh-PGDATA restore ordering.** `docker-compose.env.yml` mounts `./db/docker-prod-init` into the postgres container's `/docker-entrypoint-initdb.d` (read-only), and Postgres runs those scripts **only once, on an empty PGDATA**. The Hetzner `docker compose up -d postgres` below (step 4) initializes a fresh PGDATA, so `001-extensions.sql` runs first and creates the `vector`/`uuid-ossp`/`citext`/`pgcrypto` extensions **before** the `pg_restore` lands the dump -- the ordering is correct and the dumped schema's `vector` columns restore cleanly. This only holds if `db/docker-prod-init/` is actually present on the Hetzner host next to the compose file: `deploy-env.sh` ships it (`scp -r .../db/docker-prod-init -> /opt/acx-backend/<env>/db/`), but the manual bring-up in step 4 does not. If you bring postgres up manually without that directory, the fresh init creates no extensions and `pg_restore` fails on the first `vector`-typed column -- `scp` `apps/prototype-description-service/db/docker-prod-init` to `/opt/acx-backend/prod/db/` before step 4.
 
 ```bash
 # REPLACE before running: <tailnet> -> your tailnet name; <hetzner-ip> -> Hetzner public IP.
@@ -243,7 +245,7 @@ shred -u prod.env.tmp
 |-----------------------------------|------------------|
 | `COMPOSE_PROJECT_NAME=acx-prod`   | Unchanged.       |
 | `ACX_ENV=prod`                    | Unchanged.       |
-| `RECOGNITION_RUNTIME_MODE=production` | **Required, unchanged.** `api/main.py` refuses to start if `RECOGNITION_RUNTIME_MODE=production` **and** `RECOGNITION_ALLOWED_API_KEYS` is non-empty (the dev-keys-in-prod guard). Verify the value survived the `.env` copy and that `RECOGNITION_ALLOWED_API_KEYS` is empty before `docker compose up`; provision real keys via `scripts/manage_api_keys.py` post-boot. |
+| `RECOGNITION_RUNTIME_MODE=production` | **Required, unchanged.** `api/main.py` refuses to start if `RECOGNITION_RUNTIME_MODE=production` **and** `RECOGNITION_ALLOWED_API_KEYS` is non-empty (the dev-keys-in-prod guard). Verify the value survived the `.env` copy and that `RECOGNITION_ALLOWED_API_KEYS` is empty before `docker compose up`; provision real keys via `apps/prototype-description-service/scripts/manage_api_keys.py` post-boot. |
 | `ACX_IMAGE_TAG=latest`            | Unchanged once the amd64 `:latest` is pushed (see [§ Image Promotion](#image-promotion) above).      |
 | `ACX_PGDATA_PATH=/opt/acx-backend/data/prod-pgdata` | Same path; ensure directory exists on Hetzner before `docker compose up`. |
 | `ACX_MODELS_PATH=/opt/acx-backend/data/prod-models` | Same path; ensure directory exists; cache repopulates on first run. |
@@ -251,7 +253,7 @@ shred -u prod.env.tmp
 | `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB` | Unchanged; the `pg_restore` above expects these to match. |
 | `POSTGRES_DSN`/`POSTGRES_SYNC_DSN`| Unchanged (container-internal `postgres:5432`). |
 | `RECOGNITION_AUTH_ENABLED=true`   | Unchanged.       |
-| `RECOGNITION_ALLOWED_API_KEYS`    | MUST remain empty (the prod startup guard refuses to boot otherwise). **WordPress plugin auth continuity is preserved by the Postgres dump**: real API keys live in the `api_keys` table and migrate via `pg_restore` above. No key rotation is required during cutover. Run `scripts/manage_api_keys.py list` post-boot only to confirm the expected keys are present; rotate via `scripts/manage_api_keys.py revoke`/`create` only if a leak is suspected. |
+| `RECOGNITION_ALLOWED_API_KEYS`    | MUST remain empty (the prod startup guard refuses to boot otherwise). **WordPress plugin auth continuity is preserved by the Postgres dump**: real API keys live in the `api_keys` table and migrate via `pg_restore` above. No key rotation is required during cutover. Run `apps/prototype-description-service/scripts/manage_api_keys.py list` post-boot only to confirm the expected keys are present; rotate via `apps/prototype-description-service/scripts/manage_api_keys.py revoke`/`create` only if a leak is suspected. |
 | `RECOGNITION_ALLOWED_ORIGINS`     | Unchanged (commented out in `.env.prod.example`; uncomment + set only if the WP host is on a different origin from the API).       |
 | `TENANT_ID`                       | Unchanged (single-tenant prod). |
 | Cache dirs (`CACHE_BASE`, `HF_HOME`, etc.) | Unchanged (container-internal). |
@@ -264,6 +266,10 @@ Caddy is **not** declared in `docker-compose.env.yml`; it runs from the sibling 
 
 #### Bring-Up On Hetzner
 
+> **Precondition (hard, not optional).** `docker-compose.caddy.yml` declares **three** networks as `external: true` -- `acx-prod-net`, `acx-staging-net`, and `acx-dev-net`. On a prod-only Hetzner host only `acx-prod-net` exists (created by the prod env stack); the staging/dev networks do not. `docker compose -f docker-compose.caddy.yml up` (and `deploy-env.sh prod`, and the `acx-caddy.service` ExecStart) will hard-fail at network-attach time with `network acx-staging-net declared as external, but could not be found` and Caddy will never start. This is a startup failure distinct from the soft Caddyfile-route 502 covered below. Resolve it with **one** of:
+> - **Pre-create the two empty external networks** on the prod-only host before starting Caddy (the step below does this; both `acx-prod` env up and the caddy compose then attach cleanly), OR
+> - **Ship a pruned `docker-compose.caddy.yml`** that declares only `acx-prod-net` (drop the `acx-staging-net`/`acx-dev-net` entries from both the service `networks:` list and the top-level `networks:` block). This pairs with the same staging/dev prune the Caddyfile-route guard recommends at the end of this section.
+
 ```bash
 # REPLACE before running: <hetzner-ip> -> Hetzner public IP.
 # Mirror the OCI install: ship Caddyfile + compose + systemd unit, then start.
@@ -271,6 +277,13 @@ scp apps/prototype-description-service/Caddyfile root@<hetzner-ip>:/opt/acx-back
 scp apps/prototype-description-service/docker-compose.caddy.yml root@<hetzner-ip>:/opt/acx-backend/docker-compose.caddy.yml
 scp apps/prototype-description-service/systemd/acx-caddy.service root@<hetzner-ip>:/tmp/acx-caddy.service
 ssh root@<hetzner-ip> '
+  # PRECONDITION: create the two external networks the caddy compose requires
+  # but the prod-only stack never creates. Idempotent: `docker network create`
+  # of an existing network errors, so guard each with inspect. Skip this only
+  # if you shipped a pruned caddy compose that declares only acx-prod-net.
+  for net in acx-staging-net acx-dev-net; do
+    sudo docker network inspect "$net" >/dev/null 2>&1 || sudo docker network create "$net"
+  done
   sudo cp /tmp/acx-caddy.service /etc/systemd/system/acx-caddy.service
   sudo systemctl daemon-reload
   sudo systemctl enable --now acx-caddy.service
@@ -278,7 +291,7 @@ ssh root@<hetzner-ip> '
 '
 ```
 
-Or equivalently invoke `apps/prototype-description-service/scripts/deploy-env.sh prod root@<hetzner-ip>` -- that script already pushes `docker-compose.caddy.yml`, `Caddyfile`, and `acx-caddy.service` as part of an env deploy. See [§ Time-to-Cutover One-Time Install](#estimated-time-to-cutover) below for the parent install row.
+Or equivalently invoke `apps/prototype-description-service/scripts/deploy-env.sh prod root@<hetzner-ip>` -- that script already pushes `docker-compose.caddy.yml`, `Caddyfile`, and `acx-caddy.service` as part of an env deploy. **The same external-network precondition above applies to this path too**: run the `acx-staging-net`/`acx-dev-net` create loop (or ship a pruned caddy compose) before `deploy-env.sh` starts the caddy unit, or its `acx-caddy.service` start will fail identically. See [§ Time-to-Cutover One-Time Install](#estimated-time-to-cutover) below for the parent install row.
 
 The Let's Encrypt staging-CA guard in the next subsection applies on first Caddy start.
 
@@ -367,6 +380,6 @@ The recommended posture is to keep an amd64 `:fallback-amd64` image pre-built an
 
 This plan exits Slice 3 only when:
 
-- [ ] It passes `/planning-review` against the current `apps/prototype-description-service/.env.prod.example`, `apps/prototype-description-service/docker-compose.env.yml`, and `apps/prototype-description-service/Caddyfile` (review-run id recorded in the run log).
+- [ ] It passes `/planning-review` against the current `apps/prototype-description-service/.env.prod.example`, `apps/prototype-description-service/docker-compose.env.yml`, and `apps/prototype-description-service/Caddyfile` (planning-review fix commit recorded in the run log; live finding status via `review_findings(operation="list", task_ref="E15-5A")`).
 - [ ] Zero open planning findings remain on the E15-5a task ref.
 - [ ] The Slice 3 checklist items in [the parent task plan](./E15-5a-oci-operational-hygiene-task-plan.md#checklist-for-slice-3-hetzner-fallback-plan-cx22-baseline-sizing-analysis-required) are all ticked.

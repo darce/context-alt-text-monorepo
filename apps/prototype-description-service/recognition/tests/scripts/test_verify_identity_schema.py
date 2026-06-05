@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+from types import ModuleType
 
 
-def _import_script():
+def _import_script() -> ModuleType:
     path = pathlib.Path(__file__).resolve().parents[3] / "scripts" / "verify_identity_schema.py"
     spec = importlib.util.spec_from_file_location("verify_identity_schema", path)
-    module = importlib.util.module_from_spec(spec)
+    assert spec is not None
     assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 

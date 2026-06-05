@@ -32,7 +32,7 @@ from recognition.application.integrations import (
 )
 
 if TYPE_CHECKING:
-    from recognition.infrastructure.embeddings import InsightFaceAdapter
+    from recognition.infrastructure.embeddings import DetectedFace, InsightFaceAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -232,18 +232,23 @@ class InsightFaceFaceDetector(FaceDetectorProtocol):
                 media_id = hashlib.sha256(source).hexdigest()
                 image_bytes = source
 
+            current_source_bytes = image_bytes
+            assert current_source_bytes is not None
+
             # Compute image phash once per image
-            image_phash = self._compute_phash(image_bytes)
+            image_phash = self._compute_phash(current_source_bytes)
 
             # Detect faces and get embeddings in one pass
             try:
-                faces = await self._breaker.call(
-                    lambda image_bytes=image_bytes: wait_for_adapter(
-                        self._adapter.detect_faces(image_bytes),
+
+                async def detect_current_image(current_image_bytes: bytes = current_source_bytes) -> list[DetectedFace]:
+                    return await wait_for_adapter(
+                        self._adapter.detect_faces(current_image_bytes),
                         timeout_s=self._timeout,
                         adapter_name="insightface.detect_faces",
                     )
-                )
+
+                faces: list[DetectedFace] = await self._breaker.call(detect_current_image)
                 for face in faces:
                     # Extract pose angles
                     pose_pitch = face.pose[0] if face.pose else None

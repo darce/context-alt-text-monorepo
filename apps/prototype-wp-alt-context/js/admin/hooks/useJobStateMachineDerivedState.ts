@@ -1,7 +1,8 @@
 import { useMemo } from 'react';
 
 import type { BatchRunStatus, JobProgress, JobStatusResponse } from '../api/recognition/types/scan';
-import { buildClusterProgress, buildScanProgress, buildStatusText, isScanRunning } from './jobStateMachineProgress';
+import { buildClusterProgress, buildScanProgress, buildStatusText } from './jobStateMachineProgress';
+import { isScanRunning } from './jobStateMachineRuntime';
 import type { PipelinePhase } from './jobStateMachineUtils';
 import type { PersistedJob } from './useJobPersistence';
 import type { JobStatus } from './useJobProgressStream';

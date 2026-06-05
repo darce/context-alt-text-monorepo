@@ -160,7 +160,6 @@ class CurationSyncService:
 
         cluster.roster_id = UUID(desired_roster_id) if desired_roster_id is not None else None
         cluster.label = desired_label
-        cluster.is_labeled = bool(desired_label)
         if operation_type == "cluster_person_bound" and desired_label:
             cluster.user_confirmed = True
         if desired_dismissed is True:

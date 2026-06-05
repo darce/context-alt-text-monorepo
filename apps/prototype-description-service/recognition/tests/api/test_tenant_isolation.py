@@ -152,6 +152,15 @@ def test_session_context_is_reset_by_next_request_setup(monkeypatch) -> None:
             self.executed = True
             return None
 
+        async def commit(self) -> None:
+            return None
+
+        async def rollback(self) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
     session = StubSession()
 
     async def fake_set(session_obj, tenant_id):

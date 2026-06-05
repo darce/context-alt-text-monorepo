@@ -210,7 +210,6 @@ export const DashboardPage = (): React.JSX.Element => {
       <DashboardRecentActivitySection
         historySource={historySource}
         recentActivity={recentActivity}
-        jobHistory={jobHistory}
         jobStatuses={jobStatuses}
         jobDetails={jobDetails}
       />

@@ -1,7 +1,7 @@
 import { useRef } from 'react';
 
 import type { JobProgress } from '../api/recognition/types/scan';
-import { enforceMonotonicProgress } from './jobStateMachineProgress';
+import { enforceMonotonicProgress } from './jobStateMachineRuntime';
 
 interface MonotonicCache {
   runKey: string | null;

@@ -1,4 +1,4 @@
-PYTHON ?= python3
+PYTHON ?= uv run --locked --extra dev python
 PACKAGE_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 RUFF_TARGETS := src tests
 MYPY_TARGETS := src

@@ -251,7 +251,6 @@ async def run(argv: Sequence[str] | None = None, *, session: AsyncSession | None
             if args.tenant_command == "list":
                 return await _cmd_tenant_list(args, session)
         parser.error(f"unknown command: {args.command}")
-        return 2  # pragma: no cover
     finally:
         if opened_session:
             await session.close()

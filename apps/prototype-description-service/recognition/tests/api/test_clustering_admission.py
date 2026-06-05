@@ -266,7 +266,7 @@ def test_is_query_canceled_handles_missing_orig() -> None:
     class _BareDBAPIError:
         orig = None
 
-    assert clusters_module._is_query_canceled(_BareDBAPIError()) is False  # type: ignore[arg-type]
+    assert clusters_module._is_query_canceled(_BareDBAPIError()) is False
 
 
 # ---------------------------------------------------------------------------

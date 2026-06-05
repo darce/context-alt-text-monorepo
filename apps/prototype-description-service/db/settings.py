@@ -95,7 +95,7 @@ def _load_env_file() -> None:
         key = key.strip()
         if not key or key in os.environ:
             continue
-        resolved_value = os.path.expandvars(value.strip())
+        resolved_value: str | None = os.path.expandvars(value.strip())
         if key == "DB_NAME":
             resolved_value, warning = canonicalize_local_db_name(
                 resolved_value,
@@ -103,7 +103,8 @@ def _load_env_file() -> None:
             )
             if warning:
                 print(warning)
-        os.environ[key] = resolved_value
+        if resolved_value is not None:
+            os.environ[key] = resolved_value
 
 
 def _resolved_db_name() -> str:

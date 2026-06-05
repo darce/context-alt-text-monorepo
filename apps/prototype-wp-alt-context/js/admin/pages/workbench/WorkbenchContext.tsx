@@ -13,7 +13,7 @@ import type { ClusterResponse, WorkbenchOverlay } from '../../api/recognition';
 import type { WorkbenchMediaStatus } from '../../api/workbenchMediaApi';
 import type { PipelinePhase } from '../../hooks/jobStateMachineUtils';
 import type { ProjectionSyncState } from '../../hooks/useJobStateMachineEffects';
-import type { RecognitionHistorySource } from '../../hooks/useRecognitionJobHistory';
+import type { RecognitionHistorySource } from '../../hooks/recognitionJobHistoryUtils';
 
 export const TAB_IDS = {
   scan: 'scan',
@@ -286,7 +286,7 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     );
   }, [mediaQuery.detailQuery.data]);
 
-  const value = useMemo(
+  const value = useMemo<WorkbenchContextValue>(
     () => ({
       activeSection,
       setActiveSection,
@@ -407,7 +407,7 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   return <WorkbenchContext.Provider value={value}>{children}</WorkbenchContext.Provider>;
 };
 
-export const useWorkbenchContext = () => {
+export const useWorkbenchContext = (): WorkbenchContextValue => {
   const context = useContext(WorkbenchContext);
   if (!context) {
     throw new Error('useWorkbenchContext must be used within a WorkbenchProvider');

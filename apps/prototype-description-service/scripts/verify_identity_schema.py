@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib
 import sys
 from collections.abc import Iterable
+from typing import TypedDict
 
 from sqlalchemy import create_engine, inspect, text
 
@@ -20,13 +21,21 @@ EXPECTED_REVISION = identity_schema.revision
 EXPECTED_TABLES = tuple(identity_schema.EXPECTED_SCHEMA_TABLES)
 
 
+class SchemaStateReport(TypedDict):
+    ok: bool
+    actual_revision: str | None
+    expected_revision: str
+    missing_tables: list[str]
+    unexpected_tables: list[str]
+
+
 def _validate_schema_state(
     *,
     actual_tables: Iterable[str],
     actual_revision: str | None,
     expected_tables: Iterable[str] = EXPECTED_TABLES,
     expected_revision: str = EXPECTED_REVISION,
-) -> dict[str, object]:
+) -> SchemaStateReport:
     actual_table_set = set(actual_tables)
     expected_table_set = set(expected_tables)
     missing_tables = sorted(expected_table_set - actual_table_set)

@@ -1,5 +1,7 @@
 .PHONY: help check fix format lint typecheck arch test test-watch check-php php-cs php-cs-fix php-test phpstan mcp projection-reset localwp-link localwp-verify-activation localwp-mirror-integrity localwp-batch-run-smoke gate-package worker-daemon _js-deps _php-deps FORCE
 
+NPM ?= corepack npm
+
 help:
 	@echo "Available commands:"
 	@echo "  make check      - Run all checks (lint, types, arch, tests, PHP)"
@@ -23,31 +25,31 @@ help:
 	@echo "  make worker-daemon* - Worker daemon controls (run/status/stop/resume/tail) forwarded to root Makefile"
 
 check: _js-deps
-	@npm run check
+	@$(NPM) run check
 	@$(MAKE) php-test
 	@$(MAKE) check-php
 
 format: _js-deps
-	@npm run lint:fix
-	@npm run format:fix
+	@$(NPM) run lint:fix
+	@$(NPM) run format:fix
 	@$(MAKE) php-cs-fix
 
 fix: format check
 
 lint: _js-deps
-	@npm run lint
+	@$(NPM) run lint
 
 typecheck: _js-deps
-	@npm run typecheck
+	@$(NPM) run typecheck
 
 arch: _js-deps
-	@npm run arch
+	@$(NPM) run arch
 
 test: _js-deps
-	@npm run test -- --run
+	@$(NPM) run test -- --run
 
 test-watch: _js-deps
-	@npm run test:watch
+	@$(NPM) run test:watch
 
 check-php: php-cs phpstan
 	@echo "✓ PHP checks passed"
@@ -57,7 +59,7 @@ check-php: php-cs phpstan
 _js-deps:
 	@if [ ! -x node_modules/.bin/eslint ] || [ ! -x node_modules/.bin/prettier ] || [ ! -x node_modules/.bin/tsc ] || [ ! -x node_modules/.bin/vitest ]; then \
 		echo "Plugin Node dev dependencies missing; installing..."; \
-		npm ci --no-fund --no-audit; \
+		$(NPM) ci --allow-remote=all --no-fund --no-audit; \
 	fi
 
 # Pre-flight installer: if the plugin's composer dev dependencies are missing,

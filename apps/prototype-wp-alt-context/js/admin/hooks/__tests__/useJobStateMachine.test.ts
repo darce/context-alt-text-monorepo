@@ -66,6 +66,7 @@ describe('useJobStateMachine', () => {
     });
     (useQueryClient as Mock).mockReturnValue({
       invalidateQueries: vi.fn(),
+      refetchQueries: vi.fn().mockResolvedValue(undefined),
     });
     (useJobProgressStream as Mock).mockReturnValue({
       progress: null,
@@ -487,6 +488,7 @@ describe('useJobStateMachine', () => {
     });
     (useQueryClient as Mock).mockReturnValue({
       invalidateQueries,
+      refetchQueries: vi.fn().mockResolvedValue(undefined),
     });
     (useCombinedScanStatus as Mock).mockReturnValue({
       scanStatusQuery: {

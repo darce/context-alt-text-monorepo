@@ -884,19 +884,20 @@ describe('SuggestionReviewPanel', () => {
     expect(await screen.findByText('Low confidence')).toBeInTheDocument();
   });
 
-  it('allows collapsing and expanding the suggestion panel', async () => {
+  it('renders all queues flat without a top-level accordion and keeps bulk accept last', async () => {
     const fetchPendingSuggestionsMock = vi.mocked(fetchPendingSuggestions);
     const fetchPendingMergeSuggestionsMock = vi.mocked(fetchPendingMergeSuggestions);
+    const fetchTopUnlabeledClustersMock = vi.mocked(fetchTopUnlabeledClusters);
 
     fetchPendingSuggestionsMock.mockResolvedValue({
       suggestions: [
         {
-          id: 'sugg-collapse',
-          identity_id: 'identity-collapse',
-          suggested_cluster_id: 'cluster-collapse',
+          id: 'sugg-flat',
+          identity_id: 'identity-flat',
+          suggested_cluster_id: 'cluster-flat',
           representative_similarity: 0.9,
           avg_member_similarity: 0.85,
-          cluster_label: 'Collapse Test',
+          cluster_label: 'Flat Test',
           cluster_identity_count: 2,
         },
       ],
@@ -905,30 +906,44 @@ describe('SuggestionReviewPanel', () => {
       offset: 0,
     });
     fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
+    fetchTopUnlabeledClustersMock.mockResolvedValue(
+      topUnlabeledResponse([
+        {
+          id: 'top-flat',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: false,
+          identity_count: 3,
+          user_confirmed: false,
+          representatives: [],
+        },
+      ]),
+    );
 
-    renderPanel();
+    const { container } = renderPanel();
 
     await waitFor(() => {
       expect(fetchPendingSuggestionsMock).toHaveBeenCalled();
     });
     expect(await screen.findByText(/Is this/)).toBeInTheDocument();
 
-    const panelToggle = screen.getByRole('button', { name: /Review Suggestions/i });
-    expect(panelToggle).toHaveAttribute('aria-expanded', 'true');
+    // The top-level accordion is retired: the title is a static heading, not a toggle.
+    expect(screen.queryByRole('button', { name: /Review Suggestions/i })).not.toBeInTheDocument();
+    expect(screen.getByText('Review Suggestions')).toBeInTheDocument();
 
-    await userEvent.click(panelToggle);
+    // Assignment queue renders before the bulk-accept controls.
+    const assignmentQueue = container.querySelector('.acx-suggestion-queue');
+    const bulkAccept = container.querySelector('.acx-bulk-accept');
+    expect(assignmentQueue).toBeInTheDocument();
+    expect(bulkAccept).toBeInTheDocument();
+    expect(assignmentQueue!.compareDocumentPosition(bulkAccept!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
-    await waitFor(() => {
-      expect(panelToggle).toHaveAttribute('aria-expanded', 'false');
-      expect(screen.queryByText(/Is this/)).not.toBeInTheDocument();
-    });
-
-    await userEvent.click(panelToggle);
-
-    await waitFor(() => {
-      expect(panelToggle).toHaveAttribute('aria-expanded', 'true');
-    });
-    expect(await screen.findByText(/Is this/)).toBeInTheDocument();
+    // The naming queue (top clusters) also renders before bulk accept.
+    await screen.findByText('Name These People');
+    const namingQueue = container.querySelector('.acx-naming-queue:not(.acx-naming-queue--suggestions)');
+    expect(namingQueue).toBeInTheDocument();
+    expect(namingQueue!.compareDocumentPosition(bulkAccept!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('renders naming queue alongside suggestions (Unified View)', async () => {

@@ -136,7 +136,7 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded the PREIMPL spec, E15-14 related plan, LocalWP wrapper tests, and handoff state before editing.
+- [x] Loaded the PREIMPL spec, E15-14 related plan, LocalWP wrapper tests, and handoff state before editing. *Anchored by the Slice 1/2 proof notes above and `scripts/test_localwp_batch_run_smoke.py`.*
 - [ ] Recorded the disposition of E15-14 (superseded by E15-18 with a handoff decision id) before Slice 1 implementation starts.
 - [x] Confirmed no broad E2E automation is added.
 - [x] Confirmed WP-CLI docs are only needed if local reproduction is inconclusive.
@@ -150,7 +150,7 @@ Proof:
 ### Checklist for Slice 2: Runtime LocalWP Confirmation
 
 - [x] Runtime smoke uses explicit operator values.
-- [ ] Runtime payload proves effective values.
+- [x] Runtime payload proves effective values. *The LocalWP smoke payload reports requested effective values plus stable `child_job_statuses`, emitted by `apps/prototype-wp-alt-context/scripts/localwp/batch-run-smoke.php` (lines 195-211); `scripts/test_localwp_batch_run_smoke.py` only lint-checks the Makefile argument vector, not the payload.*
 - [x] Handoff records runtime proof or explains why LocalWP was unavailable.
 
 ## Review Readiness

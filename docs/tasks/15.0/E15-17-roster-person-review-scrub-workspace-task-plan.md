@@ -207,7 +207,7 @@ Proof:
 ### Checklist for Slice 2: Person Projection Rendering
 
 - [ ] Person rows render representative evidence, counts, review state, queue memberships, and projection status. _Partial: name, cluster_count, projection_status, projection_refreshed_at, source_version, and tags rendered; review-state and queue-membership rendering deferred until those projection fields land._
-- [ ] Bound clusters collapse under one person context. _Pending Slice 4 cluster-evidence migration; current panel shows the count but not the per-cluster collapse._
+- [x] Bound clusters collapse under one person context. _`PersonWorkspacePanel` renders assigned cluster evidence grouped under the selected person from the RCL-004 `clusters[]` projection; review-state and queue-membership rendering remain tracked by the preceding unchecked row._
 - [x] Duplicate person cluster fixture covered. _`rosterRoute.test.ts` covers duplicate-name UUID tiebreak and numeric-id tiebreak cases for `selectDeterministicDefaultWorkspaceEntry`._
 - [x] Default workspace selection follows a documented deterministic rule rather than first projection-row order. _Sorted by lowercased name → person_uuid → numeric id with locale-stable `localeCompare('en', { sensitivity: 'base' })`._
 
@@ -236,7 +236,7 @@ Proof:
 
 ## Success Criteria
 
-- [ ] The default Roster route is person-first after projection data exists.
+- [x] The default Roster route is person-first after projection data exists. _`RosterPage.tsx` computes `defaultWorkspaceRoute` from projection entries; `RosterPage.workspace.test.tsx` covers workspace routing._
 - [ ] A curated Tory Guzman cluster appears as one person with all supporting face evidence.
 - [ ] Operators can scrub, select, and act on face instances from one surface.
-- [ ] Raw cluster evidence remains available without being the primary identity model.
+- [x] Raw cluster evidence remains available without being the primary identity model. _`PersonWorkspacePanel` keeps assigned-cluster evidence inside the person context while legacy cluster routes remain available during the migration._

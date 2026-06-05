@@ -111,9 +111,9 @@ Exit: fallback behavior verified; plugin restored to production URL.
 
 ### Checklist for Slice 1: LocalWP configuration + connection probe
 
-- [ ] Install and activate the current ACX plugin build in LocalWP and configure `https://api.altcontext.com` plus the production API key.
-- [ ] Confirm the LocalWP origin is present in `RECOGNITION_ALLOWED_ORIGINS` (`/opt/acx-backend/prod/.env` on the OCI host); if not, add it and restart `acx-prod.service` (`sudo systemctl restart acx-prod`), then retry the probe.
-- [ ] Capture a successful probe with a visible correlation ID in the OCI log surface.
+- [x] Install and activate the current ACX plugin build in LocalWP and configure `https://api.altcontext.com` plus the production API key. *See `E15-3a-localwp-oci-run-log.md` Settings Applied (Slice 1) and Operator Setup.*
+- [ ] Confirm the LocalWP origin is present in `RECOGNITION_ALLOWED_ORIGINS` (`/opt/acx-backend/prod/.env` on the OCI host); if not, add it and restart `acx-prod.service` (`sudo systemctl restart acx-prod`), then retry the probe. *Server-side settings probe did not exercise browser CORS; keep unchecked until Slice 3A browser-origin proof.*
+- [x] Capture a successful probe with a visible correlation ID in the OCI log surface. *See `E15-3a-localwp-oci-run-log.md` Probe Result (Slice 1) and OCI log excerpt.*
 
 ### Checklist for Slice 2: Scan round-trip against seeded media
 

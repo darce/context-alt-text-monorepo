@@ -35,10 +35,10 @@ jobs:
           cache: "pip"
 
       - name: Install mcp-workstate-handoff
-        run: pip install "mcp-workstate-handoff==0.12.1"
+        run: pip install "mcp-workstate-handoff==0.12.3"
 
       - name: Install mcp-workstate-orchestrator
-        run: pip install "mcp-workstate-orchestrator==0.5.2"
+        run: pip install "mcp-workstate-orchestrator==0.6.0"
 
       - name: Run handoff integrity guard
         run: python -m workstate_orchestrator_mcp.orchestration.handoff_integrity_guard

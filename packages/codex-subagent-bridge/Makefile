@@ -1,4 +1,5 @@
-PYTHON ?= uv run --locked --extra dev python
+UV ?= VIRTUAL_ENV= uv
+UV_RUN ?= $(UV) run --locked --extra dev
 PACKAGE_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 RUFF_TARGETS := src tests
 MYPY_TARGETS := src
@@ -23,20 +24,20 @@ help:
 	@echo "  make check-bridge    - Run lint, mypy, and tests"
 
 lint-bridge:
-	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(PYTHON) -m ruff check $(RUFF_TARGETS)
-	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(PYTHON) -m ruff format --check $(RUFF_TARGETS)
+	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(UV_RUN) ruff check $(RUFF_TARGETS)
+	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(UV_RUN) ruff format --check $(RUFF_TARGETS)
 
 fix-lint-bridge:
-	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(PYTHON) -m ruff check --fix --unsafe-fixes $(RUFF_TARGETS)
+	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(UV_RUN) ruff check --fix --unsafe-fixes $(RUFF_TARGETS)
 
 format-bridge:
-	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(PYTHON) -m ruff check --fix --unsafe-fixes $(RUFF_TARGETS)
-	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(PYTHON) -m ruff format $(RUFF_TARGETS)
+	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(UV_RUN) ruff check --fix --unsafe-fixes $(RUFF_TARGETS)
+	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(UV_RUN) ruff format $(RUFF_TARGETS)
 
 mypy-bridge:
-	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(PYTHON) -m mypy $(MYPY_TARGETS)
+	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(UV_RUN) mypy $(MYPY_TARGETS)
 
 test-bridge:
-	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(PYTHON) -m pytest $(PYTEST_TARGETS) -q
+	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(UV_RUN) pytest $(PYTEST_TARGETS) -q
 
 check-bridge: lint-bridge mypy-bridge test-bridge

@@ -37,6 +37,7 @@ class FakeSession:
         self._savepoint_recovered = False
         self.execute_calls = 0
         self.executed_statements: list[str] = []
+        self.bind: object | None = None
 
     def set_get_result(self, *, model_class: object, pk: object, value: object | None) -> None:
         """Register a deterministic return value for `get(model_class, pk)`."""

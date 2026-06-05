@@ -53,6 +53,7 @@ class ScanQueueRepository(Protocol):
         total: int,
         message: str | None,
         created_by_user_id: int | None = None,
+        job_id: uuid.UUID | None = None,
     ) -> uuid.UUID:
         """Create a parent scan job with an initial status message."""
 

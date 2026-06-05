@@ -11,6 +11,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import AsyncMock
 
 import numpy as np
@@ -558,7 +559,7 @@ async def test_replayed_cluster_bind_curation_job_surfaces_singleton_suggestions
 
     assert result.status == "acknowledged"
 
-    queued_jobs = list(job_service.repository.jobs.values())
+    queued_jobs = list(cast(InMemoryJobRepo, job_service.repository).jobs.values())
     assert len(queued_jobs) == 1
 
     processed = await job_service.process_curation_job(
@@ -671,6 +672,8 @@ async def test_merge_cleanup_curation_job_surfaces_singleton_suggestions_and_del
     )
 
     assert merged is not None
+    assert target_cluster.id is not None
+    assert source_cluster.id is not None
 
     job = await job_service.queue_curation_followup(
         tenant_id=str(tenant.id),

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import type { BatchRunStatus } from '../../api/recognition/types/scan';
-import { buildScanProgress, buildStatusText, enforceMonotonicProgress } from '../jobStateMachineProgress';
+import { buildScanProgress, buildStatusText } from '../jobStateMachineProgress';
+import { enforceMonotonicProgress } from '../jobStateMachineRuntime';
 
 const makeBatchRunStatus = (overrides: Partial<BatchRunStatus> = {}): BatchRunStatus => ({
   id: 'run-1',

@@ -324,7 +324,7 @@ lint-all:
 			( cd apps/prototype-description-service && make lint ); \
 			echo ""; \
 			echo "=== Linting Codex Subagent Bridge ==="; \
-			$(MAKE) -C packages/codex-subagent-bridge lint-bridge PYTHON="$(PYTHON)"; \
+			$(MAKE) -C packages/codex-subagent-bridge lint-bridge; \
 			echo ""; \
 			echo "=== Linting TypeScript (frontend) ==="; \
 			( cd apps/prototype-wp-alt-context && make lint ); \
@@ -434,7 +434,7 @@ install-git-hooks:
 # PHP: composer cs-fix
 format-all:
 	@echo "=== Formatting codex-subagent-bridge ==="
-	@$(MAKE) -C packages/codex-subagent-bridge format-bridge PYTHON="$(PYTHON)"
+	@$(MAKE) -C packages/codex-subagent-bridge format-bridge
 	@echo "=== Formatting description-service ==="
 	@( cd apps/prototype-description-service && $(MAKE) format )
 	@echo "=== Formatting WordPress plugin (TS/JS + PHP) ==="

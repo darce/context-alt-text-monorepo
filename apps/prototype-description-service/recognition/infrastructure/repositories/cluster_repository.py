@@ -871,7 +871,9 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         if cluster_uuid is None:
             return 0
 
-        stmt = select(func.count()).select_from(IdentityMemberModel).where(IdentityMemberModel.cluster_id == cluster_uuid)
+        stmt = (
+            select(func.count()).select_from(IdentityMemberModel).where(IdentityMemberModel.cluster_id == cluster_uuid)
+        )
         result = await self._session.execute(stmt)
         return int(result.scalar_one() or 0)
 

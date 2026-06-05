@@ -8,6 +8,8 @@ requests with no Content-Length (411) on the protected paths.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from starlette.applications import Starlette
 from starlette.responses import PlainTextResponse
@@ -21,6 +23,10 @@ from recognition.interface_adapters.http.middleware.upload_size import (
 
 async def _ok(_request):
     return PlainTextResponse("ok")
+
+
+async def _unused_app(scope: dict[str, Any], receive: Any, send: Any) -> None:
+    return None
 
 
 @pytest.fixture
@@ -64,7 +70,7 @@ def test_post_with_no_content_length_returns_411(client: TestClient) -> None:
     import asyncio
 
     middleware = UploadSizeLimitMiddleware(
-        app=lambda scope, receive, send: None,  # never called
+        app=_unused_app,  # never called
         max_bytes=1024,
         paths={"/recognition/analyze"},
     )
@@ -105,7 +111,7 @@ def test_invalid_content_length_returns_400(client: TestClient) -> None:
     import asyncio
 
     middleware = UploadSizeLimitMiddleware(
-        app=lambda scope, receive, send: None,
+        app=_unused_app,
         max_bytes=1024,
         paths={"/recognition/analyze"},
     )

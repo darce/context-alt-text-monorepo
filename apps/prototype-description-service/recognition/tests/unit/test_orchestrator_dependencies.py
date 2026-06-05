@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import is_dataclass
+from typing import Any, cast
 
 from recognition.application.orchestration.clustering.orchestrator import (
     IncrementalClusteringRunner,
@@ -18,7 +19,7 @@ def test_clustering_dependency_groups_are_frozen_dataclasses() -> None:
 
     for cls in (ClusteringDependencies, ClusteringRuntimeConfig, ClusteringContext):
         assert is_dataclass(cls)
-        assert cls.__dataclass_params__.frozen is True
+        assert cast(Any, cls).__dataclass_params__.frozen is True
 
 
 def test_cluster_unclustered_identities_uses_grouped_inputs() -> None:

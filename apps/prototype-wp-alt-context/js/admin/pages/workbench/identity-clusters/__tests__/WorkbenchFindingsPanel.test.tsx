@@ -14,7 +14,10 @@ import { WorkbenchFindingsPanel } from '../WorkbenchFindingsPanel';
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
   _n: (single: string, plural: string, number: number) => (number === 1 ? single : plural),
-  sprintf: (text: string) => text,
+  sprintf: (template: string, ...args: (string | number)[]) => {
+    let idx = 0;
+    return template.replace(/%[sd]/g, () => String(args[idx++] ?? ''));
+  },
 }));
 
 // Radix Avatar's Image uses Image.onload which never fires in JSDOM.
@@ -86,7 +89,7 @@ describe('WorkbenchFindingsPanel', () => {
 
     expect(screen.getByText('Recognition findings')).toBeInTheDocument();
     expect(screen.getByText('2 to review')).toBeInTheDocument();
-    expect(screen.getByText('1 merge candidates')).toBeInTheDocument();
+    expect(screen.getByText('1 merge candidate')).toBeInTheDocument();
     expect(screen.getByText('3 suggested names')).toBeInTheDocument();
     expect(screen.getByText('4 unlabeled groups')).toBeInTheDocument();
     expect(screen.getAllByRole('img')).toHaveLength(2);
@@ -123,6 +126,21 @@ describe('WorkbenchFindingsPanel', () => {
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Review next/ })).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'View all findings' })).not.toBeInTheDocument();
+  });
+
+  it('disables the primary action when server totals are positive but no queue items loaded', () => {
+    // Guards the nextAction-based gate: counts.total > 0 must not enable a no-op button.
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 0, total: 1 },
+        hasFindings: true,
+        nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.EMPTY },
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
+
+    expect(screen.getByRole('button', { name: /Review next/ })).toBeDisabled();
   });
 
   it('renders an explicit loading state', () => {

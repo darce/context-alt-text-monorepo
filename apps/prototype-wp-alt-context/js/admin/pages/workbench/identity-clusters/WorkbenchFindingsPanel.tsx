@@ -8,7 +8,7 @@
  */
 
 import React from 'react';
-import { __ } from '@wordpress/i18n';
+import { __, _n, sprintf } from '@wordpress/i18n';
 
 import { Avatar } from '../../../../components/ui/avatar';
 import { NEXT_ACTION_KIND, useWorkbenchFindings, type WorkbenchNextAction } from './useWorkbenchFindings';
@@ -26,7 +26,7 @@ const nextActionHint = (action: WorkbenchNextAction): string | null => {
   switch (action.kind) {
     case NEXT_ACTION_KIND.ASSIGNMENT:
       return action.label
-        ? `${__('Confirm:', 'alt-context')} ${action.label}`
+        ? sprintf(__('Confirm: %s', 'alt-context'), action.label)
         : __('Confirm the suggested match', 'alt-context');
     case NEXT_ACTION_KIND.MERGE:
       return __('Review the next merge candidate', 'alt-context');
@@ -87,7 +87,9 @@ export const WorkbenchFindingsPanel = ({
   };
 
   const hint = nextActionHint(nextAction);
-  const primaryDisabled = !hasFindings || isReadOnly;
+  // WHY: gate on nextAction (loaded queues), not counts.total (server totals) — a
+  // positive total with an empty loaded page must not yield an enabled no-op button.
+  const primaryDisabled = isReadOnly || nextAction.kind === NEXT_ACTION_KIND.NONE;
 
   return (
     <div className="acx-findings-panel">
@@ -102,23 +104,29 @@ export const WorkbenchFindingsPanel = ({
         </p>
       )}
 
-      {/* Live region: announces findings appearing/updating after a scan without a reload. */}
-      <div role="status" aria-live="polite">
-        <ul className="acx-findings-panel__counts">
-          <li className="acx-findings-panel__count">
-            {counts.assignments} {__('to review', 'alt-context')}
-          </li>
-          <li className="acx-findings-panel__count">
-            {counts.merges} {__('merge candidates', 'alt-context')}
-          </li>
-          <li className="acx-findings-panel__count">
-            {counts.names} {__('suggested names', 'alt-context')}
-          </li>
-          <li className="acx-findings-panel__count">
-            {counts.unlabeledClusters} {__('unlabeled groups', 'alt-context')}
-          </li>
-        </ul>
-      </div>
+      {/* Live region: announces findings appearing/updating after a scan without a reload.
+          Hidden when empty so only the empty-state region announces the zero state. */}
+      {hasFindings && (
+        <div role="status" aria-live="polite">
+          <ul className="acx-findings-panel__counts">
+            <li className="acx-findings-panel__count">
+              {sprintf(_n('%d to review', '%d to review', counts.assignments, 'alt-context'), counts.assignments)}
+            </li>
+            <li className="acx-findings-panel__count">
+              {sprintf(_n('%d merge candidate', '%d merge candidates', counts.merges, 'alt-context'), counts.merges)}
+            </li>
+            <li className="acx-findings-panel__count">
+              {sprintf(_n('%d suggested name', '%d suggested names', counts.names, 'alt-context'), counts.names)}
+            </li>
+            <li className="acx-findings-panel__count">
+              {sprintf(
+                _n('%d unlabeled group', '%d unlabeled groups', counts.unlabeledClusters, 'alt-context'),
+                counts.unlabeledClusters,
+              )}
+            </li>
+          </ul>
+        </div>
+      )}
 
       {previews.length > 0 && (
         <div className="acx-findings-panel__previews">

@@ -7,7 +7,9 @@
 
 ## Decision
 
-For the initial beta phase, run the public WordPress installation and ACX plugin on the same OCI instance that already hosts the recognition backend, behind the existing Caddy edge, using `demo.altcontext.com` for WordPress and `api.altcontext.com` for the backend API. This is a deliberate short-term override of the earlier managed/shared WordPress-host recommendation in the April launch assessment; the long-term direction remains a dedicated PHP/WordPress host once the demo is proven and beta access needs more isolation.
+> **Decision anchor**: `claude_decision_e15_3_host_override_cohost_oci` (recorded in workstate-handoff-mcp under task_ref `E15-LIVE-DEMO-PLAN`).
+
+For the initial beta phase, run the public WordPress installation and ACX plugin on the same OCI instance that already hosts the recognition backend, behind the existing Caddy edge, using `demo.altcontext.com` for WordPress and `api.altcontext.com` for the backend API. This is a deliberate short-term override of the **E15-3 deliverable in the active public-demo epic** (`docs/epics/v0.4.0/public-demo-launch-readiness-epic.md`), specifically the design decision "WP on separate shared hosting, not on the OCI VPS … inference VPS should not run PHP" and its "Shared PHP hosting provisioned" deliverable / success criterion (epic lines 127, 208, and 365). The override is tracked by decision `claude_decision_e15_3_host_override_cohost_oci`; the long-term direction remains a dedicated PHP/WordPress host once the demo is proven and beta access needs more isolation (see Move-Off Trigger below).
 
 The co-hosted WordPress stack must stay operationally separate from the recognition stack: separate Docker Compose project, separate MariaDB volume, separate WordPress content volume, separate service unit, separate backups, and no reuse of the backend Postgres database. Caddy is the only shared front-door component.
 
@@ -20,7 +22,7 @@ The v0.4.0 and v0.4.1 plans split launch readiness into a small MVP and follow-o
 - Demo-visual blocker: E15-22 implementation work mostly landed, but the seeded-media/LocalWP proof capture is still required before E15-3 can claim avatar/progress readiness.
 - Follow-ons after MVP: E16 keeps CI smoke automation, deeper auth hardening, worker correlation, retry dashboards, and session-lifecycle resilience outside the first launch bar.
 
-Dashboard state at the time of this plan still shows public-demo attention items around `E15-3A-BR-21` and the workbench-avatar-progress maintenance findings. Treat those as pre-launch blockers unless a reviewer explicitly reclassifies or resolves them in MCP.
+Do not treat any finding snapshot baked into this doc as authoritative — finding status drifts the moment a finding is fixed, deferred, or reclassified. At launch time, query live open findings directly (`review_findings(review={"operation":"list","status":"open","task_ref":"E15-3a"})` and the same for `E15-3`, `E15-5`, `E15-22`, plus a scan of `DASHBOARD.txt`) and treat any open public-demo-scoped findings as pre-launch blockers unless a reviewer explicitly resolves or defers them in MCP.
 
 ## Remaining Work To Launch
 
@@ -34,7 +36,7 @@ Dashboard state at the time of this plan still shows public-demo attention items
 | P0 | Configure the production demo key server-side. | E15-3 | Raw key lives only in server-local config; run logs record fingerprint only. |
 | P0 | Seed demo media and rosters. | E15-3 | 5-10 licensed/provenance-tracked images and expected identities are present. |
 | P0 | Capture the live public-demo run log. | E15-3 | `E15-3-mvp-run-log.md` proves scan result, avatar/progress bundle, rollback path, and local-read fallback. |
-| P0 | Run E15-5 remote E2E and ARM evidence capture. | E15-5 | `E15-5-mvp-round-trip-log.md` and `E15-5-arm-compat-evidence.md` are filed. |
+| P0 | Run E15-5 remote E2E and ARM evidence capture. | E15-5 | `E15-5-mvp-round-trip-log.md` and `E15-5-arm-compat-evidence.md` (the latter to be filed by E15-5; not yet present) are filed. |
 | P1 | Publish the conversion page around the working demo. | E15-3 content slice | First viewport explains value, shows real screenshot/video proof, and collects beta interest. |
 | P1 | Add a reset/restore rhythm for beta cohorts. | E15-3 or ops follow-up | Known-good database/content snapshot can be restored after exploratory tester sessions. |
 
@@ -98,7 +100,7 @@ Do not distribute raw backend API keys to beta testers. Do not make `wp-admin` p
 ## Deployment Sequence
 
 1. Close the LocalWP/OCI proof gates: E15-22 proof capture, E15-3a run log, and any open launch-blocking findings.
-2. Record an E15-3 host decision stating that the initial phase is OCI co-hosting, why the previous managed-host recommendation is deferred, and what criteria trigger moving to the dedicated PHP server.
+2. Host decision recorded: `claude_decision_e15_3_host_override_cohost_oci` (task_ref `E15-LIVE-DEMO-PLAN`) captures that the initial phase is OCI co-hosting, why the epic's E15-3 shared-PHP-host recommendation is deferred, and what criteria trigger moving to the dedicated PHP server. Before the override takes effect, update the contradicted epic line(s) (`docs/epics/v0.4.0/public-demo-launch-readiness-epic.md` lines 127/208/365) to reference this decision so the epic and this plan agree on launch topology.
 3. Add the `demo.altcontext.com` DNS record to the existing OCI public IP.
 4. Provision `/opt/acx-demo-wp` with WordPress, MariaDB, volumes, local secrets, backup directory, and systemd unit.
 5. Extend Caddy with a `demo.altcontext.com` route and reload/restart `acx-caddy`.
@@ -109,7 +111,7 @@ Do not distribute raw backend API keys to beta testers. Do not make `wp-admin` p
 10. Run the plugin Settings probe and capture the response taxonomy.
 11. Seed media/rosters, run the Workbench scan, and file `E15-3-mvp-run-log.md` with the E15-22 proof bundle.
 12. Create a known-good snapshot: WordPress DB dump, `wp-content` archive, plugin ZIP checksum, Caddy config checksum, and redacted `.env`/config inventory.
-13. Run E15-5 remote E2E and ARM evidence capture.
+13. Run E15-5 remote E2E and ARM evidence capture; file `E15-5-arm-compat-evidence.md` (to be filed by E15-5 — not yet present) as exit evidence.
 14. Share the beta handout: `https://demo.altcontext.com/wp-admin/admin.php?page=alt-context-workbench`, edge-gate credential, shared WordPress user credential, scope notes, and expected reset cadence.
 
 ## Verification Checklist

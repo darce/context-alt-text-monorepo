@@ -677,7 +677,7 @@ describe('WorkbenchPage (integration-lite)', () => {
     });
 
     expect(await screen.findByText('1 to review')).toBeInTheDocument();
-    expect(await screen.findByText('1 unlabeled groups')).toBeInTheDocument();
+    expect(await screen.findByText('1 unlabeled group')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Review next/ })).toBeEnabled();
     expect(
       screen.queryByText('No findings yet. Run a scan and new findings will appear here automatically.'),

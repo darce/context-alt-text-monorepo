@@ -6,10 +6,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BRIDGE_PATH = REPO_ROOT / "packages" / "codex-subagent-bridge" / "src" / "codex_subagent_bridge.py"
-LANE_EXEC_PATH = REPO_ROOT / "scripts" / "mcp" / "lane_exec.py"
-REVIEW_RUNNER_PATH = REPO_ROOT / "scripts" / "mcp" / "review_runner.py"
 
 
 def _load_module(name: str, path: Path):
@@ -105,7 +105,10 @@ def _run_bridge(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def test_bridge_payload_satisfies_lane_exec_contract() -> None:
-    lane_exec = _load_module("lane_exec", LANE_EXEC_PATH)
+    lane_exec = pytest.importorskip(
+        "workstate_orchestrator_mcp.orchestration.lane_exec",
+        reason="mcp-workstate-orchestrator not installed (dev extra)",
+    )
     payload = _run_bridge(
         {
             "handoff_action": "merge_ready",
@@ -119,14 +122,17 @@ def test_bridge_payload_satisfies_lane_exec_contract() -> None:
 
 
 def test_bridge_payload_satisfies_review_runner_contract() -> None:
-    review_runner = _load_module("review_runner", REVIEW_RUNNER_PATH)
+    review_runner = pytest.importorskip(
+        "workstate_orchestrator_mcp.orchestration.review_runner",
+        reason="mcp-workstate-orchestrator not installed (dev extra)",
+    )
     payload = _run_bridge(
         {
             "findings": [
                 {
                     "severity": "low",
                     "category": "GAP",
-                    "file_path": "scripts/mcp/lane_exec.py",
+                    "file_path": "packages/codex-subagent-bridge/src/codex_subagent_bridge.py",
                     "description": "Example finding.",
                 }
             ],

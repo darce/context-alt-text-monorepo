@@ -23,10 +23,8 @@ interface SuggestionReviewPanelProps {
 }
 
 export const SuggestionReviewPanel = ({ onLabel, onReview }: SuggestionReviewPanelProps): React.JSX.Element | null => {
-  const [isOpen, setIsOpen] = React.useState(true);
   const [expandedGroups, setExpandedGroups] = React.useState<Set<string>>(new Set());
   const [bulkConfidenceThreshold, setBulkConfidenceThreshold] = React.useState(LOW_CONFIDENCE_THRESHOLD);
-  const contentId = React.useId();
 
   const {
     mergeSuggestions,
@@ -168,226 +166,211 @@ export const SuggestionReviewPanel = ({ onLabel, onReview }: SuggestionReviewPan
     topUnlabeledHasClusters === true;
 
   return (
-    <div className={`acx-suggestion-panel${isOpen ? '' : ' acx-suggestion-panel--collapsed'}`}>
-      <button
-        type="button"
-        className="acx-suggestion-panel__header"
-        onClick={() => setIsOpen((prev) => !prev)}
-        aria-expanded={isOpen}
-        aria-controls={contentId}
-      >
-        <span className={`acx-suggestion-panel__toggle-icon ${isOpen ? 'is-open' : ''}`}>▼</span>
-        <span className="acx-suggestion-panel__title">
-          {__('Review Suggestions', 'alt-context')}
-          {assignmentCount > 0 && <span className="acx-suggestion-panel__count">{assignmentCount}</span>}
-        </span>
-      </button>
+    <div className="acx-suggestion-panel">
+      <h3 className="acx-suggestion-panel__title">
+        {__('Review Suggestions', 'alt-context')}
+        {assignmentCount > 0 && <span className="acx-suggestion-panel__count">{assignmentCount}</span>}
+      </h3>
 
-      {isOpen && (
-        <div id={contentId} className="acx-suggestion-panel__content">
-          <CollapsibleMergeQueue
-            suggestions={mergeSuggestions}
-            onAccept={(id) => mutations.acceptMerge.mutate(id)}
-            onReject={(id) => mutations.rejectMerge.mutate(id)}
-            isPending={mutations.acceptMerge.isPending || mutations.rejectMerge.isPending}
-          />
-
-          <div className="acx-suggestion-queue">
-            {showUnavailableWarning ? (
-              <EmptyStateWarning
-                title={__('Suggestion service not configured', 'alt-context')}
-                message={__('Check the recognition service connection, then retry loading suggestions.', 'alt-context')}
-                onRetry={() => void refetchAssignment().then(() => refetchMerge())}
-              />
-            ) : showEndpointErrorWarning ? (
-              <EmptyStateWarning
-                title={__('Suggestion service error', 'alt-context')}
-                message={__(
-                  'The recognition service responded with an error. Retry now or check the service logs.',
-                  'alt-context',
-                )}
-                onRetry={() => void refetchAssignment().then(() => refetchMerge())}
-              />
-            ) : showZeroPendingAssignmentGuidance ? (
-              <>
-                <p className="acx-suggestion-panel__description">
-                  {__('No assignment suggestions are waiting right now.', 'alt-context')}
-                </p>
-                <p className="acx-suggestion-panel__description">
-                  {__('Review the naming queue below or run another scan after new photos arrive.', 'alt-context')}
-                </p>
-              </>
-            ) : reviewItems.length === 0 ? (
-              <p className="acx-suggestion-panel__description">{__('No suggestions to review yet.', 'alt-context')}</p>
-            ) : (
+      <div className="acx-suggestion-panel__content">
+        <div className="acx-suggestion-queue">
+          {showUnavailableWarning ? (
+            <EmptyStateWarning
+              title={__('Suggestion service not configured', 'alt-context')}
+              message={__('Check the recognition service connection, then retry loading suggestions.', 'alt-context')}
+              onRetry={() => void refetchAssignment().then(() => refetchMerge())}
+            />
+          ) : showEndpointErrorWarning ? (
+            <EmptyStateWarning
+              title={__('Suggestion service error', 'alt-context')}
+              message={__(
+                'The recognition service responded with an error. Retry now or check the service logs.',
+                'alt-context',
+              )}
+              onRetry={() => void refetchAssignment().then(() => refetchMerge())}
+            />
+          ) : showZeroPendingAssignmentGuidance ? (
+            <>
               <p className="acx-suggestion-panel__description">
-                {__('These faces are close matches but need your confirmation.', 'alt-context')}
+                {__('No assignment suggestions are waiting right now.', 'alt-context')}
               </p>
-            )}
-
-            {reviewItems.length > 0 && (
-              <div className="acx-suggestion-panel__list">
-                {reviewItems.map((item) =>
-                  item.type === 'group' ? (
-                    <GroupedSuggestionCard
-                      key={`group-${item.clusterId}`}
-                      clusterId={item.clusterId}
-                      label={item.label}
-                      suggestions={item.suggestions}
-                      lowConfidenceThreshold={LOW_CONFIDENCE_THRESHOLD}
-                      onAcceptAll={() => {
-                        void acceptGroupedSuggestions(item.clusterId, item.suggestions);
-                      }}
-                      onRejectAll={() => {
-                        void rejectGroupedSuggestions(item.clusterId, item.suggestions);
-                      }}
-                      onToggleReviewEach={() => toggleReviewEach(item.clusterId)}
-                      isExpanded={expandedGroups.has(item.clusterId)}
-                      isPending={isAnyMutationPending}
-                    >
-                      <div className="acx-suggestion-panel__list">
-                        {item.suggestions.map((suggestion) => renderSuggestionCard(suggestion))}
-                      </div>
-                    </GroupedSuggestionCard>
-                  ) : (
-                    renderSuggestionCard(item.suggestion)
-                  ),
-                )}
-              </div>
-            )}
-
-            {assignmentCount > loadedAssignmentCount && (
-              <p className="acx-suggestion-panel__more">
-                {__('and', 'alt-context')} {assignmentCount - loadedAssignmentCount} {__('more...', 'alt-context')}
+              <p className="acx-suggestion-panel__description">
+                {__('Review the naming queue below or run another scan after new photos arrive.', 'alt-context')}
               </p>
-            )}
-          </div>
+            </>
+          ) : reviewItems.length === 0 ? (
+            <p className="acx-suggestion-panel__description">{__('No suggestions to review yet.', 'alt-context')}</p>
+          ) : (
+            <p className="acx-suggestion-panel__description">
+              {__('These faces are close matches but need your confirmation.', 'alt-context')}
+            </p>
+          )}
 
-          {(nameSuggestions.length > 0 || showNameUnavailableWarning) && (
-            <div className="acx-naming-queue acx-naming-queue--suggestions">
-              <h3 className="acx-suggestion-panel__section-title">{__('Suggested names', 'alt-context')}</h3>
-              {showNameUnavailableWarning ? (
-                <EmptyStateWarning
-                  title={__('Suggested names unavailable', 'alt-context')}
-                  message={__('We could not load suggested names right now.', 'alt-context')}
-                  onRetry={() => {
-                    void refetchName();
-                  }}
-                />
-              ) : (
-                <>
-                  <p className="acx-suggestion-panel__description">
-                    {__('These names were suggested by the recognition engine for unlabeled clusters.', 'alt-context')}
-                  </p>
-                  <ul className="acx-suggestion-panel__list">
-                    {nameSuggestions.map((suggestion) => (
-                      <li key={suggestion.id} className="acx-name-suggestion-card">
-                        <span className="acx-name-suggestion-card__label">{suggestion.suggested_name}</span>
-                        {suggestion.confidence_score !== null && suggestion.confidence_score !== undefined && (
-                          <span
-                            className={`acx-suggestion-confidence${suggestion.confidence_score < LOW_CONFIDENCE_THRESHOLD ? ' acx-suggestion-confidence--low' : ''}`}
-                          >
-                            {Math.round(suggestion.confidence_score * 100)}%
-                          </span>
-                        )}
-                        <div className="acx-name-suggestion-card__actions">
-                          <button
-                            type="button"
-                            className="acx-button acx-button--primary acx-button--small"
-                            disabled={mutations.acceptName.isPending || mutations.rejectName.isPending}
-                            onClick={() => mutations.acceptName.mutate(suggestion.id)}
-                          >
-                            {__('Accept', 'alt-context')}
-                          </button>
-                          <button
-                            type="button"
-                            className="acx-button acx-button--secondary acx-button--small"
-                            disabled={mutations.acceptName.isPending || mutations.rejectName.isPending}
-                            onClick={() => mutations.rejectName.mutate(suggestion.id)}
-                          >
-                            {__('Reject', 'alt-context')}
-                          </button>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                </>
+          {reviewItems.length > 0 && (
+            <div className="acx-suggestion-panel__list">
+              {reviewItems.map((item) =>
+                item.type === 'group' ? (
+                  <GroupedSuggestionCard
+                    key={`group-${item.clusterId}`}
+                    clusterId={item.clusterId}
+                    label={item.label}
+                    suggestions={item.suggestions}
+                    lowConfidenceThreshold={LOW_CONFIDENCE_THRESHOLD}
+                    onAcceptAll={() => {
+                      void acceptGroupedSuggestions(item.clusterId, item.suggestions);
+                    }}
+                    onRejectAll={() => {
+                      void rejectGroupedSuggestions(item.clusterId, item.suggestions);
+                    }}
+                    onToggleReviewEach={() => toggleReviewEach(item.clusterId)}
+                    isExpanded={expandedGroups.has(item.clusterId)}
+                    isPending={isAnyMutationPending}
+                  >
+                    <div className="acx-suggestion-panel__list">
+                      {item.suggestions.map((suggestion) => renderSuggestionCard(suggestion))}
+                    </div>
+                  </GroupedSuggestionCard>
+                ) : (
+                  renderSuggestionCard(item.suggestion)
+                ),
               )}
             </div>
           )}
 
-          <div className="acx-bulk-accept">
-            <h3 className="acx-suggestion-panel__section-title">{__('Bulk accept', 'alt-context')}</h3>
-            <p className="acx-suggestion-panel__description">
-              {__('Accept all suggestions above a confidence threshold.', 'alt-context')}
+          {assignmentCount > loadedAssignmentCount && (
+            <p className="acx-suggestion-panel__more">
+              {__('and', 'alt-context')} {assignmentCount - loadedAssignmentCount} {__('more...', 'alt-context')}
             </p>
-            <label className="acx-bulk-accept__threshold-label">
-              <span>{__('Minimum confidence:', 'alt-context')}</span>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.05}
-                value={bulkConfidenceThreshold}
-                onChange={(e) => setBulkConfidenceThreshold(parseFloat(e.target.value))}
-                className="acx-bulk-accept__slider"
-              />
-              <span className="acx-bulk-accept__threshold-value">{Math.round(bulkConfidenceThreshold * 100)}%</span>
-            </label>
-            <div className="acx-bulk-accept__actions">
-              <button
-                type="button"
-                className="acx-button acx-button--secondary acx-button--small"
-                disabled={mutations.bulkAccept.isPending}
-                onClick={() =>
-                  mutations.bulkAccept.mutate({
-                    suggestion_type: 'assignment',
-                    min_confidence: bulkConfidenceThreshold,
-                  })
-                }
-              >
-                {mutations.bulkAccept.isPending
-                  ? __('Accepting…', 'alt-context')
-                  : __('Bulk accept assignments', 'alt-context')}
-              </button>
-              <button
-                type="button"
-                className="acx-button acx-button--secondary acx-button--small"
-                disabled={mutations.bulkAccept.isPending}
-                onClick={() =>
-                  mutations.bulkAccept.mutate({ suggestion_type: 'name', min_confidence: bulkConfidenceThreshold })
-                }
-              >
-                {mutations.bulkAccept.isPending
-                  ? __('Accepting…', 'alt-context')
-                  : __('Bulk accept names', 'alt-context')}
-              </button>
-              <button
-                type="button"
-                className="acx-button acx-button--secondary acx-button--small"
-                disabled={mutations.bulkAccept.isPending}
-                onClick={() =>
-                  mutations.bulkAccept.mutate({ suggestion_type: 'merge', min_confidence: bulkConfidenceThreshold })
-                }
-              >
-                {mutations.bulkAccept.isPending
-                  ? __('Accepting…', 'alt-context')
-                  : __('Bulk accept merges', 'alt-context')}
-              </button>
-            </div>
-          </div>
-
-          {tenantId && (
-            <div className="acx-naming-queue">
-              <TopClustersSection
-                tenantId={tenantId}
-                onLabel={(clusterId) => onLabel?.(clusterId)}
-                onReview={onReview}
-              />
-            </div>
           )}
         </div>
-      )}
+
+        <CollapsibleMergeQueue
+          suggestions={mergeSuggestions}
+          onAccept={(id) => mutations.acceptMerge.mutate(id)}
+          onReject={(id) => mutations.rejectMerge.mutate(id)}
+          isPending={mutations.acceptMerge.isPending || mutations.rejectMerge.isPending}
+        />
+
+        {(nameSuggestions.length > 0 || showNameUnavailableWarning) && (
+          <div className="acx-naming-queue acx-naming-queue--suggestions">
+            <h3 className="acx-suggestion-panel__section-title">{__('Suggested names', 'alt-context')}</h3>
+            {showNameUnavailableWarning ? (
+              <EmptyStateWarning
+                title={__('Suggested names unavailable', 'alt-context')}
+                message={__('We could not load suggested names right now.', 'alt-context')}
+                onRetry={() => {
+                  void refetchName();
+                }}
+              />
+            ) : (
+              <>
+                <p className="acx-suggestion-panel__description">
+                  {__('These names were suggested by the recognition engine for unlabeled clusters.', 'alt-context')}
+                </p>
+                <ul className="acx-suggestion-panel__list">
+                  {nameSuggestions.map((suggestion) => (
+                    <li key={suggestion.id} className="acx-name-suggestion-card">
+                      <span className="acx-name-suggestion-card__label">{suggestion.suggested_name}</span>
+                      {suggestion.confidence_score !== null && suggestion.confidence_score !== undefined && (
+                        <span
+                          className={`acx-suggestion-confidence${suggestion.confidence_score < LOW_CONFIDENCE_THRESHOLD ? ' acx-suggestion-confidence--low' : ''}`}
+                        >
+                          {Math.round(suggestion.confidence_score * 100)}%
+                        </span>
+                      )}
+                      <div className="acx-name-suggestion-card__actions">
+                        <button
+                          type="button"
+                          className="acx-button acx-button--primary acx-button--small"
+                          disabled={mutations.acceptName.isPending || mutations.rejectName.isPending}
+                          onClick={() => mutations.acceptName.mutate(suggestion.id)}
+                        >
+                          {__('Accept', 'alt-context')}
+                        </button>
+                        <button
+                          type="button"
+                          className="acx-button acx-button--secondary acx-button--small"
+                          disabled={mutations.acceptName.isPending || mutations.rejectName.isPending}
+                          onClick={() => mutations.rejectName.mutate(suggestion.id)}
+                        >
+                          {__('Reject', 'alt-context')}
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
+        )}
+
+        {tenantId && (
+          <div className="acx-naming-queue">
+            <TopClustersSection tenantId={tenantId} onLabel={(clusterId) => onLabel?.(clusterId)} onReview={onReview} />
+          </div>
+        )}
+
+        <div className="acx-bulk-accept">
+          <h3 className="acx-suggestion-panel__section-title">{__('Bulk accept', 'alt-context')}</h3>
+          <p className="acx-suggestion-panel__description">
+            {__('Accept all suggestions above a confidence threshold.', 'alt-context')}
+          </p>
+          <label className="acx-bulk-accept__threshold-label">
+            <span>{__('Minimum confidence:', 'alt-context')}</span>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={bulkConfidenceThreshold}
+              onChange={(e) => setBulkConfidenceThreshold(parseFloat(e.target.value))}
+              className="acx-bulk-accept__slider"
+            />
+            <span className="acx-bulk-accept__threshold-value">{Math.round(bulkConfidenceThreshold * 100)}%</span>
+          </label>
+          <div className="acx-bulk-accept__actions">
+            <button
+              type="button"
+              className="acx-button acx-button--secondary acx-button--small"
+              disabled={mutations.bulkAccept.isPending}
+              onClick={() =>
+                mutations.bulkAccept.mutate({
+                  suggestion_type: 'assignment',
+                  min_confidence: bulkConfidenceThreshold,
+                })
+              }
+            >
+              {mutations.bulkAccept.isPending
+                ? __('Accepting…', 'alt-context')
+                : __('Bulk accept assignments', 'alt-context')}
+            </button>
+            <button
+              type="button"
+              className="acx-button acx-button--secondary acx-button--small"
+              disabled={mutations.bulkAccept.isPending}
+              onClick={() =>
+                mutations.bulkAccept.mutate({ suggestion_type: 'name', min_confidence: bulkConfidenceThreshold })
+              }
+            >
+              {mutations.bulkAccept.isPending
+                ? __('Accepting…', 'alt-context')
+                : __('Bulk accept names', 'alt-context')}
+            </button>
+            <button
+              type="button"
+              className="acx-button acx-button--secondary acx-button--small"
+              disabled={mutations.bulkAccept.isPending}
+              onClick={() =>
+                mutations.bulkAccept.mutate({ suggestion_type: 'merge', min_confidence: bulkConfidenceThreshold })
+              }
+            >
+              {mutations.bulkAccept.isPending
+                ? __('Accepting…', 'alt-context')
+                : __('Bulk accept merges', 'alt-context')}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };

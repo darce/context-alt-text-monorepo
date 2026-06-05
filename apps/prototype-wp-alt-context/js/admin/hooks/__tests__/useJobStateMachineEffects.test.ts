@@ -1,11 +1,21 @@
 import { renderHook, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BatchRunStatus } from '../../api/recognition';
+import { resetConfigCache } from '../../api/config';
+import { queryKeys } from '../../api/queryKeys';
 import type { PipelinePhase } from '../jobStateMachineUtils';
 import { useJobStateMachineEffects, type ProjectionSyncState } from '../useJobStateMachineEffects';
 
 describe('useJobStateMachineEffects', () => {
+  beforeEach(() => {
+    window.AltContextAdmin = {
+      nonce: 'test-nonce',
+      endpoints: {},
+      tenant_id: 'test-tenant-id',
+    };
+    resetConfigCache();
+  });
   const buildTerminalBatchRunStatus = (): BatchRunStatus => ({
     id: 'batch-run-1',
     submitted_total: 14,
@@ -36,7 +46,7 @@ describe('useJobStateMachineEffects', () => {
       projection_acknowledged_at: null,
     },
     batchRunStatus: undefined,
-    queryClient: { invalidateQueries: vi.fn() } as never,
+    queryClient: { invalidateQueries: vi.fn(), refetchQueries: vi.fn().mockResolvedValue(undefined) } as never,
     activeJobs: [{ id: 'job-2', type: 'clustering' as const, startedAt: Date.now(), totalItems: 10 }],
     isWaitingForScanCompletion: false,
     setIsWaitingForScanCompletion: vi.fn(),
@@ -76,7 +86,7 @@ describe('useJobStateMachineEffects', () => {
           finished_at: new Date().toISOString(),
           message: 'Clustering identities',
         },
-        queryClient: { invalidateQueries } as never,
+        queryClient: { invalidateQueries, refetchQueries: vi.fn().mockResolvedValue(undefined) } as never,
         activeJobs: [{ id: 'job-1', type: 'scan', startedAt: Date.now(), totalItems: 500 }],
         batchRunStatus: buildTerminalBatchRunStatus(),
         isWaitingForScanCompletion: true,
@@ -134,5 +144,57 @@ describe('useJobStateMachineEffects', () => {
       expect(options.setProjectionSyncState).not.toHaveBeenCalledWith('idle');
       expect(options.removeJob).not.toHaveBeenCalled();
     });
+  });
+
+  it('force-refetches every visible findings query when projection sync reaches ready', async () => {
+    const options = buildBaseOptions();
+    const refetchQueries = vi.fn().mockResolvedValue(undefined);
+    options.queryClient = { invalidateQueries: vi.fn(), refetchQueries } as never;
+    options.syncTrigger = {
+      mutateAsync: vi.fn().mockResolvedValue({
+        synced: true,
+        reason: 'ok',
+        last_snapshot_version: 123,
+        last_synced_at: '2026-06-05T10:00:00Z',
+        is_stale: false,
+      }),
+    } as never;
+
+    renderHook(() => useJobStateMachineEffects(options));
+
+    await waitFor(() => {
+      expect(options.setProjectionSyncState).toHaveBeenCalledWith('ready');
+    });
+
+    await waitFor(() => {
+      expect(refetchQueries).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.pending() });
+      expect(refetchQueries).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.mergePending() });
+      expect(refetchQueries).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.namePending() });
+      expect(refetchQueries).toHaveBeenCalledWith({ queryKey: queryKeys.clusters.topUnlabeled('test-tenant-id') });
+      expect(refetchQueries).toHaveBeenCalledWith({ queryKey: queryKeys.media.identities() });
+    });
+  });
+
+  it('does not force findings refetch when projection sync fails', async () => {
+    const options = buildBaseOptions();
+    const refetchQueries = vi.fn().mockResolvedValue(undefined);
+    options.queryClient = { invalidateQueries: vi.fn(), refetchQueries } as never;
+    options.syncTrigger = {
+      mutateAsync: vi.fn().mockResolvedValue({
+        synced: false,
+        reason: 'sync_failed',
+        last_snapshot_version: null,
+        last_synced_at: null,
+        is_stale: true,
+      }),
+    } as never;
+
+    renderHook(() => useJobStateMachineEffects(options));
+
+    await waitFor(() => {
+      expect(options.setProjectionSyncState).toHaveBeenCalledWith('error');
+    });
+
+    expect(refetchQueries).not.toHaveBeenCalled();
   });
 });

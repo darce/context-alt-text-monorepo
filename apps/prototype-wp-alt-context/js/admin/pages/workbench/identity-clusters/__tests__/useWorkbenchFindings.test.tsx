@@ -384,16 +384,11 @@ describe('useWorkbenchFindings', () => {
   });
 
   it('degrades gracefully on partial query failure instead of surfacing an error', async () => {
-    // Locks the isError gate: assignment fails but top-unlabeled data renders,
-    // so the panel shows partial findings with no error affordance.
+    // Locks the !hasAnyData isError guard: BOTH primary queries (assignment + merge)
+    // fail, so without the guard isError would flip true — but top-unlabeled data
+    // renders, so the panel shows partial findings with no error affordance.
     vi.mocked(fetchPendingSuggestions).mockRejectedValue(new Error('assignment endpoint down'));
-    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
-      suggestions: [],
-      total: 0,
-      limit: 10,
-      offset: 0,
-      data_source: DATA_SOURCE.LOCAL_PROJECTION,
-    });
+    vi.mocked(fetchPendingMergeSuggestions).mockRejectedValue(new Error('merge endpoint down'));
     vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
       suggestions: [],
       total: 0,

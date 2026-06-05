@@ -15,7 +15,7 @@ The MVP for E15 is **public WP demo URL live + one manual end-to-end pass**. Eve
 - Phase 1 — Security Baseline (E15-1, E15-1b) — merged to `main`
 - Phase 2 — Observability Baseline (E15-2) — merged to `main`
 - Phase 3 — WordPress Demo Provisioning (E15-3) — provider-agnostic plan; gated on [E15-22](../../tasks/15.0/E15-22-workbench-avatar-and-progress-readiness-task-plan.md) landing first and on seeded local-media proof that entity avatars, Top Cluster face samples, and Review Cluster member rows render before paid/shared WP host provisioning begins, so a public host is never purchased while the Workbench still shows placeholder thumbs or an empty Review Cluster drawer
-- Phase 4 — End-to-End Verification (E15-4 in progress, E15-5 manual remote E2E, E15-22 Workbench avatar/progress readiness)
+- Phase 4 — End-to-End Verification (E15-4 in progress, E15-5 manual remote E2E, E15-22 Workbench avatar/progress readiness, E15-23 Workbench live findings panel)
 - Phase 6 — Local Sync Correctness, operator hardening, and audit closure (E15-7 in progress; E15-13, E15-14, E15-15, E15-16, and E15-17 staged under the same phase with explicit dependency order below)
 
 **Deferred to v0.4.1:**
@@ -99,6 +99,7 @@ The recognition service, Docker stack, Caddy TLS proxy, persistent model cache, 
 | Operations runbook                                        | Production Readiness Phase 5       | **Complete — E15-2 Slice 3b** (merged to `main`)                                       |
 | WordPress demo page                                       | Production Readiness Phase 6 / E14 | Not started — **E15-3** (provider-agnostic, this epic)                                 |
 | Manual remote E2E verification                            | Production Readiness Phase 6 / E14 | Not started — **E15-5** (this epic)                                                    |
+| Workbench live findings panel                             | Workbench clustering UI scope       | Planned -- **E15-23**                                                                  |
 | OCI budget alerts not verified                            | E14 / Production Readiness Phase 6 | Not started — folded into **E15-5**                                                    |
 | ARM compatibility verification                            | E14                                | Not started — folded into **E15-5** (de facto verified by running A1 instance)         |
 | Dynamic IP SSH access drift                               | Tech debt                          | Folded into **E15-4 / E15-5** (Tailscale)                                              |

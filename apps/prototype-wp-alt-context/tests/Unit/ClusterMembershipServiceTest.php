@@ -8,6 +8,7 @@ use AltContext\Api\ClusterMutationsController;
 use AltContext\Api\Services\ClusterMembershipService;
 use AltContext\Tests\Support\FindsSqlQueries;
 use AltContext\Tests\Support\ClusterMutationsMembersSpy;
+use AltContext\Tests\Support\ClusterMutationsOutboxWriterSpy;
 use AltContext\Tests\Support\ClusterMutationsRepositorySpy;
 use AltContext\Tests\Support\ClusterMutationsSyncStateSpy;
 use AltContext\Tests\Support\ClusterMutationsTopologyCommandSpy;
@@ -152,5 +153,93 @@ class ClusterMembershipServiceTest extends TestCase
         $this->assertInstanceOf(\WP_Error::class, $response);
         $this->assertSame('acx_db_error', $response->get_error_code());
         $this->assertContains('ROLLBACK', $wpdb->queries);
+    }
+
+    public function testReassignClusterIdentityRollsBackWhenCommitFails(): void
+    {
+        global $wpdb;
+        $wpdb->queryResults['COMMIT'] = false;
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/reassign');
+        $request->set_param('identity_id', 'identity-77');
+        $request->set_param('target_cluster_id', 'cluster-target');
+
+        $response = $this->service->reassign_cluster_identity($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('acx_db_error', $response->get_error_code());
+        $this->assertContains('ROLLBACK', $wpdb->queries);
+    }
+
+    public function testReassignClusterIdentityRollsBackWhenOutboxEnqueueFails(): void
+    {
+        global $wpdb;
+        $service = $this->serviceWithFailingOutbox();
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/reassign');
+        $request->set_param('identity_id', 'identity-77');
+        $request->set_param('target_cluster_id', 'cluster-target');
+
+        $response = $service->reassign_cluster_identity($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('acx_db_error', $response->get_error_code());
+        $this->assertContains('ROLLBACK', $wpdb->queries);
+        $this->assertNotContains('COMMIT', $wpdb->queries);
+    }
+
+    public function testCreateClusterForIdentityRollsBackWhenOutboxEnqueueFails(): void
+    {
+        global $wpdb;
+        $service = $this->serviceWithFailingOutbox();
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/create-for-identity');
+        $request->set_param('identity_id', 'identity-77');
+        $request->set_param('label', 'Curated Name');
+
+        $response = $service->create_cluster_for_identity($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('acx_db_error', $response->get_error_code());
+        $this->assertContains('ROLLBACK', $wpdb->queries);
+        $this->assertNotContains('COMMIT', $wpdb->queries);
+    }
+
+    public function testAssignOutlierToClusterRollsBackWhenOutboxEnqueueFails(): void
+    {
+        global $wpdb;
+        $service = $this->serviceWithFailingOutbox();
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/cluster-target/assign');
+        $request->set_param('cluster_id', 'cluster-target');
+        $request->set_param('identity_id', 'identity-outlier');
+        $request->set_param('similarity', 0.42);
+
+        $response = $service->assign_outlier_to_cluster($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('acx_db_error', $response->get_error_code());
+        $this->assertContains('ROLLBACK', $wpdb->queries);
+        $this->assertNotContains('COMMIT', $wpdb->queries);
+    }
+
+    private function serviceWithFailingOutbox(): ClusterMembershipService
+    {
+        $outbox = new ClusterMutationsOutboxWriterSpy();
+        $outbox->nextEnqueueResult = false;
+        $host = new ClusterMutationsController(
+            $this->repository,
+            $this->syncStateRepository,
+            $this->membersRepository,
+            $outbox,
+            new ClusterMutationsTopologyCommandSpy()
+        );
+
+        return new ClusterMembershipService(
+            $host,
+            $this->repository,
+            $this->membersRepository,
+            $this->syncStateRepository
+        );
     }
 }

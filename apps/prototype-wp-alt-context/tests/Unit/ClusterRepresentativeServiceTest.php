@@ -8,6 +8,7 @@ use AltContext\Api\ClusterMutationsController;
 use AltContext\Api\Services\ClusterRepresentativeService;
 use AltContext\Tests\Support\FindsSqlQueries;
 use AltContext\Tests\Support\ClusterMutationsMembersSpy;
+use AltContext\Tests\Support\ClusterMutationsOutboxWriterSpy;
 use AltContext\Tests\Support\ClusterMutationsRepositorySpy;
 use AltContext\Tests\Support\ClusterMutationsSyncStateSpy;
 use AltContext\Tests\Support\ClusterMutationsTopologyCommandSpy;
@@ -79,5 +80,32 @@ class ClusterRepresentativeServiceTest extends TestCase
         $this->assertInstanceOf(\WP_Error::class, $response);
         $this->assertSame('acx_db_error', $response->get_error_code());
         $this->assertContains('ROLLBACK', $wpdb->queries);
+    }
+
+    public function testPinRepresentativeRollsBackWhenOutboxEnqueueFails(): void
+    {
+        global $wpdb;
+        $outbox = new ClusterMutationsOutboxWriterSpy();
+        $outbox->nextEnqueueResult = false;
+        $host = new ClusterMutationsController(
+            $this->repository,
+            $this->syncStateRepository,
+            new ClusterMutationsMembersSpy(),
+            $outbox,
+            new ClusterMutationsTopologyCommandSpy()
+        );
+        $service = new ClusterRepresentativeService($host, $this->repository, $this->syncStateRepository);
+
+        $request = new WP_REST_Request('PATCH', '/acx/v1/recognition/clusters/cluster-xyz/representatives/identity-77/pin');
+        $request->set_param('cluster_id', 'cluster-xyz');
+        $request->set_param('representative_id', 'identity-77');
+        $request->set_param('is_pinned', true);
+
+        $response = $service->pin_representative($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('acx_db_error', $response->get_error_code());
+        $this->assertContains('ROLLBACK', $wpdb->queries);
+        $this->assertNotContains('COMMIT', $wpdb->queries);
     }
 }

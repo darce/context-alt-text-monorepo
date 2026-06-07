@@ -6,6 +6,7 @@ namespace AltContext\Tests\Unit;
 
 use AltContext\Api\ClusterMutationsController;
 use AltContext\Api\Services\ClusterRepresentativeService;
+use AltContext\Tests\Support\FindsSqlQueries;
 use AltContext\Tests\Support\ClusterMutationsMembersSpy;
 use AltContext\Tests\Support\ClusterMutationsRepositorySpy;
 use AltContext\Tests\Support\ClusterMutationsSyncStateSpy;
@@ -19,6 +20,8 @@ use WP_REST_Response;
  */
 class ClusterRepresentativeServiceTest extends TestCase
 {
+    use FindsSqlQueries;
+
     private ClusterRepresentativeService $service;
     private ClusterMutationsRepositorySpy $repository;
     private ClusterMutationsSyncStateSpy $syncStateRepository;

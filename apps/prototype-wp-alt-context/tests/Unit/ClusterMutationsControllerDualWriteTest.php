@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Api\ClusterMutationsController;
+use AltContext\Tests\Support\FindsSqlQueries;
 use AltContext\Tests\Support\ClusterMutationsMembersSpy;
 use AltContext\Tests\Support\ClusterMutationsRepositorySpy;
 use AltContext\Tests\Support\ClusterMutationsSyncStateSpy;
@@ -16,6 +17,7 @@ use AltContext\Tests\TestCase;
  */
 class ClusterMutationsControllerDualWriteTest extends TestCase
 {
+    use FindsSqlQueries;
     private ClusterMutationsController $controller;
     private ClusterMutationsRepositorySpy $repository;
     private ClusterMutationsMembersSpy $membersRepository;
@@ -545,17 +547,4 @@ class ClusterMutationsControllerDualWriteTest extends TestCase
         $this->assertSame('acknowledged', $response->get_data()['status']);
     }
 
-    /**
-     * @param array<int,string> $queries
-     */
-    private function findQueryContaining(array $queries, string $needle): string
-    {
-        foreach ($queries as $query) {
-            if (str_contains($query, $needle)) {
-                return $query;
-            }
-        }
-
-        $this->fail(sprintf('Unable to find query containing "%s".', $needle));
-    }
 }

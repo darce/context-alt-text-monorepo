@@ -1,0 +1,1 @@
+{"type":"response","status":200,"data":{"command_id":77,"synced":false,"status":"pending","command_state":"queued","projection_state":"awaiting_backend_partition","cluster_id":"cluster-source","idempotency_key":"3d2e6f4f-17ff-9c8b-bf03-f899ff5bcf8e"}}

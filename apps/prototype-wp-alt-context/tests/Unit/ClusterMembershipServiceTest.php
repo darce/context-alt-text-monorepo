@@ -103,4 +103,54 @@ class ClusterMembershipServiceTest extends TestCase
         $this->assertContains('START TRANSACTION', $wpdb->queries);
         $this->assertContains('COMMIT', $wpdb->queries);
     }
+
+    public function testCreateClusterForIdentityRollsBackWhenLocalCreateFails(): void
+    {
+        global $wpdb;
+        $this->repository->nextCreateLocalClusterRows = 0;
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/create-for-identity');
+        $request->set_param('identity_id', 'identity-77');
+        $request->set_param('label', 'Curated Name');
+
+        $response = $this->service->create_cluster_for_identity($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('acx_db_error', $response->get_error_code());
+        $this->assertContains('ROLLBACK', $wpdb->queries);
+        $this->assertNotContains('COMMIT', $wpdb->queries);
+    }
+
+    public function testCreateClusterForIdentityRollsBackWhenCommitFails(): void
+    {
+        global $wpdb;
+        $wpdb->queryResults['COMMIT'] = false;
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/create-for-identity');
+        $request->set_param('identity_id', 'identity-77');
+        $request->set_param('label', 'Curated Name');
+
+        $response = $this->service->create_cluster_for_identity($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('acx_db_error', $response->get_error_code());
+        $this->assertContains('ROLLBACK', $wpdb->queries);
+    }
+
+    public function testAssignOutlierToClusterRollsBackWhenCommitFails(): void
+    {
+        global $wpdb;
+        $wpdb->queryResults['COMMIT'] = false;
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/cluster-target/assign');
+        $request->set_param('cluster_id', 'cluster-target');
+        $request->set_param('identity_id', 'identity-outlier');
+        $request->set_param('similarity', 0.42);
+
+        $response = $this->service->assign_outlier_to_cluster($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('acx_db_error', $response->get_error_code());
+        $this->assertContains('ROLLBACK', $wpdb->queries);
+    }
 }

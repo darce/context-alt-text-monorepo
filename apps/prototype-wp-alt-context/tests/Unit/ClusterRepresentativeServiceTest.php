@@ -63,4 +63,21 @@ class ClusterRepresentativeServiceTest extends TestCase
         $outboxInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_outbox');
         $this->assertStringContainsString("'representative_pin_updated'", $outboxInsert);
     }
+
+    public function testPinRepresentativeRollsBackWhenCommitFails(): void
+    {
+        global $wpdb;
+        $wpdb->queryResults['COMMIT'] = false;
+
+        $request = new WP_REST_Request('PATCH', '/acx/v1/recognition/clusters/cluster-xyz/representatives/identity-77/pin');
+        $request->set_param('cluster_id', 'cluster-xyz');
+        $request->set_param('representative_id', 'identity-77');
+        $request->set_param('is_pinned', true);
+
+        $response = $this->service->pin_representative($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('acx_db_error', $response->get_error_code());
+        $this->assertContains('ROLLBACK', $wpdb->queries);
+    }
 }

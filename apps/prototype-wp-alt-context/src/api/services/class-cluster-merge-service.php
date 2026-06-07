@@ -114,7 +114,7 @@ class ClusterMergeService {
 		$this->clusters_repository->dismiss( $source_id );
 
 		$payload = array(
-			'tenant_id'         => $this->host->get_tenant_id(),
+			'tenant_id'         => $tenant_id,
 			'target_cluster_id' => $target_cluster_id,
 		);
 
@@ -127,7 +127,7 @@ class ClusterMergeService {
 			return new WP_Error( 'acx_db_error', 'Could not queue merge replay operation.', array( 'status' => 500 ) );
 		}
 
-		$this->sync_state_repository->touch_local_curation_marker( $this->host->get_tenant_id() );
+		$this->sync_state_repository->touch_local_curation_marker( $tenant_id );
 
 		if ( false === $wpdb->query( 'COMMIT' ) ) {
 			$wpdb->query( 'ROLLBACK' );

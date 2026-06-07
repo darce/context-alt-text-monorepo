@@ -73,7 +73,7 @@ class ClusterRepresentativeService {
 		}
 
 		$payload = array(
-			'tenant_id' => $this->host->get_tenant_id(),
+			'tenant_id' => $tenant_id,
 			'cluster_uuid' => $cluster_id,
 			'representative_id' => $representative_id,
 			'is_pinned' => $desired_is_pinned,
@@ -90,7 +90,7 @@ class ClusterRepresentativeService {
 		}
 
 		if ( $affected_rows > 0 ) {
-			$this->sync_state_repository->touch_local_curation_marker( $this->host->get_tenant_id() );
+			$this->sync_state_repository->touch_local_curation_marker( $tenant_id );
 		}
 
 		if ( false === $wpdb->query( 'COMMIT' ) ) {

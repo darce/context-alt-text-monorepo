@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Tests\Support;
 
+use AltContext\Sovereign\Sync\OutboxWriterInterface;
 use AltContext\Sovereign\Sync\TopologyCommandRepositoryInterface;
 use AltContext\Tests\Stubs\NullClustersRepository;
 use AltContext\Tests\Stubs\NullIdentityMembersRepository;
@@ -257,5 +258,26 @@ class ClusterMutationsMembersSpy extends NullIdentityMembersRepository
     public function find_by_identity_uuid(string $identity_uuid): ?array
     {
         return $this->membersByIdentity[$identity_uuid] ?? null;
+    }
+}
+
+class ClusterMutationsOutboxWriterSpy implements OutboxWriterInterface
+{
+    public int|false $nextEnqueueResult = 55;
+    public string $lastOperationType = '';
+
+    public function enqueue(
+        string $tenant_id,
+        string $operation_type,
+        string $entity_type,
+        string $entity_key,
+        int $expected_base_version,
+        int $local_revision,
+        array $payload,
+        ?string $idempotency_key = null
+    ): int|false {
+        $this->lastOperationType = $operation_type;
+
+        return $this->nextEnqueueResult;
     }
 }

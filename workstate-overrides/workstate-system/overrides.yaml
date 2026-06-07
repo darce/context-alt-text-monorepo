@@ -8,3 +8,9 @@ components:
       base_path: skills/branch-review/SKILL.base.md
       upstream_digest: sha256:f2ed63bd8819b816f3f5f57c3a1b130594c7cfe7d791e2233a354f484d3abfa8
       on_upstream_change: warn
+    refactor-wp-alt-context:
+      mode: add
+      path: skills/refactor-wp-alt-context/SKILL.md
+    refactor-description-service:
+      mode: add
+      path: skills/refactor-description-service/SKILL.md

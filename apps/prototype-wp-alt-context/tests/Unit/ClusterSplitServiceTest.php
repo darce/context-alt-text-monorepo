@@ -63,4 +63,37 @@ class ClusterSplitServiceTest extends TestCase
         $this->assertContains('START TRANSACTION', $wpdb->queries);
         $this->assertContains('COMMIT', $wpdb->queries);
     }
+
+    public function testSplitRollsBackWhenTopologyEnqueueFails(): void
+    {
+        global $wpdb;
+        $this->topologyCommandRepository->nextEnqueueResult = false;
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/cluster-source/split');
+        $request->set_param('cluster_id', 'cluster-source');
+        $request->set_param('n_clusters', 2);
+
+        $response = $this->service->split_cluster($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('acx_db_error', $response->get_error_code());
+        $this->assertContains('ROLLBACK', $wpdb->queries);
+        $this->assertNotContains('COMMIT', $wpdb->queries);
+    }
+
+    public function testSplitRollsBackWhenCommitFails(): void
+    {
+        global $wpdb;
+        $wpdb->queryResults['COMMIT'] = false;
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/cluster-source/split');
+        $request->set_param('cluster_id', 'cluster-source');
+        $request->set_param('n_clusters', 2);
+
+        $response = $this->service->split_cluster($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('acx_db_error', $response->get_error_code());
+        $this->assertContains('ROLLBACK', $wpdb->queries);
+    }
 }

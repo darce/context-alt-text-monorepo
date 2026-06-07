@@ -18,6 +18,7 @@ use AltContext\Tests\TestCase;
 class ClusterMutationsControllerDualWriteTest extends TestCase
 {
     use FindsSqlQueries;
+
     private ClusterMutationsController $controller;
     private ClusterMutationsRepositorySpy $repository;
     private ClusterMutationsMembersSpy $membersRepository;
@@ -546,5 +547,4 @@ class ClusterMutationsControllerDualWriteTest extends TestCase
         $this->assertSame(200, $response->get_status());
         $this->assertSame('acknowledged', $response->get_data()['status']);
     }
-
 }

@@ -21,6 +21,7 @@ class ClusterMutationsRepositorySpy extends NullClustersRepository
     public string $createdLocalClusterId = '';
     public int $nextDismissRows = 1;
     public int $nextUndismissRows = 1;
+    public int $nextCreateLocalClusterRows = 1;
     /** @var array<int,array{0:string,1:int}> */
     public array $identityCountUpdates = [];
     /** @var array<string,array<string,mixed>> */
@@ -95,6 +96,9 @@ class ClusterMutationsRepositorySpy extends NullClustersRepository
     public function create_local_cluster(string $tenant_id, string $cluster_uuid, string $label, int $identity_count = 1): int
     {
         $this->createdLocalClusterId = $cluster_uuid;
+        if ($this->nextCreateLocalClusterRows <= 0) {
+            return $this->nextCreateLocalClusterRows;
+        }
         $this->localClusterRows[$cluster_uuid] = [
             'cluster_uuid' => $cluster_uuid,
             'tenant_id' => $tenant_id,
@@ -104,7 +108,7 @@ class ClusterMutationsRepositorySpy extends NullClustersRepository
             'curation_state' => 'uncurated',
             'identity_count' => $identity_count,
         ];
-        return 1;
+        return $this->nextCreateLocalClusterRows;
     }
 }
 
@@ -137,6 +141,7 @@ class ClusterMutationsTopologyCommandSpy implements TopologyCommandRepositoryInt
     public string $lastIdempotencyKey = '';
     /** @var array<string,mixed> */
     public array $lastPayload = [];
+    public int|false $nextEnqueueResult = 77;
 
     public function enqueue(
         string $tenant_id,
@@ -152,7 +157,7 @@ class ClusterMutationsTopologyCommandSpy implements TopologyCommandRepositoryInt
         $this->lastPayload = $payload;
         $this->lastIdempotencyKey = (string) $idempotency_key;
 
-        return 77;
+        return $this->nextEnqueueResult;
     }
 
     public function find_pending(?string $tenant_id = null, int $limit = 25): array

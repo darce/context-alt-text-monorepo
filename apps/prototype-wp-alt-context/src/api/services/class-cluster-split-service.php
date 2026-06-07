@@ -43,6 +43,7 @@ class ClusterSplitService {
 
 	public function split_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		global $wpdb;
+		$tenant_id = $this->host->get_tenant_id();
 
 		$cluster_id = sanitize_text_field( (string) $request->get_param( 'cluster_id' ) );
 
@@ -58,7 +59,7 @@ class ClusterSplitService {
 		$n_clusters = absint( $request->get_param( 'n_clusters' ) ?? 0 );
 
 		$payload = array(
-			'tenant_id'  => $this->host->get_tenant_id(),
+			'tenant_id'  => $tenant_id,
 			'cluster_id' => $cluster_id,
 			'n_clusters' => $n_clusters,
 			'user_id'    => get_current_user_id(),
@@ -92,7 +93,7 @@ class ClusterSplitService {
 		$idempotency_key = $this->host->resolve_split_idempotency_key(
 			$request,
 			$cluster_id,
-			max( 0, (int) ( $cluster['snapshot_version'] ?? $this->sync_state_repository->get_snapshot_version( $this->host->get_tenant_id() ) ) ),
+			max( 0, (int) ( $cluster['snapshot_version'] ?? $this->sync_state_repository->get_snapshot_version( $tenant_id ) ) ),
 			$payload
 		);
 
@@ -105,10 +106,10 @@ class ClusterSplitService {
 		}
 
 		$command_id = $this->topology_command_repository->enqueue(
-			$this->host->get_tenant_id(),
+			$tenant_id,
 			'cluster_split',
 			$cluster_id,
-			max( 0, (int) ( $cluster['snapshot_version'] ?? $this->sync_state_repository->get_snapshot_version( $this->host->get_tenant_id() ) ) ),
+			max( 0, (int) ( $cluster['snapshot_version'] ?? $this->sync_state_repository->get_snapshot_version( $tenant_id ) ) ),
 			$payload,
 			$idempotency_key
 		);
@@ -118,8 +119,8 @@ class ClusterSplitService {
 			return new WP_Error( 'acx_db_error', 'Could not queue split topology command.', array( 'status' => 500 ) );
 		}
 
-		$this->sync_state_repository->touch_local_curation_marker( $this->host->get_tenant_id() );
-		$this->sync_state_repository->refresh_curation_metrics( $this->host->get_tenant_id() );
+		$this->sync_state_repository->touch_local_curation_marker( $tenant_id );
+		$this->sync_state_repository->refresh_curation_metrics( $tenant_id );
 
 		if ( false === $wpdb->query( 'COMMIT' ) ) {
 			$wpdb->query( 'ROLLBACK' );

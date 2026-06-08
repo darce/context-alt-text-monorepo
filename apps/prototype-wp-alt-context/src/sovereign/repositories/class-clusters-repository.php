@@ -7,6 +7,8 @@ namespace AltContext\Sovereign\Repositories;
 require_once __DIR__ . '/trait-prepares-sql-queries.php';
 require_once __DIR__ . '/trait-resolves-persons-table-name.php';
 require_once __DIR__ . '/class-clusters-read-repository.php';
+require_once __DIR__ . '/class-cluster-curation-writer.php';
+require_once __DIR__ . '/class-cluster-projection-writer.php';
 
 use function absint;
 use function array_fill;
@@ -38,7 +40,16 @@ class ClustersRepository implements ClustersRepositoryInterface {
 
 	private ClustersReadRepository $read_repository;
 
-	public function __construct( ?string $table_name = null, ?ClustersReadRepository $read_repository = null ) {
+	private ClusterCurationWriter $curation_writer;
+
+	private ClusterProjectionWriter $projection_writer;
+
+	public function __construct(
+		?string $table_name = null,
+		?ClustersReadRepository $read_repository = null,
+		?ClusterCurationWriter $curation_writer = null,
+		?ClusterProjectionWriter $projection_writer = null
+	) {
 		global $wpdb;
 
 		$default_table = 'wp_acx_clusters';
@@ -46,8 +57,10 @@ class ClustersRepository implements ClustersRepositoryInterface {
 			$default_table = $wpdb->prefix . 'acx_clusters';
 		}
 
-		$this->table_name      = $table_name ?? $default_table;
-		$this->read_repository = $read_repository ?? new ClustersReadRepository( $this->table_name );
+		$this->table_name        = $table_name ?? $default_table;
+		$this->read_repository   = $read_repository ?? new ClustersReadRepository( $this->table_name );
+		$this->curation_writer   = $curation_writer ?? new ClusterCurationWriter( $this->table_name );
+		$this->projection_writer = $projection_writer ?? new ClusterProjectionWriter( $this->table_name );
 	}
 
 	/**
@@ -233,341 +246,35 @@ class ClustersRepository implements ClustersRepositoryInterface {
 	}
 
 	public function update_label( string $cluster_uuid, string $label, bool $mark_user_confirmed = true ): int {
-		global $wpdb;
-
-		$normalized_cluster_uuid = trim( $cluster_uuid );
-		$normalized_label        = trim( $label );
-		if ( '' === $normalized_cluster_uuid || '' === $normalized_label ) {
-			return 0;
-		}
-
-		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
-			return 0;
-		}
-
-		$now_utc = gmdate( 'Y-m-d H:i:s' );
-		$sql     = $this->prepare_query(
-			'UPDATE %i SET label = %s, is_user_confirmed = %d, local_revision = local_revision + 1, updated_at = %s, suggested_label = NULL, suggested_label_source = NULL, suggested_label_confidence = NULL, suggested_target_cluster_id = NULL WHERE cluster_uuid = %s',
-			array(
-				$this->table_name,
-				$normalized_label,
-				$mark_user_confirmed ? 1 : 0,
-				$now_utc,
-				$normalized_cluster_uuid,
-			)
-		);
-
-		if ( is_string( $sql ) && '' !== $sql ) {
-			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
-			$query_result = $wpdb->query( $sql );
-			if ( is_int( $query_result ) ) {
-				return $query_result;
-			}
-		}
-
-		return 0;
+		return $this->curation_writer->update_label( $cluster_uuid, $label, $mark_user_confirmed );
 	}
 
 	public function dismiss( string $cluster_uuid ): int {
-		global $wpdb;
-
-		$normalized_cluster_uuid = trim( $cluster_uuid );
-		if ( '' === $normalized_cluster_uuid ) {
-			return 0;
-		}
-
-		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
-			return 0;
-		}
-
-		$now_utc = gmdate( 'Y-m-d H:i:s' );
-		$sql     = $this->prepare_query(
-			'UPDATE %i SET curation_state = %s, is_user_confirmed = 1, local_revision = local_revision + 1, updated_at = %s WHERE cluster_uuid = %s',
-			array(
-				$this->table_name,
-				'dismissed',
-				$now_utc,
-				$normalized_cluster_uuid,
-			)
-		);
-
-		if ( is_string( $sql ) && '' !== $sql ) {
-			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
-			$query_result = $wpdb->query( $sql );
-			if ( is_int( $query_result ) ) {
-				return $query_result;
-			}
-		}
-
-		return 0;
+		return $this->curation_writer->dismiss( $cluster_uuid );
 	}
 
 	public function update_identity_count( string $cluster_uuid, int $identity_count ): int {
-		global $wpdb;
-
-		$normalized_cluster_uuid = trim( $cluster_uuid );
-		if ( '' === $normalized_cluster_uuid ) {
-			return 0;
-		}
-
-		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
-			return 0;
-		}
-
-		$now_utc = gmdate( 'Y-m-d H:i:s' );
-		$sql     = $this->prepare_query(
-			'UPDATE %i SET identity_count = %d, local_revision = local_revision + 1, updated_at = %s WHERE cluster_uuid = %s',
-			array(
-				$this->table_name,
-				max( 0, $identity_count ),
-				$now_utc,
-				$normalized_cluster_uuid,
-			)
-		);
-
-		if ( is_string( $sql ) && '' !== $sql ) {
-			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
-			$query_result = $wpdb->query( $sql );
-			if ( is_int( $query_result ) ) {
-				return $query_result;
-			}
-		}
-
-		return 0;
+		return $this->curation_writer->update_identity_count( $cluster_uuid, $identity_count );
 	}
 
 	public function update_representative_state( string $cluster_uuid, ?string $representative_id, bool $is_pinned, bool $is_local_curation = true ): int {
-		global $wpdb;
-
-		$normalized_cluster_uuid = trim( $cluster_uuid );
-		if ( '' === $normalized_cluster_uuid ) {
-			return 0;
-		}
-
-		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
-			return 0;
-		}
-
-		$normalized_representative_id = is_string( $representative_id ) ? trim( $representative_id ) : '';
-		$now_utc = gmdate( 'Y-m-d H:i:s' );
-		$sql = $this->prepare_query(
-			'UPDATE %i
-			SET representative_id = %s,
-				is_pinned = %d,
-				local_revision = local_revision + 1,
-				updated_at = %s
-			WHERE cluster_uuid = %s',
-			array(
-				$this->table_name,
-				'' !== $normalized_representative_id ? $normalized_representative_id : null,
-				$is_pinned ? 1 : 0,
-				$now_utc,
-				$normalized_cluster_uuid,
-			)
-		);
-
-		if ( ! is_string( $sql ) || '' === $sql ) {
-			return 0;
-		}
-
-		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
-		$query_result = $wpdb->query( $sql );
-		return is_int( $query_result ) ? $query_result : 0;
+		return $this->curation_writer->update_representative_state( $cluster_uuid, $representative_id, $is_pinned, $is_local_curation );
 	}
 
 	public function create_local_cluster( string $tenant_id, string $cluster_uuid, string $label, int $identity_count = 1 ): int {
-		global $wpdb;
-
-		$normalized_tenant_id = trim( $tenant_id );
-		$normalized_cluster_uuid = trim( $cluster_uuid );
-		$normalized_label = trim( $label );
-		if ( '' === $normalized_tenant_id || '' === $normalized_cluster_uuid || '' === $normalized_label ) {
-			return 0;
-		}
-
-		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'insert' ) ) {
-			return 0;
-		}
-
-		$now_utc = gmdate( 'Y-m-d H:i:s' );
-		$inserted = $wpdb->insert(
-			$this->table_name,
-			array(
-				'cluster_uuid' => $normalized_cluster_uuid,
-				'tenant_id' => $normalized_tenant_id,
-				'label' => $normalized_label,
-				'curation_state' => 'uncurated',
-				'identity_count' => max( 0, $identity_count ),
-				'snapshot_version' => 0,
-				'is_user_confirmed' => 1,
-				'local_revision' => 1,
-				'created_at' => $now_utc,
-				'updated_at' => $now_utc,
-				'last_synced_at' => $now_utc,
-			),
-			array( '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%s', '%s', '%s' )
-		);
-
-		return is_int( $inserted ) ? $inserted : 0;
+		return $this->projection_writer->create_local_cluster( $tenant_id, $cluster_uuid, $label, $identity_count );
 	}
 
 	public function upsert_projection_cluster( string $tenant_id, string $cluster_uuid, string $label, int $identity_count, int $snapshot_version, ?string $representative_thumb_path = null, ?string $representative_id = null, bool $is_pinned = false ): int {
-		global $wpdb;
-
-		$normalized_tenant_id = trim( $tenant_id );
-		$normalized_cluster_uuid = trim( $cluster_uuid );
-		if ( '' === $normalized_tenant_id || '' === $normalized_cluster_uuid ) {
-			return 0;
-		}
-
-		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
-			return 0;
-		}
-
-		$now_utc = gmdate( 'Y-m-d H:i:s' );
-		$sql = $this->prepare_query(
-			'INSERT INTO %i
-				(cluster_uuid, tenant_id, label, curation_state, representative_thumb_path, representative_id, is_pinned, identity_count, snapshot_version, is_user_confirmed, local_revision, created_at, updated_at, last_synced_at)
-			VALUES (%s, %s, %s, %s, %s, %s, %d, %d, %d, %d, %d, %s, %s, %s)
-			ON DUPLICATE KEY UPDATE
-				label = VALUES(label),
-				curation_state = VALUES(curation_state),
-				representative_thumb_path = VALUES(representative_thumb_path),
-				representative_id = VALUES(representative_id),
-				is_pinned = VALUES(is_pinned),
-				identity_count = VALUES(identity_count),
-				snapshot_version = GREATEST(snapshot_version, VALUES(snapshot_version)),
-				is_user_confirmed = VALUES(is_user_confirmed),
-				updated_at = VALUES(updated_at),
-				last_synced_at = VALUES(last_synced_at)',
-			array(
-				$this->table_name,
-				$normalized_cluster_uuid,
-				$normalized_tenant_id,
-				trim( $label ),
-				'uncurated',
-				null === $representative_thumb_path ? null : trim( $representative_thumb_path ),
-				$this->normalize_optional_text( $representative_id ),
-				$is_pinned ? 1 : 0,
-				max( 0, $identity_count ),
-				max( 0, $snapshot_version ),
-				0,
-				0,
-				$now_utc,
-				$now_utc,
-				$now_utc,
-			)
-		);
-
-		if ( ! is_string( $sql ) || '' === $sql ) {
-			return 0;
-		}
-
-		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
-		$query_result = $wpdb->query( $sql );
-		return is_int( $query_result ) ? $query_result : 0;
+		return $this->projection_writer->upsert_projection_cluster( $tenant_id, $cluster_uuid, $label, $identity_count, $snapshot_version, $representative_thumb_path, $representative_id, $is_pinned );
 	}
 
 	public function update_projection_cluster( string $cluster_uuid, int $identity_count, int $snapshot_version, ?string $representative_thumb_path = null, ?string $representative_id = null, bool $is_pinned = false ): int {
-		global $wpdb;
-
-		$normalized_cluster_uuid = trim( $cluster_uuid );
-		if ( '' === $normalized_cluster_uuid ) {
-			return 0;
-		}
-
-		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
-			return 0;
-		}
-
-		$now_utc = gmdate( 'Y-m-d H:i:s' );
-		if ( null === $representative_thumb_path ) {
-			$sql = $this->prepare_query(
-				'UPDATE %i
-				SET identity_count = %d,
-					snapshot_version = GREATEST(snapshot_version, %d),
-					representative_id = %s,
-					is_pinned = %d,
-					updated_at = %s,
-					last_synced_at = %s
-				WHERE cluster_uuid = %s',
-				array(
-					$this->table_name,
-					max( 0, $identity_count ),
-					max( 0, $snapshot_version ),
-					$this->normalize_optional_text( $representative_id ),
-					$is_pinned ? 1 : 0,
-					$now_utc,
-					$now_utc,
-					$normalized_cluster_uuid,
-				)
-			);
-		} else {
-			$sql = $this->prepare_query(
-				'UPDATE %i
-				SET identity_count = %d,
-					snapshot_version = GREATEST(snapshot_version, %d),
-					representative_thumb_path = %s,
-					representative_id = %s,
-					is_pinned = %d,
-					updated_at = %s,
-					last_synced_at = %s
-				WHERE cluster_uuid = %s',
-				array(
-					$this->table_name,
-					max( 0, $identity_count ),
-					max( 0, $snapshot_version ),
-					trim( $representative_thumb_path ),
-					$this->normalize_optional_text( $representative_id ),
-					$is_pinned ? 1 : 0,
-					$now_utc,
-					$now_utc,
-					$normalized_cluster_uuid,
-				)
-			);
-		}
-
-		if ( ! is_string( $sql ) || '' === $sql ) {
-			return 0;
-		}
-
-		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
-		$query_result = $wpdb->query( $sql );
-		return is_int( $query_result ) ? $query_result : 0;
+		return $this->projection_writer->update_projection_cluster( $cluster_uuid, $identity_count, $snapshot_version, $representative_thumb_path, $representative_id, $is_pinned );
 	}
 
 	public function undismiss( string $cluster_uuid ): int {
-		global $wpdb;
-
-		$normalized_cluster_uuid = trim( $cluster_uuid );
-		if ( '' === $normalized_cluster_uuid ) {
-			return 0;
-		}
-
-		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
-			return 0;
-		}
-
-		$now_utc = gmdate( 'Y-m-d H:i:s' );
-		$sql     = $this->prepare_query(
-				'UPDATE %i SET curation_state = %s, is_user_confirmed = 0, local_revision = local_revision + 1, updated_at = %s WHERE cluster_uuid = %s',
-				array(
-					$this->table_name,
-					'uncurated',
-					$now_utc,
-					$normalized_cluster_uuid,
-				)
-			);
-
-		if ( is_string( $sql ) && '' !== $sql ) {
-			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
-			$query_result = $wpdb->query( $sql );
-			if ( is_int( $query_result ) ) {
-				return $query_result;
-			}
-		}
-
-		return 0;
+		return $this->curation_writer->undismiss( $cluster_uuid );
 	}
 
 	/**
@@ -578,44 +285,7 @@ class ClustersRepository implements ClustersRepositoryInterface {
 	}
 
 	public function reset_curation( string $cluster_uuid, string $tenant_id ): int {
-		global $wpdb;
-
-		$normalized_cluster_uuid = trim( $cluster_uuid );
-		$normalized_tenant_id = trim( $tenant_id );
-		if ( '' === $normalized_cluster_uuid || '' === $normalized_tenant_id ) {
-			return 0;
-		}
-
-		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
-			return 0;
-		}
-
-		$now_utc = gmdate( 'Y-m-d H:i:s' );
-		$sql = $this->prepare_query(
-			'UPDATE %i
-			SET label = NULL,
-				person_id = NULL,
-				curation_state = %s,
-				is_user_confirmed = 0,
-				local_revision = local_revision + 1,
-				updated_at = %s
-			WHERE cluster_uuid = %s AND tenant_id = %s',
-			array(
-				$this->table_name,
-				'uncurated',
-				$now_utc,
-				$normalized_cluster_uuid,
-				$normalized_tenant_id,
-			)
-		);
-
-		if ( ! is_string( $sql ) || '' === $sql ) {
-			return 0;
-		}
-
-		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
-		$query_result = $wpdb->query( $sql );
-		return is_int( $query_result ) ? $query_result : 0;
+		return $this->curation_writer->reset_curation( $cluster_uuid, $tenant_id );
 	}
 
 	public function delete_cluster_with_members( string $cluster_uuid, string $tenant_id ): int {
@@ -845,15 +515,6 @@ class ClustersRepository implements ClustersRepositoryInterface {
 		}
 
 		return in_array( trim( (string) $value ), array( '1', 'true', 'yes', 'on' ), true ) ? 1 : 0;
-	}
-
-	private function normalize_optional_text( ?string $value ): ?string {
-		if ( ! is_string( $value ) ) {
-			return null;
-		}
-
-		$normalized = trim( $value );
-		return '' !== $normalized ? $normalized : null;
 	}
 
 	private function build_thumb_key( string $cluster_uuid, int $media_id ): string {

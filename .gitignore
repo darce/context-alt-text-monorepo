@@ -63,6 +63,8 @@ literature/
 apps/prototype-wp-alt-context/.env.local
 apps/prototype-wp-alt-context/tests/e2e/.auth/
 apps/prototype-wp-alt-context/local/playwright/
+# visual:localwp snapshot baselines are LocalWP/dev-specific (live media table) — regenerate per machine, not committed.
+apps/prototype-wp-alt-context/tests/e2e/visual/*-snapshots/
 node_modules/
 package-lock.json
 !apps/prototype-wp-alt-context/package-lock.json

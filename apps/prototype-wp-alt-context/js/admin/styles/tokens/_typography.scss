@@ -2,4 +2,23 @@
   --acx-font-sans: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   --acx-font-size-base: 16px;
   --acx-line-height-base: 1.5;
+
+  /* Font-size ramp — snap map (raw rem -> token):
+   * 0.68 -> --acx-text-2xs
+   * 0.7, 0.75 -> --acx-text-xs
+   * 0.85, 0.875 -> --acx-text-sm
+   * 0.8, 0.9 -> --acx-text-md
+   * 0.95 -> --acx-text-lg
+   * 1 -> --acx-text-base
+   */
+  --acx-text-2xs: 0.68rem;
+  --acx-text-xs: 0.75rem;
+  --acx-text-sm: 0.875rem;
+  --acx-text-md: 0.9rem;
+  --acx-text-lg: 0.95rem;
+  --acx-text-base: 1rem;
+
+  --acx-font-weight-normal: 400;
+  --acx-font-weight-semibold: 600;
+  --acx-font-weight-bold: 700;
 }

@@ -78,5 +78,16 @@ export default defineConfig({
         trace: 'retain-on-failure',
       },
     },
+    {
+      name: 'visual',
+      dependencies: ['auth-setup'],
+      testMatch: /visual\/.*\.spec\.ts/,
+      outputDir: path.join(artifactRoot, 'visual'),
+      snapshotPathTemplate: '{testDir}/{testFileDir}/{testFileName}-snapshots/{arg}{ext}',
+      use: {
+        storageState: storageStatePath,
+        trace: 'retain-on-failure',
+      },
+    },
   ],
 });

@@ -13,6 +13,7 @@
     "e2e:localwp": "bash scripts/playwright-cli.sh test --project=smoke",
     "e2e:evidence": "bash scripts/playwright-cli.sh test --project=evidence",
     "a11y:localwp": "bash scripts/playwright-cli.sh test --project=a11y",
+    "visual:localwp": "bash scripts/playwright-cli.sh test --project=visual",
     "test:php": "composer test",
     "test:all": "npm run test && npm run test:php",
     "dev": "vite",

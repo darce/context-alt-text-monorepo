@@ -130,3 +130,6 @@ DASHBOARD.md
 
 # Local branch/worktree inventory files are ephemeral operator notes.
 local/*-worktrees.txt
+
+# Ephemeral Grok workstate bootstrap overlay (machine-local).
+/.grok/plugins/workstate-system

@@ -83,6 +83,10 @@ export default defineConfig({
       dependencies: ['auth-setup'],
       testMatch: /visual\/.*\.spec\.ts/,
       outputDir: path.join(artifactRoot, 'visual'),
+      // Visual snapshots are deterministic; never retry. The global retries=2 on CI would otherwise
+      // mask a missing baseline (attempt 1 writes an unreviewed snapshot + fails, retry reuses it + passes),
+      // silently auto-accepting whatever renders. With retries=0 a missing/changed baseline fails loudly.
+      retries: 0,
       snapshotPathTemplate: '{testDir}/{testFileDir}/{testFileName}-snapshots/{arg}{ext}',
       use: {
         storageState: storageStatePath,

@@ -40,7 +40,9 @@ export const DashboardRecentActivitySection = ({
 }: DashboardRecentActivitySectionProps): React.JSX.Element => (
   <section className="acx-dashboard__panel">
     <h2>{__('Recent Activity', 'alt-context')}</h2>
-    {historySource === 'browser_local_fallback' ? <p>{__('Showing jobs remembered in this browser only.', 'alt-context')}</p> : null}
+    {historySource === 'browser_local_fallback' ? (
+      <p>{__('Showing jobs remembered in this browser only.', 'alt-context')}</p>
+    ) : null}
     {historySource === 'unavailable' && recentActivity.length === 0 ? (
       <p>{__('Durable recent activity is unavailable right now.', 'alt-context')}</p>
     ) : recentActivity.length === 0 ? (

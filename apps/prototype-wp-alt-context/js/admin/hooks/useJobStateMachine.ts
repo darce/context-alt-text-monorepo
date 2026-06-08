@@ -4,12 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '../api/queryKeys';
 import type { ClusterResponse } from '../api/recognition';
 import { useSyncTrigger } from './useSyncTrigger';
-import {
-  derivePipelinePhase,
-  deriveLatestJobId,
-  getLatestJobByType,
-  type PipelinePhase,
-} from './jobStateMachineUtils';
+import { derivePipelinePhase, deriveLatestJobId, getLatestJobByType, type PipelinePhase } from './jobStateMachineUtils';
 import { useJobStateMachineDerivedState } from './useJobStateMachineDerivedState';
 import { useJobStateMachineEffects, type ProjectionSyncState } from './useJobStateMachineEffects';
 import { useJobStateMachineMutations } from './useJobStateMachineMutations';
@@ -79,11 +74,11 @@ export const useJobStateMachine = ({
   const batchRunId = activeBatchRunId ?? latestScanJob?.batchRunId ?? null;
 
   // Poll for history / external updates
-  const { scanStatusQuery, multiScanStatus = [], batchRunStatusQuery } = useCombinedScanStatus(
-    jobId ?? null,
-    activeJobIds,
-    batchRunId,
-  );
+  const {
+    scanStatusQuery,
+    multiScanStatus = [],
+    batchRunStatusQuery,
+  } = useCombinedScanStatus(jobId ?? null, activeJobIds, batchRunId);
 
   useEffect(() => {
     if (!jobId) {
@@ -149,8 +144,8 @@ export const useJobStateMachine = ({
     setProjectionError,
   });
 
-  const { statusText, scanProgress, clusterProgress, isScanRunning, scanStallSeconds } =
-    useJobStateMachineDerivedState({
+  const { statusText, scanProgress, clusterProgress, isScanRunning, scanStallSeconds } = useJobStateMachineDerivedState(
+    {
       currentPhase,
       activeJobIds,
       activeJobs,
@@ -164,7 +159,8 @@ export const useJobStateMachine = ({
       sseStatus,
       sseProgress,
       stalledForSeconds,
-    });
+    },
+  );
 
   const handleScan = useCallback(
     (mediaIds: number[]) => {

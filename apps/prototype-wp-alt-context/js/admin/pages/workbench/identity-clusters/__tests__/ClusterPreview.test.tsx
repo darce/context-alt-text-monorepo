@@ -30,12 +30,7 @@ const buildRepresentative = (overrides: Partial<DetectedIdentity> = {}): Detecte
 
 describe('ClusterPreview', () => {
   it('renders an explicit unavailable-image fallback when representative crop data is missing', () => {
-    render(
-      <ClusterPreview
-        representative={buildRepresentative({ media_url: null })}
-        memberCount={1}
-      />,
-    );
+    render(<ClusterPreview representative={buildRepresentative({ media_url: null })} memberCount={1} />);
 
     expect(screen.getByLabelText('Representative image unavailable')).toBeInTheDocument();
     expect(screen.getByText('No image')).toBeInTheDocument();

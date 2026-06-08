@@ -83,10 +83,7 @@ export const useRosterBulkConfirmation = ({
       : confirmAction === 'dismiss'
         ? {
             title: __('Confirm dismiss', 'alt-context'),
-            description: sprintf(
-              __('Are you sure you want to dismiss %d clusters?', 'alt-context'),
-              selection.count,
-            ),
+            description: sprintf(__('Are you sure you want to dismiss %d clusters?', 'alt-context'), selection.count),
             confirmLabel: __('Dismiss', 'alt-context'),
           }
         : null;

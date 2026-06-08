@@ -183,7 +183,9 @@ export const TopClusterCard = ({
                       role="img"
                       aria-label={unavailableImageLabel}
                     >
-                      <span className="acx-top-cluster-card__thumb-fallback-label">{__('No image', 'alt-context')}</span>
+                      <span className="acx-top-cluster-card__thumb-fallback-label">
+                        {__('No image', 'alt-context')}
+                      </span>
                     </span>
                   )}
                 </div>

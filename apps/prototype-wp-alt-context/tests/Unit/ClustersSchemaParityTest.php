@@ -55,10 +55,12 @@ class ClustersSchemaParityTest extends TestCase
         $source = $this->repositoryLayerSource();
 
         foreach (self::REPOSITORY_COLUMNS as $column) {
-            $this->assertStringContainsString(
-                $column,
+            // Word-boundary match so a substring column (e.g. `label`) is not
+            // falsely satisfied by a longer one (`suggested_label`).
+            $this->assertMatchesRegularExpression(
+                '/\b' . preg_quote($column, '/') . '\b/',
                 $source,
-                "No repository-layer file references {$column}; prune it from REPOSITORY_COLUMNS or restore the SQL"
+                "No repository-layer file references {$column} as a standalone column; prune it from REPOSITORY_COLUMNS or restore the SQL"
             );
         }
     }

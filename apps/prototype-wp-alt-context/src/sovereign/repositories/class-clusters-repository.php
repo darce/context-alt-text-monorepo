@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace AltContext\Sovereign\Repositories;
 
 require_once __DIR__ . '/trait-prepares-sql-queries.php';
-require_once __DIR__ . '/trait-resolves-persons-table-name.php';
 require_once __DIR__ . '/class-clusters-read-repository.php';
 require_once __DIR__ . '/class-cluster-curation-writer.php';
 require_once __DIR__ . '/class-cluster-projection-writer.php';
@@ -34,7 +33,6 @@ use function sprintf;
 use function trim;
 class ClustersRepository implements ClustersRepositoryInterface {
 	use PreparesSqlQueries;
-	use ResolvesPersonsTableName;
 
 	private string $table_name;
 

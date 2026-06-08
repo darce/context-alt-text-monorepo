@@ -35,6 +35,34 @@ class ClusterCurationWriterTest extends TestCase
         $this->assertStringContainsString('local_revision = local_revision + 1', $query);
     }
 
+    public function testDismissSetsUserConfirmedAndBumpsRevision(): void
+    {
+        global $wpdb;
+        $wpdb->defaultQueryResult = 1;
+
+        $result = $this->writer->dismiss('cluster-dismiss');
+
+        $this->assertSame(1, $result);
+        $query = $wpdb->queries[0];
+        $this->assertStringContainsString("curation_state = 'dismissed'", $query);
+        $this->assertStringContainsString('is_user_confirmed = 1', $query);
+        $this->assertStringContainsString('local_revision = local_revision + 1', $query);
+    }
+
+    public function testUndismissClearsUserConfirmedAndBumpsRevision(): void
+    {
+        global $wpdb;
+        $wpdb->defaultQueryResult = 1;
+
+        $result = $this->writer->undismiss('cluster-undismiss');
+
+        $this->assertSame(1, $result);
+        $query = $wpdb->queries[0];
+        $this->assertStringContainsString("curation_state = 'uncurated'", $query);
+        $this->assertStringContainsString('is_user_confirmed = 0', $query);
+        $this->assertStringContainsString('local_revision = local_revision + 1', $query);
+    }
+
     public function testResetCurationClearsLabelAndUserConfirmed(): void
     {
         global $wpdb;

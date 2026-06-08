@@ -30,7 +30,7 @@ class MemberResponseMapper {
 
 	/**
 	 * @param array<int,array<string,mixed>> $member_rows
-	 * @return array<string,array<int,array<string,mixed>>>
+	 * @return array<int,list<array<string,mixed>>> Media-id-keyed groups; PHP coerces the numeric string key to int.
 	 */
 	public function map_media_identities( array $member_rows ): array {
 		$grouped = array();

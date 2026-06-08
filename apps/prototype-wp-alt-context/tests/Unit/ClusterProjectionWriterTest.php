@@ -34,10 +34,16 @@ class ClusterProjectionWriterTest extends TestCase
 
         $this->assertSame(1, $result);
         $this->assertCount(1, $wpdb->queries);
-        $query = $wpdb->queries[0];
-        $this->assertStringContainsString('INSERT INTO wp_acx_clusters', $query);
-        $this->assertStringContainsString('is_user_confirmed', $query);
-        $this->assertStringContainsString('local_revision', $query);
+        $this->assertStringContainsString('INSERT INTO wp_acx_clusters', $wpdb->queries[0]);
+
+        // Assert the curation-marker value pairing, not just column presence:
+        // a flipped is_user_confirmed or dropped local_revision bump must fail here.
+        $row = $wpdb->tableRows['wp_acx_clusters'][0];
+        $this->assertSame(1, $row['is_user_confirmed']);
+        $this->assertSame(1, $row['local_revision']);
+        $this->assertSame('uncurated', $row['curation_state']);
+        $this->assertSame(0, $row['snapshot_version']);
+        $this->assertSame(3, $row['identity_count']);
     }
 
     public function testUpsertProjectionClusterLeavesUserConfirmedUnset(): void

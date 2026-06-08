@@ -34,14 +34,14 @@ Run the local PostgreSQL preflight in [E15-3a-localwp-proof-bundle-capture-check
 | Proof-bundle artifact bundle ID | `<pending>` |
 | Source scan run identifier | `<pending>` |
 | Seeded-media set identifier | `<pending>` |
-| E15-11 hosted transport proof reference | `<pending>` |
+| E15-11 hosted transport proof reference | `E15-11 Slice A merged on main` — multipart transport + `ObjectStore` filesystem impl (`apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php` `body_kind=multipart`; `apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze.py` multipart route) |
 
 ## Evidence Index
 
 | Artifact | Status | Notes |
 | --- | --- | --- |
-| Local PostgreSQL preflight complete | [ ] | Record whether native `localhost:5432` or Docker `localhost:55432` was used before OCI capture |
-| Local `/settings/test` probe | [ ] | Must use `http://localhost:8000` with `acx-local-dev-key`; stop on 403 before OCI capture |
+| Local PostgreSQL preflight complete | [x] | Native `localhost:5432`; `make reset` green in `apps/prototype-description-service` (`2026-06-08`) |
+| Local `/settings/test` probe | [ ] | Local backend `http://localhost:8000` started (`make serve`); LocalWP still points at `https://dev.api.altcontext.com` via option — switch to `http://localhost:8000` + `acx-local-dev-key` before local probe |
 | Local seeded-media scan | [ ] | Must pass locally before switching LocalWP constants back to OCI URL/key |
 | Production API key fingerprint recorded | [x] | `short_id=7592`, UI `****I-xM`, `key_id=3a5d9583-25f8-4dfb-a07b-4129708bd4ef` |
 | Slice 1 successful `/settings/test` probe | [x] | outcome=`connected`, 200, correlation_id `req-069ea56c-bb67-7398-8000-58009f0df015` |
@@ -78,7 +78,7 @@ Use the operator checklist in [E15-3a-localwp-proof-bundle-capture-checklist.md]
 | Production API key fingerprint | `short_id=7592` / UI `****I-xM` / `key_id=3a5d9583-25f8-4dfb-a07b-4129708bd4ef` |
 | Throwaway rate-limit test key fingerprint | `<fill during Slice 3>` |
 | Throwaway rate-limit test key id | `<fill during Slice 3>` |
-| Local PostgreSQL mode | `<native localhost:5432 / docker localhost:55432 / pending>` |
+| Local PostgreSQL mode | `native localhost:5432` (preflight `2026-06-08`) |
 | OCI environment | `prod` |
 | OCI log surface used | `cd /opt/acx-backend/prod && docker compose -f docker-compose.env.yml logs -f` |
 | Metrics surface used | `GET /metrics` with production API key |

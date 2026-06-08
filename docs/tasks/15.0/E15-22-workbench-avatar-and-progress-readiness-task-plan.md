@@ -1,8 +1,8 @@
 # E15-22. Workbench Avatar and Progress Readiness (MVP-critical demo gate)
 
 > **Task Short ID**: E15-22
-> **Status**: in_progress -- backend avatar surfaces, cluster-members envelope, frontend thumbnail/progress regressions, proof-bundle doc hooks, and the operator capture checklist shipped on `feature/e15-22`; remaining work is the seeded-media/LocalWP proof capture itself for the manual gate
-> **Target Branch**: feature/e15-22
+> **Status**: in_progress -- code slices 1-5 (backend cluster-members envelope + `thumb_url` surface, frontend thumbnail/progress regression coverage, proof-bundle doc hooks, operator capture checklist) merged to `main`; remaining work is the seeded-media/LocalWP proof capture for the manual gate, executed under E15-3a Slice 2
+> **Target Branch**: feature/e15-22 (merged to `main`)
 > **Epic**: [E15. Public Demo Launch Readiness](../../epics/v0.4.0/public-demo-launch-readiness-epic.md) Phase 4 (pre-demo workbench gate)
 > **Predecessors**: E15-1 (security baseline) merged; E15-2 (observability baseline) merged. [E15-11](./E15-11-image-upload-transport-task-plan.md) hosted multipart proof is only a predecessor for the demo-proof-bundle slice and the private-media LocalWP gate, not for the backend or frontend Workbench slices.
 > **Blocks**: [E15-3](./E15-3-wordpress-demo-provisioning-task-plan.md) completion and [E15-5](./E15-5-manual-remote-e2e-task-plan.md) live-demo sign-off.
@@ -24,7 +24,7 @@ The current Workbench can show blank cluster/entity avatars and misleading progr
 - Scope is limited to the Workbench avatar/progress surface needed for the public demo path. The broader 100-item scan-pipeline trust work in [scan-pipeline-trust-and-data-plane-canonicalization.md](../tech-debt/scan-pipeline-trust-and-data-plane-canonicalization.md) remains a v0.4.1 follow-on unless a discovered defect is unavoidable for the demo path.
 - Do not redesign the Workbench layout. Fix correctness, fallback semantics, and proof.
 - Hosted/private-media scan proof remains owned by [E15-11](./E15-11-image-upload-transport-task-plan.md); this task consumes that evidence in Slice 3 rather than blocking Slices 1 and 2 implementation on transport proof.
-- The post-demo automated regression path remains owned by [E15-6](./E15-6-e2e-smoke-gate-automation-stub.md); this task must leave a proof bundle that E15-6 can later automate.
+- The post-demo automated regression path remains owned by [E15-6](./E15-6-playwright-operator-evidence-harness-task-plan.md); this task must leave a proof bundle that E15-6 can later automate.
 
 ## Workflow Principles
 
@@ -52,8 +52,8 @@ The demo Workbench shows representative faces when the backend returns crop data
 
 ## Context Loading
 
-- Rules: `docs/agentic/rules/frontend-guidelines.md`, `docs/agentic/rules/testing-typescript.md`, `docs/agentic/rules/development-workflow.md`
-- Contracts: `packages/shared-contracts/schemas/recognition-cluster-top-unlabeled-response.schema.json`, `docs/agentic/contracts/cluster-snapshot-api.md`, `docs/agentic/contracts/recognition-clustering.md`
+- Rules: `docs/workstate/rules/frontend-guidelines.md`, `docs/workstate/rules/testing-typescript.md`, `docs/workstate/rules/development-workflow.md`
+- Contracts: `packages/shared-contracts/schemas/recognition-cluster-top-unlabeled-response.schema.json`, `docs/workstate/contracts/cluster-snapshot-api.md`, `docs/workstate/contracts/recognition-clustering.md`
 - Handoff/MCP state: task ref `E15-22`; intake findings `MAINT-WB-PROGRESS-PLAN-01..05`; planning-review findings `E15-22-PLAN-01..07`
 - Tech-debt inputs: `docs/tasks/tech-debt/scan-pipeline-trust-and-data-plane-canonicalization.md`, `docs/tasks/15.0/E15-6-playwright-operator-evidence-harness-task-plan.md`
 
@@ -84,7 +84,7 @@ Land a focused Workbench-correctness slice before public demo sign-off. The rema
 | tests | `apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useJobStateMachine.test.ts` | Add monotonic processed-count coverage at the live aggregation seam used by the Workbench UI |
 | tests | `apps/prototype-wp-alt-context/js/admin/api/__tests__/recognitionApi.test.ts` | Keep the cluster-members envelope contract pinned from the WP client side |
 | tests | `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ClusterReviewPanel.test.tsx` | Verify the review drawer consumes the canonical members envelope without falling back to `No members found.` |
-| planning/docs | `docs/tasks/15.0/E15-3a-localwp-oci-roundtrip-task-plan.md`, `docs/tasks/15.0/E15-3-wordpress-demo-provisioning-task-plan.md`, `docs/tasks/15.0/E15-6-e2e-smoke-gate-automation-stub.md` | Consume the proof bundle and regression guard outputs; `E15-5` consumes the artifact at execution time but is not a required doc-edit surface in this branch |
+| planning/docs | `docs/tasks/15.0/E15-3a-localwp-oci-roundtrip-task-plan.md`, `docs/tasks/15.0/E15-3-wordpress-demo-provisioning-task-plan.md`, `docs/tasks/15.0/E15-6-playwright-operator-evidence-harness-task-plan.md` | Consume the proof bundle and regression guard outputs; `E15-5` consumes the artifact at execution time but is not a required doc-edit surface in this branch |
 
 ## Related Files
 

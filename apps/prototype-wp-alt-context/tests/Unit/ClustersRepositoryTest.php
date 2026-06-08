@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Tests\Unit;
 
+use AltContext\Sovereign\Repositories\ClusterSnapshotMerger;
 use AltContext\Sovereign\Repositories\ClustersRepository;
 use AltContext\Tests\TestCase;
 
@@ -99,7 +100,7 @@ class ClustersRepositoryTest extends TestCase
 
     public function testMergeSnapshotForTenantChunksLargePayloadsIntoBoundedBatches(): void
     {
-        $repository = new class() extends ClustersRepository {
+        $merger = new class('wp_acx_clusters') extends ClusterSnapshotMerger {
             public array $preparedCalls = [];
             public array $batchCalls = [];
 
@@ -121,6 +122,14 @@ class ClustersRepositoryTest extends TestCase
             }
         };
 
+        $repository = new ClustersRepository(
+            'wp_acx_clusters',
+            null,
+            null,
+            null,
+            $merger
+        );
+
         $clusters = [];
         for ($index = 1; $index <= 501; $index++) {
             $clusters[] = [
@@ -131,14 +140,14 @@ class ClustersRepositoryTest extends TestCase
 
         $repository->merge_snapshot_for_tenant('tenant-batched', $clusters, 8);
 
-        $this->assertCount(1, $repository->preparedCalls);
-        $this->assertSame('tenant-batched', $repository->preparedCalls[0]['tenant_id']);
-        $this->assertCount(501, $repository->preparedCalls[0]['incoming_cluster_ids']);
-        $this->assertCount(2, $repository->batchCalls);
-        $this->assertCount(500, $repository->batchCalls[0]['clusters']);
-        $this->assertCount(1, $repository->batchCalls[1]['clusters']);
-        $this->assertSame(8, $repository->batchCalls[0]['snapshot_version']);
-        $this->assertSame(8, $repository->batchCalls[1]['snapshot_version']);
+        $this->assertCount(1, $merger->preparedCalls);
+        $this->assertSame('tenant-batched', $merger->preparedCalls[0]['tenant_id']);
+        $this->assertCount(501, $merger->preparedCalls[0]['incoming_cluster_ids']);
+        $this->assertCount(2, $merger->batchCalls);
+        $this->assertCount(500, $merger->batchCalls[0]['clusters']);
+        $this->assertCount(1, $merger->batchCalls[1]['clusters']);
+        $this->assertSame(8, $merger->batchCalls[0]['snapshot_version']);
+        $this->assertSame(8, $merger->batchCalls[1]['snapshot_version']);
     }
 
     public function testListForTenantReturnsRowsFromDatabaseLayer(): void

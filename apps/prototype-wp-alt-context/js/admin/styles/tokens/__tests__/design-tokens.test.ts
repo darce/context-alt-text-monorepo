@@ -32,11 +32,7 @@ const REQUIRED_FONT_WEIGHT_TOKENS = [
   '--acx-font-weight-bold',
 ] as const;
 
-const REQUIRED_COLOR_TOKENS = [
-  '--acx-color-info-border',
-  '--acx-color-info-surface',
-  '--acx-color-primary-subtle',
-] as const;
+const REQUIRED_COLOR_TOKENS = ['--acx-color-info-border', '--acx-color-primary-subtle'] as const;
 
 const REQUIRED_SHADOW_TOKENS = ['--acx-shadow-card'] as const;
 

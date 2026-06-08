@@ -635,12 +635,11 @@ lint-hoisted-paths:
 #   make integrity-watch ARGS="path1 path2" # watch explicit paths
 integrity-watch:
 	@./scripts/integrity-watcher.sh $(ARGS)
-# >>> WORKSTATE_LIFECYCLE_INCLUDE >>>
-# context-alt-text-monorepo is a thin consumer of the canonical workstate
-# lifecycle/workflows/plans/compaction/plugins surfaces hoisted under
-# Makefile.d/. The repo-local duplicates of these targets were removed (see
-# MAINT-workstate-migration-20260530); canonical fragments own them now.
-# LIFECYCLE_FORMATTER wires canonical `make format` to this repo's formatter.
+# LIFECYCLE_FORMATTER: monorepo formatter wired to the branch-lifecycle
+# post-slice `make format` step (Makefile.d/lifecycle.mk defaults it to a loud
+# no-op via `?=`). Kept OUTSIDE the bootstrap-managed markers below so a future
+# overlay migration cannot strip it again (regressed during the v0.1.24 upgrade).
 LIFECYCLE_FORMATTER = $(MAKE) format-all
+# >>> WORKSTATE_BOOTSTRAP LIFECYCLE INCLUDE >>>
 -include Makefile.d/*.mk
-# <<< WORKSTATE_LIFECYCLE_INCLUDE <<<
+# <<< WORKSTATE_BOOTSTRAP LIFECYCLE INCLUDE <<<

@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/hooks/guard-worktree-drift.sh\""
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/_run_guard.py\" \"$CLAUDE_PROJECT_DIR/scripts/hooks/guard-worktree-drift.sh\""
           }
         ]
       },
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/hooks/guard-main-branch.sh\""
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/_run_guard.py\" \"$CLAUDE_PROJECT_DIR/scripts/hooks/guard-main-branch.sh\""
           }
         ]
       },
@@ -24,7 +24,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/guard-bash-main-branch.py\""
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/_run_guard.py\" \"$CLAUDE_PROJECT_DIR/scripts/hooks/guard-bash-main-branch.py\""
           }
         ]
       },
@@ -33,7 +33,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/guard-task-plan-findings.py\""
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/_run_guard.py\" \"$CLAUDE_PROJECT_DIR/scripts/hooks/guard-task-plan-findings.py\""
           }
         ]
       },
@@ -42,7 +42,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/guard-rationale-size.py\""
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/_run_guard.py\" \"$CLAUDE_PROJECT_DIR/scripts/hooks/guard-rationale-size.py\""
           }
         ]
       },
@@ -51,7 +51,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/validate-mcp-dict-params.py\""
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/_run_guard.py\" \"$CLAUDE_PROJECT_DIR/scripts/hooks/validate-mcp-dict-params.py\""
           }
         ]
       }
@@ -62,7 +62,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/record-file-touch.py\""
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/_run_guard.py\" \"$CLAUDE_PROJECT_DIR/scripts/hooks/record-file-touch.py\""
           }
         ]
       },
@@ -71,7 +71,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/ace-detect.py\""
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/_run_guard.py\" \"$CLAUDE_PROJECT_DIR/scripts/hooks/ace-detect.py\""
           }
         ]
       },
@@ -80,7 +80,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/slim-handoff-response.py\""
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/_run_guard.py\" \"$CLAUDE_PROJECT_DIR/scripts/hooks/slim-handoff-response.py\""
           }
         ]
       },
@@ -89,7 +89,16 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/filter-test-output.py\""
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/_run_guard.py\" \"$CLAUDE_PROJECT_DIR/scripts/hooks/filter-test-output.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/_run_guard.py\" \"$CLAUDE_PROJECT_DIR/scripts/hooks/capture-agent-errors.py\""
           }
         ]
       }
@@ -99,7 +108,15 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/advise-worktree-cd.py\""
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/_run_guard.py\" \"$CLAUDE_PROJECT_DIR/scripts/hooks/advise-worktree-cd.py\""
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/_run_guard.py\" \"$CLAUDE_PROJECT_DIR/scripts/hooks/coherence-self-check.py\""
           }
         ]
       }
@@ -109,7 +126,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/advise-worktree-cd.py\""
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/_run_guard.py\" \"$CLAUDE_PROJECT_DIR/scripts/hooks/advise-worktree-cd.py\""
           }
         ]
       }

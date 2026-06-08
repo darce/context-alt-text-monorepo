@@ -1,17 +1,19 @@
 {
   "schema_version": 2,
   "remote_url": "https://github.com/darce/workstate.git",
-  "remote_ref": "v0.1.23",
-  "remote_sha": "83065f197c10353420035859f993ab827e359258",
+  "remote_ref": "v0.1.24",
+  "remote_sha": "fca5bad8004f850c7fd36d9fa1c9e7e4b0cd3f34",
   "profile": "all",
   "surfaces": [
     {
       "path": ".github/hooks",
-      "source": "shared"
+      "source": "shared",
+      "provenance_key": "clone:fca5bad8004f850c7fd36d9fa1c9e7e4b0cd3f34"
     },
     {
       "path": "scripts/hooks",
-      "source": "shared"
+      "source": "shared",
+      "provenance_key": "clone:fca5bad8004f850c7fd36d9fa1c9e7e4b0cd3f34"
     },
     {
       "path": "docs/workstate/contracts",
@@ -31,7 +33,7 @@
     },
     {
       "path": "Makefile.d/plugins.mk",
-      "source": "shared"
+      "source": "local"
     },
     {
       "path": "Makefile.d/workflows.mk",
@@ -40,6 +42,10 @@
     {
       "path": "scripts/workstate/git-plan-cat.sh",
       "source": "shared"
+    },
+    {
+      "path": ".codex/hooks.json",
+      "source": "local"
     },
     {
       "path": ".github/prompts",
@@ -54,11 +60,23 @@
       "source": "generated"
     },
     {
+      "path": ".grok/plugins/workstate-system",
+      "source": "generated"
+    },
+    {
       "path": "Makefile.d/lifecycle.mk",
       "source": "lifecycle"
     },
     {
       "path": "scripts/workstate/lifecycle",
+      "source": "lifecycle"
+    },
+    {
+      "path": "Makefile.d/update.mk",
+      "source": "lifecycle"
+    },
+    {
+      "path": "scripts/workstate/update.sh",
       "source": "lifecycle"
     }
   ],
@@ -76,6 +94,11 @@
       "action": "unchanged"
     },
     {
+      "path": ".grok/plugins/workstate-system",
+      "action": "created",
+      "kind": "grok_plugin"
+    },
+    {
       "path": ".mcp.json",
       "action": "merged"
     },
@@ -88,8 +111,23 @@
       "action": "merged"
     },
     {
+      "path": ".codex/config.toml",
+      "action": "applied",
+      "kind": "codex_plugin_activation"
+    },
+    {
+      "path": ".grok/plugins/workstate-system",
+      "action": "applied",
+      "kind": "grok_plugin_activation"
+    },
+    {
+      "path": ".claude/settings.json",
+      "action": "applied",
+      "kind": "claude_plugin_activation"
+    },
+    {
       "path": "Makefile",
-      "action": "appended"
+      "action": "migrated"
     },
     {
       "path": "core.hooksPath",
@@ -101,8 +139,39 @@
     }
   ],
   "mcp_servers": [
+    "context7",
     "workstate-handoff-mcp",
     "workstate-orchestrator-mcp"
   ],
-  "plugin_overrides_path": "workstate-overrides/workstate-system"
+  "plugin_overrides_path": "workstate-overrides/workstate-system",
+  "install_steps": [
+    {
+      "step": "presync_local_mcp",
+      "status": "ok"
+    },
+    {
+      "step": "prewarm_uvx_mcp",
+      "status": "ok"
+    },
+    {
+      "step": "config_claude",
+      "status": "ok"
+    },
+    {
+      "step": "config_vscode",
+      "status": "ok"
+    },
+    {
+      "step": "config_codex",
+      "status": "ok"
+    },
+    {
+      "step": "finalize_manifest",
+      "status": "ok"
+    }
+  ],
+  "prewarm_refs": [
+    "mcp-workstate-handoff@0.12.3",
+    "mcp-workstate-orchestrator@0.6.0"
+  ]
 }

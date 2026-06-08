@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "plugin": "workstate-system",
-  "base_remote_sha": "83065f197c10353420035859f993ab827e359258",
+  "base_remote_sha": "fca5bad8004f850c7fd36d9fa1c9e7e4b0cd3f34",
   "components": [
     {
       "component_kind": "skill",
@@ -11,6 +11,26 @@
       "base_path": "skills/branch-review/SKILL.base.md",
       "patch_path": null,
       "upstream_digest": "sha256:f2ed63bd8819b816f3f5f57c3a1b130594c7cfe7d791e2233a354f484d3abfa8",
+      "last_accept_upstream": null
+    },
+    {
+      "component_kind": "skill",
+      "name": "refactor-description-service",
+      "mode": "add",
+      "local_path": "skills/refactor-description-service/SKILL.md",
+      "base_path": null,
+      "patch_path": null,
+      "upstream_digest": null,
+      "last_accept_upstream": null
+    },
+    {
+      "component_kind": "skill",
+      "name": "refactor-wp-alt-context",
+      "mode": "add",
+      "local_path": "skills/refactor-wp-alt-context/SKILL.md",
+      "base_path": null,
+      "patch_path": null,
+      "upstream_digest": null,
       "last_accept_upstream": null
     }
   ]

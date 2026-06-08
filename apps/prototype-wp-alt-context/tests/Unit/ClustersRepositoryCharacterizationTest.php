@@ -11,11 +11,12 @@ use AltContext\Tests\TestCase;
  * Characterization safety net for repository methods not covered by
  * ClustersRepositoryTest / ClustersRepositoryMutationTest.
  *
- * Collaborator boundary matrix (Slice 1 lock; extraction status as of slices 1-3):
- * - ClustersReadRepository (extracted): has_projection_rows_for_tenant, get_curated_clusters_for_tenant
- * - ClusterCurationWriter (extracted): update_identity_count, update_representative_state, reset_curation
- * - ClusterProjectionWriter (extracted): create_local_cluster, upsert_projection_cluster, update_projection_cluster
- * - delete_cluster_with_members: still facade-resident; ClusterDeletionService extraction deferred to slice 4
+ * Collaborator boundary matrix (Slice 1 lock):
+ * - ClustersReadRepository: has_projection_rows_for_tenant, get_curated_clusters_for_tenant
+ * - ClusterCurationWriter: update_identity_count, update_representative_state, reset_curation
+ * - ClusterProjectionWriter: create_local_cluster, upsert_projection_cluster, update_projection_cluster
+ * - ClusterSnapshotMerger: merge_snapshot_* (facade characterization via ClustersRepositoryTest)
+ * - ClusterDeletionService: delete_cluster_with_members
  *
  * @covers \AltContext\Sovereign\Repositories\ClustersRepository
  */

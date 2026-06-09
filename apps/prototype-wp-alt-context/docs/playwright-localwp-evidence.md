@@ -90,8 +90,8 @@ That screenshot proves the browser can reach WordPress admin. It does not prove 
 
 - Bootstrap auth once.
 - Run the headed evidence project with `ACX_PLAYWRIGHT_TASK_REF=E15-22`.
-- Capture the Workbench surfaces that show truthful avatar/progress rendering for the accepted demo scenario.
-- Until deterministic seed/reset helpers and a Workbench-specific evidence spec land, the operator still owns selecting the seeded-media run, starting the scan, confirming the representative `thumb_url` or fallback state, and copying redacted screenshots/transcripts into the proof bundle.
+- The committed `tests/e2e/evidence/workbench-evidence.spec.ts` captures pre-scan, mid-run progress, completion, and job-timeline screenshots on `http://localhost:10010/wp-admin/admin.php?page=alt-context-workbench`.
+- Top-cluster avatar cards may still require a manual headed pass or review-drawer open when the naming queue has no rendered representatives; copy those frames into the same `local/playwright/E15-22/` bundle.
 
 ### E15-5 live-demo roundtrip placeholder
 

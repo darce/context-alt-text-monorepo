@@ -205,7 +205,7 @@ Proof:
 - [x] `RepresentativeResponse` and `ClusterMemberResponse` carry an admin-reachable `thumb_url` (route or signed URL), populated from the existing tenant-scoped image store.
 - [x] `FaceThumbnail` and the top-cluster/cluster-preview resolvers prefer `thumb_url`, falling back to `media_url + bbox` only when `thumb_url` is null.
 - [x] Pytest + Vitest coverage proves the field shape and preference order.
-- [ ] A LocalWP transcript shows seeded-media thumbs loading without `acx-face-thumbnail--error` and records the reusable proof-bundle artifact for downstream demo gates.
+- [ ] A LocalWP transcript shows seeded-media thumbs loading without `acx-face-thumbnail--error` and records the reusable proof-bundle artifact for downstream demo gates. *Progress/timeline proof captured via Playwright `workbench-evidence.spec.ts` (`E15-22-LWP-20260608-01`); avatar card capture still pending when naming queue renders representatives.*
 
 ### Checklist for Slice 3: Representative Avatar Truthfulness (frontend)
 

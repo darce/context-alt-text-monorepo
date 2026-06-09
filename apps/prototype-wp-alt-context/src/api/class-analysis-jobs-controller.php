@@ -13,11 +13,6 @@ require_once __DIR__ . '/services/class-analyze-media-service.php';
 require_once __DIR__ . '/../sovereign/repositories/interface-sync-state-repository.php';
 require_once __DIR__ . '/../sovereign/repositories/class-batch-run-repository.php';
 require_once __DIR__ . '/../sovereign/repositories/class-sync-state-repository.php';
-require_once __DIR__ . '/../sovereign/repositories/class-clusters-repository.php';
-require_once __DIR__ . '/../sovereign/repositories/class-identity-members-repository.php';
-require_once __DIR__ . '/../sovereign/sync/interface-snapshot-projector.php';
-require_once __DIR__ . '/../sovereign/sync/class-snapshot-client.php';
-require_once __DIR__ . '/../sovereign/sync/class-snapshot-projector.php';
 require_once __DIR__ . '/../sovereign/sync/interface-sync-pull-job.php';
 require_once __DIR__ . '/../sovereign/sync/class-sync-pull-job.php';
 require_once __DIR__ . '/../sovereign/sync/class-sync-pull-result.php';
@@ -79,7 +74,6 @@ class AnalysisJobsController extends AbstractRecognitionProxyController implemen
 			$this->batch_run_service,
 			$this->projection_sync_service
 		);
-		$this->batch_run_service->wire_job_status_service( $this->job_status_service );
 		$this->job_progress_stream_service = $job_progress_stream_service ?? new JobProgressStreamService(
 			$this,
 			$this->job_status_service,

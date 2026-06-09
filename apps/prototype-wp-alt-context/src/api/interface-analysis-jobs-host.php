@@ -20,7 +20,8 @@ interface AnalysisJobsHostInterface {
 		array $body = array(),
 		array $query = array(),
 		string $request_class = 'auto',
-		string $body_kind = 'json'
+		string $body_kind = 'json',
+		?int $max_body_bytes = null
 	): WP_REST_Response|WP_Error;
 
 	public function is_proxy_unavailable( WP_REST_Response|WP_Error $response ): bool;

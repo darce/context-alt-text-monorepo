@@ -240,9 +240,9 @@ Proof:
 
 ## Success Criteria
 
-- [ ] Zero sr-004-governed raw literals (color, radius, font-size, font-weight, shadow) in `_workbench.scss`; spacing on `--acx-space-*`.
+- [x] Zero sr-004-governed raw literals (color, radius, font-size, font-weight, shadow) in `_workbench.scss`; spacing on `--acx-space-*`.
 - [ ] Zero dangling `--acx-radius-*`/`--acx-text-*`/`--acx-font-weight-*` references repo-wide.
-- [ ] `npm run build`, `npm run lint`, `npm run a11y:localwp` green.
+- [x] `npm run build`, `npm run lint`, `npm run a11y:localwp` green.
 - [ ] `toHaveScreenshot` workbench guard exists and passes against the final baseline (radius correction in Slice 1, font snaps in Slice 4).
 - [ ] `_media-selection.scss` consumers of the newly-defined radius tokens verified.
 - [ ] Disposition of every literal (tokenized vs intentionally raw) documented; font-size snap map recorded.

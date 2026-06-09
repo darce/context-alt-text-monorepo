@@ -53,7 +53,10 @@ export const DashboardSyncHealthSection = ({
           <div className="acx-dashboard__mirror-warning" role="status">
             <p>
               {sprintf(
-                __('Mirror is out of sync with the backend — %1$d stale clusters, %2$d failed sync events.', 'alt-context'),
+                __(
+                  'Mirror is out of sync with the backend — %1$d stale clusters, %2$d failed sync events.',
+                  'alt-context',
+                ),
                 localClusterCount,
                 failedReplayCount,
               )}
@@ -105,8 +108,12 @@ export const DashboardSyncHealthSection = ({
             )}
           </p>
         ) : null}
-        {conflictCount > 0 && lastConflictDate ? <p>{sprintf(__('Last conflict: %s', 'alt-context'), lastConflictDate)}</p> : null}
-        {failedReplayCount > 0 && lastFailureDate ? <p>{sprintf(__('Last failure: %s', 'alt-context'), lastFailureDate)}</p> : null}
+        {conflictCount > 0 && lastConflictDate ? (
+          <p>{sprintf(__('Last conflict: %s', 'alt-context'), lastConflictDate)}</p>
+        ) : null}
+        {failedReplayCount > 0 && lastFailureDate ? (
+          <p>{sprintf(__('Last failure: %s', 'alt-context'), lastFailureDate)}</p>
+        ) : null}
         <div className="acx-dashboard__actions">
           <a href="#/workbench?tab=scan" className="acx-dashboard__action-card">
             <h3>{__('Open Workbench', 'alt-context')}</h3>

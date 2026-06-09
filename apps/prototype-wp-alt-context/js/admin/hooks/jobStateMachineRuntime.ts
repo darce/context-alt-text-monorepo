@@ -7,10 +7,7 @@ import type { JobStatus } from './useJobProgressStream';
  * count. The guard is per-run; callers must reset `prev` to null when the run
  * identity changes (new scan/batch-run id).
  */
-export const enforceMonotonicProgress = (
-  prev: JobProgress | null,
-  next: JobProgress | null,
-): JobProgress | null => {
+export const enforceMonotonicProgress = (prev: JobProgress | null, next: JobProgress | null): JobProgress | null => {
   if (!next) {
     return prev ?? next;
   }

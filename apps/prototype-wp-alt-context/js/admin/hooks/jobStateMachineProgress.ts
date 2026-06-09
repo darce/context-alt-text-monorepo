@@ -107,10 +107,7 @@ const buildCompletedScanSnapshot = (
   latestScanJob: PersistedJob | null,
   fallbackProgress: JobProgress | null | undefined,
 ): JobProgress | null => {
-  if (
-    fallbackProgress &&
-    (fallbackProgress.phase === 'complete' || fallbackProgress.phase === 'awaiting_projection')
-  ) {
+  if (fallbackProgress && (fallbackProgress.phase === 'complete' || fallbackProgress.phase === 'awaiting_projection')) {
     return fallbackProgress;
   }
 

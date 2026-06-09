@@ -23,7 +23,19 @@
   --acx-color-warning-pill-bg: #fef3c7;
   --acx-color-warning-pill-text: #92400e;
   --acx-color-frame-muted: #e0e0e0;
+  --acx-color-info-border: #3b82f6;
+  --acx-color-primary-subtle: #ccdfff;
+  // REFA-3: these were referenced across components (workbench, cluster-grid, avatar,
+  // face-thumbnail, orientation-card, toast) but defined nowhere, so the declarations
+  // were dropped at render (secondary text/inherited, primary borders/currentColor,
+  // placeholder/transparent). Aliased to the nearest semantic sibling so every site
+  // resolves to a defined value; distinct hexes can be split out later if the design
+  // wants secondary/muted or primary/accent to diverge.
+  --acx-color-primary: var(--acx-color-accent);
+  --acx-color-text-secondary: var(--acx-color-text-muted);
+  --acx-color-data-placeholder: var(--acx-color-frame-muted);
   --acx-color-overlay: rgb(15 23 42 / 45%);
   --acx-shadow-dialog-primary: 0 20px 25px -5px rgb(15 23 42 / 20%);
   --acx-shadow-dialog-secondary: 0 10px 10px -5px rgb(15 23 42 / 10%);
+  --acx-shadow-card: 0 4px 12px rgb(0 0 0 / 10%);
 }

@@ -379,14 +379,14 @@ class AnalysisJobsControllerTest extends TestCase
         $jobId = '44444444-4444-4444-4444-444444444444';
 
         $ownerController = new class() extends AnalysisJobsController {
-            protected function get_tenant_id(): string
+            public function get_tenant_id(): string
             {
                 return 'tenant-a';
             }
         };
 
         $otherTenantController = new class() extends AnalysisJobsController {
-            protected function get_tenant_id(): string
+            public function get_tenant_id(): string
             {
                 return 'tenant-b';
             }

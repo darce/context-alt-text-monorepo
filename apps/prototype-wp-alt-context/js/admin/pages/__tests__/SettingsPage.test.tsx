@@ -37,12 +37,17 @@ vi.mock('../../api/settingsApi', async () => {
   };
 });
 
+const { mockResetConfigCache } = vi.hoisted(() => ({
+  mockResetConfigCache: vi.fn(),
+}));
+
 vi.mock('../../api/config', () => ({
   getEndpoint: (key: string) => `/acx/v1/${key}`,
   getConfig: () => ({
     nonce: 'test-nonce',
     endpoints: { settings: '/acx/v1/settings', settingsTest: '/acx/v1/settings/test' },
   }),
+  resetConfigCache: mockResetConfigCache,
 }));
 
 vi.mock('@tanstack/react-query', async () => {
@@ -172,6 +177,23 @@ describe('SettingsPage', () => {
 
     expect(screen.getByLabelText('Service API URL')).toHaveAttribute('readOnly');
     expect(screen.getByLabelText('API Key')).toHaveAttribute('readOnly');
+    expect(screen.getByRole('button', { name: 'Save Settings' })).toBeEnabled();
+  });
+
+  it('disables Save when every routing field is read-only', () => {
+    mockUseQuery.mockReturnValue(
+      createMockQuery({
+        data: {
+          ...defaultSettings,
+          recognition_source_source: 'constant' as const,
+          url_source: 'constant' as const,
+          local_url_source: 'constant' as const,
+          key_source: 'constant' as const,
+        },
+      }),
+    );
+    render(<SettingsPage />);
+
     expect(screen.getByRole('button', { name: 'Save Settings' })).toBeDisabled();
   });
 
@@ -354,5 +376,42 @@ describe('SettingsPage', () => {
       const banner = bannerFor('network_error');
       expect(banner).toHaveTextContent('Could not reach the recognition service.');
     });
+
+    it('uses local network_error copy when the mutation rejects in local mode', () => {
+      mockUseQuery.mockReturnValue(
+        createMockQuery({
+          data: {
+            ...defaultSettings,
+            effective_target_mode: 'local',
+            effective_target_url: 'http://localhost:8000',
+            recognition_source: 'local',
+          },
+        }),
+      );
+      render(<SettingsPage />);
+      act(() => {
+        capturedTestOptions!.onError!(new Error('connection refused'));
+      });
+      const banner = bannerFor('network_error');
+      expect(banner).toHaveTextContent('Could not reach the local recognition service.');
+      expect(banner).toHaveTextContent('make serve');
+    });
+  });
+
+  it('keeps Save enabled when only local_url is editable', () => {
+    mockUseQuery.mockReturnValue(
+      createMockQuery({
+        data: {
+          ...defaultSettings,
+          recognition_source_source: 'constant',
+          url_source: 'constant',
+          key_source: 'constant',
+          local_url_source: 'option',
+        },
+      }),
+    );
+    render(<SettingsPage />);
+
+    expect(screen.getByRole('button', { name: 'Save Settings' })).toBeEnabled();
   });
 });

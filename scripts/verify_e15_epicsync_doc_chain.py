@@ -4,17 +4,11 @@
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
 
 E15_3_PLAN = Path("docs/tasks/15.0/E15-3-wordpress-demo-provisioning-task-plan.md")
 SELF_HOSTING_EPIC = Path("docs/epics/v0.3.1/self-hosting-epic.md")
 LAUNCH_EPIC = Path("docs/epics/v0.4.0/public-demo-launch-readiness-epic.md")
-
-
-def _fail(message: str) -> int:
-    print(message)
-    return 1
 
 
 def verify_e15_3_predecessors() -> list[str]:
@@ -42,9 +36,8 @@ def verify_self_hosting_scope_split() -> list[str]:
         if not re.search(pattern, text):
             errors.append(f"self-hosting-epic.md: {label} not satisfied")
 
-    if "delegated to E15-5**" in text and "delegated to E15-5a" not in text.split("Configure budget alerts")[1].split("\n", 1)[0]:
-        if "delegated to E15-5" in text and "delegated to E15-5a" not in text:
-            errors.append("self-hosting-epic.md: stale E15-5 hygiene delegation remains")
+    if "delegated to E15-5" in text and "delegated to E15-5a" not in text:
+        errors.append("self-hosting-epic.md: stale E15-5 hygiene delegation remains")
 
     stale_hygiene = re.findall(
         r"(budget alerts|Hetzner CX22 fallback).*\*\*E15-5\*\*(?!a)",

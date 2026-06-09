@@ -8,6 +8,22 @@ use AltContext\Sovereign\Repositories\IdentityMembersRepository;
 use AltContext\Tests\TestCase;
 
 /**
+ * Characterization safety net for identity-members repository methods.
+ *
+ * Collaborator boundary matrix (Slice 1 lock):
+ * - IdentityMembersReadRepository: list_for_cluster*, has_projection_rows_for_tenant,
+ *   count_for_cluster, find_by_identity_uuid, get_curated_members_for_tenant
+ * - IdentityMemberCurationWriter: mark_as_curated, reassign_to_cluster,
+ *   reassign_cluster_members, reset_curation, accept_machine_cluster_assignment
+ * - IdentityMemberSnapshotMerger: merge_snapshot_for_tenant, assign_to_cluster_for_projection,
+ *   delete_stale_non_curated_rows, delete_orphan_rows
+ * - IdentityMemberDeletionService: delete_member (YAGNI — deletes owned by merger per matrix)
+ * - MemberConflictRecorder: is_member_cluster_conflict,
+ *   record_member_cluster_reassignment_conflict, record_missing_curated_member_conflicts
+ * - MemberRowNormalizer: 7 normalize/sanitize privates shared across read + write paths
+ *
+ * Deferred perf (debt #11, unchanged): merge per-member loop + delete_orphan_rows LEFT JOIN.
+ *
  * @covers \AltContext\Sovereign\Repositories\IdentityMembersRepository
  */
 class IdentityMembersRepositoryTest extends TestCase
@@ -262,6 +278,186 @@ class IdentityMembersRepositoryTest extends TestCase
         $this->assertStringContainsString('INSERT INTO `wp_acx_sync_conflicts`', $sql);
         $this->assertStringContainsString("'member_cluster_reassignment'", $sql);
         $this->assertStringNotContainsString("SELECT 'identity-curated', 'cluster-remote', 90", $sql);
+    }
+
+    public function testMergeSnapshotPerMemberLoopIssuesOneInsertPerMember(): void
+    {
+        $this->repository->merge_snapshot_for_tenant(
+            'tenant-n-plus-one',
+            [
+                [
+                    'identity_uuid' => 'identity-loop-1',
+                    'cluster_uuid' => 'cluster-loop',
+                    'attachment_id' => 1,
+                ],
+                [
+                    'identity_uuid' => 'identity-loop-2',
+                    'cluster_uuid' => 'cluster-loop',
+                    'attachment_id' => 2,
+                ],
+            ],
+            12
+        );
+
+        global $wpdb;
+        $insertCount = 0;
+        foreach ($wpdb->queries as $query) {
+            if (str_contains($query, 'INSERT INTO `wp_acx_identity_members`')) {
+                ++$insertCount;
+            }
+        }
+
+        $this->assertSame(2, $insertCount, 'merge_snapshot_for_tenant issues one INSERT per member (deferred perf debt #11)');
+    }
+
+    public function testDeleteOrphanRowsUsesLeftJoinScan(): void
+    {
+        $this->repository->merge_snapshot_for_tenant('tenant-orphan-scan', [], 13);
+
+        global $wpdb;
+        $orphanDelete = $this->findQueryContaining($wpdb->queries, 'WHERE c.cluster_uuid IS NULL');
+
+        $this->assertStringContainsString('LEFT JOIN `wp_acx_clusters` c ON c.cluster_uuid = m.cluster_uuid', $orphanDelete);
+        $this->assertStringContainsString('AND m.is_curated = 0', $orphanDelete);
+    }
+
+    public function testListForClusterUuidsGroupsRowsByClusterAndUsesWindowLimit(): void
+    {
+        global $wpdb;
+        $wpdb->mockResults = [
+            [
+                'identity_uuid' => 'id-a',
+                'cluster_uuid' => 'cluster-a',
+                'attachment_id' => 10,
+                'rn' => 1,
+            ],
+            [
+                'identity_uuid' => 'id-b',
+                'cluster_uuid' => 'cluster-b',
+                'attachment_id' => 11,
+                'rn' => 1,
+            ],
+        ];
+
+        $rows = $this->repository->list_for_cluster_uuids(['cluster-a', 'cluster-b'], 5);
+
+        $this->assertArrayHasKey('cluster-a', $rows);
+        $this->assertArrayHasKey('cluster-b', $rows);
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString('ROW_NUMBER() OVER (PARTITION BY m.cluster_uuid', $sql);
+        $this->assertStringContainsString("'cluster-a', 'cluster-b'", $sql);
+    }
+
+    public function testHasProjectionRowsForTenantUsesExistsProbe(): void
+    {
+        global $wpdb;
+        $wpdb->mockVar = '1';
+
+        $this->assertTrue($this->repository->has_projection_rows_for_tenant('tenant-probe'));
+
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString('SELECT 1', $sql);
+        $this->assertStringContainsString('tenant-probe', $sql);
+        $this->assertStringContainsString('INNER JOIN `wp_acx_clusters` c ON c.cluster_uuid = m.cluster_uuid', $sql);
+    }
+
+    public function testReassignToClusterMarksCuratedAndUpdatesCluster(): void
+    {
+        $this->repository->reassign_to_cluster('identity-reassign', 'cluster-target');
+
+        global $wpdb;
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString('UPDATE `wp_acx_identity_members` SET cluster_uuid', $sql);
+        $this->assertStringContainsString('is_curated = 1', $sql);
+        $this->assertStringContainsString("'identity-reassign'", $sql);
+        $this->assertStringContainsString("'cluster-target'", $sql);
+    }
+
+    public function testAssignToClusterForProjectionUsesGreatestProjectionVersion(): void
+    {
+        $this->repository->assign_to_cluster_for_projection('identity-proj', 'cluster-proj', 42);
+
+        global $wpdb;
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString('projection_version = GREATEST(projection_version, 42)', $sql);
+        $this->assertStringContainsString("'cluster-proj'", $sql);
+    }
+
+    public function testReassignClusterMembersBulkUpdatesSourceCluster(): void
+    {
+        $this->repository->reassign_cluster_members('cluster-source', 'cluster-target');
+
+        global $wpdb;
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString('UPDATE `wp_acx_identity_members` SET cluster_uuid', $sql);
+        $this->assertStringContainsString('WHERE cluster_uuid', $sql);
+        $this->assertStringContainsString("'cluster-source'", $sql);
+        $this->assertStringContainsString("'cluster-target'", $sql);
+    }
+
+    public function testCountForClusterReturnsAggregate(): void
+    {
+        global $wpdb;
+        $wpdb->mockVar = '3';
+
+        $count = $this->repository->count_for_cluster('cluster-count');
+
+        $this->assertSame(3, $count);
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString('SELECT COUNT(*) FROM `wp_acx_identity_members`', $sql);
+        $this->assertStringContainsString("'cluster-count'", $sql);
+    }
+
+    public function testFindByIdentityUuidReturnsSingleRow(): void
+    {
+        global $wpdb;
+        $wpdb->mockRow = [
+            'identity_uuid' => 'identity-find',
+            'cluster_uuid' => 'cluster-find',
+        ];
+
+        $row = $this->repository->find_by_identity_uuid('identity-find');
+
+        $this->assertIsArray($row);
+        $this->assertSame('identity-find', $row['identity_uuid']);
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString('WHERE identity_uuid', $sql);
+        $this->assertStringContainsString('LIMIT 1', $sql);
+    }
+
+    public function testResetCurationClearsFlagWithinTenant(): void
+    {
+        $this->repository->reset_curation('identity-reset', 'tenant-reset');
+
+        global $wpdb;
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString('SET m.is_curated = 0', $sql);
+        $this->assertStringContainsString("'identity-reset'", $sql);
+        $this->assertStringContainsString("'tenant-reset'", $sql);
+    }
+
+    public function testDeleteMemberRemovesTenantScopedRow(): void
+    {
+        $this->repository->delete_member('identity-delete', 'tenant-delete');
+
+        global $wpdb;
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString('DELETE m FROM `wp_acx_identity_members` m', $sql);
+        $this->assertStringContainsString("'identity-delete'", $sql);
+        $this->assertStringContainsString("'tenant-delete'", $sql);
+    }
+
+    public function testAcceptMachineClusterAssignmentClearsCuration(): void
+    {
+        $this->repository->accept_machine_cluster_assignment('identity-accept', 'cluster-accept', 'tenant-accept');
+
+        global $wpdb;
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString('SET m.cluster_uuid', $sql);
+        $this->assertStringContainsString('m.is_curated = 0', $sql);
+        $this->assertStringContainsString("'identity-accept'", $sql);
+        $this->assertStringContainsString("'cluster-accept'", $sql);
+        $this->assertStringContainsString("'tenant-accept'", $sql);
     }
 
     public function testMissingCuratedMemberRecordsConflictBeforeCleanup(): void

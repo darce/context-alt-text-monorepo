@@ -56,10 +56,7 @@ const renderBanner = (result: TestConnectionResponse): BannerCopy => {
               'Scans route to this endpoint while recognition source is Local. Start the scan worker locally for processing.',
               'alt-context',
             )
-          : __(
-              'The plugin authenticated against the recognition service and the pool is healthy.',
-              'alt-context',
-            ),
+          : __('The plugin authenticated against the recognition service and the pool is healthy.', 'alt-context'),
       };
     case TestConnectionOutcome.NOT_CONFIGURED:
       return {
@@ -242,9 +239,7 @@ export const SettingsPage = (): React.JSX.Element => {
     },
     onError: () => {
       const probeMode: TestConnectionProbeMode =
-        settingsQuery.data?.effective_target_mode === RecognitionSource.LOCAL
-          ? 'local_liveness'
-          : 'service_auth';
+        settingsQuery.data?.effective_target_mode === RecognitionSource.LOCAL ? 'local_liveness' : 'service_auth';
       setTestResult({ outcome: TestConnectionOutcome.NETWORK_ERROR, probe_mode: probeMode });
     },
   });
@@ -307,17 +302,14 @@ export const SettingsPage = (): React.JSX.Element => {
   const localUrlReadOnly = isReadOnly(data.local_url_source);
   const keyReadOnly = isReadOnly(data.key_source);
   const hasUnsavedRoutingChanges =
-    recognitionSource !== data.recognition_source ||
-    localUrl !== data.local_url ||
-    url !== data.url;
+    recognitionSource !== data.recognition_source || localUrl !== data.local_url || url !== data.url;
 
   const activeModeLabel =
     data.effective_target_mode === RecognitionSource.LOCAL
       ? __('Local development service', 'alt-context')
       : __('Hosted recognition service', 'alt-context');
 
-  const canTestActiveTarget =
-    data.effective_target_mode === RecognitionSource.LOCAL || url.trim() !== '';
+  const canTestActiveTarget = data.effective_target_mode === RecognitionSource.LOCAL || url.trim() !== '';
 
   return (
     <section className="acx-settings" aria-labelledby="acx-settings-title">
@@ -460,9 +452,7 @@ export const SettingsPage = (): React.JSX.Element => {
           <button
             type="submit"
             className="button button-primary"
-            disabled={
-              saveMutation.isPending || (sourceReadOnly && urlReadOnly && localUrlReadOnly && keyReadOnly)
-            }
+            disabled={saveMutation.isPending || (sourceReadOnly && urlReadOnly && localUrlReadOnly && keyReadOnly)}
           >
             {saveMutation.isPending ? __('Saving\u2026', 'alt-context') : __('Save Settings', 'alt-context')}
           </button>

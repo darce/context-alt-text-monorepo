@@ -122,6 +122,20 @@ const timelineHasLabel = async (page: Page, label: string): Promise<boolean> => 
   return timeline.getByText(label, { exact: true }).isVisible().catch(() => false);
 };
 
+const readProcessedCount = async (page: Page): Promise<number | null> => {
+  const text = await page
+    .getByText(/Processed\s+\d+\/\d+/i)
+    .first()
+    .textContent()
+    .catch(() => null);
+  if (!text) {
+    return null;
+  }
+
+  const match = text.match(/Processed\s+(\d+)\/(\d+)/i);
+  return match ? Number.parseInt(match[1], 10) : null;
+};
+
 const scanHasFailures = async (page: Page): Promise<boolean> => {
   return page
     .getByText(/Client could not submit this batch|\(\d+ failed\)/i)
@@ -199,6 +213,7 @@ test('captures E15-22 workbench avatar and progress evidence on LocalWP', async 
   }
 
   const captures: Record<string, boolean> = {};
+  const processedSamples: number[] = [];
   let settingsResult = {
     changed: false,
     before: { recognition_source: 'local' as const, recognition_source_source: 'default', url: '', api_key_set: false },
@@ -298,6 +313,11 @@ test('captures E15-22 workbench avatar and progress evidence on LocalWP', async 
         const scanComplete = await timelineHasLabel(page, 'Scan complete');
         const clusteringActive = await timelineHasLabel(page, 'Clustering…');
         const clusteringComplete = await timelineHasLabel(page, 'Clustering complete');
+
+        const processed = await readProcessedCount(page);
+        if (processed !== null) {
+          processedSamples.push(processed);
+        }
 
         if (scanComplete && scanCompleteAt === null) {
           scanCompleteAt = Date.now();
@@ -418,8 +438,27 @@ test('captures E15-22 workbench avatar and progress evidence on LocalWP', async 
     const hasNamingQueue = await page.locator('.acx-top-clusters-section').first().isVisible().catch(() => false);
     const hasTimeline = await page.locator('.acx-job-timeline').first().isVisible().catch(() => false);
 
-    expect(hasNamingQueue || hasTimeline || canScan).toBeTruthy();
+    // The harness only proves something if it actually reached the Workbench and
+    // landed on a real evidence surface — a naming queue, a job timeline, or
+    // rendered cluster cards. `canScan` (merely clicking Scan) is not evidence.
+    expect(captures['workbench-pre-scan.png']).toBeTruthy();
+    expect(hasNamingQueue || hasTimeline || clusterCardsVisible).toBeTruthy();
+
+    // Honest-progress regression guard: the displayed processed count must never
+    // decrease across the scan run. Only asserts when a scan produced >=2 samples;
+    // the scan-complete predicate itself is unit-proven in JobTimeline.test.tsx.
+    if (processedSamples.length >= 2) {
+      const monotonic = processedSamples.every((value, index) => index === 0 || value >= processedSamples[index - 1]);
+      expect(
+        monotonic,
+        `processed-count samples must be non-decreasing, observed: [${processedSamples.join(', ')}]`,
+      ).toBeTruthy();
+    }
   } finally {
+    if (ensureServiceMode && settingsResult.changed && !serviceSettingsRestored) {
+      serviceSettingsRestored = await restoreRecognitionSourceIfNeeded(page, settingsResult.before).catch(() => false);
+    }
+
     const manifest: EvidenceManifest = {
       recognition_url: recognitionUrl,
       ensure_service_mode: ensureServiceMode,

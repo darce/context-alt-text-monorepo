@@ -3,8 +3,9 @@
 > **Task**: [E15-3a-localwp-oci-roundtrip-task-plan.md](./E15-3a-localwp-oci-roundtrip-task-plan.md)
 > **Status**: Slice 1 complete; Slices 2-4 pending
 > **Operator**: `Daniel`
-> **Execution Dates**: Slice 1 `2026-04-23`; Slices 2-4 `<pending>`
+> **Execution Dates**: Slice 1 `2026-04-23`; proof re-gather `2026-06-08`; Slices 2-4 `<pending>`
 > **LocalWP Site**: `wp-context-alt-text`
+> **LocalWP Site URL**: `http://localhost:10010` (WordPress admin + Workbench — not port `8000`)
 > **LocalWP Origin**: `http://localhost:10010`
 > **Backend Base URL**: `https://api.altcontext.com`
 > **Plugin Build Source**: `apps/prototype-wp-alt-context/` (build `28d78e6a`, packaged as `dist/alt-context-0.0.2.zip`)
@@ -18,6 +19,8 @@ handoff entries should reference.
 
 Run the local PostgreSQL preflight in [E15-3a-localwp-proof-bundle-capture-checklist.md](./E15-3a-localwp-proof-bundle-capture-checklist.md) before opening OCI log tails or metrics for Slice 2. The remote proof packet starts only after the local DB path is green.
 
+**Surface map:** LocalWP (browser UI, screenshots, Workbench scans) = `http://localhost:10010`. Local description-service preflight = `http://localhost:8000`. Do not treat `:8000` as the LocalWP URL.
+
 ## Run Metadata
 
 | Field | Value |
@@ -25,8 +28,9 @@ Run the local PostgreSQL preflight in [E15-3a-localwp-proof-bundle-capture-check
 | Run date | Slice 1 `2026-04-23`; Slices 2-4 `<pending>` |
 | Operator | `Daniel` |
 | Task ref | `E15-3a` |
-| Branch / build under test | `feature/e15-22` / plugin build `28d78e6a` |
+| Branch / build under test | `feature/e15-22` / plugin `0.0.4` active (`2026-06-08` re-gather) |
 | LocalWP site URL | `http://localhost:10010` |
+| Workbench route | `http://localhost:10010/wp-admin/admin.php?page=alt-context-workbench` |
 | Backend base URL | `https://api.altcontext.com` |
 | Local preflight backend base URL | `http://localhost:8000` |
 | Local preflight API key | `acx-local-dev-key` |
@@ -41,7 +45,7 @@ Run the local PostgreSQL preflight in [E15-3a-localwp-proof-bundle-capture-check
 | Artifact | Status | Notes |
 | --- | --- | --- |
 | Local PostgreSQL preflight complete | [x] | Native `localhost:5432`; `make reset` green in `apps/prototype-description-service` (`2026-06-08`) |
-| Local `/settings/test` probe | [ ] | Local backend `http://localhost:8000` started (`make serve`); LocalWP still points at `https://dev.api.altcontext.com` via option — switch to `http://localhost:8000` + `acx-local-dev-key` before local probe |
+| Local `/settings/test` probe | [ ] | Probe runs from LocalWP (`http://localhost:10010`) against optional local backend `http://localhost:8000` + `acx-local-dev-key`; current site uses `https://dev.api.altcontext.com` via option until preflight constants are applied |
 | Local seeded-media scan | [ ] | Must pass locally before switching LocalWP constants back to OCI URL/key |
 | Production API key fingerprint recorded | [x] | `short_id=7592`, UI `****I-xM`, `key_id=3a5d9583-25f8-4dfb-a07b-4129708bd4ef` |
 | Slice 1 successful `/settings/test` probe | [x] | outcome=`connected`, 200, correlation_id `req-069ea56c-bb67-7398-8000-58009f0df015` |
@@ -61,7 +65,7 @@ Use the operator checklist in [E15-3a-localwp-proof-bundle-capture-checklist.md]
 
 | Step | Required capture | Status | Notes |
 | --- | --- | --- | --- |
-| 1 | Pre-scan state showing build, seeded-media set, and the Workbench route under test | [ ] | Same operator session as the scan below |
+| 1 | Pre-scan state showing build, seeded-media set, and the Workbench route under test | [ ] | Gate re-gather `2026-06-08`: site `http://localhost:10010`, plugin active `0.0.4`, probe `connected` → `dev.api.altcontext.com`; Workbench URL verified (302 redirect to login when unauthenticated) |
 | 2 | Representative avatar visible on a top-cluster card or review drawer, or the explicit unavailable-image fallback on that same surface | [ ] | Capture from the same seeded-media scan run |
 | 3 | Mid-run progress checkpoint showing the processed count increasing and no `Scan complete` state yet | [ ] | Keep the visible count/checkpoint text in-frame |
 | 4 | UI-ready completion checkpoint showing `Scan complete` only after clustering/projection is ready | [ ] | Pair with the prior mid-run checkpoint |
@@ -174,6 +178,30 @@ the successful response above.
   container and has no `.git` dir, so it always falls through to `"unknown"`.
   This is a cosmetic log-banner bug (BR-03 follow-up), not a functional failure.
   See finding `E15-3a-BR-20` for the post-gate cleanup item.
+
+## Proof Re-Gather — 2026-06-08 (E15-22 / surface-map correction)
+
+Repeated gate capture after clarifying **LocalWP = `http://localhost:10010`** (not `:8000`). Local description-service preflight remains optional at `http://localhost:8000`.
+
+| Field | Value |
+| --- | --- |
+| Gather time | `2026-06-08` |
+| LocalWP site URL | `http://localhost:10010` |
+| Workbench route | `http://localhost:10010/wp-admin/admin.php?page=alt-context-workbench` |
+| Plugin status | `Active` / version `0.0.4` |
+| Settings URL | `https://dev.api.altcontext.com` (`recognition_source=local`, `url_source=option`) |
+| `/settings/test` outcome | `connected` / HTTP `200` |
+| Tenant UUID | `c0ce73dc-1c66-56a4-ae32-6eb966810988` |
+| Key fingerprint (option) | `5836b648c84a` (last4 `****-key`) |
+| Media library attachments | `6694` |
+| Playwright evidence | Blocked — no `.env.local` auth bootstrap; headed capture still operator-owned |
+
+```text
+make localwp-gate-status.sh --wp-path /Users/daniel/Development/wp-context-alt-text/app/public
+→ site_url=http://localhost:10010 probe.outcome=connected plugin.status=Active
+```
+
+Slice 2 avatar/progress screenshots still pending authenticated Workbench scan on `:10010`.
 
 ## Slice 2 — Scan Round-Trip Against Seeded Media
 

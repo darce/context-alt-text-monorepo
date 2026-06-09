@@ -1,1 +1,45 @@
-{"type":"response","status":200,"data":{"items":[{"run_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","latest_job_id":"11111111-1111-1111-1111-111111111111","latest_job_status":"pending","child_job_ids":["11111111-1111-1111-1111-111111111111"],"submitted_total":2,"accepted_total":2,"completed_total":0,"failed_total":0,"cancelled_total":0,"terminal_state":false,"failed_batches":[],"created_at":"__MASKED_TIMESTAMP__","updated_at":"__MASKED_TIMESTAMP__"},{"run_id":"ffffffff-ffff-4fff-8fff-ffffffffffff","latest_job_id":"","latest_job_status":"","child_job_ids":[],"submitted_total":2,"accepted_total":0,"completed_total":0,"failed_total":2,"cancelled_total":0,"terminal_state":true,"failed_batches":[{"batch_index":0,"media_ids":[301,302],"error_code":"client_transport_error","error_message":"Client could not submit this batch to WordPress."}],"created_at":"__MASKED_TIMESTAMP__","updated_at":"__MASKED_TIMESTAMP__"}]}}
+{
+  "type": "response",
+  "status": 200,
+  "data": {
+    "items": [
+      {
+        "run_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "latest_job_id": "11111111-1111-1111-1111-111111111111",
+        "latest_job_status": "pending",
+        "child_job_ids": ["11111111-1111-1111-1111-111111111111"],
+        "submitted_total": 2,
+        "accepted_total": 2,
+        "completed_total": 0,
+        "failed_total": 0,
+        "cancelled_total": 0,
+        "terminal_state": false,
+        "failed_batches": [],
+        "created_at": "__MASKED_TIMESTAMP__",
+        "updated_at": "__MASKED_TIMESTAMP__"
+      },
+      {
+        "run_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+        "latest_job_id": "",
+        "latest_job_status": "",
+        "child_job_ids": [],
+        "submitted_total": 2,
+        "accepted_total": 0,
+        "completed_total": 0,
+        "failed_total": 2,
+        "cancelled_total": 0,
+        "terminal_state": true,
+        "failed_batches": [
+          {
+            "batch_index": 0,
+            "media_ids": [301, 302],
+            "error_code": "client_transport_error",
+            "error_message": "Client could not submit this batch to WordPress."
+          }
+        ],
+        "created_at": "__MASKED_TIMESTAMP__",
+        "updated_at": "__MASKED_TIMESTAMP__"
+      }
+    ]
+  }
+}

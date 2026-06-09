@@ -6,8 +6,11 @@ namespace AltContext\Tests\Unit;
 
 use AltContext\Api\AnalysisJobsController;
 use AltContext\Api\AnalysisJobsHostInterface;
+use AltContext\Api\Services\BatchRunService;
+use AltContext\Api\Services\JobProgressStreamService;
+use AltContext\Api\Services\JobStatusService;
+use AltContext\Api\Services\ProjectionSyncService;
 use AltContext\Tests\TestCase;
-use ReflectionMethod;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -327,9 +330,7 @@ class AnalysisJobsControllerCharacterizationTest extends TestCase
             'clusters_created' => 15,
         ];
 
-        $method = new ReflectionMethod($this->controller, 'build_stream_progress_payload');
-        $payload = $method->invoke(
-            $this->controller,
+        $payload = $this->streamService()->build_stream_progress_payload(
             $progress,
             'test-job-id',
             'clustering_progress',
@@ -346,9 +347,7 @@ class AnalysisJobsControllerCharacterizationTest extends TestCase
             'total' => 100,
         ];
 
-        $method = new ReflectionMethod($this->controller, 'build_stream_progress_payload');
-        $payload = $method->invoke(
-            $this->controller,
+        $payload = $this->streamService()->build_stream_progress_payload(
             $progress,
             'job-xyz',
             'scan_progress',
@@ -372,14 +371,13 @@ class AnalysisJobsControllerCharacterizationTest extends TestCase
             ]),
         ]);
 
-        $controller = new CharacterizationStreamController();
         $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/' . $jobId . '/stream');
         $request->set_param('job_id', $jobId);
 
         $output = '';
         ob_start();
         try {
-            $controller->stream_job_progress($request);
+            $this->characterizationStreamService()->stream_job_progress($request);
             $output = (string) ob_get_clean();
         } catch (JobProgressStreamTerminated) {
             $output = (string) ob_get_clean();
@@ -561,13 +559,33 @@ class AnalysisJobsControllerCharacterizationTest extends TestCase
             $value
         );
     }
+
+    private function streamService(): JobProgressStreamService
+    {
+        $host = $this->controller;
+        $batch = new BatchRunService($host);
+        $projection = new ProjectionSyncService($host);
+        $jobStatus = new JobStatusService($host, $batch, $projection);
+
+        return new JobProgressStreamService($host, $jobStatus, $batch, $projection);
+    }
+
+    private function characterizationStreamService(): CharacterizationStreamService
+    {
+        $host = $this->controller;
+        $batch = new BatchRunService($host);
+        $projection = new ProjectionSyncService($host);
+        $jobStatus = new JobStatusService($host, $batch, $projection);
+        $batch->wire_job_status_service($jobStatus);
+
+        return new CharacterizationStreamService($host, $jobStatus, $batch, $projection);
+    }
 }
 
-class CharacterizationStreamController extends AnalysisJobsController
+class CharacterizationStreamService extends JobProgressStreamService
 {
     protected function prepare_stream_output_buffers(): void
     {
-        // Keep PHPUnit's output buffer intact for frame capture.
     }
 
     protected function terminate_job_progress_stream(): never

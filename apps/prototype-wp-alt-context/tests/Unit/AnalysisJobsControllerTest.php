@@ -5,6 +5,10 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Api\AnalysisJobsController;
+use AltContext\Api\Services\BatchRunService;
+use AltContext\Api\Services\JobProgressStreamService;
+use AltContext\Api\Services\JobStatusService;
+use AltContext\Api\Services\ProjectionSyncService;
 use AltContext\Sovereign\Sync\SyncPullJobInterface;
 use AltContext\Sovereign\Sync\SyncPullResult;
 use AltContext\Tests\TestCase;
@@ -691,9 +695,7 @@ class AnalysisJobsControllerTest extends TestCase
             'clusters_created'                    => 15,
         ];
 
-        $method = new \ReflectionMethod($this->controller, 'build_stream_progress_payload');
-        $payload = $method->invoke(
-            $this->controller,
+        $payload = $this->streamService()->build_stream_progress_payload(
             $progress,
             'test-job-id',
             'clustering_progress',
@@ -721,9 +723,7 @@ class AnalysisJobsControllerTest extends TestCase
             'total'     => 100,
         ];
 
-        $method = new \ReflectionMethod($this->controller, 'build_stream_progress_payload');
-        $payload = $method->invoke(
-            $this->controller,
+        $payload = $this->streamService()->build_stream_progress_payload(
             $progress,
             'job-xyz',
             'scan_progress',
@@ -738,6 +738,16 @@ class AnalysisJobsControllerTest extends TestCase
         $this->assertArrayNotHasKey('last_successful_processed_identities', $payload);
         $this->assertArrayNotHasKey('last_error_code', $payload);
         $this->assertArrayNotHasKey('clusters_created', $payload);
+    }
+
+    private function streamService(): JobProgressStreamService
+    {
+        $host = $this->controller;
+        $batch = new BatchRunService($host);
+        $projection = new ProjectionSyncService($host);
+        $jobStatus = new JobStatusService($host, $batch, $projection);
+
+        return new JobProgressStreamService($host, $jobStatus, $batch, $projection);
     }
 
     /**

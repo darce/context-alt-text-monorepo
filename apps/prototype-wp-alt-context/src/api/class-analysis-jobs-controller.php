@@ -7,6 +7,8 @@ namespace AltContext\Api;
 require_once __DIR__ . '/interface-analysis-jobs-host.php';
 require_once __DIR__ . '/services/class-batch-run-service.php';
 require_once __DIR__ . '/services/class-projection-sync-service.php';
+require_once __DIR__ . '/services/class-job-status-service.php';
+require_once __DIR__ . '/services/class-job-progress-stream-service.php';
 require_once __DIR__ . '/../sovereign/repositories/interface-sync-state-repository.php';
 require_once __DIR__ . '/../sovereign/repositories/class-batch-run-repository.php';
 require_once __DIR__ . '/../sovereign/repositories/class-sync-state-repository.php';
@@ -21,6 +23,8 @@ require_once __DIR__ . '/../sovereign/sync/class-sync-pull-result.php';
 require_once __DIR__ . '/../sovereign/sync/class-sync-pull-job-factory.php';
 
 use AltContext\Api\Services\BatchRunService;
+use AltContext\Api\Services\JobProgressStreamService;
+use AltContext\Api\Services\JobStatusService;
 use AltContext\Api\Services\ProjectionSyncService;
 use AltContext\Sovereign\Repositories\BatchRunRepository;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
@@ -60,6 +64,8 @@ class AnalysisJobsController extends AbstractRecognitionProxyController implemen
 	private const JOB_TRACKING_TTL_SECONDS = 86400;
 	private BatchRunService $batch_run_service;
 	private ProjectionSyncService $projection_sync_service;
+	private JobStatusService $job_status_service;
+	private JobProgressStreamService $job_progress_stream_service;
 
 	public function __construct(
 		?SyncStateRepositoryInterface $sync_state_repository = null,
@@ -67,7 +73,9 @@ class AnalysisJobsController extends AbstractRecognitionProxyController implemen
 		?SyncPullJobFactory $sync_pull_job_factory = null,
 		?BatchRunRepository $batch_run_repository = null,
 		?BatchRunService $batch_run_service = null,
-		?ProjectionSyncService $projection_sync_service = null
+		?ProjectionSyncService $projection_sync_service = null,
+		?JobStatusService $job_status_service = null,
+		?JobProgressStreamService $job_progress_stream_service = null
 	) {
 		$sync_state_repository = $sync_state_repository ?? new SyncStateRepository();
 		$this->batch_run_service = $batch_run_service ?? new BatchRunService( $this, $batch_run_repository );
@@ -76,6 +84,18 @@ class AnalysisJobsController extends AbstractRecognitionProxyController implemen
 			$sync_state_repository,
 			$sync_pull_job,
 			$sync_pull_job_factory
+		);
+		$this->job_status_service = $job_status_service ?? new JobStatusService(
+			$this,
+			$this->batch_run_service,
+			$this->projection_sync_service
+		);
+		$this->batch_run_service->wire_job_status_service( $this->job_status_service );
+		$this->job_progress_stream_service = $job_progress_stream_service ?? new JobProgressStreamService(
+			$this,
+			$this->job_status_service,
+			$this->batch_run_service,
+			$this->projection_sync_service
 		);
 	}
 
@@ -484,38 +504,7 @@ class AnalysisJobsController extends AbstractRecognitionProxyController implemen
 	}
 
 	public function get_job_status( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		$job_id = sanitize_text_field( (string) $request->get_param( 'job_id' ) );
-		if ( '' === $job_id ) {
-			return new WP_Error( 'missing_job_id', 'Job ID is required.', array( 'status' => 400 ) );
-		}
-
-		$response = $this->proxy_request(
-			'GET',
-			sprintf( '/recognition/jobs/%s', $job_id ),
-			array(),
-			array(
-				'tenant_id' => $this->get_tenant_id(),
-			),
-			self::REQUEST_CLASS_POST_SCAN_READ
-		);
-		if ( $this->is_proxy_unavailable( $response ) ) {
-			return $this->build_offline_job_status_response( $job_id );
-		}
-
-		if ( $response instanceof WP_REST_Response ) {
-			$this->batch_run_service->record_observed_job_status_from_response( $job_id, $response );
-			$data = $response->get_data();
-			if ( is_array( $data ) ) {
-				$batch_run_id = $this->batch_run_service->lookup_batch_run_id_for_job( $job_id );
-				if ( '' !== $batch_run_id ) {
-					$data['batch_run_id'] = $batch_run_id;
-					$response->set_data( $data );
-				}
-				$this->projection_sync_service->maybe_trigger_projection_sync( $data );
-			}
-		}
-
-		return $response;
+		return $this->job_status_service->get_job_status( $request );
 	}
 
 	public function get_recent_batch_runs( WP_REST_Request $request ): WP_REST_Response {
@@ -531,262 +520,15 @@ class AnalysisJobsController extends AbstractRecognitionProxyController implemen
 	}
 
 	public function stream_job_progress( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		$job_id = sanitize_text_field( (string) $request->get_param( 'job_id' ) );
-		if ( '' === $job_id ) {
-			return new WP_Error( 'missing_job_id', 'Job ID is required.', array( 'status' => 400 ) );
-		}
-
-		if ( function_exists( 'set_time_limit' ) ) {
-			@set_time_limit( 0 );
-		}
-		if ( function_exists( 'ignore_user_abort' ) ) {
-			@ignore_user_abort( true );
-		}
-
-		$this->prepare_stream_output_buffers();
-
-		$last_completed = -1;
-		$last_emit      = 0.0;
-		$last_heartbeat = microtime( true );
-		$last_phase     = null;
-
-		while ( ! connection_aborted() ) {
-			$response = $this->proxy_request(
-				'GET',
-				sprintf( '/recognition/jobs/%s', $job_id ),
-				array(),
-				array(
-					'tenant_id' => $this->get_tenant_id(),
-				)
-			);
-
-			if ( is_wp_error( $response ) ) {
-				echo "event: error\n";
-				echo 'data: ' . wp_json_encode( array( 'message' => $response->get_error_message() ) ) . "\n\n";
-				@ob_flush();
-				@flush();
-				break;
-			}
-
-			if ( ! ( $response instanceof WP_REST_Response ) ) {
-				echo "event: error\n";
-				echo 'data: ' . wp_json_encode( array( 'message' => 'Unexpected response type.' ) ) . "\n\n";
-				@ob_flush();
-				@flush();
-				break;
-			}
-
-			$status_code = $response->get_status();
-			if ( 404 === $status_code ) {
-				$this->batch_run_service->record_observed_job_status_from_response( $job_id, $response );
-				echo "event: error\n";
-				echo 'data: ' . wp_json_encode( array( 'message' => 'Job not found.' ) ) . "\n\n";
-				@ob_flush();
-				@flush();
-				break;
-			}
-
-			$data = $response->get_data();
-			if ( ! is_array( $data ) ) {
-				echo "event: error\n";
-				echo 'data: ' . wp_json_encode( array( 'message' => 'Invalid job response.' ) ) . "\n\n";
-				@ob_flush();
-				@flush();
-				break;
-			}
-			$this->projection_sync_service->maybe_trigger_projection_sync( $data );
-
-			$progress   = is_array( $data['progress'] ?? null ) ? $data['progress'] : array();
-			$completed  = absint( $progress['completed'] ?? 0 );
-			$total      = absint( $progress['total'] ?? 0 );
-			$status     = isset( $data['status'] ) ? sanitize_text_field( (string) $data['status'] ) : 'pending';
-			$this->batch_run_service->record_observed_job_status_from_response( $job_id, $response );
-			$phase      = isset( $progress['phase'] ) ? sanitize_text_field( (string) $progress['phase'] ) : null;
-			$job_type   = isset( $data['type'] ) ? sanitize_text_field( (string) $data['type'] ) : 'analyze';
-			$event_type = 'scan_progress';
-			if ( 'clustering' === $job_type ) {
-				$event_type = 'clustering_progress';
-			}
-			$now         = microtime( true );
-			$should_emit = (
-				$completed !== $last_completed
-				|| $phase !== $last_phase
-				|| ( $now - $last_emit > 0.5 && $completed > 0 )
-				|| ( $now - $last_heartbeat > 15 )
-			);
-
-			if ( $should_emit ) {
-				$payload = $this->build_stream_progress_payload( $progress, $job_id, $event_type, $status );
-				echo "event: progress\n";
-				echo 'data: ' . wp_json_encode( $payload ) . "\n\n";
-				$last_completed = $completed;
-				$last_emit      = $now;
-				$last_heartbeat = $now;
-				$last_phase     = $phase;
-				@ob_flush();
-				@flush();
-			}
-
-			if ( in_array( $status, array( 'completed', 'failed' ), true ) ) {
-				$done_payload = $this->build_stream_progress_payload( $progress, $job_id, $event_type, $status );
-				echo "event: done\n";
-				echo 'data: ' . wp_json_encode( $done_payload ) . "\n\n";
-				@ob_flush();
-				@flush();
-				break;
-			}
-
-			usleep( 100000 );
-		}
-
-		$this->terminate_job_progress_stream();
-	}
-
-	protected function prepare_stream_output_buffers(): void {
-		nocache_headers();
-		header( 'Content-Type: text/event-stream' );
-		header( 'Cache-Control: no-cache' );
-		header( 'X-Accel-Buffering: no' );
-
-		while ( ob_get_level() > 0 ) {
-			ob_end_flush();
-		}
-		@ini_set( 'output_buffering', 'off' );
-		@ini_set( 'zlib.output_compression', '0' );
-	}
-
-	protected function terminate_job_progress_stream(): never {
-		exit;
+		return $this->job_progress_stream_service->stream_job_progress( $request );
 	}
 
 	public function cancel_job( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		$job_id = sanitize_text_field( (string) $request->get_param( 'job_id' ) );
-
-		if ( '' === $job_id ) {
-			return new WP_Error( 'missing_job_id', 'Job ID is required.', array( 'status' => 400 ) );
-		}
-
-		return $this->proxy_request(
-			'POST',
-			sprintf( '/recognition/jobs/%s/cancel', $job_id ),
-			array(),
-			array(
-				'tenant_id' => $this->get_tenant_id(),
-			)
-		);
+		return $this->job_status_service->cancel_job( $request );
 	}
 
 	public function acknowledge_projection( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		$job_id = sanitize_text_field( (string) $request->get_param( 'job_id' ) );
-
-		if ( '' === $job_id ) {
-			return new WP_Error( 'missing_job_id', 'Job ID is required.', array( 'status' => 400 ) );
-		}
-
-		$body = $request->get_json_params();
-		$snapshot_version = absint( $body['snapshot_version'] ?? 0 );
-		if ( $snapshot_version <= 0 ) {
-			return new WP_Error( 'invalid_snapshot_version', 'A positive snapshot_version is required.', array( 'status' => 400 ) );
-		}
-
-		$payload = array(
-			'snapshot_version' => $snapshot_version,
-		);
-
-		$snapshot_generation_id = sanitize_text_field( (string) ( $body['snapshot_generation_id'] ?? '' ) );
-		if ( '' !== $snapshot_generation_id ) {
-			$payload['snapshot_generation_id'] = $snapshot_generation_id;
-		}
-
-		return $this->proxy_request(
-			'POST',
-			sprintf( '/recognition/jobs/%s/acknowledge-projection', $job_id ),
-			$payload
-		);
-	}
-
-	/**
-	 * Build the SSE event payload for a single stream poll result.
-	 *
-	 * Extracted so the field-forwarding logic can be unit-tested independently
-	 * of the streaming loop and its side-effects (headers, output flushing).
-	 *
-	 * @param array<string,mixed> $progress  The `progress` sub-array from the backend job response.
-	 * @param string              $job_id    The job being streamed.
-	 * @param string              $event_type  'scan_progress' or 'clustering_progress'.
-	 * @param string              $status    Current job status string.
-	 * @return array<string,mixed>
-	 */
-	protected function build_stream_progress_payload(
-		array $progress,
-		string $job_id,
-		string $event_type,
-		string $status
-	): array {
-		$completed = absint( $progress['completed'] ?? 0 );
-		$total     = absint( $progress['total'] ?? 0 );
-		$phase     = isset( $progress['phase'] ) && '' !== $progress['phase']
-			? sanitize_text_field( (string) $progress['phase'] )
-			: null;
-
-		$payload = array(
-			'type'      => $event_type,
-			'job_id'    => $job_id,
-			'status'    => $status,
-			'completed' => $completed,
-			'total'     => $total,
-		);
-		if ( null !== $phase ) {
-			$payload['phase'] = $phase;
-		}
-		if ( isset( $progress['images_processed'] ) ) {
-			$payload['images_processed'] = absint( $progress['images_processed'] );
-		}
-		if ( isset( $progress['faces_found'] ) ) {
-			$payload['faces_found'] = absint( $progress['faces_found'] );
-		}
-		if ( isset( $progress['clusters_created'] ) ) {
-			$payload['clusters_created'] = absint( $progress['clusters_created'] );
-		}
-		// Phase-2 checkpoint/retry metadata (finding 1165).
-		if ( isset( $progress['retry_count'] ) ) {
-			$payload['retry_count'] = absint( $progress['retry_count'] );
-		}
-		if ( isset( $progress['current_stage'] ) && '' !== $progress['current_stage'] ) {
-			$payload['current_stage'] = sanitize_text_field( (string) $progress['current_stage'] );
-		}
-		if ( isset( $progress['last_successful_processed_identities'] ) ) {
-			$payload['last_successful_processed_identities'] = absint( $progress['last_successful_processed_identities'] );
-		}
-		if ( isset( $progress['last_error_code'] ) && '' !== $progress['last_error_code'] ) {
-			$payload['last_error_code'] = sanitize_text_field( (string) $progress['last_error_code'] );
-		}
-
-		$batch_run_id = $this->batch_run_service->lookup_batch_run_id_for_job( $job_id );
-		if ( '' !== $batch_run_id ) {
-			$payload['batch_run_id'] = $batch_run_id;
-		}
-
-		return $payload;
-	}
-
-	private function build_offline_job_status_response( string $job_id ): WP_REST_Response {
-		$now = gmdate( 'c' );
-		return new WP_REST_Response(
-			array(
-				'id'          => $job_id,
-				'type'        => 'analyze',
-				'status'      => 'failed',
-				'progress'    => array(
-					'completed' => 0,
-					'total'     => 0,
-				),
-				'started_at'  => $now,
-				'finished_at' => $now,
-				'message'     => 'Recognition backend unavailable.',
-			),
-			200
-		);
+		return $this->job_status_service->acknowledge_projection( $request );
 	}
 
 	/**

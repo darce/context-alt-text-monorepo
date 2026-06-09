@@ -7,9 +7,7 @@ const isBlockingImpact = (impact: string | null): impact is BlockingImpact => {
   return impact === 'serious' || impact === 'critical';
 };
 
-const formatViolationSummary = (
-  violations: Awaited<ReturnType<AxeBuilder['analyze']>>['violations'],
-): string => {
+const formatViolationSummary = (violations: Awaited<ReturnType<AxeBuilder['analyze']>>['violations']): string => {
   return violations
     .map((violation) => {
       const nodes = violation.nodes.map((node) => node.target.join(' ')).join(', ');
@@ -21,9 +19,7 @@ const formatViolationSummary = (
 
 export const assertNoBlockingViolations = async (page: Page, scopeSelector: string): Promise<void> => {
   const results = await new AxeBuilder({ page }).include(scopeSelector).analyze();
-  const blockingViolations = results.violations.filter((violation) =>
-    isBlockingImpact(violation.impact ?? null),
-  );
+  const blockingViolations = results.violations.filter((violation) => isBlockingImpact(violation.impact ?? null));
 
   expect(
     blockingViolations,

@@ -61,6 +61,7 @@ window.HTMLElement.prototype.scrollIntoView = vi.fn();
   },
   tenant_id: 'test-tenant',
   recognitionSource: 'service',
+  effectiveTargetUrl: 'https://api.example.com',
 };
 
 // Mock EventSource for SSE
@@ -374,13 +375,14 @@ describe('WorkbenchPage', () => {
       },
       tenant_id: 'test-tenant',
       recognitionSource: 'local',
+      effectiveTargetUrl: 'http://localhost:8001',
     };
     resetConfigCache();
 
     renderWorkbench();
 
     expect(
-      screen.getByText('Alt Context is targeting the local recognition service at http://localhost:8000.'),
+      screen.getByText('Alt Context is targeting the local recognition service at http://localhost:8001.'),
     ).toBeInTheDocument();
     expect(screen.getByText('Use Settings to switch back to the hosted recognition service.')).toBeInTheDocument();
     expect(screen.queryByText(/local recognition URL fallback/i)).not.toBeInTheDocument();

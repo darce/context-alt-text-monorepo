@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+require_once __DIR__ . '/class-recognition-endpoint-resolver.php';
 require_once __DIR__ . '/class-recognition-proxy-policy.php';
 require_once __DIR__ . '/class-tenant-identity.php';
 require_once __DIR__ . '/class-blob-url-rewriter.php';
@@ -36,6 +37,7 @@ use function trim;
 
 abstract class AbstractRecognitionProxyController implements RecognitionRouteControllerInterface {
 	private ?RecognitionProxyPolicy $proxy_policy = null;
+	private ?RecognitionEndpointResolver $endpoint_resolver = null;
 
 	public function can_manage_recognition(): bool {
 		return current_user_can( 'manage_options' );
@@ -192,64 +194,19 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 	}
 
 	protected function get_recognition_base_url(): string {
-		if ( 'local' === $this->get_recognition_source() ) {
-			return 'http://localhost:8000';
-		}
-
-		// E15-12-BR-07: code-managed sources (constant, filter) MUST win over
-		// operator-saved options. The pre-fix candidate order resolved option
-		// before filter, which let a stale saved URL keep routing recognition
-		// traffic even after an operator wired a filter to point at a new
-		// environment. The resolver here now matches get_recognition_source()
-		// (which already inspected the filter URL before the saved option)
-		// instead of contradicting it.
-		$candidates = array(
-			$this->get_recognition_base_url_from_constant(),
-			trim( (string) apply_filters( 'acx_recognition_base_url', '' ) ),
-			trim( (string) get_option( 'acx_recognition_url', '' ) ),
-		);
-
-		foreach ( $candidates as $candidate ) {
-			if ( $this->is_valid_recognition_base_url( $candidate ) ) {
-				return $candidate;
-			}
-		}
-
-		return 'http://localhost:8000';
+		return $this->get_endpoint_resolver()->get_effective_base_url();
 	}
 
 	protected function get_recognition_source(): string {
-		$constant_source = $this->get_recognition_source_from_constant();
-		if ( '' !== $constant_source ) {
-			return $constant_source;
+		return $this->get_endpoint_resolver()->get_recognition_source();
+	}
+
+	protected function get_endpoint_resolver(): RecognitionEndpointResolver {
+		if ( null === $this->endpoint_resolver ) {
+			$this->endpoint_resolver = new RecognitionEndpointResolver();
 		}
 
-		$constant_url = $this->get_recognition_base_url_from_constant();
-		if ( $this->is_valid_recognition_base_url( $constant_url ) ) {
-			return 'service';
-		}
-
-		$filter_url = trim( (string) apply_filters( 'acx_recognition_base_url', '' ) );
-		if ( $this->is_valid_recognition_base_url( $filter_url ) ) {
-			return 'service';
-		}
-
-		$filter_source = trim( (string) apply_filters( 'acx_recognition_source', '' ) );
-		if ( $this->is_valid_recognition_source( $filter_source ) ) {
-			return $filter_source;
-		}
-
-		$option_source = trim( (string) get_option( 'acx_recognition_source', '' ) );
-		if ( $this->is_valid_recognition_source( $option_source ) ) {
-			return $option_source;
-		}
-
-		$option_url = trim( (string) get_option( 'acx_recognition_url', '' ) );
-		if ( $this->is_valid_recognition_base_url( $option_url ) ) {
-			return 'service';
-		}
-
-		return 'local';
+		return $this->endpoint_resolver;
 	}
 
 	protected function get_recognition_api_key(): string {
@@ -266,51 +223,12 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 		return trim( (string) apply_filters( 'acx_recognition_api_key', '' ) );
 	}
 
-	private function get_recognition_base_url_from_constant(): string {
-		if ( defined( 'ACX_RECOGNITION_URL' ) && is_string( ACX_RECOGNITION_URL ) ) {
-			return trim( ACX_RECOGNITION_URL );
-		}
-
-		return '';
-	}
-
 	private function get_recognition_api_key_from_constant(): string {
 		if ( defined( 'ACX_RECOGNITION_API_KEY' ) && is_string( ACX_RECOGNITION_API_KEY ) ) {
 			return trim( ACX_RECOGNITION_API_KEY );
 		}
 
 		return '';
-	}
-
-	private function get_recognition_source_from_constant(): string {
-		if ( defined( 'ACX_RECOGNITION_SOURCE' ) && is_string( ACX_RECOGNITION_SOURCE ) ) {
-			$source = trim( ACX_RECOGNITION_SOURCE );
-			if ( $this->is_valid_recognition_source( $source ) ) {
-				return $source;
-			}
-		}
-
-		return '';
-	}
-
-	private function is_valid_recognition_base_url( string $candidate ): bool {
-		if ( '' === $candidate ) {
-			return false;
-		}
-
-		$parts = parse_url( $candidate );
-		if ( false === $parts || ! is_array( $parts ) ) {
-			return false;
-		}
-
-		$scheme = strtolower( (string) ( $parts['scheme'] ?? '' ) );
-		$host   = (string) ( $parts['host'] ?? '' );
-
-		return in_array( $scheme, array( 'http', 'https' ), true ) && '' !== $host;
-	}
-
-	private function is_valid_recognition_source( string $source ): bool {
-		return in_array( $source, array( 'service', 'local' ), true );
 	}
 
 	/**

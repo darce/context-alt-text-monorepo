@@ -119,6 +119,7 @@ interface WorkbenchContextValue {
 
   // Config/Env
   recognitionSource: 'service' | 'local';
+  effectiveTargetUrl: string;
 }
 
 const WorkbenchContext = createContext<WorkbenchContextValue | null>(null);
@@ -135,7 +136,7 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [clusterMessage, setClusterMessage] = useState<string | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
   const [knownTotalPages, setKnownTotalPages] = useState<number | null>(null);
-  const { recognitionSource } = getConfig();
+  const { recognitionSource, effectiveTargetUrl } = getConfig();
   const [clusterPanel, dispatchClusterPanel] = useReducer(clusterPanelReducer, {
     mode: 'none',
     clusterId: null,
@@ -345,6 +346,7 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setScanError,
       hasIdentities: mediaItems.length > 0,
       recognitionSource,
+      effectiveTargetUrl,
     }),
     [
       activeSection,
@@ -400,6 +402,7 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       scanError,
       mediaItems.length,
       recognitionSource,
+      effectiveTargetUrl,
       setPerPage,
     ],
   );

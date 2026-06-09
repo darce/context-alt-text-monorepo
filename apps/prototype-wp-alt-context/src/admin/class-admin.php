@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Admin;
 
+use AltContext\Api\RecognitionEndpointResolver;
 use AltContext\Api\TenantIdentity;
 use AltContext\Support\BatchLimits;
 
@@ -288,15 +289,18 @@ class Admin {
 			return;
 		}
 
-		if ( 'local' !== $this->get_recognition_source() ) {
+		$resolver = new RecognitionEndpointResolver();
+		if ( 'local' !== $resolver->get_recognition_source() ) {
 			return;
 		}
 
-		$settings_url = admin_url( 'admin.php?page=alt-context-settings' );
+		$effective_url = $resolver->get_effective_base_url();
+		$settings_url  = admin_url( 'admin.php?page=alt-context-settings' );
 		echo '<div class="notice notice-warning"><p>';
 		printf(
-			/* translators: %s: URL to the settings page */
-			esc_html__( 'Alt Context is in local recognition mode and will send requests to http://localhost:8000. %s to switch to the hosted recognition service.', 'alt-context' ),
+			/* translators: 1: effective local recognition URL, 2: link to settings page */
+			esc_html__( 'Alt Context is in local recognition mode and will send requests to %1$s. %2$s to switch to the hosted recognition service.', 'alt-context' ),
+			esc_html( $effective_url ),
 			'<a href="' . esc_url( $settings_url ) . '">' . esc_html__( 'Go to Settings', 'alt-context' ) . '</a>'
 		);
 		echo '</p></div>';
@@ -316,6 +320,7 @@ class Admin {
 					'tier'      => $tier,
 					'tenant_id' => TenantIdentity::derive_from_site_url(),
 					'recognitionSource' => $this->get_recognition_source(),
+					'effectiveTargetUrl' => $this->get_effective_target_url(),
 					'max_media_per_batch' => $this->get_tier_batch_limit_for( $tier ),
 					'adminUrls' => array(
 					'mediaEditBase' => admin_url( 'post.php' ),
@@ -372,79 +377,19 @@ class Admin {
 	}
 
 	private function get_recognition_source(): string {
-		$constant_source = $this->get_recognition_source_from_constant();
-		if ( '' !== $constant_source ) {
-			return $constant_source;
-		}
-
-		$constant_url = $this->get_recognition_url_from_constant();
-		if ( $this->is_valid_recognition_base_url( $constant_url ) ) {
-			return 'service';
-		}
-
-		$filter_url = trim( (string) apply_filters( 'acx_recognition_base_url', '' ) );
-		if ( $this->is_valid_recognition_base_url( $filter_url ) ) {
-			return 'service';
-		}
-
-		$filter_source = trim( (string) apply_filters( 'acx_recognition_source', '' ) );
-		if ( $this->is_valid_recognition_source( $filter_source ) ) {
-			return $filter_source;
-		}
-
-		$option_source = trim( (string) get_option( 'acx_recognition_source', '' ) );
-		if ( $this->is_valid_recognition_source( $option_source ) ) {
-			return $option_source;
-		}
-
-		$option_url = trim( (string) get_option( 'acx_recognition_url', '' ) );
-		if ( $this->is_valid_recognition_base_url( $option_url ) ) {
-			return 'service';
-		}
-
-		return 'local';
+		return $this->get_endpoint_resolver()->get_recognition_source();
 	}
 
-	private function get_recognition_url_from_constant(): string {
-		if ( defined( 'ACX_RECOGNITION_URL' ) && is_string( ACX_RECOGNITION_URL ) ) {
-			return trim( ACX_RECOGNITION_URL );
-		}
-
-		return '';
+	private function get_effective_target_url(): string {
+		return $this->get_endpoint_resolver()->get_effective_base_url();
 	}
 
-	private function get_recognition_source_from_constant(): string {
-		if ( defined( 'ACX_RECOGNITION_SOURCE' ) && is_string( ACX_RECOGNITION_SOURCE ) ) {
-			$source = trim( ACX_RECOGNITION_SOURCE );
-			if ( $this->is_valid_recognition_source( $source ) ) {
-				return $source;
-			}
+	private function get_endpoint_resolver(): RecognitionEndpointResolver {
+		static $resolver = null;
+		if ( null === $resolver ) {
+			$resolver = new RecognitionEndpointResolver();
 		}
 
-		return '';
-	}
-
-	private function is_valid_recognition_base_url( string $candidate ): bool {
-		if ( '' === $candidate ) {
-			return false;
-		}
-
-		$parts = parse_url( $candidate );
-		if ( false === $parts || ! is_array( $parts ) ) {
-			return false;
-		}
-
-		$scheme = strtolower( (string) ( $parts['scheme'] ?? '' ) );
-		$host   = (string) ( $parts['host'] ?? '' );
-
-		if ( ! in_array( $scheme, array( 'http', 'https' ), true ) ) {
-			return false;
-		}
-
-		return '' !== $host;
-	}
-
-	private function is_valid_recognition_source( string $source ): bool {
-		return in_array( $source, array( 'service', 'local' ), true );
+		return $resolver;
 	}
 }

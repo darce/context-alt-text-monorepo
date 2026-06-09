@@ -40,16 +40,24 @@ const renderBanner = (result: TestConnectionResponse): BannerCopy => {
     return unknownOutcomeBanner();
   }
   const outcome: TestConnectionOutcomeValue = result.outcome;
+  const isLocalProbe = result.probe_mode === 'local_liveness';
   switch (outcome) {
     case TestConnectionOutcome.CONNECTED:
       return {
         tone: 'success',
         role: 'status',
-        primary: __('Connection successful.', 'alt-context'),
-        remediation: __(
-          'The plugin authenticated against the recognition service and the pool is healthy.',
-          'alt-context',
-        ),
+        primary: isLocalProbe
+          ? __('Local recognition service is reachable.', 'alt-context')
+          : __('Connection successful.', 'alt-context'),
+        remediation: isLocalProbe
+          ? __(
+              'Scans route to this endpoint while recognition source is Local. Start the scan worker locally for processing.',
+              'alt-context',
+            )
+          : __(
+              'The plugin authenticated against the recognition service and the pool is healthy.',
+              'alt-context',
+            ),
       };
     case TestConnectionOutcome.NOT_CONFIGURED:
       return {
@@ -129,8 +137,15 @@ const renderBanner = (result: TestConnectionResponse): BannerCopy => {
       return {
         tone: 'error',
         role: 'alert',
-        primary: __('Could not reach the recognition service.', 'alt-context'),
-        remediation: __('Verify the API URL above and confirm the site can reach the recognition host.', 'alt-context'),
+        primary: isLocalProbe
+          ? __('Could not reach the local recognition service.', 'alt-context')
+          : __('Could not reach the recognition service.', 'alt-context'),
+        remediation: isLocalProbe
+          ? __(
+              'Start the local description service (make serve), confirm the Local service URL matches its port, then test again.',
+              'alt-context',
+            )
+          : __('Verify the API URL above and confirm the site can reach the recognition host.', 'alt-context'),
       };
     case TestConnectionOutcome.TLS_ERROR:
       return {
@@ -173,7 +188,8 @@ export const SettingsPage = (): React.JSX.Element => {
   });
 
   const [url, setUrl] = useState('');
-  const [recognitionSource, setRecognitionSource] = useState<RecognitionSourceValue>(RecognitionSource.LOCAL);
+  const [localUrl, setLocalUrl] = useState('');
+  const [recognitionSource, setRecognitionSource] = useState<RecognitionSourceValue>(RecognitionSource.SERVICE);
   const [apiKey, setApiKey] = useState('');
   const [saveMessage, setSaveMessage] = useState('');
   const [testResult, setTestResult] = useState<TestConnectionResponse | null>(null);
@@ -181,6 +197,7 @@ export const SettingsPage = (): React.JSX.Element => {
   useEffect(() => {
     if (settingsQuery.data) {
       setUrl(settingsQuery.data.url);
+      setLocalUrl(settingsQuery.data.local_url);
       setRecognitionSource(settingsQuery.data.recognition_source);
       setApiKey('');
     }
@@ -220,6 +237,9 @@ export const SettingsPage = (): React.JSX.Element => {
     if (url !== (settingsQuery.data?.url ?? '')) {
       payload.url = url;
     }
+    if (localUrl !== (settingsQuery.data?.local_url ?? '')) {
+      payload.local_url = localUrl;
+    }
     if (apiKey) {
       payload.api_key = apiKey;
     }
@@ -258,7 +278,20 @@ export const SettingsPage = (): React.JSX.Element => {
   const data = settingsQuery.data!;
   const sourceReadOnly = isReadOnly(data.recognition_source_source);
   const urlReadOnly = isReadOnly(data.url_source);
+  const localUrlReadOnly = isReadOnly(data.local_url_source);
   const keyReadOnly = isReadOnly(data.key_source);
+  const hasUnsavedRoutingChanges =
+    recognitionSource !== data.recognition_source ||
+    localUrl !== data.local_url ||
+    url !== data.url;
+
+  const activeModeLabel =
+    data.effective_target_mode === RecognitionSource.LOCAL
+      ? __('Local development service', 'alt-context')
+      : __('Hosted recognition service', 'alt-context');
+
+  const canTestActiveTarget =
+    data.effective_target_mode === RecognitionSource.LOCAL || url.trim() !== '';
 
   return (
     <section className="acx-settings" aria-labelledby="acx-settings-title">
@@ -266,6 +299,31 @@ export const SettingsPage = (): React.JSX.Element => {
       <p className="description">
         {__('Configure the connection to the Alt Context recognition service.', 'alt-context')}
       </p>
+
+      <div
+        className="notice notice-info inline acx-settings__routing"
+        style={{ marginBottom: '16px' }}
+        data-testid="acx-effective-routing"
+      >
+        <p>
+          <strong>{__('Active routing', 'alt-context')}</strong>
+          {' — '}
+          {activeModeLabel}
+          {': '}
+          <code>{data.effective_target_url}</code>
+        </p>
+        {hasUnsavedRoutingChanges ? (
+          <p>{__('Save settings before scanning or testing so recognition traffic uses your edits.', 'alt-context')}</p>
+        ) : null}
+        {data.effective_target_mode === RecognitionSource.LOCAL && data.url ? (
+          <p>
+            {__(
+              'Service URL and API key below are stored for service mode and are not used while Local is selected.',
+              'alt-context',
+            )}
+          </p>
+        ) : null}
+      </div>
 
       <form onSubmit={handleSave} className="acx-settings__form">
         <table className="form-table" role="presentation">
@@ -299,7 +357,33 @@ export const SettingsPage = (): React.JSX.Element => {
             </tr>
             <tr>
               <th scope="row">
-                <label htmlFor="acx-settings-url">{__('API URL', 'alt-context')}</label>
+                <label htmlFor="acx-settings-local-url">{__('Local service URL', 'alt-context')}</label>
+              </th>
+              <td>
+                <input
+                  id="acx-settings-local-url"
+                  type="url"
+                  className="regular-text"
+                  value={localUrl}
+                  onChange={(e) => setLocalUrl(e.target.value)}
+                  readOnly={localUrlReadOnly}
+                  placeholder="http://localhost:8000"
+                />
+                <p className="description">
+                  {__(
+                    'Used when recognition source is Local. Match the port from make serve (PORT env overrides the default 8000).',
+                    'alt-context',
+                  )}
+                </p>
+                <p className="description">
+                  {SOURCE_LABELS[data.local_url_source] ?? data.local_url_source}
+                  {localUrlReadOnly && <> &mdash; {__('read-only (override active)', 'alt-context')}</>}
+                </p>
+              </td>
+            </tr>
+            <tr>
+              <th scope="row">
+                <label htmlFor="acx-settings-url">{__('Service API URL', 'alt-context')}</label>
               </th>
               <td>
                 <input
@@ -311,6 +395,12 @@ export const SettingsPage = (): React.JSX.Element => {
                   readOnly={urlReadOnly}
                   placeholder="https://api.altcontext.com"
                 />
+                <p className="description">
+                  {__(
+                    'Used when recognition source is Service (for example OCI at api.altcontext.com).',
+                    'alt-context',
+                  )}
+                </p>
                 <p className="description">
                   {SOURCE_LABELS[data.url_source] ?? data.url_source}
                   {urlReadOnly && <> &mdash; {__('read-only (override active)', 'alt-context')}</>}
@@ -352,10 +442,10 @@ export const SettingsPage = (): React.JSX.Element => {
             type="button"
             className="button"
             onClick={handleTest}
-            disabled={testMutation.isPending || url.trim() === '' || recognitionSource === RecognitionSource.LOCAL}
+            disabled={testMutation.isPending || !canTestActiveTarget || hasUnsavedRoutingChanges}
             style={{ marginLeft: '8px' }}
           >
-            {testMutation.isPending ? __('Testing\u2026', 'alt-context') : __('Test Connection', 'alt-context')}
+            {testMutation.isPending ? __('Testing\u2026', 'alt-context') : __('Test active target', 'alt-context')}
           </button>
         </p>
       </form>
@@ -379,6 +469,11 @@ export const SettingsPage = (): React.JSX.Element => {
             >
               <p>{banner.primary}</p>
               <p>{banner.remediation}</p>
+              {testResult.probed_url ? (
+                <p>
+                  {__('Probed', 'alt-context')}: <code>{testResult.probed_url}</code>
+                </p>
+              ) : null}
             </div>
           );
         })()}

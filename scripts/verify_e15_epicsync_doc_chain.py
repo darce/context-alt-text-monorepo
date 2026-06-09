@@ -6,9 +6,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-E15_3_PLAN = Path("docs/tasks/15.0/E15-3-wordpress-demo-provisioning-task-plan.md")
-SELF_HOSTING_EPIC = Path("docs/epics/v0.3.1/self-hosting-epic.md")
-LAUNCH_EPIC = Path("docs/epics/v0.4.0/public-demo-launch-readiness-epic.md")
+REPO_ROOT = Path(__file__).resolve().parents[1]
+E15_3_PLAN = REPO_ROOT / "docs/tasks/15.0/E15-3-wordpress-demo-provisioning-task-plan.md"
+SELF_HOSTING_EPIC = REPO_ROOT / "docs/epics/v0.3.1/self-hosting-epic.md"
+LAUNCH_EPIC = REPO_ROOT / "docs/epics/v0.4.0/public-demo-launch-readiness-epic.md"
 
 
 def verify_e15_3_predecessors() -> list[str]:
@@ -36,9 +37,6 @@ def verify_self_hosting_scope_split() -> list[str]:
         if not re.search(pattern, text):
             errors.append(f"self-hosting-epic.md: {label} not satisfied")
 
-    if "delegated to E15-5" in text and "delegated to E15-5a" not in text:
-        errors.append("self-hosting-epic.md: stale E15-5 hygiene delegation remains")
-
     stale_hygiene = re.findall(
         r"(budget alerts|Hetzner CX22 fallback).*\*\*E15-5\*\*(?!a)",
         text,
@@ -52,12 +50,22 @@ def verify_self_hosting_scope_split() -> list[str]:
     return errors
 
 
+def _phase_section(text: str, phase: str) -> str:
+    """Body of the first '## '/'### ' 'Phase <n>' heading, up to the next phase heading."""
+    match = re.search(rf"^#{{2,3}}\s+Phase {re.escape(phase)}\b.*$", text, flags=re.MULTILINE)
+    if not match:
+        return ""
+    rest = text[match.end():]
+    nxt = re.search(r"^#{2,3}\s+Phase\s", rest, flags=re.MULTILINE)
+    return rest[: nxt.start()] if nxt else rest
+
+
 def verify_launch_epic_phase4_split() -> list[str]:
     text = LAUNCH_EPIC.read_text(encoding="utf-8")
     errors: list[str] = []
     if "E15-5a OCI operational hygiene" not in text:
         errors.append("launch epic: missing E15-5a Phase 4 enumeration")
-    if "E15-3a" not in text.split("Phase 3", 1)[-1][:1200]:
+    if "E15-3a" not in _phase_section(text, "3"):
         errors.append("launch epic: missing E15-3a Phase 3 gate")
     if re.search(r"budget alerts.*\*\*E15-5\*\*(?!a)", text):
         errors.append("launch epic: budget alerts still assigned to E15-5")

@@ -8,7 +8,7 @@
 > **LocalWP Site URL**: `http://localhost:10010` (WordPress admin + Workbench — not port `8000`)
 > **LocalWP Origin**: `http://localhost:10010`
 > **Backend Base URL**: `https://api.altcontext.com`
-> **Plugin Build Source**: `apps/prototype-wp-alt-context/` (build `28d78e6a`, packaged as `dist/alt-context-0.0.2.zip`)
+> **Plugin Build Source**: `apps/prototype-wp-alt-context/` — Slice 1 (`2026-04-23`) used build `28d78e6a` / `dist/alt-context-0.0.2.zip`; the `2026-06-08` re-gather ran the installed plugin `0.0.4` (no packaged ZIP SHA recorded) against `dev`/`local` recognition, not the prod OCI round trip. Treat the re-gather as a Workbench-surface proof, not a prod backend round-trip.
 
 This run log is the single evidence surface for the full LocalWP plugin ->
 OCI backend -> recognition round trip. Record only key fingerprints, never raw
@@ -67,8 +67,8 @@ Use the operator checklist in [E15-3a-localwp-proof-bundle-capture-checklist.md]
 | --- | --- | --- | --- |
 | 1 | Pre-scan state showing build, seeded-media set, and the Workbench route under test | [x] | `apps/prototype-wp-alt-context/local/playwright/E15-22/evidence/evidence-workbench-evidenc-40d74-rogress-evidence-on-LocalWP-evidence/workbench-pre-scan.png` |
 | 2 | Representative avatar visible on a top-cluster card or review drawer, or the explicit unavailable-image fallback on that same surface | [ ] | Playwright now auto-captures top-cluster/review/unavailable surfaces when present (`evidence-manifest.json`); `2026-06-08` run still missing cards — set valid prod key + `ACX_E2E_ENSURE_SERVICE_MODE=1`, or recapture after clusters exist locally |
-| 3 | Mid-run progress checkpoint showing the processed count increasing and no `Scan complete` state yet | [x] | `.../workbench-progress-mid-run.png` + `.../workbench-job-timeline.png` |
-| 4 | UI-ready completion checkpoint showing `Scan complete` only after clustering/projection is ready | [x] | `.../workbench-progress-complete.png` + `.../workbench-post-run.png` |
+| 3 | Mid-run progress checkpoint showing the processed count increasing and no `Scan complete` state yet | [x] | `.../workbench-progress-mid-run.png` + `.../workbench-job-timeline.png`. Monotonic processed-count is asserted by `workbench-evidence.spec.ts` (non-decreasing `Processed N/M` samples); the no-early-`Scan complete` predicate is unit-proven in `JobTimeline.test.tsx`, not by the screenshot alone |
+| 4 | UI-ready completion checkpoint showing `Scan complete` only after clustering/projection is ready | [x] | `.../workbench-progress-complete.png` + `.../workbench-post-run.png`. Screenshot evidence only — completion-ordering correctness is asserted by the `JobTimeline.test.tsx` predicate suite, not inferred from this capture |
 | 5 | Backend correlation IDs, latency evidence, and a redacted payload snapshot tied to the same scan run | [ ] | OCI stdout + `/metrics` still pending for remote proof pass |
 
 ## Operator Setup

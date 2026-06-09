@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+require_once __DIR__ . '/interface-analysis-jobs-host.php';
 require_once __DIR__ . '/../sovereign/repositories/interface-sync-state-repository.php';
 require_once __DIR__ . '/../sovereign/repositories/class-batch-run-repository.php';
 require_once __DIR__ . '/../sovereign/repositories/class-sync-state-repository.php';
@@ -49,8 +50,10 @@ use function trim;
 use function wp_get_attachment_url;
 use function wp_json_encode;
 
-class AnalysisJobsController extends AbstractRecognitionProxyController {
-	use BatchLimits;
+class AnalysisJobsController extends AbstractRecognitionProxyController implements AnalysisJobsHostInterface {
+	use BatchLimits {
+		get_current_tier_batch_limit as protected resolve_current_tier_batch_limit;
+	}
 
 	private const REQUEST_CLASS_POST_SCAN_READ = 'post_scan_read';
 	private const BATCH_RUN_STATUS_STALE_SECONDS = 5;
@@ -75,6 +78,64 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 		$this->sync_pull_job = $sync_pull_job;
 		$this->sync_pull_job_factory = $sync_pull_job_factory;
 		$this->batch_run_repository = $batch_run_repository ?? new BatchRunRepository();
+	}
+
+	public function get_tenant_id(): string {
+		return parent::get_tenant_id();
+	}
+
+	/**
+	 * @param array<string,mixed> $body
+	 * @param array<string,mixed> $query
+	 */
+	public function proxy_recognition_request(
+		string $method,
+		string $path,
+		array $body = array(),
+		array $query = array(),
+		string $request_class = 'auto',
+		string $body_kind = 'json'
+	): WP_REST_Response|WP_Error {
+		return $this->proxy_request( $method, $path, $body, $query, $request_class, $body_kind );
+	}
+
+	public function is_proxy_unavailable( WP_REST_Response|WP_Error $response ): bool {
+		return parent::is_proxy_unavailable( $response );
+	}
+
+	public function get_retry_after_seconds( WP_REST_Response|WP_Error $response ): ?int {
+		return parent::get_retry_after_seconds( $response );
+	}
+
+	public function backend_overloaded_response( WP_REST_Response|WP_Error $response ): WP_REST_Response {
+		return parent::backend_overloaded_response( $response );
+	}
+
+	/**
+	 * @param object $sync_state_repository
+	 */
+	public function should_use_local_projection_gate( $sync_state_repository, string $tenant_id ): bool {
+		return parent::should_use_local_projection_gate( $sync_state_repository, $tenant_id );
+	}
+
+	public function get_proxy_policy(): RecognitionProxyPolicy {
+		return parent::get_proxy_policy();
+	}
+
+	public function get_recognition_base_url(): string {
+		return parent::get_recognition_base_url();
+	}
+
+	public function get_recognition_source(): string {
+		return parent::get_recognition_source();
+	}
+
+	public function get_recognition_api_key(): string {
+		return parent::get_recognition_api_key();
+	}
+
+	public function get_current_tier_batch_limit(): int {
+		return $this->resolve_current_tier_batch_limit();
 	}
 
 	public function register_routes(): void {
@@ -548,16 +609,7 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 			@ignore_user_abort( true );
 		}
 
-		nocache_headers();
-		header( 'Content-Type: text/event-stream' );
-		header( 'Cache-Control: no-cache' );
-		header( 'X-Accel-Buffering: no' );
-
-		while ( ob_get_level() > 0 ) {
-			ob_end_flush();
-		}
-		@ini_set( 'output_buffering', 'off' );
-		@ini_set( 'zlib.output_compression', '0' );
+		$this->prepare_stream_output_buffers();
 
 		$last_completed = -1;
 		$last_emit      = 0.0;
@@ -653,6 +705,23 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 			usleep( 100000 );
 		}
 
+		$this->terminate_job_progress_stream();
+	}
+
+	protected function prepare_stream_output_buffers(): void {
+		nocache_headers();
+		header( 'Content-Type: text/event-stream' );
+		header( 'Cache-Control: no-cache' );
+		header( 'X-Accel-Buffering: no' );
+
+		while ( ob_get_level() > 0 ) {
+			ob_end_flush();
+		}
+		@ini_set( 'output_buffering', 'off' );
+		@ini_set( 'zlib.output_compression', '0' );
+	}
+
+	protected function terminate_job_progress_stream(): never {
 		exit;
 	}
 

@@ -3,7 +3,7 @@
 > **Task Short ID**: E15-3
 > **Status**: scoped -- not started
 > **Epic**: [E15. Public Demo Launch Readiness](../../epics/v0.4.0/public-demo-launch-readiness-epic.md) Phase 3
-> **Predecessors**: E15-1 (security baseline) merged; E15-2 (observability baseline) merged; demo-critical Workbench UI gate passed locally, with entity avatars, Top Cluster face samples, and Review Cluster member rows rendering from seeded media. Backend at `api.altcontext.com` verified.
+> **Predecessors**: E15-1 (security baseline) merged; E15-2 (observability baseline) merged; [E15-22](./E15-22-workbench-avatar-and-progress-readiness-task-plan.md) demo-critical Workbench UI gate passed locally, with entity avatars, Top Cluster face samples, and Review Cluster member rows rendering from seeded media; [E15-3a](./E15-3a-localwp-oci-roundtrip-task-plan.md) LocalWP -> OCI round-trip verification gate passed. Backend at `api.altcontext.com` verified.
 > **Blocks**: E15-5 (remote E2E verification) -- needs a WP origin to round-trip against. MVP completion signal.
 > **Provider stance**: provider-agnostic. Concrete host selected at task-start via an ADR-lite decision record. Scope covers requirements, not a vendor.
 

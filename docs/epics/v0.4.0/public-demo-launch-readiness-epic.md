@@ -14,8 +14,8 @@ The MVP for E15 is **public WP demo URL live + one manual end-to-end pass**. Eve
 
 - Phase 1 — Security Baseline (E15-1, E15-1b) — merged to `main`
 - Phase 2 — Observability Baseline (E15-2) — merged to `main`
-- Phase 3 — WordPress Demo Provisioning (E15-3) — provider-agnostic plan; gated on [E15-22](../../tasks/15.0/E15-22-workbench-avatar-and-progress-readiness-task-plan.md) landing first and on seeded local-media proof that entity avatars, Top Cluster face samples, and Review Cluster member rows render before paid/shared WP host provisioning begins, so a public host is never purchased while the Workbench still shows placeholder thumbs or an empty Review Cluster drawer
-- Phase 4 — End-to-End Verification (E15-4 in progress, E15-5 manual remote E2E, E15-22 Workbench avatar/progress readiness, E15-23 Workbench live findings panel)
+- Phase 3 — WordPress Demo Provisioning (E15-3) — provider-agnostic plan; gated on [E15-22](../../tasks/15.0/E15-22-workbench-avatar-and-progress-readiness-task-plan.md) landing first, on the [E15-3a](../../tasks/15.0/E15-3a-localwp-oci-roundtrip-task-plan.md) LocalWP -> OCI round-trip gate passing, and on seeded local-media proof that entity avatars, Top Cluster face samples, and Review Cluster member rows render before paid/shared WP host provisioning begins, so a public host is never purchased while the Workbench still shows placeholder thumbs or an empty Review Cluster drawer
+- Phase 4 — End-to-End Verification (E15-4 in progress, E15-5a OCI operational hygiene, E15-5 manual remote E2E + ARM evidence, E15-22 Workbench avatar/progress readiness, E15-23 Workbench live findings panel)
 - Phase 6 — Local Sync Correctness, operator hardening, and audit closure (E15-7 in progress; E15-13, E15-14, E15-15, E15-16, and E15-17 staged under the same phase with explicit dependency order below)
 
 **Deferred to v0.4.1:**
@@ -100,9 +100,9 @@ The recognition service, Docker stack, Caddy TLS proxy, persistent model cache, 
 | WordPress demo page                                       | Production Readiness Phase 6 / E14 | Not started — **E15-3** (provider-agnostic, this epic)                                 |
 | Manual remote E2E verification                            | Production Readiness Phase 6 / E14 | Not started — **E15-5** (this epic)                                                    |
 | Workbench live findings panel                             | Workbench clustering UI scope       | Planned -- **E15-23**                                                                  |
-| OCI budget alerts not verified                            | E14 / Production Readiness Phase 6 | Not started — folded into **E15-5**                                                    |
-| ARM compatibility verification                            | E14                                | Not started — folded into **E15-5** (de facto verified by running A1 instance)         |
-| Dynamic IP SSH access drift                               | Tech debt                          | Folded into **E15-4 / E15-5** (Tailscale)                                              |
+| OCI budget alerts not verified                            | E14 / Production Readiness Phase 6 | Not started — **E15-5a** (OCI operational hygiene)                                    |
+| ARM compatibility verification                            | E14                                | Not started — **E15-5** (de facto verified by running A1 instance; artifact pending)   |
+| Dynamic IP SSH access drift                               | Tech debt                          | Folded into **E15-5a** (Tailscale)                                                     |
 | Local reset bootstrap contract mismatch                   | E15-4 (in progress)                | In progress                                                                            |
 | Local-sync correctness and audit closure                  | New for E15                        | In progress -- **E15-7**                                                               |
 | Roster curation loop + person review projection contracts | Phase 6 follow-on                  | Planned -- **E15-13**, gated by ADR-009 and sequenced after E15-7 correctness work     |
@@ -196,13 +196,13 @@ Exit criteria:
 ### Phase 3: WordPress Demo Provisioning -- not-started
 
 > **Status**: not-started — task plan drafted Apr 2026
-> **Task plans**: [E15-3. WordPress Demo Provisioning](../../tasks/15.0/E15-3-wordpress-demo-provisioning-task-plan.md)
-> **Predecessor gate**: [E15-22](../../tasks/15.0/E15-22-workbench-avatar-and-progress-readiness-task-plan.md) must land first (cluster-members envelope, backend face-thumbnail surface, explicit unavailable variant) so LocalWP proof shows truthful avatars and a populated Review Cluster drawer before any paid WP host is purchased. See plan-analyze decision `plan_analyze_e15_avatar_gate_20260512_revise_first`.
+> **Task plans**: [E15-3a. LocalWP -> OCI Round-Trip Verification](../../tasks/15.0/E15-3a-localwp-oci-roundtrip-task-plan.md) (pre-provisioning gate), [E15-3. WordPress Demo Provisioning](../../tasks/15.0/E15-3-wordpress-demo-provisioning-task-plan.md)
+> **Predecessor gates**: [E15-22](../../tasks/15.0/E15-22-workbench-avatar-and-progress-readiness-task-plan.md) must land first (cluster-members envelope, backend face-thumbnail surface, explicit unavailable variant) so LocalWP proof shows truthful avatars and a populated Review Cluster drawer. [E15-3a](../../tasks/15.0/E15-3a-localwp-oci-roundtrip-task-plan.md) LocalWP -> OCI round-trip verification must pass before any paid WP host is purchased. See plan-analyze decision `plan_analyze_e15_avatar_gate_20260512_revise_first`.
 > **Source**: Production Readiness Phase 6, E14 remaining (subsumes E14 checklist items: provision WP demo hosting, install + configure ACX plugin)
 
 **Goal**: A publicly accessible WordPress page demonstrates the ACX plugin against the live backend.
 
-**Pre-provisioning gate**: Do not purchase or provision shared WP hosting until the local/LocalWP Workbench demo path renders entity avatar thumbnails, Top Cluster face samples, and Review Cluster member rows from seeded media. Current placeholder/error thumbnails or an empty Review Cluster member list are MVP blockers because Phase 3 depends on a visibly truthful demo surface, not just a backend round trip.
+**Pre-provisioning gates**: Do not purchase or provision shared WP hosting until (1) the local/LocalWP Workbench demo path renders entity avatar thumbnails, Top Cluster face samples, and Review Cluster member rows from seeded media, and (2) the [E15-3a](../../tasks/15.0/E15-3a-localwp-oci-roundtrip-task-plan.md) LocalWP -> OCI round-trip gate passes. Placeholder/error thumbnails, an empty Review Cluster member list, or a failing OCI round trip are MVP blockers because Phase 3 depends on a visibly truthful demo surface and a proven backend path, not just request success in isolation.
 
 Deliverables:
 
@@ -223,26 +223,23 @@ Exit criteria:
 
 ### Phase 4: End-to-End Verification -- in-progress
 
-> **Status**: in-progress — E15-4 active (local reset hardening); E15-5 task plan drafted Apr 2026 (manual remote E2E + budget alerts + Tailscale + ARM verification)
-> **Task plans**: [E15-4. Local Reset Bootstrap Hardening](../../tasks/15.0/E15-4-local-reset-bootstrap-hardening-task-plan.md), [E15-5. Manual Remote E2E + Production Smoke](../../tasks/15.0/E15-5-manual-remote-e2e-task-plan.md)
+> **Status**: in-progress — E15-4 active (local reset hardening); the Apr 2026 scope split moved budget alerts + Tailscale + Hetzner fallback into E15-5a (OCI operational hygiene), leaving E15-5 as manual remote E2E + ARM verification. E15-3a (Phase 3 pre-provisioning gate) gates demo provisioning.
+> **Task plans**: [E15-4. Local Reset Bootstrap Hardening](../../tasks/15.0/E15-4-local-reset-bootstrap-hardening-task-plan.md), [E15-5a. OCI Operational Hygiene](../../tasks/15.0/E15-5a-oci-operational-hygiene-task-plan.md), [E15-5. Remote E2E Verification + ARM Evidence](../../tasks/15.0/E15-5-manual-remote-e2e-task-plan.md)
 > **Source**: Production Readiness Phase 6 exit criteria; subsumes E14 checklist items: configure budget alerts, verify ARM compatibility, end-to-end smoke test, dynamic IP SSH access drift
 
 **Goal**: Prove the full WP-to-backend-to-recognition round trip works under realistic conditions.
 
-Deliverables:
+Deliverables (by task):
 
-- End-to-end smoke test: WP plugin triggers recognition request, backend processes it, response displayed in plugin UI.
-- Local reset bootstrap hardening (E15-4, in progress): `make reset` works from clean checkout.
-- OCI budget alerts verified ($1/$5/$10 thresholds active and tested).
-- Fallback plan documented (Hetzner CX22 at ~$4.35/mo if Oracle proves unreliable).
-- Dynamic IP SSH drift resolved (Tailscale or equivalent persistent fix).
+- **E15-4**: Local reset bootstrap hardening (`make reset` works from clean checkout).
+- **E15-5a**: OCI budget alerts verified ($1/$5/$10 thresholds active and tested); Hetzner CX22 fallback plan documented; Tailscale SSH access verified.
+- **E15-5**: End-to-end smoke test (WP plugin triggers recognition request, backend processes it, response displayed in plugin UI); ARM compatibility evidence artifact captured.
 
 Exit criteria:
 
-- WP demo page can trigger a recognition scan and display results.
-- Local dev reset works from a clean checkout without undocumented manual steps.
-- Budget alerts are active and one test alert has been verified.
-- SSH access works reliably without IP-dependent terraform apply.
+- **E15-4**: Local dev reset works from a clean checkout without undocumented manual steps.
+- **E15-5a**: Budget alerts are active and one test alert has been verified; SSH access works reliably without IP-dependent terraform apply; Hetzner fallback plan is accepted.
+- **E15-5**: WP demo page can trigger a recognition scan and display results; ARM evidence artifact is filed.
 
 ---
 
@@ -276,7 +273,7 @@ Deliverables:
 Phase 6 execution order:
 
 1. E15-7 closes the sovereign local-sync correctness and audit findings.
-2. Resolve the Workbench entity-avatar/review-drawer blocker before Phase 3 provisioning starts: seeded local media must show real avatar thumbnails, Top Cluster face samples, and Review Cluster member rows instead of placeholders, thumbnail errors, or "No members found" for populated clusters.
+2. Resolve the E15-3a LocalWP -> OCI gate and Workbench entity-avatar/review-drawer blocker before Phase 3 provisioning starts: seeded local media must show real avatar thumbnails, Top Cluster face samples, and Review Cluster member rows instead of placeholders, thumbnail errors, or "No members found" for populated clusters, and the OCI round trip must pass.
 3. E15-13 starts after ADR-009 review acceptance and lands the roster curation loop, person projection, and queue contracts.
 4. E15-14 can run independently once LocalWP smoke evidence is prioritized, but still reports under Phase 6 because it hardens demo-readiness correctness proof.
 5. E15-15 reshapes dashboard triage using existing fields only.
@@ -296,7 +293,7 @@ Exit criteria:
 | --------------------------------------- | ------- | ----------------------- | ------- |
 | WP shared hosting provisioning + domain | @daniel | Not started             | Phase 3 |
 | API key / origin policy decisions       | @daniel | Not started             | Phase 1 |
-| OCI budget alert verification           | @daniel | Not started             | Phase 4 |
+| OCI budget alert verification           | @daniel | Not started             | Phase 4 (E15-5a) |
 | Tailscale installation on OCI VM        | @daniel | Implemented/documented  | Phase 4 |
 | CI secret provisioning for smoke tests  | @daniel | Not started             | Phase 5 |
 
@@ -362,22 +359,23 @@ Exit criteria:
 
 > Source: Production Readiness Phase 6 + E14 remaining
 
-- [ ] Confirm the Workbench entity-avatar/review-drawer gate passes locally before purchasing or provisioning shared PHP hosting ← _demo-critical Workbench UI gate_
+- [ ] Complete [E15-3a](../../tasks/15.0/E15-3a-localwp-oci-roundtrip-task-plan.md) LocalWP -> OCI round-trip gate before purchasing or provisioning shared PHP hosting ← _vendor-spend gate_
+- [ ] Confirm the Workbench entity-avatar/review-drawer gate passes locally before purchasing or provisioning shared PHP hosting ← _demo-critical Workbench UI gate (E15-22 / E15-3a proof bundle)_
 - [ ] Provision shared PHP hosting (provider-agnostic; vendor selected at provisioning time) ← _Prod Readiness P6_
 - [ ] Install WordPress + ACX plugin ← _Prod Readiness P6 + E14_
 - [ ] Configure plugin with production backend URL and API key ← _Prod Readiness P6 + E14_
 - [ ] Seed demo content (media library with sample faces) ← _new for E15_
 - [ ] Set up Cloudflare DNS + TLS for WP host ← _Prod Readiness P6_
 
-## Phase 4: End-to-End Verification -- IN PROGRESS → [E15-4](../../tasks/15.0/E15-4-local-reset-bootstrap-hardening-task-plan.md) + [E15-5](../../tasks/15.0/E15-5-manual-remote-e2e-task-plan.md)
+## Phase 4: End-to-End Verification -- IN PROGRESS → [E15-4](../../tasks/15.0/E15-4-local-reset-bootstrap-hardening-task-plan.md) + [E15-5a](../../tasks/15.0/E15-5a-oci-operational-hygiene-task-plan.md) + [E15-5](../../tasks/15.0/E15-5-manual-remote-e2e-task-plan.md)
 
 > Source: Production Readiness Phase 6 exit criteria + [tech-debt/dynamic-ip-ssh-access.md](../../tasks/tech-debt/archive-or-transfer-candidates/dynamic-ip-ssh-access.md)
 
 - [ ] Complete local reset bootstrap hardening (E15-4, in progress) ← _finding INVEST-reset-env-contract-mismatch_
-- [ ] Verify OCI budget alerts ($1/$5/$10 thresholds) ← _Prod Readiness P6 + E14 (E15-5)_
+- [ ] Verify OCI budget alerts ($1/$5/$10 thresholds) ← _Prod Readiness P6 + E14 (E15-5a)_
 - [x] Resolve dynamic IP SSH access drift (Tailscale) ← _[tech-debt/dynamic-ip-ssh-access.md](../../tasks/tech-debt/archive-or-transfer-candidates/dynamic-ip-ssh-access.md) (implemented/documented)_
 - [ ] Run end-to-end WP → backend → recognition → response smoke test ← _Prod Readiness P6 + E14 (E15-5)_
-- [ ] Document Hetzner CX22 fallback plan ← _Prod Readiness P6 + E14 (E15-5)_
+- [ ] Document Hetzner CX22 fallback plan ← _Prod Readiness P6 + E14 (E15-5a)_
 - [ ] Capture ARM compatibility verification evidence ← _E14 (E15-5; de facto verified by running A1 instance, but missing recorded artifact)_
 
 ## Phase 5: E2E Smoke Gate Automation -- DEFERRED → [v0.4.1](../v0.4.1/public-demo-followons-epic.md)

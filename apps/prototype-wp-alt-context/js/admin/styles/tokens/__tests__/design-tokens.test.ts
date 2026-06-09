@@ -32,11 +32,17 @@ const REQUIRED_FONT_WEIGHT_TOKENS = [
   '--acx-font-weight-bold',
 ] as const;
 
-const REQUIRED_COLOR_TOKENS = ['--acx-color-info-border', '--acx-color-primary-subtle'] as const;
+const REQUIRED_COLOR_TOKENS = [
+  '--acx-color-info-border',
+  '--acx-color-primary-subtle',
+  '--acx-color-primary',
+  '--acx-color-text-secondary',
+  '--acx-color-data-placeholder',
+] as const;
 
 const REQUIRED_SHADOW_TOKENS = ['--acx-shadow-card'] as const;
 
-const GOVERNED_VAR_PREFIXES = ['--acx-radius-', '--acx-text-', '--acx-font-weight-'] as const;
+const GOVERNED_VAR_PREFIXES = ['--acx-radius-', '--acx-text-', '--acx-font-weight-', '--acx-color-'] as const;
 
 const collectScssFiles = (directory: string): string[] => {
   const entries = readdirSync(directory, { withFileTypes: true });

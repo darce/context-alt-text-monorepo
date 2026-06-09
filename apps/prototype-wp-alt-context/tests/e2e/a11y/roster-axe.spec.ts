@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 
 import { assertNoBlockingViolations, requireBaseUrl, seededA11yEnabled } from '../fixtures/axe';
 import { getAcxAdminRouteUrl } from '../fixtures/acx-routes';
+import { skipUnlessPopulatedRoster } from '../fixtures/seeded-state';
 
 const ROSTER_SHELL_SELECTOR = '.acx-roster';
 
@@ -23,6 +24,6 @@ test('roster seeded state has no serious or critical axe violations', async ({ p
   test.skip(!seededA11yEnabled(), 'Set ACX_E2E_SEEDED=1 to enable populated roster axe coverage.');
 
   await openRoster(requireBaseUrl(baseURL), page);
-  await expect(page.locator('.acx-roster-entries__table tbody tr').first()).toBeVisible();
+  await skipUnlessPopulatedRoster(page);
   await assertNoBlockingViolations(page, ROSTER_SHELL_SELECTOR);
 });

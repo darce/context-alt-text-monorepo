@@ -12,8 +12,10 @@ import {
   type RecognitionSourceValue,
   type SettingsResponse,
   type TestConnectionOutcomeValue,
+  type TestConnectionProbeMode,
   type TestConnectionResponse,
 } from '../api/settingsApi';
+import { resetConfigCache } from '../api/config';
 import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group';
 
 type BannerTone = 'success' | 'warning' | 'error';
@@ -192,6 +194,7 @@ export const SettingsPage = (): React.JSX.Element => {
   const [recognitionSource, setRecognitionSource] = useState<RecognitionSourceValue>(RecognitionSource.SERVICE);
   const [apiKey, setApiKey] = useState('');
   const [saveMessage, setSaveMessage] = useState('');
+  const [saveMessageTone, setSaveMessageTone] = useState<BannerTone>('success');
   const [testResult, setTestResult] = useState<TestConnectionResponse | null>(null);
 
   useEffect(() => {
@@ -203,15 +206,32 @@ export const SettingsPage = (): React.JSX.Element => {
     }
   }, [settingsQuery.data]);
 
+  const syncLocalizedRouting = (settings: SettingsResponse): void => {
+    if (!window.AltContextAdmin) {
+      return;
+    }
+
+    window.AltContextAdmin.recognitionSource = settings.recognition_source;
+    window.AltContextAdmin.effectiveTargetUrl = settings.effective_target_url;
+    resetConfigCache();
+  };
+
   const saveMutation = useMutation({
     mutationFn: saveSettings,
-    onSuccess: () => {
+    onSuccess: async () => {
       setSaveMessage(__('Settings saved.', 'alt-context'));
+      setSaveMessageTone('success');
       setApiKey('');
-      void queryClient.invalidateQueries({ queryKey: ['settings'] });
+      await queryClient.invalidateQueries({ queryKey: ['settings'] });
+      const refreshed = await queryClient.fetchQuery({
+        queryKey: ['settings'],
+        queryFn: fetchSettings,
+      });
+      syncLocalizedRouting(refreshed);
     },
     onError: () => {
       setSaveMessage(__('Failed to save settings.', 'alt-context'));
+      setSaveMessageTone('error');
     },
   });
 
@@ -221,13 +241,18 @@ export const SettingsPage = (): React.JSX.Element => {
       setTestResult(data);
     },
     onError: () => {
-      setTestResult({ outcome: TestConnectionOutcome.NETWORK_ERROR });
+      const probeMode: TestConnectionProbeMode =
+        settingsQuery.data?.effective_target_mode === RecognitionSource.LOCAL
+          ? 'local_liveness'
+          : 'service_auth';
+      setTestResult({ outcome: TestConnectionOutcome.NETWORK_ERROR, probe_mode: probeMode });
     },
   });
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     setSaveMessage('');
+    setSaveMessageTone('success');
     setTestResult(null);
 
     const payload: Record<string, string> = {};
@@ -246,6 +271,7 @@ export const SettingsPage = (): React.JSX.Element => {
 
     if (Object.keys(payload).length === 0) {
       setSaveMessage(__('No changes to save.', 'alt-context'));
+      setSaveMessageTone('warning');
       return;
     }
 
@@ -434,7 +460,9 @@ export const SettingsPage = (): React.JSX.Element => {
           <button
             type="submit"
             className="button button-primary"
-            disabled={saveMutation.isPending || (sourceReadOnly && urlReadOnly && keyReadOnly)}
+            disabled={
+              saveMutation.isPending || (sourceReadOnly && urlReadOnly && localUrlReadOnly && keyReadOnly)
+            }
           >
             {saveMutation.isPending ? __('Saving\u2026', 'alt-context') : __('Save Settings', 'alt-context')}
           </button>
@@ -451,7 +479,7 @@ export const SettingsPage = (): React.JSX.Element => {
       </form>
 
       {saveMessage && (
-        <div className="notice notice-success inline" style={{ marginTop: '12px' }}>
+        <div className={`notice inline ${TONE_CLASS[saveMessageTone]}`} style={{ marginTop: '12px' }}>
           <p>{saveMessage}</p>
         </div>
       )}

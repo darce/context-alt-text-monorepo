@@ -215,12 +215,12 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 			return $constant_api_key;
 		}
 
-		$option_api_key = trim( (string) get_option( 'acx_recognition_api_key', '' ) );
-		if ( '' !== $option_api_key ) {
-			return $option_api_key;
+		$filter_api_key = trim( (string) apply_filters( 'acx_recognition_api_key', '' ) );
+		if ( '' !== $filter_api_key ) {
+			return $filter_api_key;
 		}
 
-		return trim( (string) apply_filters( 'acx_recognition_api_key', '' ) );
+		return trim( (string) get_option( 'acx_recognition_api_key', '' ) );
 	}
 
 	private function get_recognition_api_key_from_constant(): string {

@@ -61,8 +61,5 @@ export const skipUnlessPopulatedRoster = async (page: Page): Promise<void> => {
     return;
   }
 
-  test.skip(
-    true,
-    'LocalWP roster has no clusters or managed identities — seeded axe requires populated roster data.',
-  );
+  test.skip(true, 'LocalWP roster has no clusters or managed identities — seeded axe requires populated roster data.');
 };

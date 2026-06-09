@@ -42,6 +42,11 @@ class JobProgressStreamService {
 		$this->projection_sync_service = $projection_sync_service;
 	}
 
+	/**
+	 * SSE route handler: returns WP_Error for validation failures; success emits frames and terminates via exit.
+	 *
+	 * @return WP_REST_Response|WP_Error
+	 */
 	public function stream_job_progress( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		$job_id = sanitize_text_field( (string) $request->get_param( 'job_id' ) );
 		if ( '' === $job_id ) {

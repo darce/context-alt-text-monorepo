@@ -576,7 +576,6 @@ class AnalysisJobsControllerCharacterizationTest extends TestCase
         $batch = new BatchRunService($host);
         $projection = new ProjectionSyncService($host);
         $jobStatus = new JobStatusService($host, $batch, $projection);
-        $batch->wire_job_status_service($jobStatus);
 
         return new CharacterizationStreamService($host, $jobStatus, $batch, $projection);
     }

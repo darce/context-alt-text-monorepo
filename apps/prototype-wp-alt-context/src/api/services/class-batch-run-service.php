@@ -31,7 +31,6 @@ class BatchRunService {
 
 	private AnalysisJobsHostInterface $host;
 	private BatchRunRepository $batch_run_repository;
-	private ?JobStatusService $job_status_service = null;
 
 	public function __construct(
 		AnalysisJobsHostInterface $host,
@@ -39,10 +38,6 @@ class BatchRunService {
 	) {
 		$this->host = $host;
 		$this->batch_run_repository = $batch_run_repository ?? new BatchRunRepository();
-	}
-
-	public function wire_job_status_service( JobStatusService $job_status_service ): void {
-		$this->job_status_service = $job_status_service;
 	}
 
 	public function get_recent_batch_runs( WP_REST_Request $request ): WP_REST_Response {
@@ -208,6 +203,24 @@ class BatchRunService {
 		$this->batch_run_repository->record_observed_job_status( $this->host->get_tenant_id(), $job_id, $status );
 	}
 
+	private function record_observed_status_from_job_response( string $job_id, WP_REST_Response $response ): void {
+		$data   = $response->get_data();
+		$status = '';
+		if ( is_array( $data ) ) {
+			$status = sanitize_text_field( (string) ( $data['status'] ?? '' ) );
+		}
+
+		if ( '' === $status && 404 === $response->get_status() ) {
+			$status = 'failed';
+		}
+
+		if ( '' === $status ) {
+			return;
+		}
+
+		$this->record_observed_job_status( $job_id, $status );
+	}
+
 	private function refresh_stale_batch_run_children( string $run_id ): void {
 		$tenant_id = $this->host->get_tenant_id();
 		$job_ids   = $this->batch_run_repository->get_stale_non_terminal_job_ids( $tenant_id, $run_id, self::BATCH_RUN_STATUS_STALE_SECONDS );
@@ -227,9 +240,7 @@ class BatchRunService {
 				continue;
 			}
 
-			if ( null !== $this->job_status_service ) {
-				$this->job_status_service->record_observed_job_status_from_response( $job_id, $response );
-			}
+			$this->record_observed_status_from_job_response( $job_id, $response );
 			$data = $response->get_data();
 			if ( ! is_array( $data ) ) {
 				continue;

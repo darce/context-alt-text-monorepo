@@ -2138,6 +2138,34 @@ if (!function_exists('dbDelta')) {
     }
 }
 
+if (!function_exists('nocache_headers')) {
+    function nocache_headers(): void
+    {
+        // No-op in tests.
+    }
+}
+
+if (!function_exists('connection_aborted')) {
+    function connection_aborted(): bool
+    {
+        if (!isset($GLOBALS['__ac_connection_aborted'])) {
+            return false;
+        }
+
+        if (is_bool($GLOBALS['__ac_connection_aborted'])) {
+            return $GLOBALS['__ac_connection_aborted'];
+        }
+
+        if (is_int($GLOBALS['__ac_connection_aborted'])) {
+            $GLOBALS['__ac_connection_aborted_call_count'] = ($GLOBALS['__ac_connection_aborted_call_count'] ?? 0) + 1;
+
+            return $GLOBALS['__ac_connection_aborted_call_count'] >= $GLOBALS['__ac_connection_aborted'];
+        }
+
+        return false;
+    }
+}
+
 if (!function_exists('flush_rewrite_rules')) {
     /**
      * Stub for flush_rewrite_rules.

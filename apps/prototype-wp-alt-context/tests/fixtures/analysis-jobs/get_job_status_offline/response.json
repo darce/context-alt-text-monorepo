@@ -1,0 +1,1 @@
+{"type":"response","status":200,"data":{"id":"33333333-3333-3333-3333-333333333333","type":"analyze","status":"failed","progress":{"completed":0,"total":0},"started_at":"__MASKED_TIMESTAMP__","finished_at":"__MASKED_TIMESTAMP__","message":"Recognition backend unavailable."}}

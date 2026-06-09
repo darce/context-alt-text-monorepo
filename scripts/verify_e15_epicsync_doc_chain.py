@@ -14,11 +14,18 @@ LAUNCH_EPIC = REPO_ROOT / "docs/epics/v0.4.0/public-demo-launch-readiness-epic.m
 
 def verify_e15_3_predecessors() -> list[str]:
     text = E15_3_PLAN.read_text(encoding="utf-8")
+    # Anchor to the Predecessors line so reverting the predecessor edit fails
+    # the check; a whole-file substring match is vacuous because E15-22 already
+    # appears elsewhere in the plan on main.
+    predecessor_line = next(
+        (line for line in text.splitlines() if line.lstrip().startswith("> **Predecessors**")),
+        "",
+    )
     required = (
         "E15-3a-localwp-oci-roundtrip-task-plan.md",
         "E15-22-workbench-avatar-and-progress-readiness-task-plan.md",
     )
-    return [marker for marker in required if marker not in text]
+    return [marker for marker in required if marker not in predecessor_line]
 
 
 def verify_self_hosting_scope_split() -> list[str]:
@@ -67,8 +74,16 @@ def verify_launch_epic_phase4_split() -> list[str]:
         errors.append("launch epic: missing E15-5a Phase 4 enumeration")
     if "E15-3a" not in _phase_section(text, "3"):
         errors.append("launch epic: missing E15-3a Phase 3 gate")
-    if re.search(r"budget alerts.*\*\*E15-5\*\*(?!a)", text):
-        errors.append("launch epic: budget alerts still assigned to E15-5")
+    # OCI-hygiene surfaces must be OWNED by E15-5a, never plain E15-5, keeping
+    # owner parity with the self-hosting epic split. Match only ownership tokens
+    # (bold / parenthetical / delegated forms) so narrative prose that merely
+    # names E15-5's remaining scope on the same line is not a false positive.
+    owner_e15_5 = r"(?:\*\*E15-5\*\*|\(E15-5\)|delegated to E15-5(?![\w-]))"
+    for surface in ("budget alert", "Hetzner"):
+        for line in text.splitlines():
+            if surface.lower() in line.lower() and re.search(owner_e15_5, line):
+                errors.append(f"launch epic: '{surface}' line still assigns ownership to E15-5 (should be E15-5a)")
+                break
     return errors
 
 

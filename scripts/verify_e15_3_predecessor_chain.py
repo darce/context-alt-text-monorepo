@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Backward-compatible entry point; delegates to the EPICSYNC doc-chain verifier."""
+"""Backward-compatible entry point for the legacy E15-3 predecessor check.
+
+Delegates to ``verify_e15_epicsync_doc_chain.main()``, which runs the full
+E15-EPICSYNC doc chain (predecessors + scope-split + launch-epic checks).
+Kept as a stable path so existing callers / CI targets that reference this
+filename keep working; it intentionally runs the whole chain, not a subset.
+The importlib load (rather than a sibling ``import``) keeps it working when
+``scripts/`` is not on ``sys.path``.
+"""
 
 from __future__ import annotations
 

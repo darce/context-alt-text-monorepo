@@ -1,1 +1,5 @@
+event: progress
+data: {"type":"scan_progress","job_id":"66666666-6666-6666-6666-666666666666","status":"completed","completed":2,"total":2}
 
+event: done
+data: {"type":"scan_progress","job_id":"66666666-6666-6666-6666-666666666666","status":"completed","completed":2,"total":2}

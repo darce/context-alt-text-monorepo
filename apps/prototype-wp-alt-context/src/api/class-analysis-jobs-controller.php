@@ -116,37 +116,6 @@ class AnalysisJobsController extends AbstractRecognitionProxyController implemen
 		return parent::is_proxy_unavailable( $response );
 	}
 
-	public function get_retry_after_seconds( WP_REST_Response|WP_Error $response ): ?int {
-		return parent::get_retry_after_seconds( $response );
-	}
-
-	public function backend_overloaded_response( WP_REST_Response|WP_Error $response ): WP_REST_Response {
-		return parent::backend_overloaded_response( $response );
-	}
-
-	/**
-	 * @param object $sync_state_repository
-	 */
-	public function should_use_local_projection_gate( $sync_state_repository, string $tenant_id ): bool {
-		return parent::should_use_local_projection_gate( $sync_state_repository, $tenant_id );
-	}
-
-	public function get_proxy_policy(): RecognitionProxyPolicy {
-		return parent::get_proxy_policy();
-	}
-
-	public function get_recognition_base_url(): string {
-		return parent::get_recognition_base_url();
-	}
-
-	public function get_recognition_source(): string {
-		return parent::get_recognition_source();
-	}
-
-	public function get_recognition_api_key(): string {
-		return parent::get_recognition_api_key();
-	}
-
 	public function get_current_tier_batch_limit(): int {
 		return $this->resolve_current_tier_batch_limit();
 	}

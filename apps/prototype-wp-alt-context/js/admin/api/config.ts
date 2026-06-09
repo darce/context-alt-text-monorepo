@@ -12,6 +12,7 @@ export interface ApiConfig {
   max_media_per_batch?: number | string; // wp_localize_script may coerce to string
   devMode?: boolean | string | number; // wp_localize_script may convert to "1" or ""
   recognitionSource?: 'service' | 'local';
+  effectiveTargetUrl?: string;
 }
 
 export interface NormalizedConfig {
@@ -23,6 +24,7 @@ export interface NormalizedConfig {
   maxMediaPerBatch: number;
   devMode: boolean;
   recognitionSource: 'service' | 'local';
+  effectiveTargetUrl: string;
 }
 
 // NOTE: Batch limits removed for MVP. Previously 50, now set high to disable chunking.
@@ -50,6 +52,10 @@ export const normalizeConfig = (raw: ApiConfig): NormalizedConfig => {
     maxMediaPerBatch,
     devMode,
     recognitionSource: raw.recognitionSource === 'local' ? 'local' : 'service',
+    effectiveTargetUrl:
+      typeof raw.effectiveTargetUrl === 'string' && raw.effectiveTargetUrl.trim() !== ''
+        ? raw.effectiveTargetUrl
+        : 'http://localhost:8000',
   };
 };
 

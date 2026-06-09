@@ -4,6 +4,10 @@ import { getEndpoint, getConfig } from './config';
 export interface SettingsResponse {
   url: string;
   url_source: 'constant' | 'option' | 'filter' | 'default';
+  local_url: string;
+  local_url_source: 'constant' | 'option' | 'filter' | 'default';
+  effective_target_url: string;
+  effective_target_mode: 'service' | 'local';
   recognition_source: 'service' | 'local';
   recognition_source_source: 'constant' | 'option' | 'filter' | 'default';
   api_key_set: boolean;
@@ -20,6 +24,7 @@ export type RecognitionSourceValue = (typeof RecognitionSource)[keyof typeof Rec
 
 export interface SaveSettingsPayload {
   url?: string;
+  local_url?: string;
   recognition_source?: RecognitionSourceValue;
   api_key?: string;
 }
@@ -49,12 +54,16 @@ const KNOWN_TEST_CONNECTION_OUTCOMES: ReadonlySet<string> = new Set(Object.value
 export const isTestConnectionOutcome = (value: unknown): value is TestConnectionOutcomeValue =>
   typeof value === 'string' && KNOWN_TEST_CONNECTION_OUTCOMES.has(value);
 
+export type TestConnectionProbeMode = 'local_liveness' | 'service_auth';
+
 export interface TestConnectionResponse {
   outcome: TestConnectionOutcomeValue;
   status_code?: number;
   retry_after_seconds?: number;
   detail?: string;
   body?: unknown;
+  probe_mode?: TestConnectionProbeMode;
+  probed_url?: string;
 }
 
 export const fetchSettings = async (): Promise<SettingsResponse> => {

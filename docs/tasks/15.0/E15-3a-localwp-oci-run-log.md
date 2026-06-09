@@ -66,7 +66,7 @@ Use the operator checklist in [E15-3a-localwp-proof-bundle-capture-checklist.md]
 | Step | Required capture | Status | Notes |
 | --- | --- | --- | --- |
 | 1 | Pre-scan state showing build, seeded-media set, and the Workbench route under test | [x] | `apps/prototype-wp-alt-context/local/playwright/E15-22/evidence/evidence-workbench-evidenc-40d74-rogress-evidence-on-LocalWP-evidence/workbench-pre-scan.png` |
-| 2 | Representative avatar visible on a top-cluster card or review drawer, or the explicit unavailable-image fallback on that same surface | [ ] | No top-cluster card in this run; naming queue did not render cards — recapture after clusters exist or open review drawer manually |
+| 2 | Representative avatar visible on a top-cluster card or review drawer, or the explicit unavailable-image fallback on that same surface | [ ] | Playwright now auto-captures top-cluster/review/unavailable surfaces when present (`evidence-manifest.json`); `2026-06-08` run still missing cards — set valid prod key + `ACX_E2E_ENSURE_SERVICE_MODE=1`, or recapture after clusters exist locally |
 | 3 | Mid-run progress checkpoint showing the processed count increasing and no `Scan complete` state yet | [x] | `.../workbench-progress-mid-run.png` + `.../workbench-job-timeline.png` |
 | 4 | UI-ready completion checkpoint showing `Scan complete` only after clustering/projection is ready | [x] | `.../workbench-progress-complete.png` + `.../workbench-post-run.png` |
 | 5 | Backend correlation IDs, latency evidence, and a redacted payload snapshot tied to the same scan run | [ ] | OCI stdout + `/metrics` still pending for remote proof pass |

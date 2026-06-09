@@ -90,8 +90,9 @@ That screenshot proves the browser can reach WordPress admin. It does not prove 
 
 - Bootstrap auth once.
 - Run the headed evidence project with `ACX_PLAYWRIGHT_TASK_REF=E15-22`.
-- The committed `tests/e2e/evidence/workbench-evidence.spec.ts` captures pre-scan, mid-run progress, completion, and job-timeline screenshots on `http://localhost:10010/wp-admin/admin.php?page=alt-context-workbench`.
-- Top-cluster avatar cards may still require a manual headed pass or review-drawer open when the naming queue has no rendered representatives; copy those frames into the same `local/playwright/E15-22/` bundle.
+- The committed `tests/e2e/evidence/workbench-evidence.spec.ts` opens Workbench with `status=missing`, captures any **existing** naming-queue avatars/review drawer first, then runs a scan only when cluster evidence is still missing. Service mode is opt-in via `ACX_E2E_ENSURE_SERVICE_MODE=1`; the spec probes `/acx/v1/settings/test` and restores the prior option-owned source when the probe is not `connected`.
+- Optional env overrides in `.env.local`: `ACX_E2E_ENSURE_SERVICE_MODE=1`, `ACX_E2E_RECOGNITION_URL` (default `https://api.altcontext.com`), `ACX_E2E_RECOGNITION_API_KEY` (only when the stored key is missing).
+- Each run writes `evidence-manifest.json` beside the PNGs listing which captures succeeded.
 
 ### E15-5 live-demo roundtrip placeholder
 

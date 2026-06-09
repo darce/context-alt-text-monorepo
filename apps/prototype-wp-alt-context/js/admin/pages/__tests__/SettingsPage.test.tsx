@@ -236,9 +236,7 @@ describe('SettingsPage', () => {
     fireEvent.click(screen.getByLabelText('Local'));
 
     expect(screen.getByRole('button', { name: 'Test active target' })).toBeDisabled();
-    expect(screen.getByTestId('acx-effective-routing')).toHaveTextContent(
-      'Save settings before scanning or testing',
-    );
+    expect(screen.getByTestId('acx-effective-routing')).toHaveTextContent('Save settings before scanning or testing');
   });
 
   describe('probe outcome banners', () => {

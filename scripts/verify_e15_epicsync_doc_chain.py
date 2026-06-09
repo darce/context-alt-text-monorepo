@@ -14,18 +14,29 @@ LAUNCH_EPIC = REPO_ROOT / "docs/epics/v0.4.0/public-demo-launch-readiness-epic.m
 
 def verify_e15_3_predecessors() -> list[str]:
     text = E15_3_PLAN.read_text(encoding="utf-8")
-    # Anchor to the Predecessors line so reverting the predecessor edit fails
-    # the check; a whole-file substring match is vacuous because E15-22 already
-    # appears elsewhere in the plan on main.
-    predecessor_line = next(
-        (line for line in text.splitlines() if line.lstrip().startswith("> **Predecessors**")),
-        "",
-    )
+    # Anchor to the Predecessors blockquote field so reverting the predecessor
+    # edit fails the check; a whole-file substring match is vacuous because the
+    # E15-22 marker already appears elsewhere in the plan on main. Accumulate any
+    # wrapped continuation '>' lines (tolerant of a future line wrap) but stop at
+    # the next '> **Field**:' label so the anchor cannot bleed into Blocks etc.
+    lines = text.splitlines()
+    block_parts: list[str] = []
+    for idx, line in enumerate(lines):
+        if line.lstrip().startswith("> **Predecessors**"):
+            block_parts.append(line)
+            for cont in lines[idx + 1:]:
+                stripped = cont.lstrip()
+                if stripped.startswith(">") and not re.match(r">\s*\*\*", stripped):
+                    block_parts.append(cont)
+                else:
+                    break
+            break
+    predecessor_block = "\n".join(block_parts)
     required = (
         "E15-3a-localwp-oci-roundtrip-task-plan.md",
         "E15-22-workbench-avatar-and-progress-readiness-task-plan.md",
     )
-    return [marker for marker in required if marker not in predecessor_line]
+    return [marker for marker in required if marker not in predecessor_block]
 
 
 def verify_self_hosting_scope_split() -> list[str]:
@@ -39,13 +50,16 @@ def verify_self_hosting_scope_split() -> list[str]:
         ("Hetzner checklist missing", r"Hetzner CX22 fallback plan documented.*delegated to E15-5a"),
         ("ARM owner stays E15-5", r"ARM compatibility verification artifact.*\|\s*\*\*E15-5\*\*"),
         ("remote E2E owner stays E15-5", r"End-to-end WP → backend → recognition smoke test.*\|\s*\*\*E15-5\*\*"),
+        ("E2E checklist stays E15-5", r"End-to-end smoke test.*delegated to E15-5(?![\w-])"),
         ("E15-3a gate row", r"LocalWP → OCI round-trip gate.*\|\s*\*\*E15-3a\*\*"),
     ):
         if not re.search(pattern, text):
             errors.append(f"self-hosting-epic.md: {label} not satisfied")
 
+    # The '**...**' fences already disambiguate **E15-5** from **E15-5a**, so no
+    # trailing negative-lookahead is needed here.
     stale_hygiene = re.findall(
-        r"(budget alerts|Hetzner CX22 fallback).*\*\*E15-5\*\*(?!a)",
+        r"(budget alerts|Hetzner CX22 fallback).*\*\*E15-5\*\*",
         text,
         flags=re.IGNORECASE,
     )

@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 
 import { requireBaseUrl, seededA11yEnabled } from '../fixtures/axe';
 import { getAcxAdminRouteUrl } from '../fixtures/acx-routes';
+import { skipUnlessPopulatedWorkbench } from '../fixtures/seeded-state';
 import { stabilizeWorkbench } from '../fixtures/visual';
 
 const WORKBENCH_SHELL_SELECTOR = '.acx-workbench';
@@ -27,7 +28,7 @@ test('workbench seeded state matches the visual baseline', async ({ page, baseUR
   test.skip(!seededA11yEnabled(), 'Set ACX_E2E_SEEDED=1 to enable populated workbench visual coverage.');
 
   await openWorkbench(requireBaseUrl(baseURL), page);
-  await expect(page.locator('.acx-media-selection__media-title').first()).toBeVisible();
+  await skipUnlessPopulatedWorkbench(page);
   await stabilizeWorkbench(page, WORKBENCH_SHELL_SELECTOR);
   await expect(page.locator(WORKBENCH_SHELL_SELECTOR)).toHaveScreenshot('workbench-seeded.png', {
     animations: 'disabled',

@@ -1,5 +1,5 @@
 import React from 'react';
-import { __ } from '@wordpress/i18n';
+import { __, sprintf } from '@wordpress/i18n';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { SyncStatusIndicator } from './workbench/SyncStatusIndicator';
@@ -45,6 +45,7 @@ const WorkbenchPageContent = (): React.JSX.Element => {
     activeSection,
     setActiveSection,
     recognitionSource,
+    effectiveTargetUrl,
     activeOverlay,
     setActiveOverlay,
     isOnline,
@@ -106,7 +107,11 @@ const WorkbenchPageContent = (): React.JSX.Element => {
           {recognitionSource === 'local' && (
             <div className="acx-notice acx-notice--info">
               <p>
-                {__('Alt Context is targeting the local recognition service at http://localhost:8000.', 'alt-context')}
+                {sprintf(
+                  /* translators: %s is the effective local recognition service URL. */
+                  __('Alt Context is targeting the local recognition service at %s.', 'alt-context'),
+                  effectiveTargetUrl,
+                )}
               </p>
               <p>{__('Use Settings to switch back to the hosted recognition service.', 'alt-context')}</p>
             </div>

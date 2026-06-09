@@ -37,12 +37,17 @@ vi.mock('../../api/settingsApi', async () => {
   };
 });
 
+const { mockResetConfigCache } = vi.hoisted(() => ({
+  mockResetConfigCache: vi.fn(),
+}));
+
 vi.mock('../../api/config', () => ({
   getEndpoint: (key: string) => `/acx/v1/${key}`,
   getConfig: () => ({
     nonce: 'test-nonce',
     endpoints: { settings: '/acx/v1/settings', settingsTest: '/acx/v1/settings/test' },
   }),
+  resetConfigCache: mockResetConfigCache,
 }));
 
 vi.mock('@tanstack/react-query', async () => {
@@ -58,6 +63,10 @@ vi.mock('@tanstack/react-query', async () => {
 const defaultSettings: SettingsResponse = {
   url: 'https://api.example.com',
   url_source: 'option',
+  local_url: 'http://localhost:8000',
+  local_url_source: 'default',
+  effective_target_url: 'https://api.example.com',
+  effective_target_mode: 'service',
   recognition_source: 'service',
   recognition_source_source: 'option',
   api_key_set: true,
@@ -104,11 +113,12 @@ describe('SettingsPage', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
     render(<SettingsPage />);
 
-    expect(screen.getByLabelText('API URL')).toHaveValue('https://api.example.com');
+    expect(screen.getByLabelText('Service API URL')).toHaveValue('https://api.example.com');
+    expect(screen.getByLabelText('Local service URL')).toHaveValue('http://localhost:8000');
     expect(screen.getByLabelText('Service')).toBeChecked();
-    expect(screen.getAllByText('Saved in database')).toHaveLength(3);
+    expect(screen.getByTestId('acx-effective-routing')).toHaveTextContent('https://api.example.com');
     expect(screen.getByRole('button', { name: 'Save Settings' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Test Connection' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Test active target' })).toBeEnabled();
   });
 
   it('saves the recognition source when the operator switches to local mode', () => {
@@ -125,7 +135,7 @@ describe('SettingsPage', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
     render(<SettingsPage />);
 
-    fireEvent.change(screen.getByLabelText('API URL'), {
+    fireEvent.change(screen.getByLabelText('Service API URL'), {
       target: { value: 'https://new-api.example.com' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
@@ -147,7 +157,7 @@ describe('SettingsPage', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
     render(<SettingsPage />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Test Connection' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Test active target' }));
 
     expect(testMutate).toHaveBeenCalled();
   });
@@ -165,30 +175,70 @@ describe('SettingsPage', () => {
     );
     render(<SettingsPage />);
 
-    expect(screen.getByLabelText('API URL')).toHaveAttribute('readOnly');
+    expect(screen.getByLabelText('Service API URL')).toHaveAttribute('readOnly');
     expect(screen.getByLabelText('API Key')).toHaveAttribute('readOnly');
-    expect(screen.getByRole('button', { name: 'Save Settings' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save Settings' })).toBeEnabled();
   });
 
-  it('disables the Test Connection button when the URL field is empty', () => {
-    mockUseQuery.mockReturnValue(createMockQuery({ data: { ...defaultSettings, url: '' } }));
-    render(<SettingsPage />);
-
-    expect(screen.getByRole('button', { name: 'Test Connection' })).toBeDisabled();
-  });
-
-  it('disables the Test Connection button when recognition source is local', () => {
-    // Local mode targets http://localhost:8000 and never calls the hosted
-    // service URL — probing the saved service URL from local mode would be
-    // misleading.
+  it('disables Save when every routing field is read-only', () => {
     mockUseQuery.mockReturnValue(
       createMockQuery({
-        data: { ...defaultSettings, recognition_source: 'local' as const },
+        data: {
+          ...defaultSettings,
+          recognition_source_source: 'constant' as const,
+          url_source: 'constant' as const,
+          local_url_source: 'constant' as const,
+          key_source: 'constant' as const,
+        },
       }),
     );
     render(<SettingsPage />);
 
-    expect(screen.getByRole('button', { name: 'Test Connection' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save Settings' })).toBeDisabled();
+  });
+
+  it('disables the Test active target button when service mode has no URL', () => {
+    mockUseQuery.mockReturnValue(
+      createMockQuery({
+        data: {
+          ...defaultSettings,
+          url: '',
+          effective_target_url: '',
+          effective_target_mode: 'service',
+        },
+      }),
+    );
+    render(<SettingsPage />);
+
+    expect(screen.getByRole('button', { name: 'Test active target' })).toBeDisabled();
+  });
+
+  it('enables the Test active target button when recognition source is local', () => {
+    mockUseQuery.mockReturnValue(
+      createMockQuery({
+        data: {
+          ...defaultSettings,
+          recognition_source: 'local' as const,
+          effective_target_url: 'http://localhost:8000',
+          effective_target_mode: 'local' as const,
+        },
+      }),
+    );
+    render(<SettingsPage />);
+
+    expect(screen.getByRole('button', { name: 'Test active target' })).toBeEnabled();
+  });
+
+  it('disables the Test active target button when routing edits are unsaved', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    fireEvent.click(screen.getByLabelText('Local'));
+
+    expect(screen.getByRole('button', { name: 'Test active target' })).toBeDisabled();
+    expect(screen.getByTestId('acx-effective-routing')).toHaveTextContent(
+      'Save settings before scanning or testing',
+    );
   });
 
   describe('probe outcome banners', () => {
@@ -326,5 +376,42 @@ describe('SettingsPage', () => {
       const banner = bannerFor('network_error');
       expect(banner).toHaveTextContent('Could not reach the recognition service.');
     });
+
+    it('uses local network_error copy when the mutation rejects in local mode', () => {
+      mockUseQuery.mockReturnValue(
+        createMockQuery({
+          data: {
+            ...defaultSettings,
+            effective_target_mode: 'local',
+            effective_target_url: 'http://localhost:8000',
+            recognition_source: 'local',
+          },
+        }),
+      );
+      render(<SettingsPage />);
+      act(() => {
+        capturedTestOptions!.onError!(new Error('connection refused'));
+      });
+      const banner = bannerFor('network_error');
+      expect(banner).toHaveTextContent('Could not reach the local recognition service.');
+      expect(banner).toHaveTextContent('make serve');
+    });
+  });
+
+  it('keeps Save enabled when only local_url is editable', () => {
+    mockUseQuery.mockReturnValue(
+      createMockQuery({
+        data: {
+          ...defaultSettings,
+          recognition_source_source: 'constant',
+          url_source: 'constant',
+          key_source: 'constant',
+          local_url_source: 'option',
+        },
+      }),
+    );
+    render(<SettingsPage />);
+
+    expect(screen.getByRole('button', { name: 'Save Settings' })).toBeEnabled();
   });
 });

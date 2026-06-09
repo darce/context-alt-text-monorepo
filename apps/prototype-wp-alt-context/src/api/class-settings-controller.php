@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Api;
 
 require_once __DIR__ . '/class-probe-outcome.php';
+require_once __DIR__ . '/class-recognition-endpoint-resolver.php';
 require_once __DIR__ . '/class-tenant-identity.php';
 
 use WP_Error;
@@ -40,6 +41,11 @@ use function wp_remote_retrieve_response_code;
  *                                  of ten canonical {@see ProbeOutcome} codes
  */
 class SettingsController {
+	private RecognitionEndpointResolver $endpoint_resolver;
+
+	public function __construct( ?RecognitionEndpointResolver $endpoint_resolver = null ) {
+		$this->endpoint_resolver = $endpoint_resolver ?? new RecognitionEndpointResolver();
+	}
 
 	public function register_routes(): void {
 		register_rest_route(
@@ -75,16 +81,19 @@ class SettingsController {
 	}
 
 	public function get_settings( WP_REST_Request $request ): WP_REST_Response {
-		$url_resolution = $this->resolve_url_source();
+		$snapshot       = $this->endpoint_resolver->resolve_settings_snapshot();
 		$key_resolution = $this->resolve_key_source();
-		$source_resolution = $this->resolve_recognition_source( $url_resolution );
 
 		return new WP_REST_Response(
 			array(
-				'url'                       => $url_resolution['value'],
-				'url_source'                => $url_resolution['source'],
-				'recognition_source'        => $source_resolution['value'],
-				'recognition_source_source' => $source_resolution['source'],
+				'url'                       => $snapshot['service_url'],
+				'url_source'                => $snapshot['service_url_source'],
+				'local_url'                 => $snapshot['local_url'],
+				'local_url_source'          => $snapshot['local_url_source'],
+				'effective_target_url'      => $snapshot['effective_target_url'],
+				'effective_target_mode'     => $snapshot['effective_target_mode'],
+				'recognition_source'        => $snapshot['recognition_source'],
+				'recognition_source_source' => $snapshot['recognition_source_source'],
 				'api_key_set'               => '' !== $key_resolution['value'],
 				'api_key_last4'             => $this->mask_key( $key_resolution['value'] ),
 				'key_source'                => $key_resolution['source'],
@@ -129,6 +138,19 @@ class SettingsController {
 			$saved[] = 'api_key';
 		}
 
+		if ( isset( $body['local_url'] ) && is_string( $body['local_url'] ) ) {
+			$local_url = trim( $body['local_url'] );
+			if ( '' !== $local_url && ! $this->is_valid_url( $local_url ) ) {
+				return new WP_Error(
+					'invalid_local_url',
+					'The local recognition URL must be a valid HTTP or HTTPS URL.',
+					array( 'status' => 400 )
+				);
+			}
+			update_option( 'acx_recognition_local_url', $local_url );
+			$saved[] = 'local_url';
+		}
+
 		return new WP_REST_Response(
 			array(
 				'saved'  => $saved,
@@ -139,14 +161,35 @@ class SettingsController {
 	}
 
 	public function test_connection( WP_REST_Request $request ): WP_REST_Response {
-		$url_resolution = $this->resolve_url_source();
-		$url            = $url_resolution['value'];
+		$snapshot = $this->endpoint_resolver->resolve_settings_snapshot();
+		$mode     = $snapshot['effective_target_mode'];
+		$url      = $snapshot['effective_target_url'];
 
-		if ( '' === $url ) {
+		if ( 'service' === $mode && '' === $snapshot['service_url'] ) {
 			return new WP_REST_Response(
-				array( 'outcome' => ProbeOutcome::NOT_CONFIGURED ),
+				array(
+					'outcome'     => ProbeOutcome::NOT_CONFIGURED,
+					'probe_mode'  => 'service_auth',
+					'probed_url'  => '',
+				),
 				200
 			);
+		}
+
+		if ( 'local' === $mode ) {
+			$health_url = rtrim( $url, '/' ) . '/health';
+			$response   = wp_remote_get(
+				$health_url,
+				array(
+					'timeout' => 10,
+				)
+			);
+
+			$payload = $this->build_probe_payload( $response );
+			$payload['probe_mode'] = 'local_liveness';
+			$payload['probed_url'] = $health_url;
+
+			return new WP_REST_Response( $payload, 200 );
 		}
 
 		$key_resolution = $this->resolve_key_source();
@@ -166,7 +209,11 @@ class SettingsController {
 			)
 		);
 
-		return new WP_REST_Response( $this->build_probe_payload( $response ), 200 );
+		$payload = $this->build_probe_payload( $response );
+		$payload['probe_mode'] = 'service_auth';
+		$payload['probed_url'] = $health_url;
+
+		return new WP_REST_Response( $payload, 200 );
 	}
 
 	/**
@@ -303,38 +350,6 @@ class SettingsController {
 	}
 
 	/**
-	 * Resolve the recognition URL and its source using the same priority chain
-	 * as class-abstract-recognition-proxy-controller.php.
-	 *
-	 * @return array{value: string, source: string}
-	 */
-	private function resolve_url_source(): array {
-		// E15-12-BR-07: code-managed sources (constant, filter) MUST win over
-		// operator-saved options. The pre-fix order resolved option before
-		// filter, which let a stale saved URL keep routing recognition traffic
-		// even after an operator wired a filter to point at a new environment,
-		// and surfaced the selector as option-owned/editable instead of
-		// code-managed/read-only. Precedence is now: constant -> filter ->
-		// option -> default, matching the proxy runtime resolver.
-		$constant = $this->get_constant_value( 'ACX_RECOGNITION_URL' );
-		if ( '' !== $constant ) {
-			return array( 'value' => $constant, 'source' => 'constant' );
-		}
-
-		$filter = trim( (string) apply_filters( 'acx_recognition_base_url', '' ) );
-		if ( '' !== $filter && $this->is_valid_url( $filter ) ) {
-			return array( 'value' => $filter, 'source' => 'filter' );
-		}
-
-		$option = trim( (string) get_option( 'acx_recognition_url', '' ) );
-		if ( '' !== $option && $this->is_valid_url( $option ) ) {
-			return array( 'value' => $option, 'source' => 'option' );
-		}
-
-		return array( 'value' => '', 'source' => 'default' );
-	}
-
-	/**
 	 * Resolve the recognition API key and its source.
 	 *
 	 * @return array{value: string, source: string}
@@ -364,37 +379,6 @@ class SettingsController {
 		}
 
 		return array( 'value' => '', 'source' => 'default' );
-	}
-
-	/**
-	 * @param array{value: string, source: string} $url_resolution
-	 * @return array{value: string, source: string}
-	 */
-	private function resolve_recognition_source( array $url_resolution ): array {
-		$constant = trim( $this->get_constant_value( 'ACX_RECOGNITION_SOURCE' ) );
-		if ( $this->is_valid_recognition_source( $constant ) ) {
-			return array( 'value' => $constant, 'source' => 'constant' );
-		}
-
-		if ( '' !== $url_resolution['value'] && in_array( $url_resolution['source'], array( 'constant', 'filter' ), true ) ) {
-			return array( 'value' => 'service', 'source' => $url_resolution['source'] );
-		}
-
-		$filter = trim( (string) apply_filters( 'acx_recognition_source', '' ) );
-		if ( $this->is_valid_recognition_source( $filter ) ) {
-			return array( 'value' => $filter, 'source' => 'filter' );
-		}
-
-		$option = trim( (string) get_option( 'acx_recognition_source', '' ) );
-		if ( $this->is_valid_recognition_source( $option ) ) {
-			return array( 'value' => $option, 'source' => 'option' );
-		}
-
-		if ( '' !== $url_resolution['value'] ) {
-			return array( 'value' => 'service', 'source' => 'option' === $url_resolution['source'] ? 'option' : 'default' );
-		}
-
-		return array( 'value' => 'local', 'source' => 'default' );
 	}
 
 	private function get_constant_value( string $name ): string {

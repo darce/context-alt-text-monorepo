@@ -588,6 +588,10 @@ class CharacterizationStreamService extends JobProgressStreamService
     {
     }
 
+    protected function flush_stream_output(): void
+    {
+    }
+
     protected function terminate_job_progress_stream(): never
     {
         throw new JobProgressStreamTerminated();

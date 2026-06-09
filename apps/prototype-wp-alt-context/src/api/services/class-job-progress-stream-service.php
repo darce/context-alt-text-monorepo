@@ -75,16 +75,14 @@ class JobProgressStreamService {
 			if ( is_wp_error( $response ) ) {
 				echo "event: error\n";
 				echo 'data: ' . wp_json_encode( array( 'message' => $response->get_error_message() ) ) . "\n\n";
-				@ob_flush();
-				@flush();
+				$this->flush_stream_output();
 				break;
 			}
 
 			if ( ! ( $response instanceof WP_REST_Response ) ) {
 				echo "event: error\n";
 				echo 'data: ' . wp_json_encode( array( 'message' => 'Unexpected response type.' ) ) . "\n\n";
-				@ob_flush();
-				@flush();
+				$this->flush_stream_output();
 				break;
 			}
 
@@ -93,8 +91,7 @@ class JobProgressStreamService {
 				$this->job_status_service->record_observed_job_status_from_response( $job_id, $response );
 				echo "event: error\n";
 				echo 'data: ' . wp_json_encode( array( 'message' => 'Job not found.' ) ) . "\n\n";
-				@ob_flush();
-				@flush();
+				$this->flush_stream_output();
 				break;
 			}
 
@@ -102,17 +99,15 @@ class JobProgressStreamService {
 			if ( ! is_array( $data ) ) {
 				echo "event: error\n";
 				echo 'data: ' . wp_json_encode( array( 'message' => 'Invalid job response.' ) ) . "\n\n";
-				@ob_flush();
-				@flush();
+				$this->flush_stream_output();
 				break;
 			}
 			$this->projection_sync_service->maybe_trigger_projection_sync( $data );
 
 			$progress   = is_array( $data['progress'] ?? null ) ? $data['progress'] : array();
 			$completed  = absint( $progress['completed'] ?? 0 );
-			$total      = absint( $progress['total'] ?? 0 );
 			$status     = isset( $data['status'] ) ? sanitize_text_field( (string) $data['status'] ) : 'pending';
-			$this->job_status_service->record_observed_job_status_from_response( $job_id, $response );
+			$this->batch_run_service->record_observed_job_status( $job_id, $status );
 			$phase      = isset( $progress['phase'] ) ? sanitize_text_field( (string) $progress['phase'] ) : null;
 			$job_type   = isset( $data['type'] ) ? sanitize_text_field( (string) $data['type'] ) : 'analyze';
 			$event_type = 'scan_progress';
@@ -135,16 +130,14 @@ class JobProgressStreamService {
 				$last_emit      = $now;
 				$last_heartbeat = $now;
 				$last_phase     = $phase;
-				@ob_flush();
-				@flush();
+				$this->flush_stream_output();
 			}
 
 			if ( in_array( $status, array( 'completed', 'failed' ), true ) ) {
 				$done_payload = $this->build_stream_progress_payload( $progress, $job_id, $event_type, $status );
 				echo "event: done\n";
 				echo 'data: ' . wp_json_encode( $done_payload ) . "\n\n";
-				@ob_flush();
-				@flush();
+				$this->flush_stream_output();
 				break;
 			}
 
@@ -221,6 +214,11 @@ class JobProgressStreamService {
 		}
 		@ini_set( 'output_buffering', 'off' );
 		@ini_set( 'zlib.output_compression', '0' );
+	}
+
+	protected function flush_stream_output(): void {
+		@ob_flush();
+		@flush();
 	}
 
 	protected function terminate_job_progress_stream(): never {

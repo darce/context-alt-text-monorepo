@@ -137,6 +137,19 @@ class SplitTopologyCommandDrain {
 			return;
 		}
 
+		$processed_tenants = $this->process_command_batch( $commands );
+		$this->refresh_curation_metrics_for_tenants( array_keys( $processed_tenants ) );
+
+		if ( count( $commands ) >= $this->batch_size && ! empty( $this->repository->find_reconcilable( null, 1 ) ) ) {
+			self::maybe_schedule_drain();
+		}
+	}
+
+	/**
+	 * @param array<int,array<string,mixed>> $commands
+	 * @return array<string,true>
+	 */
+	private function process_command_batch( array $commands ): array {
 		$processed_tenants = array();
 		foreach ( $commands as $command ) {
 			if ( ! is_array( $command ) ) {
@@ -151,12 +164,15 @@ class SplitTopologyCommandDrain {
 			}
 		}
 
-		foreach ( array_keys( $processed_tenants ) as $tenant_id ) {
-			$this->sync_state_repository->refresh_curation_metrics( $tenant_id );
-		}
+		return $processed_tenants;
+	}
 
-		if ( count( $commands ) >= $this->batch_size && ! empty( $this->repository->find_reconcilable( null, 1 ) ) ) {
-			self::maybe_schedule_drain();
+	/**
+	 * @param array<int,string> $tenant_ids
+	 */
+	private function refresh_curation_metrics_for_tenants( array $tenant_ids ): void {
+		foreach ( $tenant_ids as $tenant_id ) {
+			$this->sync_state_repository->refresh_curation_metrics( $tenant_id );
 		}
 	}
 
@@ -601,29 +617,59 @@ class SplitTopologyCommandDrain {
 			$transaction_started = false !== $wpdb->query( 'START TRANSACTION' );
 		}
 
+		if ( ! $this->apply_created_clusters( $tenant_id, $snapshot_version, $created_clusters, $members_by_identity ) ) {
+			if ( $transaction_started ) {
+				$wpdb->query( 'ROLLBACK' );
+			}
+			return false;
+		}
+
+		if ( ! $this->apply_member_rows( $source_cluster_id, $snapshot_version, $remaining_identity_ids, $members_by_identity ) ) {
+			if ( $transaction_started ) {
+				$wpdb->query( 'ROLLBACK' );
+			}
+			return false;
+		}
+
+		if ( ! $this->finalize_snapshot( $tenant_id, $source_cluster_id, $snapshot_version, $remaining_identity_ids, $members_by_identity ) ) {
+			if ( $transaction_started ) {
+				$wpdb->query( 'ROLLBACK' );
+			}
+			return false;
+		}
+
+		if ( $transaction_started && false === $wpdb->query( 'COMMIT' ) ) {
+			$wpdb->query( 'ROLLBACK' );
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * @param array<int,array<string,mixed>> $created_clusters
+	 * @param array<string,array<string,mixed>> $members_by_identity
+	 */
+	private function apply_created_clusters(
+		string $tenant_id,
+		int $snapshot_version,
+		array $created_clusters,
+		array $members_by_identity
+	): bool {
 		foreach ( $created_clusters as $created_cluster ) {
 			if ( ! is_array( $created_cluster ) ) {
-				if ( $transaction_started ) {
-					$wpdb->query( 'ROLLBACK' );
-				}
 				return false;
 			}
 
 			$cluster_id = trim( (string) ( $created_cluster['cluster_id'] ?? '' ) );
 			$identity_ids = $this->normalize_identity_ids( $created_cluster['identity_ids'] ?? array() );
 			if ( '' === $cluster_id || empty( $identity_ids ) ) {
-				if ( $transaction_started ) {
-					$wpdb->query( 'ROLLBACK' );
-				}
 				return false;
 			}
 
 			$representative_thumb_path = null;
 			foreach ( $identity_ids as $identity_id ) {
 				if ( ! isset( $members_by_identity[ $identity_id ] ) ) {
-					if ( $transaction_started ) {
-						$wpdb->query( 'ROLLBACK' );
-					}
 					return false;
 				}
 				if ( null === $representative_thumb_path ) {
@@ -648,12 +694,47 @@ class SplitTopologyCommandDrain {
 			}
 		}
 
+		return true;
+	}
+
+	/**
+	 * @param array<int,string> $remaining_identity_ids
+	 * @param array<string,array<string,mixed>> $members_by_identity
+	 */
+	private function apply_member_rows(
+		string $source_cluster_id,
+		int $snapshot_version,
+		array $remaining_identity_ids,
+		array $members_by_identity
+	): bool {
+		foreach ( $remaining_identity_ids as $identity_id ) {
+			if ( ! isset( $members_by_identity[ $identity_id ] ) ) {
+				return false;
+			}
+
+			$current_cluster_id = trim( (string) ( $members_by_identity[ $identity_id ]['cluster_uuid'] ?? '' ) );
+			if ( $current_cluster_id !== $source_cluster_id ) {
+				$this->members_repository->assign_to_cluster_for_projection( $identity_id, $source_cluster_id, $snapshot_version );
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * @param array<int,string> $remaining_identity_ids
+	 * @param array<string,array<string,mixed>> $members_by_identity
+	 */
+	private function finalize_snapshot(
+		string $tenant_id,
+		string $source_cluster_id,
+		int $snapshot_version,
+		array $remaining_identity_ids,
+		array $members_by_identity
+	): bool {
 		$source_thumb_path = null;
 		foreach ( $remaining_identity_ids as $identity_id ) {
 			if ( ! isset( $members_by_identity[ $identity_id ] ) ) {
-				if ( $transaction_started ) {
-					$wpdb->query( 'ROLLBACK' );
-				}
 				return false;
 			}
 			if ( null === $source_thumb_path ) {
@@ -661,10 +742,6 @@ class SplitTopologyCommandDrain {
 				if ( '' !== $candidate_thumb_path ) {
 					$source_thumb_path = $candidate_thumb_path;
 				}
-			}
-			$current_cluster_id = trim( (string) ( $members_by_identity[ $identity_id ]['cluster_uuid'] ?? '' ) );
-			if ( $current_cluster_id !== $source_cluster_id ) {
-				$this->members_repository->assign_to_cluster_for_projection( $identity_id, $source_cluster_id, $snapshot_version );
 			}
 		}
 
@@ -675,11 +752,6 @@ class SplitTopologyCommandDrain {
 			$source_thumb_path
 		);
 		$this->sync_state_repository->upsert_snapshot_version( $tenant_id, $snapshot_version );
-
-		if ( $transaction_started && false === $wpdb->query( 'COMMIT' ) ) {
-			$wpdb->query( 'ROLLBACK' );
-			return false;
-		}
 
 		return true;
 	}

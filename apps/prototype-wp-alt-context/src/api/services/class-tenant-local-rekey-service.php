@@ -9,14 +9,14 @@ use Throwable;
 /**
  * Re-keys tenant-scoped local projection rows when identity changes.
  */
-final class TenantLocalRekeyService {
+class TenantLocalRekeyService {
 	public const ROW_THRESHOLD = 50_000;
 
 	/** @var list<string> */
 	private const TENANT_TABLE_SUFFIXES = array(
 		'acx_clusters',
 		'acx_batch_runs',
-		'acx_batch_failures',
+		'acx_batch_run_failures',
 		'acx_sync_outbox',
 		'acx_topology_commands',
 		'acx_sync_conflicts',
@@ -28,7 +28,7 @@ final class TenantLocalRekeyService {
 	public function reconcile_identity_change( string $from_tenant_id, string $to_tenant_id ): array {
 		$row_count = $this->count_rows_for_tenant( $from_tenant_id );
 		if ( $row_count > self::ROW_THRESHOLD ) {
-			$this->mark_resync_required( $from_tenant_id );
+			$this->mark_resync_required( $to_tenant_id );
 			return array(
 				'strategy'     => 'resync',
 				'updated_rows' => 0,
@@ -41,7 +41,7 @@ final class TenantLocalRekeyService {
 		);
 	}
 
-	private function count_rows_for_tenant( string $tenant_id ): int {
+	protected function count_rows_for_tenant( string $tenant_id ): int {
 		global $wpdb;
 
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! is_string( $wpdb->prefix ) ) {
@@ -88,6 +88,8 @@ final class TenantLocalRekeyService {
 				$updated += (int) $result;
 			}
 
+			$this->migrate_sync_state_streams( $from_tenant_id, $to_tenant_id );
+
 			if ( false === $wpdb->query( 'COMMIT' ) ) {
 				throw new \RuntimeException( 'Could not commit tenant re-key transaction.' );
 			}
@@ -99,6 +101,41 @@ final class TenantLocalRekeyService {
 		return $updated;
 	}
 
+	private function migrate_sync_state_streams( string $from_tenant_id, string $to_tenant_id ): void {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! is_string( $wpdb->prefix ) ) {
+			return;
+		}
+
+		$sync_table  = $wpdb->prefix . 'acx_sync_state';
+		$from_stream = $this->stream_name_for_tenant( $from_tenant_id );
+		$to_stream   = $this->stream_name_for_tenant( $to_tenant_id );
+		$now         = gmdate( 'Y-m-d H:i:s' );
+
+		$wpdb->delete( $sync_table, array( 'stream_name' => $from_stream ), array( '%s' ) );
+		$this->upsert_resync_required_stream( $sync_table, $to_stream, $now );
+	}
+
+	private function upsert_resync_required_stream( string $sync_table, string $stream, string $updated_at ): void {
+		global $wpdb;
+
+		$wpdb->delete( $sync_table, array( 'stream_name' => $stream ), array( '%s' ) );
+		$inserted = $wpdb->insert(
+			$sync_table,
+			array(
+				'stream_name'           => $stream,
+				'last_snapshot_version' => 0,
+				'last_sync_result'      => 'resync_required',
+				'updated_at'            => $updated_at,
+			),
+			array( '%s', '%d', '%s', '%s' )
+		);
+		if ( false === $inserted ) {
+			throw new \RuntimeException( 'Could not mark tenant sync stream for re-sync.' );
+		}
+	}
+
 	private function mark_resync_required( string $tenant_id ): void {
 		global $wpdb;
 
@@ -107,20 +144,12 @@ final class TenantLocalRekeyService {
 		}
 
 		$sync_table = $wpdb->prefix . 'acx_sync_state';
-		$stream     = 'tenant:' . $tenant_id;
+		$stream     = $this->stream_name_for_tenant( $tenant_id );
 		$now        = gmdate( 'Y-m-d H:i:s' );
-		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name is plugin-owned.
-		$wpdb->query(
-			$wpdb->prepare(
-				"INSERT INTO {$sync_table} (stream_name, last_snapshot_version, last_sync_result, updated_at)
-				VALUES (%s, 0, %s, %s)
-				ON DUPLICATE KEY UPDATE last_snapshot_version = 0, last_sync_result = %s, updated_at = %s",
-				$stream,
-				'resync_required',
-				$now,
-				'resync_required',
-				$now
-			)
-		);
+		$this->upsert_resync_required_stream( $sync_table, $stream, $now );
+	}
+
+	private function stream_name_for_tenant( string $tenant_id ): string {
+		return sprintf( 'tenant:%s:clusters', trim( $tenant_id ) );
 	}
 }

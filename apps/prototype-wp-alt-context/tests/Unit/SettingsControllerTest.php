@@ -450,6 +450,28 @@ class SettingsControllerTest extends TestCase
         );
     }
 
+    public function testProbePairingWhoamiFailurePreservesConnectedOutcome(): void
+    {
+        $this->configureProbe();
+        $keyTenant = '55555555-5555-4555-8555-555555555555';
+        $this->setOption('acx_recognition_tenant_id', $keyTenant);
+        $this->queueHttpResponse($this->buildOkResponse());
+        $this->queueHttpResponse(
+            array(
+                'response' => array('code' => 503, 'message' => 'Service Unavailable'),
+                'body'     => '{"detail":"database unavailable"}',
+            )
+        );
+
+        $data = $this->controller
+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
+            ->get_data();
+
+        $this->assertSame(ProbeOutcome::CONNECTED, $data['outcome']);
+        $this->assertSame('database unavailable', $data['pairing_error']);
+        $this->assertArrayNotHasKey('tenant_paired', $data);
+    }
+
     public function testProbeDispatchReturnsNotConfiguredWithoutHttpCall(): void
     {
         $this->setUserCapability('manage_options', true);

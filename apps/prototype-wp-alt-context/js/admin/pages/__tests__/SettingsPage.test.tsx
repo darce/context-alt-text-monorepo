@@ -314,6 +314,33 @@ describe('SettingsPage', () => {
       expect(banner).toHaveTextContent('different site');
     });
 
+    it('renders the tenant_pairing_conflict banner with tenant ids and confirm control', () => {
+      renderWithLoadedSettings();
+      driveOutcome({
+        outcome: 'tenant_pairing_conflict',
+        persisted_tenant_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        key_tenant_id: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+      });
+      const banner = bannerFor('tenant_pairing_conflict');
+      expect(banner).toHaveTextContent('Tenant identity conflict.');
+      expect(banner).toHaveTextContent('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
+      expect(banner).toHaveTextContent('ffffffff-ffff-4fff-8fff-ffffffffffff');
+      expect(screen.getByTestId('acx-confirm-tenant-pairing')).toBeInTheDocument();
+    });
+
+    it('sends confirm_tenant_pairing when adopt button is clicked', () => {
+      renderWithLoadedSettings();
+      driveOutcome({
+        outcome: 'tenant_pairing_conflict',
+        persisted_tenant_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        key_tenant_id: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+      });
+
+      fireEvent.click(screen.getByTestId('acx-confirm-tenant-pairing'));
+
+      expect(testMutate).toHaveBeenCalledWith({ confirm_tenant_pairing: true });
+    });
+
     it('renders the rate_limited banner and interpolates retry_after_seconds', () => {
       renderWithLoadedSettings();
       driveOutcome({ outcome: 'rate_limited', status_code: 429, retry_after_seconds: 45 });

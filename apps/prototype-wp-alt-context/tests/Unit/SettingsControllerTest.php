@@ -57,6 +57,9 @@ class SettingsControllerTest extends TestCase
         $this->assertFalse($data['api_key_set']);
         $this->assertSame('', $data['api_key_last4']);
         $this->assertSame('default', $data['key_source']);
+        $this->assertSame(TenantIdentity::resolve()['value'], $data['tenant_id']);
+        $this->assertSame('derived', $data['tenant_id_source']);
+        $this->assertFalse($data['tenant_paired']);
     }
 
     public function testGetSettingsReturnsOptionSourceWhenOptionSet(): void
@@ -74,6 +77,59 @@ class SettingsControllerTest extends TestCase
         $this->assertTrue($data['api_key_set']);
         $this->assertSame('****1234', $data['api_key_last4']);
         $this->assertSame('option', $data['key_source']);
+    }
+
+    public function testGetSettingsReturnsPersistedTenantFields(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $tenantId = 'dddddddd-bbbb-cccc-dddd-eeeeeeeeeeee';
+        $this->setOption('acx_recognition_tenant_id', $tenantId);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/settings');
+        $response = $this->controller->get_settings($request);
+
+        $data = $response->get_data();
+        $this->assertSame($tenantId, $data['tenant_id']);
+        $this->assertSame('option', $data['tenant_id_source']);
+        $this->assertFalse($data['tenant_paired']);
+    }
+
+    public function testGetSettingsReturnsFilterTenantSourceWhenFilterProvides(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $filterTenant = 'eeeeeeee-bbbb-cccc-dddd-eeeeeeeeeeee';
+        $this->setOption('acx_recognition_tenant_id', 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
+        add_filter('acx_recognition_tenant_id', static fn () => $filterTenant);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/settings');
+        $response = $this->controller->get_settings($request);
+
+        $data = $response->get_data();
+        $this->assertSame($filterTenant, $data['tenant_id']);
+        $this->assertSame('filter', $data['tenant_id_source']);
+    }
+
+    /**
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testGetSettingsReturnsConstantTenantSourceWhenConstantDefined(): void
+    {
+        require_once __DIR__ . '/../bootstrap.php';
+        $this->resetGlobalState();
+
+        $constantTenant = 'ffffffff-bbbb-cccc-dddd-eeeeeeeeeeee';
+        define('ACX_RECOGNITION_TENANT_ID', $constantTenant);
+        $this->setOption('acx_recognition_tenant_id', 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
+
+        $controller = new SettingsController();
+        $this->setUserCapability('manage_options', true);
+        $request = new WP_REST_Request('GET', '/acx/v1/settings');
+        $response = $controller->get_settings($request);
+
+        $data = $response->get_data();
+        $this->assertSame($constantTenant, $data['tenant_id']);
+        $this->assertSame('constant', $data['tenant_id_source']);
     }
 
     public function testGetSettingsReturnsFilterSourceWhenFilterProvides(): void
@@ -298,7 +354,7 @@ class SettingsControllerTest extends TestCase
         $this->assertStringNotContainsString('/recognition/health/pool', $calls[0]['url']);
         $this->assertSame('test-key', $calls[0]['args']['headers']['X-API-Key'] ?? null);
         $this->assertSame(
-            TenantIdentity::derive_from_site_url(),
+            TenantIdentity::resolve()['value'],
             $calls[0]['args']['headers']['X-Tenant-ID'] ?? null
         );
 

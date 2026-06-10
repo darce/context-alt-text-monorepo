@@ -183,19 +183,13 @@ export const ensureLocalRecognitionWhenProbeFails = async (
   return { restored: true, before, after, probeOutcome };
 };
 
-export const restoreRecognitionSourceIfNeeded = async (
-  page: Page,
-  before: AcxSettingsSnapshot,
-): Promise<boolean> => {
+export const restoreRecognitionSourceIfNeeded = async (page: Page, before: AcxSettingsSnapshot): Promise<boolean> => {
   if (!isOptionOwnedSource(before.recognition_source_source)) {
     return false;
   }
 
   const current = await fetchAcxSettings(page);
-  if (
-    current.recognition_source === before.recognition_source &&
-    current.url.trim() === before.url.trim()
-  ) {
+  if (current.recognition_source === before.recognition_source && current.url.trim() === before.url.trim()) {
     return false;
   }
 

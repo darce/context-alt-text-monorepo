@@ -43,6 +43,84 @@ class TenantIdentityTest extends TestCase
         );
     }
 
+    public function testResolveDerivesAndPersistsWhenOptionEmpty(): void
+    {
+        $expected = $this->expectedUuidFor('http://example.com');
+
+        $resolution = TenantIdentity::resolve();
+
+        $this->assertSame($expected, $resolution['value']);
+        $this->assertSame('derived', $resolution['source']);
+        $this->assertSame($expected, $GLOBALS['__ac_options']['acx_recognition_tenant_id'] ?? null);
+    }
+
+    public function testResolveReadsPersistedOptionOnSecondCall(): void
+    {
+        $first = TenantIdentity::resolve();
+        $this->assertSame('derived', $first['source']);
+
+        $second = TenantIdentity::resolve();
+
+        $this->assertSame($first['value'], $second['value']);
+        $this->assertSame('option', $second['source']);
+    }
+
+    public function testResolveReturnsPersistedOptionWithoutReDeriving(): void
+    {
+        $persisted = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+        $this->setOption('acx_recognition_tenant_id', $persisted);
+        $GLOBALS['__ac_site_url'] = 'http://localhost:10010';
+
+        $resolution = TenantIdentity::resolve();
+
+        $this->assertSame($persisted, $resolution['value']);
+        $this->assertSame('option', $resolution['source']);
+    }
+
+    public function testResolveFilterWinsOverOption(): void
+    {
+        $filterTenant = 'bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee';
+        $this->setOption('acx_recognition_tenant_id', 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
+        add_filter('acx_recognition_tenant_id', static fn () => $filterTenant);
+
+        $resolution = TenantIdentity::resolve();
+
+        $this->assertSame($filterTenant, $resolution['value']);
+        $this->assertSame('filter', $resolution['source']);
+    }
+
+    public function testResolveRejectsMalformedOptionAndDerives(): void
+    {
+        $this->setOption('acx_recognition_tenant_id', 'not-a-uuid');
+        $expected = $this->expectedUuidFor('http://example.com');
+
+        $resolution = TenantIdentity::resolve();
+
+        $this->assertSame($expected, $resolution['value']);
+        $this->assertSame('derived', $resolution['source']);
+        $this->assertSame('not-a-uuid', $GLOBALS['__ac_options']['acx_recognition_tenant_id']);
+    }
+
+    /**
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testResolveConstantWinsOverFilterAndOption(): void
+    {
+        require_once __DIR__ . '/../bootstrap.php';
+        $this->resetGlobalState();
+
+        $constantTenant = 'cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee';
+        define('ACX_RECOGNITION_TENANT_ID', $constantTenant);
+        $this->setOption('acx_recognition_tenant_id', 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
+        add_filter('acx_recognition_tenant_id', static fn () => 'bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee');
+
+        $resolution = TenantIdentity::resolve();
+
+        $this->assertSame($constantTenant, $resolution['value']);
+        $this->assertSame('constant', $resolution['source']);
+    }
+
     private function expectedUuidFor(string $siteUrl): string
     {
         $hash      = sha1('acx-site-tenant:' . strtolower(rtrim($siteUrl, '/')));

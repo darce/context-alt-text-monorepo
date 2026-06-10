@@ -13,6 +13,9 @@ export interface SettingsResponse {
   api_key_set: boolean;
   api_key_last4: string;
   key_source: 'constant' | 'option' | 'filter' | 'default';
+  tenant_id: string;
+  tenant_id_source: 'constant' | 'option' | 'filter' | 'derived';
+  tenant_paired: boolean;
 }
 
 export const RecognitionSource = {

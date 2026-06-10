@@ -81,8 +81,9 @@ class SettingsController {
 	}
 
 	public function get_settings( WP_REST_Request $request ): WP_REST_Response {
-		$snapshot       = $this->endpoint_resolver->resolve_settings_snapshot();
-		$key_resolution = $this->resolve_key_source();
+		$snapshot          = $this->endpoint_resolver->resolve_settings_snapshot();
+		$key_resolution    = $this->resolve_key_source();
+		$tenant_resolution = TenantIdentity::resolve();
 
 		return new WP_REST_Response(
 			array(
@@ -97,6 +98,9 @@ class SettingsController {
 				'api_key_set'               => '' !== $key_resolution['value'],
 				'api_key_last4'             => $this->mask_key( $key_resolution['value'] ),
 				'key_source'                => $key_resolution['source'],
+				'tenant_id'                 => $tenant_resolution['value'],
+				'tenant_id_source'          => $tenant_resolution['source'],
+				'tenant_paired'             => TenantIdentity::is_paired(),
 			),
 			200
 		);
@@ -194,7 +198,7 @@ class SettingsController {
 
 		$key_resolution = $this->resolve_key_source();
 		$headers        = array(
-			'X-Tenant-ID' => TenantIdentity::derive_from_site_url(),
+			'X-Tenant-ID' => TenantIdentity::resolve()['value'],
 		);
 		if ( '' !== $key_resolution['value'] ) {
 			$headers['X-API-Key'] = $key_resolution['value'];

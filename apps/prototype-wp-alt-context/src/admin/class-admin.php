@@ -318,7 +318,7 @@ class Admin {
 					'nonce'     => wp_create_nonce( 'wp_rest' ),
 					'devMode'   => $is_dev_mode,
 					'tier'      => $tier,
-					'tenant_id' => TenantIdentity::derive_from_site_url(),
+					'tenant_id' => TenantIdentity::resolve()['value'],
 					'recognitionSource' => $this->get_recognition_source(),
 					'effectiveTargetUrl' => $this->get_effective_target_url(),
 					'max_media_per_batch' => $this->get_tier_batch_limit_for( $tier ),

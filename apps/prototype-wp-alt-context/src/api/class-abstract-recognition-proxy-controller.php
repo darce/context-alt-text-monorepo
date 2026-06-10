@@ -190,7 +190,7 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 	}
 
 	protected function get_tenant_id(): string {
-		return TenantIdentity::derive_from_site_url();
+		return TenantIdentity::resolve()['value'];
 	}
 
 	protected function get_recognition_base_url(): string {

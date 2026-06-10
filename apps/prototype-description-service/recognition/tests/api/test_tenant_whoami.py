@@ -56,6 +56,24 @@ def test_whoami_returns_key_tenant_claim_and_site_url() -> None:
     assert body["site_url"] == "https://prod.example"
 
 
+def test_whoami_missing_tenant_row_returns_404() -> None:
+    tenant_id = uuid.uuid4()
+    auth = AuthContext(
+        token="key",
+        tenant_claim=str(tenant_id),
+        api_key_id="key-1",
+        rate_limit_tier="default",
+        is_admin=False,
+        enabled=True,
+    )
+    client = _build_client(auth=auth, tenant=None)
+
+    resp = client.get("/recognition/tenant/whoami", headers={"X-Tenant-ID": str(tenant_id)})
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "tenant not found"
+
+
 def test_whoami_admin_without_claim_returns_404() -> None:
     auth = AuthContext(
         token="admin-key",

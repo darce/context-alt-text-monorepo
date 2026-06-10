@@ -72,6 +72,9 @@ const defaultSettings: SettingsResponse = {
   api_key_set: true,
   api_key_last4: '****abcd',
   key_source: 'option',
+  tenant_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+  tenant_id_source: 'option',
+  tenant_paired: false,
 };
 
 const saveMutate = vi.fn();

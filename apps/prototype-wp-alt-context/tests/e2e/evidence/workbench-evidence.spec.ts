@@ -119,7 +119,10 @@ const timelineHasLabel = async (page: Page, label: string): Promise<boolean> => 
     return false;
   }
 
-  return timeline.getByText(label, { exact: true }).isVisible().catch(() => false);
+  return timeline
+    .getByText(label, { exact: true })
+    .isVisible()
+    .catch(() => false);
 };
 
 const readProcessedCount = async (page: Page): Promise<number | null> => {
@@ -132,7 +135,7 @@ const readProcessedCount = async (page: Page): Promise<number | null> => {
     return null;
   }
 
-  const match = text.match(/Processed\s+(\d+)\/(\d+)/i);
+  const match = /Processed\s+(\d+)\/(\d+)/i.exec(text);
   return match ? Number.parseInt(match[1], 10) : null;
 };
 
@@ -159,7 +162,11 @@ const waitForTopClusterSurface = async (page: Page, deadlineMs: number): Promise
   const deadline = Date.now() + deadlineMs;
 
   while (Date.now() < deadline) {
-    const hasCard = await page.locator('.acx-top-cluster-card').first().isVisible().catch(() => false);
+    const hasCard = await page
+      .locator('.acx-top-cluster-card')
+      .first()
+      .isVisible()
+      .catch(() => false);
     if (hasCard) {
       return true;
     }
@@ -273,10 +280,15 @@ test('captures E15-22 workbench avatar and progress evidence on LocalWP', async 
       includeReview: false,
       settleMs: 15_000,
     });
-    clusterCardsVisible = Boolean(captures['workbench-avatar-top-cluster.png'] || captures['workbench-avatar-unavailable.png']);
+    clusterCardsVisible = Boolean(
+      captures['workbench-avatar-top-cluster.png'] || captures['workbench-avatar-unavailable.png'],
+    );
 
     const mediaCheckboxes = page.getByRole('checkbox', { name: /Select media item/i });
-    await mediaCheckboxes.first().waitFor({ state: 'visible', timeout: 60_000 }).catch(() => undefined);
+    await mediaCheckboxes
+      .first()
+      .waitFor({ state: 'visible', timeout: 60_000 })
+      .catch(() => undefined);
 
     const checkboxCount = await mediaCheckboxes.count();
     const selectCount = Math.min(checkboxCount, MAX_SCAN_MEDIA);
@@ -290,10 +302,7 @@ test('captures E15-22 workbench avatar and progress evidence on LocalWP', async 
       Boolean(captures['workbench-avatar-top-cluster.png']) ||
       Boolean(captures['workbench-cluster-review-panel.png']) ||
       Boolean(captures['workbench-avatar-unavailable.png']);
-    canScan =
-      !hasExistingClusterEvidence &&
-      selectCount > 0 &&
-      (await scanButton.isEnabled().catch(() => false));
+    canScan = !hasExistingClusterEvidence && selectCount > 0 && (await scanButton.isEnabled().catch(() => false));
 
     if (canScan) {
       await scanButton.click();
@@ -359,7 +368,11 @@ test('captures E15-22 workbench avatar and progress evidence on LocalWP', async 
 
         captures['workbench-avatar-top-cluster.png'] =
           (captures['workbench-avatar-top-cluster.png'] ?? false) ||
-          (await captureIfVisible(page, '.acx-top-cluster-card', testInfo.outputPath('workbench-avatar-top-cluster.png')));
+          (await captureIfVisible(
+            page,
+            '.acx-top-cluster-card',
+            testInfo.outputPath('workbench-avatar-top-cluster.png'),
+          ));
 
         captures['workbench-naming-queue.png'] =
           (captures['workbench-naming-queue.png'] ?? false) ||
@@ -389,7 +402,11 @@ test('captures E15-22 workbench avatar and progress evidence on LocalWP', async 
             break;
           }
 
-          const hasClusters = await page.locator('.acx-top-cluster-card').first().isVisible().catch(() => false);
+          const hasClusters = await page
+            .locator('.acx-top-cluster-card')
+            .first()
+            .isVisible()
+            .catch(() => false);
           if (hasClusters) {
             break;
           }
@@ -435,8 +452,16 @@ test('captures E15-22 workbench avatar and progress evidence on LocalWP', async 
       captures['workbench-post-run.png'] = false;
     }
 
-    const hasNamingQueue = await page.locator('.acx-top-clusters-section').first().isVisible().catch(() => false);
-    const hasTimeline = await page.locator('.acx-job-timeline').first().isVisible().catch(() => false);
+    const hasNamingQueue = await page
+      .locator('.acx-top-clusters-section')
+      .first()
+      .isVisible()
+      .catch(() => false);
+    const hasTimeline = await page
+      .locator('.acx-job-timeline')
+      .first()
+      .isVisible()
+      .catch(() => false);
 
     // The harness only proves something if it actually reached the Workbench and
     // landed on a real evidence surface — a naming queue, a job timeline, or

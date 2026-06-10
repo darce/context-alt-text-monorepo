@@ -41,22 +41,31 @@ plugin path so the run log can point to a concrete tested artifact.
 
 ## Recognition Service Configuration
 
-Recognition endpoint and API key resolution order:
+Recognition **source** (`local` | `service`) and endpoint resolution are independent chains. A saved service URL does **not** imply service mode — operators must set `acx_recognition_source` explicitly (or via constant/filter).
 
-1. Deployment constants:
-   1. `ACX_RECOGNITION_URL`
-   2. `ACX_RECOGNITION_API_KEY`
-2. WordPress options:
-   1. `acx_recognition_url`
-   2. `acx_recognition_api_key`
-3. Filter hooks:
-   1. `acx_recognition_base_url`
-   2. `acx_recognition_api_key`
-4. Fallback URL: `http://localhost:8000`
+Recognition source precedence:
+
+1. `ACX_RECOGNITION_SOURCE` constant
+2. `acx_recognition_source` filter
+3. `acx_recognition_source` option
+4. Default: `local`
+
+Service URL precedence:
+
+1. `ACX_RECOGNITION_URL` constant
+2. `acx_recognition_base_url` filter
+3. `acx_recognition_url` option
+4. Empty (local mode uses the local URL chain; default `http://localhost:8000`)
+
+API key precedence:
+
+1. `ACX_RECOGNITION_API_KEY` constant
+2. `acx_recognition_api_key` filter
+3. `acx_recognition_api_key` option
 
 Supported URL schemes are `http` and `https`.
 
-If no valid configured URL exists, plugin screens show a warning that fallback mode is active.
+When recognition source is `local`, effective routing uses the local URL chain regardless of any saved service URL.
 
 ## Uninstall Data Policy
 

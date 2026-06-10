@@ -71,6 +71,10 @@ class SettingsControllerTest extends TestCase
         $data = $response->get_data();
         $this->assertSame('https://api.example.com', $data['url']);
         $this->assertSame('option', $data['url_source']);
+        $this->assertSame('local', $data['recognition_source']);
+        $this->assertSame('default', $data['recognition_source_source']);
+        $this->assertSame('http://localhost:8000', $data['effective_target_url']);
+        $this->assertSame('local', $data['effective_target_mode']);
         $this->assertTrue($data['api_key_set']);
         $this->assertSame('****1234', $data['api_key_last4']);
         $this->assertSame('option', $data['key_source']);
@@ -177,6 +181,10 @@ class SettingsControllerTest extends TestCase
         $data = $response->get_data();
         $this->assertSame('https://const.example.com', $data['url']);
         $this->assertSame('constant', $data['url_source']);
+        $this->assertSame('local', $data['recognition_source']);
+        $this->assertSame('default', $data['recognition_source_source']);
+        $this->assertSame('http://localhost:8000', $data['effective_target_url']);
+        $this->assertSame('local', $data['effective_target_mode']);
         $this->assertSame('constant', $data['key_source']);
         $this->assertSame('****efgh', $data['api_key_last4']);
     }

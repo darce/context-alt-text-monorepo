@@ -63,10 +63,9 @@ final class RecognitionEndpointResolver {
 	}
 
 	/**
-	 * @param array{value: string, source: string} $service_url_resolution
 	 * @return array{value: string, source: string}
 	 */
-	public function resolve_recognition_source_source( array $service_url_resolution ): array {
+	public function resolve_recognition_source_source(): array {
 		$constant = trim( $this->get_constant_value( 'ACX_RECOGNITION_SOURCE' ) );
 		if ( $this->is_valid_recognition_source( $constant ) ) {
 			return array( 'value' => $constant, 'source' => 'constant' );
@@ -86,8 +85,7 @@ final class RecognitionEndpointResolver {
 	}
 
 	public function get_recognition_source(): string {
-		$service_url = $this->resolve_service_url_source();
-		return $this->resolve_recognition_source_source( $service_url )['value'];
+		return $this->resolve_recognition_source_source()['value'];
 	}
 
 	public function get_effective_base_url(): string {
@@ -113,7 +111,7 @@ final class RecognitionEndpointResolver {
 	public function resolve_settings_snapshot(): array {
 		$service_url  = $this->resolve_service_url_source();
 		$local_url    = $this->resolve_local_url_source();
-		$source       = $this->resolve_recognition_source_source( $service_url );
+		$source       = $this->resolve_recognition_source_source();
 		$effective      = 'local' === $source['value'] ? $local_url['value'] : $service_url['value'];
 		$effective_mode = $source['value'];
 

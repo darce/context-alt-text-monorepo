@@ -609,6 +609,32 @@ PHP;
      * @runInSeparateProcess
      * @preserveGlobalState disabled
      */
+    public function testProxyRequestUsesLocalTargetWhenConstantUrlWithoutExplicitSource(): void
+    {
+        define('ACX_RECOGNITION_URL', 'https://constant.example');
+        $this->setOption('acx_recognition_source', '');
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"status":"completed"}',
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/jobs/123/cancel');
+        $request->set_param('job_id', 'test-123');
+
+        $result = $this->controller->cancel_job($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $result);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertStringContainsString('http://localhost:8000/recognition/jobs/test-123', $calls[0]['url']);
+    }
+
+    /**
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
     public function testProxyRequestUsesConstantBaseUrlOverOption(): void
     {
         define('ACX_RECOGNITION_URL', 'https://constant.example');

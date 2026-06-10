@@ -101,6 +101,7 @@ class SettingsControllerTest extends TestCase
         $this->setUserCapability('manage_options', true);
         $this->setOption('acx_recognition_url', 'https://stale-saved.example.com');
         add_filter('acx_recognition_base_url', static fn () => 'https://filter.example.com');
+        add_filter('acx_recognition_source', static fn () => 'service');
 
         $request = new WP_REST_Request('GET', '/acx/v1/settings');
         $response = $this->controller->get_settings($request);
@@ -220,6 +221,7 @@ class SettingsControllerTest extends TestCase
         // saved option win over the filter.
         $this->setUserCapability('manage_options', true);
         add_filter('acx_recognition_base_url', static fn () => 'https://filter.example.com');
+        add_filter('acx_recognition_source', static fn () => 'service');
 
         $request = new WP_REST_Request('POST', '/acx/v1/settings');
         $request->set_body_params([

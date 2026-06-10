@@ -1,11 +1,6 @@
 import { useEffect, useReducer } from 'react';
 
-import {
-  RecognitionSource,
-  type RecognitionSourceValue,
-  type SettingsResponse,
-  type TestConnectionResponse,
-} from '../../api/settingsApi';
+import { RecognitionSource, type RecognitionSourceValue, type SettingsResponse, type TestConnectionResponse } from '../../api/settingsApi';
 import type { BannerTone } from './testConnectionBanner';
 
 interface SettingsPageState {

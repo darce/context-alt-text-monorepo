@@ -10,6 +10,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from db.models import Tenant
 from db.models.identity import CurationReplayRecord
 from recognition.domain.suggestion import BulkAcceptResult, SuggestedLabelSource, SuggestionStatus
 from recognition.interface_adapters.http import dependencies
@@ -728,6 +729,9 @@ def api_client(
     app = FastAPI()
     app.include_router(recognition_router, prefix="/recognition")
     fake_session = FakeSession()
+    seeded_tenant = Tenant(id=uuid.UUID(tenant_id), site_url="http://example.test")
+    for _ in range(12):
+        fake_session.queue_execute_result(scalar_one_or_none=seeded_tenant)
     fake_cluster_service.fake_cluster_repository = fake_cluster_repository
     fake_job_service.cluster_repository = fake_cluster_repository
     fake_suggestion_service.tenant_id = tenant_id

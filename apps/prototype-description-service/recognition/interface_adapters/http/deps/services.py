@@ -18,7 +18,7 @@ from fastapi import Depends
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.tenant_context import ensure_tenant_exists, set_tenant_context
+from db.tenant_context import require_tenant_record, set_tenant_context
 from recognition.application.assignment import AssignmentGate
 from recognition.application.discovery import CentroidDiscovery, GraphDiscovery, RepresentativeDiscovery
 from recognition.application.orchestration import ClusterService
@@ -339,7 +339,7 @@ async def build_cluster_service(
     # Ensure RLS context is set for this tenant
     await set_tenant_context(session, tenant_uuid)
 
-    await ensure_tenant_exists(session, tenant_uuid)
+    await require_tenant_record(session, tenant_uuid)
 
     cluster_repo = SqlAlchemyClusterRepository(session)
     member_repo = SqlAlchemyMemberRepository(session, tenant_id=tenant_id)

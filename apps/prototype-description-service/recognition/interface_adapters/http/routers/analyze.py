@@ -17,7 +17,7 @@ from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sse_starlette.sse import EventSourceResponse
 
-from db.tenant_context import ensure_tenant_exists
+from db.tenant_context import require_tenant_record
 from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.application.tasks.scan import (
     chain_populate_and_process,
@@ -198,7 +198,7 @@ async def _prepare_tenant_context(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid tenant_id") from exc
 
     if session is not None and hasattr(session, "execute") and is_postgres(session):
-        await ensure_tenant_exists(session, tenant_uuid)
+        await require_tenant_record(session, tenant_uuid)
         if not inline_processing and not await scan_worker_available(session):
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -551,7 +551,7 @@ async def cancel_job(
     if session is not None and scan_queue is not None:
         if tenant_id and is_postgres(session):
             tenant_uuid = uuid.UUID(str(tenant_id))
-            await ensure_tenant_exists(session, tenant_uuid)
+            await require_tenant_record(session, tenant_uuid)
         job_uuid = uuid.UUID(str(job_id))
         await scan_queue.cancel_scan_job(job_id=job_uuid)
         from recognition.infrastructure.repositories.job_repository import SqlAlchemyJobRepository

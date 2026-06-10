@@ -177,23 +177,23 @@ def test_multipart_ensures_tenant_exists_before_persisting_job(
 
     from recognition.interface_adapters.http.routers import analyze_multipart as mod
 
-    ensure_calls: list[str] = []
+    require_calls: list[str] = []
 
-    async def _ensure_tenant_exists(session, tenant_uuid):
+    async def _require_tenant_record(session, tenant_uuid):
         assert session is fake_session
-        ensure_calls.append(str(tenant_uuid))
+        require_calls.append(str(tenant_uuid))
 
     async def _noop_chain(**_kwargs):
         return None
 
-    monkeypatch.setattr(mod, "ensure_tenant_exists", _ensure_tenant_exists)
+    monkeypatch.setattr(mod, "require_tenant_record", _require_tenant_record)
     monkeypatch.setattr(mod, "chain_populate_and_process", _noop_chain)
 
     client = TestClient(fastapi_app)
     response = client.post("/recognition/analyze/multipart", **_multipart_submission(tenant_id))
 
     assert response.status_code == 202, response.text
-    assert ensure_calls == [tenant_id]
+    assert require_calls == [tenant_id]
     assert fake_session.commit_calls == 1
 
 

@@ -1,19 +1,19 @@
 {
   "schema_version": 2,
   "remote_url": "https://github.com/darce/workstate.git",
-  "remote_ref": "v0.1.24",
-  "remote_sha": "fca5bad8004f850c7fd36d9fa1c9e7e4b0cd3f34",
+  "remote_ref": "workstate-stack-v0.1.12",
+  "remote_sha": "2aab3b234007a91b731630988dee470d0ceca736",
   "profile": "all",
   "surfaces": [
     {
       "path": ".github/hooks",
       "source": "shared",
-      "provenance_key": "clone:fca5bad8004f850c7fd36d9fa1c9e7e4b0cd3f34"
+      "provenance_key": "clone:2aab3b234007a91b731630988dee470d0ceca736"
     },
     {
       "path": "scripts/hooks",
       "source": "shared",
-      "provenance_key": "clone:fca5bad8004f850c7fd36d9fa1c9e7e4b0cd3f34"
+      "provenance_key": "clone:2aab3b234007a91b731630988dee470d0ceca736"
     },
     {
       "path": "docs/workstate/contracts",
@@ -25,11 +25,13 @@
     },
     {
       "path": "Makefile.d/compaction.mk",
-      "source": "shared"
+      "source": "shared",
+      "provenance_key": "clone:2aab3b234007a91b731630988dee470d0ceca736"
     },
     {
       "path": "Makefile.d/plans.mk",
-      "source": "shared"
+      "source": "shared",
+      "provenance_key": "clone:2aab3b234007a91b731630988dee470d0ceca736"
     },
     {
       "path": "Makefile.d/plugins.mk",
@@ -37,11 +39,13 @@
     },
     {
       "path": "Makefile.d/workflows.mk",
-      "source": "shared"
+      "source": "shared",
+      "provenance_key": "clone:2aab3b234007a91b731630988dee470d0ceca736"
     },
     {
       "path": "scripts/workstate/git-plan-cat.sh",
-      "source": "shared"
+      "source": "shared",
+      "provenance_key": "clone:2aab3b234007a91b731630988dee470d0ceca736"
     },
     {
       "path": ".codex/hooks.json",
@@ -87,7 +91,15 @@
     },
     {
       "path": ".claude/settings.json",
-      "action": "unchanged"
+      "action": "updated"
+    },
+    {
+      "path": ".gitignore",
+      "action": "already_present"
+    },
+    {
+      "path": ".claude/settings.local.json",
+      "action": "updated"
     },
     {
       "path": ".agents/plugins/marketplace.json",
@@ -95,7 +107,7 @@
     },
     {
       "path": ".grok/plugins/workstate-system",
-      "action": "created",
+      "action": "updated",
       "kind": "grok_plugin"
     },
     {
@@ -117,7 +129,7 @@
     },
     {
       "path": ".grok/plugins/workstate-system",
-      "action": "applied",
+      "action": "already_present",
       "kind": "grok_plugin_activation"
     },
     {
@@ -127,7 +139,7 @@
     },
     {
       "path": "Makefile",
-      "action": "migrated"
+      "action": "already_present"
     },
     {
       "path": "core.hooksPath",
@@ -139,7 +151,6 @@
     }
   ],
   "mcp_servers": [
-    "context7",
     "workstate-handoff-mcp",
     "workstate-orchestrator-mcp"
   ],
@@ -171,7 +182,7 @@
     }
   ],
   "prewarm_refs": [
-    "mcp-workstate-handoff@0.12.3",
-    "mcp-workstate-orchestrator@0.6.0"
+    "mcp-workstate-handoff@0.12.9",
+    "mcp-workstate-orchestrator@0.6.6"
   ]
 }

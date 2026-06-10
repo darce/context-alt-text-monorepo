@@ -1,16 +1,4 @@
 {
-  "_managed_by": "workstate-bootstrap",
-  "extraKnownMarketplaces": {
-    "workstate-marketplace": {
-      "source": {
-        "source": "directory",
-        "path": "."
-      }
-    }
-  },
-  "enabledPlugins": {
-    "workstate-system@workstate-marketplace": true
-  },
   "hooks": {
     "PreToolUse": [
       {

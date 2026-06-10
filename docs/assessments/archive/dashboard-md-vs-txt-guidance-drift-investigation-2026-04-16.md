@@ -1,3 +1,4 @@
+<!-- lint-dashboard-txt: allow -->
 # Why does `DASHBOARD.md` keep appearing when the correct file is `DASHBOARD.txt`?
 
 > **Metadata**

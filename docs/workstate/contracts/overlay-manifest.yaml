@@ -53,9 +53,8 @@ optional_fields:
     description: >-
       Project-relative path to the consumer's plugin overrides tree (e.g.
       workstate-overrides/workstate-system). Forward-compat hook for the
-      APD-07 durable-recipe-overrides release: workstate-bootstrap v0.1.22
-      does not read this field, so it is inert until the consumer updates to
-      an APD-07-capable bootstrap. Each plugin directory under this path
+      APD-07 durable-recipe-overrides path: workstate-bootstrap 0.8.10+
+      (workstate-stack-v0.1.12) reads this field when present. Each plugin directory under this path
       carries overrides.yaml, overrides.lock.json, and the materialized
       upstream base copies (e.g. skills/<name>/SKILL.base.md). The
       overrides.lock.json upstream_digest convention is the whole-file
@@ -79,7 +78,7 @@ notes:
 example_manifest:
   schema_version: 2
   remote_url: https://github.com/darce/workstate.git
-  remote_ref: v0.1.22
+  remote_ref: workstate-stack-v0.1.12
   remote_sha: 0123456789abcdef0123456789abcdef01234567
   profile: all
   surfaces:

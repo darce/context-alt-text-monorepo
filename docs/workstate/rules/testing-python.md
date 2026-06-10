@@ -113,8 +113,8 @@ For the E17-13 cleanup path, verify `workstate-handoff-mcp` and `workstate-orche
 ```bash
 python3 -m venv /tmp/e17-13-external-mcp
 /tmp/e17-13-external-mcp/bin/pip install --quiet \
-    "mcp-workstate-handoff==0.12.3" \
-    "mcp-workstate-orchestrator==0.6.0"
+    "mcp-workstate-handoff==0.12.9" \
+    "mcp-workstate-orchestrator==0.6.6"
 /tmp/e17-13-external-mcp/bin/mcp-workstate-handoff --workspace-root . doctor
 /tmp/e17-13-external-mcp/bin/mcp-workstate-orchestrator --workspace-root . --help
 ```

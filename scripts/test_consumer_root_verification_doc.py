@@ -17,7 +17,7 @@ REQUIRED_WORKFLOW_HEADINGS = (
 
 REQUIRED_WORKFLOW_SNIPPETS = (
     "/tmp/e17-14-scratch-consumer/",
-    './.venv/bin/pip install "mcp-workstate-handoff==0.12.3" "mcp-workstate-orchestrator==0.6.0" "workstate-bootstrap==0.7.3"',
+    './.venv/bin/pip install "workstate-stack==0.1.12"',
     "./.venv/bin/workstate-bootstrap install --target /tmp/e17-14-scratch-consumer --remote-ref v0.1.22",
     "task_plan_path",
     "DASHBOARD.txt",

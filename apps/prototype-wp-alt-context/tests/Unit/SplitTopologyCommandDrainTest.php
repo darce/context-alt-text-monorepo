@@ -353,6 +353,31 @@ class SplitTopologyCommandDrainTest extends TestCase
         $this->assertSame([], $repository->failures);
     }
 
+    public function testCommandProcessingPhasesAreExtracted(): void
+    {
+        $privateMethods = array_map(
+            static fn (\ReflectionMethod $method): string => $method->getName(),
+            (new \ReflectionClass(SplitTopologyCommandDrain::class))->getMethods(\ReflectionMethod::IS_PRIVATE)
+        );
+
+        foreach (
+            [
+                'process_applied_split_command',
+                'process_pending_split_command',
+                'build_split_dispatch_request_body',
+                'normalize_split_transport_response',
+                'reconcile_command_via_member_delta',
+                'reconcile_command_via_targeted_snapshot',
+                'reconcile_command_via_full_snapshot',
+                'project_split_conflict_via_targeted_snapshot',
+                'project_split_conflict_via_full_snapshot',
+                'collect_targeted_snapshot_member_delta',
+            ] as $expectedMethod
+        ) {
+            $this->assertContains($expectedMethod, $privateMethods, $expectedMethod);
+        }
+    }
+
     public function testDrainDelegatesToSplitLoopAndMemberDeltaWorkPhases(): void
     {
         $privateMethods = array_map(

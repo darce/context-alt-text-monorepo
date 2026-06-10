@@ -103,6 +103,45 @@ def test_component_missing_digest_fails_fast(tmp_path: Path) -> None:
     assert "upstream_digest" in errors[0]
 
 
+def test_add_mode_component_skips_base_path_requirement(tmp_path: Path) -> None:
+    """mode:add components are net-new local additions with no upstream base;
+    null base_path/upstream_digest must not be reported as a violation."""
+    plugin = tmp_path / "workstate-system"
+    plugin.mkdir(parents=True)
+    add_component = {
+        "component_kind": "skill",
+        "name": "refactor-wp-alt-context",
+        "mode": "add",
+        "local_path": "skills/refactor-wp-alt-context/SKILL.md",
+        "base_path": None,
+        "patch_path": None,
+        "upstream_digest": None,
+        "last_accept_upstream": None,
+    }
+    _write_lock(plugin, [add_component])
+    assert check_overrides_locks(tmp_path) == []
+
+
+def test_add_mode_does_not_mask_patch_component_violation(tmp_path: Path) -> None:
+    """An add component is skipped, but sibling patch components in the same
+    lock are still validated."""
+    plugin = tmp_path / "workstate-system"
+    plugin.mkdir(parents=True)
+    add_component = {
+        "component_kind": "skill",
+        "name": "refactor-wp-alt-context",
+        "mode": "add",
+        "local_path": "skills/refactor-wp-alt-context/SKILL.md",
+        "base_path": None,
+        "upstream_digest": None,
+    }
+    patch_component = _component("skills/branch-review/SKILL.base.md", "sha256:" + "a" * 64)
+    _write_lock(plugin, [add_component, patch_component])
+    errors = check_overrides_locks(tmp_path)
+    assert len(errors) == 1
+    assert "branch-review" in errors[0]
+
+
 def test_non_dict_component_entry_fails_cleanly(tmp_path: Path) -> None:
     """A structurally invalid components entry must produce a per-component
     error, not an uncaught AttributeError traceback (rg-008)."""

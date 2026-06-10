@@ -180,7 +180,7 @@ Proof: query results + admin-op side effects + drain statuses/re-schedule identi
 
 - [ ] Characterization extended: failing-unit isolation, `apply_member_delta` rollback branch, retry ceiling, re-schedule trigger.
 - [ ] Phase/transaction map + outbox query/admin clusters recorded.
-- [ ] `composer test` green against current drains.
+- [x] `composer test` green against current drains.
 
 ### Checklist for Slice 2: split-topology Split Loop + tx-preserving Extract Function
 

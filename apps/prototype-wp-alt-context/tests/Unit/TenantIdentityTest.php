@@ -14,32 +14,26 @@ class TenantIdentityTest extends TestCase
 {
     public function testDerivationIsDeterministic(): void
     {
-        $this->assertSame(
-            TenantIdentity::derive_from_site_url(),
-            TenantIdentity::derive_from_site_url(),
-            'derive_from_site_url must be idempotent for the same site URL'
-        );
+        $first  = TenantIdentity::resolve();
+        $second = TenantIdentity::resolve();
+
+        $this->assertSame($first['value'], $second['value']);
     }
 
     public function testDerivationMatchesExpectedUuidForStubSite(): void
     {
-        // The test stub fixes get_site_url() to http://example.com. The SHA-1 of
-        // 'acx-site-tenant:http://example.com' is computed deterministically; we
-        // pin it here so any future refactor of the derivation must either keep
-        // the canonical output or explicitly rev this constant (which is a
-        // cross-repo wire-contract change — every persisted recognition row is
-        // keyed on this tenant UUID).
-        $this->assertSame(
-            $this->expectedUuidFor('http://example.com'),
-            TenantIdentity::derive_from_site_url()
-        );
+        $resolution = TenantIdentity::resolve();
+
+        $this->assertSame($this->expectedUuidFor('http://example.com'), $resolution['value']);
     }
 
     public function testDerivationProducesV5ShapedUuid(): void
     {
+        $resolution = TenantIdentity::resolve();
+
         $this->assertMatchesRegularExpression(
             '/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i',
-            TenantIdentity::derive_from_site_url()
+            $resolution['value']
         );
     }
 

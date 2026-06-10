@@ -100,6 +100,16 @@ export const renderBanner = (result: TestConnectionResponse): BannerCopy => {
           'alt-context',
         ),
       };
+    case TestConnectionOutcome.TENANT_PAIRING_CONFLICT:
+      return {
+        tone: 'warning',
+        role: 'alert',
+        primary: __('Tenant identity conflict.', 'alt-context'),
+        remediation: __(
+          'The API key is bound to a different tenant than this site. Confirm adoption before re-keying local data.',
+          'alt-context',
+        ),
+      };
     case TestConnectionOutcome.RATE_LIMITED: {
       const seconds = result.retry_after_seconds;
       const wait =

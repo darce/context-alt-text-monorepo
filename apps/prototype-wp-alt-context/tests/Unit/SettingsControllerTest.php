@@ -343,25 +343,111 @@ class SettingsControllerTest extends TestCase
     public function testProbeDispatchHitsAuthenticatedPoolEndpoint(): void
     {
         $this->configureProbe();
+        $keyTenant = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+        $this->setOption('acx_recognition_tenant_id', $keyTenant);
         $this->queueHttpResponse($this->buildOkResponse());
+        $this->queueHttpResponse($this->buildWhoamiResponse($keyTenant));
 
         $response = $this->controller->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'));
         $data     = $response->get_data();
 
         $calls = $this->getHttpCalls();
-        $this->assertCount(1, $calls);
+        $this->assertCount(2, $calls);
         $this->assertStringEndsWith('/health/detailed', $calls[0]['url']);
+        $this->assertStringEndsWith('/recognition/tenant/whoami', $calls[1]['url']);
         $this->assertStringNotContainsString('/recognition/health/pool', $calls[0]['url']);
         $this->assertSame('test-key', $calls[0]['args']['headers']['X-API-Key'] ?? null);
-        $this->assertSame(
-            TenantIdentity::resolve()['value'],
-            $calls[0]['args']['headers']['X-Tenant-ID'] ?? null
-        );
+        $this->assertSame($keyTenant, $calls[0]['args']['headers']['X-Tenant-ID'] ?? null);
 
         $this->assertSame(ProbeOutcome::CONNECTED, $data['outcome']);
+        $this->assertTrue($data['tenant_paired']);
+        $this->assertSame($keyTenant, $data['tenant_id']);
         $this->assertSame(200, $data['status_code']);
         $this->assertArrayNotHasKey('connected', $data);
         $this->assertArrayNotHasKey('error', $data);
+    }
+
+    public function testProbePairingAdoptsMatchingKeyTenant(): void
+    {
+        $this->configureProbe();
+        $keyTenant = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+        $this->setOption('acx_recognition_tenant_id', $keyTenant);
+        $this->queueHttpResponse($this->buildOkResponse());
+        $this->queueHttpResponse($this->buildWhoamiResponse($keyTenant));
+
+        $data = $this->controller
+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
+            ->get_data();
+
+        $this->assertSame(ProbeOutcome::CONNECTED, $data['outcome']);
+        $this->assertTrue($data['tenant_paired']);
+        $this->assertTrue(TenantIdentity::is_paired());
+        $this->assertSame($keyTenant, get_option('acx_recognition_tenant_id'));
+    }
+
+    public function testProbePairingReturnsConflictWhenPersistedTenantDiffers(): void
+    {
+        $this->configureProbe();
+        $persisted = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+        $keyTenant = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+        $this->setOption('acx_recognition_tenant_id', $persisted);
+        $this->queueHttpResponse($this->buildOkResponse());
+        $this->queueHttpResponse($this->buildWhoamiResponse($keyTenant));
+
+        $data = $this->controller
+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
+            ->get_data();
+
+        $this->assertSame(ProbeOutcome::TENANT_PAIRING_CONFLICT, $data['outcome']);
+        $this->assertSame($persisted, $data['persisted_tenant_id']);
+        $this->assertSame($keyTenant, $data['key_tenant_id']);
+        $this->assertFalse(TenantIdentity::is_paired());
+        $this->assertSame($persisted, get_option('acx_recognition_tenant_id'));
+    }
+
+    public function testProbePairingConfirmAdoptsAndRekeysLocalRows(): void
+    {
+        global $wpdb;
+        $this->configureProbe();
+        $persisted = '11111111-1111-4111-8111-111111111111';
+        $keyTenant = '22222222-2222-4222-8222-222222222222';
+        $this->setOption('acx_recognition_tenant_id', $persisted);
+        $this->queueHttpResponse($this->buildOkResponse());
+        $this->queueHttpResponse($this->buildWhoamiResponse($keyTenant));
+
+        $wpdb->insert(
+            $wpdb->prefix . 'acx_clusters',
+            array(
+                'cluster_uuid'       => 'cluster-1',
+                'tenant_id'          => $persisted,
+                'label'              => 'A',
+                'curation_state'     => 'unlabeled',
+                'snapshot_version'   => 1,
+                'created_at'         => '2026-01-01 00:00:00',
+                'updated_at'         => '2026-01-01 00:00:00',
+                'last_synced_at'     => '2026-01-01 00:00:00',
+            )
+        );
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings/test');
+        $request->set_body_params(array('confirm_tenant_pairing' => true));
+
+        $data = $this->controller->test_connection($request)->get_data();
+
+        $this->assertSame(ProbeOutcome::CONNECTED, $data['outcome']);
+        $this->assertTrue($data['tenant_paired']);
+        $this->assertSame('rekey', $data['rekey_strategy']);
+        $this->assertGreaterThanOrEqual(1, $data['rekey_updated_rows']);
+        $this->assertSame($keyTenant, get_option('acx_recognition_tenant_id'));
+        $this->assertSame(
+            $keyTenant,
+            $wpdb->get_var(
+                $wpdb->prepare(
+                    'SELECT tenant_id FROM ' . $wpdb->prefix . 'acx_clusters WHERE cluster_uuid = %s',
+                    'cluster-1'
+                )
+            )
+        );
     }
 
     public function testProbeDispatchReturnsNotConfiguredWithoutHttpCall(): void
@@ -572,6 +658,22 @@ class SettingsControllerTest extends TestCase
         return [
             'response' => ['code' => 200, 'message' => 'OK'],
             'body'     => '{"pool":"healthy"}',
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function buildWhoamiResponse(string $tenantId): array
+    {
+        return [
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body'     => wp_json_encode(
+                array(
+                    'tenant_id' => $tenantId,
+                    'site_url'  => 'https://prod.example',
+                )
+            ),
         ];
     }
 }

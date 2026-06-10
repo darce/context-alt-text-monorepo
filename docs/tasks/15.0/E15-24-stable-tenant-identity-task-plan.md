@@ -9,6 +9,7 @@
 > - **Target Branch**: `feature/e15-24`
 > - **Review Coverage Target**: 2
 > - **Companion assessment**: [E15-24-architecture-coherence-assessment.md](E15-24-architecture-coherence-assessment.md)
+> - **Literature citation convention**: short form `designing-data-intensive-applications.md §Partition Key Stability` refers to `literature/extracted/refactoring/distilled/designing-data-intensive-applications.md`. **The `literature/` directory is gitignored and exists only in the root checkout** (`~/Development/context-alt-text-monorepo/literature/...`) — read it from there, not from your task worktree.
 
 ## Objective
 
@@ -65,6 +66,59 @@ One resolution chain: `ACX_RECOGNITION_TENANT_ID` constant → `acx_recognition_
 ## Proposed Solution
 
 PHP: add `TenantIdentity::resolve()` implementing the four-level chain with one-time persistence; replace all `derive_from_site_url()` call sites; expose tenant fields in settings GET; add pairing into the existing `/settings/test` service-mode probe (it already calls authenticated `/health/detailed` — extend to fetch and persist the key's tenant claim on success). Python: add the whoami/pairing read endpoint; gate `ensure_tenant_exists()` behind explicit provisioning (CLI `manage_api_keys` already creates tenants when minting keys — that remains the provisioning path); return structured 409 for placeholder-tenant collisions. Delete `derive_from_site_url()` after call sites migrate (delete-over-flag).
+
+## Junior Implementer Guide
+
+> Read this before touching code. **Rule zero: never trust a line number in this plan without re-verifying it** — run the grep given with each anchor; if it misses, search the symbol name and continue from what you find (rg-010: editor file models go stale; terminal grep is truth). If reality contradicts a slice's design, STOP and record a blocker via `record_event(event_kind='blocker')` instead of improvising.
+
+### Why this task exists (didactic)
+
+The partition key for ALL of a site's recognition data is currently recomputed per request from a mutable environment value. `designing-data-intensive-applications.md §Partition Key Stability` is the core lesson: keys that partition tenant data must be invariant across deployments; deriving them from a URL means a port change silently "creates" a new tenant and orphans everything. The fix shape — keep a derived value only as a one-time bootstrap, then persist and treat the stored value as authoritative — follows §Systems of Record vs Derived Data (one authority; everything else is a cached derivation). Service-side, refusing to silently provision unknown tenants is `release-it.md §Fail Fast (5.5)`: check identity validity at the transaction boundary instead of letting placeholder rows mask drift.
+
+### Assumed setup
+
+1. `make task-start TASK=E15-24 OBJECTIVE="..."` → worktree `../context-alt-text-monorepo-e15-24-impl` style path on `feature/e15-24` (if this branch already hosts the planning docs, coordinate: implementation continues on the same branch). Work ONLY in the worktree; `make context` each session.
+2. Per slice: implement → run the named test commands → `record_event(event_kind='test_result')` → `close_slice` → `render_handoff(kind='dashboard')`.
+
+### Verified code anchors (as of commit `81de3127`; re-verify each)
+
+| What | Where | Verified content | Re-verify with |
+| --- | --- | --- | --- |
+| Derivation | `apps/prototype-wp-alt-context/src/api/class-tenant-identity.php:26-40` | `sha1('acx-site-tenant:' . untrailingslashit(strtolower(get_site_url())))` reformatted into a UUIDv5-shaped string (version nibble forced to 5, variant bits forced) | `grep -n "acx-site-tenant" src/api/class-tenant-identity.php` |
+| Call site 1 | `class-abstract-recognition-proxy-controller.php:192-194` | `get_tenant_id()` is a one-line wrapper returning `TenantIdentity::derive_from_site_url()`; used to build the `X-Tenant-ID` header at ~line 80 | `grep -n "derive_from_site_url" src/api/*.php` |
+| Call site 2 | `class-settings-controller.php:197` | service-mode `/settings/test` probe sends the derived header | same grep |
+| Model for the resolution chain | `class-recognition-endpoint-resolver.php:24-41` | constant → filter → option → default, each level returning `{value, source}` | read the file |
+| Key resolution (4-level idiom incl. comment about code-managed sources) | `class-settings-controller.php:357-382` (`resolve_key_source()`) | constant `ACX_RECOGNITION_API_KEY` → filter → option → '' | `grep -n "resolve_key_source" -A 8 src/api/class-settings-controller.php` |
+| Service auth authority | `apps/prototype-description-service/recognition/interface_adapters/http/deps/auth.py:198-208` | if key has `tenant_claim` AND `X-Tenant-ID` present → must match or 403 `tenant mismatch` (with `emit_auth_event('tenant_mismatch', ...)`) | `grep -n "tenant mismatch" recognition/interface_adapters/http/deps/auth.py` |
+| JIT provisioning | `db/tenant_context.py:22-45` + live call sites `analyze.py:201`, `analyze.py:554`, `analyze_multipart.py:294`, `deps/services.py:342` | creates `Tenant(id=..., site_url='auto-provisioned-<8 chars>')` when missing | `grep -rn "ensure_tenant_exists" --include="*.py" \| grep -v test` |
+
+### Slice 1 notes — PHP resolution chain
+
+- Copy the `RecognitionEndpointResolver` idiom EXACTLY (constant → filter → option, each returning `{value, source}`): new `TenantIdentity::resolve(): array{value: string, source: string}` with constant `ACX_RECOGNITION_TENANT_ID`, filter `acx_recognition_tenant_id`, option `acx_recognition_tenant_id`, then one-time derivation. Naming per the table in CLAUDE.md §Naming Conventions (`acx_*` options, `ACX_*` constants).
+- One-time persistence rule: only when the chain falls through to derivation AND the option is empty, `update_option('acx_recognition_tenant_id', $derived)` and return `source: 'derived'`; subsequent calls hit the option level. Never overwrite a non-empty option from `resolve()` — overwriting is exclusively the pairing flow's job (Slice 3). This guard is what makes identity *sticky* across URL changes.
+- Validate any constant/filter/option value as UUID-shaped (lowercase, 8-4-4-4-12 hex); a malformed override returns to the next level and logs a warning. Do not invent a new UUID lib — `wp_is_uuid()` exists in WP core.
+- Both call sites switch to `resolve()['value']`. The settings GET adds `tenant_id`, `tenant_id_source`, `tenant_paired` (bool; false until Slice 3) — mirror the existing `url`/`url_source` response idiom at `get_settings()` (`class-settings-controller.php:83-103`) and extend `SettingsResponse` in `js/admin/api/settingsApi.ts`.
+- Tests: model them on whatever covers `RecognitionEndpointResolver` today (`grep -rln "RecognitionEndpointResolver" tests/`). Matrix: constant wins / filter wins / option wins / derivation persists once / option survives simulated `get_site_url()` change / malformed override falls through.
+
+### Slice 2 notes — service whoami + provisioning discipline
+
+- Whoami endpoint: thin authenticated GET (suggested `/recognition/tenant/whoami`) returning `{tenant_id, site_url}` from `AuthContext.tenant_claim`. Put it in a new or existing router under `recognition/interface_adapters/http/routers/` — copy the dependency-injection style of a small existing router. For an admin key (`tenant_claim is None, is_admin=True`) return 404 with detail `no tenant claim` — an admin key has no canonical tenant; do NOT guess one (rg-015: never fabricate contract metadata).
+- Do NOT modify `_require_auth_impl` — the auth seam is reviewed and spec-bound (`docs/specs/auth-transaction-isolation-spec.md`). You are a consumer of `AuthContext` only.
+- JIT gating: the 4 live `ensure_tenant_exists` call sites currently provision placeholders. Replace the silent-create behavior on authenticated tenant-scoped routes with a structured failure: unknown tenant + non-admin key → 403 with detail naming the expected provisioning path. Keep explicit provisioning working: the `manage_api_keys` CLI mints tenants when creating keys — that remains THE provisioning path. Check each call site's surrounding transaction before editing (read 20 lines of context around each; some run inside a session whose rollback semantics you must preserve).
+- Why fail-fast here: `release-it.md §Fail Fast` — reject at the boundary with a precise error rather than letting a placeholder row (`auto-provisioned-…`) mask identity drift that surfaces months later as "orphaned" data.
+
+### Slice 3 notes — pairing + local re-key + deletion
+
+- Pairing lives in `test_connection()` service-mode branch (`class-settings-controller.php:195-217`): on a successful authenticated `/health/detailed` probe, also call whoami; apply the conflict policy from this plan's Slice 3 section verbatim (adopt only when option unset/equal; mismatch → structured conflict response, no write).
+- Local re-key: enumerate tenant-scoped local tables by grepping the installer/schema for `tenant_id` columns (`grep -rn "tenant_id" src/ --include="*.php" | grep -i "create table\|schema"`) rather than trusting this plan's table list. Wrap the multi-table UPDATE in the shared `run_transactional` wrapper (sr-009; `grep -rn "run_transactional" src/` to find it). The bounded-threshold fallback to forced re-sync exists because a 50k-row UPDATE inside one request is its own outage (`latency-reduce-delay-in-software-systems.md §Deferred Task Scheduling` — defer non-interactive bulk work instead of blocking a request on it).
+- Deleting `derive_from_site_url()` is the point of the slice, not housekeeping: a surviving second derivation path is exactly the dual-write hazard `designing-data-intensive-applications.md §Log-Based Derivation vs Dual Writes` warns about — two writers of one identity guarantee eventual divergence. `grep -rn "derive_from_site_url"` must return zero before slice close.
+
+### Pitfalls / stop conditions
+
+- The derived UUID format must stay byte-identical until Slice 3 deletes derivation — golden-value test FIRST (assert a known site URL → known UUID) so refactors can't silently shift every existing tenant id.
+- Local mode has no API key → pairing is service-mode only; in local mode identity stays `derived`-then-persisted. Never block local mode on pairing.
+- `X-Tenant-ID` must remain a normalized UUID string — the service runs `normalize_tenant_id()` on it before claim comparison (auth.py:199).
+- If you find an additional derivation or header-construction site this plan doesn't list, stop and record a blocker — do not migrate it ad hoc.
 
 ## Files and Surfaces to Change
 

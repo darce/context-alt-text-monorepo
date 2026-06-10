@@ -10,6 +10,7 @@
 > - **Review Coverage Target**: 2
 > - **Companion assessment**: [E15-24-architecture-coherence-assessment.md](E15-24-architecture-coherence-assessment.md)
 > - **Supersedes**: the shared-PHP-hosting topology in [E15-3-wordpress-demo-provisioning-task-plan.md](E15-3-wordpress-demo-provisioning-task-plan.md). E15-3's exit criteria and pre-provisioning gates carry over; its hosting decision does not.
+> - **Literature citation convention**: short form `release-it.md §Bulkheads` refers to `literature/extracted/refactoring/distilled/release-it.md`. **The `literature/` directory is gitignored and exists only in the root checkout** (`~/Development/context-alt-text-monorepo/literature/...`) — read it from there, not from your task worktree.
 
 ## Objective
 
@@ -69,6 +70,61 @@ The epic's Phase 3 plan assumed ~$2–5/mo shared PHP hosting with the design ra
 ## Proposed Solution
 
 Slice 1: infra — demo compose project (`docker-compose.demo.yml` parameterized like `docker-compose.env.yml`), DNS record, Caddy vhost, systemd unit, container resource limits, `make deploy-demo`. Slice 2: WP bootstrap — non-interactive install via wp-cli, plugin build+install step, constants-based configuration (tenant/key/URL from the secrets `.env`), demo tenant + key minting runbook step via `manage_api_keys`. Slice 3: content + proof — seed bundle import, demo walkthrough runbook, E2E smoke against the public URL (reusing E15-5/E15-6 evidence shapes), epic Phase 3 text updated to the new topology.
+
+## Junior Implementer Guide
+
+> Read this before touching anything. This task touches LIVE infrastructure — the same VM serves prod. **Rule zero: never run a command against the VM whose blast radius you cannot state.** Anything that restarts `acx-prod.service`, edits prod's `.env`, or touches `prod-pgdata` is out of scope and requires the operator. If a step requires it, STOP and record a blocker.
+
+### Why this task exists (didactic)
+
+Colocating the demo WP with inference on one VM is a deliberate trade. `release-it.md §Bulkheads (5.3)` is the mitigation: partition capacity (container CPU/memory limits) so demo traffic cannot starve inference; §Chain Reactions (4.2) is the failure mode being prevented — on a shared host, one overloaded service drags down its neighbors. §Configuration Files (14.2) drives the per-env secrets layout (config outside the image, version-controlled templates, secrets chmod 600), and the staged bring-up (staging API first, then prod) is the §Zero-Downtime expand/rollout/cleanup shape applied to provisioning. The "demo is a tenant, not a special case" principle is rg-009 in product form, and `designing-data-intensive-applications.md §Offline-Capable Replicas` is what the kill-the-API sovereignty walkthrough in Slice 3 demonstrates to visitors.
+
+### Assumed setup
+
+`make task-start TASK=E15-28 …` → repo work in the worktree; VM work over SSH (Tailscale per E15-5a; check `infra/oci/README.md` § SSH access). Per slice: `record_event(test_result)` → `close_slice` → `render_handoff(kind='dashboard')`.
+
+### Verified context anchors (re-verify each — infra docs drift)
+
+| What | Where | Re-verify with |
+| --- | --- | --- |
+| Three-env topology (prod/staging/dev, subdomains, systemd units, pgdata paths) | `infra/oci/README.md` ~§324-333 | open the README; sections move |
+| Parameterized compose template | `apps/prototype-description-service/docker-compose.env.yml` (`ACX_ENV`, `ACX_IMAGE_TAG`, `ACX_PGDATA_PATH`, `ACX_NETWORK_NAME`, per-env secrets `.env`) | read the file — your demo compose copies this parameterization style |
+| VM layout | README ~§595-616 (`/opt/acx-backend/{prod,staging,dev}/`, `data/`, Caddyfile, `docker-compose.caddy.yml`) | read on the VM: `ls /opt/acx-backend/` |
+| Deploy workflow + image tagging | README ~§379-422 (`make deploy-dev`, `REMOTE_BUILD=1`, `:ENV_TAG` + `:SHA`) | read the Makefile targets |
+| Key minting CLI | `manage_api_keys` (README ~§569) — **known quirk: requires `--env prod` even when targeting staging/dev DSNs** | try `--help` on the VM before scripting it; if the quirk blocks demo-tenant minting, record a finding, don't patch around it silently |
+| CORS allowlist | E15-1 shipped origin allowlist — find the env var: `grep -rn "CORS\|allowlist\|origins" apps/prototype-description-service/recognition/ api/ --include="*.py" \| head` | confirm exact env name before editing secrets templates |
+| UFW rules | `infra/oci/cloud-init.yaml` ~lines 86-90 | read before assuming a port is reachable |
+
+### Slice 1 notes — demo stack infrastructure
+
+- Model `docker-compose.demo.yml` on `docker-compose.env.yml`'s parameterization (own project name, own network `acx-demo-net`, own data dirs `demo-wpdata`/`demo-dbdata` under `/opt/acx-backend/data/`). Services: `wordpress` (official image, pick the current `php8.x-apache` tag — it is multi-arch and runs on ARM64/A1) + `mariadb` (11.x, also multi-arch). Verify image availability for `linux/arm64` with `docker manifest inspect <image> | grep arm64` before committing to tags.
+- Bulkhead limits: non-swarm compose supports `cpus:` and `mem_limit:` per service — cap WP+MariaDB well below the 4-core/24GB envelope (suggested start: WP 1.0 cpu / 2g, MariaDB 0.5 cpu / 1g; record actuals in the slice decision). Verify post-deploy with `docker stats --no-stream`.
+- Caddy: the live Caddyfile already routes three subdomains. Add the `demo.altcontext.com` vhost in the REPO-TRACKED Caddyfile, then `make deploy-demo` rsyncs + `caddy reload` (this plan's drift rule: VM-local Caddyfile edits forbidden). Validate before reload: `caddy validate --config <file>`. Smoke all FOUR vhosts after reload — breaking prod TLS routing is the catastrophic failure of this slice; have the rollback (previous Caddyfile copy) staged before reloading.
+- DNS: `demo` A record to the OCI IP — operator action (external dependency); request it early, note it in the run log.
+- systemd unit `acx-demo.service`: copy an existing env unit (`systemctl cat acx-staging.service` on the VM) and substitute paths.
+
+### Slice 2 notes — WP bootstrap + tenant + hardening
+
+- Non-interactive install: official image + a one-shot wp-cli container (`wordpress:cli` image, same volumes/network): `wp core install --url=https://demo.altcontext.com --admin_user=... --admin_password="$WP_ADMIN_PASSWORD" ...` with credentials sourced from `demo/secrets/.env` (chmod 600, never committed — match the existing per-env secrets layout).
+- Plugin constants: the official WP image supports the `WORDPRESS_CONFIG_EXTRA` env var (arbitrary PHP appended to `wp-config.php`) — define `ACX_RECOGNITION_URL`, `ACX_RECOGNITION_SOURCE` ('service'), `ACX_RECOGNITION_API_KEY` there from the secrets env. Constant provenance renders read-only in the settings UI by design (E15-25's `isReadOnly()` path) — that is the desired demo posture.
+- Plugin packaging: check for an existing build/zip path first (`grep -rn "zip\|dist\|package" apps/prototype-wp-alt-context/package.json composer.json Makefile`); only add a script if none exists. Install into the WP volume at `wp-content/plugins/alt-context` and activate via wp-cli.
+- Demo tenant + key: mint explicitly via `manage_api_keys` against the prod env DB with `site_url=https://demo.altcontext.com` — the demo must NEVER depend on URL-derived/JIT identity (coordinate with E15-24; if E15-24 has landed, set `ACX_RECOGNITION_TENANT_ID` as a constant too and pair via the settings test).
+- Bring-up order (staged rollout): first configure against `staging.api.altcontext.com` with a staging key; only after the full walkthrough passes re-point constants to `api.altcontext.com` with the prod demo key.
+- Hardening checklist is normative, not optional: generated strong admin creds in secrets env; xmlrpc disabled (block `/xmlrpc.php` at the Caddy vhost — simpler and stronger than a WP plugin); login rate limiting at the Caddy vhost; WP auto-updates on (`WP_AUTO_UPDATE_CORE` constant via `WORDPRESS_CONFIG_EXTRA`); nightly content-reset documented as optional runbook step.
+- CORS: add `https://demo.altcontext.com` to the verified allowlist env var in the target env's secrets `.env`; restart that env's stack per README workflow (staging first).
+
+### Slice 3 notes — seed + proof + epic revision
+
+- Seed bundle: deterministic media with known faces under `infra/oci/demo/seed/` + wp-cli import script. Faces must be license-clean (generated or public-domain); record provenance in the seed README — a public demo with unlicensed faces is a launch blocker of its own.
+- E2E evidence: reuse the E15-5 evidence format (`docs/tasks/15.0/E15-5-mvp-round-trip-log.md` shows the shape). The sovereignty demonstration: `docker stop` the API container (staging first!), show curated data still readable + degraded banner (E15-26), restart, show recovery.
+- Epic edit: revise Phase 3 + the Design Decisions row ("WP on separate shared hosting" → OCI colocated with bulkheads) and run `make plan-review DOC=docs/epics/v0.4.0/public-demo-launch-readiness-epic.md` on the edit — epic revisions take the planning-review gate.
+
+### Pitfalls / stop conditions
+
+- The pre-provisioning gates still bind: E15-3a round-trip + Workbench avatar proof must pass before the demo DNS goes public. Going live with placeholder thumbs violates the epic's truthful-demo rule.
+- Never `docker compose down -v` anything under `/opt/acx-backend` — `-v` deletes named volumes; prod/staging data lives there.
+- Secrets never enter git: templates (`.env.example`) in repo, real values only on the VM. Run `git diff --staged` before every commit in this task specifically to check for leaked values.
+- If the A1 VM lacks headroom (check `free -h`, `nproc`, `df -h /opt` before Slice 1), record a blocker with the numbers — do not shrink inference's resources to make room.
 
 ## Files and Surfaces to Change
 

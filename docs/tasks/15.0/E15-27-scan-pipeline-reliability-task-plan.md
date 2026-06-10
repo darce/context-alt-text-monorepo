@@ -10,6 +10,7 @@
 > - **Review Coverage Target**: 2
 > - **Companion assessment**: [E15-24-architecture-coherence-assessment.md](E15-24-architecture-coherence-assessment.md)
 > - **Scope fence**: E15-22 owns Workbench rendering of avatars/progress. This task owns the **service-side job contract**: intake validation, terminal states, progress envelope, worker isolation.
+> - **Literature citation convention**: short form `using-asyncio-in-python.md §Executor Offloading` refers to `literature/extracted/refactoring/distilled/using-asyncio-in-python.md`. **The `literature/` directory is gitignored and exists only in the root checkout** (`~/Development/context-alt-text-monorepo/literature/...`) — read it from there, not from your task worktree.
 
 ## Objective
 
@@ -69,11 +70,67 @@ Intake: `POST /recognition/analyze` checks the capability probe; if the runtime 
 
 Slice 1: capability probe module + intake gate + `/health/detailed` field + plugin-side rendering of the rejection reason (one error path, kept small). Slice 2: progress envelope on the job read path with per-batch count updates and `StrEnum` consolidation. Slice 3: worker hardening — executor offload audit for embedding calls, per-item exception isolation, bounded stall detection transitioning to terminal `failed(stalled)`, and a failure-mode pytest harness (runtime missing, runtime dies mid-batch, one tenant poisoned among three).
 
+## Junior Implementer Guide
+
+> Read this before touching code. **Rule zero: re-verify every anchor with the grep provided** — line numbers drift; symbols are truth (rg-010). If reality contradicts a slice's design, STOP and record a blocker instead of improvising.
+
+### Why this task exists (didactic)
+
+Today a runtime-less service accepts a scan job and lets every item die at process time while the job stays `in_progress` forever — the user sees a stuck spinner. `release-it.md §Fail Fast (5.5)` names the fix: check required resources at transaction start (job intake) and reject with a precise reason, instead of wasting cycles and trust on work that cannot succeed. The progress envelope answers `latency-reduce-delay-in-software-systems.md §Perceived vs Actual Latency`: you cannot make clustering faster, but feedback within the perceived-latency window converts "broken" into "working"; §Observability adds the rule that queue-wait and processing time must be separately visible or operators cannot tell slow from dead. Worker hardening applies `using-asyncio-in-python.md` directly: §Executor Offloading (CPU-bound InsightFace calls must not stall the event loop), §Gather with `return_exceptions=True` (one tenant's exception must not abort the batch), and §Cancellation/terminal-state discipline (every task tree ends in an owned, observable state).
+
+### Assumed setup
+
+`make task-start TASK=E15-27 …` → work in the worktree → per slice `cd apps/prototype-description-service && make test` → `record_event(test_result)` → `close_slice` → `render_handoff(kind='dashboard')`.
+
+### Verified code anchors (as of commit `81de3127`; re-verify each)
+
+| What | Where | Verified content | Re-verify with |
+| --- | --- | --- | --- |
+| Worker config | `recognition/worker/scan_worker.py:46-57` | `poll_interval_seconds=1.0, claim_batch_size=10, max_concurrency=5, stale_after_seconds=600, max_attempts=3` | `grep -n "class ScanWorkerConfig" -A 12 recognition/worker/scan_worker.py` |
+| Runtime fallback (the bug) | `scan_worker.py:183-203` (`_ensure_embedding_runtime`) | skips when ready or `runtime_mode == 'test'`; on adapter failure swaps `UnavailableFaceDetector(reason)` / `UnavailableEmbeddingGenerator(reason)` and sets a 30s `_embedding_retry_after` backoff — items then fail one-by-one at process time | `grep -n "Unavailable\|_ensure_embedding_runtime" recognition/worker/scan_worker.py` |
+| Status enum exists | `recognition/domain/job.py:12` | `class JobStatus(StrEnum)` — **extend this; do not create a parallel enum** (sr-007) | `grep -n "class JobStatus" -A 15 recognition/domain/job.py` |
+| Intake call sites | `routers/analyze.py:201,554`, `routers/analyze_multipart.py:294` | analyze endpoints that enqueue scan work (also where `ensure_tenant_exists` runs — coordinate with E15-24 Slice 2 if both tasks are in flight) | `grep -rn "ensure_tenant_exists" --include="*.py" recognition/` |
+| Adapter entry | `recognition/infrastructure/embeddings.py` (`get_shared_insightface_adapter`) | the import/init that actually fails when models are absent | `grep -rn "get_shared_insightface_adapter" --include="*.py"` |
+| Health endpoints (E15-2) | health router | `/health`, `/ready`, `/health/detailed` shipped in E15-2 | `grep -rn "health/detailed" recognition/ api/` |
+
+### Architecture caution that changes Slice 1's design (read carefully)
+
+The API process and the scan worker are **separate processes** — separate containers in prod (`docker-compose.prod.yml`: API + Worker services). InsightFace models live where the WORKER runs. Therefore the intake gate in the API process MUST NOT decide capability by attempting a local InsightFace import — that probes the wrong process and will lie in both directions. Slice 1 must instead make capability a **worker-published fact**: the worker (which already learns availability in `_ensure_embedding_runtime`) writes a heartbeat/capability row (e.g. `worker_capabilities`: runtime available bool, reason, updated_at) on startup and on each availability transition; intake and `/health/detailed` read that row, treating a stale heartbeat (older than ~3× poll interval × claim cycle, pick and document) as unavailable. Record the chosen TTL and shape as a Slice 1 decision. If you find an existing worker-heartbeat mechanism (`grep -rn "heartbeat\|capability" recognition/ db/`), extend it rather than inventing a second one.
+
+### Slice 1 notes — capability probe + fail-fast intake
+
+- Probe module in `recognition/application/scan/`: one function the worker calls to publish, one the API calls to read. Pure DB read on the API side — no model imports in the request path.
+- Intake gate in `analyze.py` / `analyze_multipart.py`: when capability is unavailable → HTTP 503 with structured detail `{reason: 'embedding_runtime_unavailable', detail: <worker-published reason>}` (sr-006: explicit HTTP errors, never `assert`). Decide-and-record: 503-at-intake (recommended — nothing to clean up) vs creating a `rejected` job row; the plugin error path must render whichever you choose.
+- `/health/detailed` gains `embedding_runtime: {available, reason?, heartbeat_age_seconds}` — additive; follow the existing detailed-health response builder style.
+- Plugin side (small, one error path): the analyze trigger surfaces the 503 reason verbatim in the scan UI. Find the trigger with `grep -rn "recognition/analyze" apps/prototype-wp-alt-context/js/ apps/prototype-wp-alt-context/src/`.
+- Keep the worker's `Unavailable*` fallback classes for now — they remain the worker-internal guard; what this slice removes is silent acceptance of NEW jobs while incapable. Full removal happens only if Slice 3's isolation makes the classes dead (verify with grep before deleting; if still referenced from non-intake paths, leave them and note it).
+
+### Slice 2 notes — progress envelope
+
+- Envelope fields on the existing job-status read path (find it: `grep -rn "scan-jobs\|job_status\|jobs/" recognition/interface_adapters/http/routers/`): `{job_id, status, phase, items_total, items_done, items_failed, failure_reason?, updated_at}`. Counts come from `IdentityScanJobItem` aggregation — add an indexed COUNT query in the scan queue repository, not an N+1 loop.
+- Update counts per claimed-batch completion (every ≤10 items at current batch size), giving the plugin sub-second-fresh progress at 1s poll cadence — that satisfies the perceived-latency window without per-item write amplification (`latency-reduce-delay-in-software-systems.md §Request Batching` — amortize, don't chat).
+- Extend `JobStatus(StrEnum)` with any missing terminal values (`completed_with_errors`, `rejected`, `failed`) — exhaustive `match`/`if` handling at consumers; mypy must pass.
+- Publish a fixture JSON of the envelope for E15-22/plugin consumption (commit it under the service's test fixtures; reference its path in the slice decision).
+
+### Slice 3 notes — worker isolation + stall terminality
+
+- Executor offload audit: InsightFace detect/embed calls are CPU-bound; confirm each call site inside async handlers goes through `loop.run_in_executor`/`asyncio.to_thread` (`using-asyncio-in-python.md §Executor Offloading`; §Future-vs-Task: executor futures are not in `asyncio.all_tasks()` — keep references so shutdown can await them).
+- Per-item isolation: where the batch is processed concurrently, use `gather(..., return_exceptions=True)` semantics and record per-item failure without aborting siblings (§Gather for Resilient Shutdown). One poisoned tenant among three in the same cycle is the acceptance test.
+- Stall terminality: the worker already has `stale_after_seconds=600` and `max_attempts=3` — wire these to a TERMINAL job transition (`failed` with `failure_reason='stalled'`) instead of perpetual `in_progress`; this is rg-007's bounded no-progress rule applied to jobs, not just items.
+- Failure-mode pytest harness scenarios: runtime missing at intake; runtime dies mid-batch (adapter raises after N items); one tenant's items poisoned among three tenants; stall threshold reached. Model the harness on existing worker tests (`grep -rln "ScanWorker" recognition/tests/ tests/`).
+
+### Pitfalls / stop conditions
+
+- `runtime_mode == 'test'` short-circuits `_ensure_embedding_runtime` — your tests will silently use Stub detectors unless you account for it; the harness must set the mode that exercises the real probe path.
+- Do not shrink `max_concurrency`/batch defaults while "fixing" isolation — throughput tuning is out of scope.
+- The MV-refresh suppression logic around line 85-90 (job-scoped refresh skip) is subtle reviewed behavior — read its comment block before touching anything in the claim cycle, and leave it intact.
+- If the job-status read path turns out to live in the plugin (PHP proxy) rather than a service router, stop and re-scope the envelope's boundary row before implementing.
+
 ## Files and Surfaces to Change
 
 | Surface | File | Change |
 | --- | --- | --- |
-| Capability probe | `apps/prototype-description-service/recognition/application/scan/` (new module) | cached runtime probe |
+| Capability probe | `apps/prototype-description-service/recognition/application/scan/` (new module) | worker-published capability + API-side read (see Architecture caution) |
 | Intake | `recognition/interface_adapters/http/routers/analyze.py` | gate + structured rejection |
 | Health | health router/service from E15-2 | capability field |
 | Worker | `recognition/worker/scan_worker.py`, `handlers/` | offload, isolation, stall detection; remove Unavailable* fallback path |
@@ -95,7 +152,7 @@ Slice 1: capability probe module + intake gate + `/health/detailed` field + plug
 
 **Goal**: a scan against a runtime-less service fails at submission with a stated reason, visible in the plugin.
 
-Changes: probe; intake gate; health field; plugin rejection rendering; delete Unavailable* fallback usage at intake-reachable paths.
+Changes: worker-published capability + API-side read (see Junior Implementer Guide — Architecture caution); intake gate; health field; plugin rejection rendering. `Unavailable*` classes stay as the worker-internal guard; what ends is silent acceptance of new jobs while incapable.
 Proof: pytest rejection + health; manual LocalWP rejection message.
 
 ### Slice 2: Progress envelope
@@ -122,8 +179,8 @@ Proof: pytest harness scenarios green, including one-poisoned-tenant-of-three is
 
 ### Checklist for Slice 1: Fail-fast intake
 
-- [ ] Probe + gate + health field + plugin reason rendering landed
-- [ ] Unavailable* fallback removed from intake-reachable paths
+- [ ] Worker-published capability + intake gate + health field + plugin reason rendering landed
+- [ ] Capability TTL/shape decision recorded; no model imports in the API request path
 - [ ] Evidence recorded
 
 ### Checklist for Slice 2: Progress envelope

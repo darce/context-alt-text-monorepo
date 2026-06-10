@@ -19,7 +19,7 @@
 
   &--active {
     border-color: var(--acx-color-accent);
-    box-shadow: var(--acx-shadow-sm, 0 1px 2px rgb(0 0 0 / 8%));
+    box-shadow: var(--acx-shadow-card);
   }
 
   &--deemphasized {
@@ -53,7 +53,7 @@
     margin-left: var(--acx-spacing-xs, 8px);
     font-size: var(--acx-text-sm, 0.85rem);
     color: var(--acx-color-accent);
-    font-weight: var(--acx-font-weight-medium, 500);
+    font-weight: var(--acx-font-weight-normal);
   }
 
   &__active-icon {
@@ -72,11 +72,11 @@
     }
 
     &--reachable {
-      color: var(--acx-color-success, var(--acx-color-accent));
+      color: var(--acx-color-success);
     }
 
     &--unreachable {
-      color: var(--acx-color-danger, #b32d2e);
+      color: var(--acx-color-danger);
     }
   }
 

@@ -7,6 +7,8 @@ namespace AltContext\Tests\Unit;
 use AltContext\Sovereign\Sync\CrossPlaneSequencer;
 use AltContext\Sovereign\Sync\OutboxDispatcher;
 use AltContext\Sovereign\Sync\OutboxDrain;
+use AltContext\Sovereign\Sync\OutboxMaintenanceService;
+use AltContext\Sovereign\Sync\OutboxQueryRepository;
 use AltContext\Sovereign\Sync\TopologyCommandRepositoryInterface;
 use AltContext\Tests\TestCase;
 
@@ -547,6 +549,21 @@ class OutboxDrainTest extends TestCase
 		$this->assertStringContainsString('pending_curation_operations = 1', $syncStateUpdate);
 		$this->assertStringContainsString('failed_curation_operations = 0', $syncStateUpdate);
 		$this->assertTrue($this->isHookScheduled('acx_sync_drain_curation_outbox'));
+	}
+
+	public function testOutboxDrainDelegatesToExtractedCollaboratorsAndSplitLoopPhases(): void
+	{
+		$this->assertTrue(class_exists(OutboxQueryRepository::class));
+		$this->assertTrue(class_exists(OutboxMaintenanceService::class));
+
+		$privateMethods = array_map(
+			static fn (\ReflectionMethod $method): string => $method->getName(),
+			(new \ReflectionClass(OutboxDrain::class))->getMethods(\ReflectionMethod::IS_PRIVATE)
+		);
+
+		foreach (['process_operation_batch', 'refresh_curation_metrics_for_tenants'] as $expectedMethod) {
+			$this->assertContains($expectedMethod, $privateMethods, $expectedMethod);
+		}
 	}
 
 	public function testDrainReschedulesWhenBatchLeavesMorePendingOperations(): void

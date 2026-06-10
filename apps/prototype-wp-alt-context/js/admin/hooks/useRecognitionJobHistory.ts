@@ -39,9 +39,7 @@ export const useRecognitionJobHistory = () => {
     if (next.historySource === 'durable' && next.pollableJobIds.length === 0) {
       setJobDetails({});
     }
-    setJobId((current) =>
-      current && next.pollableJobIds.includes(current) ? current : next.selectedJobId,
-    );
+    setJobId((current) => (current && next.pollableJobIds.includes(current) ? current : next.selectedJobId));
   }, []);
 
   useEffect(() => {

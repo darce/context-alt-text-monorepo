@@ -14,7 +14,7 @@ Make the WP Alt-Context plugin core maintainable — thin composition-root contr
 
 ## Problem Statement
 
-Seven PHP files are ≥680 LOC (top two over 1,150) with 21–35 declared methods each, each mixing route registration, request parsing, business logic, transaction control, and persistence. `_workbench.scss` (1,159 LOC) carries 83 raw `px` + 11 hex literals, violating sr-004. Change risk is concentrated, unit isolation is impossible, and the `acx/v1` surface is hard to reason about — every edit risks the whole controller/repository.
+Seven PHP files are ≥680 LOC (top two over 1,150) with 21–35 declared methods each, each mixing route registration, request parsing, business logic, transaction control, and persistence. `_workbench.scss` (1,159 LOC) violates sr-004 across all five governed families — 11 hex, raw radii (`999px`/`50%`/`4-10px`), **35 raw `font-size`**, **13 raw `font-weight`**, **1 raw `box-shadow`**, plus spacing `px` (the "83 px" figure counts only `px`, so it omits the rem font-sizes, weights, and shadow). Worse, `--acx-radius-*`/`--acx-text-*` are referenced but defined nowhere (18 dangling `var()`), so those sites render unstyled today. Change risk is concentrated, unit isolation is impossible, and the `acx/v1` surface is hard to reason about — every edit risks the whole controller/repository.
 
 ## UX Vision
 
@@ -46,7 +46,7 @@ Verified against `main` HEAD `0a955f1c` (2026-06-07):
 | `src/sovereign/repositories/class-clusters-repository.php` | 1164 | 34 | — | yes |
 | `src/api/class-analysis-jobs-controller.php` | 1144 | 35 | 8 | yes (+ transport) |
 | `src/sovereign/repositories/class-identity-members-repository.php` | 1045 | 28 | — | yes |
-| `js/admin/styles/components/_workbench.scss` | 1159 | — | — | visual / Playwright a11y |
+| `js/admin/styles/components/_workbench.scss` | 1159 | — | — | Playwright axe a11y (LocalWP); **no visual snapshot baseline yet** |
 | `src/sovereign/sync/class-split-topology-command-drain.php` | 799 | 21 | — | yes |
 | `src/api/class-clusters-controller.php` | 770 | 23 | 5 | yes |
 | `src/sovereign/sync/class-outbox-drain.php` | 680 | 24 | — | yes |
@@ -112,10 +112,10 @@ Exit criteria:
 **Goal**: Tokenize `_workbench.scss`.
 
 Deliverables:
-- REFA-3: 83 `px` + 11 hex → `--acx-*` tokens; missing tokens added to `js/admin/styles/tokens/` first.
+- REFA-3: tokenize all five sr-004 families in `_workbench.scss` — color (11 hex), radius, font-size (35, `--acx-text-*`), font-weight (13), shadow (1) — defining the missing/dangling token families in `js/admin/styles/tokens/` first. Token-surface ownership spans all consumers: defining `--acx-radius-*`/`--acx-text-*` also corrects `_media-selection.scss` (+6 dangling refs), which REFA-3 must verify. Spacing `px` map to `--acx-space-*`; `1px` borders and component layout widths are out of sr-004 scope (kept raw with rationale or an explicit new family). Scope authority is the REFA-3 task plan.
 
 Exit criteria:
-- Zero raw `px`/hex for tokenizable values; `npm run lint` + Playwright a11y/visual snapshot unchanged.
+- Zero raw sr-004-governed literals (color, radius, font-size, font-weight, shadow); spacing on `--acx-space-*`. `npm run build` + `lint` green; `npm run a11y:localwp` green. Visual matches a **re-reviewed baseline** that incorporates the intended radius/font corrections (defining the dangling `--acx-radius-*`/`--acx-text-*` tokens changes rendering at the 18 previously-unstyled sites — this is a deliberate, reviewed correction, not "unchanged"). A `toHaveScreenshot` baseline is established as the durable guard.
 
 ### Phase 3: Job lifecycle + members repository -- not-started
 
@@ -171,7 +171,7 @@ Exit criteria:
 
 ## Phase 2: Stylesheet token debt -- not-started
 
-- [ ] REFA-3 merged (`_workbench.scss` fully tokenized; a11y/visual unchanged).
+- [ ] REFA-3 merged (`_workbench.scss` tokenized across all 5 sr-004 families; dangling `--acx-radius-*`/`--acx-text-*` defined; radius/font corrections re-baselined; `toHaveScreenshot` guard added; `_media-selection.scss` consumers verified).
 
 ## Phase 3: Job lifecycle + members repository -- not-started
 

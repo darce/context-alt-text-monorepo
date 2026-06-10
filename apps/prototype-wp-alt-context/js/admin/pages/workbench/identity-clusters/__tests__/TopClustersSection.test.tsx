@@ -187,7 +187,10 @@ describe('TopClustersSection', () => {
 
     expect(container.querySelector('.acx-face-thumbnail')).not.toBeNull();
     expect(container.querySelector('.acx-avatar')).toBeNull();
-    expect(screen.getByRole('img', { name: 'Face to label' })).toHaveAttribute('src', 'http://example.test/source-10.jpg');
+    expect(screen.getByRole('img', { name: 'Face to label' })).toHaveAttribute(
+      'src',
+      'http://example.test/source-10.jpg',
+    );
   });
 
   it('keeps using a dedicated face-thumb URL when one is already provided', async () => {

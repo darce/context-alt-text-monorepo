@@ -3,7 +3,7 @@
 > **Epic Short ID**: E14
 > **Status**: active -- OCI backend live at `api.altcontext.com`; remaining deliverables folded into [E15](../v0.4.0/public-demo-launch-readiness-epic.md)
 > **Parent**: [production-readiness-epic.md](./production-readiness-epic.md) Phase 6
-> **Revision**: Apr 2026 -- backend deployment landed (E14-1 merged, archived); remaining hosting work (WP demo, budget alerts, ARM verification, Tailscale, end-to-end smoke) now owned by E15 Phases 3 + 4 under handoff decision `scope_e15_mvp_close_intake_202604`.
+> **Revision**: Apr 2026 -- backend deployment landed (E14-1 merged, archived); remaining hosting work (E15-3a LocalWP -> OCI gate, E15-3 WP demo, E15-5a OCI hygiene, E15-5 remote E2E + ARM evidence) now owned by E15 Phases 3 + 4 under handoff decision `scope_e15_mvp_close_intake_202604`.
 
 ## Status Snapshot (Apr 2026)
 
@@ -19,12 +19,13 @@
 | API key validation + tenant isolation                                              | **Live**                        | E15-1                                                                                            |
 | CORS allowlist + rate limiting + key rotation                                      | **Live**        | E15-1                                                                                            |
 | Structured JSON logs + `/health` + `/ready` + `/metrics`                           | **Live**        | E15-2                                                                                            |
+| LocalWP → OCI round-trip gate                                                      | **Pending**                     | **E15-3a**                                                                                       |
 | WordPress demo provisioning                                                        | **Pending**                     | **E15-3**                                                                                        |
-| OCI budget alerts ($1/$5/$10)                                                      | **Pending**                     | **E15-5**                                                                                        |
+| OCI budget alerts ($1/$5/$10)                                                      | **Pending**                     | **E15-5a**                                                                                       |
 | ARM compatibility verification artifact                                            | **Pending**                     | **E15-5** (de facto verified by running A1 instance)                                             |
 | Dynamic IP SSH drift (Tailscale)                                                   | **Resolved**                    | [archived tech-debt note](../../tasks/tech-debt/archive-or-transfer-candidates/dynamic-ip-ssh-access.md) |
 | End-to-end WP → backend → recognition smoke test                                   | **Pending**                     | **E15-5**                                                                                        |
-| Hetzner CX22 fallback plan documented                                              | **Pending**                     | **E15-5**                                                                                        |
+| Hetzner CX22 fallback plan documented                                              | **Pending**                     | **E15-5a**                                                                                       |
 
 Hosting architecture, provider evaluation, and deployment path for the recognition service backend, a future user-account database, and a WordPress demo frontend.
 
@@ -701,9 +702,10 @@ Per-second = L4 GPU **0.0001867** + CPU (4 × **0.000018**) + RAM (16 × **0.000
 ### Server Provisioning (Oracle Cloud PAYG)
 
 - [x] Create Oracle Cloud account and upgrade to PAYG
-- [ ] Configure budget alerts ($1 / $5 / $10 thresholds) ← **delegated to E15-5**
+- [ ] Configure budget alerts ($1 / $5 / $10 thresholds) ← **delegated to E15-5a**
 - [x] Provision `VM.Standard.A1.Flex` instance (4 ARM cores / 24GB RAM / 200GB disk)
 - [ ] Verify ARM compatibility: capture full dependency install + integration test suite evidence ← **delegated to E15-5** (de facto verified by running A1 instance)
+- [ ] Hetzner CX22 fallback plan documented ← **delegated to E15-5a**
 - [x] Bootstrap Docker + Docker Compose installation through `cloud-init.yaml`
 - [x] Configure base firewall rules (ingress: 443 public; SSH restricted by configured CIDRs)
 - [x] Set up DNS + TLS (Caddy auto-TLS via Let's Encrypt; A records for `api`, `staging.api`, `dev.api` live)

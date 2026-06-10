@@ -1,0 +1,9 @@
+{
+  "type": "response",
+  "status": 200,
+  "data": {
+    "id": "55555555-5555-5555-5555-555555555555",
+    "status": "completed",
+    "projection_acknowledged_at": "__MASKED_TIMESTAMP__"
+  }
+}

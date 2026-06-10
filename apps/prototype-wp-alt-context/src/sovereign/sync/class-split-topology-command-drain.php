@@ -192,33 +192,47 @@ class SplitTopologyCommandDrain {
 		}
 
 		if ( 'applied' === $current_status ) {
-			$stored_result = $this->decode_result_payload( $command['result_json'] ?? null );
-			if ( empty( $stored_result ) ) {
-				$this->repository->record_failure(
-					$command_id,
-					'failed',
-					'missing_result_payload',
-					'Applied split topology command is missing durable result metadata.',
-					false
-				);
-				return;
-			}
+			$this->process_applied_split_command( $command_id, $command );
+			return;
+		}
 
-			if ( $this->reconcile_command( $command, $stored_result ) ) {
-				$this->repository->mark_reconciled( $command_id, $stored_result );
-				return;
-			}
+		$this->process_pending_split_command( $command_id, $command );
+	}
 
+	/**
+	 * @param array<string,mixed> $command
+	 */
+	private function process_applied_split_command( int $command_id, array $command ): void {
+		$stored_result = $this->decode_result_payload( $command['result_json'] ?? null );
+		if ( empty( $stored_result ) ) {
 			$this->repository->record_failure(
 				$command_id,
-				'applied',
-				'projection_reconcile_failed',
-				'Split topology command could not be reconciled locally.',
+				'failed',
+				'missing_result_payload',
+				'Applied split topology command is missing durable result metadata.',
 				false
 			);
 			return;
 		}
 
+		if ( $this->reconcile_command( $command, $stored_result ) ) {
+			$this->repository->mark_reconciled( $command_id, $stored_result );
+			return;
+		}
+
+		$this->repository->record_failure(
+			$command_id,
+			'applied',
+			'projection_reconcile_failed',
+			'Split topology command could not be reconciled locally.',
+			false
+		);
+	}
+
+	/**
+	 * @param array<string,mixed> $command
+	 */
+	private function process_pending_split_command( int $command_id, array $command ): void {
 		$result = $this->dispatch_command( $command );
 		$status = trim( (string) ( $result['status'] ?? 'failed' ) );
 
@@ -276,6 +290,17 @@ class SplitTopologyCommandDrain {
 			);
 		}
 
+		$body = $this->build_split_dispatch_request_body( $command );
+		$response = $this->transport->request( 'POST', '/recognition/topology-commands/split', $body, array() );
+
+		return $this->normalize_split_transport_response( $response );
+	}
+
+	/**
+	 * @param array<string,mixed> $command
+	 * @return array<string,mixed>
+	 */
+	private function build_split_dispatch_request_body( array $command ): array {
 		$payload = $command['payload_json'] ?? array();
 		if ( is_string( $payload ) ) {
 			$decoded = json_decode( $payload, true );
@@ -285,7 +310,7 @@ class SplitTopologyCommandDrain {
 			$payload = array();
 		}
 
-		$body = array_merge(
+		return array_merge(
 			$payload,
 			array(
 				'tenant_id' => trim( (string) ( $command['tenant_id'] ?? '' ) ),
@@ -294,8 +319,13 @@ class SplitTopologyCommandDrain {
 				'idempotency_key' => trim( (string) ( $command['idempotency_key'] ?? '' ) ),
 			)
 		);
+	}
 
-		$response = $this->transport->request( 'POST', '/recognition/topology-commands/split', $body, array() );
+	/**
+	 * @param \WP_REST_Response|\WP_Error $response
+	 * @return array<string,mixed>
+	 */
+	private function normalize_split_transport_response( $response ): array {
 		if ( is_wp_error( $response ) ) {
 			return array(
 				'status' => 'failed',
@@ -351,16 +381,42 @@ class SplitTopologyCommandDrain {
 			return;
 		}
 
-		$affected_cluster_ids = $this->extract_affected_cluster_ids( $command, $result );
-		$reconciled_payload = null;
-		if ( ! empty( $affected_cluster_ids ) ) {
-			$reconciled_payload = $this->fetch_targeted_snapshot_for_clusters( $tenant_id, $affected_cluster_ids );
-			if ( is_array( $reconciled_payload ) && $this->reconcile_targeted_snapshot( $tenant_id, $command, $reconciled_payload ) ) {
-				do_action( 'acx_split_topology_conflict_detected', $command, $result, $reconciled_payload );
-				return;
-			}
+		if ( $this->project_split_conflict_via_targeted_snapshot( $tenant_id, $command, $result ) ) {
+			return;
 		}
 
+		$affected_cluster_ids = $this->extract_affected_cluster_ids( $command, $result );
+		$reconciled_payload = ! empty( $affected_cluster_ids )
+			? $this->fetch_targeted_snapshot_for_clusters( $tenant_id, $affected_cluster_ids )
+			: null;
+		$this->project_split_conflict_via_full_snapshot( $tenant_id, $command, $result, $reconciled_payload );
+	}
+
+	/**
+	 * @param array<string,mixed> $command
+	 * @param array<string,mixed> $result
+	 */
+	private function project_split_conflict_via_targeted_snapshot( string $tenant_id, array $command, array $result ): bool {
+		$affected_cluster_ids = $this->extract_affected_cluster_ids( $command, $result );
+		if ( empty( $affected_cluster_ids ) ) {
+			return false;
+		}
+
+		$reconciled_payload = $this->fetch_targeted_snapshot_for_clusters( $tenant_id, $affected_cluster_ids );
+		if ( ! is_array( $reconciled_payload ) || ! $this->reconcile_targeted_snapshot( $tenant_id, $command, $reconciled_payload ) ) {
+			return false;
+		}
+
+		do_action( 'acx_split_topology_conflict_detected', $command, $result, $reconciled_payload );
+		return true;
+	}
+
+	/**
+	 * @param array<string,mixed> $command
+	 * @param array<string,mixed> $result
+	 * @param array<string,mixed>|WP_Error|null $reconciled_payload
+	 */
+	private function project_split_conflict_via_full_snapshot( string $tenant_id, array $command, array $result, $reconciled_payload ): void {
 		$snapshot = $this->snapshot_client->fetch_snapshot( $tenant_id );
 		if ( is_wp_error( $snapshot ) ) {
 			do_action( 'acx_split_topology_conflict_detected', $command, $result, $reconciled_payload );
@@ -381,15 +437,46 @@ class SplitTopologyCommandDrain {
 			return false;
 		}
 
-		if ( $this->has_complete_member_delta( $tenant_id, $result ) ) {
-			return $this->apply_member_delta( $tenant_id, $result );
-		}
-
-		$affected_cluster_ids = $this->extract_affected_cluster_ids( $command, $result );
-		if ( ! empty( $affected_cluster_ids ) && $this->reconcile_targeted_snapshot( $tenant_id, $command, $this->fetch_targeted_snapshot_for_clusters( $tenant_id, $affected_cluster_ids ) ) ) {
+		if ( $this->reconcile_command_via_member_delta( $tenant_id, $result ) ) {
 			return true;
 		}
 
+		if ( $this->reconcile_command_via_targeted_snapshot( $tenant_id, $command, $result ) ) {
+			return true;
+		}
+
+		return $this->reconcile_command_via_full_snapshot( $tenant_id );
+	}
+
+	/**
+	 * @param array<string,mixed> $result
+	 */
+	private function reconcile_command_via_member_delta( string $tenant_id, array $result ): bool {
+		if ( ! $this->has_complete_member_delta( $tenant_id, $result ) ) {
+			return false;
+		}
+
+		return $this->apply_member_delta( $tenant_id, $result );
+	}
+
+	/**
+	 * @param array<string,mixed> $command
+	 * @param array<string,mixed> $result
+	 */
+	private function reconcile_command_via_targeted_snapshot( string $tenant_id, array $command, array $result ): bool {
+		$affected_cluster_ids = $this->extract_affected_cluster_ids( $command, $result );
+		if ( empty( $affected_cluster_ids ) ) {
+			return false;
+		}
+
+		return $this->reconcile_targeted_snapshot(
+			$tenant_id,
+			$command,
+			$this->fetch_targeted_snapshot_for_clusters( $tenant_id, $affected_cluster_ids )
+		);
+	}
+
+	private function reconcile_command_via_full_snapshot( string $tenant_id ): bool {
 		$snapshot = $this->snapshot_client->fetch_snapshot( $tenant_id );
 		if ( is_wp_error( $snapshot ) ) {
 			return false;
@@ -436,9 +523,43 @@ class SplitTopologyCommandDrain {
 		}
 
 		$snapshot_version = max( 0, (int) ( $snapshot['snapshot_version'] ?? 0 ) );
+		if ( $snapshot_version <= 0 ) {
+			return null;
+		}
+
+		$member_delta = $this->collect_targeted_snapshot_member_delta( $source_cluster_id, $snapshot );
+		if ( null === $member_delta ) {
+			return null;
+		}
+
+		return array(
+			'status' => 'applied',
+			'original_cluster_id' => $source_cluster_id,
+			'new_cluster_ids' => $member_delta['new_cluster_ids'],
+			'member_delta' => array(
+				'source_cluster_id' => $source_cluster_id,
+				'remaining_identity_ids' => $member_delta['remaining_identity_ids'],
+				'created_clusters' => $member_delta['created_clusters'],
+			),
+			'moved_counts' => $member_delta['moved_counts'],
+			'affected_cluster_ids' => $this->extract_affected_cluster_ids( $command, $snapshot ),
+			'result_snapshot_version' => $snapshot_version,
+		);
+	}
+
+	/**
+	 * @param array<string,mixed> $snapshot
+	 * @return array{
+	 *   remaining_identity_ids: array<int,string>,
+	 *   created_clusters: array<int,array<string,mixed>>,
+	 *   new_cluster_ids: array<int,string>,
+	 *   moved_counts: array<int,int>
+	 * }|null
+	 */
+	private function collect_targeted_snapshot_member_delta( string $source_cluster_id, array $snapshot ): ?array {
 		$clusters = is_array( $snapshot['clusters'] ?? null ) ? $snapshot['clusters'] : array();
 		$members = is_array( $snapshot['members'] ?? null ) ? $snapshot['members'] : array();
-		if ( $snapshot_version <= 0 || empty( $clusters ) ) {
+		if ( empty( $clusters ) ) {
 			return null;
 		}
 
@@ -487,17 +608,10 @@ class SplitTopologyCommandDrain {
 		}
 
 		return array(
-			'status' => 'applied',
-			'original_cluster_id' => $source_cluster_id,
+			'remaining_identity_ids' => $remaining_identity_ids,
+			'created_clusters' => $created_clusters,
 			'new_cluster_ids' => $new_cluster_ids,
-			'member_delta' => array(
-				'source_cluster_id' => $source_cluster_id,
-				'remaining_identity_ids' => $remaining_identity_ids,
-				'created_clusters' => $created_clusters,
-			),
 			'moved_counts' => $moved_counts,
-			'affected_cluster_ids' => $this->extract_affected_cluster_ids( $command, $snapshot ),
-			'result_snapshot_version' => $snapshot_version,
 		);
 	}
 

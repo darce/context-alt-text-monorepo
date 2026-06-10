@@ -348,54 +348,70 @@ class SplitTopologyCommandDrainTest extends TestCase
         $this->assertCount(1, $repository->dispatchResults);
         $this->assertSame('conflict', $repository->dispatchResults[0]['status']);
         $this->assertSame(['tenant-test'], $snapshotClient->fetchCalls);
+        // Targeted snapshot is fetched at most once before the full-snapshot fallback;
+        // re-fetching would double a remote call and change the fallback hook payload.
+        $this->assertCount(1, $snapshotClient->targetedFetchCalls);
         $this->assertSame([['tenant-test', ['snapshot_version' => 88, 'clusters' => [], 'members' => []]]], $projector->projectCalls);
         $this->assertSame([['tenant-test']], $syncStateRepository->metricRefreshCalls);
         $this->assertSame([], $repository->failures);
     }
 
-    public function testCommandProcessingPhasesAreExtracted(): void
+    public function testDrainConflictFetchesTargetedSnapshotOnceAndCarriesItsPayloadIntoFullSnapshotFallbackHook(): void
     {
-        $privateMethods = array_map(
-            static fn (\ReflectionMethod $method): string => $method->getName(),
-            (new \ReflectionClass(SplitTopologyCommandDrain::class))->getMethods(\ReflectionMethod::IS_PRIVATE)
+        // Conflict reconcile: targeted snapshot is consulted, fails reconcile (no member
+        // delta), then the full-snapshot repair also errors. The fallback conflict hook must
+        // carry the *single* targeted-snapshot payload — re-fetching it (a) doubles a remote
+        // call and (b) changes the hook payload. Pins the slice-3 extraction seam.
+        $repository = new SplitTopologyCommandRepositoryFake([
+            $this->pendingSplitCommand(),
+        ]);
+        global $wpdb;
+        $wpdb->mockResults = [];
+        $transport = new SplitTransportFake([
+            new WP_REST_Response([
+                'conflict_code' => 'cluster_version_conflict',
+                'backend_version' => 91,
+                'message' => 'stale split request',
+            ], 409),
+        ]);
+        $targetedPayload = ['snapshot_version' => 5, 'clusters' => [], 'members' => []];
+        $snapshotClient = new SnapshotClientFake(
+            [],
+            ['tenant-test::cluster-source' => $targetedPayload]
+        );
+        $projector = new SnapshotProjectorFake();
+        $syncStateRepository = new SplitSyncStateRepositoryFake();
+
+        $capturedPayloads = [];
+        unset($GLOBALS['__ac_actions']['acx_split_topology_conflict_detected']);
+        add_action(
+            'acx_split_topology_conflict_detected',
+            static function ($command, $result, $reconciled) use (&$capturedPayloads): void {
+                $capturedPayloads[] = $reconciled;
+            },
+            10,
+            3
         );
 
-        foreach (
-            [
-                'process_applied_split_command',
-                'process_pending_split_command',
-                'build_split_dispatch_request_body',
-                'normalize_split_transport_response',
-                'reconcile_command_via_member_delta',
-                'reconcile_command_via_targeted_snapshot',
-                'reconcile_command_via_full_snapshot',
-                'project_split_conflict_via_targeted_snapshot',
-                'project_split_conflict_via_full_snapshot',
-                'collect_targeted_snapshot_member_delta',
-            ] as $expectedMethod
-        ) {
-            $this->assertContains($expectedMethod, $privateMethods, $expectedMethod);
-        }
-    }
-
-    public function testDrainDelegatesToSplitLoopAndMemberDeltaWorkPhases(): void
-    {
-        $privateMethods = array_map(
-            static fn (\ReflectionMethod $method): string => $method->getName(),
-            (new \ReflectionClass(SplitTopologyCommandDrain::class))->getMethods(\ReflectionMethod::IS_PRIVATE)
+        $drain = new SplitTopologyCommandDrain(
+            $repository,
+            $transport,
+            $snapshotClient,
+            $projector,
+            new SplitClustersRepositoryFake(),
+            new SplitMembersRepositoryFake(),
+            $syncStateRepository
         );
+        $drain->drain();
 
-        foreach (
-            [
-                'process_command_batch',
-                'refresh_curation_metrics_for_tenants',
-                'apply_created_clusters',
-                'apply_member_rows',
-                'finalize_snapshot',
-            ] as $expectedMethod
-        ) {
-            $this->assertContains($expectedMethod, $privateMethods, $expectedMethod);
-        }
+        // Targeted snapshot fetched exactly once (no doubled remote call on the fallback).
+        $this->assertSame([['tenant-test', ['cluster-source']]], $snapshotClient->targetedFetchCalls);
+        // Full-snapshot repair attempted once and errored, so nothing is projected.
+        $this->assertSame(['tenant-test'], $snapshotClient->fetchCalls);
+        $this->assertSame([], $projector->projectCalls);
+        // The fallback hook fires once carrying the single targeted-snapshot payload verbatim.
+        $this->assertSame([$targetedPayload], $capturedPayloads);
+        $this->assertSame('conflict', $repository->dispatchResults[0]['status']);
     }
 
     public function testDrainApplyMemberDeltaRollsBackWhenCommitFails(): void

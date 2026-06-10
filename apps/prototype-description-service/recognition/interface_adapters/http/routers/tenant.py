@@ -32,7 +32,14 @@ async def tenant_whoami(
     tenant_uuid = uuid.UUID(str(auth.tenant_claim))
     tenant = await get_tenant_record(session, tenant_uuid)
     if tenant is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="tenant not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": "tenant_not_found",
+                "tenant_id": str(tenant_uuid),
+                "detail": "Tenant bound to the presented API key no longer exists.",
+            },
+        )
 
     return {
         "tenant_id": str(tenant.id),

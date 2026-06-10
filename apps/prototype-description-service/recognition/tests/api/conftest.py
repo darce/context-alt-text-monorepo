@@ -39,6 +39,10 @@ class FakeSession:
         self.execute_calls = 0
         self.executed_statements: list[str] = []
         self.bind: object | None = None
+        # Optional persistent fallback for execute() once the queued results drain. Defaults to None
+        # so existing tests keep the empty-result fallback; set it to model a row that should resolve
+        # for every lookup (e.g. a seeded tenant) without coupling to a fragile fixed queue depth.
+        self.default_execute_result: FakeSessionResult | None = None
 
     def set_get_result(self, *, model_class: object, pk: object, value: object | None) -> None:
         """Register a deterministic return value for `get(model_class, pk)`."""
@@ -79,6 +83,8 @@ class FakeSession:
                     None,
                 )
             )
+        if self.default_execute_result is not None:
+            return self.default_execute_result
         return FakeSessionResult()
 
     def add(self, obj) -> None:  # noqa: ANN001
@@ -730,8 +736,10 @@ def api_client(
     app.include_router(recognition_router, prefix="/recognition")
     fake_session = FakeSession()
     seeded_tenant = Tenant(id=uuid.UUID(tenant_id), site_url="http://example.test")
-    for _ in range(12):
-        fake_session.queue_execute_result(scalar_one_or_none=seeded_tenant)
+    # Resolve every tenant-record lookup to the seeded tenant for the lifetime of the client so the
+    # provisioning gate never silently 403s a contract test that performs more lookups than a fixed
+    # queue depth would cover.
+    fake_session.default_execute_result = FakeSessionResult(scalar_one_or_none_value=seeded_tenant)
     fake_cluster_service.fake_cluster_repository = fake_cluster_repository
     fake_job_service.cluster_repository = fake_cluster_repository
     fake_suggestion_service.tenant_id = tenant_id

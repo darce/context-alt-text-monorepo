@@ -54,11 +54,6 @@ async def require_tenant_record(session: AsyncSession, tenant_id: UUID):
     )
 
 
-async def ensure_tenant_exists(session: AsyncSession, tenant_id: UUID, site_url: str | None = None) -> None:
-    """Deprecated JIT provisioning seam — fail fast like authenticated routes."""
-    await require_tenant_record(session, tenant_id)
-
-
 async def set_tenant_context(session: AsyncSession, tenant_id: UUID) -> None:
     """Set app.current_tenant for the current session/transaction."""
     # SQLite doesn't support RLS or session variables - skip for test environments

@@ -71,7 +71,9 @@ def test_whoami_missing_tenant_row_returns_404() -> None:
     resp = client.get("/recognition/tenant/whoami", headers={"X-Tenant-ID": str(tenant_id)})
 
     assert resp.status_code == 404
-    assert resp.json()["detail"] == "tenant not found"
+    detail = resp.json()["detail"]
+    assert detail["code"] == "tenant_not_found"
+    assert detail["tenant_id"] == str(tenant_id)
 
 
 def test_whoami_admin_without_claim_returns_404() -> None:

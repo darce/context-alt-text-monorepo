@@ -29,6 +29,7 @@ use function stripos;
 use function substr;
 use function trim;
 use function update_option;
+use function wp_is_uuid;
 use function wp_remote_get;
 use function wp_remote_retrieve_body;
 use function wp_remote_retrieve_headers;
@@ -290,7 +291,14 @@ class SettingsController {
 			);
 		}
 
-		$key_tenant_id      = strtolower( trim( $body['tenant_id'] ) );
+		$key_tenant_id = strtolower( trim( $body['tenant_id'] ) );
+		if ( ! wp_is_uuid( $key_tenant_id ) ) {
+			return array(
+				'outcome' => ProbeOutcome::SERVER_ERROR,
+				'detail'  => 'Tenant pairing response returned a malformed tenant_id.',
+			);
+		}
+
 		$current_resolution = TenantIdentity::resolve();
 		$current_tenant_id  = strtolower( $current_resolution['value'] );
 
@@ -303,7 +311,15 @@ class SettingsController {
 			);
 		}
 
-		if ( ! $confirm_pairing ) {
+		// First-time pairing: a never-paired, un-pinned auto-derived identity adopts the API key's
+		// canonical tenant outright -- the key claim is the single service-side authority. resolve()
+		// persists the derived id on first call, so "option unset" is unreachable; detect the bootstrap
+		// identity by value instead. Only an already-paired site (or a deliberately pinned/persisted id)
+		// whose key now maps elsewhere requires the explicit conflict-confirm dance.
+		$auto_adoptable = ! TenantIdentity::is_paired()
+			&& TenantIdentity::is_auto_derived_identity( $current_tenant_id );
+
+		if ( ! $auto_adoptable && ! $confirm_pairing ) {
 			return array(
 				'outcome'             => ProbeOutcome::TENANT_PAIRING_CONFLICT,
 				'persisted_tenant_id' => $current_tenant_id,

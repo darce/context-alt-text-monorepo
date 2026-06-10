@@ -405,6 +405,44 @@ class SettingsControllerTest extends TestCase
         $this->assertSame($persisted, get_option('acx_recognition_tenant_id'));
     }
 
+    public function testProbePairingAutoAdoptsDerivedIdentityOnFirstPairing(): void
+    {
+        $this->configureProbe();
+        // No acx_recognition_tenant_id option set: resolve() derives the site-url bootstrap id and
+        // persists it, so the option is never empty. A never-paired, auto-derived identity must adopt
+        // the key's canonical tenant outright -- not force the operator through a conflict-confirm dance.
+        $keyTenant = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+        $this->queueHttpResponse($this->buildOkResponse());
+        $this->queueHttpResponse($this->buildWhoamiResponse($keyTenant));
+
+        $data = $this->controller
+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
+            ->get_data();
+
+        $this->assertSame(ProbeOutcome::CONNECTED, $data['outcome']);
+        $this->assertTrue($data['tenant_paired']);
+        $this->assertArrayNotHasKey('persisted_tenant_id', $data);
+        $this->assertTrue(TenantIdentity::is_paired());
+        $this->assertSame($keyTenant, get_option('acx_recognition_tenant_id'));
+    }
+
+    public function testProbePairingRejectsMalformedWhoamiTenantId(): void
+    {
+        $this->configureProbe();
+        $this->queueHttpResponse($this->buildOkResponse());
+        $this->queueHttpResponse($this->buildWhoamiResponse('not-a-uuid'));
+
+        $data = $this->controller
+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
+            ->get_data();
+
+        // A malformed whoami tenant_id must surface as a pairing error -- never reach adopt/re-key (no 500,
+        // no rows committed under a non-UUID tenant id).
+        $this->assertSame(ProbeOutcome::CONNECTED, $data['outcome']);
+        $this->assertStringContainsString('malformed', $data['pairing_error']);
+        $this->assertFalse(TenantIdentity::is_paired());
+    }
+
     public function testProbePairingAdoptsWhenFilterMatchesKeyDespiteStaleOption(): void
     {
         $this->configureProbe();

@@ -96,6 +96,73 @@ class TenantLocalRekeyServiceTest extends TestCase
         );
     }
 
+    public function testRekeyUpdatesAllSixTenantScopedTables(): void
+    {
+        global $wpdb;
+
+        $from = '55555555-5555-4555-8555-555555555555';
+        $to   = '66666666-6666-4666-8666-666666666666';
+
+        $service = new TenantLocalRekeyService();
+        $result  = $service->reconcile_identity_change( $from, $to );
+
+        $this->assertSame( 'rekey', $result['strategy'] );
+
+        // Regression guard for the table list -- notably acx_batch_run_failures, whose earlier
+        // misspelling (acx_batch_failures) silently skipped batch-failure rows against a real DB.
+        $suffixes = array(
+            'acx_clusters',
+            'acx_batch_runs',
+            'acx_batch_run_failures',
+            'acx_sync_outbox',
+            'acx_topology_commands',
+            'acx_sync_conflicts',
+        );
+        foreach ( $suffixes as $suffix ) {
+            $expected = sprintf(
+                "UPDATE %s%s SET tenant_id = '%s' WHERE tenant_id = '%s'",
+                $wpdb->prefix,
+                $suffix,
+                $to,
+                $from
+            );
+            $this->assertContains( $expected, $wpdb->queries, "re-key must UPDATE {$suffix}" );
+        }
+    }
+
+    public function testRekeyRollsBackAndThrowsWhenAMidLoopUpdateFails(): void
+    {
+        global $wpdb;
+
+        $from = '11111111-1111-4111-8111-111111111111';
+        $to   = '22222222-2222-4222-8222-222222222222';
+
+        // Force the second tenant table's UPDATE to fail mid-loop (acx_clusters succeeds first).
+        $failSql = sprintf(
+            "UPDATE %sacx_batch_runs SET tenant_id = '%s' WHERE tenant_id = '%s'",
+            $wpdb->prefix,
+            $to,
+            $from
+        );
+        $wpdb->updateResults[ $failSql ] = false;
+
+        $service = new TenantLocalRekeyService();
+
+        try {
+            $service->reconcile_identity_change( $from, $to );
+            $this->fail( 'expected RuntimeException when an UPDATE fails' );
+        } catch ( \RuntimeException $e ) {
+            $this->assertStringContainsString( 'acx_batch_runs', $e->getMessage() );
+        }
+
+        $this->assertContains( 'ROLLBACK', $wpdb->queries, 'a failed re-key must issue ROLLBACK' );
+        $this->assertNotContains( 'COMMIT', $wpdb->queries, 'a failed re-key must not COMMIT' );
+        $this->assertTrue(
+            $this->queriesInclude( $wpdb->queries, $wpdb->prefix . 'acx_clusters', $to ),
+            'the first table must have been updated before the mid-loop failure rolled back'
+        );
+    }
+
     /**
      * @param list<string> $queries
      */

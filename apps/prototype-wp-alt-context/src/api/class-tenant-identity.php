@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+use AltContext\Support\Telemetry;
 use function apply_filters;
 use function defined;
-use function error_log;
 use function get_option;
 use function get_site_url;
 use function hexdec;
@@ -92,6 +92,14 @@ final class TenantIdentity {
 	}
 
 	/**
+	 * True when the given tenant id is exactly the one this site would auto-derive
+	 * from its URL (i.e. an un-pinned bootstrap identity, not an operator/pairing choice).
+	 */
+	public static function is_auto_derived_identity( string $tenant_id ): bool {
+		return strtolower( trim( $tenant_id ) ) === self::derive_site_url_tenant_id();
+	}
+
+	/**
 	 * One-time bootstrap derivation from the WordPress site URL.
 	 */
 	private static function derive_site_url_tenant_id(): string {
@@ -111,11 +119,17 @@ final class TenantIdentity {
 	}
 
 	private static function get_constant_value( string $name ): string {
-		if ( defined( $name ) && is_string( constant( $name ) ) ) {
-			return trim( constant( $name ) );
+		if ( ! defined( $name ) ) {
+			return '';
 		}
 
-		return '';
+		$value = constant( $name );
+		if ( ! is_string( $value ) ) {
+			self::log_invalid_override( 'constant', var_export( $value, true ) );
+			return '';
+		}
+
+		return trim( $value );
 	}
 
 	private static function is_valid_tenant_uuid( string $value ): bool {
@@ -123,7 +137,7 @@ final class TenantIdentity {
 	}
 
 	private static function log_invalid_override( string $level, string $value ): void {
-		error_log(
+		Telemetry::log_line(
 			sprintf(
 				'Alt Context: ignoring malformed %s tenant id override: %s',
 				$level,

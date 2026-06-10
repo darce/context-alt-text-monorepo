@@ -32,6 +32,8 @@ class ClusterMutationsCharacterizationTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->setOption('acx_recognition_url', 'http://localhost:8000');
+        $this->setOption('acx_recognition_source', 'service');
         $GLOBALS['__ac_uuid_counter'] = 0;
         $this->repository = new ClusterMutationsRepositorySpy();
         $this->membersRepository = new ClusterMutationsMembersSpy();

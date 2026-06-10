@@ -17,6 +17,7 @@ class BlobsControllerTest extends TestCase
     public function testServeFaceThumbProxiesCropQueryToRecognitionService(): void
     {
         $this->setOption('acx_recognition_url', 'https://api.example.test');
+        $this->setOption('acx_recognition_source', 'service');
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'headers' => ['content-type' => 'image/jpeg'],

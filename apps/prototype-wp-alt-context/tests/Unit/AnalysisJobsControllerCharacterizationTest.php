@@ -36,6 +36,7 @@ class AnalysisJobsControllerCharacterizationTest extends TestCase
         parent::setUp();
         $GLOBALS['__ac_connection_aborted_call_count'] = 0;
         $this->setOption('acx_recognition_url', 'http://localhost:8000');
+        $this->setOption('acx_recognition_source', 'service');
         $this->setOption('acx_tier', 'free');
         $this->controller = new AnalysisJobsController();
     }

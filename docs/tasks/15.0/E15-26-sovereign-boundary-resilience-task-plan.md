@@ -48,7 +48,7 @@ Sovereignty reads already degrade to local projections (`data_source='local_proj
 
 ## Target Outcome
 
-`RecognitionHttpClient` wraps all recognition HTTP with per-class timeouts (interactive ≤5s, background/drain ≤15s — tuned in implementation), failure counting, and a breaker whose open state short-circuits to an immediate structured "degraded" result. Admin UI shows a persistent degraded-mode banner (dismissable per session) sourced from a new lightweight `GET /acx/v1/sync/health` that reports breaker state + outbox depth + open conflicts + failed replays — queue-depth vs processing-time observability per the latency literature, so "91 stuck replays" is visible the day it begins, not months later. Sync dashboard gains an Async Debt panel with retry/discard actions delegating to existing maintenance seams. Retention: acknowledged outbox rows and resolved conflicts purge on a bounded schedule; failed replays require explicit operator action (retry/discard) and warn at a threshold.
+`RecognitionHttpClient` wraps all recognition HTTP with per-class timeouts, failure counting, and a breaker whose open state short-circuits to an immediate structured "degraded" result. Initial defaults (tunable constants, not config sprawl): interactive timeout 5s, background/drain timeout 15s, breaker opens after 3 consecutive failures, open window 60s, single half-open trial call. Admin UI shows a persistent degraded-mode banner (dismissable per session) sourced from a new lightweight `GET /acx/v1/sync/health` that reports breaker state + outbox depth + open conflicts + failed replays — queue-depth vs processing-time observability per the latency literature, so "91 stuck replays" is visible the day it begins, not months later. Sync dashboard gains an Async Debt panel with retry/discard actions delegating to existing maintenance seams. Retention: acknowledged outbox rows and resolved conflicts purge in bounded batches **piggybacked on existing drain cycles** (not WP-Cron alone — WP-Cron fires only on traffic and never on idle installs; a real-cron recommendation for self-hosters is documented as part of this slice); failed replays require explicit operator action (retry/discard) and warn at a threshold.
 
 ## Context Loading
 
@@ -78,7 +78,7 @@ Slice 1 extracts the client wrapper with timeouts + telemetry (no breaker yet) a
 | Health endpoint | `apps/prototype-wp-alt-context/src/api/class-sync-health-controller.php` (new) | debt + breaker envelope |
 | Recovery REST | extend `class-sync-status-controller.php` or sibling | retry/discard actions → maintenance service |
 | UI | `js/admin/` banner component + Async Debt panel on dashboard/sync surface | degraded mode + recovery |
-| Retention | WP-Cron registration + purge in maintenance service | bounded purges |
+| Retention | purge batches in maintenance service, invoked from drain cycles (WP-Cron as secondary trigger) | bounded purges |
 
 ## Verification Strategy
 

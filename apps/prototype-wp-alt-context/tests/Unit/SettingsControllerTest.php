@@ -51,6 +51,9 @@ class SettingsControllerTest extends TestCase
         $this->assertSame('default', $data['url_source']);
         $this->assertSame('local', $data['recognition_source']);
         $this->assertSame('default', $data['recognition_source_source']);
+        $this->assertSame('http://localhost:8000', $data['local_url']);
+        $this->assertSame('http://localhost:8000', $data['effective_target_url']);
+        $this->assertSame('local', $data['effective_target_mode']);
         $this->assertFalse($data['api_key_set']);
         $this->assertSame('', $data['api_key_last4']);
         $this->assertSame('default', $data['key_source']);
@@ -308,7 +311,7 @@ class SettingsControllerTest extends TestCase
     public function testProbeDispatchReturnsNotConfiguredWithoutHttpCall(): void
     {
         $this->setUserCapability('manage_options', true);
-        // No URL set.
+        $this->setOption('acx_recognition_source', 'service');
         $this->setOption('acx_recognition_api_key', 'test-key');
 
         $response = $this->controller->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'));
@@ -317,7 +320,27 @@ class SettingsControllerTest extends TestCase
         $this->assertSame(ProbeOutcome::NOT_CONFIGURED, $data['outcome']);
         $this->assertArrayNotHasKey('connected', $data);
         $this->assertArrayNotHasKey('error', $data);
-        $this->assertSame([], $this->getHttpCalls(), 'wp_remote_get must not be called when URL is missing');
+        $this->assertSame([], $this->getHttpCalls(), 'wp_remote_get must not be called when service URL is missing');
+    }
+
+    public function testProbeDispatchHitsLocalHealthWhenLocalModeIsActive(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_recognition_url', 'https://api.example.com');
+        $this->setOption('acx_recognition_source', 'local');
+        $this->setOption('acx_recognition_local_url', 'http://localhost:8001');
+        $this->queueHttpResponse($this->buildOkResponse());
+
+        $response = $this->controller->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'));
+        $data     = $response->get_data();
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertSame('http://localhost:8001/health', $calls[0]['url']);
+        $this->assertArrayNotHasKey('X-API-Key', $calls[0]['args']['headers'] ?? array());
+        $this->assertSame(ProbeOutcome::CONNECTED, $data['outcome']);
+        $this->assertSame('local_liveness', $data['probe_mode']);
+        $this->assertSame('http://localhost:8001/health', $data['probed_url']);
     }
 
     /**
@@ -480,6 +503,7 @@ class SettingsControllerTest extends TestCase
     private function configureProbe(): void
     {
         $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_recognition_source', 'service');
         $this->setOption('acx_recognition_url', 'https://api.example.com');
         $this->setOption('acx_recognition_api_key', 'test-key');
     }

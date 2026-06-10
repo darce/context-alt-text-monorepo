@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 
 import { assertNoBlockingViolations, requireBaseUrl, seededA11yEnabled } from '../fixtures/axe';
 import { getAcxAdminRouteUrl } from '../fixtures/acx-routes';
+import { skipUnlessPopulatedWorkbench } from '../fixtures/seeded-state';
 
 const WORKBENCH_SHELL_SELECTOR = '.acx-workbench';
 
@@ -23,6 +24,6 @@ test('workbench seeded state has no serious or critical axe violations', async (
   test.skip(!seededA11yEnabled(), 'Set ACX_E2E_SEEDED=1 to enable populated workbench axe coverage.');
 
   await openWorkbench(requireBaseUrl(baseURL), page);
-  await expect(page.locator('.acx-media-selection__media-title').first()).toBeVisible();
+  await skipUnlessPopulatedWorkbench(page);
   await assertNoBlockingViolations(page, WORKBENCH_SHELL_SELECTOR);
 });

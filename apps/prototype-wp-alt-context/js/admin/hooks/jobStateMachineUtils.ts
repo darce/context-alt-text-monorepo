@@ -65,4 +65,3 @@ export const deriveLatestJobId = (
   }
   return null;
 };
-

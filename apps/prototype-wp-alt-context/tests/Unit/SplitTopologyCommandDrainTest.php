@@ -348,9 +348,205 @@ class SplitTopologyCommandDrainTest extends TestCase
         $this->assertCount(1, $repository->dispatchResults);
         $this->assertSame('conflict', $repository->dispatchResults[0]['status']);
         $this->assertSame(['tenant-test'], $snapshotClient->fetchCalls);
+        // Targeted snapshot is fetched at most once before the full-snapshot fallback;
+        // re-fetching would double a remote call and change the fallback hook payload.
+        $this->assertCount(1, $snapshotClient->targetedFetchCalls);
         $this->assertSame([['tenant-test', ['snapshot_version' => 88, 'clusters' => [], 'members' => []]]], $projector->projectCalls);
         $this->assertSame([['tenant-test']], $syncStateRepository->metricRefreshCalls);
         $this->assertSame([], $repository->failures);
+    }
+
+    public function testDrainConflictFetchesTargetedSnapshotOnceAndCarriesItsPayloadIntoFullSnapshotFallbackHook(): void
+    {
+        // Conflict reconcile: targeted snapshot is consulted, fails reconcile (no member
+        // delta), then the full-snapshot repair also errors. The fallback conflict hook must
+        // carry the *single* targeted-snapshot payload — re-fetching it (a) doubles a remote
+        // call and (b) changes the hook payload. Pins the slice-3 extraction seam.
+        $repository = new SplitTopologyCommandRepositoryFake([
+            $this->pendingSplitCommand(),
+        ]);
+        global $wpdb;
+        $wpdb->mockResults = [];
+        $transport = new SplitTransportFake([
+            new WP_REST_Response([
+                'conflict_code' => 'cluster_version_conflict',
+                'backend_version' => 91,
+                'message' => 'stale split request',
+            ], 409),
+        ]);
+        $targetedPayload = ['snapshot_version' => 5, 'clusters' => [], 'members' => []];
+        $snapshotClient = new SnapshotClientFake(
+            [],
+            ['tenant-test::cluster-source' => $targetedPayload]
+        );
+        $projector = new SnapshotProjectorFake();
+        $syncStateRepository = new SplitSyncStateRepositoryFake();
+
+        $capturedPayloads = [];
+        unset($GLOBALS['__ac_actions']['acx_split_topology_conflict_detected']);
+        add_action(
+            'acx_split_topology_conflict_detected',
+            static function ($command, $result, $reconciled) use (&$capturedPayloads): void {
+                $capturedPayloads[] = $reconciled;
+            },
+            10,
+            3
+        );
+
+        $drain = new SplitTopologyCommandDrain(
+            $repository,
+            $transport,
+            $snapshotClient,
+            $projector,
+            new SplitClustersRepositoryFake(),
+            new SplitMembersRepositoryFake(),
+            $syncStateRepository
+        );
+        $drain->drain();
+
+        // Targeted snapshot fetched exactly once (no doubled remote call on the fallback).
+        $this->assertSame([['tenant-test', ['cluster-source']]], $snapshotClient->targetedFetchCalls);
+        // Full-snapshot repair attempted once and errored, so nothing is projected.
+        $this->assertSame(['tenant-test'], $snapshotClient->fetchCalls);
+        $this->assertSame([], $projector->projectCalls);
+        // The fallback hook fires once carrying the single targeted-snapshot payload verbatim.
+        $this->assertSame([$targetedPayload], $capturedPayloads);
+        $this->assertSame('conflict', $repository->dispatchResults[0]['status']);
+    }
+
+    public function testDrainApplyMemberDeltaRollsBackWhenCommitFails(): void
+    {
+        $repository = new SplitTopologyCommandRepositoryFake([
+            $this->pendingSplitCommand(),
+        ]);
+        global $wpdb;
+        $wpdb->mockResults = [];
+        $wpdb->queryResults['COMMIT'] = false;
+        $transport = new SplitTransportFake([
+            new WP_REST_Response([
+                'command_id' => 'remote-command-rollback',
+                'status' => 'applied',
+                'original_cluster_id' => 'cluster-source',
+                'new_cluster_ids' => ['cluster-new-1', 'cluster-new-2'],
+                'member_delta' => [
+                    'source_cluster_id' => 'cluster-source',
+                    'remaining_identity_ids' => ['identity-1'],
+                    'created_clusters' => [
+                        ['cluster_id' => 'cluster-new-1', 'identity_ids' => ['identity-2']],
+                        ['cluster_id' => 'cluster-new-2', 'identity_ids' => ['identity-3']],
+                    ],
+                ],
+                'moved_counts' => [1, 1],
+                'affected_cluster_ids' => ['cluster-source', 'cluster-new-1', 'cluster-new-2'],
+                'result_snapshot_version' => 44,
+            ], 200),
+        ]);
+        $clustersRepository = new SplitClustersRepositoryFake();
+        $membersRepository = new SplitMembersRepositoryFake();
+        $syncStateRepository = new SplitSyncStateRepositoryFake();
+
+        $drain = new SplitTopologyCommandDrain(
+            $repository,
+            $transport,
+            new SnapshotClientFake([]),
+            new SnapshotProjectorFake(),
+            $clustersRepository,
+            $membersRepository,
+            $syncStateRepository
+        );
+        $drain->drain();
+
+        $startIndex = array_search('START TRANSACTION', $wpdb->queries, true);
+        $commitIndex = array_search('COMMIT', $wpdb->queries, true);
+        $rollbackIndex = array_search('ROLLBACK', $wpdb->queries, true);
+        $this->assertIsInt($startIndex);
+        $this->assertIsInt($commitIndex);
+        $this->assertIsInt($rollbackIndex);
+        $this->assertGreaterThan($startIndex, $commitIndex);
+        $this->assertGreaterThan($commitIndex, $rollbackIndex);
+        $this->assertCount(0, $repository->reconciled);
+        $this->assertCount(1, $repository->failures);
+        $this->assertSame('applied', $repository->failures[0]['status']);
+        $this->assertSame('projection_reconcile_failed', $repository->failures[0]['error_code']);
+    }
+
+    public function testDrainIsolatesTransportFailureAndContinuesProcessingPeerCommand(): void
+    {
+        $repository = new SplitTopologyCommandRepositoryFake([
+            $this->pendingSplitCommand(['id' => 7, 'idempotency_key' => 'idem-split-1']),
+            $this->pendingSplitCommand(['id' => 8, 'idempotency_key' => 'idem-split-2']),
+        ]);
+        global $wpdb;
+        $wpdb->mockResults = [];
+        $transport = new SplitTransportFake([
+            new WP_Error('transport_error', 'network down'),
+            new WP_REST_Response([
+                'command_id' => 'remote-command-2',
+                'status' => 'applied',
+                'original_cluster_id' => 'cluster-source',
+                'new_cluster_ids' => ['cluster-new-1', 'cluster-new-2'],
+                'member_delta' => [
+                    'source_cluster_id' => 'cluster-source',
+                    'remaining_identity_ids' => ['identity-1'],
+                    'created_clusters' => [
+                        ['cluster_id' => 'cluster-new-1', 'identity_ids' => ['identity-2']],
+                        ['cluster_id' => 'cluster-new-2', 'identity_ids' => ['identity-3']],
+                    ],
+                ],
+                'moved_counts' => [1, 1],
+                'affected_cluster_ids' => ['cluster-source', 'cluster-new-1', 'cluster-new-2'],
+                'result_snapshot_version' => 44,
+            ], 200),
+        ]);
+
+        $drain = new SplitTopologyCommandDrain(
+            $repository,
+            $transport,
+            new SnapshotClientFake([]),
+            new SnapshotProjectorFake(),
+            new SplitClustersRepositoryFake(),
+            new SplitMembersRepositoryFake(),
+            new SplitSyncStateRepositoryFake()
+        );
+        $drain->drain();
+
+        $this->assertCount(1, $repository->failures);
+        $this->assertSame('pending', $repository->failures[0]['status']);
+        $this->assertSame('transport_error', $repository->failures[0]['error_code']);
+        $this->assertCount(1, $repository->reconciled);
+    }
+
+    public function testDrainKeepsCommandPendingWhenAttemptsRemainBelowMax(): void
+    {
+        add_filter(
+            'acx_split_topology_max_attempts',
+            static fn (): int => 5
+        );
+
+        $repository = new SplitTopologyCommandRepositoryFake([
+            $this->pendingSplitCommand([
+                'attempts' => 3,
+            ]),
+        ]);
+        global $wpdb;
+        $wpdb->mockResults = [];
+        $transport = new SplitTransportFake([
+            new WP_Error('transport_error', 'network down'),
+        ]);
+
+        $drain = new SplitTopologyCommandDrain(
+            $repository,
+            $transport,
+            new SnapshotClientFake([]),
+            new SnapshotProjectorFake(),
+            new SplitClustersRepositoryFake(),
+            new SplitMembersRepositoryFake(),
+            new SplitSyncStateRepositoryFake()
+        );
+        $drain->drain();
+
+        $this->assertCount(1, $repository->failures);
+        $this->assertSame('pending', $repository->failures[0]['status']);
     }
 
     public function testDrainMarksCommandFailedAfterRetryExhaustion(): void

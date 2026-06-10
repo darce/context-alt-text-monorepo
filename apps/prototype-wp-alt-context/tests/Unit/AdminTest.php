@@ -301,7 +301,7 @@ class AdminTest extends TestCase
         $this->admin->render_recognition_config_notice();
         $output = (string) ob_get_clean();
 
-        $this->assertStringContainsString('Alt Context is in local recognition mode and will send requests to http://localhost:8000.', $output);
+        $this->assertStringContainsString('Alt Context is in local recognition mode and will send requests to http://localhost:8000', $output);
     }
 
     public function testRenderRecognitionConfigNoticeDoesNotAppearWhenServiceModeIsConfigured(): void

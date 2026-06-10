@@ -3,7 +3,7 @@
 > **Task Short ID**: E15-3
 > **Status**: scoped -- not started
 > **Epic**: [E15. Public Demo Launch Readiness](../../epics/v0.4.0/public-demo-launch-readiness-epic.md) Phase 3
-> **Predecessors**: E15-1 (security baseline) merged; E15-2 (observability baseline) merged; demo-critical Workbench UI gate passed locally, with entity avatars, Top Cluster face samples, and Review Cluster member rows rendering from seeded media. Backend at `api.altcontext.com` verified.
+> **Predecessors**: E15-1 (security baseline) merged; E15-2 (observability baseline) merged; [E15-22](./E15-22-workbench-avatar-and-progress-readiness-task-plan.md) demo-critical Workbench UI gate passed locally, with entity avatars, Top Cluster face samples, and Review Cluster member rows rendering from seeded media; [E15-3a](./E15-3a-localwp-oci-roundtrip-task-plan.md) LocalWP -> OCI round-trip verification gate passed. Backend at `api.altcontext.com` verified.
 > **Blocks**: E15-5 (remote E2E verification) -- needs a WP origin to round-trip against. MVP completion signal.
 > **Provider stance**: provider-agnostic. Concrete host selected at task-start via an ADR-lite decision record. Scope covers requirements, not a vendor.
 
@@ -13,7 +13,7 @@
 
 Stand up a publicly accessible WordPress instance running the ACX plugin, pointed at the live recognition backend, such that a product demo URL can be shared and a curator can trigger a scan that round-trips through the backend.
 
-Do not purchase or provision the shared WP host until local/LocalWP evidence shows the Workbench entity-avatar path is demo-ready: populated clusters must show real thumbnails in entity avatars and Top Cluster cards, and the Review Cluster drawer must list member faces instead of "No members found" for clusters with face counts.
+Do not purchase or provision the shared WP host until [E15-3a](./E15-3a-localwp-oci-roundtrip-task-plan.md) LocalWP -> OCI round-trip verification passes and local/LocalWP evidence shows the Workbench entity-avatar path is demo-ready: populated clusters must show real thumbnails in entity avatars and Top Cluster cards, and the Review Cluster drawer must list member faces instead of "No members found" for clusters with face counts.
 
 This task does not claim demo readiness from request success alone. Before the public demo is treated as ready, the manual run log must also carry the avatar/progress proof bundle defined by [E15-22](./E15-22-workbench-avatar-and-progress-readiness-task-plan.md): representative avatar rendering from the backend `thumb_url` path or an explicit fallback state, a monotonic processed indicator, and `Scan complete` appearing only when the Workbench is actually UI-ready.
 

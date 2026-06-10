@@ -538,6 +538,44 @@ PHP;
         $this->assertSame('filtered-api-key', $calls[0]['args']['headers']['X-API-Key'] ?? null);
     }
 
+    public function testProxyRequestUsesFilteredApiKeyOverStaleOption(): void
+    {
+        $this->setOption('acx_recognition_api_key', 'option-api-key');
+
+        add_filter('acx_recognition_api_key', static function (): string {
+            return 'filtered-api-key';
+        });
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{}',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/123');
+        $request->set_param('job_id', 'test-123');
+
+        $this->controller->get_job_status($request);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertSame('filtered-api-key', $calls[0]['args']['headers']['X-API-Key'] ?? null);
+    }
+
+    public function testProxyRequestReturnsNotConfiguredWhenServiceModeHasNoUrl(): void
+    {
+        $this->setOption('acx_recognition_url', '');
+        $this->setOption('acx_recognition_source', 'service');
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/jobs/123/cancel');
+        $request->set_param('job_id', 'test-123');
+
+        $result = $this->controller->cancel_job($request);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('recognition_not_configured', $result->get_error_code());
+        $this->assertCount(0, $this->getHttpCalls());
+    }
+
     public function testProxyRequestReturnsErrorWhenApiKeyMissing(): void
     {
         $this->setOption('acx_recognition_api_key', '');

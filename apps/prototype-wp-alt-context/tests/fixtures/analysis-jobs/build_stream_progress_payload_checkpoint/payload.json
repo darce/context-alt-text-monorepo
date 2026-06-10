@@ -1,0 +1,14 @@
+{
+  "type": "clustering_progress",
+  "job_id": "test-job-id",
+  "status": "pending",
+  "completed": 500,
+  "total": 937,
+  "phase": "retrying",
+  "clusters_created": 15,
+  "retry_count": 3,
+  "current_stage": "hac_refinement",
+  "last_successful_processed_identities": 500,
+  "last_error_code": "TimeoutError",
+  "batch_run_id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+}

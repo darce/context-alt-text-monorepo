@@ -549,6 +549,67 @@ class OutboxDrainTest extends TestCase
 		$this->assertTrue($this->isHookScheduled('acx_sync_drain_curation_outbox'));
 	}
 
+	public function testDrainReschedulesWhenBatchLeavesMorePendingOperations(): void
+	{
+		add_filter(
+			'acx_outbox_drain_batch_size',
+			static fn (): int => 1
+		);
+
+		global $wpdb;
+		$row = $this->pendingOperationRow();
+		$wpdb->mockResults = [$row];
+		$wpdb->mockVar = '8';
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public function dispatch_batch(array $operations): array {
+				return [[
+					'status' => 'acknowledged',
+					'backend_version' => 33,
+				],];
+			}
+		};
+
+		$drain = new OutboxDrain($dispatcher);
+		$drain->drain();
+
+		$this->assertTrue($this->isHookScheduled('acx_sync_drain_curation_outbox'));
+	}
+
+	public function testDrainIsolatesRetryableFailureAndContinuesProcessingPeerOperation(): void
+	{
+		global $wpdb;
+		$wpdb->mockResults = [
+			$this->pendingOperationRow(['id' => 7, 'idempotency_key' => 'idem-1']),
+			$this->pendingOperationRow(['id' => 8, 'idempotency_key' => 'idem-2']),
+		];
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public function dispatch_batch(array $operations): array {
+				return [
+					[
+						'status' => 'failed',
+						'error_code' => 'timeout',
+						'error_message' => 'gateway timeout',
+						'retryable' => true,
+					],
+					[
+						'status' => 'acknowledged',
+						'backend_version' => 41,
+					],
+				];
+			}
+		};
+
+		$drain = new OutboxDrain($dispatcher);
+		$drain->drain();
+
+		$pendingUpdate = $this->findFirstQueryContaining($wpdb->queries, "status = 'pending'");
+		$acknowledgedUpdate = $this->findFirstQueryContaining($wpdb->queries, "status = 'acknowledged'");
+		$this->assertNotSame('', $pendingUpdate);
+		$this->assertNotSame('', $acknowledgedUpdate);
+	}
+
 	public function testDiscardOperationMarksDiscardedAndRefreshesMetrics(): void
 	{
 		global $wpdb;
@@ -591,11 +652,12 @@ class OutboxDrainTest extends TestCase
 	}
 
 	/**
+	 * @param array<string,mixed> $overrides
 	 * @return array<string,mixed>
 	 */
-	private function pendingOperationRow(): array
+	private function pendingOperationRow(array $overrides = []): array
 	{
-		return [
+		return array_merge([
 			'id' => 7,
 			'tenant_id' => 'tenant-test-123',
 			'operation_type' => 'cluster_person_bound',
@@ -607,7 +669,7 @@ class OutboxDrainTest extends TestCase
 			'payload' => '{"cluster_uuid":"cluster-1","person_uuid":"person-1"}',
 			'attempts' => 0,
 			'created_at' => '2026-03-10 12:00:00',
-		];
+		], $overrides);
 	}
 
 	/**

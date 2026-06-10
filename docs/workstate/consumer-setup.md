@@ -15,15 +15,13 @@ Install the three package surfaces from PyPI, then materialize the shared overla
 
 ```bash
 python3 -m venv .venv
-./.venv/bin/pip install "mcp-workstate-handoff==0.12.3"
-./.venv/bin/pip install "mcp-workstate-orchestrator==0.6.0"
-./.venv/bin/pip install "workstate-bootstrap==0.7.3"
+./.venv/bin/pip install "workstate-stack==0.1.12"
 
-./.venv/bin/workstate-bootstrap install --target . --remote-ref v0.1.22
+./.venv/bin/workstate-bootstrap install --target . --remote-ref workstate-stack-v0.1.12
 ```
 
 The install flow clones the shared workstate surface into `.workstate/remote/`, creates the overlay symlinks, writes `.workstate-bootstrap.json`, and wires the local MCP config files.
-Keep the overlay ref pinned to the reviewed workstate tag (`v0.1.22`) until a newer release set is explicitly promoted.
+Keep the overlay ref pinned to the reviewed workstate stack tag (`workstate-stack-v0.1.12`) until a newer release set is explicitly promoted.
 
 After install, run one sanity check from the consumer root:
 
@@ -59,11 +57,9 @@ If you set explicit relative paths, they resolve from `AGENT_HANDOFF_WORKSPACE_R
 Use the package manager for MCP package upgrades and `workstate-bootstrap update` for the overlay clone:
 
 ```bash
-./.venv/bin/pip install --upgrade "mcp-workstate-handoff==0.12.3"
-./.venv/bin/pip install --upgrade "mcp-workstate-orchestrator==0.6.0"
-./.venv/bin/pip install --upgrade "workstate-bootstrap==0.7.3"
+./.venv/bin/pip install --upgrade "workstate-stack==0.1.12"
 
-./.venv/bin/workstate-bootstrap update --remote-ref v0.1.22
+./.venv/bin/workstate-bootstrap update --remote-ref workstate-stack-v0.1.12
 ```
 
 Keep both the package versions and the overlay ref pinned to the reviewed release set. When a newer release set is approved, bump the exact package versions and the `--remote-ref` together.

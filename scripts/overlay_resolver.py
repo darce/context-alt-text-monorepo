@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -8,6 +9,7 @@ from typing import Literal
 
 SurfaceKind = Literal["skills", "hooks", "commands", "prompts", "contracts"]
 ResolvedSource = Literal["shared", "local", "overlapping"]
+OverlayMode = Literal["source_tree", "canonical", "legacy"]
 
 DEFAULT_SURFACE_ROOTS: dict[SurfaceKind, Path] = {
     "skills": Path(".claude/skills"),
@@ -16,7 +18,28 @@ DEFAULT_SURFACE_ROOTS: dict[SurfaceKind, Path] = {
     "prompts": Path(".github/prompts"),
     "contracts": Path("docs/workstate/contracts"),
 }
-MISSING_OVERLAY_ROOT = Path(".workstate/__missing_overlay_root__")
+
+# Manifest filenames. Duplicated here (rather than imported from
+# workstate-bootstrap) so workstate-system stays decoupled from the bootstrap
+# package — the same way the validator scripts probe filenames directly today.
+BOOTSTRAP_MANIFEST_NAME = ".workstate-bootstrap.json"
+LEGACY_OVERLAY_MANIFEST_NAME = ".workstate-overlay.json"
+
+# internal: the canonical bootstrap ledger keys surfaces by
+# filesystem ``path`` (not by resolver ``kind``), so the resolver maps each
+# kind to the ledger path(s) it owns. ``skills`` / ``commands`` are absent on
+# purpose — they moved to the generated plugin tree under
+# ``.workstate/generated/plugins/...`` and are no longer ledger surfaces; a
+# kind missing from this map falls through to source-tree/default resolution
+# and is never treated as broken-overlay drift.
+CANONICAL_KIND_LEDGER_PATHS: dict[SurfaceKind, tuple[str, ...]] = {
+    "contracts": ("docs/workstate/contracts",),
+    "hooks": (".github/hooks", "scripts/hooks"),
+    "prompts": (".github/prompts",),
+}
+
+# Bootstrap clone root that ``source="shared"`` surfaces symlink into.
+_CLONE_SUBDIR = (".workstate", "remote")
 
 
 class OverlayResolverError(RuntimeError):
@@ -36,56 +59,17 @@ class ResolvedPath:
 
 
 def _load_overlay_manifest(project_root: Path) -> dict | None:
-    manifest_path = project_root / ".workstate-bootstrap.json"
+    manifest_path = project_root / ".workstate-overlay.json"
     if not manifest_path.is_file():
         return None
 
     try:
         payload = json.loads(manifest_path.read_text())
     except json.JSONDecodeError as exc:
-        raise OverlayResolverError(f"workstate bootstrap manifest is not valid JSON: {exc}") from exc
+        raise OverlayResolverError(f"overlay manifest is not valid JSON: {exc}") from exc
     if not isinstance(payload, dict):
-        raise OverlayResolverError("workstate bootstrap manifest must parse to a mapping")
+        raise OverlayResolverError("overlay manifest must parse to a mapping")
     return payload
-
-
-def _surface_path_matches_kind(path: str, kind: SurfaceKind) -> bool:
-    surface_path = Path(path)
-    if kind == "hooks":
-        return surface_path in {Path(".github/hooks"), Path("scripts/hooks")}
-
-    default_path = DEFAULT_SURFACE_ROOTS[kind]
-    default_parts = default_path.parts
-    return surface_path == default_path or surface_path.parts[-len(default_parts) :] == default_parts
-
-
-def _surface_roots_from_bootstrap_manifest(project_root: Path, surfaces: list[object], kind: SurfaceKind) -> tuple[Path, Path] | None:
-    shared_root: Path | None = None
-    local_root: Path | None = None
-
-    for surface in surfaces:
-        if not isinstance(surface, dict):
-            raise OverlayResolverError("workstate bootstrap manifest `surfaces` entries must be mappings")
-        path = surface.get("path")
-        source = surface.get("source")
-        if not isinstance(path, str) or not path.strip():
-            raise OverlayResolverError("workstate bootstrap manifest `surfaces[].path` must be a non-empty string")
-        if not isinstance(source, str) or not source.strip():
-            raise OverlayResolverError("workstate bootstrap manifest `surfaces[].source` must be a non-empty string")
-        if not _surface_path_matches_kind(path, kind):
-            continue
-
-        root = project_root / path
-        if source == "local":
-            local_root = root
-        elif source in {"shared", "generated", "lifecycle"}:
-            shared_root = shared_root or root
-        else:
-            raise OverlayResolverError(f"unsupported workstate bootstrap surface source: {source}")
-
-    if shared_root is None and local_root is None:
-        return None
-    return shared_root or project_root / MISSING_OVERLAY_ROOT, local_root or project_root / MISSING_OVERLAY_ROOT
 
 
 def _surface_roots(project_root: Path, kind: SurfaceKind) -> tuple[Path, Path] | None:
@@ -94,14 +78,8 @@ def _surface_roots(project_root: Path, kind: SurfaceKind) -> tuple[Path, Path] |
         return None
 
     surfaces = manifest.get("surfaces")
-    if isinstance(surfaces, list):
-        return _surface_roots_from_bootstrap_manifest(project_root, surfaces, kind)
-
-    # `.workstate-bootstrap.json` is usually the bootstrap ledger with
-    # `surfaces: [list]`. Some tests and older overlay contracts use
-    # `surfaces: {dict}` to exercise explicit shared/local root replacement.
     if not isinstance(surfaces, dict):
-        return None
+        raise OverlayResolverError("overlay manifest must define a `surfaces` mapping")
 
     surface = surfaces.get(kind)
     if surface is None:
@@ -160,6 +138,27 @@ def _hook_anchor_from_surface_root(surface_root: Path) -> Path:
     return surface_root
 
 
+def _iter_hook_files(hook_root: Path) -> dict[str, Path]:
+    """Recursively enumerate hook files under a *single* concrete hook root.
+
+    Unlike :func:`_iter_hook_entries` (which scans both ``.github/hooks`` and
+    ``scripts/hooks`` under one anchor), this scans exactly the directory it is
+    given, so a canonical-ledger caller can apply each ledger entry's own
+    ``source`` to its own files. Keyed by path relative to ``hook_root``.
+    """
+    entries: dict[str, Path] = {}
+    if not hook_root.exists():
+        return entries
+    for entry in sorted(hook_root.rglob("*"), key=lambda path: path.as_posix()):
+        if not (entry.is_file() or entry.is_symlink()):
+            continue
+        relative = entry.relative_to(hook_root)
+        if any(part.startswith(".") or part == "__pycache__" for part in relative.parts):
+            continue
+        entries[relative.as_posix()] = entry
+    return entries
+
+
 def _validate_entry(path: Path, *, project_root: Path, label: str) -> None:
     if path.is_symlink() and not path.exists():
         raise BrokenOverlayError(
@@ -168,45 +167,208 @@ def _validate_entry(path: Path, *, project_root: Path, label: str) -> None:
         )
 
 
-def _is_declared_remote_root(path: Path, *, project_root: Path) -> bool:
+def _legacy_is_bootstrap_owned(project_root: Path) -> bool:
+    """Return True when the legacy file is a stale *bootstrap-owned* ledger.
+
+    Bootstrap-owned ledgers carry ``surfaces`` as a *list* (the shape
+    ``workstate-bootstrap``'s ``_migrate_legacy_manifest`` migrates), whereas a
+    user-owned legacy overlay keys ``surfaces`` as a *mapping*. Only the latter
+    makes a dual-manifest state genuinely ambiguous.
+    """
     try:
-        relative_path = path.relative_to(project_root)
-    except ValueError:
+        payload = json.loads((project_root / LEGACY_OVERLAY_MANIFEST_NAME).read_text())
+    except (OSError, json.JSONDecodeError):
         return False
-    return relative_path.parts[:2] == (".workstate", "remote")
+    return isinstance(payload, dict) and isinstance(payload.get("surfaces"), list)
 
 
-def _resolve_shared_root(kind: SurfaceKind, *, project_root: Path, declared_root: Path) -> Path:
-    if declared_root.exists():
-        return declared_root
+def detect_overlay_mode(project_root: Path) -> OverlayMode:
+    """Classify the consumer overlay state.
 
-    fallback_root = project_root / DEFAULT_SURFACE_ROOTS[kind]
-    if _is_declared_remote_root(declared_root, project_root=project_root) and fallback_root.exists():
-        return fallback_root
+    Raises ``OverlayResolverError`` for an ambiguous dual-manifest state where a
+    *user-owned* legacy mapping overlay coexists with the canonical bootstrap
+    ledger — the resolver must not silently pick one authority.
+    """
+    project_root = Path(project_root).expanduser().resolve()
+    has_canonical = (project_root / BOOTSTRAP_MANIFEST_NAME).is_file()
+    has_legacy = (project_root / LEGACY_OVERLAY_MANIFEST_NAME).is_file()
 
-    return declared_root
+    if has_canonical and has_legacy:
+        if _legacy_is_bootstrap_owned(project_root):
+            # Stale bootstrap-owned file: canonical wins; operator should let
+            # `workstate-bootstrap` migrate/remove the legacy copy.
+            return "canonical"
+        raise OverlayResolverError(
+            f"both {BOOTSTRAP_MANIFEST_NAME} and a user-owned {LEGACY_OVERLAY_MANIFEST_NAME} "
+            "exist; refusing to choose a manifest authority. Migrate or remove the legacy "
+            f"overlay, or run `workstate-bootstrap doctor --target {project_root}` followed by "
+            f"`workstate-bootstrap repair --target {project_root}`."
+        )
+    if has_canonical:
+        return "canonical"
+    if has_legacy:
+        return "legacy"
+    return "source_tree"
+
+
+def _load_bootstrap_manifest(project_root: Path) -> dict:
+    """Parse and shape-check the canonical ``.workstate-bootstrap.json`` ledger."""
+    manifest_path = project_root / BOOTSTRAP_MANIFEST_NAME
+    try:
+        payload = json.loads(manifest_path.read_text())
+    except json.JSONDecodeError as exc:
+        raise OverlayResolverError(
+            f"canonical bootstrap ledger {BOOTSTRAP_MANIFEST_NAME} is not valid JSON: {exc}"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise OverlayResolverError(
+            f"canonical bootstrap ledger {BOOTSTRAP_MANIFEST_NAME} must parse to a mapping"
+        )
+    if not isinstance(payload.get("schema_version"), int):
+        raise OverlayResolverError(
+            f"canonical bootstrap ledger {BOOTSTRAP_MANIFEST_NAME} is missing an integer "
+            "`schema_version`"
+        )
+    remote_sha = payload.get("remote_sha")
+    if not isinstance(remote_sha, str) or not remote_sha.strip():
+        raise OverlayResolverError(
+            f"canonical bootstrap ledger {BOOTSTRAP_MANIFEST_NAME} is missing clone metadata "
+            "(`remote_sha`)"
+        )
+    if not isinstance(payload.get("surfaces"), list):
+        raise OverlayResolverError(
+            f"canonical bootstrap ledger {BOOTSTRAP_MANIFEST_NAME} `surfaces` must be a list "
+            "of {path, source} entries"
+        )
+    return payload
+
+
+def _ledger_entry_by_path(manifest: dict) -> dict[str, dict]:
+    entries: dict[str, dict] = {}
+    for entry in manifest["surfaces"]:
+        if isinstance(entry, dict) and isinstance(entry.get("path"), str):
+            entries[entry["path"].rstrip("/")] = entry
+    return entries
+
+
+def _validate_shared_surface(surface_root: Path, *, project_root: Path, rel: str) -> None:
+    """Fail closed when a ``source="shared"`` ledger surface is broken.
+
+    Mirrors ``workstate-bootstrap doctor``'s ``surface_drift`` model: a shared
+    surface must be a bootstrap-managed symlink that still resolves *into*
+    ``.workstate/remote``. A surface that is no longer a symlink, is dangling,
+    or resolves outside the clone is loud drift — never a silent source-tree
+    fallback.
+    """
+    remediation = (
+        f"Run `workstate-bootstrap doctor --target {project_root}` then "
+        f"`workstate-bootstrap repair --target {project_root}`."
+    )
+    if not surface_root.is_symlink():
+        raise BrokenOverlayError(
+            f"bootstrap ledger records `{rel}` as a shared overlay surface but it is no longer a "
+            f"bootstrap-managed symlink into .workstate/remote. {remediation}"
+        )
+    if not surface_root.exists():
+        raise BrokenOverlayError(
+            f"shared overlay surface `{rel}` points to a missing bootstrap-owned target. "
+            f"{remediation}"
+        )
+    clone_root = project_root.joinpath(*_CLONE_SUBDIR).resolve()
+    resolved = surface_root.resolve()
+    if resolved != clone_root and not str(resolved).startswith(str(clone_root) + os.sep):
+        raise BrokenOverlayError(
+            f"shared overlay surface `{rel}` resolves outside the bootstrap clone "
+            f"({'/'.join(_CLONE_SUBDIR)}); it points at `{resolved}`. {remediation}"
+        )
+
+
+def _resolve_canonical_surface(kind: SurfaceKind, project_root: Path) -> list[ResolvedPath] | None:
+    """Resolve a surface from the canonical bootstrap ledger.
+
+    Returns ``None`` when the ledger records no surface for ``kind`` (e.g.
+    ``skills`` / ``commands``), signalling the caller to fall through to
+    source-tree/default resolution rather than failing closed.
+    """
+    ledger_paths = CANONICAL_KIND_LEDGER_PATHS.get(kind)
+    if ledger_paths is None:
+        return None
+
+    manifest = _load_bootstrap_manifest(project_root)
+    entry_by_path = _ledger_entry_by_path(manifest)
+
+    resolved: list[ResolvedPath] = []
+    matched_any = False
+    for rel in ledger_paths:
+        entry = entry_by_path.get(rel.rstrip("/"))
+        if entry is None:
+            continue
+        matched_any = True
+        source = entry.get("source", "shared")
+        surface_root = project_root / rel
+
+        if source == "shared":
+            _validate_shared_surface(surface_root, project_root=project_root, rel=rel)
+        # `generated` / `lifecycle` / `local` surfaces are real paths, not clone
+        # symlinks: validate by existence only and never raise BrokenOverlayError.
+
+        if kind == "hooks":
+            # Scan THIS ledger path's concrete hook root once so its own source
+            # is applied to its own files. Routing through _iter_hook_entries
+            # would scan both hook roots under one anchor and mis-tag / drop
+            # entries when the two ledger paths differ.
+            entries = _iter_hook_files(surface_root)
+        else:
+            entries = _iter_surface_entries(surface_root)
+
+        rp_source: ResolvedSource = "shared" if source == "shared" else "local"
+        for path in entries.values():
+            resolved.append(
+                ResolvedPath(
+                    source=rp_source,
+                    effective_path=path,
+                    shared_path=path if rp_source == "shared" else None,
+                    local_path=path if rp_source == "local" else None,
+                )
+            )
+
+    if not matched_any:
+        return None
+    return resolved
+
+
+def _resolve_source_tree(kind: SurfaceKind, project_root: Path) -> list[ResolvedPath]:
+    if kind == "hooks":
+        return [
+            ResolvedPath(source="shared", effective_path=path, shared_path=path)
+            for path in _iter_hook_entries(project_root).values()
+        ]
+
+    default_root = project_root / DEFAULT_SURFACE_ROOTS[kind]
+    if not default_root.exists():
+        return []
+    return [
+        ResolvedPath(source="shared", effective_path=path, shared_path=path)
+        for path in _iter_surface_entries(default_root).values()
+    ]
 
 
 def resolve_surface(kind: SurfaceKind, project_root: Path) -> list[ResolvedPath]:
     project_root = project_root.expanduser().resolve()
-    roots = _surface_roots(project_root, kind)
-    if roots is None:
-        if kind == "hooks":
-            return [
-                ResolvedPath(source="shared", effective_path=path, shared_path=path)
-                for path in _iter_hook_entries(project_root).values()
-            ]
 
-        default_root = project_root / DEFAULT_SURFACE_ROOTS[kind]
-        if not default_root.exists():
-            return []
-        return [
-            ResolvedPath(source="shared", effective_path=path, shared_path=path)
-            for path in _iter_surface_entries(default_root).values()
-        ]
+    mode = detect_overlay_mode(project_root)
+    if mode == "canonical":
+        canonical = _resolve_canonical_surface(kind, project_root)
+        if canonical is not None:
+            return canonical
+        # kind has no ledger surface (skills/commands) → source-tree fallthrough.
+        return _resolve_source_tree(kind, project_root)
+
+    roots = _surface_roots(project_root, kind) if mode == "legacy" else None
+    if roots is None:
+        return _resolve_source_tree(kind, project_root)
 
     shared_root, local_root = roots
-    shared_root = _resolve_shared_root(kind, project_root=project_root, declared_root=shared_root)
     if kind == "hooks":
         shared_entries = _iter_hook_entries(_hook_anchor_from_surface_root(shared_root))
         local_entries = _iter_hook_entries(_hook_anchor_from_surface_root(local_root))

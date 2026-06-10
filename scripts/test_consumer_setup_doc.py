@@ -21,11 +21,9 @@ REQUIRED_HEADINGS = (
 )
 
 REQUIRED_SNIPPETS = (
-    './.venv/bin/pip install "mcp-workstate-handoff==0.12.3"',
-    './.venv/bin/pip install "mcp-workstate-orchestrator==0.6.0"',
-    './.venv/bin/pip install "workstate-bootstrap==0.7.3"',
-    "./.venv/bin/workstate-bootstrap install --target . --remote-ref v0.1.22",
-    "./.venv/bin/workstate-bootstrap update --remote-ref v0.1.22",
+    './.venv/bin/pip install "workstate-stack==0.1.12"',
+    "./.venv/bin/workstate-bootstrap install --target . --remote-ref workstate-stack-v0.1.12",
+    "./.venv/bin/workstate-bootstrap update --remote-ref workstate-stack-v0.1.12",
     "./.venv/bin/workstate-bootstrap doctor",
     "./.venv/bin/workstate-bootstrap repair",
     "AGENT_HANDOFF_WORKSPACE_ROOT",
@@ -49,10 +47,8 @@ REQUIRED_SNIPPETS = (
 )
 
 REQUIRED_UPDATE_SNIPPETS = (
-    './.venv/bin/pip install --upgrade "mcp-workstate-handoff==0.12.3"',
-    './.venv/bin/pip install --upgrade "mcp-workstate-orchestrator==0.6.0"',
-    './.venv/bin/pip install --upgrade "workstate-bootstrap==0.7.3"',
-    "./.venv/bin/workstate-bootstrap update --remote-ref v0.1.22",
+    './.venv/bin/pip install --upgrade "workstate-stack==0.1.12"',
+    "./.venv/bin/workstate-bootstrap update --remote-ref workstate-stack-v0.1.12",
 )
 
 
@@ -93,17 +89,15 @@ def test_consumer_setup_doc_exists_and_is_standalone() -> None:
 def test_overlay_manifest_contract_documents_plugin_overrides_path() -> None:
     """MAINT-FB-B-02: plugin_overrides_path must be documented in the manifest contract.
 
-    The field is a forward-compat hook: workstate-bootstrap v0.1.22 does not
-    read it, the APD-07 recipe-overrides release adopts it. The contract must
-    name it as optional and state both facts so consumers do not mistake it
-    for dead config or a required key.
+    The field is documented in the overlay manifest contract: workstate-bootstrap
+    0.8.10+ (workstate-stack-v0.1.12) reads plugin_overrides_path when present.
     """
     contract_path = REPO_ROOT / "docs" / "workstate" / "contracts" / "overlay-manifest.yaml"
     text = contract_path.read_text(encoding="utf-8")
     assert "optional_fields" in text, "contract must declare an optional_fields section"
     assert "plugin_overrides_path" in text
-    assert "APD-07" in text, "contract must name the release that adopts the field"
-    assert "v0.1.22" in text, "contract must state the version that ignores the field"
+    assert "APD-07" in text, "contract must name the recipe-overrides release"
+    assert "workstate-stack-v0.1.12" in text, "contract must name the stack tag that adopts the field"
     optional_section = text.split("optional_fields", 1)[1]
     assert "plugin_overrides_path" in optional_section, (
         "plugin_overrides_path must be listed under optional_fields, not required_fields"

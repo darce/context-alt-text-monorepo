@@ -10,9 +10,13 @@
     },
     "workstate-handoff-mcp": {
       "type": "stdio",
-      "command": "uvx",
+      "command": "uv",
       "args": [
-        "mcp-workstate-handoff@0.12.3",
+        "run",
+        "--no-sync",
+        "--project",
+        ".workstate/remote/packages/mcp-workstate-handoff",
+        "mcp-workstate-handoff",
         "--workspace-root",
         ".",
         "serve-stdio"
@@ -20,9 +24,13 @@
     },
     "workstate-orchestrator-mcp": {
       "type": "stdio",
-      "command": "uvx",
+      "command": "uv",
       "args": [
-        "mcp-workstate-orchestrator@0.6.0",
+        "run",
+        "--no-sync",
+        "--project",
+        ".workstate/remote/packages/mcp-workstate-orchestrator",
+        "mcp-workstate-orchestrator",
         "--workspace-root",
         ".",
         "serve-stdio"

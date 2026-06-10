@@ -23,7 +23,7 @@ if [[ "$ROOT_BRANCH" != "main" && "$ROOT_BRANCH" != "master" ]]; then
 fi
 
 echo "→ Registering MAINT task on $ROOT_BRANCH"
-MCP_HANDOFF_PACKAGE="${MCP_HANDOFF_PACKAGE:-mcp-workstate-handoff==0.12.3}"
+MCP_HANDOFF_PACKAGE="${MCP_HANDOFF_PACKAGE:-mcp-workstate-handoff==0.12.9}"
 if ! command -v uvx >/dev/null 2>&1; then
   echo "❌ uvx not on PATH. Install uv (https://docs.astral.sh/uv/) before running maint-start." >&2
   exit 3

@@ -72,10 +72,6 @@ final class RecognitionEndpointResolver {
 			return array( 'value' => $constant, 'source' => 'constant' );
 		}
 
-		if ( '' !== $service_url_resolution['value'] && in_array( $service_url_resolution['source'], array( 'constant', 'filter' ), true ) ) {
-			return array( 'value' => 'service', 'source' => $service_url_resolution['source'] );
-		}
-
 		$filter = trim( (string) apply_filters( 'acx_recognition_source', '' ) );
 		if ( $this->is_valid_recognition_source( $filter ) ) {
 			return array( 'value' => $filter, 'source' => 'filter' );
@@ -84,13 +80,6 @@ final class RecognitionEndpointResolver {
 		$option = trim( (string) get_option( 'acx_recognition_source', '' ) );
 		if ( $this->is_valid_recognition_source( $option ) ) {
 			return array( 'value' => $option, 'source' => 'option' );
-		}
-
-		if ( '' !== $service_url_resolution['value'] ) {
-			return array(
-				'value'  => 'service',
-				'source' => 'option' === $service_url_resolution['source'] ? 'option' : 'default',
-			);
 		}
 
 		return array( 'value' => 'local', 'source' => 'default' );

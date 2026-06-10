@@ -55,27 +55,8 @@ async def require_tenant_record(session: AsyncSession, tenant_id: UUID):
 
 
 async def ensure_tenant_exists(session: AsyncSession, tenant_id: UUID, site_url: str | None = None) -> None:
-    """Create tenant record if it doesn't exist (first-use auto-provisioning).
-
-    Args:
-        session: Database session
-        tenant_id: UUID of the tenant to ensure exists
-        site_url: Optional site URL; defaults to placeholder if not provided
-
-    This enables "just-in-time" tenant creation for new WordPress installations
-    that haven't been explicitly registered. The tenant is created with minimal
-    metadata that can be updated later via admin endpoints.
-    """
-    existing = await get_tenant_record(session, tenant_id)
-
-    if existing is None:
-        from db.models import Tenant  # Import here to avoid circular dependency
-
-        # Auto-provision with placeholder site_url
-        placeholder_url = site_url or f"auto-provisioned-{str(tenant_id)[:8]}"
-        tenant = Tenant(id=tenant_id, site_url=placeholder_url)
-        session.add(tenant)
-        await session.flush()
+    """Deprecated JIT provisioning seam — fail fast like authenticated routes."""
+    await require_tenant_record(session, tenant_id)
 
 
 async def set_tenant_context(session: AsyncSession, tenant_id: UUID) -> None:

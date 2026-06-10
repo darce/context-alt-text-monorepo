@@ -20,17 +20,11 @@ use function update_option;
 use function wp_is_uuid;
 
 /**
- * Canonical tenant-id derivation for the plugin.
- *
- * The recognition service keys every row on a per-site UUID derived from the
- * WordPress site URL. `AbstractRecognitionProxyController` used to inline this
- * derivation, so the `X-Tenant-ID` header sent with every recognition call
- * matched exactly one site. The Settings probe must produce the same value or
- * its outcome diverges from real request behavior, so both call sites now
- * delegate here.
+ * Canonical tenant identity resolution for the plugin.
  */
 final class TenantIdentity {
-	public const OPTION_KEY = 'acx_recognition_tenant_id';
+	public const OPTION_KEY        = 'acx_recognition_tenant_id';
+	public const PAIRED_OPTION_KEY = 'acx_recognition_tenant_paired';
 
 	/**
 	 * @return array{value: string, source: string}
@@ -72,7 +66,7 @@ final class TenantIdentity {
 			self::log_invalid_override( 'option', $option );
 		}
 
-		$derived = self::derive_from_site_url();
+		$derived = self::derive_site_url_tenant_id();
 		if ( '' === $option ) {
 			update_option( self::OPTION_KEY, $derived );
 		}
@@ -83,7 +77,24 @@ final class TenantIdentity {
 		);
 	}
 
-	public static function derive_from_site_url(): string {
+	public static function is_paired(): bool {
+		return (bool) get_option( self::PAIRED_OPTION_KEY, false );
+	}
+
+	public static function adopt_paired_tenant( string $tenant_id ): void {
+		$normalized = strtolower( trim( $tenant_id ) );
+		if ( ! self::is_valid_tenant_uuid( $normalized ) ) {
+			throw new \InvalidArgumentException( 'Paired tenant id must be a UUID.' );
+		}
+
+		update_option( self::OPTION_KEY, $normalized );
+		update_option( self::PAIRED_OPTION_KEY, true );
+	}
+
+	/**
+	 * One-time bootstrap derivation from the WordPress site URL.
+	 */
+	private static function derive_site_url_tenant_id(): string {
 		$site_url  = untrailingslashit( strtolower( (string) get_site_url() ) );
 		$hash      = sha1( 'acx-site-tenant:' . $site_url );
 		$time_hi   = ( hexdec( substr( $hash, 12, 4 ) ) & 0x0fff ) | 0x5000;
@@ -97,10 +108,6 @@ final class TenantIdentity {
 			$clock_seq,
 			substr( $hash, 20, 12 )
 		);
-	}
-
-	public static function is_paired(): bool {
-		return false;
 	}
 
 	private static function get_constant_value( string $name ): string {

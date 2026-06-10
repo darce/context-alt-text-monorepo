@@ -7,6 +7,9 @@ namespace AltContext\Api;
 require_once __DIR__ . '/class-probe-outcome.php';
 require_once __DIR__ . '/class-recognition-endpoint-resolver.php';
 require_once __DIR__ . '/class-tenant-identity.php';
+require_once __DIR__ . '/services/class-tenant-local-rekey-service.php';
+
+use AltContext\Api\Services\TenantLocalRekeyService;
 
 use WP_Error;
 use WP_REST_Request;
@@ -217,7 +220,108 @@ class SettingsController {
 		$payload['probe_mode'] = 'service_auth';
 		$payload['probed_url'] = $health_url;
 
+		if ( ProbeOutcome::CONNECTED !== ( $payload['outcome'] ?? null ) ) {
+			return new WP_REST_Response( $payload, 200 );
+		}
+
+		$confirm_pairing = $this->request_confirms_tenant_pairing( $request );
+		$pairing         = $this->attempt_tenant_pairing(
+			base_url: $url,
+			headers: $headers,
+			confirm_pairing: $confirm_pairing,
+		);
+		if ( null !== $pairing ) {
+			$payload = array_merge( $payload, $pairing );
+		}
+
 		return new WP_REST_Response( $payload, 200 );
+	}
+
+	/**
+	 * @param array<string, string> $headers
+	 * @return array<string, mixed>|null
+	 */
+	private function attempt_tenant_pairing( string $base_url, array $headers, bool $confirm_pairing ): ?array {
+		$whoami_url = rtrim( $base_url, '/' ) . '/recognition/tenant/whoami';
+		$response   = wp_remote_get(
+			$whoami_url,
+			array(
+				'headers' => $headers,
+				'timeout' => 10,
+			)
+		);
+
+		if ( is_wp_error( $response ) ) {
+			return array(
+				'outcome' => ProbeOutcome::NETWORK_ERROR,
+				'detail'  => (string) $response->get_error_message(),
+			);
+		}
+
+		$status_code = (int) wp_remote_retrieve_response_code( $response );
+		if ( $status_code < 200 || $status_code >= 300 ) {
+			$body    = wp_remote_retrieve_body( $response );
+			$decoded = json_decode( $body, true );
+			$detail  = is_array( $decoded ) && isset( $decoded['detail'] ) && is_string( $decoded['detail'] )
+				? $decoded['detail']
+				: 'Tenant pairing lookup failed.';
+			return array(
+				'outcome'     => ProbeOutcome::SERVER_ERROR,
+				'status_code' => $status_code,
+				'detail'      => $detail,
+			);
+		}
+
+		$body = json_decode( wp_remote_retrieve_body( $response ), true );
+		if ( ! is_array( $body ) || ! isset( $body['tenant_id'] ) || ! is_string( $body['tenant_id'] ) ) {
+			return array(
+				'outcome' => ProbeOutcome::SERVER_ERROR,
+				'detail'  => 'Tenant pairing response missing tenant_id.',
+			);
+		}
+
+		$key_tenant_id       = strtolower( trim( $body['tenant_id'] ) );
+		$persisted_tenant_id = strtolower( trim( (string) get_option( TenantIdentity::OPTION_KEY, '' ) ) );
+		$current_resolution  = TenantIdentity::resolve();
+		$current_tenant_id   = strtolower( $current_resolution['value'] );
+
+		if ( '' === $persisted_tenant_id || $persisted_tenant_id === $key_tenant_id ) {
+			TenantIdentity::adopt_paired_tenant( $key_tenant_id );
+			return array(
+				'tenant_paired'    => true,
+				'tenant_id'        => $key_tenant_id,
+				'tenant_id_source' => 'option',
+			);
+		}
+
+		if ( $persisted_tenant_id !== $key_tenant_id && ! $confirm_pairing ) {
+			return array(
+				'outcome'             => ProbeOutcome::TENANT_PAIRING_CONFLICT,
+				'persisted_tenant_id' => $persisted_tenant_id,
+				'key_tenant_id'       => $key_tenant_id,
+			);
+		}
+
+		$rekey_service = new TenantLocalRekeyService();
+		$rekey_result  = $rekey_service->reconcile_identity_change( $current_tenant_id, $key_tenant_id );
+		TenantIdentity::adopt_paired_tenant( $key_tenant_id );
+
+		return array(
+			'tenant_paired'       => true,
+			'tenant_id'           => $key_tenant_id,
+			'tenant_id_source'    => 'option',
+			'rekey_strategy'      => $rekey_result['strategy'],
+			'rekey_updated_rows'  => $rekey_result['updated_rows'],
+		);
+	}
+
+	private function request_confirms_tenant_pairing( WP_REST_Request $request ): bool {
+		$body = $request->get_json_params();
+		if ( ! is_array( $body ) ) {
+			return false;
+		}
+
+		return ! empty( $body['confirm_tenant_pairing'] );
 	}
 
 	/**

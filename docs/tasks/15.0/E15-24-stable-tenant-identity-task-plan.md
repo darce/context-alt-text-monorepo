@@ -104,12 +104,16 @@ Proof: PHPUnit covering all four levels + stickiness across simulated URL change
 Changes: whoami route; `ensure_tenant_exists()` call sites gated; structured 403/409 details; tests.
 Proof: pytest — valid key returns claim; analyze with mismatched tenant fails 403 with no new tenant row.
 
-### Slice 3: Pairing flow + derivation removal
+### Slice 3: Pairing flow + local re-key + derivation removal
 
-**Goal**: successful service-mode connection test adopts the key's tenant claim; legacy derivation deleted.
+**Goal**: successful service-mode connection test adopts the key's tenant claim under an explicit conflict policy, local data follows the identity, and legacy derivation is deleted.
 
-Changes: `/settings/test` pairing write; delete `derive_from_site_url()`; docs note in epic.
-Proof: PHPUnit pairing test; `grep -r derive_from_site_url` returns nothing; full plugin + service suites green.
+**Pairing conflict policy**: pairing adopts the key's `tenant_claim` only when the persisted option is unset or already equal. On mismatch, pairing does NOT silently re-key: the test endpoint returns a structured conflict (`{persisted_tenant_id, key_tenant_id}`) and the UI requires explicit operator confirmation before adoption.
+
+**Local re-key reconciliation**: local tenant-scoped tables (`wp_acx_clusters`, `wp_acx_identity_members`, `wp_acx_sync_outbox`, `wp_acx_sync_conflicts`, `wp_acx_topology_commands`) carry `tenant_id`. Any identity change (confirmed pairing adoption, or first persistence differing from rows written under a legacy derived id) re-keys those rows in a single transaction via `run_transactional` (sr-009); if row counts exceed a bounded threshold, fall back to a forced snapshot re-sync instead of in-place re-key.
+
+Changes: `/settings/test` pairing write with conflict policy; local re-key transaction (or re-sync fallback); delete `derive_from_site_url()`; docs note in epic.
+Proof: PHPUnit pairing tests covering adopt/conflict/confirm paths; re-key test asserting no orphaned local rows after identity change; `grep -r derive_from_site_url` returns nothing; full plugin + service suites green.
 
 ## Consolidated Checklist
 
@@ -133,7 +137,8 @@ Proof: PHPUnit pairing test; `grep -r derive_from_site_url` returns nothing; ful
 
 ### Checklist for Slice 3: Pairing + cleanup
 
-- [ ] Pairing persists canonical tenant id on successful test
+- [ ] Pairing persists canonical tenant id on successful test, with mismatch-confirmation path tested
+- [ ] Local re-key transaction (or re-sync fallback) leaves zero orphaned tenant-scoped local rows
 - [ ] `derive_from_site_url()` deleted; no references remain
 - [ ] Slice-complete decision + dashboard render
 

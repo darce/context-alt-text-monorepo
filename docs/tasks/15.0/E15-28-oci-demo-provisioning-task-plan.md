@@ -75,7 +75,7 @@ Slice 1: infra — demo compose project (`docker-compose.demo.yml` parameterized
 | Surface | File | Change |
 | --- | --- | --- |
 | Compose | `apps/prototype-description-service/docker-compose.demo.yml` (new) or `infra/oci/demo/` | WP+MariaDB stack, limits |
-| Caddy | `/opt/acx-backend/Caddyfile` source-of-truth copy in repo | demo vhost |
+| Caddy | repo-tracked Caddyfile (source of truth); `make deploy-demo` rsyncs it to `/opt/acx-backend/Caddyfile` + `caddy reload` | demo vhost; VM-local Caddyfile edits forbidden (drift guard) |
 | Make | root `Makefile` | `deploy-demo` target |
 | Bootstrap | `infra/oci/demo/bootstrap-wp.sh` (new) | wp-cli install + plugin + constants |
 | Packaging | plugin build script | zip/dist artifact for container install |
@@ -98,11 +98,13 @@ Slice 1: infra — demo compose project (`docker-compose.demo.yml` parameterized
 Changes: compose + Caddy vhost + DNS + systemd + make target + limits.
 Proof: curl matrix green; `docker stats` shows limits; API latency unchanged under demo load (basic ab/hey check).
 
-### Slice 2: WP bootstrap + tenant provisioning
+### Slice 2: WP bootstrap + tenant provisioning + WP hardening
 
-**Goal**: WP configured non-interactively with the ACX plugin against the live API using an explicitly minted demo tenant/key.
+**Goal**: WP configured non-interactively with the ACX plugin against the live API using an explicitly minted demo tenant/key, hardened for public exposure.
 
-Changes: bootstrap script; plugin packaging; constants config; key-minting runbook; CORS entry.
+WP hardening deliverables (the epic's security baseline covers only the API; a public WP admin is its own attack surface): generated strong admin credentials stored in the secrets `.env`, xmlrpc disabled, login rate limiting at the Caddy vhost, WP core/plugin auto-updates enabled, and an optional nightly demo-content reset documented as a runbook step.
+
+Changes: bootstrap script; plugin packaging; constants config; key-minting runbook; CORS entry; hardening steps above.
 Proof: fresh `make deploy-demo` from clean state reaches a configured admin; settings page shows constant-provenance config; `/settings/test` passes against prod API.
 
 ### Slice 3: Seed content + end-to-end proof + epic revision
@@ -130,6 +132,7 @@ Proof: scan-to-curation walkthrough recorded; offline sovereignty demonstration 
 
 - [ ] Non-interactive bootstrap + packaging + constants config working from clean state
 - [ ] Demo tenant/key minted via CLI; CORS updated
+- [ ] WP hardening landed (creds in secrets env, xmlrpc off, login rate limit, auto-updates, reset runbook)
 - [ ] Evidence recorded
 
 ### Checklist for Slice 3: Content + proof

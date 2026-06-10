@@ -405,6 +405,25 @@ class SettingsControllerTest extends TestCase
         $this->assertSame($persisted, get_option('acx_recognition_tenant_id'));
     }
 
+    public function testProbePairingAdoptsWhenFilterMatchesKeyDespiteStaleOption(): void
+    {
+        $this->configureProbe();
+        $staleOption = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+        $keyTenant   = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+        $this->setOption('acx_recognition_tenant_id', $staleOption);
+        add_filter('acx_recognition_tenant_id', static fn () => $keyTenant);
+        $this->queueHttpResponse($this->buildOkResponse());
+        $this->queueHttpResponse($this->buildWhoamiResponse($keyTenant));
+
+        $data = $this->controller
+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
+            ->get_data();
+
+        $this->assertSame(ProbeOutcome::CONNECTED, $data['outcome']);
+        $this->assertTrue($data['tenant_paired']);
+        $this->assertSame($keyTenant, get_option('acx_recognition_tenant_id'));
+    }
+
     public function testProbePairingConfirmAdoptsAndRekeysLocalRows(): void
     {
         global $wpdb;

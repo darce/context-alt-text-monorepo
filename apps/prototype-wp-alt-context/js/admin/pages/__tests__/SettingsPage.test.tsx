@@ -271,6 +271,20 @@ describe('SettingsPage', () => {
       expect(banner.getAttribute('role')).toBe('status');
     });
 
+    it('renders a pairing warning when health succeeds but pairing fails', () => {
+      renderWithLoadedSettings();
+      driveOutcome({
+        outcome: 'connected',
+        status_code: 200,
+        pairing_error: 'database unavailable',
+      });
+      const banner = bannerFor('connected');
+      expect(banner).toHaveTextContent('tenant pairing failed');
+      expect(banner).toHaveTextContent('database unavailable');
+      expect(banner.className).toContain('notice-warning');
+      expect(banner.getAttribute('role')).toBe('alert');
+    });
+
     it('renders the not_configured banner', () => {
       renderWithLoadedSettings();
       driveOutcome({ outcome: 'not_configured' });

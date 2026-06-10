@@ -75,6 +75,7 @@ export interface TestConnectionResponse {
   tenant_id_source?: SettingsResponse['tenant_id_source'];
   rekey_strategy?: 'rekey' | 'resync';
   rekey_updated_rows?: number;
+  pairing_error?: string;
 }
 
 export const fetchSettings = async (): Promise<SettingsResponse> => {

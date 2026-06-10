@@ -260,6 +260,9 @@ async def analyze_media_multipart(
             detail="tenant mismatch between auth and request envelope",
         )
 
+    if session is not None and hasattr(session, "execute") and is_postgres(session):
+        await require_tenant_record(session, tenant_uuid)
+
     object_store = object_store_factory(canonical_tenant_id)
 
     media_items_list = multipart_to_media_items(
@@ -290,8 +293,6 @@ async def analyze_media_multipart(
     # row exists for cleanup-by-job_id to find later).
     persistence_committed = False
     try:
-        if session is not None:
-            await require_tenant_record(session, tenant_uuid)
         persisted_job_id = await scan_queue.create_scan_job_record(
             tenant_id=tenant_uuid,
             total=len(media_items_list),

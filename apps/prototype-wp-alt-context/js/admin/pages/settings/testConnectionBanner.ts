@@ -39,7 +39,19 @@ export const renderBanner = (result: TestConnectionResponse): BannerCopy => {
   const outcome: TestConnectionOutcomeValue = result.outcome;
   const isLocalProbe = result.probe_mode === 'local_liveness';
   switch (outcome) {
-    case TestConnectionOutcome.CONNECTED:
+    case TestConnectionOutcome.CONNECTED: {
+      const pairingError =
+        typeof result.pairing_error === 'string' && result.pairing_error.trim() !== ''
+          ? result.pairing_error.trim()
+          : null;
+      if (pairingError) {
+        return {
+          tone: 'warning',
+          role: 'alert',
+          primary: __('Connection successful, but tenant pairing failed.', 'alt-context'),
+          remediation: pairingError,
+        };
+      }
       return {
         tone: 'success',
         role: 'status',
@@ -53,6 +65,7 @@ export const renderBanner = (result: TestConnectionResponse): BannerCopy => {
             )
           : __('The plugin authenticated against the recognition service and the pool is healthy.', 'alt-context'),
       };
+    }
     case TestConnectionOutcome.NOT_CONFIGURED:
       return {
         tone: 'warning',

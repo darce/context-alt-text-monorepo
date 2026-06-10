@@ -53,6 +53,11 @@ def _check_lock(lock_path: Path) -> list[str]:
             errors.append(f"{rel_lock}: components[{index}] is not an object")
             continue
         label = component.get("name") or f"components[{index}]"
+        if component.get("mode") == "add":
+            # mode:add components are net-new local additions with no upstream
+            # counterpart; base_path/upstream_digest are null by design (mirrors
+            # overrides.yaml). There is nothing to diff a digest against.
+            continue
         base_rel = component.get("base_path")
         digest = component.get("upstream_digest")
         if not base_rel:

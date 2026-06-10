@@ -381,28 +381,24 @@ class SplitTopologyCommandDrain {
 			return;
 		}
 
-		if ( $this->project_split_conflict_via_targeted_snapshot( $tenant_id, $command, $result ) ) {
+		$affected_cluster_ids = $this->extract_affected_cluster_ids( $command, $result );
+		$reconciled_payload   = ! empty( $affected_cluster_ids )
+			? $this->fetch_targeted_snapshot_for_clusters( $tenant_id, $affected_cluster_ids )
+			: null;
+
+		if ( $this->project_split_conflict_via_targeted_snapshot( $tenant_id, $command, $result, $reconciled_payload ) ) {
 			return;
 		}
 
-		$affected_cluster_ids = $this->extract_affected_cluster_ids( $command, $result );
-		$reconciled_payload = ! empty( $affected_cluster_ids )
-			? $this->fetch_targeted_snapshot_for_clusters( $tenant_id, $affected_cluster_ids )
-			: null;
 		$this->project_split_conflict_via_full_snapshot( $tenant_id, $command, $result, $reconciled_payload );
 	}
 
 	/**
 	 * @param array<string,mixed> $command
 	 * @param array<string,mixed> $result
+	 * @param array<string,mixed>|WP_Error|null $reconciled_payload
 	 */
-	private function project_split_conflict_via_targeted_snapshot( string $tenant_id, array $command, array $result ): bool {
-		$affected_cluster_ids = $this->extract_affected_cluster_ids( $command, $result );
-		if ( empty( $affected_cluster_ids ) ) {
-			return false;
-		}
-
-		$reconciled_payload = $this->fetch_targeted_snapshot_for_clusters( $tenant_id, $affected_cluster_ids );
+	private function project_split_conflict_via_targeted_snapshot( string $tenant_id, array $command, array $result, $reconciled_payload ): bool {
 		if ( ! is_array( $reconciled_payload ) || ! $this->reconcile_targeted_snapshot( $tenant_id, $command, $reconciled_payload ) ) {
 			return false;
 		}

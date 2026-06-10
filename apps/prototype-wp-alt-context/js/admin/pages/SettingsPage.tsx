@@ -22,6 +22,7 @@ import { useSettingsPageState } from './settings/useSettingsPageState';
 export const SettingsPage = (): React.JSX.Element => {
   const queryClient = useQueryClient();
 
+
   const settingsQuery = useQuery<SettingsResponse>({
     queryKey: ['settings'],
     queryFn: fetchSettings,
@@ -148,7 +149,7 @@ export const SettingsPage = (): React.JSX.Element => {
         {__('Configure the connection to the Alt Context recognition service.', 'alt-context')}
       </p>
 
-      <SettingsRoutingBanner data={data} hasUnsavedRoutingChanges={hasUnsavedRoutingChanges} />
+      <SettingsRoutingBanner />
 
       <SettingsForm
         data={data}
@@ -164,12 +165,17 @@ export const SettingsPage = (): React.JSX.Element => {
         testPending={testMutation.isPending}
         canTestActiveTarget={canTestActiveTarget}
         hasUnsavedRoutingChanges={hasUnsavedRoutingChanges}
+        testResult={state.testResult}
         onUrlChange={(value) => dispatch({ type: 'setUrl', value })}
         onLocalUrlChange={(value) => dispatch({ type: 'setLocalUrl', value })}
         onRecognitionSourceChange={(value) => dispatch({ type: 'setRecognitionSource', value })}
         onApiKeyChange={(value) => dispatch({ type: 'setApiKey', value })}
         onSave={handleSave}
         onTest={handleTest}
+        onFocusServiceUrl={() => {
+          dispatch({ type: 'setRecognitionSource', value: RecognitionSource.SERVICE });
+          document.getElementById('acx-settings-url')?.focus();
+        }}
       />
 
       {state.saveMessage ? (

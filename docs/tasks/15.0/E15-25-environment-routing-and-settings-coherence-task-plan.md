@@ -34,7 +34,7 @@ Two layers of failure. Acute: the Radix radio group (`js/components/ui/radio-gro
 
 ## Terminology
 
-- **Mode**: `local` | `service` — which resolver branch routes requests (existing `acx_recognition_source`).
+- **Mode**: shorthand used by this plan for the value of `acx_recognition_source` (`local` | `service`) — the same concept the code, options, and all user-facing copy call **Recognition source**; UI copy keeps "Recognition source", and values come from the single canonical constants definition (sr-007).
 - **Target card**: UI unit representing one routable destination (Local dev, Hosted service) with URL, credential state, and live health.
 - **Effective target**: the URL+mode the next request will actually use (`effective_target_url`/`effective_target_mode` in settings GET).
 
@@ -53,6 +53,7 @@ Settings page: a "Recognition target" section with two cards — Local developme
 
 - Rules: `docs/workstate/rules/frontend-guidelines.md`, `docs/workstate/rules/testing-typescript.md`, `docs/workstate/rules/backend-php-guidelines.md`
 - Contracts: `SettingsResponse` (`js/admin/api/settingsApi.ts:4-16`), settings REST controller GET/POST/test
+- E15-12 contract: [E15-12-standard-deployment-reset-and-recognition-source-task-plan.md](E15-12-standard-deployment-reset-and-recognition-source-task-plan.md) — its shipped reset/deployment flows may rely on saved-URL-implies-service inference; characterize before Slice 2 (rg-006).
 - Handoff/MCP: E15-25 task ref; E15-1b plan for shipped UX scope; E15-24 plan for tenant fields.
 
 ## Contract and Boundary Impact
@@ -99,7 +100,9 @@ Proof: built CSS contains `.acx-radio-group` rules; manual LocalWP screenshot; m
 
 **Goal**: mode resolution is the explicit chain only; precedence is fully characterized.
 
-Changes: characterization tests for current matrix first, then delete inference branch, update tests to target semantics.
+**Precondition**: audit E15-12's shipped reset/deployment flows and documented commands for reliance on URL-presence inference; record the audit result in the slice decision before deleting the branch.
+
+Changes: characterization tests for current matrix first, then delete inference branch, update tests to target semantics; adjust any E15-12 documented flow that relied on inference in the same slice.
 Proof: PHPUnit matrix green; saved service URL + no explicit source resolves `local`.
 
 ### Slice 3: Target-card settings redesign

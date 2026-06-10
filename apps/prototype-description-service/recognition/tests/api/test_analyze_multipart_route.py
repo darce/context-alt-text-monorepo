@@ -73,6 +73,10 @@ class _FakeScanQueue:
 class _CommitOnlySession:
     def __init__(self) -> None:
         self.commit_calls = 0
+        self.bind = type("Bind", (), {"dialect": type("Dialect", (), {"name": "postgresql"})()})()
+
+    async def execute(self, *args, **kwargs):
+        return None
 
     async def commit(self) -> None:
         self.commit_calls += 1
@@ -157,7 +161,7 @@ def test_multipart_happy_path_returns_202_and_stores_blob(
     assert expected.read_bytes() == PNG_BYTES
 
 
-def test_multipart_ensures_tenant_exists_before_persisting_job(
+def test_multipart_ensures_tenant_exists_before_blob_writes(
     tmp_path: Path, tenant_id: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("RECOGNITION_ASYNC_ANALYZE_INLINE", "0")
@@ -187,6 +191,7 @@ def test_multipart_ensures_tenant_exists_before_persisting_job(
         return None
 
     monkeypatch.setattr(mod, "require_tenant_record", _require_tenant_record)
+    monkeypatch.setattr(mod, "is_postgres", lambda _session: True)
     monkeypatch.setattr(mod, "chain_populate_and_process", _noop_chain)
 
     client = TestClient(fastapi_app)

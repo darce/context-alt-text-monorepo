@@ -290,12 +290,11 @@ class SettingsController {
 			);
 		}
 
-		$key_tenant_id       = strtolower( trim( $body['tenant_id'] ) );
-		$persisted_tenant_id = strtolower( trim( (string) get_option( TenantIdentity::OPTION_KEY, '' ) ) );
-		$current_resolution  = TenantIdentity::resolve();
-		$current_tenant_id   = strtolower( $current_resolution['value'] );
+		$key_tenant_id      = strtolower( trim( $body['tenant_id'] ) );
+		$current_resolution = TenantIdentity::resolve();
+		$current_tenant_id  = strtolower( $current_resolution['value'] );
 
-		if ( '' === $persisted_tenant_id || $persisted_tenant_id === $key_tenant_id ) {
+		if ( $current_tenant_id === $key_tenant_id ) {
 			TenantIdentity::adopt_paired_tenant( $key_tenant_id );
 			return array(
 				'tenant_paired'    => true,
@@ -304,10 +303,10 @@ class SettingsController {
 			);
 		}
 
-		if ( $persisted_tenant_id !== $key_tenant_id && ! $confirm_pairing ) {
+		if ( ! $confirm_pairing ) {
 			return array(
 				'outcome'             => ProbeOutcome::TENANT_PAIRING_CONFLICT,
-				'persisted_tenant_id' => $persisted_tenant_id,
+				'persisted_tenant_id' => $current_tenant_id,
 				'key_tenant_id'       => $key_tenant_id,
 			);
 		}

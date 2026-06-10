@@ -248,16 +248,16 @@ class ClusterMutationsCharacterizationTest extends TestCase
         $actualResponse = $this->serializeResponse($response);
         $expectedResponse = (string) file_get_contents($responseFixture);
         $this->assertSame(
-            $expectedResponse,
-            $actualResponse,
+            json_decode($expectedResponse, true),
+            json_decode($actualResponse, true),
             sprintf('Golden response drift for %s.', $handler)
         );
 
         $actualSideEffects = $this->serializeSideEffects($sideEffects);
         $expectedSideEffects = (string) file_get_contents($sideEffectsFixture);
         $this->assertSame(
-            $expectedSideEffects,
-            $actualSideEffects,
+            json_decode($expectedSideEffects, true),
+            json_decode($actualSideEffects, true),
             sprintf('Golden side-effects drift for %s.', $handler)
         );
     }

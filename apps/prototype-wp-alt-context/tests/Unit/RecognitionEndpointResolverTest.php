@@ -123,4 +123,39 @@ class RecognitionEndpointResolverTest extends TestCase
         $this->assertSame('local', $snapshot['recognition_source']);
         $this->assertSame('option', $snapshot['recognition_source_source']);
     }
+
+    public function testFilterSourcedRecognitionSourcePrecedesOption(): void
+    {
+        $this->setOption('acx_recognition_source', 'local');
+        add_filter(
+            'acx_recognition_source',
+            static fn(): string => 'service'
+        );
+
+        $snapshot = $this->resolver->resolve_settings_snapshot();
+
+        $this->assertSame('service', $snapshot['recognition_source']);
+        $this->assertSame('filter', $snapshot['recognition_source_source']);
+    }
+
+    /**
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testConstantRecognitionSourcePrecedesOption(): void
+    {
+        if (!defined('ACX_RECOGNITION_SOURCE')) {
+            define('ACX_RECOGNITION_SOURCE', 'service');
+        }
+
+        $this->setOption('acx_recognition_source', 'local');
+        $this->setOption('acx_recognition_url', 'https://api.altcontext.com');
+
+        $resolver = new RecognitionEndpointResolver();
+        $snapshot = $resolver->resolve_settings_snapshot();
+
+        $this->assertSame('service', $snapshot['recognition_source']);
+        $this->assertSame('constant', $snapshot['recognition_source_source']);
+        $this->assertSame('https://api.altcontext.com', $snapshot['effective_target_url']);
+    }
 }

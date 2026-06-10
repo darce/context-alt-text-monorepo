@@ -1340,9 +1340,9 @@ if (!function_exists('number_format_i18n')) {
 }
 
 if (!function_exists('wp_json_encode')) {
-    function wp_json_encode($data)
+    function wp_json_encode($data, $options = 0, $depth = 512)
     {
-        return json_encode($data);
+        return json_encode($data, $options, $depth);
     }
 }
 

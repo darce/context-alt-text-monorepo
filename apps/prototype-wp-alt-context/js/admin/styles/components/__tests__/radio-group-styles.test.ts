@@ -24,6 +24,7 @@ describe('E15-25 slice 1: radio-group stylesheet', () => {
     expect(source).toMatch(/data-state=['"]checked['"]/);
     expect(source).toContain('var(--acx-color-border)');
     expect(source).toContain('var(--acx-color-accent)');
+    expect(source).toContain('appearance: none');
     expect(source).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
   });
 
@@ -38,6 +39,8 @@ describe('E15-25 slice 1: radio-group stylesheet', () => {
     const cssFiles = globSync(join(appRoot, 'public/assets/dist/assets/*.css'));
     const combined = cssFiles.map((filePath) => readFileSync(filePath, 'utf8')).join('\n');
 
-    expect(combined.match(/acx-radio-group/g)?.length ?? 0).toBeGreaterThan(0);
+    expect(combined).toContain('.acx-radio-group__item');
+    expect(combined).toContain('.acx-radio-group__indicator');
+    expect(combined).toMatch(/data-state=.?checked/);
   }, 120_000);
 });

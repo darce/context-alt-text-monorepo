@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator
 from uuid import UUID
 
 from asyncpg.exceptions import InFailedSQLTransactionError
+from fastapi import HTTPException, status
 from sqlalchemy import event, select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +18,40 @@ from db.session import engine
 from recognition.shared.db.dialect import is_sqlite
 
 logger = logging.getLogger(__name__)
+
+TENANT_PROVISIONING_PATH = "manage_api_keys"
+
+
+def tenant_not_provisioned_detail(tenant_id: UUID) -> dict[str, str]:
+    """Structured 403 payload for unknown tenant on authenticated tenant-scoped routes."""
+    return {
+        "code": "tenant_not_provisioned",
+        "tenant_id": str(tenant_id),
+        "detail": (
+            "Tenant is not provisioned. Create the tenant via manage_api_keys before sending tenant-scoped requests."
+        ),
+        "provisioning_path": TENANT_PROVISIONING_PATH,
+    }
+
+
+async def get_tenant_record(session: AsyncSession, tenant_id: UUID):
+    """Return the tenant row when it exists."""
+    from db.models import Tenant  # Import here to avoid circular dependency
+
+    result = await session.execute(select(Tenant).where(Tenant.id == tenant_id))
+    return result.scalar_one_or_none()
+
+
+async def require_tenant_record(session: AsyncSession, tenant_id: UUID):
+    """Require a provisioned tenant row or fail fast with structured detail."""
+    tenant = await get_tenant_record(session, tenant_id)
+    if tenant is not None:
+        return tenant
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=tenant_not_provisioned_detail(tenant_id),
+    )
 
 
 async def ensure_tenant_exists(session: AsyncSession, tenant_id: UUID, site_url: str | None = None) -> None:
@@ -31,13 +66,11 @@ async def ensure_tenant_exists(session: AsyncSession, tenant_id: UUID, site_url:
     that haven't been explicitly registered. The tenant is created with minimal
     metadata that can be updated later via admin endpoints.
     """
-    from db.models import Tenant  # Import here to avoid circular dependency
-
-    # Check if tenant exists
-    result = await session.execute(select(Tenant).where(Tenant.id == tenant_id))
-    existing = result.scalar_one_or_none()
+    existing = await get_tenant_record(session, tenant_id)
 
     if existing is None:
+        from db.models import Tenant  # Import here to avoid circular dependency
+
         # Auto-provision with placeholder site_url
         placeholder_url = site_url or f"auto-provisioned-{str(tenant_id)[:8]}"
         tenant = Tenant(id=tenant_id, site_url=placeholder_url)

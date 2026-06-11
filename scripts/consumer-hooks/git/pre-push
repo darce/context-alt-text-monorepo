@@ -8,8 +8,6 @@ if [ -z "$REPO_ROOT" ]; then
     exit 0
 fi
 
-cat >/dev/null
-
 "$REPO_ROOT/scripts/hooks/git/pre-push" "$@" || exit $?
 
 "$REPO_ROOT/scripts/consumer-hooks/run-php-characterization.sh" || exit $?

@@ -17,6 +17,14 @@ CHARACTERIZATION_FILTER = (
     "ClusterMutationsCharacterizationTest|"
     "ClustersControllerCharacterizationTest"
 )
+OVERLAY_LIFECYCLE_HOOKS = (
+    "post-checkout",
+    "post-commit",
+    "post-merge",
+    "post-rewrite",
+    "pre-commit",
+)
+HOOK_DIR = REPO_ROOT / "scripts" / "consumer-hooks" / "git"
 
 
 def test_ci_workflow_runs_characterization_suites_on_main_prs() -> None:
@@ -26,6 +34,34 @@ def test_ci_workflow_runs_characterization_suites_on_main_prs() -> None:
     assert "main" in content
     assert "vendor/bin/phpunit" in content
     assert CHARACTERIZATION_FILTER in content
+
+
+def test_consumer_hooks_delegate_overlay_lifecycle_hooks() -> None:
+    for hook_name in OVERLAY_LIFECYCLE_HOOKS:
+        hook_path = HOOK_DIR / hook_name
+        assert hook_path.exists(), f"missing consumer hook delegate: {hook_name}"
+        target = hook_path.resolve()
+        overlay_hook = (REPO_ROOT / "scripts" / "hooks" / "git" / hook_name).resolve()
+        assert target == overlay_hook, f"{hook_name} must delegate to overlay hook"
+
+
+def test_git_merge_can_retain_stale_slash_escaping(tmp_path: Path) -> None:
+    """Prove the forked-before-fix vector: merge can land stale \\/ bytes in the tree."""
+    base = tmp_path / "base.json"
+    ours = tmp_path / "ours.json"
+    theirs = tmp_path / "theirs.json"
+    base.write_text('{"url":"http://example.test"}', encoding="utf-8")
+    ours.write_text('{"url":"http:\\/\\/example.test"}', encoding="utf-8")
+    theirs.write_text('{"url":"http://example.test"}', encoding="utf-8")
+    proc = subprocess.run(
+        ["git", "merge-file", str(ours), str(base), str(theirs)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0
+    merged = ours.read_text(encoding="utf-8")
+    assert "http:\\/\\/" in merged
 
 
 def test_consumer_pre_push_extension_delegates_overlay_and_runs_gate() -> None:

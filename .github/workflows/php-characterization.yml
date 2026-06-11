@@ -9,6 +9,7 @@ on:
       - "apps/prototype-wp-alt-context/**"
       - ".github/workflows/php-characterization.yml"
       - "scripts/consumer-hooks/**"
+      - "scripts/test_php_characterization_gate.py"
   push:
     branches:
       - main
@@ -17,6 +18,7 @@ on:
       - "apps/prototype-wp-alt-context/**"
       - ".github/workflows/php-characterization.yml"
       - "scripts/consumer-hooks/**"
+      - "scripts/test_php_characterization_gate.py"
 
 jobs:
   php-characterization:

@@ -2,7 +2,9 @@ import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 
 import type { SyncHealth, WorkbenchOverlay } from '../../api/recognition';
+import { useSyncHealth } from '../../hooks/useSyncHealth';
 import { useSyncStatus } from '../../hooks/useSyncStatus';
+import { shouldShowDegradedBanner } from './degradedModeBannerLogic';
 import { useSyncTrigger } from '../../hooks/useSyncTrigger';
 import { useRetentionStatus } from '../../hooks/useRetentionStatus';
 import type { PipelinePhase } from '../../hooks/jobStateMachineUtils';
@@ -124,6 +126,7 @@ export const SyncStatusIndicator = ({
   onRetryProjection,
 }: SyncStatusIndicatorProps): React.JSX.Element | null => {
   const { data, isError, isLoading } = useSyncStatus();
+  const { data: syncHealthEnvelope } = useSyncHealth();
   const retentionStatus = useRetentionStatus();
   const syncTrigger = useSyncTrigger(data?.is_stale ?? false);
 
@@ -329,7 +332,9 @@ export const SyncStatusIndicator = ({
     );
   }
 
-  const idleState = buildIdleState(data.sync_health, data.last_synced_at, activeSection);
+  const effectiveSyncHealth =
+    syncHealthEnvelope && shouldShowDegradedBanner(syncHealthEnvelope) ? 'offline' : data.sync_health;
+  const idleState = buildIdleState(effectiveSyncHealth, data.last_synced_at, activeSection);
 
   return (
     <div className={`acx-sync-status${idleState.toneClassName ? ` ${idleState.toneClassName}` : ''}`}>

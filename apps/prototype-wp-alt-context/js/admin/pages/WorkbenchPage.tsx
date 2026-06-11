@@ -2,7 +2,6 @@ import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
-import { DegradedModeBanner } from './workbench/DegradedModeBanner';
 import { SyncStatusIndicator } from './workbench/SyncStatusIndicator';
 import { ScanTabContent } from './workbench/ScanTabContent';
 import { ConfirmTabContent } from './workbench/ConfirmTabContent';
@@ -83,7 +82,6 @@ const WorkbenchPageContent = (): React.JSX.Element => {
         </TabsList>
 
         <div className="acx-workbench__panels">
-          <DegradedModeBanner />
           <SyncStatusIndicator
             activeSection={activeSection}
             pipelinePhase={currentPhase}

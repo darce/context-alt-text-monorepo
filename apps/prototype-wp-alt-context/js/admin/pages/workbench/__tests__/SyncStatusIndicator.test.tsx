@@ -69,6 +69,13 @@ vi.mock('../../../hooks/useSyncStatus', () => ({
   useSyncStatus: () => mockReturn as unknown as UseQueryResult<SyncStatusResponse>,
 }));
 
+vi.mock('../../../hooks/useSyncHealth', () => ({
+  useSyncHealth: () =>
+    createMockQuery({
+      data: undefined,
+    }),
+}));
+
 vi.mock('../../../hooks/useSyncTrigger', () => ({
   useSyncTrigger: () => mockTrigger,
 }));

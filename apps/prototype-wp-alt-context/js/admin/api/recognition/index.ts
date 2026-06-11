@@ -135,7 +135,7 @@ export {
 } from './identityApi';
 
 // Sync status
-export { fetchSyncStatus, triggerSync, resetMirror } from './syncApi';
+export { fetchSyncHealth, fetchSyncStatus, triggerSync, resetMirror } from './syncApi';
 
 // Retention
 export {

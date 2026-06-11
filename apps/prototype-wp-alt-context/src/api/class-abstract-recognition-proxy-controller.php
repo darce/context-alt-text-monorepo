@@ -99,7 +99,7 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 
 		$policy = $this->get_proxy_policy()->resolve( $method, $request_class );
 		$circuit_key = $this->build_circuit_breaker_key( $base_url );
-		$failure_key = $circuit_key . '_failures';
+		$failure_key = RecognitionCircuitKeys::failure_key_for_base_url( $base_url );
 
 		if ( $policy['circuit_enabled'] && false !== get_transient( $circuit_key ) ) {
 			return new WP_Error(

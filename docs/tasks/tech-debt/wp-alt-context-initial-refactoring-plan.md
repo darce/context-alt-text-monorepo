@@ -103,3 +103,21 @@ Two Hats: refactor hat XOR feature hat — never both in one commit (Fowler Ch2)
 ## Convergence
 
 Done when: gates green at HEAD (TS + PHP + `make check-all`); behavior unchanged (char/existing tests prove it); each slice's decision recorded via `record_event` + user notified; no unrelated diff hunks; distilled-doc citation in each decision rationale.
+
+---
+
+## Closure (2026-06-11)
+
+**Status: CLOSED.** All eight ranked targets landed on `main` as REFA-1..8 (REFA-6 covered ranks 6+8; REFA-8 was an emergent fixture-drift slice; REFA-7B was a post-merge review fix). Every slice was characterization-backed, gated through `handoff_close_check(enforce=True)`, and merged behavior-preserving. All 110 review findings across the nine task refs are disposed (integrated/resolved/wontfix/deferred); zero open.
+
+Deferral ledger at closure — every deferred finding now has a live owner:
+
+| Finding | Item | Owner |
+|---|---|---|
+| REFA-1 210 (high) | sr-009 `run_transactional` migration (11 inline transaction sites) | `current-debt.md` #25 → REFA-9 task plan |
+| REFA-1 213 + REFA-4 423 (low) | sr-007 shared status enums | `current-debt.md` #26 |
+| REFA-3 287 (high) | deterministic workbench visual baseline (needs seeded fixtures) | debt #12 / E15-6 Playwright harness plan |
+| REFA-5 453 (medium) | perf: per-member INSERT loop + LEFT JOIN orphan scan | debt #11 (profiled perf follow-up) |
+| REFA-4 424, REFA-6 470, REFA-7 766, REFA-8 746 (low) | shallow per-service tests; split-loop micro-cost; harness split; commit-prefix cosmetics | accepted as-is, no action |
+
+Out-of-scope by design and excluded from this closure: E15-26 (boundary resilience) and E15-27 (scan-pipeline reliability) own the drain-seam and progress-envelope follow-ons; cross-stack Python/TS items from `refactoring-evaluation.md` (H1 repository split, H3/H5 value objects) were never in this plan's WP-plugin scope and remain tracked in that evaluation's triage checklist.

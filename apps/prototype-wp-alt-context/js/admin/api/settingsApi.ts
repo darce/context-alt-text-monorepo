@@ -83,10 +83,17 @@ export const saveSettings = async (payload: SaveSettingsPayload): Promise<SaveSe
   });
 };
 
-export const testConnection = async (): Promise<TestConnectionResponse> => {
+export interface TestConnectionPayload {
+  probe_target?: RecognitionSourceValue;
+}
+
+export const testConnection = async (
+  payload: TestConnectionPayload = {},
+): Promise<TestConnectionResponse> => {
   const endpoint = getEndpoint('settingsTest');
   return fetchRequiredApi<TestConnectionResponse>(endpoint, {
     method: 'POST',
     restNonce: getConfig().nonce,
+    body: payload,
   });
 };

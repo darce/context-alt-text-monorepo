@@ -1,0 +1,40 @@
+import { describe, expect, expectTypeOf, it } from 'vitest';
+
+import type { SettingsResponse } from '../settingsApi';
+
+const SETTINGS_RESPONSE_KEYS = [
+  'url',
+  'url_source',
+  'local_url',
+  'local_url_source',
+  'effective_target_url',
+  'effective_target_mode',
+  'recognition_source',
+  'recognition_source_source',
+  'api_key_set',
+  'api_key_last4',
+  'key_source',
+] as const;
+
+describe('settings response contract', () => {
+  const fixture: SettingsResponse = {
+    url: 'https://api.example.com',
+    url_source: 'option',
+    local_url: 'http://localhost:8000',
+    local_url_source: 'default',
+    effective_target_url: 'https://api.example.com',
+    effective_target_mode: 'service',
+    recognition_source: 'service',
+    recognition_source_source: 'option',
+    api_key_set: true,
+    api_key_last4: '****abcd',
+    key_source: 'option',
+  };
+
+  it('matches the GET /acx/v1/settings envelope consumed by the admin UI', () => {
+    expectTypeOf(fixture).toMatchTypeOf<SettingsResponse>();
+    expect(Object.keys(fixture).sort()).toEqual([...SETTINGS_RESPONSE_KEYS].sort());
+    expect(fixture.effective_target_mode).toBe('service');
+    expect(fixture.recognition_source_source).toBe('option');
+  });
+});

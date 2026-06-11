@@ -161,9 +161,15 @@ class SettingsController {
 	}
 
 	public function test_connection( WP_REST_Request $request ): WP_REST_Response {
-		$snapshot = $this->endpoint_resolver->resolve_settings_snapshot();
-		$mode     = $snapshot['effective_target_mode'];
-		$url      = $snapshot['effective_target_url'];
+		$snapshot     = $this->endpoint_resolver->resolve_settings_snapshot();
+		$probe_target = $request->get_param( 'probe_target' );
+		if ( is_string( $probe_target ) && in_array( $probe_target, array( 'local', 'service' ), true ) ) {
+			$mode = $probe_target;
+			$url  = 'local' === $mode ? $snapshot['local_url'] : $snapshot['service_url'];
+		} else {
+			$mode = $snapshot['effective_target_mode'];
+			$url  = $snapshot['effective_target_url'];
+		}
 
 		if ( 'service' === $mode && '' === $snapshot['service_url'] ) {
 			return new WP_REST_Response(

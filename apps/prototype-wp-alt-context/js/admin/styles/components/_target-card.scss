@@ -37,19 +37,26 @@
     gap: var(--acx-spacing-sm, 12px);
   }
 
+  &__selectable {
+    display: flex;
+    flex-direction: column;
+    gap: var(--acx-spacing-xs, 8px);
+    cursor: pointer;
+    margin: 0;
+  }
+
   &__title {
     display: inline-flex;
     align-items: center;
     gap: var(--acx-spacing-xs, 8px);
     font-weight: var(--acx-font-weight-semibold, 600);
-    cursor: pointer;
     margin: 0;
   }
 
   &__active-badge {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: var(--acx-spacing-xs, 8px);
     margin-left: var(--acx-spacing-xs, 8px);
     font-size: var(--acx-text-sm, 0.85rem);
     color: var(--acx-color-accent);
@@ -63,7 +70,7 @@
   &__health {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: var(--acx-spacing-xs, 8px);
     font-size: var(--acx-text-sm, 0.85rem);
     white-space: nowrap;
 

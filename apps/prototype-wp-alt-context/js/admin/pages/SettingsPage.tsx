@@ -108,9 +108,9 @@ export const SettingsPage = (): React.JSX.Element => {
     saveMutation.mutate(payload);
   };
 
-  const handleTest = () => {
+  const handleTest = (target: RecognitionSourceValue) => {
     dispatch({ type: 'clearTestResult' });
-    testMutation.mutate();
+    testMutation.mutate({ probe_target: target });
   };
 
   if (settingsQuery.isLoading) {
@@ -140,8 +140,6 @@ export const SettingsPage = (): React.JSX.Element => {
     state.recognitionSource !== data.recognition_source ||
     state.localUrl !== data.local_url ||
     state.url !== data.url;
-  const canTestActiveTarget = data.effective_target_mode === RecognitionSource.LOCAL || state.url.trim() !== '';
-
   return (
     <section className="acx-settings" aria-labelledby="acx-settings-title">
       <h2 id="acx-settings-title">{__('Recognition API Settings', 'alt-context')}</h2>
@@ -163,7 +161,6 @@ export const SettingsPage = (): React.JSX.Element => {
         keyReadOnly={keyReadOnly}
         savePending={saveMutation.isPending}
         testPending={testMutation.isPending}
-        canTestActiveTarget={canTestActiveTarget}
         hasUnsavedRoutingChanges={hasUnsavedRoutingChanges}
         testResult={state.testResult}
         onUrlChange={(value) => dispatch({ type: 'setUrl', value })}

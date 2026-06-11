@@ -118,7 +118,7 @@ describe('SettingsPage', () => {
     expect(screen.getByRole('radio', { name: /Hosted service/ })).toBeChecked();
     expect(screen.getByTestId('acx-effective-routing')).toHaveTextContent('https://api.example.com');
     expect(screen.getByRole('button', { name: 'Save Settings' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Check health' })).toBeEnabled();
+    expect(screen.getAllByRole('button', { name: 'Check health' })).toHaveLength(2);
   });
 
   it('saves the recognition source when the operator switches to local mode', () => {
@@ -153,13 +153,28 @@ describe('SettingsPage', () => {
     expect(saveMutate).not.toHaveBeenCalled();
   });
 
-  it('tests connection and invokes the test mutation', () => {
+  it('tests connection and invokes the test mutation with probe_target', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
     render(<SettingsPage />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Check health' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Check health' })[1]);
 
-    expect(testMutate).toHaveBeenCalled();
+    expect(testMutate).toHaveBeenCalledWith({ probe_target: 'service' });
+  });
+
+  it('updates the matching health chip after a successful probe', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    act(() => {
+      capturedTestOptions?.onSuccess?.({
+        outcome: 'connected',
+        probe_mode: 'service_auth',
+      });
+    });
+
+    expect(screen.getByTestId('acx-target-card-service')).toHaveTextContent('Reachable');
+    expect(screen.getByTestId('acx-target-card-local')).toHaveTextContent('Not checked');
   });
 
   it('renders read-only fields when source is constant', () => {
@@ -215,7 +230,7 @@ describe('SettingsPage', () => {
     expect(screen.getByRole('button', { name: 'Configure service URL' })).toBeInTheDocument();
   });
 
-  it('enables Check health on the active local card', () => {
+  it('enables Check health on both configured target cards', () => {
     mockUseQuery.mockReturnValue(
       createMockQuery({
         data: {
@@ -228,7 +243,9 @@ describe('SettingsPage', () => {
     );
     render(<SettingsPage />);
 
-    expect(screen.getByRole('button', { name: 'Check health' })).toBeEnabled();
+    const healthButtons = screen.getAllByRole('button', { name: 'Check health' });
+    expect(healthButtons).toHaveLength(2);
+    healthButtons.forEach((button) => expect(button).toBeEnabled());
   });
 
   it('disables Check health when routing edits are unsaved', () => {
@@ -237,7 +254,9 @@ describe('SettingsPage', () => {
 
     fireEvent.click(screen.getByRole('radio', { name: /Local development/ }));
 
-    expect(screen.getByRole('button', { name: 'Check health' })).toBeDisabled();
+    screen.getAllByRole('button', { name: 'Check health' }).forEach((button) => {
+      expect(button).toBeDisabled();
+    });
     expect(screen.getByText(/Save settings before scanning or testing/)).toBeInTheDocument();
   });
 

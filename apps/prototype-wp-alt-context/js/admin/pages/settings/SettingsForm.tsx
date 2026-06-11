@@ -23,7 +23,6 @@ interface SettingsFormProps {
   keyReadOnly: boolean;
   savePending: boolean;
   testPending: boolean;
-  canTestActiveTarget: boolean;
   hasUnsavedRoutingChanges: boolean;
   testResult: TestConnectionResponse | null;
   onUrlChange: (value: string) => void;
@@ -31,7 +30,7 @@ interface SettingsFormProps {
   onRecognitionSourceChange: (value: RecognitionSourceValue) => void;
   onApiKeyChange: (value: string) => void;
   onSave: (e: React.FormEvent) => void;
-  onTest: () => void;
+  onTest: (target: RecognitionSourceValue) => void;
   onFocusServiceUrl?: () => void;
 }
 
@@ -47,7 +46,6 @@ export const SettingsForm = ({
   keyReadOnly,
   savePending,
   testPending,
-  canTestActiveTarget,
   hasUnsavedRoutingChanges,
   testResult,
   onUrlChange,
@@ -76,13 +74,13 @@ export const SettingsForm = ({
           title={__('Local development', 'alt-context')}
           value={RecognitionSource.LOCAL}
           isEffectiveTarget={localIsEffective}
-          deemphasized={recognitionSource !== RecognitionSource.LOCAL}
+          deemphasized={recognitionSource !== RecognitionSource.LOCAL && !localIsEffective}
           healthStatus={healthStatusForTarget(RecognitionSource.LOCAL, testResult)}
           configured
           disabled={sourceReadOnly}
-          onHealthCheck={recognitionSource === RecognitionSource.LOCAL ? onTest : undefined}
+          onHealthCheck={() => onTest(RecognitionSource.LOCAL)}
           healthCheckPending={testPending}
-          healthCheckDisabled={!canTestActiveTarget || hasUnsavedRoutingChanges}
+          healthCheckDisabled={hasUnsavedRoutingChanges}
         >
           <label htmlFor="acx-settings-local-url">{__('Local service URL', 'alt-context')}</label>
           <input
@@ -105,15 +103,15 @@ export const SettingsForm = ({
           title={__('Hosted service', 'alt-context')}
           value={RecognitionSource.SERVICE}
           isEffectiveTarget={serviceIsEffective}
-          deemphasized={recognitionSource !== RecognitionSource.SERVICE}
+          deemphasized={recognitionSource !== RecognitionSource.SERVICE && !serviceIsEffective}
           healthStatus={healthStatusForTarget(RecognitionSource.SERVICE, testResult)}
           configured={serviceConfigured}
           disabled={sourceReadOnly}
           emptyStateCta={__('Configure service URL', 'alt-context')}
           onEmptyStateCta={onFocusServiceUrl}
-          onHealthCheck={recognitionSource === RecognitionSource.SERVICE ? onTest : undefined}
+          onHealthCheck={() => onTest(RecognitionSource.SERVICE)}
           healthCheckPending={testPending}
-          healthCheckDisabled={!canTestActiveTarget || hasUnsavedRoutingChanges}
+          healthCheckDisabled={hasUnsavedRoutingChanges || !serviceConfigured}
         >
           <label htmlFor="acx-settings-url">{__('Service API URL', 'alt-context')}</label>
           <input

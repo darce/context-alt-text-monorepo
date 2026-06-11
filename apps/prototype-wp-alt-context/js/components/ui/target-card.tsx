@@ -76,39 +76,49 @@ export const TargetCard = ({
 
   return (
     <div className={cardClassName} data-testid={`acx-target-card-${value}`}>
-      <div className="acx-target-card__header">
-        <label className="acx-target-card__title" htmlFor={id}>
-          <RadioGroupItem id={id} value={value} disabled={disabled} aria-label={title} />
-          <span>{title}</span>
-          {isEffectiveTarget ? (
-            <span className="acx-target-card__active-badge">
-              <span aria-hidden="true" className="acx-target-card__active-icon">
-                {'\u2713'}
+      <label className="acx-target-card__selectable" htmlFor={id}>
+        <div className="acx-target-card__header">
+          <span className="acx-target-card__title">
+            <RadioGroupItem id={id} value={value} disabled={disabled} />
+            <span>{title}</span>
+            {isEffectiveTarget ? (
+              <span className="acx-target-card__active-badge">
+                <span aria-hidden="true" className="acx-target-card__active-icon">
+                  {'\u2713'}
+                </span>
+                {__('Active', 'alt-context')}
               </span>
-              {__('Active', 'alt-context')}
-            </span>
-          ) : null}
-        </label>
-        <span className={`acx-target-card__health acx-target-card__health--${healthStatus}`}>
-          <span aria-hidden="true" className="acx-target-card__health-icon">
-            {HEALTH_STATUS_ICONS[healthStatus]}
+            ) : null}
           </span>
-          {HEALTH_STATUS_LABELS[healthStatus]}
-        </span>
-      </div>
-
-      {!configured && emptyStateCta ? (
-        <div className="acx-target-card__empty">
-          <p>{__('No service URL configured yet.', 'alt-context')}</p>
-          {onEmptyStateCta ? (
-            <button type="button" className="button button-secondary" onClick={onEmptyStateCta}>
-              {emptyStateCta}
-            </button>
-          ) : null}
+          <span className={`acx-target-card__health acx-target-card__health--${healthStatus}`}>
+            <span aria-hidden="true" className="acx-target-card__health-icon">
+              {HEALTH_STATUS_ICONS[healthStatus]}
+            </span>
+            {HEALTH_STATUS_LABELS[healthStatus]}
+          </span>
         </div>
-      ) : (
-        <div className="acx-target-card__body">{children}</div>
-      )}
+
+        {!configured && emptyStateCta ? (
+          <div className="acx-target-card__empty">
+            <p>{__('No service URL configured yet.', 'alt-context')}</p>
+            {onEmptyStateCta ? (
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onEmptyStateCta();
+                }}
+              >
+                {emptyStateCta}
+              </button>
+            ) : null}
+          </div>
+        ) : (
+          <div className="acx-target-card__body">{children}</div>
+        )}
+      </label>
 
       {onHealthCheck ? (
         <div className="acx-target-card__actions">

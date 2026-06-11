@@ -10,6 +10,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_DIR = REPO_ROOT / "apps" / "prototype-wp-alt-context"
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "php-characterization.yml"
+MAKEFILE = REPO_ROOT / "Makefile"
 RUNNER = REPO_ROOT / "scripts" / "consumer-hooks" / "run-php-characterization.sh"
 PRE_PUSH = REPO_ROOT / "scripts" / "consumer-hooks" / "git" / "pre-push"
 CHARACTERIZATION_FILTER = (
@@ -45,8 +46,15 @@ def test_consumer_hooks_delegate_overlay_lifecycle_hooks() -> None:
         assert target == overlay_hook, f"{hook_name} must delegate to overlay hook"
 
 
-def test_git_merge_can_retain_stale_slash_escaping(tmp_path: Path) -> None:
-    """Prove the forked-before-fix vector: merge can land stale \\/ bytes in the tree."""
+def test_repo_wide_check_runs_hook_contract_tests() -> None:
+    content = MAKEFILE.read_text(encoding="utf-8")
+    assert "test-hooks" in content.partition("\n\n# Default target")[0]
+    check_all = content.split("check-all:", 1)[1].split("\n# Guard:", 1)[0]
+    assert "$(MAKE) test-hooks" in check_all
+
+
+def test_git_merge_file_can_retain_stale_current_side(tmp_path: Path) -> None:
+    """Document the stale-resolved-tree shape the characterization gate must catch."""
     base = tmp_path / "base.json"
     ours = tmp_path / "ours.json"
     theirs = tmp_path / "theirs.json"
@@ -62,6 +70,26 @@ def test_git_merge_can_retain_stale_slash_escaping(tmp_path: Path) -> None:
     assert proc.returncode == 0
     merged = ours.read_text(encoding="utf-8")
     assert "http:\\/\\/" in merged
+
+
+def test_unchanged_forked_before_fix_side_merges_fixed_bytes(tmp_path: Path) -> None:
+    """Guard against treating an unchanged stale side as the recurrence proof."""
+    base = tmp_path / "base.json"
+    ours = tmp_path / "ours.json"
+    theirs = tmp_path / "theirs.json"
+    base.write_text('{"url":"http:\\/\\/example.test"}', encoding="utf-8")
+    ours.write_text('{"url":"http://example.test"}', encoding="utf-8")
+    theirs.write_text('{"url":"http:\\/\\/example.test"}', encoding="utf-8")
+    proc = subprocess.run(
+        ["git", "merge-file", str(ours), str(base), str(theirs)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0
+    merged = ours.read_text(encoding="utf-8")
+    assert "http:\\/\\/" not in merged
+    assert "http://example.test" in merged
 
 
 def test_consumer_pre_push_extension_delegates_overlay_and_runs_gate() -> None:

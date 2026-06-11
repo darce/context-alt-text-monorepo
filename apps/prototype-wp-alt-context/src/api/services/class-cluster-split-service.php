@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Api\Services;
 
 use AltContext\Api\ClusterMutationHostInterface;
+use AltContext\Support\RunsTransactional;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
 use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
 use AltContext\Sovereign\Sync\SplitTopologyCommandDrain;
@@ -27,6 +28,8 @@ use function method_exists;
 use function sanitize_text_field;
 
 class ClusterSplitService {
+	use RunsTransactional;
+
 	private ClusterMutationHostInterface $host;
 	private SyncStateRepositoryInterface $sync_state_repository;
 	private TopologyCommandRepositoryInterface $topology_command_repository;
@@ -101,45 +104,45 @@ class ClusterSplitService {
 			return new WP_Error( 'acx_db_error', 'Database access is unavailable.', array( 'status' => 500 ) );
 		}
 
-		if ( false === $wpdb->query( 'START TRANSACTION' ) ) {
-			return new WP_Error( 'acx_db_error', 'Could not start local transaction.', array( 'status' => 500 ) );
-		}
+		$result = $this->run_transactional(
+			function () use ( $tenant_id, $cluster_id, $cluster, $payload, $idempotency_key ): WP_REST_Response|WP_Error {
+				$command_id = $this->topology_command_repository->enqueue(
+					$tenant_id,
+					'cluster_split',
+					$cluster_id,
+					max( 0, (int) ( $cluster['snapshot_version'] ?? $this->sync_state_repository->get_snapshot_version( $tenant_id ) ) ),
+					$payload,
+					$idempotency_key
+				);
 
-		$command_id = $this->topology_command_repository->enqueue(
-			$tenant_id,
-			'cluster_split',
-			$cluster_id,
-			max( 0, (int) ( $cluster['snapshot_version'] ?? $this->sync_state_repository->get_snapshot_version( $tenant_id ) ) ),
-			$payload,
-			$idempotency_key
+				if ( false === $command_id ) {
+					return new WP_Error( 'acx_db_error', 'Could not queue split topology command.', array( 'status' => 500 ) );
+				}
+
+				$this->sync_state_repository->touch_local_curation_marker( $tenant_id );
+				$this->sync_state_repository->refresh_curation_metrics( $tenant_id );
+
+				return new WP_REST_Response(
+					array(
+						'command_id' => $command_id,
+						'synced' => false,
+						'status' => 'pending',
+						'command_state' => 'queued',
+						'projection_state' => 'awaiting_backend_partition',
+						'cluster_id' => $cluster_id,
+						'idempotency_key' => $idempotency_key,
+					),
+					200
+				);
+			}
 		);
 
-		if ( false === $command_id ) {
-			$wpdb->query( 'ROLLBACK' );
-			return new WP_Error( 'acx_db_error', 'Could not queue split topology command.', array( 'status' => 500 ) );
-		}
-
-		$this->sync_state_repository->touch_local_curation_marker( $tenant_id );
-		$this->sync_state_repository->refresh_curation_metrics( $tenant_id );
-
-		if ( false === $wpdb->query( 'COMMIT' ) ) {
-			$wpdb->query( 'ROLLBACK' );
-			return new WP_Error( 'acx_db_error', 'Could not commit local transaction.', array( 'status' => 500 ) );
+		if ( is_wp_error( $result ) ) {
+			return $result;
 		}
 
 		SplitTopologyCommandDrain::maybe_schedule_drain();
 
-		return new WP_REST_Response(
-			array(
-				'command_id' => $command_id,
-				'synced' => false,
-				'status' => 'pending',
-				'command_state' => 'queued',
-				'projection_state' => 'awaiting_backend_partition',
-				'cluster_id' => $cluster_id,
-				'idempotency_key' => $idempotency_key,
-			),
-			200
-		);
+		return $result;
 	}
 }

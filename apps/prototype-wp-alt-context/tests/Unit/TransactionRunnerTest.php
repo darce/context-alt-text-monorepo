@@ -29,4 +29,19 @@ class TransactionRunnerTest extends TestCase
         $this->assertContains('ROLLBACK', $wpdb->queries);
         $this->assertNotContains('COMMIT', $wpdb->queries);
     }
+
+    public function testRunTransactionalCommitsOnSuccess(): void
+    {
+        global $wpdb;
+
+        $result = TransactionRunner::run_transactional(
+            static function (): string {
+                return 'purged';
+            }
+        );
+
+        $this->assertSame('purged', $result);
+        $this->assertContains('START TRANSACTION', $wpdb->queries);
+        $this->assertContains('COMMIT', $wpdb->queries);
+    }
 }

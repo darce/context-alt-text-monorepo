@@ -561,9 +561,33 @@ class OutboxDrainTest extends TestCase
 			(new \ReflectionClass(OutboxDrain::class))->getMethods(\ReflectionMethod::IS_PRIVATE)
 		);
 
-		foreach (['process_operation_batch', 'refresh_curation_metrics_for_tenants'] as $expectedMethod) {
+		foreach (['process_operation_batch', 'refresh_curation_metrics_for_tenants', 'purge_terminal_rows_for_tenants'] as $expectedMethod) {
 			$this->assertContains($expectedMethod, $privateMethods, $expectedMethod);
 		}
+	}
+
+	public function testDrainInvokesTerminalPurgeForProcessedTenants(): void
+	{
+		global $wpdb;
+		$wpdb->mockResults = [$this->pendingOperationRow()];
+		$wpdb->mockVar = '1';
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public function dispatch_batch(array $operations): array {
+				return [[
+					'status' => 'acknowledged',
+					'backend_version' => 12,
+				],];
+			}
+		};
+
+		$drain = new OutboxDrain($dispatcher);
+		$drain->drain();
+
+		$this->assertNotSame(
+			'',
+			$this->findFirstQueryContaining($wpdb->queries, 'DELETE FROM `wp_acx_sync_outbox`')
+		);
 	}
 
 	public function testDrainReschedulesWhenBatchLeavesMorePendingOperations(): void

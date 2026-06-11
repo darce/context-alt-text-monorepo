@@ -148,7 +148,7 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded the two test files, fixture trees, `package.json` format scripts, and plugin-cwd `.prettierignore` before editing.
+- [x] Loaded the two test files, fixture trees, `package.json` format scripts, and plugin-cwd `.prettierignore` before editing.
 - [ ] Confirmed no `ctx7` / external dependency context needed.
 - [ ] Confirmed no contract boundary is touched (test-fixture + tooling only).
 
@@ -161,7 +161,7 @@ Proof:
 ### Checklist for Slice 2: Prettier ignore + durability
 
 - [ ] Added `tests/fixtures/**/*.json` exclusion to `apps/prototype-wp-alt-context/.prettierignore`.
-- [ ] `npm run format:fix` leaves fixtures untouched (empty diff).
+- [x] `npm run format:fix` leaves fixtures untouched (empty diff).
 - [ ] Full plugin `vendor/bin/phpunit` green after the sweep.
 
 ## Review Readiness

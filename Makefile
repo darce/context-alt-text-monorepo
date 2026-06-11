@@ -415,7 +415,7 @@ test-overrides-digest:
 # Run unit tests for scripts/hooks and .github/hooks.
 # Addresses AHMCP-14-BR-02: hook tests were not reachable via package Makefiles.
 test-hooks:
-	@python3 -m pytest scripts/hooks .github/hooks -q --tb=short
+	@python3 -m pytest scripts/hooks .github/hooks scripts/test_php_characterization_gate.py -q --tb=short
 
 # E17-8 BR-16 / BR-22: on-demand scan for dirty protected paths on main.
 # Mirrors what post-checkout / post-commit / post-merge / post-rewrite / pre-push run.
@@ -423,13 +423,15 @@ test-hooks:
 check-main-clean:
 	@python3 scripts/hooks/check_main_clean.py --trigger manual
 
-# E17-8 BR-16 / BR-22: redirect git's per-repo hooks dir to the tracked
-# scripts/hooks/git/ directory so post-checkout, post-commit, post-merge,
-# and post-rewrite (warning-only) plus pre-push (hard block) run on every
-# clone+checkout.
+# REFA-10: consumer hooksPath wraps overlay lifecycle hooks and adds the
+# characterization merge-result gate on pre-push. Overlay scripts/hooks/git/*
+# remain bootstrap-managed; consumer-hooks/git symlinks delegate to them.
 # Idempotent: safe to re-run. Uninstall with `git config --unset core.hooksPath`.
 install-git-hooks:
 	@git config core.hooksPath scripts/consumer-hooks/git
+	@for h in post-checkout post-commit post-merge post-rewrite pre-commit; do \
+		ln -sfn ../../hooks/git/$$h scripts/consumer-hooks/git/$$h; \
+	done
 	@echo "git core.hooksPath -> scripts/consumer-hooks/git (overlay guards + consumer characterization gate)"
 	@chmod +x scripts/consumer-hooks/run-php-characterization.sh scripts/consumer-hooks/git/pre-push
 	@ls -1 scripts/consumer-hooks/git

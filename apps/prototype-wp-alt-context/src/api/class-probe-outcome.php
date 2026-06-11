@@ -26,7 +26,8 @@ final class ProbeOutcome {
 	public const RATE_LIMITED    = 'rate_limited';
 	public const SERVER_ERROR    = 'server_error';
 	public const NETWORK_ERROR   = 'network_error';
-	public const TLS_ERROR       = 'tls_error';
+	public const TLS_ERROR               = 'tls_error';
+	public const TENANT_PAIRING_CONFLICT = 'tenant_pairing_conflict';
 
 	private function __construct() {}
 }

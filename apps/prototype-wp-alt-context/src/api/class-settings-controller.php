@@ -7,6 +7,9 @@ namespace AltContext\Api;
 require_once __DIR__ . '/class-probe-outcome.php';
 require_once __DIR__ . '/class-recognition-endpoint-resolver.php';
 require_once __DIR__ . '/class-tenant-identity.php';
+require_once __DIR__ . '/services/class-tenant-local-rekey-service.php';
+
+use AltContext\Api\Services\TenantLocalRekeyService;
 
 use WP_Error;
 use WP_REST_Request;
@@ -26,6 +29,7 @@ use function stripos;
 use function substr;
 use function trim;
 use function update_option;
+use function wp_is_uuid;
 use function wp_remote_get;
 use function wp_remote_retrieve_body;
 use function wp_remote_retrieve_headers;
@@ -81,8 +85,9 @@ class SettingsController {
 	}
 
 	public function get_settings( WP_REST_Request $request ): WP_REST_Response {
-		$snapshot       = $this->endpoint_resolver->resolve_settings_snapshot();
-		$key_resolution = $this->resolve_key_source();
+		$snapshot          = $this->endpoint_resolver->resolve_settings_snapshot();
+		$key_resolution    = $this->resolve_key_source();
+		$tenant_resolution = TenantIdentity::resolve();
 
 		return new WP_REST_Response(
 			array(
@@ -97,6 +102,9 @@ class SettingsController {
 				'api_key_set'               => '' !== $key_resolution['value'],
 				'api_key_last4'             => $this->mask_key( $key_resolution['value'] ),
 				'key_source'                => $key_resolution['source'],
+				'tenant_id'                 => $tenant_resolution['value'],
+				'tenant_id_source'          => $tenant_resolution['source'],
+				'tenant_paired'             => TenantIdentity::is_paired(),
 			),
 			200
 		);
@@ -194,7 +202,7 @@ class SettingsController {
 
 		$key_resolution = $this->resolve_key_source();
 		$headers        = array(
-			'X-Tenant-ID' => TenantIdentity::derive_from_site_url(),
+			'X-Tenant-ID' => TenantIdentity::resolve()['value'],
 		);
 		if ( '' !== $key_resolution['value'] ) {
 			$headers['X-API-Key'] = $key_resolution['value'];
@@ -213,7 +221,132 @@ class SettingsController {
 		$payload['probe_mode'] = 'service_auth';
 		$payload['probed_url'] = $health_url;
 
+		if ( ProbeOutcome::CONNECTED !== ( $payload['outcome'] ?? null ) ) {
+			return new WP_REST_Response( $payload, 200 );
+		}
+
+		$confirm_pairing = $this->request_confirms_tenant_pairing( $request );
+		$pairing         = $this->attempt_tenant_pairing(
+			base_url: $url,
+			headers: $headers,
+			confirm_pairing: $confirm_pairing,
+		);
+		if ( null !== $pairing ) {
+			$health_connected = ProbeOutcome::CONNECTED === ( $payload['outcome'] ?? null );
+			$pairing_outcome  = $pairing['outcome'] ?? null;
+			$pairing_errors   = array( ProbeOutcome::NETWORK_ERROR, ProbeOutcome::SERVER_ERROR );
+			if ( $health_connected && in_array( $pairing_outcome, $pairing_errors, true ) ) {
+				$detail = is_string( $pairing['detail'] ?? null ) ? $pairing['detail'] : 'Tenant pairing failed.';
+				unset( $pairing['outcome'], $pairing['status_code'] );
+				$payload                 = array_merge( $payload, $pairing );
+				$payload['pairing_error'] = $detail;
+			} else {
+				$payload = array_merge( $payload, $pairing );
+			}
+		}
+
 		return new WP_REST_Response( $payload, 200 );
+	}
+
+	/**
+	 * @param array<string, string> $headers
+	 * @return array<string, mixed>|null
+	 */
+	private function attempt_tenant_pairing( string $base_url, array $headers, bool $confirm_pairing ): ?array {
+		$whoami_url = rtrim( $base_url, '/' ) . '/recognition/tenant/whoami';
+		$response   = wp_remote_get(
+			$whoami_url,
+			array(
+				'headers' => $headers,
+				'timeout' => 10,
+			)
+		);
+
+		if ( is_wp_error( $response ) ) {
+			return array(
+				'outcome' => ProbeOutcome::NETWORK_ERROR,
+				'detail'  => (string) $response->get_error_message(),
+			);
+		}
+
+		$status_code = (int) wp_remote_retrieve_response_code( $response );
+		if ( $status_code < 200 || $status_code >= 300 ) {
+			$body    = wp_remote_retrieve_body( $response );
+			$decoded = json_decode( $body, true );
+			$detail  = is_array( $decoded ) && isset( $decoded['detail'] ) && is_string( $decoded['detail'] )
+				? $decoded['detail']
+				: 'Tenant pairing lookup failed.';
+			return array(
+				'outcome'     => ProbeOutcome::SERVER_ERROR,
+				'status_code' => $status_code,
+				'detail'      => $detail,
+			);
+		}
+
+		$body = json_decode( wp_remote_retrieve_body( $response ), true );
+		if ( ! is_array( $body ) || ! isset( $body['tenant_id'] ) || ! is_string( $body['tenant_id'] ) ) {
+			return array(
+				'outcome' => ProbeOutcome::SERVER_ERROR,
+				'detail'  => 'Tenant pairing response missing tenant_id.',
+			);
+		}
+
+		$key_tenant_id = strtolower( trim( $body['tenant_id'] ) );
+		if ( ! wp_is_uuid( $key_tenant_id ) ) {
+			return array(
+				'outcome' => ProbeOutcome::SERVER_ERROR,
+				'detail'  => 'Tenant pairing response returned a malformed tenant_id.',
+			);
+		}
+
+		$current_resolution = TenantIdentity::resolve();
+		$current_tenant_id  = strtolower( $current_resolution['value'] );
+
+		if ( $current_tenant_id === $key_tenant_id ) {
+			TenantIdentity::adopt_paired_tenant( $key_tenant_id );
+			return array(
+				'tenant_paired'    => true,
+				'tenant_id'        => $key_tenant_id,
+				'tenant_id_source' => 'option',
+			);
+		}
+
+		// First-time pairing: a never-paired, un-pinned auto-derived identity adopts the API key's
+		// canonical tenant outright -- the key claim is the single service-side authority. resolve()
+		// persists the derived id on first call, so "option unset" is unreachable; detect the bootstrap
+		// identity by value instead. Only an already-paired site (or a deliberately pinned/persisted id)
+		// whose key now maps elsewhere requires the explicit conflict-confirm dance.
+		$auto_adoptable = ! TenantIdentity::is_paired()
+			&& TenantIdentity::is_auto_derived_identity( $current_tenant_id );
+
+		if ( ! $auto_adoptable && ! $confirm_pairing ) {
+			return array(
+				'outcome'             => ProbeOutcome::TENANT_PAIRING_CONFLICT,
+				'persisted_tenant_id' => $current_tenant_id,
+				'key_tenant_id'       => $key_tenant_id,
+			);
+		}
+
+		$rekey_service = new TenantLocalRekeyService();
+		$rekey_result  = $rekey_service->reconcile_identity_change( $current_tenant_id, $key_tenant_id );
+		TenantIdentity::adopt_paired_tenant( $key_tenant_id );
+
+		return array(
+			'tenant_paired'       => true,
+			'tenant_id'           => $key_tenant_id,
+			'tenant_id_source'    => 'option',
+			'rekey_strategy'      => $rekey_result['strategy'],
+			'rekey_updated_rows'  => $rekey_result['updated_rows'],
+		);
+	}
+
+	private function request_confirms_tenant_pairing( WP_REST_Request $request ): bool {
+		$body = $request->get_json_params();
+		if ( ! is_array( $body ) ) {
+			return false;
+		}
+
+		return ! empty( $body['confirm_tenant_pairing'] );
 	}
 
 	/**

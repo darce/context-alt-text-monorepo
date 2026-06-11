@@ -18,7 +18,7 @@ from fastapi import Depends
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.tenant_context import ensure_tenant_exists, set_tenant_context
+from db.tenant_context import require_tenant_record, set_tenant_context
 from recognition.application.assignment import AssignmentGate
 from recognition.application.discovery import CentroidDiscovery, GraphDiscovery, RepresentativeDiscovery
 from recognition.application.orchestration import ClusterService
@@ -333,13 +333,13 @@ async def build_cluster_service(
     """Construct a ClusterService wired with SQLAlchemy repositories."""
     settings = settings or get_settings()
 
-    # Auto-provision tenant if it doesn't exist (first-use provisioning)
+    # Require an existing tenant record before clustering work proceeds.
     tenant_uuid = uuid.UUID(tenant_id)
 
     # Ensure RLS context is set for this tenant
     await set_tenant_context(session, tenant_uuid)
 
-    await ensure_tenant_exists(session, tenant_uuid)
+    await require_tenant_record(session, tenant_uuid)
 
     cluster_repo = SqlAlchemyClusterRepository(session)
     member_repo = SqlAlchemyMemberRepository(session, tenant_id=tenant_id)
@@ -630,7 +630,7 @@ async def get_persisted_cluster_job_service(
 #
 #   * ``get_cluster_service_builder_clustering`` does *not* pre-await
 #     ``build_cluster_service(tenant_id)`` during dep resolution. Invoking the
-#     builder emits ``set_tenant_context`` + ``ensure_tenant_exists`` SQL,
+#     builder emits ``set_tenant_context`` + ``require_tenant_record`` SQL,
 #     which would autobegin a transaction on the *bare* clustering session
 #     before the route enters ``async with session.begin():``. Instead, we
 #     return the builder itself so the route can ``await builder(tenant_id)``
@@ -655,7 +655,7 @@ def get_cluster_service_builder_clustering(
     hands the same session to ``get_persisted_cluster_job_service_clustering``.
     The route invokes the returned builder inside its own ``session.begin()``
     so ``build_cluster_service``'s internal ``set_tenant_context`` +
-    ``ensure_tenant_exists`` SQL lands inside the owned transaction.
+    ``require_tenant_record`` SQL lands inside the owned transaction.
     """
 
     async def _builder(tenant_id: str) -> ClusterService:

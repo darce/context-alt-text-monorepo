@@ -435,7 +435,7 @@ async def create_clustering_job(
         #                            so log correlation joins pg_stat_activity
         #                            for *this* connection, not a stale one)
         #   (4) cluster_service builder + reassignment onto job_service
-        #       (PLAN-12: builder's set_tenant_context + ensure_tenant_exists
+        #       (PLAN-12: builder's set_tenant_context + require_tenant_record
         #        SQL must land inside the owned txn, not during dep resolution)
         #   (5) pg_locks admission probe            (S2)
         #   (6) narrow SET LOCAL statement_timeout  (S2)

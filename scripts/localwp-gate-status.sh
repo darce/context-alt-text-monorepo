@@ -59,7 +59,7 @@ SITE_URL="$(run_wp option get siteurl | sed -n '/./{s/^[[:space:]]*//;s/[[:space
 PLUGIN_TEXT="$(run_wp plugin status alt-context)"
 PLUGIN_STATUS="$(printf '%s\n' "${PLUGIN_TEXT}" | sed -n 's/^[[:space:]]*Status:[[:space:]]*//p' | head -n 1)"
 PLUGIN_VERSION="$(printf '%s\n' "${PLUGIN_TEXT}" | sed -n 's/^[[:space:]]*Version:[[:space:]]*//p' | head -n 1)"
-TENANT_UUID="$(run_wp eval 'echo \AltContext\Api\TenantIdentity::derive_from_site_url();')"
+TENANT_UUID="$(run_wp eval 'echo \AltContext\Api\TenantIdentity::resolve()["value"];')"
 
 SETTINGS_JSON="$(run_wp eval 'wp_set_current_user(1); $request = new WP_REST_Request("GET", "/acx/v1/settings"); $response = rest_do_request($request); echo wp_json_encode($response->get_data(), JSON_UNESCAPED_SLASHES);')"
 PROBE_JSON="$(run_wp eval 'wp_set_current_user(1); $request = new WP_REST_Request("POST", "/acx/v1/settings/test"); $response = rest_do_request($request); echo wp_json_encode($response->get_data(), JSON_UNESCAPED_SLASHES);')"

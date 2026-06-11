@@ -57,6 +57,9 @@ class SettingsControllerTest extends TestCase
         $this->assertFalse($data['api_key_set']);
         $this->assertSame('', $data['api_key_last4']);
         $this->assertSame('default', $data['key_source']);
+        $this->assertSame(TenantIdentity::resolve()['value'], $data['tenant_id']);
+        $this->assertSame('derived', $data['tenant_id_source']);
+        $this->assertFalse($data['tenant_paired']);
     }
 
     public function testGetSettingsReturnsOptionSourceWhenOptionSet(): void
@@ -74,6 +77,59 @@ class SettingsControllerTest extends TestCase
         $this->assertTrue($data['api_key_set']);
         $this->assertSame('****1234', $data['api_key_last4']);
         $this->assertSame('option', $data['key_source']);
+    }
+
+    public function testGetSettingsReturnsPersistedTenantFields(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $tenantId = 'dddddddd-bbbb-cccc-dddd-eeeeeeeeeeee';
+        $this->setOption('acx_recognition_tenant_id', $tenantId);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/settings');
+        $response = $this->controller->get_settings($request);
+
+        $data = $response->get_data();
+        $this->assertSame($tenantId, $data['tenant_id']);
+        $this->assertSame('option', $data['tenant_id_source']);
+        $this->assertFalse($data['tenant_paired']);
+    }
+
+    public function testGetSettingsReturnsFilterTenantSourceWhenFilterProvides(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $filterTenant = 'eeeeeeee-bbbb-cccc-dddd-eeeeeeeeeeee';
+        $this->setOption('acx_recognition_tenant_id', 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
+        add_filter('acx_recognition_tenant_id', static fn () => $filterTenant);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/settings');
+        $response = $this->controller->get_settings($request);
+
+        $data = $response->get_data();
+        $this->assertSame($filterTenant, $data['tenant_id']);
+        $this->assertSame('filter', $data['tenant_id_source']);
+    }
+
+    /**
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testGetSettingsReturnsConstantTenantSourceWhenConstantDefined(): void
+    {
+        require_once __DIR__ . '/../bootstrap.php';
+        $this->resetGlobalState();
+
+        $constantTenant = 'ffffffff-bbbb-cccc-dddd-eeeeeeeeeeee';
+        define('ACX_RECOGNITION_TENANT_ID', $constantTenant);
+        $this->setOption('acx_recognition_tenant_id', 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
+
+        $controller = new SettingsController();
+        $this->setUserCapability('manage_options', true);
+        $request = new WP_REST_Request('GET', '/acx/v1/settings');
+        $response = $controller->get_settings($request);
+
+        $data = $response->get_data();
+        $this->assertSame($constantTenant, $data['tenant_id']);
+        $this->assertSame('constant', $data['tenant_id_source']);
     }
 
     public function testGetSettingsReturnsFilterSourceWhenFilterProvides(): void
@@ -287,25 +343,190 @@ class SettingsControllerTest extends TestCase
     public function testProbeDispatchHitsAuthenticatedPoolEndpoint(): void
     {
         $this->configureProbe();
+        $keyTenant = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+        $this->setOption('acx_recognition_tenant_id', $keyTenant);
         $this->queueHttpResponse($this->buildOkResponse());
+        $this->queueHttpResponse($this->buildWhoamiResponse($keyTenant));
 
         $response = $this->controller->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'));
         $data     = $response->get_data();
 
         $calls = $this->getHttpCalls();
-        $this->assertCount(1, $calls);
+        $this->assertCount(2, $calls);
         $this->assertStringEndsWith('/health/detailed', $calls[0]['url']);
+        $this->assertStringEndsWith('/recognition/tenant/whoami', $calls[1]['url']);
         $this->assertStringNotContainsString('/recognition/health/pool', $calls[0]['url']);
         $this->assertSame('test-key', $calls[0]['args']['headers']['X-API-Key'] ?? null);
-        $this->assertSame(
-            TenantIdentity::derive_from_site_url(),
-            $calls[0]['args']['headers']['X-Tenant-ID'] ?? null
-        );
+        $this->assertSame($keyTenant, $calls[0]['args']['headers']['X-Tenant-ID'] ?? null);
 
         $this->assertSame(ProbeOutcome::CONNECTED, $data['outcome']);
+        $this->assertTrue($data['tenant_paired']);
+        $this->assertSame($keyTenant, $data['tenant_id']);
         $this->assertSame(200, $data['status_code']);
         $this->assertArrayNotHasKey('connected', $data);
         $this->assertArrayNotHasKey('error', $data);
+    }
+
+    public function testProbePairingAdoptsMatchingKeyTenant(): void
+    {
+        $this->configureProbe();
+        $keyTenant = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+        $this->setOption('acx_recognition_tenant_id', $keyTenant);
+        $this->queueHttpResponse($this->buildOkResponse());
+        $this->queueHttpResponse($this->buildWhoamiResponse($keyTenant));
+
+        $data = $this->controller
+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
+            ->get_data();
+
+        $this->assertSame(ProbeOutcome::CONNECTED, $data['outcome']);
+        $this->assertTrue($data['tenant_paired']);
+        $this->assertTrue(TenantIdentity::is_paired());
+        $this->assertSame($keyTenant, get_option('acx_recognition_tenant_id'));
+    }
+
+    public function testProbePairingReturnsConflictWhenPersistedTenantDiffers(): void
+    {
+        $this->configureProbe();
+        $persisted = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+        $keyTenant = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+        $this->setOption('acx_recognition_tenant_id', $persisted);
+        $this->queueHttpResponse($this->buildOkResponse());
+        $this->queueHttpResponse($this->buildWhoamiResponse($keyTenant));
+
+        $data = $this->controller
+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
+            ->get_data();
+
+        $this->assertSame(ProbeOutcome::TENANT_PAIRING_CONFLICT, $data['outcome']);
+        $this->assertSame($persisted, $data['persisted_tenant_id']);
+        $this->assertSame($keyTenant, $data['key_tenant_id']);
+        $this->assertFalse(TenantIdentity::is_paired());
+        $this->assertSame($persisted, get_option('acx_recognition_tenant_id'));
+    }
+
+    public function testProbePairingAutoAdoptsDerivedIdentityOnFirstPairing(): void
+    {
+        $this->configureProbe();
+        // No acx_recognition_tenant_id option set: resolve() derives the site-url bootstrap id and
+        // persists it, so the option is never empty. A never-paired, auto-derived identity must adopt
+        // the key's canonical tenant outright -- not force the operator through a conflict-confirm dance.
+        $keyTenant = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+        $this->queueHttpResponse($this->buildOkResponse());
+        $this->queueHttpResponse($this->buildWhoamiResponse($keyTenant));
+
+        $data = $this->controller
+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
+            ->get_data();
+
+        $this->assertSame(ProbeOutcome::CONNECTED, $data['outcome']);
+        $this->assertTrue($data['tenant_paired']);
+        $this->assertArrayNotHasKey('persisted_tenant_id', $data);
+        $this->assertTrue(TenantIdentity::is_paired());
+        $this->assertSame($keyTenant, get_option('acx_recognition_tenant_id'));
+    }
+
+    public function testProbePairingRejectsMalformedWhoamiTenantId(): void
+    {
+        $this->configureProbe();
+        $this->queueHttpResponse($this->buildOkResponse());
+        $this->queueHttpResponse($this->buildWhoamiResponse('not-a-uuid'));
+
+        $data = $this->controller
+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
+            ->get_data();
+
+        // A malformed whoami tenant_id must surface as a pairing error -- never reach adopt/re-key (no 500,
+        // no rows committed under a non-UUID tenant id).
+        $this->assertSame(ProbeOutcome::CONNECTED, $data['outcome']);
+        $this->assertStringContainsString('malformed', $data['pairing_error']);
+        $this->assertFalse(TenantIdentity::is_paired());
+    }
+
+    public function testProbePairingAdoptsWhenFilterMatchesKeyDespiteStaleOption(): void
+    {
+        $this->configureProbe();
+        $staleOption = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+        $keyTenant   = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+        $this->setOption('acx_recognition_tenant_id', $staleOption);
+        add_filter('acx_recognition_tenant_id', static fn () => $keyTenant);
+        $this->queueHttpResponse($this->buildOkResponse());
+        $this->queueHttpResponse($this->buildWhoamiResponse($keyTenant));
+
+        $data = $this->controller
+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
+            ->get_data();
+
+        $this->assertSame(ProbeOutcome::CONNECTED, $data['outcome']);
+        $this->assertTrue($data['tenant_paired']);
+        $this->assertSame($keyTenant, get_option('acx_recognition_tenant_id'));
+    }
+
+    public function testProbePairingConfirmAdoptsAndRekeysLocalRows(): void
+    {
+        global $wpdb;
+        $this->configureProbe();
+        $persisted = '11111111-1111-4111-8111-111111111111';
+        $keyTenant = '22222222-2222-4222-8222-222222222222';
+        $this->setOption('acx_recognition_tenant_id', $persisted);
+        $this->queueHttpResponse($this->buildOkResponse());
+        $this->queueHttpResponse($this->buildWhoamiResponse($keyTenant));
+
+        $wpdb->insert(
+            $wpdb->prefix . 'acx_clusters',
+            array(
+                'cluster_uuid'       => 'cluster-1',
+                'tenant_id'          => $persisted,
+                'label'              => 'A',
+                'curation_state'     => 'unlabeled',
+                'snapshot_version'   => 1,
+                'created_at'         => '2026-01-01 00:00:00',
+                'updated_at'         => '2026-01-01 00:00:00',
+                'last_synced_at'     => '2026-01-01 00:00:00',
+            )
+        );
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings/test');
+        $request->set_body_params(array('confirm_tenant_pairing' => true));
+
+        $data = $this->controller->test_connection($request)->get_data();
+
+        $this->assertSame(ProbeOutcome::CONNECTED, $data['outcome']);
+        $this->assertTrue($data['tenant_paired']);
+        $this->assertSame('rekey', $data['rekey_strategy']);
+        $this->assertGreaterThanOrEqual(1, $data['rekey_updated_rows']);
+        $this->assertSame($keyTenant, get_option('acx_recognition_tenant_id'));
+        $this->assertSame(
+            $keyTenant,
+            $wpdb->get_var(
+                $wpdb->prepare(
+                    'SELECT tenant_id FROM ' . $wpdb->prefix . 'acx_clusters WHERE cluster_uuid = %s',
+                    'cluster-1'
+                )
+            )
+        );
+    }
+
+    public function testProbePairingWhoamiFailurePreservesConnectedOutcome(): void
+    {
+        $this->configureProbe();
+        $keyTenant = '55555555-5555-4555-8555-555555555555';
+        $this->setOption('acx_recognition_tenant_id', $keyTenant);
+        $this->queueHttpResponse($this->buildOkResponse());
+        $this->queueHttpResponse(
+            array(
+                'response' => array('code' => 503, 'message' => 'Service Unavailable'),
+                'body'     => '{"detail":"database unavailable"}',
+            )
+        );
+
+        $data = $this->controller
+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
+            ->get_data();
+
+        $this->assertSame(ProbeOutcome::CONNECTED, $data['outcome']);
+        $this->assertSame('database unavailable', $data['pairing_error']);
+        $this->assertArrayNotHasKey('tenant_paired', $data);
     }
 
     public function testProbeDispatchReturnsNotConfiguredWithoutHttpCall(): void
@@ -516,6 +737,22 @@ class SettingsControllerTest extends TestCase
         return [
             'response' => ['code' => 200, 'message' => 'OK'],
             'body'     => '{"pool":"healthy"}',
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function buildWhoamiResponse(string $tenantId): array
+    {
+        return [
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body'     => wp_json_encode(
+                array(
+                    'tenant_id' => $tenantId,
+                    'site_url'  => 'https://prod.example',
+                )
+            ),
         ];
     }
 }

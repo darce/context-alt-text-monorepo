@@ -2,7 +2,7 @@
 
 > **Task Short ID**: E15-22
 > **Status**: in_progress -- code slices 1-5 (backend cluster-members envelope + `thumb_url` surface, frontend thumbnail/progress regression coverage, proof-bundle doc hooks, operator capture checklist) merged to `main`; remaining work is the seeded-media/LocalWP proof capture for the manual gate, executed under E15-3a Slice 2
-> **Target Branch**: feature/e15-22 (merged to `main`)
+> **Target Branch**: feature/e15-22 (code slices merged to `main`; proof capture resumed on `feature/e15-22`)
 > **Epic**: [E15. Public Demo Launch Readiness](../../epics/v0.4.0/public-demo-launch-readiness-epic.md) Phase 4 (pre-demo workbench gate)
 > **Predecessors**: E15-1 (security baseline) merged; E15-2 (observability baseline) merged. [E15-11](./E15-11-image-upload-transport-task-plan.md) hosted multipart proof is only a predecessor for the demo-proof-bundle slice and the private-media LocalWP gate, not for the backend or frontend Workbench slices.
 > **Blocks**: [E15-3](./E15-3-wordpress-demo-provisioning-task-plan.md) completion and [E15-5](./E15-5-manual-remote-e2e-task-plan.md) live-demo sign-off.
@@ -191,7 +191,7 @@ Proof:
 ## Context and Ownership
 
 - [x] Loaded the Workbench code anchors, planning findings, and demo-gate docs before implementation. *Anchored by Current State Analysis plus the E15-3a proof-bundle run log/checklist.*
-- [ ] Confirmed the hosted/private-media proof surface from E15-11 is available before treating the LocalWP demo gate as green.
+- [x] Confirmed the hosted/private-media proof surface from E15-11 is available before treating the LocalWP demo gate as green. *E15-11 Slice A multipart transport + filesystem `ObjectStore` merged on main; LocalWP gate can use multipart against hosted API without public media URLs.*
 - [x] Kept the broader scan-pipeline trust/canonicalization work scoped to v0.4.1 unless a defect is proven demo-blocking. *The audit keeps E15-22 focused on avatar/progress proof readiness; hosted/private-media proof remains explicitly unchecked until E15-11 supplies the gate evidence.*
 
 ### Checklist for Slice 1: Cluster-Members Contract Envelope
@@ -205,7 +205,7 @@ Proof:
 - [x] `RepresentativeResponse` and `ClusterMemberResponse` carry an admin-reachable `thumb_url` (route or signed URL), populated from the existing tenant-scoped image store.
 - [x] `FaceThumbnail` and the top-cluster/cluster-preview resolvers prefer `thumb_url`, falling back to `media_url + bbox` only when `thumb_url` is null.
 - [x] Pytest + Vitest coverage proves the field shape and preference order.
-- [ ] A LocalWP transcript shows seeded-media thumbs loading without `acx-face-thumbnail--error` and records the reusable proof-bundle artifact for downstream demo gates.
+- [ ] A LocalWP transcript shows seeded-media thumbs loading without `acx-face-thumbnail--error` and records the reusable proof-bundle artifact for downstream demo gates. *Progress/timeline proof captured via Playwright `workbench-evidence.spec.ts` (`E15-22-LWP-20260608-01`); avatar card capture still pending when naming queue renders representatives.*
 
 ### Checklist for Slice 3: Representative Avatar Truthfulness (frontend)
 

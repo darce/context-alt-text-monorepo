@@ -13,6 +13,9 @@ export interface SettingsResponse {
   api_key_set: boolean;
   api_key_last4: string;
   key_source: 'constant' | 'option' | 'filter' | 'default';
+  tenant_id: string;
+  tenant_id_source: 'constant' | 'option' | 'filter' | 'derived';
+  tenant_paired: boolean;
 }
 
 export const RecognitionSource = {
@@ -41,6 +44,7 @@ export const TestConnectionOutcome = {
   EXPIRED: 'expired',
   REVOKED: 'revoked',
   TENANT_MISMATCH: 'tenant_mismatch',
+  TENANT_PAIRING_CONFLICT: 'tenant_pairing_conflict',
   RATE_LIMITED: 'rate_limited',
   SERVER_ERROR: 'server_error',
   NETWORK_ERROR: 'network_error',
@@ -64,6 +68,14 @@ export interface TestConnectionResponse {
   body?: unknown;
   probe_mode?: TestConnectionProbeMode;
   probed_url?: string;
+  persisted_tenant_id?: string;
+  key_tenant_id?: string;
+  tenant_paired?: boolean;
+  tenant_id?: string;
+  tenant_id_source?: SettingsResponse['tenant_id_source'];
+  rekey_strategy?: 'rekey' | 'resync';
+  rekey_updated_rows?: number;
+  pairing_error?: string;
 }
 
 export const fetchSettings = async (): Promise<SettingsResponse> => {
@@ -83,10 +95,17 @@ export const saveSettings = async (payload: SaveSettingsPayload): Promise<SaveSe
   });
 };
 
-export const testConnection = async (): Promise<TestConnectionResponse> => {
+export interface TestConnectionRequest {
+  confirm_tenant_pairing?: boolean;
+}
+
+export const testConnection = async (
+  payload: TestConnectionRequest = {},
+): Promise<TestConnectionResponse> => {
   const endpoint = getEndpoint('settingsTest');
   return fetchRequiredApi<TestConnectionResponse>(endpoint, {
     method: 'POST',
     restNonce: getConfig().nonce,
+    body: payload,
   });
 };

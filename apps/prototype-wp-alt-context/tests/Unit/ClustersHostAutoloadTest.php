@@ -31,6 +31,16 @@ class ClustersHostAutoloadTest extends TestCase
         $this->assertSymbolLoadableViaComposerClassmap('class_exists', 'AltContext\\Api\\Services\\ClusterReadService');
     }
 
+    public function testClusterReadDependenciesIsLoadableViaComposerClassmap(): void
+    {
+        $this->assertSymbolLoadableViaComposerClassmap('class_exists', 'AltContext\\Api\\Services\\ClusterReadDependencies');
+    }
+
+    public function testClusterReadConfigIsLoadableViaComposerClassmap(): void
+    {
+        $this->assertSymbolLoadableViaComposerClassmap('class_exists', 'AltContext\\Api\\Services\\ClusterReadConfig');
+    }
+
     private function assertSymbolLoadableViaComposerClassmap(string $exists_fn, string $symbol): void
     {
         $autoload = realpath(__DIR__ . '/../../vendor/autoload.php');

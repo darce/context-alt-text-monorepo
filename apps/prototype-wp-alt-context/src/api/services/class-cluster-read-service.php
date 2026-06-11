@@ -5,10 +5,6 @@ declare(strict_types=1);
 namespace AltContext\Api\Services;
 
 use AltContext\Api\ClustersHostInterface;
-use AltContext\Sovereign\ClusterFacade;
-use AltContext\Sovereign\Mappers\ClusterResponseMapper;
-use AltContext\Sovereign\Mappers\MemberResponseMapper;
-use AltContext\Sovereign\Repositories\ClustersRepositoryInterface;
 use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
 use WP_Error;
 use WP_REST_Request;
@@ -27,52 +23,6 @@ use function sprintf;
 use function time;
 use function wp_next_scheduled;
 use function wp_schedule_single_event;
-
-final class ClusterReadDependencies {
-	public ClustersRepositoryInterface $clusters_repository;
-	public IdentityMembersRepositoryInterface $members_repository;
-	public ClusterFacade $cluster_facade;
-	public ClusterResponseMapper $cluster_mapper;
-	public MemberResponseMapper $member_mapper;
-	public ClusterProjectionSyncService $projection_sync_service;
-	public ClusterResponseEnvelopeService $response_envelope_service;
-	public string $bootstrap_sync_hook;
-	public string $data_source_backend_proxy;
-	public string $data_source_local_projection;
-	public string $data_source_unavailable;
-	public string $projection_status_bootstrapping;
-	public string $projection_status_available;
-
-	public function __construct(
-		ClustersRepositoryInterface $clusters_repository,
-		IdentityMembersRepositoryInterface $members_repository,
-		ClusterFacade $cluster_facade,
-		ClusterResponseMapper $cluster_mapper,
-		MemberResponseMapper $member_mapper,
-		ClusterProjectionSyncService $projection_sync_service,
-		ClusterResponseEnvelopeService $response_envelope_service,
-		string $bootstrap_sync_hook,
-		string $data_source_backend_proxy,
-		string $data_source_local_projection,
-		string $data_source_unavailable,
-		string $projection_status_bootstrapping,
-		string $projection_status_available
-	) {
-		$this->clusters_repository = $clusters_repository;
-		$this->members_repository = $members_repository;
-		$this->cluster_facade = $cluster_facade;
-		$this->cluster_mapper = $cluster_mapper;
-		$this->member_mapper = $member_mapper;
-		$this->projection_sync_service = $projection_sync_service;
-		$this->response_envelope_service = $response_envelope_service;
-		$this->bootstrap_sync_hook = $bootstrap_sync_hook;
-		$this->data_source_backend_proxy = $data_source_backend_proxy;
-		$this->data_source_local_projection = $data_source_local_projection;
-		$this->data_source_unavailable = $data_source_unavailable;
-		$this->projection_status_bootstrapping = $projection_status_bootstrapping;
-		$this->projection_status_available = $projection_status_available;
-	}
-}
 
 class ClusterReadService {
 	private const GET_CLUSTER_MEMBERS_MAX_LIMIT = IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT;
@@ -171,7 +121,7 @@ class ClusterReadService {
 								'limit' => max( 1, (int) $data['limit'] ),
 								'total' => max( 0, (int) $data['total'] ),
 								'truncated' => $data['truncated'],
-								'data_source' => $this->dependencies->data_source_backend_proxy,
+								'data_source' => $this->dependencies->config->data_source_backend_proxy,
 							),
 							200
 						);
@@ -183,7 +133,7 @@ class ClusterReadService {
 							'limit' => $limit,
 							'total' => count( $data ),
 							'truncated' => false,
-							'data_source' => $this->dependencies->data_source_backend_proxy,
+							'data_source' => $this->dependencies->config->data_source_backend_proxy,
 						),
 						200
 					);
@@ -191,8 +141,8 @@ class ClusterReadService {
 			}
 
 			$args = array( $tenant_id );
-			if ( false === wp_next_scheduled( $this->dependencies->bootstrap_sync_hook, $args ) ) {
-				wp_schedule_single_event( time(), $this->dependencies->bootstrap_sync_hook, $args );
+			if ( false === wp_next_scheduled( $this->dependencies->config->bootstrap_sync_hook, $args ) ) {
+				wp_schedule_single_event( time(), $this->dependencies->config->bootstrap_sync_hook, $args );
 			}
 			return new WP_REST_Response(
 				array(
@@ -201,8 +151,8 @@ class ClusterReadService {
 					'total' => 0,
 					'truncated' => false,
 					'singleton_count'   => 0,
-					'data_source'       => $this->dependencies->data_source_unavailable,
-					'projection_status' => $this->dependencies->projection_status_bootstrapping,
+					'data_source'       => $this->dependencies->config->data_source_unavailable,
+					'projection_status' => $this->dependencies->config->projection_status_bootstrapping,
 				),
 				200
 			);
@@ -236,8 +186,8 @@ class ClusterReadService {
 				'truncated' => $total > count( $unlabeled_items ),
 				'singleton_count' => max( 0, (int) ( $sovereign_data['singleton_count'] ?? 0 ) ),
 				'has_clusters' => $has_clusters,
-				'data_source' => $this->dependencies->data_source_local_projection,
-				'projection_status' => $this->dependencies->projection_status_available,
+				'data_source' => $this->dependencies->config->data_source_local_projection,
+				'projection_status' => $this->dependencies->config->projection_status_available,
 			),
 			200
 		);

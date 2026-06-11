@@ -6,12 +6,11 @@ namespace AltContext\Tests\Unit;
 
 use AltContext\Api\ClustersHostInterface;
 use AltContext\Api\Services\ClusterProjectionSyncService;
-use AltContext\Sovereign\Repositories\ClustersRepository;
-use AltContext\Sovereign\Repositories\IdentityMembersRepository;
-use AltContext\Sovereign\Repositories\SyncStateRepository;
 use AltContext\Sovereign\Sync\SyncPullJobInterface;
 use AltContext\Sovereign\Sync\SyncPullResult;
 use AltContext\Tests\TestCase;
+use AltContext\Tests\Stubs\NullClustersRepository;
+use AltContext\Tests\Stubs\NullIdentityMembersRepository;
 use AltContext\Tests\Stubs\NullSyncStateRepository;
 use WP_REST_Response;
 
@@ -136,8 +135,8 @@ class ClusterProjectionSyncServiceTest extends TestCase
         return new ClusterProjectionSyncService(
             $host,
             self::BOOTSTRAP_HOOK,
-            new ClustersRepository(),
-            new IdentityMembersRepository(),
+            new NullClustersRepository(),
+            new NullIdentityMembersRepository(),
             new NullSyncStateRepository(),
             $sync_pull_job,
             null

@@ -15,11 +15,11 @@ use WP_REST_Response;
  * Golden-JSON characterization safety net for all 5 clusters-read routes.
  *
  * Branch-coverage inventory (route × sub-branch):
- * - list_clusters: local, proxy-success, proxy-invalid-envelope, proxy-bootstrap-inline, proxy-bootstrap-cron
- * - list_top_unlabeled: local, proxy-success, proxy-invalid-envelope, proxy-bootstrapping-fallback, targeted-repair
+ * - list_clusters: local, stale-projection-sync, stale-projection-sync-failed, proxy-success, proxy-invalid-envelope, proxy-bootstrap-inline, proxy-bootstrap-cron
+ * - list_top_unlabeled: local, proxy-success, proxy-canonical-envelope, proxy-invalid-envelope, proxy-bootstrapping-fallback, targeted-repair
  * - list_cluster_labels: local, proxy-success, proxy-invalid-envelope
  * - get_cluster_detail: local, proxy-success, local-not-found
- * - get_cluster_members: local, proxy-success, proxy-invalid-envelope, targeted-repair
+ * - get_cluster_members: local, local-not-found, proxy-success, proxy-invalid-envelope, targeted-repair
  *
  * Shared-helper ownership (SH-01):
  * - cluster_row_should_have_members: ClusterProjectionSyncService (Slice 3)

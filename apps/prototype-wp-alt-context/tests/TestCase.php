@@ -43,6 +43,7 @@ abstract class TestCase extends PHPUnitTestCase
         $GLOBALS['__ac_post_meta'] = [];
         $GLOBALS['__ac_transients'] = [];
         $GLOBALS['__ac_scheduled'] = [];
+        $GLOBALS['__ac_do_action_log'] = [];
         $GLOBALS['__ac_action_scheduler'] = [];
         $GLOBALS['__ac_action_scheduler_enqueue_result'] = null;
         $GLOBALS['__ac_http_calls'] = [];

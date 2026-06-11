@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Api;
 
 require_once __DIR__ . '/interface-clusters-host.php';
+require_once __DIR__ . '/services/class-cluster-response-envelope-service.php';
 require_once __DIR__ . '/../sovereign/mappers/class-cluster-response-mapper.php';
 require_once __DIR__ . '/../sovereign/mappers/class-member-response-mapper.php';
 require_once __DIR__ . '/../sovereign/repositories/interface-clusters-repository.php';
@@ -23,6 +24,7 @@ require_once __DIR__ . '/../sovereign/sync/class-sync-pull-result.php';
 require_once __DIR__ . '/../sovereign/sync/class-sync-pull-job-factory.php';
 require_once __DIR__ . '/../sovereign/class-cluster-facade.php';
 
+use AltContext\Api\Services\ClusterResponseEnvelopeService;
 use AltContext\Sovereign\ClusterFacade;
 use AltContext\Sovereign\Mappers\ClusterResponseMapper;
 use AltContext\Sovereign\Mappers\MemberResponseMapper;
@@ -85,6 +87,7 @@ class ClustersController extends AbstractRecognitionProxyController implements C
 	private ClusterResponseMapper $cluster_mapper;
 	private MemberResponseMapper $member_mapper;
 	private ClusterFacade $cluster_facade;
+	private ClusterResponseEnvelopeService $response_envelope_service;
 
 	public function __construct(
 		?ClustersRepositoryInterface $clusters_repository = null,
@@ -94,7 +97,8 @@ class ClustersController extends AbstractRecognitionProxyController implements C
 		?ClusterResponseMapper $cluster_mapper = null,
 		?MemberResponseMapper $member_mapper = null,
 		?ClusterFacade $cluster_facade = null,
-		?SyncPullJobFactory $sync_pull_job_factory = null
+		?SyncPullJobFactory $sync_pull_job_factory = null,
+		?ClusterResponseEnvelopeService $response_envelope_service = null
 	) {
 		$this->clusters_repository = $clusters_repository ?? new ClustersRepository();
 		$this->members_repository = $members_repository ?? new IdentityMembersRepository();
@@ -104,6 +108,7 @@ class ClustersController extends AbstractRecognitionProxyController implements C
 		$this->member_mapper = $member_mapper ?? new MemberResponseMapper();
 		$this->cluster_facade = $cluster_facade ?? new ClusterFacade( $this->clusters_repository, $this->members_repository );
 		$this->sync_pull_job_factory = $sync_pull_job_factory;
+		$this->response_envelope_service = $response_envelope_service ?? new ClusterResponseEnvelopeService( $this->cluster_mapper );
 		add_action( self::BOOTSTRAP_SYNC_HOOK, array( $this, 'perform_bootstrap_sync' ), 10, 1 );
 	}
 
@@ -181,7 +186,7 @@ class ClustersController extends AbstractRecognitionProxyController implements C
 			$members_by_cluster = $this->load_members_by_cluster( $rows, self::PREVIEW_IDENTITIES_PER_CLUSTER );
 			$clusters = $this->cluster_mapper->map_cluster_list( $rows, $members_by_cluster );
 
-			return new WP_REST_Response( $this->build_cluster_list_envelope( $rows, $clusters, $limit ), 200 );
+			return new WP_REST_Response( $this->response_envelope_service->build_cluster_list_envelope( $rows, $clusters, $limit ), 200 );
 		}
 
 		$query = array(
@@ -200,7 +205,7 @@ class ClustersController extends AbstractRecognitionProxyController implements C
 
 		$response = $this->proxy_request( 'GET', '/recognition/clusters', array(), $query );
 		$response = $this->maybe_bootstrap_after_proxy_read( $tenant_id, $response );
-		return $this->normalize_cluster_list_response( $response, $limit );
+		return $this->response_envelope_service->normalize_cluster_list_response( $response, $limit );
 	}
 
 	public function list_top_unlabeled_clusters( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -323,7 +328,7 @@ class ClustersController extends AbstractRecognitionProxyController implements C
 			if ( isset( $label_rows[0]['total_count'] ) && is_numeric( $label_rows[0]['total_count'] ) ) {
 				$total = max( 0, (int) $label_rows[0]['total_count'] );
 			}
-			return new WP_REST_Response( $this->build_cluster_labels_envelope( $labels, $limit, $total ), 200 );
+			return new WP_REST_Response( $this->response_envelope_service->build_cluster_labels_envelope( $labels, $limit, $total ), 200 );
 		}
 
 		$query = array(
@@ -337,7 +342,7 @@ class ClustersController extends AbstractRecognitionProxyController implements C
 
 		$response = $this->proxy_request( 'GET', '/recognition/clusters/labels', array(), $query );
 		$response = $this->maybe_bootstrap_after_proxy_read( $tenant_id, $response );
-		return $this->normalize_cluster_labels_response( $response, $limit );
+		return $this->response_envelope_service->normalize_cluster_labels_response( $response, $limit );
 	}
 
 	public function get_cluster_detail( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -401,7 +406,7 @@ class ClustersController extends AbstractRecognitionProxyController implements C
 			} else {
 				$total = $this->members_repository->count_for_cluster( $cluster_id );
 			}
-			return new WP_REST_Response( $this->build_cluster_members_envelope( $members, self::GET_CLUSTER_MEMBERS_MAX_LIMIT, $total ), 200 );
+			return new WP_REST_Response( $this->response_envelope_service->build_cluster_members_envelope( $members, self::GET_CLUSTER_MEMBERS_MAX_LIMIT, $total ), 200 );
 		}
 
 		$response = $this->proxy_request(
@@ -411,7 +416,7 @@ class ClustersController extends AbstractRecognitionProxyController implements C
 			array( 'tenant_id' => $tenant_id )
 		);
 		$response = $this->maybe_bootstrap_after_proxy_read( $tenant_id, $response );
-		return $this->normalize_cluster_members_response( $response, self::GET_CLUSTER_MEMBERS_MAX_LIMIT );
+		return $this->response_envelope_service->normalize_cluster_members_response( $response, self::GET_CLUSTER_MEMBERS_MAX_LIMIT );
 	}
 
 	public function perform_bootstrap_sync( string $tenant_id ): void {
@@ -598,178 +603,6 @@ class ClustersController extends AbstractRecognitionProxyController implements C
 			);
 			return false;
 		}
-	}
-
-	/**
-	 * @param array<int,array<string,mixed>> $rows
-	 * @param array<int,array<string,mixed>> $clusters
-	 * @return array<string,mixed>
-	 */
-	private function build_cluster_list_envelope( array $rows, array $clusters, int $limit ): array {
-		$total = count( $clusters );
-
-		if ( isset( $rows[0]['total_count'] ) && is_numeric( $rows[0]['total_count'] ) ) {
-			$total = max( 0, (int) $rows[0]['total_count'] );
-		}
-
-		return array(
-			'clusters' => $clusters,
-			'limit' => $limit,
-			'total' => $total,
-			'truncated' => $total > count( $clusters ),
-		);
-	}
-
-	/**
-	 * @param array<int,array<string,mixed>> $members
-	 * @return array<string,mixed>
-	 */
-	private function build_cluster_members_envelope( array $members, int $limit, int $total ): array {
-		return array(
-			'members' => $members,
-			'limit' => $limit,
-			'total' => $total,
-			'truncated' => $total > count( $members ),
-		);
-	}
-
-	/**
-	 * @param array<int,string> $labels
-	 * @return array<string,mixed>
-	 */
-	private function build_cluster_labels_envelope( array $labels, int $limit, int $total ): array {
-		return array(
-			'labels' => $labels,
-			'limit' => $limit,
-			'total' => $total,
-			'truncated' => $total > count( $labels ),
-		);
-	}
-
-	private function normalize_cluster_list_response( WP_REST_Response|WP_Error $response, int $requested_limit ): WP_REST_Response|WP_Error {
-		if ( ! ( $response instanceof WP_REST_Response ) ) {
-			return $response;
-		}
-
-		$data = $response->get_data();
-		if ( ! is_array( $data ) ) {
-			return $response;
-		}
-
-		if ( isset( $data['clusters'] ) && is_array( $data['clusters'] ) ) {
-			if ( ! isset( $data['limit'], $data['total'], $data['truncated'] ) || ! is_numeric( $data['limit'] ) || ! is_numeric( $data['total'] ) || ! is_bool( $data['truncated'] ) ) {
-				return new WP_Error(
-					'invalid_cluster_list_envelope',
-					'Cluster list response must include limit, total, and truncated when clusters is present.',
-					array( 'status' => 502 )
-				);
-			}
-
-			$clusters = $data['clusters'];
-			$total = max( 0, (int) $data['total'] );
-			$limit = max( 1, (int) $data['limit'] );
-			$truncated = $data['truncated'];
-
-			return new WP_REST_Response(
-				array(
-					'clusters' => $clusters,
-					'limit' => $limit,
-					'total' => $total,
-					'truncated' => $truncated,
-				),
-				$response->get_status()
-			);
-		}
-
-		$clusters = $data;
-		return new WP_REST_Response(
-			array(
-				'clusters' => $clusters,
-				'limit' => $requested_limit,
-				'total' => count( $clusters ),
-				'truncated' => false,
-			),
-			$response->get_status()
-		);
-	}
-
-	private function normalize_cluster_members_response( WP_REST_Response|WP_Error $response, int $requested_limit ): WP_REST_Response|WP_Error {
-		if ( ! ( $response instanceof WP_REST_Response ) ) {
-			return $response;
-		}
-
-		$data = $response->get_data();
-		if ( ! is_array( $data ) ) {
-			return $response;
-		}
-
-		if ( isset( $data['members'] ) && is_array( $data['members'] ) ) {
-			if ( ! isset( $data['limit'], $data['total'], $data['truncated'] ) || ! is_numeric( $data['limit'] ) || ! is_numeric( $data['total'] ) || ! is_bool( $data['truncated'] ) ) {
-				return new WP_Error(
-					'invalid_cluster_members_envelope',
-					'Cluster members response must include limit, total, and truncated when members is present.',
-					array( 'status' => 502 )
-				);
-			}
-
-			$members = $data['members'];
-			$total = max( 0, (int) $data['total'] );
-			$limit = max( 1, (int) $data['limit'] );
-			$truncated = $data['truncated'];
-
-			return new WP_REST_Response(
-				$this->build_cluster_members_envelope( $members, $limit, $total ),
-				$response->get_status()
-			);
-		}
-
-		$members = $data;
-		return new WP_REST_Response(
-			$this->build_cluster_members_envelope( $members, $requested_limit, count( $members ) ),
-			$response->get_status()
-		);
-	}
-
-	private function normalize_cluster_labels_response( WP_REST_Response|WP_Error $response, int $requested_limit ): WP_REST_Response|WP_Error {
-		if ( ! ( $response instanceof WP_REST_Response ) ) {
-			return $response;
-		}
-
-		$data = $response->get_data();
-		if ( ! is_array( $data ) ) {
-			return $response;
-		}
-
-		if ( isset( $data['labels'] ) && is_array( $data['labels'] ) ) {
-			if ( ! isset( $data['limit'], $data['total'], $data['truncated'] ) || ! is_numeric( $data['limit'] ) || ! is_numeric( $data['total'] ) || ! is_bool( $data['truncated'] ) ) {
-				return new WP_Error(
-					'invalid_cluster_labels_envelope',
-					'Cluster labels response must include limit, total, and truncated when labels is present.',
-					array( 'status' => 502 )
-				);
-			}
-
-			$labels = $this->cluster_mapper->map_labels_list( $data['labels'] );
-			$total = max( 0, (int) $data['total'] );
-			$limit = max( 1, (int) $data['limit'] );
-			$truncated = $data['truncated'];
-
-			return new WP_REST_Response(
-				array(
-					'labels' => $labels,
-					'limit' => $limit,
-					'total' => $total,
-					'truncated' => $truncated,
-				),
-				$response->get_status()
-			);
-		}
-
-		$labels = $this->cluster_mapper->map_labels_list( $data );
-		return new WP_REST_Response(
-			$this->build_cluster_labels_envelope( $labels, $requested_limit, count( $labels ) ),
-			$response->get_status()
-		);
 	}
 
 	private function resolve_sync_pull_job(): ?SyncPullJobInterface {

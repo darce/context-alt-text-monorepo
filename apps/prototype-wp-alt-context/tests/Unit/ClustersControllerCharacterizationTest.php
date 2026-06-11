@@ -52,7 +52,7 @@ class ClustersControllerCharacterizationTest extends TestCase
 
     public function testBranchCoverageInventoryIsComplete(): void
     {
-        $expected = array_keys(ClustersReadCharacterizationScenarios::all());
+        $expected = ClustersReadCharacterizationScenarios::scenarioIds();
         sort($expected);
 
         $entries = scandir(self::FIXTURE_ROOT);
@@ -75,10 +75,7 @@ class ClustersControllerCharacterizationTest extends TestCase
      */
     public function testGoldenScenario(string $handler): void
     {
-        $scenarios = ClustersReadCharacterizationScenarios::all();
-        $this->assertArrayHasKey($handler, $scenarios);
-
-        $payload = $scenarios[$handler];
+        $payload = ClustersReadCharacterizationScenarios::run($handler);
         $this->assertGolden($handler, $payload['response'], $payload['side_effects']);
     }
 
@@ -88,7 +85,7 @@ class ClustersControllerCharacterizationTest extends TestCase
     public static function goldenScenarioProvider(): array
     {
         $cases = [];
-        foreach (array_keys(ClustersReadCharacterizationScenarios::all()) as $handler) {
+        foreach (ClustersReadCharacterizationScenarios::scenarioIds() as $handler) {
             $cases[$handler] = [$handler];
         }
 

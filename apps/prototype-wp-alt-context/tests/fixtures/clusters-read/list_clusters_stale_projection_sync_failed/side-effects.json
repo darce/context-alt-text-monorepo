@@ -1,0 +1,1 @@
+{"branch":"stale_projection_sync_failed","scheduled_event_count":0,"scheduled_events":[],"http_call_count":0,"do_action_log":[{"hook":"acx_sync_pull_failed","args":[{"tenant_id":"33380427-1819-5ad2-922b-cdd246fac3a0","context":"stale_projection_read","message":"sync boom"}]}]}

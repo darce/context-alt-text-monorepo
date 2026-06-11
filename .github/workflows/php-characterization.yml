@@ -1,0 +1,49 @@
+name: PHP Characterization
+
+on:
+  pull_request:
+    branches:
+      - main
+      - master
+    paths:
+      - "apps/prototype-wp-alt-context/**"
+      - ".github/workflows/php-characterization.yml"
+      - "scripts/consumer-hooks/**"
+      - "scripts/test_php_characterization_gate.py"
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - "apps/prototype-wp-alt-context/**"
+      - ".github/workflows/php-characterization.yml"
+      - "scripts/consumer-hooks/**"
+      - "scripts/test_php_characterization_gate.py"
+
+jobs:
+  php-characterization:
+    name: Golden characterization suites
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: apps/prototype-wp-alt-context
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          coverage: none
+          tools: composer:v2
+
+      - name: Install PHP dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Run characterization suites
+        run: >-
+          vendor/bin/phpunit
+          --filter 'AnalysisJobsControllerCharacterizationTest|ClusterMutationsCharacterizationTest|ClustersControllerCharacterizationTest'

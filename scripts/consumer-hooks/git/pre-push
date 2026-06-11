@@ -1,0 +1,17 @@
+#!/bin/sh
+# Consumer-owned pre-push wrapper: overlay-managed guards first, then the
+# characterization merge-result gate. Do not edit scripts/hooks/git/pre-push
+# (bootstrap-managed overlay); extend here instead.
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+if [ -z "$REPO_ROOT" ]; then
+    exit 0
+fi
+
+cat >/dev/null
+
+"$REPO_ROOT/scripts/hooks/git/pre-push" "$@" || exit $?
+
+"$REPO_ROOT/scripts/consumer-hooks/run-php-characterization.sh" || exit $?
+
+exit 0

@@ -1,1 +1,1 @@
-{"branch":"proxy_invalid_envelope","scheduled_event_count":1,"http_call_count":3}
+{"branch":"proxy_invalid_envelope","scheduled_event_count":1,"scheduled_events":[{"hook":"acx_bootstrap_sync","args":["33380427-1819-5ad2-922b-cdd246fac3a0"]}],"http_call_count":3,"do_action_log":[{"hook":"acx_sync_pull_failed","args":[{"tenant_id":"33380427-1819-5ad2-922b-cdd246fac3a0","context":"delta_fetch_failed","message":"Delta payload must be an object."}]}]}

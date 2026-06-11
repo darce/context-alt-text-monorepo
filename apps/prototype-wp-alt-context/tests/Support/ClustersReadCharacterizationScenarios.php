@@ -21,18 +21,55 @@ use WP_REST_Request;
 final class ClustersReadCharacterizationScenarios
 {
     /**
-     * @return array<string, array{response: mixed, side_effects: array<string,mixed>}>
+     * @return list<string>
      */
-    public static function all(): array
+    public static function scenarioIds(): array
     {
         return [
+            'list_clusters_local_projection',
+            'list_clusters_stale_projection_sync',
+            'list_clusters_stale_projection_sync_failed',
+            'list_clusters_proxy_success',
+            'list_clusters_proxy_invalid_envelope',
+            'list_clusters_proxy_bootstrap_inline_success',
+            'list_clusters_proxy_bootstrap_cron_scheduled',
+            'list_top_unlabeled_local_projection',
+            'list_top_unlabeled_proxy_success',
+            'list_top_unlabeled_proxy_canonical_envelope',
+            'list_top_unlabeled_proxy_invalid_envelope',
+            'list_top_unlabeled_proxy_bootstrapping_fallback',
+            'list_top_unlabeled_targeted_repair',
+            'list_cluster_labels_local_projection',
+            'list_cluster_labels_proxy_success',
+            'list_cluster_labels_proxy_invalid_envelope',
+            'get_cluster_detail_local_projection',
+            'get_cluster_detail_proxy_success',
+            'get_cluster_detail_local_not_found',
+            'get_cluster_members_local_projection',
+            'get_cluster_members_local_not_found',
+            'get_cluster_members_proxy_success',
+            'get_cluster_members_proxy_invalid_envelope',
+            'get_cluster_members_targeted_repair',
+        ];
+    }
+
+    /**
+     * @return array{response: mixed, side_effects: array<string,mixed>}
+     * @throws \InvalidArgumentException When $scenario_id is unknown.
+     */
+    public static function run(string $scenario_id): array
+    {
+        return match ($scenario_id) {
             'list_clusters_local_projection' => self::listClustersLocalProjection(),
+            'list_clusters_stale_projection_sync' => self::listClustersStaleProjectionSync(),
+            'list_clusters_stale_projection_sync_failed' => self::listClustersStaleProjectionSyncFailed(),
             'list_clusters_proxy_success' => self::listClustersProxySuccess(),
             'list_clusters_proxy_invalid_envelope' => self::listClustersProxyInvalidEnvelope(),
             'list_clusters_proxy_bootstrap_inline_success' => self::listClustersProxyBootstrapInlineSuccess(),
             'list_clusters_proxy_bootstrap_cron_scheduled' => self::listClustersProxyBootstrapCronScheduled(),
             'list_top_unlabeled_local_projection' => self::listTopUnlabeledLocalProjection(),
             'list_top_unlabeled_proxy_success' => self::listTopUnlabeledProxySuccess(),
+            'list_top_unlabeled_proxy_canonical_envelope' => self::listTopUnlabeledProxyCanonicalEnvelope(),
             'list_top_unlabeled_proxy_invalid_envelope' => self::listTopUnlabeledProxyInvalidEnvelope(),
             'list_top_unlabeled_proxy_bootstrapping_fallback' => self::listTopUnlabeledProxyBootstrappingFallback(),
             'list_top_unlabeled_targeted_repair' => self::listTopUnlabeledTargetedRepair(),
@@ -43,10 +80,17 @@ final class ClustersReadCharacterizationScenarios
             'get_cluster_detail_proxy_success' => self::getClusterDetailProxySuccess(),
             'get_cluster_detail_local_not_found' => self::getClusterDetailLocalNotFound(),
             'get_cluster_members_local_projection' => self::getClusterMembersLocalProjection(),
+            'get_cluster_members_local_not_found' => self::getClusterMembersLocalNotFound(),
             'get_cluster_members_proxy_success' => self::getClusterMembersProxySuccess(),
             'get_cluster_members_proxy_invalid_envelope' => self::getClusterMembersProxyInvalidEnvelope(),
             'get_cluster_members_targeted_repair' => self::getClusterMembersTargetedRepair(),
-        ];
+            default => throw new \InvalidArgumentException(
+                sprintf(
+                    'Unknown characterization scenario: %s',
+                    esc_html($scenario_id)
+                )
+            ),
+        };
     }
 
     /**
@@ -96,7 +140,7 @@ final class ClustersReadCharacterizationScenarios
             }
             public function get_last_updated(string $tenant_id): ?string
             {
-                return '2026-02-14 00:00:00';
+                return gmdate('Y-m-d H:i:s');
             }
         };
 
@@ -287,14 +331,7 @@ final class ClustersReadCharacterizationScenarios
             }
         };
 
-        $syncRepo = new class() extends NullSyncStateRepository {
-            public function get_snapshot_version(string $tenant_id): int
-            {
-                return 1;
-            }
-        };
-
-        $controller = new ClustersController($clustersRepo, $membersRepo, $syncRepo, null, new ClusterResponseMapper(), new MemberResponseMapper());
+        $controller = new ClustersController($clustersRepo, $membersRepo, self::freshLocalSyncStateRepository(), null, new ClusterResponseMapper(), new MemberResponseMapper());
         $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled');
 
         return [
@@ -542,12 +579,7 @@ final class ClustersReadCharacterizationScenarios
         $controller = new ClustersController(
             $clustersRepo,
             new NullIdentityMembersRepository(),
-            new class() extends NullSyncStateRepository {
-                public function get_snapshot_version(string $tenant_id): int
-                {
-                    return 1;
-                }
-            },
+            self::freshLocalSyncStateRepository(),
             null,
             new ClusterResponseMapper(),
             new MemberResponseMapper()
@@ -647,12 +679,7 @@ final class ClustersReadCharacterizationScenarios
         $controller = new ClustersController(
             $clustersRepo,
             $membersRepo,
-            new class() extends NullSyncStateRepository {
-                public function get_snapshot_version(string $tenant_id): int
-                {
-                    return 1;
-                }
-            },
+            self::freshLocalSyncStateRepository(),
             null,
             new ClusterResponseMapper(),
             new MemberResponseMapper()
@@ -711,12 +738,7 @@ final class ClustersReadCharacterizationScenarios
                 }
             },
             new NullIdentityMembersRepository(),
-            new class() extends NullSyncStateRepository {
-                public function get_snapshot_version(string $tenant_id): int
-                {
-                    return 1;
-                }
-            },
+            self::freshLocalSyncStateRepository(),
             null,
             new ClusterResponseMapper(),
             new MemberResponseMapper()
@@ -768,12 +790,7 @@ final class ClustersReadCharacterizationScenarios
         $controller = new ClustersController(
             $clustersRepo,
             $membersRepo,
-            new class() extends NullSyncStateRepository {
-                public function get_snapshot_version(string $tenant_id): int
-                {
-                    return 1;
-                }
-            },
+            self::freshLocalSyncStateRepository(),
             null,
             new ClusterResponseMapper(),
             new MemberResponseMapper()
@@ -931,6 +948,7 @@ final class ClustersReadCharacterizationScenarios
     private static function resetHarness(): void
     {
         $GLOBALS['__ac_scheduled'] = [];
+        $GLOBALS['__ac_do_action_log'] = [];
         $GLOBALS['__ac_http_queue'] = [];
         $GLOBALS['__ac_http_calls'] = [];
         $GLOBALS['__ac_options']['acx_recognition_url'] = 'http://localhost:8000';
@@ -949,6 +967,21 @@ final class ClustersReadCharacterizationScenarios
         );
     }
 
+    private static function freshLocalSyncStateRepository(): NullSyncStateRepository
+    {
+        return new class() extends NullSyncStateRepository {
+            public function get_snapshot_version(string $tenant_id): int
+            {
+                return 1;
+            }
+
+            public function get_last_updated(string $tenant_id): ?string
+            {
+                return gmdate('Y-m-d H:i:s');
+            }
+        };
+    }
+
     /**
      * @param array<string,mixed>|\WP_Error $response
      */
@@ -958,14 +991,277 @@ final class ClustersReadCharacterizationScenarios
     }
 
     /**
+     * @param array<string,mixed> $extra
      * @return array<string,mixed>
      */
-    private static function baseSideEffects(string $branch): array
+    private static function baseSideEffects(string $branch, array $extra = []): array
     {
+        return array_merge(
+            [
+                'branch' => $branch,
+                'scheduled_event_count' => count($GLOBALS['__ac_scheduled'] ?? []),
+                'scheduled_events' => self::scheduledEvents(),
+                'http_call_count' => count($GLOBALS['__ac_http_calls'] ?? []),
+                'do_action_log' => $GLOBALS['__ac_do_action_log'] ?? [],
+            ],
+            $extra
+        );
+    }
+
+    /**
+     * @return list<array{hook: string, args: array<int,mixed>}>
+     */
+    private static function scheduledEvents(): array
+    {
+        $events = [];
+        foreach ($GLOBALS['__ac_scheduled'] ?? [] as $key => $entry) {
+            if (! is_array($entry)) {
+                continue;
+            }
+
+            $hook = explode('::', (string) $key, 2)[0];
+            $events[] = [
+                'hook' => $hook,
+                'args' => $entry['args'] ?? [],
+            ];
+        }
+
+        return $events;
+    }
+
+    /**
+     * @return array{response: mixed, side_effects: array<string,mixed>}
+     */
+    private static function listClustersStaleProjectionSync(): array
+    {
+        self::resetHarness();
+
+        $syncSpy = new class() implements SyncPullJobInterface {
+            public bool $performed = false;
+            public string $tenantId = '';
+            public function perform(string $tenant_id): SyncPullResult
+            {
+                $this->performed = true;
+                $this->tenantId = $tenant_id;
+                return SyncPullResult::ok();
+            }
+            public function perform_bypass_cooldown(string $tenant_id): SyncPullResult
+            {
+                return SyncPullResult::ok();
+            }
+            public function perform_projection_payload(string $tenant_id, array $payload): SyncPullResult
+            {
+                return SyncPullResult::ok();
+            }
+        };
+
+        $clustersRepo = new class() extends NullClustersRepository {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
+            public function list_for_tenant(string $tenant_id, int $limit = 50, int $offset = 0, array $filters = []): array
+            {
+                return [
+                    [
+                        'cluster_uuid' => 'cluster-stale',
+                        'label' => 'Stale Data',
+                        'identity_count' => 1,
+                    ],
+                ];
+            }
+        };
+
+        $controller = new ClustersController(
+            $clustersRepo,
+            new class() extends NullIdentityMembersRepository {
+                public function list_for_cluster_uuids(array $cluster_uuids, int $limit_per_cluster): array
+                {
+                    return [];
+                }
+            },
+            new class() extends NullSyncStateRepository {
+                public function get_snapshot_version(string $tenant_id): int
+                {
+                    return 5;
+                }
+                public function get_last_updated(string $tenant_id): ?string
+                {
+                    return '2020-01-01 00:00:00';
+                }
+            },
+            $syncSpy,
+            new ClusterResponseMapper(),
+            new MemberResponseMapper()
+        );
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters');
+        $response = $controller->list_clusters($request);
+
         return [
-            'branch' => $branch,
-            'scheduled_event_count' => count($GLOBALS['__ac_scheduled'] ?? []),
-            'http_call_count' => count($GLOBALS['__ac_http_calls'] ?? []),
+            'response' => $response,
+            'side_effects' => self::baseSideEffects('stale_projection_sync', [
+                'sync_performed' => $syncSpy->performed,
+            ]),
+        ];
+    }
+
+    /**
+     * @return array{response: mixed, side_effects: array<string,mixed>}
+     */
+    private static function listClustersStaleProjectionSyncFailed(): array
+    {
+        self::resetHarness();
+
+        $syncJob = new class() implements SyncPullJobInterface {
+            public function perform(string $tenant_id): SyncPullResult
+            {
+                throw new \RuntimeException('sync boom');
+            }
+            public function perform_bypass_cooldown(string $tenant_id): SyncPullResult
+            {
+                return SyncPullResult::ok();
+            }
+            public function perform_projection_payload(string $tenant_id, array $payload): SyncPullResult
+            {
+                return SyncPullResult::ok();
+            }
+        };
+
+        $controller = new ClustersController(
+            new class() extends NullClustersRepository {
+                public function has_projection_rows_for_tenant(string $tenant_id): bool
+                {
+                    return true;
+                }
+                public function list_for_tenant(string $tenant_id, int $limit = 50, int $offset = 0, array $filters = []): array
+                {
+                    return [
+                        [
+                            'cluster_uuid' => 'cluster-stale-fail',
+                            'label' => 'Stale Fail',
+                            'identity_count' => 1,
+                        ],
+                    ];
+                }
+            },
+            new class() extends NullIdentityMembersRepository {
+                public function list_for_cluster_uuids(array $cluster_uuids, int $limit_per_cluster): array
+                {
+                    return [];
+                }
+            },
+            new class() extends NullSyncStateRepository {
+                public function get_snapshot_version(string $tenant_id): int
+                {
+                    return 5;
+                }
+                public function get_last_updated(string $tenant_id): ?string
+                {
+                    return '2020-01-01 00:00:00';
+                }
+            },
+            $syncJob,
+            new ClusterResponseMapper(),
+            new MemberResponseMapper()
+        );
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters');
+        $response = $controller->list_clusters($request);
+
+        return [
+            'response' => $response,
+            'side_effects' => self::baseSideEffects('stale_projection_sync_failed'),
+        ];
+    }
+
+    /**
+     * @return array{response: mixed, side_effects: array<string,mixed>}
+     */
+    private static function listTopUnlabeledProxyCanonicalEnvelope(): array
+    {
+        self::resetHarness();
+
+        $syncRepo = new class() extends NullSyncStateRepository {
+            public function get_snapshot_version(string $tenant_id): int
+            {
+                return 0;
+            }
+            public function get_last_updated(string $tenant_id): ?string
+            {
+                return null;
+            }
+        };
+
+        $controller = new ClustersController(null, null, $syncRepo, null, new ClusterResponseMapper(), new MemberResponseMapper());
+
+        self::queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'clusters' => [
+                    [
+                        'id' => 'cluster-canonical',
+                        'label' => null,
+                        'identity_count' => 2,
+                        'representatives' => [],
+                    ],
+                ],
+                'limit' => 10,
+                'total' => 1,
+                'truncated' => false,
+            ]),
+        ]);
+        self::queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'snapshot_version' => 0,
+                'clusters' => [],
+                'members' => [],
+                'empty' => true,
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled');
+        $response = $controller->list_top_unlabeled_clusters($request);
+
+        return [
+            'response' => $response,
+            'side_effects' => self::baseSideEffects('proxy_canonical_envelope'),
+        ];
+    }
+
+    /**
+     * @return array{response: mixed, side_effects: array<string,mixed>}
+     */
+    private static function getClusterMembersLocalNotFound(): array
+    {
+        self::resetHarness();
+
+        $controller = new ClustersController(
+            new class() extends NullClustersRepository {
+                public function has_projection_rows_for_tenant(string $tenant_id): bool
+                {
+                    return true;
+                }
+                public function find_by_uuid(string $cluster_uuid): ?array
+                {
+                    return null;
+                }
+            },
+            new NullIdentityMembersRepository(),
+            self::freshLocalSyncStateRepository(),
+            null,
+            new ClusterResponseMapper(),
+            new MemberResponseMapper()
+        );
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/missing-members/members');
+        $request->set_param('cluster_id', 'missing-members');
+        $response = $controller->get_cluster_members($request);
+
+        return [
+            'response' => $response,
+            'side_effects' => self::baseSideEffects('local_not_found'),
         ];
     }
 }

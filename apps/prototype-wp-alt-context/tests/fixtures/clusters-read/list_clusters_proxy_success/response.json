@@ -1,0 +1,1 @@
+{"type":"response","status":200,"data":{"clusters":[{"id":"cluster-proxy","label":"Proxied","identity_count":5}],"limit":50,"total":1,"truncated":false}}

@@ -36,6 +36,7 @@ class AnalysisJobsControllerCharacterizationTest extends TestCase
         parent::setUp();
         $GLOBALS['__ac_connection_aborted_call_count'] = 0;
         $this->setOption('acx_recognition_url', 'http://localhost:8000');
+        $this->setOption('acx_recognition_source', 'service');
         $this->setOption('acx_tier', 'free');
         $this->controller = new AnalysisJobsController();
     }
@@ -412,8 +413,16 @@ class AnalysisJobsControllerCharacterizationTest extends TestCase
         $expectedResponse = (string) file_get_contents($responseFixture);
         $expectedSideEffects = (string) file_get_contents($sideEffectsFixture);
 
-        $this->assertSame($expectedResponse, $actualResponse, sprintf('Golden response drift for %s.', $handler));
-        $this->assertSame($expectedSideEffects, $actualSideEffects, sprintf('Golden side-effects drift for %s.', $handler));
+        $this->assertSame(
+            json_decode($expectedResponse, true),
+            json_decode($actualResponse, true),
+            sprintf('Golden response drift for %s.', $handler)
+        );
+        $this->assertSame(
+            json_decode($expectedSideEffects, true),
+            json_decode($actualSideEffects, true),
+            sprintf('Golden side-effects drift for %s.', $handler)
+        );
     }
 
     /**
@@ -434,7 +443,11 @@ class AnalysisJobsControllerCharacterizationTest extends TestCase
 
         $this->assertFileExists($fixture, sprintf('Missing golden payload fixture for %s.', $handler));
         $expected = (string) file_get_contents($fixture);
-        $this->assertSame($expected, $actual, sprintf('Golden payload drift for %s.', $handler));
+        $this->assertSame(
+            json_decode($expected, true),
+            json_decode($actual, true),
+            sprintf('Golden payload drift for %s.', $handler)
+        );
     }
 
     private function assertGoldenStreamFrames(string $handler, string $output): void

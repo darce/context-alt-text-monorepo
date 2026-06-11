@@ -100,4 +100,50 @@ class RunsTransactionalTest extends TestCase
         $this->assertSame('Could not start local transaction.', $result->get_error_message());
         $this->assertSame(array('START TRANSACTION'), $wpdb->queries);
     }
+
+    public function testWpdbUnavailableReturnsAcxDbErrorWithoutRunningCallable(): void
+    {
+        global $wpdb;
+        $saved_wpdb = $wpdb;
+        $wpdb = null;
+        $callable_ran = false;
+
+        try {
+            $result = $this->subject->invoke(static function () use (&$callable_ran): string {
+                $callable_ran = true;
+                return 'should-not-run';
+            });
+        } finally {
+            $wpdb = $saved_wpdb;
+        }
+
+        $this->assertFalse($callable_ran);
+        $this->assertTrue(is_wp_error($result));
+        $this->assertSame('acx_db_error', $result->get_error_code());
+        $this->assertSame('Could not start local transaction.', $result->get_error_message());
+    }
+
+    public function testNestedRunTransactionalReturnsAcxDbErrorWithoutIssuingStart(): void
+    {
+        global $wpdb;
+
+        $subject = new class() {
+            use RunsTransactional;
+
+            public function invoke(): mixed
+            {
+                return $this->run_transactional(function (): mixed {
+                    return $this->run_transactional(static fn (): string => 'nested');
+                });
+            }
+        };
+
+        $result = $subject->invoke();
+
+        $this->assertTrue(is_wp_error($result));
+        $this->assertSame('acx_db_error', $result->get_error_code());
+        $this->assertSame('Could not start local transaction.', $result->get_error_message());
+        $this->assertSame(array('START TRANSACTION', 'ROLLBACK'), $wpdb->queries);
+        $this->assertNotContains('COMMIT', $wpdb->queries);
+    }
 }

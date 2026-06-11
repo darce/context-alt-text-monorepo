@@ -270,7 +270,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "mcp-workstate-orchestrator", marker = "extra == 'dev'", git = "https://github.com/darce/workstate.git?subdirectory=packages%2Fmcp-workstate-orchestrator&tag=mcp-workstate-orchestrator-v0.6.0" },
+    { name = "mcp-workstate-orchestrator", marker = "extra == 'dev'", git = "https://github.com/darce/workstate.git?subdirectory=packages%2Fmcp-workstate-orchestrator&tag=mcp-workstate-orchestrator-v0.6.6" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.13.0,<2.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.0.0" },
@@ -753,7 +753,7 @@ wheels = [
 
 [[package]]
 name = "mcp-workstate-handoff"
-version = "0.12.3"
+version = "0.12.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastmcp" },
@@ -761,15 +761,15 @@ dependencies = [
     { name = "tiktoken" },
     { name = "workstate-protocol" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ca/17/23fb98f7922c09201e4209d0e3fff2a1a8042df9cbb7ca0bf4346348012a/mcp_workstate_handoff-0.12.3.tar.gz", hash = "sha256:7e5598e89208b747e8b24e775a95a956ba19ca3cca03116896a1a04dbbdbaab1", size = 476740, upload-time = "2026-06-05T00:05:09.232Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ba/77/7c1cb5b500676ea7622d1dccba6cdba494d72bbaf06387f4eff45b1b3cb4/mcp_workstate_handoff-0.12.9.tar.gz", hash = "sha256:de4f2ed4efa472228b3e66edd8c38f18fb7d3c08d88de2e766c2053e7245f668", size = 250400, upload-time = "2026-06-10T09:57:28.193Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fa/8b/dd12a85ffe107908b3b13443c073d2fbdf9b53dd48e80a095a6ca329bee7/mcp_workstate_handoff-0.12.3-py3-none-any.whl", hash = "sha256:980baa73433e135003fafdc82a223f6d2266615610d88759ccd77976b6d356ff", size = 254997, upload-time = "2026-06-05T00:05:07.674Z" },
+    { url = "https://files.pythonhosted.org/packages/2c/56/69a54ef6b97fd245fe237379e9b37d66b81a4e3963ab84c720a619e88223/mcp_workstate_handoff-0.12.9-py3-none-any.whl", hash = "sha256:1e3b80dd8f32a02ab64aa1ea2f079eea7c5899a70e2bba6e6f5ee169d79388e4", size = 271986, upload-time = "2026-06-10T09:57:26.756Z" },
 ]
 
 [[package]]
 name = "mcp-workstate-orchestrator"
-version = "0.6.0"
-source = { git = "https://github.com/darce/workstate.git?subdirectory=packages%2Fmcp-workstate-orchestrator&tag=mcp-workstate-orchestrator-v0.6.0#83065f197c10353420035859f993ab827e359258" }
+version = "0.6.6"
+source = { git = "https://github.com/darce/workstate.git?subdirectory=packages%2Fmcp-workstate-orchestrator&tag=mcp-workstate-orchestrator-v0.6.6#2aab3b234007a91b731630988dee470d0ceca736" }
 dependencies = [
     { name = "fastmcp" },
     { name = "mcp-workstate-handoff" },
@@ -1747,8 +1747,8 @@ wheels = [
 
 [[package]]
 name = "workstate-protocol"
-version = "0.2.1"
-source = { git = "https://github.com/darce/workstate.git?subdirectory=packages%2Fworkstate-protocol&tag=mcp-workstate-orchestrator-v0.6.0#83065f197c10353420035859f993ab827e359258" }
+version = "0.2.8"
+source = { git = "https://github.com/darce/workstate.git?subdirectory=packages%2Fworkstate-protocol&tag=mcp-workstate-orchestrator-v0.6.6#2aab3b234007a91b731630988dee470d0ceca736" }
 dependencies = [
     { name = "pydantic" },
 ]

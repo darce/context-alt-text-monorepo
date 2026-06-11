@@ -129,7 +129,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/logs.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest
+.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-hooks
 
 # Default target
 help:
@@ -287,6 +287,7 @@ check-all:
 			$(MAKE) check-codex-command-router; \
 			$(MAKE) worktree-audit; \
 			$(MAKE) task-plan-audit; \
+			$(MAKE) test-hooks; \
 			$(MAKE) test-all; \
 			echo ""; \
 			echo "✅ All monorepo checks passed!"; \
@@ -415,7 +416,7 @@ test-overrides-digest:
 # Run unit tests for scripts/hooks and .github/hooks.
 # Addresses AHMCP-14-BR-02: hook tests were not reachable via package Makefiles.
 test-hooks:
-	@python3 -m pytest scripts/hooks .github/hooks -q --tb=short
+	@python3 -m pytest scripts/hooks .github/hooks scripts/test_php_characterization_gate.py -q --tb=short
 
 # E17-8 BR-16 / BR-22: on-demand scan for dirty protected paths on main.
 # Mirrors what post-checkout / post-commit / post-merge / post-rewrite / pre-push run.
@@ -423,15 +424,18 @@ test-hooks:
 check-main-clean:
 	@python3 scripts/hooks/check_main_clean.py --trigger manual
 
-# E17-8 BR-16 / BR-22: redirect git's per-repo hooks dir to the tracked
-# scripts/hooks/git/ directory so post-checkout, post-commit, post-merge,
-# and post-rewrite (warning-only) plus pre-push (hard block) run on every
-# clone+checkout.
+# REFA-10: consumer hooksPath wraps overlay lifecycle hooks and adds the
+# characterization merge-result gate on pre-push. Overlay scripts/hooks/git/*
+# remain bootstrap-managed; consumer-hooks/git symlinks delegate to them.
 # Idempotent: safe to re-run. Uninstall with `git config --unset core.hooksPath`.
 install-git-hooks:
-	@git config core.hooksPath scripts/hooks/git
-	@echo "git core.hooksPath -> scripts/hooks/git"
-	@ls -1 scripts/hooks/git
+	@git config core.hooksPath scripts/consumer-hooks/git
+	@for h in post-checkout post-commit post-merge post-rewrite pre-commit; do \
+		ln -sfn ../../hooks/git/$$h scripts/consumer-hooks/git/$$h; \
+	done
+	@echo "git core.hooksPath -> scripts/consumer-hooks/git (overlay guards + consumer characterization gate)"
+	@chmod +x scripts/consumer-hooks/run-php-characterization.sh scripts/consumer-hooks/git/pre-push
+	@ls -1 scripts/consumer-hooks/git
 
 # Apply deterministic lint fixes and formatting across every app and package.
 # Run this before `make check-all` — many violations are auto-fixable and

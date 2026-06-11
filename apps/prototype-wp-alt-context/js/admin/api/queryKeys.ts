@@ -44,6 +44,7 @@ export const queryKeys = {
   sync: {
     all: ['sync'] as const,
     status: () => [...queryKeys.sync.all, 'status'] as const,
+    health: () => [...queryKeys.sync.all, 'health'] as const,
   },
   retention: {
     all: ['retention'] as const,

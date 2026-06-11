@@ -97,8 +97,14 @@ class SyncHealthControllerTest extends TestCase
 
     public function testGetSyncHealthDoesNotMutateTransients(): void
     {
+        $baseUrl = 'http://recognition.test';
+        $this->setOption('acx_recognition_source', 'service');
+        $this->setOption('acx_recognition_url', $baseUrl);
+        $circuitKey = RecognitionCircuitKeys::for_base_url($baseUrl);
+        $failureKey = RecognitionCircuitKeys::failure_key_for_base_url($baseUrl);
         $GLOBALS['__ac_transients'] = [
-            'acx_recognition_circuit_deadbeef' => ['value' => 1, 'expires' => time() + 60],
+            $circuitKey => ['value' => 1, 'expires' => time() + 60],
+            $failureKey => ['value' => 2, 'expires' => time() + 60],
         ];
 
         $controller = new SyncHealthController();

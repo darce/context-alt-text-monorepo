@@ -107,7 +107,7 @@ No cross-service or contract boundary is touched. REST response shapes are uncha
   - `cd apps/prototype-wp-alt-context && vendor/bin/phpunit --filter ClustersControllerCharacterizationTest` green on a clean (no-env) run.
   - Full plugin suite green: `cd apps/prototype-wp-alt-context && vendor/bin/phpunit`.
 - Regen round-trip safety: `UPDATE_CLUSTERS_READ_FIXTURES=1 vendor/bin/phpunit --filter ClustersControllerCharacterizationTest` then `git diff --stat -- tests/fixtures/clusters-read` is **empty** (the guard reproduces the already-correct bytes), and a no-env re-run is green.
-- Gate efficacy (the actual proof): inject `\/` into one clusters-read fixture on a throwaway commit, run the pre-push check and the CI job locally (act/equivalent) → both **red**; revert → both **green**. Additionally simulate the real vector: create a branch forked before `c057949e`-style fix, merge it, and confirm the gate fails on the merge commit.
+- Gate efficacy (the actual proof): inject `\/` into one clusters-read fixture in the resolved tree, run the pre-push check and the CI job locally (act/equivalent) -> both **red**; revert -> both **green**. Keep any merge-file toy proof scoped to what it actually models; the gate's authority is the final merge-result tree.
 - Diff review: `git diff --stat` shows only the test guard, the new workflow, and the pre-push extension — no production source.
 
 ## Slice Delivery
@@ -126,7 +126,7 @@ Proof: regen run produces an empty `tests/fixtures/clusters-read` diff; no-env r
 
 Changes: new `.github/workflows/php-characterization.yml` running the characterization suites on PRs to `main` and push to `main`; add the same check at the sanctioned non-managed `pre-push` extension point (resolve the extension mechanism without editing the overlay-managed hook).
 
-Proof: simulated `\/` re-escape makes both gates red; revert green; a simulated forked-before-fix merge fails on the merge commit. Full plugin suite green.
+Proof: simulated `\/` re-escape in the resolved tree makes both gates red; revert green; merge-file contract tests document the stale-resolved-tree shape without overclaiming unchanged forked-before-fix behavior. Full plugin suite green.
 
 ---
 
@@ -149,7 +149,7 @@ Proof: simulated `\/` re-escape makes both gates red; revert green; a simulated 
 - [ ] Added CI workflow running characterization suites on PRs to `main` and push to `main`.
 - [ ] Added pre-push characterization check via the sanctioned non-managed extension point (no edit to the overlay-managed hook).
 - [ ] Demonstrated both gates go red on injected `\/` drift and green on revert.
-- [ ] Demonstrated the gate fails on a simulated forked-before-fix merge commit.
+- [ ] Demonstrated the gate fails when the resolved tree contains stale `\/` fixture bytes.
 - [ ] Full plugin `vendor/bin/phpunit` green.
 
 ## Review Readiness

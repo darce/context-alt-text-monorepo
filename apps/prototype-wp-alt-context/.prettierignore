@@ -22,3 +22,6 @@ coverage
 # Generated files
 *.min.js
 *.min.css
+
+# Characterization golden fixtures (byte-exact compact JSON; never Prettier-formatted)
+tests/fixtures/**/*.json

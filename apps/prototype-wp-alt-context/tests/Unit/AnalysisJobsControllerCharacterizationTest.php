@@ -400,7 +400,7 @@ class AnalysisJobsControllerCharacterizationTest extends TestCase
 
         if (getenv('UPDATE_ANALYSIS_JOBS_FIXTURES') === '1') {
             if (! is_dir($fixtureDir)) {
-                mkdir($fixtureDir, 0777, true);
+                mkdir($fixtureDir, 0755, true);
             }
             file_put_contents($responseFixture, $actualResponse);
             file_put_contents($sideEffectsFixture, $actualSideEffects);
@@ -427,7 +427,7 @@ class AnalysisJobsControllerCharacterizationTest extends TestCase
         if (getenv('UPDATE_ANALYSIS_JOBS_FIXTURES') === '1') {
             $dir = dirname($fixture);
             if (! is_dir($dir)) {
-                mkdir($dir, 0777, true);
+                mkdir($dir, 0755, true);
             }
             file_put_contents($fixture, $actual);
         }
@@ -445,7 +445,7 @@ class AnalysisJobsControllerCharacterizationTest extends TestCase
         if (getenv('UPDATE_ANALYSIS_JOBS_FIXTURES') === '1') {
             $dir = dirname($fixture);
             if (! is_dir($dir)) {
-                mkdir($dir, 0777, true);
+                mkdir($dir, 0755, true);
             }
             file_put_contents($fixture, $normalized);
         }

@@ -74,6 +74,10 @@ class SettingsControllerTest extends TestCase
         $data = $response->get_data();
         $this->assertSame('https://api.example.com', $data['url']);
         $this->assertSame('option', $data['url_source']);
+        $this->assertSame('local', $data['recognition_source']);
+        $this->assertSame('default', $data['recognition_source_source']);
+        $this->assertSame('http://localhost:8000', $data['effective_target_url']);
+        $this->assertSame('local', $data['effective_target_mode']);
         $this->assertTrue($data['api_key_set']);
         $this->assertSame('****1234', $data['api_key_last4']);
         $this->assertSame('option', $data['key_source']);
@@ -157,6 +161,7 @@ class SettingsControllerTest extends TestCase
         $this->setUserCapability('manage_options', true);
         $this->setOption('acx_recognition_url', 'https://stale-saved.example.com');
         add_filter('acx_recognition_base_url', static fn () => 'https://filter.example.com');
+        add_filter('acx_recognition_source', static fn () => 'service');
 
         $request = new WP_REST_Request('GET', '/acx/v1/settings');
         $response = $this->controller->get_settings($request);
@@ -232,6 +237,10 @@ class SettingsControllerTest extends TestCase
         $data = $response->get_data();
         $this->assertSame('https://const.example.com', $data['url']);
         $this->assertSame('constant', $data['url_source']);
+        $this->assertSame('local', $data['recognition_source']);
+        $this->assertSame('default', $data['recognition_source_source']);
+        $this->assertSame('http://localhost:8000', $data['effective_target_url']);
+        $this->assertSame('local', $data['effective_target_mode']);
         $this->assertSame('constant', $data['key_source']);
         $this->assertSame('****efgh', $data['api_key_last4']);
     }
@@ -276,6 +285,7 @@ class SettingsControllerTest extends TestCase
         // saved option win over the filter.
         $this->setUserCapability('manage_options', true);
         add_filter('acx_recognition_base_url', static fn () => 'https://filter.example.com');
+        add_filter('acx_recognition_source', static fn () => 'service');
 
         $request = new WP_REST_Request('POST', '/acx/v1/settings');
         $request->set_body_params([
@@ -559,6 +569,29 @@ class SettingsControllerTest extends TestCase
         $this->assertCount(1, $calls);
         $this->assertSame('http://localhost:8001/health', $calls[0]['url']);
         $this->assertArrayNotHasKey('X-API-Key', $calls[0]['args']['headers'] ?? array());
+        $this->assertSame(ProbeOutcome::CONNECTED, $data['outcome']);
+        $this->assertSame('local_liveness', $data['probe_mode']);
+        $this->assertSame('http://localhost:8001/health', $data['probed_url']);
+    }
+
+    public function testProbeDispatchHonorsExplicitProbeTarget(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_recognition_url', 'https://api.example.com');
+        $this->setOption('acx_recognition_source', 'service');
+        $this->setOption('acx_recognition_api_key', 'test-key');
+        $this->setOption('acx_recognition_local_url', 'http://localhost:8001');
+        $this->queueHttpResponse($this->buildOkResponse());
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings/test');
+        $request->set_body_params(array('probe_target' => 'local'));
+
+        $response = $this->controller->test_connection($request);
+        $data     = $response->get_data();
+        $calls    = $this->getHttpCalls();
+
+        $this->assertCount(1, $calls);
+        $this->assertSame('http://localhost:8001/health', $calls[0]['url']);
         $this->assertSame(ProbeOutcome::CONNECTED, $data['outcome']);
         $this->assertSame('local_liveness', $data['probe_mode']);
         $this->assertSame('http://localhost:8001/health', $data['probed_url']);

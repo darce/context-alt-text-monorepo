@@ -8,6 +8,7 @@ import {
   saveSettings,
   testConnection,
   TestConnectionOutcome,
+  type RecognitionSourceValue,
   type SettingsResponse,
   type TestConnectionProbeMode,
 } from '../api/settingsApi';
@@ -21,6 +22,7 @@ import { useSettingsPageState } from './settings/useSettingsPageState';
 
 export const SettingsPage = (): React.JSX.Element => {
   const queryClient = useQueryClient();
+
 
   const settingsQuery = useQuery<SettingsResponse>({
     queryKey: ['settings'],
@@ -107,11 +109,9 @@ export const SettingsPage = (): React.JSX.Element => {
     saveMutation.mutate(payload);
   };
 
-  const handleTest = (confirmTenantPairing = false) => {
+  const handleTest = (target: RecognitionSourceValue) => {
     dispatch({ type: 'clearTestResult' });
-    testMutation.mutate(
-      confirmTenantPairing === true ? { confirm_tenant_pairing: true } : {},
-    );
+    testMutation.mutate({ probe_target: target });
   };
 
   if (settingsQuery.isLoading) {
@@ -138,9 +138,9 @@ export const SettingsPage = (): React.JSX.Element => {
   const localUrlReadOnly = isReadOnly(data.local_url_source);
   const keyReadOnly = isReadOnly(data.key_source);
   const hasUnsavedRoutingChanges =
-    state.recognitionSource !== data.recognition_source || state.localUrl !== data.local_url || state.url !== data.url;
-  const canTestActiveTarget = data.effective_target_mode === RecognitionSource.LOCAL || state.url.trim() !== '';
-
+    state.recognitionSource !== data.recognition_source ||
+    state.localUrl !== data.local_url ||
+    state.url !== data.url;
   return (
     <section className="acx-settings" aria-labelledby="acx-settings-title">
       <h2 id="acx-settings-title">{__('Recognition API Settings', 'alt-context')}</h2>
@@ -148,7 +148,7 @@ export const SettingsPage = (): React.JSX.Element => {
         {__('Configure the connection to the Alt Context recognition service.', 'alt-context')}
       </p>
 
-      <SettingsRoutingBanner data={data} hasUnsavedRoutingChanges={hasUnsavedRoutingChanges} />
+      <SettingsRoutingBanner />
 
       <SettingsForm
         data={data}
@@ -162,14 +162,18 @@ export const SettingsPage = (): React.JSX.Element => {
         keyReadOnly={keyReadOnly}
         savePending={saveMutation.isPending}
         testPending={testMutation.isPending}
-        canTestActiveTarget={canTestActiveTarget}
         hasUnsavedRoutingChanges={hasUnsavedRoutingChanges}
+        testResult={state.testResult}
         onUrlChange={(value) => dispatch({ type: 'setUrl', value })}
         onLocalUrlChange={(value) => dispatch({ type: 'setLocalUrl', value })}
         onRecognitionSourceChange={(value) => dispatch({ type: 'setRecognitionSource', value })}
         onApiKeyChange={(value) => dispatch({ type: 'setApiKey', value })}
         onSave={handleSave}
         onTest={handleTest}
+        onFocusServiceUrl={() => {
+          dispatch({ type: 'setRecognitionSource', value: RecognitionSource.SERVICE });
+          document.getElementById('acx-settings-url')?.focus();
+        }}
       />
 
       {state.saveMessage ? (
@@ -178,13 +182,7 @@ export const SettingsPage = (): React.JSX.Element => {
         </div>
       ) : null}
 
-      {state.testResult ? (
-        <TestConnectionBannerView
-          testResult={state.testResult}
-          onConfirmTenantPairing={() => handleTest(true)}
-          confirmPending={testMutation.isPending}
-        />
-      ) : null}
+      {state.testResult ? <TestConnectionBannerView testResult={state.testResult} /> : null}
     </section>
   );
 };

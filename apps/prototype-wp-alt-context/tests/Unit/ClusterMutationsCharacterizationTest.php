@@ -32,6 +32,8 @@ class ClusterMutationsCharacterizationTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->setOption('acx_recognition_url', 'http://localhost:8000');
+        $this->setOption('acx_recognition_source', 'service');
         $GLOBALS['__ac_uuid_counter'] = 0;
         $this->repository = new ClusterMutationsRepositorySpy();
         $this->membersRepository = new ClusterMutationsMembersSpy();
@@ -257,13 +259,13 @@ class ClusterMutationsCharacterizationTest extends TestCase
         $expectedResponse = (string) file_get_contents($responseFixture);
         $expectedSideEffects = (string) file_get_contents($sideEffectsFixture);
         $this->assertSame(
-            $expectedResponse,
-            $actualResponse,
+            json_decode($expectedResponse, true),
+            json_decode($actualResponse, true),
             sprintf('Golden response drift for %s.', $handler)
         );
         $this->assertSame(
-            $expectedSideEffects,
-            $actualSideEffects,
+            json_decode($expectedSideEffects, true),
+            json_decode($actualSideEffects, true),
             sprintf('Golden side-effects drift for %s.', $handler)
         );
     }

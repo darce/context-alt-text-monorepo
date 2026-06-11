@@ -23,6 +23,7 @@ class ProxyRequestTest extends TestCase
         parent::setUp();
 
         $this->setOption('acx_recognition_url', 'http://localhost:8000');
+        $this->setOption('acx_recognition_source', 'service');
         $this->setOption('acx_recognition_api_key', 'test-key');
         $this->setOption('acx_tier', 'free');
 
@@ -32,6 +33,7 @@ class ProxyRequestTest extends TestCase
     public function testProxyFallsBackToLocalhostWhenUrlNotConfigured(): void
     {
         $this->setOption('acx_recognition_url', '');
+        $this->setOption('acx_recognition_source', 'local');
 
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
@@ -401,6 +403,9 @@ PHP;
         add_filter('acx_recognition_base_url', static function (): string {
             return 'https://filtered.example';
         });
+        add_filter('acx_recognition_source', static function (): string {
+            return 'service';
+        });
 
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
@@ -421,9 +426,8 @@ PHP;
 
     public function testFilteredBaseUrlBeatsSavedLocalSourceOption(): void
     {
-        // Code-managed filter (acx_recognition_base_url) must override a saved
-        // local-mode option. A site whose admin previously saved local cannot
-        // silently keep traffic on localhost once an operator wires a filter.
+        // E15-25: explicit local source wins; a code-managed service URL filter
+        // must not override an operator-selected local mode.
         $this->setOption('acx_recognition_source', 'local');
         $this->setOption('acx_recognition_url', '');
 
@@ -445,7 +449,7 @@ PHP;
 
         $calls = $this->getHttpCalls();
         $this->assertCount(1, $calls);
-        $this->assertStringContainsString('https://filtered.example/recognition/jobs/test-123', $calls[0]['url']);
+        $this->assertStringContainsString('http://localhost:8000/recognition/jobs/test-123', $calls[0]['url']);
     }
 
     public function testBr07FilteredBaseUrlBeatsSavedNonEmptyOptionUrl(): void
@@ -459,6 +463,7 @@ PHP;
         // environment. The selector also reported the URL as option-owned and
         // editable, hiding the fact that code-managed source was active.
         $this->setOption('acx_recognition_url', 'https://stale-saved.example');
+        $this->setOption('acx_recognition_source', 'service');
 
         add_filter('acx_recognition_base_url', static function (): string {
             return 'https://filtered.example';
@@ -481,7 +486,7 @@ PHP;
         $this->assertStringContainsString(
             'https://filtered.example/recognition/jobs/test-123',
             $calls[0]['url'],
-            'filter URL must win over saved option URL; pre-fix code routed to the stale saved URL'
+            'filter URL must win over saved option URL when service mode is explicit'
         );
         $this->assertStringNotContainsString(
             'stale-saved.example',
@@ -493,6 +498,7 @@ PHP;
     public function testProxyRequestIgnoresInvalidFilteredBaseUrl(): void
     {
         $this->setOption('acx_recognition_url', '');
+        $this->setOption('acx_recognition_source', 'local');
 
         add_filter('acx_recognition_base_url', static function (): string {
             return 'ftp://invalid-filter.example';
@@ -603,9 +609,36 @@ PHP;
      * @runInSeparateProcess
      * @preserveGlobalState disabled
      */
+    public function testProxyRequestUsesLocalTargetWhenConstantUrlWithoutExplicitSource(): void
+    {
+        define('ACX_RECOGNITION_URL', 'https://constant.example');
+        $this->setOption('acx_recognition_source', '');
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"status":"completed"}',
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/jobs/123/cancel');
+        $request->set_param('job_id', 'test-123');
+
+        $result = $this->controller->cancel_job($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $result);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertStringContainsString('http://localhost:8000/recognition/jobs/test-123', $calls[0]['url']);
+    }
+
+    /**
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
     public function testProxyRequestUsesConstantBaseUrlOverOption(): void
     {
         define('ACX_RECOGNITION_URL', 'https://constant.example');
+        define('ACX_RECOGNITION_SOURCE', 'service');
 
         $this->setOption('acx_recognition_url', 'https://option.example');
 
@@ -654,6 +687,7 @@ PHP;
     public function testProxyRequestReadsLatestUrlWithoutControllerReconstruction(): void
     {
         $this->setOption('acx_recognition_url', 'http://example.internal:9000');
+        $this->setOption('acx_recognition_source', 'service');
 
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],

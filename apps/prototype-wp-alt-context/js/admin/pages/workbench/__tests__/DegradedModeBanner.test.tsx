@@ -2,8 +2,9 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import type { SyncHealthResponse } from '../../../api/recognition/types/sync';
+import { SCAN_CONFLICTS_HREF, SCAN_DEAD_LETTER_HREF } from '../workbenchOverlayLinks';
 import { DegradedModeBannerView } from '../DegradedModeBanner';
-import { getDegradedDebtLinks, shouldShowDegradedBanner } from '../degradedModeBannerLogic';
+import { getDegradedDebtLinks, isSyncOffline, shouldShowDegradedBanner } from '../degradedModeBannerLogic';
 
 const closedHealth: SyncHealthResponse = {
   breaker: { state: 'closed', base_url: 'http://localhost:8000', opened_at: null },
@@ -18,9 +19,25 @@ describe('shouldShowDegradedBanner', () => {
   it.each([
     ['open breaker', { ...closedHealth, breaker: { ...closedHealth.breaker, state: 'open' as const } }, true],
     ['failed last pull', { ...closedHealth, last_pull: { at: '2026-06-11T12:00:00Z', ok: false } }, true],
+    [
+      'threshold warning only',
+      { ...closedHealth, warnings: [{ code: 'open_conflicts_high', message: 'warn', count: 30, threshold: 25 }] },
+      true,
+    ],
     ['healthy envelope', closedHealth, false],
   ])('returns %s visibility', (_label, health, expected) => {
     expect(shouldShowDegradedBanner(health)).toBe(expected);
+  });
+});
+
+describe('isSyncOffline', () => {
+  it('returns false for warnings-only health', () => {
+    expect(
+      isSyncOffline({
+        ...closedHealth,
+        warnings: [{ code: 'open_conflicts_high', message: 'warn', count: 30, threshold: 25 }],
+      }),
+    ).toBe(false);
   });
 });
 
@@ -33,8 +50,8 @@ describe('getDegradedDebtLinks', () => {
         conflicts: { open: 3 },
       }),
     ).toEqual({
-      failedOutboxHref: '#/workbench?tab=scan&panel=dead-letter',
-      conflictsHref: '#/workbench?tab=scan&panel=conflicts',
+      failedOutboxHref: SCAN_DEAD_LETTER_HREF,
+      conflictsHref: SCAN_CONFLICTS_HREF,
     });
   });
 });
@@ -85,15 +102,12 @@ describe('DegradedModeBannerView', () => {
 
     expect(screen.getByRole('link', { name: /failed sync operations/i })).toHaveAttribute(
       'href',
-      '#/workbench?tab=scan&panel=dead-letter',
+      SCAN_DEAD_LETTER_HREF,
     );
-    expect(screen.getByRole('link', { name: /sync conflicts/i })).toHaveAttribute(
-      'href',
-      '#/workbench?tab=scan&panel=conflicts',
-    );
+    expect(screen.getByRole('link', { name: /sync conflicts/i })).toHaveAttribute('href', SCAN_CONFLICTS_HREF);
   });
 
-  it('renders threshold warning copy when warnings are present', () => {
+  it('renders advisory title and translated warning copy when warnings are present', () => {
     render(
       <DegradedModeBannerView
         health={{
@@ -111,6 +125,8 @@ describe('DegradedModeBannerView', () => {
     );
 
     expect(screen.getByRole('alert')).toBeInTheDocument();
+    expect(screen.getByText('Sync attention needed')).toBeInTheDocument();
+    expect(screen.queryByText('Working offline')).not.toBeInTheDocument();
     expect(screen.getByText(/warning threshold/i)).toBeInTheDocument();
   });
 

@@ -14,33 +14,185 @@ class TenantIdentityTest extends TestCase
 {
     public function testDerivationIsDeterministic(): void
     {
-        $this->assertSame(
-            TenantIdentity::derive_from_site_url(),
-            TenantIdentity::derive_from_site_url(),
-            'derive_from_site_url must be idempotent for the same site URL'
-        );
+        $first  = TenantIdentity::resolve();
+        $second = TenantIdentity::resolve();
+
+        $this->assertSame($first['value'], $second['value']);
     }
 
     public function testDerivationMatchesExpectedUuidForStubSite(): void
     {
-        // The test stub fixes get_site_url() to http://example.com. The SHA-1 of
-        // 'acx-site-tenant:http://example.com' is computed deterministically; we
-        // pin it here so any future refactor of the derivation must either keep
-        // the canonical output or explicitly rev this constant (which is a
-        // cross-repo wire-contract change — every persisted recognition row is
-        // keyed on this tenant UUID).
-        $this->assertSame(
-            $this->expectedUuidFor('http://example.com'),
-            TenantIdentity::derive_from_site_url()
-        );
+        $resolution = TenantIdentity::resolve();
+
+        // Pinned golden literal for site URL http://example.com. Hardcoded (not recomputed) so a
+        // change to the derivation algorithm shifts every tenant id and is caught here, since the
+        // tenant id is the cross-repo partition key for all recognition data.
+        $this->assertSame('33380427-1819-5ad2-922b-cdd246fac3a0', $resolution['value']);
+        // Belt-and-suspenders: the reusable helper must agree with the pinned literal.
+        $this->assertSame('33380427-1819-5ad2-922b-cdd246fac3a0', $this->expectedUuidFor('http://example.com'));
     }
 
     public function testDerivationProducesV5ShapedUuid(): void
     {
+        $resolution = TenantIdentity::resolve();
+
         $this->assertMatchesRegularExpression(
             '/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i',
-            TenantIdentity::derive_from_site_url()
+            $resolution['value']
         );
+    }
+
+    public function testResolveDerivesAndPersistsWhenOptionEmpty(): void
+    {
+        $expected = $this->expectedUuidFor('http://example.com');
+
+        $resolution = TenantIdentity::resolve();
+
+        $this->assertSame($expected, $resolution['value']);
+        $this->assertSame('derived', $resolution['source']);
+        $this->assertSame($expected, $GLOBALS['__ac_options']['acx_recognition_tenant_id'] ?? null);
+    }
+
+    public function testResolveReadsPersistedOptionOnSecondCall(): void
+    {
+        $first = TenantIdentity::resolve();
+        $this->assertSame('derived', $first['source']);
+
+        $second = TenantIdentity::resolve();
+
+        $this->assertSame($first['value'], $second['value']);
+        $this->assertSame('option', $second['source']);
+    }
+
+    public function testResolveReturnsPersistedOptionWithoutReDeriving(): void
+    {
+        $persisted = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+        $this->setOption('acx_recognition_tenant_id', $persisted);
+        $GLOBALS['__ac_site_url'] = 'http://localhost:10010';
+
+        $resolution = TenantIdentity::resolve();
+
+        $this->assertSame($persisted, $resolution['value']);
+        $this->assertSame('option', $resolution['source']);
+    }
+
+    public function testResolveFilterWinsOverOption(): void
+    {
+        $filterTenant = 'bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee';
+        $this->setOption('acx_recognition_tenant_id', 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
+        add_filter('acx_recognition_tenant_id', static fn () => $filterTenant);
+
+        $resolution = TenantIdentity::resolve();
+
+        $this->assertSame($filterTenant, $resolution['value']);
+        $this->assertSame('filter', $resolution['source']);
+    }
+
+    public function testResolveRejectsMalformedOptionAndDerives(): void
+    {
+        $this->setOption('acx_recognition_tenant_id', 'not-a-uuid');
+        $expected = $this->expectedUuidFor('http://example.com');
+
+        $resolution = TenantIdentity::resolve();
+
+        $this->assertSame($expected, $resolution['value']);
+        $this->assertSame('derived', $resolution['source']);
+        $this->assertSame('not-a-uuid', $GLOBALS['__ac_options']['acx_recognition_tenant_id']);
+        $this->assertTrue(
+            $this->errorLogContains('ignoring malformed option tenant id override'),
+            'malformed option override must emit a warning'
+        );
+    }
+
+    public function testResolveRejectsMalformedFilterAndFallsThroughToOption(): void
+    {
+        $validOption = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+        $this->setOption('acx_recognition_tenant_id', $validOption);
+        add_filter('acx_recognition_tenant_id', static fn () => 'not-a-uuid');
+
+        $resolution = TenantIdentity::resolve();
+
+        $this->assertSame($validOption, $resolution['value']);
+        $this->assertSame('option', $resolution['source']);
+        $this->assertTrue(
+            $this->errorLogContains('ignoring malformed filter tenant id override'),
+            'malformed filter override must emit a warning before falling through'
+        );
+    }
+
+    /**
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testResolveRejectsMalformedConstantAndFallsThrough(): void
+    {
+        require_once __DIR__ . '/../bootstrap.php';
+        $this->resetGlobalState();
+
+        $validOption = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+        define('ACX_RECOGNITION_TENANT_ID', 'not-a-uuid');
+        $this->setOption('acx_recognition_tenant_id', $validOption);
+
+        $resolution = TenantIdentity::resolve();
+
+        $this->assertSame($validOption, $resolution['value']);
+        $this->assertSame('option', $resolution['source']);
+        $this->assertTrue(
+            $this->errorLogContains('ignoring malformed constant tenant id override'),
+            'malformed constant override must emit a warning before falling through'
+        );
+    }
+
+    /**
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testResolveDropsNonStringConstantWithWarning(): void
+    {
+        require_once __DIR__ . '/../bootstrap.php';
+        $this->resetGlobalState();
+
+        define('ACX_RECOGNITION_TENANT_ID', true);
+
+        $resolution = TenantIdentity::resolve();
+
+        // Non-string constant is ignored and we fall through to derivation.
+        $this->assertSame('derived', $resolution['source']);
+        $this->assertTrue(
+            $this->errorLogContains('ignoring malformed constant tenant id override'),
+            'non-string constant override must emit a warning'
+        );
+    }
+
+    /**
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testResolveConstantWinsOverFilterAndOption(): void
+    {
+        require_once __DIR__ . '/../bootstrap.php';
+        $this->resetGlobalState();
+
+        $constantTenant = 'cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee';
+        define('ACX_RECOGNITION_TENANT_ID', $constantTenant);
+        $this->setOption('acx_recognition_tenant_id', 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
+        add_filter('acx_recognition_tenant_id', static fn () => 'bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee');
+
+        $resolution = TenantIdentity::resolve();
+
+        $this->assertSame($constantTenant, $resolution['value']);
+        $this->assertSame('constant', $resolution['source']);
+    }
+
+    private function errorLogContains(string $needle): bool
+    {
+        foreach ($this->getErrorLog() as $entry) {
+            if (str_contains((string) $entry, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function expectedUuidFor(string $siteUrl): string

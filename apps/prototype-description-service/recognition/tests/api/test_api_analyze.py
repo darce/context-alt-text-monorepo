@@ -75,8 +75,8 @@ async def test_prepare_tenant_context_does_not_reapply_dependency_owned_context(
     session.bind = type("Bind", (), {"dialect": type("Dialect", (), {"name": "postgresql"})()})()
     calls: list[str] = []
 
-    async def _ensure_tenant_exists(*_args, **_kwargs):
-        calls.append("ensure")
+    async def _require_tenant_record(*_args, **_kwargs):
+        calls.append("require")
 
     async def _set_tenant_context(*_args, **_kwargs):
         raise AssertionError("router should not reapply tenant context")
@@ -85,7 +85,7 @@ async def test_prepare_tenant_context_does_not_reapply_dependency_owned_context(
         calls.append("worker_check")
         return True
 
-    monkeypatch.setattr(analyze_router, "ensure_tenant_exists", _ensure_tenant_exists)
+    monkeypatch.setattr(analyze_router, "require_tenant_record", _require_tenant_record)
     monkeypatch.setattr(analyze_router, "set_tenant_context", _set_tenant_context, raising=False)
     monkeypatch.setattr(analyze_router, "scan_worker_available", _scan_worker_available)
 
@@ -97,7 +97,7 @@ async def test_prepare_tenant_context_does_not_reapply_dependency_owned_context(
     )
 
     assert tenant_uuid == uuid.UUID(tenant_id)
-    assert calls == ["ensure", "worker_check"]
+    assert calls == ["require", "worker_check"]
 
 
 @pytest.mark.asyncio
@@ -256,7 +256,7 @@ def test_get_job_status_relies_on_dependency_tenant_setup_once(monkeypatch, tena
         setup_calls["count"] += 1
         yield session
 
-    async def _ensure_tenant_exists(*_args, **_kwargs):
+    async def _require_tenant_record(*_args, **_kwargs):
         setup_calls["count"] += 1
 
     class _NullJobService:
@@ -267,8 +267,8 @@ def test_get_job_status_relies_on_dependency_tenant_setup_once(monkeypatch, tena
         return _NullJobService()
 
     monkeypatch.setattr(
-        "recognition.interface_adapters.http.routers.analyze.ensure_tenant_exists",
-        _ensure_tenant_exists,
+        "recognition.interface_adapters.http.routers.analyze.require_tenant_record",
+        _require_tenant_record,
     )
 
     app = FastAPI()

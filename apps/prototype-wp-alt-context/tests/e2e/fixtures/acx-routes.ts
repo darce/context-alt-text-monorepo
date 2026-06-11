@@ -27,3 +27,17 @@ export const getAcxAdminRouteUrl = (baseUrl: string, slug: AcxAdminRouteSlug): s
 
   return new URL(`admin.php?page=${slug}`, adminRoot).toString();
 };
+
+export const getAcxAdminRouteUrlWithParams = (
+  baseUrl: string,
+  slug: AcxAdminRouteSlug,
+  params: Record<string, string> = {},
+): string => {
+  const url = new URL(getAcxAdminRouteUrl(baseUrl, slug));
+
+  for (const [key, value] of Object.entries(params)) {
+    url.searchParams.set(key, value);
+  }
+
+  return url.toString();
+};

@@ -5,6 +5,16 @@
 
 Use this checklist for one seeded-media Workbench scan that produces the reusable E15-22 proof bundle. Keep one `proof-bundle artifact bundle ID` and one `source scan run identifier` for the whole run.
 
+## Surface Map (do not conflate ports)
+
+| Surface | URL | Role |
+| --- | --- | --- |
+| **LocalWP WordPress** | `http://localhost:10010` | Browser admin, Workbench UI, plugin REST (`/wp-json/acx/v1/...`). All screenshot/transcript proof is captured here. |
+| **Local description-service** | `http://localhost:8000` | Optional preflight backend only (`apps/prototype-description-service`). Not LocalWP — never open Workbench on this port. |
+| **OCI production backend** | `https://api.altcontext.com` | Remote proof backend for Slice 2 after local preflight (or when skipping straight to OCI per run-log disposition). |
+
+Workbench proof always means `http://localhost:10010/wp-admin/...` (Alt Context Workbench route), not `:8000`.
+
 ## Phase 0: Local PostgreSQL First
 
 1. Verify the local description-service database path before touching OCI.
@@ -16,11 +26,11 @@ Use this checklist for one seeded-media Workbench scan that produces the reusabl
 3. Use the repo-native database shell instead of raw `psql` when you need to inspect the local DB:
    - `./scripts/db_shell.sh --admin -c "SELECT current_database(), current_user;"`
    - `./scripts/db_shell.sh --admin -c "SELECT COUNT(*) FROM tenants;"`
-4. Point the LocalWP site-local constants at the local backend for this preflight pass:
+4. In the **LocalWP site** (`http://localhost:10010`), point site-local constants at the **local description-service** (`http://localhost:8000`) for this preflight pass only:
    - `define('ACX_RECOGNITION_URL', 'http://localhost:8000');`
    - `define('ACX_RECOGNITION_API_KEY', 'acx-local-dev-key');`
-5. Run the plugin `/settings/test` probe against `http://localhost:8000` and stop on any `403` until the probe returns `outcome="connected"`.
-6. Run the seeded-media scan once against the local backend and record the local scan result before opening OCI logs.
+5. From LocalWP (`http://localhost:10010`), run the plugin `/settings/test` probe via wp-cli or the Settings UI. The probe should reach the backend at `http://localhost:8000`; stop on any `403` until `outcome="connected"`.
+6. In the Workbench at `http://localhost:10010/wp-admin/...`, run one seeded-media scan against the local backend and record the local scan result before opening OCI logs.
 7. If native local PostgreSQL is unavailable, fall back to the disposable Docker database and keep that mode explicit in the run log:
    - `docker compose -f docker-compose.db.yml up -d postgres`
    - `PGPORT=55432 make reset`
@@ -37,9 +47,9 @@ Use this checklist for one seeded-media Workbench scan that produces the reusabl
    - `E15-11 hosted transport proof reference`
    - `Local PostgreSQL mode`
 3. Confirm the LocalWP site and plugin build still match the packet assumptions:
-   - LocalWP origin `http://localhost:10010`
-   - local preflight backend `http://localhost:8000`
-   - remote proof backend `https://api.altcontext.com`
+   - LocalWP site + admin + Workbench: `http://localhost:10010` (never `:8000`)
+   - optional local preflight backend (description-service): `http://localhost:8000`
+   - remote proof backend: `https://api.altcontext.com`
    - build under test `feature/e15-22`
 4. Open the two backend evidence surfaces before starting the scan:
    - OCI stdout log tail: `cd /opt/acx-backend/prod && docker compose -f docker-compose.env.yml logs -f`

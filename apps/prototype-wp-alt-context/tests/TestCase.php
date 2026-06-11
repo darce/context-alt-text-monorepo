@@ -13,7 +13,7 @@ abstract class TestCase extends PHPUnitTestCase
 {
     protected static function currentTenantId(): string
     {
-        return \AltContext\Api\TenantIdentity::derive_from_site_url();
+        return \AltContext\Api\TenantIdentity::resolve()['value'];
     }
 
     protected function setUp(): void
@@ -66,6 +66,7 @@ abstract class TestCase extends PHPUnitTestCase
         $GLOBALS['__ac_error_log'] = [];
         $GLOBALS['__ac_connection_aborted'] = false;
         $GLOBALS['__ac_connection_aborted_call_count'] = 0;
+        unset($GLOBALS['__ac_site_url']);
 
         // Reset wpdb stub
         if (isset($GLOBALS['wpdb']) && method_exists($GLOBALS['wpdb'], 'reset')) {

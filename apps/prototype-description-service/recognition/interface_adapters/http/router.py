@@ -16,6 +16,7 @@ from recognition.interface_adapters.http.routers import (
     media,
     retention,
     suggestions,
+    tenant,
 )
 
 router = APIRouter(tags=["recognition"])
@@ -31,6 +32,7 @@ router.include_router(suggestions.router)
 router.include_router(diagnostics.router)
 router.include_router(media.router)
 router.include_router(retention.router)
+router.include_router(tenant.router)
 
 # Exception handlers must be registered on the FastAPI app, not the router.
 # (See api/main.py where register_exception_handlers is called on the app.)

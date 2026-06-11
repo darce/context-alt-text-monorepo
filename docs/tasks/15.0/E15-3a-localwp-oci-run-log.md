@@ -3,11 +3,12 @@
 > **Task**: [E15-3a-localwp-oci-roundtrip-task-plan.md](./E15-3a-localwp-oci-roundtrip-task-plan.md)
 > **Status**: Slice 1 complete; Slices 2-4 pending
 > **Operator**: `Daniel`
-> **Execution Dates**: Slice 1 `2026-04-23`; Slices 2-4 `<pending>`
+> **Execution Dates**: Slice 1 `2026-04-23`; proof re-gather `2026-06-08`; Slices 2-4 `<pending>`
 > **LocalWP Site**: `wp-context-alt-text`
+> **LocalWP Site URL**: `http://localhost:10010` (WordPress admin + Workbench — not port `8000`)
 > **LocalWP Origin**: `http://localhost:10010`
 > **Backend Base URL**: `https://api.altcontext.com`
-> **Plugin Build Source**: `apps/prototype-wp-alt-context/` (build `28d78e6a`, packaged as `dist/alt-context-0.0.2.zip`)
+> **Plugin Build Source**: `apps/prototype-wp-alt-context/` — Slice 1 (`2026-04-23`) used build `28d78e6a` / `dist/alt-context-0.0.2.zip`; the `2026-06-08` re-gather ran the installed plugin `0.0.4` (no packaged ZIP SHA recorded) against `dev`/`local` recognition, not the prod OCI round trip. Treat the re-gather as a Workbench-surface proof, not a prod backend round-trip.
 
 This run log is the single evidence surface for the full LocalWP plugin ->
 OCI backend -> recognition round trip. Record only key fingerprints, never raw
@@ -18,6 +19,8 @@ handoff entries should reference.
 
 Run the local PostgreSQL preflight in [E15-3a-localwp-proof-bundle-capture-checklist.md](./E15-3a-localwp-proof-bundle-capture-checklist.md) before opening OCI log tails or metrics for Slice 2. The remote proof packet starts only after the local DB path is green.
 
+**Surface map:** LocalWP (browser UI, screenshots, Workbench scans) = `http://localhost:10010`. Local description-service preflight = `http://localhost:8000`. Do not treat `:8000` as the LocalWP URL.
+
 ## Run Metadata
 
 | Field | Value |
@@ -25,23 +28,24 @@ Run the local PostgreSQL preflight in [E15-3a-localwp-proof-bundle-capture-check
 | Run date | Slice 1 `2026-04-23`; Slices 2-4 `<pending>` |
 | Operator | `Daniel` |
 | Task ref | `E15-3a` |
-| Branch / build under test | `feature/e15-22` / plugin build `28d78e6a` |
+| Branch / build under test | `feature/e15-22` / plugin `0.0.4` active (`2026-06-08` re-gather) |
 | LocalWP site URL | `http://localhost:10010` |
+| Workbench route | `http://localhost:10010/wp-admin/admin.php?page=alt-context-workbench` |
 | Backend base URL | `https://api.altcontext.com` |
 | Local preflight backend base URL | `http://localhost:8000` |
 | Local preflight API key | `acx-local-dev-key` |
 | Production API key fingerprint | `short_id=7592` / UI `****I-xM` |
-| Proof-bundle artifact bundle ID | `<pending>` |
-| Source scan run identifier | `<pending>` |
-| Seeded-media set identifier | `<pending>` |
-| E15-11 hosted transport proof reference | `<pending>` |
+| Proof-bundle artifact bundle ID | `E15-22-LWP-20260608-01` |
+| Source scan run identifier | `e15-22-playwright-workbench-evidence-20260608` |
+| Seeded-media set identifier | `playwright-5-media-selection` |
+| E15-11 hosted transport proof reference | `E15-11 Slice A merged on main` — multipart transport + `ObjectStore` filesystem impl (`apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php` `body_kind=multipart`; `apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze.py` multipart route) |
 
 ## Evidence Index
 
 | Artifact | Status | Notes |
 | --- | --- | --- |
-| Local PostgreSQL preflight complete | [ ] | Record whether native `localhost:5432` or Docker `localhost:55432` was used before OCI capture |
-| Local `/settings/test` probe | [ ] | Must use `http://localhost:8000` with `acx-local-dev-key`; stop on 403 before OCI capture |
+| Local PostgreSQL preflight complete | [x] | Native `localhost:5432`; `make reset` green in `apps/prototype-description-service` (`2026-06-08`) |
+| Local `/settings/test` probe | [ ] | Probe runs from LocalWP (`http://localhost:10010`) against optional local backend `http://localhost:8000` + `acx-local-dev-key`; current site uses `https://dev.api.altcontext.com` via option until preflight constants are applied |
 | Local seeded-media scan | [ ] | Must pass locally before switching LocalWP constants back to OCI URL/key |
 | Production API key fingerprint recorded | [x] | `short_id=7592`, UI `****I-xM`, `key_id=3a5d9583-25f8-4dfb-a07b-4129708bd4ef` |
 | Slice 1 successful `/settings/test` probe | [x] | outcome=`connected`, 200, correlation_id `req-069ea56c-bb67-7398-8000-58009f0df015` |
@@ -61,11 +65,11 @@ Use the operator checklist in [E15-3a-localwp-proof-bundle-capture-checklist.md]
 
 | Step | Required capture | Status | Notes |
 | --- | --- | --- | --- |
-| 1 | Pre-scan state showing build, seeded-media set, and the Workbench route under test | [ ] | Same operator session as the scan below |
-| 2 | Representative avatar visible on a top-cluster card or review drawer, or the explicit unavailable-image fallback on that same surface | [ ] | Capture from the same seeded-media scan run |
-| 3 | Mid-run progress checkpoint showing the processed count increasing and no `Scan complete` state yet | [ ] | Keep the visible count/checkpoint text in-frame |
-| 4 | UI-ready completion checkpoint showing `Scan complete` only after clustering/projection is ready | [ ] | Pair with the prior mid-run checkpoint |
-| 5 | Backend correlation IDs, latency evidence, and a redacted payload snapshot tied to the same scan run | [ ] | OCI stdout + `/metrics` + redacted payload summary |
+| 1 | Pre-scan state showing build, seeded-media set, and the Workbench route under test | [x] | `apps/prototype-wp-alt-context/local/playwright/E15-22/evidence/evidence-workbench-evidenc-40d74-rogress-evidence-on-LocalWP-evidence/workbench-pre-scan.png` |
+| 2 | Representative avatar visible on a top-cluster card or review drawer, or the explicit unavailable-image fallback on that same surface | [ ] | Playwright now auto-captures top-cluster/review/unavailable surfaces when present (`evidence-manifest.json`); `2026-06-08` run still missing cards — set valid prod key + `ACX_E2E_ENSURE_SERVICE_MODE=1`, or recapture after clusters exist locally |
+| 3 | Mid-run progress checkpoint showing the processed count increasing and no `Scan complete` state yet | [x] | `.../workbench-progress-mid-run.png` + `.../workbench-job-timeline.png`. Monotonic processed-count is asserted by `workbench-evidence.spec.ts` (non-decreasing `Processed N/M` samples); the no-early-`Scan complete` predicate is unit-proven in `JobTimeline.test.tsx`, not by the screenshot alone |
+| 4 | UI-ready completion checkpoint showing `Scan complete` only after clustering/projection is ready | [x] | `.../workbench-progress-complete.png` + `.../workbench-post-run.png`. Screenshot evidence only — completion-ordering correctness is asserted by the `JobTimeline.test.tsx` predicate suite, not inferred from this capture |
+| 5 | Backend correlation IDs, latency evidence, and a redacted payload snapshot tied to the same scan run | [ ] | OCI stdout + `/metrics` still pending for remote proof pass |
 
 ## Operator Setup
 
@@ -78,7 +82,7 @@ Use the operator checklist in [E15-3a-localwp-proof-bundle-capture-checklist.md]
 | Production API key fingerprint | `short_id=7592` / UI `****I-xM` / `key_id=3a5d9583-25f8-4dfb-a07b-4129708bd4ef` |
 | Throwaway rate-limit test key fingerprint | `<fill during Slice 3>` |
 | Throwaway rate-limit test key id | `<fill during Slice 3>` |
-| Local PostgreSQL mode | `<native localhost:5432 / docker localhost:55432 / pending>` |
+| Local PostgreSQL mode | `native localhost:5432` (preflight `2026-06-08`) |
 | OCI environment | `prod` |
 | OCI log surface used | `cd /opt/acx-backend/prod && docker compose -f docker-compose.env.yml logs -f` |
 | Metrics surface used | `GET /metrics` with production API key |
@@ -175,6 +179,35 @@ the successful response above.
   This is a cosmetic log-banner bug (BR-03 follow-up), not a functional failure.
   See finding `E15-3a-BR-20` for the post-gate cleanup item.
 
+## Proof Re-Gather — 2026-06-08 (E15-22 / surface-map correction)
+
+Repeated gate capture after clarifying **LocalWP = `http://localhost:10010`** (not `:8000`). Local description-service preflight remains optional at `http://localhost:8000`.
+
+| Field | Value |
+| --- | --- |
+| Gather time | `2026-06-08` |
+| LocalWP site URL | `http://localhost:10010` |
+| Workbench route | `http://localhost:10010/wp-admin/admin.php?page=alt-context-workbench` |
+| Plugin status | `Active` / version `0.0.4` |
+| Settings URL | `https://dev.api.altcontext.com` (`recognition_source=local`, `url_source=option`) |
+| `/settings/test` outcome | `connected` / HTTP `200` |
+| Tenant UUID | `c0ce73dc-1c66-56a4-ae32-6eb966810988` |
+| Key fingerprint (option) | `5836b648c84a` (last4 `****-key`) |
+| Media library attachments | `6694` |
+| Playwright evidence | [x] Auth bootstrap + `ACX_PLAYWRIGHT_TASK_REF=E15-22 npm run e2e:evidence` — 3 passed (`2026-06-08`) |
+
+```text
+make localwp-gate-status.sh --wp-path /Users/daniel/Development/wp-context-alt-text/app/public
+→ site_url=http://localhost:10010 probe.outcome=connected plugin.status=Active
+
+ACX_PLAYWRIGHT_TASK_REF=E15-22 npm run e2e:evidence
+→ workbench-pre-scan.png, workbench-progress-mid-run.png, workbench-progress-complete.png,
+  workbench-job-timeline.png, workbench-post-run.png
+```
+
+Artifact root: `apps/prototype-wp-alt-context/local/playwright/E15-22/evidence/`.
+Avatar card capture still pending when top-cluster/review-drawer surfaces populate.
+
 ## Slice 2 — Scan Round-Trip Against Seeded Media
 
 ### Seed Media Set
@@ -219,13 +252,13 @@ query aligned with `docs/operations/observability-runbook.md`.
 
 | Field | Value |
 | --- | --- |
-| Proof-bundle artifact bundle ID | `<pending>` |
-| Source scan run identifier | `<pending>` |
-| Capture checkpoint | `<top-cluster visible / review drawer open / explicit fallback>` |
-| Surface shown | `<top-cluster card / review drawer / other>` |
-| Representative source | `<thumb_url / explicit fallback>` |
-| Representative cluster / media reference | `<cluster id / media id / note>` |
-| Screenshot / transcript path | `<path or note>` |
+| Proof-bundle artifact bundle ID | `E15-22-LWP-20260608-01` |
+| Source scan run identifier | `e15-22-playwright-workbench-evidence-20260608` |
+| Capture checkpoint | `pending — no top-cluster card rendered in automated run` |
+| Surface shown | `Workbench scan tab + job timeline` |
+| Representative source | `n/a this run` |
+| Representative cluster / media reference | `5 media items selected via Playwright checkboxes` |
+| Screenshot / transcript path | `local/playwright/E15-22/evidence/.../workbench-post-run.png` |
 | Reusable in E15-3 | `<yes / no>` |
 | Reusable in E15-5 | `<yes / no>` |
 
@@ -233,23 +266,23 @@ query aligned with `docs/operations/observability-runbook.md`.
 
 | Field | Value |
 | --- | --- |
-| Proof-bundle artifact bundle ID | `<pending>` |
-| Source scan run identifier | `<pending>` |
-| Screenshot / transcript path | `<path or note>` |
-| Capture checkpoints | `<submitted -> mid-run -> clustering/projecting -> complete>` |
-| Processed-count checkpoints | `<list or summary>` |
-| Notes | `<pending>` |
+| Proof-bundle artifact bundle ID | `E15-22-LWP-20260608-01` |
+| Source scan run identifier | `e15-22-playwright-workbench-evidence-20260608` |
+| Screenshot / transcript path | `workbench-progress-mid-run.png`, `workbench-job-timeline.png` |
+| Capture checkpoints | `submitted → mid-run (timeline active) → complete` |
+| Processed-count checkpoints | `captured in timeline screenshots; see Playwright trace` |
+| Notes | `Automated via tests/e2e/evidence/workbench-evidence.spec.ts` |
 
 ### Scan Complete Timing Evidence
 
 | Field | Value |
 | --- | --- |
-| Proof-bundle artifact bundle ID | `<pending>` |
-| Source scan run identifier | `<pending>` |
-| Pre-completion checkpoint path | `<path or note>` |
-| Completion checkpoint path | `<path or note>` |
-| `scanProgress.phase` / UI-ready state at completion capture | `<pending>` |
-| Notes | `<pending>` |
+| Proof-bundle artifact bundle ID | `E15-22-LWP-20260608-01` |
+| Source scan run identifier | `e15-22-playwright-workbench-evidence-20260608` |
+| Pre-completion checkpoint path | `workbench-progress-mid-run.png` |
+| Completion checkpoint path | `workbench-progress-complete.png` |
+| `scanProgress.phase` / UI-ready state at completion capture | `Scan complete visible in job timeline per completion screenshot` |
+| Notes | `Headed Playwright evidence project on LocalWP :10010` |
 
 ### Reuse Metadata
 

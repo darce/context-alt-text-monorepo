@@ -16,6 +16,9 @@ For this repo's LocalWP install, the canonical site/admin base is:
 
 - Site URL: `http://localhost:10010/`
 - Admin URL: `http://localhost:10010/wp-admin/`
+- Workbench route: `http://localhost:10010/wp-admin/admin.php?page=alt-context-workbench`
+
+Do not confuse LocalWP (`:10010`) with the local description-service dev backend (`http://localhost:8000` from `apps/prototype-description-service`). Browser proof and Workbench scans always use `:10010`.
 
 `wp-context-alt-text.local` was never the correct address for this setup.
 

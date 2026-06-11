@@ -2198,7 +2198,25 @@ if (!function_exists('get_site_url')) {
      */
     function get_site_url($blog_id = null, string $path = '', $scheme = null): string
     {
-        return 'http://example.com' . ($path ? '/' . ltrim($path, '/') : '');
+        $base = $GLOBALS['__ac_site_url'] ?? 'http://example.com';
+
+        return $base . ($path ? '/' . ltrim($path, '/') : '');
+    }
+}
+
+if (!function_exists('wp_is_uuid')) {
+    function wp_is_uuid($uuid): bool
+    {
+        if (!is_string($uuid)) {
+            return false;
+        }
+
+        $uuid = strtolower($uuid);
+
+        return (bool) preg_match(
+            '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/',
+            $uuid
+        );
     }
 }
 

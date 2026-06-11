@@ -72,6 +72,9 @@ const defaultSettings: SettingsResponse = {
   api_key_set: true,
   api_key_last4: '****abcd',
   key_source: 'option',
+  tenant_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+  tenant_id_source: 'option',
+  tenant_paired: false,
 };
 
 const saveMutate = vi.fn();
@@ -268,6 +271,20 @@ describe('SettingsPage', () => {
       expect(banner.getAttribute('role')).toBe('status');
     });
 
+    it('renders a pairing warning when health succeeds but pairing fails', () => {
+      renderWithLoadedSettings();
+      driveOutcome({
+        outcome: 'connected',
+        status_code: 200,
+        pairing_error: 'database unavailable',
+      });
+      const banner = bannerFor('connected');
+      expect(banner).toHaveTextContent('tenant pairing failed');
+      expect(banner).toHaveTextContent('database unavailable');
+      expect(banner.className).toContain('notice-warning');
+      expect(banner.getAttribute('role')).toBe('alert');
+    });
+
     it('renders the not_configured banner', () => {
       renderWithLoadedSettings();
       driveOutcome({ outcome: 'not_configured' });
@@ -309,6 +326,33 @@ describe('SettingsPage', () => {
       const banner = bannerFor('tenant_mismatch');
       expect(banner).toHaveTextContent('Tenant mismatch.');
       expect(banner).toHaveTextContent('different site');
+    });
+
+    it('renders the tenant_pairing_conflict banner with tenant ids and confirm control', () => {
+      renderWithLoadedSettings();
+      driveOutcome({
+        outcome: 'tenant_pairing_conflict',
+        persisted_tenant_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        key_tenant_id: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+      });
+      const banner = bannerFor('tenant_pairing_conflict');
+      expect(banner).toHaveTextContent('Tenant identity conflict.');
+      expect(banner).toHaveTextContent('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
+      expect(banner).toHaveTextContent('ffffffff-ffff-4fff-8fff-ffffffffffff');
+      expect(screen.getByTestId('acx-confirm-tenant-pairing')).toBeInTheDocument();
+    });
+
+    it('sends confirm_tenant_pairing when adopt button is clicked', () => {
+      renderWithLoadedSettings();
+      driveOutcome({
+        outcome: 'tenant_pairing_conflict',
+        persisted_tenant_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        key_tenant_id: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+      });
+
+      fireEvent.click(screen.getByTestId('acx-confirm-tenant-pairing'));
+
+      expect(testMutate).toHaveBeenCalledWith({ confirm_tenant_pairing: true });
     });
 
     it('renders the rate_limited banner and interpolates retry_after_seconds', () => {

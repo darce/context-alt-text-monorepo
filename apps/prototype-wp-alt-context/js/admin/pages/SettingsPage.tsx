@@ -107,9 +107,11 @@ export const SettingsPage = (): React.JSX.Element => {
     saveMutation.mutate(payload);
   };
 
-  const handleTest = () => {
+  const handleTest = (confirmTenantPairing = false) => {
     dispatch({ type: 'clearTestResult' });
-    testMutation.mutate();
+    testMutation.mutate(
+      confirmTenantPairing === true ? { confirm_tenant_pairing: true } : {},
+    );
   };
 
   if (settingsQuery.isLoading) {
@@ -176,7 +178,13 @@ export const SettingsPage = (): React.JSX.Element => {
         </div>
       ) : null}
 
-      {state.testResult ? <TestConnectionBannerView testResult={state.testResult} /> : null}
+      {state.testResult ? (
+        <TestConnectionBannerView
+          testResult={state.testResult}
+          onConfirmTenantPairing={() => handleTest(true)}
+          confirmPending={testMutation.isPending}
+        />
+      ) : null}
     </section>
   );
 };

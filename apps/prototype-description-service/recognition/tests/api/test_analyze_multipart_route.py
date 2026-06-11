@@ -15,7 +15,7 @@ import uuid
 from pathlib import Path
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, status
 from starlette.testclient import TestClient
 
 from recognition.application.storage import FilesystemObjectStore
@@ -73,6 +73,10 @@ class _FakeScanQueue:
 class _CommitOnlySession:
     def __init__(self) -> None:
         self.commit_calls = 0
+        self.bind = type("Bind", (), {"dialect": type("Dialect", (), {"name": "postgresql"})()})()
+
+    async def execute(self, *args, **kwargs):
+        return None
 
     async def commit(self) -> None:
         self.commit_calls += 1
@@ -157,7 +161,7 @@ def test_multipart_happy_path_returns_202_and_stores_blob(
     assert expected.read_bytes() == PNG_BYTES
 
 
-def test_multipart_ensures_tenant_exists_before_persisting_job(
+def test_multipart_ensures_tenant_exists_before_blob_writes(
     tmp_path: Path, tenant_id: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("RECOGNITION_ASYNC_ANALYZE_INLINE", "0")
@@ -177,24 +181,67 @@ def test_multipart_ensures_tenant_exists_before_persisting_job(
 
     from recognition.interface_adapters.http.routers import analyze_multipart as mod
 
-    ensure_calls: list[str] = []
+    require_calls: list[str] = []
 
-    async def _ensure_tenant_exists(session, tenant_uuid):
+    async def _require_tenant_record(session, tenant_uuid):
         assert session is fake_session
-        ensure_calls.append(str(tenant_uuid))
+        require_calls.append(str(tenant_uuid))
 
     async def _noop_chain(**_kwargs):
         return None
 
-    monkeypatch.setattr(mod, "ensure_tenant_exists", _ensure_tenant_exists)
+    monkeypatch.setattr(mod, "require_tenant_record", _require_tenant_record)
+    monkeypatch.setattr(mod, "is_postgres", lambda _session: True)
     monkeypatch.setattr(mod, "chain_populate_and_process", _noop_chain)
 
     client = TestClient(fastapi_app)
     response = client.post("/recognition/analyze/multipart", **_multipart_submission(tenant_id))
 
     assert response.status_code == 202, response.text
-    assert ensure_calls == [tenant_id]
+    assert require_calls == [tenant_id]
     assert fake_session.commit_calls == 1
+
+
+def test_multipart_gate_failure_writes_no_blobs(
+    tmp_path: Path, tenant_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the provisioning gate rejects the tenant, the route must fail BEFORE writing any blob."""
+    monkeypatch.setenv("RECOGNITION_ASYNC_ANALYZE_INLINE", "0")
+
+    settings = RecognitionSettings()
+    settings.blob_root = tmp_path / "blobs"
+
+    fake_queue = _FakeScanQueue()
+    fake_session = _CommitOnlySession()
+
+    fastapi_app = FastAPI()
+    fastapi_app.include_router(router, prefix="/recognition")
+    fastapi_app.dependency_overrides[require_write_access] = lambda: AuthContext(token="t", tenant_claim=tenant_id)
+    fastapi_app.dependency_overrides[get_optional_session] = lambda: fake_session
+    fastapi_app.dependency_overrides[get_scan_queue_service_optional] = lambda: fake_queue
+    fastapi_app.dependency_overrides[_settings_default] = lambda: settings
+
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    async def _reject_tenant(session, tenant_uuid):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"code": "tenant_not_provisioned"})
+
+    async def _noop_chain(**_kwargs):
+        return None
+
+    monkeypatch.setattr(mod, "require_tenant_record", _reject_tenant)
+    monkeypatch.setattr(mod, "is_postgres", lambda _session: True)
+    monkeypatch.setattr(mod, "chain_populate_and_process", _noop_chain)
+
+    client = TestClient(fastapi_app)
+    response = client.post("/recognition/analyze/multipart", **_multipart_submission(tenant_id))
+
+    assert response.status_code == 403, response.text
+    assert response.json()["detail"]["code"] == "tenant_not_provisioned"
+    # No blob may have been persisted before the gate rejected the request.
+    written = list(settings.blob_root.rglob("*")) if settings.blob_root.exists() else []
+    assert [p for p in written if p.is_file()] == []
+    assert fake_session.commit_calls == 0
 
 
 def test_multipart_admin_key_with_envelope_tenant_succeeds(

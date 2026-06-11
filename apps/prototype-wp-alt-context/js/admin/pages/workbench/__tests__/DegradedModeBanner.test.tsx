@@ -107,6 +107,29 @@ describe('DegradedModeBannerView', () => {
     expect(screen.getByRole('link', { name: /sync conflicts/i })).toHaveAttribute('href', SCAN_CONFLICTS_HREF);
   });
 
+  it('renders offline reassurance and warning copy when both are present', () => {
+    render(
+      <DegradedModeBannerView
+        health={{
+          ...closedHealth,
+          breaker: { ...closedHealth.breaker, state: 'open' },
+          warnings: [
+            {
+              code: 'open_conflicts_high',
+              message: 'Open sync conflicts exceed the configured warning threshold.',
+              count: 30,
+              threshold: 25,
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText('Working offline')).toBeInTheDocument();
+    expect(screen.getByText(/local copy/i)).toBeInTheDocument();
+    expect(screen.getByText(/warning threshold/i)).toBeInTheDocument();
+  });
+
   it('renders advisory title and translated warning copy when warnings are present', () => {
     render(
       <DegradedModeBannerView

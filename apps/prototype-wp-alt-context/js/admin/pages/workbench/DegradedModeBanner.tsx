@@ -22,6 +22,7 @@ export const DegradedModeBannerView = ({ health }: DegradedModeBannerViewProps):
   }
 
   const debtLinks = getDegradedDebtLinks(health);
+  const warningMessage = getDegradedWarningMessage(health);
 
   const isOffline = isSyncOffline(health);
 
@@ -37,9 +38,8 @@ export const DegradedModeBannerView = ({ health }: DegradedModeBannerViewProps):
       </span>
       <div className="acx-empty-state-warning__content">
         <p className="acx-empty-state-warning__title">{getDegradedBannerTitle(health)}</p>
-        <p className="acx-empty-state-warning__message">
-          {getDegradedWarningMessage(health) ?? getDegradedBannerMessage()}
-        </p>
+        {isOffline ? <p className="acx-empty-state-warning__message">{getDegradedBannerMessage()}</p> : null}
+        {warningMessage ? <p className="acx-empty-state-warning__message">{warningMessage}</p> : null}
         {debtLinks.failedOutboxHref || debtLinks.conflictsHref ? (
           <p className="acx-empty-state-warning__message">
             {debtLinks.failedOutboxHref ? (

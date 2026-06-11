@@ -379,13 +379,16 @@ class LifecycleManagerTest extends TestCase
     {
         wp_schedule_single_event(\time() + 300, 'acx_sync_pull_snapshot');
 		wp_schedule_single_event(\time() + 300, 'acx_sync_drain_curation_outbox');
+		wp_schedule_event(\time() + 300, 'daily', 'acx_sync_purge_terminal_rows');
         $this->assertNotFalse(wp_next_scheduled('acx_sync_pull_snapshot'));
 		$this->assertNotFalse(wp_next_scheduled('acx_sync_drain_curation_outbox'));
+		$this->assertNotFalse(wp_next_scheduled('acx_sync_purge_terminal_rows'));
 
         $this->manager->deactivate();
 
         $this->assertFalse(wp_next_scheduled('acx_sync_pull_snapshot'));
 		$this->assertFalse(wp_next_scheduled('acx_sync_drain_curation_outbox'));
+		$this->assertFalse(wp_next_scheduled('acx_sync_purge_terminal_rows'));
     }
 
 	public function testDeactivateAlsoClearsActionSchedulerDrainHooks(): void
@@ -402,13 +405,16 @@ class LifecycleManagerTest extends TestCase
     {
         wp_schedule_single_event(\time() + 300, 'acx_sync_pull_snapshot');
 		wp_schedule_single_event(\time() + 300, 'acx_sync_drain_curation_outbox');
+		wp_schedule_event(\time() + 300, 'daily', 'acx_sync_purge_terminal_rows');
         $this->assertNotFalse(wp_next_scheduled('acx_sync_pull_snapshot'));
 		$this->assertNotFalse(wp_next_scheduled('acx_sync_drain_curation_outbox'));
+		$this->assertNotFalse(wp_next_scheduled('acx_sync_purge_terminal_rows'));
 
         $this->manager->uninstall();
 
         $this->assertFalse(wp_next_scheduled('acx_sync_pull_snapshot'));
 		$this->assertFalse(wp_next_scheduled('acx_sync_drain_curation_outbox'));
+		$this->assertFalse(wp_next_scheduled('acx_sync_purge_terminal_rows'));
     }
 
 	public function testUninstallAlsoClearsActionSchedulerDrainHooks(): void

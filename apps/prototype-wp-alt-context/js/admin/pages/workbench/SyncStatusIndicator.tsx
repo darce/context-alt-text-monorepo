@@ -339,13 +339,13 @@ export const SyncStatusIndicator = ({
       {idleState.badgeHref ? (
         <a
           href={idleState.badgeHref}
-          className={`acx-sync-status__badge acx-sync-status__link${data.sync_health === 'healthy' ? ' acx-sync-status__badge--ok' : ''}`}
+          className={`acx-sync-status__badge acx-sync-status__link${effectiveSyncHealth === 'healthy' ? ' acx-sync-status__badge--ok' : ''}`}
         >
           {idleState.badge}
         </a>
       ) : (
         <span
-          className={`acx-sync-status__badge${data.sync_health === 'healthy' ? ' acx-sync-status__badge--ok' : ''}`}
+          className={`acx-sync-status__badge${effectiveSyncHealth === 'healthy' ? ' acx-sync-status__badge--ok' : ''}`}
         >
           {idleState.badge}
         </span>

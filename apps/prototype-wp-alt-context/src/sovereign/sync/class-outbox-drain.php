@@ -10,6 +10,7 @@ require_once __DIR__ . '/class-cross-plane-sequencer.php';
 require_once __DIR__ . '/class-outbox-dispatcher.php';
 require_once __DIR__ . '/class-outbox-query-repository.php';
 require_once __DIR__ . '/class-outbox-maintenance-service.php';
+require_once __DIR__ . '/class-outbox-status.php';
 require_once __DIR__ . '/../../api/class-tenant-identity.php';
 require_once __DIR__ . '/class-topology-command-repository.php';
 
@@ -262,7 +263,10 @@ class OutboxDrain {
 				continue;
 			}
 
-			$this->maintenance_service->purge_terminal_rows( $normalized_tenant_id );
+			$purged = $this->maintenance_service->purge_terminal_rows( $normalized_tenant_id );
+			if ( false === $purged ) {
+				do_action( 'acx_sync_purge_terminal_rows_failed', $normalized_tenant_id );
+			}
 		}
 	}
 
@@ -286,11 +290,11 @@ class OutboxDrain {
 		$attempted_at = current_time( 'mysql' );
 		$status = trim( (string) ( $result['status'] ?? 'failed' ) );
 
-		if ( 'acknowledged' === $status ) {
+		if ( OutboxStatus::ACKNOWLEDGED === $status ) {
 			$wpdb->update(
 				$this->table_name,
 				array(
-					'status' => 'acknowledged',
+					'status' => OutboxStatus::ACKNOWLEDGED,
 					'attempts' => $attempts,
 					'last_error_code' => null,
 					'last_error_message' => null,
@@ -305,13 +309,13 @@ class OutboxDrain {
 			return;
 		}
 
-		if ( 'conflict' === $status ) {
+		if ( OutboxStatus::CONFLICT === $status ) {
 			$this->conflict_repository->record_conflict( $operation, $result );
 
 			$wpdb->update(
 				$this->table_name,
 				array(
-					'status' => 'conflict',
+					'status' => OutboxStatus::CONFLICT,
 					'attempts' => $attempts,
 					'last_error_code' => $this->normalize_text( $result['conflict_code'] ?? '', 'version_conflict' ),
 					'last_error_message' => $this->normalize_text( $result['error_message'] ?? '', 'Remote curation replay conflict.' ),
@@ -326,7 +330,7 @@ class OutboxDrain {
 
 		$retryable = (bool) ( $result['retryable'] ?? true );
 		$max_attempts = $this->resolve_max_attempts();
-		$next_status = ( $retryable && $attempts < $max_attempts ) ? 'pending' : 'failed';
+		$next_status = ( $retryable && $attempts < $max_attempts ) ? OutboxStatus::PENDING : OutboxStatus::FAILED;
 
 		$wpdb->update(
 			$this->table_name,

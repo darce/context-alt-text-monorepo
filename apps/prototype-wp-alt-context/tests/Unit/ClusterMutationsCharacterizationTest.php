@@ -245,7 +245,7 @@ class ClusterMutationsCharacterizationTest extends TestCase
 
         if (getenv('UPDATE_CLUSTER_MUTATIONS_FIXTURES') === '1') {
             if (! is_dir($fixtureDir)) {
-                mkdir($fixtureDir, 0777, true);
+                mkdir($fixtureDir, 0755, true);
             }
             file_put_contents($responseFixture, $actualResponse);
             file_put_contents($sideEffectsFixture, $actualSideEffects);

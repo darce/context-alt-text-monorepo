@@ -429,9 +429,10 @@ check-main-clean:
 # clone+checkout.
 # Idempotent: safe to re-run. Uninstall with `git config --unset core.hooksPath`.
 install-git-hooks:
-	@git config core.hooksPath scripts/hooks/git
-	@echo "git core.hooksPath -> scripts/hooks/git"
-	@ls -1 scripts/hooks/git
+	@git config core.hooksPath scripts/consumer-hooks/git
+	@echo "git core.hooksPath -> scripts/consumer-hooks/git (overlay guards + consumer characterization gate)"
+	@chmod +x scripts/consumer-hooks/run-php-characterization.sh scripts/consumer-hooks/git/pre-push
+	@ls -1 scripts/consumer-hooks/git
 
 # Apply deterministic lint fixes and formatting across every app and package.
 # Run this before `make check-all` — many violations are auto-fixable and

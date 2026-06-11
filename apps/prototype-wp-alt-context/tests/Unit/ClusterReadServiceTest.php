@@ -6,6 +6,7 @@ namespace AltContext\Tests\Unit;
 
 use AltContext\Api\ClustersHostInterface;
 use AltContext\Api\Services\ClusterProjectionSyncService;
+use AltContext\Api\Services\ClusterReadConfig;
 use AltContext\Api\Services\ClusterReadDependencies;
 use AltContext\Api\Services\ClusterReadService;
 use AltContext\Api\Services\ClusterResponseEnvelopeService;
@@ -216,12 +217,14 @@ class ClusterReadServiceTest extends TestCase
             new MemberResponseMapper(),
             $projectionSync,
             new ClusterResponseEnvelopeService(),
-            self::BOOTSTRAP_HOOK,
-            'backend_proxy',
-            'local_projection',
-            'unavailable',
-            'bootstrapping',
-            'available'
+            new ClusterReadConfig(
+                self::BOOTSTRAP_HOOK,
+                'backend_proxy',
+                'local_projection',
+                'unavailable',
+                'bootstrapping',
+                'available'
+            )
         );
 
         return new ClusterReadService($host, $dependencies);

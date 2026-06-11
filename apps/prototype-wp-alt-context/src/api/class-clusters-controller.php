@@ -7,6 +7,8 @@ namespace AltContext\Api;
 require_once __DIR__ . '/interface-clusters-host.php';
 require_once __DIR__ . '/services/class-cluster-response-envelope-service.php';
 require_once __DIR__ . '/services/class-cluster-projection-sync-service.php';
+require_once __DIR__ . '/services/class-cluster-read-config.php';
+require_once __DIR__ . '/services/class-cluster-read-dependencies.php';
 require_once __DIR__ . '/services/class-cluster-read-service.php';
 require_once __DIR__ . '/../sovereign/mappers/class-cluster-response-mapper.php';
 require_once __DIR__ . '/../sovereign/mappers/class-member-response-mapper.php';
@@ -21,6 +23,7 @@ require_once __DIR__ . '/../sovereign/sync/class-sync-pull-job-factory.php';
 require_once __DIR__ . '/../sovereign/class-cluster-facade.php';
 
 use AltContext\Api\Services\ClusterProjectionSyncService;
+use AltContext\Api\Services\ClusterReadConfig;
 use AltContext\Api\Services\ClusterReadDependencies;
 use AltContext\Api\Services\ClusterReadService;
 use AltContext\Api\Services\ClusterResponseEnvelopeService;
@@ -101,12 +104,14 @@ class ClustersController extends AbstractRecognitionProxyController implements C
 				$this->member_mapper,
 				$this->projection_sync_service,
 				$this->response_envelope_service,
-				self::BOOTSTRAP_SYNC_HOOK,
-				self::DATA_SOURCE_BACKEND_PROXY,
-				self::DATA_SOURCE_LOCAL_PROJECTION,
-				self::DATA_SOURCE_UNAVAILABLE,
-				self::PROJECTION_STATUS_BOOTSTRAPPING,
-				self::PROJECTION_STATUS_AVAILABLE
+				new ClusterReadConfig(
+					self::BOOTSTRAP_SYNC_HOOK,
+					self::DATA_SOURCE_BACKEND_PROXY,
+					self::DATA_SOURCE_LOCAL_PROJECTION,
+					self::DATA_SOURCE_UNAVAILABLE,
+					self::PROJECTION_STATUS_BOOTSTRAPPING,
+					self::PROJECTION_STATUS_AVAILABLE
+				)
 			)
 		);
 		add_action( self::BOOTSTRAP_SYNC_HOOK, array( $this, 'perform_bootstrap_sync' ), 10, 1 );

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Api\Services;
 
 use AltContext\Api\ClusterMutationHostInterface;
+use AltContext\Support\RunsTransactional;
 use AltContext\Sovereign\Repositories\ClustersRepository;
 use AltContext\Sovereign\Repositories\ClustersRepositoryInterface;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
@@ -21,6 +22,8 @@ use function sanitize_text_field;
 use function sprintf;
 
 class ClusterLabelService {
+	use RunsTransactional;
+
 	private ClusterMutationHostInterface $host;
 	private ClustersRepositoryInterface $clusters_repository;
 	private SyncStateRepositoryInterface $sync_state_repository;
@@ -73,45 +76,46 @@ class ClusterLabelService {
 			return new WP_Error( 'acx_db_error', 'Database access is unavailable.', array( 'status' => 500 ) );
 		}
 
-		if ( false === $wpdb->query( 'START TRANSACTION' ) ) {
-			return new WP_Error( 'acx_db_error', 'Could not start local transaction.', array( 'status' => 500 ) );
-		}
+		$affected_rows = 0;
+		$result        = $this->run_transactional(
+			function () use ( $cluster_id, $label, $cluster, $tenant_id, &$affected_rows ): WP_REST_Response|WP_Error {
+				$affected_rows = $this->clusters_repository->update_label( $cluster_id, $label );
+				if ( $affected_rows > 0 && ! $this->host->enqueue_curation_operation(
+					'cluster_label_updated',
+					$cluster_id,
+					$cluster,
+					array(
+						'cluster_uuid' => $cluster_id,
+						'label' => $label,
+					)
+				) ) {
+					return new WP_Error( 'acx_db_error', 'Could not queue label replay operation.', array( 'status' => 500 ) );
+				}
 
-		$affected_rows = $this->clusters_repository->update_label( $cluster_id, $label );
-		if ( $affected_rows > 0 && ! $this->host->enqueue_curation_operation(
-			'cluster_label_updated',
-			$cluster_id,
-			$cluster,
-			array(
-				'cluster_uuid' => $cluster_id,
-				'label' => $label,
-			)
-		) ) {
-			$wpdb->query( 'ROLLBACK' );
-			return new WP_Error( 'acx_db_error', 'Could not queue label replay operation.', array( 'status' => 500 ) );
-		}
+				if ( $affected_rows > 0 ) {
+					$this->sync_state_repository->touch_local_curation_marker( $tenant_id );
+				}
 
-		if ( $affected_rows > 0 ) {
-			$this->sync_state_repository->touch_local_curation_marker( $tenant_id );
-		}
+				return new WP_REST_Response(
+					array(
+						'cluster_id' => $cluster_id,
+						'label' => $label,
+						'synced' => false,
+						'status' => $affected_rows > 0 ? 'pending' : 'acknowledged',
+					),
+					200
+				);
+			}
+		);
 
-		if ( false === $wpdb->query( 'COMMIT' ) ) {
-			$wpdb->query( 'ROLLBACK' );
-			return new WP_Error( 'acx_db_error', 'Could not commit local transaction.', array( 'status' => 500 ) );
+		if ( is_wp_error( $result ) ) {
+			return $result;
 		}
 
 		if ( $affected_rows > 0 ) {
 			$this->host->trigger_xmp_refresh_for_cluster_ids( array( $cluster_id ), 'cluster-label-update' );
 		}
 
-		return new WP_REST_Response(
-			array(
-				'cluster_id' => $cluster_id,
-				'label' => $label,
-				'synced' => false,
-				'status' => $affected_rows > 0 ? 'pending' : 'acknowledged',
-			),
-			200
-		);
+		return $result;
 	}
 }

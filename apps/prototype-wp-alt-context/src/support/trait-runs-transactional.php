@@ -10,6 +10,12 @@ trait RunsTransactional {
 	/**
 	 * Runs $operation inside a DB transaction.
 	 *
+	 * - START fails       → WP_Error( 'acx_db_error', $start_error, [ 'status' => 500 ] )
+	 * - $operation returns WP_Error → ROLLBACK, return that WP_Error verbatim
+	 * - $operation throws → ROLLBACK, rethrow
+	 * - COMMIT fails      → ROLLBACK, WP_Error( 'acx_db_error', $commit_error, [ 'status' => 500 ] )
+	 * - otherwise         → return $operation result unchanged
+	 *
 	 * @throws \Throwable Rethrown after ROLLBACK when $operation throws.
 	 * @return mixed WP_Error or the callable's return value.
 	 */

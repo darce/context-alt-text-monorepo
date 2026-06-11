@@ -240,19 +240,27 @@ class ClusterMutationsCharacterizationTest extends TestCase
         $responseFixture = $fixtureDir . '/response.json';
         $sideEffectsFixture = $fixtureDir . '/side-effects.json';
 
+        $actualResponse = $this->serializeResponse($response);
+        $actualSideEffects = $this->serializeSideEffects($sideEffects);
+
+        if (getenv('UPDATE_CLUSTER_MUTATIONS_FIXTURES') === '1') {
+            if (! is_dir($fixtureDir)) {
+                mkdir($fixtureDir, 0755, true);
+            }
+            file_put_contents($responseFixture, $actualResponse);
+            file_put_contents($sideEffectsFixture, $actualSideEffects);
+        }
+
         $this->assertFileExists($responseFixture, sprintf('Missing golden response fixture for %s.', $handler));
         $this->assertFileExists($sideEffectsFixture, sprintf('Missing golden side-effects fixture for %s.', $handler));
 
-        $actualResponse = $this->serializeResponse($response);
         $expectedResponse = (string) file_get_contents($responseFixture);
+        $expectedSideEffects = (string) file_get_contents($sideEffectsFixture);
         $this->assertSame(
             $expectedResponse,
             $actualResponse,
             sprintf('Golden response drift for %s.', $handler)
         );
-
-        $actualSideEffects = $this->serializeSideEffects($sideEffects);
-        $expectedSideEffects = (string) file_get_contents($sideEffectsFixture);
         $this->assertSame(
             $expectedSideEffects,
             $actualSideEffects,

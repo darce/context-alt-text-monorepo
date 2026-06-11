@@ -1,4 +1,1 @@
-{
-  "http_call_count": 1,
-  "http_path": "\/recognition\/jobs\/55555555-5555-5555-5555-555555555555\/acknowledge-projection"
-}
+{"http_call_count":1,"http_path":"\/recognition\/jobs\/55555555-5555-5555-5555-555555555555\/acknowledge-projection"}

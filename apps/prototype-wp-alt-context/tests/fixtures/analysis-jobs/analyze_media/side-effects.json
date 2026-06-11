@@ -1,5 +1,1 @@
-{
-  "http_call_count": 1,
-  "job_batch_run_transient": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-  "projection_sync_performed": false
-}
+{"http_call_count":1,"job_batch_run_transient":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","projection_sync_performed":false}

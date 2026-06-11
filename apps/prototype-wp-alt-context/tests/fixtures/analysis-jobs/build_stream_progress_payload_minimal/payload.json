@@ -1,1 +1,1 @@
-{ "type": "scan_progress", "job_id": "job-xyz", "status": "running", "completed": 10, "total": 100 }
+{"type":"scan_progress","job_id":"job-xyz","status":"running","completed":10,"total":100}

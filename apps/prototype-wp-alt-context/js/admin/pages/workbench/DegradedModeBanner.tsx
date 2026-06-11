@@ -5,8 +5,10 @@ import type { SyncHealthResponse } from '../../api/recognition/types/sync';
 import { useSyncHealth } from '../../hooks/useSyncHealth';
 import {
   getDegradedBannerMessage,
+  getDegradedBannerTitle,
   getDegradedDebtLinks,
   getDegradedWarningMessage,
+  isSyncOffline,
   shouldShowDegradedBanner,
 } from './degradedModeBannerLogic';
 
@@ -21,18 +23,20 @@ export const DegradedModeBannerView = ({ health }: DegradedModeBannerViewProps):
 
   const debtLinks = getDegradedDebtLinks(health);
 
+  const isOffline = isSyncOffline(health);
+
   return (
     <div
-      className="acx-empty-state-warning acx-degraded-mode-banner"
+      className={`acx-empty-state-warning acx-degraded-mode-banner${isOffline ? '' : ' acx-degraded-mode-banner--advisory'}`}
       role="alert"
-      aria-live="assertive"
+      aria-live={isOffline ? 'assertive' : 'polite'}
       data-testid="acx-degraded-mode-banner"
     >
       <span className="acx-empty-state-warning__icon" aria-hidden="true" data-testid="acx-degraded-mode-banner-icon">
         !
       </span>
       <div className="acx-empty-state-warning__content">
-        <p className="acx-empty-state-warning__title">{__('Working offline', 'alt-context')}</p>
+        <p className="acx-empty-state-warning__title">{getDegradedBannerTitle(health)}</p>
         <p className="acx-empty-state-warning__message">
           {getDegradedWarningMessage(health) ?? getDegradedBannerMessage()}
         </p>

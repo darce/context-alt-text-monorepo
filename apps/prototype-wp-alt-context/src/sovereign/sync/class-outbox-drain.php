@@ -127,6 +127,10 @@ class OutboxDrain {
 		}
 	}
 
+	public static function clear_scheduled_purge(): void {
+		wp_clear_scheduled_hook( self::PURGE_HOOK, array() );
+	}
+
 	public function drain(): void {
 		$operations = $this->sequencer->filter_ready_outbox_operations(
 			$this->query_repository->load_pending_operations( $this->batch_size )
@@ -198,13 +202,18 @@ class OutboxDrain {
 	}
 
 	public function purge_terminal_rows(): void {
-		$tenant = TenantIdentity::resolve();
-		$tenant_id = trim( (string) ( $tenant['value'] ?? '' ) );
-		if ( '' === $tenant_id ) {
-			return;
+		$tenant_ids = $this->maintenance_service->list_terminal_purge_tenant_ids();
+		if ( empty( $tenant_ids ) ) {
+			$tenant = TenantIdentity::resolve();
+			$tenant_id = trim( (string) ( $tenant['value'] ?? '' ) );
+			if ( '' === $tenant_id ) {
+				return;
+			}
+
+			$tenant_ids = array( $tenant_id );
 		}
 
-		$this->maintenance_service->purge_terminal_rows( $tenant_id );
+		$this->purge_terminal_rows_for_tenants( $tenant_ids );
 	}
 
 	/**

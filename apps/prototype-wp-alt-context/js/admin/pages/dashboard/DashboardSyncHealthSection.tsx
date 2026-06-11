@@ -1,6 +1,8 @@
 import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 
+import { SCAN_CONFLICTS_HREF, SCAN_DEAD_LETTER_HREF } from '../workbench/workbenchOverlayLinks';
+
 interface SyncStatusData {
   sync_health?: string | null;
   last_snapshot_version?: number | null;
@@ -120,13 +122,13 @@ export const DashboardSyncHealthSection = ({
             <p>{__('Inspect sync status, scans, and queued replay work.', 'alt-context')}</p>
           </a>
           {conflictCount > 0 ? (
-            <a href="#/workbench?tab=scan&panel=conflicts" className="acx-dashboard__action-card">
+            <a href={SCAN_CONFLICTS_HREF} className="acx-dashboard__action-card">
               <h3>{__('Open Conflict Inbox', 'alt-context')}</h3>
               <p>{__('Review and resolve recorded sync conflicts.', 'alt-context')}</p>
             </a>
           ) : null}
           {failedReplayCount > 0 ? (
-            <a href="#/workbench?tab=scan&panel=dead-letter" className="acx-dashboard__action-card">
+            <a href={SCAN_DEAD_LETTER_HREF} className="acx-dashboard__action-card">
               <h3>{__('Open Dead-Letter Queue', 'alt-context')}</h3>
               <p>{__('Retry or discard failed replay operations.', 'alt-context')}</p>
             </a>

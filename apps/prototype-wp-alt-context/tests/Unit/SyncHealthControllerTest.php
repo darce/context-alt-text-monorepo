@@ -21,30 +21,57 @@ class SyncHealthControllerTest extends TestCase
 {
     public function testGetSyncHealthReturnsDebtAndBreakerEnvelope(): void
     {
-        $baseUrl = 'http://localhost:8000';
-        $syncRepo = new class() extends NullSyncStateRepository {
+        $fixturePath = dirname(__DIR__) . '/fixtures/sync-health/debt-and-breaker-envelope.json';
+        $fixture = json_decode((string) file_get_contents($fixturePath), true);
+        $this->assertIsArray($fixture);
+
+        $baseUrl = (string) ($fixture['breaker']['base_url'] ?? 'http://localhost:8000');
+        $syncRepo = new class($fixture) extends NullSyncStateRepository {
+            /** @var array<string,mixed> */
+            private array $fixture;
+
+            /**
+             * @param array<string,mixed> $fixture
+             */
+            public function __construct(array $fixture)
+            {
+                $this->fixture = $fixture;
+            }
+
             public function get_last_updated(string $tenant_id): ?string
             {
-                return '2026-06-11 12:00:00';
+                $at = $this->fixture['last_pull']['at'] ?? null;
+                return is_string($at) ? $at : null;
             }
 
             public function get_last_sync_result(string $tenant_id): string
             {
-                return SyncPullResult::OK;
+                return !empty($this->fixture['last_pull']['ok']) ? SyncPullResult::OK : SyncPullResult::FAILED;
             }
 
             public function get_conflict_count(string $tenant_id): int
             {
-                return 3;
+                return (int) ($this->fixture['conflicts']['open'] ?? 0);
             }
         };
 
-        $outboxRepo = new class() extends OutboxQueryRepository {
+        $outboxRepo = new class($fixture) extends OutboxQueryRepository {
+            /** @var array<string,mixed> */
+            private array $fixture;
+
+            /**
+             * @param array<string,mixed> $fixture
+             */
+            public function __construct(array $fixture)
+            {
+                $this->fixture = $fixture;
+            }
+
             public function count_operations_by_status(string $tenant_id, ?string $status): int
             {
                 return match ($status) {
-                    'pending' => 5,
-                    'failed' => 2,
+                    'pending' => (int) ($this->fixture['outbox']['pending'] ?? 0),
+                    'failed' => (int) ($this->fixture['outbox']['failed'] ?? 0),
                     default => 0,
                 };
             }
@@ -59,25 +86,12 @@ class SyncHealthControllerTest extends TestCase
         $this->assertSame(200, $response->get_status());
         $data = $response->get_data();
 
-        $this->assertSame(
-            [
-                'state' => 'closed',
-                'base_url' => $baseUrl,
-                'opened_at' => null,
-            ],
-            $data['breaker']
-        );
-        $this->assertSame(['pending' => 5, 'failed' => 2], $data['outbox']);
-        $this->assertSame(['open' => 3], $data['conflicts']);
-        $this->assertSame(
-            ['failed' => null, 'source' => 'unavailable_local'],
-            $data['replays']
-        );
-        $this->assertSame(
-            ['at' => '2026-06-11 12:00:00', 'ok' => true],
-            $data['last_pull']
-        );
-        $this->assertSame([], $data['warnings']);
+        $this->assertSame($fixture['breaker'], $data['breaker']);
+        $this->assertSame($fixture['outbox'], $data['outbox']);
+        $this->assertSame($fixture['conflicts'], $data['conflicts']);
+        $this->assertSame($fixture['replays'], $data['replays']);
+        $this->assertSame($fixture['last_pull'], $data['last_pull']);
+        $this->assertSame($fixture['warnings'], $data['warnings']);
     }
 
     public function testGetSyncHealthIncludesConflictThresholdWarning(): void

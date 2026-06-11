@@ -1,0 +1,23 @@
+{
+  "breaker": {
+    "state": "closed",
+    "base_url": "http://localhost:8000",
+    "opened_at": null
+  },
+  "outbox": {
+    "pending": 5,
+    "failed": 2
+  },
+  "conflicts": {
+    "open": 3
+  },
+  "replays": {
+    "failed": null,
+    "source": "unavailable_local"
+  },
+  "last_pull": {
+    "at": "2026-06-11 12:00:00",
+    "ok": true
+  },
+  "warnings": []
+}

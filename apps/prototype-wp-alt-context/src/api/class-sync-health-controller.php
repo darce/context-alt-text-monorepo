@@ -8,10 +8,12 @@ require_once __DIR__ . '/class-recognition-circuit-keys.php';
 require_once __DIR__ . '/../sovereign/repositories/interface-sync-state-repository.php';
 require_once __DIR__ . '/../sovereign/repositories/class-sync-state-repository.php';
 require_once __DIR__ . '/../sovereign/sync/class-outbox-query-repository.php';
+require_once __DIR__ . '/../sovereign/sync/class-outbox-status.php';
 
 use AltContext\Sovereign\Repositories\SyncStateRepository;
 use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
 use AltContext\Sovereign\Sync\OutboxQueryRepository;
+use AltContext\Sovereign\Sync\OutboxStatus;
 use AltContext\Sovereign\Sync\SyncPullResult;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -65,8 +67,8 @@ class SyncHealthController extends AbstractRecognitionProxyController {
 					'opened_at' => null,
 				),
 				'outbox' => array(
-					'pending' => $this->outbox_query_repository->count_operations_by_status( $tenant_id, 'pending' ),
-					'failed' => $this->outbox_query_repository->count_operations_by_status( $tenant_id, 'failed' ),
+					'pending' => $this->outbox_query_repository->count_operations_by_status( $tenant_id, OutboxStatus::PENDING ),
+					'failed' => $this->outbox_query_repository->count_operations_by_status( $tenant_id, OutboxStatus::FAILED ),
 				),
 				'conflicts' => array(
 					'open' => $open_conflicts,

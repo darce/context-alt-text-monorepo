@@ -12,6 +12,7 @@ class TransactionRunner {
 	 * @template T
 	 * @param callable():T $callback
 	 * @return T|false
+	 * @throws \Throwable
 	 */
 	public static function run_transactional( callable $callback ): mixed {
 		global $wpdb;

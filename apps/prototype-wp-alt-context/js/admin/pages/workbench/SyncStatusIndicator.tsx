@@ -4,7 +4,8 @@ import { __, sprintf } from '@wordpress/i18n';
 import type { SyncHealth, WorkbenchOverlay } from '../../api/recognition';
 import { useSyncHealth } from '../../hooks/useSyncHealth';
 import { useSyncStatus } from '../../hooks/useSyncStatus';
-import { shouldShowDegradedBanner } from './degradedModeBannerLogic';
+import { isSyncOffline } from './degradedModeBannerLogic';
+import { buildWorkbenchOverlayHref } from './workbenchOverlayLinks';
 import { useSyncTrigger } from '../../hooks/useSyncTrigger';
 import { useRetentionStatus } from '../../hooks/useRetentionStatus';
 import type { PipelinePhase } from '../../hooks/jobStateMachineUtils';
@@ -60,9 +61,6 @@ interface IdleStatePresentation {
   actionLabel?: string;
 }
 
-const buildWorkbenchHref = (section: WorkbenchTab, overlay: Exclude<WorkbenchOverlay, null>): string =>
-  `#/workbench?tab=${encodeURIComponent(section)}&panel=${encodeURIComponent(overlay)}`;
-
 const buildIdleState = (
   syncHealth: SyncHealth,
   lastSyncedAt: string | null | undefined,
@@ -86,14 +84,14 @@ const buildIdleState = (
         toneClassName: 'acx-sync-status--warning',
         label: __('Curation replay needs attention.', 'alt-context'),
         badge: __('Failures', 'alt-context'),
-        badgeHref: buildWorkbenchHref(activeSection, 'dead-letter'),
+        badgeHref: buildWorkbenchOverlayHref(activeSection, 'dead-letter'),
       };
     case 'conflicts':
       return {
         toneClassName: 'acx-sync-status--warning',
         label: __('Conflict resolution is required before replay can catch up.', 'alt-context'),
         badge: __('Conflicts', 'alt-context'),
-        badgeHref: buildWorkbenchHref(activeSection, 'conflicts'),
+        badgeHref: buildWorkbenchOverlayHref(activeSection, 'conflicts'),
       };
     case 'queued':
       return {
@@ -152,8 +150,8 @@ export const SyncStatusIndicator = ({
   const topologyApplied = normalizeCount(data.topology_commands?.applied);
   const topologyFailed = normalizeCount(data.topology_commands?.failed);
   const topologyConflict = normalizeCount(data.topology_commands?.conflict);
-  const conflictHref = buildWorkbenchHref(activeSection, 'conflicts');
-  const deadLetterHref = buildWorkbenchHref(activeSection, 'dead-letter');
+  const conflictHref = buildWorkbenchOverlayHref(activeSection, 'conflicts');
+  const deadLetterHref = buildWorkbenchOverlayHref(activeSection, 'dead-letter');
   const retentionMode = retentionStatus.data?.available ? retentionStatus.data.policy?.retention_mode : null;
   const syncMode = data.sync_mode ? formatSyncMode(data.sync_mode) : null;
   const retentionDetails =
@@ -332,8 +330,7 @@ export const SyncStatusIndicator = ({
     );
   }
 
-  const effectiveSyncHealth =
-    syncHealthEnvelope && shouldShowDegradedBanner(syncHealthEnvelope) ? 'offline' : data.sync_health;
+  const effectiveSyncHealth = syncHealthEnvelope && isSyncOffline(syncHealthEnvelope) ? 'offline' : data.sync_health;
   const idleState = buildIdleState(effectiveSyncHealth, data.last_synced_at, activeSection);
 
   return (

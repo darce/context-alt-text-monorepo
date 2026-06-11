@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+require_once __DIR__ . '/interface-clusters-host.php';
 require_once __DIR__ . '/../sovereign/mappers/class-cluster-response-mapper.php';
 require_once __DIR__ . '/../sovereign/mappers/class-member-response-mapper.php';
 require_once __DIR__ . '/../sovereign/repositories/interface-clusters-repository.php';
@@ -61,7 +62,7 @@ use function wp_get_attachment_url;
 use function wp_next_scheduled;
 use function wp_schedule_single_event;
 
-class ClustersController extends AbstractRecognitionProxyController {
+class ClustersController extends AbstractRecognitionProxyController implements ClustersHostInterface {
 	private const BOOTSTRAP_SYNC_HOOK = 'acx_bootstrap_sync';
 	private const DATA_SOURCE_BACKEND_PROXY = 'backend_proxy';
 	private const DATA_SOURCE_LOCAL_PROJECTION = 'local_projection';
@@ -429,6 +430,37 @@ class ClustersController extends AbstractRecognitionProxyController {
 
 	public function get_sync_state_repository(): SyncStateRepositoryInterface {
 		return $this->sync_state_repository;
+	}
+
+	public function get_tenant_id(): string {
+		return parent::get_tenant_id();
+	}
+
+	/**
+	 * @param array<string,mixed> $body
+	 * @param array<string,mixed> $query
+	 */
+	public function proxy_recognition_request(
+		string $method,
+		string $path,
+		array $body = array(),
+		array $query = array(),
+		string $request_class = 'auto',
+		string $body_kind = 'json',
+		?int $max_body_bytes = null
+	): WP_REST_Response|WP_Error {
+		return $this->proxy_request( $method, $path, $body, $query, $request_class, $body_kind, $max_body_bytes );
+	}
+
+	public function host_should_use_local_projection_gate(
+		SyncStateRepositoryInterface $sync_state_repository,
+		string $tenant_id
+	): bool {
+		return $this->should_use_local_projection_gate( $sync_state_repository, $tenant_id );
+	}
+
+	public function host_is_projection_stale( ?string $updated_at ): bool {
+		return $this->is_projection_stale( $updated_at );
 	}
 
 	/**

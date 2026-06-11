@@ -136,9 +136,7 @@ export const SettingsPage = (): React.JSX.Element => {
   const localUrlReadOnly = isReadOnly(data.local_url_source);
   const keyReadOnly = isReadOnly(data.key_source);
   const hasUnsavedRoutingChanges =
-    state.recognitionSource !== data.recognition_source ||
-    state.localUrl !== data.local_url ||
-    state.url !== data.url;
+    state.recognitionSource !== data.recognition_source || state.localUrl !== data.local_url || state.url !== data.url;
   const canTestActiveTarget = data.effective_target_mode === RecognitionSource.LOCAL || state.url.trim() !== '';
 
   return (

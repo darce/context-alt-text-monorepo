@@ -3,7 +3,12 @@ import { __ } from '@wordpress/i18n';
 
 import type { SyncHealthResponse } from '../../api/recognition/types/sync';
 import { useSyncHealth } from '../../hooks/useSyncHealth';
-import { getDegradedBannerMessage, getDegradedDebtLinks, shouldShowDegradedBanner } from './degradedModeBannerLogic';
+import {
+  getDegradedBannerMessage,
+  getDegradedDebtLinks,
+  getDegradedWarningMessage,
+  shouldShowDegradedBanner,
+} from './degradedModeBannerLogic';
 
 interface DegradedModeBannerViewProps {
   health: SyncHealthResponse | undefined;
@@ -28,7 +33,9 @@ export const DegradedModeBannerView = ({ health }: DegradedModeBannerViewProps):
       </span>
       <div className="acx-empty-state-warning__content">
         <p className="acx-empty-state-warning__title">{__('Working offline', 'alt-context')}</p>
-        <p className="acx-empty-state-warning__message">{getDegradedBannerMessage()}</p>
+        <p className="acx-empty-state-warning__message">
+          {getDegradedWarningMessage(health) ?? getDegradedBannerMessage()}
+        </p>
         {debtLinks.failedOutboxHref || debtLinks.conflictsHref ? (
           <p className="acx-empty-state-warning__message">
             {debtLinks.failedOutboxHref ? (

@@ -32,6 +32,13 @@ export interface SyncTriggerResponse extends SyncStatusResponse {
 
 export type BreakerState = 'open' | 'closed';
 
+export interface SyncHealthWarning {
+  code: string;
+  message: string;
+  count: number;
+  threshold: number;
+}
+
 export interface SyncHealthResponse {
   breaker: {
     state: BreakerState;
@@ -53,4 +60,5 @@ export interface SyncHealthResponse {
     at: string | null;
     ok: boolean;
   };
+  warnings: SyncHealthWarning[];
 }

@@ -2,7 +2,7 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import type { SyncHealthResponse } from '../recognition/types/sync';
 
-const SYNC_HEALTH_KEYS = ['breaker', 'outbox', 'conflicts', 'replays', 'last_pull'] as const;
+const SYNC_HEALTH_KEYS = ['breaker', 'outbox', 'conflicts', 'replays', 'last_pull', 'warnings'] as const;
 
 describe('sync health response contract', () => {
   const fixture: SyncHealthResponse = {
@@ -15,6 +15,7 @@ describe('sync health response contract', () => {
     conflicts: { open: 0 },
     replays: { failed: null, source: 'unavailable_local' },
     last_pull: { at: null, ok: true },
+    warnings: [],
   };
 
   it('matches GET /acx/v1/recognition/sync/health envelope', () => {

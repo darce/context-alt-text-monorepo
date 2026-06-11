@@ -28,6 +28,7 @@ describe('useSyncHealth', () => {
       conflicts: { open: 0 },
       replays: { failed: null, source: 'unavailable_local' },
       last_pull: { at: null, ok: true },
+      warnings: [],
     });
 
     const { result } = renderHook(() => useSyncHealth(), { wrapper });

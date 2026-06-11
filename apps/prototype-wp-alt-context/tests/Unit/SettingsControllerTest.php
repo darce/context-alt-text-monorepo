@@ -353,6 +353,29 @@ class SettingsControllerTest extends TestCase
         $this->assertSame('http://localhost:8001/health', $data['probed_url']);
     }
 
+    public function testProbeDispatchHonorsExplicitProbeTarget(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_recognition_url', 'https://api.example.com');
+        $this->setOption('acx_recognition_source', 'service');
+        $this->setOption('acx_recognition_api_key', 'test-key');
+        $this->setOption('acx_recognition_local_url', 'http://localhost:8001');
+        $this->queueHttpResponse($this->buildOkResponse());
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings/test');
+        $request->set_body_params(array('probe_target' => 'local'));
+
+        $response = $this->controller->test_connection($request);
+        $data     = $response->get_data();
+        $calls    = $this->getHttpCalls();
+
+        $this->assertCount(1, $calls);
+        $this->assertSame('http://localhost:8001/health', $calls[0]['url']);
+        $this->assertSame(ProbeOutcome::CONNECTED, $data['outcome']);
+        $this->assertSame('local_liveness', $data['probe_mode']);
+        $this->assertSame('http://localhost:8001/health', $data['probed_url']);
+    }
+
     /**
      * @dataProvider outcomeProvider
      * @param array<string, mixed>|\WP_Error $stubbed

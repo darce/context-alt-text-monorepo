@@ -72,6 +72,37 @@ describe('TargetCard', () => {
     expect(screen.getByText('Reachable')).toBeInTheDocument();
   });
 
+  it('selects a card when clicking the card body', () => {
+    const onChange = vi.fn();
+    render(
+      <TargetCardGroup value={RecognitionSource.LOCAL} onValueChange={onChange}>
+        <TargetCard
+          id="acx-target-local"
+          title="Local development"
+          value={RecognitionSource.LOCAL}
+          isEffectiveTarget
+          healthStatus={HealthStatus.NOT_CHECKED}
+          configured
+        >
+          <span>Local fields</span>
+        </TargetCard>
+        <TargetCard
+          id="acx-target-service"
+          title="Hosted service"
+          value={RecognitionSource.SERVICE}
+          isEffectiveTarget={false}
+          healthStatus={HealthStatus.NOT_CHECKED}
+          configured
+        >
+          <span>Service fields</span>
+        </TargetCard>
+      </TargetCardGroup>,
+    );
+
+    fireEvent.click(screen.getByText('Service fields'));
+    expect(onChange).toHaveBeenCalledWith(RecognitionSource.SERVICE);
+  });
+
   it('shows unconfigured empty state CTA on the service card', () => {
     render(
       <TargetCardGroup value={RecognitionSource.SERVICE} onValueChange={vi.fn()}>

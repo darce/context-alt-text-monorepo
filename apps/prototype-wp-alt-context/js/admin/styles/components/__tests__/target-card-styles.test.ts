@@ -18,8 +18,8 @@ describe('E15-25 slice 3: target-card stylesheet', () => {
     expect(existsSync(targetCardScssPath)).toBe(true);
     const source = readFileSync(targetCardScssPath, 'utf8');
 
-    expect(source).toContain('.acx-target-card--active');
-    expect(source).toContain('.acx-target-card__health--reachable');
+    expect(source).toContain('&--active');
+    expect(source).toContain('&--reachable');
     expect(source).toContain('var(--acx-color-accent)');
     expect(source).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
   });

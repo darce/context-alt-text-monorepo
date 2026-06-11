@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Api\Services;
 
 use AltContext\Api\ClusterMutationHostInterface;
+use AltContext\Support\RunsTransactional;
 use AltContext\Sovereign\Repositories\ClustersRepository;
 use AltContext\Sovereign\Repositories\ClustersRepositoryInterface;
 use WP_Error;
@@ -18,6 +19,8 @@ use function sanitize_text_field;
 use function sprintf;
 
 class ClusterLifecycleService {
+	use RunsTransactional;
+
 	private ClusterMutationHostInterface $host;
 	private ClustersRepositoryInterface $clusters_repository;
 
@@ -51,30 +54,31 @@ class ClusterLifecycleService {
 			return new WP_Error( 'acx_db_error', 'Database access is unavailable.', array( 'status' => 500 ) );
 		}
 
-		if ( false === $wpdb->query( 'START TRANSACTION' ) ) {
-			return new WP_Error( 'acx_db_error', 'Could not start local transaction.', array( 'status' => 500 ) );
-		}
+		$affected_rows = 0;
+		$result        = $this->run_transactional(
+			function () use ( $cluster_id, $cluster, &$affected_rows ): WP_REST_Response|WP_Error {
+				$affected_rows = $this->clusters_repository->dismiss( $cluster_id );
 
-		$affected_rows = $this->clusters_repository->dismiss( $cluster_id );
+				if ( $affected_rows > 0 && ! $this->host->enqueue_curation_operation( 'cluster_dismissed', $cluster_id, $cluster ) ) {
+					return new WP_Error( 'acx_db_error', 'Could not queue dismiss replay operation.', array( 'status' => 500 ) );
+				}
 
-		if ( $affected_rows > 0 && ! $this->host->enqueue_curation_operation( 'cluster_dismissed', $cluster_id, $cluster ) ) {
-			$wpdb->query( 'ROLLBACK' );
-			return new WP_Error( 'acx_db_error', 'Could not queue dismiss replay operation.', array( 'status' => 500 ) );
-		}
-
-		if ( false === $wpdb->query( 'COMMIT' ) ) {
-			$wpdb->query( 'ROLLBACK' );
-			return new WP_Error( 'acx_db_error', 'Could not commit local transaction.', array( 'status' => 500 ) );
-		}
-
-		return new WP_REST_Response(
-			array(
-				'dismissed' => true,
-				'synced' => false,
-				'status' => $affected_rows > 0 ? 'pending' : 'acknowledged',
-			),
-			200
+				return new WP_REST_Response(
+					array(
+						'dismissed' => true,
+						'synced' => false,
+						'status' => $affected_rows > 0 ? 'pending' : 'acknowledged',
+					),
+					200
+				);
+			}
 		);
+
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		return $result;
 	}
 
 	public function undismiss_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -99,29 +103,30 @@ class ClusterLifecycleService {
 			return new WP_Error( 'acx_db_error', 'Database access is unavailable.', array( 'status' => 500 ) );
 		}
 
-		if ( false === $wpdb->query( 'START TRANSACTION' ) ) {
-			return new WP_Error( 'acx_db_error', 'Could not start local transaction.', array( 'status' => 500 ) );
-		}
+		$affected_rows = 0;
+		$result        = $this->run_transactional(
+			function () use ( $cluster_id, $cluster, &$affected_rows ): WP_REST_Response|WP_Error {
+				$affected_rows = $this->clusters_repository->undismiss( $cluster_id );
 
-		$affected_rows = $this->clusters_repository->undismiss( $cluster_id );
+				if ( $affected_rows > 0 && ! $this->host->enqueue_curation_operation( 'cluster_undismissed', $cluster_id, $cluster ) ) {
+					return new WP_Error( 'acx_db_error', 'Could not queue undismiss replay operation.', array( 'status' => 500 ) );
+				}
 
-		if ( $affected_rows > 0 && ! $this->host->enqueue_curation_operation( 'cluster_undismissed', $cluster_id, $cluster ) ) {
-			$wpdb->query( 'ROLLBACK' );
-			return new WP_Error( 'acx_db_error', 'Could not queue undismiss replay operation.', array( 'status' => 500 ) );
-		}
-
-		if ( false === $wpdb->query( 'COMMIT' ) ) {
-			$wpdb->query( 'ROLLBACK' );
-			return new WP_Error( 'acx_db_error', 'Could not commit local transaction.', array( 'status' => 500 ) );
-		}
-
-		return new WP_REST_Response(
-			array(
-				'dismissed' => false,
-				'synced' => false,
-				'status' => $affected_rows > 0 ? 'pending' : 'acknowledged',
-			),
-			200
+				return new WP_REST_Response(
+					array(
+						'dismissed' => false,
+						'synced' => false,
+						'status' => $affected_rows > 0 ? 'pending' : 'acknowledged',
+					),
+					200
+				);
+			}
 		);
+
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		return $result;
 	}
 }

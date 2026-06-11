@@ -34,7 +34,7 @@ Developer/operator experience after the epic: editing one cluster operation touc
 - **God Class / Large Class**: too many responsibilities; measured by LOC + declared-method count + distinct route/operation clusters (Fowler Ch3).
 - **Characterization test**: pins current behavior before a refactor; here a `WP_REST_Request` via `rest_do_request()` serialized to a committed golden JSON fixture, asserted byte-equal pre/post.
 - **Composition root**: controller keeps routing + parsing, delegates logic to injected services (mirror `class-recognition-controller.php`).
-- **Epic short id / task refs**: this epic's short id is `REFA`; its task plans/tasks are `REFA-1` … `REFA-6`.
+- **Epic short id / task refs**: this epic's short id is `REFA`; its task plans/tasks are `REFA-1` … `REFA-7`.
 
 ## Current State
 
@@ -47,11 +47,11 @@ Verified against `main` HEAD `0a955f1c` (2026-06-07):
 | `src/api/class-analysis-jobs-controller.php` | 1144 | 35 | 8 | yes (+ transport) |
 | `src/sovereign/repositories/class-identity-members-repository.php` | 1045 | 28 | — | yes |
 | `js/admin/styles/components/_workbench.scss` | 1159 | — | — | Playwright axe a11y (LocalWP); **no visual snapshot baseline yet** |
-| `src/sovereign/sync/class-split-topology-command-drain.php` | 799 | 21 | — | yes |
-| `src/api/class-clusters-controller.php` | 770 | 23 | 5 | yes |
-| `src/sovereign/sync/class-outbox-drain.php` | 680 | 24 | — | yes |
+| `src/sovereign/sync/class-split-topology-command-drain.php` | 799 | 21 | — | yes (REFA-6) |
+| `src/api/class-clusters-controller.php` | 770 | 23 | 5 | yes (REFA-7, Phase 5) |
+| `src/sovereign/sync/class-outbox-drain.php` | 680 | 24 | — | yes (REFA-6) |
 
-Calibration: 0 `switch` smell (1 in analysis-jobs) — God Class is the dominant smell, not Repeated Switches; `run_transactional` does not exist; 10 `.tsx` exceed the 300-line limit (deferred, finding `REFA-TS-DEBT-01`).
+Calibration: 0 `switch` smell (1 in analysis-jobs) — God Class is the dominant smell, not Repeated Switches; `run_transactional` does not exist; 10 `.tsx` exceed the 300-line limit (deferred, finding `REFA-TS-DEBT-01`). All eight Current State targets are now assigned to a child task: the read-only `class-clusters-controller.php` (5 GET routes, no inline transactions, no SSE) is REFA-7 under Phase 5 — it was the lone orphan and is the read sibling to REFA-1's mutations controller.
 
 ## Applied Concepts from Sources
 
@@ -144,6 +144,21 @@ Deliverables:
 Exit criteria:
 - Drain tests green; enqueue/drain meaning unchanged.
 
+### Phase 5: Cluster read controller -- not-started
+
+> **Status**: not-started
+> **Task plans**: `docs/tasks/tech-debt/REFA-7-clusters-controller-task-plan.md` (drafted)
+
+**Goal**: Decompose the read-only cluster controller — the last unassigned Current State target and the read sibling to REFA-1's mutations controller.
+
+Deliverables:
+- REFA-7: `class-clusters-controller.php` (5 GET routes, no inline transactions, no SSE) → thin composition root + `ClusterReadService` / `ClusterProjectionSyncService` / `ClusterResponseEnvelopeService`; preserve the dual local-projection/backend-proxy read seam, the bootstrap/targeted-sync side effects, the `perform_bootstrap_sync` WP-action callback, and the facade delegation + public repo getters.
+
+Exit criteria:
+- All 5 `acx/v1` routes byte-identical on both branches; sync side effects + facade unchanged; controller reduced to composition root.
+
+> **Sequencing**: REFA-7 shares `src/api/`, `src/api/services/`, the facade, and the `services/` autoload block with merged REFA-1/REFA-2/REFA-4 and pending REFA-5 — runs sequentially with REFA-5 (no concurrent live PHP REFA task).
+
 ## External Dependencies
 
 | Dependency | Owner | Status | Blocks |
@@ -181,6 +196,10 @@ Exit criteria:
 ## Phase 4: Sync drains -- not-started
 
 - [ ] REFA-6 merged (drains Split Loop + Extract Function).
+
+## Phase 5: Cluster read controller -- not-started
+
+- [ ] REFA-7 merged (`class-clusters-controller.php` → composition root + read/projection-sync/envelope services; dual-path read seam + sync side effects + facade preserved).
 
 ## Deferred (Post-v0.4.1)
 

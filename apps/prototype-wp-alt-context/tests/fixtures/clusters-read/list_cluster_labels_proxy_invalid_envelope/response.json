@@ -1,0 +1,1 @@
+{"type":"error","code":"invalid_cluster_labels_envelope","message":"Cluster labels response must include limit, total, and truncated when labels is present.","data":{"status":502}}

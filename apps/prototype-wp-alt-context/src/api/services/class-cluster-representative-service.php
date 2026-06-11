@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Api\Services;
 
 use AltContext\Api\ClusterMutationHostInterface;
+use AltContext\Support\RunsTransactional;
 use AltContext\Sovereign\Repositories\ClustersRepository;
 use AltContext\Sovereign\Repositories\ClustersRepositoryInterface;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
@@ -21,6 +22,8 @@ use function sanitize_text_field;
 use function sprintf;
 
 class ClusterRepresentativeService {
+	use RunsTransactional;
+
 	private ClusterMutationHostInterface $host;
 	private ClustersRepositoryInterface $clusters_repository;
 	private SyncStateRepositoryInterface $sync_state_repository;
@@ -79,38 +82,39 @@ class ClusterRepresentativeService {
 			'is_pinned' => $desired_is_pinned,
 		);
 
-		if ( false === $wpdb->query( 'START TRANSACTION' ) ) {
-			return new WP_Error( 'acx_db_error', 'Could not start local transaction.', array( 'status' => 500 ) );
-		}
+		$affected_rows = 0;
+		$result        = $this->run_transactional(
+			function () use ( $cluster_id, $representative_id, $desired_is_pinned, $cluster, $tenant_id, $payload, &$affected_rows ): WP_REST_Response|WP_Error {
+				$affected_rows = $this->clusters_repository->update_representative_state( $cluster_id, $representative_id, $desired_is_pinned );
+				if ( $affected_rows > 0 && ! $this->host->enqueue_curation_operation( 'representative_pin_updated', $cluster_id, $cluster, $payload ) ) {
+					return new WP_Error( 'acx_db_error', 'Could not queue representative pin replay operation.', array( 'status' => 500 ) );
+				}
 
-		$affected_rows = $this->clusters_repository->update_representative_state( $cluster_id, $representative_id, $desired_is_pinned );
-		if ( $affected_rows > 0 && ! $this->host->enqueue_curation_operation( 'representative_pin_updated', $cluster_id, $cluster, $payload ) ) {
-			$wpdb->query( 'ROLLBACK' );
-			return new WP_Error( 'acx_db_error', 'Could not queue representative pin replay operation.', array( 'status' => 500 ) );
-		}
+				if ( $affected_rows > 0 ) {
+					$this->sync_state_repository->touch_local_curation_marker( $tenant_id );
+				}
 
-		if ( $affected_rows > 0 ) {
-			$this->sync_state_repository->touch_local_curation_marker( $tenant_id );
-		}
+				return new WP_REST_Response(
+					array(
+						'cluster_id' => $cluster_id,
+						'representative_id' => $representative_id,
+						'is_pinned' => $desired_is_pinned,
+						'synced' => false,
+						'status' => $affected_rows > 0 ? 'pending' : 'acknowledged',
+					),
+					200
+				);
+			}
+		);
 
-		if ( false === $wpdb->query( 'COMMIT' ) ) {
-			$wpdb->query( 'ROLLBACK' );
-			return new WP_Error( 'acx_db_error', 'Could not commit local transaction.', array( 'status' => 500 ) );
+		if ( is_wp_error( $result ) ) {
+			return $result;
 		}
 
 		if ( $affected_rows > 0 ) {
 			$this->host->trigger_xmp_refresh_for_cluster_ids( array( $cluster_id ), 'cluster-pin-representative' );
 		}
 
-		return new WP_REST_Response(
-			array(
-				'cluster_id' => $cluster_id,
-				'representative_id' => $representative_id,
-				'is_pinned' => $desired_is_pinned,
-				'synced' => false,
-				'status' => $affected_rows > 0 ? 'pending' : 'acknowledged',
-			),
-			200
-		);
+		return $result;
 	}
 }

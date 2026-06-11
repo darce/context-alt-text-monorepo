@@ -1226,6 +1226,15 @@ if (!function_exists('apply_filters')) {
 if (!function_exists('do_action')) {
     function do_action($hook, ...$args): void
     {
+        if (!isset($GLOBALS['__ac_do_action_log'])) {
+            $GLOBALS['__ac_do_action_log'] = [];
+        }
+
+        $GLOBALS['__ac_do_action_log'][] = [
+            'hook' => (string) $hook,
+            'args' => $args,
+        ];
+
         if (empty($GLOBALS['__ac_actions'][$hook])) {
             return;
         }

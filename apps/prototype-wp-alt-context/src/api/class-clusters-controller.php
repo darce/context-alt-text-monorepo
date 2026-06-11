@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+require_once __DIR__ . '/interface-clusters-host.php';
+require_once __DIR__ . '/services/class-cluster-response-envelope-service.php';
+require_once __DIR__ . '/services/class-cluster-projection-sync-service.php';
+require_once __DIR__ . '/services/class-cluster-read-service.php';
 require_once __DIR__ . '/../sovereign/mappers/class-cluster-response-mapper.php';
 require_once __DIR__ . '/../sovereign/mappers/class-member-response-mapper.php';
 require_once __DIR__ . '/../sovereign/repositories/interface-clusters-repository.php';
@@ -12,16 +16,14 @@ require_once __DIR__ . '/../sovereign/repositories/interface-identity-members-re
 require_once __DIR__ . '/../sovereign/repositories/class-identity-members-repository.php';
 require_once __DIR__ . '/../sovereign/repositories/interface-sync-state-repository.php';
 require_once __DIR__ . '/../sovereign/repositories/class-sync-state-repository.php';
-require_once __DIR__ . '/../sovereign/sync/interface-snapshot-projector.php';
-require_once __DIR__ . '/../sovereign/sync/class-snapshot-client.php';
-require_once __DIR__ . '/../sovereign/sync/class-snapshot-projector.php';
 require_once __DIR__ . '/../sovereign/sync/interface-sync-pull-job.php';
-require_once __DIR__ . '/../sovereign/sync/interface-targeted-sync-pull-job.php';
-require_once __DIR__ . '/../sovereign/sync/class-sync-pull-job.php';
-require_once __DIR__ . '/../sovereign/sync/class-sync-pull-result.php';
 require_once __DIR__ . '/../sovereign/sync/class-sync-pull-job-factory.php';
 require_once __DIR__ . '/../sovereign/class-cluster-facade.php';
 
+use AltContext\Api\Services\ClusterProjectionSyncService;
+use AltContext\Api\Services\ClusterReadDependencies;
+use AltContext\Api\Services\ClusterReadService;
+use AltContext\Api\Services\ClusterResponseEnvelopeService;
 use AltContext\Sovereign\ClusterFacade;
 use AltContext\Sovereign\Mappers\ClusterResponseMapper;
 use AltContext\Sovereign\Mappers\MemberResponseMapper;
@@ -31,49 +33,19 @@ use AltContext\Sovereign\Repositories\IdentityMembersRepository;
 use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
 use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
-use AltContext\Sovereign\Sync\SnapshotClient;
 use AltContext\Sovereign\Sync\SyncPullJobFactory;
-use AltContext\Sovereign\Sync\SyncPullJob;
 use AltContext\Sovereign\Sync\SyncPullJobInterface;
-use AltContext\Sovereign\Sync\TargetedSyncPullJobInterface;
-use Throwable;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
 
 use function add_action;
-use function absint;
-use function array_unique;
-use function array_values;
-use function count;
-use function do_action;
-use function is_array;
-use function is_numeric;
-use function is_string;
-use function max;
-use function min;
-use function rest_sanitize_boolean;
-use function sanitize_text_field;
-use function sprintf;
-use function time;
-use function trim;
-use function wp_get_attachment_url;
-use function wp_next_scheduled;
-use function wp_schedule_single_event;
 
-class ClustersController extends AbstractRecognitionProxyController {
+class ClustersController extends AbstractRecognitionProxyController implements ClustersHostInterface {
 	private const BOOTSTRAP_SYNC_HOOK = 'acx_bootstrap_sync';
 	private const DATA_SOURCE_BACKEND_PROXY = 'backend_proxy';
 	private const DATA_SOURCE_LOCAL_PROJECTION = 'local_projection';
 	private const DATA_SOURCE_UNAVAILABLE = 'unavailable';
-	private const GET_CLUSTER_MEMBERS_MAX_LIMIT = IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT;
-	private const LIST_CLUSTER_LABELS_DEFAULT_LIMIT = 50;
-	private const LIST_CLUSTER_LABELS_MAX_LIMIT = 500;
-	private const LIST_CLUSTERS_DEFAULT_LIMIT = 50;
-	private const LIST_CLUSTERS_MAX_LIMIT = 500;
-	private const LIST_TOP_UNLABELED_CLUSTERS_DEFAULT_LIMIT = 10;
-	private const LIST_TOP_UNLABELED_CLUSTERS_MAX_LIMIT = 500;
-	private const PREVIEW_IDENTITIES_PER_CLUSTER = 4;
 	private const PROJECTION_STATUS_AVAILABLE = 'available';
 	private const PROJECTION_STATUS_BOOTSTRAPPING = 'bootstrapping';
 	private ClustersRepositoryInterface $clusters_repository;
@@ -84,6 +56,9 @@ class ClustersController extends AbstractRecognitionProxyController {
 	private ClusterResponseMapper $cluster_mapper;
 	private MemberResponseMapper $member_mapper;
 	private ClusterFacade $cluster_facade;
+	private ClusterResponseEnvelopeService $response_envelope_service;
+	private ClusterProjectionSyncService $projection_sync_service;
+	private ClusterReadService $read_service;
 
 	public function __construct(
 		?ClustersRepositoryInterface $clusters_repository = null,
@@ -93,7 +68,10 @@ class ClustersController extends AbstractRecognitionProxyController {
 		?ClusterResponseMapper $cluster_mapper = null,
 		?MemberResponseMapper $member_mapper = null,
 		?ClusterFacade $cluster_facade = null,
-		?SyncPullJobFactory $sync_pull_job_factory = null
+		?SyncPullJobFactory $sync_pull_job_factory = null,
+		?ClusterResponseEnvelopeService $response_envelope_service = null,
+		?ClusterProjectionSyncService $projection_sync_service = null,
+		?ClusterReadService $read_service = null
 	) {
 		$this->clusters_repository = $clusters_repository ?? new ClustersRepository();
 		$this->members_repository = $members_repository ?? new IdentityMembersRepository();
@@ -103,6 +81,34 @@ class ClustersController extends AbstractRecognitionProxyController {
 		$this->member_mapper = $member_mapper ?? new MemberResponseMapper();
 		$this->cluster_facade = $cluster_facade ?? new ClusterFacade( $this->clusters_repository, $this->members_repository );
 		$this->sync_pull_job_factory = $sync_pull_job_factory;
+		$this->response_envelope_service = $response_envelope_service ?? new ClusterResponseEnvelopeService( $this->cluster_mapper );
+		$this->projection_sync_service = $projection_sync_service ?? new ClusterProjectionSyncService(
+			$this,
+			self::BOOTSTRAP_SYNC_HOOK,
+			$this->clusters_repository,
+			$this->members_repository,
+			$this->sync_state_repository,
+			$this->sync_pull_job,
+			$this->sync_pull_job_factory
+		);
+		$this->read_service = $read_service ?? new ClusterReadService(
+			$this,
+			new ClusterReadDependencies(
+				$this->clusters_repository,
+				$this->members_repository,
+				$this->cluster_facade,
+				$this->cluster_mapper,
+				$this->member_mapper,
+				$this->projection_sync_service,
+				$this->response_envelope_service,
+				self::BOOTSTRAP_SYNC_HOOK,
+				self::DATA_SOURCE_BACKEND_PROXY,
+				self::DATA_SOURCE_LOCAL_PROJECTION,
+				self::DATA_SOURCE_UNAVAILABLE,
+				self::PROJECTION_STATUS_BOOTSTRAPPING,
+				self::PROJECTION_STATUS_AVAILABLE
+			)
+		);
 		add_action( self::BOOTSTRAP_SYNC_HOOK, array( $this, 'perform_bootstrap_sync' ), 10, 1 );
 	}
 
@@ -159,268 +165,27 @@ class ClustersController extends AbstractRecognitionProxyController {
 	}
 
 	public function list_clusters( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		$tenant_id = $this->get_tenant_id();
-		$limit  = absint( $request->get_param( 'limit' ) ?? self::LIST_CLUSTERS_DEFAULT_LIMIT );
-		$limit  = max( 1, min( $limit, self::LIST_CLUSTERS_MAX_LIMIT ) );
-		$offset = absint( $request->get_param( 'offset' ) ?? 0 );
-		$search = sanitize_text_field( (string) $request->get_param( 'search' ) );
-		$labeled_only = rest_sanitize_boolean( $request->get_param( 'labeled_only' ) );
-
-		if ( $this->should_use_local_projection( $tenant_id ) ) {
-			$rows = $this->clusters_repository->list_for_tenant(
-				$tenant_id,
-				$limit,
-				$offset,
-				array(
-					'search' => $search,
-					'labeled_only' => $labeled_only,
-				)
-			);
-
-			$members_by_cluster = $this->load_members_by_cluster( $rows, self::PREVIEW_IDENTITIES_PER_CLUSTER );
-			$clusters = $this->cluster_mapper->map_cluster_list( $rows, $members_by_cluster );
-
-			return new WP_REST_Response( $this->build_cluster_list_envelope( $rows, $clusters, $limit ), 200 );
-		}
-
-		$query = array(
-			'tenant_id' => $tenant_id,
-			'limit'     => $limit,
-			'offset'    => $offset,
-		);
-
-		if ( $labeled_only ) {
-			$query['labeled_only'] = 'true';
-		}
-
-		if ( '' !== $search ) {
-			$query['search'] = $search;
-		}
-
-		$response = $this->proxy_request( 'GET', '/recognition/clusters', array(), $query );
-		$response = $this->maybe_bootstrap_after_proxy_read( $tenant_id, $response );
-		return $this->normalize_cluster_list_response( $response, $limit );
+		return $this->read_service->list_clusters( $request );
 	}
 
 	public function list_top_unlabeled_clusters( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		$tenant_id = $this->get_tenant_id();
-		$limit     = absint( $request->get_param( 'limit' ) ?? self::LIST_TOP_UNLABELED_CLUSTERS_DEFAULT_LIMIT );
-		$limit     = max( 1, min( $limit, self::LIST_TOP_UNLABELED_CLUSTERS_MAX_LIMIT ) );
-
-		if ( ! $this->should_use_local_projection( $tenant_id ) ) {
-			$response = $this->proxy_request(
-				'GET',
-				'/recognition/clusters/top-unlabeled',
-				array(),
-				array(
-					'tenant_id' => $tenant_id,
-					'limit'     => $limit,
-				)
-			);
-			$response = $this->maybe_bootstrap_after_proxy_read( $tenant_id, $response );
-
-			if ( $response instanceof WP_REST_Response && $response->get_status() >= 200 && $response->get_status() < 300 ) {
-				$data = $response->get_data();
-				if ( is_array( $data ) ) {
-					if ( isset( $data['clusters'] ) && is_array( $data['clusters'] ) ) {
-						if ( ! isset( $data['limit'], $data['total'], $data['truncated'] ) || ! is_numeric( $data['limit'] ) || ! is_numeric( $data['total'] ) || ! is_bool( $data['truncated'] ) ) {
-							return new WP_Error(
-								'invalid_top_unlabeled_envelope',
-								'Top-unlabeled clusters response must include limit, total, and truncated when clusters is present.',
-								array( 'status' => 502 )
-							);
-						}
-
-						return new WP_REST_Response(
-							array(
-								'clusters' => $data['clusters'],
-								'limit' => max( 1, (int) $data['limit'] ),
-								'total' => max( 0, (int) $data['total'] ),
-								'truncated' => $data['truncated'],
-								'data_source' => self::DATA_SOURCE_BACKEND_PROXY,
-							),
-							200
-						);
-					}
-
-					return new WP_REST_Response(
-						array(
-							'clusters' => $data,
-							'limit' => $limit,
-							'total' => count( $data ),
-							'truncated' => false,
-							'data_source' => self::DATA_SOURCE_BACKEND_PROXY,
-						),
-						200
-					);
-				}
-			}
-
-			$args = array( $tenant_id );
-			if ( false === wp_next_scheduled( self::BOOTSTRAP_SYNC_HOOK, $args ) ) {
-				wp_schedule_single_event( time(), self::BOOTSTRAP_SYNC_HOOK, $args );
-			}
-			return new WP_REST_Response(
-				array(
-					'clusters'          => array(),
-					'limit' => $limit,
-					'total' => 0,
-					'truncated' => false,
-					'singleton_count'   => 0,
-					'data_source'       => self::DATA_SOURCE_UNAVAILABLE,
-					'projection_status' => self::PROJECTION_STATUS_BOOTSTRAPPING,
-				),
-				200
-			);
-		}
-
-		$sovereign_data = $this->cluster_facade->list_top_unlabeled( $tenant_id, $limit );
-		$cluster_ids_to_repair = $this->find_clusters_missing_projected_members(
-			$sovereign_data['clusters'],
-			$sovereign_data['members']
-		);
-		if ( ! empty( $cluster_ids_to_repair ) && $this->repair_targeted_projection( $tenant_id, $cluster_ids_to_repair ) ) {
-			$sovereign_data = $this->cluster_facade->list_top_unlabeled( $tenant_id, $limit );
-		}
-
-		$has_clusters = $this->clusters_repository->has_projection_rows_for_tenant( $tenant_id );
-		$unlabeled_items = $this->cluster_mapper->map_top_unlabeled_clusters(
-			$sovereign_data['clusters'],
-			$sovereign_data['members'],
-			$tenant_id
-		);
-		$total = count( $unlabeled_items );
-		if ( isset( $sovereign_data['clusters'][0]['total_count'] ) && is_numeric( $sovereign_data['clusters'][0]['total_count'] ) ) {
-			$total = max( 0, (int) $sovereign_data['clusters'][0]['total_count'] );
-		}
-
-		return new WP_REST_Response(
-			array(
-				'clusters' => $unlabeled_items,
-				'limit' => $limit,
-				'total' => $total,
-				'truncated' => $total > count( $unlabeled_items ),
-				'singleton_count' => max( 0, (int) ( $sovereign_data['singleton_count'] ?? 0 ) ),
-				'has_clusters' => $has_clusters,
-				'data_source' => self::DATA_SOURCE_LOCAL_PROJECTION,
-				'projection_status' => self::PROJECTION_STATUS_AVAILABLE,
-			),
-			200
-		);
+		return $this->read_service->list_top_unlabeled_clusters( $request );
 	}
 
 	public function list_cluster_labels( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		$tenant_id = $this->get_tenant_id();
-		$limit = absint( $request->get_param( 'limit' ) ?? self::LIST_CLUSTER_LABELS_DEFAULT_LIMIT );
-		$limit = max( 1, min( $limit, self::LIST_CLUSTER_LABELS_MAX_LIMIT ) );
-		$search = sanitize_text_field( (string) $request->get_param( 'search' ) );
-
-		if ( $this->should_use_local_projection( $tenant_id ) ) {
-			$label_rows = $this->clusters_repository->list_labels( $tenant_id, $search, $limit );
-			$labels = $this->cluster_mapper->map_labels_list( array_map( static fn ( array $row ): string => (string) ( $row['label'] ?? '' ), $label_rows ) );
-			$total = count( $labels );
-			if ( isset( $label_rows[0]['total_count'] ) && is_numeric( $label_rows[0]['total_count'] ) ) {
-				$total = max( 0, (int) $label_rows[0]['total_count'] );
-			}
-			return new WP_REST_Response( $this->build_cluster_labels_envelope( $labels, $limit, $total ), 200 );
-		}
-
-		$query = array(
-			'tenant_id' => $tenant_id,
-			'limit' => $limit,
-		);
-
-		if ( '' !== $search ) {
-			$query['search'] = $search;
-		}
-
-		$response = $this->proxy_request( 'GET', '/recognition/clusters/labels', array(), $query );
-		$response = $this->maybe_bootstrap_after_proxy_read( $tenant_id, $response );
-		return $this->normalize_cluster_labels_response( $response, $limit );
+		return $this->read_service->list_cluster_labels( $request );
 	}
 
 	public function get_cluster_detail( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		$tenant_id = $this->get_tenant_id();
-		$cluster_id = sanitize_text_field( (string) $request->get_param( 'cluster_id' ) );
-		if ( '' === $cluster_id ) {
-			return new WP_Error( 'missing_cluster_id', 'Cluster ID is required.', array( 'status' => 400 ) );
-		}
-
-		if ( $this->should_use_local_projection( $tenant_id ) ) {
-			$cluster_row = $this->clusters_repository->find_by_uuid( $cluster_id );
-			if ( is_array( $cluster_row ) ) {
-				$members = $this->members_repository->list_for_cluster( $cluster_id, 500, 0, $tenant_id );
-				$payload = $this->cluster_mapper->map_cluster_detail( $cluster_row, $members );
-				return new WP_REST_Response( $payload, 200 );
-			}
-
-			// Local projection is authoritative, but cluster not found
-			return new WP_Error(
-				'cluster_not_found',
-				sprintf( 'Cluster %s not found.', $cluster_id ),
-				array( 'status' => 404 )
-			);
-		}
-
-		$response = $this->proxy_request(
-			'GET',
-			sprintf( '/recognition/clusters/%s', $cluster_id ),
-			array(),
-			array( 'tenant_id' => $tenant_id )
-		);
-		return $this->maybe_bootstrap_after_proxy_read( $tenant_id, $response );
+		return $this->read_service->get_cluster_detail( $request );
 	}
 
 	public function get_cluster_members( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		$tenant_id = $this->get_tenant_id();
-		$cluster_id = sanitize_text_field( (string) $request->get_param( 'cluster_id' ) );
-		if ( '' === $cluster_id ) {
-			return new WP_Error( 'missing_cluster_id', 'Cluster ID is required.', array( 'status' => 400 ) );
-		}
-
-		if ( $this->should_use_local_projection( $tenant_id ) ) {
-			// Verify cluster exists before listing members
-			$cluster_row = $this->clusters_repository->find_by_uuid( $cluster_id );
-			if ( ! is_array( $cluster_row ) ) {
-				return new WP_Error(
-					'cluster_not_found',
-					sprintf( 'Cluster %s not found.', $cluster_id ),
-					array( 'status' => 404 )
-				);
-			}
-
-			$member_rows = $this->members_repository->list_for_cluster( $cluster_id, self::GET_CLUSTER_MEMBERS_MAX_LIMIT, 0, $tenant_id );
-			if ( empty( $member_rows ) && $this->cluster_row_should_have_members( $cluster_row ) && $this->repair_targeted_projection( $tenant_id, array( $cluster_id ) ) ) {
-				$member_rows = $this->members_repository->list_for_cluster( $cluster_id, self::GET_CLUSTER_MEMBERS_MAX_LIMIT, 0, $tenant_id );
-			}
-
-			$members = $this->member_mapper->map_cluster_members( $member_rows );
-			if ( isset( $member_rows[0]['total_count'] ) && is_numeric( $member_rows[0]['total_count'] ) ) {
-				$total = max( 0, (int) $member_rows[0]['total_count'] );
-			} else {
-				$total = $this->members_repository->count_for_cluster( $cluster_id );
-			}
-			return new WP_REST_Response( $this->build_cluster_members_envelope( $members, self::GET_CLUSTER_MEMBERS_MAX_LIMIT, $total ), 200 );
-		}
-
-		$response = $this->proxy_request(
-			'GET',
-			sprintf( '/recognition/clusters/%s/members', $cluster_id ),
-			array(),
-			array( 'tenant_id' => $tenant_id )
-		);
-		$response = $this->maybe_bootstrap_after_proxy_read( $tenant_id, $response );
-		return $this->normalize_cluster_members_response( $response, self::GET_CLUSTER_MEMBERS_MAX_LIMIT );
+		return $this->read_service->get_cluster_members( $request );
 	}
 
 	public function perform_bootstrap_sync( string $tenant_id ): void {
-		$sync_pull_job = $this->resolve_sync_pull_job();
-		$normalized_tenant_id = trim( $tenant_id );
-		if ( '' === $normalized_tenant_id || null === $sync_pull_job ) {
-			return;
-		}
-
-		$sync_pull_job->perform_bypass_cooldown( $normalized_tenant_id );
+		$this->projection_sync_service->perform_bootstrap_sync( $tenant_id );
 	}
 
 	public function get_clusters_repository(): ClustersRepositoryInterface {
@@ -431,340 +196,34 @@ class ClustersController extends AbstractRecognitionProxyController {
 		return $this->sync_state_repository;
 	}
 
-	/**
-	 * @param array<int,array<string,mixed>> $cluster_rows
-	 * @return array<string,array<int,array<string,mixed>>>
-	 */
-	private function load_members_by_cluster( array $cluster_rows, int $limit ): array {
-		// Extract cluster UUIDs for batch query
-		$cluster_uuids = array();
-		foreach ( $cluster_rows as $row ) {
-			$cluster_id = sanitize_text_field( (string) ( $row['cluster_uuid'] ?? '' ) );
-			if ( '' !== $cluster_id ) {
-				$cluster_uuids[] = $cluster_id;
-			}
-		}
-
-		if ( empty( $cluster_uuids ) ) {
-			return array();
-		}
-
-		// Batch query all members at once
-		return $this->members_repository->list_for_cluster_uuids( $cluster_uuids, $limit );
-	}
-
-	private function should_use_local_projection( string $tenant_id ): bool {
-		$has_projection = $this->should_use_local_projection_gate( $this->sync_state_repository, $tenant_id );
-		if ( ! $has_projection ) {
-			return false;
-		}
-
-		// If projection is stale, attempt on-demand sync.
-		// Wrap in try/catch so a projector failure degrades to stale data
-		// instead of crashing the request.
-		$updated_at    = $this->sync_state_repository->get_last_updated( $tenant_id );
-		$sync_pull_job = $this->resolve_sync_pull_job();
-		if ( $this->is_projection_stale( $updated_at ) && null !== $sync_pull_job ) {
-			try {
-				$sync_pull_job->perform( $tenant_id );
-			} catch ( Throwable $e ) {
-				do_action(
-					'acx_sync_pull_failed',
-					array(
-						'tenant_id' => $tenant_id,
-						'context' => 'stale_projection_read',
-						'message' => $e->getMessage(),
-					)
-				);
-			}
-		}
-
-		return true;
-	}
-
-	private function maybe_bootstrap_after_proxy_read( string $tenant_id, WP_REST_Response|WP_Error $response ): WP_REST_Response|WP_Error {
-		if ( ! ( $response instanceof WP_REST_Response ) ) {
-			return $response;
-		}
-
-		if ( $response->get_status() < 200 || $response->get_status() >= 300 ) {
-			return $response;
-		}
-
-		$sync_pull_job = $this->resolve_sync_pull_job();
-		if ( null === $sync_pull_job ) {
-			return $response;
-		}
-
-		$inline_result = $sync_pull_job->perform_bypass_cooldown( $tenant_id );
-		if ( ! $inline_result->is_success() ) {
-			$args = array( $tenant_id );
-			if ( false === wp_next_scheduled( self::BOOTSTRAP_SYNC_HOOK, $args ) ) {
-				wp_schedule_single_event( time(), self::BOOTSTRAP_SYNC_HOOK, $args );
-			}
-		}
-
-		return $response;
+	public function get_tenant_id(): string {
+		return parent::get_tenant_id();
 	}
 
 	/**
-	 * @param array<int,array<string,mixed>> $clusters
-	 * @param array<string,array<int,array<string,mixed>>> $members_by_cluster
-	 * @return string[]
+	 * @param array<string,mixed> $body
+	 * @param array<string,mixed> $query
 	 */
-	private function find_clusters_missing_projected_members( array $clusters, array $members_by_cluster ): array {
-		$cluster_ids = array();
-		foreach ( $clusters as $cluster ) {
-			if ( ! is_array( $cluster ) ) {
-				continue;
-			}
-
-			$cluster_id = sanitize_text_field( (string) ( $cluster['cluster_uuid'] ?? '' ) );
-			if ( '' === $cluster_id || ! $this->cluster_row_should_have_members( $cluster ) ) {
-				continue;
-			}
-
-			if ( empty( $members_by_cluster[ $cluster_id ] ) ) {
-				$cluster_ids[] = $cluster_id;
-			}
-		}
-
-		return array_values( array_unique( $cluster_ids ) );
+	public function proxy_recognition_request(
+		string $method,
+		string $path,
+		array $body = array(),
+		array $query = array(),
+		string $request_class = 'auto',
+		string $body_kind = 'json',
+		?int $max_body_bytes = null
+	): WP_REST_Response|WP_Error {
+		return $this->proxy_request( $method, $path, $body, $query, $request_class, $body_kind, $max_body_bytes );
 	}
 
-	/**
-	 * @param array<string,mixed> $cluster_row
-	 */
-	private function cluster_row_should_have_members( array $cluster_row ): bool {
-		if ( ! isset( $cluster_row['identity_count'] ) || ! is_numeric( $cluster_row['identity_count'] ) ) {
-			return false;
-		}
-
-		return (int) $cluster_row['identity_count'] > 0;
+	public function host_should_use_local_projection_gate(
+		SyncStateRepositoryInterface $sync_state_repository,
+		string $tenant_id
+	): bool {
+		return $this->should_use_local_projection_gate( $sync_state_repository, $tenant_id );
 	}
 
-	/**
-	 * @param string[] $cluster_ids
-	 */
-	private function repair_targeted_projection( string $tenant_id, array $cluster_ids ): bool {
-		$sync_pull_job = $this->resolve_sync_pull_job();
-		if ( ! ( $sync_pull_job instanceof TargetedSyncPullJobInterface ) ) {
-			return false;
-		}
-
-		try {
-			$result = $sync_pull_job->perform_targeted_snapshot( $tenant_id, $cluster_ids );
-			return $result->is_success();
-		} catch ( Throwable $throwable ) {
-			do_action(
-				'acx_sync_pull_failed',
-				array(
-					'tenant_id' => $tenant_id,
-					'context' => 'targeted_projection_read_repair',
-					'message' => $throwable->getMessage(),
-				)
-			);
-			return false;
-		}
-	}
-
-	/**
-	 * @param array<int,array<string,mixed>> $rows
-	 * @param array<int,array<string,mixed>> $clusters
-	 * @return array<string,mixed>
-	 */
-	private function build_cluster_list_envelope( array $rows, array $clusters, int $limit ): array {
-		$total = count( $clusters );
-
-		if ( isset( $rows[0]['total_count'] ) && is_numeric( $rows[0]['total_count'] ) ) {
-			$total = max( 0, (int) $rows[0]['total_count'] );
-		}
-
-		return array(
-			'clusters' => $clusters,
-			'limit' => $limit,
-			'total' => $total,
-			'truncated' => $total > count( $clusters ),
-		);
-	}
-
-	/**
-	 * @param array<int,array<string,mixed>> $members
-	 * @return array<string,mixed>
-	 */
-	private function build_cluster_members_envelope( array $members, int $limit, int $total ): array {
-		return array(
-			'members' => $members,
-			'limit' => $limit,
-			'total' => $total,
-			'truncated' => $total > count( $members ),
-		);
-	}
-
-	/**
-	 * @param array<int,string> $labels
-	 * @return array<string,mixed>
-	 */
-	private function build_cluster_labels_envelope( array $labels, int $limit, int $total ): array {
-		return array(
-			'labels' => $labels,
-			'limit' => $limit,
-			'total' => $total,
-			'truncated' => $total > count( $labels ),
-		);
-	}
-
-	private function normalize_cluster_list_response( WP_REST_Response|WP_Error $response, int $requested_limit ): WP_REST_Response|WP_Error {
-		if ( ! ( $response instanceof WP_REST_Response ) ) {
-			return $response;
-		}
-
-		$data = $response->get_data();
-		if ( ! is_array( $data ) ) {
-			return $response;
-		}
-
-		if ( isset( $data['clusters'] ) && is_array( $data['clusters'] ) ) {
-			if ( ! isset( $data['limit'], $data['total'], $data['truncated'] ) || ! is_numeric( $data['limit'] ) || ! is_numeric( $data['total'] ) || ! is_bool( $data['truncated'] ) ) {
-				return new WP_Error(
-					'invalid_cluster_list_envelope',
-					'Cluster list response must include limit, total, and truncated when clusters is present.',
-					array( 'status' => 502 )
-				);
-			}
-
-			$clusters = $data['clusters'];
-			$total = max( 0, (int) $data['total'] );
-			$limit = max( 1, (int) $data['limit'] );
-			$truncated = $data['truncated'];
-
-			return new WP_REST_Response(
-				array(
-					'clusters' => $clusters,
-					'limit' => $limit,
-					'total' => $total,
-					'truncated' => $truncated,
-				),
-				$response->get_status()
-			);
-		}
-
-		$clusters = $data;
-		return new WP_REST_Response(
-			array(
-				'clusters' => $clusters,
-				'limit' => $requested_limit,
-				'total' => count( $clusters ),
-				'truncated' => false,
-			),
-			$response->get_status()
-		);
-	}
-
-	private function normalize_cluster_members_response( WP_REST_Response|WP_Error $response, int $requested_limit ): WP_REST_Response|WP_Error {
-		if ( ! ( $response instanceof WP_REST_Response ) ) {
-			return $response;
-		}
-
-		$data = $response->get_data();
-		if ( ! is_array( $data ) ) {
-			return $response;
-		}
-
-		if ( isset( $data['members'] ) && is_array( $data['members'] ) ) {
-			if ( ! isset( $data['limit'], $data['total'], $data['truncated'] ) || ! is_numeric( $data['limit'] ) || ! is_numeric( $data['total'] ) || ! is_bool( $data['truncated'] ) ) {
-				return new WP_Error(
-					'invalid_cluster_members_envelope',
-					'Cluster members response must include limit, total, and truncated when members is present.',
-					array( 'status' => 502 )
-				);
-			}
-
-			$members = $data['members'];
-			$total = max( 0, (int) $data['total'] );
-			$limit = max( 1, (int) $data['limit'] );
-			$truncated = $data['truncated'];
-
-			return new WP_REST_Response(
-				$this->build_cluster_members_envelope( $members, $limit, $total ),
-				$response->get_status()
-			);
-		}
-
-		$members = $data;
-		return new WP_REST_Response(
-			$this->build_cluster_members_envelope( $members, $requested_limit, count( $members ) ),
-			$response->get_status()
-		);
-	}
-
-	private function normalize_cluster_labels_response( WP_REST_Response|WP_Error $response, int $requested_limit ): WP_REST_Response|WP_Error {
-		if ( ! ( $response instanceof WP_REST_Response ) ) {
-			return $response;
-		}
-
-		$data = $response->get_data();
-		if ( ! is_array( $data ) ) {
-			return $response;
-		}
-
-		if ( isset( $data['labels'] ) && is_array( $data['labels'] ) ) {
-			if ( ! isset( $data['limit'], $data['total'], $data['truncated'] ) || ! is_numeric( $data['limit'] ) || ! is_numeric( $data['total'] ) || ! is_bool( $data['truncated'] ) ) {
-				return new WP_Error(
-					'invalid_cluster_labels_envelope',
-					'Cluster labels response must include limit, total, and truncated when labels is present.',
-					array( 'status' => 502 )
-				);
-			}
-
-			$labels = $this->cluster_mapper->map_labels_list( $data['labels'] );
-			$total = max( 0, (int) $data['total'] );
-			$limit = max( 1, (int) $data['limit'] );
-			$truncated = $data['truncated'];
-
-			return new WP_REST_Response(
-				array(
-					'labels' => $labels,
-					'limit' => $limit,
-					'total' => $total,
-					'truncated' => $truncated,
-				),
-				$response->get_status()
-			);
-		}
-
-		$labels = $this->cluster_mapper->map_labels_list( $data );
-		return new WP_REST_Response(
-			$this->build_cluster_labels_envelope( $labels, $requested_limit, count( $labels ) ),
-			$response->get_status()
-		);
-	}
-
-	private function resolve_sync_pull_job(): ?SyncPullJobInterface {
-		if ( null !== $this->sync_pull_job ) {
-			return $this->sync_pull_job;
-		}
-
-		try {
-			$factory = $this->sync_pull_job_factory ?? new SyncPullJobFactory(
-				$this->clusters_repository,
-				$this->members_repository,
-				$this->sync_state_repository,
-				new SnapshotClient()
-			);
-			$this->sync_pull_job = $factory->create();
-		} catch ( Throwable $e ) {
-			do_action(
-				'acx_recognition_composition_failed',
-				array(
-					'message' => $e->getMessage(),
-					'controller' => __CLASS__,
-					'context' => 'clusters_lazy_sync_pull_job',
-				)
-			);
-			return null;
-		}
-
-		return $this->sync_pull_job;
+	public function host_is_projection_stale( ?string $updated_at ): bool {
+		return $this->is_projection_stale( $updated_at );
 	}
 }

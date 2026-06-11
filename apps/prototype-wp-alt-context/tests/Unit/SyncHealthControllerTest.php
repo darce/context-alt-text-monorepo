@@ -77,6 +77,26 @@ class SyncHealthControllerTest extends TestCase
             ['at' => '2026-06-11 12:00:00', 'ok' => true],
             $data['last_pull']
         );
+        $this->assertSame([], $data['warnings']);
+    }
+
+    public function testGetSyncHealthIncludesConflictThresholdWarning(): void
+    {
+        $syncRepo = new class() extends NullSyncStateRepository {
+            public function get_conflict_count(string $tenant_id): int
+            {
+                return 30;
+            }
+        };
+
+        $controller = new SyncHealthController($syncRepo);
+        $response = $controller->get_sync_health(new WP_REST_Request('GET', '/acx/v1/recognition/sync/health'));
+        $data = $response->get_data();
+
+        $this->assertCount(1, $data['warnings']);
+        $this->assertSame('open_conflicts_high', $data['warnings'][0]['code']);
+        $this->assertSame(30, $data['warnings'][0]['count']);
+        $this->assertSame(25, $data['warnings'][0]['threshold']);
     }
 
     public function testGetSyncHealthReportsOpenBreakerFromTransient(): void

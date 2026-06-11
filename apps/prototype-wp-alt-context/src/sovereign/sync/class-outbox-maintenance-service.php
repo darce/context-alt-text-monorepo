@@ -5,9 +5,12 @@ declare(strict_types=1);
 namespace AltContext\Sovereign\Sync;
 
 require_once __DIR__ . '/../repositories/class-sync-state-repository.php';
+require_once __DIR__ . '/class-conflict-repository.php';
+require_once __DIR__ . '/class-transaction-runner.php';
 
 use AltContext\Sovereign\Repositories\SyncStateRepository;
 
+use function apply_filters;
 use function is_array;
 use function is_object;
 use function is_string;
@@ -17,14 +20,21 @@ use function trim;
 use function wp_json_encode;
 
 class OutboxMaintenanceService {
+	private const DEFAULT_PURGE_BATCH_SIZE = 50;
+	private const DEFAULT_ACKNOWLEDGED_RETENTION_DAYS = 14;
+	private const DEFAULT_RESOLVED_CONFLICT_RETENTION_DAYS = 14;
+
 	private OutboxQueryRepository $query_repository;
 	private SyncStateRepository $sync_state_repository;
+	private ConflictRepository $conflict_repository;
 	private string $table_name;
+	private string $conflicts_table_name;
 
 	public function __construct(
 		?OutboxQueryRepository $query_repository = null,
 		?SyncStateRepository $sync_state_repository = null,
-		?string $table_name = null
+		?string $table_name = null,
+		?ConflictRepository $conflict_repository = null
 	) {
 		global $wpdb;
 
@@ -33,9 +43,111 @@ class OutboxMaintenanceService {
 			$default_table = $wpdb->prefix . 'acx_sync_outbox';
 		}
 
+		$default_conflicts_table = 'wp_acx_sync_conflicts';
+		if ( isset( $wpdb ) && is_object( $wpdb ) && isset( $wpdb->prefix ) && is_string( $wpdb->prefix ) ) {
+			$default_conflicts_table = $wpdb->prefix . 'acx_sync_conflicts';
+		}
+
 		$this->table_name = $table_name ?? $default_table;
+		$this->conflicts_table_name = $default_conflicts_table;
 		$this->query_repository = $query_repository ?? new OutboxQueryRepository( $this->table_name );
 		$this->sync_state_repository = $sync_state_repository ?? new SyncStateRepository();
+		$this->conflict_repository = $conflict_repository ?? new ConflictRepository( $this->conflicts_table_name );
+	}
+
+	/**
+	 * @return array{outbox:int,conflicts:int}|false
+	 */
+	public function purge_terminal_rows( string $tenant_id ): array|false {
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			return false;
+		}
+
+		$result = TransactionRunner::run_transactional(
+			function () use ( $normalized_tenant_id ): array {
+				return array(
+					'outbox' => $this->purge_acknowledged_outbox_batch( $normalized_tenant_id ),
+					'conflicts' => $this->purge_resolved_conflicts_batch( $normalized_tenant_id ),
+				);
+			}
+		);
+
+		return is_array( $result ) ? $result : false;
+	}
+
+	public function purge_acknowledged_outbox_batch( string $tenant_id ): int {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		if (
+			'' === $normalized_tenant_id
+			|| ! isset( $wpdb )
+			|| ! is_object( $wpdb )
+			|| ! method_exists( $wpdb, 'query' )
+		) {
+			return 0;
+		}
+
+		$batch_size = max( 1, (int) apply_filters( 'acx_sync_purge_batch_size', self::DEFAULT_PURGE_BATCH_SIZE ) );
+		$retention_days = max( 1, (int) apply_filters( 'acx_sync_purge_acknowledged_days', self::DEFAULT_ACKNOWLEDGED_RETENTION_DAYS ) );
+		$day_seconds = defined( 'DAY_IN_SECONDS' ) ? (int) DAY_IN_SECONDS : 86400;
+		$cutoff = gmdate( 'Y-m-d H:i:s', time() - ( $retention_days * $day_seconds ) );
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- table name is internal, values are prepared.
+		$deleted = $wpdb->query(
+			$wpdb->prepare(
+				"DELETE FROM {$this->table_name}
+				WHERE tenant_id = %s
+					AND status = 'acknowledged'
+					AND acknowledged_at IS NOT NULL
+					AND acknowledged_at < %s
+				ORDER BY acknowledged_at ASC
+				LIMIT %d",
+				$normalized_tenant_id,
+				$cutoff,
+				$batch_size
+			)
+		);
+
+		return max( 0, (int) $deleted );
+	}
+
+	public function purge_resolved_conflicts_batch( string $tenant_id ): int {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		if (
+			'' === $normalized_tenant_id
+			|| ! isset( $wpdb )
+			|| ! is_object( $wpdb )
+			|| ! method_exists( $wpdb, 'query' )
+		) {
+			return 0;
+		}
+
+		$batch_size = max( 1, (int) apply_filters( 'acx_sync_purge_batch_size', self::DEFAULT_PURGE_BATCH_SIZE ) );
+		$retention_days = max( 1, (int) apply_filters( 'acx_sync_purge_resolved_conflict_days', self::DEFAULT_RESOLVED_CONFLICT_RETENTION_DAYS ) );
+		$day_seconds = defined( 'DAY_IN_SECONDS' ) ? (int) DAY_IN_SECONDS : 86400;
+		$cutoff = gmdate( 'Y-m-d H:i:s', time() - ( $retention_days * $day_seconds ) );
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- table name is internal, values are prepared.
+		$deleted = $wpdb->query(
+			$wpdb->prepare(
+				"DELETE FROM {$this->conflicts_table_name}
+				WHERE tenant_id = %s
+					AND resolution_status <> 'open'
+					AND resolved_at IS NOT NULL
+					AND resolved_at < %s
+				ORDER BY resolved_at ASC
+				LIMIT %d",
+				$normalized_tenant_id,
+				$cutoff,
+				$batch_size
+			)
+		);
+
+		return max( 0, (int) $deleted );
 	}
 
 	public function retry_failed_operation( int $outbox_id, string $tenant_id ): bool {

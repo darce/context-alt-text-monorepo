@@ -11,6 +11,7 @@ const closedHealth: SyncHealthResponse = {
   conflicts: { open: 0 },
   replays: { failed: null, source: 'unavailable_local' },
   last_pull: { at: '2026-06-11T12:00:00Z', ok: true },
+  warnings: [],
 };
 
 describe('shouldShowDegradedBanner', () => {
@@ -90,6 +91,27 @@ describe('DegradedModeBannerView', () => {
       'href',
       '#/workbench?tab=scan&panel=conflicts',
     );
+  });
+
+  it('renders threshold warning copy when warnings are present', () => {
+    render(
+      <DegradedModeBannerView
+        health={{
+          ...closedHealth,
+          warnings: [
+            {
+              code: 'open_conflicts_high',
+              message: 'Open sync conflicts exceed the configured warning threshold.',
+              count: 30,
+              threshold: 25,
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+    expect(screen.getByText(/warning threshold/i)).toBeInTheDocument();
   });
 
   it('renders nothing when sync health is healthy', () => {

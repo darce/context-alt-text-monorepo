@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+require_once __DIR__ . '/class-recognition-circuit-keys.php';
 require_once __DIR__ . '/class-recognition-endpoint-resolver.php';
 require_once __DIR__ . '/class-recognition-proxy-policy.php';
 require_once __DIR__ . '/class-tenant-identity.php';
@@ -209,6 +210,10 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 		return $this->endpoint_resolver;
 	}
 
+	protected function inject_endpoint_resolver( RecognitionEndpointResolver $endpoint_resolver ): void {
+		$this->endpoint_resolver = $endpoint_resolver;
+	}
+
 	protected function get_recognition_api_key(): string {
 		$constant_api_key = $this->get_recognition_api_key_from_constant();
 		if ( '' !== $constant_api_key ) {
@@ -406,7 +411,7 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 	}
 
 	private function build_circuit_breaker_key( string $base_url ): string {
-		return 'acx_recognition_circuit_' . md5( strtolower( trim( $base_url ) ) );
+		return RecognitionCircuitKeys::for_base_url( $base_url );
 	}
 
 	/**

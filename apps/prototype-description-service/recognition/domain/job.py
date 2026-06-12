@@ -15,6 +15,8 @@ class JobStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
+    COMPLETED_WITH_ERRORS = "completed_with_errors"
+    REJECTED = "rejected"
     FAILED = "failed"
 
 

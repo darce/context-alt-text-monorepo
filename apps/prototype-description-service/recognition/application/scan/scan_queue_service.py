@@ -206,13 +206,14 @@ class ScanQueueService:
         if pending == 0 and processing == 0 and processed_media > 0:
             now = datetime.now(tz=UTC)
             if failed > 0:
-                await self._repository.fail_job(
-                    job_id=job_id, completed_at=now, error_message="one or more items failed"
+                await self._repository.complete_job_with_errors(
+                    job_id=job_id,
+                    completed_at=now,
+                    error_message="one or more items failed",
                 )
                 return False
-            else:
-                await self._repository.complete_job(job_id=job_id, completed_at=now)
-                return True
+            await self._repository.complete_job(job_id=job_id, completed_at=now)
+            return True
         return False
 
     async def cancel_scan_job(self, *, job_id: uuid.UUID) -> int:

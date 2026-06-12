@@ -220,6 +220,10 @@ class ScanWorker:
 
     async def _publish_embedding_runtime_capability(self, session: AsyncSession) -> None:
         """Write the worker-published embedding-runtime heartbeat for API intake."""
+        from recognition.shared.db.dialect import is_postgres
+
+        if not is_postgres(session):
+            return
         if self._runtime_mode == "test" or self._embedding_runtime_ready:
             available = True
             reason = None

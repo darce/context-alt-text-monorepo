@@ -59,15 +59,12 @@ async def test_terminate_stalled_jobs_fails_running_job_with_no_progress(db_sess
     assert job.error_message == "stalled"
 
     item_statuses = (
-        (
-            await db_session.execute(
-                select(IdentityScanJobItem.status, IdentityScanJobItem.last_error)
-                .where(IdentityScanJobItem.job_id == job_id)
-                .order_by(IdentityScanJobItem.media_id)
-            )
+        await db_session.execute(
+            select(IdentityScanJobItem.status, IdentityScanJobItem.last_error)
+            .where(IdentityScanJobItem.job_id == job_id)
+            .order_by(IdentityScanJobItem.media_id)
         )
-        .all()
-    )
+    ).all()
     assert ("cancelled", None) in item_statuses
     assert (ScanItemStatus.FAILED.value, "stalled") in item_statuses
 

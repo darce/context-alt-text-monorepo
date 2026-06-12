@@ -64,9 +64,7 @@ async def test_process_items_isolates_poisoned_tenant_among_three(
             items=[(index + 1, f"http://example.test/{index + 1}.jpg")],
         )
         item_row = (
-            await db_session.execute(
-                select(IdentityScanJobItem).where(IdentityScanJobItem.job_id == job_id)
-            )
+            await db_session.execute(select(IdentityScanJobItem).where(IdentityScanJobItem.job_id == job_id))
         ).scalar_one()
         claimed.append(
             _claimed_item(

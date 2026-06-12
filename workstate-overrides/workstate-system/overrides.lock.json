@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "plugin": "workstate-system",
-  "base_remote_sha": "2aab3b234007a91b731630988dee470d0ceca736",
+  "base_remote_sha": "ecfc6123ef53a0b30029f96564bce5a045419d1d",
   "components": [
     {
       "component_kind": "skill",

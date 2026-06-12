@@ -1,19 +1,19 @@
 {
   "schema_version": 2,
   "remote_url": "https://github.com/darce/workstate.git",
-  "remote_ref": "workstate-stack-v0.1.12",
-  "remote_sha": "2aab3b234007a91b731630988dee470d0ceca736",
+  "remote_ref": "workstate-system-v0.3.0",
+  "remote_sha": "ecfc6123ef53a0b30029f96564bce5a045419d1d",
   "profile": "all",
   "surfaces": [
     {
       "path": ".github/hooks",
       "source": "shared",
-      "provenance_key": "clone:2aab3b234007a91b731630988dee470d0ceca736"
+      "provenance_key": "clone:ecfc6123ef53a0b30029f96564bce5a045419d1d"
     },
     {
       "path": "scripts/hooks",
       "source": "shared",
-      "provenance_key": "clone:2aab3b234007a91b731630988dee470d0ceca736"
+      "provenance_key": "clone:ecfc6123ef53a0b30029f96564bce5a045419d1d"
     },
     {
       "path": "docs/workstate/contracts",
@@ -26,12 +26,12 @@
     {
       "path": "Makefile.d/compaction.mk",
       "source": "shared",
-      "provenance_key": "clone:2aab3b234007a91b731630988dee470d0ceca736"
+      "provenance_key": "clone:ecfc6123ef53a0b30029f96564bce5a045419d1d"
     },
     {
       "path": "Makefile.d/plans.mk",
       "source": "shared",
-      "provenance_key": "clone:2aab3b234007a91b731630988dee470d0ceca736"
+      "provenance_key": "clone:ecfc6123ef53a0b30029f96564bce5a045419d1d"
     },
     {
       "path": "Makefile.d/plugins.mk",
@@ -40,16 +40,16 @@
     {
       "path": "Makefile.d/workflows.mk",
       "source": "shared",
-      "provenance_key": "clone:2aab3b234007a91b731630988dee470d0ceca736"
+      "provenance_key": "clone:ecfc6123ef53a0b30029f96564bce5a045419d1d"
     },
     {
       "path": "scripts/workstate/git-plan-cat.sh",
       "source": "shared",
-      "provenance_key": "clone:2aab3b234007a91b731630988dee470d0ceca736"
+      "provenance_key": "clone:ecfc6123ef53a0b30029f96564bce5a045419d1d"
     },
     {
       "path": ".codex/hooks.json",
-      "source": "local"
+      "source": "shared"
     },
     {
       "path": ".github/prompts",
@@ -91,7 +91,7 @@
     },
     {
       "path": ".claude/settings.json",
-      "action": "updated"
+      "action": "unchanged"
     },
     {
       "path": ".gitignore",
@@ -99,7 +99,7 @@
     },
     {
       "path": ".claude/settings.local.json",
-      "action": "updated"
+      "action": "unchanged"
     },
     {
       "path": ".agents/plugins/marketplace.json",
@@ -181,8 +181,8 @@
       "status": "ok"
     }
   ],
-  "prewarm_refs": [
-    "mcp-workstate-handoff@0.12.9",
-    "mcp-workstate-orchestrator@0.6.6"
+  "presync_projects": [
+    "/Users/daniel/Development/context-alt-text-monorepo/.workstate/remote/packages/mcp-workstate-handoff",
+    "/Users/daniel/Development/context-alt-text-monorepo/.workstate/remote/packages/mcp-workstate-orchestrator"
   ]
 }

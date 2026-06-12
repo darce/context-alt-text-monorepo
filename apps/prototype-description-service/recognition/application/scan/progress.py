@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from recognition.application.scan.queue_repository import ScanQueueRepository
-from recognition.domain.job import Job, JobPhase, JobStatus, TERMINAL_JOB_STATUSES
+from recognition.domain.job import TERMINAL_JOB_STATUSES, Job, JobPhase, JobStatus
 
 
 @dataclass(frozen=True, slots=True)

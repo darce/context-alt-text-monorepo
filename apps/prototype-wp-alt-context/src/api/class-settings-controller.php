@@ -237,18 +237,15 @@ class SettingsController {
 			headers: $headers,
 			confirm_pairing: $confirm_pairing,
 		);
-		if ( null !== $pairing ) {
-			$health_connected = ProbeOutcome::CONNECTED === ( $payload['outcome'] ?? null );
-			$pairing_outcome  = $pairing['outcome'] ?? null;
-			$pairing_errors   = array( ProbeOutcome::NETWORK_ERROR, ProbeOutcome::SERVER_ERROR );
-			if ( $health_connected && in_array( $pairing_outcome, $pairing_errors, true ) ) {
-				$detail = is_string( $pairing['detail'] ?? null ) ? $pairing['detail'] : 'Tenant pairing failed.';
-				unset( $pairing['outcome'], $pairing['status_code'] );
-				$payload                 = array_merge( $payload, $pairing );
-				$payload['pairing_error'] = $detail;
-			} else {
-				$payload = array_merge( $payload, $pairing );
-			}
+		$pairing_outcome = $pairing['outcome'] ?? null;
+		$pairing_errors  = array( ProbeOutcome::NETWORK_ERROR, ProbeOutcome::SERVER_ERROR );
+		if ( in_array( $pairing_outcome, $pairing_errors, true ) ) {
+			$detail = is_string( $pairing['detail'] ?? null ) ? $pairing['detail'] : 'Tenant pairing failed.';
+			unset( $pairing['outcome'], $pairing['status_code'] );
+			$payload                 = array_merge( $payload, $pairing );
+			$payload['pairing_error'] = $detail;
+		} else {
+			$payload = array_merge( $payload, $pairing );
 		}
 
 		return new WP_REST_Response( $payload, 200 );
@@ -256,9 +253,9 @@ class SettingsController {
 
 	/**
 	 * @param array<string, string> $headers
-	 * @return array<string, mixed>|null
+	 * @return array<string, mixed>
 	 */
-	private function attempt_tenant_pairing( string $base_url, array $headers, bool $confirm_pairing ): ?array {
+	private function attempt_tenant_pairing( string $base_url, array $headers, bool $confirm_pairing ): array {
 		$whoami_url = rtrim( $base_url, '/' ) . '/recognition/tenant/whoami';
 		$response   = wp_remote_get(
 			$whoami_url,

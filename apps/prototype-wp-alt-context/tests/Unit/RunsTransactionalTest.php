@@ -105,7 +105,8 @@ class RunsTransactionalTest extends TestCase
     {
         global $wpdb;
         $saved_wpdb = $wpdb;
-        $wpdb = null;
+        // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- Negative-path test simulates missing wpdb.
+        $GLOBALS['wpdb'] = null;
         $callable_ran = false;
 
         try {
@@ -114,7 +115,8 @@ class RunsTransactionalTest extends TestCase
                 return 'should-not-run';
             });
         } finally {
-            $wpdb = $saved_wpdb;
+            // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- Restore the test's original wpdb stub.
+            $GLOBALS['wpdb'] = $saved_wpdb;
         }
 
         $this->assertFalse($callable_ran);

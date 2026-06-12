@@ -41,13 +41,19 @@ def test_is_embedding_runtime_available_rejects_stale_heartbeat() -> None:
     assert is_embedding_runtime_available(capability) is False
 
 
+def test_worker_capability_updated_at_matches_timezone_aware_migration() -> None:
+    from db.models.worker_capability import WorkerCapability
+
+    assert WorkerCapability.__table__.c.updated_at.type.timezone is True
+
+
 @pytest.mark.asyncio
 async def test_worker_probe_publish_retries_runtime_before_heartbeat() -> None:
     from recognition.worker.scan_worker import ScanWorker
 
     worker = object.__new__(ScanWorker)
-    worker._ensure_embedding_runtime = AsyncMock()  # type: ignore[attr-defined]
-    worker._heartbeat_embedding_runtime_capability = AsyncMock()  # type: ignore[attr-defined]
+    worker._ensure_embedding_runtime = AsyncMock()
+    worker._heartbeat_embedding_runtime_capability = AsyncMock()
 
     await worker._probe_and_publish_embedding_runtime_capability()
 

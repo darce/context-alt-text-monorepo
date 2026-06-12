@@ -19,4 +19,4 @@ class WorkerCapability(Base):
     capability: Mapped[str] = mapped_column(String(64), primary_key=True)
     available: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)

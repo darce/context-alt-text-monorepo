@@ -118,6 +118,24 @@ class JobProgressStreamService {
 			$this->projection_sync_service->maybe_trigger_projection_sync( $data );
 
 			$progress   = is_array( $data['progress'] ?? null ) ? $data['progress'] : array();
+			$envelope   = is_array( $data['progress_envelope'] ?? null ) ? $data['progress_envelope'] : array();
+			if ( array() !== $envelope ) {
+				if ( ! isset( $progress['completed'] ) && isset( $envelope['items_done'] ) ) {
+					$progress['completed'] = $envelope['items_done'];
+				}
+				if ( ! isset( $progress['total'] ) && isset( $envelope['items_total'] ) ) {
+					$progress['total'] = $envelope['items_total'];
+				}
+				if ( ! isset( $progress['phase'] ) && isset( $envelope['phase'] ) ) {
+					$progress['phase'] = $envelope['phase'];
+				}
+				if ( isset( $envelope['items_failed'] ) ) {
+					$progress['items_failed'] = $envelope['items_failed'];
+				}
+				if ( isset( $envelope['failure_reason'] ) && '' !== $envelope['failure_reason'] ) {
+					$progress['failure_reason'] = $envelope['failure_reason'];
+				}
+			}
 			$completed  = absint( $progress['completed'] ?? 0 );
 			$status     = isset( $data['status'] ) ? sanitize_text_field( (string) $data['status'] ) : 'pending';
 			$this->batch_run_service->record_observed_job_status( $job_id, $status );
@@ -206,6 +224,12 @@ class JobProgressStreamService {
 		}
 		if ( isset( $progress['last_error_code'] ) && '' !== $progress['last_error_code'] ) {
 			$payload['last_error_code'] = sanitize_text_field( (string) $progress['last_error_code'] );
+		}
+		if ( isset( $progress['items_failed'] ) ) {
+			$payload['items_failed'] = absint( $progress['items_failed'] );
+		}
+		if ( isset( $progress['failure_reason'] ) && '' !== $progress['failure_reason'] ) {
+			$payload['failure_reason'] = sanitize_text_field( (string) $progress['failure_reason'] );
 		}
 
 		$batch_run_id = $this->batch_run_service->lookup_batch_run_id_for_job( $job_id );

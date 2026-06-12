@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from recognition.application.scan.queue_repository import ScanQueueRepository
-from recognition.domain.job import Job, JobPhase, JobStatus
+from recognition.domain.job import Job, JobPhase, JobStatus, TERMINAL_JOB_STATUSES
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,12 +95,14 @@ async def build_scan_progress_envelope(
 
     if job.status is JobStatus.PENDING:
         phase = JobPhase.QUEUED
-    elif job.status in {JobStatus.RUNNING}:
+    elif job.status is JobStatus.RUNNING:
         phase = JobPhase.DETECTING
     elif job.status is JobStatus.FAILED:
         phase = JobPhase.FAILED
-    else:
+    elif job.status in TERMINAL_JOB_STATUSES:
         phase = JobPhase.COMPLETE
+    else:
+        phase = JobPhase.QUEUED
 
     updated_at = job.finished_at or job.started_at or datetime.now(tz=UTC)
     failure_reason = job.error_message if job.status in {JobStatus.FAILED, JobStatus.COMPLETED_WITH_ERRORS} else None

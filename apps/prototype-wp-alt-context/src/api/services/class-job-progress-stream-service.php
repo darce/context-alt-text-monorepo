@@ -25,6 +25,14 @@ use function usleep;
 use function wp_json_encode;
 
 class JobProgressStreamService {
+	/** @var list<string> */
+	private const TERMINAL_JOB_STATUSES = array(
+		'completed',
+		'completed_with_errors',
+		'rejected',
+		'failed',
+	);
+
 	private AnalysisJobsHostInterface $host;
 	private JobStatusService $job_status_service;
 	private BatchRunService $batch_run_service;
@@ -138,7 +146,7 @@ class JobProgressStreamService {
 				$this->flush_stream_output();
 			}
 
-			if ( in_array( $status, array( 'completed', 'failed' ), true ) ) {
+			if ( in_array( $status, self::TERMINAL_JOB_STATUSES, true ) ) {
 				$done_payload = $this->build_stream_progress_payload( $progress, $job_id, $event_type, $status );
 				echo "event: done\n";
 				echo 'data: ' . wp_json_encode( $done_payload ) . "\n\n";

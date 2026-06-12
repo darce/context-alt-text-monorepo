@@ -107,6 +107,15 @@ class ScanQueueRepository(Protocol):
     async def complete_job(self, *, job_id: uuid.UUID, completed_at: datetime) -> None:
         """Mark a scan job as completed."""
 
+    async def complete_job_with_errors(
+        self,
+        *,
+        job_id: uuid.UUID,
+        completed_at: datetime,
+        error_message: str,
+    ) -> None:
+        """Mark a scan job as completed with one or more item failures."""
+
     async def fail_job(self, *, job_id: uuid.UUID, completed_at: datetime, error_message: str) -> None:
         """Mark a scan job as failed."""
 

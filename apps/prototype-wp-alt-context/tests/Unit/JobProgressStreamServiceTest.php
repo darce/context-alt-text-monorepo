@@ -116,6 +116,41 @@ class JobProgressStreamServiceTest extends TestCase
         $this->assertStringContainsString('"status":"completed_with_errors"', $output);
     }
 
+    public function testStreamJobProgressEmitsDoneForFailedJob(): void
+    {
+        $jobId = '44444444-4444-4444-4444-444444444444';
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'id' => $jobId,
+                'status' => 'failed',
+                'type' => 'analyze',
+                'progress' => ['completed' => 0, 'total' => 2],
+                'progress_envelope' => [
+                    'job_id' => $jobId,
+                    'status' => 'failed',
+                    'phase' => 'failed',
+                    'items_total' => 2,
+                    'items_done' => 0,
+                    'items_failed' => 2,
+                    'failure_reason' => 'stalled',
+                    'updated_at' => '2026-06-11T12:15:00+00:00',
+                ],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/' . $jobId . '/stream');
+        $request->set_param('job_id', $jobId);
+
+        $output = $this->captureStreamOutput(function () use ($request): void {
+            $this->service->stream_job_progress($request);
+        });
+
+        $this->assertStringContainsString("event: done\n", $output);
+        $this->assertStringContainsString('"status":"failed"', $output);
+        $this->assertStringContainsString('"failure_reason":"stalled"', $output);
+    }
+
     public function testBuildStreamProgressPayloadIncludesBatchRunIdWhenTracked(): void
     {
         $jobId = '88888888-8888-8888-8888-888888888888';

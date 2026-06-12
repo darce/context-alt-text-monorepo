@@ -151,23 +151,23 @@ class ScanWorker:
                 now = datetime.now(tz=UTC)
                 await self._refresh_mv_if_needed(session, now)
 
+                await repo.reclaim_stale_items(
+                    stale_after_seconds=self._config.stale_after_seconds,
+                    max_attempts=self._config.max_attempts,
+                    now=now,
+                )
+                queue = ScanQueueService(repo)
+                terminated = await queue.terminate_stalled_jobs(
+                    stale_after_seconds=self._config.stale_after_seconds,
+                    now=now,
+                )
+                if terminated:
+                    logger.warning("[worker] Terminated %d stalled scan job(s)", terminated)
+
                 if await self._process_pending_clustering_jobs(session=session, now=now):
                     await session.commit()
                     should_sleep = True
                 else:
-                    await repo.reclaim_stale_items(
-                        stale_after_seconds=self._config.stale_after_seconds,
-                        max_attempts=self._config.max_attempts,
-                        now=now,
-                    )
-                    queue = ScanQueueService(repo)
-                    terminated = await queue.terminate_stalled_jobs(
-                        stale_after_seconds=self._config.stale_after_seconds,
-                        now=now,
-                    )
-                    if terminated:
-                        logger.warning("[worker] Terminated %d stalled scan job(s)", terminated)
-
                     claimed = await repo.claim_pending_items_any(limit=self._config.claim_batch_size, now=now)
                     if not claimed:
                         await session.commit()

@@ -31,6 +31,7 @@ from recognition.application.embedding.generator import (
     StubEmbeddingGenerator,
     UnavailableEmbeddingGenerator,
 )
+from recognition.application.scan.capability import publish_embedding_runtime_capability
 from recognition.application.scan.queue_repository import ScanQueueItem
 from recognition.config import get_settings as get_recognition_settings
 from recognition.domain.job import JobStatus
@@ -124,6 +125,7 @@ class ScanWorker:
     async def __aenter__(self) -> ScanWorker:
         """Prepare worker resources."""
         await self._ensure_embedding_runtime()
+        await self._heartbeat_embedding_runtime_capability()
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
@@ -142,6 +144,7 @@ class ScanWorker:
             should_sleep = False
             async with self._session_factory() as session:
                 await enable_rls_bypass(session)
+                await self._publish_embedding_runtime_capability(session)
                 repo = SqlAlchemyScanQueueRepository(session)
 
                 now = datetime.now(tz=UTC)
@@ -213,6 +216,26 @@ class ScanWorker:
             max_concurrency=self._config.max_concurrency,
             object_store_factory=self._object_store_factory,
         )
+        await self._heartbeat_embedding_runtime_capability()
+
+    async def _publish_embedding_runtime_capability(self, session: AsyncSession) -> None:
+        """Write the worker-published embedding-runtime heartbeat for API intake."""
+        if self._runtime_mode == "test" or self._embedding_runtime_ready:
+            available = True
+            reason = None
+        elif isinstance(self._detector, UnavailableFaceDetector):
+            available = False
+            reason = self._detector.reason
+        else:
+            available = False
+            reason = "embedding runtime not initialized"
+        await publish_embedding_runtime_capability(session, available=available, reason=reason)
+
+    async def _heartbeat_embedding_runtime_capability(self) -> None:
+        async with self._session_factory() as session:
+            await enable_rls_bypass(session)
+            await self._publish_embedding_runtime_capability(session)
+            await session.commit()
 
     async def _process_pending_clustering_jobs(self, *, session: AsyncSession, now: datetime) -> bool:
         stmt = (

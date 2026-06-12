@@ -204,36 +204,36 @@ Proof: purge test with seeded aged rows; characterization suites green; threshol
 
 - [ ] Loaded refa-6 plan + characterization suites + E15-7 scope fence + cited literature sections before editing.
 - [ ] Re-verified every code anchor with the greps in the Junior Implementer Guide.
-- [ ] Boundary rows recorded in slice-close decisions.
+- [x] Boundary rows recorded in slice-close decisions.
 
 ### Checklist for Slice 1: Sync-health envelope
 
-- [ ] Circuit key derivation extracted and shared (no copy-paste)
-- [ ] Envelope shipped read-only with honest nulls (no fabricated counts) + TS type
-- [ ] New controller wired in `class-recognition-controller.php` with rg-016 autoload parity verified
-- [ ] Evidence recorded
+- [x] Circuit key derivation extracted and shared (no copy-paste)
+- [x] Envelope shipped read-only with honest nulls (no fabricated counts) + TS type
+- [x] New controller wired in `class-recognition-controller.php` with rg-016 autoload parity verified
+- [x] Evidence recorded
 
 ### Checklist for Slice 2: Banner + recovery
 
-- [ ] Banner meets sr-004 (icon + color + text) and polls ≥15s intervals
-- [ ] Existing outbox retry/discard routes are reused; any new recovery action is a thin delegation; replay-retry decision recorded
-- [ ] Evidence recorded
+- [x] Banner meets sr-004 (icon + color + text) and polls ≥15s intervals
+- [x] Existing outbox retry/discard routes are reused; any new recovery action is a thin delegation; replay-retry decision recorded
+- [x] Evidence recorded
 
 ### Checklist for Slice 3: Retention + thresholds
 
-- [ ] Drain-coupled bounded purges with run_transactional; WP-Cron secondary; real-cron documented
-- [ ] Threshold warnings in envelope and banner
-- [ ] Slice-complete decision + dashboard render
+- [x] Drain-coupled bounded purges with run_transactional; WP-Cron secondary; real-cron documented
+- [x] Threshold warnings in envelope and banner
+- [x] Slice-complete decision + dashboard render
 
 ## Review Readiness
 
-- [ ] Refa-6 characterization suites untouched-and-green or consciously extended.
-- [ ] No atomic backend write split across frontend mutations.
-- [ ] `RecognitionProxyPolicy` defaults unchanged (or change justified by a recorded finding).
+- [x] Refa-6 characterization suites untouched-and-green or consciously extended.
+- [x] No atomic backend write split across frontend mutations.
+- [x] `RecognitionProxyPolicy` defaults unchanged (or change justified by a recorded finding).
 
 ## Stretch Goals
 
-- [ ] None declared; defer any extra recovery mode or service-side replay tooling through a recorded decision/follow-on finding.
+- [x] None declared; defer any extra recovery mode or service-side replay tooling through a recorded decision/follow-on finding.
 
 ## Success Criteria
 

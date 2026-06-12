@@ -14,7 +14,7 @@ The MVP for E15 is **public WP demo URL live + one manual end-to-end pass**. Eve
 
 - Phase 1 — Security Baseline (E15-1, E15-1b) — merged to `main`
 - Phase 2 — Observability Baseline (E15-2) — merged to `main`
-- Phase 3 — WordPress Demo Provisioning (E15-3) — provider-agnostic plan; gated on [E15-22](../../tasks/15.0/E15-22-workbench-avatar-and-progress-readiness-task-plan.md) landing first, on the [E15-3a](../../tasks/15.0/E15-3a-localwp-oci-roundtrip-task-plan.md) LocalWP -> OCI round-trip gate passing, and on seeded local-media proof that entity avatars, Top Cluster face samples, and Review Cluster member rows render before paid/shared WP host provisioning begins, so a public host is never purchased while the Workbench still shows placeholder thumbs or an empty Review Cluster drawer
+- Phase 3 — WordPress Demo Provisioning (E15-3 revision via [E15-28](../../tasks/15.0/E15-28-oci-demo-provisioning-task-plan.md)) — OCI-colocated WP demo behind Caddy; gated on [E15-22](../../tasks/15.0/E15-22-workbench-avatar-and-progress-readiness-task-plan.md), [E15-3a](../../tasks/15.0/E15-3a-localwp-oci-roundtrip-task-plan.md), and seeded local-media proof before public DNS cutover
 - Phase 4 — End-to-End Verification (E15-4 in progress, E15-5a OCI operational hygiene, E15-5 manual remote E2E + ARM evidence, E15-22 Workbench avatar/progress readiness, E15-23 Workbench live findings panel)
 - Phase 6 — Local Sync Correctness, operator hardening, and audit closure (E15-7 in progress; E15-13, E15-14, E15-15, E15-16, and E15-17 staged under the same phase with explicit dependency order below)
 
@@ -125,7 +125,7 @@ The recognition service, Docker stack, Caddy TLS proxy, persistent model cache, 
 | ------------------------------------------------- | -------------------------------------------------------------------------------------- |
 | Security before WP demo provisioning              | Cannot share a public URL until the backend is safe for internet exposure              |
 | Observability before E2E smoke gate               | Need structured logs and health endpoints to debug smoke test failures                 |
-| WP on separate shared hosting, not on the OCI VPS | Clean separation of concerns; inference VPS should not run PHP; ~$2-5/mo is acceptable |
+| WP demo colocated on OCI with container bulkheads | $0 incremental vendor; Caddy routes `demo.altcontext.com`; WP+MariaDB capped so inference keeps SLO (see [E15-28](../../tasks/15.0/E15-28-oci-demo-provisioning-task-plan.md)) |
 | Tailscale for SSH access (replaces IP allowlist)  | Eliminates dynamic-IP drift permanently; free for personal use; 15-minute setup        |
 | E2E smoke gate as final phase                     | All other infrastructure must be in place before automated tests can assert against it |
 
@@ -193,31 +193,32 @@ Exit criteria:
 
 ---
 
-### Phase 3: WordPress Demo Provisioning -- not-started
+### Phase 3: WordPress Demo Provisioning -- in-progress
 
-> **Status**: not-started — task plan drafted Apr 2026
-> **Task plans**: [E15-3a. LocalWP -> OCI Round-Trip Verification](../../tasks/15.0/E15-3a-localwp-oci-roundtrip-task-plan.md) (pre-provisioning gate), [E15-3. WordPress Demo Provisioning](../../tasks/15.0/E15-3-wordpress-demo-provisioning-task-plan.md)
-> **Predecessor gates**: [E15-22](../../tasks/15.0/E15-22-workbench-avatar-and-progress-readiness-task-plan.md) must land first (cluster-members envelope, backend face-thumbnail surface, explicit unavailable variant) so LocalWP proof shows truthful avatars and a populated Review Cluster drawer. [E15-3a](../../tasks/15.0/E15-3a-localwp-oci-roundtrip-task-plan.md) LocalWP -> OCI round-trip verification must pass before any paid WP host is purchased. See plan-analyze decision `plan_analyze_e15_avatar_gate_20260512_revise_first`.
+> **Status**: in-progress — [E15-28](../../tasks/15.0/E15-28-oci-demo-provisioning-task-plan.md) supersedes shared-hosting topology in [E15-3](../../tasks/15.0/E15-3-wordpress-demo-provisioning-task-plan.md)
+> **Task plans**: [E15-28. OCI Demo Provisioning](../../tasks/15.0/E15-28-oci-demo-provisioning-task-plan.md) (active), [E15-3a. LocalWP -> OCI Round-Trip Verification](../../tasks/15.0/E15-3a-localwp-oci-roundtrip-task-plan.md) (pre-provisioning gate), [E15-3. WordPress Demo Provisioning](../../tasks/15.0/E15-3-wordpress-demo-provisioning-task-plan.md) (superseded hosting deliverables)
+> **Predecessor gates**: [E15-22](../../tasks/15.0/E15-22-workbench-avatar-and-progress-readiness-task-plan.md) Workbench avatar/review-drawer proof; [E15-3a](../../tasks/15.0/E15-3a-localwp-oci-roundtrip-task-plan.md) LocalWP → OCI round-trip before public DNS.
 > **Source**: Production Readiness Phase 6, E14 remaining (subsumes E14 checklist items: provision WP demo hosting, install + configure ACX plugin)
 
-**Goal**: A publicly accessible WordPress page demonstrates the ACX plugin against the live backend.
+**Goal**: A publicly accessible WordPress page at `https://demo.altcontext.com` demonstrates the ACX plugin against the live backend via the same DNS path self-hosted users take.
 
-**Pre-provisioning gates**: Do not purchase or provision shared WP hosting until (1) the local/LocalWP Workbench demo path renders entity avatar thumbnails, Top Cluster face samples, and Review Cluster member rows from seeded media, and (2) the [E15-3a](../../tasks/15.0/E15-3a-localwp-oci-roundtrip-task-plan.md) LocalWP -> OCI round-trip gate passes. Placeholder/error thumbnails, an empty Review Cluster member list, or a failing OCI round trip are MVP blockers because Phase 3 depends on a visibly truthful demo surface and a proven backend path, not just request success in isolation.
+**Pre-provisioning gates**: Do not point public DNS at the demo vhost until (1) the local/LocalWP Workbench path renders truthful avatars and a populated Review Cluster drawer, and (2) the E15-3a round-trip gate passes.
 
 Deliverables:
 
-- Shared PHP hosting provisioned (Hostinger Premium or equivalent, ~$2-5/mo).
-- WordPress installed with ACX plugin.
-- Plugin configured with `api.altcontext.com` backend URL and production API key.
-- Demo content seeded: sample media library with recognizable faces for demonstration.
-- Cloudflare DNS + TLS in front of the WP host.
+- OCI demo stack (`acx-demo.service`): WordPress + MariaDB on `acx-demo-net` with CPU/memory bulkheads.
+- Caddy vhost + TLS for `demo.altcontext.com` (repo-tracked Caddyfile; recreate on network join).
+- Non-interactive bootstrap (`bootstrap-wp.sh`) + packaged ACX plugin install.
+- Explicit demo tenant + API key (never URL-derived/JIT); CORS origin allowlisted.
+- Seed bundle + import script under `infra/oci/demo/seed/` with license provenance recorded.
+- Operator walkthrough + smoke log (`E15-28-demo-smoke-log.md`).
 
 Exit criteria:
 
-- WP demo page loads at its public URL.
-- ACX plugin admin UI is accessible and communicates with the backend API.
-- Scan trigger from plugin reaches the backend and returns recognition results.
-- Sovereign local-read path works when backend is temporarily unreachable.
+- WP demo loads at `https://demo.altcontext.com`.
+- Plugin settings show constant-provenance config; settings probe passes against configured API.
+- Scan → recognition → curation walkthrough recorded with E15-22 proof bundle shapes.
+- Sovereign local-read + degraded banner demonstrated when API container stopped (E15-26).
 
 ---
 
@@ -291,7 +292,7 @@ Exit criteria:
 
 | Dependency                              | Owner   | Status                  | Blocks  |
 | --------------------------------------- | ------- | ----------------------- | ------- |
-| WP shared hosting provisioning + domain | @daniel | Not started             | Phase 3 |
+| OCI demo stack + DNS (`demo.altcontext.com`) | @daniel | In progress (E15-28) | Phase 3 |
 | API key / origin policy decisions       | @daniel | Not started             | Phase 1 |
 | OCI budget alert verification           | @daniel | Not started             | Phase 4 (E15-5a) |
 | Tailscale installation on OCI VM        | @daniel | Implemented/documented  | Phase 4 |
@@ -355,17 +356,16 @@ Exit criteria:
 - [x] Add latency and error metrics by endpoint class ← _Prod Readiness P5 (Slice 3a)_
 - [x] Document operator diagnostics flow/runbook ← _Prod Readiness P5 (Slice 3b)_
 
-## Phase 3: WordPress Demo Provisioning -- NOT STARTED → [E15-3](../../tasks/15.0/E15-3-wordpress-demo-provisioning-task-plan.md)
+## Phase 3: WordPress Demo Provisioning -- IN PROGRESS → [E15-28](../../tasks/15.0/E15-28-oci-demo-provisioning-task-plan.md)
 
-> Source: Production Readiness Phase 6 + E14 remaining
+> Source: Production Readiness Phase 6 + E14 remaining (OCI-colocated topology)
 
-- [ ] Complete [E15-3a](../../tasks/15.0/E15-3a-localwp-oci-roundtrip-task-plan.md) LocalWP -> OCI round-trip gate before purchasing or provisioning shared PHP hosting ← _vendor-spend gate_
-- [ ] Confirm the Workbench entity-avatar/review-drawer gate passes locally before purchasing or provisioning shared PHP hosting ← _demo-critical Workbench UI gate (E15-22 / E15-3a proof bundle)_
-- [ ] Provision shared PHP hosting (provider-agnostic; vendor selected at provisioning time) ← _Prod Readiness P6_
-- [ ] Install WordPress + ACX plugin ← _Prod Readiness P6 + E14_
-- [ ] Configure plugin with production backend URL and API key ← _Prod Readiness P6 + E14_
-- [ ] Seed demo content (media library with sample faces) ← _new for E15_
-- [ ] Set up Cloudflare DNS + TLS for WP host ← _Prod Readiness P6_
+- [ ] Complete [E15-3a](../../tasks/15.0/E15-3a-localwp-oci-roundtrip-task-plan.md) LocalWP → OCI round-trip gate before public demo DNS ← _pre-provisioning gate_
+- [ ] Confirm Workbench entity-avatar/review-drawer gate locally ← _E15-22 / E15-3a proof bundle_
+- [ ] Land repo-tracked demo stack (`acx-demo`, bulkheads, Caddy vhost) ← _E15-28 Slice 1_
+- [ ] Bootstrap WP + ACX plugin + explicit tenant/key ← _E15-28 Slice 2_
+- [ ] Seed demo media + capture walkthrough smoke log ← _E15-28 Slice 3_
+- [ ] Add `demo` DNS A record + verify TLS on `demo.altcontext.com` ← _operator_
 
 ## Phase 4: End-to-End Verification -- IN PROGRESS → [E15-4](../../tasks/15.0/E15-4-local-reset-bootstrap-hardening-task-plan.md) + [E15-5a](../../tasks/15.0/E15-5a-oci-operational-hygiene-task-plan.md) + [E15-5](../../tasks/15.0/E15-5-manual-remote-e2e-task-plan.md)
 

@@ -36,6 +36,11 @@ def test_demo_compose_file_exists_with_bulkhead_and_network_alias() -> None:
     assert "mem_limit:" in text
     assert "ACX_DEMO_WPDATA_PATH" in text
     assert "ACX_DEMO_DBDATA_PATH" in text
+    # acx-demo-net must stay external: a compose-owned network gets deleted by
+    # `down`, and the edge Caddy declares it as a required external join.
+    assert "external: true" in text
+    # No blanket env_file — each service maps only the secrets it needs.
+    assert "env_file:" not in text
 
 
 def test_caddyfile_routes_demo_subdomain_to_demo_wp_upstream() -> None:
@@ -66,4 +71,7 @@ def test_systemd_unit_and_secrets_template_exist() -> None:
     assert "docker-compose.demo.yml" in unit_text
     env_text = ENV_EXAMPLE.read_text()
     assert "COMPOSE_PROJECT_NAME=acx-demo" in env_text
-    assert "ACX_NETWORK_NAME=acx-demo-net" in env_text
+    # The network name is hardcoded in compose (external acx-demo-net); an env
+    # knob would be illusory because docker-compose.caddy.yml and sync-demo.sh
+    # both hardcode the name.
+    assert "ACX_NETWORK_NAME" not in env_text

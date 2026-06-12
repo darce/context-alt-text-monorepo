@@ -13,6 +13,11 @@ DEMO_DIR="${DEMO_DIR:-/opt/acx-backend/demo}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.demo.yml}"
 
 cd "$DEMO_DIR"
+
+if [[ ! -f secrets/.env ]]; then
+  echo "ERROR: ${DEMO_DIR}/secrets/.env missing — copy from secrets/.env.example" >&2
+  exit 2
+fi
 ln -sf secrets/.env .env
 
 if [[ ! -d "$SEED_MEDIA_DIR" ]]; then

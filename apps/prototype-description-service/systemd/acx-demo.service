@@ -1,5 +1,7 @@
 # Systemd unit for the ACX public WordPress demo stack.
 # Separate compose project + network from the recognition API envs.
+# acx-demo-net is external (created by sync-demo.sh), so ExecStop's
+# `compose down` cannot delete the network the edge Caddy depends on.
 #
 # Install:
 #   sudo cp acx-demo.service /etc/systemd/system/acx-demo.service

@@ -127,7 +127,7 @@ Colocating the demo WP with inference on one VM is a deliberate trade. `release-
 - Plugin packaging: an existing path already ships — `apps/prototype-wp-alt-context/scripts/release/package-plugin.sh`, invoked as `npm run release:package` from `apps/prototype-wp-alt-context/` (NOT a repo-root script). It runs `npm run build` + `composer install --no-dev` into a staging tree and writes `<repo-root>/dist/alt-context-<version>.zip` + `.sha256`; it hard-fails if the `alt-context.php` header Version and `package.json` version disagree — check both before building. Reuse/extend it (do NOT add a new build script); `make deploy-demo` ships the `dist/` zip to the VM.
 - Demo tenant + key: the demo must NEVER depend on URL-derived/JIT identity. Note the trap: the documented reset workflow (`scripts/deploy/_derive_tenant_id.py`, README §561-568) DERIVES the tenant UUID from `site_url` by default, so "mint with `site_url=…`" alone yields a URL-derived UUID and silently violates this constraint. Instead, create the tenant with an EXPLICIT non-derived UUID — `tenant create --tenant <explicit-uuid> --site-url https://demo.altcontext.com`, then `manage_api_keys --env prod create --tenant <explicit-uuid>` (the `--env prod` quirk applies). Set that same UUID as the `ACX_RECOGNITION_TENANT_ID` constant via `WORDPRESS_CONFIG_EXTRA`. The plugin already supports this constant — E15-24 has landed (`apps/prototype-wp-alt-context/src/api/class-tenant-identity.php` `resolve()`/`get_constant_value('ACX_RECOGNITION_TENANT_ID')`). Pairing proof: `TenantIdentity::is_auto_derived_identity()` MUST return false for the demo tenant and the settings pairing test MUST pass.
 - Bring-up order (staged rollout): first configure against `staging.api.altcontext.com` with a staging key; only after the full walkthrough passes re-point constants to `api.altcontext.com` with the prod demo key.
-- Hardening checklist is normative, not optional: generated strong admin creds in secrets env; xmlrpc disabled (block `/xmlrpc.php` at the Caddy vhost — simpler and stronger than a WP plugin); login rate limiting at the Caddy vhost; WP auto-updates on (`WP_AUTO_UPDATE_CORE` constant via `WORDPRESS_CONFIG_EXTRA`); nightly content-reset documented as optional runbook step.
+- Hardening checklist is normative, not optional: generated strong admin creds in secrets env; xmlrpc disabled (block `/xmlrpc.php` at the Caddy vhost — simpler and stronger than a WP plugin); login rate limiting deferred (the `rate_limit` directive is the third-party caddy-ratelimit module, absent from stock `caddy:2-alpine`; enabling it requires a custom xcaddy image — do not add the directive to the stock-image Caddyfile or `caddy validate` fails for every vhost); WP auto-updates on (`WP_AUTO_UPDATE_CORE` constant via `WORDPRESS_CONFIG_EXTRA`); nightly content-reset documented as optional runbook step.
 - CORS: append `https://demo.altcontext.com` to `RECOGNITION_ALLOWED_ORIGINS` (comma-separated; the validator at `recognition/config/security.py` ~75-82 rejects `*`, so list the origin explicitly — scheme + host, no trailing slash, no path) in the target env's secrets `.env`; restart that env's stack per README workflow (staging first).
 
 ### Slice 3 notes — seed + proof + epic revision
@@ -176,7 +176,7 @@ Proof: curl matrix green (all four vhosts, incl. demo via `demo-wp` upstream); `
 
 **Goal**: WP configured non-interactively with the ACX plugin against the live API using an explicitly minted demo tenant/key, hardened for public exposure.
 
-WP hardening deliverables (the epic's security baseline covers only the API; a public WP admin is its own attack surface): generated strong admin credentials stored in the secrets `.env`, xmlrpc disabled, login rate limiting at the Caddy vhost, WP core/plugin auto-updates enabled, and an optional nightly demo-content reset documented as a runbook step.
+WP hardening deliverables (the epic's security baseline covers only the API; a public WP admin is its own attack surface): generated strong admin credentials stored in the secrets `.env`, xmlrpc disabled, login rate limiting deferred pending a custom xcaddy Caddy image (stock caddy:2-alpine lacks the rate_limit module), WP core/plugin auto-updates enabled, and an optional nightly demo-content reset documented as a runbook step.
 
 Changes: bootstrap script; plugin packaging; constants config; key-minting runbook; CORS entry; hardening steps above.
 Proof: fresh `make deploy-demo` from clean state reaches a configured admin; settings page shows constant-provenance config; `/settings/test` passes against prod API.
@@ -206,7 +206,7 @@ Proof: scan-to-curation walkthrough recorded; offline sovereignty demonstration 
 
 - [ ] Non-interactive bootstrap + packaging + constants config working from clean state
 - [ ] Demo tenant/key minted via CLI; CORS updated
-- [ ] WP hardening landed (creds in secrets env, xmlrpc off, login rate limit, auto-updates, reset runbook)
+- [ ] WP hardening landed (creds in secrets env, xmlrpc off, auto-updates, reset runbook; login rate limit deferred — needs custom xcaddy image)
 - [ ] Evidence recorded
 
 ### Checklist for Slice 3: Content + proof

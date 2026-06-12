@@ -30,15 +30,24 @@ def test_bootstrap_script_covers_install_plugin_sequence() -> None:
     assert "wp core install" in text
     assert "wp plugin" in text
     assert "docker compose" in text
+    # secrets/.env is a compose dotenv (unquoted define(...) values) — sourcing
+    # it is a bash syntax error; the script must parse keys instead.
+    assert "source secrets/.env" not in text
+    assert "wp-config.php" in text
 
 
-def test_caddy_demo_vhost_blocks_xmlrpc_and_rate_limits_login() -> None:
+def test_caddy_demo_vhost_blocks_xmlrpc_without_nonstock_directives() -> None:
     text = CADDYFILE.read_text()
     demo_block = text.split("demo.altcontext.com {", 1)[1].split("\n}", 1)[0]
     assert "xmlrpc.php" in demo_block
     assert "403" in demo_block
-    assert "wp-login.php" in demo_block
-    assert "rate_limit" in demo_block
+    # rate_limit is a third-party module absent from stock caddy:2-alpine;
+    # reintroducing it without a custom xcaddy image breaks `caddy validate`
+    # for every vhost. Only allow it commented (the deferred-hardening note).
+    directives = [
+        line for line in demo_block.splitlines() if not line.strip().startswith("#")
+    ]
+    assert all("rate_limit" not in line for line in directives)
 
 
 def test_env_example_documents_acx_constants_and_admin_creds() -> None:

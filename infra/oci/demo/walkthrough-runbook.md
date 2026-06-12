@@ -35,16 +35,19 @@ On **staging** first:
 
 Repeat against prod only after staging proof is filed.
 
-## 4. CORS + rate-limit spot checks
+## 4. CORS spot check
+
+`-D -` dumps response headers so the asserted header is actually visible:
 
 ```bash
-curl -fsS -o /dev/null -w '%{http_code}\n' \
+curl -fsS -D - -o /dev/null \
   -X OPTIONS 'https://staging.api.altcontext.com/recognition/health' \
   -H 'Origin: https://demo.altcontext.com' \
   -H 'Access-Control-Request-Method: GET'
 ```
 
-Expect `204`/`200` with `Access-Control-Allow-Origin: https://demo.altcontext.com`.
+Expect a `204`/`200` status line and
+`Access-Control-Allow-Origin: https://demo.altcontext.com` in the dumped headers.
 
 ## 5. Record evidence
 

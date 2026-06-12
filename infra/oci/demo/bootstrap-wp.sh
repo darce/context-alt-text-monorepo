@@ -34,10 +34,17 @@ if [[ ! -f secrets/.env ]]; then
 fi
 ln -sf secrets/.env .env
 
-# shellcheck disable=SC1091
-set -a
-source secrets/.env
-set +a
+# secrets/.env is a docker-compose dotenv, not a shell file — the documented
+# WORDPRESS_CONFIG_EXTRA value (unquoted define(...) line) is a bash syntax
+# error under `source`. Parse the keys we need instead of sourcing.
+env_get() {
+  grep -m1 "^${1}=" secrets/.env | cut -d= -f2- || true
+}
+
+WP_ADMIN_USER="$(env_get WP_ADMIN_USER)"
+WP_ADMIN_PASSWORD="$(env_get WP_ADMIN_PASSWORD)"
+WP_ADMIN_EMAIL="$(env_get WP_ADMIN_EMAIL)"
+WORDPRESS_CONFIG_EXTRA="$(env_get WORDPRESS_CONFIG_EXTRA)"
 
 for var in WP_ADMIN_USER WP_ADMIN_PASSWORD WP_ADMIN_EMAIL WORDPRESS_CONFIG_EXTRA; do
   if [[ -z "${!var:-}" ]]; then
@@ -58,16 +65,18 @@ echo "==> Starting demo stack services"
 compose up -d mariadb wordpress
 
 echo "==> Waiting for WordPress volume + database readiness"
+# Ready means: core files AND wp-config.php exist (the entrypoint writes
+# wp-config.php after the volume seed), and wp-cli reaches the DB. wp-cli
+# exits 1 both for "not installed" and for runtime errors, so a DB-unreachable
+# error must keep us polling instead of counting as "ready, not installed".
 ready=0
 for _ in $(seq 1 60); do
-  if compose exec -T wordpress test -f /var/www/html/wp-includes/version.php 2>/dev/null; then
-    if wpcli wp core is-installed >/dev/null 2>&1; then
+  if compose exec -T wordpress test -f /var/www/html/wp-includes/version.php 2>/dev/null \
+    && compose exec -T wordpress test -f /var/www/html/wp-config.php 2>/dev/null; then
+    if install_out=$(wpcli wp core is-installed 2>&1); then
       ready=1
       break
-    fi
-    install_rc=0
-    wpcli wp core is-installed >/dev/null 2>&1 || install_rc=$?
-    if [[ "$install_rc" -eq 1 ]]; then
+    elif ! grep -qiE 'error establishing|connection refused|could not find|wp-config' <<<"$install_out"; then
       ready=1
       break
     fi

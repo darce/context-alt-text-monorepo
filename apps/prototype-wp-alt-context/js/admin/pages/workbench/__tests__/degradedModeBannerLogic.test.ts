@@ -1,8 +1,5 @@
 import type { SyncHealthResponse } from '../../../api/recognition/types/sync';
-import {
-  getDashboardSyncHealthSummary,
-  resolveEffectiveSyncHealth,
-} from '../degradedModeBannerLogic';
+import { getDashboardSyncHealthSummary, resolveEffectiveSyncHealth } from '../degradedModeBannerLogic';
 
 const buildEnvelope = (overrides: Partial<SyncHealthResponse> = {}): SyncHealthResponse => ({
   breaker: { state: 'closed', base_url: 'http://localhost:8000', opened_at: null },

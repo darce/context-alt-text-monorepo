@@ -10,18 +10,13 @@ export const isSyncOffline = (health: SyncHealthResponse): boolean =>
 export const resolveEffectiveSyncHealth = (
   legacySyncHealth: SyncHealth,
   syncHealthEnvelope: SyncHealthResponse | null | undefined,
-): SyncHealth =>
-  syncHealthEnvelope && isSyncOffline(syncHealthEnvelope) ? 'offline' : legacySyncHealth;
+): SyncHealth => (syncHealthEnvelope && isSyncOffline(syncHealthEnvelope) ? 'offline' : legacySyncHealth);
 
 export const getDashboardSyncHealthSummary = (
   effectiveSyncHealth: SyncHealth,
   syncHealthEnvelope: SyncHealthResponse | null | undefined,
 ): string => {
-  if (
-    syncHealthEnvelope &&
-    hasSyncHealthWarnings(syncHealthEnvelope) &&
-    effectiveSyncHealth === 'healthy'
-  ) {
+  if (syncHealthEnvelope && hasSyncHealthWarnings(syncHealthEnvelope) && effectiveSyncHealth === 'healthy') {
     return getDegradedWarningMessage(syncHealthEnvelope) ?? __('Sync attention needed.', 'alt-context');
   }
 

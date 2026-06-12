@@ -27,7 +27,7 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
             "/acknowledged_at < '20\\d{2}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}'/",
             $deleteQuery
         );
-        $expectedCutoff = gmdate('Y-m-d H:i:s', time() - (14 * 86400));
+        $expectedCutoff = gmdate('Y-m-d H:i:s', current_time('timestamp') - (14 * 86400));
         $this->assertStringContainsString(substr($expectedCutoff, 0, 10), $deleteQuery);
         $this->assertSame(0, $purged['outbox']);
         $this->assertContains('START TRANSACTION', $wpdb->queries);

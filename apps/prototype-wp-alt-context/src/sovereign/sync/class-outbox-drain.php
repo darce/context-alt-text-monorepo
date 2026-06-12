@@ -263,9 +263,13 @@ class OutboxDrain {
 				continue;
 			}
 
-			$purged = $this->maintenance_service->purge_terminal_rows( $normalized_tenant_id );
-			if ( false === $purged ) {
-				do_action( 'acx_sync_purge_terminal_rows_failed', $normalized_tenant_id );
+			try {
+				$purged = $this->maintenance_service->purge_terminal_rows( $normalized_tenant_id );
+				if ( false === $purged ) {
+					do_action( 'acx_sync_purge_terminal_rows_failed', $normalized_tenant_id );
+				}
+			} catch ( Throwable $exception ) {
+				do_action( 'acx_sync_purge_terminal_rows_failed', $normalized_tenant_id, $exception );
 			}
 		}
 	}

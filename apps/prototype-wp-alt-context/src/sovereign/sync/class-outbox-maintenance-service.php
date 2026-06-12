@@ -5,11 +5,11 @@ declare(strict_types=1);
 namespace AltContext\Sovereign\Sync;
 
 require_once __DIR__ . '/../repositories/class-sync-state-repository.php';
-require_once __DIR__ . '/class-conflict-repository.php';
 require_once __DIR__ . '/class-conflict-resolution-status.php';
 require_once __DIR__ . '/class-outbox-status.php';
-require_once __DIR__ . '/class-transaction-runner.php';
+require_once __DIR__ . '/../../support/trait-runs-transactional.php';
 
+use AltContext\Support\RunsTransactional;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
 
 use function apply_filters;
@@ -27,6 +27,8 @@ use function trim;
 use function wp_json_encode;
 
 class OutboxMaintenanceService {
+	use RunsTransactional;
+
 	private const DEFAULT_PURGE_BATCH_SIZE = 50;
 	private const DEFAULT_ACKNOWLEDGED_RETENTION_DAYS = 14;
 	private const DEFAULT_RESOLVED_CONFLICT_RETENTION_DAYS = 14;
@@ -34,7 +36,6 @@ class OutboxMaintenanceService {
 
 	private OutboxQueryRepository $query_repository;
 	private SyncStateRepository $sync_state_repository;
-	private ConflictRepository $conflict_repository;
 	private string $table_name;
 	private string $conflicts_table_name;
 
@@ -42,7 +43,7 @@ class OutboxMaintenanceService {
 		?OutboxQueryRepository $query_repository = null,
 		?SyncStateRepository $sync_state_repository = null,
 		?string $table_name = null,
-		?ConflictRepository $conflict_repository = null
+		?string $conflicts_table_name = null
 	) {
 		global $wpdb;
 
@@ -57,10 +58,9 @@ class OutboxMaintenanceService {
 		}
 
 		$this->table_name = $table_name ?? $default_table;
-		$this->conflicts_table_name = $default_conflicts_table;
+		$this->conflicts_table_name = $conflicts_table_name ?? $default_conflicts_table;
 		$this->query_repository = $query_repository ?? new OutboxQueryRepository( $this->table_name );
 		$this->sync_state_repository = $sync_state_repository ?? new SyncStateRepository();
-		$this->conflict_repository = $conflict_repository ?? new ConflictRepository( $this->conflicts_table_name );
 	}
 
 	/**
@@ -72,7 +72,7 @@ class OutboxMaintenanceService {
 			return false;
 		}
 
-		$result = TransactionRunner::run_transactional(
+		$result = $this->run_transactional(
 			function () use ( $normalized_tenant_id ): array {
 				return array(
 					'outbox' => $this->purge_acknowledged_outbox_batch( $normalized_tenant_id ),
@@ -80,6 +80,10 @@ class OutboxMaintenanceService {
 				);
 			}
 		);
+
+		if ( is_wp_error( $result ) ) {
+			return false;
+		}
 
 		return is_array( $result ) ? $result : false;
 	}

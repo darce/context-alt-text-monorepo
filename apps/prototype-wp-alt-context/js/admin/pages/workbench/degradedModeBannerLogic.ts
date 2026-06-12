@@ -1,11 +1,46 @@
 import { __ } from '@wordpress/i18n';
 
-import type { SyncHealthResponse, SyncHealthWarning } from '../../api/recognition/types/sync';
+import type { SyncHealth, SyncHealthResponse, SyncHealthWarning } from '../../api/recognition/types/sync';
 
 import { SCAN_CONFLICTS_HREF, SCAN_DEAD_LETTER_HREF } from './workbenchOverlayLinks';
 
 export const isSyncOffline = (health: SyncHealthResponse): boolean =>
   health.breaker.state === 'open' || health.last_pull.ok === false;
+
+export const resolveEffectiveSyncHealth = (
+  legacySyncHealth: SyncHealth,
+  syncHealthEnvelope: SyncHealthResponse | null | undefined,
+): SyncHealth =>
+  syncHealthEnvelope && isSyncOffline(syncHealthEnvelope) ? 'offline' : legacySyncHealth;
+
+export const getDashboardSyncHealthSummary = (
+  effectiveSyncHealth: SyncHealth,
+  syncHealthEnvelope: SyncHealthResponse | null | undefined,
+): string => {
+  if (
+    syncHealthEnvelope &&
+    hasSyncHealthWarnings(syncHealthEnvelope) &&
+    effectiveSyncHealth === 'healthy'
+  ) {
+    return getDegradedWarningMessage(syncHealthEnvelope) ?? __('Sync attention needed.', 'alt-context');
+  }
+
+  switch (effectiveSyncHealth) {
+    case 'healthy':
+      return __('Machine sync is healthy and curation replay is caught up.', 'alt-context');
+    case 'queued':
+      return __('Local curation changes are queued for replay.', 'alt-context');
+    case 'conflicts':
+      return __('Conflict resolution is blocking part of the replay queue.', 'alt-context');
+    case 'failures':
+      return __('Some replay operations failed and need operator attention.', 'alt-context');
+    case 'offline':
+      return __('The recognition backend is currently unreachable.', 'alt-context');
+    case 'stale':
+    default:
+      return __('Machine state is stale and should be refreshed.', 'alt-context');
+  }
+};
 
 export const hasSyncHealthWarnings = (health: SyncHealthResponse): boolean => health.warnings.length > 0;
 

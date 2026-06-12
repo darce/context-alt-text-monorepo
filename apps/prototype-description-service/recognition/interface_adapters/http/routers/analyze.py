@@ -24,7 +24,7 @@ from recognition.application.tasks.scan import (
     chain_populate_and_process,
     extract_media_id,
 )
-from recognition.domain.job import Job, JobPhase, JobStatus, JobType
+from recognition.domain.job import TERMINAL_JOB_STATUSES, Job, JobPhase, JobStatus, JobType
 from recognition.domain.repositories import JobRepository
 from recognition.interface_adapters.http.dependencies import (
     RetentionPolicyServiceProtocol,
@@ -508,7 +508,7 @@ async def stream_job_progress(
                     last_heartbeat = now
                     last_phase = phase
 
-                if job_status in (JobStatus.COMPLETED, JobStatus.FAILED):
+                if job_status in TERMINAL_JOB_STATUSES:
                     yield {
                         "event": "done",
                         "data": json.dumps(

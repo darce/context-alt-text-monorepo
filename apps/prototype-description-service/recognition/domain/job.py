@@ -20,6 +20,16 @@ class JobStatus(StrEnum):
     FAILED = "failed"
 
 
+TERMINAL_JOB_STATUSES: frozenset[JobStatus] = frozenset(
+    {
+        JobStatus.COMPLETED,
+        JobStatus.COMPLETED_WITH_ERRORS,
+        JobStatus.REJECTED,
+        JobStatus.FAILED,
+    }
+)
+
+
 class JobType(StrEnum):
     """Supported job categories."""
 

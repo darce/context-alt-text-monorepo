@@ -46,6 +46,29 @@ async def test_build_scan_progress_envelope_shape() -> None:
 
 
 @pytest.mark.asyncio
+async def test_build_scan_progress_envelope_maps_completed_with_errors_to_complete_phase() -> None:
+    job_id = uuid.uuid4()
+    scan_repo = AsyncMock()
+    scan_repo.get_job_item_status_counts.return_value = {"completed": 1, "failed": 1}
+
+    job = Job(
+        id=str(job_id),
+        type=JobType.ANALYZE,
+        tenant_id=str(uuid.uuid4()),
+        status=JobStatus.COMPLETED_WITH_ERRORS,
+        progress_completed=2,
+        progress_total=2,
+        started_at=datetime(2026, 6, 11, 12, 0, tzinfo=UTC),
+        error_message="one or more items failed",
+    )
+
+    envelope = await build_scan_progress_envelope(job=job, scan_repo=scan_repo)
+
+    assert envelope.phase is JobPhase.COMPLETE
+    assert envelope.failure_reason == "one or more items failed"
+
+
+@pytest.mark.asyncio
 async def test_job_to_response_includes_progress_envelope_for_analyze_jobs() -> None:
     job_id = uuid.uuid4()
     scan_repo = AsyncMock()

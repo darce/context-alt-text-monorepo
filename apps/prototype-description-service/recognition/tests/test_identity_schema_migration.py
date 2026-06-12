@@ -51,6 +51,7 @@ def test_identity_schema_declares_expected_table_set() -> None:
     assert identity_schema.EXPECTED_SCHEMA_TABLES == [
         "tenants",
         "api_keys",
+        "worker_capabilities",
         "media_identities",
         "curation_replay_records",
         "identity_clusters",

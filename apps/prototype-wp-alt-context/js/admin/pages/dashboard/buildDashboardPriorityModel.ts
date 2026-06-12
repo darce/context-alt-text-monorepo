@@ -9,7 +9,8 @@ export type DashboardSectionId =
 export interface DashboardPriorityInputs {
   isSyncStatusLoading: boolean;
   isSyncStatusError: boolean;
-  syncHealth: string | null;
+  effectiveSyncHealth: string | null;
+  hasSyncHealthWarnings: boolean;
   pendingReplayCount: number;
   conflictCount: number;
   failedReplayCount: number;
@@ -43,7 +44,11 @@ const hasSyncAttention = (inputs: DashboardPriorityInputs): boolean => {
     return true;
   }
 
-  if (inputs.syncHealth !== 'healthy') {
+  if (inputs.hasSyncHealthWarnings) {
+    return true;
+  }
+
+  if (inputs.effectiveSyncHealth !== 'healthy') {
     return true;
   }
 

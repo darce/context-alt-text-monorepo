@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace AltContext\Support;
 
+require_once __DIR__ . '/../sovereign/sync/class-outbox-drain.php';
+
+use AltContext\Sovereign\Sync\OutboxDrain;
 use function defined;
 use function function_exists;
 use function get_option;
@@ -360,6 +363,7 @@ class LifecycleManager {
 		$this->clear_legacy_roster_migration_schedule();
 		$this->clear_curation_outbox_drain_schedule();
 		$this->clear_split_topology_drain_schedule();
+		OutboxDrain::clear_scheduled_purge();
 		flush_rewrite_rules( false );
 	}
 
@@ -379,6 +383,7 @@ class LifecycleManager {
 		$this->clear_legacy_roster_migration_schedule();
 		$this->clear_curation_outbox_drain_schedule();
 		$this->clear_split_topology_drain_schedule();
+		OutboxDrain::clear_scheduled_purge();
 		$this->drop_tables();
 		flush_rewrite_rules( false );
 	}

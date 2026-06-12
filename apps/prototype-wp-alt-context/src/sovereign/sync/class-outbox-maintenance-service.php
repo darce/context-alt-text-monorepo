@@ -16,13 +16,13 @@ use function apply_filters;
 use function array_merge;
 use function array_unique;
 use function array_values;
+use function current_time;
 use function gmdate;
 use function is_array;
 use function is_object;
 use function is_string;
 use function max;
 use function method_exists;
-use function time;
 use function trim;
 use function wp_json_encode;
 
@@ -170,7 +170,7 @@ class OutboxMaintenanceService {
 
 		$retention_days = max( 1, (int) apply_filters( 'acx_sync_purge_acknowledged_days', self::DEFAULT_ACKNOWLEDGED_RETENTION_DAYS ) );
 		$day_seconds = defined( 'DAY_IN_SECONDS' ) ? (int) DAY_IN_SECONDS : 86400;
-		$cutoff = gmdate( 'Y-m-d H:i:s', time() - ( $retention_days * $day_seconds ) );
+		$cutoff = gmdate( 'Y-m-d H:i:s', current_time( 'timestamp' ) - ( $retention_days * $day_seconds ) );
 
 		$deleted = $wpdb->query(
 			$wpdb->prepare(
@@ -207,7 +207,7 @@ class OutboxMaintenanceService {
 
 		$retention_days = max( 1, (int) apply_filters( 'acx_sync_purge_resolved_conflict_days', self::DEFAULT_RESOLVED_CONFLICT_RETENTION_DAYS ) );
 		$day_seconds = defined( 'DAY_IN_SECONDS' ) ? (int) DAY_IN_SECONDS : 86400;
-		$cutoff = gmdate( 'Y-m-d H:i:s', time() - ( $retention_days * $day_seconds ) );
+		$cutoff = gmdate( 'Y-m-d H:i:s', current_time( 'timestamp' ) - ( $retention_days * $day_seconds ) );
 
 		$deleted = $wpdb->query(
 			$wpdb->prepare(

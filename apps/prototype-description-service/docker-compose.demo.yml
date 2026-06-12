@@ -1,0 +1,48 @@
+# Parameterized compose template for the public WordPress demo stack.
+# The demo directory on the VM holds secrets/.env (chmod 600) with:
+#   COMPOSE_PROJECT_NAME=acx-demo
+#   ACX_DEMO_WPDATA_PATH=/opt/acx-backend/data/demo-wpdata
+#   ACX_DEMO_DBDATA_PATH=/opt/acx-backend/data/demo-dbdata
+#   ACX_NETWORK_NAME=acx-demo-net
+#   MARIADB_* / WORDPRESS_DB_* credentials (see infra/oci/demo/.env.example)
+#
+# Usage: cd /opt/acx-backend/demo && docker compose -f docker-compose.demo.yml up -d
+
+services:
+  mariadb:
+    image: mariadb:11.4
+    restart: unless-stopped
+    env_file: .env
+    cpus: "0.5"
+    mem_limit: 1g
+    volumes:
+      - ${ACX_DEMO_DBDATA_PATH}:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - demo
+
+  wordpress:
+    image: wordpress:6.8-php8.3-apache
+    restart: unless-stopped
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    env_file: .env
+    cpus: "1.0"
+    mem_limit: 2g
+    environment:
+      WORDPRESS_DB_HOST: mariadb
+    volumes:
+      - ${ACX_DEMO_WPDATA_PATH}:/var/www/html
+    networks:
+      demo:
+        aliases:
+          - demo-wp
+
+networks:
+  demo:
+    name: ${ACX_NETWORK_NAME}

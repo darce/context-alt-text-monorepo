@@ -330,8 +330,9 @@ Three isolated environments share the VM:
 | prod | `api.altcontext.com` | `:latest` | `acx-prod.service` |
 | staging | `staging.api.altcontext.com` | `:staging` | `acx-staging.service` |
 | dev | `dev.api.altcontext.com` | `:dev` | `acx-dev.service` |
+| demo | `demo.altcontext.com` | WordPress `:6.8-php8.3-apache` + MariaDB `:11.4` | `acx-demo.service` |
 
-Caddy runs separately as `acx-caddy.service`, routing all three subdomains.
+Caddy runs separately as `acx-caddy.service`, routing all four subdomains.
 
 ### Service Management
 
@@ -605,13 +606,19 @@ focused on the destructive contract.
 │   └── db/docker-prod-init/
 ├── staging/                         # same structure as prod
 ├── dev/                             # same structure as prod
+├── demo/
+│   ├── .env -> secrets/.env
+│   ├── docker-compose.demo.yml      # WordPress + MariaDB demo stack
+│   └── secrets/.env                 # demo credentials (chmod 600)
 ├── data/
 │   ├── prod-pgdata/                 # prod Postgres (persists)
 │   ├── prod-models/                 # prod InsightFace cache (persists)
 │   ├── staging-pgdata/
 │   ├── staging-models/
 │   ├── dev-pgdata/
-│   └── dev-models/
+│   ├── dev-models/
+│   ├── demo-wpdata/                 # demo WordPress content (persists)
+│   └── demo-dbdata/                 # demo MariaDB (persists)
 └── logs/
 ```
 

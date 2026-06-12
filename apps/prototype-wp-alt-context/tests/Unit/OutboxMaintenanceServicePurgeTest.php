@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace AltContext\Tests\Unit;
 
-use AltContext\Sovereign\Sync\ConflictRepository;
 use AltContext\Sovereign\Sync\ConflictResolutionStatus;
 use AltContext\Sovereign\Sync\OutboxMaintenanceService;
 use AltContext\Sovereign\Sync\OutboxStatus;
@@ -18,7 +17,7 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
 
         $tenantId = 'tenant-purge-1';
         $wpdb->defaultQueryResult = 0;
-        $service = new OutboxMaintenanceService(null, null, 'wp_acx_sync_outbox', new ConflictRepository('wp_acx_sync_conflicts'));
+        $service = new OutboxMaintenanceService(null, null, 'wp_acx_sync_outbox', 'wp_acx_sync_conflicts');
 
         $purged = $service->purge_terminal_rows($tenantId);
 
@@ -41,11 +40,11 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
 
         $tenantId = 'tenant-purge-2';
         $wpdb->defaultQueryResult = 0;
-        $service = new OutboxMaintenanceService(null, null, 'wp_acx_sync_outbox', new ConflictRepository('wp_acx_sync_conflicts'));
+        $service = new OutboxMaintenanceService(null, null, 'wp_acx_sync_outbox', 'wp_custom_conflicts');
 
         $purged = $service->purge_terminal_rows($tenantId);
 
-        $deleteQuery = $this->findQueryContaining($wpdb->queries, 'DELETE FROM `wp_acx_sync_conflicts`');
+        $deleteQuery = $this->findQueryContaining($wpdb->queries, 'DELETE FROM `wp_custom_conflicts`');
         $this->assertStringContainsString(
             "resolution_status <> '" . ConflictResolutionStatus::OPEN . "'",
             $deleteQuery

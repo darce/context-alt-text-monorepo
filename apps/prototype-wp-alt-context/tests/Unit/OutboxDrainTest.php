@@ -11,6 +11,7 @@ use AltContext\Sovereign\Sync\OutboxMaintenanceService;
 use AltContext\Sovereign\Sync\OutboxQueryRepository;
 use AltContext\Sovereign\Sync\TopologyCommandRepositoryInterface;
 use AltContext\Tests\TestCase;
+use RuntimeException;
 
 class OutboxDrainTest extends TestCase
 {
@@ -564,6 +565,76 @@ class OutboxDrainTest extends TestCase
 		foreach (['process_operation_batch', 'refresh_curation_metrics_for_tenants', 'purge_terminal_rows_for_tenants'] as $expectedMethod) {
 			$this->assertContains($expectedMethod, $privateMethods, $expectedMethod);
 		}
+	}
+
+	public function testPurgeTerminalRowsContinuesAfterTenantThrowable(): void
+	{
+		$purgeCalls = array();
+		$maintenance = new class( $purgeCalls ) extends OutboxMaintenanceService {
+			/** @var array<int,string> */
+			private array $purgeCalls;
+
+			/** @param array<int,string> $purgeCalls */
+			public function __construct( array &$purgeCalls ) {
+				$this->purgeCalls = &$purgeCalls;
+			}
+
+			public function list_terminal_purge_tenant_ids(): array {
+				return array( 'tenant-bad', 'tenant-good' );
+			}
+
+			public function purge_terminal_rows( string $tenant_id ): array|false {
+				$this->purgeCalls[] = $tenant_id;
+				if ( 'tenant-bad' === $tenant_id ) {
+					throw new RuntimeException( 'purge failed' );
+				}
+
+				return array(
+					'outbox' => 1,
+					'conflicts' => 0,
+				);
+			}
+		};
+
+		$drain = new OutboxDrain( null, null, null, null, null, null, $maintenance );
+		$drain->purge_terminal_rows();
+
+		$this->assertSame( array( 'tenant-bad', 'tenant-good' ), $purgeCalls );
+	}
+
+	public function testDrainReschedulesWhenPurgeThrowsForProcessedTenant(): void
+	{
+		add_filter(
+			'acx_outbox_drain_batch_size',
+			static fn (): int => 1
+		);
+
+		global $wpdb;
+		$row = $this->pendingOperationRow();
+		$wpdb->mockResults = array( $row );
+		$wpdb->mockVar = '8';
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public function dispatch_batch( array $operations ): array {
+				return array(
+					array(
+						'status' => 'acknowledged',
+						'backend_version' => 12,
+					),
+				);
+			}
+		};
+
+		$maintenance = new class() extends OutboxMaintenanceService {
+			public function purge_terminal_rows( string $tenant_id ): array|false {
+				throw new RuntimeException( 'purge failed' );
+			}
+		};
+
+		$drain = new OutboxDrain( $dispatcher, null, null, null, null, null, $maintenance );
+		$drain->drain();
+
+		$this->assertTrue( $this->isHookScheduled( 'acx_sync_drain_curation_outbox' ) );
 	}
 
 	public function testDrainInvokesTerminalPurgeForProcessedTenants(): void

@@ -1,19 +1,19 @@
 {
   "schema_version": 2,
   "remote_url": "https://github.com/darce/workstate.git",
-  "remote_ref": "workstate-system-v0.3.0",
-  "remote_sha": "ecfc6123ef53a0b30029f96564bce5a045419d1d",
+  "remote_ref": "workstate-system-v0.4.0",
+  "remote_sha": "38e872a1eb13cd987b4d264936ad00fd6624380d",
   "profile": "all",
   "surfaces": [
     {
       "path": ".github/hooks",
       "source": "shared",
-      "provenance_key": "clone:ecfc6123ef53a0b30029f96564bce5a045419d1d"
+      "provenance_key": "clone:38e872a1eb13cd987b4d264936ad00fd6624380d"
     },
     {
       "path": "scripts/hooks",
       "source": "shared",
-      "provenance_key": "clone:ecfc6123ef53a0b30029f96564bce5a045419d1d"
+      "provenance_key": "clone:38e872a1eb13cd987b4d264936ad00fd6624380d"
     },
     {
       "path": "docs/workstate/contracts",
@@ -26,30 +26,32 @@
     {
       "path": "Makefile.d/compaction.mk",
       "source": "shared",
-      "provenance_key": "clone:ecfc6123ef53a0b30029f96564bce5a045419d1d"
+      "provenance_key": "clone:38e872a1eb13cd987b4d264936ad00fd6624380d"
     },
     {
       "path": "Makefile.d/plans.mk",
       "source": "shared",
-      "provenance_key": "clone:ecfc6123ef53a0b30029f96564bce5a045419d1d"
+      "provenance_key": "clone:38e872a1eb13cd987b4d264936ad00fd6624380d"
     },
     {
       "path": "Makefile.d/plugins.mk",
-      "source": "local"
+      "source": "shared",
+      "provenance_key": "clone:38e872a1eb13cd987b4d264936ad00fd6624380d"
     },
     {
       "path": "Makefile.d/workflows.mk",
       "source": "shared",
-      "provenance_key": "clone:ecfc6123ef53a0b30029f96564bce5a045419d1d"
+      "provenance_key": "clone:38e872a1eb13cd987b4d264936ad00fd6624380d"
     },
     {
       "path": "scripts/workstate/git-plan-cat.sh",
       "source": "shared",
-      "provenance_key": "clone:ecfc6123ef53a0b30029f96564bce5a045419d1d"
+      "provenance_key": "clone:38e872a1eb13cd987b4d264936ad00fd6624380d"
     },
     {
       "path": ".codex/hooks.json",
-      "source": "shared"
+      "source": "shared",
+      "provenance_key": "clone:38e872a1eb13cd987b4d264936ad00fd6624380d"
     },
     {
       "path": ".github/prompts",
@@ -61,6 +63,14 @@
     },
     {
       "path": ".workstate/generated/plugins/workstate-system/effective",
+      "source": "generated"
+    },
+    {
+      "path": ".cursor/skills",
+      "source": "generated"
+    },
+    {
+      "path": ".cursor/hooks.json",
       "source": "generated"
     },
     {
@@ -82,6 +92,14 @@
     {
       "path": "scripts/workstate/update.sh",
       "source": "lifecycle"
+    },
+    {
+      "path": "scripts/generate_agent_workflows.py",
+      "source": "local"
+    },
+    {
+      "path": "scripts/apply_cursor_skills_only_surface.py",
+      "source": "local"
     }
   ],
   "configs": [
@@ -106,8 +124,13 @@
       "action": "unchanged"
     },
     {
-      "path": ".grok/plugins/workstate-system",
+      "path": ".cursor",
       "action": "updated",
+      "kind": "cursor_native_surfaces"
+    },
+    {
+      "path": ".grok/plugins/workstate-system",
+      "action": "created",
       "kind": "grok_plugin"
     },
     {
@@ -123,6 +146,10 @@
       "action": "merged"
     },
     {
+      "path": ".cursor/mcp.json",
+      "action": "created"
+    },
+    {
       "path": ".codex/config.toml",
       "action": "applied",
       "kind": "codex_plugin_activation"
@@ -131,6 +158,11 @@
       "path": ".grok/plugins/workstate-system",
       "action": "already_present",
       "kind": "grok_plugin_activation"
+    },
+    {
+      "path": ".cursor",
+      "action": "applied",
+      "kind": "cursor_native_surfaces_activation"
     },
     {
       "path": ".claude/settings.json",
@@ -143,14 +175,16 @@
     },
     {
       "path": "core.hooksPath",
-      "action": "set"
+      "action": "set",
+      "scope": "worktree"
     },
     {
       "path": ".gitignore",
-      "action": "skipped_self_managed"
+      "action": "already_present"
     }
   ],
   "mcp_servers": [
+    "context7",
     "workstate-handoff-mcp",
     "workstate-orchestrator-mcp"
   ],
@@ -177,12 +211,12 @@
       "status": "ok"
     },
     {
+      "step": "config_cursor",
+      "status": "ok"
+    },
+    {
       "step": "finalize_manifest",
       "status": "ok"
     }
-  ],
-  "presync_projects": [
-    "/Users/daniel/Development/context-alt-text-monorepo/.workstate/remote/packages/mcp-workstate-handoff",
-    "/Users/daniel/Development/context-alt-text-monorepo/.workstate/remote/packages/mcp-workstate-orchestrator"
   ]
 }

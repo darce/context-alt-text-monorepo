@@ -647,3 +647,10 @@ LIFECYCLE_FORMATTER = $(MAKE) format-all
 # >>> WORKSTATE_BOOTSTRAP LIFECYCLE INCLUDE >>>
 -include Makefile.d/*.mk
 # <<< WORKSTATE_BOOTSTRAP LIFECYCLE INCLUDE <<<
+
+# Cursor discovers workflows from .cursor/skills; command markdown duplicates picker entries.
+.PHONY: apply-cursor-skills-only-surface apply-cursor-skills-only-surface-check
+apply-cursor-skills-only-surface:
+	@$(PYTHON) scripts/apply_cursor_skills_only_surface.py
+apply-cursor-skills-only-surface-check:
+	@$(PYTHON) scripts/apply_cursor_skills_only_surface.py --check

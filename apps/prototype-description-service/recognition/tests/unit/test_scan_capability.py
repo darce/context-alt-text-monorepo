@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -38,3 +39,17 @@ def test_is_embedding_runtime_available_rejects_stale_heartbeat() -> None:
     )
 
     assert is_embedding_runtime_available(capability) is False
+
+
+@pytest.mark.asyncio
+async def test_worker_probe_publish_retries_runtime_before_heartbeat() -> None:
+    from recognition.worker.scan_worker import ScanWorker
+
+    worker = object.__new__(ScanWorker)
+    worker._ensure_embedding_runtime = AsyncMock()  # type: ignore[attr-defined]
+    worker._heartbeat_embedding_runtime_capability = AsyncMock()  # type: ignore[attr-defined]
+
+    await worker._probe_and_publish_embedding_runtime_capability()
+
+    worker._ensure_embedding_runtime.assert_awaited_once()
+    worker._heartbeat_embedding_runtime_capability.assert_awaited_once()

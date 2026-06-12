@@ -27,8 +27,12 @@ docker compose -f docker-compose.demo.yml exec -T wordpress \
   wp media regenerate --yes
 ```
 
-Replace with the Slice 3 seed import command once `infra/oci/demo/seed/import.sh`
-lands.
+Replace with the Slice 3 seed import once media is licensed:
+
+```bash
+cd /opt/acx-backend/demo
+./seed/import.sh
+```
 
 ## Hard reset (reinstall WP + plugin)
 

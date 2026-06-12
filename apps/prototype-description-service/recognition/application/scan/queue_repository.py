@@ -186,3 +186,11 @@ class ScanQueueRepository(Protocol):
 
     async def get_job_tenant_id(self, *, job_id: uuid.UUID) -> uuid.UUID | None:
         """Return the tenant_id for a scan job, or None if not found."""
+
+    async def fail_stalled_running_jobs(
+        self,
+        *,
+        stale_after_seconds: int,
+        now: datetime,
+    ) -> int:
+        """Fail running jobs with incomplete work older than the stall threshold."""

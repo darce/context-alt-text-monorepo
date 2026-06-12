@@ -216,6 +216,25 @@ class ScanQueueService:
             return True
         return False
 
+    async def terminate_stalled_jobs(
+        self,
+        *,
+        stale_after_seconds: int,
+        now: datetime | None = None,
+    ) -> int:
+        """Transition stale running jobs to terminal ``failed(stalled)`` state.
+
+        A job is stalled when it has been running longer than
+        ``stale_after_seconds`` while items remain pending or processing.
+        """
+        if stale_after_seconds <= 0:
+            return 0
+        effective_now = now or datetime.now(tz=UTC)
+        return await self._repository.fail_stalled_running_jobs(
+            stale_after_seconds=stale_after_seconds,
+            now=effective_now,
+        )
+
     async def cancel_scan_job(self, *, job_id: uuid.UUID) -> int:
         """Cancel any pending items for a scan job.
 

@@ -33,6 +33,7 @@ from recognition.application.embedding.generator import (
 )
 from recognition.application.scan.capability import publish_embedding_runtime_capability
 from recognition.application.scan.queue_repository import ScanQueueItem
+from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.config import get_settings as get_recognition_settings
 from recognition.domain.job import JobStatus
 from recognition.infrastructure.embeddings import get_shared_insightface_adapter
@@ -159,6 +160,13 @@ class ScanWorker:
                         max_attempts=self._config.max_attempts,
                         now=now,
                     )
+                    queue = ScanQueueService(repo)
+                    terminated = await queue.terminate_stalled_jobs(
+                        stale_after_seconds=self._config.stale_after_seconds,
+                        now=now,
+                    )
+                    if terminated:
+                        logger.warning("[worker] Terminated %d stalled scan job(s)", terminated)
 
                     claimed = await repo.claim_pending_items_any(limit=self._config.claim_batch_size, now=now)
                     if not claimed:

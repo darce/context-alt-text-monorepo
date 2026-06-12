@@ -14,9 +14,10 @@
 
 DEPLOY_SCRIPT         := $(ROOT_MAKEFILE_DIR)/scripts/deploy/recognition-service.sh
 DEPLOY_COMPOSE_SCRIPT := $(ROOT_MAKEFILE_DIR)/scripts/deploy/sync-compose.sh
+DEPLOY_DEMO_SCRIPT    := $(ROOT_MAKEFILE_DIR)/scripts/deploy/sync-demo.sh
 
 .PHONY: deploy-help deploy-build deploy-build-remote \
-        deploy-dev deploy-staging deploy-prod \
+        deploy-dev deploy-staging deploy-prod deploy-demo \
         deploy-promote-staging deploy-promote-prod deploy-rollback-dev \
         deploy-verify deploy-verify-dev deploy-verify-staging deploy-verify-prod \
         deploy-status \
@@ -58,6 +59,9 @@ deploy-help:
 	@echo "    make deploy-compose-dev                    Sync compose to acx-dev VM and 'docker compose up -d'"
 	@echo "    make deploy-compose-staging                Sync compose to acx-staging VM and 'docker compose up -d'"
 	@echo "    make deploy-compose-prod CONFIRM=PROD      Sync compose to acx-prod VM and 'docker compose up -d'"
+	@echo ""
+	@echo "  Demo WordPress stack (compose + Caddy edge; recreates Caddy to join acx-demo-net):"
+	@echo "    make deploy-demo                           Sync demo stack + Caddy config to OCI VM"
 	@echo ""
 	@echo "  Optional overrides: OCI_HOST OCI_USER OCIR_REGISTRY OCIR_NAMESPACE IMAGE_NAME GIT_REF"
 	@echo "                      ACX_DEPLOY_PLATFORM ACX_REMOTE_BUILD_DIR ACX_ALLOW_DIRTY"
@@ -142,3 +146,6 @@ deploy-compose-staging:
 
 deploy-compose-prod:
 	@ENV=prod CONFIRM="$(CONFIRM)" "$(DEPLOY_COMPOSE_SCRIPT)"
+
+deploy-demo:
+	@"$(DEPLOY_DEMO_SCRIPT)"

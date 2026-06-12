@@ -1,0 +1,21 @@
+# Systemd unit for the ACX public WordPress demo stack.
+# Separate compose project + network from the recognition API envs.
+#
+# Install:
+#   sudo cp acx-demo.service /etc/systemd/system/acx-demo.service
+#   sudo systemctl daemon-reload && sudo systemctl enable acx-demo.service
+
+[Unit]
+Description=ACX Demo WordPress Stack
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=exec
+WorkingDirectory=/opt/acx-backend/demo
+ExecStart=/usr/bin/docker compose -f docker-compose.demo.yml up --remove-orphans
+ExecStop=/usr/bin/docker compose -f docker-compose.demo.yml down
+TimeoutStartSec=180
+
+[Install]
+WantedBy=multi-user.target

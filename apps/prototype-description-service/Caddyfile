@@ -13,3 +13,7 @@ staging.api.altcontext.com {
 dev.api.altcontext.com {
 	reverse_proxy dev-api:8000
 }
+
+demo.altcontext.com {
+	reverse_proxy demo-wp:80
+}

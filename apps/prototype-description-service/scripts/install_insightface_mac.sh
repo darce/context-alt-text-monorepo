@@ -13,8 +13,10 @@ else
   PYTHON_BIN="${PYTHON_BIN:-python}"
 fi
 
-# Extract insightface version from pyproject.toml (e.g., "insightface>=0.7.3,<1.0.0" -> "insightface>=0.7.3")
-INSIGHTFACE_SPEC="${INSIGHTFACE_SPEC:-$(grep -o '"insightface[^"]*"' "${PROJECT_ROOT}/pyproject.toml" | head -1 | tr -d '"' | sed 's/,<.*//')}"
+# Extract the full insightface spec from pyproject.toml, keeping the upper
+# bound (e.g. "insightface>=0.7.3,<1.0.0"): uv.lock and the deployed service
+# pin 0.7.x, so stripping it would install an unvetted 1.x build.
+INSIGHTFACE_SPEC="${INSIGHTFACE_SPEC:-$(grep -o '"insightface[^"]*"' "${PROJECT_ROOT}/pyproject.toml" | head -1 | tr -d '"')}"
 
 if [[ $(uname -s) != "Darwin" || $(uname -m) != "arm64" ]]; then
   echo "[install-insightface] Apple Silicon macOS not detected; skipping specialized build." >&2
@@ -44,12 +46,23 @@ EXTRA_CFLAGS="-isysroot ${SDKROOT} -I${SDKROOT}/usr/include -I${SDKROOT}/usr/inc
 EXTRA_CXXFLAGS="${EXTRA_CFLAGS} -stdlib=libc++"
 EXTRA_LDFLAGS="-isysroot ${SDKROOT} -L${SDKROOT}/usr/lib"
 
+# uv-managed venvs ship without pip; route through `uv pip` against the
+# project python in that case so the install lands in the same environment.
+if "${PYTHON_BIN}" -m pip --version >/dev/null 2>&1; then
+  INSTALL_CMD=("${PYTHON_BIN}" -m pip install --no-cache-dir "${INSIGHTFACE_SPEC}")
+elif command -v uv >/dev/null 2>&1; then
+  INSTALL_CMD=(uv pip install --python "${PYTHON_BIN}" --no-cache "${INSIGHTFACE_SPEC}")
+else
+  echo "Neither pip (in ${PYTHON_BIN}) nor uv is available; cannot install InsightFace." >&2
+  exit 1
+fi
+
 echo "[install-insightface] Installing ${INSIGHTFACE_SPEC} with SDK flags..." >&2
 env \
   SDKROOT="${SDKROOT}" \
   CFLAGS="${EXTRA_CFLAGS} ${CFLAGS:-}" \
   CXXFLAGS="${EXTRA_CXXFLAGS} ${CXXFLAGS:-}" \
   LDFLAGS="${EXTRA_LDFLAGS} ${LDFLAGS:-}" \
-  "${PYTHON_BIN}" -m pip install --no-cache-dir "${INSIGHTFACE_SPEC}"
+  "${INSTALL_CMD[@]}"
 
 echo "[install-insightface] InsightFace installation complete." >&2

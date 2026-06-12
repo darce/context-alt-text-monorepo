@@ -36,12 +36,28 @@ services:
     mem_limit: 2g
     environment:
       WORDPRESS_DB_HOST: mariadb
+      WORDPRESS_CONFIG_EXTRA: ${WORDPRESS_CONFIG_EXTRA}
     volumes:
       - ${ACX_DEMO_WPDATA_PATH}:/var/www/html
     networks:
       demo:
         aliases:
           - demo-wp
+
+  wpcli:
+    image: wordpress:cli-2.11-php8.3
+    profiles: ["tools"]
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      WORDPRESS_DB_HOST: mariadb
+    user: "33:33"
+    volumes:
+      - ${ACX_DEMO_WPDATA_PATH}:/var/www/html
+    networks:
+      - demo
 
 networks:
   demo:

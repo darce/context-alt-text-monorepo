@@ -15,5 +15,17 @@ dev.api.altcontext.com {
 }
 
 demo.altcontext.com {
+	@xmlrpc path /xmlrpc.php
+	respond @xmlrpc "Forbidden" 403
+
+	@login path /wp-login.php
+	rate_limit @login {
+		zone demo_login {
+			key {remote_host}
+			events 10
+			window 1m
+		}
+	}
+
 	reverse_proxy demo-wp:80
 }

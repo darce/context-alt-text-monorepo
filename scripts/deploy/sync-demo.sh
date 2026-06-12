@@ -3,9 +3,12 @@
 #
 # Order matters: bring up acx-demo first so acx-demo-net exists, then recreate
 # Caddy (network join requires container recreate — reload-only is insufficient).
+# When PLUGIN_ZIP is available (local dist/ or explicit path), runs bootstrap-wp.sh
+# after the stack is healthy.
 #
 # Usage:
 #   scripts/deploy/sync-demo.sh
+#   PLUGIN_ZIP=dist/alt-context-1.2.3.zip scripts/deploy/sync-demo.sh
 #   OCI_HOST=<host> OCI_USER=ubuntu scripts/deploy/sync-demo.sh
 
 set -euo pipefail
@@ -18,13 +21,19 @@ CADDYFILE_SRC="${CADDYFILE_SRC:-apps/prototype-description-service/Caddyfile}"
 CADDY_COMPOSE_SRC="${CADDY_COMPOSE_SRC:-apps/prototype-description-service/docker-compose.caddy.yml}"
 SYSTEMD_SRC="${SYSTEMD_SRC:-apps/prototype-description-service/systemd/acx-demo.service}"
 ENV_EXAMPLE_SRC="${ENV_EXAMPLE_SRC:-infra/oci/demo/.env.example}"
+BOOTSTRAP_SRC="${BOOTSTRAP_SRC:-infra/oci/demo/bootstrap-wp.sh}"
 
 REMOTE_DEMO_DIR="/opt/acx-backend/demo"
 REMOTE_BACKEND_DIR="/opt/acx-backend"
+REMOTE_PLUGIN_ZIP="/tmp/alt-context.zip"
 SSH="ssh ${OCI_USER}@${OCI_HOST}"
 SCP="scp"
 
-for src in "$DEMO_COMPOSE_SRC" "$CADDYFILE_SRC" "$CADDY_COMPOSE_SRC" "$SYSTEMD_SRC" "$ENV_EXAMPLE_SRC"; do
+if [[ -z "${PLUGIN_ZIP:-}" ]]; then
+  PLUGIN_ZIP="$(ls -t dist/alt-context-*.zip 2>/dev/null | head -1 || true)"
+fi
+
+for src in "$DEMO_COMPOSE_SRC" "$CADDYFILE_SRC" "$CADDY_COMPOSE_SRC" "$SYSTEMD_SRC" "$ENV_EXAMPLE_SRC" "$BOOTSTRAP_SRC"; do
   if [[ ! -f "$src" ]]; then
     echo "ERROR: source file not found: $src" >&2
     exit 2
@@ -36,9 +45,18 @@ echo "==> Ensure demo secrets exist at ${REMOTE_DEMO_DIR}/secrets/.env (from ${E
 
 $SSH "sudo mkdir -p '${REMOTE_DEMO_DIR}/secrets' '${REMOTE_BACKEND_DIR}/data/demo-wpdata' '${REMOTE_BACKEND_DIR}/data/demo-dbdata'"
 
-echo "==> Rsync demo compose + env example"
+echo "==> Rsync demo compose, bootstrap script, and env example"
 $SCP "$DEMO_COMPOSE_SRC" "${OCI_USER}@${OCI_HOST}:${REMOTE_DEMO_DIR}/docker-compose.demo.yml"
+$SCP "$BOOTSTRAP_SRC" "${OCI_USER}@${OCI_HOST}:${REMOTE_DEMO_DIR}/bootstrap-wp.sh"
 $SCP "$ENV_EXAMPLE_SRC" "${OCI_USER}@${OCI_HOST}:${REMOTE_DEMO_DIR}/secrets/.env.example"
+$SSH "chmod +x '${REMOTE_DEMO_DIR}/bootstrap-wp.sh'"
+
+if [[ -n "${PLUGIN_ZIP}" ]]; then
+  echo "==> Rsync plugin package: ${PLUGIN_ZIP} -> ${REMOTE_PLUGIN_ZIP}"
+  $SCP "$PLUGIN_ZIP" "${OCI_USER}@${OCI_HOST}:${REMOTE_PLUGIN_ZIP}"
+else
+  echo "WARN: no dist/alt-context-*.zip found locally — bootstrap will fail until a zip is shipped" >&2
+fi
 
 echo "==> Rsync Caddy edge config (repo-tracked source of truth)"
 $SCP "$CADDYFILE_SRC" "${OCI_USER}@${OCI_HOST}:${REMOTE_BACKEND_DIR}/Caddyfile.new"
@@ -65,6 +83,15 @@ docker compose -f docker-compose.demo.yml up -d
 docker compose -f docker-compose.demo.yml ps
 docker network ls | grep acx-demo-net
 EOF
+
+if [[ -n "${PLUGIN_ZIP}" ]]; then
+  echo "==> Run bootstrap-wp.sh (core install + alt-context plugin)"
+  $SSH bash -se <<EOF
+set -euo pipefail
+cd '${REMOTE_DEMO_DIR}'
+PLUGIN_ZIP='${REMOTE_PLUGIN_ZIP}' ./bootstrap-wp.sh
+EOF
+fi
 
 echo "==> Promote Caddy config and validate syntax"
 $SSH bash -se <<'EOF'

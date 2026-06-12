@@ -143,9 +143,9 @@ class ScanWorker:
         while True:
             claimed: list[ScanQueueItem] = []
             should_sleep = False
+            await self._probe_and_publish_embedding_runtime_capability()
             async with self._session_factory() as session:
                 await enable_rls_bypass(session)
-                await self._publish_embedding_runtime_capability(session)
                 repo = SqlAlchemyScanQueueRepository(session)
 
                 now = datetime.now(tz=UTC)
@@ -190,6 +190,11 @@ class ScanWorker:
     ) -> None:
         await self._ensure_embedding_runtime()
         await self._scan_handler.process_items(claimed=claimed)
+
+    async def _probe_and_publish_embedding_runtime_capability(self) -> None:
+        """Retry runtime initialization even while intake is rejecting new jobs."""
+        await self._ensure_embedding_runtime()
+        await self._heartbeat_embedding_runtime_capability()
 
     async def _ensure_embedding_runtime(self) -> None:
         """Initialize scan inference dependencies once per worker process."""

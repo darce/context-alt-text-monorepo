@@ -30,8 +30,8 @@ IN_ORCHESTRATOR_ROOT := $(if $(filter $(WORKTREE_ROOT_REAL),$(ORCHESTRATOR_ROOT)
 
 # --- MCP runtime ---
 UVX ?= uvx
-MCP_HANDOFF_PACKAGE ?= mcp-workstate-handoff==0.12.9
-MCP_ORCHESTRATOR_PACKAGE ?= mcp-workstate-orchestrator==0.6.6
+MCP_HANDOFF_PACKAGE ?= mcp-workstate-handoff==0.13.0
+MCP_ORCHESTRATOR_PACKAGE ?= mcp-workstate-orchestrator==0.7.0
 MCP_PYTHON = $(UVX) --from "$(MCP_ORCHESTRATOR_PACKAGE)" python3
 LANE_CONFIG_CMD = $(MCP_PYTHON) -m workstate_orchestrator_mcp.orchestration.lane_config
 MCP_PYTHONPATH := $(ORCHESTRATOR_ROOT)/packages/codex-subagent-bridge/src$(if $(PYTHONPATH),:$(PYTHONPATH),)

@@ -24,8 +24,8 @@ dev = [
 
 # Unpublished workstate packages resolve from pinned tags of the workstate monorepo.
 [tool.uv.sources]
-mcp-workstate-orchestrator = { git = "https://github.com/darce/workstate.git", tag = "mcp-workstate-orchestrator-v0.6.6", subdirectory = "packages/mcp-workstate-orchestrator" }
-mcp-workstate-handoff = { git = "https://github.com/darce/workstate.git", tag = "mcp-workstate-handoff-v0.12.9", subdirectory = "packages/mcp-workstate-handoff" }
+mcp-workstate-orchestrator = { git = "https://github.com/darce/workstate.git", tag = "mcp-workstate-orchestrator-v0.7.0", subdirectory = "packages/mcp-workstate-orchestrator" }
+mcp-workstate-handoff = { git = "https://github.com/darce/workstate.git", tag = "mcp-workstate-handoff-v0.13.0", subdirectory = "packages/mcp-workstate-handoff" }
 workstate-protocol = { git = "https://github.com/darce/workstate.git", tag = "workstate-protocol-v0.2.1", subdirectory = "packages/workstate-protocol" }
 
 [tool.setuptools]

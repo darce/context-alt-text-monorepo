@@ -2,7 +2,10 @@ import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 
 import type { SyncHealth, WorkbenchOverlay } from '../../api/recognition';
+import { useSyncHealth } from '../../hooks/useSyncHealth';
 import { useSyncStatus } from '../../hooks/useSyncStatus';
+import { isSyncOffline } from './degradedModeBannerLogic';
+import { buildWorkbenchOverlayHref } from './workbenchOverlayLinks';
 import { useSyncTrigger } from '../../hooks/useSyncTrigger';
 import { useRetentionStatus } from '../../hooks/useRetentionStatus';
 import type { PipelinePhase } from '../../hooks/jobStateMachineUtils';
@@ -58,9 +61,6 @@ interface IdleStatePresentation {
   actionLabel?: string;
 }
 
-const buildWorkbenchHref = (section: WorkbenchTab, overlay: Exclude<WorkbenchOverlay, null>): string =>
-  `#/workbench?tab=${encodeURIComponent(section)}&panel=${encodeURIComponent(overlay)}`;
-
 const buildIdleState = (
   syncHealth: SyncHealth,
   lastSyncedAt: string | null | undefined,
@@ -84,14 +84,14 @@ const buildIdleState = (
         toneClassName: 'acx-sync-status--warning',
         label: __('Curation replay needs attention.', 'alt-context'),
         badge: __('Failures', 'alt-context'),
-        badgeHref: buildWorkbenchHref(activeSection, 'dead-letter'),
+        badgeHref: buildWorkbenchOverlayHref(activeSection, 'dead-letter'),
       };
     case 'conflicts':
       return {
         toneClassName: 'acx-sync-status--warning',
         label: __('Conflict resolution is required before replay can catch up.', 'alt-context'),
         badge: __('Conflicts', 'alt-context'),
-        badgeHref: buildWorkbenchHref(activeSection, 'conflicts'),
+        badgeHref: buildWorkbenchOverlayHref(activeSection, 'conflicts'),
       };
     case 'queued':
       return {
@@ -124,6 +124,7 @@ export const SyncStatusIndicator = ({
   onRetryProjection,
 }: SyncStatusIndicatorProps): React.JSX.Element | null => {
   const { data, isError, isLoading } = useSyncStatus();
+  const { data: syncHealthEnvelope } = useSyncHealth();
   const retentionStatus = useRetentionStatus();
   const syncTrigger = useSyncTrigger(data?.is_stale ?? false);
 
@@ -149,8 +150,8 @@ export const SyncStatusIndicator = ({
   const topologyApplied = normalizeCount(data.topology_commands?.applied);
   const topologyFailed = normalizeCount(data.topology_commands?.failed);
   const topologyConflict = normalizeCount(data.topology_commands?.conflict);
-  const conflictHref = buildWorkbenchHref(activeSection, 'conflicts');
-  const deadLetterHref = buildWorkbenchHref(activeSection, 'dead-letter');
+  const conflictHref = buildWorkbenchOverlayHref(activeSection, 'conflicts');
+  const deadLetterHref = buildWorkbenchOverlayHref(activeSection, 'dead-letter');
   const retentionMode = retentionStatus.data?.available ? retentionStatus.data.policy?.retention_mode : null;
   const syncMode = data.sync_mode ? formatSyncMode(data.sync_mode) : null;
   const retentionDetails =
@@ -329,7 +330,8 @@ export const SyncStatusIndicator = ({
     );
   }
 
-  const idleState = buildIdleState(data.sync_health, data.last_synced_at, activeSection);
+  const effectiveSyncHealth = syncHealthEnvelope && isSyncOffline(syncHealthEnvelope) ? 'offline' : data.sync_health;
+  const idleState = buildIdleState(effectiveSyncHealth, data.last_synced_at, activeSection);
 
   return (
     <div className={`acx-sync-status${idleState.toneClassName ? ` ${idleState.toneClassName}` : ''}`}>
@@ -337,13 +339,13 @@ export const SyncStatusIndicator = ({
       {idleState.badgeHref ? (
         <a
           href={idleState.badgeHref}
-          className={`acx-sync-status__badge acx-sync-status__link${data.sync_health === 'healthy' ? ' acx-sync-status__badge--ok' : ''}`}
+          className={`acx-sync-status__badge acx-sync-status__link${effectiveSyncHealth === 'healthy' ? ' acx-sync-status__badge--ok' : ''}`}
         >
           {idleState.badge}
         </a>
       ) : (
         <span
-          className={`acx-sync-status__badge${data.sync_health === 'healthy' ? ' acx-sync-status__badge--ok' : ''}`}
+          className={`acx-sync-status__badge${effectiveSyncHealth === 'healthy' ? ' acx-sync-status__badge--ok' : ''}`}
         >
           {idleState.badge}
         </span>

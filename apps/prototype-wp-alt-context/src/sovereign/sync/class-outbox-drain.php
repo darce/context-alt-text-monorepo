@@ -10,8 +10,11 @@ require_once __DIR__ . '/class-cross-plane-sequencer.php';
 require_once __DIR__ . '/class-outbox-dispatcher.php';
 require_once __DIR__ . '/class-outbox-query-repository.php';
 require_once __DIR__ . '/class-outbox-maintenance-service.php';
+require_once __DIR__ . '/class-outbox-status.php';
+require_once __DIR__ . '/../../api/class-tenant-identity.php';
 require_once __DIR__ . '/class-topology-command-repository.php';
 
+use AltContext\Api\TenantIdentity;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
 use Throwable;
 
@@ -30,10 +33,12 @@ use function time;
 use function trim;
 use function wp_clear_scheduled_hook;
 use function wp_next_scheduled;
+use function wp_schedule_event;
 use function wp_schedule_single_event;
 
 class OutboxDrain {
 	private const DRAIN_HOOK = 'acx_sync_drain_curation_outbox';
+	private const PURGE_HOOK = 'acx_sync_purge_terminal_rows';
 	private const ACTION_SCHEDULER_GROUP = 'acx-sync';
 	private const DEFAULT_BATCH_SIZE = 25;
 	private const DEFAULT_MAX_ATTEMPTS = 5;
@@ -79,6 +84,12 @@ class OutboxDrain {
 
 	public function register(): void {
 		add_action( self::DRAIN_HOOK, array( $this, 'drain' ) );
+		add_action( self::PURGE_HOOK, array( $this, 'purge_terminal_rows' ) );
+
+		if ( false === wp_next_scheduled( self::PURGE_HOOK, array() ) ) {
+			$hour_seconds = defined( 'HOUR_IN_SECONDS' ) ? (int) HOUR_IN_SECONDS : 3600;
+			wp_schedule_event( time() + $hour_seconds, 'daily', self::PURGE_HOOK, array() );
+		}
 
 		if ( $this->query_repository->has_pending_operations() ) {
 			self::maybe_schedule_drain();
@@ -117,6 +128,10 @@ class OutboxDrain {
 		}
 	}
 
+	public static function clear_scheduled_purge(): void {
+		wp_clear_scheduled_hook( self::PURGE_HOOK, array() );
+	}
+
 	public function drain(): void {
 		$operations = $this->sequencer->filter_ready_outbox_operations(
 			$this->query_repository->load_pending_operations( $this->batch_size )
@@ -129,7 +144,9 @@ class OutboxDrain {
 		}
 
 		$processed_tenants = $this->process_operation_batch( $operations );
-		$this->refresh_curation_metrics_for_tenants( array_keys( $processed_tenants ) );
+		$tenant_ids = array_keys( $processed_tenants );
+		$this->refresh_curation_metrics_for_tenants( $tenant_ids );
+		$this->purge_terminal_rows_for_tenants( $tenant_ids );
 
 		if ( count( $operations ) >= $this->batch_size && $this->query_repository->has_pending_operations() ) {
 			self::maybe_schedule_drain();
@@ -185,6 +202,21 @@ class OutboxDrain {
 		return $this->maintenance_service->re_enqueue_with_current_base( $outbox_id, $backend_version, $tenant_id, $merged_value );
 	}
 
+	public function purge_terminal_rows(): void {
+		$tenant_ids = $this->maintenance_service->list_terminal_purge_tenant_ids();
+		if ( empty( $tenant_ids ) ) {
+			$tenant = TenantIdentity::resolve();
+			$tenant_id = trim( (string) ( $tenant['value'] ?? '' ) );
+			if ( '' === $tenant_id ) {
+				return;
+			}
+
+			$tenant_ids = array( $tenant_id );
+		}
+
+		$this->purge_terminal_rows_for_tenants( $tenant_ids );
+	}
+
 	/**
 	 * @param array<int,array<string,mixed>> $operations
 	 * @return array<string,true>
@@ -222,6 +254,27 @@ class OutboxDrain {
 	}
 
 	/**
+	 * @param array<int,string> $tenant_ids
+	 */
+	private function purge_terminal_rows_for_tenants( array $tenant_ids ): void {
+		foreach ( $tenant_ids as $tenant_id ) {
+			$normalized_tenant_id = trim( $tenant_id );
+			if ( '' === $normalized_tenant_id ) {
+				continue;
+			}
+
+			try {
+				$purged = $this->maintenance_service->purge_terminal_rows( $normalized_tenant_id );
+				if ( false === $purged ) {
+					do_action( 'acx_sync_purge_terminal_rows_failed', $normalized_tenant_id );
+				}
+			} catch ( Throwable $exception ) {
+				do_action( 'acx_sync_purge_terminal_rows_failed', $normalized_tenant_id, $exception );
+			}
+		}
+	}
+
+	/**
 	 * @param array<string,mixed> $operation
 	 * @param array<string,mixed> $result
 	 */
@@ -241,11 +294,11 @@ class OutboxDrain {
 		$attempted_at = current_time( 'mysql' );
 		$status = trim( (string) ( $result['status'] ?? 'failed' ) );
 
-		if ( 'acknowledged' === $status ) {
+		if ( OutboxStatus::ACKNOWLEDGED === $status ) {
 			$wpdb->update(
 				$this->table_name,
 				array(
-					'status' => 'acknowledged',
+					'status' => OutboxStatus::ACKNOWLEDGED,
 					'attempts' => $attempts,
 					'last_error_code' => null,
 					'last_error_message' => null,
@@ -260,13 +313,13 @@ class OutboxDrain {
 			return;
 		}
 
-		if ( 'conflict' === $status ) {
+		if ( OutboxStatus::CONFLICT === $status ) {
 			$this->conflict_repository->record_conflict( $operation, $result );
 
 			$wpdb->update(
 				$this->table_name,
 				array(
-					'status' => 'conflict',
+					'status' => OutboxStatus::CONFLICT,
 					'attempts' => $attempts,
 					'last_error_code' => $this->normalize_text( $result['conflict_code'] ?? '', 'version_conflict' ),
 					'last_error_message' => $this->normalize_text( $result['error_message'] ?? '', 'Remote curation replay conflict.' ),
@@ -281,7 +334,7 @@ class OutboxDrain {
 
 		$retryable = (bool) ( $result['retryable'] ?? true );
 		$max_attempts = $this->resolve_max_attempts();
-		$next_status = ( $retryable && $attempts < $max_attempts ) ? 'pending' : 'failed';
+		$next_status = ( $retryable && $attempts < $max_attempts ) ? OutboxStatus::PENDING : OutboxStatus::FAILED;
 
 		$wpdb->update(
 			$this->table_name,

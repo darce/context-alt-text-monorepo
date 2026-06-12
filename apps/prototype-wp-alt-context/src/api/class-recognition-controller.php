@@ -20,6 +20,7 @@ require_once __DIR__ . '/class-conflict-controller.php';
 require_once __DIR__ . '/class-media-identities-controller.php';
 require_once __DIR__ . '/class-retention-controller.php';
 require_once __DIR__ . '/class-sync-status-controller.php';
+require_once __DIR__ . '/class-sync-health-controller.php';
 require_once __DIR__ . '/class-suggestions-controller.php';
 require_once __DIR__ . '/class-blobs-controller.php';
 require_once __DIR__ . '/../sovereign/class-cluster-facade.php';
@@ -46,6 +47,7 @@ class RecognitionController {
 	private ?MediaIdentitiesController $mediaIdentitiesController = null;
 	private ?RetentionController $retentionController = null;
 	private ?SyncStatusController $syncStatusController = null;
+	private ?SyncHealthController $syncHealthController = null;
 	private ?SuggestionsController $suggestionsController = null;
 	private ?BlobsController $blobsController = null;
 	private ?ClusterFacade $clusterFacade = null;
@@ -101,6 +103,9 @@ class RecognitionController {
 		);
 		$this->register_routes_for(
 			static fn ( self $controller ): RecognitionRouteControllerInterface => $controller->getSyncStatusController()
+		);
+		$this->register_routes_for(
+			static fn ( self $controller ): RecognitionRouteControllerInterface => $controller->getSyncHealthController()
 		);
 		$this->register_routes_for(
 			static fn ( self $controller ): RecognitionRouteControllerInterface => $controller->getSuggestionsController()
@@ -283,6 +288,14 @@ class RecognitionController {
 	private function getSyncStatusController(): SyncStatusController {
 		$this->ensureProjectionControllers();
 		return $this->syncStatusController;
+	}
+
+	private function getSyncHealthController(): SyncHealthController {
+		if ( null === $this->syncHealthController ) {
+			$this->syncHealthController = new SyncHealthController();
+		}
+
+		return $this->syncHealthController;
 	}
 
 	private function getSuggestionsController(): SuggestionsController {

@@ -8,6 +8,7 @@ import { RosterPage } from './pages/RosterPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { ToastProvider } from './context/ToastContext';
+import { DegradedModeBanner } from './pages/workbench/DegradedModeBanner';
 import { extractRouteFromHash, ensureHashInitialized, type RoutePath, DEFAULT_ROUTE } from './utils/routeHelpers';
 
 const queryClient = new QueryClient({
@@ -28,6 +29,7 @@ export const App = (): React.JSX.Element => {
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
         <HashRouter>
+          <DegradedModeBanner />
           <Routes>
             <Route
               path="/dashboard"

@@ -18,12 +18,15 @@ recognition API data.
 
 ## Soft reset (content only)
 
-From `/opt/acx-backend/demo`:
+From `/opt/acx-backend/demo`. The `wordpress` container has no wp-cli — both
+steps go through the `wpcli` tools service, and the id list must resolve
+*inside* the container (a host-side `$(wp ...)` substitution fails — no wp on
+the host):
 
 ```bash
-docker compose -f docker-compose.demo.yml exec -T wordpress \
-  wp post delete $(wp post list --post_type=post --format=ids) --force
-docker compose -f docker-compose.demo.yml exec -T wordpress \
+docker compose -f docker-compose.demo.yml run --rm --no-deps wpcli sh -c \
+  'ids=$(wp post list --post_type=post --format=ids); [ -z "$ids" ] || wp post delete $ids --force'
+docker compose -f docker-compose.demo.yml run --rm --no-deps wpcli \
   wp media regenerate --yes
 ```
 

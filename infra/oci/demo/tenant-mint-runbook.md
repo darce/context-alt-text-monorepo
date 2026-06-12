@@ -11,14 +11,21 @@ do not rely on URL-only minting that derives the UUID from `site_url`.
 
 ## 1. Choose an explicit tenant UUID
 
-Generate once and reuse everywhere (plugin constant, DB row, key binding):
+Generate once (`uuidgen` or any valid hex UUID) and reuse everywhere (plugin
+constant, DB row, key binding). Canonical demo value:
 
 ```text
-00000000-0000-4000-8000-demo00000001
+00000000-0000-4000-8000-000000000001
 ```
 
-Record it in `secrets/.env` as `ACX_RECOGNITION_TENANT_ID` and embed the same value
-inside `WORDPRESS_CONFIG_EXTRA`.
+Embed it in the `define('ACX_RECOGNITION_TENANT_ID', ...)` entry inside
+`WORDPRESS_CONFIG_EXTRA` in `secrets/.env` — the constants are the operative
+plugin config (see `.env.example`).
+
+> `--env` quirk: `manage_api_keys.py` only accepts `prod`/`dev`/`local` —
+> there is no `staging` choice. Use `--env prod` even when exec'ing inside the
+> staging stack; the env flag gates DSN validation, not the target stack
+> (the DSN comes from the container's own environment).
 
 ## 2. Create the tenant row (staging first)
 
@@ -27,8 +34,8 @@ On the VM, against the **staging** API stack:
 ```bash
 cd /opt/acx-backend/staging
 docker compose -f docker-compose.env.yml exec -T api \
-  python -m scripts.manage_api_keys --env staging tenant create \
-  --tenant 00000000-0000-4000-8000-demo00000001 \
+  python -m scripts.manage_api_keys --env prod tenant create \
+  --tenant 00000000-0000-4000-8000-000000000001 \
   --site-url https://demo.altcontext.com
 ```
 
@@ -38,7 +45,7 @@ Repeat against prod only after the staging walkthrough passes:
 cd /opt/acx-backend/prod
 docker compose -f docker-compose.env.yml exec -T api \
   python -m scripts.manage_api_keys --env prod tenant create \
-  --tenant 00000000-0000-4000-8000-demo00000001 \
+  --tenant 00000000-0000-4000-8000-000000000001 \
   --site-url https://demo.altcontext.com
 ```
 
@@ -47,12 +54,12 @@ docker compose -f docker-compose.env.yml exec -T api \
 ```bash
 cd /opt/acx-backend/staging   # or prod after launch cutover
 docker compose -f docker-compose.env.yml exec -T api \
-  python -m scripts.manage_api_keys --env staging create \
-  --tenant 00000000-0000-4000-8000-demo00000001
+  python -m scripts.manage_api_keys --env prod create \
+  --tenant 00000000-0000-4000-8000-000000000001
 ```
 
-Copy the emitted raw key into `ACX_RECOGNITION_API_KEY` / `WORDPRESS_CONFIG_EXTRA` in
-demo secrets only — never commit it.
+Copy the emitted raw key into the `define('ACX_RECOGNITION_API_KEY', ...)` entry
+of `WORDPRESS_CONFIG_EXTRA` in demo secrets only — never commit it.
 
 ## 4. CORS allowlist (staging first)
 
@@ -75,10 +82,13 @@ After bootstrap:
 
 ## Launch cutover
 
-When staging walkthrough is green, update demo secrets to:
+When staging walkthrough is green, edit the `define()` values **inside
+`WORDPRESS_CONFIG_EXTRA`** in demo `secrets/.env` (the constants are the only
+operative config — there are no standalone ACX_* env vars):
 
-- `ACX_RECOGNITION_URL=https://api.altcontext.com`
-- prod-minted API key + the same explicit tenant UUID
+- `define('ACX_RECOGNITION_URL','https://api.altcontext.com')`
+- prod-minted key in `define('ACX_RECOGNITION_API_KEY', ...)`, same explicit tenant UUID
 
-Re-run `bootstrap-wp.sh` only if constants changed materially; otherwise update
-`secrets/.env` and `docker compose -f docker-compose.demo.yml up -d wordpress`.
+Then recreate the container so the new constants load:
+`docker compose -f docker-compose.demo.yml up -d wordpress`. Re-run
+`bootstrap-wp.sh` only if constants changed materially.

@@ -19,7 +19,7 @@ Deterministic seed images for the public demo walkthrough. Every face file in
 ```text
 infra/oci/demo/seed/
   README.md          this file
-  import.sh          wp-cli import (run on VM or via bootstrap)
+  import.sh          wp-cli import (synced to the VM by scripts/deploy/sync-demo.sh)
   media/             JPEG/PNG inputs (not committed until licensed)
 ```
 
@@ -28,7 +28,9 @@ The walkthrough runbook names expected roster labels for E2E assertions.
 
 ## Import
 
-On the VM after bootstrap:
+`make deploy-demo` (scripts/deploy/sync-demo.sh) ships `seed/import.sh` and any
+licensed `seed/media/` files to `/opt/acx-backend/demo/seed/`. On the VM after
+bootstrap:
 
 ```bash
 cd /opt/acx-backend/demo

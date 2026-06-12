@@ -18,14 +18,10 @@ demo.altcontext.com {
 	@xmlrpc path /xmlrpc.php
 	respond @xmlrpc "Forbidden" 403
 
-	@login path /wp-login.php
-	rate_limit @login {
-		zone demo_login {
-			key {remote_host}
-			events 10
-			window 1m
-		}
-	}
+	# No rate_limit directive here: stock caddy:2-alpine does not bundle the
+	# third-party caddy-ratelimit module, and an unrecognized directive fails
+	# `caddy validate` for every vhost. Login rate-limiting requires a custom
+	# xcaddy build — deferred (E15-28 hardening note).
 
 	reverse_proxy demo-wp:80
 }

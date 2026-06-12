@@ -159,6 +159,23 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
             .values(status=JobStatus.COMPLETED, completed_at=completed_at)
         )
 
+    async def complete_job_with_errors(
+        self,
+        *,
+        job_id: uuid.UUID,
+        completed_at: datetime,
+        error_message: str,
+    ) -> None:
+        await self._session.execute(
+            update(IdentityScanJob)
+            .where(IdentityScanJob.id == job_id)
+            .values(
+                status=JobStatus.COMPLETED_WITH_ERRORS,
+                completed_at=completed_at,
+                error_message=error_message,
+            )
+        )
+
     async def fail_job(self, *, job_id: uuid.UUID, completed_at: datetime, error_message: str) -> None:
         await self._session.execute(
             update(IdentityScanJob)

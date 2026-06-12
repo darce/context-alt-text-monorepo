@@ -9,13 +9,14 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from recognition.application.scan.progress import build_scan_progress_snapshot
+from recognition.application.scan.progress import build_scan_progress_envelope, build_scan_progress_snapshot
 from recognition.application.scan.queue_repository import ScanQueueRepository
 from recognition.domain.job import Job, JobPhase, JobStatus, JobType
 from recognition.interface_adapters.http.schemas.responses import (
     ClusteringJobStatusResponse,
     JobProgressResponse,
     JobStatusResponse,
+    ScanProgressEnvelopeResponse,
 )
 
 
@@ -30,12 +31,29 @@ async def job_to_response(job: Job, *, scan_repo: ScanQueueRepository | None = N
         JobStatusResponse suitable for API serialization.
     """
     progress = await build_job_progress_response(job=job, scan_repo=scan_repo)
+    progress_envelope = None
+    if job.type is JobType.ANALYZE and scan_repo is not None:
+        try:
+            envelope = await build_scan_progress_envelope(job=job, scan_repo=scan_repo)
+            progress_envelope = ScanProgressEnvelopeResponse(
+                job_id=envelope.job_id,
+                status=envelope.status,
+                phase=envelope.phase,
+                items_total=envelope.items_total,
+                items_done=envelope.items_done,
+                items_failed=envelope.items_failed,
+                failure_reason=envelope.failure_reason,
+                updated_at=envelope.updated_at,
+            )
+        except ValueError:
+            progress_envelope = None
     started_at = job.started_at or datetime.now(tz=UTC)
     return JobStatusResponse(
         id=job.id,
         type=job.type.value,
         status=job.status.value,
         progress=progress,
+        progress_envelope=progress_envelope,
         started_at=started_at,
         finished_at=job.finished_at,
         message=job.message,

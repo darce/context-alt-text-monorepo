@@ -65,8 +65,9 @@ async def test_refresh_job_progress_fails_when_any_item_failed(db_session, tenan
     assert completed is False  # Job failed, not successfully completed
 
     job = (await db_session.execute(select(IdentityScanJob).where(IdentityScanJob.id == job_id))).scalar_one()
-    assert job.status == "failed"
+    assert job.status == "completed_with_errors"
     assert job.completed_at is not None
+    assert job.error_message == "one or more items failed"
 
 
 @pytest.mark.asyncio

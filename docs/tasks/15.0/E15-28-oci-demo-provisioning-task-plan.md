@@ -99,7 +99,9 @@ Colocating the demo WP with inference on one VM is a deliberate trade. `release-
 
 - Model `docker-compose.demo.yml` on `docker-compose.env.yml`'s parameterization (own project name, own network `acx-demo-net`, own data dirs `demo-wpdata`/`demo-dbdata` under `/opt/acx-backend/data/`). Services: `wordpress` (official image, pick the current `php8.x-apache` tag — it is multi-arch and runs on ARM64/A1) + `mariadb` (11.x, also multi-arch). Verify image availability for `linux/arm64` with `docker manifest inspect <image> | grep arm64` before committing to tags.
 - Bulkhead limits: non-swarm compose supports `cpus:` and `mem_limit:` per service — cap WP+MariaDB well below the 4-core/24GB envelope (suggested start: WP 1.0 cpu / 2g, MariaDB 0.5 cpu / 1g; record actuals in the slice decision). Verify post-deploy with `docker stats --no-stream`.
-- Caddy: the live Caddyfile already routes three subdomains. Add the `demo.altcontext.com` vhost in the REPO-TRACKED Caddyfile, then `make deploy-demo` rsyncs + `caddy reload` (this plan's drift rule: VM-local Caddyfile edits forbidden). Validate before reload: `caddy validate --config <file>`. Smoke all FOUR vhosts after reload — breaking prod TLS routing is the catastrophic failure of this slice; have the rollback (previous Caddyfile copy) staged before reloading.
+- Caddy: the live Caddyfile (`apps/prototype-description-service/Caddyfile`, the repo-tracked source of truth — currently 3 vhosts) already routes three subdomains. Add the `demo.altcontext.com` vhost there with `reverse_proxy demo-wp:80` (this plan's drift rule: VM-local Caddyfile edits forbidden).
+- Caddy networking (catastrophic if skipped): Caddy reaches each upstream only because `docker-compose.caddy.yml` joins that env's external network; today it joins `acx-prod-net`/`acx-staging-net`/`acx-dev-net` ONLY. You MUST (a) add `acx-demo-net` (`external: true`) to `docker-compose.caddy.yml`'s `services.caddy.networks` and its top-level `networks:` block, and (b) give the demo WP service the network alias `demo-wp` on `acx-demo-net`. A config-only `caddy reload` CANNOT attach a new docker network to the running Caddy container — after adding `acx-demo-net` you must RECREATE Caddy (`cd /opt/acx-backend && docker compose -f docker-compose.caddy.yml up -d`, which recreates on the network change), not reload-only. Skip this and the demo vhost returns 502 (upstream `demo-wp` unresolvable). Plain vhost edits against an already-joined network may use `caddy reload`.
+- No existing Caddyfile deploy automation: `mk/deploy.mk` and `scripts/deploy/` carry no Caddyfile rsync/reload (the VM Caddyfile is hand-maintained), so `make deploy-demo` must build the rsync + validate + Caddy-recreate path from scratch, modeled on the env-compose deploy. Validate before applying: `caddy validate --config <file>`. Smoke all FOUR vhosts after the recreate — breaking prod TLS routing is the catastrophic failure of this slice; stage the rollback (previous Caddyfile + previous `docker-compose.caddy.yml`) before touching Caddy.
 - DNS: `demo` A record to the OCI IP — operator action (external dependency); request it early, note it in the run log.
 - systemd unit `acx-demo.service`: copy an existing env unit (`systemctl cat acx-staging.service` on the VM) and substitute paths.
 
@@ -107,8 +109,8 @@ Colocating the demo WP with inference on one VM is a deliberate trade. `release-
 
 - Non-interactive install: official image + a one-shot wp-cli container (`wordpress:cli` image, same volumes/network): `wp core install --url=https://demo.altcontext.com --admin_user=... --admin_password="$WP_ADMIN_PASSWORD" ...` with credentials sourced from `demo/secrets/.env` (chmod 600, never committed — match the existing per-env secrets layout).
 - Plugin constants: the official WP image supports the `WORDPRESS_CONFIG_EXTRA` env var (arbitrary PHP appended to `wp-config.php`) — define `ACX_RECOGNITION_URL`, `ACX_RECOGNITION_SOURCE` ('service'), `ACX_RECOGNITION_API_KEY` there from the secrets env. Constant provenance renders read-only in the settings UI by design (E15-25's `isReadOnly()` path) — that is the desired demo posture.
-- Plugin packaging: check for an existing build/zip path first (`grep -rn "zip\|dist\|package" apps/prototype-wp-alt-context/package.json composer.json Makefile`); only add a script if none exists. Install into the WP volume at `wp-content/plugins/alt-context` and activate via wp-cli.
-- Demo tenant + key: mint explicitly via `manage_api_keys` against the prod env DB with `site_url=https://demo.altcontext.com` — the demo must NEVER depend on URL-derived/JIT identity (coordinate with E15-24; if E15-24 has landed, set `ACX_RECOGNITION_TENANT_ID` as a constant too and pair via the settings test).
+- Plugin packaging: an existing path already ships — `apps/prototype-wp-alt-context/package.json` `release:package` → `scripts/release/package-plugin.sh`. Reuse/extend it (do NOT add a new build script). Install the produced artifact into the WP volume at `wp-content/plugins/alt-context` and activate via wp-cli.
+- Demo tenant + key: the demo must NEVER depend on URL-derived/JIT identity. Note the trap: the documented reset workflow (`scripts/deploy/_derive_tenant_id.py`, README §561-568) DERIVES the tenant UUID from `site_url` by default, so "mint with `site_url=…`" alone yields a URL-derived UUID and silently violates this constraint. Instead, create the tenant with an EXPLICIT non-derived UUID — `tenant create --tenant <explicit-uuid> --site-url https://demo.altcontext.com`, then `manage_api_keys --env prod create --tenant <explicit-uuid>` (the `--env prod` quirk applies). Set that same UUID as the `ACX_RECOGNITION_TENANT_ID` constant via `WORDPRESS_CONFIG_EXTRA`. The plugin already supports this constant — E15-24 has landed (`apps/prototype-wp-alt-context/src/api/class-tenant-identity.php` `resolve()`/`get_constant_value('ACX_RECOGNITION_TENANT_ID')`). Pairing proof: `TenantIdentity::is_auto_derived_identity()` MUST return false for the demo tenant and the settings pairing test MUST pass.
 - Bring-up order (staged rollout): first configure against `staging.api.altcontext.com` with a staging key; only after the full walkthrough passes re-point constants to `api.altcontext.com` with the prod demo key.
 - Hardening checklist is normative, not optional: generated strong admin creds in secrets env; xmlrpc disabled (block `/xmlrpc.php` at the Caddy vhost — simpler and stronger than a WP plugin); login rate limiting at the Caddy vhost; WP auto-updates on (`WP_AUTO_UPDATE_CORE` constant via `WORDPRESS_CONFIG_EXTRA`); nightly content-reset documented as optional runbook step.
 - CORS: add `https://demo.altcontext.com` to the verified allowlist env var in the target env's secrets `.env`; restart that env's stack per README workflow (staging first).
@@ -131,10 +133,11 @@ Colocating the demo WP with inference on one VM is a deliberate trade. `release-
 | Surface | File | Change |
 | --- | --- | --- |
 | Compose | `apps/prototype-description-service/docker-compose.demo.yml` (new) or `infra/oci/demo/` | WP+MariaDB stack, limits |
-| Caddy | repo-tracked Caddyfile (source of truth); `make deploy-demo` rsyncs it to `/opt/acx-backend/Caddyfile` + `caddy reload` | demo vhost; VM-local Caddyfile edits forbidden (drift guard) |
-| Make | root `Makefile` | `deploy-demo` target |
+| Caddy (vhost) | `apps/prototype-description-service/Caddyfile` (repo-tracked source of truth) | add `demo.altcontext.com` vhost → `reverse_proxy demo-wp:80`; VM-local edits forbidden (drift guard) |
+| Caddy (network) | `apps/prototype-description-service/docker-compose.caddy.yml` | add `acx-demo-net` (external) to caddy networks; deploy recreates Caddy (not reload-only) so it joins the new net |
+| Make | `mk/deploy.mk` (included by root `Makefile`; alongside `deploy-dev/staging/prod`) | `deploy-demo` target: rsync Caddyfile+caddy compose, validate, recreate Caddy |
 | Bootstrap | `infra/oci/demo/bootstrap-wp.sh` (new) | wp-cli install + plugin + constants |
-| Packaging | plugin build script | zip/dist artifact for container install |
+| Packaging | `scripts/release/package-plugin.sh` (existing; `npm run release:package`) | reuse/extend for container-install artifact (no new script) |
 | Seed | `infra/oci/demo/seed/` | media bundle + import script |
 | Docs | epic Phase 3 + `infra/oci/README.md` | revised topology + runbook |
 
@@ -151,8 +154,8 @@ Colocating the demo WP with inference on one VM is a deliberate trade. `release-
 
 **Goal**: `https://demo.altcontext.com` serves a stock WP install behind Caddy with bulkhead limits.
 
-Changes: compose + Caddy vhost + DNS + systemd + make target + limits.
-Proof: curl matrix green; `docker stats` shows limits; API latency unchanged under demo load (basic ab/hey check).
+Changes: compose + Caddy vhost + Caddy `acx-demo-net` join (compose recreate) + DNS + systemd + make target + limits.
+Proof: curl matrix green (all four vhosts, incl. demo via `demo-wp` upstream); `docker stats` shows limits; API latency unchanged under demo load (basic ab/hey check).
 
 ### Slice 2: WP bootstrap + tenant provisioning + WP hardening
 

@@ -375,6 +375,26 @@ docker exec acx-staging-postgres-1 pg_isready -U acx_staging
 docker exec acx-dev-postgres-1 pg_isready -U acx_dev
 ```
 
+### Deploying the demo stack
+
+```bash
+# From repo root — ships compose, Caddy edge, plugin zip (when dist/ exists), bootstrap:
+make deploy-demo
+
+# Pin the plugin artifact explicitly:
+PLUGIN_ZIP=dist/alt-context-<version>.zip make deploy-demo
+```
+
+Operator prerequisites before first deploy:
+
+1. Copy `infra/oci/demo/.env.example` → `/opt/acx-backend/demo/secrets/.env` (chmod 600)
+2. Populate DB creds, `WP_ADMIN_*`, `WORDPRESS_CONFIG_EXTRA`, and ACX constants
+3. Mint tenant + key per `infra/oci/demo/tenant-mint-runbook.md` (explicit UUID)
+4. Append `https://demo.altcontext.com` to `RECOGNITION_ALLOWED_ORIGINS` (staging first)
+
+Bootstrap sequence is implemented by `infra/oci/demo/bootstrap-wp.sh` (wp core install +
+plugin activate). Optional cohort reset: `infra/oci/demo/content-reset-runbook.md`.
+
 ### Deploying Updates
 
 **Recommended:** use the wrapper at `scripts/deploy/recognition-service.sh`

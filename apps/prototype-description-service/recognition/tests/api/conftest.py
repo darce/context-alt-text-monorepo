@@ -190,6 +190,13 @@ class FakeSessionResult:
     def scalar_one_or_none(self):  # noqa: ANN001
         return self._scalar_one_or_none_value
 
+    def one_or_none(self):  # noqa: ANN001
+        if self._all_rows:
+            return self._all_rows[0]
+        if self._scalar_one_or_none_value is not None:
+            return (self._scalar_one_or_none_value,)
+        return None
+
     def scalar(self):  # noqa: ANN001
         return self._scalar_value
 

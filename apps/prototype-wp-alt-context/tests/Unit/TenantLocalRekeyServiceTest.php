@@ -77,7 +77,7 @@ class TenantLocalRekeyServiceTest extends TestCase
         $from = '33333333-3333-4333-8333-333333333333';
         $to   = '44444444-4444-4444-8444-444444444444';
 
-        $service = new class () extends TenantLocalRekeyService {
+        $service = new class() extends TenantLocalRekeyService {
             protected function count_rows_for_tenant( string $tenant_id ): int {
                 return TenantLocalRekeyService::ROW_THRESHOLD + 1;
             }

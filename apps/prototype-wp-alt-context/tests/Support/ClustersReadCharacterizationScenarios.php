@@ -85,7 +85,7 @@ final class ClustersReadCharacterizationScenarios
             'get_cluster_members_proxy_invalid_envelope' => self::getClusterMembersProxyInvalidEnvelope(),
             'get_cluster_members_targeted_repair' => self::getClusterMembersTargetedRepair(),
             default => throw new \InvalidArgumentException(
-                sprintf('Unknown characterization scenario: %s', $scenario_id)
+                sprintf('Unknown characterization scenario: %s', esc_html($scenario_id))
             ),
         };
     }

@@ -91,6 +91,7 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
             Table("media_identities", Base.metadata),
             Table("identity_constraints", Base.metadata),
             Table("tenants", Base.metadata),
+            Table("worker_capabilities", Base.metadata),
         ]
         await conn.run_sync(Base.metadata.create_all, tables=tables)
         # Create mv_identity_cluster_centroids as a regular table for SQLite

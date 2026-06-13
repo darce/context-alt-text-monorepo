@@ -31,7 +31,9 @@ from recognition.application.embedding.generator import (
     StubEmbeddingGenerator,
     UnavailableEmbeddingGenerator,
 )
+from recognition.application.scan.capability import publish_embedding_runtime_capability
 from recognition.application.scan.queue_repository import ScanQueueItem
+from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.config import get_settings as get_recognition_settings
 from recognition.domain.job import JobStatus
 from recognition.infrastructure.embeddings import get_shared_insightface_adapter
@@ -124,6 +126,7 @@ class ScanWorker:
     async def __aenter__(self) -> ScanWorker:
         """Prepare worker resources."""
         await self._ensure_embedding_runtime()
+        await self._heartbeat_embedding_runtime_capability()
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
@@ -140,6 +143,7 @@ class ScanWorker:
         while True:
             claimed: list[ScanQueueItem] = []
             should_sleep = False
+            await self._probe_and_publish_embedding_runtime_capability()
             async with self._session_factory() as session:
                 await enable_rls_bypass(session)
                 repo = SqlAlchemyScanQueueRepository(session)
@@ -147,16 +151,23 @@ class ScanWorker:
                 now = datetime.now(tz=UTC)
                 await self._refresh_mv_if_needed(session, now)
 
+                await repo.reclaim_stale_items(
+                    stale_after_seconds=self._config.stale_after_seconds,
+                    max_attempts=self._config.max_attempts,
+                    now=now,
+                )
+                queue = ScanQueueService(repo)
+                terminated = await queue.terminate_stalled_jobs(
+                    stale_after_seconds=self._config.stale_after_seconds,
+                    now=now,
+                )
+                if terminated:
+                    logger.warning("[worker] Terminated %d stalled scan job(s)", terminated)
+
                 if await self._process_pending_clustering_jobs(session=session, now=now):
                     await session.commit()
                     should_sleep = True
                 else:
-                    await repo.reclaim_stale_items(
-                        stale_after_seconds=self._config.stale_after_seconds,
-                        max_attempts=self._config.max_attempts,
-                        now=now,
-                    )
-
                     claimed = await repo.claim_pending_items_any(limit=self._config.claim_batch_size, now=now)
                     if not claimed:
                         await session.commit()
@@ -179,6 +190,11 @@ class ScanWorker:
     ) -> None:
         await self._ensure_embedding_runtime()
         await self._scan_handler.process_items(claimed=claimed)
+
+    async def _probe_and_publish_embedding_runtime_capability(self) -> None:
+        """Retry runtime initialization even while intake is rejecting new jobs."""
+        await self._ensure_embedding_runtime()
+        await self._heartbeat_embedding_runtime_capability()
 
     async def _ensure_embedding_runtime(self) -> None:
         """Initialize scan inference dependencies once per worker process."""
@@ -213,6 +229,30 @@ class ScanWorker:
             max_concurrency=self._config.max_concurrency,
             object_store_factory=self._object_store_factory,
         )
+        await self._heartbeat_embedding_runtime_capability()
+
+    async def _publish_embedding_runtime_capability(self, session: AsyncSession) -> None:
+        """Write the worker-published embedding-runtime heartbeat for API intake."""
+        from recognition.shared.db.dialect import is_postgres
+
+        if not is_postgres(session):
+            return
+        if self._runtime_mode == "test" or self._embedding_runtime_ready:
+            available = True
+            reason = None
+        elif isinstance(self._detector, UnavailableFaceDetector):
+            available = False
+            reason = self._detector.reason
+        else:
+            available = False
+            reason = "embedding runtime not initialized"
+        await publish_embedding_runtime_capability(session, available=available, reason=reason)
+
+    async def _heartbeat_embedding_runtime_capability(self) -> None:
+        async with self._session_factory() as session:
+            await enable_rls_bypass(session)
+            await self._publish_embedding_runtime_capability(session)
+            await session.commit()
 
     async def _process_pending_clustering_jobs(self, *, session: AsyncSession, now: datetime) -> bool:
         stmt = (

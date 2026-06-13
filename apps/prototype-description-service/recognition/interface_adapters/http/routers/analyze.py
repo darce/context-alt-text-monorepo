@@ -18,13 +18,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sse_starlette.sse import EventSourceResponse
 
 from db.tenant_context import require_tenant_record
+from recognition.application.scan.capability import require_scan_dispatch_ready
 from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.application.tasks.scan import (
     chain_populate_and_process,
     extract_media_id,
-    scan_worker_available,
 )
-from recognition.domain.job import Job, JobPhase, JobStatus, JobType
+from recognition.domain.job import TERMINAL_JOB_STATUSES, Job, JobPhase, JobStatus, JobType
 from recognition.domain.repositories import JobRepository
 from recognition.interface_adapters.http.dependencies import (
     RetentionPolicyServiceProtocol,
@@ -199,11 +199,7 @@ async def _prepare_tenant_context(
 
     if session is not None and hasattr(session, "execute") and is_postgres(session):
         await require_tenant_record(session, tenant_uuid)
-        if not inline_processing and not await scan_worker_available(session):
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Scan worker unavailable. Start the scan worker or enable inline processing.",
-            )
+        await require_scan_dispatch_ready(session, inline_processing=inline_processing)
 
     return tenant_uuid
 
@@ -512,7 +508,7 @@ async def stream_job_progress(
                     last_heartbeat = now
                     last_phase = phase
 
-                if job_status in (JobStatus.COMPLETED, JobStatus.FAILED):
+                if job_status in TERMINAL_JOB_STATUSES:
                     yield {
                         "event": "done",
                         "data": json.dumps(

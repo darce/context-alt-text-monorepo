@@ -13,6 +13,9 @@ export interface SettingsResponse {
   api_key_set: boolean;
   api_key_last4: string;
   key_source: 'constant' | 'option' | 'filter' | 'default';
+  tenant_id: string;
+  tenant_id_source: 'constant' | 'option' | 'filter' | 'default' | 'derived';
+  tenant_paired: boolean;
 }
 
 export const RecognitionSource = {
@@ -41,6 +44,7 @@ export const TestConnectionOutcome = {
   EXPIRED: 'expired',
   REVOKED: 'revoked',
   TENANT_MISMATCH: 'tenant_mismatch',
+  TENANT_PAIRING_CONFLICT: 'tenant_pairing_conflict',
   RATE_LIMITED: 'rate_limited',
   SERVER_ERROR: 'server_error',
   NETWORK_ERROR: 'network_error',
@@ -64,6 +68,9 @@ export interface TestConnectionResponse {
   body?: unknown;
   probe_mode?: TestConnectionProbeMode;
   probed_url?: string;
+  pairing_error?: string | null;
+  persisted_tenant_id?: string;
+  key_tenant_id?: string;
 }
 
 export const fetchSettings = async (): Promise<SettingsResponse> => {
@@ -85,6 +92,7 @@ export const saveSettings = async (payload: SaveSettingsPayload): Promise<SaveSe
 
 export interface TestConnectionPayload {
   probe_target?: RecognitionSourceValue;
+  confirm_tenant_pairing?: boolean;
 }
 
 export const testConnection = async (

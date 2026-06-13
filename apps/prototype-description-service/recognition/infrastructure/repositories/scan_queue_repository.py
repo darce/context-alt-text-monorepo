@@ -7,16 +7,19 @@ import uuid
 from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import Select, func, select, text, update
+from sqlalchemy import Select, exists, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityScanJob, IdentityScanJobItem
 from recognition.application.scan.queue_repository import ScanQueueItem, ScanQueueRepository
-from recognition.domain.job import JobStatus, ScanItemStatus
+from recognition.domain.job import TERMINAL_JOB_STATUSES, JobStatus, ScanItemStatus
 from recognition.shared.db.dialect import is_postgres, timestamp_as_epoch
 from recognition.shared.db.helpers import execute_dml, get_rowcount
 
 logger = logging.getLogger(__name__)
+
+# Stored job.status values that are terminal; finalizers must never overwrite them.
+_TERMINAL_JOB_STATUS_VALUES = tuple(status.value for status in TERMINAL_JOB_STATUSES)
 
 
 class SqlAlchemyScanQueueRepository(ScanQueueRepository):
@@ -152,12 +155,39 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
             .values(media_ids=list(media_ids), message=message)
         )
 
-    async def complete_job(self, *, job_id: uuid.UUID, completed_at: datetime) -> None:
-        await self._session.execute(
+    async def complete_job(self, *, job_id: uuid.UUID, completed_at: datetime) -> bool:
+        result = await execute_dml(
+            self._session,
             update(IdentityScanJob)
-            .where(IdentityScanJob.id == job_id)
-            .values(status=JobStatus.COMPLETED, completed_at=completed_at)
+            .where(
+                IdentityScanJob.id == job_id,
+                IdentityScanJob.status.not_in(_TERMINAL_JOB_STATUS_VALUES),
+            )
+            .values(status=JobStatus.COMPLETED, completed_at=completed_at),
         )
+        return get_rowcount(result) > 0
+
+    async def complete_job_with_errors(
+        self,
+        *,
+        job_id: uuid.UUID,
+        completed_at: datetime,
+        error_message: str,
+    ) -> bool:
+        result = await execute_dml(
+            self._session,
+            update(IdentityScanJob)
+            .where(
+                IdentityScanJob.id == job_id,
+                IdentityScanJob.status.not_in(_TERMINAL_JOB_STATUS_VALUES),
+            )
+            .values(
+                status=JobStatus.COMPLETED_WITH_ERRORS,
+                completed_at=completed_at,
+                error_message=error_message,
+            ),
+        )
+        return get_rowcount(result) > 0
 
     async def fail_job(self, *, job_id: uuid.UUID, completed_at: datetime, error_message: str) -> None:
         await self._session.execute(
@@ -441,6 +471,60 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
         stmt = select(IdentityScanJob.tenant_id).where(IdentityScanJob.id == job_id)
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def fail_stalled_running_jobs(
+        self,
+        *,
+        stale_after_seconds: int,
+        now: datetime,
+    ) -> int:
+        if stale_after_seconds <= 0:
+            return 0
+
+        stale_before = now - timedelta(seconds=stale_after_seconds)
+        incomplete_items = exists(
+            select(IdentityScanJobItem.id).where(
+                IdentityScanJobItem.job_id == IdentityScanJob.id,
+                IdentityScanJobItem.status.in_(
+                    (
+                        ScanItemStatus.PENDING.value,
+                        ScanItemStatus.PROCESSING.value,
+                    )
+                ),
+            )
+        )
+        stmt = select(IdentityScanJob.id).where(
+            IdentityScanJob.status == JobStatus.RUNNING.value,
+            IdentityScanJob.started_at.is_not(None),
+            IdentityScanJob.started_at < stale_before,
+            incomplete_items,
+        )
+        result = await self._session.execute(stmt)
+        stalled_job_ids = list(result.scalars().all())
+        if not stalled_job_ids:
+            return 0
+
+        for job_id in stalled_job_ids:
+            await self.fail_job(job_id=job_id, completed_at=now, error_message="stalled")
+            await execute_dml(
+                self._session,
+                update(IdentityScanJobItem)
+                .where(
+                    IdentityScanJobItem.job_id == job_id,
+                    IdentityScanJobItem.status == ScanItemStatus.PENDING.value,
+                )
+                .values(status=ScanItemStatus.CANCELLED.value, completed_at=now),
+            )
+            await execute_dml(
+                self._session,
+                update(IdentityScanJobItem)
+                .where(
+                    IdentityScanJobItem.job_id == job_id,
+                    IdentityScanJobItem.status == ScanItemStatus.PROCESSING.value,
+                )
+                .values(status=ScanItemStatus.FAILED.value, completed_at=now, last_error="stalled"),
+            )
+        return len(stalled_job_ids)
 
 
 def _to_item(row: IdentityScanJobItem) -> ScanQueueItem:

@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from starlette.datastructures import FormData, UploadFile
 
 from db.tenant_context import require_tenant_record
+from recognition.application.scan.capability import require_scan_dispatch_ready
 from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.application.storage import ObjectStore, ObjectStoreError
 from recognition.application.tasks.scan import chain_populate_and_process
@@ -260,8 +261,10 @@ async def analyze_media_multipart(
             detail="tenant mismatch between auth and request envelope",
         )
 
+    inline_processing = os.environ.get("RECOGNITION_ASYNC_ANALYZE_INLINE", "0") == "1"
     if session is not None and hasattr(session, "execute") and is_postgres(session):
         await require_tenant_record(session, tenant_uuid)
+        await require_scan_dispatch_ready(session, inline_processing=inline_processing)
 
     object_store = object_store_factory(canonical_tenant_id)
 
@@ -312,7 +315,6 @@ async def analyze_media_multipart(
     media_items_tuples: list[tuple[int, str]] = [(item.media_id, item.blob_uri) for item in media_items_list]
     media_ids = [str(item.media_id) for item in media_items_list]
 
-    inline_processing = os.environ.get("RECOGNITION_ASYNC_ANALYZE_INLINE", "0") == "1"
     session_factory = None
     if session is not None and getattr(session, "bind", None) is not None and not is_postgres(session):
         session_factory = async_sessionmaker(bind=session.bind, expire_on_commit=False)

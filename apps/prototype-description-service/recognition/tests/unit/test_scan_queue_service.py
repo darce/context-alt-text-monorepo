@@ -65,8 +65,48 @@ async def test_refresh_job_progress_fails_when_any_item_failed(db_session, tenan
     assert completed is False  # Job failed, not successfully completed
 
     job = (await db_session.execute(select(IdentityScanJob).where(IdentityScanJob.id == job_id))).scalar_one()
-    assert job.status == "failed"
+    assert job.status == "completed_with_errors"
     assert job.completed_at is not None
+    assert job.error_message == "one or more items failed"
+
+
+@pytest.mark.asyncio
+async def test_refresh_job_progress_does_not_overwrite_terminal_stalled_job(db_session, tenant) -> None:
+    """Regression (E15-27-RF-A-01): once a job is terminal as failed(stalled), a
+    late refresh_job_progress — e.g. a concurrent worker replica finishing an
+    in-flight item after the stall — must not flip it to completed_with_errors
+    and must preserve the stall reason."""
+    repo = SqlAlchemyScanQueueRepository(db_session)
+    queue = ScanQueueService(repo)
+
+    job_id = await repo.create_job(tenant_id=tenant.id, media_ids=[1, 2])
+    await repo.enqueue_items(
+        job_id=job_id,
+        tenant_id=tenant.id,
+        items=[
+            (1, "http://example.test/1.jpg"),
+            (2, "http://example.test/2.jpg"),
+        ],
+    )
+
+    claimed = await repo.claim_pending_items(tenant_id=tenant.id, job_id=job_id, limit=2, now=datetime.now(tz=UTC))
+    assert len(claimed) == 2
+    # Started long enough ago to be eligible for stall termination.
+    await repo.mark_job_running(job_id=job_id, started_at=datetime.now(tz=UTC) - timedelta(seconds=3600))
+
+    terminated = await queue.terminate_stalled_jobs(stale_after_seconds=600)
+    assert terminated == 1
+    job = (await db_session.execute(select(IdentityScanJob).where(IdentityScanJob.id == job_id))).scalar_one()
+    assert job.status == "failed"
+    assert job.error_message == "stalled"
+
+    # A late refresh after every item has reached a terminal state must not
+    # re-finalize the already-terminal job.
+    completed = await queue.refresh_job_progress(job_id=job_id)
+    assert completed is False
+    job = (await db_session.execute(select(IdentityScanJob).where(IdentityScanJob.id == job_id))).scalar_one()
+    assert job.status == "failed"
+    assert job.error_message == "stalled"
 
 
 @pytest.mark.asyncio

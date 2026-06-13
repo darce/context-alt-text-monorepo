@@ -18,7 +18,7 @@ Take the alt-context recognition demo from "kit built, not deployed" to a **live
 ## Intake (decision 794)
 
 - **Key Q&A decisions**: handoff decision `claude_intake_e15-29_public_demo_go_live_scope` (id 794).
-- **Answers**: DNS = investigate `demo.altcontext.com` editability first (IP/sslip.io fallback); capability = recognition-only (no VLM); API = production `api.altcontext.com` directly; seed = **100 images, ≥5/person** from `celebs01` to showcase clustering.
+- **Answers**: DNS = operator will set `demo.altcontext.com`; deploy on the `sslip.io` interim now (`altcontext.com/demo` is off-VM — see Constraints); capability = recognition-only (no VLM); API = production `api.altcontext.com` directly; seed = **100 images, ≥5/person** from `celebs01` to showcase clustering; seed licensing = **fair-use/editorial demo, accepted** (blocker 7 closed — see Open Risks).
 - **Not-Doing**: VLM/captioning/GPU host (v0.5+); account DB / signup; CI E2E smoke gate (E16/v0.4.1 Theme D); plugin structural refactor (E18/REFA); any new deploy mechanism (reuse E15-28 kit); any edit to prod/staging/dev API `.env` beyond the single additive CORS origin.
 
 ## Problem Statement
@@ -34,6 +34,7 @@ E15-28 merged every reusable surface but **none of it has been executed against 
 - **Port 80 firewalled** (UFW 22/443 only) — Caddy issues TLS via TLS-ALPN-01 on 443; `http://` demo will not connect; do not edit UFW.
 - **Secrets never enter git** — `.env.example` templates only; real values live on the VM (`chmod 600`); seed images stay uncommitted until licensed.
 - **Seed glob is jpg/jpeg/png** — both `seed/import.sh:29` and `sync-demo.sh:60` exclude `.webp`; the selector must emit only jpg/jpeg/png (celebs01 has 29 `.webp` to avoid).
+- **Apex is off-VM** — `altcontext.com`/`www` → `66.241.124.177` (marketing host), **not** the demo VM `129.213.40.111`. The OCI Caddy serves only `*.altcontext.com` vhosts it terminates; serving `altcontext.com/demo` would require the marketing host to reverse-proxy `/demo/*` → the VM (operator, separate repo) plus a WP subdirectory install. The VM-native interim is `sslip.io`.
 
 ## Terminology
 
@@ -46,7 +47,7 @@ E15-28 merged every reusable surface but **none of it has been executed against 
 ## Workflow Principles
 
 - **Demo is a tenant, not a special case** — no service-side branches for the demo (rg-009).
-- **Execute, don't re-spec** — E15-29 calls `make deploy-demo` / `seed/import.sh` verbatim; it edits the kit only for a fallback URL.
+- **Execute, don't re-spec** — E15-29 calls `make deploy-demo` / `seed/import.sh` verbatim; it edits the kit only to point at the interim URL until `demo.altcontext.com` DNS lands.
 - **Agent vs operator split**: the agent authors/dry-runs commands and records evidence; the **operator executes** any command that mutates a prod stack — minting the demo tenant/key (`manage_api_keys` on the prod VM) and the prod CORS edit + `acx-prod.service` restart. The agent records minted-identity references (never the raw key) in a handoff decision.
 - **Slices ↔ epic phase**: Slices 0–4 close the epic's **Phase 3** (WP Demo Provisioning); Phase 4 verification remains E15-4/5/5a per the epic.
 
@@ -60,10 +61,10 @@ E15-28 merged every reusable surface but **none of it has been executed against 
 
 > Tracked live in handoff (blocker id 7, findings `E15-29-PA-*`); not duplicated as a status list here.
 
-1. **Seed licensing (hard launch blocker — blocker id 7).** `seed/README.md` mandates public-domain/generated faces only; `celebs01` is real-celebrity photos of unknown license, on a public site, fed to face recognition (biometric + likeness exposure). Resolve before public DNS (Slice 3): (a) HTTP-basic-gate the Caddy demo vhost so it is not "public"; (b) swap to Wikimedia/CC-BY portraits; (c) document explicit demo/fair-use rationale per image and accept the risk. Owner: operator.
-2. **Pre-provisioning gates (E15-28 carry-over).** `walkthrough-runbook.md` lists **E15-3a** (LocalWP→OCI round-trip) and **E15-22** (Workbench avatar/review-drawer proof) as preconditions before public DNS. Status verified in Slice 0; gating rule in Slice 0.
+1. **Seed licensing — RESOLVED via documented fair-use acceptance (blocker id 7 closed; decision recorded).** `seed/README.md` advises public-domain/generated faces; the operator accepted using `celebs01` celebrity photos under a documented **editorial/fair-use demo rationale** (non-commercial product demonstration, attributed in the provenance table, **takedown-on-request** posture). Every provenance `Source/license` cell records `celebs01 — editorial/fair-use demo (takedown on request)`. Residual likeness/biometric exposure on a public face-recognition page is **accepted for the demo**; revisit if the demo becomes promotional. No longer gates public DNS.
+2. **Pre-provisioning gates (E15-28 carry-over) — status known.** **E15-22** (Workbench avatars + honest progress) is **done** (2026-06-12) ✅. **E15-3a** (LocalWP→`api.altcontext.com` round-trip) was a *vendor-spend gate* ("don't buy WP hosting until proven") with no closed handoff row; the $0 colocation topology (no hosting purchase) **obviates its spend rationale**, and its end-to-end proof is **superseded by E15-29 S4's live walkthrough**. Not a real blocker — see Slice 0 gating rule.
 3. **Prod CORS restart blast radius.** Appending the demo origin requires restarting `acx-prod.service`; operator-executed; rollback in Rollback Strategy.
-4. **DNS / TLS timing.** Until the chosen host resolves and propagates, Caddy cannot complete TLS-ALPN-01 for the demo vhost — cert errors on the demo host only; **API vhosts must stay green throughout**.
+4. **DNS / TLS + interim URL.** `demo.altcontext.com` is unset (operator will add the A-record → `129.213.40.111`). The apex `altcontext.com`/`www` → `66.241.124.177` (marketing host, **off-VM**), so `altcontext.com/demo` is **not** servable from the demo VM without a marketing-host proxy (operator, cross-repo). VM-native interim available today: `https://129-213-40-111.sslip.io` (Caddy ALPN-issues a real LE cert, no external DNS). Until the chosen host resolves+propagates, only the demo vhost shows cert errors; **API vhosts must stay green throughout**.
 
 ## Deployment Topology (recap — unchanged from E15-28)
 
@@ -91,18 +92,18 @@ Run the merged E15-28 kit end-to-end after producing the clustering seed: Slice 
 
 ## Slice Delivery
 
-### Slice 0 — DNS spike + URL decision (first; unblocks TLS timing)
+### Slice 0 — URL decision + interim deploy target (first; unblocks TLS timing)
 
-**Goal**: Decide the public URL and start A-record propagation early.
+**Goal**: Lock the public URL, hand the operator the DNS request, and pick a working interim that needs no external DNS.
 
-- Confirm unresolved: `dig +short demo.altcontext.com` (expect empty); `dig +short api.altcontext.com` (expect `129.213.40.111`).
-- **Spike** Unstoppable Domains: `altcontext.com` uses `ns1.unstoppabledomains.com`. In the UD dashboard → Domains → `altcontext.com` → **DNS / Manage records**, determine whether a standard `A` record `demo` → `129.213.40.111` can be added (UD supports standard records for domains where it provides authoritative DNS). Capture the dashboard path / API used. Expected propagation: minutes–hours.
-- **If editable** → add the record; target URL = `https://demo.altcontext.com` (kit defaults already match — no kit edits).
-- **If not editable** → fallback URL = `https://129-213-40-111.sslip.io` (sslip.io resolves the embedded IP; Caddy ALPN-issues a real cert). Edit in lockstep: Caddy demo vhost host token (`Caddyfile`), `WP_URL`/`--site-url` (via `bootstrap-wp.sh` env or `secrets/.env`), and the tenant `--site-url`. Record before/after in the Slice 0 decision.
-- **Record** the URL choice as a handoff decision; if fallback, file an E15 follow-on to migrate sslip.io → `demo.altcontext.com` once DNS permits.
-- **Gate-task check (Risk 2)**: query `review_findings`/dashboard for E15-3a + E15-22 status. **Gating rule**: both complete → proceed to Slice 1; either incomplete → record a blocker and do **not** proceed past Slice 1 until the operator waives or the gates complete.
+- Confirm DNS state: `dig +short demo.altcontext.com` (empty); `dig +short api.altcontext.com` (`129.213.40.111`); `dig +short altcontext.com` (`66.241.124.177` — marketing host, **off-VM**).
+- **Target `https://demo.altcontext.com`** (operator-owned): operator adds the A-record `demo` → `129.213.40.111` at the DNS provider (`ns1.unstoppabledomains.com`). Kit defaults already match — **no kit edits** when it lands. Expected propagation: minutes–hours.
+- **Interim now (recommended, VM-native): `https://129-213-40-111.sslip.io`** — sslip.io resolves the embedded IP; Caddy ALPN-issues a real LE cert; no external DNS. Edit in lockstep: demo Caddy vhost host token (`Caddyfile`), `WP_URL`/`--site-url` (`bootstrap-wp.sh` env / `secrets/.env`), the tenant `--site-url`, and the CORS origin. Record before/after in the Slice 0 decision.
+- **`altcontext.com/demo` (operator-coordinated variant only)**: apex is off-VM, so this needs the **marketing host** (`66.241.124.177`) to reverse-proxy `/demo/*` → `129.213.40.111` (operator, separate repo) **plus** a WP subdirectory install (`WP_HOME`/`WP_SITEURL` = `https://altcontext.com/demo`; Caddy `handle_path /demo/*` on an `altcontext.com` vhost). Out of scope for the VM-side kit; do not attempt VM-only.
+- **Record** the URL choice + interim as a handoff decision; file an E15 follow-on to cut the interim over to `demo.altcontext.com` once the A-record propagates.
+- **Gate-task check (Risk 2)**: E15-22 is **done** ✅; E15-3a has no closed row but is obviated by $0 colocation and superseded by S4. **Gating rule**: proceed — capture S4's live walkthrough as the E15-3a-equivalent round-trip evidence, or record an explicit operator-waiver decision. Do **not** block on E15-3a.
 
-**Proof**: `dig` output captured; URL-choice handoff decision recorded; A-record requested (or fallback edits listed); gate-task status + gating decision recorded.
+**Proof**: `dig` output captured; URL + interim decision recorded; operator DNS request noted; gate-task disposition recorded.
 
 ### Slice 1 — Clustering seed curation (net-new deliverable)
 
@@ -110,7 +111,7 @@ Run the merged E15-28 kit end-to-end after producing the clustering seed: Slice 
 
 - Author `infra/oci/demo/seed/select-clustering-seed.sh` (params via env or flags): `SRC` (default the celebs01 path), `PERSONS` (default 20), `PER_PERSON` (default 5), `OUT` (default `infra/oci/demo/seed/media`). **Selection rule**: rank persons by count of eligible (`.jpg/.jpeg/.png`, excluding `.webp`) images **descending**; ties broken alphabetically by person key; take the top `PERSONS`; copy the first `PER_PERSON` eligible files each as `<person>_<n>.<ext>` into `OUT`. **Error path**: refuse (exit 2) if fewer than `PERSONS` persons have ≥`PER_PERSON` eligible files. Idempotent (clears prior `OUT` selection on re-run). Source verified: 110 persons have ≥5 eligible images.
 - Emit `infra/oci/demo/seed/clustering-manifest.txt` — one line per person, `<person> <count>` — and **commit** it (the image files stay uncommitted).
-- Fill the provenance table in `seed/README.md` for all 100 (File · Subject label · Source/license · Added). Example row: `al_pacino_10.jpg | Al Pacino | celebs01 (marketing-monorepo); license: SEE BLOCKER 7 | 2026-06-13`. Verify completeness: no `_(operator fills)_` placeholder rows remain.
+- Fill the provenance table in `seed/README.md` for all 100 (File · Subject label · Source/license · Added). Example row: `al_pacino_10.jpg | Al Pacino | celebs01 — editorial/fair-use demo (takedown on request) | 2026-06-13`. Verify completeness: no `_(operator fills)_` placeholder rows remain.
 - **Sanity** (verification commands in Verification Strategy): `ls OUT | wc -l` == 100; every person has ≥5 files (`for p in $(cut -d' ' -f1 clustering-manifest.txt); do find OUT -name "${p}_*" | wc -l; done` all ≥5); zero `.webp` in `OUT`; ≥2 distinct persons. "Distinct images" = ≥5 files with distinct basenames per person.
 
 **Proof**: selector shellcheck-clean; `OUT` has exactly 100 jpg/jpeg/png; per-person ≥5; manifest committed; provenance table complete.
@@ -235,13 +236,13 @@ Run the merged E15-28 kit end-to-end after producing the clustering seed: Slice 
 - [ ] CORS + Caddy boundary changes have matching verification evidence (preflight header + four-vhost matrix).
 - [ ] Runtime-parity covered (staging dry-run or recorded skip) so the manual walkthrough is not masked by fixtures.
 - [ ] Handoff decisions record DNS choice, tenant mint (UUID only), CORS restart, and each slice close.
-- [ ] Licensing blocker (id 7) resolved or explicitly deferred before public DNS.
+- [ ] Licensing blocker (id 7) dispositioned (fair-use demo accepted) with provenance table filled.
 
 ## Success Criteria
 
-- [ ] A public visitor loads the live demo URL (`demo.altcontext.com` or documented fallback) over valid TLS and sees the plugin with **real recognition results** from `api.altcontext.com`.
+- [ ] A public visitor loads the live demo URL (the `sslip.io` interim now; `demo.altcontext.com` once the operator's A-record lands) over valid TLS and sees the plugin with **real recognition results** from `api.altcontext.com`.
 - [ ] The media library holds **100 seed images, ≥5 per person**, and the Workbench **clusters** them by identity (≥1 multi-image cluster, not singletons).
-- [ ] Seed licensing resolved (blocker 7) — gated, CC-swapped, or documented — before public DNS.
+- [ ] Seed licensing dispositioned (blocker 7) — **documented fair-use demo, accepted** — with the provenance table filled.
 - [ ] Demo runs at $0/mo incremental with inference SLO intact (`docker stats` within limits).
 - [ ] Killing the API container leaves curated data readable with an honest degraded banner.
 - [ ] `handoff_close_check(enforce=True)` passes; epic Phase 3 marked live.

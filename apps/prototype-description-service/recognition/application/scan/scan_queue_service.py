@@ -206,14 +206,36 @@ class ScanQueueService:
         if pending == 0 and processing == 0 and processed_media > 0:
             now = datetime.now(tz=UTC)
             if failed > 0:
-                await self._repository.fail_job(
-                    job_id=job_id, completed_at=now, error_message="one or more items failed"
+                await self._repository.complete_job_with_errors(
+                    job_id=job_id,
+                    completed_at=now,
+                    error_message="one or more items failed",
                 )
                 return False
-            else:
-                await self._repository.complete_job(job_id=job_id, completed_at=now)
-                return True
+            # Only signal success (and trigger downstream clustering) when this
+            # call actually transitioned the job; an already-terminal job
+            # (e.g. failed/stalled by another worker) returns False.
+            return await self._repository.complete_job(job_id=job_id, completed_at=now)
         return False
+
+    async def terminate_stalled_jobs(
+        self,
+        *,
+        stale_after_seconds: int,
+        now: datetime | None = None,
+    ) -> int:
+        """Transition stale running jobs to terminal ``failed(stalled)`` state.
+
+        A job is stalled when it has been running longer than
+        ``stale_after_seconds`` while items remain pending or processing.
+        """
+        if stale_after_seconds <= 0:
+            return 0
+        effective_now = now or datetime.now(tz=UTC)
+        return await self._repository.fail_stalled_running_jobs(
+            stale_after_seconds=stale_after_seconds,
+            now=effective_now,
+        )
 
     async def cancel_scan_job(self, *, job_id: uuid.UUID) -> int:
         """Cancel any pending items for a scan job.

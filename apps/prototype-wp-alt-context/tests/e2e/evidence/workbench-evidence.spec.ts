@@ -4,6 +4,7 @@ import { expect, test, type Page } from '@playwright/test';
 
 import { getAcxAdminRouteUrlWithParams } from '../fixtures/acx-routes';
 import {
+  type AcxSettingsSnapshot,
   ensureLocalRecognitionWhenProbeFails,
   ensureServiceRecognitionTarget,
   probeAcxConnection,
@@ -221,7 +222,7 @@ test('captures E15-22 workbench avatar and progress evidence on LocalWP', async 
 
   const captures: Record<string, boolean> = {};
   const processedSamples: number[] = [];
-  let settingsResult = {
+  let settingsResult: { changed: boolean; before: AcxSettingsSnapshot; after: AcxSettingsSnapshot } = {
     changed: false,
     before: { recognition_source: 'local' as const, recognition_source_source: 'default', url: '', api_key_set: false },
     after: { recognition_source: 'local' as const, recognition_source_source: 'default', url: '', api_key_set: false },

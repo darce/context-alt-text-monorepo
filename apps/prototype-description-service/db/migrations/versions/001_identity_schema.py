@@ -39,6 +39,7 @@ TENANT_TABLES = [
 EXPECTED_SCHEMA_TABLES = [
     "tenants",
     "api_keys",
+    "worker_capabilities",
     "media_identities",
     "curation_replay_records",
     "identity_clusters",
@@ -61,6 +62,7 @@ EXPECTED_SCHEMA_TABLES = [
 ]
 
 DOWNGRADE_TABLE_ORDER = [
+    "worker_capabilities",
     "audit_events",
     "clustering_feedback",
     "export_jobs",
@@ -124,6 +126,20 @@ def upgrade() -> None:
         sa.Column("last_used_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("expires_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("revoked_at", sa.TIMESTAMP(timezone=True), nullable=True),
+    )
+
+    op.create_table(
+        "worker_capabilities",
+        sa.Column("worker_kind", sa.String(length=64), primary_key=True),
+        sa.Column("capability", sa.String(length=64), primary_key=True),
+        sa.Column("available", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+        sa.Column("reason", sa.Text(), nullable=True),
+        sa.Column(
+            "updated_at",
+            sa.TIMESTAMP(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
     )
 
     op.create_table(

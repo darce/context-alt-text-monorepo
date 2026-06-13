@@ -85,9 +85,22 @@ async def test_prepare_tenant_context_does_not_reapply_dependency_owned_context(
         calls.append("worker_check")
         return True
 
+    from recognition.application.scan import capability as capability_module
+    from recognition.application.scan.capability import EmbeddingRuntimeCapability
+    from recognition.application.tasks import scan as scan_tasks
+
+    async def _embedding_runtime_available(_session):
+        return EmbeddingRuntimeCapability(
+            available=True,
+            reason=None,
+            updated_at=datetime.now(tz=UTC),
+            heartbeat_age_seconds=0.0,
+        )
+
     monkeypatch.setattr(analyze_router, "require_tenant_record", _require_tenant_record)
     monkeypatch.setattr(analyze_router, "set_tenant_context", _set_tenant_context, raising=False)
-    monkeypatch.setattr(analyze_router, "scan_worker_available", _scan_worker_available)
+    monkeypatch.setattr(scan_tasks, "scan_worker_available", _scan_worker_available)
+    monkeypatch.setattr(capability_module, "read_embedding_runtime_capability", _embedding_runtime_available)
 
     tenant_uuid = await analyze_router._prepare_tenant_context(
         request=SimpleNamespace(tenant_id=tenant_id),

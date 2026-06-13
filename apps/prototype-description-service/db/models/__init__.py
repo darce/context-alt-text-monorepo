@@ -38,6 +38,7 @@ from db.models.observability import (
     RecognitionRun,
 )
 from db.models.tenant import ApiKey, Tenant
+from db.models.worker_capability import WorkerCapability
 
 __all__ = [
     # Tenant
@@ -68,4 +69,6 @@ __all__ = [
     "NameSuggestion",
     "IdentityClusterBlock",
     "IdentityConstraint",
+    # Worker capability
+    "WorkerCapability",
 ]

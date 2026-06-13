@@ -82,6 +82,19 @@ class _CommitOnlySession:
         self.commit_calls += 1
 
 
+def _patch_scan_dispatch_ready(monkeypatch: pytest.MonkeyPatch, *, mod=None) -> None:
+    """Bypass worker/capability intake gate — multipart route tests own other boundaries."""
+    from recognition.application.scan import capability as capability_module
+    from recognition.interface_adapters.http.routers import analyze_multipart as multipart_mod
+
+    async def _ready(_session, *, inline_processing: bool) -> None:
+        return None
+
+    target = mod if mod is not None else multipart_mod
+    monkeypatch.setattr(target, "require_scan_dispatch_ready", _ready)
+    monkeypatch.setattr(capability_module, "require_scan_dispatch_ready", _ready)
+
+
 @pytest.fixture
 def tenant_id() -> str:
     return str(uuid.uuid4())
@@ -193,6 +206,7 @@ def test_multipart_ensures_tenant_exists_before_blob_writes(
     monkeypatch.setattr(mod, "require_tenant_record", _require_tenant_record)
     monkeypatch.setattr(mod, "is_postgres", lambda _session: True)
     monkeypatch.setattr(mod, "chain_populate_and_process", _noop_chain)
+    _patch_scan_dispatch_ready(monkeypatch, mod=mod)
 
     client = TestClient(fastapi_app)
     response = client.post("/recognition/analyze/multipart", **_multipart_submission(tenant_id))

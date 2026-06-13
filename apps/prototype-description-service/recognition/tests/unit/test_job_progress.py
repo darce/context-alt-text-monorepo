@@ -18,6 +18,8 @@ from recognition.interface_adapters.http.job_utils import build_job_progress_res
         (JobType.ANALYZE, JobStatus.PENDING, JobPhase.QUEUED),
         (JobType.ANALYZE, JobStatus.RUNNING, JobPhase.DETECTING),
         (JobType.ANALYZE, JobStatus.COMPLETED, JobPhase.COMPLETE),
+        (JobType.ANALYZE, JobStatus.COMPLETED_WITH_ERRORS, JobPhase.COMPLETE),
+        (JobType.ANALYZE, JobStatus.REJECTED, JobPhase.COMPLETE),
         (JobType.ANALYZE, JobStatus.FAILED, JobPhase.FAILED),
         (JobType.CLUSTERING, JobStatus.PENDING, JobPhase.QUEUED),
         (JobType.CLUSTERING, JobStatus.RUNNING, JobPhase.CLUSTERING),

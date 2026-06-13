@@ -196,6 +196,18 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
             .values(status=JobStatus.FAILED, completed_at=completed_at, error_message=error_message)
         )
 
+    async def fail_job_if_active(self, *, job_id: uuid.UUID, completed_at: datetime, error_message: str) -> bool:
+        result = await execute_dml(
+            self._session,
+            update(IdentityScanJob)
+            .where(
+                IdentityScanJob.id == job_id,
+                IdentityScanJob.status.not_in(_TERMINAL_JOB_STATUS_VALUES),
+            )
+            .values(status=JobStatus.FAILED, completed_at=completed_at, error_message=error_message),
+        )
+        return get_rowcount(result) > 0
+
     async def claim_pending_items(
         self,
         *,

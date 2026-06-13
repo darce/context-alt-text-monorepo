@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import { __ } from '@wordpress/i18n';
 
 import type { ClusterResponse } from '../api/recognition';
-import { formatScanSubmissionError } from '../api/recognition/scanApiError';
+import { formatScanSubmissionError, resolveScanErrorMessage } from '../api/recognition/scanApiError';
 import type { JobType } from './useJobPersistence';
 import { useScanIdentities, useClusterIdentities, useCancelScanJobs } from './useRecognitionHooks';
 
@@ -66,11 +66,11 @@ export const useJobStateMachineMutations = ({
       onScanComplete?.(jobIds);
     },
     onError: (error) => {
-      const structured = formatScanSubmissionError(error);
-      const message =
-        structured ??
-        (error instanceof Error ? error.message : __('Recognition job failed. Please try again.', 'alt-context'));
-      onScanError?.(message);
+      if (!formatScanSubmissionError(error) && error instanceof Error) {
+        // Non-JSON proxy/HTTP error bodies must not reach the UI (E15-27-BR-11).
+        console.error('Scan submission failed', error);
+      }
+      onScanError?.(resolveScanErrorMessage(error, __('Recognition job failed. Please try again.', 'alt-context')));
     },
   });
 

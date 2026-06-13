@@ -7,7 +7,26 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from recognition.application.scan.queue_repository import ScanQueueRepository
-from recognition.domain.job import TERMINAL_JOB_STATUSES, Job, JobPhase, JobStatus
+from recognition.domain.job import Job, JobPhase, JobStatus
+
+
+def scan_phase_for_status(status: JobStatus) -> JobPhase:
+    """Map a job status to its scan progress phase.
+
+    Explicit per-status mapping so terminal statuses (``COMPLETED_WITH_ERRORS``,
+    ``REJECTED``) cannot silently fall through to ``COMPLETE`` and a newly added
+    :class:`JobStatus` fails loudly instead of defaulting (E15-27-BR-21).
+    """
+    match status:
+        case JobStatus.PENDING:
+            return JobPhase.QUEUED
+        case JobStatus.RUNNING:
+            return JobPhase.DETECTING
+        case JobStatus.FAILED:
+            return JobPhase.FAILED
+        case JobStatus.COMPLETED | JobStatus.COMPLETED_WITH_ERRORS | JobStatus.REJECTED:
+            return JobPhase.COMPLETE
+    raise ValueError(f"Unhandled JobStatus for scan phase mapping: {status!r}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,14 +69,7 @@ async def build_scan_progress_snapshot(
     images_total = max(total_images, sum(status_counts.values()))
     images_processed = min(status_counts.get("completed", 0), images_total)
 
-    if status is JobStatus.PENDING:
-        phase = JobPhase.QUEUED
-    elif status is JobStatus.RUNNING:
-        phase = JobPhase.DETECTING
-    elif status is JobStatus.FAILED:
-        phase = JobPhase.FAILED
-    else:
-        phase = JobPhase.COMPLETE
+    phase = scan_phase_for_status(status)
 
     return ScanJobProgressSnapshot(
         phase=phase,
@@ -93,16 +105,7 @@ async def build_scan_progress_envelope(
     items_done = status_counts.get("completed", 0)
     items_failed = status_counts.get("failed", 0)
 
-    if job.status is JobStatus.PENDING:
-        phase = JobPhase.QUEUED
-    elif job.status is JobStatus.RUNNING:
-        phase = JobPhase.DETECTING
-    elif job.status is JobStatus.FAILED:
-        phase = JobPhase.FAILED
-    elif job.status in TERMINAL_JOB_STATUSES:
-        phase = JobPhase.COMPLETE
-    else:
-        phase = JobPhase.QUEUED
+    phase = scan_phase_for_status(job.status)
 
     updated_at = job.finished_at or job.started_at or datetime.now(tz=UTC)
     failure_reason = job.error_message if job.status in {JobStatus.FAILED, JobStatus.COMPLETED_WITH_ERRORS} else None
@@ -124,4 +127,5 @@ __all__ = [
     "ScanProgressEnvelope",
     "build_scan_progress_envelope",
     "build_scan_progress_snapshot",
+    "scan_phase_for_status",
 ]

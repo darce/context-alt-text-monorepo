@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from recognition.application.scan.progress import build_scan_progress_snapshot
+from recognition.application.scan.progress import build_scan_progress_snapshot, scan_phase_for_status
 from recognition.domain.job import Job, JobPhase, JobStatus, JobType
 from recognition.interface_adapters.http.job_utils import build_job_progress_response, derive_job_phase
 
@@ -158,3 +158,29 @@ async def test_build_job_progress_response_includes_current_chunk_size() -> None
     progress = await build_job_progress_response(job=job, scan_repo=None)
     assert progress is not None
     assert progress.current_chunk_size == 5
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (JobStatus.PENDING, JobPhase.QUEUED),
+        (JobStatus.RUNNING, JobPhase.DETECTING),
+        (JobStatus.COMPLETED, JobPhase.COMPLETE),
+        # Terminal-with-errors and rejected must be mapped by an explicit branch,
+        # not a silent else fall-through (E15-27-BR-21).
+        (JobStatus.COMPLETED_WITH_ERRORS, JobPhase.COMPLETE),
+        (JobStatus.REJECTED, JobPhase.COMPLETE),
+        (JobStatus.FAILED, JobPhase.FAILED),
+    ],
+)
+def test_scan_phase_for_status_maps_every_status_explicitly(
+    status: JobStatus, expected: JobPhase
+) -> None:
+    assert scan_phase_for_status(status) is expected
+
+
+def test_scan_phase_for_status_is_exhaustive() -> None:
+    # Every current JobStatus must map without raising; a newly added status that
+    # is left unhandled raises ValueError here instead of silently defaulting.
+    for status in JobStatus:
+        assert isinstance(scan_phase_for_status(status), JobPhase)

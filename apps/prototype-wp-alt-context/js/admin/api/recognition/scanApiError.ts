@@ -47,3 +47,11 @@ export const formatScanSubmissionError = (error: unknown): string | null => {
   }
   return null;
 };
+
+/**
+ * Resolve a user-safe scan error message: the structured rejection detail when the
+ * error carries one, otherwise the caller's localized fallback. Never returns raw
+ * HTTP/proxy body text (E15-27-BR-11).
+ */
+export const resolveScanErrorMessage = (error: unknown, fallbackMessage: string): string =>
+  formatScanSubmissionError(error) ?? fallbackMessage;

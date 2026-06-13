@@ -11,6 +11,15 @@ review_findings(review={"operation":"list","task_ref":"E15-27-REV-B","status":"d
 
 These were deferred (not bugs) when E15-27 merged; the 3 HIGHs + the two behavioral findings (BR-24/BR-25) were already fixed. This task works the remaining quality backlog as bounded TDD slices. As each finding is addressed, flip its handoff status from `deferred` → `fixed` with `verified_commit_sha` — **do not track status in this doc** (it drifts; the DB is the source of truth).
 
+## Scope (revised 2026-06-13 — cherry-pick)
+
+Per the 2026-06-11 MVP strategy assessment ("ship the demo URL, stop polishing the chassis past it"), this task is **narrowed to the demo-visible findings only**; the rest of the quality backlog stays `deferred` in handoff for post-demo:
+
+- **E15-27-BR-11** — scan error fallback surfaced raw HTTP/proxy body text to the UI → addressed.
+- **E15-27-BR-21** — JobStatus→JobPhase exhaustiveness; terminal statuses fell through a silent `else` → addressed.
+
+The Slice tables below remain the deferred backlog inventory — they are **not** being worked now; do not treat unaddressed rows as in-progress. Live status: `review_findings(operation="list", status="deferred", task_ref="E15-27-REV-A"|"E15-27-REV-B")`.
+
 ## Context already shipped (do not redo)
 - BR-22 (contract docs) is **partially done**: E15-29 added `completed_with_errors`/`rejected` to the JobStatus wire vocabulary + a "Scan job terminal states" section in `docs/workstate/contracts/recognition-clustering.md`. Remaining: document the `progress_envelope` additive read shape (overlaps BR-14).
 

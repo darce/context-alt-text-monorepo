@@ -25,6 +25,13 @@ export interface DemoWalkthroughManifest {
   deploy_commit_sha: string | null;
   settings: {
     constant_provenance_visible: boolean;
+    /**
+     * Whether constant-provenance gated the verdict this run. The demo requires it
+     * (non-derived identity); LocalWP runs legitimately lack constants and opt out
+     * via ACX_E2E_REQUIRE_CONSTANT_PROVENANCE=0, so a missing provenance does not
+     * force verdict=fail there.
+     */
+    constant_provenance_required: boolean;
     probe_outcome: string | null;
   };
   scan: {
@@ -85,6 +92,7 @@ export const renderDemoSmokeLogFragment = (manifest: DemoWalkthroughManifest): s
 ## Settings + Pairing Proof
 
 - Constant-provenance fields read-only: ${yesNo(manifest.settings.constant_provenance_visible)}
+- Constant-provenance required for verdict: ${yesNo(manifest.settings.constant_provenance_required)}
 - Test Connection outcome: ${manifest.settings.probe_outcome ?? '(not run)'}
 
 ## Live Round-Trip Summary

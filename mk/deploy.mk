@@ -66,8 +66,9 @@ deploy-help:
 	@echo "    PLUGIN_ZIP=dist/alt-context-x.y.z.zip make deploy-demo   Pin plugin artifact explicitly"
 	@echo ""
 	@echo "  Demo walkthrough proof (Playwright evidence — screenshots + smoke-log fragment):"
+	@echo "    First-time setup: (cd apps/prototype-wp-alt-context && npm ci && npm run e2e:install)"
 	@echo "    make demo-walkthrough-proof                Drive demo.altcontext.com walkthrough; emit evidence"
-	@echo "    WP_BASE_URL=http://localhost:10010 make demo-walkthrough-proof   Run against LocalWP instead"
+	@echo "    WP_BASE_URL=http://localhost:10010 ACX_E2E_REQUIRE_CONSTANT_PROVENANCE=0 make demo-walkthrough-proof   LocalWP (no wp-config constants)"
 	@echo "    Requires ACX_E2E_WP_ADMIN_USER / ACX_E2E_WP_ADMIN_PASS for non-interactive auth."
 	@echo ""
 	@echo "  Optional overrides: OCI_HOST OCI_USER OCIR_REGISTRY OCIR_NAMESPACE IMAGE_NAME GIT_REF"
@@ -166,10 +167,17 @@ demo-walkthrough-proof: WP_BASE_URL ?= https://demo.altcontext.com
 demo-walkthrough-proof: ACX_PLAYWRIGHT_TASK_REF ?= E15-28
 demo-walkthrough-proof:
 	@cd "$(DEMO_WALKTHROUGH_APP)" && \
+		if [ ! -d node_modules ]; then \
+			echo "demo-walkthrough-proof: dependencies missing. First run: (cd apps/prototype-wp-alt-context && npm ci && npm run e2e:install)" >&2; \
+			exit 2; \
+		fi
+	@cd "$(DEMO_WALKTHROUGH_APP)" && npm run e2e:install >/dev/null
+	@cd "$(DEMO_WALKTHROUGH_APP)" && \
 		WP_BASE_URL="$(WP_BASE_URL)" \
 		ACX_PLAYWRIGHT_TASK_REF="$(ACX_PLAYWRIGHT_TASK_REF)" \
 		ACX_DEPLOY_COMMIT_SHA="$${ACX_DEPLOY_COMMIT_SHA:-$$(git rev-parse HEAD 2>/dev/null || true)}" \
 		bash scripts/playwright-cli.sh test --project=evidence tests/e2e/evidence/demo-walkthrough.spec.ts
-	@echo "==> Demo walkthrough proof artifacts:"
+	@echo "==> Demo walkthrough proof artifacts under:"
 	@echo "    $(DEMO_WALKTHROUGH_APP)/local/playwright/$(ACX_PLAYWRIGHT_TASK_REF)/evidence/"
-	@echo "    smoke-log fragment: $(DEMO_WALKTHROUGH_APP)/local/playwright/$(ACX_PLAYWRIGHT_TASK_REF)/evidence/<spec-dir>/demo-walkthrough-smoke-log-fragment.md"
+	@echo "    Smoke-log fragment (Playwright nests it in a per-test subdir) — locate with:"
+	@echo "    find $(DEMO_WALKTHROUGH_APP)/local/playwright/$(ACX_PLAYWRIGHT_TASK_REF)/evidence -name demo-walkthrough-smoke-log-fragment.md"

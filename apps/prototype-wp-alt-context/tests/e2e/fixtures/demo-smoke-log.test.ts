@@ -12,7 +12,7 @@ const passingManifest = (): DemoWalkthroughManifest => ({
   base_url: 'https://demo.altcontext.com',
   recognition_url: 'https://staging.api.altcontext.com',
   deploy_commit_sha: '2b87aa0db8a6ae7e1acf47cba6d77e15e79778fb',
-  settings: { constant_provenance_visible: true, probe_outcome: 'connected' },
+  settings: { constant_provenance_visible: true, constant_provenance_required: true, probe_outcome: 'connected' },
   scan: { triggered: true, processed_samples: [1, 3, 5], monotonic: true, had_failures: false },
   sovereignty: { degraded_banner_captured: true, local_read_ok: true, recovery_captured: true },
   captures: {
@@ -49,6 +49,7 @@ describe('renderDemoSmokeLogFragment', () => {
     const fragment = renderDemoSmokeLogFragment(passingManifest());
 
     expect(fragment).toContain('Constant-provenance fields read-only: yes');
+    expect(fragment).toContain('Constant-provenance required for verdict: yes');
     expect(fragment).toContain('Test Connection outcome: connected');
     expect(fragment).toContain('Monotonic processed-count: yes (samples: 1, 3, 5)');
     expect(fragment).toContain('Scan failures: none');
@@ -74,7 +75,7 @@ describe('renderDemoSmokeLogFragment', () => {
     const failing: DemoWalkthroughManifest = {
       ...passingManifest(),
       deploy_commit_sha: null,
-      settings: { constant_provenance_visible: false, probe_outcome: null },
+      settings: { constant_provenance_visible: false, constant_provenance_required: false, probe_outcome: null },
       scan: { triggered: false, processed_samples: [], monotonic: false, had_failures: true },
       sovereignty: { degraded_banner_captured: false, local_read_ok: false, recovery_captured: false },
       captures: { 'demo-settings-provenance.png': false },
@@ -91,5 +92,32 @@ describe('renderDemoSmokeLogFragment', () => {
     expect(fragment).toContain('Degraded banner captured: no');
     expect(fragment).toContain('(none captured)');
     expect(fragment).toContain('Public demo walkthrough verdict: fail');
+  });
+
+  it('mirrors the E15-28 smoke-log section headings', () => {
+    const fragment = renderDemoSmokeLogFragment(passingManifest());
+
+    for (const heading of [
+      '## Run Metadata',
+      '## Settings + Pairing Proof',
+      '## Live Round-Trip Summary',
+      '## Sovereign Boundary Evidence (E15-26)',
+      '## Captured Artifacts',
+      '## Outcome',
+    ]) {
+      expect(fragment).toContain(heading);
+    }
+  });
+
+  it('omits the samples suffix when monotonic holds with no samples', () => {
+    const noSamples: DemoWalkthroughManifest = {
+      ...passingManifest(),
+      scan: { triggered: false, processed_samples: [], monotonic: true, had_failures: false },
+    };
+
+    const fragment = renderDemoSmokeLogFragment(noSamples);
+
+    expect(fragment).toContain('Monotonic processed-count: yes');
+    expect(fragment).not.toContain('(samples:');
   });
 });

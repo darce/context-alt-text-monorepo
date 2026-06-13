@@ -38,6 +38,13 @@ const SCAN_TIMEOUT_MS = 240_000;
 const taskRef = (process.env.ACX_PLAYWRIGHT_TASK_REF ?? 'E15-28').trim();
 const recognitionUrl = (process.env.ACX_E2E_RECOGNITION_URL ?? 'https://staging.api.altcontext.com').trim();
 const deployCommitSha = (process.env.ACX_DEPLOY_COMMIT_SHA ?? '').trim() || null;
+// The demo's core pairing proof is constant-provenance (non-derived identity), so it
+// gates the verdict by default. LocalWP runs legitimately have no wp-config constants —
+// pass ACX_E2E_REQUIRE_CONSTANT_PROVENANCE=0 there so a missing badge does not force fail.
+const requireConstantProvenance = (process.env.ACX_E2E_REQUIRE_CONSTANT_PROVENANCE ?? '1') !== '0';
+
+const isMonotonic = (samples: number[]): boolean =>
+  samples.length < 2 || samples.every((value, index) => index === 0 || value >= samples[index - 1]);
 
 const captureIfVisible = async (page: Page, selector: string, outputPath: string): Promise<boolean> => {
   const target = page.locator(selector).first();
@@ -64,9 +71,11 @@ const readProcessedCount = async (page: Page): Promise<number | null> => {
   return match ? Number.parseInt(match[1], 10) : null;
 };
 
+// The Workbench renders "Processed X/Y (Z failed)" via jobStateMachineProgress;
+// match a non-zero failed count so "(0 failed)" is not a false positive.
 const scanHasFailures = async (page: Page): Promise<boolean> =>
   page
-    .getByText(/Client could not submit this batch|\(\d+ failed\)/i)
+    .getByText(/\([1-9]\d* failed\)/i)
     .first()
     .isVisible()
     .catch(() => false);
@@ -85,6 +94,7 @@ test('captures E15-28 public demo walkthrough proof', async ({ page, baseURL }, 
   let scanTriggered = false;
   let scanHadFailures = false;
   let degradedBannerCaptured = false;
+  let localReadOk = false;
 
   try {
     // 1. Settings + pairing proof: constant-provenance fields + Test Connection.
@@ -110,7 +120,13 @@ test('captures E15-28 public demo walkthrough proof', async ({ page, baseURL }, 
     await page.screenshot({ path: testInfo.outputPath('demo-workbench-pre-scan.png'), fullPage: true });
     captures['demo-workbench-pre-scan.png'] = true;
 
-    // Opportunistic degraded-banner capture (operator may have stopped the API per runbook §3).
+    // Opportunistic degraded-banner capture, attempt 1 (pre-scan). The sovereign
+    // boundary's API stop/start is an operator shell step (runbook §3, E15-6 v1
+    // excludes outage helpers), so this is best-effort: it only catches an outage
+    // the operator induced before the run. A second attempt runs post-scan below in
+    // case the API was stopped mid-walkthrough. `.acx-sync-status--warning` also
+    // covers stale/projection-error states, so this is a degraded *indicator*, not a
+    // proven outage.
     degradedBannerCaptured = await captureIfVisible(
       page,
       DEGRADED_BANNER,
@@ -166,6 +182,20 @@ test('captures E15-28 public demo walkthrough proof', async ({ page, baseURL }, 
       testInfo.outputPath('demo-naming-queue.png'),
     );
 
+    // Degraded-banner attempt 2 (post-scan), and the sovereign-boundary read:
+    // local/curated data still rendering while the indicator is degraded. Computed
+    // here while the page is live so the finally block never touches `page`.
+    if (!degradedBannerCaptured) {
+      degradedBannerCaptured = await captureIfVisible(
+        page,
+        DEGRADED_BANNER,
+        testInfo.outputPath('demo-degraded-banner.png'),
+      );
+    }
+    captures['demo-degraded-banner.png'] = degradedBannerCaptured;
+    localReadOk =
+      degradedBannerCaptured && (await page.locator(WORKBENCH_SHELL).isVisible().catch(() => false));
+
     await page.screenshot({ path: testInfo.outputPath('demo-workbench-post-run.png'), fullPage: true });
     captures['demo-workbench-post-run.png'] = true;
 
@@ -176,19 +206,18 @@ test('captures E15-28 public demo walkthrough proof', async ({ page, baseURL }, 
     expect(captures['demo-workbench-pre-scan.png']).toBeTruthy();
 
     if (processedSamples.length >= 2) {
-      const monotonic = processedSamples.every((value, index) => index === 0 || value >= processedSamples[index - 1]);
       expect(
-        monotonic,
+        isMonotonic(processedSamples),
         `processed-count samples must be non-decreasing, observed: [${processedSamples.join(', ')}]`,
       ).toBeTruthy();
     }
   } finally {
-    const monotonic =
-      processedSamples.length < 2 ||
-      processedSamples.every((value, index) => index === 0 || value >= processedSamples[index - 1]);
-
+    // Verdict gates on constant-provenance only when required (demo: yes; LocalWP: opt
+    // out). The finally block must not touch `page` — it can be closed if the try threw,
+    // which would swallow the failure and skip the manifest+fragment write.
+    const provenanceOk = requireConstantProvenance ? constantProvenanceVisible : true;
     const verdict: DemoWalkthroughManifest['verdict'] =
-      constantProvenanceVisible && probeOutcome === 'connected' && !scanHadFailures ? 'pass' : 'fail';
+      provenanceOk && probeOutcome === 'connected' && !scanHadFailures ? 'pass' : 'fail';
 
     const manifest: DemoWalkthroughManifest = {
       task_ref: taskRef,
@@ -196,11 +225,20 @@ test('captures E15-28 public demo walkthrough proof', async ({ page, baseURL }, 
       base_url: baseURL,
       recognition_url: recognitionUrl,
       deploy_commit_sha: deployCommitSha,
-      settings: { constant_provenance_visible: constantProvenanceVisible, probe_outcome: probeOutcome },
-      scan: { triggered: scanTriggered, processed_samples: processedSamples, monotonic, had_failures: scanHadFailures },
+      settings: {
+        constant_provenance_visible: constantProvenanceVisible,
+        constant_provenance_required: requireConstantProvenance,
+        probe_outcome: probeOutcome,
+      },
+      scan: {
+        triggered: scanTriggered,
+        processed_samples: processedSamples,
+        monotonic: isMonotonic(processedSamples),
+        had_failures: scanHadFailures,
+      },
       sovereignty: {
         degraded_banner_captured: degradedBannerCaptured,
-        local_read_ok: degradedBannerCaptured ? await page.locator(WORKBENCH_SHELL).isVisible().catch(() => false) : false,
+        local_read_ok: localReadOk,
         recovery_captured: false,
       },
       captures,

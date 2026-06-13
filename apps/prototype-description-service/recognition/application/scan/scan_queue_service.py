@@ -212,8 +212,10 @@ class ScanQueueService:
                     error_message="one or more items failed",
                 )
                 return False
-            await self._repository.complete_job(job_id=job_id, completed_at=now)
-            return True
+            # Only signal success (and trigger downstream clustering) when this
+            # call actually transitioned the job; an already-terminal job
+            # (e.g. failed/stalled by another worker) returns False.
+            return await self._repository.complete_job(job_id=job_id, completed_at=now)
         return False
 
     async def terminate_stalled_jobs(

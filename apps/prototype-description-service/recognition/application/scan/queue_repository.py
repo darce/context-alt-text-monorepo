@@ -104,8 +104,12 @@ class ScanQueueRepository(Protocol):
     ) -> None:
         """Persist media_ids and final queue message after enqueueing completes."""
 
-    async def complete_job(self, *, job_id: uuid.UUID, completed_at: datetime) -> None:
-        """Mark a scan job as completed."""
+    async def complete_job(self, *, job_id: uuid.UUID, completed_at: datetime) -> bool:
+        """Mark a non-terminal scan job as completed.
+
+        Returns True only if this call transitioned the job; a job already in a
+        terminal state (e.g. failed/stalled by another worker) is left untouched.
+        """
 
     async def complete_job_with_errors(
         self,
@@ -113,8 +117,12 @@ class ScanQueueRepository(Protocol):
         job_id: uuid.UUID,
         completed_at: datetime,
         error_message: str,
-    ) -> None:
-        """Mark a scan job as completed with one or more item failures."""
+    ) -> bool:
+        """Mark a non-terminal scan job as completed-with-errors.
+
+        Returns True only if this call transitioned the job; an already-terminal
+        job is left untouched so a stall/failure reason is never overwritten.
+        """
 
     async def fail_job(self, *, job_id: uuid.UUID, completed_at: datetime, error_message: str) -> None:
         """Mark a scan job as failed."""

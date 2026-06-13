@@ -12,11 +12,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityScanJob, IdentityScanJobItem
 from recognition.application.scan.queue_repository import ScanQueueItem, ScanQueueRepository
-from recognition.domain.job import JobStatus, ScanItemStatus
+from recognition.domain.job import TERMINAL_JOB_STATUSES, JobStatus, ScanItemStatus
 from recognition.shared.db.dialect import is_postgres, timestamp_as_epoch
 from recognition.shared.db.helpers import execute_dml, get_rowcount
 
 logger = logging.getLogger(__name__)
+
+# Stored job.status values that are terminal; finalizers must never overwrite them.
+_TERMINAL_JOB_STATUS_VALUES = tuple(status.value for status in TERMINAL_JOB_STATUSES)
 
 
 class SqlAlchemyScanQueueRepository(ScanQueueRepository):
@@ -152,12 +155,17 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
             .values(media_ids=list(media_ids), message=message)
         )
 
-    async def complete_job(self, *, job_id: uuid.UUID, completed_at: datetime) -> None:
-        await self._session.execute(
+    async def complete_job(self, *, job_id: uuid.UUID, completed_at: datetime) -> bool:
+        result = await execute_dml(
+            self._session,
             update(IdentityScanJob)
-            .where(IdentityScanJob.id == job_id)
-            .values(status=JobStatus.COMPLETED, completed_at=completed_at)
+            .where(
+                IdentityScanJob.id == job_id,
+                IdentityScanJob.status.not_in(_TERMINAL_JOB_STATUS_VALUES),
+            )
+            .values(status=JobStatus.COMPLETED, completed_at=completed_at),
         )
+        return get_rowcount(result) > 0
 
     async def complete_job_with_errors(
         self,
@@ -165,16 +173,21 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
         job_id: uuid.UUID,
         completed_at: datetime,
         error_message: str,
-    ) -> None:
-        await self._session.execute(
+    ) -> bool:
+        result = await execute_dml(
+            self._session,
             update(IdentityScanJob)
-            .where(IdentityScanJob.id == job_id)
+            .where(
+                IdentityScanJob.id == job_id,
+                IdentityScanJob.status.not_in(_TERMINAL_JOB_STATUS_VALUES),
+            )
             .values(
                 status=JobStatus.COMPLETED_WITH_ERRORS,
                 completed_at=completed_at,
                 error_message=error_message,
-            )
+            ),
         )
+        return get_rowcount(result) > 0
 
     async def fail_job(self, *, job_id: uuid.UUID, completed_at: datetime, error_message: str) -> None:
         await self._session.execute(

@@ -285,6 +285,10 @@ def test_health_detailed_returns_diagnostic_payload(tmp_path) -> None:
     assert mc["bundle_files"] == 2
     assert mc["status"] == HealthStatus.OK.value
 
+    embedding_runtime = body["embedding_runtime"]
+    assert embedding_runtime["available"] is False
+    assert embedding_runtime["reason"] == "capability read failed"
+
 
 def test_health_detailed_status_tracks_breaker_failure(tmp_path) -> None:
     """Regression guard for 7ed215db: /health/detailed status must aggregate

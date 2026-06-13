@@ -29,3 +29,36 @@ export interface SyncTriggerResponse extends SyncStatusResponse {
   reason: 'ok' | 'sync_failed' | 'sync_unavailable' | 'no_remote_data';
   error?: string | null;
 }
+
+export type BreakerState = 'open' | 'closed';
+
+export interface SyncHealthWarning {
+  code: string;
+  message: string;
+  count: number;
+  threshold: number;
+}
+
+export interface SyncHealthResponse {
+  breaker: {
+    state: BreakerState;
+    base_url: string;
+    opened_at: string | null;
+  };
+  outbox: {
+    pending: number;
+    failed: number;
+  };
+  conflicts: {
+    open: number;
+  };
+  replays: {
+    failed: number | null;
+    source: string;
+  };
+  last_pull: {
+    at: string | null;
+    ok: boolean;
+  };
+  warnings: SyncHealthWarning[];
+}

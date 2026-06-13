@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import { __ } from '@wordpress/i18n';
 
 import type { ClusterResponse } from '../api/recognition';
+import { formatScanSubmissionError } from '../api/recognition/scanApiError';
 import type { JobType } from './useJobPersistence';
 import { useScanIdentities, useClusterIdentities, useCancelScanJobs } from './useRecognitionHooks';
 
@@ -65,8 +66,10 @@ export const useJobStateMachineMutations = ({
       onScanComplete?.(jobIds);
     },
     onError: (error) => {
+      const structured = formatScanSubmissionError(error);
       const message =
-        error instanceof Error ? error.message : __('Recognition job failed. Please try again.', 'alt-context');
+        structured ??
+        (error instanceof Error ? error.message : __('Recognition job failed. Please try again.', 'alt-context'));
       onScanError?.(message);
     },
   });

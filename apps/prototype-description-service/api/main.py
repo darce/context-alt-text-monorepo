@@ -16,6 +16,10 @@ from recognition.application.health import (
     check_database,
     check_model_cache,
 )
+from recognition.application.scan.capability import (
+    embedding_runtime_health_payload,
+    read_embedding_runtime_capability,
+)
 from recognition.config.cache import configure_dev_cache
 from recognition.config.security import get_security_settings, validate_production_security
 from recognition.config.settings import RecognitionSettings
@@ -276,6 +280,21 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
         status = aggregate_status([db_check, breaker_check, mc_check])
         bundle = cache_dir / model_name
         bundle_files = len(list(bundle.glob("*.onnx"))) if bundle.is_dir() else 0
+        embedding_runtime = {
+            "available": False,
+            "reason": "database unavailable",
+            "heartbeat_age_seconds": None,
+        }
+        if session is not None:
+            try:
+                embedding_capability = await read_embedding_runtime_capability(session)
+                embedding_runtime = embedding_runtime_health_payload(embedding_capability)
+            except Exception:
+                embedding_runtime = {
+                    "available": False,
+                    "reason": "capability read failed",
+                    "heartbeat_age_seconds": None,
+                }
         return {
             "status": status.value,
             "timestamp": datetime.now(UTC).isoformat(),
@@ -288,6 +307,7 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
                 "status": mc_check.status.value,
                 "detail": mc_check.detail,
             },
+            "embedding_runtime": embedding_runtime,
         }
 
 

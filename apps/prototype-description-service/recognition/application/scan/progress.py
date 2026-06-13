@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from recognition.application.scan.queue_repository import ScanQueueRepository
-from recognition.domain.job import JobPhase, JobStatus
+from recognition.domain.job import TERMINAL_JOB_STATUSES, Job, JobPhase, JobStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,4 +67,61 @@ async def build_scan_progress_snapshot(
     )
 
 
-__all__ = ["ScanJobProgressSnapshot", "build_scan_progress_snapshot"]
+@dataclass(frozen=True, slots=True)
+class ScanProgressEnvelope:
+    """Poll-cheap scan progress contract for plugin/E15-22 consumers."""
+
+    job_id: str
+    status: JobStatus
+    phase: JobPhase
+    items_total: int
+    items_done: int
+    items_failed: int
+    failure_reason: str | None
+    updated_at: datetime
+
+
+async def build_scan_progress_envelope(
+    *,
+    job: Job,
+    scan_repo: ScanQueueRepository,
+) -> ScanProgressEnvelope:
+    """Build the scan progress envelope from live item aggregates."""
+    job_uuid = uuid.UUID(str(job.id))
+    status_counts = await scan_repo.get_job_item_status_counts(job_id=job_uuid)
+    items_total = max(job.progress_total or 0, sum(status_counts.values()))
+    items_done = status_counts.get("completed", 0)
+    items_failed = status_counts.get("failed", 0)
+
+    if job.status is JobStatus.PENDING:
+        phase = JobPhase.QUEUED
+    elif job.status is JobStatus.RUNNING:
+        phase = JobPhase.DETECTING
+    elif job.status is JobStatus.FAILED:
+        phase = JobPhase.FAILED
+    elif job.status in TERMINAL_JOB_STATUSES:
+        phase = JobPhase.COMPLETE
+    else:
+        phase = JobPhase.QUEUED
+
+    updated_at = job.finished_at or job.started_at or datetime.now(tz=UTC)
+    failure_reason = job.error_message if job.status in {JobStatus.FAILED, JobStatus.COMPLETED_WITH_ERRORS} else None
+
+    return ScanProgressEnvelope(
+        job_id=job.id,
+        status=job.status,
+        phase=phase,
+        items_total=items_total,
+        items_done=items_done,
+        items_failed=items_failed,
+        failure_reason=failure_reason,
+        updated_at=updated_at,
+    )
+
+
+__all__ = [
+    "ScanJobProgressSnapshot",
+    "ScanProgressEnvelope",
+    "build_scan_progress_envelope",
+    "build_scan_progress_snapshot",
+]

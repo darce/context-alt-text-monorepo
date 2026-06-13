@@ -15,7 +15,19 @@ class JobStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
+    COMPLETED_WITH_ERRORS = "completed_with_errors"
+    REJECTED = "rejected"
     FAILED = "failed"
+
+
+TERMINAL_JOB_STATUSES: frozenset[JobStatus] = frozenset(
+    {
+        JobStatus.COMPLETED,
+        JobStatus.COMPLETED_WITH_ERRORS,
+        JobStatus.REJECTED,
+        JobStatus.FAILED,
+    }
+)
 
 
 class JobType(StrEnum):

@@ -373,7 +373,31 @@ describe('SettingsPage', () => {
 
       fireEvent.click(screen.getByTestId('acx-confirm-tenant-pairing'));
 
-      expect(testMutate).toHaveBeenCalledWith({ confirm_tenant_pairing: true });
+      expect(testMutate).toHaveBeenCalledWith({ probe_target: 'service', confirm_tenant_pairing: true });
+    });
+
+    it('keeps tenant-pairing confirmation on the tested service target when effective mode is local', () => {
+      mockUseQuery.mockReturnValue(
+        createMockQuery({
+          data: {
+            ...defaultSettings,
+            effective_target_mode: 'local',
+            effective_target_url: 'http://localhost:8000',
+            recognition_source: 'local',
+          },
+        }),
+      );
+      render(<SettingsPage />);
+
+      fireEvent.click(screen.getAllByRole('button', { name: 'Check health' })[1]);
+      driveOutcome({
+        outcome: 'tenant_pairing_conflict',
+        persisted_tenant_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        key_tenant_id: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+      });
+      fireEvent.click(screen.getByTestId('acx-confirm-tenant-pairing'));
+
+      expect(testMutate).toHaveBeenLastCalledWith({ probe_target: 'service', confirm_tenant_pairing: true });
     });
 
     it('renders the rate_limited banner and interpolates retry_after_seconds', () => {

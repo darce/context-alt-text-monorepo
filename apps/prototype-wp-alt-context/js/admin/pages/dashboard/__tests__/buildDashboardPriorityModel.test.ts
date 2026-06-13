@@ -3,7 +3,8 @@ import { buildDashboardPriorityModel } from '../buildDashboardPriorityModel';
 const buildInputs = (overrides: Partial<Parameters<typeof buildDashboardPriorityModel>[0]> = {}) => ({
   isSyncStatusLoading: false,
   isSyncStatusError: false,
-  syncHealth: 'healthy',
+  effectiveSyncHealth: 'healthy',
+  hasSyncHealthWarnings: false,
   pendingReplayCount: 0,
   conflictCount: 0,
   failedReplayCount: 0,
@@ -23,7 +24,7 @@ describe('buildDashboardPriorityModel', () => {
   it('prioritizes sync health when the replay pipeline needs attention', () => {
     const model = buildDashboardPriorityModel(
       buildInputs({
-        syncHealth: 'conflicts',
+        effectiveSyncHealth: 'conflicts',
         conflictCount: 2,
         pendingClustersCount: 3,
       }),
@@ -47,10 +48,10 @@ describe('buildDashboardPriorityModel', () => {
 
   it.each(['queued', 'failures', 'offline', 'stale'])(
     'treats %s as sync attention that outranks review work',
-    (syncHealth) => {
+    (effectiveSyncHealth) => {
       const model = buildDashboardPriorityModel(
         buildInputs({
-          syncHealth,
+          effectiveSyncHealth,
           pendingClustersCount: 2,
         }),
       );
@@ -58,6 +59,18 @@ describe('buildDashboardPriorityModel', () => {
       expect(model.gridSectionOrder[0]).toBe('syncHealth');
     },
   );
+
+  it('treats sync-health envelope warnings as sync attention even when effective health is healthy', () => {
+    const model = buildDashboardPriorityModel(
+      buildInputs({
+        effectiveSyncHealth: 'healthy',
+        hasSyncHealthWarnings: true,
+        pendingClustersCount: 2,
+      }),
+    );
+
+    expect(model.gridSectionOrder[0]).toBe('syncHealth');
+  });
 
   it('treats topology backlog as sync attention even when the health label is healthy', () => {
     const model = buildDashboardPriorityModel(

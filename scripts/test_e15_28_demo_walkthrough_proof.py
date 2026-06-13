@@ -29,6 +29,8 @@ def test_renderer_exports_pure_fragment_surface() -> None:
     assert f"'{FRAGMENT_FILENAME}'" in text
     assert "export const renderDemoSmokeLogFragment" in text
     assert "export interface DemoWalkthroughManifest" in text
+    # Honest verdict axis: provenance gating is explicit in the contract.
+    assert "constant_provenance_required" in text
     # Purity guard: the renderer must not read the clock or filesystem.
     assert "new Date(" not in text
     assert "node:fs" not in text
@@ -56,6 +58,24 @@ def test_spec_drives_walkthrough_and_emits_manifest_plus_fragment() -> None:
     # Emits both artifacts.
     assert "evidence-manifest.json" in text
     assert "demo-settings-provenance.png" in text
+    # LocalWP opt-out for the provenance verdict axis is wired.
+    assert "ACX_E2E_REQUIRE_CONSTANT_PROVENANCE" in text
+    # The dead failure-string copied from the older spec must not regress back in.
+    assert "Client could not submit this batch" not in text
+
+
+def _phony_block(makefile_text: str) -> str:
+    """Return the full ``.PHONY`` declaration, honoring backslash line continuations."""
+    lines: list[str] = []
+    capturing = False
+    for line in makefile_text.splitlines():
+        if line.lstrip().startswith(".PHONY"):
+            capturing = True
+        if capturing:
+            lines.append(line)
+            if not line.rstrip().endswith("\\"):
+                break
+    return "\n".join(lines)
 
 
 def test_make_target_runs_evidence_project_against_demo_spec() -> None:
@@ -63,7 +83,11 @@ def test_make_target_runs_evidence_project_against_demo_spec() -> None:
     assert "demo-walkthrough-proof:" in text
     assert "--project=evidence" in text
     assert "tests/e2e/evidence/demo-walkthrough.spec.ts" in text
-    assert "demo-walkthrough-proof" in text.split(".PHONY", 1)[1].split("\n\n", 1)[0]
+    assert "demo-walkthrough-proof" in _phony_block(text)
+    # Fresh-checkout runnability: the target guards missing deps and ensures the browser
+    # rather than dying at exit 127 / a headless Chromium launch with no message.
+    assert "node_modules" in text
+    assert "npm run e2e:install" in text
 
 
 def test_runbook_points_operators_at_the_make_target() -> None:

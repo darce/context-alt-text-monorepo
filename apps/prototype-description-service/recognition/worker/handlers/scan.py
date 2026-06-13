@@ -133,13 +133,18 @@ class ScanItemHandler:
             repo = SqlAlchemyScanQueueRepository(session)
             queue = ScanQueueService(repo)
             for job_id in job_ids:
-                completed = await queue.refresh_job_progress(job_id=job_id)
-                if completed:
+                result = await queue.refresh_job_progress(job_id=job_id)
+                # Fan out clustering + ObjectStore cleanup whenever the job
+                # reached a terminal state with at least one successful item
+                # (COMPLETED or COMPLETED_WITH_ERRORS). A fully-failed job is
+                # skipped: nothing to cluster, uploads kept for diagnosis.
+                if result.triggers_followups:
                     tenant_id = await repo.get_job_tenant_id(job_id=job_id)
                     if tenant_id:
                         logger.info(
-                            "[worker] Scan job %s completed, auto-creating clustering job for tenant %s",
+                            "[worker] Scan job %s reached %s, auto-creating clustering job for tenant %s",
                             job_id,
+                            result.status,
                             tenant_id,
                         )
                         clustering_job = IdentityClusteringJob(

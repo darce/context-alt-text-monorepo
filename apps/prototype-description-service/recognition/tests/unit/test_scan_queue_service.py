@@ -9,7 +9,8 @@ import pytest
 from sqlalchemy import select
 
 from db.models import IdentityScanJob, IdentityScanJobItem
-from recognition.application.scan.scan_queue_service import ScanQueueService
+from recognition.application.scan.scan_queue_service import JobProgressResult, ScanQueueService
+from recognition.domain.job import JobStatus
 from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
 
 
@@ -33,16 +34,18 @@ async def test_refresh_job_progress_completes_when_all_items_done(db_session, te
     await repo.mark_job_running(job_id=job_id, started_at=datetime.now(tz=UTC))
 
     await repo.mark_item_completed(item_id=claimed[0].id, completed_at=datetime.now(tz=UTC), identities_detected=1)
-    completed = await queue.refresh_job_progress(job_id=job_id)
-    assert completed is False  # Not all items done yet
+    result = await queue.refresh_job_progress(job_id=job_id)
+    assert result.transitioned is False  # Not all items done yet
     job = (await db_session.execute(select(IdentityScanJob).where(IdentityScanJob.id == job_id))).scalar_one()
     assert job.processed_media == 1
     assert job.identities_detected == 1
     assert job.status in {"pending", "running", "completed"}
 
     await repo.mark_item_completed(item_id=claimed[1].id, completed_at=datetime.now(tz=UTC), identities_detected=2)
-    completed = await queue.refresh_job_progress(job_id=job_id)
-    assert completed is True  # All items done, job completed successfully
+    result = await queue.refresh_job_progress(job_id=job_id)
+    assert result.transitioned is True  # All items done, job completed successfully
+    assert result.status is JobStatus.COMPLETED
+    assert result.triggers_followups is True
     job = (await db_session.execute(select(IdentityScanJob).where(IdentityScanJob.id == job_id))).scalar_one()
     assert job.processed_media == 2
     assert job.identities_detected == 3
@@ -51,23 +54,80 @@ async def test_refresh_job_progress_completes_when_all_items_done(db_session, te
 
 
 @pytest.mark.asyncio
-async def test_refresh_job_progress_fails_when_any_item_failed(db_session, tenant) -> None:
+async def test_refresh_job_progress_partial_failure_completes_with_errors(db_session, tenant) -> None:
+    """E15-27-BR-24/BR-25: a batch with at least one success AND at least one
+    failure finalizes completed_with_errors and must still trigger the
+    downstream follow-ups (clustering + ObjectStore cleanup)."""
     repo = SqlAlchemyScanQueueRepository(db_session)
     queue = ScanQueueService(repo)
 
-    job_id = await repo.create_job(tenant_id=tenant.id, media_ids=[1])
-    await repo.enqueue_items(job_id=job_id, tenant_id=tenant.id, items=[(1, "http://example.test/1.jpg")])
+    job_id = await repo.create_job(tenant_id=tenant.id, media_ids=[1, 2])
+    await repo.enqueue_items(
+        job_id=job_id,
+        tenant_id=tenant.id,
+        items=[(1, "http://example.test/1.jpg"), (2, "http://example.test/2.jpg")],
+    )
+    claimed = await repo.claim_pending_items(tenant_id=tenant.id, job_id=job_id, limit=2, now=datetime.now(tz=UTC))
+    await repo.mark_item_completed(item_id=claimed[0].id, completed_at=datetime.now(tz=UTC), identities_detected=2)
+    await repo.mark_item_failed(item_id=claimed[1].id, completed_at=datetime.now(tz=UTC), error_message="boom")
 
-    claimed = await repo.claim_pending_items(tenant_id=tenant.id, job_id=job_id, limit=1, now=datetime.now(tz=UTC))
-    assert len(claimed) == 1
-    await repo.mark_item_failed(item_id=claimed[0].id, completed_at=datetime.now(tz=UTC), error_message="boom")
-    completed = await queue.refresh_job_progress(job_id=job_id)
-    assert completed is False  # Job failed, not successfully completed
+    result = await queue.refresh_job_progress(job_id=job_id)
+    assert result.transitioned is True
+    assert result.status is JobStatus.COMPLETED_WITH_ERRORS
+    assert result.triggers_followups is True  # successes present -> cluster + cleanup
 
     job = (await db_session.execute(select(IdentityScanJob).where(IdentityScanJob.id == job_id))).scalar_one()
     assert job.status == "completed_with_errors"
     assert job.completed_at is not None
     assert job.error_message == "one or more items failed"
+
+
+@pytest.mark.asyncio
+async def test_refresh_job_progress_all_items_failed_finalizes_failed(db_session, tenant) -> None:
+    """E15-27-BR-25: a batch where every processed item failed (zero successes)
+    must finalize as terminal FAILED, not completed_with_errors. The latter
+    reads as a partial success and lets envelope phase=complete look healthy.
+    With no successful item there is also nothing to cluster or clean up."""
+    repo = SqlAlchemyScanQueueRepository(db_session)
+    queue = ScanQueueService(repo)
+
+    job_id = await repo.create_job(tenant_id=tenant.id, media_ids=[1, 2])
+    await repo.enqueue_items(
+        job_id=job_id,
+        tenant_id=tenant.id,
+        items=[(1, "http://example.test/1.jpg"), (2, "http://example.test/2.jpg")],
+    )
+    claimed = await repo.claim_pending_items(tenant_id=tenant.id, job_id=job_id, limit=2, now=datetime.now(tz=UTC))
+    for item in claimed:
+        await repo.mark_item_failed(item_id=item.id, completed_at=datetime.now(tz=UTC), error_message="boom")
+
+    result = await queue.refresh_job_progress(job_id=job_id)
+    assert result.transitioned is True
+    assert result.status is JobStatus.FAILED
+    assert result.triggers_followups is False  # nothing succeeded
+
+    job = (await db_session.execute(select(IdentityScanJob).where(IdentityScanJob.id == job_id))).scalar_one()
+    assert job.status == "failed"
+    assert job.completed_at is not None
+    assert job.error_message == "no items completed successfully"
+
+
+@pytest.mark.asyncio
+async def test_fail_job_if_active_is_terminal_guarded(db_session, tenant) -> None:
+    """The all-items-failed -> FAILED finalize is terminal-guarded just like the
+    complete paths (E15-27-RF-A-01): a job already terminal is never
+    overwritten, so a stall/completion reason is preserved."""
+    repo = SqlAlchemyScanQueueRepository(db_session)
+
+    job_id = await repo.create_job(tenant_id=tenant.id, media_ids=[1])
+    assert await repo.complete_job(job_id=job_id, completed_at=datetime.now(tz=UTC)) is True
+
+    transitioned = await repo.fail_job_if_active(
+        job_id=job_id, completed_at=datetime.now(tz=UTC), error_message="all items failed"
+    )
+    assert transitioned is False
+    job = (await db_session.execute(select(IdentityScanJob).where(IdentityScanJob.id == job_id))).scalar_one()
+    assert job.status == "completed"
 
 
 @pytest.mark.asyncio
@@ -102,8 +162,8 @@ async def test_refresh_job_progress_does_not_overwrite_terminal_stalled_job(db_s
 
     # A late refresh after every item has reached a terminal state must not
     # re-finalize the already-terminal job.
-    completed = await queue.refresh_job_progress(job_id=job_id)
-    assert completed is False
+    result = await queue.refresh_job_progress(job_id=job_id)
+    assert result.transitioned is False
     job = (await db_session.execute(select(IdentityScanJob).where(IdentityScanJob.id == job_id))).scalar_one()
     assert job.status == "failed"
     assert job.error_message == "stalled"

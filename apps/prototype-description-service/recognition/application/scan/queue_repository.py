@@ -125,7 +125,15 @@ class ScanQueueRepository(Protocol):
         """
 
     async def fail_job(self, *, job_id: uuid.UUID, completed_at: datetime, error_message: str) -> None:
-        """Mark a scan job as failed."""
+        """Mark a scan job as failed (unconditional; used by explicit cancel)."""
+
+    async def fail_job_if_active(self, *, job_id: uuid.UUID, completed_at: datetime, error_message: str) -> bool:
+        """Mark a non-terminal scan job as failed.
+
+        Returns True only if this call transitioned the job; an already-terminal
+        job is left untouched so a prior stall/completion reason is never
+        overwritten. Used by the all-items-failed finalize path.
+        """
 
     async def claim_pending_items(
         self,

@@ -293,6 +293,14 @@ check-all:
 			echo "✅ All monorepo checks passed!"; \
 		fi
 
+# Run the full monorepo check suite before merging a feature branch to main.
+# Pairs with the external handoff-close-check evidence gate, which validates
+# recorded test_result evidence but does NOT execute checks itself (see
+# docs/workstate/workstate-migration-upstream-asks.md § K). Run by habit before
+# the close-check so the working tree is actually verified, not trusted.
+pre-merge:
+	@$(MAKE) check-all
+
 # Guard: every editable current-pin reference to the workstate MCP packages must
 # match the Makefile MCP_*_PACKAGE canonical. Frozen records (docs/adrs|specs|tasks)
 # are exempt; overlay manifest + range/git+ssh forms surface as advisories.

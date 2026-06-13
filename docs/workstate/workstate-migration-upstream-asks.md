@@ -176,6 +176,30 @@ consumer `.gitignore` must use slashless patterns (`/.workstate`,
 symlink (git treats it as a file), so the symlink shows up untracked. The
 `workstate-bootstrap` `.gitignore` template should ship the slashless form.
 
+## K. Close-check gate validates recorded evidence but never RUNS verification commands
+
+`handoff_close_check` / `integrity-check --kind close`
+(`workstate_handoff_mcp/decisions.py`) enforces that `test_result` evidence
+exists and is tied to the current HEAD SHA, but it never *executes*
+lint/typecheck/test — it trusts the recorded evidence. A broken tree can
+therefore merge if evidence was recorded green while the working tree is
+actually red: E15-26's `DashboardPage.test.tsx` (25 tests crashing on an
+unmocked `useSyncHealth`) merged to main and was only caught when the e15-28
+integration ran `make check` (ref E15-28 decision 748). The consumer cannot
+fix this — the gate lives in the external package (Plugin Boundary Rule), and
+"run the checks" is repo-specific, so the capability must be config-driven, not
+hardcoded upstream. **Ask:** add a generic capability for the close-check to
+RUN one or more consumer-configured verification commands (fail-closed on
+non-zero exit) before it passes — e.g. a runtime-config
+`close_check.required_commands: ["make check-all"]` — so the gate verifies the
+working tree rather than only trusting recorded evidence. **Consumer mitigation
+(this repo, MAINT-TYPECHECK-GATE-20260613):** a local `make pre-merge`
+(= `make check-all`) run by habit before the close-check. This does NOT close
+the bypass — it is not enforced by the gate — and is intentionally not built as
+a bespoke changed-surface detector, which would be off the demo critical path
+(per the 2026-06-11 MVP strategy assessment) and would duplicate the real fix
+that belongs here.
+
 ## Resolved during this migration (not an upstream ask)
 
 - `workstate_orchestrator_mcp.orchestration.lane_prompt` raised

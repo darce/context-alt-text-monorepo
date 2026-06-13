@@ -114,6 +114,10 @@ export const SettingsPage = (): React.JSX.Element => {
     testMutation.mutate({ probe_target: target });
   };
 
+  const handleConfirmTenantPairing = () => {
+    testMutation.mutate({ confirm_tenant_pairing: true });
+  };
+
   if (settingsQuery.isLoading) {
     return (
       <section className="acx-settings" aria-labelledby="acx-settings-title">
@@ -182,7 +186,13 @@ export const SettingsPage = (): React.JSX.Element => {
         </div>
       ) : null}
 
-      {state.testResult ? <TestConnectionBannerView testResult={state.testResult} /> : null}
+      {state.testResult ? (
+        <TestConnectionBannerView
+          testResult={state.testResult}
+          onConfirmTenantPairing={handleConfirmTenantPairing}
+          confirmPending={testMutation.isPending}
+        />
+      ) : null}
     </section>
   );
 };

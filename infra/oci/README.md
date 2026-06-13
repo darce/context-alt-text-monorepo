@@ -330,8 +330,9 @@ Three isolated environments share the VM:
 | prod | `api.altcontext.com` | `:latest` | `acx-prod.service` |
 | staging | `staging.api.altcontext.com` | `:staging` | `acx-staging.service` |
 | dev | `dev.api.altcontext.com` | `:dev` | `acx-dev.service` |
+| demo | `demo.altcontext.com` | WordPress `:6.8-php8.3-apache` + MariaDB `:11.4` | `acx-demo.service` |
 
-Caddy runs separately as `acx-caddy.service`, routing all three subdomains.
+Caddy runs separately as `acx-caddy.service`, routing all four subdomains.
 
 ### Service Management
 
@@ -373,6 +374,26 @@ docker exec acx-prod-postgres-1 pg_isready -U acx_app
 docker exec acx-staging-postgres-1 pg_isready -U acx_staging
 docker exec acx-dev-postgres-1 pg_isready -U acx_dev
 ```
+
+### Deploying the demo stack
+
+```bash
+# From repo root — ships compose, Caddy edge, plugin zip (when dist/ exists), bootstrap:
+make deploy-demo
+
+# Pin the plugin artifact explicitly:
+PLUGIN_ZIP=dist/alt-context-<version>.zip make deploy-demo
+```
+
+Operator prerequisites before first deploy:
+
+1. Copy `infra/oci/demo/.env.example` → `/opt/acx-backend/demo/secrets/.env` (chmod 600)
+2. Populate DB creds, `WP_ADMIN_*`, `WORDPRESS_CONFIG_EXTRA`, and ACX constants
+3. Mint tenant + key per `infra/oci/demo/tenant-mint-runbook.md` (explicit UUID)
+4. Append `https://demo.altcontext.com` to `RECOGNITION_ALLOWED_ORIGINS` (staging first)
+
+Bootstrap sequence is implemented by `infra/oci/demo/bootstrap-wp.sh` (wp core install +
+plugin activate). Optional cohort reset: `infra/oci/demo/content-reset-runbook.md`.
 
 ### Deploying Updates
 
@@ -605,13 +626,19 @@ focused on the destructive contract.
 │   └── db/docker-prod-init/
 ├── staging/                         # same structure as prod
 ├── dev/                             # same structure as prod
+├── demo/
+│   ├── .env -> secrets/.env
+│   ├── docker-compose.demo.yml      # WordPress + MariaDB demo stack
+│   └── secrets/.env                 # demo credentials (chmod 600)
 ├── data/
 │   ├── prod-pgdata/                 # prod Postgres (persists)
 │   ├── prod-models/                 # prod InsightFace cache (persists)
 │   ├── staging-pgdata/
 │   ├── staging-models/
 │   ├── dev-pgdata/
-│   └── dev-models/
+│   ├── dev-models/
+│   ├── demo-wpdata/                 # demo WordPress content (persists)
+│   └── demo-dbdata/                 # demo MariaDB (persists)
 └── logs/
 ```
 

@@ -13,3 +13,15 @@ staging.api.altcontext.com {
 dev.api.altcontext.com {
 	reverse_proxy dev-api:8000
 }
+
+demo.altcontext.com {
+	@xmlrpc path /xmlrpc.php
+	respond @xmlrpc "Forbidden" 403
+
+	# No rate_limit directive here: stock caddy:2-alpine does not bundle the
+	# third-party caddy-ratelimit module, and an unrecognized directive fails
+	# `caddy validate` for every vhost. Login rate-limiting requires a custom
+	# xcaddy build — deferred (E15-28 hardening note).
+
+	reverse_proxy demo-wp:80
+}

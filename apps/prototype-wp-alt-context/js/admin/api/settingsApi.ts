@@ -13,6 +13,8 @@ export interface SettingsResponse {
   api_key_set: boolean;
   api_key_last4: string;
   key_source: 'constant' | 'option' | 'filter' | 'default';
+  // Tenant identity (settings GET, class-settings-controller.php get_settings).
+  // tenant_id_source mirrors TenantIdentity::resolve()['source'].
   tenant_id: string;
   tenant_id_source: 'constant' | 'option' | 'filter' | 'default' | 'derived';
   tenant_paired: boolean;
@@ -68,9 +70,16 @@ export interface TestConnectionResponse {
   body?: unknown;
   probe_mode?: TestConnectionProbeMode;
   probed_url?: string;
+  // Tenant-pairing fields merged by class-settings-controller.php attempt_tenant_pairing.
+  // All optional: present only on the relevant pairing path (error / conflict / success).
   pairing_error?: string | null;
   persisted_tenant_id?: string;
   key_tenant_id?: string;
+  tenant_paired?: boolean;
+  tenant_id?: string;
+  tenant_id_source?: string;
+  rekey_strategy?: string;
+  rekey_updated_rows?: number;
 }
 
 export const fetchSettings = async (): Promise<SettingsResponse> => {
@@ -92,6 +101,8 @@ export const saveSettings = async (payload: SaveSettingsPayload): Promise<SaveSe
 
 export interface TestConnectionPayload {
   probe_target?: RecognitionSourceValue;
+  // Set when the operator adopts the API key's tenant from the pairing-conflict banner;
+  // read by class-settings-controller.php request_confirms_tenant_pairing.
   confirm_tenant_pairing?: boolean;
 }
 

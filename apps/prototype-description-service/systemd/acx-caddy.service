@@ -9,7 +9,7 @@
 [Unit]
 Description=ACX Caddy Reverse Proxy
 Requires=docker.service
-After=docker.service acx-prod.service acx-staging.service acx-dev.service
+After=docker.service acx-prod.service acx-staging.service acx-dev.service acx-demo.service
 
 [Service]
 Type=exec

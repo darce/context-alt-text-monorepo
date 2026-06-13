@@ -14,14 +14,16 @@
 
 DEPLOY_SCRIPT         := $(ROOT_MAKEFILE_DIR)/scripts/deploy/recognition-service.sh
 DEPLOY_COMPOSE_SCRIPT := $(ROOT_MAKEFILE_DIR)/scripts/deploy/sync-compose.sh
+DEPLOY_DEMO_SCRIPT    := $(ROOT_MAKEFILE_DIR)/scripts/deploy/sync-demo.sh
+DEMO_WALKTHROUGH_APP  := $(ROOT_MAKEFILE_DIR)/apps/prototype-wp-alt-context
 
 .PHONY: deploy-help deploy-build deploy-build-remote \
-        deploy-dev deploy-staging deploy-prod \
+        deploy-dev deploy-staging deploy-prod deploy-demo \
         deploy-promote-staging deploy-promote-prod deploy-rollback-dev \
         deploy-verify deploy-verify-dev deploy-verify-staging deploy-verify-prod \
         deploy-status \
         deploy-compose-dev deploy-compose-staging deploy-compose-prod \
-        reset-remote
+        reset-remote demo-walkthrough-proof
 
 deploy-help:
 	@echo "Recognition service deploy targets:"
@@ -58,6 +60,16 @@ deploy-help:
 	@echo "    make deploy-compose-dev                    Sync compose to acx-dev VM and 'docker compose up -d'"
 	@echo "    make deploy-compose-staging                Sync compose to acx-staging VM and 'docker compose up -d'"
 	@echo "    make deploy-compose-prod CONFIRM=PROD      Sync compose to acx-prod VM and 'docker compose up -d'"
+	@echo ""
+	@echo "  Demo WordPress stack (compose + Caddy edge; recreates Caddy to join acx-demo-net):"
+	@echo "    make deploy-demo                           Sync demo stack + bootstrap + Caddy config"
+	@echo "    PLUGIN_ZIP=dist/alt-context-x.y.z.zip make deploy-demo   Pin plugin artifact explicitly"
+	@echo ""
+	@echo "  Demo walkthrough proof (Playwright evidence — screenshots + smoke-log fragment):"
+	@echo "    First-time setup: (cd apps/prototype-wp-alt-context && npm ci && npm run e2e:install)"
+	@echo "    make demo-walkthrough-proof                Drive demo.altcontext.com walkthrough; emit evidence"
+	@echo "    WP_BASE_URL=http://localhost:10010 ACX_E2E_REQUIRE_CONSTANT_PROVENANCE=0 make demo-walkthrough-proof   LocalWP (no wp-config constants)"
+	@echo "    Requires ACX_E2E_WP_ADMIN_USER / ACX_E2E_WP_ADMIN_PASS for non-interactive auth."
 	@echo ""
 	@echo "  Optional overrides: OCI_HOST OCI_USER OCIR_REGISTRY OCIR_NAMESPACE IMAGE_NAME GIT_REF"
 	@echo "                      ACX_DEPLOY_PLATFORM ACX_REMOTE_BUILD_DIR ACX_ALLOW_DIRTY"
@@ -142,3 +154,30 @@ deploy-compose-staging:
 
 deploy-compose-prod:
 	@ENV=prod CONFIRM="$(CONFIRM)" "$(DEPLOY_COMPOSE_SCRIPT)"
+
+deploy-demo:
+	@"$(DEPLOY_DEMO_SCRIPT)"
+
+# Demo walkthrough proof: runs the Playwright `evidence` project's demo-walkthrough
+# spec against WP_BASE_URL (default https://demo.altcontext.com), emitting screenshots,
+# an evidence manifest, and a paste-ready smoke-log fragment under the task-scoped
+# local/playwright/<task-ref>/evidence/ artifact dir. Auth bootstraps from
+# ACX_E2E_WP_ADMIN_USER/ACX_E2E_WP_ADMIN_PASS (interactive page.pause() otherwise).
+demo-walkthrough-proof: WP_BASE_URL ?= https://demo.altcontext.com
+demo-walkthrough-proof: ACX_PLAYWRIGHT_TASK_REF ?= E15-28
+demo-walkthrough-proof:
+	@cd "$(DEMO_WALKTHROUGH_APP)" && \
+		if [ ! -d node_modules ]; then \
+			echo "demo-walkthrough-proof: dependencies missing. First run: (cd apps/prototype-wp-alt-context && npm ci && npm run e2e:install)" >&2; \
+			exit 2; \
+		fi
+	@cd "$(DEMO_WALKTHROUGH_APP)" && npm run e2e:install >/dev/null
+	@cd "$(DEMO_WALKTHROUGH_APP)" && \
+		WP_BASE_URL="$(WP_BASE_URL)" \
+		ACX_PLAYWRIGHT_TASK_REF="$(ACX_PLAYWRIGHT_TASK_REF)" \
+		ACX_DEPLOY_COMMIT_SHA="$${ACX_DEPLOY_COMMIT_SHA:-$$(git rev-parse HEAD 2>/dev/null || true)}" \
+		bash scripts/playwright-cli.sh test --project=evidence tests/e2e/evidence/demo-walkthrough.spec.ts
+	@echo "==> Demo walkthrough proof artifacts under:"
+	@echo "    $(DEMO_WALKTHROUGH_APP)/local/playwright/$(ACX_PLAYWRIGHT_TASK_REF)/evidence/"
+	@echo "    Smoke-log fragment (Playwright nests it in a per-test subdir) — locate with:"
+	@echo "    find $(DEMO_WALKTHROUGH_APP)/local/playwright/$(ACX_PLAYWRIGHT_TASK_REF)/evidence -name demo-walkthrough-smoke-log-fragment.md"

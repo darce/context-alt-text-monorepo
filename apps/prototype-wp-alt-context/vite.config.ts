@@ -21,7 +21,10 @@ export default defineConfig(({ mode }) => ({
     environment: 'jsdom',
     setupFiles: './vitest.setup.ts',
     globals: true,
-    include: ['js/**/*.{test,spec}.{ts,tsx}'],
+    // js/** holds the React unit suites. tests/e2e/**/*.test.ts covers pure
+    // Playwright-harness helpers (e.g. the demo-walkthrough smoke-log renderer);
+    // Playwright itself only collects *.spec.ts, so the two runners never overlap.
+    include: ['js/**/*.{test,spec}.{ts,tsx}', 'tests/e2e/**/*.test.ts'],
     pool: 'forks',
     minWorkers: 1,
     maxWorkers: 1,

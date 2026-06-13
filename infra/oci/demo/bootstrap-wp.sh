@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# Non-interactive WordPress install + ACX plugin activation for the OCI demo stack.
+#
+# Implements the Slice 2 bootstrap sequence from E15-28:
+#   1. Ensure compose stack is up (MariaDB healthy, WordPress volume seeded)
+#   2. Wait until wp-cli can reach the DB cleanly
+#   3. wp core install (idempotent via wp core is-installed gate)
+#   4. Install + activate the packaged alt-context plugin zip
+#
+# Usage (on the VM):
+#   cd /opt/acx-backend/demo
+#   PLUGIN_ZIP=/tmp/alt-context.zip ./bootstrap-wp.sh
+#
+# Environment:
+#   DEMO_DIR          default /opt/acx-backend/demo
+#   COMPOSE_FILE      default docker-compose.demo.yml
+#   PLUGIN_ZIP        path to dist/alt-context-<version>.zip (required for plugin step)
+#   WP_URL            default https://demo.altcontext.com
+#   WP_TITLE          default ACX Demo
+
+set -euo pipefail
+
+DEMO_DIR="${DEMO_DIR:-/opt/acx-backend/demo}"
+COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.demo.yml}"
+PLUGIN_ZIP="${PLUGIN_ZIP:-}"
+WP_URL="${WP_URL:-https://demo.altcontext.com}"
+WP_TITLE="${WP_TITLE:-ACX Demo}"
+
+cd "$DEMO_DIR"
+
+if [[ ! -f secrets/.env ]]; then
+  echo "ERROR: ${DEMO_DIR}/secrets/.env missing — copy from secrets/.env.example" >&2
+  exit 2
+fi
+ln -sf secrets/.env .env
+
+# secrets/.env is a docker-compose dotenv, not a shell file — the documented
+# WORDPRESS_CONFIG_EXTRA value (unquoted define(...) line) is a bash syntax
+# error under `source`. Parse the keys we need instead of sourcing.
+env_get() {
+  grep -m1 "^${1}=" secrets/.env | cut -d= -f2- || true
+}
+
+WP_ADMIN_USER="$(env_get WP_ADMIN_USER)"
+WP_ADMIN_PASSWORD="$(env_get WP_ADMIN_PASSWORD)"
+WP_ADMIN_EMAIL="$(env_get WP_ADMIN_EMAIL)"
+WORDPRESS_CONFIG_EXTRA="$(env_get WORDPRESS_CONFIG_EXTRA)"
+
+for var in WP_ADMIN_USER WP_ADMIN_PASSWORD WP_ADMIN_EMAIL WORDPRESS_CONFIG_EXTRA; do
+  if [[ -z "${!var:-}" ]]; then
+    echo "ERROR: ${var} must be set in secrets/.env before bootstrap" >&2
+    exit 2
+  fi
+done
+
+compose() {
+  docker compose -f "$COMPOSE_FILE" "$@"
+}
+
+wpcli() {
+  compose run --rm --no-deps wpcli "$@"
+}
+
+echo "==> Starting demo stack services"
+compose up -d mariadb wordpress
+
+echo "==> Waiting for WordPress volume + database readiness"
+# Ready means: core files AND wp-config.php exist (the entrypoint writes
+# wp-config.php after the volume seed), and wp-cli reaches the DB. wp-cli
+# exits 1 both for "not installed" and for runtime errors, so a DB-unreachable
+# error must keep us polling instead of counting as "ready, not installed".
+ready=0
+for _ in $(seq 1 60); do
+  if compose exec -T wordpress test -f /var/www/html/wp-includes/version.php 2>/dev/null \
+    && compose exec -T wordpress test -f /var/www/html/wp-config.php 2>/dev/null; then
+    if install_out=$(wpcli wp core is-installed 2>&1); then
+      ready=1
+      break
+    elif ! grep -qiE 'error establishing|connection refused|could not find|wp-config' <<<"$install_out"; then
+      ready=1
+      break
+    fi
+  fi
+  sleep 5
+done
+
+if [[ "$ready" -ne 1 ]]; then
+  echo "ERROR: WordPress did not become ready for wp-cli within timeout" >&2
+  exit 2
+fi
+
+echo "==> Ensuring WordPress core is installed"
+if ! wpcli wp core is-installed >/dev/null 2>&1; then
+  wpcli wp core install \
+    --url="$WP_URL" \
+    --title="$WP_TITLE" \
+    --admin_user="$WP_ADMIN_USER" \
+    --admin_password="$WP_ADMIN_PASSWORD" \
+    --admin_email="$WP_ADMIN_EMAIL" \
+    --skip-email
+fi
+
+if [[ -z "$PLUGIN_ZIP" ]]; then
+  echo "ERROR: PLUGIN_ZIP must point at dist/alt-context-<version>.zip" >&2
+  exit 2
+fi
+if [[ ! -f "$PLUGIN_ZIP" ]]; then
+  echo "ERROR: PLUGIN_ZIP not found: $PLUGIN_ZIP" >&2
+  exit 2
+fi
+
+echo "==> Installing and activating alt-context plugin"
+compose run --rm --no-deps \
+  -v "${PLUGIN_ZIP}:/tmp/alt-context.zip:ro" \
+  wpcli wp plugin install /tmp/alt-context.zip --activate
+
+echo "==> Bootstrap complete — verify ACX constants inside the container:"
+echo "    docker compose -f ${COMPOSE_FILE} exec wordpress php -r \"require '/var/www/html/wp-config.php'; var_export(defined('ACX_RECOGNITION_URL') ? ACX_RECOGNITION_URL : null);\""

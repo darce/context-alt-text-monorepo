@@ -51,4 +51,14 @@ Expect a `204`/`200` status line and
 
 ## 5. Record evidence
 
-Fill `docs/tasks/15.0/E15-28-demo-smoke-log.md` and link handoff decision IDs.
+Automated capture: `make demo-walkthrough-proof` drives the browser steps above
+(settings provenance + Test Connection, Workbench scan, cluster avatar, and an
+opportunistic degraded-banner grab if the API was stopped per §3) and emits
+screenshots, an evidence manifest, and a paste-ready
+`demo-walkthrough-smoke-log-fragment.md` under
+`apps/prototype-wp-alt-context/local/playwright/<task-ref>/evidence/`. Run against
+the demo origin by default, or `WP_BASE_URL=http://localhost:10010 make demo-walkthrough-proof`
+for LocalWP. Auth needs `ACX_E2E_WP_ADMIN_USER` / `ACX_E2E_WP_ADMIN_PASS`.
+
+Paste the fragment into `docs/tasks/15.0/E15-28-demo-smoke-log.md`, fill the manual
+sections (correlation IDs, recovery screenshot), and link handoff decision IDs.

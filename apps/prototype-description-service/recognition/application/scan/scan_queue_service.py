@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from recognition.application.scan.queue_repository import ScanQueueItem, ScanQueueRepository
 from recognition.application.settings.scan import ScanSettings
 from recognition.config import get_settings
+from recognition.domain.job import JobStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +24,35 @@ class EnqueueScanResult:
 
     job_id: uuid.UUID
     total: int
+
+
+@dataclass(frozen=True, slots=True)
+class JobProgressResult:
+    """Outcome of a ``refresh_job_progress`` call.
+
+    Attributes:
+        transitioned: True iff this call moved the job into a terminal state. An
+            already-terminal job (e.g. failed/stalled by another worker replica)
+            yields False so a stall/failure reason is never overwritten.
+        status: the terminal status reached; set only when ``transitioned``.
+    """
+
+    transitioned: bool = False
+    status: JobStatus | None = None
+
+    @property
+    def triggers_followups(self) -> bool:
+        """Whether this terminal transition should fan out to downstream
+        clustering + per-job ObjectStore cleanup.
+
+        Jobs that produced at least one successful item (COMPLETED or
+        COMPLETED_WITH_ERRORS) do; an all-failed FAILED job does not — there is
+        nothing to cluster and the uploads are retained for diagnosis.
+        """
+        return self.transitioned and self.status in {
+            JobStatus.COMPLETED,
+            JobStatus.COMPLETED_WITH_ERRORS,
+        }
 
 
 def _format_queue_message(enqueued: int, total: int) -> str:
@@ -176,18 +206,21 @@ class ScanQueueService:
             await self._repository.mark_job_running(job_id=job_id, started_at=now)
         return items
 
-    async def refresh_job_progress(self, *, job_id: uuid.UUID) -> bool:
+    async def refresh_job_progress(self, *, job_id: uuid.UUID) -> JobProgressResult:
         """Recompute job progress and finalize job status when appropriate.
 
         Rules:
         - processed_media counts terminal item states: completed/failed/skipped/cancelled
         - identities_detected sums completed item identities_detected
         - when no pending/processing remain:
-          - fail if any failed items exist
-          - otherwise complete
+          - FAILED when every processed item failed (no successful output to keep)
+          - COMPLETED_WITH_ERRORS when at least one item succeeded and at least one failed
+          - COMPLETED otherwise
 
         Returns:
-            True if the job was just completed successfully, False otherwise.
+            JobProgressResult describing whether this call transitioned the job
+            and the terminal status it reached. All finalizers are terminal-
+            guarded, so an already-terminal job yields ``transitioned=False``.
         """
         counts = await self._repository.get_job_item_status_counts(job_id=job_id)
         terminal = ("completed", "failed", "skipped", "cancelled")
@@ -202,18 +235,54 @@ class ScanQueueService:
         pending = counts.get("pending", 0)
         processing = counts.get("processing", 0)
         failed = counts.get("failed", 0)
+        completed = counts.get("completed", 0)
 
         if pending == 0 and processing == 0 and processed_media > 0:
             now = datetime.now(tz=UTC)
-            if failed > 0:
-                await self._repository.fail_job(
-                    job_id=job_id, completed_at=now, error_message="one or more items failed"
+            if failed > 0 and completed == 0:
+                # No item succeeded: finalize terminal FAILED rather than
+                # completed_with_errors, which reads as a partial success.
+                transitioned = await self._repository.fail_job_if_active(
+                    job_id=job_id,
+                    completed_at=now,
+                    error_message="no items completed successfully",
                 )
-                return False
-            else:
-                await self._repository.complete_job(job_id=job_id, completed_at=now)
-                return True
-        return False
+                return JobProgressResult(transitioned=transitioned, status=JobStatus.FAILED if transitioned else None)
+            if failed > 0:
+                transitioned = await self._repository.complete_job_with_errors(
+                    job_id=job_id,
+                    completed_at=now,
+                    error_message="one or more items failed",
+                )
+                return JobProgressResult(
+                    transitioned=transitioned,
+                    status=JobStatus.COMPLETED_WITH_ERRORS if transitioned else None,
+                )
+            # Only signal success when this call actually transitioned the job;
+            # an already-terminal job (e.g. failed/stalled by another worker)
+            # yields transitioned=False.
+            transitioned = await self._repository.complete_job(job_id=job_id, completed_at=now)
+            return JobProgressResult(transitioned=transitioned, status=JobStatus.COMPLETED if transitioned else None)
+        return JobProgressResult()
+
+    async def terminate_stalled_jobs(
+        self,
+        *,
+        stale_after_seconds: int,
+        now: datetime | None = None,
+    ) -> int:
+        """Transition stale running jobs to terminal ``failed(stalled)`` state.
+
+        A job is stalled when it has been running longer than
+        ``stale_after_seconds`` while items remain pending or processing.
+        """
+        if stale_after_seconds <= 0:
+            return 0
+        effective_now = now or datetime.now(tz=UTC)
+        return await self._repository.fail_stalled_running_jobs(
+            stale_after_seconds=stale_after_seconds,
+            now=effective_now,
+        )
 
     async def cancel_scan_job(self, *, job_id: uuid.UUID) -> int:
         """Cancel any pending items for a scan job.

@@ -53,7 +53,10 @@ export type {
   BulkAcceptRequest,
   BulkAcceptResponse,
   SuggestionActionResponse,
+  BreakerState,
   SyncHealth,
+  SyncHealthResponse,
+  SyncHealthWarning,
   SyncStatusResponse,
   SyncTriggerResponse,
   RetentionMode,
@@ -135,7 +138,7 @@ export {
 } from './identityApi';
 
 // Sync status
-export { fetchSyncStatus, triggerSync, resetMirror } from './syncApi';
+export { fetchSyncHealth, fetchSyncStatus, triggerSync, resetMirror } from './syncApi';
 
 // Retention
 export {

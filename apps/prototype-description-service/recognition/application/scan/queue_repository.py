@@ -104,11 +104,36 @@ class ScanQueueRepository(Protocol):
     ) -> None:
         """Persist media_ids and final queue message after enqueueing completes."""
 
-    async def complete_job(self, *, job_id: uuid.UUID, completed_at: datetime) -> None:
-        """Mark a scan job as completed."""
+    async def complete_job(self, *, job_id: uuid.UUID, completed_at: datetime) -> bool:
+        """Mark a non-terminal scan job as completed.
+
+        Returns True only if this call transitioned the job; a job already in a
+        terminal state (e.g. failed/stalled by another worker) is left untouched.
+        """
+
+    async def complete_job_with_errors(
+        self,
+        *,
+        job_id: uuid.UUID,
+        completed_at: datetime,
+        error_message: str,
+    ) -> bool:
+        """Mark a non-terminal scan job as completed-with-errors.
+
+        Returns True only if this call transitioned the job; an already-terminal
+        job is left untouched so a stall/failure reason is never overwritten.
+        """
 
     async def fail_job(self, *, job_id: uuid.UUID, completed_at: datetime, error_message: str) -> None:
-        """Mark a scan job as failed."""
+        """Mark a scan job as failed (unconditional; used by explicit cancel)."""
+
+    async def fail_job_if_active(self, *, job_id: uuid.UUID, completed_at: datetime, error_message: str) -> bool:
+        """Mark a non-terminal scan job as failed.
+
+        Returns True only if this call transitioned the job; an already-terminal
+        job is left untouched so a prior stall/completion reason is never
+        overwritten. Used by the all-items-failed finalize path.
+        """
 
     async def claim_pending_items(
         self,
@@ -177,3 +202,11 @@ class ScanQueueRepository(Protocol):
 
     async def get_job_tenant_id(self, *, job_id: uuid.UUID) -> uuid.UUID | None:
         """Return the tenant_id for a scan job, or None if not found."""
+
+    async def fail_stalled_running_jobs(
+        self,
+        *,
+        stale_after_seconds: int,
+        now: datetime,
+    ) -> int:
+        """Fail running jobs with incomplete work older than the stall threshold."""

@@ -11,7 +11,9 @@ import { useMediaStats } from '../hooks/useMediaStats';
 import { useRecognitionJobHistory } from '../hooks/useRecognitionJobHistory';
 import { useIdentityStats } from '../hooks/useIdentityStats';
 import { useResetMirror } from '../hooks/useSyncTrigger';
+import { useSyncHealth } from '../hooks/useSyncHealth';
 import { useSyncStatus } from '../hooks/useSyncStatus';
+import { hasSyncHealthWarnings, resolveEffectiveSyncHealth } from './workbench/degradedModeBannerLogic';
 import { useRetentionStatus } from '../hooks/useRetentionStatus';
 import { GuidanceCard } from './dashboard/GuidanceCard';
 import { DashboardRecentActivitySection } from './dashboard/DashboardRecentActivitySection';
@@ -47,6 +49,9 @@ export const DashboardPage = (): React.JSX.Element => {
     historySource = 'unavailable',
   } = useRecognitionJobHistory();
   const { data: syncStatus, isLoading: isSyncStatusLoading, isError: isSyncStatusError } = useSyncStatus();
+  const { data: syncHealthEnvelope } = useSyncHealth();
+  const effectiveSyncHealth = resolveEffectiveSyncHealth(syncStatus?.sync_health ?? 'stale', syncHealthEnvelope);
+  const syncHealthWarningsActive = syncHealthEnvelope ? hasSyncHealthWarnings(syncHealthEnvelope) : false;
   const resetMirror = useResetMirror();
   const { data: retentionStatus } = useRetentionStatus();
   const {
@@ -81,7 +86,8 @@ export const DashboardPage = (): React.JSX.Element => {
   const priorityModel = buildDashboardPriorityModel({
     isSyncStatusLoading,
     isSyncStatusError,
-    syncHealth: syncStatus?.sync_health ?? null,
+    effectiveSyncHealth,
+    hasSyncHealthWarnings: syncHealthWarningsActive,
     pendingReplayCount,
     conflictCount,
     failedReplayCount,
@@ -102,6 +108,8 @@ export const DashboardPage = (): React.JSX.Element => {
         isLoading={isSyncStatusLoading}
         isError={isSyncStatusError}
         syncStatus={syncStatus}
+        effectiveSyncHealth={effectiveSyncHealth}
+        syncHealthEnvelope={syncHealthEnvelope}
         localClusterCount={localClusterCount}
         showMirrorDivergenceBanner={showMirrorDivergenceBanner}
         pendingReplayCount={pendingReplayCount}

@@ -34,7 +34,7 @@ describe('settings response contract', () => {
     key_source: 'option',
     tenant_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
     tenant_id_source: 'option',
-    tenant_paired: false,
+    tenant_paired: true,
   };
 
   it('matches the GET /acx/v1/settings envelope consumed by the admin UI', () => {

@@ -22,6 +22,7 @@ import { useSettingsPageState } from './settings/useSettingsPageState';
 
 export const SettingsPage = (): React.JSX.Element => {
   const queryClient = useQueryClient();
+  const lastProbeTargetRef = React.useRef<RecognitionSourceValue | null>(null);
 
 
   const settingsQuery = useQuery<SettingsResponse>({
@@ -110,12 +111,16 @@ export const SettingsPage = (): React.JSX.Element => {
   };
 
   const handleTest = (target: RecognitionSourceValue) => {
+    lastProbeTargetRef.current = target;
     dispatch({ type: 'clearTestResult' });
     testMutation.mutate({ probe_target: target });
   };
 
   const handleConfirmTenantPairing = () => {
-    testMutation.mutate({ confirm_tenant_pairing: true });
+    testMutation.mutate({
+      probe_target: lastProbeTargetRef.current ?? data.effective_target_mode,
+      confirm_tenant_pairing: true,
+    });
   };
 
   if (settingsQuery.isLoading) {

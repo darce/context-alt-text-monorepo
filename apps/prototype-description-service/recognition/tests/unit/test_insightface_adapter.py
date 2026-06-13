@@ -8,6 +8,7 @@ Note: Some tests are skipped if cv2/insightface are not properly installed.
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -131,6 +132,33 @@ class TestInsightFaceAdapterContextId:
         ctx_id = adapter._get_ctx_id()
 
         assert ctx_id == -1
+
+
+@pytest.mark.skipif(not HAS_ADAPTER, reason="InsightFace adapter dependencies not available")
+class TestInsightFaceAdapterExecutorOffload:
+    """CPU-bound inference must not block the asyncio event loop."""
+
+    @pytest.mark.asyncio
+    async def test_detect_faces_offloads_sync_inference_to_executor(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        adapter = InsightFaceAdapter()
+        adapter._model_loaded = True
+        adapter._app = MagicMock(return_value=[])
+
+        executor_calls: list[tuple[object, ...]] = []
+        loop = asyncio.get_running_loop()
+        original_run_in_executor = loop.run_in_executor
+
+        async def _tracking_run_in_executor(executor, fn, *args):  # noqa: ANN001
+            executor_calls.append((executor, fn, *args))
+            return await original_run_in_executor(executor, fn, *args)
+
+        monkeypatch.setattr(loop, "run_in_executor", _tracking_run_in_executor)
+        monkeypatch.setattr(adapter, "_bytes_to_cv2", lambda _image_bytes: np.zeros((8, 8, 3), dtype=np.uint8))
+
+        await adapter.detect_faces(b"fake-image-bytes")
+
+        assert len(executor_calls) == 1
+        assert executor_calls[0][1] is adapter._app.get
 
 
 @pytest.mark.skipif(not HAS_ADAPTER, reason="InsightFace adapter dependencies not available")

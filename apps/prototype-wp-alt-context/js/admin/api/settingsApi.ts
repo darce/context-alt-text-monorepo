@@ -14,10 +14,9 @@ export interface SettingsResponse {
   api_key_last4: string;
   key_source: 'constant' | 'option' | 'filter' | 'default';
   // Tenant identity (settings GET, class-settings-controller.php get_settings).
-  // tenant_id_source mirrors TenantIdentity::resolve()['source'], which emits
-  // 'derived' (never 'default') for an auto-derived identity.
+  // tenant_id_source mirrors TenantIdentity::resolve()['source'].
   tenant_id: string;
-  tenant_id_source: 'constant' | 'option' | 'filter' | 'derived';
+  tenant_id_source: 'constant' | 'option' | 'filter' | 'default' | 'derived';
   tenant_paired: boolean;
 }
 
@@ -73,7 +72,7 @@ export interface TestConnectionResponse {
   probed_url?: string;
   // Tenant-pairing fields merged by class-settings-controller.php attempt_tenant_pairing.
   // All optional: present only on the relevant pairing path (error / conflict / success).
-  pairing_error?: string;
+  pairing_error?: string | null;
   persisted_tenant_id?: string;
   key_tenant_id?: string;
   tenant_paired?: boolean;

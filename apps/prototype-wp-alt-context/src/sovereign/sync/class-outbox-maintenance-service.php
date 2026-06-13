@@ -5,9 +5,19 @@ declare(strict_types=1);
 namespace AltContext\Sovereign\Sync;
 
 require_once __DIR__ . '/../repositories/class-sync-state-repository.php';
+require_once __DIR__ . '/class-conflict-resolution-status.php';
+require_once __DIR__ . '/class-outbox-status.php';
+require_once __DIR__ . '/../../support/trait-runs-transactional.php';
 
+use AltContext\Support\RunsTransactional;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
 
+use function apply_filters;
+use function array_merge;
+use function array_unique;
+use function array_values;
+use function current_time;
+use function gmdate;
 use function is_array;
 use function is_object;
 use function is_string;
@@ -17,14 +27,23 @@ use function trim;
 use function wp_json_encode;
 
 class OutboxMaintenanceService {
+	use RunsTransactional;
+
+	private const DEFAULT_PURGE_BATCH_SIZE = 50;
+	private const DEFAULT_ACKNOWLEDGED_RETENTION_DAYS = 14;
+	private const DEFAULT_RESOLVED_CONFLICT_RETENTION_DAYS = 14;
+	private const MAX_PURGE_BATCH_ITERATIONS = 20;
+
 	private OutboxQueryRepository $query_repository;
 	private SyncStateRepository $sync_state_repository;
 	private string $table_name;
+	private string $conflicts_table_name;
 
 	public function __construct(
 		?OutboxQueryRepository $query_repository = null,
 		?SyncStateRepository $sync_state_repository = null,
-		?string $table_name = null
+		?string $table_name = null,
+		?string $conflicts_table_name = null
 	) {
 		global $wpdb;
 
@@ -33,18 +52,190 @@ class OutboxMaintenanceService {
 			$default_table = $wpdb->prefix . 'acx_sync_outbox';
 		}
 
+		$default_conflicts_table = 'wp_acx_sync_conflicts';
+		if ( isset( $wpdb ) && is_object( $wpdb ) && isset( $wpdb->prefix ) && is_string( $wpdb->prefix ) ) {
+			$default_conflicts_table = $wpdb->prefix . 'acx_sync_conflicts';
+		}
+
 		$this->table_name = $table_name ?? $default_table;
+		$this->conflicts_table_name = $conflicts_table_name ?? $default_conflicts_table;
 		$this->query_repository = $query_repository ?? new OutboxQueryRepository( $this->table_name );
 		$this->sync_state_repository = $sync_state_repository ?? new SyncStateRepository();
+	}
+
+	/**
+	 * @return array{outbox:int,conflicts:int}|false
+	 */
+	public function purge_terminal_rows( string $tenant_id ): array|false {
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			return false;
+		}
+
+		$result = $this->run_transactional(
+			function () use ( $normalized_tenant_id ): array {
+				return array(
+					'outbox' => $this->purge_acknowledged_outbox_batch( $normalized_tenant_id ),
+					'conflicts' => $this->purge_resolved_conflicts_batch( $normalized_tenant_id ),
+				);
+			}
+		);
+
+		if ( is_wp_error( $result ) ) {
+			return false;
+		}
+
+		return is_array( $result ) ? $result : false;
+	}
+
+	/**
+	 * @return string[]
+	 */
+	public function list_terminal_purge_tenant_ids(): array {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_col' ) ) {
+			return array();
+		}
+
+		$tenant_ids = array();
+
+		$outbox_tenant_ids = $wpdb->get_col(
+			$wpdb->prepare(
+				'SELECT DISTINCT tenant_id FROM %i WHERE tenant_id <> %s',
+				$this->table_name,
+				''
+			)
+		);
+		$conflict_tenant_ids = $wpdb->get_col(
+			$wpdb->prepare(
+				'SELECT DISTINCT tenant_id FROM %i WHERE tenant_id <> %s',
+				$this->conflicts_table_name,
+				''
+			)
+		);
+
+		foreach ( array_merge( is_array( $outbox_tenant_ids ) ? $outbox_tenant_ids : array(), is_array( $conflict_tenant_ids ) ? $conflict_tenant_ids : array() ) as $tenant_id ) {
+			$normalized_tenant_id = trim( (string) $tenant_id );
+			if ( '' !== $normalized_tenant_id ) {
+				$tenant_ids[] = $normalized_tenant_id;
+			}
+		}
+
+		return array_values( array_unique( $tenant_ids ) );
+	}
+
+	public function purge_acknowledged_outbox_batch( string $tenant_id ): int {
+		$batch_size = max( 1, (int) apply_filters( 'acx_sync_purge_batch_size', self::DEFAULT_PURGE_BATCH_SIZE ) );
+		$total_deleted = 0;
+
+		for ( $iteration = 0; $iteration < self::MAX_PURGE_BATCH_ITERATIONS; $iteration++ ) {
+			$deleted = $this->purge_acknowledged_outbox_batch_once( $tenant_id, $batch_size );
+			$total_deleted += $deleted;
+			if ( $deleted < $batch_size ) {
+				break;
+			}
+		}
+
+		return $total_deleted;
+	}
+
+	public function purge_resolved_conflicts_batch( string $tenant_id ): int {
+		$batch_size = max( 1, (int) apply_filters( 'acx_sync_purge_batch_size', self::DEFAULT_PURGE_BATCH_SIZE ) );
+		$total_deleted = 0;
+
+		for ( $iteration = 0; $iteration < self::MAX_PURGE_BATCH_ITERATIONS; $iteration++ ) {
+			$deleted = $this->purge_resolved_conflicts_batch_once( $tenant_id, $batch_size );
+			$total_deleted += $deleted;
+			if ( $deleted < $batch_size ) {
+				break;
+			}
+		}
+
+		return $total_deleted;
+	}
+
+	private function purge_acknowledged_outbox_batch_once( string $tenant_id, int $batch_size ): int {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		if (
+			'' === $normalized_tenant_id
+			|| ! isset( $wpdb )
+			|| ! is_object( $wpdb )
+			|| ! method_exists( $wpdb, 'query' )
+		) {
+			return 0;
+		}
+
+		$retention_days = max( 1, (int) apply_filters( 'acx_sync_purge_acknowledged_days', self::DEFAULT_ACKNOWLEDGED_RETENTION_DAYS ) );
+		$day_seconds = defined( 'DAY_IN_SECONDS' ) ? (int) DAY_IN_SECONDS : 86400;
+		$cutoff = gmdate( 'Y-m-d H:i:s', current_time( 'timestamp' ) - ( $retention_days * $day_seconds ) );
+
+		$deleted = $wpdb->query(
+			$wpdb->prepare(
+				'DELETE FROM %i
+				WHERE tenant_id = %s
+					AND status = %s
+					AND acknowledged_at IS NOT NULL
+					AND acknowledged_at < %s
+				ORDER BY acknowledged_at ASC
+				LIMIT %d',
+				$this->table_name,
+				$normalized_tenant_id,
+				OutboxStatus::ACKNOWLEDGED,
+				$cutoff,
+				$batch_size
+			)
+		);
+
+		return max( 0, (int) $deleted );
+	}
+
+	private function purge_resolved_conflicts_batch_once( string $tenant_id, int $batch_size ): int {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		if (
+			'' === $normalized_tenant_id
+			|| ! isset( $wpdb )
+			|| ! is_object( $wpdb )
+			|| ! method_exists( $wpdb, 'query' )
+		) {
+			return 0;
+		}
+
+		$retention_days = max( 1, (int) apply_filters( 'acx_sync_purge_resolved_conflict_days', self::DEFAULT_RESOLVED_CONFLICT_RETENTION_DAYS ) );
+		$day_seconds = defined( 'DAY_IN_SECONDS' ) ? (int) DAY_IN_SECONDS : 86400;
+		$cutoff = gmdate( 'Y-m-d H:i:s', current_time( 'timestamp' ) - ( $retention_days * $day_seconds ) );
+
+		$deleted = $wpdb->query(
+			$wpdb->prepare(
+				'DELETE FROM %i
+				WHERE tenant_id = %s
+					AND resolution_status <> %s
+					AND resolved_at IS NOT NULL
+					AND resolved_at < %s
+				ORDER BY resolved_at ASC
+				LIMIT %d',
+				$this->conflicts_table_name,
+				$normalized_tenant_id,
+				ConflictResolutionStatus::OPEN,
+				$cutoff,
+				$batch_size
+			)
+		);
+
+		return max( 0, (int) $deleted );
 	}
 
 	public function retry_failed_operation( int $outbox_id, string $tenant_id ): bool {
 		$updated = $this->update_operation_status(
 			$outbox_id,
 			$tenant_id,
-			'failed',
+			OutboxStatus::FAILED,
 			array(
-				'status' => 'pending',
+				'status' => OutboxStatus::PENDING,
 				'attempts' => 0,
 				'last_error_code' => null,
 				'last_error_message' => null,
@@ -69,7 +260,7 @@ class OutboxMaintenanceService {
 		}
 
 		$current_status = trim( (string) ( $operation['status'] ?? '' ) );
-		if ( ! in_array( $current_status, array( 'failed', 'conflict' ), true ) ) {
+		if ( ! in_array( $current_status, array( OutboxStatus::FAILED, OutboxStatus::CONFLICT ), true ) ) {
 			return false;
 		}
 
@@ -78,7 +269,7 @@ class OutboxMaintenanceService {
 			$tenant_id,
 			$current_status,
 			array(
-				'status' => 'discarded',
+				'status' => OutboxStatus::DISCARDED,
 			),
 			array( '%s' )
 		);
@@ -92,7 +283,7 @@ class OutboxMaintenanceService {
 
 	public function re_enqueue_with_current_base( int $outbox_id, int $backend_version, string $tenant_id, ?string $merged_value = null ): bool {
 		$data = array(
-			'status' => 'pending',
+			'status' => OutboxStatus::PENDING,
 			'attempts' => 0,
 			'expected_base_version' => max( 0, $backend_version ),
 			'last_error_code' => null,
@@ -128,7 +319,7 @@ class OutboxMaintenanceService {
 		$updated = $this->update_operation_status(
 			$outbox_id,
 			$tenant_id,
-			'conflict',
+			OutboxStatus::CONFLICT,
 			$data,
 			$format
 		);

@@ -31,6 +31,10 @@ const mockReturn = {
   isError: false,
 };
 
+const syncHealthMock = {
+  data: undefined as import('../../../api/recognition/types/sync').SyncHealthResponse | undefined,
+};
+
 const retentionQueryState = {
   data: {
     available: true,
@@ -69,6 +73,13 @@ vi.mock('../../../hooks/useSyncStatus', () => ({
   useSyncStatus: () => mockReturn as unknown as UseQueryResult<SyncStatusResponse>,
 }));
 
+vi.mock('../../../hooks/useSyncHealth', () => ({
+  useSyncHealth: () =>
+    createMockQuery({
+      data: syncHealthMock.data,
+    }),
+}));
+
 vi.mock('../../../hooks/useSyncTrigger', () => ({
   useSyncTrigger: () => mockTrigger,
 }));
@@ -87,6 +98,7 @@ describe('SyncStatusIndicator', () => {
     mockReturn.data = null;
     mockReturn.isLoading = false;
     mockReturn.isError = false;
+    syncHealthMock.data = undefined;
     retentionQueryState.data = {
       available: true,
       policy: {
@@ -275,6 +287,29 @@ describe('SyncStatusIndicator', () => {
     expect(screen.getByText('Offline')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
     expect(container.firstChild).toHaveClass('acx-sync-status--warning');
+  });
+
+  it('overrides healthy sync-status when sync-health envelope reports offline', () => {
+    mockReturn.data = buildSyncStatus({
+      sync_health: 'healthy',
+      is_stale: false,
+      last_sync_result: 'ok',
+    });
+    syncHealthMock.data = {
+      breaker: { state: 'open', base_url: 'http://localhost:8000', opened_at: null },
+      outbox: { pending: 0, failed: 0 },
+      conflicts: { open: 0 },
+      replays: { failed: null, source: 'unavailable_local' },
+      last_pull: { at: '2026-06-11T12:00:00Z', ok: true },
+      warnings: [],
+    };
+
+    const { container } = render(<SyncStatusIndicator />);
+
+    expect(screen.getByText('Waiting for service…')).toBeInTheDocument();
+    expect(screen.getByText('Offline')).toBeInTheDocument();
+    expect(container.firstChild).toHaveClass('acx-sync-status--warning');
+    expect(container.querySelector('.acx-sync-status__badge--ok')).not.toBeInTheDocument();
   });
 
   it('renders syncing state when trigger is pending', () => {

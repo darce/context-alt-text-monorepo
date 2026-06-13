@@ -1,0 +1,10 @@
+{
+  "job_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "status": "running",
+  "phase": "detecting",
+  "items_total": 10,
+  "items_done": 4,
+  "items_failed": 0,
+  "failure_reason": null,
+  "updated_at": "2026-06-11T12:00:00+00:00"
+}

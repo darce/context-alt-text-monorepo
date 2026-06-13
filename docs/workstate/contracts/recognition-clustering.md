@@ -29,9 +29,11 @@ Contract impact:
 - No HTTP request or response envelope changed for `/recognition/analyze`,
   `/recognition/analyze/multipart`, `/recognition/jobs/{job_id}`, or the
   clustering routes covered by this document.
-- `JobStatusResponse.status` continues to serialize as the same lowercase wire
-  vocabulary (`pending`, `running`, `completed`, `failed`) even though the
-  implementation now uses the canonical `JobStatus` enum internally.
+- `JobStatusResponse.status` serializes the lowercase `JobStatus` wire
+  vocabulary: `pending`, `running`, `completed`, `completed_with_errors`,
+  `rejected`, `failed`. `completed_with_errors` (partial failure) and `rejected`
+  (capability-unavailable intake rejection) are terminal states; see
+  [Scan job terminal states](#scan-job-terminal-states) for the finalize rules.
 - `JobStatusResponse.phase` continues to serialize the existing lowercase
   `JobPhase` vocabulary when present; the enum adoption is an internal
   correctness change, not a wire-shape change.
@@ -42,6 +44,31 @@ Contract impact:
   does not change environment variable names or defaults.
 
 ## Analyze jobs
+
+### Scan job terminal states
+
+`JobStatusResponse.status` for a scan (analyze) job resolves to one of three
+terminal states once every queued item reaches a terminal item state:
+
+- `completed` — every item succeeded.
+- `completed_with_errors` — at least one item succeeded **and** at least one
+  failed (`error_message` is `"one or more items failed"`).
+- `failed` — no item succeeded (`error_message` `"no items completed
+  successfully"`), the job stalled past its run threshold, or it was explicitly
+  canceled. An all-items-failed batch finalizes `failed` rather than
+  `completed_with_errors` so a fully-failed batch is never reported as a partial
+  success (a consumer reading only `phase=complete` would otherwise mis-read it
+  as healthy).
+
+All finalizers are terminal-guarded: once a job is terminal (e.g. `failed` from
+a stall), a late progress refresh from a concurrent worker replica never
+overwrites the status or its reason.
+
+Downstream side effects fan out only for jobs that produced at least one
+successful item (`completed` or `completed_with_errors`): identity clustering is
+auto-triggered and the per-job ObjectStore upload directory is cleaned up. A
+fully-`failed` job triggers neither — there is nothing to cluster and the
+uploads are retained for diagnosis.
 
 ### POST /recognition/analyze
 

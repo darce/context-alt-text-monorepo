@@ -377,6 +377,19 @@ class IdentitySuggestionsResponse(BaseModel):
     matches: list[ClusterSuggestionMatch]
 
 
+class ScanProgressEnvelopeResponse(BaseModel):
+    """Poll-cheap scan progress envelope (E15-27 Slice 2)."""
+
+    job_id: str
+    status: JobStatus
+    phase: JobPhase
+    items_total: int
+    items_done: int
+    items_failed: int
+    failure_reason: str | None = None
+    updated_at: datetime
+
+
 class JobProgressResponse(BaseModel):
     """Job progress summary."""
 
@@ -400,6 +413,7 @@ class JobStatusResponse(BaseModel):
     type: JobType
     status: JobStatus
     progress: JobProgressResponse | None
+    progress_envelope: ScanProgressEnvelopeResponse | None = None
     started_at: datetime
     finished_at: datetime | None
     message: str | None = None

@@ -135,3 +135,9 @@ local/*-worktrees.txt
 
 # Ephemeral Grok workstate bootstrap overlay (machine-local).
 /.grok/plugins/workstate-system
+# >>> WORKSTATE_BOOTSTRAP OVERLAY IGNORE >>>
+/.cursor/skills
+/.cursor/commands
+/.cursor/hooks.json
+/.cursor/mcp.json
+# <<< WORKSTATE_BOOTSTRAP OVERLAY IGNORE <<<

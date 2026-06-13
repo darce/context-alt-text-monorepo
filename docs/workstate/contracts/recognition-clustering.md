@@ -53,9 +53,9 @@ terminal states once every queued item reaches a terminal item state:
 - `completed` — every item succeeded.
 - `completed_with_errors` — at least one item succeeded **and** at least one
   failed (`error_message` is `"one or more items failed"`).
-- `failed` — no item succeeded (every processed item failed, `error_message`
-  `"all items failed"`), the job stalled past its run threshold, or it was
-  explicitly canceled. An all-items-failed batch finalizes `failed` rather than
+- `failed` — no item succeeded (`error_message` `"no items completed
+  successfully"`), the job stalled past its run threshold, or it was explicitly
+  canceled. An all-items-failed batch finalizes `failed` rather than
   `completed_with_errors` so a fully-failed batch is never reported as a partial
   success (a consumer reading only `phase=complete` would otherwise mis-read it
   as healthy).

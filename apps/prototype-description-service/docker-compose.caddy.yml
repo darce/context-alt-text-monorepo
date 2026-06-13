@@ -19,6 +19,7 @@ services:
       - acx-prod-net
       - acx-staging-net
       - acx-dev-net
+      - acx-demo-net
 
 networks:
   acx-prod-net:
@@ -26,6 +27,8 @@ networks:
   acx-staging-net:
     external: true
   acx-dev-net:
+    external: true
+  acx-demo-net:
     external: true
 
 volumes:

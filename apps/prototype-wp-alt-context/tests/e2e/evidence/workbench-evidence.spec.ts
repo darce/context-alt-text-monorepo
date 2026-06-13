@@ -224,8 +224,8 @@ test('captures E15-22 workbench avatar and progress evidence on LocalWP', async 
   const processedSamples: number[] = [];
   let settingsResult: { changed: boolean; before: AcxSettingsSnapshot; after: AcxSettingsSnapshot } = {
     changed: false,
-    before: { recognition_source: 'local' as const, recognition_source_source: 'default', url: '', api_key_set: false },
-    after: { recognition_source: 'local' as const, recognition_source_source: 'default', url: '', api_key_set: false },
+    before: { recognition_source: 'local', recognition_source_source: 'default', url: '', api_key_set: false },
+    after: { recognition_source: 'local', recognition_source_source: 'default', url: '', api_key_set: false },
   };
   let settingsProbeOutcome: string | null = null;
   let serviceSettingsRestored = false;

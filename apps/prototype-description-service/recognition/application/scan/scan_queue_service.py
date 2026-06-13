@@ -240,12 +240,12 @@ class ScanQueueService:
         if pending == 0 and processing == 0 and processed_media > 0:
             now = datetime.now(tz=UTC)
             if failed > 0 and completed == 0:
-                # Every processed item failed: finalize terminal FAILED rather
-                # than completed_with_errors, which reads as a partial success.
+                # No item succeeded: finalize terminal FAILED rather than
+                # completed_with_errors, which reads as a partial success.
                 transitioned = await self._repository.fail_job_if_active(
                     job_id=job_id,
                     completed_at=now,
-                    error_message="all items failed",
+                    error_message="no items completed successfully",
                 )
                 return JobProgressResult(transitioned=transitioned, status=JobStatus.FAILED if transitioned else None)
             if failed > 0:

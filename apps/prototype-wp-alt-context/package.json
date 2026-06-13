@@ -12,6 +12,7 @@
     "e2e:auth": "bash scripts/playwright-cli.sh test --project=auth-setup --headed",
     "e2e:localwp": "bash scripts/playwright-cli.sh test --project=smoke",
     "e2e:evidence": "bash scripts/playwright-cli.sh test --project=evidence",
+    "e2e:runtime": "bash scripts/playwright-cli.sh test --project=evidence evidence/scan-runtime-evidence.spec.ts",
     "a11y:localwp": "bash scripts/playwright-cli.sh test --project=a11y",
     "visual:localwp": "bash scripts/playwright-cli.sh test --project=visual",
     "test:php": "composer test",

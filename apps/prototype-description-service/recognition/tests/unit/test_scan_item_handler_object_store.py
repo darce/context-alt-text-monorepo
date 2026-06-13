@@ -16,8 +16,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from recognition.application.scan.scan_queue_service import JobProgressResult
 from recognition.application.scan.service import ScanService
 from recognition.application.storage import FilesystemObjectStore, ObjectStore
+from recognition.domain.job import JobStatus
 from recognition.worker.handlers.scan import ScanItemHandler
 
 
@@ -88,11 +90,11 @@ class _FakeRepo:
 
 
 class _FakeQueue:
-    def __init__(self, completed: bool) -> None:
-        self._completed = completed
+    def __init__(self, result: JobProgressResult) -> None:
+        self._result = result
 
     async def refresh_job_progress(self, *, job_id):
-        return self._completed
+        return self._result
 
 
 class _FakeSession:
@@ -123,11 +125,19 @@ class _FakeSessionFactory:
         return _FakeSession(self._repo, self._queue)
 
 
-@pytest.mark.asyncio
-async def test_worker_cleans_up_blobs_when_job_completes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """E15-11-BR-07/BR-08: once the worker drains the last queued item for
-    a job (queue.refresh_job_progress(...) returns True), the per-job
-    ObjectStore directory must be removed via the worker's factory."""
+async def _async_noop(*_args, **_kwargs):
+    return None
+
+
+async def _run_worker_refresh(
+    *,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    result: JobProgressResult,
+) -> tuple[Path, list[dict]]:
+    """Drive ScanItemHandler._refresh_job_progress for one job whose refresh
+    resolves to ``result``. Returns (job_blob_dir, clustering_calls) so callers
+    can assert the cleanup + clustering side effects."""
     from recognition.worker.handlers import scan as scan_module
 
     tenant_uuid = uuid.uuid4()
@@ -143,23 +153,25 @@ async def test_worker_cleans_up_blobs_when_job_completes(tmp_path: Path, monkeyp
     job_dir = blob_root / tenant_id / job_id
     assert job_dir.is_dir()
 
-    fake_session_factory = _FakeSessionFactory(_FakeRepo(tenant_uuid), _FakeQueue(completed=True))
-
     # Patch the SqlAlchemyScanQueueRepository + ScanQueueService + bypass
-    # constructors used inside _refresh_job_progress so they read from the
-    # fake session.
+    # constructors used inside _refresh_job_progress so they read from the fakes.
     fake_repo = _FakeRepo(tenant_uuid)
-    fake_queue = _FakeQueue(completed=True)
+    fake_queue = _FakeQueue(result)
+    clustering_calls: list[dict] = []
     monkeypatch.setattr(scan_module, "SqlAlchemyScanQueueRepository", lambda _session: fake_repo)
     monkeypatch.setattr(scan_module, "ScanQueueService", lambda _repo: fake_queue)
     monkeypatch.setattr(scan_module, "enable_rls_bypass", _async_noop)
-    monkeypatch.setattr(scan_module, "IdentityClusteringJob", lambda **_kwargs: object())
+    monkeypatch.setattr(
+        scan_module,
+        "IdentityClusteringJob",
+        lambda **kwargs: clustering_calls.append(kwargs) or object(),
+    )
 
     def factory(t: str) -> ObjectStore:
         return FilesystemObjectStore(root=blob_root, tenant_id=t)
 
     handler = ScanItemHandler(
-        session_factory=fake_session_factory,
+        session_factory=_FakeSessionFactory(fake_repo, fake_queue),
         detector=MagicMock(),
         generator=MagicMock(),
         max_attempts=3,
@@ -168,23 +180,51 @@ async def test_worker_cleans_up_blobs_when_job_completes(tmp_path: Path, monkeyp
     )
 
     await handler._refresh_job_progress({job_uuid})
-
-    assert not job_dir.exists(), "worker must clean up the per-job blob dir once the job completes"
-
-
-# Helpers for the worker cleanup test ----------------------------------------
+    return job_dir, clustering_calls
 
 
-async def _async_noop(*_args, **_kwargs):
-    return None
+@pytest.mark.asyncio
+async def test_worker_cleans_up_and_clusters_when_job_completes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E15-11-BR-07/BR-08: a fully-completed job removes its per-job blob dir
+    and auto-creates a clustering job."""
+    job_dir, clustering_calls = await _run_worker_refresh(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        result=JobProgressResult(transitioned=True, status=JobStatus.COMPLETED),
+    )
+    assert not job_dir.exists(), "completed job must clean up its per-job blob dir"
+    assert len(clustering_calls) == 1
 
 
-def session_queue_proxy(repo):
-    """Return a queue-like object backed by the fake repo's queue attribute,
-    matching the ScanQueueService surface _refresh_job_progress depends on."""
+@pytest.mark.asyncio
+async def test_worker_cleans_up_and_clusters_on_completed_with_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E15-27-BR-24: a completed_with_errors job (partial failure) must still
+    clean up its per-job blob dir AND cluster the identities detected from the
+    items that succeeded. Previously both were gated on full success, so a
+    single failed item leaked storage and dropped clustering for the batch."""
+    job_dir, clustering_calls = await _run_worker_refresh(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        result=JobProgressResult(transitioned=True, status=JobStatus.COMPLETED_WITH_ERRORS),
+    )
+    assert not job_dir.exists(), "completed_with_errors job must clean up its per-job blob dir"
+    assert len(clustering_calls) == 1
 
-    class _Queue:
-        async def refresh_job_progress(self, *, job_id):
-            return await repo._queue.refresh_job_progress(job_id=job_id)
 
-    return _Queue()
+@pytest.mark.asyncio
+async def test_worker_skips_cleanup_and_clustering_when_job_fully_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fully-failed job (no successful items) neither clusters nor cleans up:
+    there is nothing to cluster, and the uploads are retained for diagnosis."""
+    job_dir, clustering_calls = await _run_worker_refresh(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        result=JobProgressResult(transitioned=True, status=JobStatus.FAILED),
+    )
+    assert job_dir.exists(), "fully-failed job must NOT clean up its blob dir"
+    assert clustering_calls == []

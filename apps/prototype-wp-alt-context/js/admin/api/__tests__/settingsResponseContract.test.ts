@@ -14,6 +14,9 @@ const SETTINGS_RESPONSE_KEYS = [
   'api_key_set',
   'api_key_last4',
   'key_source',
+  'tenant_id',
+  'tenant_id_source',
+  'tenant_paired',
 ] as const;
 
 describe('settings response contract', () => {
@@ -29,6 +32,9 @@ describe('settings response contract', () => {
     api_key_set: true,
     api_key_last4: '****abcd',
     key_source: 'option',
+    tenant_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+    tenant_id_source: 'option',
+    tenant_paired: false,
   };
 
   it('matches the GET /acx/v1/settings envelope consumed by the admin UI', () => {

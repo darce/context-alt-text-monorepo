@@ -2,11 +2,13 @@ import { fireEvent, render, screen } from '@testing-library/react';
 
 import { DashboardPage } from '../DashboardPage';
 import type { DashboardStats } from '../../api/dashboardApi';
+import type { SyncHealthResponse } from '../../api/recognition';
 import { useIdentityStats } from '../../hooks/useIdentityStats';
 import { useMediaStats } from '../../hooks/useMediaStats';
 import { useRecognitionJobHistory } from '../../hooks/useRecognitionJobHistory';
 import { useResetMirror } from '../../hooks/useSyncTrigger';
 import { useSyncStatus } from '../../hooks/useSyncStatus';
+import { useSyncHealth } from '../../hooks/useSyncHealth';
 import { useRetentionStatus } from '../../hooks/useRetentionStatus';
 import { createMockMutation, createMockQuery } from '../../test-utils/mockHooks';
 
@@ -40,6 +42,10 @@ vi.mock('../../hooks/useSyncStatus', () => ({
   useSyncStatus: vi.fn(),
 }));
 
+vi.mock('../../hooks/useSyncHealth', () => ({
+  useSyncHealth: vi.fn(),
+}));
+
 vi.mock('../../hooks/useSyncTrigger', () => ({
   useResetMirror: vi.fn(),
 }));
@@ -57,6 +63,7 @@ describe('DashboardPage', () => {
   const mockedUseRecognitionJobHistory = vi.mocked(useRecognitionJobHistory);
   const mockedUseIdentityStats = vi.mocked(useIdentityStats);
   const mockedUseSyncStatus = vi.mocked(useSyncStatus);
+  const mockedUseSyncHealth = vi.mocked(useSyncHealth);
   const mockedUseResetMirror = vi.mocked(useResetMirror);
   const mockedUseRetentionStatus = vi.mocked(useRetentionStatus);
 
@@ -97,6 +104,7 @@ describe('DashboardPage', () => {
         },
       }),
     );
+    mockedUseSyncHealth.mockReturnValue(createMockQuery<SyncHealthResponse>({ data: undefined }));
     mockedUseResetMirror.mockReturnValue(createMockMutation());
     mockedUseRetentionStatus.mockReturnValue(
       createMockQuery({

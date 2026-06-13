@@ -1,7 +1,7 @@
 import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 
-import type { SyncHealth, WorkbenchOverlay } from '../../api/recognition';
+import type { SyncHealth } from '../../api/recognition';
 import { useSyncHealth } from '../../hooks/useSyncHealth';
 import { useSyncStatus } from '../../hooks/useSyncStatus';
 import { isSyncOffline } from './degradedModeBannerLogic';

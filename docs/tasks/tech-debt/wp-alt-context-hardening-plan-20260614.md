@@ -84,7 +84,7 @@ Slice 0 — Safety net
 - [x] 0.2 schema-parity guard derives referenced columns from SQL (TST-2)
 
 Slice 1 — Concurrency data-integrity
-- [ ] 1.1 snapshot version-monotonicity guard on data columns + projector gate (COR-1, critical)
+- [x] 1.1 snapshot version-monotonicity guard on data columns + projector gate (COR-1, critical)
 - [ ] 1.2 atomic relative-delta identity_count (CON-1)
 - [ ] 1.3 reconcile-attempt cap + terminal failed state (COR-2)
 - [ ] 1.4 outbox drain row-claim + apply_result status guard (CON-3)

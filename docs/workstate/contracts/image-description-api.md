@@ -24,7 +24,7 @@ recognition multipart/auth/object-store transport.
 - **Body** (`multipart/form-data`):
   - `request` — JSON `DescribeImageEnvelope`: `tenant_id` (UUID, canonicalized
     lowercase), `media_id` (int > 0, must equal the part suffix), optional inert
-    `context`, optional `adapter` override.
+    `context`. Adapter selection is server-side in Phase 1.
   - `image_<media_id>` — exactly one image part (`image/jpeg|png|webp`).
 - **Upload cap**: `/scene/describe/multipart` is registered with the body-size
   middleware (413 on oversize).

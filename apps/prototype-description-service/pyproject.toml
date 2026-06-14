@@ -197,4 +197,5 @@ norecursedirs = [
 testpaths = [
     "recognition/tests",
     "apps/prototype-description-service/recognition/tests",
+    "scene/tests",
 ]

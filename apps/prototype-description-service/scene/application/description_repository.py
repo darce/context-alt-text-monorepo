@@ -9,6 +9,7 @@ from __future__ import annotations
 import uuid
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models.scene import ImageDescription
@@ -43,3 +44,23 @@ class ImageDescriptionRepository:
         self._session.add(record)
         await self._session.flush()
         return record
+
+    async def insert_or_get_existing(self, record: ImageDescription) -> tuple[ImageDescription, bool]:
+        """Insert a cache row, or return the row that won a duplicate-key race."""
+        try:
+            async with self._session.begin_nested():
+                self._session.add(record)
+                await self._session.flush()
+            return record, True
+        except IntegrityError:
+            existing = await self.get_by_cache_key(
+                tenant_id=record.tenant_id,
+                image_hash=record.image_hash,
+                adapter=record.adapter,
+                model_version=record.model_version,
+                prompt_or_task_version=record.prompt_or_task_version,
+                context_hash=record.context_hash,
+            )
+            if existing is None:
+                raise
+            return existing, False

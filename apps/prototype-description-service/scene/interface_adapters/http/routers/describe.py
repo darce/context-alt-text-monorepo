@@ -22,8 +22,10 @@ from recognition.interface_adapters.http.dependencies import (
     require_write_access,
 )
 from scene.application.description_repository import ImageDescriptionRepository
+from scene.application.settings.vlm import VlmSettings
 from scene.application.visual_facts_service import VisualFactsService
 from scene.config.settings import DescriptionSettings
+from scene.domain.description import DescriptionAdapterKind
 from scene.interface_adapters.http.deps import get_description_adapter
 from scene.interface_adapters.http.schemas.requests import DescribeImageEnvelope
 from scene.interface_adapters.http.schemas.responses import VisualFactsResponse
@@ -49,6 +51,12 @@ def _read_request_part(raw) -> dict:
     if not isinstance(envelope, dict):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "'request' part must decode to a JSON object")
     return envelope
+
+
+def _generation_timeout_seconds(settings: DescriptionSettings, adapter) -> float:
+    if adapter.kind is DescriptionAdapterKind.LOCAL_CPU:
+        return VlmSettings().inference_timeout_seconds
+    return settings.generation_timeout_seconds
 
 
 @router.post("/describe/multipart", response_model=VisualFactsResponse)
@@ -113,7 +121,7 @@ async def describe_image_multipart(
     service = VisualFactsService(
         adapter=adapter,
         repository=repository,
-        generation_timeout_seconds=settings.generation_timeout_seconds,
+        generation_timeout_seconds=_generation_timeout_seconds(settings, adapter),
     )
     try:
         response = await service.describe(

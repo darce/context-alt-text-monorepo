@@ -4,8 +4,9 @@ import asyncio
 import json
 import os
 import tempfile
+import time
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -18,6 +19,9 @@ from recognition.interface_adapters.http.dependencies import (
     get_optional_session,
     require_write_access,
 )
+from scene.application.description_adapter import AdapterResult
+from scene.domain.description import DescriptionAdapterKind
+from scene.interface_adapters.http.deps import get_description_adapter
 from scene.interface_adapters.http.router import router as scene_router
 
 TENANT_ID = "00000000-0000-0000-0000-0000000000bb"
@@ -27,6 +31,24 @@ class _Auth:
     def __init__(self, tenant_claim=None):
         self.tenant_claim = tenant_claim
         self.user_id = None
+
+
+class _SlowLocalAdapter:
+    kind = DescriptionAdapterKind.LOCAL_CPU
+    model_id = "slow-local"
+    model_version = "1"
+    prompt_or_task_version = "1"
+
+    def describe(self, *, image_bytes, context):
+        time.sleep(0.05)
+        return AdapterResult(
+            caption="Slow local caption.",
+            objects=(),
+            ocr_text=None,
+            alt_text_draft="Slow local caption.",
+            context_sources=(),
+            context_applied=False,
+        )
 
 
 def _make_db():
@@ -48,7 +70,7 @@ def _make_db():
 
 
 @contextmanager
-def _client(auth_tenant=None):
+def _client(auth_tenant=None, adapter=None):
     path, url = _make_db()
     sf = async_sessionmaker(create_async_engine(url), expire_on_commit=False)
 
@@ -60,14 +82,14 @@ def _client(auth_tenant=None):
     app.include_router(scene_router, prefix="/scene")
     app.dependency_overrides[require_write_access] = lambda: _Auth(tenant_claim=auth_tenant)
     app.dependency_overrides[get_optional_session] = _session
+    if adapter is not None:
+        app.dependency_overrides[get_description_adapter] = lambda: adapter
     try:
         with TestClient(app) as client:
             yield client
     finally:
-        try:
+        with suppress(OSError):
             os.unlink(path)
-        except OSError:
-            pass
 
 
 def _post(client, tenant, *, media_id=42, image_key="image_42", content_type="image/jpeg"):
@@ -145,3 +167,11 @@ def test_create_app_registers_route_and_upload_cap():
     mws = [m for m in app.user_middleware if getattr(getattr(m, "cls", None), "__name__", "") == "UploadSizeLimitMiddleware"]
     assert mws, "UploadSizeLimitMiddleware not registered"
     assert "/scene/describe/multipart" in getattr(mws[0], "kwargs", {}).get("paths", set())
+
+
+def test_local_cpu_route_uses_vlm_timeout(monkeypatch):
+    monkeypatch.setenv("ACX_VLM_TIMEOUT_SECONDS", "0.001")
+    monkeypatch.setenv("ACX_DESCRIPTION_TIMEOUT_SECONDS", "60")
+    with _client(adapter=_SlowLocalAdapter()) as client:
+        r = _post(client, TENANT_ID)
+        assert r.status_code == 504

@@ -7,6 +7,7 @@ no persist, no audit), mirroring recognition's optional-session degradation.
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from collections.abc import Mapping
@@ -77,7 +78,11 @@ class VisualFactsService:
             if row is not None:
                 return self._row_to_response(row, cached=True, duration_ms=_elapsed_ms(start))
 
-        result = self._adapter.describe(image_bytes=image_bytes, context=context)
+        # Offload to a thread so a slow adapter (local_cpu Florence ~30-60s) never
+        # blocks the event loop — otherwise asyncpg drops the open DB connection
+        # mid-request and the persist fails. Seeded is instant, so the overhead is
+        # negligible. (A dedicated worker/queue is the heavier production option.)
+        result = await asyncio.to_thread(self._adapter.describe, image_bytes=image_bytes, context=context)
         response = self._result_to_response(
             tenant_id=tenant_id,
             media_id=media_id,

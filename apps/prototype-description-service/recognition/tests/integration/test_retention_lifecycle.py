@@ -16,9 +16,9 @@ from db.models import (
     NameSuggestion,
     Tenant,
 )
-from recognition.domain.services.export_service import EXPORT_SCHEMA_VERSION, TenantExportService
-from recognition.domain.services.purge_service import TenantPurgeService
-from recognition.domain.services.retention_policy_service import RetentionPolicyService
+from recognition.application.services.export_service import EXPORT_SCHEMA_VERSION, TenantExportService
+from recognition.application.services.purge_service import TenantPurgeService
+from recognition.application.services.retention_policy_service import RetentionPolicyService
 from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
 
 

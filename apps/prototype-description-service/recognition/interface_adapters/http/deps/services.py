@@ -256,7 +256,7 @@ async def get_retention_policy_service(
     if session is None:
         return _NotImplementedRetentionPolicyService()
     try:
-        from recognition.domain.services.retention_policy_service import RetentionPolicyService
+        from recognition.application.services.retention_policy_service import RetentionPolicyService
 
         return RetentionPolicyService(session=session)
     except ModuleNotFoundError:
@@ -268,7 +268,7 @@ async def get_retention_export_service(
 ) -> RetentionExportServiceProtocol:
     """Return the real tenant export service when available."""
     try:
-        from recognition.domain.services.export_service import TenantExportService
+        from recognition.application.services.export_service import TenantExportService
 
         return TenantExportService(session=session)
     except ModuleNotFoundError:
@@ -280,7 +280,7 @@ async def get_retention_purge_service(
 ) -> RetentionPurgeServiceProtocol:
     """Return the real tenant purge service when available."""
     try:
-        from recognition.domain.services.purge_service import TenantPurgeService
+        from recognition.application.services.purge_service import TenantPurgeService
 
         return TenantPurgeService(session=session)
     except ModuleNotFoundError:
@@ -315,7 +315,7 @@ async def get_retention_import_service(
 ) -> TenantImportServiceProtocol:
     """Return the real tenant import service when available."""
     try:
-        from recognition.domain.services.import_service import TenantImportService
+        from recognition.application.services.import_service import TenantImportService
 
         return TenantImportService(session=session)
     except ModuleNotFoundError:

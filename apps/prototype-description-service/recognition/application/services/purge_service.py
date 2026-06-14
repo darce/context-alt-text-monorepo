@@ -33,7 +33,7 @@ from db.models import (
     RecognitionRun,
     Tenant,
 )
-from recognition.domain.services.audit_service import AuditService
+from recognition.application.services.audit_service import AuditService
 from recognition.infrastructure.repositories._helpers import coerce_uuid
 from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
 

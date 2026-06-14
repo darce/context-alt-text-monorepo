@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 
-from recognition.domain.services.export_service import run_export_to_file
+from recognition.application.services.export_service import run_export_to_file
 from recognition.interface_adapters.http.dependencies import (
     AuditRepositoryProtocol,
     AuthContext,

@@ -11,7 +11,7 @@ import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
-from recognition.domain.services.export_service import EXPORT_SCHEMA_VERSION
+from recognition.application.services.export_service import EXPORT_SCHEMA_VERSION
 from recognition.interface_adapters.http import dependencies
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.deps.services import (
@@ -50,7 +50,7 @@ class FakeRetentionPolicyService:
 
     async def apply_preset(self, tenant_id: str, preset_name: str, actor: str) -> dict[str, Any]:
         self.calls.append(("preset", tenant_id, actor))
-        from recognition.domain.services.retention_policy_service import RETENTION_PRESETS
+        from recognition.application.services.retention_policy_service import RETENTION_PRESETS
 
         if preset_name not in RETENTION_PRESETS:
             raise ValueError(f"invalid preset: {preset_name!r}")

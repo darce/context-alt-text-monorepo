@@ -3,7 +3,20 @@
 **Date:** 2026-06-13 · **Scope:** `apps/prototype-description-service` · **Branch:** `feature/maint-descsvc-deadcode-20260613`
 **Driver:** `/review-parallel` (literature-grounded), concentrate on dead code, obsolete documentation, and "architecture easier to reason about instead of deep implementations where agents get lost."
 
-> **Findings-of-record caveat:** `workstate-handoff-mcp` (both the MCP tools and the Python API) was unavailable during this review, so findings could not be recorded in the handoff DB. This report is the durable artifact. When MCP is restored, the surviving findings should be backfilled via `review_findings(operation="batch_record")` under this branch's task ref.
+> **Findings-of-record caveat:** the `workstate-handoff-mcp` MCP tools and the local Python API were unavailable during the review (the package is not installed in this checkout). The slice-complete decision was later recorded via `uvx --from mcp-workstate-handoff` under task `MAINT-descsvc-deadcode-20260613`, but the 96 individual findings were not batch-recorded. This report is the durable findings artifact; when MCP tooling is restored, backfill the surviving findings via `review_findings(operation="batch_record")` under this branch's task ref.
+
+## Execution status (this branch)
+
+| Slice | Status | Commit |
+|---|---|---|
+| Review report | ✅ landed | `73e7ffc0` |
+| Slice 3 — obsolete-doc fixes (9 docs) | ✅ landed | `25c7ff9e` |
+| Slice 1a — verified dead-module deletion (900 LOC) | ✅ landed | `08763c6c` |
+| Slice 1b — `db_export.py`, `ScheduledDisposalWorker` (need surgical test edits + pytest) | ⏳ deferred | — |
+| Slice 2 — small dead-symbol sweep | ⏳ deferred | — |
+| Slices 4–9 — indirection collapse, domain-boundary move, router split, DI consolidation, long-method extraction, repo split | ⏳ planned | — |
+
+Landed slices were validated by repo-wide reference grep (zero residual refs), `ruff`, and `py_compile`. **Full `pytest` was not run** (needs DB + the heavy ML venv) — it is the pre-merge-gate step before this branch merges to `main`. No merge has occurred; the pre-merge gate (`handoff_close_check`) also requires MCP, which was degraded this session.
 
 ## Method & provenance
 

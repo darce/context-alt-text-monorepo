@@ -14,8 +14,9 @@ The domain layer has NO knowledge of:
 This allows us to swap the embedding provider (InsightFace → ArcFace,
 MediaPipe, YOLO, etc.) without changing any domain logic.
 
-The transformation from infrastructure (Face*) to domain (*Identity)
-happens in EmbeddingService.to_media_identities().
+The transformation from infrastructure (Face*) to domain (*Identity) is
+performed by the application layer over the embedding adapters in
+recognition/application/embedding/ (detector.py, generator.py).
 
 Domain Models:
     - MediaIdentity: A clusterable entity with embedding vector
@@ -24,8 +25,7 @@ Domain Models:
     - AssignmentSuggestion: Pending human-review assignment
 
 See Also:
-    - recognition/application/embedding/service.py (the seam)
-    - docs/tasks/4.0/4.2.4/uml/architecture-face-identity-boundary.mmd
+    - recognition/application/embedding/ (detector.py, generator.py — the seam)
 """
 
 from recognition.domain.cluster import IdentityCluster

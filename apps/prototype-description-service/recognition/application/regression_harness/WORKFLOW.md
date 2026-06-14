@@ -241,15 +241,12 @@ unlabeled/unconfirmed, they will be absent from `canonical_clusters` and therefo
 
 ### Option A: Evaluate immediately after clustering (DB snapshot)
 
-This pulls predicted clusters from the **current DB state**, so run it **before any manual curation changes**
+This evaluates predicted clusters from the **current DB state**, so do it **before any manual curation changes**
 (merges/splits/reassignments) that mutate `identity_members`.
 
-```bash
-python -m scripts.evaluate_run \
-  --canonical data/canonical_reports/<TENANT_UUID>/<RUN_UUID>.json \
-  --tenant-id <TENANT_UUID> \
-  --output data/evaluations/<TENANT_UUID>/<RUN_UUID>.json
-```
+> The standalone `scripts.evaluate_run` CLI was removed. Evaluate in-process by
+> adapting the Option B one-liner below — load predicted clusters from the live
+> `identity_members`/`identity_clusters` rows instead of `pre_curation_state`.
 
 ### Option B: Evaluate later using `pre_curation_state` (frozen snapshot)
 
@@ -378,11 +375,10 @@ ORDER BY reject_count DESC;
 
 ### C) Spot borderline members (optional)
 
-To find cluster members whose stored similarity falls below their cluster threshold:
-
-```bash
-python scripts/audit_cluster_quality.py --tenant-id <TENANT_UUID> --limit 200
-```
+> The `scripts/audit_cluster_quality.py` helper was removed. To find cluster
+> members whose stored similarity falls below their cluster threshold, query
+> `identity_members` joined to `identity_clusters` directly, or use the outlier
+> view in section D below.
 
 ### D) Inspect the current outlier set (UI/API)
 

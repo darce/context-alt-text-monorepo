@@ -6,18 +6,18 @@ Utility scripts for local development and testing.
 
 ```text
 scripts/
-├── db_shell.sh                 # Database shell access (used by /db-query workflow)
-├── reset_dev_db.sh             # Database reset (used by /db-reset workflow)
+├── db_shell.sh                 # Database shell access
+├── deploy-env.sh               # Deployment environment helper
+├── reset_dev_db.sh             # Database reset
 ├── setup.sh                    # Initial environment setup
 ├── start_prototype_local.sh    # Local development server
 ├── install_insightface_mac.sh  # macOS ARM64 insightface setup
 ├── generate_canonical_report.py # Canonical reporting utility
+├── manage_api_keys.py          # Create/list/revoke tenant API keys
+├── verify_identity_schema.py   # Assert the baseline schema footprint
 └── utilities/
     └── compare_media_embeddings.py  # Embedding similarity comparison
 ```
-
-> **Note:** The unified MCP server is located at `scripts/mcp/unified_server.py` in the monorepo root.
-> Use the `/compare-embeddings` workflow (`.agent/workflows/compare-embeddings.md`) to access the embedding comparison tool.
 
 ## start_prototype_local.sh
 

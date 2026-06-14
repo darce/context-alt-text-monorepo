@@ -18,6 +18,8 @@
 | Branch review — parallel re-review of the cleanup (pass_with_findings) → 3 in-place fixes (TRANSFORMERS_CACHE config lockstep, orphan logger stub, dead `TypeVar`) | ✅ landed | `160ae3fd` |
 | Slice 4 — indirection collapse (inline shim, delete `DiscoveryAlgorithm` ABC + `ClusterVisualizer` + 3 dead params + leaf shim, 228 LOC) | ✅ landed | `144ff3a2` |
 | Slice 5 — domain-boundary move (DOMAIN-1: 5 impure services `domain/services/` → `application/services/`) | ✅ landed | `485c06e6` |
+| Branch re-review fixes (DESC-REV-B-01..04: dead matplotlib dep + MPLCONFIGDIR config, stale `.dockerignore scene/tests`, ruff format, test typing) | ✅ landed | `a0ce0c43` |
+| Dead clustering-residue config prune (mypy overrides for deleted modules + `onnxruntime.*`/`sklearn.*` globs; dead direct `scikit-learn` dev dep) | ✅ landed | `9cf931ed` |
 | Slice 6 — `clusters.py` router split | ⏳ planned | — |
 | Slice 7 — DI consolidation (+ deferred `get_cluster_service`/`InMemoryJobService`) | ⏳ planned | — |
 | Slices 8–9 — long-method extraction, repository/AssignmentWriter split | ⏳ planned | — |
@@ -25,7 +27,7 @@
 
 **Intentional non-removals** (verified by the re-review): `get_cluster_service` + `InMemoryJobService` deferred to **Slice 7** (only on the `dependencies.py` re-export surface that slice deletes; `InMemoryJobRepository` at the adjacent line is **live** — do not confuse); `compute_centroid` left (live test helper); `retry_matching` kept (live, `curation_job` calls it — review over-bundled it).
 
-Validation per landed slice: repo-wide reference grep (zero residual refs), `ruff` (incl. autofix), `pytest --collect-only` (whole-tree import safety), and `pytest` against a live Postgres. Closing gate: **full suite green — 1046 passed, 2 skipped** at `485c06e6` (net cleanup since the branch opened: ~−1,600 LOC). **No merge to `main`** — the pre-merge gate (`handoff_close_check`) requires MCP, which was degraded; merge when MCP is restored.
+Validation per landed slice: repo-wide reference grep (zero residual refs), `ruff` (incl. autofix), `pytest --collect-only` (whole-tree import safety), and `pytest` against a live Postgres. Closing gate: **full suite green — 1046 passed, 2 skipped** at `9cf931ed` (net cleanup since the branch opened: ~−1,600 LOC). **No merge to `main`** — the pre-merge gate (`handoff_close_check`) requires MCP, which was degraded; merge when MCP is restored.
 
 ## Method & provenance
 

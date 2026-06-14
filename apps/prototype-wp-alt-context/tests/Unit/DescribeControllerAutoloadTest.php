@@ -36,6 +36,9 @@ class DescribeControllerAutoloadTest extends TestCase
             "class_exists('AltContext\\\\Api\\\\DescribeController')"
             . " && interface_exists('AltContext\\\\Api\\\\DescribeHostInterface')"
             . " && class_exists('AltContext\\\\Api\\\\Services\\\\DescribeMediaService')"
+            // rg-016: the service's Telemetry dependency must resolve through the
+            // require_once chain too, not free-ride on a freshly-dumped classmap.
+            . " && class_exists('AltContext\\\\Support\\\\Telemetry')"
         );
         $output = shell_exec(sprintf('php -r %s 2>&1', escapeshellarg($script)));
         $this->assertSame(

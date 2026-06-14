@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace AltContext\Api\Services;
 
+require_once __DIR__ . '/../../support/class-telemetry.php';
+
 use AltContext\Api\DescribeHostInterface;
 use AltContext\Support\Telemetry;
 use WP_Error;
@@ -90,6 +92,13 @@ class DescribeMediaService {
 			);
 		}
 
+		// Reject oversize on a cheap stat before loading the whole file into
+		// memory; the post-read strlen check below still guards the exact size.
+		$stat_size = @filesize( $path );
+		if ( is_int( $stat_size ) && $stat_size > self::MULTIPART_MAX_BYTES ) {
+			return $this->payload_too_large_error( $media_id, $stat_size );
+		}
+
 		$bytes = @file_get_contents( $path );
 		if ( false === $bytes || '' === $bytes ) {
 			return new WP_Error(
@@ -100,16 +109,7 @@ class DescribeMediaService {
 		}
 
 		if ( strlen( $bytes ) > self::MULTIPART_MAX_BYTES ) {
-			return new WP_Error(
-				'describe_payload_too_large',
-				sprintf(
-					'Image for media_id=%d is %d bytes, exceeding the %d-byte cap.',
-					$media_id,
-					strlen( $bytes ),
-					self::MULTIPART_MAX_BYTES
-				),
-				array( 'status' => 413 )
-			);
+			return $this->payload_too_large_error( $media_id, strlen( $bytes ) );
 		}
 
 		$multipart_body = array(
@@ -167,6 +167,19 @@ class DescribeMediaService {
 		}
 
 		return $response;
+	}
+
+	private function payload_too_large_error( int $media_id, int $size_bytes ): WP_Error {
+		return new WP_Error(
+			'describe_payload_too_large',
+			sprintf(
+				'Image for media_id=%d is %d bytes, exceeding the %d-byte cap.',
+				$media_id,
+				$size_bytes,
+				self::MULTIPART_MAX_BYTES
+			),
+			array( 'status' => 413 )
+		);
 	}
 
 	private function invalid_envelope_error( int $media_id, string $reason ): WP_Error {

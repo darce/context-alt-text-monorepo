@@ -118,10 +118,11 @@ async def describe_image_multipart(
         # Surface an unprovisioned tenant as the structured 403, not an FK 500.
         await require_tenant_record(session, tenant_uuid)
         repository = ImageDescriptionRepository(session)
+    effective_timeout = _generation_timeout_seconds(settings, adapter)
     service = VisualFactsService(
         adapter=adapter,
         repository=repository,
-        generation_timeout_seconds=_generation_timeout_seconds(settings, adapter),
+        generation_timeout_seconds=effective_timeout,
     )
     try:
         response = await service.describe(
@@ -133,7 +134,7 @@ async def describe_image_multipart(
     except TimeoutError as exc:
         raise HTTPException(
             status.HTTP_504_GATEWAY_TIMEOUT,
-            f"description generation exceeded {settings.generation_timeout_seconds}s",
+            f"description generation exceeded {effective_timeout}s",
         ) from exc
     if session is not None and not response.cached:
         await session.commit()

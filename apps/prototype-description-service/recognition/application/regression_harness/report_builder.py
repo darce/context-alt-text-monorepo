@@ -120,17 +120,6 @@ def _locator_payload(identity: MediaIdentity, *, include_crop_hash: bool = False
     return payload
 
 
-def _locator_sort_key(locator: IdentityLocator) -> tuple[int, int, int, int, int, str]:
-    return (
-        locator.media_id,
-        locator.bbox_x,
-        locator.bbox_y,
-        locator.bbox_width,
-        locator.bbox_height,
-        locator.crop_hash or "",
-    )
-
-
 async def _build_pre_curation_state(
     session: AsyncSession,
     *,

@@ -87,27 +87,6 @@ def match_to_anchor(
     return best_anchor, best_similarity
 
 
-def match_single_to_anchors(
-    face_vec: np.ndarray,
-    anchor_embeddings: dict[str, list[np.ndarray]],
-) -> tuple[str | None, float]:
-    """Match a single noise point to existing anchor clusters."""
-    best_anchor: str | None = None
-    best_similarity = 0.0
-
-    for anchor_id, reps in anchor_embeddings.items():
-        if not reps:
-            continue
-        for rep in reps:
-            rep_vec = normalize_face_embedding(np.asarray(rep, dtype=np.float32))
-            sim = float(np.dot(face_vec, rep_vec))
-            if sim > best_similarity:
-                best_similarity = sim
-                best_anchor = anchor_id
-
-    return best_anchor, best_similarity
-
-
 def compute_member_similarities(member_vectors: Sequence[np.ndarray]) -> list[float]:
     """Compute similarity of each member to the group centroid."""
     if not member_vectors:

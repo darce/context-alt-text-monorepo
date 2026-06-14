@@ -1,7 +1,5 @@
 """
 SQLAlchemy-backed implementation of ClusterRepository.
-
-This is scaffolding only; methods are implemented in Phase 5.
 """
 
 from __future__ import annotations

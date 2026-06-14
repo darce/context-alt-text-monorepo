@@ -1,5 +1,6 @@
 """
-Minimal FastAPI router for the recognition service (stub endpoints).
+Aggregates the recognition sub-routers into a single APIRouter mounted by
+api/main.py under /recognition.
 """
 
 from __future__ import annotations

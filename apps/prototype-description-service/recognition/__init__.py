@@ -20,9 +20,9 @@ The codebase uses intentionally different nomenclature for each layer:
         - Technology-agnostic, business-focused
         - Contains: ClusterRepresentative, AssignmentSuggestion
 
-    The Seam (recognition/application/embedding/service.py):
-        - EmbeddingService.to_media_identities() transforms infrastructure → domain
-        - This is the single transformation point
+    The Seam (recognition/application/embedding/):
+        - detector.py / generator.py produce FaceDetection / EmbeddingResult
+        - the application layer assembles them into *Identity domain objects
 
 Why This Matters:
     If we swap InsightFace for YOLO+ArcFace, MediaPipe, or another detection
@@ -42,6 +42,5 @@ Package Structure:
     └── observability/    # Logging, visualization, reports
 
 See Also:
-    - docs/tasks/4.0/4.2.4/uml/architecture-face-identity-boundary.mmd
-    - docs/tasks/4.0/4.2.4/RECOGNITION_SERVICE_V4.2.4_IMPLEMENTATION_PLAN.md
+    - docs/archive/tasks/4.0/4.2.4/RECOGNITION_SERVICE_V4.2.4_IMPLEMENTATION_PLAN.md
 """

@@ -62,8 +62,9 @@ class ClustersRepositoryTest extends TestCase
         $this->assertStringContainsString('curation_state = IF(is_user_confirmed = 1, curation_state, VALUES(curation_state))', $mergedSql);
         $this->assertStringContainsString('person_id = IF(is_user_confirmed = 1, person_id, person_id)', $mergedSql);
         $this->assertStringContainsString('local_revision = IF(is_user_confirmed = 1, local_revision, local_revision)', $mergedSql);
-        $this->assertStringContainsString('representative_id = VALUES(representative_id)', $mergedSql);
-        $this->assertStringContainsString('is_pinned = VALUES(is_pinned)', $mergedSql);
+        // COR-1: overwritten data columns are version-gated so a stale snapshot cannot regress them.
+        $this->assertStringContainsString('representative_id = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(representative_id), representative_id)', $mergedSql);
+        $this->assertStringContainsString('is_pinned = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(is_pinned), is_pinned)', $mergedSql);
         $this->assertStringContainsString('snapshot_version = GREATEST(snapshot_version, VALUES(snapshot_version))', $mergedSql);
     }
 
@@ -303,10 +304,10 @@ class ClustersRepositoryTest extends TestCase
         $this->assertStringContainsString('0.92', $sql);
         $this->assertStringContainsString('cluster-target', $sql);
         $this->assertStringContainsString('NULLIF', $sql);
-        $this->assertStringContainsString('suggested_label = VALUES(suggested_label)', $sql);
-        $this->assertStringContainsString('suggested_label_source = VALUES(suggested_label_source)', $sql);
-        $this->assertStringContainsString('suggested_label_confidence = VALUES(suggested_label_confidence)', $sql);
-        $this->assertStringContainsString('suggested_target_cluster_id = VALUES(suggested_target_cluster_id)', $sql);
+        $this->assertStringContainsString('suggested_label = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(suggested_label), suggested_label)', $sql);
+        $this->assertStringContainsString('suggested_label_source = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(suggested_label_source), suggested_label_source)', $sql);
+        $this->assertStringContainsString('suggested_label_confidence = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(suggested_label_confidence), suggested_label_confidence)', $sql);
+        $this->assertStringContainsString('suggested_target_cluster_id = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(suggested_target_cluster_id), suggested_target_cluster_id)', $sql);
     }
 
     public function testMergeSnapshotUsesNullIfForAbsentSuggestedLabel(): void
@@ -330,6 +331,6 @@ class ClustersRepositoryTest extends TestCase
         // Absent suggested_label fields must use NULLIF(%s, '') so MySQL stores NULL, not ''
         $this->assertStringContainsString('NULLIF', $sql);
         $this->assertStringContainsString('suggested_label', $sql);
-        $this->assertStringContainsString('suggested_label = VALUES(suggested_label)', $sql);
+        $this->assertStringContainsString('suggested_label = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(suggested_label), suggested_label)', $sql);
     }
 }

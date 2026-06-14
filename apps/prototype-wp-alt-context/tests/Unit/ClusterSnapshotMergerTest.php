@@ -42,6 +42,38 @@ class ClusterSnapshotMergerTest extends TestCase
         $this->assertStringContainsString('snapshot_version = GREATEST(snapshot_version, VALUES(snapshot_version))', $query);
     }
 
+    public function testMergeSnapshotBatchGatesOverwrittenDataColumnsOnIncomingVersion(): void
+    {
+        // COR-1 (PA-2 mechanism assertion): an out-of-order snapshot with a
+        // lower version must not clobber newer projection data. Each column the
+        // upsert previously overwrote unconditionally is now gated on the
+        // incoming snapshot_version.
+        $this->merger->merge_snapshot_batch_for_tenant(
+            'tenant-merge',
+            [
+                [
+                    'cluster_uuid' => 'cluster-ver',
+                    'label' => 'Versioned',
+                    'identity_count' => 3,
+                ],
+            ],
+            14
+        );
+
+        global $wpdb;
+        $query = $wpdb->queries[0];
+        $this->assertStringContainsString('identity_count = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(identity_count), identity_count)', $query);
+        $this->assertStringContainsString('representative_id = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(representative_id), representative_id)', $query);
+        $this->assertStringContainsString('representative_thumb_path = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(representative_thumb_path), representative_thumb_path)', $query);
+        $this->assertStringContainsString('is_pinned = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(is_pinned), is_pinned)', $query);
+        $this->assertStringContainsString('suggested_label = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(suggested_label), suggested_label)', $query);
+        $this->assertStringContainsString('suggested_target_cluster_id = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(suggested_target_cluster_id), suggested_target_cluster_id)', $query);
+        // The monotonic version column itself stays GREATEST and the curation
+        // guard on label is preserved.
+        $this->assertStringContainsString('snapshot_version = GREATEST(snapshot_version, VALUES(snapshot_version))', $query);
+        $this->assertStringContainsString('label = IF(is_user_confirmed = 1, label, VALUES(label))', $query);
+    }
+
     public function testMergeBatchCoercesActiveCurationStateToUncurated(): void
     {
         $this->merger->merge_snapshot_batch_for_tenant(

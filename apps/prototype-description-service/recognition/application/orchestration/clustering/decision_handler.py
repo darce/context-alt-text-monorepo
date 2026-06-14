@@ -120,61 +120,6 @@ class DecisionHandler:
         self._clustering_logger = clustering_logger
         self._logger = logger_instance or logger
 
-    async def evaluate_and_handle(
-        self,
-        candidate: AssignmentCandidate,
-        *,
-        job_id: str,
-        job_label: str,
-    ) -> AssignmentDecision:
-        """Evaluate a candidate and apply the resulting decision."""
-        decision = await self._gate.evaluate(candidate)
-        log_and_report_decision(
-            logger_instance=self._logger,
-            clustering_logger=self._clustering_logger,
-            gate=self._gate,
-            candidate=candidate,
-            decision=decision,
-            job_label=job_label,
-        )
-
-        if decision.outcome == AssignmentOutcome.ACCEPT:
-            await self._writer.persist_assignment(decision, batch_mode=True)
-            await self._suggestions.resolve_for_identity_exclusive(
-                identity_id=candidate.identity.id,
-                accepted_cluster_id=candidate.cluster_id,
-                reason="auto_assignment",
-            )
-            self._logger.info(
-                "[clustering] ACCEPTED job_id=%s identity=%s media_id=%s cluster=%s",
-                job_id,
-                candidate.identity.id,
-                candidate.identity.media_id,
-                candidate.cluster_id,
-            )
-        elif decision.outcome == AssignmentOutcome.SUGGEST:
-            await self._suggestions.create(candidate, decision.suggestion_confidence)
-            self._logger.info(
-                "[clustering] SUGGESTED job_id=%s identity=%s media_id=%s cluster=%s confidence=%.2f reason=%s",
-                job_id,
-                candidate.identity.id,
-                candidate.identity.media_id,
-                candidate.cluster_id,
-                decision.suggestion_confidence or 0.0,
-                decision.rejection_reason,
-            )
-        else:
-            self._logger.info(
-                "[clustering] REJECTED job_id=%s identity=%s media_id=%s cluster=%s reason=%s",
-                job_id,
-                candidate.identity.id,
-                candidate.identity.media_id,
-                candidate.cluster_id,
-                decision.rejection_reason,
-            )
-
-        return decision
-
     async def evaluate_only(
         self,
         candidate: AssignmentCandidate,

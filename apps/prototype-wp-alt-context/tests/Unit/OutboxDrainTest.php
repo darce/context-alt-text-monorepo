@@ -54,7 +54,7 @@ class OutboxDrainTest extends TestCase
 		$drain = new OutboxDrain($dispatcher);
 		$drain->drain();
 
-		$updateQuery = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_outbox SET');
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
 		$this->assertStringContainsString("status = 'acknowledged'", $updateQuery);
 		$this->assertStringContainsString('acknowledged_version = 33', $updateQuery);
 	}
@@ -81,7 +81,7 @@ class OutboxDrainTest extends TestCase
 		$conflictInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_conflicts');
 		$this->assertStringContainsString("'version_conflict'", $conflictInsert);
 
-		$updateQuery = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_outbox SET');
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
 		$this->assertStringContainsString("status = 'conflict'", $updateQuery);
 	}
 
@@ -104,7 +104,7 @@ class OutboxDrainTest extends TestCase
 		$drain = new OutboxDrain($dispatcher);
 		$drain->drain();
 
-		$updateQuery = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_outbox SET');
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
 		$this->assertStringContainsString("status = 'pending'", $updateQuery);
 		$this->assertStringContainsString("last_error_code = 'timeout'", $updateQuery);
 	}
@@ -131,8 +131,87 @@ class OutboxDrainTest extends TestCase
 		$drain = new OutboxDrain($dispatcher);
 		$drain->drain();
 
-		$updateQuery = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_outbox SET');
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
 		$this->assertStringContainsString("status = 'failed'", $updateQuery);
+	}
+
+	public function testDrainClaimsPendingRowAsInFlightBeforeDispatch(): void
+	{
+		global $wpdb;
+		$wpdb->mockResults = [$this->pendingOperationRow()];
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public function dispatch_batch(array $operations): array {
+				return array_fill(0, count($operations), [
+					'status' => 'acknowledged',
+					'backend_version' => 33,
+				]);
+			}
+		};
+
+		$drain = new OutboxDrain($dispatcher);
+		$drain->drain();
+
+		// CON-3: claim transitions pending -> in_flight gated on the pending status, so a row
+		// already claimed by a peer drain is updated by 0 rows (no double dispatch).
+		$claim = $this->findQueryContaining($wpdb->queries, "UPDATE wp_acx_sync_outbox SET status = 'in_flight'");
+		$this->assertStringContainsString('claimed_at = ', $claim);
+		$this->assertStringContainsString("WHERE id = 7 AND status = 'pending'", $claim);
+	}
+
+	public function testDrainApplyResultGuardsTerminalWriteOnInFlightClaim(): void
+	{
+		global $wpdb;
+		$wpdb->mockResults = [$this->pendingOperationRow()];
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public function dispatch_batch(array $operations): array {
+				return array_fill(0, count($operations), [
+					'status' => 'acknowledged',
+					'backend_version' => 33,
+				]);
+			}
+		};
+
+		$drain = new OutboxDrain($dispatcher);
+		$drain->drain();
+
+		// CON-3: terminal write only lands while this drain still owns the row (status='in_flight'),
+		// so a stale worker's write is a no-op and cannot double-increment attempts.
+		$apply = $this->findOutboxStatusUpdate($wpdb->queries);
+		$this->assertStringContainsString("status = 'acknowledged'", $apply);
+		$this->assertStringContainsString("WHERE id = 7 AND status = 'in_flight'", $apply);
+	}
+
+	public function testDrainSkipsDispatchAndApplyWhenClaimIsLostToPeerDrain(): void
+	{
+		global $wpdb;
+		$wpdb->mockResults = [$this->pendingOperationRow()];
+		// Simulate a peer drain already owning the row: every claim UPDATE matches 0 rows.
+		$wpdb->defaultUpdateResult = 0;
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public int $dispatchCalls = 0;
+
+			public function dispatch_batch(array $operations): array {
+				++$this->dispatchCalls;
+				return array_fill(0, count($operations), [
+					'status' => 'acknowledged',
+					'backend_version' => 33,
+				]);
+			}
+		};
+
+		$drain = new OutboxDrain($dispatcher);
+		$drain->drain();
+
+		// Claim attempted but lost -> no dispatch, no terminal write (so attempts is not bumped twice).
+		$this->assertStringContainsString(
+			"UPDATE wp_acx_sync_outbox SET status = 'in_flight'",
+			$this->findQueryContaining($wpdb->queries, "UPDATE wp_acx_sync_outbox SET status = 'in_flight'")
+		);
+		$this->assertSame(0, $dispatcher->dispatchCalls);
+		$this->assertSame('', $this->findFirstQueryContaining($wpdb->queries, "SET status = 'acknowledged'"));
 	}
 
 	public function testDrainSkipsReplayPlaneTopologyOperationBlockedByEarlierSplitCommand(): void
@@ -249,7 +328,7 @@ class OutboxDrainTest extends TestCase
 		$this->assertCount(1, $calls);
 		$this->assertStringContainsString('/recognition/clusters/cluster-source/merge', $calls[0]['url']);
 
-		$updateQuery = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_outbox SET');
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
 		$this->assertStringContainsString("status = 'acknowledged'", $updateQuery);
 		$this->assertStringContainsString('acknowledged_version = 55', $updateQuery);
 	}
@@ -286,7 +365,7 @@ class OutboxDrainTest extends TestCase
 		$conflictInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_conflicts');
 		$this->assertStringContainsString("'cluster_version_conflict'", $conflictInsert);
 
-		$updateQuery = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_outbox SET');
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
 		$this->assertStringContainsString("status = 'conflict'", $updateQuery);
 	}
 
@@ -313,7 +392,7 @@ class OutboxDrainTest extends TestCase
 		$result = $drain->re_enqueue_with_current_base(51, 13, 'tenant-test-123', 'Merged Name');
 
 		$this->assertTrue($result);
-		$updateQuery = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_outbox SET');
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
 		$this->assertStringContainsString("status = 'pending'", $updateQuery);
 		$this->assertStringContainsString('expected_base_version = 13', $updateQuery);
 		$this->assertStringContainsString('\"merged_value\":\"Merged Name\"', $updateQuery);
@@ -350,7 +429,7 @@ class OutboxDrainTest extends TestCase
 		$this->assertCount(1, $calls);
 		$this->assertStringContainsString('/recognition/clusters/cluster-target/assign', $calls[0]['url']);
 
-		$updateQuery = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_outbox SET');
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
 		$this->assertStringContainsString("status = 'acknowledged'", $updateQuery);
 		$this->assertStringContainsString('acknowledged_version = 29', $updateQuery);
 	}
@@ -386,7 +465,7 @@ class OutboxDrainTest extends TestCase
 		$this->assertStringContainsString('/roster/curation/sync', $calls[0]['url']);
 		$this->assertStringContainsString('"operation_type":"cluster_label_updated"', (string) ($calls[0]['body'] ?? ''));
 
-		$outboxUpdate = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_outbox SET');
+		$outboxUpdate = $this->findOutboxStatusUpdate($wpdb->queries);
 		$this->assertStringContainsString("status = 'acknowledged'", $outboxUpdate);
 		$this->assertStringContainsString('acknowledged_version = 61', $outboxUpdate);
 
@@ -430,7 +509,7 @@ class OutboxDrainTest extends TestCase
 		$conflictInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_conflicts');
 		$this->assertStringContainsString("'version_conflict'", $conflictInsert);
 
-		$outboxUpdate = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_outbox SET');
+		$outboxUpdate = $this->findOutboxStatusUpdate($wpdb->queries);
 		$this->assertStringContainsString("status = 'conflict'", $outboxUpdate);
 
 		$syncStateUpdate = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_state SET');
@@ -467,7 +546,7 @@ class OutboxDrainTest extends TestCase
 		$drain = new OutboxDrain(new OutboxDispatcher());
 		$drain->drain();
 
-		$outboxUpdate = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_outbox SET');
+		$outboxUpdate = $this->findOutboxStatusUpdate($wpdb->queries);
 		$this->assertStringContainsString("status = 'failed'", $outboxUpdate);
 		$this->assertStringContainsString("last_error_code = 'remote_error'", $outboxUpdate);
 
@@ -543,7 +622,7 @@ class OutboxDrainTest extends TestCase
 		$result = $drain->retry_failed_operation(9, $tenantId);
 
 		$this->assertTrue($result);
-		$updateQuery = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_outbox SET');
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
 		$this->assertStringContainsString("status = 'pending'", $updateQuery);
 		$this->assertStringContainsString('attempts = 0', $updateQuery);
 		$this->assertStringContainsString('last_error_code = NULL', $updateQuery);
@@ -758,7 +837,7 @@ class OutboxDrainTest extends TestCase
 		$result = $drain->discard_operation($operationId, $tenantId);
 
 		$this->assertTrue($result);
-		$updateQuery = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_outbox SET');
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
 		$this->assertStringContainsString("status = 'discarded'", $updateQuery);
 
 		$syncStateUpdate = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_state SET');
@@ -809,6 +888,27 @@ class OutboxDrainTest extends TestCase
 		}
 
 		return '';
+	}
+
+	/**
+	 * First outbox UPDATE that is not the CON-3 row-claim (claim sets status='in_flight').
+	 *
+	 * @param array<int,string> $queries
+	 */
+	private function findOutboxStatusUpdate(array $queries): string
+	{
+		foreach ($queries as $query) {
+			if (! str_contains($query, 'UPDATE wp_acx_sync_outbox SET')) {
+				continue;
+			}
+			if (str_contains($query, "SET status = 'in_flight'")) {
+				continue;
+			}
+
+			return $query;
+		}
+
+		$this->fail('Unable to find a non-claim outbox status UPDATE.');
 	}
 
 	/**

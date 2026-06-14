@@ -581,6 +581,7 @@ class LifecycleManager {
 			last_error_message text DEFAULT NULL,
 			acknowledged_version bigint(20) unsigned DEFAULT NULL,
 			created_at datetime NOT NULL,
+			claimed_at datetime DEFAULT NULL,
 			last_attempted_at datetime DEFAULT NULL,
 			acknowledged_at datetime DEFAULT NULL,
 			PRIMARY KEY  (id),

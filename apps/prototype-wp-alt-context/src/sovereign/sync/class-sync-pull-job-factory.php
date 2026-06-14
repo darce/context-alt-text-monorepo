@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace AltContext\Sovereign\Sync;
 
-require_once __DIR__ . '/interface-snapshot-client.php';
 require_once __DIR__ . '/class-snapshot-client.php';
 require_once __DIR__ . '/interface-snapshot-projector.php';
 require_once __DIR__ . '/class-snapshot-projector.php';
@@ -21,13 +20,13 @@ final class SyncPullJobFactory {
 	private ClustersRepositoryInterface $clusters_repository;
 	private IdentityMembersRepositoryInterface $members_repository;
 	private SyncStateRepositoryInterface $sync_state_repository;
-	private SnapshotClientInterface $snapshot_client;
+	private SnapshotClient $snapshot_client;
 
 	public function __construct(
 		ClustersRepositoryInterface $clusters_repository,
 		IdentityMembersRepositoryInterface $members_repository,
 		SyncStateRepositoryInterface $sync_state_repository,
-		?SnapshotClientInterface $snapshot_client = null
+		?SnapshotClient $snapshot_client = null
 	) {
 		$this->clusters_repository = $clusters_repository;
 		$this->members_repository = $members_repository;

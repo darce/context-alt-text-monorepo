@@ -85,7 +85,7 @@ Slice 0 — Safety net
 
 Slice 1 — Concurrency data-integrity
 - [x] 1.1 snapshot version-monotonicity guard on data columns + projector gate (COR-1, critical)
-- [ ] 1.2 atomic relative-delta identity_count (CON-1)
+- [x] 1.2 atomic relative-delta identity_count (CON-1)
 - [ ] 1.3 reconcile-attempt cap + terminal failed state (COR-2)
 - [ ] 1.4 outbox drain row-claim + apply_result status guard (CON-3)
 - [ ] 1.5 split-topology command-claim + status-guarded terminal writes (CON-4)

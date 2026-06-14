@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import ValidationError
 from starlette.datastructures import UploadFile
 
+from db.tenant_context import set_tenant_context
 from recognition.interface_adapters.http.dependencies import (
     get_optional_session,
     require_write_access,
@@ -99,7 +100,14 @@ async def describe_image_multipart(
     if not image_bytes:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"image part '{key}' is empty")
 
-    repository = ImageDescriptionRepository(session) if session is not None else None
+    repository = None
+    if session is not None:
+        # RLS: scope the session to the tenant before any read/write on
+        # image_descriptions — both the cache SELECT (USING) and the INSERT
+        # (WITH CHECK) filter on app.current_tenant. Mirrors the tenant-scoped
+        # recognition routes (e.g. clusters.py).
+        await set_tenant_context(session, uuid.UUID(envelope.tenant_id))
+        repository = ImageDescriptionRepository(session)
     service = VisualFactsService(adapter=adapter, repository=repository)
     response = await service.describe(
         tenant_id=uuid.UUID(envelope.tenant_id),

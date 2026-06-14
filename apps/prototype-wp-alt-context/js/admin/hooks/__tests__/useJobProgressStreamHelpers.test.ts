@@ -15,6 +15,15 @@ describe('parseProgressEvent', () => {
     expect(parseProgressEvent('not-json', ref)).toBeNull();
   });
 
+  it('returns null when completed/total are non-numeric or absent (COR-4: sr-005 SSE boundary validation)', () => {
+    const ref = createRef<number | null>() as React.MutableRefObject<number | null>;
+    ref.current = null;
+    expect(parseProgressEvent(JSON.stringify({ status: 'running', total: null }), ref)).toBeNull();
+    expect(parseProgressEvent(JSON.stringify({ status: 'running', completed: '3', total: 10 }), ref)).toBeNull();
+    expect(parseProgressEvent(JSON.stringify({ status: 'running' }), ref)).toBeNull();
+    expect(ref.current).toBeNull();
+  });
+
   it('parses basic completed/total/status', () => {
     const ref = createRef<number | null>() as React.MutableRefObject<number | null>;
     ref.current = null;

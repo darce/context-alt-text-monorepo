@@ -10,6 +10,8 @@
 
 Ranked by ROI (impact × safety × low blast radius):
 
+> **Note — LOC figures below are the pre-refactor 2026-06-07 baseline.** All eight targets were decomposed (see the Closure section): current `main` sizes are cluster-mutations 455, clusters-repo 156, analysis-jobs 266, identity-members 141, clusters-controller 234. `split-topology-command-drain` instead grew 799→981 — re-evaluate it separately.
+
 | Rank | Target | LOC | Methods | Safety net | Smell | First move |
 |---|---|---|---|---|---|---|
 | **1** | `src/api/class-cluster-mutations-controller.php` | 1257 | 51 | partial (`ClusterMutationsControllerDualWriteTest`) | God controller, 11 routes + label/merge/split/dismiss/reassign | Extract Class per operation cluster |

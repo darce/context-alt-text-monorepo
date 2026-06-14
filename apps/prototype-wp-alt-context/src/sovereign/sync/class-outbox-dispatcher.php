@@ -11,7 +11,6 @@ use WP_REST_Response;
 use function apply_filters;
 use function array_fill;
 use function count;
-use function in_array;
 use function is_array;
 use function is_string;
 use function is_wp_error;

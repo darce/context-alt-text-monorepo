@@ -12,7 +12,7 @@ import { useJobPersistence } from './useJobPersistence';
 import { useJobProgressStream } from './useJobProgressStream';
 import { useCombinedScanStatus } from './useRecognitionHooks';
 
-export type { JobPhase, PipelinePhase } from './jobStateMachineUtils';
+export type { PipelinePhase } from './jobStateMachineUtils';
 
 export interface JobStateMachineOptions {
   onScanStart?: () => void;

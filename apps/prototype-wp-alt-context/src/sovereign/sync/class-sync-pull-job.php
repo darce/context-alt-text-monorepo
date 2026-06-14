@@ -6,7 +6,7 @@ namespace AltContext\Sovereign\Sync;
 
 require_once __DIR__ . '/../repositories/interface-sync-state-repository.php';
 require_once __DIR__ . '/class-sync-pull-result.php';
-require_once __DIR__ . '/interface-snapshot-client.php';
+require_once __DIR__ . '/class-snapshot-client.php';
 require_once __DIR__ . '/interface-targeted-sync-pull-job.php';
 
 use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
@@ -34,12 +34,12 @@ class SyncPullJob implements TargetedSyncPullJobInterface {
 	/** Tenant-specific cooldown key prefix used by perform() and bypass path writes. */
 	private const COOLDOWN_TRANSIENT_PREFIX = 'acx_sync_cooldown_';
 
-	private SnapshotClientInterface $client;
+	private SnapshotClient $client;
 	private SnapshotProjectorInterface $projector;
 	private SyncStateRepositoryInterface $sync_state_repository;
 
 	public function __construct(
-		SnapshotClientInterface $client,
+		SnapshotClient $client,
 		SnapshotProjectorInterface $projector,
 		SyncStateRepositoryInterface $sync_state_repository
 	) {

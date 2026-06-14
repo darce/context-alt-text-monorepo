@@ -325,18 +325,47 @@ class ClusterMutationsController extends AbstractRecognitionProxyController impl
 		$resolved_payload = ! empty( $payload ) ? $payload : array(
 			'cluster_uuid' => $entity_key,
 		);
-		$result = $this->outbox_writer->enqueue(
+		$snapshot_version = max( 0, (int) ( $context_row['snapshot_version'] ?? $this->sync_state_repository->get_snapshot_version( $tenant_id ) ) );
+		$target_revision  = max( 1, (int) ( $context_row['local_revision'] ?? 0 ) + 1 );
+		$result           = $this->outbox_writer->enqueue(
 			$tenant_id,
 			$operation_type,
 			$entity_type,
 			$entity_key,
-			max( 0, (int) ( $context_row['snapshot_version'] ?? $this->sync_state_repository->get_snapshot_version( $tenant_id ) ) ),
-			max( 1, (int) ( $context_row['local_revision'] ?? 0 ) + 1 ),
+			$snapshot_version,
+			$target_revision,
 			$resolved_payload,
-			wp_generate_uuid4()
+			$this->derive_curation_idempotency_key( $tenant_id, $operation_type, $entity_type, $entity_key, $target_revision, $resolved_payload )
 		);
 
 		return false !== $result;
+	}
+
+	/**
+	 * Deterministic idempotency key for a curation operation so a double-submit (or a retried
+	 * request whose response was lost) collapses to a single outbox row via uq_idempotency,
+	 * mirroring resolve_split_idempotency_key. A genuinely distinct operation (different entity
+	 * or a newer local revision) yields a different key and is enqueued normally.
+	 *
+	 * @param array<string,mixed> $payload
+	 */
+	private function derive_curation_idempotency_key( string $tenant_id, string $operation_type, string $entity_type, string $entity_key, int $target_revision, array $payload ): string {
+		$basis = wp_json_encode(
+			array(
+				'tenant_id'       => $tenant_id,
+				'operation_type'  => $operation_type,
+				'entity_type'     => $entity_type,
+				'entity_key'      => $entity_key,
+				'target_revision' => $target_revision,
+				'payload'         => $payload,
+			)
+		);
+
+		if ( ! is_string( $basis ) || '' === $basis ) {
+			return wp_generate_uuid4();
+		}
+
+		return $this->format_idempotency_key( $basis );
 	}
 
 	public function trigger_xmp_refresh_for_cluster_ids( array $cluster_ids, string $context ): void {
@@ -377,6 +406,10 @@ class ClusterMutationsController extends AbstractRecognitionProxyController impl
 			return wp_generate_uuid4();
 		}
 
+		return $this->format_idempotency_key( $basis );
+	}
+
+	private function format_idempotency_key( string $basis ): string {
 		$hash = md5( $basis );
 
 		return sprintf(

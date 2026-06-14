@@ -19,7 +19,7 @@ _FORBIDDEN_PATTERNS = (
 _TARGETS = (
     "recognition/application/orchestration/clustering/orchestrator.py",
     "recognition/application/scan/service.py",
-    "recognition/domain/services/export_service.py",
+    "recognition/application/services/export_service.py",
     "recognition/infrastructure/repositories/scan_queue_repository.py",
     "recognition/observability/recognition_runs.py",
     "recognition/interface_adapters/http/routers/clusters.py",

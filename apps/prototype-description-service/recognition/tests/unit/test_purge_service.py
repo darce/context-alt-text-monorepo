@@ -31,7 +31,7 @@ from db.models import (
     RecognitionRun,
     Tenant,
 )
-from recognition.domain.services.purge_service import TenantPurgeService
+from recognition.application.services.purge_service import TenantPurgeService
 from recognition.domain.suggestion import SuggestedLabelSource
 
 

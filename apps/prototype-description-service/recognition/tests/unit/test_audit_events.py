@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from db.models import AuditEvent, Tenant
-from recognition.domain.services.audit_service import AuditService
+from recognition.application.services.audit_service import AuditService
 from recognition.infrastructure.repositories.audit_repository import AuditRepository
 
 

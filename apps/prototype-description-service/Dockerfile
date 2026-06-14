@@ -69,7 +69,6 @@ COPY api/ api/
 COPY db/ db/
 COPY recognition/ recognition/
 COPY roster/ roster/
-COPY scene/ scene/
 COPY shared/ shared/
 COPY scripts/ scripts/
 COPY pyproject.toml .

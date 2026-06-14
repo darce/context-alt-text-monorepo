@@ -45,7 +45,6 @@ include = [
     "db*",
     "recognition*",
     "roster*",
-    "scene*",
     "shared*",
 ]
 
@@ -164,7 +163,6 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = [
     "recognition.application.clustering.*",
-    "recognition.application.representatives.*",
     "recognition.domain.embeddings.*",
     "recognition.application.health",
     "recognition.config.*",

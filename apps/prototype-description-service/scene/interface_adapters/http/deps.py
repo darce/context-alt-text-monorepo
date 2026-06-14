@@ -21,11 +21,22 @@ def get_description_adapter() -> DescriptionAdapter:
     settings = DescriptionSettings()
     if settings.adapter_mode is DescriptionAdapterKind.LOCAL_CPU:
         try:
+            from scene.application.settings.vlm import VlmSettings
             from scene.infrastructure.vlm import get_shared_local_cpu_adapter
 
-            return get_shared_local_cpu_adapter()
+            vlm = VlmSettings()
+            return get_shared_local_cpu_adapter(
+                model_id=vlm.florence_model_id,
+                model_revision=vlm.model_revision,
+                max_image_edge_px=vlm.max_image_edge_px,
+                num_beams=vlm.num_beams,
+                max_new_tokens=vlm.max_new_tokens,
+            )
         except Exception as exc:  # noqa: BLE001 - degrade uniformly on any import/setup failure
             from scene.infrastructure.vlm.unavailable_adapter import UnavailableDescriptionAdapter
 
             return UnavailableDescriptionAdapter(str(exc))
-    return SeededDescriptionAdapter(prompt_or_task_version=settings.prompt_or_task_version)
+    return SeededDescriptionAdapter(
+        model_version=settings.model_version,
+        prompt_or_task_version=settings.prompt_or_task_version,
+    )

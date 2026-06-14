@@ -31,3 +31,35 @@ def test_unavailable_adapter_is_protocol_and_fails_closed():
     assert isinstance(unavailable, DescriptionAdapter)
     with pytest.raises(RuntimeError):
         unavailable.describe(image_bytes=b"x", context=None)
+
+
+def test_get_description_adapter_defaults_to_seeded(monkeypatch):
+    monkeypatch.delenv("ACX_DESCRIPTION_ADAPTER", raising=False)
+    from scene.interface_adapters.http.deps import get_description_adapter
+
+    assert get_description_adapter().kind is DescriptionAdapterKind.SEEDED
+
+
+def test_get_description_adapter_selects_local_cpu(monkeypatch):
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "local_cpu")
+    from scene.infrastructure.vlm import reset_shared_local_cpu_adapter_for_tests
+    from scene.interface_adapters.http.deps import get_description_adapter
+
+    reset_shared_local_cpu_adapter_for_tests()
+    try:
+        adapter = get_description_adapter()  # constructs the singleton; no model load
+        assert adapter.kind is DescriptionAdapterKind.LOCAL_CPU
+    finally:
+        reset_shared_local_cpu_adapter_for_tests()
+
+
+def test_get_description_adapter_degrades_to_unavailable(monkeypatch):
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "local_cpu")
+    import scene.infrastructure.vlm as vlm_pkg
+    from scene.interface_adapters.http.deps import get_description_adapter
+
+    def _boom(**kwargs):
+        raise RuntimeError("simulated missing [vlm]")
+
+    monkeypatch.setattr(vlm_pkg, "get_shared_local_cpu_adapter", _boom)
+    assert isinstance(get_description_adapter(), UnavailableDescriptionAdapter)

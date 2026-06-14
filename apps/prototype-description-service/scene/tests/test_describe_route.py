@@ -13,11 +13,14 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from db.models.base_imports import Base
 from db.models.scene import ImageDescription
+from db.models.tenant import Tenant
 from recognition.interface_adapters.http.dependencies import (
     get_optional_session,
     require_write_access,
 )
 from scene.interface_adapters.http.router import router as scene_router
+
+TENANT_ID = "00000000-0000-0000-0000-0000000000bb"
 
 
 class _Auth:
@@ -33,7 +36,11 @@ def _make_db():
     async def _init():
         engine = create_async_engine(url)
         async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all, tables=[ImageDescription.__table__])
+            await conn.run_sync(Base.metadata.create_all, tables=[Tenant.__table__, ImageDescription.__table__])
+        sf = async_sessionmaker(engine, expire_on_commit=False)
+        async with sf() as s:  # provision the tenant so require_tenant_record passes
+            s.add(Tenant(id=uuid.UUID(TENANT_ID), site_url="http://test.local"))
+            await s.commit()
         await engine.dispose()
 
     asyncio.run(_init())
@@ -72,7 +79,7 @@ def _post(client, tenant, *, media_id=42, image_key="image_42", content_type="im
 
 
 def test_happy_path_returns_15_fields_then_cached():
-    tenant = uuid.uuid4()
+    tenant = TENANT_ID
     with _client() as client:
         r1 = _post(client, tenant)
         assert r1.status_code == 200, r1.text
@@ -88,7 +95,7 @@ def test_happy_path_returns_15_fields_then_cached():
 
 
 def test_two_image_parts_422():
-    tenant = uuid.uuid4()
+    tenant = TENANT_ID
     with _client() as client:
         r = client.post(
             "/scene/describe/multipart",
@@ -102,19 +109,19 @@ def test_two_image_parts_422():
 
 
 def test_tenant_mismatch_403():
-    tenant = uuid.uuid4()
+    tenant = TENANT_ID
     with _client(auth_tenant=str(uuid.uuid4())) as client:
         assert _post(client, tenant).status_code == 403
 
 
 def test_media_id_suffix_mismatch_422():
-    tenant = uuid.uuid4()
+    tenant = TENANT_ID
     with _client() as client:
         assert _post(client, tenant, image_key="image_99").status_code == 422
 
 
 def test_missing_image_part_422():
-    tenant = uuid.uuid4()
+    tenant = TENANT_ID
     with _client() as client:
         r = client.post(
             "/scene/describe/multipart",
@@ -124,7 +131,7 @@ def test_missing_image_part_422():
 
 
 def test_unsupported_mime_415():
-    tenant = uuid.uuid4()
+    tenant = TENANT_ID
     with _client() as client:
         assert _post(client, tenant, content_type="text/plain").status_code == 415
 

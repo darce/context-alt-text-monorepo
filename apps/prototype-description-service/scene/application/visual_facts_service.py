@@ -48,11 +48,13 @@ class VisualFactsService:
         repository: ImageDescriptionRepository | None = None,
         audit_sink: AuditSink | None = None,
         retention_class: RetentionClass = RetentionClass.RETAIN_ALL,
+        generation_timeout_seconds: float | None = None,
     ) -> None:
         self._adapter = adapter
         self._repo = repository
         self._audit = audit_sink
         self._retention = retention_class
+        self._timeout = generation_timeout_seconds
 
     async def describe(
         self,
@@ -82,7 +84,8 @@ class VisualFactsService:
         # blocks the event loop — otherwise asyncpg drops the open DB connection
         # mid-request and the persist fails. Seeded is instant, so the overhead is
         # negligible. (A dedicated worker/queue is the heavier production option.)
-        result = await asyncio.to_thread(self._adapter.describe, image_bytes=image_bytes, context=context)
+        call = asyncio.to_thread(self._adapter.describe, image_bytes=image_bytes, context=context)
+        result = await (asyncio.wait_for(call, self._timeout) if self._timeout else call)
         response = self._result_to_response(
             tenant_id=tenant_id,
             media_id=media_id,

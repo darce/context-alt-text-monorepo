@@ -64,5 +64,5 @@ class VisualFactsResponse(BaseModel):
     context_used: ContextUsed
     provider_disclosure: ProviderDisclosure
     cached: bool
-    duration_ms: int
+    duration_ms: int = Field(ge=0)
     retention_class: RetentionClass

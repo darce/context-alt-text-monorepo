@@ -26,7 +26,16 @@ class VlmSettings(BaseModel):
     florence_model_id: str = Field(
         default_factory=lambda: os.environ.get("ACX_VLM_MODEL_ID", "microsoft/Florence-2-base-ft")
     )
+    # Pin the trust_remote_code model + remote code to the tested commit
+    # (supply-chain reproducibility); override via env to upgrade deliberately.
+    model_revision: str = Field(
+        default_factory=lambda: os.environ.get(
+            "ACX_VLM_MODEL_REVISION", "f6c1a25888ffc1d945ee8a1a77ac833c7303d46e"
+        )
+    )
     max_image_edge_px: int = Field(default_factory=lambda: int(os.environ.get("ACX_VLM_MAX_IMAGE_EDGE_PX", "1024")))
+    num_beams: int = Field(default_factory=lambda: int(os.environ.get("ACX_VLM_NUM_BEAMS", "3")))
+    max_new_tokens: int = Field(default_factory=lambda: int(os.environ.get("ACX_VLM_MAX_NEW_TOKENS", "512")))
     inference_timeout_seconds: float = Field(
         default_factory=lambda: float(os.environ.get("ACX_VLM_TIMEOUT_SECONDS", "20"))
     )

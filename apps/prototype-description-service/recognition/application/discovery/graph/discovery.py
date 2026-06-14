@@ -10,7 +10,6 @@ from typing import cast
 import numpy as np
 
 from recognition.application.assignment.candidate import AssignmentCandidate, DiscoveryMethod
-from recognition.application.discovery.base import DiscoveryAlgorithm
 from recognition.application.discovery.graph.algorithm import AnchorIdentity, GraphAlgorithm, GraphDiscoveryResult
 from recognition.application.discovery.graph.helpers import (
     compute_avg_similarity,
@@ -32,7 +31,7 @@ from recognition.shared.similarity import normalize_face_embedding
 logger = logging.getLogger(__name__)
 
 
-class GraphDiscovery(DiscoveryAlgorithm):
+class GraphDiscovery:
     """Find candidate assignments via graph clustering outputs."""
 
     discovery_method = DiscoveryMethod.GRAPH

@@ -10,7 +10,6 @@ from collections.abc import Sequence
 import numpy as np
 
 from recognition.application.assignment.candidate import AssignmentCandidate, DiscoveryMethod
-from recognition.application.discovery.base import DiscoveryAlgorithm
 from recognition.application.settings import ClusteringSettings
 from recognition.application.similarity import SimilaritySearch
 from recognition.domain.identity import MediaIdentity
@@ -18,7 +17,7 @@ from recognition.domain.identity import MediaIdentity
 logger = logging.getLogger(__name__)
 
 
-class RepresentativeDiscovery(DiscoveryAlgorithm):
+class RepresentativeDiscovery:
     """Find candidate assignments by comparing identities to representatives."""
 
     discovery_method = DiscoveryMethod.REPRESENTATIVE

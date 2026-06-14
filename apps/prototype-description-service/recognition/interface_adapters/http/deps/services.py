@@ -11,7 +11,6 @@ import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from functools import lru_cache
-from pathlib import Path
 from typing import Any, Protocol
 
 from fastapi import Depends
@@ -51,7 +50,6 @@ from recognition.interface_adapters.http.deps.session import (
 )
 from recognition.interface_adapters.http.deps.stores import (
     MediaIdentityService,
-    get_decision_store,
     get_mem_job_repo,
 )
 from recognition.interface_adapters.http.deps.tenant import get_tenant_id_optional
@@ -59,7 +57,6 @@ from recognition.interface_adapters.http.middleware.metrics import get_default_m
 from recognition.observability import ClusteringLogger
 from recognition.observability.curation_refresh_metrics import get_default_curation_refresh_metrics
 from recognition.observability.persistence import ObservabilityRepository
-from recognition.observability.visualization import ClusterVisualizer
 
 logger = logging.getLogger(__name__)
 
@@ -380,8 +377,6 @@ async def build_cluster_service(
         settings=settings,
     )
 
-    charts_dir = Path("logs") / "charts"
-
     # Create HAC settings (can be overridden later via config)
     from recognition.application.settings.clustering import HACSettings
 
@@ -400,9 +395,6 @@ async def build_cluster_service(
         constraint_repository=constraint_repo,
         hac_settings=hac_settings,
         logger=ClusteringLogger(),
-        visualizer=ClusterVisualizer(output_dir=charts_dir),
-        decision_store=get_decision_store(),
-        observability_repo=ObservabilityRepository(session),
         session=session,
     )
 

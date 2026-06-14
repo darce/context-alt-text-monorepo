@@ -1,0 +1,140 @@
+"""S5: /scene/describe/multipart route behavior + api/main.py wiring."""
+
+import asyncio
+import json
+import os
+import tempfile
+import uuid
+from contextlib import contextmanager
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from db.models.base_imports import Base
+from db.models.scene import ImageDescription
+from recognition.interface_adapters.http.dependencies import (
+    get_optional_session,
+    require_write_access,
+)
+from scene.interface_adapters.http.router import router as scene_router
+
+
+class _Auth:
+    def __init__(self, tenant_claim=None):
+        self.tenant_claim = tenant_claim
+        self.user_id = None
+
+
+def _make_db():
+    path = os.path.join(tempfile.gettempdir(), f"e19_route_{uuid.uuid4().hex}.db")
+    url = f"sqlite+aiosqlite:///{path}"
+
+    async def _init():
+        engine = create_async_engine(url)
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all, tables=[ImageDescription.__table__])
+        await engine.dispose()
+
+    asyncio.run(_init())
+    return path, url
+
+
+@contextmanager
+def _client(auth_tenant=None):
+    path, url = _make_db()
+    sf = async_sessionmaker(create_async_engine(url), expire_on_commit=False)
+
+    async def _session():
+        async with sf() as s:
+            yield s
+
+    app = FastAPI()
+    app.include_router(scene_router, prefix="/scene")
+    app.dependency_overrides[require_write_access] = lambda: _Auth(tenant_claim=auth_tenant)
+    app.dependency_overrides[get_optional_session] = _session
+    try:
+        with TestClient(app) as client:
+            yield client
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+def _post(client, tenant, *, media_id=42, image_key="image_42", content_type="image/jpeg"):
+    return client.post(
+        "/scene/describe/multipart",
+        data={"request": json.dumps({"tenant_id": str(tenant), "media_id": media_id})},
+        files={image_key: ("x.jpg", b"image-bytes-payload", content_type)},
+    )
+
+
+def test_happy_path_returns_15_fields_then_cached():
+    tenant = uuid.uuid4()
+    with _client() as client:
+        r1 = _post(client, tenant)
+        assert r1.status_code == 200, r1.text
+        body = r1.json()
+        assert len(body) == 15
+        assert body["cached"] is False
+        assert body["media_id"] == 42
+        assert body["adapter"] == "seeded"
+        assert body["provider_disclosure"]["provider"] == "none"
+        r2 = _post(client, tenant)
+        assert r2.status_code == 200
+        assert r2.json()["cached"] is True
+
+
+def test_two_image_parts_422():
+    tenant = uuid.uuid4()
+    with _client() as client:
+        r = client.post(
+            "/scene/describe/multipart",
+            data={"request": json.dumps({"tenant_id": str(tenant), "media_id": 42})},
+            files=[
+                ("image_42", ("a.jpg", b"x", "image/jpeg")),
+                ("image_43", ("b.jpg", b"y", "image/jpeg")),
+            ],
+        )
+        assert r.status_code == 422
+
+
+def test_tenant_mismatch_403():
+    tenant = uuid.uuid4()
+    with _client(auth_tenant=str(uuid.uuid4())) as client:
+        assert _post(client, tenant).status_code == 403
+
+
+def test_media_id_suffix_mismatch_422():
+    tenant = uuid.uuid4()
+    with _client() as client:
+        assert _post(client, tenant, image_key="image_99").status_code == 422
+
+
+def test_missing_image_part_422():
+    tenant = uuid.uuid4()
+    with _client() as client:
+        r = client.post(
+            "/scene/describe/multipart",
+            data={"request": json.dumps({"tenant_id": str(tenant), "media_id": 42})},
+        )
+        assert r.status_code == 422
+
+
+def test_unsupported_mime_415():
+    tenant = uuid.uuid4()
+    with _client() as client:
+        assert _post(client, tenant, content_type="text/plain").status_code == 415
+
+
+def test_create_app_registers_route_and_upload_cap():
+    from api.main import create_app
+
+    app = create_app()
+    paths = {getattr(r, "path", None) for r in app.routes}
+    assert "/scene/describe/multipart" in paths
+    mws = [m for m in app.user_middleware if getattr(getattr(m, "cls", None), "__name__", "") == "UploadSizeLimitMiddleware"]
+    assert mws, "UploadSizeLimitMiddleware not registered"
+    assert "/scene/describe/multipart" in getattr(mws[0], "kwargs", {}).get("paths", set())

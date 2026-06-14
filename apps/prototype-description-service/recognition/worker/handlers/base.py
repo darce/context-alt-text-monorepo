@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TypeVar
 
 from sqlalchemy.ext.asyncio import AsyncSession
-
-T = TypeVar("T")
 
 
 class JobHandler[T](ABC):

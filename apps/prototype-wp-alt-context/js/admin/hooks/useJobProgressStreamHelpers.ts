@@ -81,6 +81,18 @@ export const parseProgressEvent = <TStatus extends string>(
     return null;
   }
 
+  // Validate the untrusted SSE boundary (sr-005): a malformed/schema-evolved event with
+  // non-numeric completed/total must not pollute JobProgress with NaN (which then poisons
+  // the monotonic-progress cache for the whole run).
+  if (
+    typeof data.completed !== 'number' ||
+    !Number.isFinite(data.completed) ||
+    typeof data.total !== 'number' ||
+    !Number.isFinite(data.total)
+  ) {
+    return null;
+  }
+
   const now = Date.now();
   if (!startTimeRef.current && data.completed > 0) {
     startTimeRef.current = now;

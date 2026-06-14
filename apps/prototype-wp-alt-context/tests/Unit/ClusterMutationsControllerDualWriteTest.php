@@ -126,7 +126,7 @@ class ClusterMutationsControllerDualWriteTest extends TestCase
         $this->assertSame([], $this->getHttpCalls());
     }
 
-    public function testDismissRollbackWhenOutboxEnqueueFails(): void
+    public function testDismissRollsBackWhenCommitFails(): void
     {
         global $wpdb;
         $wpdb->queryResults['COMMIT'] = false;
@@ -193,7 +193,7 @@ class ClusterMutationsControllerDualWriteTest extends TestCase
         $this->assertSame([], $this->getHttpCalls());
     }
 
-    public function testReassignRollbackWhenOutboxEnqueueFails(): void
+    public function testReassignRollsBackWhenCommitFails(): void
     {
         global $wpdb;
         $wpdb->queryResults['COMMIT'] = false;
@@ -327,7 +327,7 @@ class ClusterMutationsControllerDualWriteTest extends TestCase
         $this->assertSame([], $this->getHttpCalls());
     }
 
-    public function testMergeRollbackWhenOutboxEnqueueFails(): void
+    public function testMergeRollsBackWhenCommitFails(): void
     {
         global $wpdb;
         $wpdb->queryResults['COMMIT'] = false;
@@ -476,7 +476,7 @@ class ClusterMutationsControllerDualWriteTest extends TestCase
         $this->assertSame([], $this->getHttpCalls());
     }
 
-    public function testRevertMergeRollbackWhenOutboxEnqueueFails(): void
+    public function testRevertMergeRollsBackWhenCommitFails(): void
     {
         global $wpdb;
         $wpdb->queryResults['COMMIT'] = false;

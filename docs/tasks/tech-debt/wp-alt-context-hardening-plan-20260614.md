@@ -45,7 +45,7 @@ Each item: write a characterization/regression test that reproduces the wrong ou
 - **1.4 — Outbox drain row-claim (CON-3, med).** Atomically claim before dispatch (`UPDATE outbox SET status='in_flight', claimed_at=NOW() WHERE status='pending' … LIMIT n`, then select claimed ids — or `FOR UPDATE SKIP LOCKED`); guard `apply_result` `WHERE` on the claim. Test: concurrent drains do not double-increment `attempts`.
 - **1.5 — Split-topology command-claim (CON-4, med).** Claim commands before processing and add the expected-status guard to `update_status`/`mark_reconciled`/`record_failure` `WHERE` clauses so a stale worker's terminal write is a no-op. Test: an interleaved user reassign is not reverted by a second drain.
 
-**Gate per item:** `composer test` · `phpstan` · `cs-check`; `composer dump-autoload` for any new class; verify SQL column names against the live DDL (rg-005).
+**Gate per item:** `composer test` · `phpstan` · `cs-check`; `composer dump-autoload` for any new class; verify SQL column names against the live DDL (rg-005). Concurrency acceptance asserts the fix **mechanism** — atomic relative-delta SQL is emitted; a claim `UPDATE` affects 0 rows under a simulated stale-status precondition; the `WHERE`-status guard is present — because PHPUnit cannot deterministically reproduce a true race (PA-2).
 
 ---
 
@@ -70,6 +70,52 @@ Each item: write a characterization/regression test that reproduces the wrong ou
 **Gate:** full `make check-all`; tests prove behavior unchanged; cite the named technique per refactor.
 
 ---
+
+## Context and Ownership
+
+- **Owner:** branch `feature/maint-wpac-harden-20260614`, single-agent.
+- **Upstream:** based on `main` @ `8fc7ff71` (cleanup + first defect-hardening merged). No cross-team blockers; Slice 2.1 touches the shared `recognition-job.schema.json` contract.
+- **Two Hats:** bug-fix commits (Slices 0–2) stay separate from refactor commits (Slice 3).
+
+## Consolidated Checklist
+
+Slice 0 — Safety net
+- [ ] 0.1 per-service enqueue-fail ROLLBACK tests, Lifecycle/Label/Merge (TST-1)
+- [ ] 0.2 schema-parity guard derives referenced columns from SQL (TST-2)
+
+Slice 1 — Concurrency data-integrity
+- [ ] 1.1 snapshot version-monotonicity guard on data columns + projector gate (COR-1, critical)
+- [ ] 1.2 atomic relative-delta identity_count (CON-1)
+- [ ] 1.3 reconcile-attempt cap + terminal failed state (COR-2)
+- [ ] 1.4 outbox drain row-claim + apply_result status guard (CON-3)
+- [ ] 1.5 split-topology command-claim + status-guarded terminal writes (CON-4)
+
+Slice 2 — Contract + resilience
+- [ ] 2.1 completed_with_errors terminal status across schema + effects (BND-1)
+- [ ] 2.2 stop fabricating suggestions total (COR-3, rg-015)
+- [ ] 2.3 atomic circuit-breaker failure counter (CON-5)
+
+Slice 3 — Deferred refactors (behavior-preserving)
+- [ ] 3.1 co-locate single-consumer conflict/outbox hooks (ARCH-6)
+- [ ] 3.2 flatten job state machine, char-tests-first (ARCH-1)
+- [ ] 3.3 inline ClusterFacade (ARCH-5)
+- [ ] 3.4 SnapshotClientTransport composition over inheritance (ARCH-7)
+- [ ] 3.5 RecognitionController forwarders decision + test re-seat (DC-10)
+
+## Review Readiness
+
+- [ ] every slice's tests green at branch HEAD (composer test · vitest · typecheck · lint · phpstan · cs-check)
+- [ ] `make check-all` clean
+- [ ] each addressed finding resolved/deferred in its source review task (MAINT-wpac-defect-review-20260614 · MAINT-wpac-arch-deadcode-review-20260613)
+- [ ] zero open findings on MAINT-WPAC-HARDEN-20260614; fresh test_result tied to HEAD; slice-complete decisions recorded
+
+## Success Criteria
+
+- **COR-1:** an out-of-order snapshot cannot regress projection data (test proves v5 data survives a later v4 merge; version stays 5).
+- **CON-1 / CON-3 / CON-4:** count + drain paths are race-safe by construction — atomic delta, claimed rows, status-guarded terminal writes (asserted via the mechanism per PA-2).
+- **COR-2:** an unreconcilable applied split command reaches terminal `failed` within N drains instead of looping forever.
+- **BND-1:** a `completed_with_errors` scan triggers the immediate identity/cluster/suggestion refresh.
+- **Slice 3:** refactors land behavior-preserving (suite unchanged); ARCH-1 only after its status/progress char-tests are green.
 
 ## Close
 

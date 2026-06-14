@@ -62,9 +62,10 @@ Error shapes match the recognition routes: 5xx/503 use the `{error, trace_id, pa
 
 | Field | Source / authority |
 | --- | --- |
-| `media_id` (request) | operator-supplied attachment id |
+| `media_id` (request param) | operator-supplied attachment id |
 | `request.tenant_id` | `TenantIdentity::resolve` |
-| `request.site_url`, `request.wp_context` | WordPress (`get_site_url`, attachment fields) — inert in Phase 1 |
+| `request.media_id` | echoes the request param (must equal the `image_<id>` part suffix) |
+| `request.context` | WordPress inert bag `{site_url, title, caption, description, filename}` — nested under the single `context` key because the backend `DescribeImageEnvelope` is `extra='forbid'` (no extra top-level keys); inert in Phase 1 |
 | every response field | **passed through from the backend payload** |
 
 **rg-015 (boundary fidelity)**: the proxy MUST trace every envelope field to the

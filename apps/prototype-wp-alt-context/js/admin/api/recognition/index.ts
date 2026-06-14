@@ -102,18 +102,15 @@ export {
 export {
   updateClusterLabel,
   mergeCluster,
-  listRecognitionClusters,
-  getRecognitionCluster,
   reassignClusterIdentity,
   revertMergeCluster,
   pinRepresentative,
   splitCluster,
   createClusterForIdentity,
   dismissCluster,
-  fetchClusterMembers,
-  removeClusterMember,
-  fetchTopUnlabeledClusters,
-} from './clusterApi';
+} from './clusterApiMutations';
+export { fetchClusterMembers, removeClusterMember } from './clusterApiMembers';
+export { listRecognitionClusters, getRecognitionCluster, fetchTopUnlabeledClusters } from './clusterApiQueries';
 
 // Identity operations
 export {
@@ -122,7 +119,9 @@ export {
   fetchPendingSuggestions,
   fetchPendingMergeSuggestions,
   fetchPendingNameSuggestions,
-  type PendingNameSuggestionsResponse,
+} from './identityQueriesApi';
+export type { PendingNameSuggestionsResponse } from './types';
+export {
   acceptSuggestion,
   acceptMergeSuggestion,
   rejectSuggestion,
@@ -130,7 +129,7 @@ export {
   acceptNameSuggestion,
   rejectNameSuggestion,
   bulkAcceptSuggestions,
-} from './identityApi';
+} from './identityActionsApi';
 
 // Sync status
 export { fetchSyncHealth, fetchSyncStatus, triggerSync, resetMirror } from './syncApi';

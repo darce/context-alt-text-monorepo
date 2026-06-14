@@ -80,8 +80,8 @@ Each item: write a characterization/regression test that reproduces the wrong ou
 ## Consolidated Checklist
 
 Slice 0 — Safety net
-- [ ] 0.1 per-service enqueue-fail ROLLBACK tests, Lifecycle/Label/Merge (TST-1)
-- [ ] 0.2 schema-parity guard derives referenced columns from SQL (TST-2)
+- [x] 0.1 per-service enqueue-fail ROLLBACK tests, Lifecycle/Label/Merge (TST-1)
+- [x] 0.2 schema-parity guard derives referenced columns from SQL (TST-2)
 
 Slice 1 — Concurrency data-integrity
 - [ ] 1.1 snapshot version-monotonicity guard on data columns + projector gate (COR-1, critical)

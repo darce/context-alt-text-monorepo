@@ -177,29 +177,6 @@ export const ScanActionPanel = ({
   </div>
 );
 
-export const BatchPanel = ({ items }: { items: { id: number; title: string; altText: string | null }[] }) => (
-  <div className="acx-apply-panel">
-    <p>
-      {sprintf(
-        _n(
-          'You have %d media item ready for analysis.',
-          'You have %d media items ready for analysis.',
-          items.length,
-          'alt-context',
-        ),
-        items.length,
-      )}
-    </p>
-    <ul className="acx-apply-panel__list">
-      {items.map((item) => (
-        <li key={item.id}>
-          <strong>{item.title}</strong> — {item.altText ?? __('No alt text yet', 'alt-context')}
-        </li>
-      ))}
-    </ul>
-  </div>
-);
-
 interface ConfirmPanelProps {
   jobId: string | null;
   status?: string;

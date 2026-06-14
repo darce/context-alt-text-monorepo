@@ -20,11 +20,6 @@ interface TopologyCommandRepositoryInterface {
 	/**
 	 * @return array<int,array<string,mixed>>
 	 */
-	public function find_pending( ?string $tenant_id = null, int $limit = 25 ): array;
-
-	/**
-	 * @return array<int,array<string,mixed>>
-	 */
 	public function find_reconcilable( ?string $tenant_id = null, int $limit = 25 ): array;
 
 	/**

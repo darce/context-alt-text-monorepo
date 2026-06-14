@@ -5,6 +5,8 @@
 **Scope**: PHP plugin (`src/`), admin SPA (`js/admin/`), shared UI (`js/components/`), CSS tokens (`js/admin/styles/`).
 **Reading order**: §2 for the principle vocabulary, §3 for site-specific opportunities by surface, §4 for the top priorities to slot into a future task plan.
 
+> **Reconciled against `main` 2026-06-14.** The PHP god-class decomposition (REFA-1..9, 2026-06) landed after this digest was written; DB-1/DB-3 anchors below were re-pointed and DB-1 marked RESOLVED. TS/UX findings were not re-audited in this pass.
+
 ---
 
 ## 1. Method
@@ -80,9 +82,9 @@ A finding is logged here only if it is non-obvious from reading the code in isol
 
 | ID   | Anchor                                                                                                       | Observation                                                                                                                                                                                                              | Principles                |
 | ---- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------- |
-| DB-1 | [class-clusters-repository.php:51-87](../src/sovereign/repositories/class-clusters-repository.php)           | `merge_snapshot_for_tenant()` ingests an array-typed `clusters` payload and inserts row-at-a-time without a per-batch commit checkpoint. A 100k-cluster snapshot becomes one giant transaction.                          | REL-URS, LAT-BA, DDIA-IDP |
+| DB-1 | [class-cluster-snapshot-merger.php:51](../src/sovereign/repositories/class-cluster-snapshot-merger.php)           | **RESOLVED (2026-06).** Snapshot ingest moved out of the (decomposed) clusters repository into `ClusterSnapshotMerger`, which batches via `array_chunk(..., MAX_SNAPSHOT_MERGE_BATCH=500)` — the per-batch checkpoint this finding required.                          | REL-URS, LAT-BA, DDIA-IDP |
 | DB-2 | [interface-clusters-repository.php](../src/sovereign/repositories/interface-clusters-repository.php)         | `list_for_tenant(...$limit=50, $offset=0)` — pagination contract is in the interface. Preserve and replicate to repositories that lack it.                                                                               | DDIA-SI (preserve)        |
-| DB-3 | [class-identity-members-repository.php](../src/sovereign/repositories/class-identity-members-repository.php) | `list_for_cluster($limit=500)` — ceiling is hard-coded in the parameter default; not exposed as a typed cap or surfaced in the response envelope.                                                                        | DDIA-SI, REL-URS          |
+| DB-3 | [class-identity-members-read-repository.php:39](../src/sovereign/repositories/class-identity-members-read-repository.php) | **Partly addressed (2026-06).** `list_for_cluster()` now defaults to the named `IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT` rather than a magic `500`; still not surfaced in the response envelope.                                                                        | DDIA-SI, REL-URS          |
 | DB-4 | All sovereign repositories                                                                                   | No explicit composite indexes documented for hot UI queries (e.g. `(tenant_id, status, updated_at DESC)` for the dashboard). Migrations create tables but indexes beyond PK are not visible from the dbDelta call alone. | DDIA-SI                   |
 | DB-5 | [class-life-cycle-manager.php:64-96](../src/support/class-life-cycle-manager.php)                            | `migrate_legacy_roster_data()` iterates legacy entries inside a single foreach with no batching/transaction boundary.                                                                                                    | REL-URS, LAT-BA           |
 

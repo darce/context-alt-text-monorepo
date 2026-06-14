@@ -112,9 +112,6 @@ vi.mock('../../../hooks/useRecognitionHooks', () => ({
   useClusterIdentities: vi.fn(),
   useMultiScanStatus: vi.fn(),
   useCombinedScanStatus: vi.fn(),
-  useAcknowledgeProjection: vi.fn(() => ({
-    mutateAsync: vi.fn(),
-  })),
   useTrainingStage: vi.fn(() => ({
     data: null,
     isLoading: false,

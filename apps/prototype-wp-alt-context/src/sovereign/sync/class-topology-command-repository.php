@@ -95,13 +95,6 @@ class TopologyCommandRepository implements TopologyCommandRepositoryInterface {
 	/**
 	 * @return array<int,array<string,mixed>>
 	 */
-	public function find_pending( ?string $tenant_id = null, int $limit = 25 ): array {
-		return $this->find_by_statuses( array( 'pending' ), $tenant_id, $limit );
-	}
-
-	/**
-	 * @return array<int,array<string,mixed>>
-	 */
 	public function find_reconcilable( ?string $tenant_id = null, int $limit = 25 ): array {
 		return $this->find_by_statuses( array( 'pending', 'applied' ), $tenant_id, $limit );
 	}

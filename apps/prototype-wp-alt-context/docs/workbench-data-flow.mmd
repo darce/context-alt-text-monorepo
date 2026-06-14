@@ -1,8 +1,8 @@
-%% Data flow for Workbench scan -> batch -> confirm loop
+%% Data flow for Workbench scan -> confirm loop
 sequenceDiagram
     participant AdminMenu as WordPress Admin Page
     participant SPA as WorkbenchPage (React)
-    participant REST as GET /cat/v1/workbench/media
+    participant REST as GET /acx/v1/workbench/media
     participant DB as WP_Query attachments
 
     AdminMenu->>SPA: Render #alt-context-admin-app
@@ -14,5 +14,5 @@ sequenceDiagram
         REST-->>SPA: JSON payload
         SPA->>SPA: render MediaSelection + selection state
     end
-    SPA->>SPA: Batch tab shows selected media\nwith Scan Faces CTA
-    SPA->>SPA: Confirm tab lists next steps/checklist
+    SPA->>SPA: Scan tab runs Scan Faces on the selected media
+    SPA->>SPA: Confirm tab lists clustering results / next steps

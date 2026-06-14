@@ -26,6 +26,8 @@ use function sprintf;
 class BatchRunService {
 	private const REQUEST_CLASS_POST_SCAN_READ = 'post_scan_read';
 	private const BATCH_RUN_STATUS_STALE_SECONDS = 5;
+	/** Max stale child jobs refreshed synchronously per status poll — bounds the recognition fan-out (REL-URS). */
+	private const MAX_STALE_CHILD_REFRESH_PER_POLL = 5;
 	private const JOB_BATCH_RUN_TRANSIENT_PREFIX = 'acx_job_batch_run_';
 	private const JOB_TRACKING_TTL_SECONDS = 86400;
 
@@ -224,6 +226,10 @@ class BatchRunService {
 	private function refresh_stale_batch_run_children( string $run_id ): void {
 		$tenant_id = $this->host->get_tenant_id();
 		$job_ids   = $this->batch_run_repository->get_stale_non_terminal_job_ids( $tenant_id, $run_id, self::BATCH_RUN_STATUS_STALE_SECONDS );
+
+		// Bound the synchronous recognition fan-out per poll (REL-URS): refresh at most
+		// MAX_STALE_CHILD_REFRESH_PER_POLL of the stalest children; the rest catch up on later polls.
+		$job_ids = array_slice( $job_ids, 0, self::MAX_STALE_CHILD_REFRESH_PER_POLL );
 
 		foreach ( $job_ids as $job_id ) {
 			$response = $this->host->proxy_recognition_request(

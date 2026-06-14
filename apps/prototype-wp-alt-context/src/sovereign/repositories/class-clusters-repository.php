@@ -119,6 +119,10 @@ class ClustersRepository implements ClustersRepositoryInterface {
 		return $this->curation_writer->update_identity_count( $cluster_uuid, $identity_count );
 	}
 
+	public function adjust_identity_count( string $cluster_uuid, int $delta ): int {
+		return $this->curation_writer->adjust_identity_count( $cluster_uuid, $delta );
+	}
+
 	public function update_representative_state( string $cluster_uuid, ?string $representative_id, bool $is_pinned, bool $is_local_curation = true ): int {
 		return $this->curation_writer->update_representative_state( $cluster_uuid, $representative_id, $is_pinned, $is_local_curation );
 	}

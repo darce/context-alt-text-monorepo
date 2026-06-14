@@ -314,7 +314,10 @@ class ClusterMutationsControllerDualWriteTest extends TestCase
         $this->assertSame(200, $response->get_status());
         $this->assertSame('cluster-source', $this->membersRepository->lastReassignedSourceClusterId);
         $this->assertSame('cluster-target', $this->membersRepository->lastReassignedTargetClusterId);
-        $this->assertSame([['cluster-source', 0], ['cluster-target', 5]], $this->repository->identityCountUpdates);
+        // CON-1: source emptied to 0 (absolute reset for the dismissed cluster);
+        // target gains the moved members (+3) as an atomic relative delta.
+        $this->assertSame([['cluster-source', 0]], $this->repository->identityCountUpdates);
+        $this->assertSame([['cluster-target', 3]], $this->repository->identityCountAdjustments);
         $this->assertSame('cluster-source', $this->repository->dismissedClusterId);
         $this->assertSame('cluster-target', $this->repository->updatedLabelClusterId);
         $this->assertContains('START TRANSACTION', $wpdb->queries);
@@ -523,7 +526,9 @@ class ClusterMutationsControllerDualWriteTest extends TestCase
         $this->assertSame(200, $response->get_status());
         $this->assertSame('identity-outlier', $this->membersRepository->lastReassignedIdentityId);
         $this->assertSame('cluster-target', $this->membersRepository->lastTargetClusterId);
-        $this->assertSame([['cluster-source', 2], ['cluster-target', 3]], $this->repository->identityCountUpdates);
+        // CON-1: source -1 / target +1 as atomic relative deltas.
+        $this->assertSame([], $this->repository->identityCountUpdates);
+        $this->assertSame([['cluster-source', -1], ['cluster-target', 1]], $this->repository->identityCountAdjustments);
         $this->assertContains('START TRANSACTION', $wpdb->queries);
         $this->assertContains('COMMIT', $wpdb->queries);
 

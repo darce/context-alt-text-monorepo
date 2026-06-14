@@ -10,7 +10,6 @@ use function gmdate;
 use function is_int;
 use function is_object;
 use function is_string;
-use function max;
 use function method_exists;
 use function trim;
 
@@ -23,37 +22,6 @@ class IdentityMemberCurationWriter {
 	public function __construct( string $members_table_name, string $clusters_table_name ) {
 		$this->members_table_name  = $members_table_name;
 		$this->clusters_table_name = $clusters_table_name;
-	}
-
-	public function mark_as_curated( string $identity_uuid ): int {
-		global $wpdb;
-
-		$normalized_identity_uuid = trim( $identity_uuid );
-		if ( '' === $normalized_identity_uuid ) {
-			return 0;
-		}
-
-		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
-			return 0;
-		}
-
-		$now_utc = gmdate( 'Y-m-d H:i:s' );
-		$sql     = $this->prepare_query(
-			'UPDATE %i SET is_curated = 1, updated_at = %s WHERE identity_uuid = %s',
-			array(
-				$this->members_table_name,
-				$now_utc,
-				$normalized_identity_uuid,
-			)
-		);
-
-		if ( ! is_string( $sql ) || '' === $sql ) {
-			return 0;
-		}
-
-		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
-		$query_result = $wpdb->query( $sql );
-		return is_int( $query_result ) ? $query_result : 0;
 	}
 
 	public function reassign_to_cluster( string $identity_uuid, string $target_cluster_uuid ): int {

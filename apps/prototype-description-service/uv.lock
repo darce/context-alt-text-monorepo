@@ -1910,7 +1910,6 @@ dashboard = [
 dev = [
     { name = "aiosqlite" },
     { name = "fastmcp" },
-    { name = "matplotlib" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -1941,7 +1940,6 @@ requires-dist = [
     { name = "imagehash", specifier = ">=4.3.0" },
     { name = "insightface", marker = "extra == 'face'", specifier = ">=0.7.3,<1.0.0" },
     { name = "insightface", marker = "extra == 'gpu'", specifier = ">=0.7.3,<1.0.0" },
-    { name = "matplotlib", marker = "extra == 'dev'", specifier = ">=3.8.0,<4.0.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.7.0,<2.0.0" },
     { name = "networkx", specifier = ">=3.6,<4.0" },
     { name = "numpy", specifier = ">=2.0.0,<3.0.0" },

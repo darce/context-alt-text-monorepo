@@ -173,9 +173,7 @@ async def test_build_job_progress_response_includes_current_chunk_size() -> None
         (JobStatus.FAILED, JobPhase.FAILED),
     ],
 )
-def test_scan_phase_for_status_maps_every_status_explicitly(
-    status: JobStatus, expected: JobPhase
-) -> None:
+def test_scan_phase_for_status_maps_every_status_explicitly(status: JobStatus, expected: JobPhase) -> None:
     assert scan_phase_for_status(status) is expected
 
 

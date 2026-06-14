@@ -161,11 +161,12 @@ async def _run_worker_refresh(
     monkeypatch.setattr(scan_module, "SqlAlchemyScanQueueRepository", lambda _session: fake_repo)
     monkeypatch.setattr(scan_module, "ScanQueueService", lambda _repo: fake_queue)
     monkeypatch.setattr(scan_module, "enable_rls_bypass", _async_noop)
-    monkeypatch.setattr(
-        scan_module,
-        "IdentityClusteringJob",
-        lambda **kwargs: clustering_calls.append(kwargs) or object(),
-    )
+
+    def fake_clustering_job(**kwargs):
+        clustering_calls.append(kwargs)
+        return object()
+
+    monkeypatch.setattr(scan_module, "IdentityClusteringJob", fake_clustering_job)
 
     def factory(t: str) -> ObjectStore:
         return FilesystemObjectStore(root=blob_root, tenant_id=t)

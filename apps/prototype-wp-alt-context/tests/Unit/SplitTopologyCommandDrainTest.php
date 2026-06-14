@@ -578,6 +578,68 @@ class SplitTopologyCommandDrainTest extends TestCase
         $this->assertSame('transport_error', $repository->failures[0]['error_code']);
     }
 
+    public function testDrainMarksUnreconcilableAppliedCommandFailedAfterReconcileAttemptCap(): void
+    {
+        // COR-2: an applied command whose local reconcile never succeeds must reach
+        // terminal `failed` within resolve_max_attempts() drains instead of looping
+        // forever. The reconcile-attempt counter is dedicated, independent of dispatch attempts.
+        add_filter(
+            'acx_split_topology_max_attempts',
+            static fn (): int => 2
+        );
+
+        $repository = new SplitTopologyCommandRepositoryFake([
+            $this->pendingSplitCommand([
+                'status' => 'applied',
+                'result_json' => wp_json_encode([
+                    'status' => 'applied',
+                    'original_cluster_id' => 'cluster-source',
+                    'new_cluster_ids' => ['cluster-new-1'],
+                    'member_delta' => [
+                        'source_cluster_id' => 'cluster-source',
+                        'remaining_identity_ids' => ['identity-1'],
+                        // created_clusters empty against one new_cluster_id => member-delta incomplete.
+                        'created_clusters' => [],
+                    ],
+                    'affected_cluster_ids' => ['cluster-source', 'cluster-new-1'],
+                    'result_snapshot_version' => 90,
+                ]),
+            ]),
+        ]);
+        global $wpdb;
+        $wpdb->mockResults = [];
+
+        // No dispatch (already applied); no targeted/full snapshot available => every reconcile attempt fails.
+        $drain = new SplitTopologyCommandDrain(
+            $repository,
+            new SplitTransportFake([]),
+            new SnapshotClientFake([]),
+            new SnapshotProjectorFake(),
+            new SplitClustersRepositoryFake(),
+            new SplitMembersRepositoryFake(),
+            new SplitSyncStateRepositoryFake()
+        );
+
+        // Drain 1: reconcile fails, attempt 1 < 2 => stays applied, still reconcilable.
+        $drain->drain();
+        $this->assertSame('applied', $repository->pendingRows[0]['status']);
+        $this->assertCount(1, $repository->find_reconcilable());
+
+        // Drain 2: reconcile fails, attempt 2 >= 2 => terminal failed, no longer reconcilable.
+        $drain->drain();
+        $this->assertSame('failed', $repository->pendingRows[0]['status']);
+        $this->assertSame(
+            'projection_reconcile_failed',
+            $repository->failures[array_key_last($repository->failures)]['error_code']
+        );
+        $this->assertCount(0, $repository->find_reconcilable());
+
+        // Drain 3: nothing reconcilable => stopped re-fetching, no further failure writes.
+        $failureCountAtTerminal = count($repository->failures);
+        $drain->drain();
+        $this->assertCount($failureCountAtTerminal, $repository->failures);
+    }
+
     public function testDrainReschedulesWhenBatchLeavesMorePendingCommands(): void
     {
         add_filter(
@@ -1113,6 +1175,24 @@ class SplitTopologyCommandRepositoryFake implements TopologyCommandRepositoryInt
 
     public function record_failure(int $command_id, string $status, string $error_code, string $error_message, bool $increment_attempt = true): bool
     {
+        $this->setPendingStatus($command_id, $status);
+        $this->failures[] = [
+            'status' => $status,
+            'error_code' => $error_code,
+            'error_message' => $error_message,
+        ];
+        return true;
+    }
+
+    public function record_reconcile_failure(int $command_id, string $status, string $error_code, string $error_message): bool
+    {
+        foreach ($this->pendingRows as $index => $command) {
+            if (($command['id'] ?? 0) === $command_id) {
+                $this->pendingRows[$index]['reconcile_attempts'] = (int) ($command['reconcile_attempts'] ?? 0) + 1;
+                break;
+            }
+        }
+
         $this->setPendingStatus($command_id, $status);
         $this->failures[] = [
             'status' => $status,

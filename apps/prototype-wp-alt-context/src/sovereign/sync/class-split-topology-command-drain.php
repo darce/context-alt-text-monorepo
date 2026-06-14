@@ -219,12 +219,13 @@ class SplitTopologyCommandDrain {
 			return;
 		}
 
-		$this->repository->record_failure(
+		$reconcile_attempts = max( 0, (int) ( $command['reconcile_attempts'] ?? 0 ) ) + 1;
+		$next_status = $reconcile_attempts >= $this->resolve_max_attempts() ? 'failed' : 'applied';
+		$this->repository->record_reconcile_failure(
 			$command_id,
-			'applied',
+			$next_status,
 			'projection_reconcile_failed',
-			'Split topology command could not be reconciled locally.',
-			false
+			'Split topology command could not be reconciled locally.'
 		);
 	}
 

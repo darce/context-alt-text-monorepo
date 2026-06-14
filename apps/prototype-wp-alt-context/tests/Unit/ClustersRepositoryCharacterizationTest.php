@@ -70,6 +70,23 @@ class ClustersRepositoryCharacterizationTest extends TestCase
         $this->assertStringContainsString("WHERE cluster_uuid = 'cluster-abc'", $query);
     }
 
+    public function testAdjustIdentityCountAppliesAtomicRelativeDelta(): void
+    {
+        global $wpdb;
+        $wpdb->defaultQueryResult = 1;
+
+        $result = $this->repository->adjust_identity_count('cluster-abc', -2);
+
+        $this->assertSame(1, $result);
+        $this->assertCount(1, $wpdb->queries);
+        $query = $wpdb->queries[0];
+        // CON-1: an atomic relative delta so concurrent reassigns into one
+        // cluster sum (+2) instead of clobbering each other (+1).
+        $this->assertStringContainsString('UPDATE `wp_acx_clusters` SET identity_count = GREATEST(0, identity_count + -2)', $query);
+        $this->assertStringContainsString('local_revision = local_revision + 1', $query);
+        $this->assertStringContainsString("WHERE cluster_uuid = 'cluster-abc'", $query);
+    }
+
     public function testUpdateRepresentativeStateSetsPinAndRevision(): void
     {
         global $wpdb;

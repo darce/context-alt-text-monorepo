@@ -25,6 +25,8 @@ class ClusterMutationsRepositorySpy extends NullClustersRepository
     public int $nextCreateLocalClusterRows = 1;
     /** @var array<int,array{0:string,1:int}> */
     public array $identityCountUpdates = [];
+    /** @var array<int,array{0:string,1:int}> */
+    public array $identityCountAdjustments = [];
     /** @var array<string,array<string,mixed>> */
     public array $localClusterRows = [
         'cluster-xyz' => [
@@ -62,6 +64,12 @@ class ClusterMutationsRepositorySpy extends NullClustersRepository
     public function update_identity_count(string $cluster_uuid, int $identity_count): int
     {
         $this->identityCountUpdates[] = [$cluster_uuid, $identity_count];
+        return 1;
+    }
+
+    public function adjust_identity_count(string $cluster_uuid, int $delta): int
+    {
+        $this->identityCountAdjustments[] = [$cluster_uuid, $delta];
         return 1;
     }
 

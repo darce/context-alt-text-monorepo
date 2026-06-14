@@ -31,6 +31,9 @@ class DescriptionSettings(BaseModel):
     prompt_or_task_version: str = Field(
         default_factory=lambda: os.environ.get("ACX_DESCRIPTION_PROMPT_VERSION", "1")
     )
+    model_version: str = Field(default_factory=lambda: os.environ.get("ACX_DESCRIPTION_MODEL_VERSION", "1"))
+    # Generous default so the slow local_cpu (Florence) inline POC is not prematurely
+    # 504'd (~30-95s incl. cold load); seeded never approaches it. Tune via env for prod.
     generation_timeout_seconds: float = Field(
-        default_factory=lambda: float(os.environ.get("ACX_DESCRIPTION_TIMEOUT_SECONDS", "30"))
+        default_factory=lambda: float(os.environ.get("ACX_DESCRIPTION_TIMEOUT_SECONDS", "180"))
     )

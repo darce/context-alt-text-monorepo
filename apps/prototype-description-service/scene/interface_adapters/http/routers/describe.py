@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import ValidationError
 from starlette.datastructures import UploadFile
 
-from db.tenant_context import set_tenant_context
+from db.tenant_context import require_tenant_record, set_tenant_context
 from recognition.interface_adapters.http.dependencies import (
     get_optional_session,
     require_write_access,
@@ -78,16 +78,10 @@ async def describe_image_multipart(
     key, value = image_parts[0]
     if not isinstance(value, UploadFile):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"form key '{key}' must be a file upload")
-    try:
-        part_media_id = int(key[len(_IMAGE_KEY_PREFIX) :])
-    except ValueError as exc:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, f"form key '{key}' has a non-integer media_id suffix"
-        ) from exc
-    if part_media_id != envelope.media_id:
+    if key[len(_IMAGE_KEY_PREFIX) :] != str(envelope.media_id):
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
-            f"media_id {envelope.media_id} does not match image part suffix {part_media_id}",
+            f"image part key '{key}' must be the canonical 'image_{envelope.media_id}'",
         )
 
     settings = DescriptionSettings()
@@ -99,22 +93,40 @@ async def describe_image_multipart(
     image_bytes = await value.read()
     if not image_bytes:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"image part '{key}' is empty")
+    if len(image_bytes) > settings.max_description_image_bytes:
+        raise HTTPException(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            f"image exceeds the description size cap ({settings.max_description_image_bytes} bytes)",
+        )
 
+    tenant_uuid = uuid.UUID(envelope.tenant_id)
     repository = None
     if session is not None:
         # RLS: scope the session to the tenant before any read/write on
         # image_descriptions — both the cache SELECT (USING) and the INSERT
         # (WITH CHECK) filter on app.current_tenant. Mirrors the tenant-scoped
         # recognition routes (e.g. clusters.py).
-        await set_tenant_context(session, uuid.UUID(envelope.tenant_id))
+        await set_tenant_context(session, tenant_uuid)
+        # Surface an unprovisioned tenant as the structured 403, not an FK 500.
+        await require_tenant_record(session, tenant_uuid)
         repository = ImageDescriptionRepository(session)
-    service = VisualFactsService(adapter=adapter, repository=repository)
-    response = await service.describe(
-        tenant_id=uuid.UUID(envelope.tenant_id),
-        media_id=envelope.media_id,
-        image_bytes=image_bytes,
-        context=envelope.context,
+    service = VisualFactsService(
+        adapter=adapter,
+        repository=repository,
+        generation_timeout_seconds=settings.generation_timeout_seconds,
     )
+    try:
+        response = await service.describe(
+            tenant_id=tenant_uuid,
+            media_id=envelope.media_id,
+            image_bytes=image_bytes,
+            context=envelope.context,
+        )
+    except TimeoutError as exc:
+        raise HTTPException(
+            status.HTTP_504_GATEWAY_TIMEOUT,
+            f"description generation exceeded {settings.generation_timeout_seconds}s",
+        ) from exc
     if session is not None and not response.cached:
         await session.commit()
     return response

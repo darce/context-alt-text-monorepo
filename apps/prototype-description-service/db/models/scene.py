@@ -48,7 +48,7 @@ class ImageDescription(Base):
     adapter: Mapped[str] = mapped_column(String(32), nullable=False)
     model_id: Mapped[str] = mapped_column(String(128), nullable=False)
     model_version: Mapped[str] = mapped_column(String(32), nullable=False)
-    prompt_or_task_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    prompt_or_task_version: Mapped[str] = mapped_column(String(64), nullable=False)
     visual_facts: Mapped[dict] = mapped_column(_json_col(), nullable=False)
     alt_text_draft: Mapped[str] = mapped_column(Text, nullable=False)
     context_used: Mapped[dict] = mapped_column(_json_col(), nullable=False)

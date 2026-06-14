@@ -27,6 +27,7 @@ from scene.domain.description import DescriptionAdapterKind
 _CAPTION_TASK = "<MORE_DETAILED_CAPTION>"
 _OD_TASK = "<OD>"
 _DEFAULT_TASKS = (_CAPTION_TASK, _OD_TASK)
+_DEFAULT_MODEL_ID = "microsoft/Florence-2-base-ft"
 
 
 class LocalVlmUnavailableError(RuntimeError):
@@ -35,7 +36,6 @@ class LocalVlmUnavailableError(RuntimeError):
 
 class LocalCpuDescriptionAdapter:
     kind = DescriptionAdapterKind.LOCAL_CPU
-    model_id = "microsoft/Florence-2-base-ft"
 
     def __init__(
         self,
@@ -44,9 +44,13 @@ class LocalCpuDescriptionAdapter:
         tasks: Sequence[str] = _DEFAULT_TASKS,
         max_image_edge_px: int = 1024,
         num_beams: int = 3,
-        max_new_tokens: int = 1024,
+        max_new_tokens: int = 512,
+        model_id: str = _DEFAULT_MODEL_ID,
+        model_revision: str | None = None,
         model_version: str = "florence-2-base-ft",
     ) -> None:
+        self.model_id = model_id
+        self._revision = model_revision
         self._device = device
         self._tasks = tuple(tasks)
         self._max_edge = max_image_edge_px
@@ -79,10 +83,12 @@ class LocalCpuDescriptionAdapter:
                 if self._device == "cpu":
                     torch.set_num_threads(max(1, torch.get_num_threads()))
                 self._model = AutoModelForCausalLM.from_pretrained(
-                    self.model_id, trust_remote_code=True, torch_dtype=torch.float32
+                    self.model_id, revision=self._revision, trust_remote_code=True, torch_dtype=torch.float32
                 ).to(self._device)
                 self._model.eval()
-                self._processor = AutoProcessor.from_pretrained(self.model_id, trust_remote_code=True)
+                self._processor = AutoProcessor.from_pretrained(
+                    self.model_id, revision=self._revision, trust_remote_code=True
+                )
             except Exception as exc:  # noqa: BLE001 - surface any load failure uniformly
                 raise LocalVlmUnavailableError(f"failed to load {self.model_id}: {exc}") from exc
 

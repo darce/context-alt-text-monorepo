@@ -7,8 +7,6 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from scene.domain.description import DescriptionAdapterKind
-
 
 class DescribeImageEnvelope(BaseModel):
     """JSON envelope accompanying the single ``image_<media_id>`` multipart part.
@@ -25,10 +23,6 @@ class DescribeImageEnvelope(BaseModel):
     context: dict[str, Any] | None = Field(
         default=None,
         description="Inert WP context (Phase 1): title/caption/description/filename.",
-    )
-    adapter: DescriptionAdapterKind | None = Field(
-        default=None,
-        description="Optional adapter override; defaults to the server's configured adapter.",
     )
 
     @field_validator("tenant_id")

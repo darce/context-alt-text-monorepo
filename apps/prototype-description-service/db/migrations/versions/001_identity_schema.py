@@ -1133,7 +1133,7 @@ def upgrade() -> None:
         sa.Column("adapter", sa.String(length=32), nullable=False),
         sa.Column("model_id", sa.String(length=128), nullable=False),
         sa.Column("model_version", sa.String(length=32), nullable=False),
-        sa.Column("prompt_or_task_version", sa.String(length=32), nullable=False),
+        sa.Column("prompt_or_task_version", sa.String(length=64), nullable=False),
         sa.Column("visual_facts", sa.dialects.postgresql.JSONB(), nullable=False),
         sa.Column("alt_text_draft", sa.Text(), nullable=False),
         sa.Column("context_used", sa.dialects.postgresql.JSONB(), nullable=False),

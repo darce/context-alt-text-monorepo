@@ -12,11 +12,14 @@
 | Review report | ✅ landed | `73e7ffc0` |
 | Slice 3 — obsolete-doc fixes (9 docs) | ✅ landed | `25c7ff9e` |
 | Slice 1a — verified dead-module deletion (900 LOC) | ✅ landed | `08763c6c` |
-| Slice 1b — `db_export.py`, `ScheduledDisposalWorker` (need surgical test edits + pytest) | ⏳ deferred | — |
-| Slice 2 — small dead-symbol sweep | ⏳ deferred | — |
+| Slice 1b — `db_export.py` + `ScheduledDisposalWorker` (454 LOC) | ✅ landed | `466ab50f` |
+| Slice 2a — small dead-symbol sweep, no-test-edit items (174 LOC) | ✅ landed | `92d042b5` |
+| Slice 2b — dead background fn + 2 logger methods (test-edit items) | ✅ landed | `7184e834` |
 | Slices 4–9 — indirection collapse, domain-boundary move, router split, DI consolidation, long-method extraction, repo split | ⏳ planned | — |
 
-Landed slices were validated by repo-wide reference grep (zero residual refs), `ruff`, and `py_compile`. **Full `pytest` was not run** (needs DB + the heavy ML venv) — it is the pre-merge-gate step before this branch merges to `main`. No merge has occurred; the pre-merge gate (`handoff_close_check`) also requires MCP, which was degraded this session.
+**Deferred out of Slice 2** (intentionally, not skipped): `get_cluster_service` + `InMemoryJobService` → roll into **Slice 7 (DI consolidation)** since both only live on the `dependencies.py` re-export surface that slice deletes; `compute_centroid` → left in place (a live test uses it as a helper; "test-only" doesn't justify rewriting the test). `retry_matching` was **not** removed — the review over-bundled it; it is a live method (`curation_job` calls it). Only the `run_background_retry` wrapper was dead.
+
+Validation per landed slice: repo-wide reference grep (zero residual refs), `ruff` (incl. unused-import autofix), `py_compile`, `pytest --collect-only` (whole-tree import safety), and targeted `pytest` against a live Postgres (Slice 1b: 15 pass; Slice 2a: 630 pass; Slice 2b: 9 pass). Closing gate: **full suite green — 1048 passed, 2 skipped** (87s, live Postgres) at `7184e834`. **No merge to `main`** — the pre-merge gate (`handoff_close_check`) requires MCP, which was degraded; merge when MCP is restored.
 
 ## Method & provenance
 

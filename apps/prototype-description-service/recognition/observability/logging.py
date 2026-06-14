@@ -98,24 +98,6 @@ class ClusteringLogger:
 
         return decision_log
 
-    def log_batch_start(self, identity_count: int, algorithm: str, tenant_id: str | None = None) -> None:
-        """Emit a log entry when a clustering batch begins.
-
-        Args:
-            identity_count: Number of identities in the batch.
-            algorithm: Name of the algorithm selected for clustering.
-            tenant_id: Optional tenant identifier.
-        """
-        self.logger.info(
-            "clustering_batch_start",
-            extra={
-                "identity_count": identity_count,
-                "algorithm": algorithm,
-                "tenant_id": tenant_id,
-                "timestamp": datetime.now(tz=UTC).isoformat(),
-            },
-        )
-
     def log_batch_complete(self, report: BatchJobReport) -> None:
         """Emit a log entry when a clustering batch completes.
 
@@ -221,50 +203,6 @@ class ClusteringLogger:
                 "tenant_id": tenant_id,
                 "old_label": old_label,
                 "new_label": new_label,
-                "timestamp": ts.isoformat(),
-            },
-        )
-        return event_log
-
-    def log_cluster_merged(
-        self,
-        source_cluster_id: str,
-        target_cluster_id: str,
-        moved_count: int,
-        tenant_id: str,
-    ) -> CurationEventLog:
-        """Record a cluster merge operation.
-
-        Args:
-            source_cluster_id: The cluster being merged (will be deleted).
-            target_cluster_id: The cluster receiving members.
-            moved_count: Number of members moved.
-            tenant_id: Tenant performing the action.
-
-        Returns:
-            CurationEventLog: Structured log record.
-        """
-        ts = datetime.now(tz=UTC)
-        details = {
-            "source_cluster_id": source_cluster_id,
-            "target_cluster_id": target_cluster_id,
-            "moved_count": moved_count,
-        }
-        event_log = CurationEventLog(
-            event_type=CurationEventType.MERGE,
-            cluster_id=target_cluster_id,
-            tenant_id=tenant_id,
-            timestamp=ts,
-            details=details,
-        )
-        self.logger.info(
-            "curation_event",
-            extra={
-                "event_type": CurationEventType.MERGE.value,
-                "source_cluster_id": source_cluster_id,
-                "target_cluster_id": target_cluster_id,
-                "moved_count": moved_count,
-                "tenant_id": tenant_id,
                 "timestamp": ts.isoformat(),
             },
         )

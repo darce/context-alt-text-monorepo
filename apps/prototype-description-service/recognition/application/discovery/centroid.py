@@ -9,13 +9,12 @@ from collections.abc import Sequence
 import numpy as np
 
 from recognition.application.assignment.candidate import AssignmentCandidate, DiscoveryMethod
-from recognition.application.discovery.base import DiscoveryAlgorithm
 from recognition.application.settings import ClusteringSettings
 from recognition.domain.identity import MediaIdentity
 from recognition.shared.similarity import normalize_face_embedding
 
 
-class CentroidDiscovery(DiscoveryAlgorithm):
+class CentroidDiscovery:
     """Find candidate assignments by comparing identities to cluster centroids."""
 
     discovery_method = DiscoveryMethod.CENTROID

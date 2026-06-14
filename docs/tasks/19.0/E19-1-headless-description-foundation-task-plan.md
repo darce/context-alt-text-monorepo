@@ -282,13 +282,13 @@ Proof:
 
 ### Checklist for Slice 6 (S6): WordPress describe path
 
-- [ ] `DescribeController` + `DescribeMediaService` + `DescribeHostInterface` + explicit `require_once`/registration in `class-api.php`
-- [ ] `composer test` + `class_exists` runtime check + `make check-php` green; `502 invalid_description_envelope` on malformed upstream
+- [x] `DescribeController` + `DescribeMediaService` + `DescribeHostInterface` + explicit `require_once`/registration via `RecognitionController` (the established `/recognition/*` sub-controller seam; not `class-api.php`)
+- [x] `composer test` + `class_exists` runtime check + `make check-php` green; `502 invalid_description_envelope` on malformed upstream
 
 ### Checklist for Slice 7 (S7): LocalWP smoke
 
-- [ ] `scripts/localwp/describe-run-smoke.php` + `localwp-describe-run-smoke` Makefile target (verbatim guard block)
-- [ ] `make localwp-describe-run-smoke` evidence JSON shows first `cached=false` then `cached=true` + source attachment; both negative guards exit 1
+- [x] `scripts/localwp/describe-run-smoke.php` + `localwp-describe-run-smoke` Makefile target (verbatim guard block)
+- [ ] `make localwp-describe-run-smoke` evidence JSON shows first `cached=false` then `cached=true` + source attachment; both negative guards exit 1 *(negative guards verified; live evidence JSON is operator-run — description service not running this session)*
 
 ### Checklist for Slice 8 (S8): vlm extras isolation
 

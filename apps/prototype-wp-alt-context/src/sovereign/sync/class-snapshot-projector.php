@@ -78,8 +78,7 @@ class SnapshotProjector implements SnapshotProjectorInterface {
 		}
 
 		// COR-1: an out-of-order full snapshot whose version is not newer than
-		// what is already projected would regress curated/projection data (and
-		// the stored version, since upsert_snapshot_version is an absolute set).
+		// what is already projected would regress curated/projection data.
 		// Skip it entirely — this also avoids running the stale-row delete.
 		$stored_version = $this->sync_state_repository->get_snapshot_version( $normalized_tenant_id );
 		if ( $stored_version > 0 && $snapshot_version <= $stored_version ) {

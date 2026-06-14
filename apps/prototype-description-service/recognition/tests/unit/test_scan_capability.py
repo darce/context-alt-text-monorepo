@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy import DateTime
 
 from recognition.application.scan.capability import (
     HEARTBEAT_STALE_SECONDS,
@@ -44,7 +45,9 @@ def test_is_embedding_runtime_available_rejects_stale_heartbeat() -> None:
 def test_worker_capability_updated_at_matches_timezone_aware_migration() -> None:
     from db.models.worker_capability import WorkerCapability
 
-    assert WorkerCapability.__table__.c.updated_at.type.timezone is True
+    updated_at_type = WorkerCapability.__table__.c.updated_at.type
+    assert isinstance(updated_at_type, DateTime)
+    assert updated_at_type.timezone is True
 
 
 @pytest.mark.asyncio

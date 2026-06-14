@@ -14,8 +14,8 @@ from sqlalchemy import select
 
 from db.models import AuditEvent, IdentityCluster, IdentityClusterRepresentative, MediaIdentity, NameSuggestion, Tenant
 from db.models.jobs import IdentityClusteringJob, IdentityScanJob
-from recognition.domain.job import Job, JobStatus, JobType, ProjectionStatus
 from recognition.application.services.retention_policy_service import RetentionPolicyService
+from recognition.domain.job import Job, JobStatus, JobType, ProjectionStatus
 from recognition.interface_adapters.http import dependencies
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.routers import analyze as analyze_router

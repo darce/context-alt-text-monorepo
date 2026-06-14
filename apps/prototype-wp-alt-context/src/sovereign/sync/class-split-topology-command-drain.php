@@ -30,7 +30,6 @@ use WP_Error;
 
 use function add_action;
 use function apply_filters;
-use function array_fill;
 use function array_keys;
 use function array_map;
 use function array_merge;

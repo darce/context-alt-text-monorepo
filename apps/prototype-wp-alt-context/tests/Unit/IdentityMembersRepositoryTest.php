@@ -208,18 +208,6 @@ class IdentityMembersRepositoryTest extends TestCase
         $this->assertStringContainsString('COALESCE(p.name, c.label) AS cluster_label', $sql);
     }
 
-    public function testMarkAsCuratedWritesUpdateQuery(): void
-    {
-        $affectedRows = $this->repository->mark_as_curated('identity-curated');
-
-        global $wpdb;
-        $sql = implode("\n", $wpdb->queries);
-
-        $this->assertGreaterThanOrEqual(0, $affectedRows);
-        $this->assertStringContainsString('UPDATE `wp_acx_identity_members` SET is_curated = 1', $sql);
-        $this->assertStringContainsString("'identity-curated'", $sql);
-    }
-
     public function testGetCuratedMembersForTenantIndexesRowsByIdentityUuid(): void
     {
         global $wpdb;

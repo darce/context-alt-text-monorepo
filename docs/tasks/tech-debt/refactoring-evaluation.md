@@ -6,6 +6,8 @@
 **Scope:** All three stacks (Python backend, PHP plugin, TypeScript frontend)
 **Method:** Codebase exploration guided by the code smells catalog from Chapter 3 of the book, supplemented by the refactoring catalog (Chapters 6-12).
 
+> **⚠ Superseded (PHP findings) — 2026-06.** The PHP god-class findings (H1/H2/H4) were resolved by REFA-1..9: ClusterMutationsController 1198→455 LOC with handlers extracted to merge/split services; inline transaction boilerplate centralised in the `RunsTransactional` trait (a grep for inline BEGIN/COMMIT now returns 0). Treat PHP entries below as historical. Python and TypeScript findings were not re-audited against current `main`.
+
 ---
 
 ## Table of Contents

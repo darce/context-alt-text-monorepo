@@ -11,13 +11,14 @@ classDiagram
     }
     class DashboardPage {
         +Hero copy
-        +Static panels
+        +useMediaStats / useIdentityStats
+        +useSyncStatus / useRetentionStatus
+        +useRecognitionJobHistory
     }
     class WorkbenchPage {
-        +Radix Tabs (scan/batch/confirm)
+        +Radix Tabs (scan/confirm)
         +React Query useWorkbenchMedia()
         +MediaSelection
-        +BatchPanel
     }
     class RosterPage {
         +Radix Tabs (entries/clusters)
@@ -31,7 +32,7 @@ classDiagram
     }
     class ApiEndpoint {
         <<REST>>
-        +GET /cat/v1/workbench/media
+        +GET /acx/v1/workbench/media
     }
 
     WordPressAdmin --> AdminSPA : localizes AltContextAdmin\nand enqueues bundle

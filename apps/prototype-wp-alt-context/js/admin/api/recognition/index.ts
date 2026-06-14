@@ -34,8 +34,6 @@ export type {
   UpdateClusterLabelRequest,
   MergeClusterRequest,
   MergeClusterResponse,
-  AssignOutlierRequest,
-  AssignOutlierResponse,
   ReassignClusterIdentityRequest,
   RevertMergeRequest,
   RevertMergeResponse,
@@ -98,14 +96,12 @@ export {
   fetchScanStatus,
   cancelScanJob,
   clusterFaces,
-  acknowledgeProjection,
 } from './scanApi';
 
 // Cluster operations
 export {
   updateClusterLabel,
   mergeCluster,
-  assignOutlierToCluster,
   listRecognitionClusters,
   getRecognitionCluster,
   reassignClusterIdentity,
@@ -114,7 +110,6 @@ export {
   splitCluster,
   createClusterForIdentity,
   dismissCluster,
-  undismissCluster,
   fetchClusterMembers,
   removeClusterMember,
   fetchTopUnlabeledClusters,

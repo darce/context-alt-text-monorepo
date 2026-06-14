@@ -7,14 +7,12 @@
 export {
   updateClusterLabel,
   mergeCluster,
-  assignOutlierToCluster,
   reassignClusterIdentity,
   revertMergeCluster,
   pinRepresentative,
   splitCluster,
   createClusterForIdentity,
   dismissCluster,
-  undismissCluster,
 } from './clusterApiMutations';
 
 export { fetchClusterMembers, removeClusterMember } from './clusterApiMembers';

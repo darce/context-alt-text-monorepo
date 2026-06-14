@@ -13,18 +13,15 @@ import {
   fetchTopUnlabeledClusters,
   getRecognitionCluster,
   listRecognitionClusters,
-  assignOutlierToCluster,
   mergeCluster,
   purgeTenantData,
   pinRepresentative,
   revertMergeCluster,
-  acknowledgeProjection,
   cancelScanJob,
   downloadExportJobData,
   exportTenantData,
   scanFaces,
   triggerSync,
-  undismissCluster,
   updateRetentionPolicy,
   updateClusterLabel,
   type BulkAcceptRequest,
@@ -63,7 +60,6 @@ vi.mock('../../utils/http', () => {
 
 describe('recognitionApi', () => {
   const fetchApiMock = vi.mocked(httpModule.fetchRequiredApi);
-  const fetchMutationMock = vi.mocked(httpModule.fetchApi);
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -312,24 +308,6 @@ describe('recognitionApi', () => {
         source_label: 'Alice',
       },
       restNonce: 'nonce-123',
-    });
-  });
-
-  it('posts assign outlier payload', async () => {
-    fetchApiMock.mockResolvedValue({});
-    await assignOutlierToCluster({
-      clusterId: 'target-1',
-      identityId: 'identity-1',
-      similarity: 0.25,
-    });
-    expect(fetchApiMock).toHaveBeenCalledWith(expect.stringContaining('/target-1/assign'), {
-      method: 'POST',
-      body: {
-        identity_id: 'identity-1',
-        similarity: 0.25,
-      },
-      restNonce: 'nonce-123',
-      signal: undefined,
     });
   });
 
@@ -720,18 +698,6 @@ describe('recognitionApi', () => {
     );
   });
 
-  it('keeps undismiss cluster operation on the DELETE contract', async () => {
-    fetchMutationMock.mockResolvedValue(undefined);
-
-    await undismissCluster('cluster-42');
-
-    expect(fetchMutationMock).toHaveBeenCalledWith(expect.stringContaining('/cluster-42/dismiss'), {
-      method: 'DELETE',
-      restNonce: 'nonce-123',
-      signal: undefined,
-    });
-  });
-
   it('triggers sync with POST method', async () => {
     fetchApiMock.mockResolvedValue({
       synced: true,
@@ -757,16 +723,10 @@ describe('recognitionApi', () => {
     vi.mocked(getEndpoint).mockImplementation((...keys: string[]) => `https://example.com/${keys[0] ?? 'default'}/`);
     fetchApiMock.mockResolvedValue({ status: 'acknowledged', snapshot_version: 3 });
 
-    await acknowledgeProjection('job-3', 3);
     await cancelScanJob('job-4');
 
     expect(fetchApiMock).toHaveBeenNthCalledWith(
       1,
-      'https://example.com/recognitionJobs/job-3/acknowledge-projection',
-      expect.objectContaining({ method: 'POST' }),
-    );
-    expect(fetchApiMock).toHaveBeenNthCalledWith(
-      2,
       'https://example.com/recognitionJobs/job-4/cancel',
       expect.objectContaining({ method: 'POST' }),
     );

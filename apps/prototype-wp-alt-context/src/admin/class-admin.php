@@ -346,7 +346,6 @@ class Admin {
 					'retentionImport'                => rest_url( 'acx/v1/retention/import' ),
 					'retentionAudit'                 => rest_url( 'acx/v1/retention/audit' ),
 					'recognitionReassignIdentity'    => rest_url( 'acx/v1/recognition/clusters/reassign' ),
-					'recognitionAssignOutlier'       => rest_url( 'acx/v1/recognition/clusters' ),
 					'recognitionIdentitySuggestions' => rest_url( 'acx/v1/recognition/identities' ),
 					'recognitionSuggestions'         => rest_url( 'acx/v1/recognition/suggestions' ),
 					'recognitionMergeSuggestions'    => rest_url( 'acx/v1/recognition/suggestions/merge' ),

@@ -76,6 +76,18 @@ dashboard = [
     "rich>=13.0.0,<15.0.0",
     "textual>=3.0.0,<4.0.0",
 ]
+# Local-CPU VLM (Florence-2) for image description (E19-1 D3). Isolated from the
+# recognition-only default install: never pulled by `dev`/`face`/`gpu`, so the
+# default build and the live OCIR image stay torch-free.
+vlm = [
+    # Florence-2's trust_remote_code modeling pre-dates the transformers attention
+    # refactor (~4.50 removed `_supports_sdpa`); pin below it.
+    "transformers>=4.44.0,<4.49.0",
+    "torch>=2.2.0",
+    "einops>=0.7.0",
+    "timm>=1.0.0",
+    "accelerate>=0.33.0",
+]
 
 
 

@@ -15,11 +15,17 @@
 | Slice 1b — `db_export.py` + `ScheduledDisposalWorker` (454 LOC) | ✅ landed | `466ab50f` |
 | Slice 2a — small dead-symbol sweep, no-test-edit items (174 LOC) | ✅ landed | `92d042b5` |
 | Slice 2b — dead background fn + 2 logger methods (test-edit items) | ✅ landed | `7184e834` |
-| Slices 4–9 — indirection collapse, domain-boundary move, router split, DI consolidation, long-method extraction, repo split | ⏳ planned | — |
+| Branch review — parallel re-review of the cleanup (pass_with_findings) → 3 in-place fixes (TRANSFORMERS_CACHE config lockstep, orphan logger stub, dead `TypeVar`) | ✅ landed | `160ae3fd` |
+| Slice 4 — indirection collapse (inline shim, delete `DiscoveryAlgorithm` ABC + `ClusterVisualizer` + 3 dead params + leaf shim, 228 LOC) | ✅ landed | `144ff3a2` |
+| Slice 5 — domain-boundary move (DOMAIN-1: 5 impure services `domain/services/` → `application/services/`) | ✅ landed | `485c06e6` |
+| Slice 6 — `clusters.py` router split | ⏳ planned | — |
+| Slice 7 — DI consolidation (+ deferred `get_cluster_service`/`InMemoryJobService`) | ⏳ planned | — |
+| Slices 8–9 — long-method extraction, repository/AssignmentWriter split | ⏳ planned | — |
+| Follow-up — `_NotImplemented*` retention 503 path (behavior change, own TDD slice) | ⏳ planned | — |
 
-**Deferred out of Slice 2** (intentionally, not skipped): `get_cluster_service` + `InMemoryJobService` → roll into **Slice 7 (DI consolidation)** since both only live on the `dependencies.py` re-export surface that slice deletes; `compute_centroid` → left in place (a live test uses it as a helper; "test-only" doesn't justify rewriting the test). `retry_matching` was **not** removed — the review over-bundled it; it is a live method (`curation_job` calls it). Only the `run_background_retry` wrapper was dead.
+**Intentional non-removals** (verified by the re-review): `get_cluster_service` + `InMemoryJobService` deferred to **Slice 7** (only on the `dependencies.py` re-export surface that slice deletes; `InMemoryJobRepository` at the adjacent line is **live** — do not confuse); `compute_centroid` left (live test helper); `retry_matching` kept (live, `curation_job` calls it — review over-bundled it).
 
-Validation per landed slice: repo-wide reference grep (zero residual refs), `ruff` (incl. unused-import autofix), `py_compile`, `pytest --collect-only` (whole-tree import safety), and targeted `pytest` against a live Postgres (Slice 1b: 15 pass; Slice 2a: 630 pass; Slice 2b: 9 pass). Closing gate: **full suite green — 1048 passed, 2 skipped** (87s, live Postgres) at `7184e834`. **No merge to `main`** — the pre-merge gate (`handoff_close_check`) requires MCP, which was degraded; merge when MCP is restored.
+Validation per landed slice: repo-wide reference grep (zero residual refs), `ruff` (incl. autofix), `pytest --collect-only` (whole-tree import safety), and `pytest` against a live Postgres. Closing gate: **full suite green — 1046 passed, 2 skipped** at `485c06e6` (net cleanup since the branch opened: ~−1,600 LOC). **No merge to `main`** — the pre-merge gate (`handoff_close_check`) requires MCP, which was degraded; merge when MCP is restored.
 
 ## Method & provenance
 

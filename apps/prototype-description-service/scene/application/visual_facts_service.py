@@ -78,7 +78,7 @@ class VisualFactsService:
                 context_hash=context_hash,
             )
             if row is not None:
-                return self._row_to_response(row, cached=True, duration_ms=_elapsed_ms(start))
+                return self._row_to_response(row, cached=True, duration_ms=_elapsed_ms(start), media_id=media_id)
 
         # Offload to a thread so a slow adapter (local_cpu Florence ~30-60s) never
         # blocks the event loop — otherwise asyncpg drops the open DB connection
@@ -101,7 +101,9 @@ class VisualFactsService:
         )
 
         if self._repo is not None:
-            await self._repo.insert(self._response_to_row(response))
+            row, inserted = await self._repo.insert_or_get_existing(self._response_to_row(response))
+            if not inserted:
+                return self._row_to_response(row, cached=True, duration_ms=_elapsed_ms(start), media_id=media_id)
             if self._audit is not None:
                 await self._audit.record(
                     tenant_id=tenant_id,
@@ -125,6 +127,7 @@ class VisualFactsService:
         context_applied: bool,
         duration_ms: int,
     ) -> VisualFactsResponse:
+        provider = _PROVIDER_FOR_ADAPTER[self._adapter.kind]
         return VisualFactsResponse(
             tenant_id=str(tenant_id),
             media_id=media_id,
@@ -138,17 +141,25 @@ class VisualFactsService:
             alt_text_draft=alt_text_draft,
             context_used=ContextUsed(sources=context_sources, applied=context_applied),
             provider_disclosure=ProviderDisclosure(
-                provider=_PROVIDER_FOR_ADAPTER[self._adapter.kind], left_service_boundary=False
+                provider=provider,
+                left_service_boundary=provider is ProviderMode.HOSTED,
             ),
             cached=False,
             duration_ms=duration_ms,
             retention_class=self._retention,
         )
 
-    def _row_to_response(self, row: ImageDescription, *, cached: bool, duration_ms: int) -> VisualFactsResponse:
+    def _row_to_response(
+        self,
+        row: ImageDescription,
+        *,
+        cached: bool,
+        duration_ms: int,
+        media_id: int | None = None,
+    ) -> VisualFactsResponse:
         return VisualFactsResponse(
             tenant_id=str(row.tenant_id),
-            media_id=row.media_id,
+            media_id=row.media_id if media_id is None else media_id,
             image_hash=row.image_hash,
             context_hash=row.context_hash,
             adapter=row.adapter,

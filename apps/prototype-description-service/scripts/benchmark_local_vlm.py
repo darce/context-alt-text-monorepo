@@ -30,12 +30,20 @@ def _peak_rss_mb() -> float:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from scene.application.settings.vlm import VlmSettings
+
+    vlm_defaults = VlmSettings()
     ap = argparse.ArgumentParser(description="Local-CPU Florence-2 description eval/benchmark.")
     ap.add_argument("images", nargs="+", help="image file paths to describe")
     ap.add_argument("--device", default="cpu", help="torch device (cpu mirrors the OCI A1 target)")
     ap.add_argument("--num-beams", type=int, default=3)
     ap.add_argument("--max-edge", type=int, default=1024, help="downsample longest edge to N px")
     ap.add_argument("--max-new-tokens", type=int, default=512)
+    ap.add_argument(
+        "--model-revision",
+        default=vlm_defaults.model_revision,
+        help="Hugging Face revision for the trust_remote_code model",
+    )
     ap.add_argument("--tasks", default="<MORE_DETAILED_CAPTION>,<OD>")
     ap.add_argument("--json-out", default=None)
     args = ap.parse_args(argv)
@@ -51,6 +59,7 @@ def main(argv: list[str] | None = None) -> int:
         max_image_edge_px=args.max_edge,
         num_beams=args.num_beams,
         max_new_tokens=args.max_new_tokens,
+        model_revision=args.model_revision,
     )
 
     print(f"Loading {adapter.model_id} (device={args.device}, beams={args.num_beams})...", flush=True)
@@ -86,6 +95,7 @@ def main(argv: list[str] | None = None) -> int:
     latencies = [r["latency_s"] for r in results]
     artifact = {
         "model_id": adapter.model_id,
+        "model_revision": args.model_revision,
         "model_version": adapter.model_version,
         "prompt_or_task_version": adapter.prompt_or_task_version,
         "device": args.device,

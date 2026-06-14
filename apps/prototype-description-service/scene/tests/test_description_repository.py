@@ -11,22 +11,22 @@ from scene.application.description_repository import ImageDescriptionRepository
 
 
 def _row(tenant_id: uuid.UUID, **over) -> ImageDescription:
-    fields = dict(
-        tenant_id=tenant_id,
-        media_id=42,
-        image_hash="a" * 64,
-        context_hash="b" * 64,
-        adapter="seeded",
-        model_id="seeded-fixtures",
-        model_version="1",
-        prompt_or_task_version="1",
-        visual_facts={"caption": "A cat", "objects": [], "ocr_text": None},
-        alt_text_draft="A cat.",
-        context_used={"sources": [], "applied": False},
-        provider_disclosure={"provider": "none", "left_service_boundary": False},
-        retention_class="retain_all",
-        duration_ms=5,
-    )
+    fields = {
+        "tenant_id": tenant_id,
+        "media_id": 42,
+        "image_hash": "a" * 64,
+        "context_hash": "b" * 64,
+        "adapter": "seeded",
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "prompt_or_task_version": "1",
+        "visual_facts": {"caption": "A cat", "objects": [], "ocr_text": None},
+        "alt_text_draft": "A cat.",
+        "context_used": {"sources": [], "applied": False},
+        "provider_disclosure": {"provider": "none", "left_service_boundary": False},
+        "retention_class": "retain_all",
+        "duration_ms": 5,
+    }
     fields.update(over)
     return ImageDescription(**fields)
 
@@ -89,6 +89,25 @@ def test_version_bump_is_a_cache_miss():
                 context_hash="b" * 64,
             )
             assert miss is None
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_duplicate_cache_key_returns_existing_row_without_aborting_transaction():
+    async def body():
+        engine, sf = await _sessionmaker()
+        tenant = uuid.uuid4()
+        async with sf() as s:
+            repo = ImageDescriptionRepository(s)
+            first, first_inserted = await repo.insert_or_get_existing(_row(tenant, media_id=42))
+            second, second_inserted = await repo.insert_or_get_existing(_row(tenant, media_id=99))
+            await s.commit()
+
+        assert first_inserted is True
+        assert second_inserted is False
+        assert second.id == first.id
+        assert second.media_id == 42
         await engine.dispose()
 
     asyncio.run(body())

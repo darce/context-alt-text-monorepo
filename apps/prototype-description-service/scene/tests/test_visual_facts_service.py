@@ -7,9 +7,11 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from db.models.base_imports import Base
 from db.models.scene import ImageDescription
+from scene.application.description_adapter import AdapterResult
 from scene.application.description_repository import ImageDescriptionRepository
 from scene.application.seeded_adapter import SeededDescriptionAdapter
 from scene.application.visual_facts_service import VisualFactsService
+from scene.domain.description import DescriptionAdapterKind
 
 IMG = b"\x89PNG service test bytes"
 CTX = {"title": "Cat", "caption": "x"}
@@ -51,6 +53,23 @@ class FakeAudit:
         self.events.append((event_type, payload))
 
 
+class HostedAdapter:
+    kind = DescriptionAdapterKind.HOSTED_PROVIDER
+    model_id = "hosted-test"
+    model_version = "1"
+    prompt_or_task_version = "1"
+
+    def describe(self, *, image_bytes, context):
+        return AdapterResult(
+            caption="Hosted caption.",
+            objects=("object",),
+            ocr_text=None,
+            alt_text_draft="Hosted caption.",
+            context_sources=(),
+            context_applied=False,
+        )
+
+
 async def _sessionmaker():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
@@ -83,8 +102,9 @@ def test_first_call_generates_persists_audits_then_cache_hit_skips_adapter():
             )
             assert row is not None  # persisted
             svc2 = VisualFactsService(adapter=adapter, repository=ImageDescriptionRepository(s), audit_sink=audit)
-            r2 = await svc2.describe(tenant_id=tenant, media_id=7, image_bytes=IMG, context=CTX)
+            r2 = await svc2.describe(tenant_id=tenant, media_id=8, image_bytes=IMG, context=CTX)
             assert r2.cached is True
+            assert r2.media_id == 8
             assert adapter.calls == 1  # NOT called again on cache hit
             assert len(audit.events) == 1  # no audit on cache hit
             assert r2.alt_text_draft == r1.alt_text_draft
@@ -115,5 +135,15 @@ def test_response_is_full_15_field_contract():
         assert dumped["provider_disclosure"]["provider"] == "none"
         assert dumped["context_used"] == {"sources": [], "applied": False}
         assert dumped["retention_class"] == "retain_all"
+
+    asyncio.run(body())
+
+
+def test_hosted_provider_disclosure_marks_service_boundary_left():
+    async def body():
+        svc = VisualFactsService(adapter=HostedAdapter())
+        r = await svc.describe(tenant_id=uuid.uuid4(), media_id=1, image_bytes=b"x", context=None)
+        assert r.provider_disclosure.provider.value == "hosted"
+        assert r.provider_disclosure.left_service_boundary is True
 
     asyncio.run(body())

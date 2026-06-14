@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace AltContext\Sovereign\Sync;
 
+require_once __DIR__ . '/class-outbox-status.php';
+
+use function current_time;
 use function implode;
 use function is_array;
 use function is_object;
@@ -264,6 +267,37 @@ class OutboxQueryRepository {
 		}
 
 		return $operations;
+	}
+
+	/**
+	 * Atomically claim a single pending operation for this drain.
+	 *
+	 * Transitions pending -> in_flight gated on the current status so a row already
+	 * claimed by a concurrent drain matches 0 rows. Returns true only when this caller
+	 * won the claim (CON-3).
+	 */
+	public function claim_operation( int $outbox_id ): bool {
+		global $wpdb;
+
+		if ( $outbox_id <= 0 || ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'update' ) ) {
+			return false;
+		}
+
+		$updated = $wpdb->update(
+			$this->table_name,
+			array(
+				'status'     => OutboxStatus::IN_FLIGHT,
+				'claimed_at' => current_time( 'mysql' ),
+			),
+			array(
+				'id'     => $outbox_id,
+				'status' => OutboxStatus::PENDING,
+			),
+			array( '%s', '%s' ),
+			array( '%d', '%s' )
+		);
+
+		return false !== $updated && (int) $updated > 0;
 	}
 
 	public function has_pending_operations(): bool {

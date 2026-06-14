@@ -143,14 +143,45 @@ class OutboxDrain {
 			return;
 		}
 
-		$processed_tenants = $this->process_operation_batch( $operations );
+		$claimed = $this->claim_operations( $operations );
+		if ( empty( $claimed ) ) {
+			if ( $this->query_repository->has_pending_operations() ) {
+				self::maybe_schedule_drain();
+			}
+			return;
+		}
+
+		$processed_tenants = $this->process_operation_batch( $claimed );
 		$tenant_ids = array_keys( $processed_tenants );
 		$this->refresh_curation_metrics_for_tenants( $tenant_ids );
 		$this->purge_terminal_rows_for_tenants( $tenant_ids );
 
-		if ( count( $operations ) >= $this->batch_size && $this->query_repository->has_pending_operations() ) {
+		if ( count( $claimed ) >= $this->batch_size && $this->query_repository->has_pending_operations() ) {
 			self::maybe_schedule_drain();
 		}
+	}
+
+	/**
+	 * Claim each ready operation before dispatch so a concurrent drain cannot pick up the same
+	 * row. Only operations this drain won the claim for are returned for processing (CON-3).
+	 *
+	 * @param array<int,array<string,mixed>> $operations
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function claim_operations( array $operations ): array {
+		$claimed = array();
+		foreach ( $operations as $operation ) {
+			$outbox_id = max( 0, (int) ( $operation['id'] ?? 0 ) );
+			if ( $outbox_id <= 0 ) {
+				continue;
+			}
+
+			if ( $this->query_repository->claim_operation( $outbox_id ) ) {
+				$claimed[] = $operation;
+			}
+		}
+
+		return $claimed;
 	}
 
 	/**
@@ -306,9 +337,9 @@ class OutboxDrain {
 					'last_attempted_at' => $attempted_at,
 					'acknowledged_at' => $attempted_at,
 				),
-				array( 'id' => $outbox_id ),
+				array( 'id' => $outbox_id, 'status' => OutboxStatus::IN_FLIGHT ),
 				array( '%s', '%d', '%s', '%s', '%d', '%s', '%s' ),
-				array( '%d' )
+				array( '%d', '%s' )
 			);
 			return;
 		}
@@ -325,9 +356,9 @@ class OutboxDrain {
 					'last_error_message' => $this->normalize_text( $result['error_message'] ?? '', 'Remote curation replay conflict.' ),
 					'last_attempted_at' => $attempted_at,
 				),
-				array( 'id' => $outbox_id ),
+				array( 'id' => $outbox_id, 'status' => OutboxStatus::IN_FLIGHT ),
 				array( '%s', '%d', '%s', '%s', '%s' ),
-				array( '%d' )
+				array( '%d', '%s' )
 			);
 			return;
 		}

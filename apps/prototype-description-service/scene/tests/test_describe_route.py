@@ -175,3 +175,6 @@ def test_local_cpu_route_uses_vlm_timeout(monkeypatch):
     with _client(adapter=_SlowLocalAdapter()) as client:
         r = _post(client, TENANT_ID)
         assert r.status_code == 504
+        # Message must report the VLM cap that actually fired, not the 60s
+        # description timeout (regression guard for E19-1-REV-A-2 / REV-B-1).
+        assert "0.001" in r.json()["detail"]

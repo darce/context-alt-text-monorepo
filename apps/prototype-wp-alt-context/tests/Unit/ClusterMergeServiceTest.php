@@ -8,6 +8,7 @@ use AltContext\Api\ClusterMutationsController;
 use AltContext\Api\Services\ClusterMergeService;
 use AltContext\Tests\Support\FindsSqlQueries;
 use AltContext\Tests\Support\ClusterMutationsMembersSpy;
+use AltContext\Tests\Support\ClusterMutationsOutboxWriterSpy;
 use AltContext\Tests\Support\ClusterMutationsRepositorySpy;
 use AltContext\Tests\Support\ClusterMutationsSyncStateSpy;
 use AltContext\Tests\Support\ClusterMutationsTopologyCommandSpy;
@@ -88,5 +89,61 @@ class ClusterMergeServiceTest extends TestCase
 
         $outboxInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_outbox');
         $this->assertStringContainsString("'revert_merge_cluster'", $outboxInsert);
+    }
+
+    public function testMergeRollsBackWhenOutboxEnqueueFails(): void
+    {
+        global $wpdb;
+        $service = $this->serviceWithFailingOutbox();
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/cluster-source/merge');
+        $request->set_param('source_id', 'cluster-source');
+        $request->set_param('target_cluster_id', 'cluster-target');
+        $request->set_param('target_label', 'Merged Cluster');
+
+        $response = $service->merge_cluster($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('acx_db_error', $response->get_error_code());
+        $this->assertContains('ROLLBACK', $wpdb->queries);
+        $this->assertNotContains('COMMIT', $wpdb->queries);
+    }
+
+    public function testRevertMergeRollsBackWhenOutboxEnqueueFails(): void
+    {
+        global $wpdb;
+        $service = $this->serviceWithFailingOutbox();
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/revert-merge');
+        $request->set_param('target_cluster_id', 'cluster-target');
+        $request->set_param('moved_identity_ids', ['identity-77', 'identity-88']);
+        $request->set_param('source_label', 'Restored Cluster');
+
+        $response = $service->revert_merge_cluster($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('acx_db_error', $response->get_error_code());
+        $this->assertContains('ROLLBACK', $wpdb->queries);
+        $this->assertNotContains('COMMIT', $wpdb->queries);
+    }
+
+    private function serviceWithFailingOutbox(): ClusterMergeService
+    {
+        $outbox = new ClusterMutationsOutboxWriterSpy();
+        $outbox->nextEnqueueResult = false;
+        $host = new ClusterMutationsController(
+            $this->repository,
+            $this->syncStateRepository,
+            $this->membersRepository,
+            $outbox,
+            new ClusterMutationsTopologyCommandSpy()
+        );
+
+        return new ClusterMergeService(
+            $host,
+            $this->repository,
+            $this->membersRepository,
+            $this->syncStateRepository
+        );
     }
 }

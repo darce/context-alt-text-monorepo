@@ -179,6 +179,8 @@ class OutboxDrainTest extends TestCase
 				return true; }
 			public function record_failure(int $command_id, string $status, string $error_code, string $error_message, bool $increment_attempt = true): bool {
 				return true; }
+			public function record_reconcile_failure(int $command_id, string $status, string $error_code, string $error_message): bool {
+				return true; }
 		};
 
 		$drain = new OutboxDrain(

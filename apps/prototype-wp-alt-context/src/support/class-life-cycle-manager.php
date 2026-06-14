@@ -599,6 +599,7 @@ class LifecycleManager {
 			expected_base_version bigint(20) unsigned NOT NULL DEFAULT 0,
 			status varchar(20) NOT NULL DEFAULT 'pending',
 			attempts int(11) unsigned NOT NULL DEFAULT 0,
+			reconcile_attempts int(11) unsigned NOT NULL DEFAULT 0,
 			backend_command_id varchar(128) DEFAULT NULL,
 			result_json longtext DEFAULT NULL,
 			projection_reconciled_at datetime DEFAULT NULL,

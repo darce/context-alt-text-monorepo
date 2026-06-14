@@ -278,6 +278,35 @@ class TopologyCommandRepository implements TopologyCommandRepositoryInterface {
 		return $this->increment_attempts( $command_id );
 	}
 
+	public function record_reconcile_failure( int $command_id, string $status, string $error_code, string $error_message ): bool {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) || ! method_exists( $wpdb, 'prepare' ) ) {
+			return false;
+		}
+
+		$now = current_time( 'mysql' );
+		$query = $this->prepare_query(
+			'UPDATE %i SET status = %s, last_error_code = %s, last_error_message = %s, reconcile_attempts = reconcile_attempts + 1, last_attempted_at = %s, updated_at = %s WHERE id = %d',
+			array(
+				$this->table_name,
+				trim( $status ),
+				trim( $error_code ),
+				trim( $error_message ),
+				$now,
+				$now,
+				max( 1, $command_id ),
+			)
+		);
+		if ( ! is_string( $query ) || '' === $query ) {
+			return false;
+		}
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$result = $wpdb->query( $query );
+
+		return false !== $result;
+	}
+
 	/**
 	 * @param object $wpdb
 	 */

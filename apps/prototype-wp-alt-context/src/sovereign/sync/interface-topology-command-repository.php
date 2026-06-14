@@ -43,4 +43,10 @@ interface TopologyCommandRepositoryInterface {
 	public function mark_reconciled( int $command_id, ?array $result_payload = null ): bool;
 
 	public function record_failure( int $command_id, string $status, string $error_code, string $error_message, bool $increment_attempt = true ): bool;
+
+	/**
+	 * Record a failed local reconcile of an already-applied command, bumping the
+	 * dedicated reconcile-attempt counter (independent of dispatch `attempts`).
+	 */
+	public function record_reconcile_failure( int $command_id, string $status, string $error_code, string $error_message ): bool;
 }

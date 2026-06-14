@@ -7,7 +7,6 @@ namespace AltContext\Sovereign\Sync;
 use WP_Error;
 use WP_REST_Response;
 
-require_once __DIR__ . '/interface-snapshot-client.php';
 require_once __DIR__ . '/class-snapshot-client-transport.php';
 
 use function apply_filters;
@@ -20,7 +19,7 @@ use function strtolower;
 use function substr;
 use function trim;
 
-class SnapshotClient implements SnapshotClientInterface {
+class SnapshotClient {
 	private SnapshotClientTransport $transport;
 
 	public function __construct( ?SnapshotClientTransport $transport = null ) {

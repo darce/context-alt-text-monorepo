@@ -54,7 +54,6 @@ dev = [
     "mypy>=1.7.0,<2.0.0",
     "pytest>=8.3.0,<10.0.0",
     "pytest-asyncio>=0.21.0,<2.0.0",
-    "scikit-learn>=1.4.0,<2.0.0",  # Test-only: clustering accuracy metrics
     "aiosqlite>=0.19.0,<1.0.0",  # Test-only: in-memory SQLite for async tests
     "fastmcp>=3.1.1,<4.0.0",  # MCP server for agent tooling (v3 decorator semantics)
     # Type stubs for mypy
@@ -128,20 +127,9 @@ warn_unreachable = true
 strict_equality = true
 no_implicit_optional = true
 
-# Per-module options (strict on new code)
-[[tool.mypy.overrides]]
-module = [
-    "recognition.application.cluster_repository",
-    "recognition.application.cluster_factory",
-    "recognition.application.cluster_assignment",
-    "recognition.application.identity_clustering_service",
-]
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
-
 # Relax strictness for test files (allow mocking)
 [[tool.mypy.overrides]]
-module = ["recognition.tests.*", "recognition.infrastructure.tests.*"]
+module = ["recognition.tests.*"]
 disallow_untyped_defs = false
 disable_error_code = ["method-assign", "arg-type", "index"]
 
@@ -149,11 +137,9 @@ disable_error_code = ["method-assign", "arg-type", "index"]
 [[tool.mypy.overrides]]
 module = [
     "insightface.*",
-    "onnxruntime.*",
     "cv2.*",
     "pgvector.*",
     "asyncpg.*",
-    "sklearn.*",
     "hdbscan.*",
     "uuid_extensions.*",
 ]
@@ -162,7 +148,6 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = [
     "recognition.application.clustering.*",
-    "recognition.domain.embeddings.*",
     "recognition.application.health",
     "recognition.config.*",
     "recognition.interface_adapters.http.*",

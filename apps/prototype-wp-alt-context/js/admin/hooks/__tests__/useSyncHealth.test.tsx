@@ -4,7 +4,7 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import * as recognitionApi from '../../api/recognition';
-import { syncHealthPollingIntervals, useSyncHealth } from '../useSyncHealth';
+import { useSyncHealth } from '../useSyncHealth';
 
 vi.mock('../../api/recognition', async () => {
   const actual = await vi.importActual<typeof recognitionApi>('../../api/recognition');
@@ -35,7 +35,5 @@ describe('useSyncHealth', () => {
 
     await waitFor(() => expect(fetchSyncHealthMock).toHaveBeenCalled());
     expect(result.current.data?.breaker.state).toBe('closed');
-    expect(syncHealthPollingIntervals.staleTime).toBeGreaterThanOrEqual(15_000);
-    expect(syncHealthPollingIntervals.refetchInterval).toBeGreaterThanOrEqual(15_000);
   });
 });

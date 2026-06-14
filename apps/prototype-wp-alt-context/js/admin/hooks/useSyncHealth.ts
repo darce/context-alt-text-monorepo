@@ -13,8 +13,3 @@ export const useSyncHealth = () =>
     staleTime: SYNC_HEALTH_STALE_MS,
     refetchInterval: SYNC_HEALTH_REFETCH_MS,
   });
-
-export const syncHealthPollingIntervals = {
-  staleTime: SYNC_HEALTH_STALE_MS,
-  refetchInterval: SYNC_HEALTH_REFETCH_MS,
-} as const;

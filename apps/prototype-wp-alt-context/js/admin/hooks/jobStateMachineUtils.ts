@@ -2,7 +2,6 @@ import type { BatchRunStatus, JobStatusResponse } from '../api/recognition/types
 import type { PersistedJob } from './useJobPersistence';
 
 export type PipelinePhase = 'idle' | 'scanning' | 'clustering' | 'projecting';
-export type JobPhase = PipelinePhase;
 
 export const getLatestJobByType = (jobs: PersistedJob[], type: PersistedJob['type']): PersistedJob | null => {
   const typedJobs = jobs.filter((job) => job.type === type);
@@ -46,8 +45,6 @@ export const derivePipelinePhase = (
   }
   return 'idle';
 };
-
-export const deriveJobPhase = derivePipelinePhase;
 
 export const deriveLatestJobId = (
   currentPhase: PipelinePhase,

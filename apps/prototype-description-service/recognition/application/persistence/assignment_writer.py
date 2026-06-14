@@ -7,7 +7,6 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Sequence
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import cast
 
@@ -28,18 +27,6 @@ from recognition.observability.recognition_runs import RecognitionRunContext
 from recognition.shared.similarity import compute_face_similarity, extract_face_embedding
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class IdentityMember:
-    """Domain representation of a cluster member."""
-
-    id: str
-    cluster_id: str
-    identity_id: str
-    similarity: float
-    tenant_id: str | None = None
-    assigned_at: datetime | None = None
 
 
 def _compute_fingerprint(embedding: np.ndarray) -> str:

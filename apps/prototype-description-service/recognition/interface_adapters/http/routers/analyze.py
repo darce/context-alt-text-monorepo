@@ -127,7 +127,7 @@ async def _build_projection_payload(
     if cluster_repo is None or snapshot_version <= 0:
         return None
 
-    from recognition.interface_adapters.http.routers.clusters import (
+    from recognition.interface_adapters.http.routers.clusters_snapshot import (
         _build_cluster_responses,
         _build_member_responses,
     )

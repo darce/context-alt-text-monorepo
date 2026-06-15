@@ -1148,7 +1148,7 @@ def test_get_tenant_snapshot_includes_suggested_label_for_unlabeled_cluster(
         target_cluster_id="bbb-222",
     )
     monkeypatch.setattr(
-        "recognition.interface_adapters.http.routers.clusters.infer_suggested_label",
+        "recognition.interface_adapters.http.routers.clusters_snapshot.infer_suggested_label",
         AsyncMock(return_value=inferred),
     )
 
@@ -1175,7 +1175,7 @@ def test_get_tenant_snapshot_has_null_suggested_label_for_confirmed_cluster(
 
     mock_infer = AsyncMock()
     monkeypatch.setattr(
-        "recognition.interface_adapters.http.routers.clusters.infer_suggested_label",
+        "recognition.interface_adapters.http.routers.clusters_snapshot.infer_suggested_label",
         mock_infer,
     )
 
@@ -1207,7 +1207,7 @@ def test_cluster_delta_includes_suggested_label_for_unlabeled_cluster(
         target_cluster_id=None,
     )
     monkeypatch.setattr(
-        "recognition.interface_adapters.http.routers.clusters.infer_suggested_label",
+        "recognition.interface_adapters.http.routers.clusters_snapshot.infer_suggested_label",
         AsyncMock(return_value=inferred),
     )
 

@@ -18,7 +18,7 @@ from db.base import Base
 from db.models import IdentityCluster, Tenant
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.deps import session as session_deps
-from recognition.interface_adapters.http.routers import clusters as cluster_router
+from recognition.interface_adapters.http.routers import clusters_topology as cluster_router
 
 
 def _make_client() -> TestClient:

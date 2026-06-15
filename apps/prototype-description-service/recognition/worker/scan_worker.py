@@ -255,6 +255,40 @@ class ScanWorker:
             await session.commit()
 
     async def _process_pending_clustering_jobs(self, *, session: AsyncSession, now: datetime) -> bool:
+        job = await self._claim_next_clustering_job(session=session, now=now)
+        if job is None:
+            return False
+
+        # Capture identity before the handler runs: the main session is rolled
+        # back in the failure path, after which the ORM instance is unusable.
+        job_id = job.id
+        tenant_id = job.tenant_id
+        job_type = job.job_type
+
+        try:
+            await self._dispatch_clustering_job(job=job, session=session)
+            return True
+        except Exception as exc:  # pragma: no cover
+            logger.exception(
+                "[worker] Clustering job failed: job_id=%s tenant_id=%s job_type=%s",
+                job_id,
+                tenant_id,
+                job_type,
+            )
+            await self._record_clustering_job_failure(
+                exc=exc, session=session, job_id=job_id, tenant_id=tenant_id
+            )
+            return True
+
+    async def _claim_next_clustering_job(
+        self, *, session: AsyncSession, now: datetime
+    ) -> IdentityClusteringJob | None:
+        """Claim the next pending clustering/curation/split job via SKIP LOCKED.
+
+        Marks the claimed row RUNNING and commits so the SELECT FOR UPDATE row
+        lock is released before the handler runs (finding 1163). Returns None
+        when the queue holds no eligible job.
+        """
         stmt = (
             select(IdentityClusteringJob)
             .where(IdentityClusteringJob.status == JobStatus.PENDING.value)
@@ -266,7 +300,7 @@ class ScanWorker:
         result = await session.execute(stmt)
         job = result.scalar_one_or_none()
         if job is None:
-            return False
+            return None
 
         await ensure_job_context(session=session, job=job)
         job.status = JobStatus.RUNNING
@@ -278,114 +312,114 @@ class ScanWorker:
         # fresh session and UPDATE the same row) do not block indefinitely
         # (finding 1163).
         await session.commit()
+        return job
 
-        job_id = job.id
-        tenant_id = job.tenant_id
-        job_type = job.job_type
+    async def _dispatch_clustering_job(self, *, job: IdentityClusteringJob, session: AsyncSession) -> None:
+        """Route a claimed job to its handler, failing it if the type is unknown."""
+        handler = self._job_handlers.get(job.job_type)
+        if handler is None:
+            await ensure_job_context(session=session, job=job)
+            job.status = JobStatus.FAILED
+            job.error_message = f"unsupported job_type: {job.job_type}"
+            job.completed_at = datetime.now(tz=UTC)
+            await session.flush()
+        else:
+            await handler.handle(job, session)
 
+    async def _record_clustering_job_failure(
+        self, *, exc: Exception, session: AsyncSession, job_id: uuid.UUID, tenant_id: uuid.UUID | None
+    ) -> None:
+        """Durably persist retry/failed status for a job whose handler raised.
+
+        Classifies the error as transient (re-queue within the bounded retry
+        budget) or deterministic (permanent fail) and writes the outcome through
+        a fresh session so it survives the main session's rollback
+        (finding 1161 + finding 1168: bounded retry budget).
+        """
+        # Roll back the main session FIRST so its row lock on the job is
+        # released before the fresh session tries to acquire it. Without
+        # this, the fresh FOR UPDATE query gets SKIP-LOCKED and returns
+        # None, leaving the job reclaimable as pending.
         try:
-            handler = self._job_handlers.get(job.job_type)
-            if handler is None:
-                await ensure_job_context(session=session, job=job)
-                job.status = JobStatus.FAILED
-                job.error_message = f"unsupported job_type: {job.job_type}"
-                job.completed_at = datetime.now(tz=UTC)
-                await session.flush()
-            else:
-                await handler.handle(job, session)
-            return True
-        except Exception as exc:  # pragma: no cover
-            logger.exception(
-                "[worker] Clustering job failed: job_id=%s tenant_id=%s job_type=%s",
-                job_id,
-                tenant_id,
-                job_type,
-            )
-            # Roll back the main session FIRST so its row lock on the job is
-            # released before the fresh session tries to acquire it. Without
-            # this, the fresh FOR UPDATE query gets SKIP-LOCKED and returns
-            # None, leaving the job reclaimable as pending.
-            try:
-                await session.rollback()
-            except Exception:
-                logger.warning("[worker] Failed to rollback main session for job_id=%s", job_id)
-            # Use a fresh session to persist retry/failed status durably
-            # (finding 1161 + finding 1168: bounded retry budget).
-            try:
-                async with self._session_factory() as fresh_session:
-                    await enable_rls_bypass(fresh_session)
-                    # Seam 5 (defense-in-depth): also restore tenant context so any
-                    # RLS-gated reads on the failed_job row see the correct tenant.
-                    # tenant_id is captured before session.rollback() above.
-                    if tenant_id is not None:
-                        try:
-                            await set_tenant_context(fresh_session, uuid.UUID(str(tenant_id)))
-                        except Exception:
-                            logger.warning(
-                                "[worker] Failed to set tenant context in error recovery for job_id=%s; bypass still active",
-                                job_id,
-                            )
-                    failed_stmt = (
-                        select(IdentityClusteringJob)
-                        .where(IdentityClusteringJob.id == job_id)
-                        .with_for_update(skip_locked=True)
-                    )
-                    fresh_result = await fresh_session.execute(failed_stmt)
-                    failed_job = fresh_result.scalar_one_or_none()
-                    if failed_job is not None:
-                        # Persist retry/checkpoint metadata in payload.
-                        existing_payload = dict(failed_job.payload) if failed_job.payload else {}
-                        _prev_retry = existing_payload.get("retry_count", 0)
-                        new_retry_count = (_prev_retry if isinstance(_prev_retry, int) else 0) + 1
-                        existing_payload["retry_count"] = new_retry_count
-                        existing_payload["last_error_code"] = type(exc).__name__
-                        existing_payload["last_error_at"] = datetime.now(tz=UTC).isoformat()
-                        existing_payload["current_stage"] = "clustering"
-                        failed_job.payload = existing_payload
-
-                        # Retry budget: re-queue only for known-transient infrastructure
-                        # failures; all other errors (including IntegrityError, ValueError,
-                        # RuntimeError) fail immediately without retrying because they are
-                        # deterministic and retrying cannot fix them
-                        # (finding 1168: transient-vs-deterministic classification policy).
-                        _transient_exceptions = (
-                            OSError,
-                            TimeoutError,
-                            ConnectionError,
+            await session.rollback()
+        except Exception:
+            logger.warning("[worker] Failed to rollback main session for job_id=%s", job_id)
+        # Use a fresh session to persist retry/failed status durably
+        # (finding 1161 + finding 1168: bounded retry budget).
+        try:
+            async with self._session_factory() as fresh_session:
+                await enable_rls_bypass(fresh_session)
+                # Seam 5 (defense-in-depth): also restore tenant context so any
+                # RLS-gated reads on the failed_job row see the correct tenant.
+                # tenant_id is captured before session.rollback() above.
+                if tenant_id is not None:
+                    try:
+                        await set_tenant_context(fresh_session, uuid.UUID(str(tenant_id)))
+                    except Exception:
+                        logger.warning(
+                            "[worker] Failed to set tenant context in error recovery for job_id=%s; bypass still active",
+                            job_id,
                         )
-                        is_transient = isinstance(exc, _transient_exceptions)
-                        max_retries = self._config.max_attempts
-                        if is_transient and new_retry_count < max_retries:
-                            failed_job.status = JobStatus.PENDING
-                            failed_job.started_at = None
-                            failed_job.completed_at = None
-                            self._retry_suppressed_job_id = failed_job.id
-                            logger.warning(
-                                "[worker] Clustering job %s transient failure (attempt %d/%d), re-queuing: %s",
-                                job_id,
-                                new_retry_count,
-                                max_retries,
-                                type(exc).__name__,
-                            )
-                        else:
-                            failed_job.status = JobStatus.FAILED
-                            failed_job.error_message = str(exc)
-                            failed_job.completed_at = datetime.now(tz=UTC)
-                            logger.error(
-                                "[worker] Clustering job %s failed permanently (attempt %d/%d%s): %s",
-                                job_id,
-                                new_retry_count,
-                                max_retries,
-                                ", deterministic" if not is_transient else "",
-                                exc,
-                            )
-                        await fresh_session.commit()
-            except Exception:
-                logger.exception(
-                    "[worker] Failed to persist retry/failed status for job_id=%s; job may be reclaimed",
-                    job_id,
+                failed_stmt = (
+                    select(IdentityClusteringJob)
+                    .where(IdentityClusteringJob.id == job_id)
+                    .with_for_update(skip_locked=True)
                 )
-            return True
+                fresh_result = await fresh_session.execute(failed_stmt)
+                failed_job = fresh_result.scalar_one_or_none()
+                if failed_job is not None:
+                    # Persist retry/checkpoint metadata in payload.
+                    existing_payload = dict(failed_job.payload) if failed_job.payload else {}
+                    _prev_retry = existing_payload.get("retry_count", 0)
+                    new_retry_count = (_prev_retry if isinstance(_prev_retry, int) else 0) + 1
+                    existing_payload["retry_count"] = new_retry_count
+                    existing_payload["last_error_code"] = type(exc).__name__
+                    existing_payload["last_error_at"] = datetime.now(tz=UTC).isoformat()
+                    existing_payload["current_stage"] = "clustering"
+                    failed_job.payload = existing_payload
+
+                    # Retry budget: re-queue only for known-transient infrastructure
+                    # failures; all other errors (including IntegrityError, ValueError,
+                    # RuntimeError) fail immediately without retrying because they are
+                    # deterministic and retrying cannot fix them
+                    # (finding 1168: transient-vs-deterministic classification policy).
+                    _transient_exceptions = (
+                        OSError,
+                        TimeoutError,
+                        ConnectionError,
+                    )
+                    is_transient = isinstance(exc, _transient_exceptions)
+                    max_retries = self._config.max_attempts
+                    if is_transient and new_retry_count < max_retries:
+                        failed_job.status = JobStatus.PENDING
+                        failed_job.started_at = None
+                        failed_job.completed_at = None
+                        self._retry_suppressed_job_id = failed_job.id
+                        logger.warning(
+                            "[worker] Clustering job %s transient failure (attempt %d/%d), re-queuing: %s",
+                            job_id,
+                            new_retry_count,
+                            max_retries,
+                            type(exc).__name__,
+                        )
+                    else:
+                        failed_job.status = JobStatus.FAILED
+                        failed_job.error_message = str(exc)
+                        failed_job.completed_at = datetime.now(tz=UTC)
+                        logger.error(
+                            "[worker] Clustering job %s failed permanently (attempt %d/%d%s): %s",
+                            job_id,
+                            new_retry_count,
+                            max_retries,
+                            ", deterministic" if not is_transient else "",
+                            exc,
+                        )
+                    await fresh_session.commit()
+        except Exception:
+            logger.exception(
+                "[worker] Failed to persist retry/failed status for job_id=%s; job may be reclaimed",
+                job_id,
+            )
 
     async def _refresh_mv_if_needed(self, session: AsyncSession, now: datetime) -> None:
         """Periodically refresh the cluster centroids materialized view."""

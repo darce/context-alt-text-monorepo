@@ -30,6 +30,10 @@ vi.mock('../../hooks/useMediaStats', () => ({
   useMediaStats: vi.fn(),
 }));
 
+vi.mock('../../hooks/useDescribeMedia', () => ({
+  useDescribeMedia: () => ({ mutate: vi.fn(), isPending: false, data: undefined, error: null, reset: vi.fn() }),
+}));
+
 vi.mock('../../hooks/useRecognitionJobHistory', () => ({
   useRecognitionJobHistory: vi.fn(),
 }));

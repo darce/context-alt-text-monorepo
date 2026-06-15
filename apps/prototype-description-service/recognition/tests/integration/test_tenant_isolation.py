@@ -12,7 +12,7 @@ from db.models import IdentityCluster, Tenant
 from recognition.domain.cluster import IdentityCluster as DomainCluster
 from recognition.domain.repositories import SuggestionCreateData
 from recognition.infrastructure.repositories import SqlAlchemyClusterRepository, SqlAlchemySuggestionRepository
-from recognition.interface_adapters.http import dependencies
+from recognition.interface_adapters.http import deps as dependencies
 from recognition.interface_adapters.http import router as recognition_router
 
 

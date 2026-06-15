@@ -20,7 +20,7 @@ from starlette.testclient import TestClient
 
 from recognition.application.storage import FilesystemObjectStore
 from recognition.config.settings import RecognitionSettings
-from recognition.interface_adapters.http.dependencies import (
+from recognition.interface_adapters.http.deps import (
     get_optional_session,
     get_scan_queue_service_optional,
     require_write_access,

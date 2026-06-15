@@ -30,7 +30,7 @@ from recognition.domain.repositories import SuggestionCreateData
 from recognition.domain.representative import ClusterRepresentative
 from recognition.domain.suggestion import SuggestionStatus
 from recognition.infrastructure.repositories import SqlAlchemySuggestionRepository
-from recognition.interface_adapters.http import dependencies
+from recognition.interface_adapters.http import deps as dependencies
 from recognition.interface_adapters.http.routers.clusters_snapshot import get_top_unlabeled_clusters
 from recognition.tests.unit.job_repo_stub import InMemoryJobRepo
 from roster.application.curation_sync_service import CurationSyncService

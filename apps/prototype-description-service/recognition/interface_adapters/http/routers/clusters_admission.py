@@ -21,7 +21,7 @@ from db.models import Tenant
 from db.settings import get_database_settings
 from db.tenant_context import set_tenant_context
 from recognition.domain.job import JobStatus, JobType
-from recognition.interface_adapters.http.dependencies import (
+from recognition.interface_adapters.http.deps import (
     get_cluster_service_builder,
     get_cluster_service_builder_clustering,
     get_clustering_session,

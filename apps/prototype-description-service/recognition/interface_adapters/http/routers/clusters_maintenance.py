@@ -10,7 +10,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from recognition.interface_adapters.http.dependencies import (
+from recognition.interface_adapters.http.deps import (
     get_session,
     require_auth,
     require_write_access,

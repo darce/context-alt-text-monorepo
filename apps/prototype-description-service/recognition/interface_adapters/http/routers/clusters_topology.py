@@ -27,7 +27,7 @@ from recognition.infrastructure.repositories import (
     SqlAlchemyConstraintRepository,
     SqlAlchemyIdentityClusterBlockRepository,
 )
-from recognition.interface_adapters.http.dependencies import (
+from recognition.interface_adapters.http.deps import (
     build_cluster_service,
     get_cluster_repository,
     get_cluster_service_builder,

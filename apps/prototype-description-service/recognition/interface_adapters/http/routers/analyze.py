@@ -26,7 +26,7 @@ from recognition.application.tasks.scan import (
 )
 from recognition.domain.job import TERMINAL_JOB_STATUSES, Job, JobPhase, JobStatus, JobType
 from recognition.domain.repositories import JobRepository
-from recognition.interface_adapters.http.dependencies import (
+from recognition.interface_adapters.http.deps import (
     RetentionPolicyServiceProtocol,
     get_job_repo,
     get_job_service_dependency,

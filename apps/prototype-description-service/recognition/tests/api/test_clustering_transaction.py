@@ -21,7 +21,7 @@ from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
 from recognition.application.orchestration.job_service import JobService
-from recognition.interface_adapters.http import dependencies
+from recognition.interface_adapters.http import deps as dependencies
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.deps.tenant import get_tenant_id
 from recognition.interface_adapters.http.routers import clusters_admission as clusters_module

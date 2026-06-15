@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from recognition.application.services.retention_policy_service import RetentionPolicyService
-from recognition.interface_adapters.http import dependencies
+from recognition.interface_adapters.http import deps as dependencies
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.deps import session as session_module
 from recognition.interface_adapters.http.deps.circuit_breaker import (

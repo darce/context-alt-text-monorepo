@@ -16,7 +16,7 @@ from recognition.application.orchestration.curation_job import run_curation_job
 from recognition.application.orchestration.job_service import JobService
 from recognition.domain.job import JobStatus
 from recognition.infrastructure.repositories.job_repository import SqlAlchemyJobRepository
-from recognition.interface_adapters.http.dependencies import build_cluster_service
+from recognition.interface_adapters.http.deps import build_cluster_service
 from recognition.interface_adapters.http.middleware.metrics import get_default_metrics
 from recognition.observability.curation_refresh_metrics import get_default_curation_refresh_metrics
 from recognition.worker.handlers.base import JobHandler

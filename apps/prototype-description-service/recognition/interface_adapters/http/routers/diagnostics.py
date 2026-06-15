@@ -9,7 +9,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from recognition.interface_adapters.http.dependencies import (
+from recognition.interface_adapters.http.deps import (
     DecisionStore,
     get_decision_store,
     get_observability_repository,

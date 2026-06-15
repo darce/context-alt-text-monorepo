@@ -19,7 +19,7 @@ from recognition.domain.suggestion import (
     SuggestedLabelSource,
     SuggestionStatus,
 )
-from recognition.interface_adapters.schemas.suggestion_details import SuggestionDetails
+from recognition.domain.suggestion_details import SuggestionDetails
 
 
 def _make_candidate(tenant_id: str, cluster_id: str) -> AssignmentCandidate:

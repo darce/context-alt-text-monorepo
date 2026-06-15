@@ -34,6 +34,7 @@ TENANT_TABLES = [
     "audit_events",
     "curation_replay_records",
     "export_jobs",
+    "image_descriptions",
 ]
 
 EXPECTED_SCHEMA_TABLES = [
@@ -59,10 +60,12 @@ EXPECTED_SCHEMA_TABLES = [
     "audit_events",
     "export_jobs",
     "identity_cluster_refresh_queue",
+    "image_descriptions",
 ]
 
 DOWNGRADE_TABLE_ORDER = [
     "worker_capabilities",
+    "image_descriptions",
     "audit_events",
     "clustering_feedback",
     "export_jobs",
@@ -1114,6 +1117,41 @@ def upgrade() -> None:
         ),
     )
     op.create_index("idx_export_jobs_tenant", "export_jobs", ["tenant_id"])
+
+    op.create_table(
+        "image_descriptions",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("media_id", sa.Integer(), nullable=False),
+        sa.Column("image_hash", sa.String(length=64), nullable=False),
+        sa.Column("context_hash", sa.String(length=64), nullable=False),
+        sa.Column("adapter", sa.String(length=32), nullable=False),
+        sa.Column("model_id", sa.String(length=128), nullable=False),
+        sa.Column("model_version", sa.String(length=32), nullable=False),
+        sa.Column("prompt_or_task_version", sa.String(length=64), nullable=False),
+        sa.Column("visual_facts", sa.dialects.postgresql.JSONB(), nullable=False),
+        sa.Column("alt_text_draft", sa.Text(), nullable=False),
+        sa.Column("context_used", sa.dialects.postgresql.JSONB(), nullable=False),
+        sa.Column("provider_disclosure", sa.dialects.postgresql.JSONB(), nullable=False),
+        sa.Column("retention_class", sa.String(length=32), nullable=False),
+        sa.Column("duration_ms", sa.Integer(), nullable=False),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.UniqueConstraint(
+            "tenant_id",
+            "image_hash",
+            "adapter",
+            "model_version",
+            "prompt_or_task_version",
+            "context_hash",
+            name="uq_image_descriptions_cache_key",
+        ),
+    )
+    op.create_index("idx_image_descriptions_tenant", "image_descriptions", ["tenant_id"])
 
     for table in TENANT_TABLES:
         op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")

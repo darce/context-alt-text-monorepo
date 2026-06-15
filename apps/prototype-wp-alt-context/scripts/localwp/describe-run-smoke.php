@@ -150,8 +150,8 @@ if ( ! ( $first['ok'] ?? false ) || ! ( $second['ok'] ?? false ) ) {
 	exit( 2 );
 }
 
-if ( true !== ( $second_data['cached'] ?? null ) ) {
-	fwrite( STDERR, "Repeat describe call was not served from cache (expected second_cached=true).\n" );
+if ( false !== ( $first_data['cached'] ?? null ) || true !== ( $second_data['cached'] ?? null ) ) {
+	fwrite( STDERR, "Describe cache proof failed (expected first_cached=false and second_cached=true).\n" );
 	exit( 3 );
 }
 

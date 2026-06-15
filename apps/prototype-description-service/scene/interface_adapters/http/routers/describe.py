@@ -17,10 +17,12 @@ from pydantic import ValidationError
 from starlette.datastructures import UploadFile
 
 from db.tenant_context import require_tenant_record, set_tenant_context
+from recognition.infrastructure.repositories.audit_repository import AuditRepository
 from recognition.interface_adapters.http.dependencies import (
     get_optional_session,
     require_write_access,
 )
+from recognition.interface_adapters.http.middleware.metrics import get_default_metrics
 from scene.application.description_repository import ImageDescriptionRepository
 from scene.application.settings.vlm import VlmSettings
 from scene.application.visual_facts_service import VisualFactsService
@@ -34,6 +36,34 @@ from scene.interface_adapters.http.schemas.responses import VisualFactsResponse
 router = APIRouter(tags=["describe"])
 
 _IMAGE_KEY_PREFIX = "image_"
+
+
+class _DescriptionAuditSink:
+    def __init__(self, repository: AuditRepository) -> None:
+        self._repository = repository
+
+    async def record(self, *, tenant_id: uuid.UUID, event_type: str, payload: dict) -> None:
+        await self._repository.create_event(
+            tenant_id=str(tenant_id),
+            event_type=event_type,
+            actor="scene.describe",
+            scope="media",
+            payload=payload,
+        )
+
+
+class _DescriptionMetricsSink:
+    def __init__(self) -> None:
+        self._metrics = get_default_metrics()
+
+    def record_request(self, *, adapter: str, result: str) -> None:
+        self._metrics.description_requests_total.labels(adapter=adapter, result=result).inc()
+
+    def record_cache_hit(self, *, adapter: str) -> None:
+        self._metrics.description_cache_hits_total.labels(adapter=adapter).inc()
+
+    def observe_adapter_duration(self, *, adapter: str, duration_seconds: float) -> None:
+        self._metrics.description_adapter_duration_seconds.labels(adapter=adapter).observe(duration_seconds)
 
 
 def _read_request_part(raw) -> dict:
@@ -110,6 +140,7 @@ async def describe_image_multipart(
 
     tenant_uuid = uuid.UUID(envelope.tenant_id)
     repository = None
+    audit_sink = None
     if session is not None:
         # RLS: scope the session to the tenant before any read/write on
         # image_descriptions — both the cache SELECT (USING) and the INSERT
@@ -119,10 +150,13 @@ async def describe_image_multipart(
         # Surface an unprovisioned tenant as the structured 403, not an FK 500.
         await require_tenant_record(session, tenant_uuid)
         repository = ImageDescriptionRepository(session)
+        audit_sink = _DescriptionAuditSink(AuditRepository(session))
     effective_timeout = _generation_timeout_seconds(settings, adapter)
     service = VisualFactsService(
         adapter=adapter,
         repository=repository,
+        audit_sink=audit_sink,
+        metrics=_DescriptionMetricsSink(),
         generation_timeout_seconds=effective_timeout,
     )
     try:
@@ -141,6 +175,6 @@ async def describe_image_multipart(
         # A deferred/stub profile (florence_large, gpu_phi4) or a missing [vlm]
         # extra: surface an actionable 503 instead of an opaque 500.
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
-    if session is not None and not response.cached:
+    if session is not None:
         await session.commit()
     return response

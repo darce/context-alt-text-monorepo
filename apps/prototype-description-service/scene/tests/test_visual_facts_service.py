@@ -53,6 +53,22 @@ class FakeAudit:
         self.events.append((event_type, payload))
 
 
+class FakeMetrics:
+    def __init__(self):
+        self.requests = []
+        self.cache_hits = []
+        self.adapter_durations = []
+
+    def record_request(self, *, adapter, result):
+        self.requests.append((adapter, result))
+
+    def record_cache_hit(self, *, adapter):
+        self.cache_hits.append(adapter)
+
+    def observe_adapter_duration(self, *, adapter, duration_seconds):
+        self.adapter_durations.append((adapter, duration_seconds))
+
+
 class HostedAdapter:
     kind = DescriptionAdapterKind.HOSTED_PROVIDER
     model_id = "hosted-test"
@@ -83,13 +99,21 @@ def test_first_call_generates_persists_audits_then_cache_hit_skips_adapter():
         tenant = uuid.uuid4()
         adapter = CountingAdapter(SeededDescriptionAdapter())
         audit = FakeAudit()
+        metrics = FakeMetrics()
         async with sf() as s:
-            svc = VisualFactsService(adapter=adapter, repository=ImageDescriptionRepository(s), audit_sink=audit)
+            svc = VisualFactsService(
+                adapter=adapter,
+                repository=ImageDescriptionRepository(s),
+                audit_sink=audit,
+                metrics=metrics,
+            )
             r1 = await svc.describe(tenant_id=tenant, media_id=7, image_bytes=IMG, context=CTX)
             await s.commit()
         assert r1.cached is False
         assert adapter.calls == 1
         assert len(audit.events) == 1 and audit.events[0][0] == "description.generated"
+        assert metrics.requests == [("seeded", "generated")]
+        assert len(metrics.adapter_durations) == 1
 
         async with sf() as s:
             row = await ImageDescriptionRepository(s).get_by_cache_key(
@@ -101,12 +125,20 @@ def test_first_call_generates_persists_audits_then_cache_hit_skips_adapter():
                 context_hash=r1.context_hash,
             )
             assert row is not None  # persisted
-            svc2 = VisualFactsService(adapter=adapter, repository=ImageDescriptionRepository(s), audit_sink=audit)
+            svc2 = VisualFactsService(
+                adapter=adapter,
+                repository=ImageDescriptionRepository(s),
+                audit_sink=audit,
+                metrics=metrics,
+            )
             r2 = await svc2.describe(tenant_id=tenant, media_id=8, image_bytes=IMG, context=CTX)
             assert r2.cached is True
             assert r2.media_id == 8
             assert adapter.calls == 1  # NOT called again on cache hit
-            assert len(audit.events) == 1  # no audit on cache hit
+            assert len(audit.events) == 2
+            assert audit.events[1][0] == "description.cache_hit"
+            assert metrics.cache_hits == ["seeded"]
+            assert metrics.requests[-1] == ("seeded", "cache_hit")
             assert r2.alt_text_draft == r1.alt_text_draft
         await engine.dispose()
 

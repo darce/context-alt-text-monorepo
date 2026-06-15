@@ -23,6 +23,13 @@ interface TopologyCommandRepositoryInterface {
 	public function find_reconcilable( ?string $tenant_id = null, int $limit = 25 ): array;
 
 	/**
+	 * Atomically claim a command for processing, gated on its current status and the claim
+	 * lease, so a second concurrent drain cannot re-dispatch or re-reconcile it (CON-4).
+	 * Returns true only when this caller won the claim.
+	 */
+	public function claim_command( int $command_id, string $expected_status ): bool;
+
+	/**
 	 * @param array<string,mixed>|null $result_payload
 	 */
 	public function update_status(

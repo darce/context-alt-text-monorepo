@@ -179,6 +179,11 @@ class ClusterMutationsTopologyCommandSpy implements TopologyCommandRepositoryInt
         return array();
     }
 
+    public function claim_command(int $command_id, string $expected_status): bool
+    {
+        return true;
+    }
+
     public function update_status(
         int $command_id,
         string $status,

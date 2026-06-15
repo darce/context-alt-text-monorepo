@@ -8,6 +8,7 @@ require_once __DIR__ . '/../repositories/trait-prepares-sql-queries.php';
 require_once __DIR__ . '/interface-topology-command-repository.php';
 
 use AltContext\Sovereign\Repositories\PreparesSqlQueries;
+use function apply_filters;
 use function current_time;
 use function is_numeric;
 use function is_object;
@@ -20,6 +21,8 @@ use function wp_json_encode;
 
 class TopologyCommandRepository implements TopologyCommandRepositoryInterface {
 	use PreparesSqlQueries;
+
+	private const DEFAULT_CLAIM_LEASE_SECONDS = 300;
 
 	private string $table_name;
 
@@ -123,25 +126,29 @@ class TopologyCommandRepository implements TopologyCommandRepositoryInterface {
 		}
 
 		$status_placeholders = implode( ', ', array_fill( 0, count( $statuses ), '%s' ) );
+		$lease = $this->resolve_claim_lease_seconds();
+		// CON-4: exclude rows another drain has claimed within the lease window; re-select
+		// stale-leased rows (claimed_at older than the lease) so a crashed-drain claim recovers.
+		$claim_clause = ' AND ( claimed_at IS NULL OR claimed_at <= DATE_SUB( NOW(), INTERVAL %d SECOND ) )';
 		if ( null !== $normalized_tenant_id ) {
 			$query = $this->prepare_query(
-				"SELECT * FROM %i WHERE tenant_id = %s AND status IN ({$status_placeholders}) ORDER BY created_at ASC LIMIT %d",
+				"SELECT * FROM %i WHERE tenant_id = %s AND status IN ({$status_placeholders}){$claim_clause} ORDER BY created_at ASC LIMIT %d",
 				array_merge(
 					array(
 						$this->table_name,
 						$normalized_tenant_id,
 					),
 					$statuses,
-					array( max( 1, $limit ) )
+					array( $lease, max( 1, $limit ) )
 				)
 			);
 		} else {
 			$query = $this->prepare_query(
-				"SELECT * FROM %i WHERE status IN ({$status_placeholders}) ORDER BY created_at ASC LIMIT %d",
+				"SELECT * FROM %i WHERE status IN ({$status_placeholders}){$claim_clause} ORDER BY created_at ASC LIMIT %d",
 				array_merge(
 					array( $this->table_name ),
 					$statuses,
-					array( max( 1, $limit ) )
+					array( $lease, max( 1, $limit ) )
 				)
 			);
 		}
@@ -154,6 +161,35 @@ class TopologyCommandRepository implements TopologyCommandRepositoryInterface {
 		$results = $wpdb->get_results( $query, ARRAY_A );
 
 		return is_array( $results ) ? $results : array();
+	}
+
+	public function claim_command( int $command_id, string $expected_status ): bool {
+		global $wpdb;
+
+		if ( $command_id <= 0 || ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) || ! method_exists( $wpdb, 'prepare' ) ) {
+			return false;
+		}
+
+		$query = $this->prepare_query(
+			'UPDATE %i SET claimed_at = NOW(), updated_at = NOW() WHERE id = %d AND status = %s AND ( claimed_at IS NULL OR claimed_at <= DATE_SUB( NOW(), INTERVAL %d SECOND ) )',
+			array(
+				$this->table_name,
+				max( 1, $command_id ),
+				trim( $expected_status ),
+				$this->resolve_claim_lease_seconds(),
+			)
+		);
+		if ( ! is_string( $query ) || '' === $query ) {
+			return false;
+		}
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$result = $wpdb->query( $query );
+
+		return false !== $result && (int) $result > 0;
+	}
+
+	private function resolve_claim_lease_seconds(): int {
+		return max( 1, (int) apply_filters( 'acx_split_topology_claim_lease_seconds', self::DEFAULT_CLAIM_LEASE_SECONDS ) );
 	}
 
 	/**

@@ -22,6 +22,26 @@ Ran all 4 shortlist models + the incumbent on the real A1 host (same china/flowe
 
 Cold load 17–28 s (incl. download); peak RSS 2.8–5.7 GB. SmolVLM-500M loaded on transformers 4.48.3 (idefics3 — no ≥4.50 bump needed).
 
+### Phi-tier (GPU-class quality) — measured on A1 CPU 2026-06-15, for GPU-move signal
+
+Reference: the archived recognition service ([/Volumes/Butter/…/archived-recognition-service](file:///Volumes/Butter/archives/archived-recognition-service)) ran **Phi-3.5-vision-instruct** on a **T4 GPU** with acceptable latency, using **eager attention** (T4 = compute cap 7.5, no flash-attn), num_crops=4, greedy, the prompt *"Generate a factual, objective alt-text description for a visually impaired user. Avoid redundancy and speculation."* That config ports cleanly to CPU. Both Phi models were run here in **bf16 + eager** (fp32 Phi-4 would OOM 23 GB; bf16 is emulated/slow on Neoverse-N1).
+
+| Model | china | flower | quality |
+| --- | --- | --- | --- |
+| **Phi-4-multimodal-instruct** (5.6B) | **924 s** (~15 min) | *(skipped to spare host)* | **BEST**: *"A traditional multi-tiered **pagoda** with **green and red roof tiles**, surrounded by trees and overlooking a body of water **with boats**."* — most accurate **and** most concise, no hallucination, ideal alt-text shape |
+| **Phi-3.5-vision-instruct** (4.2B) | 874 s (~15 min) | 844 s (~14 min) | TOP: *"traditional Chinese multi-tiered **pagoda**, red and green… hill overlooking water… greenery"* (+phantom "bridge") / *"single **orange dahlia** in full bloom… blurred green foliage… layers of petals radiating from center, ruffled"* (missed 2nd bud) |
+
+Cold load 95 s (Phi-3.5) / 173 s (Phi-4); peak RSS ~10 GB.
+
+**Signal for the GPU move:**
+- **Quality: Phi >> Florence/BLIP.** Both Phi models correctly name "pagoda" + roof colours and write fluent, natural alt-text; **Phi-4-multimodal is the best of every model tested** — Florence-large's accuracy *with* BLIP's concision. This is the quality ceiling.
+- **Latency: ~14–15 min/image on A1 CPU = GPU-only** (≈60× the Florence-base 14 s). bf16 is emulated on N1; even fp32/native wouldn't close a 60× gap. **The A1 CPU latency is not a discriminator for the GPU choice — quality is**, and the Phi tier clearly wins it. On the prior **T4 (eager)** this latency was "acceptable," so a GPU deployment of Phi-4-multimodal is the quality play.
+- **Swap cost is still one adapter:** the archived `Phi3CaptionAdapter` maps 1:1 onto our `DescriptionAdapter` protocol (chat template `<|user|><|image_1|>…`, processor, greedy, trim-prompt decode) — Phi-4 is the same shape with the `<|user|>…<|end|><|assistant|>` template.
+
+**Net recommendation across CPU + GPU:**
+- **A1 CPU (sovereignty / no-GPU) path:** Florence-2-base-ft is the only viable real-description model (~14 s). The Phi tier is off the table on CPU.
+- **GPU path (the move):** **Phi-4-multimodal-instruct** is the top quality pick (proven loadable, best alt-text); **Phi-3.5-vision** is the de-risked fallback (battle-tested adapter in the archive, known-good on T4 eager). Benchmark both on the actual GPU for the binding latency before committing.
+
 ### Sweet-spot verdict (three lenses: accuracy / WCAG-alt-text / pragmatist)
 
 - **Florence-2-base-ft (the incumbent) is the quality×latency sweet spot** — the only model that is both **under budget** and **rich** (colour, composition, objects) at ~14 s. No swap beats it on richness-under-budget.

@@ -38,6 +38,14 @@ class AuditSink(Protocol):
     async def record(self, *, tenant_id: uuid.UUID, event_type: str, payload: dict[str, Any]) -> None: ...
 
 
+class DescriptionMetrics(Protocol):
+    def record_request(self, *, adapter: str, result: str) -> None: ...
+
+    def record_cache_hit(self, *, adapter: str) -> None: ...
+
+    def observe_adapter_duration(self, *, adapter: str, duration_seconds: float) -> None: ...
+
+
 def _elapsed_ms(start: float) -> int:
     return max(0, int((time.perf_counter() - start) * 1000))
 
@@ -49,12 +57,14 @@ class VisualFactsService:
         adapter: DescriptionAdapter,
         repository: ImageDescriptionRepository | None = None,
         audit_sink: AuditSink | None = None,
+        metrics: DescriptionMetrics | None = None,
         retention_class: RetentionClass = RetentionClass.RETAIN_ALL,
         generation_timeout_seconds: float | None = None,
     ) -> None:
         self._adapter = adapter
         self._repo = repository
         self._audit = audit_sink
+        self._metrics = metrics
         self._retention = retention_class
         self._timeout = generation_timeout_seconds
 
@@ -80,14 +90,18 @@ class VisualFactsService:
                 context_hash=context_hash,
             )
             if row is not None:
-                return self._row_to_response(row, cached=True, duration_ms=_elapsed_ms(start), media_id=media_id)
+                response = self._row_to_response(row, cached=True, duration_ms=_elapsed_ms(start), media_id=media_id)
+                await self._record_cache_hit(tenant_id=tenant_id, media_id=media_id, image_hash=image_hash)
+                return response
 
         # Offload to a thread so a slow adapter (local_cpu Florence ~30-60s) never
         # blocks the event loop — otherwise asyncpg drops the open DB connection
         # mid-request and the persist fails. Seeded is instant, so the overhead is
         # negligible. (A dedicated worker/queue is the heavier production option.)
+        adapter_start = time.perf_counter()
         call = asyncio.to_thread(self._adapter.describe, image_bytes=image_bytes, context=context)
         result = await (asyncio.wait_for(call, self._timeout) if self._timeout else call)
+        self._observe_adapter_duration(time.perf_counter() - adapter_start)
         response = self._result_to_response(
             tenant_id=tenant_id,
             media_id=media_id,
@@ -105,14 +119,36 @@ class VisualFactsService:
         if self._repo is not None:
             row, inserted = await self._repo.insert_or_get_existing(self._response_to_row(response))
             if not inserted:
-                return self._row_to_response(row, cached=True, duration_ms=_elapsed_ms(start), media_id=media_id)
+                response = self._row_to_response(row, cached=True, duration_ms=_elapsed_ms(start), media_id=media_id)
+                await self._record_cache_hit(tenant_id=tenant_id, media_id=media_id, image_hash=image_hash)
+                return response
             if self._audit is not None:
                 await self._audit.record(
                     tenant_id=tenant_id,
                     event_type="description.generated",
                     payload={"media_id": media_id, "image_hash": image_hash, "adapter": response.adapter.value},
                 )
+        self._record_request(result="generated")
         return response
+
+    async def _record_cache_hit(self, *, tenant_id: uuid.UUID, media_id: int, image_hash: str) -> None:
+        if self._audit is not None:
+            await self._audit.record(
+                tenant_id=tenant_id,
+                event_type="description.cache_hit",
+                payload={"media_id": media_id, "image_hash": image_hash, "adapter": self._adapter.kind.value},
+            )
+        if self._metrics is not None:
+            self._metrics.record_cache_hit(adapter=self._adapter.kind.value)
+        self._record_request(result="cache_hit")
+
+    def _observe_adapter_duration(self, duration_seconds: float) -> None:
+        if self._metrics is not None:
+            self._metrics.observe_adapter_duration(adapter=self._adapter.kind.value, duration_seconds=duration_seconds)
+
+    def _record_request(self, *, result: str) -> None:
+        if self._metrics is not None:
+            self._metrics.record_request(adapter=self._adapter.kind.value, result=result)
 
     def _result_to_response(
         self,

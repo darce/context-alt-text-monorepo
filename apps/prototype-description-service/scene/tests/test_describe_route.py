@@ -13,12 +13,14 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from db.models.base_imports import Base
+from db.models.observability import AuditEvent
 from db.models.scene import ImageDescription
 from db.models.tenant import Tenant
 from recognition.interface_adapters.http.dependencies import (
     get_optional_session,
     require_write_access,
 )
+from recognition.interface_adapters.http.middleware.metrics import get_default_metrics
 from scene.application.description_adapter import AdapterResult
 from scene.domain.description import DescriptionAdapterKind
 from scene.interface_adapters.http.deps import get_description_adapter
@@ -58,7 +60,10 @@ def _make_db():
     async def _init():
         engine = create_async_engine(url)
         async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all, tables=[Tenant.__table__, ImageDescription.__table__])
+            await conn.run_sync(
+                Base.metadata.create_all,
+                tables=[Tenant.__table__, ImageDescription.__table__, AuditEvent.__table__],
+            )
         sf = async_sessionmaker(engine, expire_on_commit=False)
         async with sf() as s:  # provision the tenant so require_tenant_record passes
             s.add(Tenant(id=uuid.UUID(TENANT_ID), site_url="http://test.local"))
@@ -114,6 +119,22 @@ def test_happy_path_returns_15_fields_then_cached():
         r2 = _post(client, tenant)
         assert r2.status_code == 200
         assert r2.json()["cached"] is True
+
+
+def test_route_records_description_metrics():
+    metrics = get_default_metrics()
+    with _client() as client:
+        r1 = _post(client, TENANT_ID)
+        r2 = _post(client, TENANT_ID)
+        assert r1.status_code == 200, r1.text
+        assert r2.status_code == 200, r2.text
+
+    generated = metrics.description_requests_total.labels(adapter="seeded", result="generated")._value.get()
+    cache_hit = metrics.description_requests_total.labels(adapter="seeded", result="cache_hit")._value.get()
+    cache_hit_total = metrics.description_cache_hits_total.labels(adapter="seeded")._value.get()
+    assert generated >= 1
+    assert cache_hit >= 1
+    assert cache_hit_total >= 1
 
 
 def test_two_image_parts_422():

@@ -5,8 +5,8 @@ registry (``scene/config/profiles.py``), which is the single source of truth for
 the ``ACX_DESCRIPTION_ADAPTER`` switch. These caps are deployment-host knobs that
 apply to whichever local-CPU Florence profile is active; they exist independently
 of whether the ``[vlm]`` extra (torch/transformers) is installed — the model is
-never imported here. ``async_inline=False`` plus ``worker_concurrency=1`` keep
-inference off the HTTP request path and bounded on the OCI A1 host.
+never imported here. ``worker_concurrency=1`` documents the deferred async worker
+limit; the shipped ``florence_small`` demo path runs inline but off the event loop.
 """
 
 from __future__ import annotations

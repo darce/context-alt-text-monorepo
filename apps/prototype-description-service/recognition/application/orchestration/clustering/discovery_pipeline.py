@@ -5,11 +5,12 @@ from __future__ import annotations
 import contextlib
 import logging
 import uuid
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
 
-from recognition.application.assignment import AssignmentCandidate
+from recognition.application.assignment import AssignmentCandidate, AssignmentOutcome
 from recognition.application.discovery import CentroidDiscovery, GraphDiscovery, RepresentativeDiscovery
 from recognition.application.discovery.graph.helpers import compute_member_similarities
 from recognition.application.persistence.assignment_writer import AssignmentWriter
@@ -18,6 +19,8 @@ from recognition.observability import ClusteringLogger
 from recognition.shared.similarity import normalize_face_embedding
 
 if TYPE_CHECKING:
+    from recognition.application.assignment import AssignmentDecision
+    from recognition.application.orchestration.clustering.decision_handler import DecisionHandler
     from recognition.application.orchestration.protocols import MergeSuggestionServiceProtocol
     from recognition.application.settings import HACSettings
     from recognition.domain.repositories import ConstrainedHACProtocol
@@ -150,6 +153,112 @@ async def run_discovery_pipeline(
 
     all_candidates = rep_candidates + centroid_candidates + graph_candidates
     return all_candidates, new_cluster_proposals
+
+
+@dataclass(frozen=True, slots=True)
+class ChunkGateResult:
+    """Outcome partition for one chunk's discovery candidates.
+
+    ``*_count`` fields count decisions; the ``*_ids`` sets dedupe by identity id.
+    The two can legitimately differ when a single identity produces multiple
+    candidates, so both are reported (behaviour-preserving split).
+    """
+
+    accepted_decisions: list[AssignmentDecision]
+    accepted_ids: set[str]
+    suggested_ids: set[str]
+    rejected_ids: set[str]
+    accept_count: int
+    suggest_count: int
+    reject_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class ChunkPartition:
+    """Identities that still need a new cluster after gate evaluation."""
+
+    still_unclustered: list[MediaIdentity]
+    no_candidates: list[MediaIdentity]
+    rejected_identities: list[MediaIdentity]
+    suggested_identities: list[MediaIdentity]
+
+
+async def evaluate_chunk_candidates(
+    *,
+    all_candidates: list[AssignmentCandidate],
+    decision_handler: DecisionHandler,
+    job_id: str,
+    job_label: str,
+    verbose: bool,
+) -> ChunkGateResult:
+    """Evaluate each candidate through the gate and partition it by outcome.
+
+    ACCEPT persistence is deferred to the caller (bulk write per cluster); this
+    seam only classifies and accumulates the accepted decisions in order.
+    """
+    accepted_decisions: list[AssignmentDecision] = []
+    accepted_ids: set[str] = set()
+    suggested_ids: set[str] = set()
+    rejected_ids: set[str] = set()
+    accept_count = 0
+    suggest_count = 0
+    reject_count = 0
+
+    for candidate in all_candidates:
+        decision = await decision_handler.evaluate_only(
+            candidate,
+            job_id=job_id,
+            job_label=job_label,
+            verbose=verbose,
+        )
+        if decision.outcome == AssignmentOutcome.ACCEPT:
+            accept_count += 1
+            accepted_ids.add(candidate.identity.id)
+            accepted_decisions.append(decision)
+        elif decision.outcome == AssignmentOutcome.SUGGEST:
+            suggest_count += 1
+            suggested_ids.add(candidate.identity.id)
+        else:
+            reject_count += 1
+            rejected_ids.add(candidate.identity.id)
+
+    return ChunkGateResult(
+        accepted_decisions=accepted_decisions,
+        accepted_ids=accepted_ids,
+        suggested_ids=suggested_ids,
+        rejected_ids=rejected_ids,
+        accept_count=accept_count,
+        suggest_count=suggest_count,
+        reject_count=reject_count,
+    )
+
+
+def partition_unclustered(
+    *,
+    chunk: list[MediaIdentity],
+    accepted_ids: set[str],
+    suggested_ids: set[str],
+    rejected_ids: set[str],
+    new_cluster_proposals: list[tuple[list[MediaIdentity], list[float]]],
+) -> ChunkPartition:
+    """Identify the chunk's identities that still need a new cluster.
+
+    Suggested identities need singleton clusters as a fallback: they carry a
+    suggestion linking them to an existing cluster but must still belong to some
+    cluster. Ordering (no_candidates ++ rejected ++ suggested) is preserved.
+    """
+    already_in_new_clusters = {member.id for members, _ in new_cluster_proposals for member in members}
+    all_processed_ids = accepted_ids | suggested_ids | rejected_ids | already_in_new_clusters
+    no_candidates = [i for i in chunk if i.id not in all_processed_ids]
+    rejected_identities = [i for i in chunk if i.id in rejected_ids]
+    suggested_identities = [i for i in chunk if i.id in suggested_ids]
+    still_unclustered = no_candidates + rejected_identities + suggested_identities
+    return ChunkPartition(
+        still_unclustered=still_unclustered,
+        no_candidates=no_candidates,
+        rejected_identities=rejected_identities,
+        suggested_identities=suggested_identities,
+    )
 
 
 async def run_hac_refinement(

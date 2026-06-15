@@ -16,7 +16,6 @@ from db.models import IdentityClusteringJob
 from db.models import IdentityMember as MemberModel
 from db.models import MediaIdentity as MediaIdentityModel
 from db.tenant_context import enable_rls_bypass, set_tenant_context
-from recognition.application.assignment import AssignmentOutcome
 from recognition.application.orchestration.clustering.chunked_processor import ChunkedIdentityProcessor
 from recognition.application.orchestration.clustering.decision_handler import DecisionHandler
 from recognition.application.orchestration.clustering.dependencies import (
@@ -25,6 +24,8 @@ from recognition.application.orchestration.clustering.dependencies import (
     ClusteringRuntimeConfig,
 )
 from recognition.application.orchestration.clustering.discovery_pipeline import (
+    evaluate_chunk_candidates,
+    partition_unclustered,
     prepare_cluster_caches,
     run_discovery_pipeline,
     run_hac_refinement,
@@ -462,28 +463,20 @@ class IncrementalClusteringRunner:
             )
             logger.info("[clustering] Total candidates to evaluate through gate: %d", len(all_candidates))
 
-            accepted_ids: set[str] = set()
-            suggested_ids: set[str] = set()
-            rejected_ids: set[str] = set()
-            accepted_decisions: list = []
-
-            for candidate in all_candidates:
-                decision = await self._decision_handler.evaluate_only(
-                    candidate,
-                    job_id=job_id,
-                    job_label=job_label,
-                    verbose=_verbose_decisions,
-                )
-                if decision.outcome == AssignmentOutcome.ACCEPT:
-                    accept_count += 1
-                    accepted_ids.add(candidate.identity.id)
-                    accepted_decisions.append(decision)
-                elif decision.outcome == AssignmentOutcome.SUGGEST:
-                    suggest_count += 1
-                    suggested_ids.add(candidate.identity.id)
-                else:
-                    reject_count += 1
-                    rejected_ids.add(candidate.identity.id)
+            gate_result = await evaluate_chunk_candidates(
+                all_candidates=all_candidates,
+                decision_handler=self._decision_handler,
+                job_id=job_id,
+                job_label=job_label,
+                verbose=_verbose_decisions,
+            )
+            accept_count += gate_result.accept_count
+            suggest_count += gate_result.suggest_count
+            reject_count += gate_result.reject_count
+            accepted_ids = gate_result.accepted_ids
+            suggested_ids = gate_result.suggested_ids
+            rejected_ids = gate_result.rejected_ids
+            accepted_decisions = gate_result.accepted_decisions
 
             # Bulk-persist all accepted assignments for this chunk: one INSERT per
             # cluster instead of N per-identity round-trips (Phase 3 bulk writes).
@@ -518,14 +511,17 @@ class IncrementalClusteringRunner:
                             decision.candidate.cluster_id,
                         )
 
-            already_in_new_clusters = {member.id for members, _ in new_cluster_proposals for member in members}
-            all_processed_ids = accepted_ids | suggested_ids | rejected_ids | already_in_new_clusters
-            no_candidates = [i for i in chunk if i.id not in all_processed_ids]
-            rejected_identities = [i for i in chunk if i.id in rejected_ids]
-            # Suggested identities need singleton clusters as fallback - they have a suggestion
-            # linking them to an existing cluster, but they must still belong to SOME cluster
-            suggested_identities = [i for i in chunk if i.id in suggested_ids]
-            still_unclustered = no_candidates + rejected_identities + suggested_identities
+            partition = partition_unclustered(
+                chunk=chunk,
+                accepted_ids=accepted_ids,
+                suggested_ids=suggested_ids,
+                rejected_ids=rejected_ids,
+                new_cluster_proposals=new_cluster_proposals,
+            )
+            still_unclustered = partition.still_unclustered
+            no_candidates = partition.no_candidates
+            rejected_identities = partition.rejected_identities
+            suggested_identities = partition.suggested_identities
 
             logger.info(
                 "[clustering] Identities needing new clusters: %d (no candidates: %d, rejected: %d, suggested: %d)",

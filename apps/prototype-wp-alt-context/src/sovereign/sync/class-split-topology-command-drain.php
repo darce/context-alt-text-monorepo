@@ -271,7 +271,14 @@ class SplitTopologyCommandDrain {
 		}
 
 		if ( 'conflict' === $status ) {
-			$this->repository->record_dispatch_result( $command_id, $result, 'pending' );
+			// Claimed as 'pending'; record_dispatch_result is the pending->conflict transition.
+			// If this drain outlived its lease and a peer re-claimed + advanced the row, the
+			// guarded write matches 0 rows -> do not re-project a stale conflict snapshot over
+			// the peer's state. Mirrors the 'applied' branch's guarded early-return.
+			if ( ! $this->repository->record_dispatch_result( $command_id, $result, 'pending' ) ) {
+				return;
+			}
+
 			$this->reconcile_conflict( $command, $result );
 			return;
 		}

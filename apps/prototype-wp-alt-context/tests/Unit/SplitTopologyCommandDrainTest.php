@@ -1192,6 +1192,56 @@ class SplitTopologyCommandDrainTest extends TestCase
         $this->assertSame([], $membersRepository->projectionAssignments);
     }
 
+    public function testDrainSkipsConflictReconcileWhenDispatchResultGuardLostToPeerDrain(): void
+    {
+        // CON-4-FU-1 (conflict branch): the claim is granted (lease reclaimed), but this drain's
+        // slow dispatch outlived its lease and a peer re-claimed + advanced the row. The guarded
+        // pending->conflict write then matches 0 rows; the drain must NOT re-project a stale
+        // conflict snapshot over the peer's state — mirroring the applied branch's early return.
+        // Without the guard check this test fails: reconcile_conflict would fetch + project.
+        $repository = new SplitTopologyCommandRepositoryFake([
+            $this->pendingSplitCommand(),
+        ]);
+        $repository->dispatchResultGranted = false;
+        global $wpdb;
+        $wpdb->mockResults = [];
+        $transport = new SplitTransportFake([
+            new WP_REST_Response([
+                'conflict_code' => 'cluster_version_conflict',
+                'backend_version' => 88,
+                'message' => 'stale split request',
+            ], 409),
+        ]);
+        $snapshotClient = new SnapshotClientFake([
+            'tenant-test' => [
+                'snapshot_version' => 88,
+                'clusters' => [],
+                'members' => [],
+            ],
+        ]);
+        $projector = new SnapshotProjectorFake();
+
+        $drain = new SplitTopologyCommandDrain(
+            $repository,
+            $transport,
+            $snapshotClient,
+            $projector,
+            new SplitClustersRepositoryFake(),
+            new SplitMembersRepositoryFake(),
+            new SplitSyncStateRepositoryFake()
+        );
+        $drain->drain();
+
+        // Claim granted and dispatch ran, but the guarded write no-op'd -> no reconcile/projection.
+        $this->assertSame([[7, 'pending']], $repository->claimCalls);
+        $this->assertCount(1, $transport->requests);
+        $this->assertCount(0, $repository->dispatchResults);
+        $this->assertSame([], $snapshotClient->fetchCalls);
+        $this->assertSame([], $snapshotClient->targetedFetchCalls);
+        $this->assertSame([], $projector->projectCalls);
+        $this->assertSame([], $repository->failures);
+    }
+
     /**
      * @param array<string,mixed> $overrides
      * @return array<string,mixed>
@@ -1245,6 +1295,7 @@ class SplitTopologyCommandRepositoryFake implements TopologyCommandRepositoryInt
     /** @var array<int,array{0:int,1:string}> */
     public array $claimCalls = [];
     public bool $claimGranted = true;
+    public bool $dispatchResultGranted = true;
 
     /**
      * @param array<int,array<string,mixed>> $pending
@@ -1328,6 +1379,12 @@ class SplitTopologyCommandRepositoryFake implements TopologyCommandRepositoryInt
 
     public function record_dispatch_result(int $command_id, array $response, ?string $expected_status = null): bool
     {
+        if (!$this->dispatchResultGranted) {
+            // Simulate the guarded pending->terminal write matching 0 rows because a peer
+            // drain re-claimed past the lease and already advanced the row.
+            return false;
+        }
+
         $this->setPendingStatus($command_id, (string) ($response['status'] ?? 'applied'));
         $this->dispatchResults[] = $response;
         return true;

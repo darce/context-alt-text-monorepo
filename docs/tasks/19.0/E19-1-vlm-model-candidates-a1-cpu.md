@@ -22,6 +22,30 @@ Ran all 4 shortlist models + the incumbent on the real A1 host (same china/flowe
 
 Cold load 17–28 s (incl. download); peak RSS 2.8–5.7 GB. SmolVLM-500M loaded on transformers 4.48.3 (idefics3 — no ≥4.50 bump needed).
 
+### Florence config sweep — A1 CPU, 2026-06-15 (the deployable settings)
+
+Swept Florence-2-**base-ft** ("small", cold 11.5s) and **large-ft** (cold 19.8s) over the high-impact levers: **beams (1 vs 3)**, **OD on/off**, and **task token** (`<CAPTION>` / `<DETAILED_CAPTION>` / `<MORE_DETAILED_CAPTION>`). fp32, 1024px, both images. `cap` = caption pass, `od` = the separate `<OD>` forward.
+
+| Config | base china | base flower | large china | large flower |
+| --- | --- | --- | --- | --- |
+| `MDC b3 +OD` (orig baseline) | 15.1s (5.9+9.2) | 12.5s (7.7+4.8) | 38.2s (18.5+19.7) | 39.1s (23.1+16.0) |
+| `MDC b1 +OD` | 9.3s (4.8+4.5) | 9.2s (4.9+4.3) | 34.7s | 33.1s |
+| **`MDC b1` (no OD)** | **4.9s** | **5.0s** | 19.5s | 17.4s |
+| `MDC b3` (no OD) | 5.9s | 7.6s | 18.9s | 26.6s |
+| `DC b1` (no OD) | 6.4s | 7.9s | 18.5s | 16.0s |
+| `CAP b1` (no OD) | 4.5s | 4.5s | 15.6s | 18.4s |
+
+**What the levers do:**
+- **OD is ~half the latency and the source of the hallucination.** base `MDC b3 +OD` flower → OD `['dining table']` (wrong); dropping OD or switching to **beams=1** flipped it to `['flower']`/correct. The `<OD>` pass costs as much as the caption (base china: caption 5.9s, OD 9.2s). **Drop OD unless you need object labels** (and the recognition pipeline already does faces/objects separately).
+- **beams=1 ≈ beams=3 quality, and is faster on base-ft** (and stopped the OD hallucination). On **large-ft beams barely matter** — it's encoder/decode-bound (a ~15s floor on A1 regardless), so beams=1 is strictly better.
+- **Task token: `<MORE_DETAILED_CAPTION>` is the quality pick.** `<DETAILED_CAPTION>` / `<CAPTION>` are **not faster** (decode-bound) and produce *worse* captions — base CAP china *"a building with a view of the ocean"* (wrong, it's a lake), DC flower *"a flower which is in cream color"* (wrong colour), large DC flower *"In this image we can see a flower."* (useless). Don't shorten the task to save time — it doesn't.
+- **Other levers (noted, not swept):** **downsample edge** (1024→768/512) is the one lever that could cut large-ft's ~15s encoder floor — worth a future test; **max_new_tokens** cap bounds the verbose tail (MDC stops at EOS so minor here); **dtype** keep fp32 (native/fast on N1; bf16 is emulated/slower).
+
+**Recommended production config (CPU A1):**
+> **Florence-2-base-ft · `<MORE_DETAILED_CAPTION>` · `num_beams=1` · OD off → ~5 s/image**, rich accurate caption (*"A tall red building with a pointed roof sits on a hill… water behind with boats"* / *"A large light orange flower with a red center… many petals… green leaf behind"*), **no hallucination**, ~3× faster than the original 15 s baseline and ~4× under the 20 s bar. If object labels are needed, add OD at beams=1 (~9 s, correct labels). Wire as `VlmSettings(num_beams=1, tasks=("<MORE_DETAILED_CAPTION>",))`.
+
+**large-ft is not worth it on CPU:** even tuned (`MDC b1` no-OD) it's ~17–20 s (3.5× base) and its *china* caption is actually **less** specific than base ("tall building", no "red"/"pagoda") — it only wins on the flower (dahlia + "two smaller flowers"). Reserve large-ft for the **GPU** tier where its quality pays off without the latency.
+
 ### Phi-tier (GPU-class quality) — measured on A1 CPU 2026-06-15, for GPU-move signal
 
 Reference: the archived recognition service ([/Volumes/Butter/…/archived-recognition-service](file:///Volumes/Butter/archives/archived-recognition-service)) ran **Phi-3.5-vision-instruct** on a **T4 GPU** with acceptable latency, using **eager attention** (T4 = compute cap 7.5, no flash-attn), num_crops=4, greedy, the prompt *"Generate a factual, objective alt-text description for a visually impaired user. Avoid redundancy and speculation."* That config ports cleanly to CPU. Both Phi models were run here in **bf16 + eager** (fp32 Phi-4 would OOM 23 GB; bf16 is emulated/slow on Neoverse-N1).

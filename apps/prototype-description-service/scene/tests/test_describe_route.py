@@ -182,3 +182,21 @@ def test_local_cpu_route_uses_vlm_timeout(monkeypatch):
         # Message must report the VLM cap that actually fired, not the 60s
         # description timeout (regression guard for E19-1-REV-A-2 / REV-B-1).
         assert "0.001" in r.json()["detail"]
+
+
+def test_stub_profile_returns_503_with_reason():
+    # A deferred/stub profile (florence_large, gpu_phi4) resolves to a fail-closed
+    # UnavailableDescriptionAdapter; the route must surface its reason as 503, not
+    # an opaque 500 (E19-1-REV-C-1).
+    from scene.infrastructure.vlm.unavailable_adapter import UnavailableDescriptionAdapter
+
+    stub = UnavailableDescriptionAdapter(
+        "florence_large (~39s/image) requires the async describe worker",
+        kind=DescriptionAdapterKind.LOCAL_CPU,
+        model_id="microsoft/Florence-2-large-ft",
+        model_version="florence-2-large-ft",
+    )
+    with _client(adapter=stub) as client:
+        r = _post(client, TENANT_ID)
+        assert r.status_code == 503, r.text
+        assert "async describe worker" in r.json()["detail"]

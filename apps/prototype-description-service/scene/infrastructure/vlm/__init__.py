@@ -16,20 +16,35 @@ from scene.infrastructure.vlm.unavailable_adapter import (
     UnavailableDescriptionAdapter,
 )
 
-_SHARED: LocalCpuDescriptionAdapter | None = None
+_SHARED: dict[tuple, LocalCpuDescriptionAdapter] = {}
 
 
 def get_shared_local_cpu_adapter(**kwargs) -> LocalCpuDescriptionAdapter:
-    """Process-wide singleton so the heavy model loads at most once."""
-    global _SHARED
-    if _SHARED is None:
-        _SHARED = LocalCpuDescriptionAdapter(**kwargs)
-    return _SHARED
+    """Per-model process-wide cache so each distinct model loads at most once.
+
+    Keyed by the build identity (model id/revision/version + decode caps), NOT a
+    single global slot: two LOCAL_CPU profiles (e.g. florence_small vs
+    florence_large) must never alias to one adapter. Aliasing would mis-key the
+    description cache (``model_version`` is a cache-key input) and mislabel
+    provenance — E19-1-REV-A-1.
+    """
+    key = (
+        kwargs.get("model_id"),
+        kwargs.get("model_revision"),
+        kwargs.get("model_version"),
+        kwargs.get("num_beams"),
+        kwargs.get("max_new_tokens"),
+        kwargs.get("max_image_edge_px"),
+    )
+    adapter = _SHARED.get(key)
+    if adapter is None:
+        adapter = LocalCpuDescriptionAdapter(**kwargs)
+        _SHARED[key] = adapter
+    return adapter
 
 
 def reset_shared_local_cpu_adapter_for_tests() -> None:
-    global _SHARED
-    _SHARED = None
+    _SHARED.clear()
 
 
 __all__ = [

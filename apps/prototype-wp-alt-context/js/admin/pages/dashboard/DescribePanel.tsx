@@ -26,13 +26,16 @@ export const DescribePanel = (): React.JSX.Element => {
     }
   };
 
-  const result = mutation.data;
-  const errorMessage = mutation.error
-    ? resolveDescribeErrorMessage(
-        mutation.error,
-        __('The description service could not be reached. Try again.', 'alt-context'),
-      )
-    : null;
+  // Hide the prior image's result/error while a new describe is in flight —
+  // react-query keeps the last data/error during the next mutation (E19-1-REV-B-2).
+  const result = mutation.isPending ? undefined : mutation.data;
+  const errorMessage =
+    !mutation.isPending && mutation.error
+      ? resolveDescribeErrorMessage(
+          mutation.error,
+          __('The description service could not be reached. Try again.', 'alt-context'),
+        )
+      : null;
 
   return (
     <section className="acx-dashboard__panel acx-describe" aria-labelledby={`${inputId}-title`}>

@@ -66,9 +66,14 @@ class OutboxQueryRepositoryTest extends TestCase
         // CON-3-FU-1: a drain that dies between claim_operation (pending->in_flight) and
         // apply_result orphans the row in_flight forever — load_pending_operations only sees
         // 'pending', so the stuck row is never reprocessed. A lease-expiry reclaim returns
-        // in_flight rows whose claim is older than the lease back to 'pending'. Mirrors the
-        // topology drain's claimed_at lease-reclaim; a freshly-claimed row (claimed_at = NOW)
-        // is excluded by the lease window so a peer drain mid-flight is not disturbed.
+        // in_flight rows whose claim is older than the lease back to 'pending'. A freshly-claimed
+        // row is excluded by the lease window so a peer drain mid-flight is not disturbed.
+        //
+        // CON-3-FU-REV-A1 regression: the lease cutoff MUST use the WP clock current_time('mysql')
+        // — the same clock claim_operation writes claimed_at with — not MySQL NOW(). A bound,
+        // quoted timestamp cutoff (DATE_SUB( 'Y-m-d H:i:s', ... )) proves both sides share the WP
+        // clock; a bare DATE_SUB( NOW(), ... ) would reintroduce the site-vs-DB tz mismatch that
+        // silently no-ops or mis-fires the reclaim.
         global $wpdb;
         $wpdb->defaultQueryResult = 2;
 
@@ -82,8 +87,10 @@ class OutboxQueryRepositoryTest extends TestCase
             static fn (string $query): bool => str_contains($query, 'acx_sync_outbox')
                 && str_contains($query, "SET status = 'pending', claimed_at = NULL")
                 && str_contains($query, "WHERE status = 'in_flight'")
-                && str_contains($query, 'DATE_SUB( NOW(), INTERVAL 300 SECOND )')
+                && str_contains($query, "DATE_SUB( '")
+                && str_contains($query, 'INTERVAL 300 SECOND )')
+                && ! str_contains($query, 'DATE_SUB( NOW(')
         );
-        $this->assertNotEmpty($matched, 'Expected a lease-gated reclaim UPDATE returning stale in_flight rows to pending.');
+        $this->assertNotEmpty($matched, 'Expected a lease-gated reclaim UPDATE whose cutoff is the WP clock (current_time), not MySQL NOW().');
     }
 }

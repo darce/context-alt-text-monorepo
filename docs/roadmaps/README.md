@@ -9,6 +9,7 @@ Product and architecture roadmaps for the Alt Context monorepo.
 | [roadmap-v3.hybrid.md](roadmap-v3.hybrid.md) | Architectural vision — hybrid on-device + backend recognition, sovereign clusters, assisted labeling UX | Vision reference, superseded |
 | [roadmap-v4.md](roadmap-v4.md)             | Product and architecture roadmap for the next recognition UX wave                                        | Historical roadmap draft      |
 | [roadmap-pg18-upgrade.md](roadmap-pg18-upgrade.md) | PostgreSQL upgrade evaluation and phased migration planning                                      | Technical roadmap             |
+| [context-aware-image-description-roadmap-2026-06-13.md](context-aware-image-description-roadmap-2026-06-13.md) | Roadmap seed for context-aware image description, visual facts, WordPress alt-text workflow, and provider adapters | Roadmap seed (pre-epic) |
 
 ## How to use
 

@@ -89,6 +89,6 @@ def test_request_rejects_extra_field_and_nonpositive_media_id():
 
 
 def test_enums_have_canonical_values():
-    assert [e.value for e in DescriptionAdapterKind] == ["seeded", "local_cpu", "hosted_provider"]
+    assert [e.value for e in DescriptionAdapterKind] == ["seeded", "local_cpu", "gpu", "hosted_provider"]
     assert [e.value for e in RetentionClass] == ["retain_all", "dispose_after_ack", "purge_on_demand"]
     assert ProviderMode.NONE.value == "none"

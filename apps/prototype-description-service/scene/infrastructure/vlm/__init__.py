@@ -11,7 +11,10 @@ from scene.infrastructure.vlm.florence_local_adapter import (
     LocalCpuDescriptionAdapter,
     LocalVlmUnavailableError,
 )
-from scene.infrastructure.vlm.unavailable_adapter import UnavailableDescriptionAdapter
+from scene.infrastructure.vlm.unavailable_adapter import (
+    DescriptionAdapterUnavailableError,
+    UnavailableDescriptionAdapter,
+)
 
 _SHARED: LocalCpuDescriptionAdapter | None = None
 
@@ -30,6 +33,7 @@ def reset_shared_local_cpu_adapter_for_tests() -> None:
 
 
 __all__ = [
+    "DescriptionAdapterUnavailableError",
     "LocalCpuDescriptionAdapter",
     "LocalVlmUnavailableError",
     "UnavailableDescriptionAdapter",

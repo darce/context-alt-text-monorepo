@@ -28,6 +28,8 @@ from scene.interface_adapters.http.schemas.responses import (
 _PROVIDER_FOR_ADAPTER = {
     DescriptionAdapterKind.SEEDED: ProviderMode.NONE,
     DescriptionAdapterKind.LOCAL_CPU: ProviderMode.LOCAL,
+    # GPU (e.g. Phi-4) runs on our own host — bytes stay inside the boundary.
+    DescriptionAdapterKind.GPU: ProviderMode.LOCAL,
     DescriptionAdapterKind.HOSTED_PROVIDER: ProviderMode.HOSTED,
 }
 

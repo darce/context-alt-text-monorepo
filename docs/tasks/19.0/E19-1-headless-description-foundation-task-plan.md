@@ -245,6 +245,44 @@ Proof:
 
 ---
 
+## Slice Delivery — UI Wiring Extension (S11–S13)
+
+Follow-on to S1–S10: wire the benchmarked Florence winners behind a 4-option operator switch and surface description in the WordPress admin for the MVP demo. Execution stays **inline off-thread** (the existing `asyncio.to_thread` path); the DB-backed async worker is deferred and documented (S13). Only `seeded` + `florence_small` are functional this turn; `florence_large` + `gpu_phi4` ship as fail-closed stubs.
+
+### Slice 11 (S11): 4-option description profile switch + Florence stubs
+
+**Goal**: Replace the binary `seeded|local_cpu` selector with an operator-facing `DescriptionProfile` switch resolving to the benchmarked winners; functional `seeded`/`florence_small`, fail-closed `florence_large`/`gpu_phi4` stubs naming the deferral + impl notes.
+
+Changes:
+- `scene/config/profiles.py` (new) — `DescriptionProfile` StrEnum + frozen `ProfileSpec` registry (kind, model_id, revision, model_version, decode params, availability, reason)
+- `scene/config/settings.py` (`profile` from `ACX_DESCRIPTION_ADAPTER`), `scene/application/settings/vlm.py` (host caps only; drop model fields + invalid `adapter_mode` parse), `scene/interface_adapters/http/deps.py` (profile→adapter resolution), `scene/domain/description.py` (`GPU` kind), `scene/infrastructure/vlm/unavailable_adapter.py` (carry kind/model_id/model_version + `DescriptionAdapterUnavailableError`), `scene/application/visual_facts_service.py` (`GPU`→`local` provider), `scene/interface_adapters/http/routers/describe.py` (503 on unavailable), `scripts/benchmark_local_vlm.py` (revision default from registry)
+
+Proof:
+- `uv run pytest apps/prototype-description-service/scene/tests/test_description_profiles.py -q` — each profile resolves to the right adapter (kind/model_id/availability); stubs raise `DescriptionAdapterUnavailableError`; `florence_small` builds without a model load; default is `seeded`
+- existing `scene/tests/test_settings.py`/`test_local_vlm_adapter.py`/`test_schemas.py` updated + green
+
+### Slice 12 (S12): WordPress admin "Describe with AI" UI
+
+**Goal**: A media-attachment admin action that POSTs `acx/v1/recognition/describe` and renders `alt_text_draft` + visual facts (caption/objects) + provenance (adapter/model_id), with loading + error states (503 stub message surfaced).
+
+Changes:
+- `apps/prototype-wp-alt-context/js/admin/**` — describe button/panel component + hook calling the existing REST route; render result; surface 503/`invalid_description_envelope`
+
+Proof:
+- `npm test` (component/hook): triggers describe, renders `alt_text_draft`/objects/provenance on 200; shows the stub/unavailable message on 503; disabled while in flight
+
+### Slice 13 (S13): florence_large + async-worker + OCI-Florence impl notes
+
+**Goal**: Detailed, implementation-ready notes so the deferred work is unambiguous: the async describe worker (job table, SKIP-LOCKED claim, worker process, compose service, WP enqueue/poll), the `florence_large` enablement, and the OCI `runtime-vlm` build + env to run `florence_small` on the remote A1 for the demo.
+
+Changes:
+- `docs/tasks/19.0/E19-1-florence-large-async-worker-impl-notes.md` (new), `apps/prototype-description-service/.env.prod.example` + operator notes for the renamed switch + OCI Florence enablement
+
+Proof:
+- notes enumerate concrete files/seams (mirroring `recognition/worker/scan_worker.py` + `db/models/jobs.py`), env keys, and the WP polling contract; `.env.prod.example` documents `ACX_DESCRIPTION_ADAPTER=florence_small` + `ACX_VLM_*`
+
+---
+
 ## Consolidated Checklist
 
 ## Context and Ownership
@@ -304,6 +342,21 @@ Proof:
 
 - [ ] `scripts/benchmark_local_vlm.py` + seed fixture + `vlm-benchmark` target + decision memo
 - [ ] `make vlm-benchmark` JSON captured; decision recorded; recognition health unaffected
+
+### Checklist for Slice 11 (S11): description profile switch + stubs
+
+- [ ] `DescriptionProfile` (4 options) + `ProfileSpec` registry in `scene/config/profiles.py`; `seeded`/`florence_small` functional, `florence_large`/`gpu_phi4` fail-closed stubs; `GPU` provenance kind
+- [ ] `uv run pytest scene/tests/test_description_profiles.py -q` green + updated `test_settings.py`/`test_local_vlm_adapter.py`/`test_schemas.py` green
+
+### Checklist for Slice 12 (S12): WordPress describe UI
+
+- [ ] Admin "Describe with AI" action in `apps/prototype-wp-alt-context/js/admin/**` calling `acx/v1/recognition/describe`; renders `alt_text_draft`/objects/provenance; loading + 503-stub error states
+- [ ] `npm test` green for the describe component/hook
+
+### Checklist for Slice 13 (S13): florence_large + async-worker impl notes
+
+- [ ] `docs/tasks/19.0/E19-1-florence-large-async-worker-impl-notes.md` enumerates the async worker seams (job table, SKIP-LOCKED claim, worker process, compose, WP poll), `florence_large` enablement, and OCI `runtime-vlm` Florence build/env
+- [ ] `.env.prod.example` documents the renamed switch (`ACX_DESCRIPTION_ADAPTER=florence_small`) + `ACX_VLM_*`
 
 ## Review Readiness
 

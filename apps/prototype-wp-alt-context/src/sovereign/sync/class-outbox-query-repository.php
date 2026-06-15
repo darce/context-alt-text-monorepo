@@ -307,8 +307,15 @@ class OutboxQueryRepository {
 	 * terminal apply_result write orphans the row: load_pending_operations() and
 	 * has_pending_operations() only see `pending`, so the stuck row is never reprocessed. This
 	 * lease-expiry UPDATE returns such rows to `pending` and clears the claim. A freshly-claimed
-	 * row (claimed_at = NOW) sits inside the lease window and is left untouched, so a peer drain
-	 * mid-flight is not disturbed. Mirrors the topology drain's lease-reclaim. Returns the count.
+	 * row sits inside the lease window and is left untouched, so a peer drain mid-flight is not
+	 * disturbed.
+	 *
+	 * CON-3-FU-REV-A1: the lease cutoff is computed from current_time('mysql') — the SAME WP
+	 * site clock claim_operation() writes claimed_at with — NOT MySQL NOW(). Comparing a
+	 * WP-local claimed_at against the DB server's NOW() silently breaks the lease whenever the
+	 * site timezone differs from the DB session timezone (ahead -> never reclaims, behind ->
+	 * reclaims rows a peer still holds). Every outbox timestamp uses the WP clock; the lease
+	 * stays on that clock too.
 	 */
 	public function reclaim_stale_in_flight_operations( int $lease_seconds ): int {
 		global $wpdb;
@@ -318,10 +325,11 @@ class OutboxQueryRepository {
 		}
 
 		$query = $wpdb->prepare(
-			'UPDATE %i SET status = %s, claimed_at = NULL WHERE status = %s AND ( claimed_at IS NULL OR claimed_at <= DATE_SUB( NOW(), INTERVAL %d SECOND ) )',
+			'UPDATE %i SET status = %s, claimed_at = NULL WHERE status = %s AND ( claimed_at IS NULL OR claimed_at <= DATE_SUB( %s, INTERVAL %d SECOND ) )',
 			$this->table_name,
 			OutboxStatus::PENDING,
 			OutboxStatus::IN_FLIGHT,
+			current_time( 'mysql' ),
 			max( 1, $lease_seconds )
 		);
 		if ( ! is_string( $query ) || '' === $query ) {

@@ -277,7 +277,8 @@ class OutboxDrainTest extends TestCase
 
 		$this->assertSame(0, $dispatcher->dispatchCalls);
 		$this->assertTrue($this->isHookScheduled('acx_sync_drain_curation_outbox'));
-		$this->assertSame('', $this->findFirstQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_outbox SET'));
+		// CON-3-FU-1: reclaim runs on entry, but the blocked operation is never claimed/dispatched.
+		$this->assertSame('', $this->findFirstQueryContaining($wpdb->queries, "SET status = 'in_flight'"));
 	}
 
 	public function testDrainReturnsImmediatelyWhenNoPendingOperationsExist(): void
@@ -300,7 +301,10 @@ class OutboxDrainTest extends TestCase
 
 		$this->assertSame(0, $dispatcher->dispatchCalls);
 		$this->assertFalse($this->isHookScheduled('acx_sync_drain_curation_outbox'));
-		$this->assertSame('', $this->findFirstQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_outbox SET'));
+		// CON-3-FU-1: the drain reclaims stale in_flight rows on entry, but with nothing pending
+		// it claims and dispatches nothing.
+		$this->assertNotSame('', $this->findFirstQueryContaining($wpdb->queries, "SET status = 'pending', claimed_at = NULL"));
+		$this->assertSame('', $this->findFirstQueryContaining($wpdb->queries, "SET status = 'in_flight'"));
 	}
 
 	public function testDrainDispatchesMergeTopologyOperationAndMarksAcknowledged(): void

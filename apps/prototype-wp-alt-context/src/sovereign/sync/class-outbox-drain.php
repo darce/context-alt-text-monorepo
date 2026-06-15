@@ -42,6 +42,7 @@ class OutboxDrain {
 	private const ACTION_SCHEDULER_GROUP = 'acx-sync';
 	private const DEFAULT_BATCH_SIZE = 25;
 	private const DEFAULT_MAX_ATTEMPTS = 5;
+	private const DEFAULT_CLAIM_LEASE_SECONDS = 300;
 
 	private OutboxDispatcher $dispatcher;
 	private ConflictRepository $conflict_repository;
@@ -133,6 +134,11 @@ class OutboxDrain {
 	}
 
 	public function drain(): void {
+		// CON-3-FU-1: recover rows orphaned in_flight by a drain that died between claim and the
+		// terminal apply_result write, before loading the pending batch. The lease window leaves
+		// rows a concurrent drain is actively processing untouched.
+		$this->query_repository->reclaim_stale_in_flight_operations( $this->resolve_claim_lease_seconds() );
+
 		$operations = $this->sequencer->filter_ready_outbox_operations(
 			$this->query_repository->load_pending_operations( $this->batch_size )
 		);
@@ -386,6 +392,10 @@ class OutboxDrain {
 
 	private function resolve_max_attempts(): int {
 		return max( 1, (int) apply_filters( 'acx_outbox_max_attempts', self::DEFAULT_MAX_ATTEMPTS ) );
+	}
+
+	private function resolve_claim_lease_seconds(): int {
+		return max( 1, (int) apply_filters( 'acx_outbox_claim_lease_seconds', self::DEFAULT_CLAIM_LEASE_SECONDS ) );
 	}
 
 	private function normalize_text( mixed $value, string $default ): string {

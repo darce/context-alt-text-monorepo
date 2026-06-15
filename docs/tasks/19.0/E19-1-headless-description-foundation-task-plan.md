@@ -345,18 +345,18 @@ Proof:
 
 ### Checklist for Slice 11 (S11): description profile switch + stubs
 
-- [ ] `DescriptionProfile` (4 options) + `ProfileSpec` registry in `scene/config/profiles.py`; `seeded`/`florence_small` functional, `florence_large`/`gpu_phi4` fail-closed stubs; `GPU` provenance kind
-- [ ] `uv run pytest scene/tests/test_description_profiles.py -q` green + updated `test_settings.py`/`test_local_vlm_adapter.py`/`test_schemas.py` green
+- [x] `DescriptionProfile` (4 options) + `ProfileSpec` registry in `scene/config/profiles.py`; `seeded`/`florence_small` functional, `florence_large`/`gpu_phi4` fail-closed stubs; `GPU` provenance kind
+- [x] `uv run pytest scene/tests/test_description_profiles.py -q` green + updated `test_settings.py`/`test_local_vlm_adapter.py`/`test_schemas.py` green
 
 ### Checklist for Slice 12 (S12): WordPress describe UI
 
-- [ ] Admin "Describe with AI" action in `apps/prototype-wp-alt-context/js/admin/**` calling `acx/v1/recognition/describe`; renders `alt_text_draft`/objects/provenance; loading + 503-stub error states
-- [ ] `npm test` green for the describe component/hook
+- [x] Admin "Describe with AI" action in `apps/prototype-wp-alt-context/js/admin/**` calling `acx/v1/recognition/describe`; renders `alt_text_draft`/objects/provenance; loading + 503-stub error states
+- [x] `npm test` green for the describe component/hook *(vitest: describeApi 3 + DescribePanel 5; DashboardPage mock; AdminTest endpoint)*
 
 ### Checklist for Slice 13 (S13): florence_large + async-worker impl notes
 
-- [ ] `docs/tasks/19.0/E19-1-florence-large-async-worker-impl-notes.md` enumerates the async worker seams (job table, SKIP-LOCKED claim, worker process, compose, WP poll), `florence_large` enablement, and OCI `runtime-vlm` Florence build/env
-- [ ] `.env.prod.example` documents the renamed switch (`ACX_DESCRIPTION_ADAPTER=florence_small`) + `ACX_VLM_*`
+- [x] `docs/tasks/19.0/E19-1-florence-large-async-worker-impl-notes.md` enumerates the async worker seams (job table, SKIP-LOCKED claim, worker process, compose, WP poll), `florence_large` enablement, and OCI `runtime-vlm` Florence build/env
+- [x] `.env.prod.example` documents the renamed switch (`ACX_DESCRIPTION_ADAPTER=florence_small`) + `ACX_VLM_*`
 
 ## Review Readiness
 

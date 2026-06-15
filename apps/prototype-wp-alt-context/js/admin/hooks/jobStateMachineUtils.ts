@@ -3,6 +3,21 @@ import type { PersistedJob } from './useJobPersistence';
 
 export type PipelinePhase = 'idle' | 'scanning' | 'clustering' | 'projecting';
 
+type ScanJobStatus = JobStatusResponse['status'];
+
+// Terminal partial-success: some items succeeded, some failed. The description-service emits
+// completed_with_errors as a terminal status, so recognition-job consumers must treat it as a
+// completed scan (refresh/finalize). Centralized so the check is not scattered as `=== 'completed'`
+// literals across hooks (sr-007, BND-1).
+export const SCAN_SUCCESS_STATUSES = ['completed', 'completed_with_errors'] as const satisfies readonly ScanJobStatus[];
+
+export const isScanSuccessStatus = (status: ScanJobStatus | undefined): boolean =>
+  status !== undefined && (SCAN_SUCCESS_STATUSES as readonly string[]).includes(status);
+
+// Terminal = succeeded (incl. partial) or hard-failed.
+export const isScanTerminalStatus = (status: ScanJobStatus | undefined): boolean =>
+  isScanSuccessStatus(status) || status === 'failed';
+
 export const getLatestJobByType = (jobs: PersistedJob[], type: PersistedJob['type']): PersistedJob | null => {
   const typedJobs = jobs.filter((job) => job.type === type);
   return typedJobs[typedJobs.length - 1] ?? null;
@@ -24,8 +39,7 @@ export const derivePipelinePhase = (
   // Backend auto-chained a clustering job; frontend never registered a local cluster entry.
   // Guard: only treat as active when backend reports a non-terminal state so stale cached
   // responses do not lock the UI in the clustering phase after the job finishes.
-  const backendClusteringActive =
-    scanStatus?.type === 'clustering' && scanStatus.status !== 'completed' && scanStatus.status !== 'failed';
+  const backendClusteringActive = scanStatus?.type === 'clustering' && !isScanTerminalStatus(scanStatus.status);
   if (backendClusteringActive) {
     return 'clustering';
   }

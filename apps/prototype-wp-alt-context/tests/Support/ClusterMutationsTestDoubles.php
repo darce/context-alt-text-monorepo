@@ -188,27 +188,28 @@ class ClusterMutationsTopologyCommandSpy implements TopologyCommandRepositoryInt
         int $command_id,
         string $status,
         ?array $result_payload = null,
-        ?string $backend_command_id = null
+        ?string $backend_command_id = null,
+        ?string $expected_status = null
     ): bool {
         return true;
     }
 
-    public function record_dispatch_result(int $command_id, array $response): bool
+    public function record_dispatch_result(int $command_id, array $response, ?string $expected_status = null): bool
     {
         return true;
     }
 
-    public function mark_reconciled(int $command_id, ?array $result_payload = null): bool
+    public function mark_reconciled(int $command_id, ?array $result_payload = null, ?string $expected_status = null): bool
     {
         return true;
     }
 
-    public function record_failure(int $command_id, string $status, string $error_code, string $error_message, bool $increment_attempt = true): bool
+    public function record_failure(int $command_id, string $status, string $error_code, string $error_message, bool $increment_attempt = true, ?string $expected_status = null): bool
     {
         return true;
     }
 
-    public function record_reconcile_failure(int $command_id, string $status, string $error_code, string $error_message): bool
+    public function record_reconcile_failure(int $command_id, string $status, string $error_code, string $error_message, ?string $expected_status = null): bool
     {
         return true;
     }

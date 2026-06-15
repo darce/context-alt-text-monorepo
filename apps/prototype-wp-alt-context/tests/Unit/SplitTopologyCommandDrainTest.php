@@ -1065,6 +1065,57 @@ class SplitTopologyCommandDrainTest extends TestCase
         $this->assertNotEmpty($cleared, 'record_reconcile_failure must clear claimed_at for prompt re-claim.');
     }
 
+    public function testTerminalWritesGuardOnExpectedStatusSoStaleWorkerWriteIsNoOp(): void
+    {
+        // CON-4-FU-1: defense-in-depth on top of the lease claim. If a drain's processing
+        // exceeds the claim lease and the row is re-claimed by a peer mid-flight, the late
+        // drain's terminal write must match 0 rows instead of clobbering the peer's state.
+        // Each terminal write carries the status it expects in its WHERE.
+        global $wpdb;
+        $repository = new TopologyCommandRepository('wp_acx_topology_commands');
+
+        $repository->update_status(7, 'applied', null, null, 'pending');
+        $repository->record_dispatch_result(9, ['status' => 'applied'], 'pending');
+        $repository->mark_reconciled(11, null, 'applied');
+        $repository->record_failure(13, 'applied', 'projection_reconcile_failed', 'retry', false, 'applied');
+        $repository->record_reconcile_failure(15, 'failed', 'projection_reconcile_failed', 'retry', 'applied');
+
+        $expectedGuards = [
+            "WHERE id = 7 AND status = 'pending'",     // update_status transition
+            "WHERE id = 9 AND status = 'pending'",     // record_dispatch_result -> update_status
+            "WHERE id = 11 AND status = 'applied'",    // mark_reconciled status flip applied->reconciled
+            "WHERE id = 11 AND status = 'reconciled'", // mark_reconciled projection_reconciled_at write
+            "WHERE id = 13 AND status = 'applied'",    // record_failure reconcile-fail
+            "WHERE id = 15 AND status = 'applied'",    // record_reconcile_failure
+        ];
+        foreach ($expectedGuards as $guard) {
+            $matched = array_filter(
+                $wpdb->queries,
+                static fn (string $query): bool => str_contains($query, $guard)
+            );
+            $this->assertNotEmpty($matched, "Expected a status-guarded terminal write containing: {$guard}");
+        }
+    }
+
+    public function testTerminalWriteReturnsFalseWhenStaleStatusGuardMatchesZeroRows(): void
+    {
+        // CON-4-FU-1: a guarded write whose expected status no longer matches affects 0 rows;
+        // the method reports that no-op back to the drain so the stale worker stops.
+        global $wpdb;
+        $wpdb->defaultUpdateResult = 0;
+        $wpdb->defaultQueryResult = 0;
+        $repository = new TopologyCommandRepository('wp_acx_topology_commands');
+
+        $this->assertFalse($repository->update_status(7, 'applied', null, null, 'pending'));
+        $this->assertFalse($repository->record_dispatch_result(7, ['status' => 'applied'], 'pending'));
+        $this->assertFalse($repository->mark_reconciled(7, null, 'applied'));
+        $this->assertFalse($repository->record_failure(7, 'applied', 'projection_reconcile_failed', 'retry', false, 'applied'));
+        $this->assertFalse($repository->record_reconcile_failure(7, 'failed', 'projection_reconcile_failed', 'retry', 'applied'));
+
+        // Backward-compat: an unguarded call keeps the legacy "no DB error" success semantics.
+        $this->assertTrue($repository->update_status(7, 'applied'));
+    }
+
     public function testDrainSkipsPendingDispatchWhenCommandClaimLostToPeerDrain(): void
     {
         $repository = new SplitTopologyCommandRepositoryFake([
@@ -1269,27 +1320,27 @@ class SplitTopologyCommandRepositoryFake implements TopologyCommandRepositoryInt
         ));
     }
 
-    public function update_status(int $command_id, string $status, ?array $result_payload = null, ?string $backend_command_id = null): bool
+    public function update_status(int $command_id, string $status, ?array $result_payload = null, ?string $backend_command_id = null, ?string $expected_status = null): bool
     {
         $this->setPendingStatus($command_id, $status);
         return true;
     }
 
-    public function record_dispatch_result(int $command_id, array $response): bool
+    public function record_dispatch_result(int $command_id, array $response, ?string $expected_status = null): bool
     {
         $this->setPendingStatus($command_id, (string) ($response['status'] ?? 'applied'));
         $this->dispatchResults[] = $response;
         return true;
     }
 
-    public function mark_reconciled(int $command_id, ?array $result_payload = null): bool
+    public function mark_reconciled(int $command_id, ?array $result_payload = null, ?string $expected_status = null): bool
     {
         $this->reconciled[] = $result_payload;
         $this->setPendingStatus($command_id, 'reconciled');
         return true;
     }
 
-    public function record_failure(int $command_id, string $status, string $error_code, string $error_message, bool $increment_attempt = true): bool
+    public function record_failure(int $command_id, string $status, string $error_code, string $error_message, bool $increment_attempt = true, ?string $expected_status = null): bool
     {
         $this->setPendingStatus($command_id, $status);
         $this->failures[] = [
@@ -1300,7 +1351,7 @@ class SplitTopologyCommandRepositoryFake implements TopologyCommandRepositoryInt
         return true;
     }
 
-    public function record_reconcile_failure(int $command_id, string $status, string $error_code, string $error_message): bool
+    public function record_reconcile_failure(int $command_id, string $status, string $error_code, string $error_message, ?string $expected_status = null): bool
     {
         foreach ($this->pendingRows as $index => $command) {
             if (($command['id'] ?? 0) === $command_id) {

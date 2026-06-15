@@ -8,7 +8,33 @@
 
 The hexagonal seam (`DescriptionAdapter` Protocol → `AdapterResult`) means each model below is **one adapter class (~50–90 lines) + one wiring branch + a settings field**. Route, service, cache key, wire contract, DB, and UI are untouched; the cache key auto-isolates per `model_id`/`model_version`. **Bonus:** GIT and BLIP are native `transformers` (no `trust_remote_code`, no flash-attn) and would let us **drop the `transformers <4.49` pin** that Florence-2 forces.
 
-## Ranked shortlist (benchmark next)
+## ⏱ MEASURED on the A1 (2026-06-15) — supersedes the extrapolations below
+
+Ran all 4 shortlist models + the incumbent on the real A1 host (same china/flower images, fp32 CPU, 4 threads). **The optimistic latency extrapolations were wrong — `num_beams=3` is brutal on CPU.** `/health` stayed `ok` throughout; scratch torn down.
+
+| Model | china | flower | budget (≤20s) | OD | Caption character |
+| --- | --- | --- | --- | --- | --- |
+| **Florence-2-base-ft** (incumbent, beams=3, detail+OD) | **11.1s** | **16.6s** | ✅ | boat✓ / **dining-table✗** | RICH: *"tall **red** building, **pointed roof**… water with boats"* / *"large **orange** flower, round petals, red center, blurry bg, sun"* |
+| **BLIP-large** (beams=3) | **12.1s** | **13.6s** | ✅ | — | TIGHT: *"a tall tower with many windows on top of a hill"* / *"**two** orange flowers with green leaves"* |
+| **SmolVLM-500M-Instruct** (greedy) | 37.2s | 39.4s | ❌ | — | GENERIC: *"In this image we can see a building, trees, boats…"* / *"…flowers… leaves"* (missed colour) |
+| **GIT-large-coco** (beams=3) | 59.1s | 57.6s | ❌ | — | TERSE: *"the **pagoda** at the top of the hill"* / *"close up of a bright orange flower"* |
+| **Florence-2-large-ft** (beams=3, detail+OD) | 39.8s | 38.9s | ❌ (2×) | boat✓ / **flower✓** | BEST: *"a **dahlia**… peach… petals in a circular pattern… yellow center… green leaves blurred… **another flower at the bottom**"* |
+
+Cold load 17–28 s (incl. download); peak RSS 2.8–5.7 GB. SmolVLM-500M loaded on transformers 4.48.3 (idefics3 — no ≥4.50 bump needed).
+
+### Sweet-spot verdict (three lenses: accuracy / WCAG-alt-text / pragmatist)
+
+- **Florence-2-base-ft (the incumbent) is the quality×latency sweet spot** — the only model that is both **under budget** and **rich** (colour, composition, objects) at ~14 s. No swap beats it on richness-under-budget.
+- **BLIP-large (~13 s)** is the strong lean alternative and the **accessibility lens actually prefers it**: tight one-sentence captions are better alt-text than Florence's verbose 8-sentence paragraphs, it's **native transformers (un-pins `<4.49`)**, BSD-3, and has **no hallucinated OD**. Loses colour/composition richness.
+- **Florence-2-large-ft is the quality ceiling** (it alone ID'd the *dahlia* + the second flower, and its OD didn't hallucinate) but **~39 s → async-worker + progress UI only**.
+- **GIT-large-coco & SmolVLM-500M are dominated** — over budget *and* not richer than Florence-base. (GIT was the only model to say "pagoda", though.)
+- **The dominant lever is decode config, not the model:** `num_beams=3` is what blew GIT to 58 s. Greedy (`beams=1`) + **dropping the `<OD>` pass** would cut Florence-base to ~7–9 s (and kill the dining-table hallucination), and could bring Florence-large into ~15–20 s. **Tune Florence before swapping models.**
+
+**Recommendation:** keep Florence-2-base-ft as the real-description model; drop `<OD>` + try `beams=1` for headroom + fewer hallucinations; offer Florence-2-large-ft as an async "high-quality" tier; BLIP-large is the fallback if you want to drop `trust_remote_code` and un-pin transformers. Strip filler ("There is…", "In this image we can see…") in post for alt-text norms.
+
+---
+
+## Ranked shortlist (pre-benchmark extrapolations — kept for the reasoning trail)
 
 | Model | Params | License | transformers | Est. A1 latency vs 14 s | Caption quality | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |

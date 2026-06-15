@@ -3,7 +3,7 @@
 > **Date**: 2026-06-14
 > **Adapter**: `LocalCpuDescriptionAdapter` (Florence-2-base-ft) · `scene/infrastructure/vlm/`
 > **Harness**: `scripts/benchmark_local_vlm.py`
-> **Status**: dev-host proxy run complete; binding OCI A1 run pending (remote).
+> **Status**: dev-host proxy run complete + independently re-verified (2026-06-14, 2nd pass) — non-viability for interactive use confirmed; binding OCI A1 run pending (remote).
 
 ## Setup
 
@@ -25,6 +25,21 @@ Quality (caption / OD):
 - **flower** (27.3s): "a large flower… light orange… many round petals… background blurry… sun shining" — accurate, accessibility-useful. OD: `['dining table']` — **hallucinated**.
 - **Grace Hopper portrait** (65.9s): "an elderly **man** in a black uniform, white shirt, tie, glasses, hat, flag behind" — details accurate, **gender wrong**. OD: `flag, glasses, hat, human face, person, tie` — good.
 - **temple/china** (48.1s): "tall red building, pointed roof, trees, water with boats" — accurate. OD: `['boat']`.
+
+## Verification run (2026-06-14, second pass — pre-UI go/no-go)
+
+Independent re-run on 2 real photos (china/temple, flower) before any UI work, same config (`beams=3`, `<MORE_DETAILED_CAPTION>,<OD>`, 1024px), torch 2.12.0 / transformers 4.48.3, **pinned model revision `f6c1a258…`** (validates the trust_remote_code revision pin live):
+
+| Metric | Value |
+| --- | --- |
+| Cold model load | 38.4 s |
+| Per-image latency | **55.7 / 87.1 / 118.5 s** (min / mean / max) |
+| Peak RSS | 582 MB |
+
+- **china/temple** (55.7s): "a tall red building with a pointed roof… trees surrounding… water in front with boats" — accurate, accessibility-useful. OD: `['boat']` — correct.
+- **flower** (118.5s): "a large flower… light orange… many round petals… red center… background blurry… sun shining" — accurate, accessibility-useful. OD: `['dining table']` — **hallucinated**.
+
+Confirms the first pass: latency is **2.8–6× the <20s interactive bar** (the longer the caption, the worse — flower generated 8 sentences → 118s of beam-search decode). Caption quality holds (scene/colour/composition); OD remains untrustworthy standalone. Decision below is **unchanged and reinforced**: do not put `local_cpu` on the interactive request path.
 
 ## Assessment
 

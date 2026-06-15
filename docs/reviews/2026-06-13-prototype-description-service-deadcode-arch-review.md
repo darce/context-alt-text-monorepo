@@ -24,7 +24,9 @@
 | Slice 7 — DI consolidation: collapse 3 re-export surfaces to one canonical `deps/__init__`, delete `dependencies.py` + `suggestion_details` shim, repoint 49 files (route surface byte-identical) | ✅ landed | `c48ba534` |
 | Slice 7 — parallel branch re-review (2 reviewers, **pass**, 0 findings: union complete, dependency identity preserved, zero residual refs) | ✅ verified | `66d996b7` |
 | Slice 8a — `ScanWorker._process_pending_clustering_jobs` phase extraction (WORKEROBS-6): claim/dispatch/failure-recovery seams + 6 unit tests; behaviour-preserving | ✅ landed | `11ae8ee0` |
-| Slice 8 remainder — ORCH-4 (`_process_chunks`), PERSREG-5 (`generate_canonical_report`), INFRA-5 (`refresh_centroids_view` fail-fast), INFRA-3 (`ensure_media_identity` fixture) | ⏳ planned | — |
+| Slice 8a parallel re-review (2 reviewers; **pass_with_findings**) → 2 in-place fixes: ruff-format drift the slice's "ruff clean" missed (BR-01) + orchestrator `except` `# pragma: no cover` removed with 3 wiring tests (BR-02) | ✅ verified | `5a421e10` |
+| Slice 8b — ORCH-4 (partial): extract `evaluate_chunk_candidates` + `partition_unclustered` chunk seams from `_process_chunks` into `discovery_pipeline.py` + 5 unit tests; behaviour-preserving (suite 1070) | ✅ landed | `de0e2187` |
+| Slice 8 remainder — ORCH-4 finish (`_process_chunks` still 229L: persist-accepted / new-cluster / commit-restore phases), PERSREG-5 (`generate_canonical_report`), INFRA-5 (`refresh_centroids_view` fail-fast), INFRA-3 (`ensure_media_identity` fixture) | ⏳ planned | — |
 | Slice 9 — repository/AssignmentWriter split | ⏳ planned | — |
 | Follow-up — `_NotImplemented*` retention 503 path (behavior change, own TDD slice) | ⏳ planned | — |
 

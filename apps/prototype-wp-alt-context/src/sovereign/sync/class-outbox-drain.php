@@ -156,7 +156,9 @@ class OutboxDrain {
 		$this->refresh_curation_metrics_for_tenants( $tenant_ids );
 		$this->purge_terminal_rows_for_tenants( $tenant_ids );
 
-		if ( count( $claimed ) >= $this->batch_size && $this->query_repository->has_pending_operations() ) {
+		// Reschedule on the pre-claim ready count: when concurrent drains split a full batch,
+		// count( $claimed ) can fall below the batch size even though a backlog remains.
+		if ( count( $operations ) >= $this->batch_size && $this->query_repository->has_pending_operations() ) {
 			self::maybe_schedule_drain();
 		}
 	}
@@ -376,9 +378,9 @@ class OutboxDrain {
 				'last_error_message' => $this->normalize_text( $result['error_message'] ?? '', 'Outbox dispatch failed.' ),
 				'last_attempted_at' => $attempted_at,
 			),
-			array( 'id' => $outbox_id ),
+			array( 'id' => $outbox_id, 'status' => OutboxStatus::IN_FLIGHT ),
 			array( '%s', '%d', '%s', '%s', '%s' ),
-			array( '%d' )
+			array( '%d', '%s' )
 		);
 	}
 

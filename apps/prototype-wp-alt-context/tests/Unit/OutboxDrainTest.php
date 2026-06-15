@@ -107,6 +107,8 @@ class OutboxDrainTest extends TestCase
 		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
 		$this->assertStringContainsString("status = 'pending'", $updateQuery);
 		$this->assertStringContainsString("last_error_code = 'timeout'", $updateQuery);
+		// CON-3: the retryable/failed terminal write is also guarded on the in_flight claim.
+		$this->assertStringContainsString("WHERE id = 7 AND status = 'in_flight'", $updateQuery);
 	}
 
 	public function testDrainMarksFailedAfterMaxAttempts(): void
@@ -133,6 +135,7 @@ class OutboxDrainTest extends TestCase
 
 		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
 		$this->assertStringContainsString("status = 'failed'", $updateQuery);
+		$this->assertStringContainsString("WHERE id = 7 AND status = 'in_flight'", $updateQuery);
 	}
 
 	public function testDrainClaimsPendingRowAsInFlightBeforeDispatch(): void

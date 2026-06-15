@@ -132,7 +132,7 @@ class DescribeMediaService {
 			'/scene/describe/multipart',
 			$multipart_body,
 			array(),
-			'auto',
+			'description',
 			'multipart',
 			self::MULTIPART_MAX_BYTES
 		);

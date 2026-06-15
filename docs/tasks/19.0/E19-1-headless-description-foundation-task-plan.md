@@ -222,6 +222,8 @@ Proof:
 
 ### Slice 9 (S9): `LocalCpuDescriptionAdapter` behind the S2 protocol + async describe worker
 
+> **Superseded (S11–S13):** S9 shipped the adapter only; the one-worker async path was deferred. `florence_small` runs **inline off-thread** (`VisualFactsService` `asyncio.to_thread`), not via an enqueue worker — so the prose below ("one-worker async path", "request path makes no model call") describes deferred work, not the as-shipped state. The async describe worker design lives in [`E19-1-florence-large-async-worker-impl-notes.md`](E19-1-florence-large-async-worker-impl-notes.md); see the S11–S13 addendum above.
+
 **Goal**: Florence-2-base-ft CPU adapter conforming to the S2 protocol, with downsample/timeout/fail-closed caps, run only in a one-worker async path so the request path never executes the model. Depends on S2 (protocol) + S8 (extras/settings). Owns the `describe.py` `local_cpu` async-enqueue branch.
 
 Changes:
@@ -351,7 +353,7 @@ Proof:
 ### Checklist for Slice 12 (S12): WordPress describe UI
 
 - [x] Admin "Describe with AI" action in `apps/prototype-wp-alt-context/js/admin/**` calling `acx/v1/recognition/describe`; renders `alt_text_draft`/objects/provenance; loading + 503-stub error states
-- [x] `npm test` green for the describe component/hook *(vitest: describeApi 3 + DescribePanel 5; DashboardPage mock; AdminTest endpoint)*
+- [x] `npm test` green for the describe component/hook *(vitest: describeApi 3 + DescribePanel 5 + useDescribeMedia 2; DashboardPage mock; AdminTest describe-endpoint)*
 
 ### Checklist for Slice 13 (S13): florence_large + async-worker impl notes
 

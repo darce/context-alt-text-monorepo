@@ -63,6 +63,12 @@ const parsePayload = (raw: string): Record<string, unknown> | null => {
  * Resolve a user-safe describe error message: the FastAPI `detail` (503 stub /
  * unavailable) or the WP_Error `message` (502 invalid envelope) when present,
  * otherwise the caller's localized fallback. Never returns raw proxy body text.
+ *
+ * Intentionally separate from recognition/scanApiError.ts (E19-1-REV-C-4): that
+ * resolver special-cases `embedding_runtime_unavailable` and only reads `detail`;
+ * describe instead needs the WP_Error `message` branch (502 invalid_description_
+ * envelope) and a nested-`detail` branch. Kept as a small dedicated parser rather
+ * than coupling describe to the scan-specific resolver.
  */
 export const resolveDescribeErrorMessage = (error: unknown, fallback: string): string => {
   if (!(error instanceof Error)) {

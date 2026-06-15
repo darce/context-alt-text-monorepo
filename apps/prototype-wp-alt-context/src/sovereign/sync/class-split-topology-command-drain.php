@@ -190,6 +190,13 @@ class SplitTopologyCommandDrain {
 			return;
 		}
 
+		// CON-4: claim the command before processing so a second concurrent drain cannot
+		// re-dispatch a pending command or re-apply an applied command's member delta and
+		// revert an interleaved user reassign. A lost claim means a peer drain owns it.
+		if ( ! $this->repository->claim_command( $command_id, $current_status ) ) {
+			return;
+		}
+
 		if ( 'applied' === $current_status ) {
 			$this->process_applied_split_command( $command_id, $command );
 			return;

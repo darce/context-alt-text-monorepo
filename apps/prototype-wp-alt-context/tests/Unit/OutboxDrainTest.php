@@ -253,6 +253,8 @@ class OutboxDrainTest extends TestCase
 					'created_at' => '2026-03-10 12:00:00',
 				],];
 			}
+			public function claim_command(int $command_id, string $expected_status): bool {
+				return true; }
 			public function update_status(int $command_id, string $status, ?array $result_payload = null, ?string $backend_command_id = null): bool {
 				return true; }
 			public function record_dispatch_result(int $command_id, array $response): bool {

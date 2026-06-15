@@ -1034,6 +1034,82 @@ class SplitTopologyCommandDrainTest extends TestCase
         $this->assertSame([['identity-2', 'cluster-new-1', 89], ['identity-3', 'cluster-new-1', 89]], $membersRepository->projectionAssignments);
     }
 
+    public function testDrainSkipsPendingDispatchWhenCommandClaimLostToPeerDrain(): void
+    {
+        $repository = new SplitTopologyCommandRepositoryFake([
+            $this->pendingSplitCommand(),
+        ]);
+        $repository->claimGranted = false;
+        global $wpdb;
+        $wpdb->mockResults = [];
+        $transport = new SplitTransportFake([
+            new WP_REST_Response(['command_id' => 'remote-x', 'status' => 'applied'], 200),
+        ]);
+
+        $drain = new SplitTopologyCommandDrain(
+            $repository,
+            $transport,
+            new SnapshotClientFake([]),
+            new SnapshotProjectorFake(),
+            new SplitClustersRepositoryFake(),
+            new SplitMembersRepositoryFake(),
+            new SplitSyncStateRepositoryFake()
+        );
+        $drain->drain();
+
+        // CON-4: claim lost (peer drain owns it) -> no dispatch, no terminal writes.
+        $this->assertSame([[7, 'pending']], $repository->claimCalls);
+        $this->assertSame([], $transport->requests);
+        $this->assertCount(0, $repository->dispatchResults);
+        $this->assertCount(0, $repository->failures);
+    }
+
+    public function testDrainSkipsAppliedReconcileWhenCommandClaimLostToPeerDrain(): void
+    {
+        $repository = new SplitTopologyCommandRepositoryFake([
+            $this->pendingSplitCommand([
+                'status' => 'applied',
+                'result_json' => wp_json_encode([
+                    'status' => 'applied',
+                    'original_cluster_id' => 'cluster-source',
+                    'new_cluster_ids' => ['cluster-new-1', 'cluster-new-2'],
+                    'member_delta' => [
+                        'source_cluster_id' => 'cluster-source',
+                        'remaining_identity_ids' => ['identity-1'],
+                        'created_clusters' => [
+                            ['cluster_id' => 'cluster-new-1', 'identity_ids' => ['identity-2']],
+                            ['cluster_id' => 'cluster-new-2', 'identity_ids' => ['identity-3']],
+                        ],
+                    ],
+                    'moved_counts' => [1, 1],
+                    'affected_cluster_ids' => ['cluster-source', 'cluster-new-1', 'cluster-new-2'],
+                    'result_snapshot_version' => 66,
+                ]),
+            ]),
+        ]);
+        $repository->claimGranted = false;
+        global $wpdb;
+        $wpdb->mockResults = [];
+        $membersRepository = new SplitMembersRepositoryFake();
+
+        $drain = new SplitTopologyCommandDrain(
+            $repository,
+            new SplitTransportFake([]),
+            new SnapshotClientFake([]),
+            new SnapshotProjectorFake(),
+            new SplitClustersRepositoryFake(),
+            $membersRepository,
+            new SplitSyncStateRepositoryFake()
+        );
+        $drain->drain();
+
+        // CON-4 headline: a 2nd drain that lost the claim must NOT re-apply the member delta,
+        // so an interleaved user reassign is not reverted.
+        $this->assertSame([[7, 'applied']], $repository->claimCalls);
+        $this->assertCount(0, $repository->reconciled);
+        $this->assertSame([], $membersRepository->projectionAssignments);
+    }
+
     /**
      * @param array<string,mixed> $overrides
      * @return array<string,mixed>
@@ -1084,6 +1160,9 @@ class SplitTopologyCommandRepositoryFake implements TopologyCommandRepositoryInt
     public array $reconciled = [];
     /** @var array<int,array<string,string>> */
     public array $failures = [];
+    /** @var array<int,array{0:int,1:string}> */
+    public array $claimCalls = [];
+    public bool $claimGranted = true;
 
     /**
      * @param array<int,array<string,mixed>> $pending
@@ -1091,6 +1170,12 @@ class SplitTopologyCommandRepositoryFake implements TopologyCommandRepositoryInt
     public function __construct(array $pending)
     {
         $this->pendingRows = $pending;
+    }
+
+    public function claim_command(int $command_id, string $expected_status): bool
+    {
+        $this->claimCalls[] = [$command_id, $expected_status];
+        return $this->claimGranted;
     }
 
     public function enqueue(

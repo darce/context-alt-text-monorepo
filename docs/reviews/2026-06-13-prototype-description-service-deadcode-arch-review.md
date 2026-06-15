@@ -20,7 +20,7 @@
 | Slice 5 — domain-boundary move (DOMAIN-1: 5 impure services `domain/services/` → `application/services/`) | ✅ landed | `485c06e6` |
 | Branch re-review fixes (DESC-REV-B-01..04: dead matplotlib dep + MPLCONFIGDIR config, stale `.dockerignore scene/tests`, ruff format, test typing) | ✅ landed | `a0ce0c43` |
 | Dead clustering-residue config prune (mypy overrides for deleted modules + `onnxruntime.*`/`sklearn.*` globs; dead direct `scikit-learn` dev dep) | ✅ landed | `9cf931ed` |
-| Slice 6 — `clusters.py` router split | ⏳ planned | — |
+| Slice 6 — `clusters.py` router split (4 concern routers + `assert_tenant_match` shared dep; route surface byte-identical, 39/39 bodies verified faithful) | ✅ landed | `85400e40` |
 | Slice 7 — DI consolidation (+ deferred `get_cluster_service`/`InMemoryJobService`) | ⏳ planned | — |
 | Slices 8–9 — long-method extraction, repository/AssignmentWriter split | ⏳ planned | — |
 | Follow-up — `_NotImplemented*` retention 503 path (behavior change, own TDD slice) | ⏳ planned | — |

@@ -67,7 +67,7 @@ flowchart LR
     Diagnostics -.-> DecisionStore
     Events --> Broadcaster
 
-    EndpointCode["Code anchors:\nrecognition/interface_adapters/http/routers/analyze.py\nrecognition/interface_adapters/http/routers/clusters.py\nrecognition/interface_adapters/http/routers/suggestions.py\nrecognition/interface_adapters/http/routers/media.py\nrecognition/interface_adapters/http/routers/diagnostics.py\nrecognition/interface_adapters/http/routers/events.py"]
+    EndpointCode["Code anchors:\nrecognition/interface_adapters/http/routers/analyze.py\nrecognition/interface_adapters/http/routers/clusters_admission.py\nrecognition/interface_adapters/http/routers/clusters_snapshot.py\nrecognition/interface_adapters/http/routers/clusters_topology.py\nrecognition/interface_adapters/http/routers/clusters_maintenance.py\nrecognition/interface_adapters/http/routers/suggestions.py\nrecognition/interface_adapters/http/routers/media.py\nrecognition/interface_adapters/http/routers/diagnostics.py\nrecognition/interface_adapters/http/routers/events.py"]
     ServiceCode["Code anchors:\nrecognition/application/scan/scan_queue_service.py\nrecognition/application/orchestration/cluster_service.py\nrecognition/application/suggestions/service.py\nrecognition/application/events/broadcaster.py\nrecognition/interface_adapters/http/deps/stores.py\nrecognition/observability/persistence.py"]
     RepoCode["Code anchors:\nrecognition/infrastructure/repositories/*\napps/prototype-description-service/db/models.py"]
     Endpoints -.-> EndpointCode

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from recognition.domain.suggestion import SuggestedLabel, SuggestedLabelSource
-from recognition.interface_adapters.http.routers.clusters import (
+from recognition.interface_adapters.http.routers.clusters_snapshot import (
     _INFERENCE_CAP,
     _enrich_with_suggested_labels,
 )
@@ -41,7 +41,7 @@ async def test_enrich_sets_suggested_label_for_unlabeled_cluster(monkeypatch) ->
         )
     )
     monkeypatch.setattr(
-        "recognition.interface_adapters.http.routers.clusters.infer_suggested_label",
+        "recognition.interface_adapters.http.routers.clusters_snapshot.infer_suggested_label",
         mock_infer,
     )
 
@@ -59,7 +59,7 @@ async def test_enrich_skips_user_confirmed_cluster(monkeypatch) -> None:
     cluster = _make_cluster("aaa-111", label=None, is_user_confirmed=True, identity_count=10)
     mock_infer = AsyncMock()
     monkeypatch.setattr(
-        "recognition.interface_adapters.http.routers.clusters.infer_suggested_label",
+        "recognition.interface_adapters.http.routers.clusters_snapshot.infer_suggested_label",
         mock_infer,
     )
 
@@ -75,7 +75,7 @@ async def test_enrich_skips_already_labeled_cluster(monkeypatch) -> None:
     cluster = _make_cluster("aaa-111", label="Daniel", is_user_confirmed=False)
     mock_infer = AsyncMock()
     monkeypatch.setattr(
-        "recognition.interface_adapters.http.routers.clusters.infer_suggested_label",
+        "recognition.interface_adapters.http.routers.clusters_snapshot.infer_suggested_label",
         mock_infer,
     )
 
@@ -100,7 +100,7 @@ async def test_enrich_respects_inference_cap(monkeypatch) -> None:
         return None
 
     monkeypatch.setattr(
-        "recognition.interface_adapters.http.routers.clusters.infer_suggested_label",
+        "recognition.interface_adapters.http.routers.clusters_snapshot.infer_suggested_label",
         _fake_infer,
     )
 
@@ -123,7 +123,7 @@ async def test_enrich_orders_by_identity_count_descending(monkeypatch) -> None:
         return None
 
     monkeypatch.setattr(
-        "recognition.interface_adapters.http.routers.clusters.infer_suggested_label",
+        "recognition.interface_adapters.http.routers.clusters_snapshot.infer_suggested_label",
         _fake_infer,
     )
 

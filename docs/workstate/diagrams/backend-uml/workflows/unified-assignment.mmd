@@ -21,7 +21,7 @@ sequenceDiagram
     participant DB as Database
 
     Note over Client,DB: Legend: ENTRY = external entrypoint, Dashed arrow = optional wiring
-    Note over Client,DB: Mini-map: ENTRY: POST /recognition/clustering/jobs -> ClusterService.cluster_unclustered_identities, Code: recognition/interface_adapters/http/routers/clusters.py | recognition/application/orchestration/cluster_service.py | recognition/infrastructure/repositories/cluster_repository.py
+    Note over Client,DB: Mini-map: ENTRY: POST /recognition/clustering/jobs -> ClusterService.cluster_unclustered_identities, Code: recognition/interface_adapters/http/routers/clusters_admission.py | recognition/application/orchestration/cluster_service.py | recognition/infrastructure/repositories/cluster_repository.py
     
     %% Phase 1: Initiate Clustering
     Client->>API: ENTRY: POST /recognition/clustering/jobs

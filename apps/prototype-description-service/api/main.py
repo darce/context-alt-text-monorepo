@@ -25,6 +25,7 @@ from recognition.config.security import get_security_settings, validate_producti
 from recognition.config.settings import RecognitionSettings
 from recognition.interface_adapters.http import dependencies as http_deps
 from recognition.interface_adapters.http import router as recognition_router
+from scene.interface_adapters.http.router import router as scene_router
 from recognition.interface_adapters.http.deps.auth import require_auth
 from recognition.interface_adapters.http.deps.circuit_breaker import (
     get_or_create_session_dependency_circuit_breaker,
@@ -163,7 +164,7 @@ def create_app() -> FastAPI:
     app.add_middleware(
         UploadSizeLimitMiddleware,
         max_bytes=recognition_settings.max_upload_bytes,
-        paths={"/recognition/analyze/multipart"},
+        paths={"/recognition/analyze/multipart", "/scene/describe/multipart"},
     )
 
     initialize_session_dependency_circuit_breaker(app)
@@ -171,6 +172,7 @@ def create_app() -> FastAPI:
 
     app.include_router(recognition_router, prefix="/recognition")
     app.include_router(roster_curation_router, prefix="/roster")
+    app.include_router(scene_router, prefix="/scene")
     register_exception_handlers(app)
 
     register_health_probes(app)

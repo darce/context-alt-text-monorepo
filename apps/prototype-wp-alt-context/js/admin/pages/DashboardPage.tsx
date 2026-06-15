@@ -15,6 +15,7 @@ import { useSyncHealth } from '../hooks/useSyncHealth';
 import { useSyncStatus } from '../hooks/useSyncStatus';
 import { hasSyncHealthWarnings, resolveEffectiveSyncHealth } from './workbench/degradedModeBannerLogic';
 import { useRetentionStatus } from '../hooks/useRetentionStatus';
+import { DescribePanel } from './dashboard/DescribePanel';
 import { GuidanceCard } from './dashboard/GuidanceCard';
 import { DashboardRecentActivitySection } from './dashboard/DashboardRecentActivitySection';
 import { DashboardSyncHealthSection } from './dashboard/DashboardSyncHealthSection';
@@ -320,6 +321,8 @@ export const DashboardPage = (): React.JSX.Element => {
       </header>
 
       {priorityModel.orientationPosition === 'before_grid' ? <OrientationCard /> : null}
+
+      <DescribePanel />
 
       <div className="acx-dashboard__grid">
         {priorityModel.gridSectionOrder.map((sectionId) => (

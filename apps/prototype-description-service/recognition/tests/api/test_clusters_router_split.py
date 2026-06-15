@@ -81,4 +81,4 @@ def test_monolith_clusters_module_removed() -> None:
 def test_aggregate_router_serves_all_cluster_routes() -> None:
     from recognition.interface_adapters.http.router import router
 
-    assert EXPECTED_CLUSTER_ROUTES <= _routes(router)
+    assert _routes(router) >= EXPECTED_CLUSTER_ROUTES

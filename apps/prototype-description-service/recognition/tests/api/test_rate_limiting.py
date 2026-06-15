@@ -22,7 +22,7 @@ from fastapi.testclient import TestClient
 # clean env; individual tests below call _check_dev_key_guard() directly after
 # monkeypatching env vars.
 import api.main as _api_main  # noqa: F401
-from recognition.interface_adapters.http import dependencies
+from recognition.interface_adapters.http import deps as dependencies
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.deps import auth as auth_module
 from recognition.tests.api.conftest import FakeSession

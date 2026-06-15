@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from db.models import Tenant
 from db.models.identity import CurationReplayRecord
 from recognition.domain.suggestion import BulkAcceptResult, SuggestedLabelSource, SuggestionStatus
-from recognition.interface_adapters.http import dependencies
+from recognition.interface_adapters.http import deps as dependencies
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.deps.tenant import get_tenant_id
 from recognition.interface_adapters.http.routers import media as media_router

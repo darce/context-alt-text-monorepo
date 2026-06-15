@@ -12,7 +12,7 @@ from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
 from recognition.application.services.export_service import EXPORT_SCHEMA_VERSION
-from recognition.interface_adapters.http import dependencies
+from recognition.interface_adapters.http import deps as dependencies
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.deps.services import (
     get_audit_repository,

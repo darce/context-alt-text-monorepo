@@ -20,7 +20,7 @@ from recognition.config import get_settings as get_recognition_settings
 from recognition.config.security import get_security_settings
 from recognition.domain.repositories import ClusterRepository
 from recognition.interface_adapters.http.blob_url import build_face_thumb_path
-from recognition.interface_adapters.http.dependencies import (
+from recognition.interface_adapters.http.deps import (
     get_cluster_repository,
     get_cluster_service_builder,
     get_persisted_cluster_job_service,

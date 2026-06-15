@@ -7,7 +7,7 @@ import uuid
 import pytest
 
 from recognition.domain.cluster import IdentityCluster
-from recognition.interface_adapters.http import dependencies
+from recognition.interface_adapters.http import deps as dependencies
 
 
 @pytest.mark.asyncio

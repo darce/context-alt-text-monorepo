@@ -6,7 +6,7 @@ import uuid
 
 from fastapi.testclient import TestClient
 
-from recognition.interface_adapters.schemas.suggestion_details import SuggestionDetails
+from recognition.domain.suggestion_details import SuggestionDetails
 from recognition.tests.api.conftest import FakeMediaIdentityService, seed_cluster
 
 

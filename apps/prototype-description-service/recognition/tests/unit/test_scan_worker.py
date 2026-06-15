@@ -457,7 +457,12 @@ async def test_record_failure_requeues_transient_under_budget(monkeypatch: pytes
 
     job_id = uuid.uuid4()
     failed_job = SimpleNamespace(
-        id=job_id, payload={"retry_count": 0}, status=None, started_at=object(), completed_at=object(), error_message=None
+        id=job_id,
+        payload={"retry_count": 0},
+        status=None,
+        started_at=object(),
+        completed_at=object(),
+        error_message=None,
     )
     fresh = _RecordingFreshSession(failed_job)
     monkeypatch.setattr(worker, "_session_factory", lambda: _FakeAsyncCtx(fresh))
@@ -530,5 +535,112 @@ async def test_record_failure_fails_transient_when_budget_exhausted(monkeypatch:
 
     assert failed_job.status == JobStatus.FAILED
     assert worker._retry_suppressed_job_id is None
+
+    await worker.__aexit__(None, None, None)
+
+
+# ---------------------------------------------------------------------------
+# WORKEROBS-6 (descsvc8a-BR-02): orchestrator -> seam wiring
+# The extract-method refactor introduced a thin _process_pending_clustering_jobs
+# orchestrator whose try/except hands the claimed job's captured identity to the
+# failure-recovery seam. These pin that handoff end-to-end (previously only the
+# seams were unit-tested and the except block carried `# pragma: no cover`).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_process_pending_jobs_returns_false_when_no_job_claimed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    worker = _make_test_worker(monkeypatch, tmp_path)
+
+    async def _claim(*, session: object, now: object) -> object | None:
+        return None
+
+    monkeypatch.setattr(worker, "_claim_next_clustering_job", _claim)
+
+    result = await worker._process_pending_clustering_jobs(session=object(), now=datetime.now(tz=UTC))
+    assert result is False
+
+    await worker.__aexit__(None, None, None)
+
+
+@pytest.mark.asyncio
+async def test_process_pending_jobs_returns_true_on_handler_success(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    worker = _make_test_worker(monkeypatch, tmp_path)
+    job = SimpleNamespace(id=uuid.uuid4(), tenant_id=uuid.uuid4(), job_type="clustering")
+
+    async def _claim(*, session: object, now: object) -> object:
+        return job
+
+    monkeypatch.setattr(worker, "_claim_next_clustering_job", _claim)
+
+    class _OkHandler(JobHandler[IdentityClusteringJob]):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def handle(self, job: IdentityClusteringJob, session: AsyncSession) -> None:
+            self.calls += 1
+
+    handler = _OkHandler()
+    worker._job_handlers = {"clustering": handler}
+
+    recovery_called = False
+
+    async def _record(**_kwargs: object) -> None:
+        nonlocal recovery_called
+        recovery_called = True
+
+    monkeypatch.setattr(worker, "_record_clustering_job_failure", _record)
+
+    result = await worker._process_pending_clustering_jobs(session=object(), now=datetime.now(tz=UTC))
+    assert result is True
+    assert handler.calls == 1
+    assert recovery_called is False
+
+    await worker.__aexit__(None, None, None)
+
+
+@pytest.mark.asyncio
+async def test_process_pending_jobs_routes_handler_failure_to_recovery_seam(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """A handler that raises must route the job's captured identity and the raised
+    exception into _record_clustering_job_failure, and the orchestrator must still
+    return True (the failure is handled durably, not propagated)."""
+    worker = _make_test_worker(monkeypatch, tmp_path)
+
+    job_id = uuid.uuid4()
+    tenant_id = uuid.uuid4()
+    job = SimpleNamespace(id=job_id, tenant_id=tenant_id, job_type="clustering")
+
+    async def _claim(*, session: object, now: object) -> object:
+        return job
+
+    monkeypatch.setattr(worker, "_claim_next_clustering_job", _claim)
+
+    boom = RuntimeError("handler exploded")
+
+    class _ExplodingHandler(JobHandler[IdentityClusteringJob]):
+        async def handle(self, job: IdentityClusteringJob, session: AsyncSession) -> None:
+            raise boom
+
+    worker._job_handlers = {"clustering": _ExplodingHandler()}
+
+    recorded: dict[str, object] = {}
+
+    async def _record(*, exc: Exception, session: object, job_id: object, tenant_id: object) -> None:
+        recorded.update(exc=exc, session=session, job_id=job_id, tenant_id=tenant_id)
+
+    monkeypatch.setattr(worker, "_record_clustering_job_failure", _record)
+
+    sentinel_session = object()
+    result = await worker._process_pending_clustering_jobs(session=sentinel_session, now=datetime.now(tz=UTC))
+
+    assert result is True
+    assert recorded["exc"] is boom
+    assert recorded["session"] is sentinel_session
+    assert recorded["job_id"] == job_id
+    assert recorded["tenant_id"] == tenant_id
 
     await worker.__aexit__(None, None, None)

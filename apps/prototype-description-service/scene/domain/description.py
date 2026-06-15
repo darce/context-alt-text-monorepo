@@ -14,6 +14,7 @@ class DescriptionAdapterKind(StrEnum):
 
     SEEDED = "seeded"
     LOCAL_CPU = "local_cpu"
+    GPU = "gpu"
     HOSTED_PROVIDER = "hosted_provider"
 
 

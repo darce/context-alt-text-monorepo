@@ -11,7 +11,7 @@ import os
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from scene.domain.description import DescriptionAdapterKind
+from scene.config.profiles import DescriptionProfile
 
 _DEFAULT_MAX_IMAGE_BYTES = 25 * 1024 * 1024  # 25 MiB, matches recognition multipart cap.
 
@@ -21,16 +21,15 @@ class DescriptionSettings(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    adapter_mode: DescriptionAdapterKind = Field(
-        default_factory=lambda: DescriptionAdapterKind(os.environ.get("ACX_DESCRIPTION_ADAPTER", "seeded"))
+    # The operator switch: seeded | florence_small | florence_large | gpu_phi4.
+    profile: DescriptionProfile = Field(
+        default_factory=lambda: DescriptionProfile(os.environ.get("ACX_DESCRIPTION_ADAPTER", "seeded"))
     )
     max_description_image_bytes: int = Field(
         default_factory=lambda: int(os.environ.get("ACX_DESCRIPTION_MAX_IMAGE_BYTES", _DEFAULT_MAX_IMAGE_BYTES))
     )
     allowed_description_mime_types: tuple[str, ...] = ("image/jpeg", "image/png", "image/webp")
-    prompt_or_task_version: str = Field(
-        default_factory=lambda: os.environ.get("ACX_DESCRIPTION_PROMPT_VERSION", "1")
-    )
+    prompt_or_task_version: str = Field(default_factory=lambda: os.environ.get("ACX_DESCRIPTION_PROMPT_VERSION", "1"))
     model_version: str = Field(default_factory=lambda: os.environ.get("ACX_DESCRIPTION_MODEL_VERSION", "1"))
     # Generous default so the slow local_cpu (Florence) inline POC is not prematurely
     # 504'd (~30-95s incl. cold load); seeded never approaches it. Tune via env for prod.

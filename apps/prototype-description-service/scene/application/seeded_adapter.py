@@ -20,7 +20,11 @@ from scene.domain.description import DescriptionAdapterKind
 _FIXTURE_POOL: tuple[dict[str, Any], ...] = (
     {"caption": "A person standing outdoors near greenery.", "objects": ("person", "plant", "sky"), "ocr_text": None},
     {"caption": "A plate of food on a wooden table.", "objects": ("food", "plate", "table"), "ocr_text": None},
-    {"caption": "A scenic landscape with mountains under a clear sky.", "objects": ("mountain", "sky"), "ocr_text": None},
+    {
+        "caption": "A scenic landscape with mountains under a clear sky.",
+        "objects": ("mountain", "sky"),
+        "ocr_text": None,
+    },
     {"caption": "A close-up of a small object on a neutral background.", "objects": ("object",), "ocr_text": None},
     {"caption": "A printed document with several lines of text.", "objects": ("document",), "ocr_text": "Sample text"},
     {"caption": "Two people seated indoors in conversation.", "objects": ("person", "chair"), "ocr_text": None},

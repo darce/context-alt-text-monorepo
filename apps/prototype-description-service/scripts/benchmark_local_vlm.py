@@ -30,18 +30,19 @@ def _peak_rss_mb() -> float:
 
 
 def main(argv: list[str] | None = None) -> int:
-    from scene.application.settings.vlm import VlmSettings
+    from scene.config.profiles import DescriptionProfile, get_profile_spec
 
-    vlm_defaults = VlmSettings()
+    small = get_profile_spec(DescriptionProfile.FLORENCE_SMALL)
     ap = argparse.ArgumentParser(description="Local-CPU Florence-2 description eval/benchmark.")
     ap.add_argument("images", nargs="+", help="image file paths to describe")
     ap.add_argument("--device", default="cpu", help="torch device (cpu mirrors the OCI A1 target)")
     ap.add_argument("--num-beams", type=int, default=3)
     ap.add_argument("--max-edge", type=int, default=1024, help="downsample longest edge to N px")
     ap.add_argument("--max-new-tokens", type=int, default=512)
+    ap.add_argument("--model-id", default=small.model_id, help="Hugging Face model id (florence_small default)")
     ap.add_argument(
         "--model-revision",
-        default=vlm_defaults.model_revision,
+        default=small.model_revision,
         help="Hugging Face revision for the trust_remote_code model",
     )
     ap.add_argument("--tasks", default="<MORE_DETAILED_CAPTION>,<OD>")
@@ -59,6 +60,7 @@ def main(argv: list[str] | None = None) -> int:
         max_image_edge_px=args.max_edge,
         num_beams=args.num_beams,
         max_new_tokens=args.max_new_tokens,
+        model_id=args.model_id,
         model_revision=args.model_revision,
     )
 

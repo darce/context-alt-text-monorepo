@@ -164,7 +164,11 @@ def test_create_app_registers_route_and_upload_cap():
     app = create_app()
     paths = {getattr(r, "path", None) for r in app.routes}
     assert "/scene/describe/multipart" in paths
-    mws = [m for m in app.user_middleware if getattr(getattr(m, "cls", None), "__name__", "") == "UploadSizeLimitMiddleware"]
+    mws = [
+        m
+        for m in app.user_middleware
+        if getattr(getattr(m, "cls", None), "__name__", "") == "UploadSizeLimitMiddleware"
+    ]
     assert mws, "UploadSizeLimitMiddleware not registered"
     assert "/scene/describe/multipart" in getattr(mws[0], "kwargs", {}).get("paths", set())
 

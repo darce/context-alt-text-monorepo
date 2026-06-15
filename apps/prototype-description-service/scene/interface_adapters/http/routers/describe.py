@@ -26,6 +26,7 @@ from scene.application.settings.vlm import VlmSettings
 from scene.application.visual_facts_service import VisualFactsService
 from scene.config.settings import DescriptionSettings
 from scene.domain.description import DescriptionAdapterKind
+from scene.infrastructure.vlm.unavailable_adapter import DescriptionAdapterUnavailableError
 from scene.interface_adapters.http.deps import get_description_adapter
 from scene.interface_adapters.http.schemas.requests import DescribeImageEnvelope
 from scene.interface_adapters.http.schemas.responses import VisualFactsResponse
@@ -71,7 +72,9 @@ async def describe_image_multipart(
     try:
         envelope = DescribeImageEnvelope.model_validate(_read_request_part(form.get("request")))
     except ValidationError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"invalid 'request' envelope: {exc.errors()}") from exc
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, f"invalid 'request' envelope: {exc.errors()}"
+        ) from exc
 
     auth_tenant = (getattr(auth, "tenant_claim", None) or "").strip()
     if auth_tenant and auth_tenant != envelope.tenant_id:
@@ -95,9 +98,7 @@ async def describe_image_multipart(
     settings = DescriptionSettings()
     content_type = value.content_type or ""
     if content_type not in settings.allowed_description_mime_types:
-        raise HTTPException(
-            status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, f"unsupported image content-type '{content_type}'"
-        )
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, f"unsupported image content-type '{content_type}'")
     image_bytes = await value.read()
     if not image_bytes:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"image part '{key}' is empty")
@@ -136,6 +137,10 @@ async def describe_image_multipart(
             status.HTTP_504_GATEWAY_TIMEOUT,
             f"description generation exceeded {effective_timeout}s",
         ) from exc
+    except DescriptionAdapterUnavailableError as exc:
+        # A deferred/stub profile (florence_large, gpu_phi4) or a missing [vlm]
+        # extra: surface an actionable 503 instead of an opaque 500.
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
     if session is not None and not response.cached:
         await session.commit()
     return response

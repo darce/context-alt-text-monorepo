@@ -10,6 +10,7 @@ use AltContext\Sovereign\Sync\SnapshotClient;
 use AltContext\Sovereign\Sync\SnapshotClientTransport;
 use AltContext\Sovereign\Sync\SnapshotProjectorInterface;
 use AltContext\Sovereign\Sync\SplitTopologyCommandDrain;
+use AltContext\Sovereign\Sync\TopologyCommandRepository;
 use AltContext\Sovereign\Sync\TopologyCommandRepositoryInterface;
 use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
 use AltContext\Tests\Stubs\NullClustersRepository;
@@ -1032,6 +1033,36 @@ class SplitTopologyCommandDrainTest extends TestCase
         $this->assertSame([], $snapshotClient->fetchCalls);
         $this->assertSame([], $projector->projectCalls);
         $this->assertSame([['identity-2', 'cluster-new-1', 89], ['identity-3', 'cluster-new-1', 89]], $membersRepository->projectionAssignments);
+    }
+
+    public function testRecordFailureClearsClaimedAtSoRetryableRowIsImmediatelyReclaimable(): void
+    {
+        // CON-4 review (REVA-1): a retryable failure that returns the row to pending/applied
+        // must clear claimed_at, else the lease parks the row out of find_reconcilable for 300s.
+        global $wpdb;
+        $repository = new TopologyCommandRepository('wp_acx_topology_commands');
+        $repository->record_failure(7, 'applied', 'projection_reconcile_failed', 'retry', false);
+
+        $cleared = array_filter(
+            $wpdb->queries,
+            static fn (string $query): bool => str_contains($query, 'UPDATE wp_acx_topology_commands SET')
+                && str_contains($query, 'claimed_at = NULL')
+        );
+        $this->assertNotEmpty($cleared, 'record_failure must clear claimed_at for prompt re-claim.');
+    }
+
+    public function testRecordReconcileFailureClearsClaimedAtSoRetryableRowIsImmediatelyReclaimable(): void
+    {
+        global $wpdb;
+        $repository = new TopologyCommandRepository('wp_acx_topology_commands');
+        $repository->record_reconcile_failure(7, 'applied', 'projection_reconcile_failed', 'retry');
+
+        $cleared = array_filter(
+            $wpdb->queries,
+            static fn (string $query): bool => str_contains($query, 'reconcile_attempts = reconcile_attempts + 1')
+                && str_contains($query, 'claimed_at = NULL')
+        );
+        $this->assertNotEmpty($cleared, 'record_reconcile_failure must clear claimed_at for prompt re-claim.');
     }
 
     public function testDrainSkipsPendingDispatchWhenCommandClaimLostToPeerDrain(): void

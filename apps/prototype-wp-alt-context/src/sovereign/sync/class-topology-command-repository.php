@@ -296,11 +296,14 @@ class TopologyCommandRepository implements TopologyCommandRepositoryInterface {
 				'status'             => trim( $status ),
 				'last_error_code'    => trim( $error_code ),
 				'last_error_message' => trim( $error_message ),
+				// CON-4: release the claim so a retryable row is re-claimable on the next drain
+				// instead of being parked out of find_reconcilable for the full claim lease.
+				'claimed_at'         => null,
 				'last_attempted_at'  => current_time( 'mysql' ),
 				'updated_at'         => current_time( 'mysql' ),
 			),
 			array( 'id' => max( 1, $command_id ) ),
-			array( '%s', '%s', '%s', '%s', '%s' ),
+			array( '%s', '%s', '%s', '%s', '%s', '%s' ),
 			array( '%d' )
 		);
 		if ( false === $updated ) {
@@ -323,7 +326,7 @@ class TopologyCommandRepository implements TopologyCommandRepositoryInterface {
 
 		$now = current_time( 'mysql' );
 		$query = $this->prepare_query(
-			'UPDATE %i SET status = %s, last_error_code = %s, last_error_message = %s, reconcile_attempts = reconcile_attempts + 1, last_attempted_at = %s, updated_at = %s WHERE id = %d',
+			'UPDATE %i SET status = %s, last_error_code = %s, last_error_message = %s, reconcile_attempts = reconcile_attempts + 1, claimed_at = NULL, last_attempted_at = %s, updated_at = %s WHERE id = %d',
 			array(
 				$this->table_name,
 				trim( $status ),

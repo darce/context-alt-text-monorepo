@@ -268,21 +268,17 @@ class ScanWorker:
         try:
             await self._dispatch_clustering_job(job=job, session=session)
             return True
-        except Exception as exc:  # pragma: no cover
+        except Exception as exc:
             logger.exception(
                 "[worker] Clustering job failed: job_id=%s tenant_id=%s job_type=%s",
                 job_id,
                 tenant_id,
                 job_type,
             )
-            await self._record_clustering_job_failure(
-                exc=exc, session=session, job_id=job_id, tenant_id=tenant_id
-            )
+            await self._record_clustering_job_failure(exc=exc, session=session, job_id=job_id, tenant_id=tenant_id)
             return True
 
-    async def _claim_next_clustering_job(
-        self, *, session: AsyncSession, now: datetime
-    ) -> IdentityClusteringJob | None:
+    async def _claim_next_clustering_job(self, *, session: AsyncSession, now: datetime) -> IdentityClusteringJob | None:
         """Claim the next pending clustering/curation/split job via SKIP LOCKED.
 
         Marks the claimed row RUNNING and commits so the SELECT FOR UPDATE row

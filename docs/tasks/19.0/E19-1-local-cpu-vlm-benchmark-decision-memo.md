@@ -66,6 +66,8 @@ Run on the deployed VM `acx-backend` (Ampere Altra **aarch64, 4 OCPU, 23 GB**, i
 
 ## Decision (revised)
 
+> **Update (2026-06-15, S11):** the `ACX_DESCRIPTION_ADAPTER` switch was generalized to a 4-option profile — `local_cpu` is now **`florence_small`** (Florence-2-base-ft), alongside `florence_large` (stub, async-only) and `gpu_phi4` (stub, GPU-only). See `docs/tasks/19.0/E19-1-florence-large-async-worker-impl-notes.md` and `scene/config/profiles.py`. References to `ACX_DESCRIPTION_ADAPTER=local_cpu` below read as `=florence_small`.
+
 1. **`local_cpu` on A1 is viable as a real-description path** at ~11–17 s — **no GPU is required for an MVP**. GPU/hosted-GPU becomes a *quality/headroom* upgrade, not a latency necessity.
 2. **Run it async (worker), not inline**, with a progress indicator — latency is interactive-range but variable; protects the event loop and the shared recognition service on the 4-OCPU box.
 3. **Keep `seeded` as the zero-latency default** for the demo loop/contract; `local_cpu` is the opt-in real path (`ACX_DESCRIPTION_ADAPTER=local_cpu`).

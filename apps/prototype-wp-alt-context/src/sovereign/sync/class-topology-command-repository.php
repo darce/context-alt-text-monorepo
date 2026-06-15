@@ -193,13 +193,54 @@ class TopologyCommandRepository implements TopologyCommandRepositoryInterface {
 	}
 
 	/**
+	 * Append an optimistic status guard to a `$wpdb->update` WHERE clause (CON-4-FU-1) so a
+	 * stale worker whose claim lease expired and was re-claimed mid-flight cannot clobber the
+	 * peer's terminal state — its write matches 0 rows when the status no longer matches.
+	 *
+	 * @param array<string,mixed> $where
+	 * @param array<int,string>   $where_formats
+	 * @return bool True when a guard was appended (the caller opted into status-gated writes).
+	 */
+	private function append_status_guard( array &$where, array &$where_formats, ?string $expected_status ): bool {
+		if ( null === $expected_status ) {
+			return false;
+		}
+
+		$normalized = trim( $expected_status );
+		if ( '' === $normalized ) {
+			return false;
+		}
+
+		$where['status'] = $normalized;
+		$where_formats[] = '%s';
+
+		return true;
+	}
+
+	/**
+	 * Resolve a write result to a boolean. A guarded write reports the no-op (0 rows matched
+	 * the expected status) so the stale caller stops; an unguarded write keeps the legacy
+	 * "no DB error" success semantics.
+	 *
+	 * @param mixed $result
+	 */
+	private function resolve_guarded_write_result( $result, bool $guarded ): bool {
+		if ( false === $result ) {
+			return false;
+		}
+
+		return $guarded ? (int) $result > 0 : true;
+	}
+
+	/**
 	 * @param array<string,mixed>|null $result_payload
 	 */
 	public function update_status(
 		int $command_id,
 		string $status,
 		?array $result_payload = null,
-		?string $backend_command_id = null
+		?string $backend_command_id = null,
+		?string $expected_status = null
 	): bool {
 		global $wpdb;
 
@@ -229,25 +270,29 @@ class TopologyCommandRepository implements TopologyCommandRepositoryInterface {
 			$formats[] = '%s';
 		}
 
+		$where = array( 'id' => max( 1, $command_id ) );
+		$where_formats = array( '%d' );
+		$guarded = $this->append_status_guard( $where, $where_formats, $expected_status );
+
 		$updated = $wpdb->update(
 			$this->table_name,
 			$update,
-			array( 'id' => max( 1, $command_id ) ),
+			$where,
 			$formats,
-			array( '%d' )
+			$where_formats
 		);
 
-		return false !== $updated;
+		return $this->resolve_guarded_write_result( $updated, $guarded );
 	}
 
 	/**
 	 * @param array<string,mixed> $response
 	 */
-	public function record_dispatch_result( int $command_id, array $response ): bool {
+	public function record_dispatch_result( int $command_id, array $response, ?string $expected_status = null ): bool {
 		$status = isset( $response['status'] ) && is_string( $response['status'] ) ? trim( $response['status'] ) : 'applied';
 		$backend_command_id = isset( $response['command_id'] ) && is_string( $response['command_id'] ) ? $response['command_id'] : null;
 
-		$updated = $this->update_status( $command_id, $status, $response, $backend_command_id );
+		$updated = $this->update_status( $command_id, $status, $response, $backend_command_id, $expected_status );
 		if ( ! $updated ) {
 			return false;
 		}
@@ -258,16 +303,26 @@ class TopologyCommandRepository implements TopologyCommandRepositoryInterface {
 	/**
 	 * @param array<string,mixed>|null $result_payload
 	 */
-	public function mark_reconciled( int $command_id, ?array $result_payload = null ): bool {
+	public function mark_reconciled( int $command_id, ?array $result_payload = null, ?string $expected_status = null ): bool {
 		global $wpdb;
 
-		if ( ! $this->update_status( $command_id, 'reconciled', $result_payload ) ) {
+		if ( ! $this->update_status( $command_id, 'reconciled', $result_payload, null, $expected_status ) ) {
 			return false;
 		}
 
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'update' ) ) {
 			return false;
 		}
+
+		$where = array( 'id' => max( 1, $command_id ) );
+		$where_formats = array( '%d' );
+		// The first write moved the row to 'reconciled'; gate the durable timestamp write on that
+		// so it is a no-op when the status flip itself was a stale no-op (CON-4-FU-1).
+		$guarded = $this->append_status_guard(
+			$where,
+			$where_formats,
+			null === $expected_status ? null : 'reconciled'
+		);
 
 		$updated = $wpdb->update(
 			$this->table_name,
@@ -275,20 +330,24 @@ class TopologyCommandRepository implements TopologyCommandRepositoryInterface {
 				'projection_reconciled_at' => current_time( 'mysql' ),
 				'updated_at'               => current_time( 'mysql' ),
 			),
-			array( 'id' => max( 1, $command_id ) ),
+			$where,
 			array( '%s', '%s' ),
-			array( '%d' )
+			$where_formats
 		);
 
-		return false !== $updated;
+		return $this->resolve_guarded_write_result( $updated, $guarded );
 	}
 
-	public function record_failure( int $command_id, string $status, string $error_code, string $error_message, bool $increment_attempt = true ): bool {
+	public function record_failure( int $command_id, string $status, string $error_code, string $error_message, bool $increment_attempt = true, ?string $expected_status = null ): bool {
 		global $wpdb;
 
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'update' ) ) {
 			return false;
 		}
+
+		$where = array( 'id' => max( 1, $command_id ) );
+		$where_formats = array( '%d' );
+		$guarded = $this->append_status_guard( $where, $where_formats, $expected_status );
 
 		$updated = $wpdb->update(
 			$this->table_name,
@@ -302,11 +361,11 @@ class TopologyCommandRepository implements TopologyCommandRepositoryInterface {
 				'last_attempted_at'  => current_time( 'mysql' ),
 				'updated_at'         => current_time( 'mysql' ),
 			),
-			array( 'id' => max( 1, $command_id ) ),
+			$where,
 			array( '%s', '%s', '%s', '%s', '%s', '%s' ),
-			array( '%d' )
+			$where_formats
 		);
-		if ( false === $updated ) {
+		if ( ! $this->resolve_guarded_write_result( $updated, $guarded ) ) {
 			return false;
 		}
 
@@ -317,7 +376,7 @@ class TopologyCommandRepository implements TopologyCommandRepositoryInterface {
 		return $this->increment_attempts( $command_id );
 	}
 
-	public function record_reconcile_failure( int $command_id, string $status, string $error_code, string $error_message ): bool {
+	public function record_reconcile_failure( int $command_id, string $status, string $error_code, string $error_message, ?string $expected_status = null ): bool {
 		global $wpdb;
 
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) || ! method_exists( $wpdb, 'prepare' ) ) {
@@ -325,17 +384,28 @@ class TopologyCommandRepository implements TopologyCommandRepositoryInterface {
 		}
 
 		$now = current_time( 'mysql' );
+		$args = array(
+			$this->table_name,
+			trim( $status ),
+			trim( $error_code ),
+			trim( $error_message ),
+			$now,
+			$now,
+			max( 1, $command_id ),
+		);
+		// CON-4-FU-1: gate the reconcile-failure write on the row still being in its expected
+		// status so a stale re-claimed worker's write is a 0-row no-op.
+		$guard_clause = '';
+		$normalized_expected = null === $expected_status ? '' : trim( $expected_status );
+		$guarded = '' !== $normalized_expected;
+		if ( $guarded ) {
+			$guard_clause = ' AND status = %s';
+			$args[] = $normalized_expected;
+		}
+
 		$query = $this->prepare_query(
-			'UPDATE %i SET status = %s, last_error_code = %s, last_error_message = %s, reconcile_attempts = reconcile_attempts + 1, claimed_at = NULL, last_attempted_at = %s, updated_at = %s WHERE id = %d',
-			array(
-				$this->table_name,
-				trim( $status ),
-				trim( $error_code ),
-				trim( $error_message ),
-				$now,
-				$now,
-				max( 1, $command_id ),
-			)
+			'UPDATE %i SET status = %s, last_error_code = %s, last_error_message = %s, reconcile_attempts = reconcile_attempts + 1, claimed_at = NULL, last_attempted_at = %s, updated_at = %s WHERE id = %d' . $guard_clause,
+			$args
 		);
 		if ( ! is_string( $query ) || '' === $query ) {
 			return false;
@@ -343,7 +413,7 @@ class TopologyCommandRepository implements TopologyCommandRepositoryInterface {
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$result = $wpdb->query( $query );
 
-		return false !== $result;
+		return $this->resolve_guarded_write_result( $result, $guarded );
 	}
 
 	/**

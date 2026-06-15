@@ -216,13 +216,14 @@ class SplitTopologyCommandDrain {
 				'failed',
 				'missing_result_payload',
 				'Applied split topology command is missing durable result metadata.',
-				false
+				false,
+				'applied'
 			);
 			return;
 		}
 
 		if ( $this->reconcile_command( $command, $stored_result ) ) {
-			$this->repository->mark_reconciled( $command_id, $stored_result );
+			$this->repository->mark_reconciled( $command_id, $stored_result, 'applied' );
 			return;
 		}
 
@@ -232,7 +233,8 @@ class SplitTopologyCommandDrain {
 			$command_id,
 			$next_status,
 			'projection_reconcile_failed',
-			'Split topology command could not be reconciled locally.'
+			'Split topology command could not be reconciled locally.',
+			'applied'
 		);
 	}
 
@@ -244,29 +246,32 @@ class SplitTopologyCommandDrain {
 		$status = trim( (string) ( $result['status'] ?? 'failed' ) );
 
 		if ( 'applied' === $status ) {
-			if ( ! $this->repository->record_dispatch_result( $command_id, $result ) ) {
+			// Claimed as 'pending'; record_dispatch_result is the pending->applied transition.
+			if ( ! $this->repository->record_dispatch_result( $command_id, $result, 'pending' ) ) {
 				return;
 			}
 
 			if ( $this->reconcile_command( $command, $result ) ) {
-				$this->repository->mark_reconciled( $command_id, $result );
+				$this->repository->mark_reconciled( $command_id, $result, 'applied' );
 				return;
 			}
 
 			$attempts = max( 0, (int) ( $command['attempts'] ?? 0 ) ) + 1;
 			$retryable = $attempts < $this->resolve_max_attempts();
+			// Row is now 'applied' after record_dispatch_result; guard the reconcile-fail write on it.
 			$this->repository->record_failure(
 				$command_id,
 				$retryable ? 'applied' : 'failed',
 				'projection_reconcile_failed',
 				'Split topology command could not be reconciled locally.',
-				false
+				false,
+				'applied'
 			);
 			return;
 		}
 
 		if ( 'conflict' === $status ) {
-			$this->repository->record_dispatch_result( $command_id, $result );
+			$this->repository->record_dispatch_result( $command_id, $result, 'pending' );
 			$this->reconcile_conflict( $command, $result );
 			return;
 		}
@@ -274,11 +279,14 @@ class SplitTopologyCommandDrain {
 		$attempts = max( 0, (int) ( $command['attempts'] ?? 0 ) ) + 1;
 		$retryable = (bool) ( $result['retryable'] ?? true );
 		$next_status = ( $retryable && $attempts < $this->resolve_max_attempts() ) ? 'pending' : 'failed';
+		// Dispatch failed before any status flip; the row is still 'pending'.
 		$this->repository->record_failure(
 			$command_id,
 			$next_status,
 			$this->normalize_text( $result['error_code'] ?? '', 'dispatch_failed' ),
-			$this->normalize_text( $result['error_message'] ?? '', 'Split topology command dispatch failed.' )
+			$this->normalize_text( $result['error_message'] ?? '', 'Split topology command dispatch failed.' ),
+			true,
+			'pending'
 		);
 	}
 

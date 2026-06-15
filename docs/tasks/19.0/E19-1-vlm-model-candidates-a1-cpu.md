@@ -44,7 +44,24 @@ Swept Florence-2-**base-ft** ("small", cold 11.5s) and **large-ft** (cold 19.8s)
 **Recommended production config (CPU A1):**
 > **Florence-2-base-ft · `<MORE_DETAILED_CAPTION>` · `num_beams=1` · OD off → ~5 s/image**, rich accurate caption (*"A tall red building with a pointed roof sits on a hill… water behind with boats"* / *"A large light orange flower with a red center… many petals… green leaf behind"*), **no hallucination**, ~3× faster than the original 15 s baseline and ~4× under the 20 s bar. If object labels are needed, add OD at beams=1 (~9 s, correct labels). Wire as `VlmSettings(num_beams=1, tasks=("<MORE_DETAILED_CAPTION>",))`.
 
-**large-ft is not worth it on CPU:** even tuned (`MDC b1` no-OD) it's ~17–20 s (3.5× base) and its *china* caption is actually **less** specific than base ("tall building", no "red"/"pagoda") — it only wins on the flower (dahlia + "two smaller flowers"). Reserve large-ft for the **GPU** tier where its quality pays off without the latency.
+**large-ft is not worth it on CPU at 768:** even tuned (`MDC b1` no-OD @768) it's ~16–21 s (3.5× base) and its *china* caption is actually **less** specific than base ("tall building", no "red"/"pagoda") — it only wins on the flower (dahlia + "two smaller flowers"). But see the resolution lever below — 512 changes this.
+
+### Resolution lever — input edge 1024 / 768 / 512 (`MDC b1`, no OD)
+
+Florence's processor resizes to a **fixed default 768×768** (confirmed: `image_processor.size = crop_size = 768`; the prior "1024 pre-downsample" was a no-op — the test images are 640×427, upscaled to 768). So the real knob is the **processor target size**, swept here with `pixel_values` shape logged to confirm the model input actually changed:
+
+| edge | base china | base flower | large china | large flower |
+| --- | --- | --- | --- | --- |
+| **768** (default) | 4.7s — *full rich* | 4.8s — *full rich* | 15.8s — full | 20.9s — full (dahlia, 2 flowers) |
+| **512** | 2.3s — **collapses** | 2.4s — **collapses** | **8.8s** — *retains detail* | **10.2s** — *retains detail* |
+| **1024** | ❌ `IndexError` | ❌ | ❌ `IndexError` | ❌ |
+
+- **Florence is hard-capped at 768** — 1024 crashes (`index out of range in self`: fixed 768 position embeddings). You can only go *down*.
+- **512 cuts latency ~45–50%** (base 4.7→2.3 s; large 16→9 s, 21→10 s) — encoder/prefill cost scales with pixel count.
+- **Quality at 512 is capacity-dependent.** base-ft **collapses** to a useless one-liner (*"A tall Chinese pagoda is shown."* / *"A beautiful orange flower is shown."* — gains the noun, loses everything else). large-ft **retains rich detail** (*"a tall building… pointed roof… a boat"* / *"peach… many petals… circular pattern"*) — it only sheds fine nuance (species "dahlia", the second flower) that needs the full 768.
+- **New CPU option this unlocks:** **large-ft @512 (`MDC b1` no-OD) ≈ 9–10 s** — large's scene understanding at ~half its 768 cost, comfortably under budget. Use it when base-ft@768's detail is insufficient but you can't afford large@768's ~18 s. **Do not run base-ft below 768** (quality collapse) and **never above 768** (crash).
+
+**Net on the resolution lever:** it's a real latency knob, but only *downward* and only worth it for **large-ft** (512 ≈ halves its latency while keeping useful detail). base-ft@768 (~5 s) remains the primary CPU sweet spot; large-ft@512 (~10 s) is now a viable richer-scene middle tier.
 
 ### Phi-tier (GPU-class quality) — measured on A1 CPU 2026-06-15, for GPU-move signal
 

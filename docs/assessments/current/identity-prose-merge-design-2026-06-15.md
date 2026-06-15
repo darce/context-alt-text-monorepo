@@ -5,6 +5,7 @@
 > **Task:** `MAINT-identity-prose-merge-20260615`
 > **Question evaluated:** How to merge curated/confirmed clustered identities (roster names + face boxes) into the written prose of a generated image description, seamlessly for the user, on the OCI A1 VM.
 > **Source inputs:** Code (`apps/prototype-description-service` recognition + roster + db models), [segmentation-vlm-pipeline-feasibility-2026-06-15.md](./segmentation-vlm-pipeline-feasibility-2026-06-15.md), [privacy-trust-and-vlm-fit-investigation-2026-06-13.md](./privacy-trust-and-vlm-fit-investigation-2026-06-13.md), [context-aware-image-description-roadmap-2026-06-13.md](../../roadmaps/context-aware-image-description-roadmap-2026-06-13.md) (Phase 5).
+> **Revision (2026-06-15):** consent model resolved by operator decision (admin-only plugin + blanket operator naming-agreement); reflow approach expanded (grammar-aware NLG vs. small on-box LLM vs. instruction-VLM) and the "small LLM on the VM?" question answered.
 
 ---
 
@@ -13,10 +14,10 @@
 **The merge is the cheapest part of the whole system, and the OCI A1 hardware is not the bottleneck.** Naming a confirmed person in prose is a spatial-join + string-substitution — pure Python/SQL, sub-millisecond, ~0 RAM. The hardware cost is entirely the VLM pass(es) already budgeted in the feasibility doc; the merge adds **at most +1 Florence pass** (phrase grounding), or **zero** with the positional fallback.
 
 The real constraints are **not** compute. They are:
-1. **Correctness of face↔phrase association** (calling the *wrong* person by name is a worse failure than not naming at all).
-2. **A missing consent/opt-in layer** — the backend has **zero** naming-policy fields today, yet the privacy posture (Meta-2021 / BIPA / GDPR) requires identity naming to be opt-in, human-in-the-loop, and roster-bound. This is a prerequisite, not an afterthought.
+1. **Correctness of face↔phrase association** (calling the *wrong* person by name is a worse failure than not naming at all). With consent resolved (below), this is now the **top** risk.
+2. **Consent posture** — resolved by product decision (admin-only plugin + blanket operator naming-agreement). This *simplifies* the engineering (naming on-by-default behind one operator flag, no per-person opt-in) but is **mitigation + liability-shift, not full elimination** of the privacy concern. See the Consent model section below.
 
-**Recommended (A1-viable now):** post-hoc **deterministic merge** — VLM emits caption + grounded person-phrase boxes; match against `user_confirmed` face boxes by normalized containment; substitute names via a small template; gate behind an opt-in flag; fall back to generic phrasing on any ambiguity. Seamless because it reuses the curation the user *already did* and runs server-side in the describe worker — no new per-image action.
+**Recommended (A1-viable now):** post-hoc **deterministic merge** — VLM emits caption + grounded person-phrase boxes; match against `user_confirmed` face boxes by normalized containment; **reflow** names into the prose (grammar-aware NLG, not naive substitution — see §2 below); gate behind the operator naming-agreement; fall back to generic phrasing on any ambiguity. Seamless because it reuses the curation the user *already did* and runs server-side in the describe worker — no new per-image action.
 
 **Upgrade (off-A1 / later):** single-pass **prompt-injection** — feed roster names into an instruction-following VLM's prompt so it weaves names in natively. Most fluent, but needs Phi-3.5-vision / SmolVLM / Qwen-class models (heavier, borderline on A1 CPU, some license caveats) → GPU/provider tier.
 
@@ -68,13 +69,26 @@ The two box sources live in **different coordinate spaces**:
 
 **Match rule (containment, not IoU):** a face matches a person-phrase when the **face-box center lies inside the person-phrase box** AND `area(face) ≪ area(person)`. If several person boxes contain the center, pick the **smallest** (most specific). IoU is wrong here — face and body boxes barely overlap by area.
 
-### 2. Name injection
+### 2. Name injection — reflow, not naive replacement
 
-Florence-2 `<CAPTION_TO_PHRASE_GROUNDING>` returns, for the model's own caption, a box per noun phrase (e.g. "a man", "a woman", "a person") with its character span. Once a phrase is associated with confirmed name *N*:
-- **Template substitution** (no model): replace the phrase head, preserve modifiers — `"A man in a red jacket"` → `"Daniel, in a red jacket"`. Handle article/case/pronoun minimally; alt text is short and formulaic, so this is usually adequate.
-- **Tiny text rewriter** (one cheap pass): hand the caption + `[(phrase→name)]` bindings to a small text LLM for fluency. Adds latency/RAM/license surface; reserve for when templating reads robotically.
+Florence-2 `<CAPTION_TO_PHRASE_GROUNDING>` returns, for the model's own caption, a box per noun phrase (e.g. "a man", "a woman", "a person") with its character span. Once a phrase is associated with confirmed name *N*, the prose must be **reflowed** so the name reads naturally — a naive head-swap ("A man in a red jacket" → "Daniel, in a red jacket") is brittle: article elision, subject vs. object/possessive position, pronoun coreference on later mentions, and list aggregation ("Daniel and Sarah"). Three reflow tiers, increasing cost:
 
-> **Florence-2 cannot be prompted with names.** It is **task-token driven, not instruction-following** — there is no free-text channel to say "call the left person Daniel." So with Florence, naming is necessarily **post-hoc**. Only an instruction-following VLM (Phi-3.5-vision, SmolVLM2, Qwen2.5-VL) supports name-in-prompt (Approach C below).
+1. **Grammar-aware NLG (deterministic, no model) — start here.** A small data-to-text realizer that, given `(generic_caption, [(span→name)], face_order)`, fixes articles/case, chooses subject vs. possessive form, aggregates multiple names, and resolves repeated mentions. Zero added RAM/CPU/latency and **zero hallucination risk**. For accessibility alt text — short, literal, factual — this covers the large majority of cases; the patterns are few and enumerable.
+2. **Small on-box LLM rewriter (constrained) — feasible on A1, but a deliberate upgrade.** Analysis below. Use only if tier 1 reads robotically on real data.
+3. **Instruction-VLM single pass (names in prompt) — best reflow, off-A1.** The model produces named prose natively; reflow disappears as a separate step. Needs a heavier instruction-following VLM → GPU/provider tier (Approach C).
+
+> **Florence-2 cannot be prompted with names.** It is **task-token driven, not instruction-following** — no free-text channel to say "call the left person Daniel." With Florence, naming is necessarily **post-hoc** (tier 1 or 2). Only an instruction-following VLM (Phi-3.5-vision, SmolVLM2, Qwen2.5-VL) supports name-in-prompt (tier 3 / Approach C).
+
+#### Should a small LLM run on the OCI VM for reflow?
+
+**Feasible: yes. First choice: no.** Findings:
+- **Latency is fine.** A 1.5B-class instruct model, Q4 via llama.cpp on the A1's Ampere cores, generating the ~50–80 tokens of an alt-text rewrite, lands in roughly **1–3 s** (server-grade ARM far exceeds SBC benchmarks of ~5–8 t/s for 4B models). Tolerable inside the async describe worker.
+- **License is fine.** Permissive small picks: **Qwen2.5-1.5B-Instruct** (Apache-2.0) and **SmolLM2-1.7B-Instruct** (Apache-2.0); **Phi-3.5-mini** (MIT, but 3.8B); **Gemma-4** (now Apache-2.0). Avoid **Qwen2.5-3B** (Qwen-Research, non-commercial); treat **Llama-3.2** (custom community license) as review-required. Qwen2.5-1.5B is the strongest instruction-follower of the permissive small set.
+- **The real cost is stacking, not speed.** It puts a *second* generative model into the ~5–8 GB headroom already shared by Florence (~1–2 GB), Postgres, and InsightFace — Q4 1.5B adds ~1–1.5 GB and competes for the same 4 cores (passes serialize). Manage via lazy load/unload.
+- **The real risk is hallucination.** A free-text rewriter can invent attributes absent from the grounded caption — a correctness/trust regression for accessibility text and a breach of the product's "inspectable visual facts" positioning. **Mitigation is mandatory:** feed the LLM *structured grounded facts + names* (not the raw image), constrain hard (low temperature; "use only these facts and names, add nothing"), and **validate output against the source caption**, rejecting any new content nouns.
+- **It may be a stopgap.** The cleanest long-term reflow is tier 3 (instruction-VLM, single pass) on a GPU/provider tier; heavy investment in an on-box reflow LLM is partly throwaway if the roadmap heads there.
+
+**Recommendation:** ship tier 1 (grammar-aware NLG). Add the small on-box LLM (tier 2: **Qwen2.5-1.5B-Instruct**, Q4 llama.cpp, constrained + validated) only if deterministic reflow reads robotically on real data — and treat it as a **data-to-text realizer of grounded facts, never open generation**. Prefer tier 3 once off the A1.
 
 ### 3. Seamlessness
 
@@ -89,20 +103,29 @@ Florence-2 `<CAPTION_TO_PHRASE_GROUNDING>` returns, for the model's own caption,
 | **A** | **Deterministic post-hoc** (ground phrases → containment-match → template substitution) | +1 (grounding) | ✅ excellent (merge ≈ 0 cost) | good; integrated into prose | MIT (Florence only) |
 | **B** | **Positional fallback** (order confirmed faces left→right, prepend/append: "Left to right: Daniel, Sarah.") | 0 | ✅ best | adequate; less woven in | MIT |
 | **C** | **Prompt-injection** (names → instruction VLM prompt, single pass) | 0 extra (replaces Florence) | ⚠️ poor on A1 (heavier VLM) | best; native prose | model-dependent (Phi/SmolVLM permissive; Qwen review) |
-| **D** | **A + tiny text rewriter** (template, then LLM polish) | +1 grounding +1 text | ⚠️ marginal on A1 | best of the post-hoc options | rewriter-dependent |
+| **D** | **A + small on-box LLM rewriter** (grounded facts → constrained realize) | +1 grounding +1 text | ✅ feasible (~1–3 s, +~1–1.5 GB; stacks on Florence) | high; constrained to grounded facts | Apache (Qwen2.5-1.5B / SmolLM2-1.7B) |
 
-**Recommendation:** ship **A** with **B** as the zero-pass fallback when grounding is absent/low-confidence. Defer **C/D** to a GPU/provider tier.
+**Recommendation:** ship **A** (with grammar-aware reflow) plus **B** as the zero-pass fallback when grounding is absent/low-confidence. Add **D** only if deterministic reflow is insufficient on real data — as a *constrained, validated* realizer, not open generation. Defer **C** to a GPU/provider tier.
 
 ---
 
-## Policy prerequisite (must land before any naming)
+## Consent model (resolved 2026-06-15)
 
-The backend has **no** consent, opt-in, or naming-suppression fields (`grep` for consent/opt_in/allow_naming/name_policy → none; only `user_confirmed` and `confirmation_source`, which mean "a human confirmed this is one person", **not** "naming this person in published alt text is allowed"). The privacy assessment is explicit: naming must be **human-in-the-loop, site-roster-bound, consent/provenance-bound** (Meta shut off automatic people-naming in 2021; BIPA/GDPR treat this as biometric processing).
+**Product decision:** the WordPress plugin is **admin-operator-only**, and operators give a **blanket agreement** to person-naming. This resolves the engineering gate and removes the worst fact patterns — but, to be honest about scope, it is **mitigation + liability-shift, not full elimination** of the privacy concern. (Risk analysis, not legal advice; get counsel before any "BIPA/GDPR compliant" claim.)
 
-**Required before shipping identity-in-prose:**
-- A naming opt-in gate — minimally **per-tenant**, ideally **per-person (`roster_id`)** — default **off**.
-- **Provenance** on the result: which names were injected, from which `cluster_id`/`roster_id`, and the match confidence (matches the roadmap's auditability trait).
-- Generic fallback always available (the "generic caption vs. context-aware draft" pair the roadmap/assessment already want).
+**What admin-only + operator agreement genuinely solves:**
+- No public/end-user uploads, no public face lookup, no cross-tenant or surveillance use — the high-severity patterns the privacy assessment flags simply don't exist.
+- The operator becomes the accountable **controller**; Alt Context is the **processor**. Engineering can treat naming as **on-by-default behind a single operator-level agreement flag** — no per-person opt-in needed for v1.
+
+**What it does NOT solve (the nuance that matters):**
+- The parties protected by BIPA/GDPR are the **people in the photos** (the data subjects), not the operator. An operator accepting terms is **not** consent from those people. The privacy assessment is explicit: *"customer contracts do not cure missing subject notice or written release."*
+- The durable mechanism is an operator **attestation/warranty** — the operator affirms they hold the rights, notice, and consent for the people in their media and will not use the tool for prohibited biometric purposes. "Blanket agreement" carries weight only when framed this way (operator warranting subject consent), backed by the already-built retention/purge/export controls and the no-training-reuse posture.
+
+**Engineering implications (simplified, not removed):**
+- One tenant-level operator naming-agreement flag (its default reflects the signed agreement); **no per-person opt-in** for v1.
+- Keep a cheap **per-person suppress** escape hatch keyed on `roster_id` (the operator may still choose not to name someone) — far smaller than an opt-in system.
+- Keep **provenance** on every result: which names were injected, from which `cluster_id`/`roster_id`, and match confidence (the roadmap's auditability trait, and the operator's audit trail if a subject objects).
+- Always emit the generic draft alongside the named draft.
 
 ## Correctness guardrails (mis-naming is the worst outcome)
 
@@ -110,7 +133,7 @@ Name **only** when **all** hold; otherwise degrade to generic:
 - `user_confirmed = TRUE` and `label` present (never name a raw cluster).
 - A **single** high-confidence containment match between one confirmed face and one person-phrase (1:1). Ambiguous many-to-one → do not name that region.
 - Detection `confidence` and grounding presence above thresholds.
-- Naming opt-in satisfied for that tenant/person.
+- Operator naming-agreement active **and** the person not on the per-person suppress list (`roster_id`).
 - On any miss: fall back to count/generic ("two people", "a person") — **never guess a name**.
 
 ---
@@ -127,21 +150,22 @@ So: **identity→prose merge is achievable on the current hardware** via Approac
 ## Recommended architecture & sequencing
 
 1. **Build the merge layer model-independently now** (against the seeded adapter + existing recognition data). Pure function + tests; no VLM dependency. Lands inside roadmap Phase 1/Phase 5 work without waiting on Florence.
-2. **Add the naming opt-in + provenance** fields/contract (prerequisite; small backend + WP curation surface).
+2. **Add the operator naming-agreement flag + per-person suppress + provenance** (small backend + WP curation surface; far lighter than a per-person opt-in system — see Consent model).
 3. **When Florence-2 lands** (roadmap Phase 2), wire Approach **A** (caption + `<CAPTION_TO_PHRASE_GROUNDING>`) with **B** fallback.
 4. **Defer C/D** to a GPU/provider tier; revisit once a heavier instruction VLM is hosted.
 
-Describe-worker flow: `VLM → (caption, phrase_boxes)` → `join confirmed faces by media_id` → `normalize+containment-match` → `policy gate` → `template substitution` → emit **both** generic and named drafts + provenance.
+Describe-worker flow: `VLM → (caption, phrase_boxes)` → `join confirmed faces by media_id` → `normalize+containment-match` → `agreement + suppress gate` → `reflow (grammar-aware NLG; optional constrained LLM)` → emit **both** generic and named drafts + provenance.
 
 ## Open questions / required evidence
 
 - Florence-2 grounding recall for generic "person/man/woman" phrases on real WordPress media (drives how often A succeeds vs. falls back to B).
 - Coordinate fidelity after downsample — verify normalized boxes still align across recognition (full-res) and description (downsampled).
-- Templating quality (article/pronoun/possessive) — decide the threshold at which a rewriter (D) is warranted.
-- Consent UX: per-tenant vs. per-person opt-in granularity; default copy.
+- Reflow quality: how often deterministic grammar-aware NLG reads robotically on real captions — the threshold for adding the constrained on-box LLM (D). If added, measure hallucination rate and validation-rejection rate.
+- Operator-agreement UX: exact attestation wording (rights/notice/consent warranty); where the per-person suppress control lives in the curation UI.
 
 ## References
 
 - Florence-2 phrase grounding & coordinate format: [Roboflow — phrase grounding](https://blog.roboflow.com/what-is-phrase-grounding/) · [Florence-2 tasks (Analytics Vidhya)](https://www.analyticsvidhya.com/blog/2024/07/how-to-perform-computer-vision-tasks-with-florence-2/) · [Florence-2 deep-dive (TDS)](https://towardsdatascience.com/florence-2-mastering-multiple-vision-tasks-with-a-single-vlm-model-435d251976d0/)
 - Naming policy / biometric posture: [Meta — update on face recognition (2021)](https://about.fb.com/news/2021/11/update-on-use-of-face-recognition/) · [740 ILCS 14/15 (BIPA)](https://www.ilga.gov/documents/legislation/ilcs/documents/074000140K15.htm) · [GDPR Art. 9](https://gdpr-info.eu/art-9-gdpr/)
 - Instruction-following VLM alternatives (Approach C): [Phi-3.5-vision](https://huggingface.co/microsoft/Phi-3.5-vision-instruct) · [SmolVLM2-2.2B](https://huggingface.co/HuggingFaceTB/SmolVLM2-2.2B-Instruct)
+- Small on-box reflow LLM (Approach D): [Qwen2.5-1.5B license (Apache-2.0)](https://huggingface.co/Qwen/Qwen2.5-1.5B/blob/main/LICENSE) · [SmolLM2-1.7B-Instruct (Apache-2.0)](https://huggingface.co/HuggingFaceTB/SmolLM2-1.7B-Instruct) · [llama.cpp](https://github.com/ggml-org/llama.cpp) · [Llama-3.2 community license](https://www.llama.com/llama3_2/license/)

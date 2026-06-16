@@ -857,18 +857,44 @@ PHP;
      *
      * PA-2 mechanism assertion (a true cross-request race cannot be reproduced
      * in PHPUnit): a failing `ui_read` proxy request must serialize the
-     * failure-counter read-modify-write under a short-lived MySQL named lock
-     * (GET_LOCK acquired before the increment, RELEASE_LOCK after), instead of
-     * the previous non-atomic get_transient/++/set_transient that loses
-     * increments when two requests fail in the same window.
+     * failure-counter read-modify-write *inside* a short-lived MySQL named lock
+     * window, instead of the previous non-atomic get_transient/++/set_transient
+     * that loses increments when two requests fail in the same window.
+     *
+     * Asserting only that GET_LOCK/RELEASE_LOCK queries appear (and GET_LOCK
+     * precedes RELEASE_LOCK) is false confidence: the RMW writes
+     * $GLOBALS['__ac_transients'] and never hits $wpdb, so a regression that
+     * moves the increment outside the lock (acquire; release; set_transient)
+     * emits a byte-identical query log and still passes. To pin the ordering we
+     * snapshot the failure-counter transient at the moment GET_LOCK and
+     * RELEASE_LOCK are issued: it must be unset when the lock is acquired and
+     * already incremented when the lock is released — i.e. GET_LOCK <
+     * set_transient < RELEASE_LOCK.
      */
     public function testUiReadFailureIncrementsCircuitCounterUnderAtomicNamedLock(): void
     {
         global $wpdb;
-        $wpdb->queries = [];
-        $wpdb->mockVar = '1'; // GET_LOCK(...) acquired.
 
-        $harness = $this->makeUiReadHarness();
+        $harness    = $this->makeUiReadHarness();
+        $failureKey = RecognitionCircuitKeys::failure_key_for_base_url($harness->resolvedBaseUrl());
+
+        // Snapshot the failure-counter transient at the moment GET_LOCK and
+        // RELEASE_LOCK are issued. set_transient never touches $wpdb, so this is
+        // the only way to witness whether the increment ran inside the lock.
+        $transientAtGetLock = 'unset';
+        $transientAtRelease = 'unset';
+        $wpdb->onGetVar = static function (string $sql) use (
+            &$transientAtGetLock,
+            &$transientAtRelease,
+            $failureKey
+        ): void {
+            if (stripos($sql, 'RELEASE_LOCK') !== false) {
+                $transientAtRelease = get_transient($failureKey);
+            } elseif (stripos($sql, 'GET_LOCK') !== false) {
+                $transientAtGetLock = get_transient($failureKey);
+            }
+        };
+        $wpdb->mockVar = '1'; // GET_LOCK(...) acquired.
 
         $this->queueHttpResponse(new WP_Error('http_request_failed', 'down'));
         $harness->callUiRead();
@@ -888,21 +914,33 @@ PHP;
         );
         $this->assertNotEmpty(
             $releaseLock,
-            'The named lock must be released after the increment so the lock is not held past the RMW (CON-5).'
+            'The named lock must be released after the increment (CON-5).'
         );
 
-        $firstGetLockIdx = array_search($getLock[0], $wpdb->queries, true);
-        $firstReleaseIdx = array_search($releaseLock[0], $wpdb->queries, true);
-        $this->assertLessThan(
-            $firstReleaseIdx,
-            $firstGetLockIdx,
-            'GET_LOCK must be acquired before RELEASE_LOCK (lock wraps the read-modify-write).'
+        // The increment is invisible in the query log, so pin its position via
+        // the transient snapshots captured at lock acquire/release.
+        $this->assertFalse(
+            $transientAtGetLock,
+            'Counter must NOT be incremented before the lock is acquired — the RMW belongs inside the lock window.'
+        );
+        $this->assertSame(
+            1,
+            $transientAtRelease,
+            'Counter must already be incremented when the lock is released — proves the RMW ran inside the lock, '
+            . 'catching a regression that moves the increment after RELEASE_LOCK (CON-5).'
         );
     }
 
     /**
-     * CON-5 success criterion: with the increment serialized, the breaker trips
-     * deterministically once the failure count reaches the threshold (default 2).
+     * CON-5 success criterion: the breaker trips once the failure count reaches
+     * the threshold (default 2).
+     *
+     * This is a behavioral/threshold guard only — it does NOT guard the
+     * atomicity fix. ui_read is max_retries=1, so two sequential failing calls
+     * accumulate to the threshold the same way the pre-CON-5 non-atomic code
+     * did in single-threaded PHPUnit. The atomicity regression guard is
+     * testUiReadFailureIncrementsCircuitCounterUnderAtomicNamedLock; this test
+     * pins the threshold/open-seconds wiring around it.
      */
     public function testUiReadBreakerTripsDeterministicallyAtThreshold(): void
     {

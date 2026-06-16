@@ -29,7 +29,10 @@
 | Slice 8b parallel re-review (2 reviewers; **pass_with_findings**) → 1 in-place fix: unit-pin `partition_unclustered` multi-proposal/multi-member flatten (BR-01) | ✅ verified | `b8e6cbbf` |
 | Slice 8c — ORCH-4 finish: `_process_chunks` 233L→71L thin loop + `_process_single_chunk` orchestrator + 3 named phase methods (`_persist_accepted_assignments`, `_create_new_clusters_for_chunk`, `_commit_chunk_progress`) + 4 unit tests; behaviour-preserving (suite 1075) | ✅ landed | `c23bf65c` |
 | ORCH-4 final parallel review (2 reviewers; REV-A 0 findings end-to-end behaviour-preservation, REV-B **pass_with_findings**) → 1 in-place fix: 2 unit tests pinning the graph-fallback→HAC exclusion (BR-01) | ✅ verified | `cd58d973` |
-| Slice 8 remainder — PERSREG-5 (`generate_canonical_report` 394L), INFRA-5 (`refresh_centroids_view` fail-fast), INFRA-3 (`ensure_media_identity` fixture) | ⏳ planned | — |
+| Slice 8 — PERSREG-5 (`generate_canonical_report` phase extraction) + BR-01/02 fixes | ✅ landed | `16a74b83` |
+| Slice 8 — INFRA-5 (`refresh_centroids_view` fail-fast: repo propagates, purge warns) | ✅ landed | `81602226` |
+| INFRA-5 parallel re-review (2 reviewers; **pass_with_findings**) → best-effort post-merge refresh so a transient MV hiccup no longer rolls back a completed user-facing merge/bulk-batch (REVA-01/02, REVB-01) + happy-path/RLS-order test (REVB-02) | ✅ verified | `f0d0fb6d` |
+| Slice 8 remainder — INFRA-3 (`ensure_media_identity` fixture) | ⏳ planned | — |
 | Slice 9 — repository/AssignmentWriter split | ⏳ planned | — |
 | Follow-up — `_NotImplemented*` retention 503 path (behavior change, own TDD slice) | ⏳ planned | — |
 

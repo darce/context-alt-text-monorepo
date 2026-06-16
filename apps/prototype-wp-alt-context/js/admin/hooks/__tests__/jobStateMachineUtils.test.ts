@@ -57,6 +57,8 @@ describe('scan status helpers (BND-1)', () => {
     expect(isScanSuccessStatus('completed_with_errors')).toBe(true);
     expect(isScanSuccessStatus('failed')).toBe(false);
     expect(isScanSuccessStatus('running')).toBe(false);
+    // SSE-channel-only value (not in the REST union) — the widened string param must handle it.
+    expect(isScanSuccessStatus('clustering')).toBe(false);
     expect(isScanSuccessStatus(undefined)).toBe(false);
   });
 

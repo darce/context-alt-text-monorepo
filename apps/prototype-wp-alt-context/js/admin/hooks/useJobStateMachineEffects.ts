@@ -149,7 +149,9 @@ export const useJobStateMachineEffects = ({
       return;
     }
 
-    const clusteringCompleted = sseStatus === 'completed' || sseStatus === 'failed';
+    // BND-1 (SSE channel): completed_with_errors is terminal — clean up the cluster job + refresh,
+    // else a partial-success clustering run leaves the UI stuck in the clustering phase.
+    const clusteringCompleted = isScanSuccessStatus(sseStatus) || sseStatus === 'failed';
     if (clusteringCompleted && currentPhase === 'clustering') {
       removeJob(latestClusterJob.id);
       void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });

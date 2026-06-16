@@ -1,6 +1,7 @@
 import type { MutableRefObject } from 'react';
 
 import type { JobProgress } from '../api/recognition/types/scan';
+import { isScanSuccessStatus } from './jobStateMachineUtils';
 
 interface SseProgressFields {
   phase?: 'queued' | 'detecting' | 'clustering' | 'retrying' | 'awaiting_projection' | 'failed' | 'complete';
@@ -127,7 +128,7 @@ export const parseDoneEvent = <TStatus extends string>(
     return { progress, status: data.status };
   }
 
-  if (latestProgress && data.status === 'completed') {
+  if (latestProgress && isScanSuccessStatus(data.status)) {
     return {
       progress: {
         completed: latestProgress.total,

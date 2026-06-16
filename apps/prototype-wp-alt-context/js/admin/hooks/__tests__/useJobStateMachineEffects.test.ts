@@ -138,6 +138,31 @@ describe('useJobStateMachineEffects', () => {
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.all });
   });
 
+  it('cleans up the cluster job + refreshes when clustering completes with errors over SSE (BND-1-AUDIT-2)', async () => {
+    // SSE channel: completed_with_errors is terminal. Before the fix `clusteringCompleted` only
+    // matched 'completed'|'failed', so a partial-success clustering run never removed the job and
+    // never invalidated identities/clusters — the UI stayed stuck in the clustering phase.
+    const base = buildBaseOptions();
+    const removeJob = vi.fn();
+    const invalidateQueries = vi.fn();
+
+    renderHook(() =>
+      useJobStateMachineEffects({
+        ...base,
+        scanStatus: { ...base.scanStatus, status: 'running' },
+        sseStatus: 'completed_with_errors',
+        currentPhase: 'clustering',
+        latestClusterJob: { id: 'cluster-1', type: 'clustering', startedAt: Date.now(), totalItems: 5 },
+        removeJob,
+        queryClient: { invalidateQueries, refetchQueries: vi.fn().mockResolvedValue(undefined) } as never,
+      }),
+    );
+
+    await waitFor(() => expect(removeJob).toHaveBeenCalledWith('cluster-1'));
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.media.identities() });
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.clusters.all });
+  });
+
   it('keeps projection failures retryable after the backend leaves projecting', async () => {
     const options = buildBaseOptions();
     const syncMutateAsync = vi.fn().mockRejectedValueOnce(new Error('Waiting for service…')).mockResolvedValueOnce({

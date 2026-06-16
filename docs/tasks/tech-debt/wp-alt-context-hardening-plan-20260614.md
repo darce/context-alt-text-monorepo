@@ -93,7 +93,7 @@ Slice 1 — Concurrency data-integrity
 Slice 2 — Contract + resilience
 - [x] 2.1 completed_with_errors terminal status across schema + effects (BND-1)
 - [x] 2.2 stop fabricating suggestions total (COR-3, rg-015)
-- [ ] 2.3 atomic circuit-breaker failure counter (CON-5)
+- [x] 2.3 atomic circuit-breaker failure counter (CON-5)
 
 Slice 3 — Deferred refactors (behavior-preserving)
 - [ ] 3.1 co-locate single-consumer conflict/outbox hooks (ARCH-6)

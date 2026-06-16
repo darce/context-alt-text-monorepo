@@ -422,48 +422,46 @@ class SqlAlchemyClusterRepository(ClusterRepository):
     async def refresh_centroids_view(self) -> None:
         """Refresh the materialized view for cluster centroids.
 
-        This is a PostgreSQL-specific operation. SQLite and other databases
-        will silently skip this operation.
+        PostgreSQL refreshes the materialized view; SQLite rebuilds the shadow
+        table directly. INFRA-5: failures propagate (fail-fast) instead of being
+        swallowed — a silently-stale MV would feed wrong centroids to downstream
+        reads and merge-suggestion generation.
         """
-        try:
-            if is_sqlite(self._session):
-                await self._session.execute(text("DELETE FROM mv_identity_cluster_centroids"))
-                await self._session.execute(
-                    text(
-                        """
-                        INSERT INTO mv_identity_cluster_centroids (
-                            cluster_id,
-                            tenant_id,
-                            identity_count,
-                            centroid,
-                            refreshed_at
-                        )
-                        SELECT
-                            im.cluster_id,
-                            ic.tenant_id,
-                            COUNT(im.identity_id) AS identity_count,
-                            NULL AS centroid,
-                            COALESCE(MAX(mi.updated_at), MAX(ic.updated_at), CURRENT_TIMESTAMP) AS refreshed_at
-                        FROM identity_members im
-                        JOIN identity_clusters ic ON ic.id = im.cluster_id
-                        JOIN media_identities mi ON mi.id = im.identity_id
-                        GROUP BY im.cluster_id, ic.tenant_id
-                        """
+        if is_sqlite(self._session):
+            await self._session.execute(text("DELETE FROM mv_identity_cluster_centroids"))
+            await self._session.execute(
+                text(
+                    """
+                    INSERT INTO mv_identity_cluster_centroids (
+                        cluster_id,
+                        tenant_id,
+                        identity_count,
+                        centroid,
+                        refreshed_at
                     )
+                    SELECT
+                        im.cluster_id,
+                        ic.tenant_id,
+                        COUNT(im.identity_id) AS identity_count,
+                        NULL AS centroid,
+                        COALESCE(MAX(mi.updated_at), MAX(ic.updated_at), CURRENT_TIMESTAMP) AS refreshed_at
+                    FROM identity_members im
+                    JOIN identity_clusters ic ON ic.id = im.cluster_id
+                    JOIN media_identities mi ON mi.id = im.identity_id
+                    GROUP BY im.cluster_id, ic.tenant_id
+                    """
                 )
-                return
-            # Use CONCURRENTLY if possible, but it requires a unique index on the MV
-            # For now, standard refresh.
-            # SQLite and other databases don't support REFRESH MATERIALIZED VIEW
-            await enable_rls_bypass(self._session)
-            await self._session.execute(text("REFRESH MATERIALIZED VIEW mv_identity_cluster_centroids"))
-            count_result = await self._session.execute(text("SELECT COUNT(*) FROM mv_identity_cluster_centroids"))
-            logger.debug(
-                "Refreshed mv_identity_cluster_centroids (standard): count=%d",
-                count_result.scalar_one(),
             )
-        except Exception:
-            logger.warning("Failed to refresh centroid materialized view", exc_info=True)
+            return
+        # Standard (non-concurrent) refresh. CONCURRENTLY lives in the
+        # _concurrent variant, which requires a unique index on the MV.
+        await enable_rls_bypass(self._session)
+        await self._session.execute(text("REFRESH MATERIALIZED VIEW mv_identity_cluster_centroids"))
+        count_result = await self._session.execute(text("SELECT COUNT(*) FROM mv_identity_cluster_centroids"))
+        logger.debug(
+            "Refreshed mv_identity_cluster_centroids (standard): count=%d",
+            count_result.scalar_one(),
+        )
 
     async def refresh_centroids_view_concurrent(self) -> bool:
         """Refresh the materialized view concurrently.

@@ -112,7 +112,13 @@ class TenantPurgeService:
         scope_ids = await self._collect_scope_ids(tenant_id, scope)
         deleted_counts = await self._delete_jobs_for_scope(tenant_id, scope)
         deleted_counts.update(await self._delete_dependency_rows(tenant_id, scope, scope_ids))
-        await self._cluster_repository.refresh_centroids_view_concurrent()
+        if not await self._cluster_repository.refresh_centroids_view_concurrent():
+            logger.warning(
+                "[purge] centroid MV refresh failed after purge (tenant_id=%s scope=%s); "
+                "centroids may be stale until the next refresh",
+                tenant_id,
+                scope,
+            )
         return deleted_counts
 
     async def _get_tenant(self, tenant_id: str) -> Tenant:

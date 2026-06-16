@@ -452,7 +452,14 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 	 *
 	 * The lock is best-effort: if it cannot be acquired (timeout) or $wpdb is
 	 * unavailable, the increment still runs unguarded so behaviour never
-	 * degrades below the pre-CON-5 baseline.
+	 * degrades below the pre-CON-5 baseline. Two cases keep the guarantee a
+	 * ceiling rather than an absolute: a GET_LOCK timeout falls through to the
+	 * unguarded RMW, and on DB-split deployments (HyperDB/LudicrousDB) the
+	 * GET_LOCK SELECT may route to a replica while the transient write lands on
+	 * the master, so the lock can guard a different connection than the
+	 * mutation. Both are tolerable here — the critical section is two
+	 * sub-millisecond transient ops against a 1s lock timeout, so the realistic
+	 * contended path acquires the lock rather than timing out.
 	 */
 	private function increment_failure_counter( string $failure_key ): int {
 		$lock_name = 'acx_cb_' . md5( $failure_key );

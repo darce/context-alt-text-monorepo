@@ -11,11 +11,13 @@ type ScanJobStatus = JobStatusResponse['status'];
 // literals across hooks (sr-007, BND-1).
 export const SCAN_SUCCESS_STATUSES = ['completed', 'completed_with_errors'] as const satisfies readonly ScanJobStatus[];
 
-export const isScanSuccessStatus = (status: ScanJobStatus | undefined): boolean =>
+// Accepts any status string (REST JobStatusResponse['status'] OR the SSE JobStatus channel, which
+// also carries non-REST values like 'clustering'), so both channels can share one terminal check.
+export const isScanSuccessStatus = (status: string | undefined): boolean =>
   status !== undefined && (SCAN_SUCCESS_STATUSES as readonly string[]).includes(status);
 
 // Terminal = succeeded (incl. partial) or hard-failed.
-export const isScanTerminalStatus = (status: ScanJobStatus | undefined): boolean =>
+export const isScanTerminalStatus = (status: string | undefined): boolean =>
   isScanSuccessStatus(status) || status === 'failed';
 
 export const getLatestJobByType = (jobs: PersistedJob[], type: PersistedJob['type']): PersistedJob | null => {

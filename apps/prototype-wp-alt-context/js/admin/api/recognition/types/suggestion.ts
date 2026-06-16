@@ -65,6 +65,7 @@ export interface PendingNameSuggestion {
 
 export interface PendingNameSuggestionsResponse {
   suggestions: PendingNameSuggestion[];
+  // COR-3 (rg-015): no authoritative total; count derives from `suggestions.length`.
   limit: number;
   offset: number;
   data_source?: DataSource;
@@ -113,6 +114,7 @@ export interface PendingMergeSuggestion {
 
 export interface PendingMergeSuggestionsResponse {
   suggestions: PendingMergeSuggestion[];
+  // COR-3 (rg-015): no authoritative total; count derives from `suggestions.length`.
   limit: number;
   offset: number;
   data_source?: DataSource;

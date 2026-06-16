@@ -23,6 +23,7 @@ use function get_transient;
 use function get_option;
 use function in_array;
 use function is_wp_error;
+use function md5;
 use function parse_url;
 use function set_transient;
 use function strtotime;
@@ -422,9 +423,7 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 			return;
 		}
 
-		$failures = (int) get_transient( $failure_key );
-		$failures++;
-		set_transient( $failure_key, $failures, 300 );
+		$failures = $this->increment_failure_counter( $failure_key );
 
 		$threshold = (int) apply_filters( 'acx_proxy_circuit_failure_threshold', 2 );
 		$threshold = max( 1, $threshold );
@@ -435,6 +434,64 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 		$open_seconds = (int) apply_filters( 'acx_proxy_circuit_open_seconds', 60 );
 		$open_seconds = max( 10, $open_seconds );
 		set_transient( $circuit_key, 1, $open_seconds );
+	}
+
+	/**
+	 * Atomically increment the per-backend failure counter and return the new
+	 * total (CON-5).
+	 *
+	 * The previous get_transient/++/set_transient was a non-atomic
+	 * read-modify-write: two requests failing in the same window both read N
+	 * and both write N+1, losing one increment and delaying the breaker trip by
+	 * a cycle. Serializing the RMW under a short-lived MySQL named lock makes
+	 * concurrent failures accumulate so the breaker trips deterministically at
+	 * the threshold. GET_LOCK is connection-scoped and works regardless of
+	 * whether transients live in a persistent object cache or the options
+	 * table, so it is the deployment-agnostic choice over wp_cache_incr (which
+	 * only counts per-request without a persistent object cache).
+	 *
+	 * The lock is best-effort: if it cannot be acquired (timeout) or $wpdb is
+	 * unavailable, the increment still runs unguarded so behaviour never
+	 * degrades below the pre-CON-5 baseline.
+	 */
+	private function increment_failure_counter( string $failure_key ): int {
+		$lock_name = 'acx_cb_' . md5( $failure_key );
+		$locked    = $this->acquire_named_lock( $lock_name );
+
+		try {
+			$failures = (int) get_transient( $failure_key );
+			++$failures;
+			set_transient( $failure_key, $failures, 300 );
+
+			return $failures;
+		} finally {
+			if ( $locked ) {
+				$this->release_named_lock( $lock_name );
+			}
+		}
+	}
+
+	private function acquire_named_lock( string $lock_name ): bool {
+		global $wpdb;
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_var' ) ) {
+			return false;
+		}
+
+		$timeout = (int) apply_filters( 'acx_proxy_circuit_lock_timeout_seconds', 1 );
+		$timeout = max( 0, $timeout );
+
+		$acquired = $wpdb->get_var( $wpdb->prepare( 'SELECT GET_LOCK(%s, %d)', $lock_name, $timeout ) );
+
+		return '1' === (string) $acquired;
+	}
+
+	private function release_named_lock( string $lock_name ): void {
+		global $wpdb;
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_var' ) ) {
+			return;
+		}
+
+		$wpdb->get_var( $wpdb->prepare( 'SELECT RELEASE_LOCK(%s)', $lock_name ) );
 	}
 
 	/**

@@ -56,6 +56,34 @@ async def test_refresh_centroids_view_propagates_sqlite_error(monkeypatch) -> No
         await repo.refresh_centroids_view()
 
 
+async def test_refresh_centroids_view_postgres_happy_path(monkeypatch) -> None:
+    """Postgres branch: a successful refresh returns cleanly and bypasses RLS
+    BEFORE issuing the REFRESH (guards against a regression that drops fail-fast
+    AND the bypass ordering)."""
+    from recognition.infrastructure.repositories import cluster_repository as cr
+
+    monkeypatch.setattr(cr, "is_sqlite", lambda _session: False)
+    order: list[str] = []
+    bypass = AsyncMock(side_effect=lambda _session: order.append("bypass"))
+    monkeypatch.setattr(cr, "enable_rls_bypass", bypass)
+
+    class _OkResult:
+        def scalar_one(self) -> int:
+            return 0
+
+    class _OkSession:
+        async def execute(self, *args, **kwargs):  # noqa: ANN002, ANN003
+            order.append("execute")
+            return _OkResult()
+
+    repo = cr.SqlAlchemyClusterRepository(_OkSession())
+
+    assert await repo.refresh_centroids_view() is None
+    bypass.assert_awaited_once()
+    assert order[0] == "bypass", "RLS bypass must precede the REFRESH"
+    assert "execute" in order
+
+
 async def test_purge_rows_warns_when_mv_refresh_fails(monkeypatch, caplog) -> None:
     """When the concurrent refresh returns False the purge logs it (no longer silent)."""
     from recognition.application.services.purge_service import TenantPurgeService

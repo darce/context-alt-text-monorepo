@@ -307,7 +307,20 @@ async def merge_cluster(
     if not defer_recompute:
         await assignment_writer.recompute_representatives(target_cluster_id)
         await assignment_writer.recompute_centroid(target_cluster_id)
-        await assignment_writer.refresh_centroids_view()
+        # Best-effort: the merge is already applied. refresh_centroids_view is
+        # fail-fast (INFRA-5), but a transient MV-refresh failure must not roll
+        # back a completed user-facing merge (bulk-accept would discard the whole
+        # batch). The recomputed centroid is persisted; the scan worker's periodic
+        # concurrent refresh heals the MV lag.
+        try:
+            await assignment_writer.refresh_centroids_view()
+        except Exception:
+            logger.warning(
+                "Post-merge centroid MV refresh failed for target_cluster_id=%s; "
+                "centroids may lag until the next scheduled refresh",
+                target_cluster_id,
+                exc_info=True,
+            )
 
         # Resolve any pending suggestions for identities moved into the target cluster
         try:

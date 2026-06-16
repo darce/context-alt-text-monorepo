@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace AltContext\Tests\Unit;
 
+use AltContext\Api\AnalysisJobsController;
 use AltContext\Api\RecognitionController;
+use AltContext\Api\RecognitionCircuitKeys;
 use AltContext\Tests\TestCase;
 use WP_REST_Request;
 use WP_Error;
@@ -848,5 +850,99 @@ PHP;
 
         $calls = $this->getHttpCalls();
         $this->assertCount(3, $calls, 'Should make exactly 3 attempts');
+    }
+
+    /**
+     * CON-5: the circuit-breaker failure counter increment must be atomic.
+     *
+     * PA-2 mechanism assertion (a true cross-request race cannot be reproduced
+     * in PHPUnit): a failing `ui_read` proxy request must serialize the
+     * failure-counter read-modify-write under a short-lived MySQL named lock
+     * (GET_LOCK acquired before the increment, RELEASE_LOCK after), instead of
+     * the previous non-atomic get_transient/++/set_transient that loses
+     * increments when two requests fail in the same window.
+     */
+    public function testUiReadFailureIncrementsCircuitCounterUnderAtomicNamedLock(): void
+    {
+        global $wpdb;
+        $wpdb->queries = [];
+        $wpdb->mockVar = '1'; // GET_LOCK(...) acquired.
+
+        $harness = $this->makeUiReadHarness();
+
+        $this->queueHttpResponse(new WP_Error('http_request_failed', 'down'));
+        $harness->callUiRead();
+
+        $getLock = array_values(array_filter(
+            $wpdb->queries,
+            static fn (string $q): bool => stripos($q, 'GET_LOCK') !== false
+        ));
+        $releaseLock = array_values(array_filter(
+            $wpdb->queries,
+            static fn (string $q): bool => stripos($q, 'RELEASE_LOCK') !== false
+        ));
+
+        $this->assertNotEmpty(
+            $getLock,
+            'Failure-counter increment must acquire a named lock so concurrent failures cannot lose increments (CON-5).'
+        );
+        $this->assertNotEmpty(
+            $releaseLock,
+            'The named lock must be released after the increment so the lock is not held past the RMW (CON-5).'
+        );
+
+        $firstGetLockIdx = array_search($getLock[0], $wpdb->queries, true);
+        $firstReleaseIdx = array_search($releaseLock[0], $wpdb->queries, true);
+        $this->assertLessThan(
+            $firstReleaseIdx,
+            $firstGetLockIdx,
+            'GET_LOCK must be acquired before RELEASE_LOCK (lock wraps the read-modify-write).'
+        );
+    }
+
+    /**
+     * CON-5 success criterion: with the increment serialized, the breaker trips
+     * deterministically once the failure count reaches the threshold (default 2).
+     */
+    public function testUiReadBreakerTripsDeterministicallyAtThreshold(): void
+    {
+        global $wpdb;
+        $wpdb->mockVar = '1'; // GET_LOCK(...) acquired.
+
+        $harness = $this->makeUiReadHarness();
+        $circuitKey = RecognitionCircuitKeys::for_base_url($harness->resolvedBaseUrl());
+
+        $this->queueHttpResponse(new WP_Error('http_request_failed', 'down'));
+        $this->queueHttpResponse(new WP_Error('http_request_failed', 'down'));
+
+        $harness->callUiRead();
+        $this->assertFalse(
+            get_transient($circuitKey),
+            'Breaker stays closed below the failure threshold.'
+        );
+
+        $harness->callUiRead();
+        $this->assertNotFalse(
+            get_transient($circuitKey),
+            'Breaker opens deterministically once the failure count reaches the threshold.'
+        );
+    }
+
+    private function makeUiReadHarness(): object
+    {
+        return new class() extends AnalysisJobsController {
+            /**
+             * @return \WP_REST_Response|\WP_Error
+             */
+            public function callUiRead()
+            {
+                return $this->proxy_request('GET', '/ping', [], [], 'ui_read');
+            }
+
+            public function resolvedBaseUrl(): string
+            {
+                return \untrailingslashit($this->get_recognition_base_url());
+            }
+        };
     }
 }

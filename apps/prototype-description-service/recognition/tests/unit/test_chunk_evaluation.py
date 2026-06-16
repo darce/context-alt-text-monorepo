@@ -139,3 +139,23 @@ def test_partition_unclustered_excludes_accepted_and_new_cluster_members() -> No
     )
 
     assert part.still_unclustered == []
+
+
+def test_partition_unclustered_flattens_members_across_proposals() -> None:
+    """already_in_new_clusters must flatten across MULTIPLE proposals AND multiple
+    members per proposal — every new-cluster member is excluded from still_unclustered."""
+    chunk = [_identity("p1"), _identity("p2"), _identity("p3"), _identity("n1")]
+    part = partition_unclustered(
+        chunk=chunk,
+        accepted_ids=set(),
+        suggested_ids=set(),
+        rejected_ids=set(),
+        new_cluster_proposals=[
+            ([_identity("p1"), _identity("p2")], [0.9, 0.8]),
+            ([_identity("p3")], [0.7]),
+        ],
+    )
+
+    # p1/p2 (proposal 1) and p3 (proposal 2) are all new-cluster members -> excluded.
+    assert [i.id for i in part.still_unclustered] == ["n1"]
+    assert [i.id for i in part.no_candidates] == ["n1"]

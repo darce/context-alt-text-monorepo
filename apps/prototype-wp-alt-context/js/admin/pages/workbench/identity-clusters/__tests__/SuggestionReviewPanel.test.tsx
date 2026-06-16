@@ -120,7 +120,7 @@ describe('SuggestionReviewPanel', () => {
       tenant_id: 'test-tenant-id',
     };
 
-    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({ suggestions: [], total: 0, limit: 25, offset: 0 });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({ suggestions: [], limit: 25, offset: 0 });
     fetchTopUnlabeledClustersMock.mockResolvedValue(topUnlabeledResponse([]));
     resetConfigCache();
   });
@@ -147,14 +147,12 @@ describe('SuggestionReviewPanel', () => {
   it('renders unconfigured guidance instead of a false empty state when suggestions are unavailable', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [],
-      total: 0,
       limit: 10,
       offset: 0,
       data_source: DATA_SOURCE.UNAVAILABLE,
     });
     vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
       suggestions: [],
-      total: 0,
       limit: 10,
       offset: 0,
       data_source: DATA_SOURCE.UNAVAILABLE,
@@ -177,14 +175,12 @@ describe('SuggestionReviewPanel', () => {
   it('renders endpoint error guidance when the backend returns a server error envelope', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [],
-      total: 0,
       limit: 10,
       offset: 0,
       data_source: DATA_SOURCE.ENDPOINT_ERROR,
     });
     vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
       suggestions: [],
-      total: 0,
       limit: 10,
       offset: 0,
       data_source: DATA_SOURCE.ENDPOINT_ERROR,
@@ -207,14 +203,12 @@ describe('SuggestionReviewPanel', () => {
   it('renders assignment zero-pending guidance when clusters exist but no review suggestions are pending', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [],
-      total: 0,
       limit: 10,
       offset: 0,
       data_source: DATA_SOURCE.LOCAL_PROJECTION,
     });
     vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
       suggestions: [],
-      total: 0,
       limit: 10,
       offset: 0,
       data_source: DATA_SOURCE.LOCAL_PROJECTION,
@@ -246,19 +240,16 @@ describe('SuggestionReviewPanel', () => {
   it('renders an unavailable warning when suggested names cannot be loaded', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [],
-      total: 0,
       limit: 10,
       offset: 0,
     });
     vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
       suggestions: [],
-      total: 0,
       limit: 10,
       offset: 0,
     });
     vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
       suggestions: [],
-      total: 0,
       limit: 25,
       offset: 0,
       data_source: DATA_SOURCE.UNAVAILABLE,
@@ -290,14 +281,12 @@ describe('SuggestionReviewPanel', () => {
           cluster_identity_count: 3,
         },
       ],
-      total: 1,
       limit: 10,
       offset: 0,
     };
     fetchPendingSuggestionsMock.mockResolvedValue(pendingResponse);
     fetchPendingMergeSuggestionsMock.mockResolvedValue({
       suggestions: [],
-      total: 0,
       limit: 10,
       offset: 0,
     });
@@ -367,13 +356,11 @@ describe('SuggestionReviewPanel', () => {
           cluster_identity_count: 6,
         },
       ],
-      total: 3,
       limit: 10,
       offset: 0,
     });
     fetchPendingMergeSuggestionsMock.mockResolvedValue({
       suggestions: [],
-      total: 0,
       limit: 10,
       offset: 0,
     });
@@ -425,13 +412,11 @@ describe('SuggestionReviewPanel', () => {
           representative_media_url: 'http://example.test/media/representative.jpg',
         },
       ],
-      total: 1,
       limit: 10,
       offset: 0,
     });
     fetchPendingMergeSuggestionsMock.mockResolvedValue({
       suggestions: [],
-      total: 0,
       limit: 10,
       offset: 0,
     });
@@ -485,7 +470,6 @@ describe('SuggestionReviewPanel', () => {
             cluster_identity_count: 7,
           },
         ],
-        total: 3,
         limit: 10,
         offset: 0,
       })
@@ -501,13 +485,11 @@ describe('SuggestionReviewPanel', () => {
             cluster_identity_count: 7,
           },
         ],
-        total: 1,
         limit: 10,
         offset: 0,
       });
     fetchPendingMergeSuggestionsMock.mockResolvedValue({
       suggestions: [],
-      total: 0,
       limit: 10,
       offset: 0,
     });
@@ -560,14 +542,12 @@ describe('SuggestionReviewPanel', () => {
           cluster_identity_count: 5,
         },
       ],
-      total: 1,
       limit: 10,
       offset: 0,
     };
     fetchPendingSuggestionsMock.mockResolvedValue(pendingResponse);
     fetchPendingMergeSuggestionsMock.mockResolvedValue({
       suggestions: [],
-      total: 0,
       limit: 10,
       offset: 0,
     });
@@ -625,13 +605,11 @@ describe('SuggestionReviewPanel', () => {
           cluster_identity_count: 5,
         },
       ],
-      total: 2,
       limit: 10,
       offset: 0,
     });
     fetchPendingMergeSuggestionsMock.mockResolvedValue({
       suggestions: [],
-      total: 0,
       limit: 10,
       offset: 0,
     });
@@ -689,13 +667,11 @@ describe('SuggestionReviewPanel', () => {
           cluster_identity_count: 3,
         },
       ],
-      total: 2,
       limit: 10,
       offset: 0,
     });
     fetchPendingMergeSuggestionsMock.mockResolvedValue({
       suggestions: [],
-      total: 0,
       limit: 10,
       offset: 0,
     });
@@ -759,12 +735,11 @@ describe('SuggestionReviewPanel', () => {
           cluster_identity_count: 4,
         },
       ],
-      total: 1,
       limit: 10,
       offset: 0,
     };
     fetchPendingSuggestionsMock.mockResolvedValue(pendingResponse);
-    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
+    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], limit: 10, offset: 0 });
 
     renderPanel();
 
@@ -798,12 +773,11 @@ describe('SuggestionReviewPanel', () => {
           cluster_identity_count: 2,
         },
       ],
-      total: 1,
       limit: 10,
       offset: 0,
     };
     fetchPendingSuggestionsMock.mockResolvedValue(pendingResponse);
-    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
+    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], limit: 10, offset: 0 });
 
     renderPanel();
 
@@ -836,12 +810,11 @@ describe('SuggestionReviewPanel', () => {
           cluster_identity_count: 5,
         },
       ],
-      total: 1,
       limit: 10,
       offset: 0,
     };
     fetchPendingSuggestionsMock.mockResolvedValue(pendingResponse);
-    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
+    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], limit: 10, offset: 0 });
 
     renderPanel();
 
@@ -868,11 +841,10 @@ describe('SuggestionReviewPanel', () => {
           cluster_identity_count: 4,
         },
       ],
-      total: 1,
       limit: 10,
       offset: 0,
     });
-    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
+    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], limit: 10, offset: 0 });
 
     const { container } = renderPanel();
 
@@ -901,11 +873,10 @@ describe('SuggestionReviewPanel', () => {
           cluster_identity_count: 2,
         },
       ],
-      total: 1,
       limit: 10,
       offset: 0,
     });
-    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
+    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], limit: 10, offset: 0 });
     fetchTopUnlabeledClustersMock.mockResolvedValue(
       topUnlabeledResponse([
         {
@@ -964,7 +935,6 @@ describe('SuggestionReviewPanel', () => {
           cluster_identity_count: 5,
         },
       ],
-      total: 1,
       limit: 10,
       offset: 0,
     });
@@ -984,7 +954,6 @@ describe('SuggestionReviewPanel', () => {
           status: 'pending',
         },
       ],
-      total: 1,
       limit: 10,
       offset: 0,
     });
@@ -1039,8 +1008,8 @@ describe('SuggestionReviewPanel', () => {
       is_pinned: false,
     } as TopUnlabeledCluster['representatives'][number];
 
-    fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
-    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
+    fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], limit: 10, offset: 0 });
+    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], limit: 10, offset: 0 });
     fetchTopUnlabeledClustersMock.mockResolvedValue(
       topUnlabeledResponse([
         {
@@ -1084,9 +1053,9 @@ describe('SuggestionReviewPanel', () => {
     const fetchPendingNameSuggestionsMock = vi.mocked(fetchPendingNameSuggestions);
     const fetchTopUnlabeledClustersMock = vi.mocked(fetchTopUnlabeledClusters);
 
-    fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
-    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
-    fetchPendingNameSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 25, offset: 0 });
+    fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], limit: 10, offset: 0 });
+    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], limit: 10, offset: 0 });
+    fetchPendingNameSuggestionsMock.mockResolvedValue({ suggestions: [], limit: 25, offset: 0 });
     fetchTopUnlabeledClustersMock.mockResolvedValue(topUnlabeledResponse([], 1));
 
     renderPanel();
@@ -1112,8 +1081,8 @@ describe('SuggestionReviewPanel', () => {
     const mergeClusterMock = vi.mocked(mergeCluster);
     const fetchTopUnlabeledClustersMock = vi.mocked(fetchTopUnlabeledClusters);
 
-    fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
-    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
+    fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], limit: 10, offset: 0 });
+    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], limit: 10, offset: 0 });
     fetchTopUnlabeledClustersMock.mockResolvedValue(
       topUnlabeledResponse([
         {
@@ -1179,8 +1148,8 @@ describe('SuggestionReviewPanel', () => {
     const fetchPendingMergeSuggestionsMock = vi.mocked(fetchPendingMergeSuggestions);
     const fetchTopUnlabeledClustersMock = vi.mocked(fetchTopUnlabeledClusters);
 
-    fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
-    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
+    fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], limit: 10, offset: 0 });
+    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], limit: 10, offset: 0 });
     fetchTopUnlabeledClustersMock.mockResolvedValue(
       topUnlabeledResponse([
         {
@@ -1228,8 +1197,8 @@ describe('SuggestionReviewPanel', () => {
     const fetchTopUnlabeledClustersMock = vi.mocked(fetchTopUnlabeledClusters);
     const dismissClusterMock = vi.mocked(dismissCluster);
 
-    fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
-    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
+    fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], limit: 10, offset: 0 });
+    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], limit: 10, offset: 0 });
 
     let resolveDismiss: (() => void) | null = null;
     dismissClusterMock.mockImplementation(
@@ -1302,8 +1271,8 @@ describe('SuggestionReviewPanel', () => {
     const fetchPendingMergeSuggestionsMock = vi.mocked(fetchPendingMergeSuggestions);
     const fetchPendingNameSuggestionsMock = vi.mocked(fetchPendingNameSuggestions);
 
-    fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 25, offset: 0 });
-    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
+    fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], limit: 25, offset: 0 });
+    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], limit: 10, offset: 0 });
     fetchPendingNameSuggestionsMock.mockResolvedValue({
       suggestions: [
         {
@@ -1325,7 +1294,6 @@ describe('SuggestionReviewPanel', () => {
           expires_at: null,
         },
       ],
-      total: 2,
       limit: 25,
       offset: 0,
     });
@@ -1351,8 +1319,8 @@ describe('SuggestionReviewPanel', () => {
     const fetchPendingNameSuggestionsMock = vi.mocked(fetchPendingNameSuggestions);
     const acceptNameSuggestionMock = vi.mocked(acceptNameSuggestion);
 
-    fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 25, offset: 0 });
-    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
+    fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], limit: 25, offset: 0 });
+    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], limit: 10, offset: 0 });
     fetchPendingNameSuggestionsMock.mockResolvedValue({
       suggestions: [
         {
@@ -1365,7 +1333,6 @@ describe('SuggestionReviewPanel', () => {
           expires_at: null,
         },
       ],
-      total: 1,
       limit: 25,
       offset: 0,
     });
@@ -1400,8 +1367,8 @@ describe('SuggestionReviewPanel', () => {
     const fetchPendingNameSuggestionsMock = vi.mocked(fetchPendingNameSuggestions);
     const rejectNameSuggestionMock = vi.mocked(rejectNameSuggestion);
 
-    fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 25, offset: 0 });
-    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
+    fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], limit: 25, offset: 0 });
+    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], limit: 10, offset: 0 });
     fetchPendingNameSuggestionsMock.mockResolvedValue({
       suggestions: [
         {
@@ -1414,7 +1381,6 @@ describe('SuggestionReviewPanel', () => {
           expires_at: null,
         },
       ],
-      total: 1,
       limit: 25,
       offset: 0,
     });
@@ -1447,8 +1413,8 @@ describe('SuggestionReviewPanel', () => {
     const fetchPendingSuggestionsMock = vi.mocked(fetchPendingSuggestions);
     const fetchPendingMergeSuggestionsMock = vi.mocked(fetchPendingMergeSuggestions);
 
-    fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 25, offset: 0 });
-    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
+    fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], limit: 25, offset: 0 });
+    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], limit: 10, offset: 0 });
 
     renderPanel();
 
@@ -1467,8 +1433,8 @@ describe('SuggestionReviewPanel', () => {
     const fetchPendingMergeSuggestionsMock = vi.mocked(fetchPendingMergeSuggestions);
     const bulkAcceptSuggestionsMock = vi.mocked(bulkAcceptSuggestions);
 
-    fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 25, offset: 0 });
-    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
+    fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], limit: 25, offset: 0 });
+    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], limit: 10, offset: 0 });
     bulkAcceptSuggestionsMock.mockResolvedValue({ accepted_count: 2, skipped_count: 0 });
 
     const { queryClient } = renderPanel();
@@ -1503,8 +1469,8 @@ describe('SuggestionReviewPanel', () => {
     const fetchPendingMergeSuggestionsMock = vi.mocked(fetchPendingMergeSuggestions);
     const bulkAcceptSuggestionsMock = vi.mocked(bulkAcceptSuggestions);
 
-    fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 25, offset: 0 });
-    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
+    fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], limit: 25, offset: 0 });
+    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], limit: 10, offset: 0 });
     bulkAcceptSuggestionsMock.mockResolvedValue({ accepted_count: 1, skipped_count: 0 });
 
     const { queryClient } = renderPanel();

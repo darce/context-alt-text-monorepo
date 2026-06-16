@@ -436,10 +436,11 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 		return $response;
 	}
 	private function empty_pending_suggestions_response( int $limit, int $offset, string $data_source = self::DATA_SOURCE_UNAVAILABLE ): WP_REST_Response {
+		// COR-3 (rg-015): no authoritative total exists for a single bare page; omit it
+		// rather than claim a fabricated count. Consumers count loaded suggestions.
 		return new WP_REST_Response(
 			array(
 				'suggestions' => array(),
-				'total'       => 0,
 				'limit'       => $limit,
 				'offset'      => $offset,
 				'data_source' => $data_source,
@@ -452,7 +453,6 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 		return new WP_REST_Response(
 			array(
 				'suggestions' => array(),
-				'total'       => 0,
 				'limit'       => $limit,
 				'offset'      => $offset,
 				'data_source' => self::DATA_SOURCE_UNAVAILABLE,
@@ -482,7 +482,6 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 		return new WP_REST_Response(
 			array(
 				'suggestions' => $data,
-				'total'       => count( $data ),
 				'limit'       => $limit,
 				'offset'      => $offset,
 				'data_source' => self::DATA_SOURCE_BACKEND_PROXY,
@@ -512,7 +511,6 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 		return new WP_REST_Response(
 			array(
 				'suggestions' => $data,
-				'total'       => count( $data ),
 				'limit'       => $limit,
 				'offset'      => $offset,
 				'data_source' => self::DATA_SOURCE_BACKEND_PROXY,

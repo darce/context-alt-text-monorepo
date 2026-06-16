@@ -97,6 +97,63 @@ def test_analyze_duplicates_handles_none_pre_curation_state() -> None:
     assert result.consistency_issues == []
 
 
+def _canonical_member(
+    *, identity_id: str, media_id: int, phash: str, bbox: dict[str, int], label: str
+) -> dict[str, Any]:
+    """A canonical-cluster member entry (curation.final_label, no original_assignment)."""
+    return {
+        "identity_id": identity_id,
+        "media_id": media_id,
+        "image_phash": phash,
+        "bbox": bbox,
+        "embedding_fingerprint": "fp",
+        "curation": {"final_label": label},
+    }
+
+
+def test_analyze_duplicates_collects_canonical_cluster_members() -> None:
+    """canonical_clusters branch: members land in by_image_hash with their curation
+    label and a None cluster_id (no original_assignment/final_cluster_id on the member)."""
+    bbox = _bbox(7, 8, 9, 10)
+    canonical_clusters = [
+        {
+            "canonical_label": "Alice",
+            "member_identities": [
+                _canonical_member(identity_id="c1", media_id=3, phash="CHASH", bbox=bbox, label="Alice")
+            ],
+        }
+    ]
+    result = _analyze_duplicates(None, canonical_clusters)
+
+    grouped = result.by_image_hash["CHASH"]
+    assert len(grouped) == 1
+    assert grouped[0]["label"] == "Alice"
+    assert grouped[0]["cluster_id"] is None  # canonical members carry no cluster id
+    # A lone canonical member never fabricates a transitivity issue.
+    assert result.consistency_issues == []
+
+
+def test_analyze_duplicates_canonical_member_does_not_collide_with_predicted() -> None:
+    """A canonical member (cluster_id None) sharing phash+bbox with one predicted
+    cluster does not create a transitivity failure: the None id is filtered out."""
+    bbox = _bbox(1, 1, 2, 2)
+    pre_curation = _pre_curation(
+        [_predicted_member(identity_id="p1", media_id=1, phash="HASH", bbox=bbox, cluster_id="cA")]
+    )
+    canonical_clusters = [
+        {
+            "canonical_label": "Alice",
+            "member_identities": [
+                _canonical_member(identity_id="c1", media_id=2, phash="HASH", bbox=bbox, label="Alice")
+            ],
+        }
+    ]
+    result = _analyze_duplicates(pre_curation, canonical_clusters)
+
+    assert len(result.by_image_hash["HASH"]) == 2  # both predicted + canonical entries grouped
+    assert result.consistency_issues == []  # only one non-None cluster id -> no failure
+
+
 # --- _build_canonical_labels_from_clusters -------------------------------------
 
 

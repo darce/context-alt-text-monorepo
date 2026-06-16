@@ -467,6 +467,16 @@ async def _build_canonical_clusters(
     return canonical_clusters, inferred_media_ids
 
 
+@dataclass(frozen=True)
+class _PreCurationResolution:
+    """Pre-curation state plus the run metadata gathered while building it."""
+
+    pre_curation_state: dict[str, object] | None
+    run_ids_used: list[str]
+    aggregated_settings: dict[str, object]
+    aggregated_selector: dict[str, object]
+
+
 async def _resolve_pre_curation_state(
     session: AsyncSession,
     *,
@@ -474,12 +484,10 @@ async def _resolve_pre_curation_state(
     run_uuid: UUID | None,
     all_runs: bool,
     dataset_media_ids: list[int],
-) -> tuple[dict[str, object] | None, list[str], dict[str, object], dict[str, object]]:
+) -> _PreCurationResolution:
     """Build pre-curation state for the selected run(s) and gather run metadata.
 
-    Returns ``(pre_curation_state, run_ids_used, aggregated_settings,
-    aggregated_selector)``. The aggregated settings/selector are only populated
-    in the ``all_runs`` path.
+    The aggregated settings/selector are only populated in the ``all_runs`` path.
     """
     pre_curation_state: dict[str, object] | None = None
     run_ids_used: list[str] = []
@@ -512,7 +520,12 @@ async def _resolve_pre_curation_state(
     if pre_curation_state is not None:
         pre_curation_state["run_ids"] = run_ids_used
 
-    return pre_curation_state, run_ids_used, aggregated_settings, aggregated_selector
+    return _PreCurationResolution(
+        pre_curation_state=pre_curation_state,
+        run_ids_used=run_ids_used,
+        aggregated_settings=aggregated_settings,
+        aggregated_selector=aggregated_selector,
+    )
 
 
 @dataclass(frozen=True)
@@ -786,13 +799,14 @@ async def generate_canonical_report(
     )
 
     # 2) Build pre-curation state (original algorithm output) from events.
-    pre_curation_state, run_ids_used, aggregated_settings, aggregated_selector = await _resolve_pre_curation_state(
+    pre_curation = await _resolve_pre_curation_state(
         session,
         tenant_uuid=inputs.tenant_uuid,
         run_uuid=inputs.run_uuid,
         all_runs=all_runs,
         dataset_media_ids=dataset_media_ids,
     )
+    pre_curation_state = pre_curation.pre_curation_state
 
     # 3) Build duplicates analysis (phash grouping + transitivity failures).
     duplicates = _analyze_duplicates(pre_curation_state, canonical_clusters)
@@ -821,8 +835,8 @@ async def generate_canonical_report(
     # Determine settings_snapshot and dataset_selector
     # Priority: run (single run) > aggregated (all runs) > empty
     run = inputs.run
-    final_settings = run.settings_snapshot if run is not None else aggregated_settings
-    final_selector = run.dataset_selector if run is not None else aggregated_selector
+    final_settings = run.settings_snapshot if run is not None else pre_curation.aggregated_settings
+    final_selector = run.dataset_selector if run is not None else pre_curation.aggregated_selector
 
     return {
         "schema_version": 1,
@@ -837,7 +851,7 @@ async def generate_canonical_report(
         "baseline_run": {
             "run_id": str(inputs.run_uuid) if inputs.run_uuid is not None else None,
             "all_runs": all_runs,
-            "run_ids": run_ids_used if run_ids_used else None,
+            "run_ids": pre_curation.run_ids_used if pre_curation.run_ids_used else None,
             "git_sha": run.git_sha if run is not None else None,
             "settings_snapshot": final_settings,
             "dataset_selector": final_selector,

@@ -512,7 +512,6 @@ describe('recognitionApi', () => {
           status: 'pending',
         },
       ],
-      total: 1,
       limit: 10,
       offset: 5,
       data_source: 'backend_proxy',
@@ -520,7 +519,8 @@ describe('recognitionApi', () => {
 
     const result = await fetchPendingSuggestions(10, 5);
 
-    expect(result.total).toBe(1);
+    // COR-3 (rg-015): the boundary no longer forwards an authoritative total.
+    expect('total' in result).toBe(false);
     expect(result.limit).toBe(10);
     expect(result.offset).toBe(5);
     expect(result.suggestions[0]).toMatchObject({
@@ -545,7 +545,6 @@ describe('recognitionApi', () => {
           status: 'pending',
         },
       ],
-      total: 1,
       limit: 25,
       offset: 0,
       data_source: 'backend_proxy',
@@ -553,7 +552,8 @@ describe('recognitionApi', () => {
 
     const result = await fetchPendingMergeSuggestions(25, 0);
 
-    expect(result.total).toBe(1);
+    // COR-3 (rg-015): the boundary no longer forwards an authoritative total.
+    expect('total' in result).toBe(false);
     expect(result.limit).toBe(25);
     expect(result.offset).toBe(0);
     expect(result.suggestions[0]).toMatchObject({

@@ -324,21 +324,18 @@ describe('useWorkbenchFindings', () => {
   it('derives the view model from live suggestion review queries', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [makeSuggestion({ id: 'live-sugg', suggested_cluster_id: 'live-cluster' })],
-      total: 1,
       limit: 25,
       offset: 0,
       data_source: DATA_SOURCE.LOCAL_PROJECTION,
     });
     vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
       suggestions: [],
-      total: 0,
       limit: 10,
       offset: 0,
       data_source: DATA_SOURCE.LOCAL_PROJECTION,
     });
     vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
       suggestions: [],
-      total: 0,
       limit: 25,
       offset: 0,
       data_source: DATA_SOURCE.LOCAL_PROJECTION,
@@ -391,7 +388,6 @@ describe('useWorkbenchFindings', () => {
     vi.mocked(fetchPendingMergeSuggestions).mockRejectedValue(new Error('merge endpoint down'));
     vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
       suggestions: [],
-      total: 0,
       limit: 25,
       offset: 0,
       data_source: DATA_SOURCE.LOCAL_PROJECTION,

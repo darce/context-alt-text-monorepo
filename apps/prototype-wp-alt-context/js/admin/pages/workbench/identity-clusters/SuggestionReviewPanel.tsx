@@ -34,7 +34,6 @@ export const SuggestionReviewPanel = ({ onLabel, onReview }: SuggestionReviewPan
     topUnlabeledDataSource,
     reviewItems,
     assignmentCount,
-    loadedAssignmentCount,
     assignmentDataSource,
     hasInitialFailure,
     isLoading,
@@ -235,12 +234,6 @@ export const SuggestionReviewPanel = ({ onLabel, onReview }: SuggestionReviewPan
                 ),
               )}
             </div>
-          )}
-
-          {assignmentCount > loadedAssignmentCount && (
-            <p className="acx-suggestion-panel__more">
-              {__('and', 'alt-context')} {assignmentCount - loadedAssignmentCount} {__('more...', 'alt-context')}
-            </p>
           )}
         </div>
 

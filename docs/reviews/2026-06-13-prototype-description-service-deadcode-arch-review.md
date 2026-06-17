@@ -32,7 +32,7 @@
 | Slice 8 — PERSREG-5 (`generate_canonical_report` phase extraction) + BR-01/02 fixes | ✅ landed | `16a74b83` |
 | Slice 8 — INFRA-5 (`refresh_centroids_view` fail-fast: repo propagates, purge warns) | ✅ landed | `81602226` |
 | INFRA-5 parallel re-review (2 reviewers; **pass_with_findings**) → best-effort post-merge refresh so a transient MV hiccup no longer rolls back a completed user-facing merge/bulk-batch (REVA-01/02, REVB-01) + happy-path/RLS-order test (REVB-02) | ✅ verified | `f0d0fb6d` |
-| Slice 8 remainder — INFRA-3 (`ensure_media_identity` fixture) | ⏳ planned | — |
+| Slice 8 remainder — INFRA-3 (`ensure_media_identity` placeholder fabrication dropped from prod write paths → moved to `recognition/tests/db_seed.py` + `seed_media_identity` fixture; FK enforces integrity, new `test_repository_fk_integrity.py`; suite 1115) → parallel review (2 reviewers; **pass**, 0 findings) | ✅ landed | `0d1a667d` |
 | Slice 9 — repository/AssignmentWriter split | ⏳ planned | — |
 | Follow-up — `_NotImplemented*` retention 503 path (behavior change, own TDD slice) | ⏳ planned | — |
 

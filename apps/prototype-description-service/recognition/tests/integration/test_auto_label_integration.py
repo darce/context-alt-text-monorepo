@@ -29,13 +29,15 @@ def make_identity(tenant_id: str) -> MediaIdentity:
 
 
 @pytest.mark.asyncio
-async def test_persist_new_cluster_applies_auto_label_when_criteria_met(db_session, tenant) -> None:
+async def test_persist_new_cluster_applies_auto_label_when_criteria_met(db_session, tenant, seed_media_identity) -> None:
     settings = ClusteringSettings(auto_label=AutoLabelSettings(min_members=3, similarity_floor=0.85))
     cluster_repo = SqlAlchemyClusterRepository(db_session)
     member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
     writer = AssignmentWriter(settings, cluster_repo, member_repo, session=db_session)
 
     identities = [make_identity(str(tenant.id)) for _ in range(5)]
+    for identity in identities:
+        await seed_media_identity(identity.id)
     similarities = [0.90, 0.88, 0.92, 0.89, 0.91]
 
     cluster = await writer.persist_new_cluster(
@@ -51,13 +53,15 @@ async def test_persist_new_cluster_applies_auto_label_when_criteria_met(db_sessi
 
 
 @pytest.mark.asyncio
-async def test_persist_new_cluster_skips_auto_label_for_manual_clusters(db_session, tenant) -> None:
+async def test_persist_new_cluster_skips_auto_label_for_manual_clusters(db_session, tenant, seed_media_identity) -> None:
     settings = ClusteringSettings(auto_label=AutoLabelSettings(min_members=3, similarity_floor=0.85))
     cluster_repo = SqlAlchemyClusterRepository(db_session)
     member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
     writer = AssignmentWriter(settings, cluster_repo, member_repo, session=db_session)
 
     identities = [make_identity(str(tenant.id)) for _ in range(4)]
+    for identity in identities:
+        await seed_media_identity(identity.id)
     similarities = [0.95, 0.95, 0.95, 0.95]
 
     cluster = await writer.persist_new_cluster(
@@ -72,13 +76,15 @@ async def test_persist_new_cluster_skips_auto_label_for_manual_clusters(db_sessi
 
 
 @pytest.mark.asyncio
-async def test_persist_new_cluster_skips_auto_label_below_threshold(db_session, tenant) -> None:
+async def test_persist_new_cluster_skips_auto_label_below_threshold(db_session, tenant, seed_media_identity) -> None:
     settings = ClusteringSettings(auto_label=AutoLabelSettings(min_members=3, similarity_floor=0.85))
     cluster_repo = SqlAlchemyClusterRepository(db_session)
     member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
     writer = AssignmentWriter(settings, cluster_repo, member_repo, session=db_session)
 
     identities = [make_identity(str(tenant.id)) for _ in range(5)]
+    for identity in identities:
+        await seed_media_identity(identity.id)
     similarities = [0.70, 0.72, 0.68, 0.74, 0.71]
 
     cluster = await writer.persist_new_cluster(

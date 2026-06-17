@@ -30,7 +30,6 @@ from recognition.domain.repositories import ClusterRepository
 from recognition.domain.repositories import IdentityMember as DomainMember
 from recognition.domain.representative import ClusterRepresentative
 from recognition.infrastructure.repositories._helpers import coerce_uuid as _coerce_uuid
-from recognition.infrastructure.repositories._helpers import ensure_media_identity as _ensure_media_identity
 from recognition.shared.db.dialect import is_sqlite
 from recognition.shared.db.helpers import execute_dml, get_rowcount
 
@@ -376,12 +375,6 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         if tenant_uuid is None:
             raise ValueError("tenant_id must be a valid UUID-compatible string")
 
-        if cluster.representative_identity_id:
-            await _ensure_media_identity(
-                self._session,
-                tenant_uuid,
-                _coerce_uuid(cluster.representative_identity_id),
-            )
         model = self._to_model(cluster)
         self._session.add(model)
         await self._session.flush()
@@ -400,8 +393,6 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         model.user_confirmed = cluster.user_confirmed
         model.identity_count = cluster.identity_count
         rep_uuid = _coerce_uuid(cluster.representative_identity_id) if cluster.representative_identity_id else None
-        if rep_uuid is not None:
-            await _ensure_media_identity(self._session, model.tenant_id, rep_uuid)
         model.representative_identity_id = rep_uuid
         if cluster.clustering_algorithm:
             model.clustering_algorithm = cluster.clustering_algorithm

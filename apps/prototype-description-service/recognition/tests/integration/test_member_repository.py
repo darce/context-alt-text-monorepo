@@ -51,7 +51,7 @@ def test_member_data_has_required_fields() -> None:
 
 
 @pytest.mark.asyncio
-async def test_add_member_and_fetch(db_session, tenant) -> None:
+async def test_add_member_and_fetch(db_session, tenant, seed_media_identity) -> None:
     """Members should be persisted and retrieved by cluster."""
     cluster_repo = SqlAlchemyClusterRepository(db_session)
     member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
@@ -66,7 +66,9 @@ async def test_add_member_and_fetch(db_session, tenant) -> None:
             created_at=None,
         )
     )
-    member = await member_repo.add_member(cluster.id, identity_id=str(uuid.uuid4()), similarity=0.88)
+    identity_id = str(uuid.uuid4())
+    await seed_media_identity(identity_id)
+    member = await member_repo.add_member(cluster.id, identity_id=identity_id, similarity=0.88)
 
     members = await member_repo.get_by_cluster(cluster.id)
     assert len(members) == 1
@@ -75,7 +77,7 @@ async def test_add_member_and_fetch(db_session, tenant) -> None:
 
 
 @pytest.mark.asyncio
-async def test_bulk_add_members(db_session, tenant) -> None:
+async def test_bulk_add_members(db_session, tenant, seed_media_identity) -> None:
     """Bulk insertion should persist all member rows."""
     cluster_repo = SqlAlchemyClusterRepository(db_session)
     member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
@@ -95,6 +97,8 @@ async def test_bulk_add_members(db_session, tenant) -> None:
         MemberData(identity_id=str(uuid.uuid4()), similarity=0.81),
         MemberData(identity_id=str(uuid.uuid4()), similarity=0.82),
     ]
+    for m in members:
+        await seed_media_identity(m.identity_id)
     created = await member_repo.bulk_add_members(cluster.id, members)
 
     assert len(created) == 3
@@ -103,7 +107,7 @@ async def test_bulk_add_members(db_session, tenant) -> None:
 
 
 @pytest.mark.asyncio
-async def test_remove_member(db_session, tenant) -> None:
+async def test_remove_member(db_session, tenant, seed_media_identity) -> None:
     """Members should be removable by ID."""
     cluster_repo = SqlAlchemyClusterRepository(db_session)
     member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
@@ -117,7 +121,9 @@ async def test_remove_member(db_session, tenant) -> None:
             created_at=None,
         )
     )
-    member = await member_repo.add_member(cluster.id, identity_id=str(uuid.uuid4()), similarity=0.77)
+    identity_id = str(uuid.uuid4())
+    await seed_media_identity(identity_id)
+    member = await member_repo.add_member(cluster.id, identity_id=identity_id, similarity=0.77)
 
     await member_repo.remove_member(member.id)
     remaining = await member_repo.get_by_cluster(cluster.id)
@@ -126,7 +132,7 @@ async def test_remove_member(db_session, tenant) -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_by_cluster_is_tenant_scoped(db_session, tenant) -> None:
+async def test_get_by_cluster_is_tenant_scoped(db_session, tenant, seed_media_identity) -> None:
     """Cross-tenant members should not be returned."""
     # Seed cluster and member for a different tenant
     other_tenant = Tenant(site_url="http://other.example")
@@ -147,7 +153,9 @@ async def test_get_by_cluster_is_tenant_scoped(db_session, tenant) -> None:
             created_at=None,
         )
     )
-    await other_member_repo.add_member(other_cluster.id, identity_id=str(uuid.uuid4()), similarity=0.55)
+    other_identity_id = str(uuid.uuid4())
+    await seed_media_identity(other_identity_id, tenant_id=str(other_tenant.id))
+    await other_member_repo.add_member(other_cluster.id, identity_id=other_identity_id, similarity=0.55)
 
     member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
     members = await member_repo.get_by_cluster(other_cluster.id)
@@ -161,7 +169,7 @@ async def test_get_by_cluster_is_tenant_scoped(db_session, tenant) -> None:
 
 
 @pytest.mark.asyncio
-async def test_bulk_add_members_if_not_exists_inserts_new_rows(db_session, tenant) -> None:
+async def test_bulk_add_members_if_not_exists_inserts_new_rows(db_session, tenant, seed_media_identity) -> None:
     """bulk_add_members_if_not_exists should insert all rows when none exist."""
     cluster_repo = SqlAlchemyClusterRepository(db_session)
     member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
@@ -180,6 +188,8 @@ async def test_bulk_add_members_if_not_exists_inserts_new_rows(db_session, tenan
         MemberData(identity_id=str(uuid.uuid4()), similarity=0.85),
         MemberData(identity_id=str(uuid.uuid4()), similarity=0.86),
     ]
+    for m in members:
+        await seed_media_identity(m.identity_id)
     created, skipped = await member_repo.bulk_add_members_if_not_exists(cluster.id, members)
 
     assert len(created) == 2
@@ -189,7 +199,7 @@ async def test_bulk_add_members_if_not_exists_inserts_new_rows(db_session, tenan
 
 
 @pytest.mark.asyncio
-async def test_bulk_add_members_if_not_exists_skips_duplicates(db_session, tenant) -> None:
+async def test_bulk_add_members_if_not_exists_skips_duplicates(db_session, tenant, seed_media_identity) -> None:
     """bulk_add_members_if_not_exists must not raise on duplicate identity inserts.
 
     This is the regression guard for planner overlap: calling persist_new_cluster()
@@ -209,6 +219,7 @@ async def test_bulk_add_members_if_not_exists_skips_duplicates(db_session, tenan
     )
 
     identity_id = str(uuid.uuid4())
+    await seed_media_identity(identity_id)
     first_member = MemberData(identity_id=identity_id, similarity=0.9)
 
     # Insert once

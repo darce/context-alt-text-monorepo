@@ -17,7 +17,7 @@ from recognition.infrastructure.repositories import SqlAlchemyClusterRepository,
 
 
 @pytest.mark.asyncio
-async def test_create_persists_suggestion(db_session, tenant) -> None:
+async def test_create_persists_suggestion(db_session, tenant, seed_media_identity) -> None:
     """Creating a suggestion should persist and return a domain object."""
     cluster_repo = SqlAlchemyClusterRepository(db_session)
     cluster = await cluster_repo.save(
@@ -32,8 +32,10 @@ async def test_create_persists_suggestion(db_session, tenant) -> None:
     )
 
     repo = SqlAlchemySuggestionRepository(db_session)
+    identity_id = str(uuid.uuid4())
+    await seed_media_identity(identity_id)
     payload = SuggestionCreateData(
-        identity_id=str(uuid.uuid4()),
+        identity_id=identity_id,
         cluster_id=cluster.id,
         representative_similarity=0.91,
         member_similarity=0.82,
@@ -49,7 +51,7 @@ async def test_create_persists_suggestion(db_session, tenant) -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_by_identity_returns_only_tenant_rows(db_session, tenant) -> None:
+async def test_get_by_identity_returns_only_tenant_rows(db_session, tenant, seed_media_identity) -> None:
     """Suggestions should be filtered by tenant and identity."""
     cluster_repo = SqlAlchemyClusterRepository(db_session)
     cluster = await cluster_repo.save(
@@ -63,8 +65,10 @@ async def test_get_by_identity_returns_only_tenant_rows(db_session, tenant) -> N
         )
     )
     repo = SqlAlchemySuggestionRepository(db_session)
+    identity_id = str(uuid.uuid4())
+    await seed_media_identity(identity_id)
     payload = SuggestionCreateData(
-        identity_id=str(uuid.uuid4()),
+        identity_id=identity_id,
         cluster_id=cluster.id,
         representative_similarity=0.9,
         member_similarity=0.8,
@@ -87,6 +91,7 @@ async def test_get_by_identity_returns_only_tenant_rows(db_session, tenant) -> N
             created_at=None,
         )
     )
+    await seed_media_identity(payload.identity_id, tenant_id=other_tenant_id)
     other_payload = SuggestionCreateData(
         identity_id=payload.identity_id,
         cluster_id=other_cluster.id,
@@ -102,7 +107,7 @@ async def test_get_by_identity_returns_only_tenant_rows(db_session, tenant) -> N
 
 
 @pytest.mark.asyncio
-async def test_get_by_cluster_filters_tenant(db_session, tenant) -> None:
+async def test_get_by_cluster_filters_tenant(db_session, tenant, seed_media_identity) -> None:
     """Fetching by cluster should not leak suggestions from other tenants."""
     cluster_repo = SqlAlchemyClusterRepository(db_session)
     cluster = await cluster_repo.save(
@@ -117,8 +122,10 @@ async def test_get_by_cluster_filters_tenant(db_session, tenant) -> None:
     )
 
     repo = SqlAlchemySuggestionRepository(db_session)
+    identity_id = str(uuid.uuid4())
+    await seed_media_identity(identity_id)
     payload = SuggestionCreateData(
-        identity_id=str(uuid.uuid4()),
+        identity_id=identity_id,
         cluster_id=cluster.id,
         representative_similarity=0.92,
         member_similarity=0.83,
@@ -143,8 +150,10 @@ async def test_get_by_cluster_filters_tenant(db_session, tenant) -> None:
     )
 
     other_repo = SqlAlchemySuggestionRepository(db_session)
+    other_identity_id = str(uuid.uuid4())
+    await seed_media_identity(other_identity_id, tenant_id=other_tenant_id)
     other_payload = SuggestionCreateData(
-        identity_id=str(uuid.uuid4()),
+        identity_id=other_identity_id,
         cluster_id=other_cluster.id,
         representative_similarity=0.5,
         member_similarity=0.4,
@@ -158,7 +167,7 @@ async def test_get_by_cluster_filters_tenant(db_session, tenant) -> None:
 
 
 @pytest.mark.asyncio
-async def test_update_status_transitions(db_session, tenant) -> None:
+async def test_update_status_transitions(db_session, tenant, seed_media_identity) -> None:
     """PENDING suggestions should transition to accepted/rejected."""
     cluster_repo = SqlAlchemyClusterRepository(db_session)
     cluster = await cluster_repo.save(
@@ -172,8 +181,10 @@ async def test_update_status_transitions(db_session, tenant) -> None:
         )
     )
     repo = SqlAlchemySuggestionRepository(db_session)
+    identity_id = str(uuid.uuid4())
+    await seed_media_identity(identity_id)
     payload = SuggestionCreateData(
-        identity_id=str(uuid.uuid4()),
+        identity_id=identity_id,
         cluster_id=cluster.id,
         representative_similarity=0.95,
         member_similarity=0.86,
@@ -189,7 +200,7 @@ async def test_update_status_transitions(db_session, tenant) -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_upserts_pending_suggestion_scores(db_session, tenant) -> None:
+async def test_create_upserts_pending_suggestion_scores(db_session, tenant, seed_media_identity) -> None:
     """Creating the same pending suggestion twice should update its score fields."""
     cluster_repo = SqlAlchemyClusterRepository(db_session)
     cluster = await cluster_repo.save(
@@ -204,6 +215,7 @@ async def test_create_upserts_pending_suggestion_scores(db_session, tenant) -> N
     )
     repo = SqlAlchemySuggestionRepository(db_session)
     identity_id = str(uuid.uuid4())
+    await seed_media_identity(identity_id)
 
     original = await repo.create(
         str(tenant.id),
@@ -233,7 +245,7 @@ async def test_create_upserts_pending_suggestion_scores(db_session, tenant) -> N
 
 
 @pytest.mark.asyncio
-async def test_update_scores_updates_pending_suggestions(db_session, tenant) -> None:
+async def test_update_scores_updates_pending_suggestions(db_session, tenant, seed_media_identity) -> None:
     """update_scores should update stored similarity metrics for pending suggestions."""
     cluster_repo = SqlAlchemyClusterRepository(db_session)
     cluster = await cluster_repo.save(
@@ -247,8 +259,10 @@ async def test_update_scores_updates_pending_suggestions(db_session, tenant) -> 
         )
     )
     repo = SqlAlchemySuggestionRepository(db_session)
+    identity_id = str(uuid.uuid4())
+    await seed_media_identity(identity_id)
     payload = SuggestionCreateData(
-        identity_id=str(uuid.uuid4()),
+        identity_id=identity_id,
         cluster_id=cluster.id,
         representative_similarity=0.91,
         member_similarity=0.82,
@@ -270,7 +284,7 @@ async def test_update_scores_updates_pending_suggestions(db_session, tenant) -> 
 
 
 @pytest.mark.asyncio
-async def test_update_scores_does_not_modify_resolved_suggestions(db_session, tenant) -> None:
+async def test_update_scores_does_not_modify_resolved_suggestions(db_session, tenant, seed_media_identity) -> None:
     """Resolved suggestions should preserve historical scores."""
     cluster_repo = SqlAlchemyClusterRepository(db_session)
     cluster = await cluster_repo.save(
@@ -284,8 +298,10 @@ async def test_update_scores_does_not_modify_resolved_suggestions(db_session, te
         )
     )
     repo = SqlAlchemySuggestionRepository(db_session)
+    identity_id = str(uuid.uuid4())
+    await seed_media_identity(identity_id)
     payload = SuggestionCreateData(
-        identity_id=str(uuid.uuid4()),
+        identity_id=identity_id,
         cluster_id=cluster.id,
         representative_similarity=0.91,
         member_similarity=0.82,
@@ -308,7 +324,7 @@ async def test_update_scores_does_not_modify_resolved_suggestions(db_session, te
 
 
 @pytest.mark.asyncio
-async def test_bulk_update_status_updates_multiple_rows(db_session, tenant) -> None:
+async def test_bulk_update_status_updates_multiple_rows(db_session, tenant, seed_media_identity) -> None:
     """bulk_update_status should update status for multiple suggestions."""
     cluster_repo = SqlAlchemyClusterRepository(db_session)
     cluster = await cluster_repo.save(
@@ -323,10 +339,15 @@ async def test_bulk_update_status_updates_multiple_rows(db_session, tenant) -> N
     )
     repo = SqlAlchemySuggestionRepository(db_session)
 
+    identity_id_a = str(uuid.uuid4())
+    identity_id_b = str(uuid.uuid4())
+    await seed_media_identity(identity_id_a)
+    await seed_media_identity(identity_id_b)
+
     suggestion_a = await repo.create(
         str(tenant.id),
         SuggestionCreateData(
-            identity_id=str(uuid.uuid4()),
+            identity_id=identity_id_a,
             cluster_id=cluster.id,
             representative_similarity=0.88,
             member_similarity=0.81,
@@ -336,7 +357,7 @@ async def test_bulk_update_status_updates_multiple_rows(db_session, tenant) -> N
     suggestion_b = await repo.create(
         str(tenant.id),
         SuggestionCreateData(
-            identity_id=str(uuid.uuid4()),
+            identity_id=identity_id_b,
             cluster_id=cluster.id,
             representative_similarity=0.86,
             member_similarity=0.8,
@@ -358,7 +379,7 @@ async def test_bulk_update_status_updates_multiple_rows(db_session, tenant) -> N
 
 
 @pytest.mark.asyncio
-async def test_upsert_updates_pending_and_skips_resolved(db_session, tenant) -> None:
+async def test_upsert_updates_pending_and_skips_resolved(db_session, tenant, seed_media_identity) -> None:
     """upsert_by_identity_cluster should update pending suggestions, not resolved ones."""
     cluster_repo = SqlAlchemyClusterRepository(db_session)
     cluster = await cluster_repo.save(
@@ -373,6 +394,7 @@ async def test_upsert_updates_pending_and_skips_resolved(db_session, tenant) -> 
     )
     repo = SqlAlchemySuggestionRepository(db_session)
     identity_id = str(uuid.uuid4())
+    await seed_media_identity(identity_id)
     source_job = IdentityClusteringJob(tenant_id=tenant.id, status="completed", progress=1.0)
     updated_source_job = IdentityClusteringJob(tenant_id=tenant.id, status="completed", progress=1.0)
     db_session.add_all([source_job, updated_source_job])

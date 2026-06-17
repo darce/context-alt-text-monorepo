@@ -8,6 +8,7 @@ use AltContext\Api\ClusterMutationsController;
 use AltContext\Api\Services\ClusterLifecycleService;
 use AltContext\Tests\Support\FindsSqlQueries;
 use AltContext\Tests\Support\ClusterMutationsMembersSpy;
+use AltContext\Tests\Support\ClusterMutationsOutboxWriterSpy;
 use AltContext\Tests\Support\ClusterMutationsRepositorySpy;
 use AltContext\Tests\Support\ClusterMutationsSyncStateSpy;
 use AltContext\Tests\Support\ClusterMutationsTopologyCommandSpy;
@@ -73,5 +74,52 @@ class ClusterLifecycleServiceTest extends TestCase
 
         $outboxInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_outbox');
         $this->assertStringContainsString("'cluster_undismissed'", $outboxInsert);
+    }
+
+    public function testDismissRollsBackWhenOutboxEnqueueFails(): void
+    {
+        global $wpdb;
+        $service = $this->serviceWithFailingOutbox();
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/cluster-xyz/dismiss');
+        $request->set_param('cluster_id', 'cluster-xyz');
+
+        $response = $service->dismiss_cluster($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('acx_db_error', $response->get_error_code());
+        $this->assertContains('ROLLBACK', $wpdb->queries);
+        $this->assertNotContains('COMMIT', $wpdb->queries);
+    }
+
+    public function testUndismissRollsBackWhenOutboxEnqueueFails(): void
+    {
+        global $wpdb;
+        $service = $this->serviceWithFailingOutbox();
+
+        $request = new WP_REST_Request('DELETE', '/acx/v1/recognition/clusters/cluster-xyz/dismiss');
+        $request->set_param('cluster_id', 'cluster-xyz');
+
+        $response = $service->undismiss_cluster($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('acx_db_error', $response->get_error_code());
+        $this->assertContains('ROLLBACK', $wpdb->queries);
+        $this->assertNotContains('COMMIT', $wpdb->queries);
+    }
+
+    private function serviceWithFailingOutbox(): ClusterLifecycleService
+    {
+        $outbox = new ClusterMutationsOutboxWriterSpy();
+        $outbox->nextEnqueueResult = false;
+        $host = new ClusterMutationsController(
+            $this->repository,
+            new ClusterMutationsSyncStateSpy(),
+            new ClusterMutationsMembersSpy(),
+            $outbox,
+            new ClusterMutationsTopologyCommandSpy()
+        );
+
+        return new ClusterLifecycleService($host, $this->repository);
     }
 }

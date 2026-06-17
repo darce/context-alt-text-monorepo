@@ -130,14 +130,12 @@ describe('WorkbenchPage (integration-lite)', () => {
     scanStatusRef.data = null;
     vi.mocked(recognitionApi.fetchPendingMergeSuggestions).mockResolvedValue({
       suggestions: [],
-      total: 0,
       limit: 10,
       offset: 0,
       data_source: DATA_SOURCE.LOCAL_PROJECTION,
     });
     vi.mocked(recognitionApi.fetchPendingNameSuggestions).mockResolvedValue({
       suggestions: [],
-      total: 0,
       limit: 25,
       offset: 0,
       data_source: DATA_SOURCE.LOCAL_PROJECTION,
@@ -213,7 +211,6 @@ describe('WorkbenchPage (integration-lite)', () => {
           cluster_identity_count: 2,
         },
       ],
-      total: 1,
       limit: 10,
       offset: 0,
     });
@@ -449,7 +446,6 @@ describe('WorkbenchPage (integration-lite)', () => {
       });
       vi.mocked(recognitionApi.fetchPendingSuggestions).mockResolvedValue({
         suggestions: [],
-        total: 0,
         limit: 10,
         offset: 0,
       });
@@ -527,7 +523,6 @@ describe('WorkbenchPage (integration-lite)', () => {
     });
     vi.mocked(recognitionApi.fetchPendingSuggestions).mockResolvedValue({
       suggestions: [],
-      total: 0,
       limit: 10,
       offset: 0,
     });
@@ -572,7 +567,6 @@ describe('WorkbenchPage (integration-lite)', () => {
     });
     vi.mocked(recognitionApi.fetchPendingSuggestions).mockResolvedValue({
       suggestions: [],
-      total: 0,
       limit: 25,
       offset: 0,
       data_source: DATA_SOURCE.LOCAL_PROJECTION,
@@ -638,7 +632,6 @@ describe('WorkbenchPage (integration-lite)', () => {
           cluster_identity_count: 2,
         },
       ],
-      total: 1,
       limit: 25,
       offset: 0,
       data_source: DATA_SOURCE.LOCAL_PROJECTION,

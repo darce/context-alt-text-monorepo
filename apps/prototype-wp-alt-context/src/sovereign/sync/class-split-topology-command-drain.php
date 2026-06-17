@@ -190,6 +190,13 @@ class SplitTopologyCommandDrain {
 			return;
 		}
 
+		// CON-4: claim the command before processing so a second concurrent drain cannot
+		// re-dispatch a pending command or re-apply an applied command's member delta and
+		// revert an interleaved user reassign. A lost claim means a peer drain owns it.
+		if ( ! $this->repository->claim_command( $command_id, $current_status ) ) {
+			return;
+		}
+
 		if ( 'applied' === $current_status ) {
 			$this->process_applied_split_command( $command_id, $command );
 			return;
@@ -209,22 +216,25 @@ class SplitTopologyCommandDrain {
 				'failed',
 				'missing_result_payload',
 				'Applied split topology command is missing durable result metadata.',
-				false
+				false,
+				'applied'
 			);
 			return;
 		}
 
 		if ( $this->reconcile_command( $command, $stored_result ) ) {
-			$this->repository->mark_reconciled( $command_id, $stored_result );
+			$this->repository->mark_reconciled( $command_id, $stored_result, 'applied' );
 			return;
 		}
 
-		$this->repository->record_failure(
+		$reconcile_attempts = max( 0, (int) ( $command['reconcile_attempts'] ?? 0 ) ) + 1;
+		$next_status = $reconcile_attempts >= $this->resolve_max_attempts() ? 'failed' : 'applied';
+		$this->repository->record_reconcile_failure(
 			$command_id,
-			'applied',
+			$next_status,
 			'projection_reconcile_failed',
 			'Split topology command could not be reconciled locally.',
-			false
+			'applied'
 		);
 	}
 
@@ -236,29 +246,39 @@ class SplitTopologyCommandDrain {
 		$status = trim( (string) ( $result['status'] ?? 'failed' ) );
 
 		if ( 'applied' === $status ) {
-			if ( ! $this->repository->record_dispatch_result( $command_id, $result ) ) {
+			// Claimed as 'pending'; record_dispatch_result is the pending->applied transition.
+			if ( ! $this->repository->record_dispatch_result( $command_id, $result, 'pending' ) ) {
 				return;
 			}
 
 			if ( $this->reconcile_command( $command, $result ) ) {
-				$this->repository->mark_reconciled( $command_id, $result );
+				$this->repository->mark_reconciled( $command_id, $result, 'applied' );
 				return;
 			}
 
 			$attempts = max( 0, (int) ( $command['attempts'] ?? 0 ) ) + 1;
 			$retryable = $attempts < $this->resolve_max_attempts();
+			// Row is now 'applied' after record_dispatch_result; guard the reconcile-fail write on it.
 			$this->repository->record_failure(
 				$command_id,
 				$retryable ? 'applied' : 'failed',
 				'projection_reconcile_failed',
 				'Split topology command could not be reconciled locally.',
-				false
+				false,
+				'applied'
 			);
 			return;
 		}
 
 		if ( 'conflict' === $status ) {
-			$this->repository->record_dispatch_result( $command_id, $result );
+			// Claimed as 'pending'; record_dispatch_result is the pending->conflict transition.
+			// If this drain outlived its lease and a peer re-claimed + advanced the row, the
+			// guarded write matches 0 rows -> do not re-project a stale conflict snapshot over
+			// the peer's state. Mirrors the 'applied' branch's guarded early-return.
+			if ( ! $this->repository->record_dispatch_result( $command_id, $result, 'pending' ) ) {
+				return;
+			}
+
 			$this->reconcile_conflict( $command, $result );
 			return;
 		}
@@ -266,11 +286,14 @@ class SplitTopologyCommandDrain {
 		$attempts = max( 0, (int) ( $command['attempts'] ?? 0 ) ) + 1;
 		$retryable = (bool) ( $result['retryable'] ?? true );
 		$next_status = ( $retryable && $attempts < $this->resolve_max_attempts() ) ? 'pending' : 'failed';
+		// Dispatch failed before any status flip; the row is still 'pending'.
 		$this->repository->record_failure(
 			$command_id,
 			$next_status,
 			$this->normalize_text( $result['error_code'] ?? '', 'dispatch_failed' ),
-			$this->normalize_text( $result['error_message'] ?? '', 'Split topology command dispatch failed.' )
+			$this->normalize_text( $result['error_message'] ?? '', 'Split topology command dispatch failed.' ),
+			true,
+			'pending'
 		);
 	}
 

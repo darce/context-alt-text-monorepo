@@ -77,6 +77,14 @@ class SnapshotProjector implements SnapshotProjectorInterface {
 			return;
 		}
 
+		// COR-1: an out-of-order full snapshot whose version is not newer than
+		// what is already projected would regress curated/projection data.
+		// Skip it entirely — this also avoids running the stale-row delete.
+		$stored_version = $this->sync_state_repository->get_snapshot_version( $normalized_tenant_id );
+		if ( $stored_version > 0 && $snapshot_version <= $stored_version ) {
+			return;
+		}
+
 		$pre_projection_conflict_count = $this->sync_state_repository->get_conflict_count( $normalized_tenant_id );
 
 		if ( $this->should_batch_cluster_only_snapshot( $clusters, $members ) ) {
@@ -215,13 +223,22 @@ class SnapshotProjector implements SnapshotProjectorInterface {
 			throw new RuntimeException( 'Snapshot projection requires $wpdb query support.' );
 		}
 
+		$snapshot_version = (int) ( $delta['snapshot_version'] ?? 0 );
+
+		// COR-1: a stale delta (version not newer than what is already projected)
+		// would regress data and the stored version. Skip it before opening a
+		// transaction.
+		$stored_version = $this->sync_state_repository->get_snapshot_version( $normalized_tenant_id );
+		if ( $stored_version > 0 && $snapshot_version <= $stored_version ) {
+			return;
+		}
+
 		$started = false !== $wpdb->query( 'START TRANSACTION' );
 		if ( ! $started ) {
 			throw new RuntimeException( 'Snapshot projection requires transaction support.' );
 		}
 
 		try {
-			$snapshot_version = (int) ( $delta['snapshot_version'] ?? 0 );
 			$clusters         = is_array( $delta['clusters'] ?? null ) ? $delta['clusters'] : array();
 			$members          = is_array( $delta['members'] ?? null ) ? $delta['members'] : array();
 

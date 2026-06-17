@@ -62,6 +62,65 @@ class SnapshotProjectorTest extends TestCase
         $this->assertSame([['tenant-a', 2, 1, 7]], $snapshotEvents);
     }
 
+    public function testProjectSkipsStaleFullSnapshotSoNewerDataAndVersionSurvive(): void
+    {
+        $clustersRepo = new SnapshotProjectorClustersSpy();
+        $membersRepo = new SnapshotProjectorMembersSpy();
+        $syncRepo = new SnapshotProjectorSyncStateSpy();
+        $projector = new SnapshotProjector($clustersRepo, $membersRepo, $syncRepo);
+
+        $projector->project(
+            'tenant-ooo',
+            [
+                'snapshot_version' => 5,
+                'clusters' => [['cluster_uuid' => 'cluster-1', 'label' => 'V5 Label', 'identity_count' => 5]],
+                'members' => [],
+            ]
+        );
+
+        $this->assertSame(5, $syncRepo->snapshotVersion);
+        $this->assertSame('V5 Label', $clustersRepo->mergedClusters[0]['label']);
+
+        // COR-1: a later, out-of-order v4 full snapshot must not regress the
+        // already-projected v5 data or the stored version.
+        $projector->project(
+            'tenant-ooo',
+            [
+                'snapshot_version' => 4,
+                'clusters' => [['cluster_uuid' => 'cluster-1', 'label' => 'V4 STALE', 'identity_count' => 1]],
+                'members' => [],
+            ]
+        );
+
+        $this->assertSame(5, $syncRepo->snapshotVersion, 'stored version must stay at 5 after a stale v4 snapshot');
+        $this->assertSame('V5 Label', $clustersRepo->mergedClusters[0]['label'], 'v5 cluster data must survive a later v4 merge');
+        $this->assertSame(5, $clustersRepo->snapshotVersion, 'merger must not be re-invoked with the stale version');
+    }
+
+    public function testProjectDeltaSkipsStaleDeltaSoVersionAndDataSurvive(): void
+    {
+        global $wpdb;
+
+        $clustersRepo = new SnapshotProjectorClustersSpy();
+        $membersRepo = new SnapshotProjectorMembersSpy();
+        $syncRepo = new SnapshotProjectorSyncStateSpy();
+        $syncRepo->snapshotVersion = 9; // tenant already projected up to v9
+        $projector = new SnapshotProjector($clustersRepo, $membersRepo, $syncRepo);
+
+        $projector->project_delta(
+            'tenant-delta-stale',
+            [
+                'snapshot_version' => 8,
+                'clusters' => [['cluster_uuid' => 'cluster-x', 'label' => 'stale']],
+                'members' => [],
+            ]
+        );
+
+        $this->assertSame(9, $syncRepo->snapshotVersion, 'a stale delta must not regress the stored version');
+        $this->assertSame([], $clustersRepo->mergedClusters, 'merger must not run for a stale delta');
+        $this->assertNotContains('START TRANSACTION', $wpdb->queries, 'a stale delta should be skipped before opening a transaction');
+    }
+
     public function testProjectRollsBackWhenRepositoryThrows(): void
     {
         $clustersRepo = new SnapshotProjectorClustersSpy();

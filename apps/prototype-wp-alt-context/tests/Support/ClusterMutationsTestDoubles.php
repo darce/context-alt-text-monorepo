@@ -25,6 +25,8 @@ class ClusterMutationsRepositorySpy extends NullClustersRepository
     public int $nextCreateLocalClusterRows = 1;
     /** @var array<int,array{0:string,1:int}> */
     public array $identityCountUpdates = [];
+    /** @var array<int,array{0:string,1:int}> */
+    public array $identityCountAdjustments = [];
     /** @var array<string,array<string,mixed>> */
     public array $localClusterRows = [
         'cluster-xyz' => [
@@ -62,6 +64,12 @@ class ClusterMutationsRepositorySpy extends NullClustersRepository
     public function update_identity_count(string $cluster_uuid, int $identity_count): int
     {
         $this->identityCountUpdates[] = [$cluster_uuid, $identity_count];
+        return 1;
+    }
+
+    public function adjust_identity_count(string $cluster_uuid, int $delta): int
+    {
+        $this->identityCountAdjustments[] = [$cluster_uuid, $delta];
         return 1;
     }
 
@@ -171,26 +179,37 @@ class ClusterMutationsTopologyCommandSpy implements TopologyCommandRepositoryInt
         return array();
     }
 
+    public function claim_command(int $command_id, string $expected_status): bool
+    {
+        return true;
+    }
+
     public function update_status(
         int $command_id,
         string $status,
         ?array $result_payload = null,
-        ?string $backend_command_id = null
+        ?string $backend_command_id = null,
+        ?string $expected_status = null
     ): bool {
         return true;
     }
 
-    public function record_dispatch_result(int $command_id, array $response): bool
+    public function record_dispatch_result(int $command_id, array $response, ?string $expected_status = null): bool
     {
         return true;
     }
 
-    public function mark_reconciled(int $command_id, ?array $result_payload = null): bool
+    public function mark_reconciled(int $command_id, ?array $result_payload = null, ?string $expected_status = null): bool
     {
         return true;
     }
 
-    public function record_failure(int $command_id, string $status, string $error_code, string $error_message, bool $increment_attempt = true): bool
+    public function record_failure(int $command_id, string $status, string $error_code, string $error_message, bool $increment_attempt = true, ?string $expected_status = null): bool
+    {
+        return true;
+    }
+
+    public function record_reconcile_failure(int $command_id, string $status, string $error_code, string $error_message, ?string $expected_status = null): bool
     {
         return true;
     }

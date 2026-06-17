@@ -114,6 +114,8 @@ class IdentityMemberSnapshotMerger {
 			$thumb_path       = $this->normalize_thumb_path( $member, $identity_uuid, $attachment_id );
 			$bbox_json        = $this->encode_bbox_json( $member );
 
+			// COR-1: gate member data on projection_version (kept monotonic via
+			// GREATEST) so a stale snapshot cannot regress newer member rows.
 			$sql = $this->prepare_query(
 				"INSERT INTO %i
 					(identity_uuid, cluster_uuid, attachment_id, bbox_json, thumb_path, similarity, similarity_threshold, is_curated, projection_version, created_at, updated_at)
@@ -127,12 +129,12 @@ class IdentityMemberSnapshotMerger {
 				)
 				ON DUPLICATE KEY UPDATE
 					cluster_uuid = IF(is_curated = 1, cluster_uuid, VALUES(cluster_uuid)),
-					attachment_id = VALUES(attachment_id),
-					bbox_json = VALUES(bbox_json),
-					thumb_path = VALUES(thumb_path),
-					similarity = NULLIF(%s, ''),
-					similarity_threshold = NULLIF(%s, ''),
-					projection_version = IF(is_curated = 1, projection_version, VALUES(projection_version)),
+					attachment_id = IF(VALUES(projection_version) >= projection_version, VALUES(attachment_id), attachment_id),
+					bbox_json = IF(VALUES(projection_version) >= projection_version, VALUES(bbox_json), bbox_json),
+					thumb_path = IF(VALUES(projection_version) >= projection_version, VALUES(thumb_path), thumb_path),
+					similarity = IF(VALUES(projection_version) >= projection_version, NULLIF(%s, ''), similarity),
+					similarity_threshold = IF(VALUES(projection_version) >= projection_version, NULLIF(%s, ''), similarity_threshold),
+					projection_version = IF(is_curated = 1, projection_version, GREATEST(projection_version, VALUES(projection_version))),
 					updated_at = VALUES(updated_at)",
 				array(
 					$this->members_table_name,

@@ -42,6 +42,7 @@ class OutboxDrain {
 	private const ACTION_SCHEDULER_GROUP = 'acx-sync';
 	private const DEFAULT_BATCH_SIZE = 25;
 	private const DEFAULT_MAX_ATTEMPTS = 5;
+	private const DEFAULT_CLAIM_LEASE_SECONDS = 300;
 
 	private OutboxDispatcher $dispatcher;
 	private ConflictRepository $conflict_repository;
@@ -133,6 +134,11 @@ class OutboxDrain {
 	}
 
 	public function drain(): void {
+		// CON-3-FU-1: recover rows orphaned in_flight by a drain that died between claim and the
+		// terminal apply_result write, before loading the pending batch. The lease window leaves
+		// rows a concurrent drain is actively processing untouched.
+		$this->query_repository->reclaim_stale_in_flight_operations( $this->resolve_claim_lease_seconds() );
+
 		$operations = $this->sequencer->filter_ready_outbox_operations(
 			$this->query_repository->load_pending_operations( $this->batch_size )
 		);
@@ -143,14 +149,47 @@ class OutboxDrain {
 			return;
 		}
 
-		$processed_tenants = $this->process_operation_batch( $operations );
+		$claimed = $this->claim_operations( $operations );
+		if ( empty( $claimed ) ) {
+			if ( $this->query_repository->has_pending_operations() ) {
+				self::maybe_schedule_drain();
+			}
+			return;
+		}
+
+		$processed_tenants = $this->process_operation_batch( $claimed );
 		$tenant_ids = array_keys( $processed_tenants );
 		$this->refresh_curation_metrics_for_tenants( $tenant_ids );
 		$this->purge_terminal_rows_for_tenants( $tenant_ids );
 
+		// Reschedule on the pre-claim ready count: when concurrent drains split a full batch,
+		// count( $claimed ) can fall below the batch size even though a backlog remains.
 		if ( count( $operations ) >= $this->batch_size && $this->query_repository->has_pending_operations() ) {
 			self::maybe_schedule_drain();
 		}
+	}
+
+	/**
+	 * Claim each ready operation before dispatch so a concurrent drain cannot pick up the same
+	 * row. Only operations this drain won the claim for are returned for processing (CON-3).
+	 *
+	 * @param array<int,array<string,mixed>> $operations
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function claim_operations( array $operations ): array {
+		$claimed = array();
+		foreach ( $operations as $operation ) {
+			$outbox_id = max( 0, (int) ( $operation['id'] ?? 0 ) );
+			if ( $outbox_id <= 0 ) {
+				continue;
+			}
+
+			if ( $this->query_repository->claim_operation( $outbox_id ) ) {
+				$claimed[] = $operation;
+			}
+		}
+
+		return $claimed;
 	}
 
 	/**
@@ -306,9 +345,9 @@ class OutboxDrain {
 					'last_attempted_at' => $attempted_at,
 					'acknowledged_at' => $attempted_at,
 				),
-				array( 'id' => $outbox_id ),
+				array( 'id' => $outbox_id, 'status' => OutboxStatus::IN_FLIGHT ),
 				array( '%s', '%d', '%s', '%s', '%d', '%s', '%s' ),
-				array( '%d' )
+				array( '%d', '%s' )
 			);
 			return;
 		}
@@ -325,9 +364,9 @@ class OutboxDrain {
 					'last_error_message' => $this->normalize_text( $result['error_message'] ?? '', 'Remote curation replay conflict.' ),
 					'last_attempted_at' => $attempted_at,
 				),
-				array( 'id' => $outbox_id ),
+				array( 'id' => $outbox_id, 'status' => OutboxStatus::IN_FLIGHT ),
 				array( '%s', '%d', '%s', '%s', '%s' ),
-				array( '%d' )
+				array( '%d', '%s' )
 			);
 			return;
 		}
@@ -345,14 +384,18 @@ class OutboxDrain {
 				'last_error_message' => $this->normalize_text( $result['error_message'] ?? '', 'Outbox dispatch failed.' ),
 				'last_attempted_at' => $attempted_at,
 			),
-			array( 'id' => $outbox_id ),
+			array( 'id' => $outbox_id, 'status' => OutboxStatus::IN_FLIGHT ),
 			array( '%s', '%d', '%s', '%s', '%s' ),
-			array( '%d' )
+			array( '%d', '%s' )
 		);
 	}
 
 	private function resolve_max_attempts(): int {
 		return max( 1, (int) apply_filters( 'acx_outbox_max_attempts', self::DEFAULT_MAX_ATTEMPTS ) );
+	}
+
+	private function resolve_claim_lease_seconds(): int {
+		return max( 1, (int) apply_filters( 'acx_outbox_claim_lease_seconds', self::DEFAULT_CLAIM_LEASE_SECONDS ) );
 	}
 
 	private function normalize_text( mixed $value, string $default ): string {

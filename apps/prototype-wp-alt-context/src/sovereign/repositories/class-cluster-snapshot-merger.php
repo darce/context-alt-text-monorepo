@@ -101,6 +101,8 @@ class ClusterSnapshotMerger {
 			$thumb_path  = $this->resolve_representative_thumb_path( $cluster, $cluster_uuid );
 			$inserted_at = $now_utc;
 
+			// COR-1: gate each overwritten data column on the incoming version so
+			// an out-of-order (older) snapshot cannot regress newer projection data.
 			$sql = $this->prepare_query(
 				'INSERT INTO %i
 				(cluster_uuid, tenant_id, label, curation_state, representative_thumb_path, representative_id, is_pinned, identity_count, snapshot_version, is_user_confirmed, created_at, updated_at, last_synced_at, suggested_label, suggested_label_source, suggested_label_confidence, suggested_target_cluster_id)
@@ -111,17 +113,17 @@ class ClusterSnapshotMerger {
 					is_user_confirmed = IF(is_user_confirmed = 1, is_user_confirmed, VALUES(is_user_confirmed)),
 					person_id = IF(is_user_confirmed = 1, person_id, person_id),
 					local_revision = IF(is_user_confirmed = 1, local_revision, local_revision),
-					representative_thumb_path = VALUES(representative_thumb_path),
-					representative_id = VALUES(representative_id),
-					is_pinned = VALUES(is_pinned),
-					identity_count = VALUES(identity_count),
+					representative_thumb_path = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(representative_thumb_path), representative_thumb_path),
+					representative_id = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(representative_id), representative_id),
+					is_pinned = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(is_pinned), is_pinned),
+					identity_count = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(identity_count), identity_count),
 					snapshot_version = GREATEST(snapshot_version, VALUES(snapshot_version)),
 					updated_at = VALUES(updated_at),
 					last_synced_at = VALUES(last_synced_at),
-					suggested_label = VALUES(suggested_label),
-					suggested_label_source = VALUES(suggested_label_source),
-					suggested_label_confidence = VALUES(suggested_label_confidence),
-					suggested_target_cluster_id = VALUES(suggested_target_cluster_id)',
+					suggested_label = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(suggested_label), suggested_label),
+					suggested_label_source = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(suggested_label_source), suggested_label_source),
+					suggested_label_confidence = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(suggested_label_confidence), suggested_label_confidence),
+					suggested_target_cluster_id = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(suggested_target_cluster_id), suggested_target_cluster_id)',
 				array(
 					$this->table_name,
 					$cluster_uuid,

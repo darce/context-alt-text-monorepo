@@ -133,7 +133,7 @@ export const fetchPendingNameSuggestions = async (
 
     return {
       suggestions: response.suggestions,
-      total: requireEnvelopeNumber(response.total, 'total', 'Pending name suggestions response'),
+      // COR-3 (rg-015): no authoritative total forwarded; consumers count loaded items.
       limit: requireEnvelopeNumber(response.limit, 'limit', 'Pending name suggestions response'),
       offset: requireEnvelopeNumber(response.offset, 'offset', 'Pending name suggestions response'),
       data_source: requireCanonicalDataSource(response.data_source, 'Pending name suggestions response'),

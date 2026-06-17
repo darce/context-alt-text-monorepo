@@ -7,9 +7,18 @@ namespace AltContext\Tests\Unit;
 use AltContext\Tests\TestCase;
 
 /**
- * rg-005: columns referenced by the identity-members repository SQL must exist in
- * the identity_members / clusters / persons DDL. Parsed live from
- * class-life-cycle-manager.php — never hand-duplicated.
+ * rg-005: columns the identity-members repository SQL references must exist in
+ * the identity_members / clusters / persons DDL. Two complementary checks:
+ *
+ *  - Live parity: the DDL column sets are parsed live from
+ *    class-life-cycle-manager.php and the identity_members write columns are
+ *    parsed live from the repository-layer INSERT/upsert statements, so a
+ *    fabricated or renamed *write* column is caught directly from the SQL
+ *    (testSqlWriteColumnsExistInMembersDdl).
+ *  - Allowlist: the MEMBERS_COLUMNS / CLUSTERS_COLUMNS / PERSONS_COLUMNS lists
+ *    are hand-maintained secondary checks covering the read/join/where columns
+ *    the SQL parser does not extract. They do not, on their own, prove the SQL
+ *    matches the DDL.
  *
  * @coversNothing
  */
@@ -133,6 +142,45 @@ class IdentityMembersSchemaParityTest extends TestCase
     }
 
     /**
+     * Live-parity check: the identity_members write columns the repository SQL
+     * actually names — parsed straight out of its INSERT/upsert statements —
+     * must all exist in the parsed identity_members DDL, without trusting the
+     * MEMBERS_COLUMNS allowlist.
+     */
+    public function testSqlWriteColumnsExistInMembersDdl(): void
+    {
+        $referenced = $this->parseSqlWriteColumns($this->repositoryLayerSource());
+
+        $this->assertNotEmpty(
+            $referenced,
+            'parser found no INSERT/upsert write columns in the identity-members repository SQL — parser or corpus is broken'
+        );
+
+        $this->assertSame(
+            [],
+            $this->columnsMissingFrom($referenced, $this->parseDdlColumns('members_table')),
+            'identity-members repository SQL writes columns absent from the identity_members DDL'
+        );
+    }
+
+    public function testSqlWriteColumnGuardDetectsFabricatedColumn(): void
+    {
+        $sql = "INSERT INTO %i\n(identity_uuid, fabricated_member_write_xyz)\nVALUES (%s, %s)";
+        $referenced = $this->parseSqlWriteColumns($sql);
+
+        $this->assertContains(
+            'fabricated_member_write_xyz',
+            $referenced,
+            'parser must extract every identifier from the INSERT column list'
+        );
+        $this->assertSame(
+            ['fabricated_member_write_xyz'],
+            $this->columnsMissingFrom($referenced, $this->parseDdlColumns('members_table')),
+            'live-parity guard must flag an SQL write column missing from the DDL'
+        );
+    }
+
+    /**
      * @param string[] $candidates
      * @param string[] $ddlColumns
      * @return string[]
@@ -143,6 +191,42 @@ class IdentityMembersSchemaParityTest extends TestCase
             $candidates,
             static fn (string $column): bool => ! in_array($column, $ddlColumns, true)
         ));
+    }
+
+    /**
+     * Parse the column identifiers the repository SQL writes — INSERT column
+     * lists (followed by either VALUES or an INSERT...SELECT row source) and
+     * `VALUES(col)` upsert back-references. Both name columns of the single
+     * identity_members table being written, so the parsed set is a clean
+     * DDL-subset candidate (unlike SELECT/JOIN lists, which span tables). Only
+     * these SQL-specific shapes are matched so the parser never trips on the
+     * surrounding PHP source; `VALUES` is matched case-sensitively so PHP's
+     * lower-case array_values() is not mistaken for an upsert back-reference.
+     *
+     * @return string[]
+     */
+    private function parseSqlWriteColumns(string $source): array
+    {
+        $columns = [];
+
+        if (preg_match_all('/INSERT INTO\s+\S+\s*\(([^)]*)\)\s*(?:VALUES|SELECT)\b/i', $source, $insertMatches)) {
+            foreach ($insertMatches[1] as $columnList) {
+                foreach (preg_split('/\s*,\s*/', trim($columnList)) as $candidate) {
+                    $candidate = trim((string) $candidate);
+                    if (preg_match('/^[a-z_][a-z0-9_]*$/', $candidate)) {
+                        $columns[$candidate] = true;
+                    }
+                }
+            }
+        }
+
+        if (preg_match_all('/VALUES\s*\(\s*([a-z_][a-z0-9_]*)\s*\)/', $source, $valueMatches)) {
+            foreach ($valueMatches[1] as $candidate) {
+                $columns[$candidate] = true;
+            }
+        }
+
+        return array_keys($columns);
     }
 
     /**

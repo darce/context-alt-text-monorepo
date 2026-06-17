@@ -70,8 +70,8 @@ const requireSuggestionEnvelopeMetadata = (
     throw new Error(`${responseName} must include a valid data_source.`);
   }
 
+  // COR-3 (rg-015): no authoritative `total` is forwarded; consumers count loaded items.
   return {
-    total: requireEnvelopeNumber(response.total, 'total', responseName),
     limit: requireEnvelopeNumber(response.limit, 'limit', responseName),
     offset: requireEnvelopeNumber(response.offset, 'offset', responseName),
     data_source: dataSource,

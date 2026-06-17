@@ -9,6 +9,9 @@ export const JOB_STATUS = {
   PENDING: 'pending',
   RUNNING: 'running',
   COMPLETED: 'completed',
+  // Terminal partial-success the WP SSE producer forwards verbatim from the description-service
+  // (some items succeeded, some failed). Must be recognized as terminal on the SSE channel too.
+  COMPLETED_WITH_ERRORS: 'completed_with_errors',
   FAILED: 'failed',
   CLUSTERING: 'clustering',
 } as const;
@@ -84,7 +87,11 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
       return;
     }
 
-    if (status === JOB_STATUS.COMPLETED || status === JOB_STATUS.FAILED) {
+    if (
+      status === JOB_STATUS.COMPLETED ||
+      status === JOB_STATUS.COMPLETED_WITH_ERRORS ||
+      status === JOB_STATUS.FAILED
+    ) {
       setStalledForSeconds(null);
       return;
     }

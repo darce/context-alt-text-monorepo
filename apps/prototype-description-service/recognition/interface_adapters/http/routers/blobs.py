@@ -148,7 +148,7 @@ async def serve_face_thumb(
         image = Image.open(io.BytesIO(data)).convert("RGB")
     except (UnidentifiedImageError, OSError) as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="blob is not a supported image",
         ) from exc
 
@@ -158,7 +158,7 @@ async def serve_face_thumb(
     bottom = min(y + height, image.height)
     if right <= left or bottom <= top:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="face crop is outside image bounds",
         )
 

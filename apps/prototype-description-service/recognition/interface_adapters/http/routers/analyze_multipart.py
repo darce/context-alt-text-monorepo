@@ -117,7 +117,7 @@ def multipart_to_media_items(
         data = value.file.read()
         if not data:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"image part '{key}' is empty",
             )
 
@@ -233,14 +233,14 @@ async def analyze_media_multipart(
     tenant_id_raw = envelope.get("tenant_id")
     if not tenant_id_raw or not isinstance(tenant_id_raw, str):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="'request' JSON must include a non-empty 'tenant_id' string",
         )
     try:
         tenant_uuid = uuid.UUID(tenant_id_raw)
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"'tenant_id' must be a UUID: {exc}",
         ) from exc
 
@@ -275,7 +275,7 @@ async def analyze_media_multipart(
     )
     if not media_items_list:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=("multipart submission must include at least one image_<media_id> part"),
         )
 

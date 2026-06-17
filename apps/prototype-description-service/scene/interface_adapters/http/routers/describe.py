@@ -103,7 +103,7 @@ async def describe_image_multipart(
         envelope = DescribeImageEnvelope.model_validate(_read_request_part(form.get("request")))
     except ValidationError as exc:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, f"invalid 'request' envelope: {exc.errors()}"
+            status.HTTP_422_UNPROCESSABLE_CONTENT, f"invalid 'request' envelope: {exc.errors()}"
         ) from exc
 
     auth_tenant = (getattr(auth, "tenant_claim", None) or "").strip()
@@ -113,7 +113,7 @@ async def describe_image_multipart(
     image_parts = [(k, v) for k, v in form.multi_items() if k.startswith(_IMAGE_KEY_PREFIX)]
     if len(image_parts) != 1:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             f"exactly one image_<media_id> part is required; got {len(image_parts)}",
         )
     key, value = image_parts[0]
@@ -121,7 +121,7 @@ async def describe_image_multipart(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"form key '{key}' must be a file upload")
     if key[len(_IMAGE_KEY_PREFIX) :] != str(envelope.media_id):
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             f"image part key '{key}' must be the canonical 'image_{envelope.media_id}'",
         )
 
@@ -131,10 +131,10 @@ async def describe_image_multipart(
         raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, f"unsupported image content-type '{content_type}'")
     image_bytes = await value.read()
     if not image_bytes:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"image part '{key}' is empty")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"image part '{key}' is empty")
     if len(image_bytes) > settings.max_description_image_bytes:
         raise HTTPException(
-            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            status.HTTP_413_CONTENT_TOO_LARGE,
             f"image exceeds the description size cap ({settings.max_description_image_bytes} bytes)",
         )
 

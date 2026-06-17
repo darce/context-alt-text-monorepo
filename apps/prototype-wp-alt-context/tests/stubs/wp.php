@@ -1638,6 +1638,8 @@ if (!isset($GLOBALS['wpdb'])) {
         public array $updateResults = [];
         /** @var array<string,array<int,array<string,mixed>>> */
         public array $tableRows = [];
+        /** @var callable|null Optional observer invoked with each get_var SQL string (test instrumentation). */
+        public $onGetVar = null;
 
         public function query($sql)
         {
@@ -1774,7 +1776,11 @@ if (!isset($GLOBALS['wpdb'])) {
         {
             $normalizedSql = trim((string) $query);
             $this->queries[] = $normalizedSql;
-            
+
+            if ($this->onGetVar !== null) {
+                ($this->onGetVar)($normalizedSql);
+            }
+
             if (array_key_exists($normalizedSql, $this->queryResults)) {
                 return $this->queryResults[$normalizedSql];
             }
@@ -2107,6 +2113,7 @@ if (!isset($GLOBALS['wpdb'])) {
             $this->defaultUpdateResult = 1;
             $this->updateResults = [];
             $this->tableRows = [];
+            $this->onGetVar = null;
         }
     }
 

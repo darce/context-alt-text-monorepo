@@ -161,6 +161,43 @@ class ClusterCurationWriter {
 		return 0;
 	}
 
+	public function adjust_identity_count( string $cluster_uuid, int $delta ): int {
+		global $wpdb;
+
+		$normalized_cluster_uuid = trim( $cluster_uuid );
+		if ( '' === $normalized_cluster_uuid ) {
+			return 0;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
+			return 0;
+		}
+
+		$now_utc = gmdate( 'Y-m-d H:i:s' );
+		// CON-1: apply the count change as an atomic relative delta clamped at
+		// zero, so concurrent reassigns into one cluster sum instead of racing
+		// on a read-modify-write of an absolute value.
+		$sql = $this->prepare_query(
+			'UPDATE %i SET identity_count = GREATEST(0, identity_count + %d), local_revision = local_revision + 1, updated_at = %s WHERE cluster_uuid = %s',
+			array(
+				$this->table_name,
+				$delta,
+				$now_utc,
+				$normalized_cluster_uuid,
+			)
+		);
+
+		if ( is_string( $sql ) && '' !== $sql ) {
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+			$query_result = $wpdb->query( $sql );
+			if ( is_int( $query_result ) ) {
+				return $query_result;
+			}
+		}
+
+		return 0;
+	}
+
 	public function update_representative_state( string $cluster_uuid, ?string $representative_id, bool $is_pinned, bool $is_local_curation = true ): int {
 		global $wpdb;
 

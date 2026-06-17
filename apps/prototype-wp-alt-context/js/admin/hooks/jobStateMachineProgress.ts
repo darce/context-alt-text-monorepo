@@ -3,7 +3,7 @@ import { __, sprintf } from '@wordpress/i18n';
 import type { BatchRunStatus, JobProgress, JobStatusResponse } from '../api/recognition/types/scan';
 import type { PersistedJob } from './useJobPersistence';
 import type { JobStatus } from './useJobProgressStream';
-import type { PipelinePhase } from './jobStateMachineUtils';
+import { isScanSuccessStatus, isScanTerminalStatus, type PipelinePhase } from './jobStateMachineUtils';
 
 interface StatusTextParams {
   clusterPending: boolean;
@@ -71,7 +71,7 @@ export const buildStatusText = ({
       }
       return sprintf(__('Detecting faces… %d/%d processed', 'alt-context'), processed, sseProgress.total);
     }
-    if (sseStatus === 'completed') {
+    if (isScanSuccessStatus(sseStatus)) {
       return 'completed';
     }
     if (sseStatus === 'failed') {
@@ -85,7 +85,7 @@ export const buildStatusText = ({
 
   const statusMessage = scanStatus?.message;
   const statusValue = scanStatus?.status;
-  if (statusMessage && statusValue !== 'completed' && statusValue !== 'failed') {
+  if (statusMessage && !isScanTerminalStatus(statusValue)) {
     return statusMessage;
   }
   return statusValue ?? (scanPending ? __('Starting scan…', 'alt-context') : undefined);

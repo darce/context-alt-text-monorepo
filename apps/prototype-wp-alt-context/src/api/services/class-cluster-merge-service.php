@@ -99,15 +99,12 @@ class ClusterMergeService {
 			return new WP_Error( 'acx_db_error', 'Database access is unavailable.', array( 'status' => 500 ) );
 		}
 
-		$source_member_count = $this->members_repository->count_for_cluster( $source_id );
-		$target_member_count = $this->members_repository->count_for_cluster( $target_cluster_id );
-
 		$moved_rows = 0;
 		$result     = $this->run_transactional(
-			function () use ( $source_id, $target_cluster_id, $source_member_count, $target_member_count, $target_label, $tenant_id, $source_cluster, &$moved_rows ): WP_REST_Response|WP_Error {
+			function () use ( $source_id, $target_cluster_id, $target_label, $tenant_id, $source_cluster, &$moved_rows ): WP_REST_Response|WP_Error {
 				$moved_rows = $this->members_repository->reassign_cluster_members( $source_id, $target_cluster_id );
 				$this->clusters_repository->update_identity_count( $source_id, 0 );
-				$this->clusters_repository->update_identity_count( $target_cluster_id, $target_member_count + $source_member_count );
+				$this->clusters_repository->adjust_identity_count( $target_cluster_id, $moved_rows );
 
 				if ( '' !== $target_label ) {
 					$this->clusters_repository->update_label( $target_cluster_id, $target_label );
@@ -241,7 +238,7 @@ class ClusterMergeService {
 					$moved_rows += $this->members_repository->reassign_to_cluster( $identity_id, $source_cluster_id );
 				}
 
-				$this->clusters_repository->update_identity_count( $target_cluster_id, max( 0, $target_member_count - $moved_rows ) );
+				$this->clusters_repository->adjust_identity_count( $target_cluster_id, -$moved_rows );
 
 				$payload = array(
 					'tenant_id' => $tenant_id,

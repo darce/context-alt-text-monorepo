@@ -77,7 +77,8 @@ class IdentityMembersRepositoryTest extends TestCase
         $this->assertStringContainsString('is_curated', $insertSql);
         $this->assertStringContainsString('projection_version', $insertSql);
         $this->assertStringContainsString('cluster_uuid = IF(is_curated = 1, cluster_uuid, VALUES(cluster_uuid))', $insertSql);
-        $this->assertStringContainsString('projection_version = IF(is_curated = 1, projection_version, VALUES(projection_version))', $insertSql);
+        // COR-1: projection_version is monotonic (GREATEST) for non-curated members.
+        $this->assertStringContainsString('projection_version = IF(is_curated = 1, projection_version, GREATEST(projection_version, VALUES(projection_version)))', $insertSql);
         $this->assertStringContainsString('acx://identity/identity-1/attachment/123', $sql);
         $this->assertStringContainsString('\\"coordinate_space\\":\\"original_image\\"', $sql);
         $this->assertStringContainsString('\\"normalized\\":{\\"x\\":0.1875', $sql);

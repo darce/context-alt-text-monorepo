@@ -5,7 +5,7 @@ import { getConfig } from '../api/config';
 import { queryKeys } from '../api/queryKeys';
 import type { SyncTriggerResponse } from '../api/recognition';
 import type { BatchRunStatus, JobStatusResponse } from '../api/recognition/types/scan';
-import type { PipelinePhase } from './jobStateMachineUtils';
+import { isScanSuccessStatus, type PipelinePhase } from './jobStateMachineUtils';
 import type { PersistedJob } from './useJobPersistence';
 import type { JobStatus } from './useJobProgressStream';
 
@@ -112,7 +112,9 @@ export const useJobStateMachineEffects = ({
   }, [syncTrigger.mutateAsync]);
 
   useEffect(() => {
-    if (scanStatus?.status === 'completed') {
+    // BND-1: completed_with_errors is a terminal partial-success — refresh findings just like a
+    // clean completion so a partially-failed scan still surfaces its results immediately.
+    if (isScanSuccessStatus(scanStatus?.status)) {
       void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
       void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
       void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.all });
@@ -147,7 +149,9 @@ export const useJobStateMachineEffects = ({
       return;
     }
 
-    const clusteringCompleted = sseStatus === 'completed' || sseStatus === 'failed';
+    // BND-1 (SSE channel): completed_with_errors is terminal — clean up the cluster job + refresh,
+    // else a partial-success clustering run leaves the UI stuck in the clustering phase.
+    const clusteringCompleted = isScanSuccessStatus(sseStatus) || sseStatus === 'failed';
     if (clusteringCompleted && currentPhase === 'clustering') {
       removeJob(latestClusterJob.id);
       void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });

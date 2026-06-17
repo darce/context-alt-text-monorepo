@@ -8,6 +8,7 @@ use AltContext\Api\ClusterMutationsController;
 use AltContext\Api\Services\ClusterLabelService;
 use AltContext\Tests\Support\FindsSqlQueries;
 use AltContext\Tests\Support\ClusterMutationsMembersSpy;
+use AltContext\Tests\Support\ClusterMutationsOutboxWriterSpy;
 use AltContext\Tests\Support\ClusterMutationsRepositorySpy;
 use AltContext\Tests\Support\ClusterMutationsSyncStateSpy;
 use AltContext\Tests\Support\ClusterMutationsTopologyCommandSpy;
@@ -73,5 +74,31 @@ class ClusterLabelServiceTest extends TestCase
 
         $this->assertTrue(is_wp_error($response));
         $this->assertSame('missing_label', $response->get_error_code());
+    }
+
+    public function testUpdateClusterLabelRollsBackWhenOutboxEnqueueFails(): void
+    {
+        global $wpdb;
+        $outbox = new ClusterMutationsOutboxWriterSpy();
+        $outbox->nextEnqueueResult = false;
+        $host = new ClusterMutationsController(
+            $this->repository,
+            $this->syncStateRepository,
+            new ClusterMutationsMembersSpy(),
+            $outbox,
+            new ClusterMutationsTopologyCommandSpy()
+        );
+        $service = new ClusterLabelService($host, $this->repository, $this->syncStateRepository);
+
+        $request = new WP_REST_Request('PATCH', '/acx/v1/recognition/clusters/cluster-xyz');
+        $request->set_param('cluster_id', 'cluster-xyz');
+        $request->set_param('label', 'Known Person');
+
+        $response = $service->update_cluster_label($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('acx_db_error', $response->get_error_code());
+        $this->assertContains('ROLLBACK', $wpdb->queries);
+        $this->assertNotContains('COMMIT', $wpdb->queries);
     }
 }

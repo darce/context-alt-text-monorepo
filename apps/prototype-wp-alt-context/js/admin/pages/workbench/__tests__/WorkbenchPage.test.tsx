@@ -419,7 +419,10 @@ describe('WorkbenchPage', () => {
     const { queryClient } = renderWorkbench();
 
     fireEvent.click(screen.getByRole('button', { name: /Analyze selected media/i }));
-    expect(await screen.findByText('Scan failed')).toBeInTheDocument();
+    // E15-30 BR-11 sanitizes scan errors: a non-JSON error message ('Scan failed') is replaced by
+    // the localized fallback. Assert the sanitized text surfaces and the raw message does NOT leak.
+    expect(await screen.findByText('Recognition job failed. Please try again.')).toBeInTheDocument();
+    expect(screen.queryByText('Scan failed')).not.toBeInTheDocument();
     expect(rememberJob).not.toHaveBeenCalled();
     expect(queryClient.getQueryCache().findAll({ queryKey: queryKeys.media.identities() })).toHaveLength(0);
   });

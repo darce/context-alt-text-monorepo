@@ -42,7 +42,8 @@ export interface PendingSuggestion {
 
 export interface PendingSuggestionsResponse {
   suggestions: PendingSuggestion[];
-  total: number;
+  // COR-3 (rg-015): the boundary forwards a single bare page with no authoritative
+  // grand total. Display counts derive from `suggestions.length` instead.
   limit: number;
   offset: number;
   data_source?: DataSource;
@@ -64,7 +65,7 @@ export interface PendingNameSuggestion {
 
 export interface PendingNameSuggestionsResponse {
   suggestions: PendingNameSuggestion[];
-  total: number;
+  // COR-3 (rg-015): no authoritative total; count derives from `suggestions.length`.
   limit: number;
   offset: number;
   data_source?: DataSource;
@@ -113,7 +114,7 @@ export interface PendingMergeSuggestion {
 
 export interface PendingMergeSuggestionsResponse {
   suggestions: PendingMergeSuggestion[];
-  total: number;
+  // COR-3 (rg-015): no authoritative total; count derives from `suggestions.length`.
   limit: number;
   offset: number;
   data_source?: DataSource;

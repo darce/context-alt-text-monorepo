@@ -13,7 +13,7 @@ from recognition.interface_adapters.http import deps as dependencies
 
 
 @pytest.mark.asyncio
-async def test_merge_reassigns_members_and_deletes_source(db_session, tenant) -> None:
+async def test_merge_reassigns_members_and_deletes_source(db_session, tenant, seed_media_identity) -> None:
     """Merging should move members to target and remove the source cluster."""
     cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
     cluster_repo = cluster_service.assignment_writer.cluster_repository
@@ -29,7 +29,9 @@ async def test_merge_reassigns_members_and_deletes_source(db_session, tenant) ->
             created_at=None,
         )
     )
-    await member_repo.add_member(target.id, identity_id=str(uuid.uuid4()), similarity=0.92)
+    target_member_id = str(uuid.uuid4())
+    await seed_media_identity(target_member_id)
+    await member_repo.add_member(target.id, identity_id=target_member_id, similarity=0.92)
 
     source = await cluster_repo.save(
         IdentityCluster(
@@ -41,7 +43,9 @@ async def test_merge_reassigns_members_and_deletes_source(db_session, tenant) ->
             created_at=None,
         )
     )
-    await member_repo.add_member(source.id, identity_id=str(uuid.uuid4()), similarity=0.9)
+    source_member_id = str(uuid.uuid4())
+    await seed_media_identity(source_member_id)
+    await member_repo.add_member(source.id, identity_id=source_member_id, similarity=0.9)
     await db_session.commit()
 
     # Note: audit logging is handled internally by merge_cluster, not via a public hook

@@ -221,7 +221,7 @@ async def trigger_purge(
 ) -> PurgeResponse:
     """Permanently delete retained machine-derived state for a tenant."""
     if not request.confirm:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="confirm=true is required")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="confirm=true is required")
     if request.scope not in PURGE_SCOPES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid scope")
     try:
@@ -274,7 +274,7 @@ async def trigger_import(
     try:
         result = await service.validate_and_import(request.data, tenant_id, _actor_from_auth(auth))
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     except HTTPException:
         raise
     except Exception as exc:  # pragma: no cover - fallback path

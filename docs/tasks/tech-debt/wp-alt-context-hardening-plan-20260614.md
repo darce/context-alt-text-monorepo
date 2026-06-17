@@ -20,7 +20,7 @@ Safety net first, then the data-integrity quartet, then contract/resilience, the
 | 0 | Safety net | TST-1, TST-2 | low | new tests must fail first, then the prod guard makes them pass |
 | 1 | Concurrency data-integrity | COR-1, CON-1, COR-2, CON-3, CON-4 | high | char-tests-first; per-fix gates |
 | 2 | Contract + resilience | BND-1, COR-3, CON-5 | med | contract regen + boundary tests |
-| 3 | Deferred refactors | ARCH-6, ARCH-1, ARCH-5, ARCH-7, DC-10 | mixed | behavior-preserving; tests prove unchanged |
+| 3 | Deferred refactors → split to `MAINT-WPAC-REFACTOR-20260616` (PR-1) | ARCH-6, ARCH-1, ARCH-5, ARCH-7, DC-10, PR-2 | mixed | not delivered here; separate refactor task |
 
 ---
 
@@ -59,13 +59,16 @@ Each item: write a characterization/regression test that reproduces the wrong ou
 
 ---
 
-## Slice 3 — Deferred refactors (behavior-preserving)
+## Slice 3 — Deferred refactors (split out → `MAINT-WPAC-REFACTOR-20260616`)
+
+> **Split per PR-1.** Slices 0–2 (bug fixes, feature hat) merge as this task. The refactor-hat work below was moved to **`MAINT-WPAC-REFACTOR-20260616`** (branched off the merged hardening baseline) so the data-integrity fixes land independently of the larger, riskier flatten. Two Hats at the branch level. Items retained here for provenance only — they are **not** delivered by this task.
 
 - **3.1 — Co-locate single-consumer hooks (ARCH-6, quick win).** Merge the 7 conflict/outbox/dead-letter hooks into `useConflictHooks.ts` + `useOutboxHooks.ts`; update the 3 consumers + tests. No signature changes.
 - **3.2 — Flatten the job state machine (ARCH-1, high value).** With Slice 1.x + COR-4/BND-1 characterization tests as the net: inline `useJobStateMachineDerivedState`'s memos into `useJobStateMachine`, merge `jobStateMachineRuntime.ts` + `jobStateMachineUtils.ts`; ~12 files → ~6. This is the "agents get lost" target — do it only with the status/progress-string char tests green.
 - **3.3 — Inline `ClusterFacade` (ARCH-5).** Inline `list_top_unlabeled` into `ClusterReadService`, drop the `ClusterFacade` field + ctor param from `ClusterReadDependencies` + the 2 controllers; migrate `ClusterFacadeTest`/`ClusterReadServiceTest`/`SnapshotProjectorTest`.
 - **3.4 — `SnapshotClientTransport` composition (ARCH-7).** Replace the false IS-A REST-controller inheritance with a shared `proxy_request`/`get_tenant_id` trait. NOT purely behavior-preserving — characterization tests first.
 - **3.5 — `RecognitionController` forwarders (DC-10).** Decide whether `RecognitionController` stays a facade; if removing the 16 forwarders, re-seat the ~15 XMP-refresh integration tests onto sub-controller seams (add a test-only accessor or restructure).
+- **3.6 — Shared claim+status-guard helper (PR-2).** Extract one claim+status-guarded-terminal-write utility reused by the outbox drain (1.4) and the split-topology drain (1.5) so the two drains do not grow divergent claim logic.
 
 **Gate:** full `make check-all`; tests prove behavior unchanged; cite the named technique per refactor.
 
@@ -95,12 +98,8 @@ Slice 2 — Contract + resilience
 - [x] 2.2 stop fabricating suggestions total (COR-3, rg-015)
 - [x] 2.3 atomic circuit-breaker failure counter (CON-5)
 
-Slice 3 — Deferred refactors (behavior-preserving)
-- [ ] 3.1 co-locate single-consumer conflict/outbox hooks (ARCH-6)
-- [ ] 3.2 flatten job state machine, char-tests-first (ARCH-1)
-- [ ] 3.3 inline ClusterFacade (ARCH-5)
-- [ ] 3.4 SnapshotClientTransport composition over inheritance (ARCH-7)
-- [ ] 3.5 RecognitionController forwarders decision + test re-seat (DC-10)
+Slice 3 — Deferred refactors → split to `MAINT-WPAC-REFACTOR-20260616` (PR-1); not delivered here
+- [x] Slice 3 split off into `MAINT-WPAC-REFACTOR-20260616` (ARCH-6/1/5/7, DC-10, + PR-2 shared claim/guard helper)
 
 ## Review Readiness
 
@@ -115,7 +114,7 @@ Slice 3 — Deferred refactors (behavior-preserving)
 - **CON-1 / CON-3 / CON-4:** count + drain paths are race-safe by construction — atomic delta, claimed rows, status-guarded terminal writes (asserted via the mechanism per PA-2).
 - **COR-2:** an unreconcilable applied split command reaches terminal `failed` within N drains instead of looping forever.
 - **BND-1:** a `completed_with_errors` scan triggers the immediate identity/cluster/suggestion refresh.
-- **Slice 3:** refactors land behavior-preserving (suite unchanged); ARCH-1 only after its status/progress char-tests are green.
+- **Slice 3:** split out to `MAINT-WPAC-REFACTOR-20260616` (PR-1) — not a success criterion for this task.
 
 ## Close
 

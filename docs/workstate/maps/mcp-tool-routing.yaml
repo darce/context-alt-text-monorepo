@@ -59,21 +59,6 @@ on_demand:
         - lane-worker
         - worktree-orchestrator
 
-  context7:
-    description: >-
-      Upstream library documentation lookup. Only load when the slice depends
-      on framework / library behavior that cannot be deduced from local code.
-      See `docs/workstate/instructions.md` § "ctx7 entry criteria" for the gate.
-    triggers:
-      keywords:
-        - upstream library
-        - documentation for
-        - "API of "
-        - "how does "
-        - library docs
-        - framework docs
-      criteria_doc: docs/workstate/instructions.md#ctx7-entry-criteria
-
   computer-use:
     description: >-
       Desktop screenshot / native app automation. Almost never needed for
@@ -104,7 +89,3 @@ exclude:
       - "CHANGELOG*"
       - "README*"
       - "LICENSE*"
-  context7:
-    paths_only:
-      - "*.md"
-      - "docs/**"

@@ -1,13 +1,5 @@
 {
   "servers": {
-    "context7": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@upstash/context7-mcp@2.1.4"
-      ],
-      "type": "stdio"
-    },
     "workstate-handoff-mcp": {
       "type": "stdio",
       "command": "uv",

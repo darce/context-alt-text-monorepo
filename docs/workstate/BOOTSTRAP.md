@@ -40,28 +40,7 @@ make fix-php-style                   # Runs plugin PHPCBF fixer
 
 ---
 
-## ctx7 (Library Documentation)
-
-ctx7 fetches current upstream library documentation on demand. Use it instead of relying on static
-generic reference in guideline files.
-
-### Installation
-
-```bash
-brew install ctx7          # CLI binary for interactive doc queries
-# MCP server is registered in .vscode/mcp.json (npx, no separate install)
-```
-
-### Verification
-
-```bash
-ctx7 library fastapi                                          # Search; returns resolved ID, e.g. /fastapi/fastapi
-ctx7 docs /fastapi/fastapi "routing and dependency injection" # Fetch docs using resolved ID
-```
-
-VS Code: Command Palette → `MCP: List Servers` → "context7" should appear.
-
-### Service Map
+## Service Map
 
 Hardcoded port references appear in docker-compose files and PHP controllers.
 Canonical mapping (portless integration deferred; see task plan M-2 resolution):

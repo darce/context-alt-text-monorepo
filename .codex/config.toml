@@ -1,11 +1,6 @@
 [features]
 codex_hooks = true
 
-[mcp_servers."context7"]
-type = "stdio"
-command = "npx"
-args = ["-y", "@upstash/context7-mcp@2.1.4"]
-
 [mcp_servers.workstate-handoff-mcp]
 type = "stdio"
 command = "uv"

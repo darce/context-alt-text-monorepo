@@ -107,8 +107,7 @@ DASHBOARD.md
 # SHARED entries are symlinks into .workstate/remote/; committing them would
 # leave dangling symlinks on a fresh clone. GENERATED entries are deterministic
 # generator outputs. .mcp.json / .vscode/mcp.json / .codex/config.toml are kept
-# tracked here (not gitignored) because they carry the consumer-specific
-# context7 server that the workstate generator does not manage.
+# tracked here (not gitignored) as the consumer-owned MCP server config.
 .workstate/
 /scripts/hooks
 /.github/hooks

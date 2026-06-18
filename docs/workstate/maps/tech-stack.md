@@ -1,15 +1,7 @@
 # Tech Stack by Role
 
-When working in a role, use ctx7 to fetch current documentation
-for the listed libraries before starting implementation.
-
-```bash
-# Fetch docs for a specific library (ctx7 CLI)
-ctx7 docs <library-id> "<query>"
-
-# Example: fetch FastAPI routing docs
-ctx7 library fastapi "routing and dependency injection"
-```
+When working in a role, review current documentation for the listed
+libraries before starting implementation.
 
 ---
 
@@ -17,7 +9,7 @@ ctx7 library fastapi "routing and dependency injection"
 
 - `fastapi`
 - `sqlalchemy` (2.0+)
-- `pgvector` — ctx7 ID: `/pgvector/pgvector-python`
+- `pgvector`
 - `pydantic` (v2)
 - `pytest` / `pytest-asyncio`
 - `httpx`
@@ -37,7 +29,7 @@ ctx7 library fastapi "routing and dependency injection"
 ## PHP Plugin
 
 - `phpunit` (10.5+)
-- `wp-mock` — **no ctx7 coverage**; use GitHub docs at [10up/wp_mock](https://github.com/10up/wp_mock) directly
+- `wp-mock` — use GitHub docs at [10up/wp_mock](https://github.com/10up/wp_mock) directly
 - `phpstan` (level 8)
 - `wordpress-rest-api`
 - `phpcs` (PSR-12 + WordPress)
@@ -45,7 +37,7 @@ ctx7 library fastapi "routing and dependency injection"
 ## Orchestration
 
 - `sqlite3` (FTS5)
-- `fastmcp` — ctx7 ID: `/prefecthq/fastmcp`
+- `fastmcp`
 
 ---
 

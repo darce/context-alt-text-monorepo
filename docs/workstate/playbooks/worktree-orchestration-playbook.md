@@ -214,6 +214,6 @@ make lane-intake TASK=<task-ref> LANE=<lane>   # merge and close lane
 
 ## Canonical Policy
 
-- [instructions.md](../instructions.md): task startup, handoff, and `ctx7` policy
+- [instructions.md](../instructions.md): task startup and handoff policy
 - [rules/development-workflow.md](../rules/development-workflow.md): cross-boundary, slice, and review-readiness rules
 - [lane-scoped-context.md](lane-scoped-context.md): prompt budget and context rules for workers

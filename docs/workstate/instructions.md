@@ -31,7 +31,7 @@ This file is a dispatcher, not the architecture source of truth.
 
 Choose your domain to load targeted context. Always load the matching testing guide alongside the domain guidance.
 
-| Role                            | Context Map                                                                  | Guidelines                                                               | Testing Guide                                              | Tech Stack (ctx7)                                                          | Key Entry Points                      |
+| Role                            | Context Map                                                                  | Guidelines                                                               | Testing Guide                                              | Tech Stack                                                          | Key Entry Points                      |
 | ------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------- |
 | **Backend (Python)**            | [maps/backend.md](maps/backend.md)                                           | [rules/backend-python-guidelines.md](rules/backend-python-guidelines.md) | [rules/testing-python.md](rules/testing-python.md)         | [maps/tech-stack.md#backend-python](maps/tech-stack.md#backend-python)     | `apps/prototype-description-service/` |
 | **Frontend (React/TS)**         | [maps/frontend.md](maps/frontend.md)                                         | [rules/frontend-guidelines.md](rules/frontend-guidelines.md)             | [rules/testing-typescript.md](rules/testing-typescript.md) | [maps/tech-stack.md#frontend-reactts](maps/tech-stack.md#frontend-reactts) | `apps/prototype-wp-alt-context/js/`   |
@@ -127,7 +127,7 @@ Run at every session start (cold start, mid-task re-entry, lane inherit).
 4. In a lane: run `make lane-inbox` to pick up routed findings, blockers, and dispatch messages before editing.
 5. Load role routing from the Role Selection table. Read the linked context map, guidelines, and testing guide for the surface you are about to change.
 6. Check open findings when you need the detailed list behind the `make context` count: `review_findings(review={"operation":"list","status":"open"})`.
-7. Verify boundaries only when relevant. If the task touches a service/schema/MCP boundary, confirm the owning contract in [contracts/](contracts/). Upstream library/framework behavior is the trigger to call `ctx7`.
+7. Verify boundaries only when relevant. If the task touches a service/schema/MCP boundary, confirm the owning contract in [contracts/](contracts/).
 8. Ensure the work has an MCP task before editing. Task plan optional; handoff state not. Wrong active task → switch or initialize before editing.
 
 Cold start vs. mid-task re-entry:
@@ -343,32 +343,6 @@ Primary binary shape:
 - `mcp-workstate-handoff --workspace-root <repo> state`
 - `mcp-workstate-handoff --workspace-root <repo> task <task_ref>`
 - `mcp-workstate-handoff --workspace-root <repo> switch <task_ref>`
-
-## ctx7 Entry Criteria
-
-Use `ctx7` when implementation depends on upstream library/framework behavior that may have drifted.
-
-Use when:
-
-- code depends on an upstream API (FastAPI, SQLAlchemy, Radix UI, WordPress hooks, React, MCP SDK, etc.)
-- verifying version-specific behavior, migration guidance, or deprecation details
-- confirming the current API surface for a dependency in [maps/tech-stack.md](maps/tech-stack.md)
-
-Do not use for:
-
-- repo-local rules, contracts, task plans, handoff state, or architecture decisions
-- facts owned by [instructions.md](instructions.md), [contracts/](contracts/), or [maps/tech-stack.md](maps/tech-stack.md)
-- broad context when a targeted local document answers the question
-
-Fallback and caching:
-
-- Unavailable → use [maps/tech-stack.md](maps/tech-stack.md) as static manifest; note `ctx7` gap in handoff when it affects confidence.
-- Before a new lookup, search recent handoff decisions for the package name or prior query to reuse existing answers.
-- When a lookup changes an implementation decision, record in handoff:
-  - `ctx7 library id: /org/project[/version]`
-  - `ctx7 query: <targeted question>`
-  - `ctx7 impact: <what changed in implementation or review scope>`
-- Cache the pointer and decision impact, not a prose dump of upstream docs.
 
 ## Periodic Health Reviews
 

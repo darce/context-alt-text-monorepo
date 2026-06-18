@@ -145,8 +145,8 @@ def _load_known_tools() -> set[str]:
     for server_name in sorted(server_names):
         api_spec = SERVER_API_FILES.get(server_name)
         if api_spec is None:
-            # External services such as context7 or computer-use do not ship a
-            # local API manifest in this repo, so they cannot contribute local
+            # External services such as computer-use do not ship a local API
+            # manifest in this repo, so they cannot contribute local
             # skill-wiring entries here.
             continue
         package_name, relative_name = api_spec

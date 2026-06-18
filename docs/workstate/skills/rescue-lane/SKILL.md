@@ -33,7 +33,7 @@ Recover the lane through a bounded rescue branch and a documented MCP trail inst
 
 ## Canonical Policy
 
-- Use [../../instructions.md](../../instructions.md) for startup, handoff, and `ctx7` policy.
+- Use [../../instructions.md](../../instructions.md) for startup and handoff policy.
 - Use [../../rules/development-workflow.md](../../rules/development-workflow.md) for cross-boundary change rules and review-readiness expectations.
 - Treat this skill as the rescue execution recipe; project-wide policy stays in the linked canonical docs.
 

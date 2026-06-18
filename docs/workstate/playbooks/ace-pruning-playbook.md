@@ -22,7 +22,7 @@ A reflection cycle runs when:
 1. A branch review finding references a rule (daemon detects and logs automatically; run `make ace-reflect TASK=<task-ref>` from the orchestrator root to apply pending counter updates)
 2. A branch review finding contradicts a rule (daemon detects and logs automatically; run `make ace-reflect TASK=<task-ref>` from the orchestrator root to apply pending counter updates)
 3. A new failure mode is discovered that no existing rule covers (add new bullet)
-4. A library version upgrade invalidates a rule (remove; ctx7 serves current docs)
+4. A library version upgrade invalidates a rule (remove; consult current upstream docs)
 
 ### Curation rules
 
@@ -79,7 +79,7 @@ Ask:
 - Are stale artifacts being archived instead of accumulating forever?
   - inspect artifact counts and age distribution before deciding whether to archive or purge
 - Is context rediscovery happening?
-  - look for repeated `ctx7 library id:` entries or repeated handoff searches for the same dependency across decisions in the same task
+  - look for repeated handoff searches for the same dependency across decisions in the same task
 
 Healthy pattern:
 
@@ -93,37 +93,9 @@ Unhealthy pattern:
 - hot-state size grows without bound
 - agents repeatedly reload full state instead of using targeted retrieval
 - stale artifacts accumulate with no archival discipline
-- the same dependency is re-looked-up across nearby slices because earlier decisions did not cache the resolved `ctx7` pointer
+- the same dependency is re-looked-up across nearby slices because earlier decisions did not cache the resolved upstream-doc pointer
 
 If handoff-memory health regresses, treat that as a process issue: simplify guidance, archive stale state, or tighten retrieval discipline instead of normalizing around larger prompt loads.
-
----
-
-## ctx7 Adoption Evaluation
-
-Review `ctx7` usage during the periodic pruning workflow.
-
-Ask:
-
-- are resolved library ids being reused across sessions?
-  - search recent decisions for `ctx7 library id:` and repeated package names
-- are runtime-reported `ctx7` turns visible in metrics?
-  - inspect `get_metrics_summary` for the `tool_attribution` section and confirm `used_ctx7` / `ctx7_query_count` appear only when the caller/runtime explicitly reported them
-- are bulk upstream doc copies still appearing in repo docs or plans?
-  - review instruction-file and task-plan changes for pasted vendor docs instead of targeted references
-- is targeted retrieval preferred over broad browsing?
-  - check whether recent decisions captured a narrow `ctx7 query:` and impact note instead of generic "looked it up" prose
-
-Keep `ctx7` usage targeted:
-
-- reuse prior library ids and questions when still relevant
-- record the impact, not the upstream prose
-- prefer repo-owned docs for local process and architecture decisions
-
-Token-cost boundary:
-
-- Use runtime-reported turn attribution for prompt-growth analysis when it exists: `tool_attribution.used_ctx7`, `tool_attribution.ctx7_query_count_total`, and the prompt-token totals attached to those attributed turns.
-- Treat `ctx7` token-cost reduction as out of scope unless a tool explicitly records before/after savings; the current repo can measure adoption, reuse, and attributed prompt growth, but not counterfactual token savings.
 
 ---
 

@@ -1,6 +1,6 @@
 # Frontend Guidelines -- Project Conventions
 
-> **Library reference**: Use ctx7 to fetch current docs for React, TypeScript, TanStack Query,
+> **Library reference**: Review current docs for React, TypeScript, TanStack Query,
 > Radix UI, Vite, and Vitest listed in
 > [../maps/tech-stack.md](../maps/tech-stack.md#frontend-reactts) before starting work.
 > This file covers only project-specific conventions.

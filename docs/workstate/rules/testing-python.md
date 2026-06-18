@@ -1,6 +1,6 @@
 # Python Testing (pytest) -- Project Conventions
 
-> **Library reference**: Use ctx7 to fetch current docs for `pytest`, `pytest-asyncio`,
+> **Library reference**: Review current docs for `pytest`, `pytest-asyncio`,
 > `httpx`, and `sqlalchemy` listed in
 > [../maps/tech-stack.md](../maps/tech-stack.md#backend-python) before starting work.
 > This file covers only project-specific conventions.

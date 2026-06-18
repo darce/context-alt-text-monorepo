@@ -1,6 +1,6 @@
 # TypeScript / React Testing (Vitest) -- Project Conventions
 
-> **Library reference**: Use ctx7 to fetch current docs for `vitest`, `@testing-library/react`,
+> **Library reference**: Review current docs for `vitest`, `@testing-library/react`,
 > `@tanstack/react-query`, and `msw` listed in
 > [../maps/tech-stack.md](../maps/tech-stack.md#frontend-reactts) before starting work.
 > This file covers only project-specific conventions.

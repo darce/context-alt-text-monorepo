@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from recognition.application.assignment.decision import AssignmentDecision, AssignmentOutcome
 from recognition.application.assignment.quality import compute_identity_quality as _compute_quality_info
 from recognition.application.labeling.auto_labeler import allocate_person_label, should_auto_label
+from recognition.application.persistence.centroid_maintainer import CentroidMaintainer
 from recognition.application.settings.clustering import ClusteringSettings
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
@@ -245,6 +246,7 @@ class AssignmentWriter:
         self._run_context = run_context
         self._session = session
         self._last_rep_count: int | None = None
+        self._centroids = CentroidMaintainer(cluster_repository)
 
     def bind_run_context(self, context: RecognitionRunContext | None) -> None:
         """Attach or clear the active recognition run context.
@@ -598,17 +600,11 @@ class AssignmentWriter:
 
     async def refresh_centroids_view(self) -> None:
         """Trigger a refresh of the cluster centroids view."""
-        # Call repo if it supports it
-        refresh = getattr(self._clusters, "refresh_centroids_view", None)
-        if callable(refresh):
-            await refresh()
+        await self._centroids.refresh_centroids_view()
 
     async def refresh_centroids_view_concurrent(self) -> bool:
         """Trigger a concurrent refresh of the cluster centroids view. Returns True on success."""
-        refresh = getattr(self._clusters, "refresh_centroids_view_concurrent", None)
-        if callable(refresh):
-            return bool(await refresh())
-        return True
+        return await self._centroids.refresh_centroids_view_concurrent()
 
     async def _should_add_representative(
         self, decision: AssignmentDecision, batch_mode: bool = False
@@ -801,23 +797,7 @@ class AssignmentWriter:
 
         Returns None if no representatives exist for the cluster.
         """
-        reps = await self._clusters.get_all_representatives(cluster_id)
-        if not reps:
-            # No representatives yet - return None to signal no centroid update
-            return None
-
-        # Calculate mean vector
-        # Handle both raw embedding vectors and full ClusterRepresentative objects
-        rep_vecs = [cast(np.ndarray, getattr(r, "embedding", r)) for r in reps]
-        stacked = np.stack(rep_vecs)
-        mean_vector = np.mean(stacked, axis=0)
-
-        # Normalize
-        norm = np.linalg.norm(mean_vector)
-        if norm > 0:
-            mean_vector = mean_vector / norm
-
-        return cast(np.ndarray, mean_vector)
+        return await self._centroids.recompute_centroid(cluster_id)
 
     async def recompute_representatives(self, cluster_id: str) -> None:
         """Recompute cluster representatives using FPS for diversity while preserving pins/quality."""

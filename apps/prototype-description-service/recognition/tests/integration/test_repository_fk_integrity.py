@@ -17,8 +17,13 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from recognition.domain.cluster import IdentityCluster
+from recognition.domain.repositories import SuggestionCreateData
 from recognition.domain.representative import ClusterRepresentative
-from recognition.infrastructure.repositories import SqlAlchemyClusterRepository, SqlAlchemyMemberRepository
+from recognition.infrastructure.repositories import (
+    SqlAlchemyClusterRepository,
+    SqlAlchemyMemberRepository,
+    SqlAlchemySuggestionRepository,
+)
 
 
 async def _make_cluster(cluster_repo: SqlAlchemyClusterRepository, tenant_id: str) -> IdentityCluster:
@@ -100,3 +105,29 @@ async def test_add_representative_with_seeded_identity_succeeds(db_session, tena
         )
     )
     assert await cluster_repo.get_representative_count(cluster.id) == 1
+
+
+@pytest.mark.asyncio
+async def test_create_suggestion_with_unknown_identity_raises_fk_error(db_session, tenant) -> None:
+    """Suggestion create must not fabricate the identity; the FK rejects the orphan write.
+
+    Symmetric with the member/representative paths: INFRA-3 also dropped the
+    ``ensure_media_identity`` fabrication from ``SqlAlchemySuggestionRepository``,
+    so ``identity_suggestions.identity_id`` (FK -> ``media_identities``) is the
+    sole integrity guard. The cluster is real, so only the identity FK is violated.
+    """
+    cluster_repo = SqlAlchemyClusterRepository(db_session)
+    suggestion_repo = SqlAlchemySuggestionRepository(db_session)
+    cluster = await _make_cluster(cluster_repo, str(tenant.id))
+
+    with pytest.raises(IntegrityError):
+        await suggestion_repo.create(
+            str(tenant.id),
+            SuggestionCreateData(
+                identity_id=str(uuid.uuid4()),
+                cluster_id=cluster.id,
+                representative_similarity=0.91,
+                member_similarity=0.82,
+                confidence_score=0.87,
+            ),
+        )

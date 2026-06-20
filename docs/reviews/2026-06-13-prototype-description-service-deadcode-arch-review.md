@@ -33,8 +33,9 @@
 | Slice 8 — INFRA-5 (`refresh_centroids_view` fail-fast: repo propagates, purge warns) | ✅ landed | `81602226` |
 | INFRA-5 parallel re-review (2 reviewers; **pass_with_findings**) → best-effort post-merge refresh so a transient MV hiccup no longer rolls back a completed user-facing merge/bulk-batch (REVA-01/02, REVB-01) + happy-path/RLS-order test (REVB-02) | ✅ verified | `f0d0fb6d` |
 | Slice 8 remainder — INFRA-3 (`ensure_media_identity` placeholder fabrication dropped from prod write paths → moved to `recognition/tests/db_seed.py` + `seed_media_identity` fixture; FK enforces integrity, new `test_repository_fk_integrity.py`; suite 1115) → parallel review (2 reviewers; **pass**, 0 findings) | ✅ landed | `0d1a667d` |
-| Slice 9 — repository/AssignmentWriter split | ⏳ planned | — |
-| Follow-up — `_NotImplemented*` retention 503 path (behavior change, own TDD slice) | ⏳ planned | — |
+| INFRA-3 deeper re-review (5 lenses A/D/E via workflow + inline B/C after usage-limit; **pass_with_findings**) → 1 low finding INFRA3-RR-01: suggestion write path lost its FK-contract test (symmetric removal, asymmetric coverage) → added `test_create_suggestion_with_unknown_identity_raises_fk_error` | ✅ verified | `3dbe9a4e` |
+| Follow-up — `_NotImplemented*` retention 503 path: `get_retention_policy_service` raises **503** on breaker-open (was misleading 501); 5 dead stub classes + `except ModuleNotFoundError` fallbacks removed; new TDD test pins 503 (45 tests green) | ✅ landed | `40276ab8` |
+| Slice 9 — repository/AssignmentWriter split | ⏳ planned (deferred: high effort, low confidence) | — |
 
 **Intentional non-removals** (verified by the re-review): `get_cluster_service` + `InMemoryJobService` deferred to **Slice 7** (only on the `dependencies.py` re-export surface that slice deletes; `InMemoryJobRepository` at the adjacent line is **live** — do not confuse); `compute_centroid` left (live test helper); `retry_matching` kept (live, `curation_job` calls it — review over-bundled it).
 

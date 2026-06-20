@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityClusteringJob, IdentityScanJob
-from recognition.domain.job import Job, JobStatus, JobType, ProjectionStatus
+from recognition.domain.job import CLUSTERING_JOB_TYPES, Job, JobStatus, JobType, ProjectionStatus
 from recognition.domain.repositories import JobRepository
 from recognition.infrastructure.repositories._helpers import coerce_uuid as _coerce_uuid
 
@@ -43,7 +43,7 @@ class SqlAlchemyJobRepository(JobRepository):
             await self._session.refresh(scan_model)
             job.id = str(scan_model.id)
             return job
-        if job.type in (JobType.CLUSTERING, JobType.CURATION, JobType.SPLIT):
+        if job.type in CLUSTERING_JOB_TYPES:
             progress = _compute_progress(job.progress_completed, job.progress_total)
             payload = job.payload or {}
             cluster_model = IdentityClusteringJob(
@@ -215,7 +215,7 @@ class SqlAlchemyJobRepository(JobRepository):
             scan_model.completed_at = job.finished_at
             scan_model.error_message = job.error_message
             scan_model.message = job.message
-        elif job.type in (JobType.CLUSTERING, JobType.CURATION, JobType.SPLIT):
+        elif job.type in CLUSTERING_JOB_TYPES:
             cluster_stmt = select(IdentityClusteringJob).where(IdentityClusteringJob.id == job_uuid)
             cluster_result = await self._session.execute(cluster_stmt)
             cluster_model: IdentityClusteringJob | None = cluster_result.scalar_one_or_none()

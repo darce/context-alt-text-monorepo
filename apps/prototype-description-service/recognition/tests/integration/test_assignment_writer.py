@@ -377,8 +377,8 @@ async def test_should_not_upgrade_user_selected_representative(db_session, tenan
         checks_failed=[],
     )
 
-    should_add, _ = await writer._should_add_representative(decision)
-    assert should_add is False, "Should not upgrade user-selected representative"
+    admission = await writer._should_add_representative(decision)
+    assert admission.should_add is False, "Should not upgrade user-selected representative"
 
 
 @pytest.mark.asyncio

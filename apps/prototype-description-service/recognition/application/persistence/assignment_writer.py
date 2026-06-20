@@ -7,6 +7,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import cast
 
@@ -228,6 +229,25 @@ def _find_upgradeable_representative(
     return None
 
 
+@dataclass(frozen=True)
+class RepAdmission:
+    """Result of the representative-admission decision.
+
+    Replaces the former ``_last_*`` instance-state side effects of
+    ``_should_add_representative`` with an explicit return value. ``was_upgrade``
+    reproduces the historical always-False observed value (latent reset bug at the
+    ``_should_add_representative`` ``= False`` reset, fixed separately in Slice 9
+    sub-slice 3a-fix). ``rep_count`` is the pre-upgrade-removal representative count
+    (what ``persist_assignment`` passes as ``existing_rep_count``).
+    """
+
+    should_add: bool
+    cached_reps: list[ClusterRepresentative]
+    rep_count: int
+    was_upgrade: bool
+    was_novel_pose: bool
+
+
 class AssignmentWriter:
     """Persist assignment decisions and cluster updates."""
 
@@ -245,7 +265,6 @@ class AssignmentWriter:
         self._members = member_repository
         self._run_context = run_context
         self._session = session
-        self._last_rep_count: int | None = None
         self._centroids = CentroidMaintainer(cluster_repository)
 
     def bind_run_context(self, context: RecognitionRunContext | None) -> None:
@@ -436,13 +455,13 @@ class AssignmentWriter:
         if existing_member is None:
             return
 
-        should_add, cached_reps = await self._should_add_representative(decision, batch_mode=batch_mode)
-        if should_add:
+        admission = await self._should_add_representative(decision, batch_mode=batch_mode)
+        if admission.should_add:
             # Store the full 1024D embedding, not the face-only 512D vector
             # Identify if this was an upgrade vs novel addition for the reason
-            is_upgrade = getattr(self, "_last_decision_was_upgrade", False)
+            is_upgrade = admission.was_upgrade
             reason = "representative_upgrade" if is_upgrade else "diverse_addition"
-            if not is_upgrade and getattr(self, "_last_decision_was_novel_pose", False):
+            if not is_upgrade and admission.was_novel_pose:
                 reason = "novel_pose_addition"
 
             rep = await self._create_and_add_representative(
@@ -450,7 +469,7 @@ class AssignmentWriter:
                 identity=decision.candidate.identity,
                 reason=reason,
                 is_provisional=batch_mode,
-                existing_rep_count=self._last_rep_count,
+                existing_rep_count=admission.rep_count,
             )
 
             if is_upgrade and self._run_context:
@@ -467,7 +486,7 @@ class AssignmentWriter:
             # Compute centroid from the cached reps (returned by _should_add_representative)
             # plus the newly added rep -- this avoids a redundant get_all_representatives
             # DB round-trip (Phase 3: duplicate-read elimination).
-            all_rep_embeddings = [r.embedding for r in cached_reps]
+            all_rep_embeddings = [r.embedding for r in admission.cached_reps]
             all_rep_embeddings.append(rep.embedding)
             if all_rep_embeddings:
                 stacked = np.stack(all_rep_embeddings)
@@ -542,21 +561,21 @@ class AssignmentWriter:
 
             # Per-identity: representative and centroid updates for new members only.
             for decision in newly_inserted:
-                should_add, cached_reps = await self._should_add_representative(decision, batch_mode=batch_mode)
-                if should_add:
-                    is_upgrade = getattr(self, "_last_decision_was_upgrade", False)
+                admission = await self._should_add_representative(decision, batch_mode=batch_mode)
+                if admission.should_add:
+                    is_upgrade = admission.was_upgrade
                     reason = "representative_upgrade" if is_upgrade else "diverse_addition"
-                    if not is_upgrade and getattr(self, "_last_decision_was_novel_pose", False):
+                    if not is_upgrade and admission.was_novel_pose:
                         reason = "novel_pose_addition"
                     rep = await self._create_and_add_representative(
                         cluster_id=cluster_id,
                         identity=decision.candidate.identity,
                         reason=reason,
                         is_provisional=batch_mode,
-                        existing_rep_count=len(cached_reps),
+                        existing_rep_count=len(admission.cached_reps),
                     )
                     _reps_added += 1
-                    all_rep_embeddings = [r.embedding for r in cached_reps]
+                    all_rep_embeddings = [r.embedding for r in admission.cached_reps]
                     all_rep_embeddings.append(rep.embedding)
                     if all_rep_embeddings:
                         stacked = np.stack(all_rep_embeddings)
@@ -606,15 +625,18 @@ class AssignmentWriter:
         """Trigger a concurrent refresh of the cluster centroids view. Returns True on success."""
         return await self._centroids.refresh_centroids_view_concurrent()
 
-    async def _should_add_representative(
-        self, decision: AssignmentDecision, batch_mode: bool = False
-    ) -> tuple[bool, list[ClusterRepresentative]]:
+    async def _should_add_representative(self, decision: AssignmentDecision, batch_mode: bool = False) -> RepAdmission:
         """Determine if the assigned identity should become a representative.
 
-        Returns ``(should_add, cached_reps)`` where ``cached_reps`` reflects
-        the current DB state *after* any upgrade removal so the caller can
-        compute the new centroid from cached data without a second DB round-trip
-        (Phase 3 duplicate-read elimination).
+        Returns a :class:`RepAdmission` whose ``cached_reps`` reflects the current
+        DB state *after* any upgrade removal so the caller can compute the new
+        centroid from cached data without a second DB round-trip (Phase 3
+        duplicate-read elimination). ``rep_count`` is the pre-removal count.
+
+        ``was_upgrade`` reproduces the historical observed value, which is always
+        ``False`` due to a latent reset bug (the upgrade flag was set then
+        unconditionally cleared before any return). The bug is fixed separately in
+        Slice 9 sub-slice 3a-fix, not here — this refactor is behaviour-preserving.
         """
         cluster_id = decision.candidate.cluster_id
 
@@ -622,7 +644,6 @@ class AssignmentWriter:
         # for the accepted-assignment path (Phase 3: remove duplicate reads).
         existing_reps: list[ClusterRepresentative] = list(await self._clusters.get_all_representatives(cluster_id))
         current_count = len(existing_reps)
-        self._last_rep_count = current_count
 
         # Track which rep was removed so cached_reps reflects current DB state.
         removed_rep_id: str | None = None
@@ -637,8 +658,7 @@ class AssignmentWriter:
         if upgrade_target:
             # User-selected representatives are protected from automatic upgrades
             if getattr(upgrade_target, "is_user_selected", False):
-                self._last_decision_was_upgrade = False
-                return False, existing_reps
+                return RepAdmission(False, existing_reps, current_count, was_upgrade=False, was_novel_pose=False)
 
             await self._clusters.remove_representative(upgrade_target.id)
             removed_rep_id = upgrade_target.id
@@ -650,9 +670,6 @@ class AssignmentWriter:
                 _compute_identity_quality(decision.candidate.identity, self._settings)
                 - (upgrade_target.quality_score or 0),
             )
-            self._last_decision_was_upgrade = True
-
-        self._last_decision_was_upgrade = False
 
         # cached_reps = existing_reps minus any rep just removed by the upgrade path.
         cached_reps = [r for r in existing_reps if r.id != removed_rep_id] if removed_rep_id else existing_reps
@@ -666,21 +683,18 @@ class AssignmentWriter:
         # Actually, the upgrade logic (1) already handles replacing.
         # For new additions:
         if not batch_mode and current_count >= max_total:
-            return False, cached_reps
+            return RepAdmission(False, cached_reps, current_count, was_upgrade=False, was_novel_pose=False)
 
         # 3. If above base limit, only add if novel pose
         if current_count >= max_base:
             if _is_novel_pose(decision.candidate.identity, existing_reps, self._settings.pose_bucket_size):
-                self._last_decision_was_novel_pose = True
-                return True, cached_reps
+                return RepAdmission(True, cached_reps, current_count, was_upgrade=False, was_novel_pose=True)
             # If batch_mode, we might still want to add it if it's "better" than nothing?
             # No, if not novel pose and no upgrade target, it's redundant.
-            return False, cached_reps
-
-        self._last_decision_was_novel_pose = False
+            return RepAdmission(False, cached_reps, current_count, was_upgrade=False, was_novel_pose=False)
 
         if not existing_reps:
-            return True, cached_reps
+            return RepAdmission(True, cached_reps, current_count, was_upgrade=False, was_novel_pose=False)
 
         # 4. Standard diversity check (embedding distance)
         for rep in existing_reps:
@@ -692,9 +706,9 @@ class AssignmentWriter:
                 # If above max_base, we already checked novel pose (which implies diversity in pose space).
                 # But novel pose == false -> we fell through.
                 # So if similarity is high, we reject.
-                return False, cached_reps
+                return RepAdmission(False, cached_reps, current_count, was_upgrade=False, was_novel_pose=False)
 
-        return True, cached_reps
+        return RepAdmission(True, cached_reps, current_count, was_upgrade=False, was_novel_pose=False)
 
     async def _select_reps_to_preserve(
         self,

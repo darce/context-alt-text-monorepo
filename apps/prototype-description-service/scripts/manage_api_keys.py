@@ -23,12 +23,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import hashlib
-import secrets
 import sys
 import uuid
 from collections.abc import Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from urllib.parse import urlparse
 
 from sqlalchemy import select
@@ -36,7 +34,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import Tenant
-from recognition.config.security import RateLimitTier, get_security_settings
+from recognition.application.services.api_key_admin_service import mint_api_key
+from recognition.config.security import RateLimitTier
 from recognition.infrastructure.repositories.api_key_repository import SqlAlchemyApiKeyRepository
 
 _ENV_CHOICES = ("prod", "dev", "local")
@@ -102,23 +101,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 async def _cmd_create(args, session: AsyncSession) -> int:
-    settings = get_security_settings()
-    raw = secrets.token_urlsafe(32)
-    digest = hashlib.new(settings.api_key_hash_algorithm)
-    digest.update(raw.encode("utf-8"))
-    hashed = digest.hexdigest()
-
-    expires_at: datetime | None = None
-    if args.expires_in is not None:
-        expires_at = datetime.now(tz=UTC) + timedelta(days=int(args.expires_in))
-
-    repo = SqlAlchemyApiKeyRepository(session)
     try:
-        record = await repo.create(
+        record, raw = await mint_api_key(
+            session,
             tenant_id=uuid.UUID(args.tenant),
-            hashed_key=hashed,
-            rate_limit_tier=RateLimitTier(args.tier),
-            expires_at=expires_at,
+            tier=RateLimitTier(args.tier),
+            expires_in_days=args.expires_in,
         )
         await session.commit()
     except IntegrityError as exc:

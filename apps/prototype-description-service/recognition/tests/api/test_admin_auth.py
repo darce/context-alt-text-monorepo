@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+
 import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
@@ -14,6 +16,11 @@ from recognition.config.security import (
 from recognition.interface_adapters.http.deps.admin_auth import require_admin
 
 _VALID_TOKEN = "x" * 40  # >= 32 chars
+
+
+def _basic_header(password: str, *, username: str = "admin") -> dict[str, str]:
+    raw = base64.b64encode(f"{username}:{password}".encode()).decode("ascii")
+    return {"Authorization": f"Basic {raw}"}
 
 
 def _admin_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
@@ -87,6 +94,49 @@ def test_admin_gate_honors_custom_header(monkeypatch: pytest.MonkeyPatch) -> Non
 
     assert client.get("/_t", headers={"X-Admin-Token": _VALID_TOKEN}).status_code == 401
     assert client.get("/_t", headers={"X-Operator-Key": _VALID_TOKEN}).status_code == 200
+
+
+# --- HTTP Basic auth (browser path) ---
+
+
+def test_valid_basic_password_allows_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A browser without the custom header authenticates via Basic password == token."""
+    client = _admin_client(monkeypatch)
+    response = client.get("/_t", headers=_basic_header(_VALID_TOKEN))
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+
+
+def test_basic_password_ignores_username(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _admin_client(monkeypatch)
+    response = client.get("/_t", headers=_basic_header(_VALID_TOKEN, username="anything"))
+    assert response.status_code == 200
+
+
+def test_wrong_basic_password_returns_401(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _admin_client(monkeypatch)
+    response = client.get("/_t", headers=_basic_header("y" * 40))
+    assert response.status_code == 401
+
+
+def test_401_responses_carry_basic_challenge_header(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every 401 includes WWW-Authenticate: Basic so a browser shows a native prompt."""
+    client = _admin_client(monkeypatch)
+
+    missing = client.get("/_t")
+    assert missing.status_code == 401
+    assert missing.headers.get("WWW-Authenticate", "").lower().startswith("basic")
+
+    wrong_basic = client.get("/_t", headers=_basic_header("y" * 40))
+    assert wrong_basic.status_code == 401
+    assert wrong_basic.headers.get("WWW-Authenticate", "").lower().startswith("basic")
+
+
+def test_malformed_basic_header_returns_401(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _admin_client(monkeypatch)
+    # Not valid base64, and no scheme padding — must not crash, just 401.
+    assert client.get("/_t", headers={"Authorization": "Basic not-base64!!"}).status_code == 401
+    assert client.get("/_t", headers={"Authorization": "Basic"}).status_code == 401
 
 
 # --- validate_admin_config fail-closed guard ---

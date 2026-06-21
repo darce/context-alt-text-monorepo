@@ -23,7 +23,8 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Form, HTTPException, status
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -40,6 +41,7 @@ from recognition.infrastructure.repositories.api_key_repository import (
     SqlAlchemyApiKeyRepository,
     _as_utc,
 )
+from recognition.interface_adapters.http.admin_console import render_console
 from recognition.interface_adapters.http.deps.admin_auth import require_admin
 
 _ADMIN_ACTOR = "admin"
@@ -146,6 +148,127 @@ def _api_key_response(record: ApiKey) -> ApiKeyResponse:
     )
 
 
+class TenantSiteUrlConflictError(Exception):
+    """Raised when an upsert would collide with another tenant's ``site_url``."""
+
+
+class UnknownTenantError(Exception):
+    """Raised when a mint targets a tenant id that does not exist (FK violation)."""
+
+
+class UnknownKeyError(Exception):
+    """Raised when a revoke targets a key id that does not exist."""
+
+
+class RevokeOutcome:
+    """Result of :func:`revoke_key_atomic`: the key plus whether it was already revoked."""
+
+    __slots__ = ("record", "already_revoked")
+
+    def __init__(self, record: ApiKey, *, already_revoked: bool) -> None:
+        self.record = record
+        self.already_revoked = already_revoked
+
+
+# --- Shared mutation helpers (single audit/atomicity implementation) -----------
+#
+# Both the JSON handlers and the browser-form handlers call these so the
+# audit-row-per-mutation + single-commit contract has exactly one implementation.
+# Each helper flushes/audits and commits on the supplied session; callers map the
+# domain exceptions above onto their transport's error shape (HTTP status vs.
+# console message).
+
+
+async def upsert_tenant_atomic(session: AsyncSession, *, tenant_id: uuid.UUID, site_url: str) -> Tenant:
+    """Upsert a tenant by id + audit + commit. Duplicate site_url → TenantSiteUrlConflictError."""
+    existing = await session.get(Tenant, tenant_id)
+    if existing is None:
+        tenant = Tenant(id=tenant_id, site_url=site_url)
+        session.add(tenant)
+    else:
+        existing.site_url = site_url
+        tenant = existing
+
+    try:
+        await session.flush()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise TenantSiteUrlConflictError from exc
+
+    await AuditService().record_event(
+        session,
+        tenant_id=str(tenant_id),
+        event_type=AdminAuditEvent.TENANT_CREATE,
+        actor=_ADMIN_ACTOR,
+        scope=_ADMIN_SCOPE,
+        payload={"site_url": site_url},
+    )
+    await session.commit()
+    await session.refresh(tenant)
+    return tenant
+
+
+async def mint_key_atomic(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    tier: RateLimitTier,
+    expires_in_days: int | None,
+) -> tuple[ApiKey, str]:
+    """Mint a key + audit + commit. Unknown tenant (FK) → UnknownTenantError."""
+    try:
+        record, raw = await mint_api_key(
+            session,
+            tenant_id=tenant_id,
+            tier=tier,
+            expires_in_days=expires_in_days,
+        )
+    except IntegrityError as exc:
+        await session.rollback()
+        raise UnknownTenantError from exc
+
+    await AuditService().record_event(
+        session,
+        tenant_id=str(tenant_id),
+        event_type=AdminAuditEvent.API_KEY_MINT,
+        actor=_ADMIN_ACTOR,
+        scope=_ADMIN_SCOPE,
+        payload={"key_id": str(record.id), "rate_limit_tier": record.rate_limit_tier},
+    )
+    await session.commit()
+    return record, raw
+
+
+async def revoke_key_atomic(session: AsyncSession, *, key_id: uuid.UUID) -> RevokeOutcome:
+    """Revoke a key + audit + commit. Unknown key → UnknownKeyError; already-revoked is idempotent.
+
+    An already-revoked key returns the original ``revoked_at`` unchanged and writes
+    NO second audit row. A fresh revoke resolves the owning ``tenant_id`` first, then
+    audits atomically with the soft-revoke.
+    """
+    record = await session.get(ApiKey, key_id)
+    if record is None:
+        raise UnknownKeyError
+
+    if record.revoked_at is not None:
+        return RevokeOutcome(record, already_revoked=True)
+
+    tenant_id = record.tenant_id
+    repo = SqlAlchemyApiKeyRepository(session)
+    revoked = await repo.revoke(key_id)
+
+    await AuditService().record_event(
+        session,
+        tenant_id=str(tenant_id),
+        event_type=AdminAuditEvent.API_KEY_REVOKE,
+        actor=_ADMIN_ACTOR,
+        scope=_ADMIN_SCOPE,
+        payload={"key_id": str(key_id)},
+    )
+    await session.commit()
+    return RevokeOutcome(revoked, already_revoked=False)
+
+
 # --- Routes --------------------------------------------------------------------
 
 
@@ -155,33 +278,13 @@ async def create_tenant(
     session: AsyncSession = Depends(get_admin_session),
 ) -> TenantResponse:
     """Upsert a tenant by id. A duplicate ``site_url`` on a different tenant → 409."""
-    existing = await session.get(Tenant, body.tenant_id)
-    if existing is None:
-        tenant = Tenant(id=body.tenant_id, site_url=body.site_url)
-        session.add(tenant)
-    else:
-        existing.site_url = body.site_url
-        tenant = existing
-
     try:
-        await session.flush()
-    except IntegrityError as exc:
-        await session.rollback()
+        tenant = await upsert_tenant_atomic(session, tenant_id=body.tenant_id, site_url=body.site_url)
+    except TenantSiteUrlConflictError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="site_url already in use by another tenant",
         ) from exc
-
-    await AuditService().record_event(
-        session,
-        tenant_id=str(body.tenant_id),
-        event_type=AdminAuditEvent.TENANT_CREATE,
-        actor=_ADMIN_ACTOR,
-        scope=_ADMIN_SCOPE,
-        payload={"site_url": body.site_url},
-    )
-    await session.commit()
-    await session.refresh(tenant)
     return TenantResponse(tenant_id=tenant.id, site_url=tenant.site_url, created_at=tenant.created_at)
 
 
@@ -209,28 +312,18 @@ async def mint_key(
     """
     request = body or MintKeyRequest()
     try:
-        record, raw = await mint_api_key(
+        record, raw = await mint_key_atomic(
             session,
             tenant_id=tenant_id,
             tier=request.tier,
             expires_in_days=request.expires_in_days,
         )
-    except IntegrityError as exc:
-        await session.rollback()
+    except UnknownTenantError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="tenant not found",
         ) from exc
 
-    await AuditService().record_event(
-        session,
-        tenant_id=str(tenant_id),
-        event_type=AdminAuditEvent.API_KEY_MINT,
-        actor=_ADMIN_ACTOR,
-        scope=_ADMIN_SCOPE,
-        payload={"key_id": str(record.id), "rate_limit_tier": record.rate_limit_tier},
-    )
-    await session.commit()
     return MintKeyResponse(
         key_id=record.id,
         tenant_id=record.tenant_id,
@@ -263,37 +356,131 @@ async def revoke_key(
     writes NO second audit row (no re-stamp). A fresh revoke resolves the owning
     ``tenant_id`` first, then audits atomically with the soft-revoke.
     """
-    record = await session.get(ApiKey, key_id)
-    if record is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="api key not found")
-
-    if record.revoked_at is not None:
-        return RevokeKeyResponse(
-            key_id=record.id,
-            tenant_id=record.tenant_id,
-            revoked_at=record.revoked_at,
-            already_revoked=True,
-        )
-
-    tenant_id = record.tenant_id
-    repo = SqlAlchemyApiKeyRepository(session)
-    revoked = await repo.revoke(key_id)
-
-    await AuditService().record_event(
-        session,
-        tenant_id=str(tenant_id),
-        event_type=AdminAuditEvent.API_KEY_REVOKE,
-        actor=_ADMIN_ACTOR,
-        scope=_ADMIN_SCOPE,
-        payload={"key_id": str(key_id)},
-    )
-    await session.commit()
+    try:
+        outcome = await revoke_key_atomic(session, key_id=key_id)
+    except UnknownKeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="api key not found"
+        ) from exc
     return RevokeKeyResponse(
-        key_id=revoked.id,
-        tenant_id=revoked.tenant_id,
-        revoked_at=revoked.revoked_at,
-        already_revoked=False,
+        key_id=outcome.record.id,
+        tenant_id=outcome.record.tenant_id,
+        revoked_at=outcome.record.revoked_at,
+        already_revoked=outcome.already_revoked,
     )
+
+
+# --- Browser console (HTML) ----------------------------------------------------
+#
+# These routes live on ``admin_router`` so they inherit the router-level
+# ``Depends(require_admin)``. They reuse the SAME atomic mutation helpers as the
+# JSON routes above, so the audit/atomicity contract has one implementation.
+# Forms POST (not JSON) and 303-redirect back to ``/admin/`` — except mint, which
+# renders inline so the raw key is shown once and never lands in a redirect URL.
+
+
+async def _load_console_model(session: AsyncSession) -> tuple[list[Tenant], dict[uuid.UUID, list[ApiKey]]]:
+    """Load every tenant + its keys (including revoked) for the console."""
+    stmt = select(Tenant).order_by(Tenant.created_at, Tenant.id)
+    tenants = list((await session.execute(stmt)).scalars().all())
+    repo = SqlAlchemyApiKeyRepository(session)
+    keys_by_tenant: dict[uuid.UUID, list[ApiKey]] = {}
+    for tenant in tenants:
+        keys_by_tenant[tenant.id] = await repo.list_for_tenant(tenant.id, include_revoked=True)
+    return tenants, keys_by_tenant
+
+
+async def _render_console_response(
+    session: AsyncSession,
+    *,
+    minted_key: str | None = None,
+    message: str | None = None,
+    status_code: int = status.HTTP_200_OK,
+) -> HTMLResponse:
+    tenants, keys_by_tenant = await _load_console_model(session)
+    html_doc = render_console(
+        tenants=tenants,
+        keys_by_tenant=keys_by_tenant,
+        minted_key=minted_key,
+        message=message,
+    )
+    return HTMLResponse(content=html_doc, status_code=status_code)
+
+
+@admin_router.get("/", response_class=HTMLResponse, include_in_schema=False)
+async def console_index(session: AsyncSession = Depends(get_admin_session)) -> HTMLResponse:
+    """Render the operator console listing every tenant and its keys."""
+    return await _render_console_response(session)
+
+
+@admin_router.post("/ui/tenants", include_in_schema=False)
+async def console_create_tenant(
+    tenant_id: str = Form(...),
+    site_url: str = Form(...),
+    session: AsyncSession = Depends(get_admin_session),
+) -> RedirectResponse:
+    """Upsert a tenant from the console form, then 303-redirect to the console."""
+    try:
+        parsed_id = uuid.UUID(tenant_id.strip())
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="tenant_id must be a UUID") from exc
+    try:
+        await upsert_tenant_atomic(session, tenant_id=parsed_id, site_url=site_url.strip())
+    except TenantSiteUrlConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="site_url already in use by another tenant",
+        ) from exc
+    return RedirectResponse(url="/admin/", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@admin_router.post("/ui/keys", response_class=HTMLResponse, include_in_schema=False)
+async def console_mint_key(
+    tenant_id: str = Form(...),
+    tier: RateLimitTier = Form(RateLimitTier.STANDARD),
+    expires_in_days: str | None = Form(None),
+    session: AsyncSession = Depends(get_admin_session),
+) -> HTMLResponse:
+    """Mint a key from the console form and render the raw key inline exactly once.
+
+    The raw key is NOT placed in a redirect URL; it is surfaced once in the
+    re-rendered console and is unrecoverable thereafter.
+    """
+    try:
+        parsed_id = uuid.UUID(tenant_id.strip())
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="tenant_id must be a UUID") from exc
+
+    days: int | None = None
+    if expires_in_days is not None and expires_in_days.strip():
+        try:
+            days = int(expires_in_days)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="expires_in_days must be an integer"
+            ) from exc
+        if days < 1:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="expires_in_days must be >= 1")
+
+    try:
+        _record, raw = await mint_key_atomic(session, tenant_id=parsed_id, tier=tier, expires_in_days=days)
+    except UnknownTenantError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="tenant not found") from exc
+
+    return await _render_console_response(session, minted_key=raw, message="API key minted.")
+
+
+@admin_router.post("/ui/keys/{key_id}/revoke", include_in_schema=False)
+async def console_revoke_key(
+    key_id: uuid.UUID,
+    session: AsyncSession = Depends(get_admin_session),
+) -> RedirectResponse:
+    """Revoke a key from the console form (idempotent), then 303-redirect."""
+    try:
+        await revoke_key_atomic(session, key_id=key_id)
+    except UnknownKeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="api key not found") from exc
+    return RedirectResponse(url="/admin/", status_code=status.HTTP_303_SEE_OTHER)
 
 
 # --- Env/DSN safety guard (BR-02 mirror) ---------------------------------------

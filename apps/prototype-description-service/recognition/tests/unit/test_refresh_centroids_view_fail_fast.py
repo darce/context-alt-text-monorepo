@@ -78,7 +78,7 @@ async def test_refresh_centroids_view_postgres_happy_path(monkeypatch) -> None:
 
     repo = cr.SqlAlchemyClusterRepository(_OkSession())
 
-    assert await repo.refresh_centroids_view() is None
+    await repo.refresh_centroids_view()
     bypass.assert_awaited_once()
     assert order[0] == "bypass", "RLS bypass must precede the REFRESH"
     assert "execute" in order

@@ -29,7 +29,9 @@ def make_identity(tenant_id: str) -> MediaIdentity:
 
 
 @pytest.mark.asyncio
-async def test_persist_new_cluster_applies_auto_label_when_criteria_met(db_session, tenant, seed_media_identity) -> None:
+async def test_persist_new_cluster_applies_auto_label_when_criteria_met(
+    db_session, tenant, seed_media_identity
+) -> None:
     settings = ClusteringSettings(auto_label=AutoLabelSettings(min_members=3, similarity_floor=0.85))
     cluster_repo = SqlAlchemyClusterRepository(db_session)
     member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
@@ -53,7 +55,9 @@ async def test_persist_new_cluster_applies_auto_label_when_criteria_met(db_sessi
 
 
 @pytest.mark.asyncio
-async def test_persist_new_cluster_skips_auto_label_for_manual_clusters(db_session, tenant, seed_media_identity) -> None:
+async def test_persist_new_cluster_skips_auto_label_for_manual_clusters(
+    db_session, tenant, seed_media_identity
+) -> None:
     settings = ClusteringSettings(auto_label=AutoLabelSettings(min_members=3, similarity_floor=0.85))
     cluster_repo = SqlAlchemyClusterRepository(db_session)
     member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))

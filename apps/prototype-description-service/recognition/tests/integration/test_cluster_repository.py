@@ -261,7 +261,9 @@ async def test_get_member_identities_for_clusters_groups_by_cluster(db_session, 
 
 
 @pytest.mark.asyncio
-async def test_get_member_identities_with_similarity_can_count_and_limit(db_session, tenant, seed_media_identity) -> None:
+async def test_get_member_identities_with_similarity_can_count_and_limit(
+    db_session, tenant, seed_media_identity
+) -> None:
     repo = SqlAlchemyClusterRepository(db_session)
     member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
 

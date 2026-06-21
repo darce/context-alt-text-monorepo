@@ -4,6 +4,8 @@
 > **Scope**: (1) benchmark MiMo-VL against the planned Phi-4 GPU tier; (2) since 7B is too large for the OCI VM, find + **live-test** newer modern **sub-7B** VLMs in the MiMo-VL vein on the real A1.
 > **Companion to**: [`E19-1-vlm-model-candidates-a1-cpu.md`](E19-1-vlm-model-candidates-a1-cpu.md) · [`E19-1-local-cpu-vlm-benchmark-decision-memo.md`](E19-1-local-cpu-vlm-benchmark-decision-memo.md) · [`E19-1-florence-large-async-worker-impl-notes.md`](E19-1-florence-large-async-worker-impl-notes.md) (Part D = the GPU tier)
 > **Measured on** `acx-backend` via Tailscale (aarch64 Neoverse-N1, 4 OCPU, 23 GB, no GPU, no swap). Live `docker ps` healthy throughout; scratch venv under `/tmp`, public deps + scikit-learn sample images only.
+>
+> **Outcome (2026-06-21)**: MiMo-VL-7B is **not adopted** for the current CPU-only OCI A1 deployment — 7B exceeds A1 memory (§3). It is **retained as the reference GPU-tier candidate** for a future GPU-host migration; revisit alongside the `gpu_phi4` Part D plan when GPU capacity exists. The current real-description direction is the measured sub-7B tier (Qwen2.5-VL-3B / Qwen3-VL-4B), see §4–§6.
 
 ## TL;DR
 

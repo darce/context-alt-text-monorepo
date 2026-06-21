@@ -2,7 +2,9 @@
 
 import asyncio
 import uuid
+from typing import cast
 
+from sqlalchemy import Table
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from db.models.base_imports import Base
@@ -89,7 +91,7 @@ class HostedAdapter:
 async def _sessionmaker():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all, tables=[ImageDescription.__table__])
+        await conn.run_sync(Base.metadata.create_all, tables=cast(list[Table], [ImageDescription.__table__]))
     return engine, async_sessionmaker(engine, expire_on_commit=False)
 
 

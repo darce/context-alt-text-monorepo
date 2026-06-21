@@ -142,20 +142,9 @@ warn_unreachable = true
 strict_equality = true
 no_implicit_optional = true
 
-# Per-module options (strict on new code)
-[[tool.mypy.overrides]]
-module = [
-    "recognition.application.cluster_repository",
-    "recognition.application.cluster_factory",
-    "recognition.application.cluster_assignment",
-    "recognition.application.identity_clustering_service",
-]
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
-
 # Relax strictness for test files (allow mocking)
 [[tool.mypy.overrides]]
-module = ["recognition.tests.*", "recognition.infrastructure.tests.*"]
+module = ["recognition.tests.*", "scene.tests.*"]
 disallow_untyped_defs = false
 disable_error_code = ["method-assign", "arg-type", "index"]
 
@@ -163,13 +152,14 @@ disable_error_code = ["method-assign", "arg-type", "index"]
 [[tool.mypy.overrides]]
 module = [
     "insightface.*",
-    "onnxruntime.*",
     "cv2.*",
     "pgvector.*",
     "asyncpg.*",
-    "sklearn.*",
     "hdbscan.*",
     "uuid_extensions.*",
+    "jsonschema.*",
+    "transformers.*",
+    "torch.*",
 ]
 ignore_missing_imports = true
 
@@ -177,7 +167,6 @@ ignore_missing_imports = true
 module = [
     "recognition.application.clustering.*",
     "recognition.application.representatives.*",
-    "recognition.domain.embeddings.*",
     "recognition.application.health",
     "recognition.config.*",
     "recognition.interface_adapters.http.*",

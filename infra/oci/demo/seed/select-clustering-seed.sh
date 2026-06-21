@@ -3,9 +3,13 @@
 #
 # Picks the top PERSONS persons by eligible-image count (desc; ties alphabetical)
 # from a source dir of `<person>_<n>.<ext>` files, copies the first PER_PERSON
-# eligible (.jpg/.jpeg/.png — .webp excluded, since import.sh/sync-demo.sh skip it)
-# images of each into the demo seed bundle, writes a manifest, and regenerates the
-# provenance table in seed/README.md between the SEED-PROVENANCE markers.
+# eligible images of each into the demo seed bundle, writes a manifest, and
+# regenerates the provenance table in seed/README.md between the SEED-PROVENANCE markers.
+#
+# Eligible = .jpg/.jpeg/.png BY EXTENSION *and* true image/jpeg|image/png BY CONTENT.
+# Content validation is mandatory: the source mixes in webp/avif files renamed to
+# image extensions, which the recognition decoder cannot read (E15-29-BR-02). Extension
+# alone admits them; magic-byte filtering excludes them. import.sh/sync-demo.sh skip webp too.
 #
 # Idempotent: clears any prior manifest-listed selection from OUT before copying.
 # Refuses (exit 2) if fewer than PERSONS persons have >= PER_PERSON eligible images.
@@ -34,8 +38,13 @@ mkdir -p "$OUT"
 tmp_elig="$(mktemp)"; tmp_map="$(mktemp)"; tmp_persons="$(mktemp)"; tmp_rows="$(mktemp)"; tmp_readme="$(mktemp)"
 trap 'rm -f "$tmp_elig" "$tmp_map" "$tmp_persons" "$tmp_rows" "$tmp_readme"' EXIT
 
-find "$SRC" -maxdepth 1 -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) | sort > "$tmp_elig"
-[ -s "$tmp_elig" ] || { echo "ERROR: no eligible jpg/jpeg/png under $SRC" >&2; exit 2; }
+# Eligibility = jpg/jpeg/png extension AND true image/jpeg|image/png content. Batch
+# `file --mime-type` (portable; few invocations), keep only paths whose detected MIME
+# is jpeg/png — drops webp/avif/gif renamed with image extensions (E15-29-BR-02).
+find "$SRC" -maxdepth 1 -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) -exec file --mime-type {} + 2>/dev/null \
+  | awk -F': ' '{ mt = $2; gsub(/^[ \t]+|[ \t]+$/, "", mt); if (mt == "image/jpeg" || mt == "image/png") print $1 }' \
+  | sort > "$tmp_elig"
+[ -s "$tmp_elig" ] || { echo "ERROR: no eligible (true image/jpeg|image/png) files under $SRC" >&2; exit 2; }
 
 # person<TAB>path, preserving sorted-by-path order.
 sed -E "$STRIP" "$tmp_elig" | paste - "$tmp_elig" > "$tmp_map"

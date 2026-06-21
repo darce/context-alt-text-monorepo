@@ -1,16 +1,16 @@
-"""Slice 9 sub-slice 3a: _should_add_representative returns an explicit RepAdmission.
+"""Slice 9 sub-slice 3a / 3a-fix: _should_add_representative returns an explicit RepAdmission.
 
-Pins the CURRENT observed contract before the temporal-coupling removal so the
-refactor stays behaviour-preserving. Notably `was_upgrade` is always False today
-(latent reset bug at assignment_writer.py:655, documented in the increment-3 plan
-and fixed separately in 3a-fix), and `rep_count` is the pre-upgrade-removal count
-that persist_assignment passes as existing_rep_count.
+3a removed the ``_last_*`` temporal coupling (the decision is now an explicit return
+value). 3a-fix then restored the upgrade signal: a genuine quality upgrade reports
+``was_upgrade=True``, so the ``representative_upgrade`` reason and ``representative_upgraded``
+event fire again (previously dead code behind a reset bug). ``rep_count`` remains the
+pre-upgrade-removal count that persist_assignment passes as existing_rep_count.
 """
 
 from __future__ import annotations
 
 import uuid
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import numpy as np
 import pytest
@@ -19,6 +19,7 @@ from recognition.application.assignment.candidate import AssignmentCandidate, Di
 from recognition.application.assignment.decision import AssignmentDecision, AssignmentOutcome
 from recognition.application.persistence.assignment_writer import AssignmentWriter, RepAdmission
 from recognition.application.settings.clustering import ClusteringSettings
+from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.repositories import ClusterRepository, MemberRepository
 from recognition.domain.representative import ClusterRepresentative
@@ -109,7 +110,7 @@ async def test_admission_empty_cluster_diverse_add(writer: AssignmentWriter, clu
 
 
 @pytest.mark.asyncio
-async def test_admission_rep_count_is_pre_removal_and_never_upgrade(
+async def test_admission_rep_count_is_pre_removal_no_upgrade_target(
     writer: AssignmentWriter, cluster_repo: AsyncMock
 ) -> None:
     reps = [_rep("c1", i) for i in range(8)]  # no pose -> no upgrade target; count >= max_total -> reject
@@ -119,7 +120,101 @@ async def test_admission_rep_count_is_pre_removal_and_never_upgrade(
 
     assert adm.should_add is False
     assert adm.rep_count == 8  # current_count (pre-removal) — what persist_assignment passes
-    assert adm.was_upgrade is False  # documents the always-False latent state
+    assert adm.was_upgrade is False  # no upgrade target found (not the latent reset)
+
+
+@pytest.mark.asyncio
+async def test_admission_upgrade_sets_was_upgrade(writer: AssignmentWriter, cluster_repo: AsyncMock) -> None:
+    """3a-fix: a genuine quality upgrade (same pose bucket, higher quality) now reports
+    was_upgrade=True, restoring the upgrade reason/event suppressed by the former reset bug."""
+    old_rep = ClusterRepresentative(
+        id=str(uuid.uuid4()),
+        cluster_id="c1",
+        identity_id="rep-old",
+        embedding=_unit_vector(0),
+        created_at=None,
+        tenant_id="tenant-1",
+        pose_pitch=0.0,
+        pose_yaw=0.0,
+        quality_score=0.1,  # low quality -> upgradeable
+    )
+    cluster_repo.get_all_representatives.return_value = [old_rep]
+    # Same pose bucket (0,0) -> upgrade target; orthogonal embedding -> passes the
+    # diversity check run over the pre-removal reps.
+    cand = _candidate("c1", index=10, pitch=0.0, yaw=0.0)
+
+    adm = await writer._should_add_representative(_accept(cand))
+
+    assert adm.should_add is True
+    assert adm.was_upgrade is True
+    assert all(r.id != old_rep.id for r in adm.cached_reps)  # removed rep excluded from cache
+    cluster_repo.remove_representative.assert_awaited_once_with(old_rep.id)
+
+
+@pytest.mark.asyncio
+async def test_admission_protected_upgrade_target_is_not_an_upgrade(
+    writer: AssignmentWriter, cluster_repo: AsyncMock
+) -> None:
+    """A user-selected (pinned) rep is protected: no removal, no upgrade flag."""
+    pinned = ClusterRepresentative(
+        id=str(uuid.uuid4()),
+        cluster_id="c1",
+        identity_id="rep-pinned",
+        embedding=_unit_vector(0),
+        created_at=None,
+        tenant_id="tenant-1",
+        pose_pitch=0.0,
+        pose_yaw=0.0,
+        quality_score=0.1,
+        is_user_selected=True,
+    )
+    cluster_repo.get_all_representatives.return_value = [pinned]
+    cand = _candidate("c1", index=10, pitch=0.0, yaw=0.0)
+
+    adm = await writer._should_add_representative(_accept(cand))
+
+    assert adm.should_add is False
+    assert adm.was_upgrade is False
+    cluster_repo.remove_representative.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_persist_assignment_upgrade_emits_reason_and_event() -> None:
+    """3a-fix event-reason regression: an upgrade decision records reason
+    'representative_upgrade' and emits exactly one representative_upgraded event."""
+    settings = ClusteringSettings(
+        max_representatives_per_cluster=5,
+        pose_diversity_bonus=2,
+        representative_diversity_threshold=0.9,
+        pose_bucket_size=30.0,
+    )
+    old_rep = ClusterRepresentative(
+        id=str(uuid.uuid4()),
+        cluster_id="c1",
+        identity_id="rep-old",
+        embedding=_unit_vector(0),
+        created_at=None,
+        tenant_id="tenant-1",
+        pose_pitch=0.0,
+        pose_yaw=0.0,
+        quality_score=0.1,
+    )
+    cluster_repo = AsyncMock()
+    cluster_repo.get_all_representatives.return_value = [old_rep]
+    cluster_repo.get_by_id.return_value = IdentityCluster(
+        id="c1", tenant_id="tenant-1", label=None, is_labeled=False, identity_count=0
+    )
+    run_ctx = Mock()
+    writer = AssignmentWriter(settings, cluster_repo, AsyncMock(), run_context=run_ctx)
+
+    await writer.persist_assignment(_accept(_candidate("c1", index=10, pitch=0.0, yaw=0.0)))
+
+    events = run_ctx.add_event.call_args_list
+    selected = [c for c in events if c.kwargs.get("event_type") == "representative_selected"]
+    upgraded = [c for c in events if c.kwargs.get("event_type") == "representative_upgraded"]
+    assert len(selected) == 1
+    assert selected[0].kwargs["payload"]["reason"] == "representative_upgrade"
+    assert len(upgraded) == 1
 
 
 @pytest.mark.asyncio

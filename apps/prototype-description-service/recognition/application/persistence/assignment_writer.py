@@ -234,11 +234,11 @@ class RepAdmission:
     """Result of the representative-admission decision.
 
     Replaces the former ``_last_*`` instance-state side effects of
-    ``_should_add_representative`` with an explicit return value. ``was_upgrade``
-    reproduces the historical always-False observed value (latent reset bug at the
-    ``_should_add_representative`` ``= False`` reset, fixed separately in Slice 9
-    sub-slice 3a-fix). ``rep_count`` is the pre-upgrade-removal representative count
-    (what ``persist_assignment`` passes as ``existing_rep_count``).
+    ``_should_add_representative`` with an explicit return value. ``was_upgrade`` is
+    True when the decision replaced a lower-quality representative in the same pose
+    bucket (Slice 9 sub-slice 3a-fix restored this signal after a reset bug had pinned
+    it False). ``rep_count`` is the pre-upgrade-removal representative count (what
+    ``persist_assignment`` passes as ``existing_rep_count``).
     """
 
     should_add: bool
@@ -488,11 +488,9 @@ class AssignmentWriter:
             # DB round-trip (Phase 3: duplicate-read elimination).
             all_rep_embeddings = [r.embedding for r in admission.cached_reps]
             all_rep_embeddings.append(rep.embedding)
-            if all_rep_embeddings:
-                stacked = np.stack(all_rep_embeddings)
-                mean_vec = np.mean(stacked, axis=0)
-                norm = float(np.linalg.norm(mean_vec))
-                cluster.centroid = cast(np.ndarray, mean_vec / norm if norm > 0 else mean_vec)
+            new_centroid = self._centroids.unit_normalized_mean(all_rep_embeddings)
+            if new_centroid is not None:
+                cluster.centroid = new_centroid
 
         cluster.identity_count += 1
         await self._clusters.update(cluster)
@@ -577,11 +575,9 @@ class AssignmentWriter:
                     _reps_added += 1
                     all_rep_embeddings = [r.embedding for r in admission.cached_reps]
                     all_rep_embeddings.append(rep.embedding)
-                    if all_rep_embeddings:
-                        stacked = np.stack(all_rep_embeddings)
-                        mean_vec = np.mean(stacked, axis=0)
-                        norm = float(np.linalg.norm(mean_vec))
-                        cluster.centroid = cast(np.ndarray, mean_vec / norm if norm > 0 else mean_vec)
+                    new_centroid = self._centroids.unit_normalized_mean(all_rep_embeddings)
+                    if new_centroid is not None:
+                        cluster.centroid = new_centroid
 
             # Single cluster identity_count update for all newly inserted members.
             cluster.identity_count += len(newly_inserted)
@@ -633,10 +629,9 @@ class AssignmentWriter:
         centroid from cached data without a second DB round-trip (Phase 3
         duplicate-read elimination). ``rep_count`` is the pre-removal count.
 
-        ``was_upgrade`` reproduces the historical observed value, which is always
-        ``False`` due to a latent reset bug (the upgrade flag was set then
-        unconditionally cleared before any return). The bug is fixed separately in
-        Slice 9 sub-slice 3a-fix, not here — this refactor is behaviour-preserving.
+        ``was_upgrade`` is True when an existing lower-quality representative in the
+        same pose bucket was removed to make room for this one (Slice 9 sub-slice
+        3a-fix; the upgrade reason + ``representative_upgraded`` event depend on it).
         """
         cluster_id = decision.candidate.cluster_id
 
@@ -674,6 +669,12 @@ class AssignmentWriter:
         # cached_reps = existing_reps minus any rep just removed by the upgrade path.
         cached_reps = [r for r in existing_reps if r.id != removed_rep_id] if removed_rep_id else existing_reps
 
+        # An upgrade occurred iff we removed a lower-quality rep in the same pose
+        # bucket above. Carrying this through restores the upgrade reason + the
+        # representative_upgraded event that the former unconditional reset
+        # clobbered (Slice 9 sub-slice 3a-fix; behaviour-changing observability fix).
+        was_upgrade = removed_rep_id is not None
+
         # 2. Check limits with bonus
         max_base = self._settings.max_representatives_per_cluster
         max_total = max_base + self._settings.pose_diversity_bonus
@@ -688,13 +689,13 @@ class AssignmentWriter:
         # 3. If above base limit, only add if novel pose
         if current_count >= max_base:
             if _is_novel_pose(decision.candidate.identity, existing_reps, self._settings.pose_bucket_size):
-                return RepAdmission(True, cached_reps, current_count, was_upgrade=False, was_novel_pose=True)
+                return RepAdmission(True, cached_reps, current_count, was_upgrade=was_upgrade, was_novel_pose=True)
             # If batch_mode, we might still want to add it if it's "better" than nothing?
             # No, if not novel pose and no upgrade target, it's redundant.
             return RepAdmission(False, cached_reps, current_count, was_upgrade=False, was_novel_pose=False)
 
         if not existing_reps:
-            return RepAdmission(True, cached_reps, current_count, was_upgrade=False, was_novel_pose=False)
+            return RepAdmission(True, cached_reps, current_count, was_upgrade=was_upgrade, was_novel_pose=False)
 
         # 4. Standard diversity check (embedding distance)
         for rep in existing_reps:
@@ -708,7 +709,7 @@ class AssignmentWriter:
                 # So if similarity is high, we reject.
                 return RepAdmission(False, cached_reps, current_count, was_upgrade=False, was_novel_pose=False)
 
-        return RepAdmission(True, cached_reps, current_count, was_upgrade=False, was_novel_pose=False)
+        return RepAdmission(True, cached_reps, current_count, was_upgrade=was_upgrade, was_novel_pose=False)
 
     async def _select_reps_to_preserve(
         self,

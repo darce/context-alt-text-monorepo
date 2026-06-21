@@ -20,7 +20,6 @@ from recognition.domain.repositories import SuggestionCreateData, SuggestionRepo
 from recognition.domain.suggestion import AssignmentSuggestion, SuggestionStatus
 from recognition.domain.suggestion_details import FaceBox, SuggestionDetails
 from recognition.infrastructure.repositories._helpers import coerce_uuid as _coerce_uuid
-from recognition.infrastructure.repositories._helpers import ensure_media_identity as _ensure_media_identity
 
 
 def _clamp_similarity(value: float) -> float:
@@ -320,7 +319,6 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
             raise ValueError("tenant_id, identity_id, and cluster_id must be valid UUID-compatible strings")
 
         assert tenant_uuid is not None and identity_uuid is not None and cluster_uuid is not None
-        await _ensure_media_identity(self._session, tenant_uuid, identity_uuid)
 
         existing_stmt = (
             select(SuggestionModel)

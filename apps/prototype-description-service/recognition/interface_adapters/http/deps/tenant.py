@@ -11,8 +11,6 @@ from recognition.interface_adapters.http.deps.tenant_common import (
     normalize_tenant_id,
 )
 
-_normalize_tenant_id = normalize_tenant_id
-
 
 async def get_authenticated_tenant_id(
     auth: AuthContext = Depends(require_auth),
@@ -43,4 +41,4 @@ async def get_authenticated_tenant_id(
     )
 
 
-__all__ = ["get_tenant_id", "get_tenant_id_optional", "get_authenticated_tenant_id", "_normalize_tenant_id"]
+__all__ = ["get_tenant_id", "get_tenant_id_optional", "get_authenticated_tenant_id"]

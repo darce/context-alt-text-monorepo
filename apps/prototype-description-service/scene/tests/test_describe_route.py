@@ -18,7 +18,7 @@ from db.models.base_imports import Base
 from db.models.observability import AuditEvent
 from db.models.scene import ImageDescription
 from db.models.tenant import Tenant
-from recognition.interface_adapters.http.dependencies import (
+from recognition.interface_adapters.http.deps import (
     get_optional_session,
     require_write_access,
 )

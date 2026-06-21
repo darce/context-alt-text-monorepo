@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from recognition.config.security import SecuritySettings
-from recognition.interface_adapters.http import dependencies
+from recognition.interface_adapters.http import deps as dependencies
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.deps import auth
 from recognition.tests.api.conftest import FakeSession

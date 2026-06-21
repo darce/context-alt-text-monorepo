@@ -7,7 +7,7 @@ import uuid
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from recognition.interface_adapters.http import dependencies
+from recognition.interface_adapters.http import deps as dependencies
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.tests.api.conftest import FakeSession, FakeSuggestionService, seed_cluster
 from recognition.tests.fakes import FakeClusterService

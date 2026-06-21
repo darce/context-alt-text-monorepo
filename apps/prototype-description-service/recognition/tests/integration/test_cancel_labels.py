@@ -10,7 +10,7 @@ from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.application.scan.service import ScanService
 from recognition.domain.cluster import IdentityCluster
 from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
-from recognition.interface_adapters.http import dependencies
+from recognition.interface_adapters.http import deps as dependencies
 
 
 @pytest.mark.asyncio

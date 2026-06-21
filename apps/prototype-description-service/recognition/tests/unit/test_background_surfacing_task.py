@@ -13,7 +13,6 @@ import pytest
 
 from recognition.application.tasks.clustering import (
     run_background_backfill_suggestions,
-    run_background_refresh_suggestions,
     run_background_surface_suggestions,
 )
 
@@ -93,31 +92,6 @@ async def test_background_surface_suggestions_commits_chunk_session(monkeypatch)
     refresh_service.surface_for_newly_labeled_cluster.assert_awaited_once()
     chunk_session.commit.assert_awaited_once()
     preload_session.commit.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_background_refresh_suggestions_commits_session() -> None:
-    session = AsyncMock()
-
-    @asynccontextmanager
-    async def _session_factory():
-        yield session
-
-    refresh_service = SimpleNamespace(refresh_for_cluster=AsyncMock())
-    cluster_service = SimpleNamespace(suggestion_refresh_service=refresh_service)
-
-    async def _builder(*, session, tenant_id):  # noqa: ANN001
-        return cluster_service
-
-    await run_background_refresh_suggestions(
-        "tenant-1",
-        "cluster-1",
-        session_factory=_session_factory,
-        cluster_service_builder=_builder,
-    )
-
-    refresh_service.refresh_for_cluster.assert_awaited_once_with("cluster-1")
-    session.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio

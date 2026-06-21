@@ -3,7 +3,6 @@ from __future__ import annotations
 import pytest
 
 from db.models import IdentityCluster, IdentityClusterRepresentative, IdentityMember, MediaIdentity
-from recognition.application.regression_harness.db_export import fetch_canonical_labels, fetch_predicted_clusters
 from recognition.application.regression_harness.report_builder import generate_canonical_report
 from recognition.application.regression_harness.serialization import load_canonical_labels, write_json
 from recognition.domain.locator import IdentityLocator
@@ -84,54 +83,3 @@ async def test_generate_canonical_report_includes_labeled_clusters(db_session, t
         labels[IdentityLocator(media_id=101, bbox_x=10, bbox_y=20, bbox_width=30, bbox_height=40, crop_hash=None)]
         == "Alice"
     )
-
-
-@pytest.mark.asyncio
-async def test_db_exports_return_canonical_labels_and_predicted_clusters(db_session, tenant) -> None:
-    identity_1 = MediaIdentity(
-        tenant_id=tenant.id,
-        media_id=201,
-        media_url="http://example.test/201.jpg",
-        bbox_x=0,
-        bbox_y=0,
-        bbox_width=10,
-        bbox_height=10,
-        confidence=0.99,
-        embedding=[0.0] * 512,
-    )
-    unclustered = MediaIdentity(
-        tenant_id=tenant.id,
-        media_id=202,
-        media_url="http://example.test/202.jpg",
-        bbox_x=5,
-        bbox_y=5,
-        bbox_width=10,
-        bbox_height=10,
-        confidence=0.5,
-        embedding=[0.0] * 512,
-    )
-    db_session.add_all([identity_1, unclustered])
-    await db_session.commit()
-
-    cluster = IdentityCluster(tenant_id=tenant.id, label="Bob", user_confirmed=True, identity_count=1)
-    db_session.add(cluster)
-    await db_session.commit()
-    await db_session.refresh(cluster)
-
-    db_session.add(
-        IdentityMember(tenant_id=tenant.id, cluster_id=cluster.id, identity_id=identity_1.id, similarity=1.0)
-    )
-    await db_session.commit()
-
-    canonical = await fetch_canonical_labels(db_session, tenant_id=str(tenant.id))
-    assert len(canonical) == 1
-    assert list(canonical.values()) == ["Bob"]
-
-    predicted = await fetch_predicted_clusters(db_session, tenant_id=str(tenant.id))
-    assert len(predicted) == 2
-    assert predicted[
-        IdentityLocator(media_id=201, bbox_x=0, bbox_y=0, bbox_width=10, bbox_height=10, crop_hash=None)
-    ] == str(cluster.id)
-    assert predicted[
-        IdentityLocator(media_id=202, bbox_x=5, bbox_y=5, bbox_width=10, bbox_height=10, crop_hash=None)
-    ].startswith(f"unclustered:{unclustered.id}")

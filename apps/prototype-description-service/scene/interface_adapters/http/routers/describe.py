@@ -18,7 +18,7 @@ from starlette.datastructures import UploadFile
 
 from db.tenant_context import require_tenant_record, set_tenant_context
 from recognition.infrastructure.repositories.audit_repository import AuditRepository
-from recognition.interface_adapters.http.dependencies import (
+from recognition.interface_adapters.http.deps import (
     get_optional_session,
     require_write_access,
 )

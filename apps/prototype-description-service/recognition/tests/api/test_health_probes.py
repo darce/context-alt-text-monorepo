@@ -58,7 +58,7 @@ def test_root_health_does_not_open_db_session(monkeypatch) -> None:
     the handler never entered them.
     """
     from api.main import create_app
-    from recognition.interface_adapters.http import dependencies
+    from recognition.interface_adapters.http import deps as dependencies
 
     def _boom():  # pragma: no cover - should never execute
         raise AssertionError("/health must not open a DB session (liveness only)")
@@ -94,7 +94,7 @@ def _build_ready_app(
     from fastapi import FastAPI
 
     from api.main import register_health_probes
-    from recognition.interface_adapters.http import dependencies
+    from recognition.interface_adapters.http import deps as dependencies
     from recognition.interface_adapters.http.deps.circuit_breaker import (
         BreakerState,
         SessionDependencyCircuitBreaker,

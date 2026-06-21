@@ -6,12 +6,12 @@ import uuid
 from collections.abc import AsyncIterator
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, status
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
-from recognition.domain.services.retention_policy_service import RetentionPolicyService
-from recognition.interface_adapters.http import dependencies
+from recognition.application.services.retention_policy_service import RetentionPolicyService
+from recognition.interface_adapters.http import deps as dependencies
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.deps import session as session_module
 from recognition.interface_adapters.http.deps.circuit_breaker import (
@@ -146,6 +146,20 @@ async def test_retention_policy_service_factory_uses_provided_optional_session()
 
     assert isinstance(service, RetentionPolicyService)
     assert getattr(service, "_session", None) is session
+
+
+@pytest.mark.asyncio
+async def test_retention_policy_service_factory_raises_503_when_session_unavailable() -> None:
+    """A None optional session (DB breaker open) must fail fast with 503, not a stub.
+
+    Previously the factory returned a ``_NotImplementedRetentionPolicyService`` whose
+    methods raised ``NotImplementedError``, surfacing to the client as a misleading 501.
+    The breaker-open path is reachable, so it must be an explicit 503 Service Unavailable.
+    """
+    with pytest.raises(HTTPException) as exc_info:
+        await dependencies.get_retention_policy_service(session=None)
+
+    assert exc_info.value.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
 
 
 class _TrackingSession:

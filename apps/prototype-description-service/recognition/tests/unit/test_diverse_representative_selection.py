@@ -7,7 +7,7 @@ import uuid
 import numpy as np
 import pytest
 
-from recognition.application.persistence.assignment_writer import (
+from recognition.application.persistence.representative_selector import (
     _normalize_embedding,
     _select_diverse_representatives,
 )

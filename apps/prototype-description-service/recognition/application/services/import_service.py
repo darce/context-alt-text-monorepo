@@ -7,8 +7,8 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from recognition.domain.services.audit_service import AuditService
-from recognition.domain.services.export_service import EXPORT_SCHEMA_VERSION
+from recognition.application.services.audit_service import AuditService
+from recognition.application.services.export_service import EXPORT_SCHEMA_VERSION
 from recognition.infrastructure.repositories._helpers import coerce_uuid
 
 

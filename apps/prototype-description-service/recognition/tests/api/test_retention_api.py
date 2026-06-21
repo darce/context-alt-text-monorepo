@@ -5,14 +5,14 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
-from recognition.domain.services.export_service import EXPORT_SCHEMA_VERSION
-from recognition.interface_adapters.http import dependencies
+from recognition.application.services.export_service import EXPORT_SCHEMA_VERSION
+from recognition.interface_adapters.http import deps as dependencies
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.deps.services import (
     get_audit_repository,
@@ -50,7 +50,7 @@ class FakeRetentionPolicyService:
 
     async def apply_preset(self, tenant_id: str, preset_name: str, actor: str) -> dict[str, Any]:
         self.calls.append(("preset", tenant_id, actor))
-        from recognition.domain.services.retention_policy_service import RETENTION_PRESETS
+        from recognition.application.services.retention_policy_service import RETENTION_PRESETS
 
         if preset_name not in RETENTION_PRESETS:
             raise ValueError(f"invalid preset: {preset_name!r}")
@@ -268,6 +268,36 @@ def test_retention_policy_uses_authenticated_tenant_claim(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert policy_service.calls == [("get", tenant_id, "")]
+
+
+def test_retention_policy_returns_503_when_db_session_unavailable(monkeypatch) -> None:
+    """Breaker-open (optional session is None) surfaces as 503 at the HTTP boundary, not 501.
+
+    Pins the client-visible 501->503 contract change end-to-end: the REAL
+    get_retention_policy_service factory runs (fake override dropped) with no DB session,
+    guarding against the router's except-Exception->501 catch-all reabsorbing the 503.
+    """
+    tenant_id = str(uuid.uuid4())
+    client, _, _, _, _ = _build_client(monkeypatch, tenant_id=tenant_id)
+    app = cast(FastAPI, client.app)
+
+    # Run the real factory (not the fake) with no DB session available.
+    app.dependency_overrides.pop(dependencies.get_retention_policy_service, None)
+
+    async def _no_session():
+        yield None
+
+    app.dependency_overrides[dependencies.get_optional_session] = _no_session
+
+    async def _fake_lookup(api_key, settings, session):  # noqa: ANN001
+        return tenant_id, "api-key-id", "enterprise", False
+
+    from recognition.interface_adapters.http.deps import auth
+
+    monkeypatch.setattr(auth, "_lookup_api_key", _fake_lookup)
+    response = client.get("/recognition/retention/policy", headers={"Authorization": "Bearer good-key"})
+
+    assert response.status_code == 503
 
 
 def test_authenticated_tenant_dependency_is_self_contained(monkeypatch) -> None:

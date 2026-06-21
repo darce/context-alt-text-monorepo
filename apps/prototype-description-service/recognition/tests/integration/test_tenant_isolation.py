@@ -12,7 +12,7 @@ from db.models import IdentityCluster, Tenant
 from recognition.domain.cluster import IdentityCluster as DomainCluster
 from recognition.domain.repositories import SuggestionCreateData
 from recognition.infrastructure.repositories import SqlAlchemyClusterRepository, SqlAlchemySuggestionRepository
-from recognition.interface_adapters.http import dependencies
+from recognition.interface_adapters.http import deps as dependencies
 from recognition.interface_adapters.http import router as recognition_router
 
 
@@ -63,7 +63,7 @@ async def test_tenant_cannot_query_other_clusters(db_session, tenant) -> None:
 
 
 @pytest.mark.asyncio
-async def test_suggestions_are_tenant_scoped(db_session, tenant) -> None:
+async def test_suggestions_are_tenant_scoped(db_session, tenant, seed_media_identity) -> None:
     """Suggestions for tenant A should not be visible or mutable by tenant B."""
     tenant_a = str(tenant.id)
     tenant_b = str(uuid.uuid4())
@@ -80,11 +80,14 @@ async def test_suggestions_are_tenant_scoped(db_session, tenant) -> None:
         )
     )
 
+    suggestion_identity_id = str(uuid.uuid4())
+    await seed_media_identity(suggestion_identity_id, tenant_id=tenant_a)
+
     sugg_repo_a = SqlAlchemySuggestionRepository(db_session)
     suggestion = await sugg_repo_a.create(
         tenant_a,
         SuggestionCreateData(
-            identity_id=str(uuid.uuid4()),
+            identity_id=suggestion_identity_id,
             cluster_id=cluster.id,
             representative_similarity=0.9,
             member_similarity=0.8,

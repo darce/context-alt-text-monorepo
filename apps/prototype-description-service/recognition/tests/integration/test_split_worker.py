@@ -9,7 +9,7 @@ import pytest
 from db.models import IdentityClusteringJob
 from db.models import MediaIdentity as MediaIdentityModel
 from recognition.domain.cluster import IdentityCluster
-from recognition.interface_adapters.http import dependencies
+from recognition.interface_adapters.http import deps as dependencies
 from recognition.worker.scan_worker import ScanWorker, ScanWorkerConfig
 
 

@@ -1,5 +1,6 @@
 """
-Minimal FastAPI router for the recognition service (stub endpoints).
+Aggregates the recognition sub-routers into a single APIRouter mounted by
+api/main.py under /recognition.
 """
 
 from __future__ import annotations
@@ -10,7 +11,10 @@ from recognition.interface_adapters.http.routers import (
     analyze,
     analyze_multipart,
     blobs,
-    clusters,
+    clusters_admission,
+    clusters_maintenance,
+    clusters_snapshot,
+    clusters_topology,
     diagnostics,
     events,
     media,
@@ -26,7 +30,11 @@ router = APIRouter(tags=["recognition"])
 router.include_router(analyze.router)
 router.include_router(analyze_multipart.router)
 router.include_router(blobs.router)
-router.include_router(clusters.router)
+# Cluster concern routers (split from the former clusters.py god-router, Slice 6)
+router.include_router(clusters_admission.router)
+router.include_router(clusters_snapshot.router)
+router.include_router(clusters_topology.router)
+router.include_router(clusters_maintenance.router)
 router.include_router(events.router)
 router.include_router(suggestions.router)
 router.include_router(diagnostics.router)

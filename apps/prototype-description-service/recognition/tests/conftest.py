@@ -33,6 +33,7 @@ from recognition.infrastructure.repositories.cluster_repository import SqlAlchem
 from recognition.infrastructure.repositories.job_repository import SqlAlchemyJobRepository
 from recognition.infrastructure.repositories.member_repository import SqlAlchemyMemberRepository
 from recognition.infrastructure.repositories.suggestion_repository import SqlAlchemySuggestionRepository
+from recognition.tests.db_seed import ensure_media_identity as _ensure_media_identity
 
 os.environ["RECOGNITION_AUTH_ENABLED"] = "0"
 os.environ["RECOGNITION_ASYNC_ANALYZE_INLINE"] = "1"
@@ -142,6 +143,16 @@ async def tenant(db_session: AsyncSession) -> Tenant:
 def uuid_str() -> str:
     """Return a new UUID string."""
     return str(uuid.uuid4())
+
+
+@pytest.fixture
+def seed_media_identity(db_session: AsyncSession, tenant: Tenant):
+    """Seed a placeholder ``MediaIdentity`` so FK-bound repo writes can be exercised (INFRA-3)."""
+
+    async def _seed(identity_id: str | uuid.UUID, *, tenant_id: str | uuid.UUID | None = None) -> None:
+        await _ensure_media_identity(db_session, tenant_id if tenant_id is not None else tenant.id, identity_id)
+
+    return _seed
 
 
 # ----------------------------------------------------------------------

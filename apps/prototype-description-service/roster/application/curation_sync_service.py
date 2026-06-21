@@ -189,11 +189,6 @@ class CurationSyncService:
         )
         return result
 
-    @classmethod
-    def reset_idempotency_cache(cls) -> None:
-        # Legacy no-op retained for compatibility with older tests.
-        return
-
     async def _apply_person_operation(self, tenant_id: UUID, operation_type: str, operation: Any) -> CurationSyncResult:
         payload = self._payload(operation)
         person_uuid = payload.get("person_uuid")

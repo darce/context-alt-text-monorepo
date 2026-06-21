@@ -20,9 +20,10 @@ from recognition.domain.suggestion import (
     NameSuggestion,
     SuggestionStatus,
 )
+from recognition.domain.suggestion_details import MergeSuggestionDetails, SuggestionDetails
 from recognition.infrastructure.repositories import SqlAlchemyClusterRepository, SqlAlchemyMergeSuggestionRepository
 from recognition.infrastructure.services import SuggestionExtensionService
-from recognition.interface_adapters.http.dependencies import (
+from recognition.interface_adapters.http.deps import (
     get_cluster_repository,
     get_cluster_service_builder,
     get_merge_suggestion_repository,
@@ -45,7 +46,6 @@ from recognition.interface_adapters.http.schemas.responses import (
     SuggestionResponse,
 )
 from recognition.interface_adapters.http.validation import validate_entity_id, validate_paging
-from recognition.interface_adapters.schemas.suggestion_details import MergeSuggestionDetails, SuggestionDetails
 
 router = APIRouter(tags=["suggestions"], dependencies=[Depends(require_auth), Depends(enforce_rate_limit)])
 

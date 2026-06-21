@@ -71,7 +71,7 @@ def _make_media_identity_model(
 
 
 @pytest.mark.asyncio
-async def test_persist_assignment_adds_member_and_updates_count(db_session, tenant) -> None:
+async def test_persist_assignment_adds_member_and_updates_count(db_session, tenant, seed_media_identity) -> None:
     cluster_repo = SqlAlchemyClusterRepository(db_session)
     member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
     writer = AssignmentWriter(ClusteringSettings(), cluster_repo, member_repo)
@@ -88,6 +88,7 @@ async def test_persist_assignment_adds_member_and_updates_count(db_session, tena
     )
 
     identity = make_identity(str(tenant.id))
+    await seed_media_identity(identity.id)
     candidate = make_candidate(identity, cluster.id, similarity=0.91)
     decision = AssignmentDecision(
         outcome=AssignmentOutcome.ACCEPT,
@@ -139,12 +140,14 @@ async def test_persist_assignment_rejects_non_accept(db_session, tenant) -> None
 
 
 @pytest.mark.asyncio
-async def test_persist_new_cluster_creates_members(db_session, tenant) -> None:
+async def test_persist_new_cluster_creates_members(db_session, tenant, seed_media_identity) -> None:
     cluster_repo = SqlAlchemyClusterRepository(db_session)
     member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
     writer = AssignmentWriter(ClusteringSettings(), cluster_repo, member_repo)
 
     identities = [make_identity(str(tenant.id)), make_identity(str(tenant.id))]
+    for identity in identities:
+        await seed_media_identity(identity.id)
     similarities = [0.93, 0.94]
 
     cluster = await writer.persist_new_cluster(
@@ -163,7 +166,7 @@ async def test_persist_new_cluster_creates_members(db_session, tenant) -> None:
 
 
 @pytest.mark.asyncio
-async def test_persist_new_cluster_creates_representatives(db_session, tenant) -> None:
+async def test_persist_new_cluster_creates_representatives(db_session, tenant, seed_media_identity) -> None:
     """persist_new_cluster should create representatives from highest-confidence identities."""
     cluster_repo = SqlAlchemyClusterRepository(db_session)
     member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
@@ -175,6 +178,8 @@ async def test_persist_new_cluster_creates_representatives(db_session, tenant) -
     identities[0].confidence = 0.99  # Highest
     identities[1].confidence = 0.95
     identities[2].confidence = 0.90  # Lowest
+    for identity in identities:
+        await seed_media_identity(identity.id)
     similarities = [0.93, 0.94, 0.91]
 
     cluster = await writer.persist_new_cluster(
@@ -195,7 +200,9 @@ async def test_persist_new_cluster_creates_representatives(db_session, tenant) -
 
 
 @pytest.mark.asyncio
-async def test_update_cluster_metadata_updates_label_and_representative(db_session, tenant) -> None:
+async def test_update_cluster_metadata_updates_label_and_representative(
+    db_session, tenant, seed_media_identity
+) -> None:
     cluster_repo = SqlAlchemyClusterRepository(db_session)
     member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
     writer = AssignmentWriter(ClusteringSettings(), cluster_repo, member_repo)
@@ -212,6 +219,7 @@ async def test_update_cluster_metadata_updates_label_and_representative(db_sessi
     )
 
     representative_id = str(uuid.uuid4())
+    await seed_media_identity(representative_id)
     updated = await writer.update_cluster_metadata(cluster.id, label="Confirmed", representative_id=representative_id)
 
     assert updated.label == "Confirmed"
@@ -371,8 +379,8 @@ async def test_should_not_upgrade_user_selected_representative(db_session, tenan
         checks_failed=[],
     )
 
-    should_add, _ = await writer._should_add_representative(decision)
-    assert should_add is False, "Should not upgrade user-selected representative"
+    admission = await writer._should_add_representative(decision)
+    assert admission.should_add is False, "Should not upgrade user-selected representative"
 
 
 @pytest.mark.asyncio
@@ -750,7 +758,7 @@ async def test_provisional_representative_lifecycle(db_session, tenant) -> None:
 
 
 @pytest.mark.asyncio
-async def test_persist_new_cluster_logs_per_identity(db_session, tenant) -> None:
+async def test_persist_new_cluster_logs_per_identity(db_session, tenant, seed_media_identity) -> None:
     """persist_new_cluster should log initial assignment for every member if logger provided."""
     from unittest.mock import Mock
 
@@ -774,6 +782,9 @@ async def test_persist_new_cluster_logs_per_identity(db_session, tenant) -> None
     # So we should ensure our input identities have parseable media_ids.
     identities[0].media_id = "101"
     identities[1].media_id = "102"
+
+    for identity in identities:
+        await seed_media_identity(identity.id)
 
     similarities = [1.0, 0.95]
 

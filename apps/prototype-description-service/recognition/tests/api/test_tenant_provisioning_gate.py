@@ -9,7 +9,7 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from recognition.interface_adapters.http import dependencies
+from recognition.interface_adapters.http import deps as dependencies
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.deps.auth import AuthContext, require_auth
 from recognition.tests.api.conftest import FakeSession

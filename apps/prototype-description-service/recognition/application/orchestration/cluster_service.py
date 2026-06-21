@@ -29,10 +29,16 @@ from recognition.application.orchestration.cluster_merge import (
 from recognition.application.orchestration.cluster_merge import (
     post_merge_retry_matching as post_merge_retry_matching_op,
 )
+from recognition.application.orchestration.clustering.chunked_processor import (
+    get_chunk_size as get_chunk_size_op,
+)
 from recognition.application.orchestration.clustering.dependencies import (
     ClusteringContext,
     ClusteringDependencies,
     ClusteringRuntimeConfig,
+)
+from recognition.application.orchestration.clustering.orchestrator import (
+    cluster_unclustered_identities as cluster_unclustered_identities_op,
 )
 from recognition.application.orchestration.curation import (
     assign_outlier_to_cluster as assign_outlier_to_cluster_op,
@@ -51,12 +57,6 @@ from recognition.application.orchestration.curation import (
 )
 from recognition.application.orchestration.curation import (
     update_cluster as update_cluster_op,
-)
-from recognition.application.orchestration.incremental_clustering import (
-    cluster_unclustered_identities as cluster_unclustered_identities_op,
-)
-from recognition.application.orchestration.incremental_clustering import (
-    get_chunk_size as get_chunk_size_op,
 )
 from recognition.application.orchestration.protocols import (
     MergeSuggestionServiceProtocol,
@@ -98,9 +98,6 @@ class ClusterService:
         constraint_repository: IdentityConstraintRepository | None = None,
         hac_settings: HACSettings | None = None,
         logger: ClusteringLogger | None = None,
-        visualizer=None,
-        decision_store=None,
-        observability_repo=None,
         session: AsyncSession | None = None,
     ) -> None:
         self.gate = gate
@@ -114,9 +111,6 @@ class ClusterService:
         self.block_repository = block_repository
         self.constraint_repository = constraint_repository
         self.logger = logger
-        self.visualizer = visualizer
-        self.decision_store = decision_store
-        self.observability_repo = observability_repo
         self._session = session
 
         # Initialize ConstrainedHAC if constraint repository is available

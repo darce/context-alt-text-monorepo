@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.tenant_context import get_tenant_record
-from recognition.interface_adapters.http.dependencies import get_optional_session, require_auth
+from recognition.interface_adapters.http.deps import get_optional_session, require_auth
 from recognition.interface_adapters.http.deps.auth import AuthContext
 from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
 

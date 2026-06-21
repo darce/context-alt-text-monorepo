@@ -6,8 +6,6 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import Sequence
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import cast
 
@@ -15,8 +13,14 @@ import numpy as np
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from recognition.application.assignment.decision import AssignmentDecision, AssignmentOutcome
-from recognition.application.assignment.quality import compute_identity_quality as _compute_quality_info
 from recognition.application.labeling.auto_labeler import allocate_person_label, should_auto_label
+from recognition.application.persistence.centroid_maintainer import CentroidMaintainer
+from recognition.application.persistence.representative_selector import (
+    RepAdmission,
+    RepresentativeSelector,
+    _compute_identity_quality,
+    _select_diverse_representatives,
+)
 from recognition.application.settings.clustering import ClusteringSettings
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
@@ -30,18 +34,6 @@ from recognition.shared.similarity import compute_face_similarity, extract_face_
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class IdentityMember:
-    """Domain representation of a cluster member."""
-
-    id: str
-    cluster_id: str
-    identity_id: str
-    similarity: float
-    tenant_id: str | None = None
-    assigned_at: datetime | None = None
-
-
 def _compute_fingerprint(embedding: np.ndarray) -> str:
     """Compute a stable fingerprint for a face embedding."""
     import hashlib
@@ -49,195 +41,6 @@ def _compute_fingerprint(embedding: np.ndarray) -> str:
     # Use face-only portion for fingerprinting
     face_vec = extract_face_embedding(embedding)
     return hashlib.sha256(face_vec.tobytes()).hexdigest()[:8]
-
-
-def _normalize_embedding(embedding: np.ndarray) -> np.ndarray:
-    """Normalize a face embedding to unit length.
-
-    Args:
-        embedding: Raw embedding vector (512D or 1024D).
-
-    Returns:
-        Normalized 512D face embedding.
-    """
-    face_vec = extract_face_embedding(embedding)
-    norm = float(np.linalg.norm(face_vec))
-    if norm == 0:
-        return face_vec.astype(np.float32)
-    return face_vec.astype(np.float32) / norm
-
-
-def _compute_identity_quality(identity: MediaIdentity, settings: ClusteringSettings) -> float:
-    """Compute quality score for a media identity.
-
-    Delegates to the canonical compute_identity_quality in quality.py which
-    considers detection confidence, pose angles, and face size.
-
-    Args:
-        identity: MediaIdentity with confidence and bbox dimensions.
-        settings: Clustering settings containing quality parameters.
-
-    Returns:
-        Quality score between 0.0 and 1.0.
-    """
-    info = _compute_quality_info(
-        confidence=identity.confidence,
-        pose_pitch=identity.pose_pitch,
-        pose_yaw=identity.pose_yaw,
-        pose_roll=identity.pose_roll,
-        bbox_width=identity.bbox_width,
-        bbox_height=identity.bbox_height,
-        settings=settings.quality,
-    )
-    return info.score
-
-
-def _select_diverse_representatives(
-    identities: list[MediaIdentity],
-    max_reps: int,
-) -> list[MediaIdentity]:
-    """Select representatives via Farthest-Point Sampling for diversity.
-
-    This algorithm ensures geometric diversity by selecting representatives
-    that maximize minimum distance from already-chosen representatives,
-    preventing the loss of "bridge" faces that connect different pose angles.
-
-    Args:
-        identities: Pool of candidate identities.
-        max_reps: Maximum number of representatives to select.
-
-    Returns:
-        Selected representatives in insertion order (first is highest confidence).
-    """
-    if not identities:
-        return []
-    k = min(max_reps, len(identities))
-
-    # Seed with highest-confidence face
-    sorted_by_conf = sorted(identities, key=lambda i: i.confidence, reverse=True)
-    selected: list[MediaIdentity] = [sorted_by_conf[0]]
-    selected_vecs: list[np.ndarray] = [_normalize_embedding(np.asarray(sorted_by_conf[0].embedding, dtype=np.float32))]
-    remaining = set(range(1, len(sorted_by_conf)))
-
-    for _ in range(k - 1):
-        if not remaining:
-            break
-        best_idx: int | None = None
-        best_min_dist = -1.0
-        for idx in remaining:
-            vec = _normalize_embedding(np.asarray(sorted_by_conf[idx].embedding, dtype=np.float32))
-            # Distance = 1 - cosine_similarity (since embeddings are normalized)
-            min_dist = min(float(1 - np.dot(vec, sv)) for sv in selected_vecs)
-            if min_dist > best_min_dist:
-                best_min_dist = min_dist
-                best_idx = idx
-        if best_idx is None:
-            break
-        selected.append(sorted_by_conf[best_idx])
-        selected_vecs.append(_normalize_embedding(np.asarray(sorted_by_conf[best_idx].embedding, dtype=np.float32)))
-        remaining.remove(best_idx)
-
-    return selected
-
-
-def _get_pose_bucket(identity: MediaIdentity | ClusterRepresentative, bucket_size: float) -> tuple[int, int] | None:
-    """Get the (pitch, yaw) bucket for an identity or representative."""
-    pitch = identity.pose_pitch
-    yaw = identity.pose_yaw
-    if pitch is None or yaw is None:
-        return None
-    bucket = (int(pitch // bucket_size), int(yaw // bucket_size))
-    identity_ref = getattr(identity, "id", None) or getattr(identity, "identity_id", None)
-    logger.debug(
-        "[pose_bucket] identity=%s pitch=%.2f yaw=%.2f bucket=%s size=%.1f",
-        identity_ref,
-        pitch,
-        yaw,
-        bucket,
-        bucket_size,
-    )
-    return bucket
-
-
-def _is_novel_pose(
-    identity: MediaIdentity,
-    existing_reps: Sequence[ClusterRepresentative],
-    bucket_size: float,
-) -> bool:
-    """Check if identity's pose fall into a bucket not covered by existing reps."""
-    new_bucket = _get_pose_bucket(identity, bucket_size)
-    if not new_bucket:
-        logger.debug(
-            "[pose_bucket] identity=%s has no pose data, cannot determine novelty",
-            identity.id,
-        )
-        return False
-
-    existing_buckets = []
-    for rep in existing_reps:
-        rep_bucket = _get_pose_bucket(rep, bucket_size)
-        if rep_bucket:
-            existing_buckets.append(rep_bucket)
-        if rep_bucket == new_bucket:
-            logger.debug(
-                "[pose_bucket] identity=%s bucket=%s already covered by rep=%s",
-                identity.id,
-                new_bucket,
-                rep.identity_id,
-            )
-            return False  # Covered
-
-    logger.info(
-        "[pose_bucket] NOVEL_POSE identity=%s bucket=%s existing_buckets=%s",
-        identity.id,
-        new_bucket,
-        existing_buckets,
-    )
-    return True
-
-
-def _find_upgradeable_representative(
-    identity: MediaIdentity,
-    existing_reps: Sequence[ClusterRepresentative],
-    bucket_size: float,
-    settings: ClusteringSettings,
-) -> ClusterRepresentative | None:
-    """Find an existing representative in the same pose bucket to replace (upgrade).
-
-    Returns the representative to replace if the new identity is significantly better.
-    """
-    new_bucket = _get_pose_bucket(identity, bucket_size)
-    if not new_bucket:
-        return None
-
-    new_quality = _compute_identity_quality(identity, settings)
-    margin = 0.1
-
-    for rep in existing_reps:
-        rep_bucket = _get_pose_bucket(rep, bucket_size)
-        if rep_bucket == new_bucket:
-            rep_quality = rep.quality_score or 0
-            if new_quality > rep_quality + margin:
-                logger.info(
-                    "[pose_bucket] UPGRADE identity=%s bucket=%s new_quality=%.3f > rep=%s rep_quality=%.3f",
-                    identity.id,
-                    new_bucket,
-                    new_quality,
-                    rep.identity_id,
-                    rep_quality,
-                )
-                return rep
-            else:
-                logger.debug(
-                    "[pose_bucket] identity=%s bucket=%s quality=%.3f not better than rep=%s quality=%.3f",
-                    identity.id,
-                    new_bucket,
-                    new_quality,
-                    rep.identity_id,
-                    rep_quality,
-                )
-
-    return None
 
 
 class AssignmentWriter:
@@ -257,7 +60,8 @@ class AssignmentWriter:
         self._members = member_repository
         self._run_context = run_context
         self._session = session
-        self._last_rep_count: int | None = None
+        self._centroids = CentroidMaintainer(cluster_repository)
+        self._reps = RepresentativeSelector(settings, cluster_repository)
 
     def bind_run_context(self, context: RecognitionRunContext | None) -> None:
         """Attach or clear the active recognition run context.
@@ -356,6 +160,32 @@ class AssignmentWriter:
             payload=payload,
         )
 
+    def _emit_representative_upgraded_event(
+        self,
+        *,
+        is_upgrade: bool,
+        cluster_id: str,
+        identity_id: str,
+        rep: ClusterRepresentative,
+    ) -> None:
+        """Emit a `representative_upgraded` event when a genuine quality upgrade occurred.
+
+        Shared by both write paths (`persist_assignment` + `persist_assignments_chunk`) so the
+        upgrade reason and its event stay coupled across single and batch persistence.
+        """
+        if not (is_upgrade and self._run_context):
+            return
+
+        self._run_context.add_event(
+            event_type="representative_upgraded",
+            identity_id=identity_id,
+            cluster_id=cluster_id,
+            payload={
+                "representative_id": rep.id,
+                "quality": float(rep.quality_score or 0),
+            },
+        )
+
     async def _create_and_add_representative(
         self,
         cluster_id: str,
@@ -447,13 +277,13 @@ class AssignmentWriter:
         if existing_member is None:
             return
 
-        should_add, cached_reps = await self._should_add_representative(decision, batch_mode=batch_mode)
-        if should_add:
+        admission = await self._should_add_representative(decision, batch_mode=batch_mode)
+        if admission.should_add:
             # Store the full 1024D embedding, not the face-only 512D vector
             # Identify if this was an upgrade vs novel addition for the reason
-            is_upgrade = getattr(self, "_last_decision_was_upgrade", False)
+            is_upgrade = admission.was_upgrade
             reason = "representative_upgrade" if is_upgrade else "diverse_addition"
-            if not is_upgrade and getattr(self, "_last_decision_was_novel_pose", False):
+            if not is_upgrade and admission.was_novel_pose:
                 reason = "novel_pose_addition"
 
             rep = await self._create_and_add_representative(
@@ -461,30 +291,24 @@ class AssignmentWriter:
                 identity=decision.candidate.identity,
                 reason=reason,
                 is_provisional=batch_mode,
-                existing_rep_count=self._last_rep_count,
+                existing_rep_count=admission.rep_count,
             )
 
-            if is_upgrade and self._run_context:
-                self._run_context.add_event(
-                    event_type="representative_upgraded",
-                    identity_id=decision.candidate.identity.id,
-                    cluster_id=decision.candidate.cluster_id,
-                    payload={
-                        "representative_id": rep.id,
-                        "quality": float(rep.quality_score or 0),
-                    },
-                )
+            self._emit_representative_upgraded_event(
+                is_upgrade=is_upgrade,
+                cluster_id=decision.candidate.cluster_id,
+                identity_id=decision.candidate.identity.id,
+                rep=rep,
+            )
 
             # Compute centroid from the cached reps (returned by _should_add_representative)
             # plus the newly added rep -- this avoids a redundant get_all_representatives
             # DB round-trip (Phase 3: duplicate-read elimination).
-            all_rep_embeddings = [r.embedding for r in cached_reps]
+            all_rep_embeddings = [r.embedding for r in admission.cached_reps]
             all_rep_embeddings.append(rep.embedding)
-            if all_rep_embeddings:
-                stacked = np.stack(all_rep_embeddings)
-                mean_vec = np.mean(stacked, axis=0)
-                norm = float(np.linalg.norm(mean_vec))
-                cluster.centroid = cast(np.ndarray, mean_vec / norm if norm > 0 else mean_vec)
+            new_centroid = self._centroids.unit_normalized_mean(all_rep_embeddings)
+            if new_centroid is not None:
+                cluster.centroid = new_centroid
 
         cluster.identity_count += 1
         await self._clusters.update(cluster)
@@ -553,27 +377,31 @@ class AssignmentWriter:
 
             # Per-identity: representative and centroid updates for new members only.
             for decision in newly_inserted:
-                should_add, cached_reps = await self._should_add_representative(decision, batch_mode=batch_mode)
-                if should_add:
-                    is_upgrade = getattr(self, "_last_decision_was_upgrade", False)
+                admission = await self._should_add_representative(decision, batch_mode=batch_mode)
+                if admission.should_add:
+                    is_upgrade = admission.was_upgrade
                     reason = "representative_upgrade" if is_upgrade else "diverse_addition"
-                    if not is_upgrade and getattr(self, "_last_decision_was_novel_pose", False):
+                    if not is_upgrade and admission.was_novel_pose:
                         reason = "novel_pose_addition"
                     rep = await self._create_and_add_representative(
                         cluster_id=cluster_id,
                         identity=decision.candidate.identity,
                         reason=reason,
                         is_provisional=batch_mode,
-                        existing_rep_count=len(cached_reps),
+                        existing_rep_count=len(admission.cached_reps),
                     )
                     _reps_added += 1
-                    all_rep_embeddings = [r.embedding for r in cached_reps]
+                    self._emit_representative_upgraded_event(
+                        is_upgrade=is_upgrade,
+                        cluster_id=cluster_id,
+                        identity_id=decision.candidate.identity.id,
+                        rep=rep,
+                    )
+                    all_rep_embeddings = [r.embedding for r in admission.cached_reps]
                     all_rep_embeddings.append(rep.embedding)
-                    if all_rep_embeddings:
-                        stacked = np.stack(all_rep_embeddings)
-                        mean_vec = np.mean(stacked, axis=0)
-                        norm = float(np.linalg.norm(mean_vec))
-                        cluster.centroid = cast(np.ndarray, mean_vec / norm if norm > 0 else mean_vec)
+                    new_centroid = self._centroids.unit_normalized_mean(all_rep_embeddings)
+                    if new_centroid is not None:
+                        cluster.centroid = new_centroid
 
             # Single cluster identity_count update for all newly inserted members.
             cluster.identity_count += len(newly_inserted)
@@ -611,226 +439,27 @@ class AssignmentWriter:
 
     async def refresh_centroids_view(self) -> None:
         """Trigger a refresh of the cluster centroids view."""
-        # Call repo if it supports it
-        refresh = getattr(self._clusters, "refresh_centroids_view", None)
-        if callable(refresh):
-            await refresh()
+        await self._centroids.refresh_centroids_view()
 
     async def refresh_centroids_view_concurrent(self) -> bool:
         """Trigger a concurrent refresh of the cluster centroids view. Returns True on success."""
-        refresh = getattr(self._clusters, "refresh_centroids_view_concurrent", None)
-        if callable(refresh):
-            return bool(await refresh())
-        return True
+        return await self._centroids.refresh_centroids_view_concurrent()
 
-    async def _should_add_representative(
-        self, decision: AssignmentDecision, batch_mode: bool = False
-    ) -> tuple[bool, list[ClusterRepresentative]]:
-        """Determine if the assigned identity should become a representative.
+    async def _should_add_representative(self, decision: AssignmentDecision, batch_mode: bool = False) -> RepAdmission:
+        """Delegate the representative-admission decision to :class:`RepresentativeSelector`.
 
-        Returns ``(should_add, cached_reps)`` where ``cached_reps`` reflects
-        the current DB state *after* any upgrade removal so the caller can
-        compute the new centroid from cached data without a second DB round-trip
-        (Phase 3 duplicate-read elimination).
+        Retained as a thin delegator so existing callers and unit tests that exercise
+        the admission decision through the writer keep working after the Slice 9 3b
+        extraction.
         """
-        cluster_id = decision.candidate.cluster_id
-
-        # Fetch all reps once; this is the only get_all_representatives call
-        # for the accepted-assignment path (Phase 3: remove duplicate reads).
-        existing_reps: list[ClusterRepresentative] = list(await self._clusters.get_all_representatives(cluster_id))
-        current_count = len(existing_reps)
-        self._last_rep_count = current_count
-
-        # Track which rep was removed so cached_reps reflects current DB state.
-        removed_rep_id: str | None = None
-
-        # 1. Check for upgrade opportunity (replace lower quality rep in same pose bucket)
-        upgrade_target = _find_upgradeable_representative(
-            decision.candidate.identity,
-            existing_reps,
-            self._settings.pose_bucket_size,
-            self._settings,
-        )
-        if upgrade_target:
-            # User-selected representatives are protected from automatic upgrades
-            if getattr(upgrade_target, "is_user_selected", False):
-                self._last_decision_was_upgrade = False
-                return False, existing_reps
-
-            await self._clusters.remove_representative(upgrade_target.id)
-            removed_rep_id = upgrade_target.id
-            logger.info(
-                "[pose_bucket] QUALITY_UPGRADE cluster=%s old_identity=%s new_identity=%s quality_diff=%.3f",
-                cluster_id,
-                upgrade_target.identity_id,
-                decision.candidate.identity.id,
-                _compute_identity_quality(decision.candidate.identity, self._settings)
-                - (upgrade_target.quality_score or 0),
-            )
-            self._last_decision_was_upgrade = True
-
-        self._last_decision_was_upgrade = False
-
-        # cached_reps = existing_reps minus any rep just removed by the upgrade path.
-        cached_reps = [r for r in existing_reps if r.id != removed_rep_id] if removed_rep_id else existing_reps
-
-        # 2. Check limits with bonus
-        max_base = self._settings.max_representatives_per_cluster
-        max_total = max_base + self._settings.pose_diversity_bonus
-
-        # In batch_mode, we allow adding even if we reached the limit,
-        # provided it's a novel pose or diverse, because they will be provisional.
-        # Actually, the upgrade logic (1) already handles replacing.
-        # For new additions:
-        if not batch_mode and current_count >= max_total:
-            return False, cached_reps
-
-        # 3. If above base limit, only add if novel pose
-        if current_count >= max_base:
-            if _is_novel_pose(decision.candidate.identity, existing_reps, self._settings.pose_bucket_size):
-                self._last_decision_was_novel_pose = True
-                return True, cached_reps
-            # If batch_mode, we might still want to add it if it's "better" than nothing?
-            # No, if not novel pose and no upgrade target, it's redundant.
-            return False, cached_reps
-
-        self._last_decision_was_novel_pose = False
-
-        if not existing_reps:
-            return True, cached_reps
-
-        # 4. Standard diversity check (embedding distance)
-        for rep in existing_reps:
-            rep_embedding = cast(np.ndarray, getattr(rep, "embedding", rep))
-            similarity = compute_face_similarity(decision.candidate.identity_vector, rep_embedding)
-            if similarity > self._settings.representative_diversity_threshold:
-                # If we are here, it means we are NOT in the novel pose path (or below max_base).
-                # If below max_base, we enforce diversity.
-                # If above max_base, we already checked novel pose (which implies diversity in pose space).
-                # But novel pose == false -> we fell through.
-                # So if similarity is high, we reject.
-                return False, cached_reps
-
-        return True, cached_reps
-
-    async def _select_reps_to_preserve(
-        self,
-        cluster_id: str,
-    ) -> list[ClusterRepresentative]:
-        """Identify representatives that MUST be preserved during recompute.
-
-        Preserves:
-        1. All user-selected (pinned) representatives.
-        2. The highest-quality representative from each covered pose bucket.
-        """
-        all_reps = await self._clusters.get_all_representatives(cluster_id)
-        if not all_reps:
-            return []
-
-        # 1. Start with all pinned reps
-        pinned = [rep for rep in all_reps if rep.is_user_selected]
-        preserved: dict[str, ClusterRepresentative] = {rep.id: rep for rep in pinned}
-        logger.debug("[_select_reps_to_preserve] Found %d pinned reps", len(pinned))
-
-        # 2. Add best-of-bucket for all buckets
-        buckets: dict[tuple[int, int], ClusterRepresentative] = {}
-        for rep in all_reps:
-            bucket = _get_pose_bucket(rep, self._settings.pose_bucket_size)
-            if bucket is None:
-                continue
-
-            if bucket not in buckets or rep.quality_score > buckets[bucket].quality_score:
-                buckets[bucket] = rep
-
-        for rep in buckets.values():
-            if rep.id not in preserved:
-                logger.debug(
-                    "[_select_reps_to_preserve] Adding best-of-bucket rep: %s for bucket %s",
-                    rep.identity_id,
-                    _get_pose_bucket(rep, self._settings.pose_bucket_size),
-                )
-                preserved[rep.id] = rep
-            else:
-                logger.debug(
-                    "[_select_reps_to_preserve] Best-of-bucket rep %s already preserved (pinned)",
-                    rep.identity_id,
-                )
-
-        return list(preserved.values())
-
-    def _select_diverse_representatives_seeded(
-        self,
-        identities: list[MediaIdentity],
-        requested_count: int,
-        seeded_embeddings: list[np.ndarray],
-    ) -> list[MediaIdentity]:
-        """Select diverse representatives using Furthest Point Sampling, seeded with existing reps.
-
-        This ensures newly selected reps are diverse relative to BOTH each other
-        AND the already-preserved representatives.
-        """
-        if not identities or requested_count <= 0:
-            return []
-
-        # Seed the selected set with normalized preserved embeddings
-        selected_vecs = [_normalize_embedding(ev) for ev in seeded_embeddings]
-
-        # We only want to select from identities that aren't already represented by seeds
-        # (though recompute_representatives usually filters these out anyway)
-        selected_identities: list[MediaIdentity] = []
-
-        num_to_pick = min(requested_count, len(identities))
-
-        # Pool of candidates
-        pool = identities
-
-        for _ in range(num_to_pick):
-            best_idx: int | None = None
-            best_min_dist = -1.0
-
-            for idx, candidate in enumerate(pool):
-                cand_vec = _normalize_embedding(candidate.embedding)
-                # Distance to nearest already-selected representative (including seeds)
-                if not selected_vecs:
-                    min_dist = 1.0  # First one if no seeds
-                else:
-                    min_dist = min(float(1 - np.dot(cand_vec, sv)) for sv in selected_vecs)
-
-                if min_dist > best_min_dist:
-                    best_min_dist = min_dist
-                    best_idx = idx
-
-            if best_idx is None:
-                break
-
-            picked = pool.pop(best_idx)
-            selected_identities.append(picked)
-            selected_vecs.append(_normalize_embedding(picked.embedding))
-
-        return selected_identities
+        return await self._reps.should_add_representative(decision, batch_mode)
 
     async def recompute_centroid(self, cluster_id: str) -> np.ndarray | None:
         """Recompute cluster centroid from representatives.
 
         Returns None if no representatives exist for the cluster.
         """
-        reps = await self._clusters.get_all_representatives(cluster_id)
-        if not reps:
-            # No representatives yet - return None to signal no centroid update
-            return None
-
-        # Calculate mean vector
-        # Handle both raw embedding vectors and full ClusterRepresentative objects
-        rep_vecs = [cast(np.ndarray, getattr(r, "embedding", r)) for r in reps]
-        stacked = np.stack(rep_vecs)
-        mean_vector = np.mean(stacked, axis=0)
-
-        # Normalize
-        norm = np.linalg.norm(mean_vector)
-        if norm > 0:
-            mean_vector = mean_vector / norm
-
-        return cast(np.ndarray, mean_vector)
+        return await self._centroids.recompute_centroid(cluster_id)
 
     async def recompute_representatives(self, cluster_id: str) -> None:
         """Recompute cluster representatives using FPS for diversity while preserving pins/quality."""
@@ -839,7 +468,7 @@ class AssignmentWriter:
             raise ClusterNotFoundError(cluster_id)
 
         # 1. Identify what to preserve
-        preserved = await self._select_reps_to_preserve(cluster_id)
+        preserved = await self._reps.select_reps_to_preserve(cluster_id)
         preserved_ids = {p.identity_id for p in preserved}
         preserved_embeddings = [p.embedding for p in preserved]
 
@@ -858,7 +487,7 @@ class AssignmentWriter:
 
         selected_new: list[MediaIdentity] = []
         if available_slots > 0 and identities:
-            selected_new = self._select_diverse_representatives_seeded(
+            selected_new = self._reps.select_diverse_representatives_seeded(
                 identities, available_slots, preserved_embeddings
             )
 

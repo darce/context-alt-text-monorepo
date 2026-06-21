@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError, ProgrammingError
 from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 
-from recognition.interface_adapters.http import dependencies
+from recognition.interface_adapters.http import deps as dependencies
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.exception_handlers import register_exception_handlers
 from recognition.tests.api.conftest import FakeSession

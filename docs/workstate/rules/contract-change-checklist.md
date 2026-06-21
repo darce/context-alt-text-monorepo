@@ -6,8 +6,8 @@
 
 | Boundary | Canonical Owner | Contract | Adaptation Point | Primary Consumers |
 | --- | --- | --- | --- | --- |
-| Recognition cluster snapshot API | `backend` | `docs/workstate/contracts/cluster-snapshot-api.md` | FastAPI snapshot export in `apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters.py` | WordPress sovereign projector, frontend via local projection |
-| Recognition cluster delta API | `backend` | `docs/workstate/contracts/cluster-delta-api.md` | FastAPI delta export in `apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters.py` | WordPress sovereign projector |
+| Recognition cluster snapshot API | `backend` | `docs/workstate/contracts/cluster-snapshot-api.md` | FastAPI snapshot export in `apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters_snapshot.py` | WordPress sovereign projector, frontend via local projection |
+| Recognition cluster delta API | `backend` | `docs/workstate/contracts/cluster-delta-api.md` | FastAPI delta export in `apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters_snapshot.py` | WordPress sovereign projector |
 | WordPress recognition REST proxy | `wp-proxy` | `docs/workstate/contracts/clustering-api.md` | WordPress REST controllers under `apps/prototype-wp-alt-context/src/api/` | React admin UI |
 | Curation replay API | `backend` | `docs/workstate/contracts/curation-sync-api.md` | Recognition-service replay/topology routes | WordPress outbox drain |
 | Recognition HTTP API | `backend` | `docs/workstate/contracts/recognition-clustering.md` | FastAPI routes under `apps/prototype-description-service/recognition/interface_adapters/http/routers/` | WordPress proxy |

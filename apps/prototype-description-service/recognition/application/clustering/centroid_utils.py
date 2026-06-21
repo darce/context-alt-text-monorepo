@@ -48,31 +48,6 @@ def compute_centroid(embeddings: Sequence[Sequence[float] | np.ndarray]) -> np.n
     return normalize_vector(centroid)
 
 
-def update_centroid_incremental(
-    old_centroid: Sequence[float] | np.ndarray,
-    old_count: int,
-    new_embedding: Sequence[float] | np.ndarray,
-) -> np.ndarray:
-    """
-    Update an existing centroid with an additional embedding using a weighted average.
-
-    Returns a normalized centroid (L2 norm == 1.0) suitable for cosine similarity checks.
-
-    Note: This operates on the full embedding (512D) to preserve metadata
-    for the centroid representation.
-    """
-    if old_count < 0:
-        raise ValueError("old_count must be non-negative")
-
-    old_vector = np.array(old_centroid, dtype=np.float32)
-    new_vector = np.array(new_embedding, dtype=np.float32)
-    new_vector = normalize_vector(new_vector)
-
-    weighted_old = old_vector * float(old_count)
-    updated = (weighted_old + new_vector) / float(old_count + 1)
-    return normalize_vector(updated)
-
-
 def compute_similarity(
     embedding_a: Sequence[float] | np.ndarray,
     embedding_b: Sequence[float] | np.ndarray,

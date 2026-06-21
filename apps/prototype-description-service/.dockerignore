@@ -2,7 +2,6 @@
 tests/
 recognition/tests/
 roster/tests/
-scene/tests/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

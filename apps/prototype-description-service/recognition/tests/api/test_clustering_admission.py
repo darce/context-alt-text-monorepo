@@ -26,7 +26,7 @@ from sqlalchemy.exc import DBAPIError
 from recognition.interface_adapters.http.deps.clustering_circuit_breaker import (
     get_or_create_clustering_circuit_breaker,
 )
-from recognition.interface_adapters.http.routers import clusters as clusters_module
+from recognition.interface_adapters.http.routers import clusters_admission as clusters_module
 from recognition.tests.api.conftest import FakeSession
 
 

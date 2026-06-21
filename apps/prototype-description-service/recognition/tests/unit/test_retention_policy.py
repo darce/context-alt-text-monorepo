@@ -11,8 +11,8 @@ from pydantic import ValidationError
 from sqlalchemy import select
 
 from db.models import AuditEvent, Tenant
+from recognition.application.services.retention_policy_service import RetentionPolicyService
 from recognition.config.settings import RecognitionSettings
-from recognition.domain.services.retention_policy_service import RetentionPolicyService
 
 
 @pytest.mark.asyncio

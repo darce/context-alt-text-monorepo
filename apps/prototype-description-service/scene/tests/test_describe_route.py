@@ -7,9 +7,11 @@ import tempfile
 import time
 import uuid
 from contextlib import contextmanager, suppress
+from typing import cast
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import Table
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from db.models.base_imports import Base
@@ -62,7 +64,7 @@ def _make_db():
         async with engine.begin() as conn:
             await conn.run_sync(
                 Base.metadata.create_all,
-                tables=[Tenant.__table__, ImageDescription.__table__, AuditEvent.__table__],
+                tables=cast(list[Table], [Tenant.__table__, ImageDescription.__table__, AuditEvent.__table__]),
             )
         sf = async_sessionmaker(engine, expire_on_commit=False)
         async with sf() as s:  # provision the tenant so require_tenant_record passes

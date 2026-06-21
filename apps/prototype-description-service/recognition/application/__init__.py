@@ -21,6 +21,7 @@ def __getattr__(name: str):
         return check_health
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
+
 __all__ = [
     "AssignmentCandidate",
     "AssignmentDecision",

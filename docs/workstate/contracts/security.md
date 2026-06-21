@@ -401,11 +401,10 @@ printed outside the single labeled stdout line written by `manage_api_keys.py cr
 ## Operator CLI: Key Rotation Ceremony
 
 Beta-tester key provisioning happens via `scripts/manage_api_keys.py`, run
-by an operator with direct DB access. An HTTP admin surface is explicitly
-**deferred** until a production admin authority is designed (the current
-`AuthContext.is_admin` flag only resolves for dev keys and cannot gate a
-production admin surface). The CLI delegates to `SqlAlchemyApiKeyRepository`
-and never issues raw SQL.
+by an operator with direct DB access. The CLI delegates to
+`SqlAlchemyApiKeyRepository` and never issues raw SQL. As of **E15-31** the CLI
+coexists with a **shipped** HTTP `/admin` surface (below); both call the same
+extracted key-minting service, so the CLI ceremony here remains valid.
 
 **Commands**:
 
@@ -443,6 +442,24 @@ and never issues raw SQL.
 7. Operator runs `manage_api_keys.py revoke --key-id <old-key-id>` to
    soft-revoke the old key.
 
-**HTTP admin surface: deferred.** No admin router ships with E15-1. A real
-production admin authority is required first; until then, provisioning is
-operator-only via this CLI.
+**HTTP admin surface: shipped (E15-31).** The `/admin` router that E15-1
+left out now ships, gated by a **tailnet + shared `RECOGNITION_ADMIN_TOKEN`**
+admin authority — neither alone is sufficient by policy:
+
+- **Network**: the public `api.altcontext.com` vhost denies `/admin*` with a
+  `404` (Caddy `@admin` matcher → `respond @admin 404`, not 403, so the
+  surface is not confirmed). `/admin` is reachable **only over the tailnet**
+  (`tailscale serve` or an `ssh -L` tunnel to the prod-api loopback); see
+  `docs/runbooks/admin-tenant-keys.md`.
+- **Token**: every `/admin` route requires the shared `RECOGNITION_ADMIN_TOKEN`
+  on the dedicated `X-Admin-Token` header (or HTTP Basic password), checked
+  with `secrets.compare_digest`. It never reads `AuthContext.is_admin`, the
+  tenant `X-API-Key` header, or the DB — the dev-key admin path stays banned in
+  production.
+- **Env gate / fail-closed**: the router mounts only when
+  `RECOGNITION_ADMIN_ENABLED=true`. `validate_admin_config` refuses to start
+  when admin is enabled with an empty or `<32`-char token, or in production
+  without the `RECOGNITION_ADMIN_TAILNET_BOUND=1` acknowledgement.
+
+The operator runbook for the surface is `docs/runbooks/admin-tenant-keys.md`;
+the CLI ceremony above remains a supported fallback.

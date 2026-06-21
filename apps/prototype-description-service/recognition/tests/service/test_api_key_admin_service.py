@@ -95,3 +95,17 @@ async def test_mint_api_key_expiry_conversion(db_session: AsyncSession, tenant: 
 
     assert before + timedelta(days=7) - timedelta(seconds=5) <= expires_at
     assert expires_at <= after + timedelta(days=7) + timedelta(seconds=5)
+
+
+@pytest.mark.asyncio
+async def test_mint_api_key_rejects_out_of_range_expiry_with_value_error(
+    db_session: AsyncSession, tenant: Tenant
+) -> None:
+    """BR-03: a huge expires_in_days must raise ValueError (bounded), not OverflowError → 500."""
+    with pytest.raises(ValueError, match="expires_in_days"):
+        await mint_api_key(
+            db_session,
+            tenant_id=tenant.id,
+            tier=RateLimitTier.STANDARD,
+            expires_in_days=3_000_000,
+        )

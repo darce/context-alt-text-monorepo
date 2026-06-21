@@ -256,10 +256,142 @@ def test_assert_admin_env_dsn_raises_production_with_local_dsn() -> None:
 
 
 def test_assert_admin_env_dsn_passes_non_production_with_local_dsn() -> None:
-    assert assert_admin_env_dsn(runtime_mode="test", dsn="postgresql+asyncpg://user@127.0.0.1:5432/db") is None
+    # Returns None on agreement; a mismatch would raise. Just call it.
+    assert_admin_env_dsn(runtime_mode="test", dsn="postgresql+asyncpg://user@127.0.0.1:5432/db")
 
 
 def test_config_guard_and_mint_symbol_importable() -> None:
     """Sanity: fail-closed config guard + shared mint helper remain importable."""
     assert InsecureProductionConfigError is not None
     assert admin_module.mint_api_key is _mint_symbol
+
+
+# --- BR-03: expires_in_days bound (no OverflowError → 500) ----------------------
+
+
+@pytest.mark.asyncio
+async def test_mint_json_out_of_range_expiry_returns_422_not_500(
+    admin_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    tenant_id = str(uuid.uuid4())
+    await admin_client.post(
+        "/admin/tenants", json={"tenant_id": tenant_id, "site_url": "http://expiry.test"}, headers=_AUTH
+    )
+    resp = await admin_client.post(
+        f"/admin/tenants/{tenant_id}/keys", json={"expires_in_days": 3_000_000}, headers=_AUTH
+    )
+    assert resp.status_code == 422, resp.text
+
+
+@pytest.mark.asyncio
+async def test_console_mint_form_out_of_range_expiry_returns_400_not_500(
+    admin_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    tenant_id = str(uuid.uuid4())
+    await admin_client.post(
+        "/admin/tenants", json={"tenant_id": tenant_id, "site_url": "http://expiry-form.test"}, headers=_AUTH
+    )
+    resp = await admin_client.post(
+        "/admin/ui/keys",
+        data={"tenant_id": tenant_id, "tier": "STANDARD", "expires_in_days": "3000000"},
+        headers={**_AUTH, "Origin": "http://admin.test"},
+    )
+    assert resp.status_code == 400, resp.text
+
+
+# --- BR-02: same-origin guard on form routes -----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_console_mint_form_rejects_cross_origin(
+    admin_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    tenant_id = str(uuid.uuid4())
+    await admin_client.post(
+        "/admin/tenants", json={"tenant_id": tenant_id, "site_url": "http://csrf.test"}, headers=_AUTH
+    )
+    resp = await admin_client.post(
+        "/admin/ui/keys",
+        data={"tenant_id": tenant_id, "tier": "STANDARD"},
+        headers={**_AUTH, "Origin": "https://evil.example"},
+    )
+    assert resp.status_code == 403, resp.text
+
+
+@pytest.mark.asyncio
+async def test_console_mint_form_allows_same_origin(
+    admin_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    tenant_id = str(uuid.uuid4())
+    await admin_client.post(
+        "/admin/tenants", json={"tenant_id": tenant_id, "site_url": "http://ok-origin.test"}, headers=_AUTH
+    )
+    resp = await admin_client.post(
+        "/admin/ui/keys",
+        data={"tenant_id": tenant_id, "tier": "STANDARD"},
+        headers={**_AUTH, "Origin": "http://admin.test"},
+    )
+    assert resp.status_code == 200, resp.text
+
+
+# --- BR-04: console single key query + per-tenant cap --------------------------
+
+
+@pytest.mark.asyncio
+async def test_console_caps_keys_and_renders_note(
+    admin_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A tenant with > cap keys renders the 'showing N of M' note and is capped."""
+    from recognition.interface_adapters.http.routers.admin import _CONSOLE_KEYS_PER_TENANT
+
+    tenant_id = str(uuid.uuid4())
+    await admin_client.post(
+        "/admin/tenants", json={"tenant_id": tenant_id, "site_url": "http://cap.test"}, headers=_AUTH
+    )
+
+    over_cap = _CONSOLE_KEYS_PER_TENANT + 5
+    repo = SqlAlchemyApiKeyRepository(db_session)
+    for index in range(over_cap):
+        await repo.create(tenant_id=uuid.UUID(tenant_id), hashed_key=f"hash-{index:04d}")
+    await db_session.commit()
+
+    resp = await admin_client.get("/admin/", headers=_AUTH)
+    assert resp.status_code == 200, resp.text
+    body = resp.text
+    assert f"Showing {_CONSOLE_KEYS_PER_TENANT} of {over_cap} keys" in body
+
+
+@pytest.mark.asyncio
+async def test_console_loads_keys_in_single_query_no_n_plus_one(
+    admin_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_load_console_model issues ONE key query regardless of tenant count (no N+1)."""
+    from recognition.interface_adapters.http.routers import admin as admin_mod
+
+    # Seed several tenants, each with a key, so an N+1 loop would issue many queries.
+    tenant_ids = [str(uuid.uuid4()) for _ in range(4)]
+    for index, tid in enumerate(tenant_ids):
+        await admin_client.post(
+            "/admin/tenants", json={"tenant_id": tid, "site_url": f"http://n1-{index}.test"}, headers=_AUTH
+        )
+        await admin_client.post(f"/admin/tenants/{tid}/keys", json={}, headers=_AUTH)
+
+    # Count list_for_tenant invocations during a console load: the fixed query must
+    # NOT loop the repo per tenant.
+    calls = {"n": 0}
+    original = SqlAlchemyApiKeyRepository.list_for_tenant
+
+    async def _counting(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        calls["n"] += 1
+        return await original(self, *args, **kwargs)
+
+    monkeypatch.setattr(SqlAlchemyApiKeyRepository, "list_for_tenant", _counting)
+
+    tenants, keys_by_tenant, totals_by_tenant = await admin_mod._load_console_model(db_session)
+    assert calls["n"] == 0  # no per-tenant repo loop
+    assert len(tenants) == len(tenant_ids)
+    # Every tenant present in both maps (empty list allowed), keys grouped correctly.
+    for tid in tenant_ids:
+        assert uuid.UUID(tid) in keys_by_tenant
+        assert totals_by_tenant[uuid.UUID(tid)] == 1
+        assert len(keys_by_tenant[uuid.UUID(tid)]) == 1

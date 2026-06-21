@@ -103,12 +103,22 @@ def _keys_table(keys: Sequence[_KeyView]) -> str:
     )
 
 
-def _tenant_section(tenant: _TenantView, keys: Sequence[_KeyView]) -> str:
+def _truncation_note(shown: int, total: int) -> str:
+    """Escaped 'showing N of M keys' banner when the per-tenant cap truncated keys."""
+    if total <= shown:
+        return ""
+    return f'<p class="truncated"><em>Showing {_esc(shown)} of {_esc(total)} keys.</em></p>'
+
+
+def _tenant_section(tenant: _TenantView, keys: Sequence[_KeyView], total_keys: int | None = None) -> str:
+    shown = len(keys)
+    total = total_keys if total_keys is not None else shown
     return (
         '<section class="tenant">'
         f"<h3>{_esc(tenant.site_url)}</h3>"
         f"<p>Tenant ID: <code>{_esc(tenant.id)}</code> &middot; "
         f"Created: {_fmt_ts(tenant.created_at)}</p>"
+        f"{_truncation_note(shown, total)}"
         f"{_keys_table(keys)}"
         f'<form method="post" action="/admin/ui/keys">'
         f'<input type="hidden" name="tenant_id" value="{_esc(tenant.id)}">'
@@ -136,6 +146,7 @@ def render_console(
     *,
     tenants: Sequence[_TenantView],
     keys_by_tenant: Mapping[object, Sequence[_KeyView]],
+    totals_by_tenant: Mapping[object, int] | None = None,
     minted_key: str | None = None,
     message: str | None = None,
 ) -> str:
@@ -143,7 +154,10 @@ def render_console(
 
     Args:
         tenants: tenant rows in display order.
-        keys_by_tenant: maps a tenant id to that tenant's keys (any order).
+        keys_by_tenant: maps a tenant id to that tenant's (possibly capped) keys.
+        totals_by_tenant: maps a tenant id to its PRE-cap key count; when a tenant's
+            rendered key list is shorter than its total, a "showing N of M" note is
+            rendered. Defaults to the rendered count (no truncation note) when None.
         minted_key: when set, the raw key is rendered once in a highlighted box.
         message: an optional escaped status banner.
     """
@@ -151,7 +165,14 @@ def render_console(
     minted = _minted_block(minted_key) if minted_key else ""
 
     if tenants:
-        tenant_sections = "".join(_tenant_section(t, keys_by_tenant.get(t.id, ())) for t in tenants)
+        tenant_sections = "".join(
+            _tenant_section(
+                t,
+                keys_by_tenant.get(t.id, ()),
+                totals_by_tenant.get(t.id) if totals_by_tenant is not None else None,
+            )
+            for t in tenants
+        )
     else:
         tenant_sections = "<p><em>No tenants yet.</em></p>"
 

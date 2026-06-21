@@ -37,6 +37,7 @@ from db.models.observability import (
     RecognitionEvent,
     RecognitionRun,
 )
+from db.models.scene import ImageDescription
 from db.models.tenant import ApiKey, Tenant
 from db.models.worker_capability import WorkerCapability
 
@@ -69,6 +70,8 @@ __all__ = [
     "NameSuggestion",
     "IdentityClusterBlock",
     "IdentityConstraint",
+    # Scene (image description)
+    "ImageDescription",
     # Worker capability
     "WorkerCapability",
 ]

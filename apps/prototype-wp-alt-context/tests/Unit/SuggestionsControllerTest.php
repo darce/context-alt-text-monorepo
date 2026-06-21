@@ -84,7 +84,7 @@ class SuggestionsControllerTest extends TestCase
         $this->assertSame(200, $response->get_status());
         $data = $response->get_data();
         $this->assertSame([], $data['suggestions'] ?? null);
-        $this->assertSame(0, $data['total'] ?? null);
+        $this->assertArrayNotHasKey('total', $data);
         $this->assertSame(25, $data['limit'] ?? null);
         $this->assertSame(0, $data['offset'] ?? null);
         $this->assertSame('unavailable', $data['data_source'] ?? null);
@@ -107,7 +107,7 @@ class SuggestionsControllerTest extends TestCase
         $this->assertSame(200, $response->get_status());
         $data = $response->get_data();
         $this->assertSame([], $data['suggestions'] ?? null);
-        $this->assertSame(0, $data['total'] ?? null);
+        $this->assertArrayNotHasKey('total', $data);
         $this->assertSame(25, $data['limit'] ?? null);
         $this->assertSame(0, $data['offset'] ?? null);
         $this->assertSame('endpoint_error', $data['data_source'] ?? null);
@@ -163,7 +163,7 @@ class SuggestionsControllerTest extends TestCase
         $this->assertSame(200, $response->get_status());
         $data = $response->get_data();
         $this->assertSame([], $data['suggestions'] ?? null);
-        $this->assertSame(0, $data['total'] ?? null);
+        $this->assertArrayNotHasKey('total', $data);
         $this->assertSame(10, $data['limit'] ?? null);
         $this->assertSame(0, $data['offset'] ?? null);
         $this->assertSame('unavailable', $data['data_source'] ?? null);
@@ -186,11 +186,13 @@ class SuggestionsControllerTest extends TestCase
         $this->assertSame('backend_proxy', $data['data_source'] ?? null);
         $this->assertSame(10, $data['limit'] ?? null);
         $this->assertSame(4, $data['offset'] ?? null);
-        $this->assertSame(1, $data['total'] ?? null);
+        $this->assertArrayNotHasKey('total', $data);
     }
 
-    public function testGetPendingSuggestionsTotalDerivesFromArrayCountNotBackendField(): void
+    public function testGetPendingSuggestionsOmitsAuthoritativeTotal(): void
     {
+        // COR-3 (rg-015): upstream returns a bare page with no global count, so the
+        // boundary must not synthesize an authoritative total from count(page).
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([
@@ -208,9 +210,10 @@ class SuggestionsControllerTest extends TestCase
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $data = $response->get_data();
 
-        // total must be derived from count(items)=3, not from any backend field
-        $this->assertSame(3, $data['total']);
-        // limit and offset must come from the request parameters, not the backend
+        // No fabricated authoritative total — consumers count loaded items instead.
+        $this->assertArrayNotHasKey('total', $data);
+        $this->assertCount(3, $data['suggestions']);
+        // limit and offset still echo the request parameters.
         $this->assertSame(25, $data['limit']);
         $this->assertSame(0, $data['offset']);
         $this->assertSame('backend_proxy', $data['data_source']);
@@ -247,7 +250,7 @@ class SuggestionsControllerTest extends TestCase
         $this->assertSame('backend_proxy', $data['data_source'] ?? null);
         $this->assertCount(1, $data['suggestions'] ?? []);
         // total from count(items), limit/offset from request params
-        $this->assertSame(1, $data['total'] ?? null);
+        $this->assertArrayNotHasKey('total', $data);
         $this->assertSame(15, $data['limit'] ?? null);
         $this->assertSame(5, $data['offset'] ?? null);
     }
@@ -314,7 +317,7 @@ class SuggestionsControllerTest extends TestCase
         $this->assertSame(200, $response->get_status());
         $data = $response->get_data();
         $this->assertSame([], $data['suggestions'] ?? null);
-        $this->assertSame(0, $data['total'] ?? null);
+        $this->assertArrayNotHasKey('total', $data);
         $this->assertSame('unavailable', $data['data_source'] ?? null);
     }
 
@@ -335,7 +338,7 @@ class SuggestionsControllerTest extends TestCase
         $this->assertSame('backend_proxy', $data['data_source'] ?? null);
         $this->assertSame(25, $data['limit'] ?? null);
         $this->assertSame(6, $data['offset'] ?? null);
-        $this->assertSame(1, $data['total'] ?? null);
+        $this->assertArrayNotHasKey('total', $data);
     }
 
     public function testListNameSuggestionsRejectsUnexpectedEnvelopePayload(): void
@@ -366,7 +369,7 @@ class SuggestionsControllerTest extends TestCase
         $data = $response->get_data();
         $this->assertSame('backend_proxy', $data['data_source'] ?? null);
         $this->assertCount(1, $data['suggestions'] ?? []);
-        $this->assertSame(1, $data['total'] ?? null);
+        $this->assertArrayNotHasKey('total', $data);
     }
 
     public function testAcceptNameSuggestionForwardsSuggestionId(): void

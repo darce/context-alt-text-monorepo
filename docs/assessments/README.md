@@ -14,6 +14,8 @@ These docs can inform planning, but they are not themselves active epics or task
 - [Refactoring Opportunities — `apps/prototype-wp-alt-context`](wp-alt-context-cross-cutting-assessment.md) remains actionable as a plugin hardening backlog.
 - [Clustering Pipeline & Postgres Refactor — Literature Crosswalk](clustering-pipeline-postgres-refactor-literature-2026-04-26.md) remains actionable as a backend hardening/source-crosswalk input.
 - [PgCache and Description-Service DB Read/Write Mechanics Assessment](pgcache-description-service-db-read-write-assessment-2026-04-30.md) remains actionable as a deferred architecture/performance decision.
+- [context7 Usefulness Audit & Reintroduction Criteria](current/context7-usefulness-audit-2026-06-18.md) records why context7 stays removed (zero realized usage in the handoff ledger) and the criteria that would justify reintroduction.
+- [ACE Rule-Curation Framework Usefulness Audit](current/ace-framework-usefulness-audit-2026-06-18.md) finds the `sr-*`/`rg-*` rule set load-bearing but the helpful/harmful curation loop dormant/broken (tools parse the wrong file; `harmful` never nonzero; no pruning pass ever recorded). Repair-or-retire decision pending.
 
 ## Archived Assessments
 

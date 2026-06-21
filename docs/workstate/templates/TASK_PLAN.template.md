@@ -85,7 +85,6 @@
 - Rules: `[path/to/rule.md]`
 - Contracts: `[path/to/contract.md]`
 - Handoff/MCP state: [task ref, findings, or decision surfaces to inspect]
-- External docs via `ctx7` only if: [exact dependency/runtime reason]
 
 ## Contract and Boundary Impact
 
@@ -189,7 +188,6 @@ make lane-manifest-init TASK=<task-ref> LANE_IDS='<lane-a lane-b>' TASK_PLAN=doc
 ## Context and Ownership
 
 - [ ] Loaded the minimum authoritative rules, contracts, and handoff state before editing.
-- [ ] Confirmed whether external dependency context requires `ctx7`.
 - [ ] Recorded boundary ownership and compatibility expectations if any contract is touched.
 
 ### Checklist for Slice 1: [Title]

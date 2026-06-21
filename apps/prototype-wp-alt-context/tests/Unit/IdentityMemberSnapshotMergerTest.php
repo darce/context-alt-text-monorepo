@@ -55,6 +55,40 @@ class IdentityMemberSnapshotMergerTest extends TestCase
         $this->assertSame(1, $insertCount);
     }
 
+    public function testMergeSnapshotGatesMemberDataAndKeepsProjectionVersionMonotonic(): void
+    {
+        // COR-1 (PA-2 mechanism assertion): a stale member snapshot must not
+        // regress data or lower projection_version for non-curated rows.
+        $this->merger->merge_snapshot_for_tenant(
+            'tenant-merger',
+            [
+                [
+                    'identity_uuid' => 'identity-ver',
+                    'cluster_uuid' => 'cluster-ver',
+                    'attachment_id' => 9,
+                ],
+            ],
+            12
+        );
+
+        global $wpdb;
+        $insert = '';
+        foreach ($wpdb->queries as $query) {
+            if (str_contains($query, 'INSERT INTO `wp_acx_identity_members`')) {
+                $insert = $query;
+                break;
+            }
+        }
+
+        $this->assertNotSame('', $insert, 'expected a per-member INSERT query');
+        $this->assertStringContainsString('projection_version = IF(is_curated = 1, projection_version, GREATEST(projection_version, VALUES(projection_version)))', $insert);
+        $this->assertStringContainsString('attachment_id = IF(VALUES(projection_version) >= projection_version, VALUES(attachment_id), attachment_id)', $insert);
+        $this->assertStringContainsString('thumb_path = IF(VALUES(projection_version) >= projection_version, VALUES(thumb_path), thumb_path)', $insert);
+        $this->assertStringContainsString('bbox_json = IF(VALUES(projection_version) >= projection_version, VALUES(bbox_json), bbox_json)', $insert);
+        // The curation guard on cluster_uuid is preserved.
+        $this->assertStringContainsString('cluster_uuid = IF(is_curated = 1, cluster_uuid, VALUES(cluster_uuid))', $insert);
+    }
+
     public function testAssignToClusterForProjectionUsesGreatest(): void
     {
         $this->merger->assign_to_cluster_for_projection('identity-proj-merger', 'cluster-proj-merger', 19);

@@ -139,20 +139,6 @@ export interface RevertMergeResponse {
   status?: 'pending' | 'acknowledged';
 }
 
-export interface AssignOutlierRequest {
-  clusterId: string;
-  identityId: string;
-  similarity?: number;
-}
-
-export interface AssignOutlierResponse {
-  identity_id: string;
-  source_cluster_id: string;
-  target_cluster_id: string;
-  synced: boolean;
-  status: 'pending' | 'acknowledged';
-}
-
 export interface SplitClusterResponse {
   /** IDs of newly created clusters */
   new_cluster_ids: string[];

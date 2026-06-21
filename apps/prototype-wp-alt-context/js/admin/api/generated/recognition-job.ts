@@ -18,7 +18,7 @@ export interface JobProgress {
 export interface RecognitionJob {
   id: string;
   type: 'analyze' | 'clustering' | 'curation' | 'split';
-  status: 'pending' | 'running' | 'completed' | 'failed';
+  status: 'pending' | 'running' | 'completed' | 'completed_with_errors' | 'failed';
   progress: JobProgress | null;
   started_at: string;
   finished_at: string | null;

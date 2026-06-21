@@ -5,12 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Sovereign\Mappers;
 
 use function absint;
-use function is_array;
-use function is_numeric;
-use function is_string;
-use function json_decode;
 use function trim;
-use function wp_get_attachment_url;
 
 class MemberResponseMapper {
 	use MapsResponseFields;

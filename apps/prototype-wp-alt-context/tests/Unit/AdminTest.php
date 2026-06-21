@@ -134,6 +134,19 @@ class AdminTest extends TestCase
         $this->assertSame('http://example.test/wp-json/acx/v1/retention/purge', $localized['endpoints']['retentionPurge'] ?? null);
     }
 
+    public function testLocalizeSpaConfigIncludesDescribeEndpoint(): void
+    {
+        $this->invokePrivateMethod($this->admin, 'localize_spa_config', ['test-handle']);
+
+        $localized = $GLOBALS['__ac_localized_scripts']['test-handle']['AltContextAdmin'] ?? null;
+
+        $this->assertIsArray($localized);
+        $this->assertSame(
+            'http://example.test/wp-json/acx/v1/recognition/describe',
+            $localized['endpoints']['recognitionDescribe'] ?? null
+        );
+    }
+
     public function testLocalizeSpaConfigIncludesRecognitionSource(): void
     {
         $this->setOption('acx_recognition_url', 'https://recognition.example');

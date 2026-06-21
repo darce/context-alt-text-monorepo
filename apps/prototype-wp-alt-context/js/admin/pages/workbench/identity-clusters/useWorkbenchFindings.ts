@@ -237,6 +237,7 @@ export const useWorkbenchFindings = (): WorkbenchFindingsViewModel => {
     nameQuery,
     topUnlabeledQuery,
     assignmentDataSource,
+    assignmentSuggestions,
     mergeSuggestions,
     nameSuggestions,
     nameDataSource,
@@ -254,9 +255,10 @@ export const useWorkbenchFindings = (): WorkbenchFindingsViewModel => {
   // failures degrade gracefully to whatever findings did load.
   const isError = !hasAnyData && assignmentQuery.isError && mergeQuery.isError;
 
-  const assignmentTotal = assignmentQuery.data?.total ?? 0;
-  const mergeTotal = mergeQuery.data?.total ?? mergeSuggestions.length;
-  const nameTotal = nameQuery.data?.total ?? nameSuggestions.length;
+  // COR-3 (rg-015): no authoritative backlog total exists; count loaded items.
+  const assignmentTotal = assignmentSuggestions?.length ?? 0;
+  const mergeTotal = mergeSuggestions.length;
+  const nameTotal = nameSuggestions.length;
   const resolvedTopUnlabeledTotal = topUnlabeledTotal ?? topUnlabeledClusters.length;
 
   return buildWorkbenchFindings(

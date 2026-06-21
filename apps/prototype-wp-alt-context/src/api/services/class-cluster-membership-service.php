@@ -22,7 +22,6 @@ use function get_current_user_id;
 use function is_array;
 use function is_object;
 use function is_wp_error;
-use function max;
 use function method_exists;
 use function rest_sanitize_boolean;
 use function sanitize_text_field;
@@ -161,21 +160,20 @@ class ClusterMembershipService {
 
 		$new_cluster_id = wp_generate_uuid4();
 		$source_cluster_id = sanitize_text_field( (string) ( $existing_member['cluster_uuid'] ?? '' ) );
-		$source_member_count = '' !== $source_cluster_id ? $this->members_repository->count_for_cluster( $source_cluster_id ) : 0;
 
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
 			return new WP_Error( 'acx_db_error', 'Database access is unavailable.', array( 'status' => 500 ) );
 		}
 
 		$result = $this->run_transactional(
-			function () use ( $tenant_id, $new_cluster_id, $label, $identity_id, $source_cluster_id, $source_member_count ): WP_REST_Response|WP_Error {
+			function () use ( $tenant_id, $new_cluster_id, $label, $identity_id, $source_cluster_id ): WP_REST_Response|WP_Error {
 				if ( $this->clusters_repository->create_local_cluster( $tenant_id, $new_cluster_id, $label, 1 ) <= 0 ) {
 					return new WP_Error( 'acx_db_error', 'Could not create local cluster projection.', array( 'status' => 500 ) );
 				}
 
 				$this->members_repository->reassign_to_cluster( $identity_id, $new_cluster_id );
 				if ( '' !== $source_cluster_id ) {
-					$this->clusters_repository->update_identity_count( $source_cluster_id, max( 0, $source_member_count - 1 ) );
+					$this->clusters_repository->adjust_identity_count( $source_cluster_id, -1 );
 				}
 
 				$payload = array(
@@ -278,16 +276,13 @@ class ClusterMembershipService {
 			return new WP_Error( 'acx_db_error', 'Database access is unavailable.', array( 'status' => 500 ) );
 		}
 
-		$source_member_count = $this->members_repository->count_for_cluster( $source_cluster_id );
-		$target_member_count = $this->members_repository->count_for_cluster( $cluster_id );
-
 		$affected_rows = 0;
 		$result        = $this->run_transactional(
-			function () use ( $identity_id, $cluster_id, $source_cluster_id, $source_member_count, $target_member_count, $tenant_id, $similarity, $target_cluster, &$affected_rows ): WP_REST_Response|WP_Error {
+			function () use ( $identity_id, $cluster_id, $source_cluster_id, $tenant_id, $similarity, $target_cluster, &$affected_rows ): WP_REST_Response|WP_Error {
 				$affected_rows = $this->members_repository->reassign_to_cluster( $identity_id, $cluster_id );
 				if ( $affected_rows > 0 ) {
-					$this->clusters_repository->update_identity_count( $source_cluster_id, max( 0, $source_member_count - 1 ) );
-					$this->clusters_repository->update_identity_count( $cluster_id, $target_member_count + 1 );
+					$this->clusters_repository->adjust_identity_count( $source_cluster_id, -1 );
+					$this->clusters_repository->adjust_identity_count( $cluster_id, 1 );
 				}
 
 				$payload = array(

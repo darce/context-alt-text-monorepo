@@ -13,18 +13,15 @@ import {
   fetchTopUnlabeledClusters,
   getRecognitionCluster,
   listRecognitionClusters,
-  assignOutlierToCluster,
   mergeCluster,
   purgeTenantData,
   pinRepresentative,
   revertMergeCluster,
-  acknowledgeProjection,
   cancelScanJob,
   downloadExportJobData,
   exportTenantData,
   scanFaces,
   triggerSync,
-  undismissCluster,
   updateRetentionPolicy,
   updateClusterLabel,
   type BulkAcceptRequest,
@@ -63,7 +60,6 @@ vi.mock('../../utils/http', () => {
 
 describe('recognitionApi', () => {
   const fetchApiMock = vi.mocked(httpModule.fetchRequiredApi);
-  const fetchMutationMock = vi.mocked(httpModule.fetchApi);
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -315,24 +311,6 @@ describe('recognitionApi', () => {
     });
   });
 
-  it('posts assign outlier payload', async () => {
-    fetchApiMock.mockResolvedValue({});
-    await assignOutlierToCluster({
-      clusterId: 'target-1',
-      identityId: 'identity-1',
-      similarity: 0.25,
-    });
-    expect(fetchApiMock).toHaveBeenCalledWith(expect.stringContaining('/target-1/assign'), {
-      method: 'POST',
-      body: {
-        identity_id: 'identity-1',
-        similarity: 0.25,
-      },
-      restNonce: 'nonce-123',
-      signal: undefined,
-    });
-  });
-
   it('posts representative pin state to the representative pin endpoint', async () => {
     fetchApiMock.mockResolvedValue({});
 
@@ -534,7 +512,6 @@ describe('recognitionApi', () => {
           status: 'pending',
         },
       ],
-      total: 1,
       limit: 10,
       offset: 5,
       data_source: 'backend_proxy',
@@ -542,7 +519,8 @@ describe('recognitionApi', () => {
 
     const result = await fetchPendingSuggestions(10, 5);
 
-    expect(result.total).toBe(1);
+    // COR-3 (rg-015): the boundary no longer forwards an authoritative total.
+    expect('total' in result).toBe(false);
     expect(result.limit).toBe(10);
     expect(result.offset).toBe(5);
     expect(result.suggestions[0]).toMatchObject({
@@ -567,7 +545,6 @@ describe('recognitionApi', () => {
           status: 'pending',
         },
       ],
-      total: 1,
       limit: 25,
       offset: 0,
       data_source: 'backend_proxy',
@@ -575,7 +552,8 @@ describe('recognitionApi', () => {
 
     const result = await fetchPendingMergeSuggestions(25, 0);
 
-    expect(result.total).toBe(1);
+    // COR-3 (rg-015): the boundary no longer forwards an authoritative total.
+    expect('total' in result).toBe(false);
     expect(result.limit).toBe(25);
     expect(result.offset).toBe(0);
     expect(result.suggestions[0]).toMatchObject({
@@ -720,18 +698,6 @@ describe('recognitionApi', () => {
     );
   });
 
-  it('keeps undismiss cluster operation on the DELETE contract', async () => {
-    fetchMutationMock.mockResolvedValue(undefined);
-
-    await undismissCluster('cluster-42');
-
-    expect(fetchMutationMock).toHaveBeenCalledWith(expect.stringContaining('/cluster-42/dismiss'), {
-      method: 'DELETE',
-      restNonce: 'nonce-123',
-      signal: undefined,
-    });
-  });
-
   it('triggers sync with POST method', async () => {
     fetchApiMock.mockResolvedValue({
       synced: true,
@@ -757,16 +723,10 @@ describe('recognitionApi', () => {
     vi.mocked(getEndpoint).mockImplementation((...keys: string[]) => `https://example.com/${keys[0] ?? 'default'}/`);
     fetchApiMock.mockResolvedValue({ status: 'acknowledged', snapshot_version: 3 });
 
-    await acknowledgeProjection('job-3', 3);
     await cancelScanJob('job-4');
 
     expect(fetchApiMock).toHaveBeenNthCalledWith(
       1,
-      'https://example.com/recognitionJobs/job-3/acknowledge-projection',
-      expect.objectContaining({ method: 'POST' }),
-    );
-    expect(fetchApiMock).toHaveBeenNthCalledWith(
-      2,
       'https://example.com/recognitionJobs/job-4/cancel',
       expect.objectContaining({ method: 'POST' }),
     );

@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace AltContext\Tests\Unit;
 
+use AltContext\Api\AnalysisJobsController;
 use AltContext\Api\RecognitionController;
+use AltContext\Api\RecognitionCircuitKeys;
 use AltContext\Tests\TestCase;
 use WP_REST_Request;
 use WP_Error;
@@ -848,5 +850,235 @@ PHP;
 
         $calls = $this->getHttpCalls();
         $this->assertCount(3, $calls, 'Should make exactly 3 attempts');
+    }
+
+    /**
+     * CON-5: the circuit-breaker failure counter increment must be atomic.
+     *
+     * PA-2 mechanism assertion (a true cross-request race cannot be reproduced
+     * in PHPUnit): a failing `ui_read` proxy request must serialize the
+     * failure-counter read-modify-write *inside* a short-lived MySQL named lock
+     * window, instead of the previous non-atomic get_transient/++/set_transient
+     * that loses increments when two requests fail in the same window.
+     *
+     * Asserting only that GET_LOCK/RELEASE_LOCK queries appear (and GET_LOCK
+     * precedes RELEASE_LOCK) is false confidence: the RMW writes
+     * $GLOBALS['__ac_transients'] and never hits $wpdb, so a regression that
+     * moves the increment outside the lock (acquire; release; set_transient)
+     * emits a byte-identical query log and still passes. To pin the ordering we
+     * snapshot the failure-counter transient at the moment GET_LOCK and
+     * RELEASE_LOCK are issued: it must be unset when the lock is acquired and
+     * already incremented when the lock is released — i.e. GET_LOCK <
+     * set_transient < RELEASE_LOCK.
+     */
+    public function testUiReadFailureIncrementsCircuitCounterUnderAtomicNamedLock(): void
+    {
+        global $wpdb;
+
+        $harness    = $this->makeUiReadHarness();
+        $failureKey = RecognitionCircuitKeys::failure_key_for_base_url($harness->resolvedBaseUrl());
+
+        // Snapshot the failure-counter transient at the moment GET_LOCK and
+        // RELEASE_LOCK are issued. set_transient never touches $wpdb, so this is
+        // the only way to witness whether the increment ran inside the lock.
+        $transientAtGetLock = 'unset';
+        $transientAtRelease = 'unset';
+        $wpdb->onGetVar = static function (string $sql) use (
+            &$transientAtGetLock,
+            &$transientAtRelease,
+            $failureKey
+        ): void {
+            if (stripos($sql, 'RELEASE_LOCK') !== false) {
+                $transientAtRelease = get_transient($failureKey);
+            } elseif (stripos($sql, 'GET_LOCK') !== false) {
+                $transientAtGetLock = get_transient($failureKey);
+            }
+        };
+        $wpdb->mockVar = '1'; // GET_LOCK(...) acquired.
+
+        $this->queueHttpResponse(new WP_Error('http_request_failed', 'down'));
+        $harness->callUiRead();
+
+        $getLock = array_values(array_filter(
+            $wpdb->queries,
+            static fn (string $q): bool => stripos($q, 'GET_LOCK') !== false
+        ));
+        $releaseLock = array_values(array_filter(
+            $wpdb->queries,
+            static fn (string $q): bool => stripos($q, 'RELEASE_LOCK') !== false
+        ));
+
+        $this->assertNotEmpty(
+            $getLock,
+            'Failure-counter increment must acquire a named lock so concurrent failures cannot lose increments (CON-5).'
+        );
+        $this->assertNotEmpty(
+            $releaseLock,
+            'The named lock must be released after the increment (CON-5).'
+        );
+
+        // The increment is invisible in the query log, so pin its position via
+        // the transient snapshots captured at lock acquire/release.
+        $this->assertFalse(
+            $transientAtGetLock,
+            'Counter must NOT be incremented before the lock is acquired — the RMW belongs inside the lock window.'
+        );
+        $this->assertSame(
+            1,
+            $transientAtRelease,
+            'Counter must already be incremented when the lock is released — proves the RMW ran inside the lock, '
+            . 'catching a regression that moves the increment after RELEASE_LOCK (CON-5).'
+        );
+    }
+
+    /**
+     * CON-5 success criterion: the breaker trips once the failure count reaches
+     * the threshold (default 2).
+     *
+     * This is a behavioral/threshold guard only — it does NOT guard the
+     * atomicity fix. ui_read is max_retries=1, so two sequential failing calls
+     * accumulate to the threshold the same way the pre-CON-5 non-atomic code
+     * did in single-threaded PHPUnit. The atomicity regression guard is
+     * testUiReadFailureIncrementsCircuitCounterUnderAtomicNamedLock; this test
+     * pins the threshold/open-seconds wiring around it.
+     */
+    public function testUiReadBreakerTripsDeterministicallyAtThreshold(): void
+    {
+        global $wpdb;
+        $wpdb->mockVar = '1'; // GET_LOCK(...) acquired.
+
+        $harness = $this->makeUiReadHarness();
+        $circuitKey = RecognitionCircuitKeys::for_base_url($harness->resolvedBaseUrl());
+
+        $this->queueHttpResponse(new WP_Error('http_request_failed', 'down'));
+        $this->queueHttpResponse(new WP_Error('http_request_failed', 'down'));
+
+        $harness->callUiRead();
+        $this->assertFalse(
+            get_transient($circuitKey),
+            'Breaker stays closed below the failure threshold.'
+        );
+
+        $harness->callUiRead();
+        $this->assertNotFalse(
+            get_transient($circuitKey),
+            'Breaker opens deterministically once the failure count reaches the threshold.'
+        );
+    }
+
+    /**
+     * CON-5 fallback (best-effort lock ceiling): a GET_LOCK timeout must not
+     * suppress the failure-counter increment.
+     *
+     * When acquire_named_lock returns false (GET_LOCK -> '0'),
+     * increment_failure_counter falls through to the unguarded
+     * read-modify-write and its `finally` must skip RELEASE_LOCK because nothing
+     * was held. The increment still lands and the breaker still trips at the
+     * threshold, so the deployment never degrades below the pre-CON-5 baseline.
+     * The two atomicity tests above both set mockVar='1', so this is the only
+     * coverage of the lock-not-acquired branch. Guards a regression that skips
+     * the increment when !$locked, or releases a lock it never acquired.
+     */
+    public function testUiReadCounterStillIncrementsWhenLockTimesOut(): void
+    {
+        global $wpdb;
+        $wpdb->mockVar = '0'; // GET_LOCK(...) timed out -> lock not acquired.
+
+        $harness    = $this->makeUiReadHarness();
+        $failureKey = RecognitionCircuitKeys::failure_key_for_base_url($harness->resolvedBaseUrl());
+        $circuitKey = RecognitionCircuitKeys::for_base_url($harness->resolvedBaseUrl());
+
+        $this->queueHttpResponse(new WP_Error('http_request_failed', 'down'));
+        $this->queueHttpResponse(new WP_Error('http_request_failed', 'down'));
+
+        $harness->callUiRead();
+        $this->assertSame(
+            1,
+            get_transient($failureKey),
+            'Counter must still increment via the unguarded fallback when GET_LOCK times out (CON-5 ceiling).'
+        );
+
+        $harness->callUiRead();
+        $this->assertNotFalse(
+            get_transient($circuitKey),
+            'Breaker must still trip at threshold even when the named lock is never acquired.'
+        );
+
+        $getLock = array_values(array_filter(
+            $wpdb->queries,
+            static fn (string $q): bool => stripos($q, 'GET_LOCK') !== false
+        ));
+        $releaseLock = array_values(array_filter(
+            $wpdb->queries,
+            static fn (string $q): bool => stripos($q, 'RELEASE_LOCK') !== false
+        ));
+
+        $this->assertNotEmpty(
+            $getLock,
+            'The lock acquire is still attempted on the fallback path.'
+        );
+        $this->assertEmpty(
+            $releaseLock,
+            'RELEASE_LOCK must NOT be issued when the lock was never acquired — the finally skips release.'
+        );
+    }
+
+    /**
+     * CON-5 fallback ($wpdb unavailable): with no usable $wpdb,
+     * acquire_named_lock returns false without emitting any lock query and
+     * increment_failure_counter runs its unguarded RMW.
+     *
+     * The increment and breaker trip must still work with no error raised (the
+     * `finally` skips release because nothing was held). Guards a regression
+     * that assumes $wpdb is always present (e.g. early-boot / drop-in failures).
+     */
+    public function testUiReadCounterStillIncrementsWhenWpdbUnavailable(): void
+    {
+        $harness    = $this->makeUiReadHarness();
+        $failureKey = RecognitionCircuitKeys::failure_key_for_base_url($harness->resolvedBaseUrl());
+        $circuitKey = RecognitionCircuitKeys::for_base_url($harness->resolvedBaseUrl());
+
+        $savedWpdb = $GLOBALS['wpdb'] ?? null;
+        // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- Negative-path test simulates missing wpdb so acquire_named_lock bails to the unguarded path.
+        $GLOBALS['wpdb'] = null;
+
+        try {
+            $this->queueHttpResponse(new WP_Error('http_request_failed', 'down'));
+            $this->queueHttpResponse(new WP_Error('http_request_failed', 'down'));
+
+            $harness->callUiRead();
+            $this->assertSame(
+                1,
+                get_transient($failureKey),
+                'Counter must still increment when $wpdb is unavailable (no named lock possible).'
+            );
+
+            $harness->callUiRead();
+            $this->assertNotFalse(
+                get_transient($circuitKey),
+                'Breaker must still trip at threshold on the $wpdb-unavailable fallback path.'
+            );
+        } finally {
+            // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- Restore the test's original wpdb stub.
+            $GLOBALS['wpdb'] = $savedWpdb;
+        }
+    }
+
+    private function makeUiReadHarness(): object
+    {
+        return new class() extends AnalysisJobsController {
+            /**
+             * @return \WP_REST_Response|\WP_Error
+             */
+            public function callUiRead()
+            {
+                return $this->proxy_request('GET', '/ping', [], [], 'ui_read');
+            }
+
+            public function resolvedBaseUrl(): string
+            {
+                return \untrailingslashit($this->get_recognition_base_url());
+            }
+        };
     }
 }

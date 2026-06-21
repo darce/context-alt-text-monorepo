@@ -41,6 +41,7 @@ from recognition.interface_adapters.http.middleware.metrics import (
 from recognition.interface_adapters.http.middleware.upload_size import UploadSizeLimitMiddleware
 from recognition.observability.curation_refresh_metrics import get_default_curation_refresh_metrics
 from roster.interface_adapters.http.curation_router import router as roster_curation_router
+from scene.interface_adapters.http.router import router as scene_router
 from shared.health import HealthStatus
 
 # Configure logging to show diagnostic output
@@ -160,7 +161,7 @@ def create_app() -> FastAPI:
     app.add_middleware(
         UploadSizeLimitMiddleware,
         max_bytes=recognition_settings.max_upload_bytes,
-        paths={"/recognition/analyze/multipart"},
+        paths={"/recognition/analyze/multipart", "/scene/describe/multipart"},
     )
 
     initialize_session_dependency_circuit_breaker(app)
@@ -168,6 +169,7 @@ def create_app() -> FastAPI:
 
     app.include_router(recognition_router, prefix="/recognition")
     app.include_router(roster_curation_router, prefix="/roster")
+    app.include_router(scene_router, prefix="/scene")
     register_exception_handlers(app)
 
     register_health_probes(app)

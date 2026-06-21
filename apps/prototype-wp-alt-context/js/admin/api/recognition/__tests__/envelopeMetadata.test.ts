@@ -66,28 +66,17 @@ describe('mapPendingSuggestions', () => {
           resolution: 'pending',
         },
       ],
-      total: 1,
       limit: 25,
       offset: 0,
       data_source: DATA_SOURCE.BACKEND_PROXY,
     };
 
     const mapped = mapPendingSuggestions(response);
-    expect(mapped.total).toBe(1);
+    // COR-3 (rg-015): no authoritative total is forwarded by the boundary.
+    expect('total' in mapped).toBe(false);
     expect(mapped.limit).toBe(25);
     expect(mapped.offset).toBe(0);
     expect(mapped.data_source).toBe('backend_proxy');
-  });
-
-  it('throws when total is missing', () => {
-    const response = asPendingSuggestionsResponse({
-      suggestions: [],
-      limit: 25,
-      offset: 0,
-      data_source: DATA_SOURCE.BACKEND_PROXY,
-    });
-
-    expect(() => mapPendingSuggestions(response)).toThrow('numeric total');
   });
 
   it('throws when data_source is invalid', () => {
@@ -123,14 +112,14 @@ describe('mapPendingMergeSuggestions', () => {
   it('preserves envelope metadata from a valid response', () => {
     const response: PendingMergeSuggestionsResponse = {
       suggestions: [{ id: 'm1', cluster_a_id: 'a', cluster_b_id: 'b', similarity: 0.85, status: 'pending' }],
-      total: 1,
       limit: 10,
       offset: 0,
       data_source: DATA_SOURCE.BACKEND_PROXY,
     };
 
     const mapped = mapPendingMergeSuggestions(response);
-    expect(mapped.total).toBe(1);
+    // COR-3 (rg-015): no authoritative total is forwarded by the boundary.
+    expect('total' in mapped).toBe(false);
     expect(mapped.limit).toBe(10);
     expect(mapped.data_source).toBe('backend_proxy');
   });

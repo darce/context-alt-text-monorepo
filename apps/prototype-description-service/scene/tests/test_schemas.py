@@ -1,0 +1,94 @@
+"""S1: typed visual-facts request/response contract (15 fields, extra-forbid)."""
+
+import uuid
+
+import pytest
+from pydantic import ValidationError
+
+from scene.domain.description import DescriptionAdapterKind, ProviderMode, RetentionClass
+from scene.interface_adapters.http.schemas.requests import DescribeImageEnvelope
+from scene.interface_adapters.http.schemas.responses import VisualFactsResponse
+
+EXPECTED_FIELDS = {
+    "tenant_id",
+    "media_id",
+    "image_hash",
+    "context_hash",
+    "adapter",
+    "model_id",
+    "model_version",
+    "prompt_or_task_version",
+    "visual_facts",
+    "alt_text_draft",
+    "context_used",
+    "provider_disclosure",
+    "cached",
+    "duration_ms",
+    "retention_class",
+}
+
+
+def _sample_response() -> dict:
+    return {
+        "tenant_id": "00000000-0000-0000-0000-000000000001",
+        "media_id": 42,
+        "image_hash": "a" * 64,
+        "context_hash": "b" * 64,
+        "adapter": "seeded",
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "prompt_or_task_version": "1",
+        "visual_facts": {"caption": "A cat on a mat", "objects": ["cat", "mat"], "ocr_text": None},
+        "alt_text_draft": "A cat sitting on a mat.",
+        "context_used": {"sources": [], "applied": False},
+        "provider_disclosure": {"provider": "none", "left_service_boundary": False},
+        "cached": False,
+        "duration_ms": 12,
+        "retention_class": "retain_all",
+    }
+
+
+def test_response_has_exactly_15_contract_fields():
+    assert set(VisualFactsResponse.model_fields) == EXPECTED_FIELDS
+    assert len(EXPECTED_FIELDS) == 15
+
+
+def test_response_round_trip_typed_provenance():
+    r = VisualFactsResponse.model_validate(_sample_response())
+    assert r.adapter is DescriptionAdapterKind.SEEDED
+    assert r.retention_class is RetentionClass.RETAIN_ALL
+    assert r.provider_disclosure.provider is ProviderMode.NONE
+    assert set(r.model_dump().keys()) == EXPECTED_FIELDS
+
+
+def test_response_forbids_extra_provenance_field():
+    bad = _sample_response()
+    bad["sneaky_provider"] = "openai"
+    with pytest.raises(ValidationError):
+        VisualFactsResponse.model_validate(bad)
+
+
+def test_request_canonicalizes_tenant_uuid_lowercase():
+    tid = str(uuid.uuid4()).upper()
+    env = DescribeImageEnvelope.model_validate({"tenant_id": tid, "media_id": 7})
+    assert env.tenant_id == tid.lower()
+    assert env.media_id == 7
+
+
+def test_request_rejects_bad_uuid():
+    with pytest.raises(ValidationError):
+        DescribeImageEnvelope.model_validate({"tenant_id": "not-a-uuid", "media_id": 1})
+
+
+def test_request_rejects_extra_field_and_nonpositive_media_id():
+    good_tid = str(uuid.uuid4())
+    with pytest.raises(ValidationError):
+        DescribeImageEnvelope.model_validate({"tenant_id": good_tid, "media_id": 1, "nope": 1})
+    with pytest.raises(ValidationError):
+        DescribeImageEnvelope.model_validate({"tenant_id": good_tid, "media_id": 0})
+
+
+def test_enums_have_canonical_values():
+    assert [e.value for e in DescriptionAdapterKind] == ["seeded", "local_cpu", "gpu", "hosted_provider"]
+    assert [e.value for e in RetentionClass] == ["retain_all", "dispose_after_ack", "purge_on_demand"]
+    assert ProviderMode.NONE.value == "none"

@@ -76,21 +76,3 @@
 | Pre-review triage | `get_review_findings_summary` | Summary of existing findings before starting detection passes in `branch-review` skill |
 | Finding repair | `reconcile_review_findings` | Dedup and repair finding state before detection passes when prior review runs exist |
 | Worker output | `worker_reports` | Query worker lane results during orchestrated multi-lane execution |
-
----
-
-## ctx7 Entry Points
-
-Use `context7` (load via `ToolSearch select:mcp__context7__*`) when implementation depends on upstream library behavior. Do **not** use for repo-local rules, contracts, or task plans.
-
-| Trigger | Library ID hint |
-|---------|----------------|
-| FastMCP tool registration, discriminated union patterns | `fastmcp` |
-| Pydantic v2 model validators, field coercion | `pydantic` |
-| SQLAlchemy 2.x session / query patterns | `sqlalchemy` |
-| React hooks, component lifecycle | `react` |
-| Radix UI component API, accessibility props | `radix-ui` |
-| WordPress REST API, hook system | `wordpress` |
-| MCP SDK protocol, transport options | `modelcontextprotocol/python-sdk` |
-
-Static fallback when ctx7 is unavailable: [docs/workstate/maps/tech-stack.md](maps/tech-stack.md).

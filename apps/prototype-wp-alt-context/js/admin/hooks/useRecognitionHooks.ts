@@ -8,7 +8,6 @@ import {
 } from '@tanstack/react-query';
 
 import {
-  acknowledgeProjection,
   clusterFaces,
   fetchBatchRunStatus,
   fetchScanStatus,
@@ -129,19 +128,6 @@ export const useCombinedScanStatus = (
 export const useClusterIdentities = (options?: UseMutationOptions<ClusterResponse, Error, void, unknown>) =>
   useMutation<ClusterResponse, Error, void>({
     mutationFn: () => clusterFaces(),
-    ...options,
-  });
-
-export const useAcknowledgeProjection = (
-  options?: UseMutationOptions<
-    { status: string; snapshot_version: number },
-    Error,
-    { jobId: string; snapshotVersion: number },
-    unknown
-  >,
-) =>
-  useMutation<{ status: string; snapshot_version: number }, Error, { jobId: string; snapshotVersion: number }>({
-    mutationFn: ({ jobId, snapshotVersion }) => acknowledgeProjection(jobId, snapshotVersion),
     ...options,
   });
 

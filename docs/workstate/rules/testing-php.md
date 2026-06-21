@@ -1,6 +1,6 @@
 # PHP Testing (PHPUnit) -- Project Conventions
 
-> **Library reference**: Use ctx7 to fetch current docs for PHPUnit and WP_Mock listed in
+> **Library reference**: Review current docs for PHPUnit and WP_Mock listed in
 > [../maps/tech-stack.md](../maps/tech-stack.md#php-plugin) before starting work.
 > This file covers only project-specific conventions.
 

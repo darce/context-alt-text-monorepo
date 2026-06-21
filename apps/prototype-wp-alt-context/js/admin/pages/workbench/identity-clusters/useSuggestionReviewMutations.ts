@@ -28,7 +28,8 @@ export const useSuggestionReviewMutations = ({ queryClient, bulkActionRef }: Use
       if (filtered.length === current.suggestions.length) {
         return current;
       }
-      return { ...current, suggestions: filtered, total: Math.max(0, current.total - 1) };
+      // COR-3 (rg-015): no envelope total to decrement; the loaded count follows suggestions.
+      return { ...current, suggestions: filtered };
     });
   };
 

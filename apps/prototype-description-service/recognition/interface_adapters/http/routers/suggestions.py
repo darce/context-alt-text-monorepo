@@ -226,7 +226,7 @@ async def accept_name_suggestion(
     except LookupError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Name suggestion not found") from None
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from None
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from None
 
     await session.commit()
     return _to_name_response(suggestion)
@@ -316,7 +316,7 @@ async def bulk_accept_suggestions(
             merge_repo=merge_repo,
         )
     else:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="unsupported suggestion_type")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="unsupported suggestion_type")
 
     await session.commit()
     return BulkAcceptResponse(accepted_count=result.accepted_count, skipped_count=result.skipped_count)

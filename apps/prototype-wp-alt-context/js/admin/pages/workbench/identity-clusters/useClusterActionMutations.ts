@@ -13,6 +13,7 @@ import {
   rejectSuggestion,
   splitCluster,
 } from '../../../api/recognition';
+import { isScanSuccessStatus } from '../../../hooks/jobStateMachineUtils';
 import { delay, isAbortError } from './clusterMutationUtils';
 
 interface UseClusterActionMutationsOptions {
@@ -32,7 +33,9 @@ const pollSplitJob = async (jobId: string): Promise<void> => {
   const startedAt = Date.now();
   while (Date.now() - startedAt < SPLIT_TIMEOUT_MS) {
     const status = await fetchScanStatus(jobId);
-    if (status.status === 'completed') {
+    // BND-1: completed_with_errors is a terminal partial-success — resolve the poll, else it spins
+    // until SPLIT_TIMEOUT_MS and throws a spurious timeout. 'failed' remains the only hard failure.
+    if (isScanSuccessStatus(status.status)) {
       return;
     }
     if (status.status === 'failed') {

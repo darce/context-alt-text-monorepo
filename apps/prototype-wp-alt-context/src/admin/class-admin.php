@@ -9,23 +9,19 @@ use AltContext\Api\TenantIdentity;
 use AltContext\Support\BatchLimits;
 
 use function add_action;
-use function apply_filters;
 use function do_action;
 use function admin_url;
 use function esc_html;
 use function esc_html__;
 use function esc_url_raw;
 use function file_get_contents;
-use function get_site_url;
 use function in_array;
 use function is_array;
 use function is_readable;
 use function json_decode;
 use function get_option;
-use function parse_url;
 use function plugins_url;
 use function sanitize_key;
-use function strtolower;
 use function trailingslashit;
 use function rest_url;
 use function wp_enqueue_script;
@@ -330,6 +326,7 @@ class Admin {
 					'workbenchMedia'                 => rest_url( 'acx/v1/workbench/media' ),
 					'workbenchMediaDetail'           => rest_url( 'acx/v1/workbench/media/detail' ),
 					'recognitionAnalyze'             => rest_url( 'acx/v1/recognition/analyze' ),
+					'recognitionDescribe'            => rest_url( 'acx/v1/recognition/describe' ),
 					'recognitionBatchRuns'           => rest_url( 'acx/v1/recognition/batch-runs' ),
 					'recognitionJobs'                => rest_url( 'acx/v1/recognition/jobs' ),
 					'recognitionCluster'             => rest_url( 'acx/v1/recognition/cluster' ),
@@ -350,7 +347,6 @@ class Admin {
 					'retentionImport'                => rest_url( 'acx/v1/retention/import' ),
 					'retentionAudit'                 => rest_url( 'acx/v1/retention/audit' ),
 					'recognitionReassignIdentity'    => rest_url( 'acx/v1/recognition/clusters/reassign' ),
-					'recognitionAssignOutlier'       => rest_url( 'acx/v1/recognition/clusters' ),
 					'recognitionIdentitySuggestions' => rest_url( 'acx/v1/recognition/identities' ),
 					'recognitionSuggestions'         => rest_url( 'acx/v1/recognition/suggestions' ),
 					'recognitionMergeSuggestions'    => rest_url( 'acx/v1/recognition/suggestions/merge' ),

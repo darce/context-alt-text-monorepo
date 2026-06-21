@@ -96,10 +96,6 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 		return $this->read_repository->has_projection_rows_for_tenant( $tenant_id );
 	}
 
-	public function mark_as_curated( string $identity_uuid ): int {
-		return $this->curation_writer->mark_as_curated( $identity_uuid );
-	}
-
 	public function reassign_to_cluster( string $identity_uuid, string $target_cluster_uuid ): int {
 		return $this->curation_writer->reassign_to_cluster( $identity_uuid, $target_cluster_uuid );
 	}

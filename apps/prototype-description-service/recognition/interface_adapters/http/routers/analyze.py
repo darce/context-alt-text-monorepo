@@ -170,7 +170,7 @@ def _prepare_media_items(request: AnalyzeRequest) -> tuple[list[str], list[str],
         media_sources = list(media_ids)
 
     if not media_ids:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="media_ids are required")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="media_ids are required")
 
     validated_media_ids = [_validate_uuid(mid) for mid in media_ids]
     if request.media_items:
@@ -420,7 +420,7 @@ async def acknowledge_projection(
                 actor=f"tenant:{tenant_id}",
             )
         except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
         await repo.record_projection_acknowledgement(
             job_id=job_id,
             tenant_id=tenant_id,

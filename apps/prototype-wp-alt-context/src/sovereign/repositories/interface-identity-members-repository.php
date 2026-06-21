@@ -43,11 +43,6 @@ interface IdentityMembersRepositoryInterface {
 	public function has_projection_rows_for_tenant( string $tenant_id ): bool;
 
 	/**
-	 * Mark one projected member row as locally curated.
-	 */
-	public function mark_as_curated( string $identity_uuid ): int;
-
-	/**
 	 * Reassign one projected member row to a different cluster and mark it as curated.
 	 */
 	public function reassign_to_cluster( string $identity_uuid, string $target_cluster_uuid ): int;

@@ -771,12 +771,6 @@
     flex-wrap: wrap;
     gap: var(--acx-space-12);
   }
-
-  &__more {
-    margin: var(--acx-space-12) 0 0;
-    color: var(--acx-color-text-secondary);
-    font-size: var(--acx-text-sm);
-  }
 }
 
 .acx-suggestion-card {

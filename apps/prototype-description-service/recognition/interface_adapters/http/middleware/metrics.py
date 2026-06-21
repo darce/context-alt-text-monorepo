@@ -79,6 +79,25 @@ class MetricsRegistry:
             buckets=CLUSTERING_ADMISSION_BUCKETS_MS,
             registry=self.registry,
         )
+        self.description_requests_total = Counter(
+            "acx_description_requests_total",
+            "Total image-description requests by adapter and result",
+            labelnames=("adapter", "result"),
+            registry=self.registry,
+        )
+        self.description_cache_hits_total = Counter(
+            "acx_description_cache_hits_total",
+            "Total image-description cache hits by adapter",
+            labelnames=("adapter",),
+            registry=self.registry,
+        )
+        self.description_adapter_duration_seconds = Histogram(
+            "acx_description_adapter_duration_seconds",
+            "Image-description adapter generation duration in seconds",
+            labelnames=("adapter",),
+            buckets=DEFAULT_BUCKETS,
+            registry=self.registry,
+        )
 
 
 _default: MetricsRegistry | None = None

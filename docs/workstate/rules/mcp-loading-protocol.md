@@ -4,7 +4,7 @@
 
 ## Why this exists
 
-Each loaded MCP server costs prompt tokens for the entire session. Most sessions need only one or two of the four servers (`workstate-handoff-mcp`, `workstate-orchestrator-mcp`, `context7`, `computer-use`). This protocol uses **declarative routing**: rules in a YAML file, applied mechanically at session start, reproducible across harnesses.
+Each loaded MCP server costs prompt tokens for the entire session. Most sessions need only one or two of the three servers (`workstate-handoff-mcp`, `workstate-orchestrator-mcp`, `computer-use`). This protocol uses **declarative routing**: rules in a YAML file, applied mechanically at session start, reproducible across harnesses.
 
 ## Where the rules live
 
@@ -28,7 +28,7 @@ Triggers under `on_demand.<server>`:
 - **`keywords`** — substrings to scan in the user prompt and the active task objective/focus.
 - **`paths`** — globs against the changed-file list (or the active worktree's scope).
 - **`roles`** — symbolic role names from the [Role Selection table](../instructions.md#role-selection).
-- **`criteria_doc`** — pointer to a separate doc that defines additional gate criteria (e.g. `context7`'s entry criteria).
+- **`criteria_doc`** — pointer to a separate doc that defines additional gate criteria for a server.
 
 A server is loaded when **any** trigger matches AND **no** exclusion applies.
 

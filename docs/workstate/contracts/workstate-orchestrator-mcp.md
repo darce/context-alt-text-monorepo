@@ -152,7 +152,6 @@ Top-level snapshot fields:
 - `planning_drift`: plan-cursor completion vs dispatch drift within the evaluation window.
 - `stale_artifact_rate`: artifact-source staleness counts and ratio from `mcp-artifacts.db`.
 - `archive_rate`: repo-wide task archive cadence derived from `task_archives`.
-- `ctx7_adoption`: decision-level `ctx7 library id:` reuse and adoption counts.
 - `phase_timing`: exec/review timing aggregates.
 - `ace_documentation`: strategy-bullet and pruning-candidate counts from instruction files.
 
@@ -191,13 +190,6 @@ Top-level snapshot fields:
 - `in_window`: archived tasks whose `archived_at` falls inside the window
 - `mean_interval_hours`: average hours between archive events across the repo, or `null` when fewer than two archives exist
 
-`ctx7_adoption` currently includes:
-
-- `decisions_with_ctx7`: number of task decisions containing at least one `ctx7 library id:`
-- `unique_library_ids`: distinct library ids referenced by those decisions
-- `reuse_ratio`: total library-id mentions divided by distinct library ids, or `null` when none exist
-- `library_ids`: sorted distinct library ids referenced in task decisions
-
 ### Deferred Instrumentation
 
 The following metrics require new structured telemetry not yet in the schema. These are explicit instrumentation gaps:
@@ -205,7 +197,6 @@ The following metrics require new structured telemetry not yet in the schema. Th
 - `runtime_parity` coverage: requires structured classification of verification rows beyond raw command text
 - `performance_evidence` coverage: requires typed linkage between verification records and latency / queue-health benchmark evidence
 - `resolved_from_hot_state` ratio: requires agent-side retrieval telemetry
-- `ctx7` token-cost reduction: requires prompt/tooling telemetry outside the current handoff DB schema
 
 Consumers should treat unknown keys as forward-compatible additions and should not require every section to have `data_available=true`.
 
@@ -219,7 +210,7 @@ Common stored fields:
 - Observed usage: `input_tokens`, `output_tokens`, `cached_input_tokens`, `reasoning_output_tokens`, `total_tokens`
 - Prompt-budget context: `model_context_window`, `prompt_tokens`, `prompt_chars`, `prompt_token_source`, `utilization_ratio`, `domain_signal_ratio`, `pressure_level`
 - Attribution payloads: `attribution`, `section_sizes`, `raw_usage`
-- Attribution booleans: `used_ace_guidance`, `used_artifact_context`, `used_slice_packet`, `used_recent_lane_history`, `used_global_context`, `used_ctx7`, plus `ctx7_query_count`
+- Attribution booleans: `used_ace_guidance`, `used_artifact_context`, `used_slice_packet`, `used_recent_lane_history`, `used_global_context`
 - Usage exactness: `usage_source` with additive values `observed`, `tokenizer_estimate`, or `char_estimate`
 
 Exactness rules:

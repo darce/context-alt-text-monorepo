@@ -35,7 +35,7 @@ from recognition.application.scan.capability import publish_embedding_runtime_ca
 from recognition.application.scan.queue_repository import ScanQueueItem
 from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.config import get_settings as get_recognition_settings
-from recognition.domain.job import JobStatus
+from recognition.domain.job import CLUSTERING_JOB_TYPES, JobStatus
 from recognition.infrastructure.embeddings import get_shared_insightface_adapter
 from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
 from recognition.worker.handlers.clustering import ClusteringJobHandler, CurationJobHandler, SplitJobHandler
@@ -43,6 +43,11 @@ from recognition.worker.handlers.scan import ScanItemHandler
 from recognition.worker.handlers.utils import ensure_job_context
 
 logger = logging.getLogger(__name__)
+
+# Clustering-family job types the worker claims/recovers (everything except
+# ANALYZE). Sourced from the canonical CLUSTERING_JOB_TYPES frozenset; sorted to
+# bind deterministically in the SQL `IN` filter (sr-007 single source of truth).
+_CLUSTERING_JOB_TYPE_VALUES: tuple[str, ...] = tuple(sorted(t.value for t in CLUSTERING_JOB_TYPES))
 
 
 @dataclass(frozen=True, slots=True)
@@ -288,7 +293,7 @@ class ScanWorker:
         stmt = (
             select(IdentityClusteringJob)
             .where(IdentityClusteringJob.status == JobStatus.PENDING.value)
-            .where(IdentityClusteringJob.job_type.in_(["clustering", "curation", "split"]))
+            .where(IdentityClusteringJob.job_type.in_(_CLUSTERING_JOB_TYPE_VALUES))
             .order_by(IdentityClusteringJob.created_at.asc())
             .with_for_update(skip_locked=True)
             .limit(1)
@@ -427,7 +432,7 @@ class ScanWorker:
             peek_stmt = (
                 select(IdentityClusteringJob.id)
                 .where(IdentityClusteringJob.status == JobStatus.PENDING.value)
-                .where(IdentityClusteringJob.job_type.in_(["clustering", "curation", "split"]))
+                .where(IdentityClusteringJob.job_type.in_(_CLUSTERING_JOB_TYPE_VALUES))
                 .order_by(IdentityClusteringJob.created_at.asc())
                 .limit(1)
             )

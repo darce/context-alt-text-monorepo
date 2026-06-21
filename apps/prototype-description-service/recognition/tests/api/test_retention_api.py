@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from fastapi import Depends, FastAPI
@@ -279,14 +279,15 @@ def test_retention_policy_returns_503_when_db_session_unavailable(monkeypatch) -
     """
     tenant_id = str(uuid.uuid4())
     client, _, _, _, _ = _build_client(monkeypatch, tenant_id=tenant_id)
+    app = cast(FastAPI, client.app)
 
     # Run the real factory (not the fake) with no DB session available.
-    client.app.dependency_overrides.pop(dependencies.get_retention_policy_service, None)
+    app.dependency_overrides.pop(dependencies.get_retention_policy_service, None)
 
     async def _no_session():
         yield None
 
-    client.app.dependency_overrides[dependencies.get_optional_session] = _no_session
+    app.dependency_overrides[dependencies.get_optional_session] = _no_session
 
     async def _fake_lookup(api_key, settings, session):  # noqa: ANN001
         return tenant_id, "api-key-id", "enterprise", False

@@ -200,7 +200,9 @@ async def test_persist_new_cluster_creates_representatives(db_session, tenant, s
 
 
 @pytest.mark.asyncio
-async def test_update_cluster_metadata_updates_label_and_representative(db_session, tenant, seed_media_identity) -> None:
+async def test_update_cluster_metadata_updates_label_and_representative(
+    db_session, tenant, seed_media_identity
+) -> None:
     cluster_repo = SqlAlchemyClusterRepository(db_session)
     member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
     writer = AssignmentWriter(ClusteringSettings(), cluster_repo, member_repo)

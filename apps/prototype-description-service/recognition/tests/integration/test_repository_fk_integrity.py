@@ -27,7 +27,7 @@ from recognition.infrastructure.repositories import (
 
 
 async def _make_cluster(cluster_repo: SqlAlchemyClusterRepository, tenant_id: str) -> IdentityCluster:
-    return await cluster_repo.save(
+    saved: IdentityCluster = await cluster_repo.save(
         IdentityCluster(
             id=None,
             tenant_id=tenant_id,
@@ -37,6 +37,7 @@ async def _make_cluster(cluster_repo: SqlAlchemyClusterRepository, tenant_id: st
             created_at=None,
         )
     )
+    return saved
 
 
 @pytest.mark.asyncio

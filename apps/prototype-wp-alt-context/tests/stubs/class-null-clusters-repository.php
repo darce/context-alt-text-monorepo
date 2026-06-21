@@ -55,6 +55,10 @@ class NullClustersRepository implements ClustersRepositoryInterface {
 		return 0;
 	}
 
+	public function adjust_identity_count( string $cluster_uuid, int $delta ): int {
+		return 0;
+	}
+
 	public function update_representative_state( string $cluster_uuid, ?string $representative_id, bool $is_pinned, bool $is_local_curation = true ): int {
 		return 0;
 	}

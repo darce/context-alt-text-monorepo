@@ -1,11 +1,9 @@
 import type { MutableRefObject } from 'react';
 
 import type { JobProgress } from '../api/recognition/types/scan';
+import { isScanSuccessStatus } from './jobStateMachineUtils';
 
-interface ProgressEventData<TStatus extends string> {
-  completed: number;
-  total: number;
-  status: TStatus;
+interface SseProgressFields {
   phase?: 'queued' | 'detecting' | 'clustering' | 'retrying' | 'awaiting_projection' | 'failed' | 'complete';
   images_processed?: number;
   faces_found?: number;
@@ -16,18 +14,16 @@ interface ProgressEventData<TStatus extends string> {
   last_error_code?: string;
 }
 
-interface DoneEventData<TStatus extends string> {
+interface ProgressEventData<TStatus extends string> extends SseProgressFields {
+  completed: number;
+  total: number;
+  status: TStatus;
+}
+
+interface DoneEventData<TStatus extends string> extends SseProgressFields {
   status: TStatus;
   completed?: number;
   total?: number;
-  phase?: 'queued' | 'detecting' | 'clustering' | 'retrying' | 'awaiting_projection' | 'failed' | 'complete';
-  images_processed?: number;
-  faces_found?: number;
-  clusters_created?: number;
-  retry_count?: number;
-  current_stage?: string;
-  last_successful_processed_identities?: number;
-  last_error_code?: string;
 }
 
 const parseJson = <T>(payload: string): T | null => {
@@ -50,21 +46,7 @@ const calcEtaSeconds = (elapsedMs: number, completed: number, total: number): nu
   return Math.round(remainingItems / rate / 1000);
 };
 
-export const parseProgressEvent = <TStatus extends string>(
-  payload: string,
-  startTimeRef: MutableRefObject<number | null>,
-): { progress: JobProgress; status: TStatus; etaSeconds: number | null } | null => {
-  const data = parseJson<ProgressEventData<TStatus>>(payload);
-  if (!data) {
-    return null;
-  }
-
-  const now = Date.now();
-  if (!startTimeRef.current && data.completed > 0) {
-    startTimeRef.current = now;
-  }
-
-  const progress: JobProgress = { completed: data.completed, total: data.total };
+const copyOptionalProgressFields = (data: SseProgressFields, progress: JobProgress): void => {
   if (data.phase) {
     progress.phase = data.phase;
   }
@@ -89,6 +71,36 @@ export const parseProgressEvent = <TStatus extends string>(
   if (typeof data.last_error_code === 'string') {
     progress.last_error_code = data.last_error_code;
   }
+};
+
+export const parseProgressEvent = <TStatus extends string>(
+  payload: string,
+  startTimeRef: MutableRefObject<number | null>,
+): { progress: JobProgress; status: TStatus; etaSeconds: number | null } | null => {
+  const data = parseJson<ProgressEventData<TStatus>>(payload);
+  if (!data) {
+    return null;
+  }
+
+  // Validate the untrusted SSE boundary (sr-005): a malformed/schema-evolved event with
+  // non-numeric completed/total must not pollute JobProgress with NaN (which then poisons
+  // the monotonic-progress cache for the whole run).
+  if (
+    typeof data.completed !== 'number' ||
+    !Number.isFinite(data.completed) ||
+    typeof data.total !== 'number' ||
+    !Number.isFinite(data.total)
+  ) {
+    return null;
+  }
+
+  const now = Date.now();
+  if (!startTimeRef.current && data.completed > 0) {
+    startTimeRef.current = now;
+  }
+
+  const progress: JobProgress = { completed: data.completed, total: data.total };
+  copyOptionalProgressFields(data, progress);
 
   const etaSeconds =
     startTimeRef.current && data.completed > 0
@@ -112,34 +124,11 @@ export const parseDoneEvent = <TStatus extends string>(
       completed: data.completed,
       total: data.total,
     };
-    if (data.phase) {
-      progress.phase = data.phase;
-    }
-    if (typeof data.images_processed === 'number') {
-      progress.images_processed = data.images_processed;
-    }
-    if (typeof data.faces_found === 'number') {
-      progress.faces_found = data.faces_found;
-    }
-    if (typeof data.clusters_created === 'number') {
-      progress.clusters_created = data.clusters_created;
-    }
-    if (typeof data.retry_count === 'number') {
-      progress.retry_count = data.retry_count;
-    }
-    if (typeof data.current_stage === 'string') {
-      progress.current_stage = data.current_stage;
-    }
-    if (typeof data.last_successful_processed_identities === 'number') {
-      progress.last_successful_processed_identities = data.last_successful_processed_identities;
-    }
-    if (typeof data.last_error_code === 'string') {
-      progress.last_error_code = data.last_error_code;
-    }
+    copyOptionalProgressFields(data, progress);
     return { progress, status: data.status };
   }
 
-  if (latestProgress && data.status === 'completed') {
+  if (latestProgress && isScanSuccessStatus(data.status)) {
     return {
       progress: {
         completed: latestProgress.total,

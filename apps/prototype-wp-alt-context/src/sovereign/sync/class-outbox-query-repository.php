@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace AltContext\Sovereign\Sync;
 
+require_once __DIR__ . '/class-outbox-status.php';
+
+use function current_time;
 use function implode;
 use function is_array;
 use function is_object;
@@ -264,6 +267,79 @@ class OutboxQueryRepository {
 		}
 
 		return $operations;
+	}
+
+	/**
+	 * Atomically claim a single pending operation for this drain.
+	 *
+	 * Transitions pending -> in_flight gated on the current status so a row already
+	 * claimed by a concurrent drain matches 0 rows. Returns true only when this caller
+	 * won the claim (CON-3).
+	 */
+	public function claim_operation( int $outbox_id ): bool {
+		global $wpdb;
+
+		if ( $outbox_id <= 0 || ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'update' ) ) {
+			return false;
+		}
+
+		$updated = $wpdb->update(
+			$this->table_name,
+			array(
+				'status'     => OutboxStatus::IN_FLIGHT,
+				'claimed_at' => current_time( 'mysql' ),
+			),
+			array(
+				'id'     => $outbox_id,
+				'status' => OutboxStatus::PENDING,
+			),
+			array( '%s', '%s' ),
+			array( '%d', '%s' )
+		);
+
+		return false !== $updated && (int) $updated > 0;
+	}
+
+	/**
+	 * Reclaim operations stuck in `in_flight` past the claim lease back to `pending` (CON-3-FU-1).
+	 *
+	 * A drain that dies between {@see self::claim_operation()} (pending -> in_flight) and the
+	 * terminal apply_result write orphans the row: load_pending_operations() and
+	 * has_pending_operations() only see `pending`, so the stuck row is never reprocessed. This
+	 * lease-expiry UPDATE returns such rows to `pending` and clears the claim. A freshly-claimed
+	 * row sits inside the lease window and is left untouched, so a peer drain mid-flight is not
+	 * disturbed.
+	 *
+	 * CON-3-FU-REV-A1: the lease cutoff is computed from current_time('mysql') — the SAME WP
+	 * site clock claim_operation() writes claimed_at with — NOT MySQL NOW(). Comparing a
+	 * WP-local claimed_at against the DB server's NOW() silently breaks the lease whenever the
+	 * site timezone differs from the DB session timezone (ahead -> never reclaims, behind ->
+	 * reclaims rows a peer still holds). Every outbox timestamp uses the WP clock; the lease
+	 * stays on that clock too.
+	 */
+	public function reclaim_stale_in_flight_operations( int $lease_seconds ): int {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
+			return 0;
+		}
+
+		$query = $wpdb->prepare(
+			'UPDATE %i SET status = %s, claimed_at = NULL WHERE status = %s AND ( claimed_at IS NULL OR claimed_at <= DATE_SUB( %s, INTERVAL %d SECOND ) )',
+			$this->table_name,
+			OutboxStatus::PENDING,
+			OutboxStatus::IN_FLIGHT,
+			current_time( 'mysql' ),
+			max( 1, $lease_seconds )
+		);
+		if ( ! is_string( $query ) || '' === $query ) {
+			return 0;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$result = $wpdb->query( $query );
+
+		return false !== $result ? max( 0, (int) $result ) : 0;
 	}
 
 	public function has_pending_operations(): bool {

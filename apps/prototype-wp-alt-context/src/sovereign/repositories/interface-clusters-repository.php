@@ -89,6 +89,13 @@ interface ClustersRepositoryInterface {
 	public function update_identity_count( string $cluster_uuid, int $identity_count ): int;
 
 	/**
+	 * Atomically apply a signed delta to the projected identity count for one
+	 * cluster, clamped at zero. Avoids the lost-update race of an absolute
+	 * read-modify-write on concurrent mutation paths (CON-1).
+	 */
+	public function adjust_identity_count( string $cluster_uuid, int $delta ): int;
+
+	/**
 	 * Persist representative pin state for one projected cluster.
 	 */
 	public function update_representative_state( string $cluster_uuid, ?string $representative_id, bool $is_pinned, bool $is_local_curation = true ): int;

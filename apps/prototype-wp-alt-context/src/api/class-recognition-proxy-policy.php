@@ -46,6 +46,21 @@ final class RecognitionProxyPolicy {
 			);
 		}
 
+		if ( 'description' === $normalized_class ) {
+			// Image description is a single expensive, effectively non-idempotent
+			// backend generation (Florence inline ~14-39s, cold load higher) and a
+			// deferred-profile 503 is deterministic. Await it once at a budget that
+			// matches the backend ACX_DESCRIPTION_TIMEOUT_SECONDS (180); never retry
+			// — retrying would re-run the generation or re-poll a stub 503
+			// (E19-1-REV-B-1).
+			return array(
+				'timeout_seconds' => (int) apply_filters( 'acx_proxy_timeout_description_seconds', 180 ),
+				'max_retries' => (int) apply_filters( 'acx_proxy_max_retries_description', 1 ),
+				'base_delay_ms' => (int) apply_filters( 'acx_proxy_backoff_base_ms_description', 0 ),
+				'circuit_enabled' => false,
+			);
+		}
+
 		return array(
 			'timeout_seconds' => (int) apply_filters( 'acx_proxy_timeout_mutation_seconds', 60 ),
 			'max_retries' => (int) apply_filters( 'acx_proxy_max_retries_mutation', 3 ),

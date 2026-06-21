@@ -29,8 +29,8 @@ export const useSuggestionReviewData = () => {
     bulkActionRef,
   });
 
-  const assignmentCount = assignmentQuery.data?.total ?? 0;
-  const loadedAssignmentCount = assignmentSuggestions?.length ?? 0;
+  // COR-3 (rg-015): no authoritative backlog total exists; count loaded suggestions.
+  const assignmentCount = assignmentSuggestions?.length ?? 0;
   const hasNoSuggestionData = !assignmentQuery.data && !mergeQuery.data;
   const hasInitialFailure = (assignmentQuery.failureCount > 0 || mergeQuery.failureCount > 0) && hasNoSuggestionData;
   const isLoading =
@@ -56,7 +56,6 @@ export const useSuggestionReviewData = () => {
     topUnlabeledDataSource,
     reviewItems,
     assignmentCount,
-    loadedAssignmentCount,
     hasInitialFailure,
     isLoading,
     isError,

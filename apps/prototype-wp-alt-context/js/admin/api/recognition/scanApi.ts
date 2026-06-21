@@ -149,26 +149,6 @@ export const cancelScanJob = async (jobId: string): Promise<JobStatusResponse> =
   });
 };
 
-export const acknowledgeProjection = async (
-  jobId: string,
-  snapshotVersion: number,
-): Promise<{ status: string; snapshot_version: number }> => {
-  const base = getEndpoint('recognitionJobs');
-  const separator = base.endsWith('/') ? '' : '/';
-
-  return fetchRequiredApi<{ status: string; snapshot_version: number }>(
-    `${base}${separator}${jobId}/acknowledge-projection`,
-    {
-      method: 'POST',
-      body: { snapshot_version: snapshotVersion },
-      restNonce: getConfig().nonce,
-      // Projection acknowledgement can legitimately take longer than a
-      // client round-trip during curation, so keep the browser timeout wide.
-      signal: createRecognitionTimeoutSignal(30_000),
-    },
-  );
-};
-
 export const clusterFaces = async (mode: 'sync' | 'async' = 'async'): Promise<ClusterResponse> => {
   const tenantId = getConfig().tenant_id;
   return fetchRequiredApi<ClusterResponse>(getEndpoint('recognitionCluster'), {

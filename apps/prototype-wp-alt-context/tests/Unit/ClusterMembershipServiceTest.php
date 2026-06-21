@@ -105,6 +105,22 @@ class ClusterMembershipServiceTest extends TestCase
         $this->assertContains('COMMIT', $wpdb->queries);
     }
 
+    public function testAssignOutlierAdjustsCountsWithAtomicRelativeDeltas(): void
+    {
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/cluster-target/assign');
+        $request->set_param('cluster_id', 'cluster-target');
+        $request->set_param('identity_id', 'identity-outlier');
+        $request->set_param('similarity', 0.42);
+
+        $response = $this->service->assign_outlier_to_cluster($request);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        // CON-1: source -1 / target +1 applied as atomic relative deltas, never
+        // as absolute read-modify-write counts (which lose concurrent updates).
+        $this->assertSame([['cluster-source', -1], ['cluster-target', 1]], $this->repository->identityCountAdjustments);
+        $this->assertSame([], $this->repository->identityCountUpdates);
+    }
+
     public function testCreateClusterForIdentityRollsBackWhenLocalCreateFails(): void
     {
         global $wpdb;

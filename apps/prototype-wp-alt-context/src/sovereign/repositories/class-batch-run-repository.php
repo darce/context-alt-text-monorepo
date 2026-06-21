@@ -10,7 +10,6 @@ use WP_Error;
 
 use function absint;
 use function array_filter;
-use function array_key_exists;
 use function array_map;
 use function array_unique;
 use function count;

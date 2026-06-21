@@ -1,0 +1,67 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://context-alt-text.dev/schemas/image-description-response.schema.json",
+  "title": "VisualFactsResponse",
+  "description": "Response of POST /scene/describe/multipart. All 15 fields are required so model/provider provenance and retention state are unavoidable on the wire.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "tenant_id",
+    "media_id",
+    "image_hash",
+    "context_hash",
+    "adapter",
+    "model_id",
+    "model_version",
+    "prompt_or_task_version",
+    "visual_facts",
+    "alt_text_draft",
+    "context_used",
+    "provider_disclosure",
+    "cached",
+    "duration_ms",
+    "retention_class"
+  ],
+  "properties": {
+    "tenant_id": { "type": "string", "description": "Canonical lowercase tenant UUID." },
+    "media_id": { "type": "integer" },
+    "image_hash": { "type": "string", "description": "sha256 hex of the raw image bytes." },
+    "context_hash": { "type": "string", "description": "sha256 hex of canonical-JSON context; cache-key dimension surfaced on the wire." },
+    "adapter": { "type": "string", "enum": ["seeded", "local_cpu", "hosted_provider"] },
+    "model_id": { "type": "string" },
+    "model_version": { "type": "string" },
+    "prompt_or_task_version": { "type": "string" },
+    "visual_facts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["caption"],
+      "properties": {
+        "caption": { "type": "string" },
+        "objects": { "type": "array", "items": { "type": "string" } },
+        "ocr_text": { "type": ["string", "null"] }
+      }
+    },
+    "alt_text_draft": { "type": "string" },
+    "context_used": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sources", "applied"],
+      "properties": {
+        "sources": { "type": "array", "items": { "type": "string" } },
+        "applied": { "type": "boolean" }
+      }
+    },
+    "provider_disclosure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "left_service_boundary"],
+      "properties": {
+        "provider": { "type": "string", "enum": ["none", "local", "hosted"] },
+        "left_service_boundary": { "type": "boolean" }
+      }
+    },
+    "cached": { "type": "boolean" },
+    "duration_ms": { "type": "integer", "minimum": 0 },
+    "retention_class": { "type": "string", "enum": ["retain_all", "dispose_after_ack", "purge_on_demand"] }
+  }
+}

@@ -71,6 +71,7 @@ def test_identity_schema_declares_expected_table_set() -> None:
         "audit_events",
         "export_jobs",
         "identity_cluster_refresh_queue",
+        "image_descriptions",
     ]
 
 

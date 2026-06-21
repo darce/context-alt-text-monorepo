@@ -17,8 +17,8 @@
     },
     "status": {
       "type": "string",
-      "enum": ["pending", "running", "completed", "failed"],
-      "description": "Current job status."
+      "enum": ["pending", "running", "completed", "completed_with_errors", "failed"],
+      "description": "Current job status. completed_with_errors is a terminal partial-success (some items succeeded, some failed) emitted by the description-service; consumers must treat it as a completed scan (BND-1)."
     },
     "progress": {
       "type": ["object", "null"],

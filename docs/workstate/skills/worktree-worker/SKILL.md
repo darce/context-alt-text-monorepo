@@ -34,7 +34,7 @@ Use this skill when you are implementing a delegated lane slice with a defined o
 
 ## Canonical Policy
 
-- Use [../../instructions.md](../../instructions.md) for startup, handoff, and `ctx7` policy.
+- Use [../../instructions.md](../../instructions.md) for startup and handoff policy.
 - Use [../../rules/development-workflow.md](../../rules/development-workflow.md) for cross-boundary, slice, and review-readiness rules.
 - Use [../../playbooks/worktree-orchestration-playbook.md](../../playbooks/worktree-orchestration-playbook.md) for the canonical lane lifecycle procedure (worker states, scope enforcement, handoff contract, health model).
 - This skill is an execution wrapper for this specific runtime. Shared process policy remains in the linked canonical docs above.

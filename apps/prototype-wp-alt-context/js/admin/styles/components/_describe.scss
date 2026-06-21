@@ -1,0 +1,107 @@
+// AI Image Description panel (E19-1 S12). Scoped to .acx-describe; the card
+// chrome comes from .acx-dashboard__panel. Tokens only (sr-004) — E19-1-REV-C-3.
+
+.acx-describe__form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--acx-space-12);
+  margin-top: var(--acx-space-16);
+
+  label {
+    color: var(--acx-color-text-secondary);
+    font-size: var(--acx-text-sm);
+    font-weight: var(--acx-font-weight-semibold);
+  }
+}
+
+.acx-describe .acx-input {
+  width: 12ch;
+  padding: var(--acx-space-8);
+  border: 1px solid var(--acx-color-border);
+  border-radius: var(--acx-radius-md);
+  background: var(--acx-color-surface);
+  color: var(--acx-color-text);
+  font-size: var(--acx-text-base);
+}
+
+.acx-describe__result {
+  margin-top: var(--acx-space-24);
+  padding-top: var(--acx-space-16);
+  border-top: 1px solid var(--acx-color-border);
+
+  h3 {
+    margin: 0 0 var(--acx-space-8) 0;
+    color: var(--acx-color-text-muted);
+    font-size: var(--acx-text-sm);
+    font-weight: var(--acx-font-weight-semibold);
+  }
+}
+
+.acx-describe__alt-text {
+  margin: 0 0 var(--acx-space-12) 0;
+  padding: var(--acx-space-12);
+  border: 1px solid var(--acx-color-border);
+  border-radius: var(--acx-radius-md);
+  background: var(--acx-color-surface-alt);
+  color: var(--acx-color-text);
+  font-size: var(--acx-text-lg);
+  font-weight: var(--acx-font-weight-semibold);
+}
+
+.acx-describe__caption {
+  margin: 0 0 var(--acx-space-12) 0;
+  color: var(--acx-color-text-secondary);
+}
+
+.acx-describe__ocr {
+  margin: 0 0 var(--acx-space-12) 0;
+  color: var(--acx-color-text-secondary);
+  font-style: italic;
+}
+
+.acx-describe__objects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--acx-space-8);
+  margin: 0 0 var(--acx-space-12) 0;
+  padding: 0;
+  list-style: none;
+
+  li {
+    padding: var(--acx-space-8);
+    border: 1px solid var(--acx-color-panel-border);
+    border-radius: var(--acx-radius-pill);
+    background: var(--acx-color-panel);
+    color: var(--acx-color-text);
+    font-size: var(--acx-text-sm);
+    line-height: 1;
+  }
+}
+
+.acx-describe__provenance {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--acx-space-12);
+  margin: 0;
+
+  div {
+    display: flex;
+    flex-direction: column;
+    gap: var(--acx-space-8);
+  }
+
+  dt {
+    color: var(--acx-color-text-muted);
+    font-size: var(--acx-text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  dd {
+    margin: 0;
+    color: var(--acx-color-text);
+    font-size: var(--acx-text-sm);
+    word-break: break-word;
+  }
+}

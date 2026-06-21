@@ -1,6 +1,6 @@
 # Radix UI Component Guide (Project Conventions)
 
-> **Library reference**: Use ctx7 to fetch current docs for `@radix-ui/react-*` listed
+> **Library reference**: Review current docs for `@radix-ui/react-*` listed
 > in [../maps/tech-stack.md](../maps/tech-stack.md#frontend-reactts) before starting work.
 > This file covers only project-specific conventions.
 
@@ -81,8 +81,6 @@ import { Separator } from "@radix-ui/react-separator";
 3. BEM classes: `acx-{component}`, `acx-{component}--variant`
 4. TypeScript types extending Radix props
 5. Behavior tests + axe-core audit
-
-For package priority, use ctx7: `ctx7 library @radix-ui/react-dialog "installation and usage"`.
 
 ---
 

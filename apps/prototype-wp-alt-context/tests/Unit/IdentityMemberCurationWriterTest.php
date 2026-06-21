@@ -20,16 +20,6 @@ class IdentityMemberCurationWriterTest extends TestCase
         $this->writer = new IdentityMemberCurationWriter('wp_acx_identity_members', 'wp_acx_clusters');
     }
 
-    public function testMarkAsCuratedWritesUpdateQuery(): void
-    {
-        $this->writer->mark_as_curated('identity-curation');
-
-        global $wpdb;
-        $sql = implode("\n", $wpdb->queries);
-        $this->assertStringContainsString('UPDATE `wp_acx_identity_members` SET is_curated = 1', $sql);
-        $this->assertStringContainsString("'identity-curation'", $sql);
-    }
-
     public function testResetCurationScopesByTenant(): void
     {
         $this->writer->reset_curation('identity-reset-writer', 'tenant-reset-writer');

@@ -35,7 +35,7 @@ Operate the daemon through the supported control paths so the process state, loc
 
 ## Canonical Policy
 
-- Use [../../instructions.md](../../instructions.md) for startup, handoff, and `ctx7` policy.
+- Use [../../instructions.md](../../instructions.md) for startup and handoff policy.
 - Use [../../rules/development-workflow.md](../../rules/development-workflow.md) for cross-boundary and review-readiness rules.
 - Treat this skill as the execution recipe for daemon operations, not as the canonical source of project-wide policy.
 

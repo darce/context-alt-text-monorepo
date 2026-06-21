@@ -15,6 +15,15 @@ describe('parseProgressEvent', () => {
     expect(parseProgressEvent('not-json', ref)).toBeNull();
   });
 
+  it('returns null when completed/total are non-numeric or absent (COR-4: sr-005 SSE boundary validation)', () => {
+    const ref = createRef<number | null>() as React.MutableRefObject<number | null>;
+    ref.current = null;
+    expect(parseProgressEvent(JSON.stringify({ status: 'running', total: null }), ref)).toBeNull();
+    expect(parseProgressEvent(JSON.stringify({ status: 'running', completed: '3', total: 10 }), ref)).toBeNull();
+    expect(parseProgressEvent(JSON.stringify({ status: 'running' }), ref)).toBeNull();
+    expect(ref.current).toBeNull();
+  });
+
   it('parses basic completed/total/status', () => {
     const ref = createRef<number | null>() as React.MutableRefObject<number | null>;
     ref.current = null;
@@ -155,6 +164,19 @@ describe('parseDoneEvent', () => {
     expect(result).not.toBeNull();
     expect(result!.progress!.completed).toBe(50);
     expect(result!.progress!.total).toBe(50);
+  });
+
+  it('finalizes progress for a completed_with_errors done event without counts (BND-1-AUDIT-2)', () => {
+    // The done-event success gate must accept completed_with_errors, not just 'completed'. Defensive:
+    // the live WP producer always sends counts (first branch), but a counts-less partial-success
+    // done event must still FINALIZE progress (completed := total). latest is deliberately unequal
+    // (30/50) so the fix's branch (-> 50/50) is distinguishable from the buggy passthrough (30/50).
+    const latest: JobProgress = { completed: 30, total: 50 };
+    const result = parseDoneEvent<'completed_with_errors'>(JSON.stringify({ status: 'completed_with_errors' }), latest);
+    expect(result).not.toBeNull();
+    expect(result!.progress!.completed).toBe(50);
+    expect(result!.progress!.total).toBe(50);
+    expect(result!.status).toBe('completed_with_errors');
   });
 
   it('returns latestProgress for non-completed status without counts', () => {

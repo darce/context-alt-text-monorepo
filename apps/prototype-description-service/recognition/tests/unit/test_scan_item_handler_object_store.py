@@ -162,11 +162,11 @@ async def _run_worker_refresh(
     monkeypatch.setattr(scan_module, "ScanQueueService", lambda _repo: fake_queue)
     monkeypatch.setattr(scan_module, "enable_rls_bypass", _async_noop)
 
-    def fake_clustering_job(**kwargs):
+    def _make_clustering_job(**kwargs: object) -> object:
         clustering_calls.append(kwargs)
         return object()
 
-    monkeypatch.setattr(scan_module, "IdentityClusteringJob", fake_clustering_job)
+    monkeypatch.setattr(scan_module, "IdentityClusteringJob", _make_clustering_job)
 
     def factory(t: str) -> ObjectStore:
         return FilesystemObjectStore(root=blob_root, tenant_id=t)

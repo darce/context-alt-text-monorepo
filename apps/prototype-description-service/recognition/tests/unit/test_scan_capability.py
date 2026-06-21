@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -45,9 +46,7 @@ def test_is_embedding_runtime_available_rejects_stale_heartbeat() -> None:
 def test_worker_capability_updated_at_matches_timezone_aware_migration() -> None:
     from db.models.worker_capability import WorkerCapability
 
-    updated_at_type = WorkerCapability.__table__.c.updated_at.type
-    assert isinstance(updated_at_type, DateTime)
-    assert updated_at_type.timezone is True
+    assert cast(DateTime, WorkerCapability.__table__.c.updated_at.type).timezone is True
 
 
 @pytest.mark.asyncio

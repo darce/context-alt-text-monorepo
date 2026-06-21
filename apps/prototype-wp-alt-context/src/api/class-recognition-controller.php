@@ -7,6 +7,7 @@ namespace AltContext\Api;
 require_once __DIR__ . '/interface-recognition-route-controller.php';
 require_once __DIR__ . '/class-abstract-recognition-proxy-controller.php';
 require_once __DIR__ . '/class-analysis-jobs-controller.php';
+require_once __DIR__ . '/class-describe-controller.php';
 require_once __DIR__ . '/class-clusters-controller.php';
 require_once __DIR__ . '/interface-cluster-mutation-host.php';
 require_once __DIR__ . '/services/class-cluster-label-service.php';
@@ -41,6 +42,7 @@ use function do_action;
 
 class RecognitionController {
 	private ?AnalysisJobsController $analysisJobsController = null;
+	private ?DescribeController $describeController = null;
 	private ?ClustersController $clustersController = null;
 	private ?ClusterMutationsController $clusterMutationsController = null;
 	private ?ConflictController $conflictController = null;
@@ -85,6 +87,9 @@ class RecognitionController {
 	public function register_routes(): void {
 		$this->register_routes_for(
 			static fn ( self $controller ): RecognitionRouteControllerInterface => $controller->getAnalysisJobsController()
+		);
+		$this->register_routes_for(
+			static fn ( self $controller ): RecognitionRouteControllerInterface => $controller->getDescribeController()
 		);
 		$this->register_routes_for(
 			static fn ( self $controller ): RecognitionRouteControllerInterface => $controller->getClustersController()
@@ -252,6 +257,14 @@ class RecognitionController {
 		}
 
 		return $this->analysisJobsController;
+	}
+
+	private function getDescribeController(): DescribeController {
+		if ( null === $this->describeController ) {
+			$this->describeController = new DescribeController();
+		}
+
+		return $this->describeController;
 	}
 
 	private function getClustersController(): ClustersController {

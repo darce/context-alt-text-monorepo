@@ -431,3 +431,121 @@ Additional sources:
 - [Qwen2.5-VL-3B model card](https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct)
 - [SigLIP 2 model card](https://huggingface.co/google/siglip2-base-patch16-224)
 - [OpenCLIP on Hugging Face](https://huggingface.co/docs/hub/open_clip)
+
+## Follow-Up: OCI-Only Local VLM Path - 2026-06-13
+
+### Constraint
+
+This section applies when the MVP demo has no access to a T4/L4 or other hosted GPU. In that mode, the real hardware target is the existing OCI A1 host, not a speculative HF worker.
+
+Repo-local constraints:
+
+- `public-demo-launch-readiness-epic.md` records the current backend as OCI `VM.Standard.A1.Flex`, 4 ARM cores, 24 GB RAM, 200 GB disk, Ubuntu 24.04, and recognition-only CPU inference for the current milestone.
+- `E15-28-oci-demo-provisioning-task-plan.md` moves the demo WordPress stack onto the same A1 VM, with container limits as the isolation mechanism.
+- `E15-29-public-demo-go-live-task-plan.md` keeps the live public demo recognition-only and explicitly excludes VLM/captioning/GPU host work.
+- `self-hosting-epic.md` assumed CPU Phi-3.5 could be acceptable for demos, but that was before the current WordPress cohost and before the HF cold-start/cost reassessment. Treat that estimate as optimistic and stale until rebenchmarked on the live A1 shape.
+
+Oracle-side constraints:
+
+- Oracle's public Free Tier page still describes Arm A1 resources as a shared Always Free allocation, usable as one VM or split across VMs, and states one Free Trial or Always Free account is permitted per person.
+- Oracle's current Help Center page is more conservative in this check: it describes A1 Always Free as a per-tenancy monthly OCPU/RAM-hour pool and says the number of instances depends on boot volume size and allocated OCPUs. It also notes idle Always Free instances may be reclaimed and that capacity errors can require retrying or upgrading.
+- The safe planning assumption is therefore: the existing A1 VM is the budget. Do not assume another free A1 instance exists until the actual tenancy quota and current boot/block volume allocation are checked in OCI.
+
+Technical implications:
+
+- No CUDA, no T4/L4, no `bitsandbytes` CUDA path, and no GPU-serving stack such as vLLM/SGLang in the MVP path.
+- Arm64 dependency compatibility matters more than model-card benchmark claims. A model that is "small on GPU" can still be unpleasant on a 4-core ARM CPU.
+- VLM work must be async, one-worker, timeboxed, cached, and bulkheaded from FastAPI, Postgres, Caddy, and WordPress.
+- The demo should prove the product hypothesis with a seeded/small image set, not promise live batch captioning.
+
+Sources:
+
+- [Oracle Cloud Free Tier](https://www.oracle.com/cloud/free/)
+- [Oracle Always Free resources](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm)
+- [Oracle compute shapes: `VM.Standard.A1.Flex`](https://docs.oracle.com/en-us/iaas/Content/Compute/References/computeshapes.htm)
+- [OCI shape resizing](https://docs.oracle.com/en-us/iaas/Content/Compute/Tasks/resizinginstances.htm)
+
+### Best Local Model
+
+Best first local model: `microsoft/Florence-2-base-ft`, preferably via the `onnx-community/Florence-2-base-ft` package if the ONNX/Transformers.js path installs and runs cleanly on ARM64.
+
+Why:
+
+- It is MIT-licensed.
+- It is much smaller than Phi-3.5 Vision, SmolVLM2, Gemma, or InternVL-class models.
+- It supports the useful MVP primitives directly: caption, detailed caption, OCR, object detection, phrase grounding, and dense-region captions.
+- Its outputs are structured enough to combine with Alt Context's real differentiator: roster-bound face labels and WordPress-authoritative context.
+
+Do not make the local MVP depend on a prose-heavy VLM. For OCI-only, the better composition is:
+
+1. Florence-2-base-ft extracts visual facts.
+2. Existing recognition/clustering adds known people and face boxes.
+3. A deterministic or very small text rewriter produces the alt-text draft.
+4. Results are cached by image hash, model id, and roster-context hash.
+
+Model fit table:
+
+| Candidate | License | OCI A1 CPU verdict | Use |
+| --- | --- | --- | --- |
+| `onnx-community/Florence-2-base-ft` / `microsoft/Florence-2-base-ft` | MIT | Best first local host candidate. Smallest useful Florence path; ONNX package exists; PyTorch path is fallback if ARM64 wheels cooperate. | MVP local description worker. |
+| `microsoft/Florence-2-large-ft` | MIT | Better quality than base, but roughly 3x larger. CPU latency may be unacceptable on 4 ARM cores. | Offline benchmark only; use if base misses too much and latency is still tolerable. |
+| `vikhyatk/moondream2` or pinned Moondream 2 release | Apache-2.0 | Plausible local fallback for caption/VQA/detect. More prose-oriented than Florence, but not MIT and uses custom-code style deployment. | Benchmark if Florence prose is too mechanical. |
+| `HuggingFaceTB/SmolVLM2-2.2B-Instruct` | Apache-2.0 | Strong small VLM, but 2.2B is likely too slow for the current shared A1 host without quantized CPU proof. | Post-MVP benchmark, not default local demo. |
+| `microsoft/Phi-3.5-vision-instruct` / ONNX | MIT | Not the local MVP choice. The ONNX card lists CPU support, but 4B-class vision generation on shared A1 is likely slow and memory-contentious. | Only benchmark after Florence proves insufficient. |
+| `moondream/moondream3-preview` | BSL 1.1 / other | Avoid for MVP. The license summary blocks paid third-party hosted/embedded offerings that overlap with M87's paid versions without a separate agreement. | Research only unless licensing is cleared. |
+| `google/gemma-4-E2B`, `OpenGVLab/InternVL3-2B`, `Qwen2.5-VL-3B` | Mixed | Too much uncertainty for the shared CPU host. Larger runtime, newer integration surface, and/or unresolved license/commercial review. | GPU/paid-worker exploration only. |
+| SigLIP / OpenCLIP | Model-specific | Useful locally for embeddings, retrieval, dedupe, or zero-shot tags. | Helpful adjunct, not an alt-text generator. |
+
+Sources:
+
+- [Florence-2-base-ft ONNX model card](https://huggingface.co/onnx-community/Florence-2-base-ft)
+- [Florence-2-base ONNX model card](https://huggingface.co/onnx-community/Florence-2-base)
+- [OpenVINO Florence-2 notebook](https://docs.openvino.ai/2024/notebooks/florence2-with-output.html)
+- [SmolVLM2-2.2B model card](https://huggingface.co/HuggingFaceTB/SmolVLM2-2.2B-Instruct)
+- [Moondream2 model card](https://huggingface.co/vikhyatk/moondream2)
+- [Moondream3 preview model card](https://huggingface.co/moondream/moondream3-preview)
+- [Moondream3 preview license](https://huggingface.co/moondream/moondream3-preview/blob/main/LICENSE.md)
+
+### Should Another VM Be Provisioned?
+
+No, not for the MVP local VLM demo.
+
+If "another VM" means another OCI instance in the same Oracle account, it draws from the same shared tenancy quota and block-volume pool. If the existing A1 VM already consumes the useful Always Free allocation, a second free A1 worker would require shrinking the current host or paying for additional resources. It would also still be CPU-only, so it improves isolation more than inference speed.
+
+If "another VM" means a nested VM on the current A1 host, do not do that. Use a separate container or systemd service. Nested virtualization would add overhead and operational complexity while making the tight CPU/RAM problem worse.
+
+Recommended MVP topology:
+
+- Same OCI host.
+- Separate `acx-description-worker` container/service, disabled by default or demo-gated.
+- One job at a time.
+- Initial limits: 1 OCPU-equivalent, 6-8 GB memory cap, low CPU/IO priority.
+- Dedicated model cache under `/opt/acx-backend/data/models/description` or equivalent persistent path.
+- Image downsample cap at 1024 px longest edge for the first benchmark.
+- Hard timeout: 60-90 seconds per image on CPU.
+- Cache all outputs by image hash + model id + prompt/task + roster-context hash.
+- Never run description inference inline on the WordPress admin request path.
+
+Provision a second OCI VM only if one of these becomes true:
+
+- OCI console confirms unused Always Free A1 quota and unused block volume after the current host is accounted for.
+- The current host can be deliberately resized and still leaves enough headroom for API, Postgres, Caddy, and WordPress.
+- A paid budget is approved for a temporary worker host.
+
+Even then, the second VM should be treated as an isolation worker, not a quality/performance fix. If local CPU output is too slow or weak, the next serious upgrade is burst GPU or a public vision API behind explicit opt-in, not another small CPU VM.
+
+### OCI-Only Decision
+
+When no T4/HF GPU is available, the viable MVP proposal becomes:
+
+> Keep recognition, WordPress demo, and control plane on the existing OCI A1 host. Add a disabled-by-default async description worker on the same host. First benchmark `Florence-2-base-ft` locally, preferably through the ONNX package. Generate visual facts, inject roster context, produce a cached alt-text draft, and show the context delta. Do not provision another VM unless tenancy quota is verified and host headroom is measured.
+
+Acceptance gate for this path:
+
+- ARM64 install succeeds without fragile manual build steps.
+- Cold model load and one 1024 px image inference are measured separately.
+- Single-image cached demo result is acceptable even if first-run CPU inference takes 30-90 seconds.
+- Worker limits prevent API/DB/WordPress degradation.
+- If live latency is poor, demo uses precomputed/cached outputs rather than pretending the CPU host is a GPU service.
+
+This path is weaker than the HF T4 proposal on quality and latency, but stronger on cost, privacy story, and operational control. It is good enough to test the core Alt Context proposition: identity-aware context improves alt text. It is not good enough to validate production-scale automatic captioning.

@@ -1,0 +1,82 @@
+{
+  "benchmark": "E19-1 sub-7B VLM A1 CPU benchmark (MiMo-VL vein)",
+  "date": "2026-06-16",
+  "task_ref": "MAINT-mimo-vl-eval-20260617",
+  "host": {
+    "name": "acx-backend",
+    "access": "tailscale (acx-backend.tail1a44b8.ts.net)",
+    "machine": "aarch64",
+    "cpu_arch": "Ampere Altra Neoverse-N1",
+    "cpu_count": 4,
+    "ram_gb": 23,
+    "swap": "0B",
+    "gpu": false,
+    "platform": "Linux-6.17.0-1011-oracle-aarch64-with-glibc2.39"
+  },
+  "config": {
+    "device": "cpu",
+    "dtype": "bfloat16",
+    "dtype_note": "mkldnn bf16 unsupported on Neoverse-N1 -> falls back to BLAS gemm (same regime as the prior Phi-tier A1 runs)",
+    "attn_implementation": "eager",
+    "num_beams": 1,
+    "max_new_tokens": 256,
+    "prompt": "Generate a factual, objective alt-text description for a visually impaired user. Avoid redundancy and speculation.",
+    "images": ["scikit-learn china.jpg", "scikit-learn flower.jpg"],
+    "deps_note": "torch torchvision transformers>=4.49 (installed 5.12.1) accelerate pillow scikit-learn; torchvision required (Qwen processor builds a video sub-processor)"
+  },
+  "models": [
+    {
+      "model_id": "Qwen/Qwen2.5-VL-3B-Instruct",
+      "params": "3B",
+      "license": "apache-2.0",
+      "arch": "qwen2_5_vl",
+      "cold_load_s": 1.6,
+      "peak_rss_mb": 8432.4,
+      "latency_s": {"min": 329.3, "max": 353.7, "mean": 341.5},
+      "results": [
+        {
+          "image": "china",
+          "latency_s": 353.7,
+          "caption": "A traditional Chinese pagoda with a multi-tiered structure, red and green colors, and ornate decorations stands prominently on a hill overlooking a serene lake. The pagoda features a conical roof with golden elements at the top. Surrounding the pagoda are lush green trees, and in the distance, there is a cityscape with buildings and a bridge spanning across the lake. The sky is clear with a light blue hue.",
+          "quality_note": "names 'pagoda', red/green, multi-tiered, hill, lake, trees; mild over-reach: 'cityscape/bridge', 'golden elements' (no bridge in image); missed the boats"
+        },
+        {
+          "image": "flower",
+          "latency_s": 329.3,
+          "caption": "A close-up of an orange dahlia flower with a vibrant, intricate center and petals radiating outward. The background is blurred, highlighting the flower's detailed structure.",
+          "quality_note": "names 'dahlia' (only Florence-large managed before), concise, no hallucination"
+        }
+      ]
+    },
+    {
+      "model_id": "Qwen/Qwen3-VL-4B-Instruct",
+      "params": "4B",
+      "license": "apache-2.0",
+      "arch": "qwen3_vl",
+      "released": "2025-10",
+      "cold_load_s": 1.7,
+      "peak_rss_mb": 9621.5,
+      "latency_s": {"min": 373.0, "max": 443.0, "mean": 408.0},
+      "results": [
+        {
+          "image": "china",
+          "latency_s": 443.0,
+          "caption": "A traditional Chinese multi-tiered pagoda with red pillars, green and orange tiled roofs, and ornate eaves stands atop a hill, surrounded by lush green trees. In the background, a large body of water with numerous small boats is visible, along with distant landmasses and a hazy horizon.",
+          "quality_note": "best china caption of all tested: gets the boats, no hallucinated bridge; pillars/tiles/eaves accurate"
+        },
+        {
+          "image": "flower",
+          "latency_s": 373.0,
+          "caption": "A close-up of a peach-colored dahlia with layered, ruffled petals, set against a blurred background of dark green foliage. A second, partially visible dahlia appears below.",
+          "quality_note": "matches Florence-2-large best-in-class: 'peach', 'ruffled petals', and the SECOND dahlia bud (previously only Florence-large caught it)"
+        }
+      ]
+    }
+  ],
+  "anchors_prior_runs": {
+    "Florence-2-base-ft (0.23B, incumbent CPU)": "~5-14 s/image, 2.5 GB, names 'red building' not 'pagoda'",
+    "Phi-4-multimodal (5.6B)": "924 s/image, ~10 GB, best concise (GPU-only)",
+    "MiMo-VL-7B-RL (~8B, projected)": "~13-14 min/image, ~16 GB -> OOM-risk on A1, GPU-only"
+  },
+  "verdict": "Sub-7B modern Qwen VLMs fit A1 RAM (8-10 GB) and deliver best-tier alt-text quality, but at ~6-7 min/image on CPU -> async-worker only (>> 20 s interactive bar). 7B (MiMo-VL / Phi-4) is GPU-only on memory grounds. Qwen3-VL-4B = best quality; Qwen2.5-VL-3B = leaner/faster at near-equal quality. Presented for testing; no adapter implemented."
+}

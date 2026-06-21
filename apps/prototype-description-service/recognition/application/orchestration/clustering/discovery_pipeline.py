@@ -433,6 +433,18 @@ async def run_singleton_hac_refinement(
             )
 
     if merged_clusters:
-        await assignment_writer.refresh_centroids_view()
+        # Best-effort: the merges are already applied and their centroids recomputed
+        # and persisted above. refresh_centroids_view is fail-fast (INFRA-5), but a
+        # transient MV-refresh failure must not flip a completed clustering job to
+        # FAILED — the scan worker's periodic concurrent refresh heals the MV lag.
+        try:
+            await assignment_writer.refresh_centroids_view()
+        except Exception:
+            logger.warning(
+                "[clustering] singleton_hac_merge MV refresh failed tenant_id=%s; "
+                "centroids may lag until the next scheduled refresh",
+                tenant_id,
+                exc_info=True,
+            )
 
     return merged_clusters

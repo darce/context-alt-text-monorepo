@@ -70,3 +70,11 @@ def test_job_repository_uses_centralized_clustering_job_types() -> None:
     src = (repo_root / "recognition/infrastructure/repositories/job_repository.py").read_text()
     assert "CLUSTERING_JOB_TYPES" in src
     assert "(JobType.CLUSTERING, JobType.CURATION, JobType.SPLIT)" not in src
+
+
+def test_scan_worker_uses_centralized_clustering_job_types() -> None:
+    """The worker's claim/recover queries must not re-inline the clustering-family string list."""
+    repo_root = Path(__file__).resolve().parents[3]
+    src = (repo_root / "recognition/worker/scan_worker.py").read_text()
+    assert "CLUSTERING_JOB_TYPES" in src
+    assert '["clustering", "curation", "split"]' not in src

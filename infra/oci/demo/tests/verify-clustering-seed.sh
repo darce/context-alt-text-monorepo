@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # E15-29 Slice 1: assert the clustering seed bundle is correctly populated.
 #   - exactly PERSONS*PER_PERSON eligible images in OUT, zero webp
+#   - every image is TRUE image/jpeg or image/png by content (magic bytes),
+#     not just by extension (E15-29-BR-02: webp/avif renamed .jpg break the decoder)
 #   - manifest lists PERSONS persons, each with >= PER_PERSON
 #   - each manifest person has >= PER_PERSON files on disk
 #   - provenance table filled (no placeholder; >= expected data rows)
@@ -22,6 +24,20 @@ n=$(find "$OUT" -maxdepth 1 -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -ina
 
 w=$(find "$OUT" -maxdepth 1 -type f -iname '*.webp' 2>/dev/null | wc -l | tr -d ' ')
 [[ "$w" -eq 0 ]] || { echo "FAIL: $w .webp files in $OUT (glob excludes webp)" >&2; fail=1; }
+
+# Content (magic-byte) assertion — extension alone is insufficient: webp/avif files
+# carrying .jpg/.jpeg/.png names pass the glob but break the recognition decoder and
+# WP media handling (E15-29-BR-02). Require every image to be TRUE image/jpeg|image/png.
+bad_content=0
+while IFS= read -r f; do
+  [[ -n "$f" ]] || continue
+  mt=$(file -b --mime-type "$f" 2>/dev/null || echo unknown)
+  case "$mt" in
+    image/jpeg|image/png) : ;;
+    *) echo "FAIL: $(basename "$f") is '$mt' by content, not image/jpeg|image/png" >&2; bad_content=$((bad_content + 1)) ;;
+  esac
+done < <(find "$OUT" -maxdepth 1 -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) 2>/dev/null)
+[[ "$bad_content" -eq 0 ]] || { echo "FAIL: $bad_content image(s) have non-jpeg/png content" >&2; fail=1; }
 
 if [[ ! -f "$MANIFEST" ]]; then
   echo "FAIL: manifest missing at $MANIFEST" >&2; fail=1

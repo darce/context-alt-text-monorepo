@@ -48,11 +48,13 @@ Not part of the behaviour-preserving refactor. Carve out only after 3a lands.
 - Verification: representative/cluster/curation/split suites green; import smoke (selector imports `domain.*` + `application.settings`, never `assignment_writer` → no cycle).
 - Evidence anchor: new `representative_selector.py`, decision `claude_slice_complete_slice9_3b_*`.
 
-### Sub-slice 3c — (design-decision, default DEFER) relocate the repo-writing rep orchestration
+### Sub-slice 3c — RESOLVED: WON'T-DO (option (i) is already the shipped post-3b state)
 
 `recompute_representatives` (clear+select+persist+update cluster) and `_create_and_add_representative` (writes a rep + emits a run-context event) are persistence orchestration. Review-decided options:
 - (i) **default/recommended:** keep them on `AssignmentWriter`, calling `self._reps` for selection sub-steps — `AssignmentWriter` stays the single persistence entry point; smaller blast radius. Defer 3c.
 - (ii) move them onto `RepresentativeSelector` (needs `run_context` + write access; larger, more cohesive "representative lifecycle" object).
+
+**Resolution (post-3b adversarial review, 3/3 judges → won't-do, high confidence):** Close as won't-do, not perpetual-defer. 3b already landed option (i): `recompute_representatives` delegates both selection sub-steps to `self._reps` (`select_reps_to_preserve`, `select_diverse_representatives_seeded`) while keeping the four persistence verbs (clear/persist-preserved/persist-new/update) on `AssignmentWriter` — the exact seam option (i) describes. Option (ii) would *invert* that seam: `RepresentativeSelector` today is `__init__(settings, cluster_repository)` with zero `run_context`/event capability (its docstring codifies "persistence orchestration … remains on AssignmentWriter"), so the move would force it to acquire run_context + bind lifecycle, event emission (`representative_selected` + `pose_bucket_completion`), and cluster-update authority. It would not even consolidate the lifecycle: `representative_upgraded` is emitted in `persist_assignment` (caller), not in the create helper, so the move fragments the event surface further. A separate `RepresentativeWriter` class was considered and rejected — the `CentroidMaintainer` precedent (repo-holding, event-free) can't be followed because rep writes are inseparable from event emission.
 
 ## Out of scope
 
@@ -69,4 +71,4 @@ Not part of the behaviour-preserving refactor. Carve out only after 3a lands.
 
 ## Convergence
 
-3a lands behaviour-preserving (always-False upgrade flag faithfully reproduced) with the new direct reason/admission test; 3a-fix optionally restores the upgrade reason/event as a separate reviewed behaviour change; 3b extracts the selection surface; 3c decided (default defer). Each sub-slice: failing test first, targeted suites green, slice-complete decision recorded.
+3a lands behaviour-preserving (always-False upgrade flag faithfully reproduced) with the new direct reason/admission test; 3a-fix optionally restores the upgrade reason/event as a separate reviewed behaviour change; 3b extracts the selection surface; 3c resolved **WON'T-DO** (post-3b code is already option (i); option (ii) would re-couple `run_context`/event emission into the selector). Each sub-slice: failing test first, targeted suites green, slice-complete decision recorded.

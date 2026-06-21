@@ -160,6 +160,32 @@ class AssignmentWriter:
             payload=payload,
         )
 
+    def _emit_representative_upgraded_event(
+        self,
+        *,
+        is_upgrade: bool,
+        cluster_id: str,
+        identity_id: str,
+        rep: ClusterRepresentative,
+    ) -> None:
+        """Emit a `representative_upgraded` event when a genuine quality upgrade occurred.
+
+        Shared by both write paths (`persist_assignment` + `persist_assignments_chunk`) so the
+        upgrade reason and its event stay coupled across single and batch persistence.
+        """
+        if not (is_upgrade and self._run_context):
+            return
+
+        self._run_context.add_event(
+            event_type="representative_upgraded",
+            identity_id=identity_id,
+            cluster_id=cluster_id,
+            payload={
+                "representative_id": rep.id,
+                "quality": float(rep.quality_score or 0),
+            },
+        )
+
     async def _create_and_add_representative(
         self,
         cluster_id: str,
@@ -268,16 +294,12 @@ class AssignmentWriter:
                 existing_rep_count=admission.rep_count,
             )
 
-            if is_upgrade and self._run_context:
-                self._run_context.add_event(
-                    event_type="representative_upgraded",
-                    identity_id=decision.candidate.identity.id,
-                    cluster_id=decision.candidate.cluster_id,
-                    payload={
-                        "representative_id": rep.id,
-                        "quality": float(rep.quality_score or 0),
-                    },
-                )
+            self._emit_representative_upgraded_event(
+                is_upgrade=is_upgrade,
+                cluster_id=decision.candidate.cluster_id,
+                identity_id=decision.candidate.identity.id,
+                rep=rep,
+            )
 
             # Compute centroid from the cached reps (returned by _should_add_representative)
             # plus the newly added rep -- this avoids a redundant get_all_representatives
@@ -369,6 +391,12 @@ class AssignmentWriter:
                         existing_rep_count=len(admission.cached_reps),
                     )
                     _reps_added += 1
+                    self._emit_representative_upgraded_event(
+                        is_upgrade=is_upgrade,
+                        cluster_id=cluster_id,
+                        identity_id=decision.candidate.identity.id,
+                        rep=rep,
+                    )
                     all_rep_embeddings = [r.embedding for r in admission.cached_reps]
                     all_rep_embeddings.append(rep.embedding)
                     new_centroid = self._centroids.unit_normalized_mean(all_rep_embeddings)

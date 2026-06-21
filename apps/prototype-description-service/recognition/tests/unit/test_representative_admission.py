@@ -228,3 +228,125 @@ async def test_admission_novel_pose_sets_flag(writer: AssignmentWriter, cluster_
     assert adm.should_add is True
     assert adm.was_novel_pose is True
     assert adm.was_upgrade is False
+
+
+@pytest.mark.asyncio
+async def test_persist_assignments_chunk_upgrade_emits_event() -> None:
+    """BR-01: the batch path emits the representative_upgraded event on an upgrade, at
+    parity with the single-item persist_assignment path (previously only the single path did)."""
+    settings = ClusteringSettings(
+        max_representatives_per_cluster=5,
+        pose_diversity_bonus=2,
+        representative_diversity_threshold=0.9,
+        pose_bucket_size=30.0,
+    )
+    old_rep = ClusterRepresentative(
+        id=str(uuid.uuid4()),
+        cluster_id="c1",
+        identity_id="rep-old",
+        embedding=_unit_vector(0),
+        created_at=None,
+        tenant_id="tenant-1",
+        pose_pitch=0.0,
+        pose_yaw=0.0,
+        quality_score=0.1,
+    )
+    cluster_repo = AsyncMock()
+    cluster_repo.get_all_representatives.return_value = [old_rep]
+    cluster_repo.get_by_id.return_value = IdentityCluster(
+        id="c1", tenant_id="tenant-1", label=None, is_labeled=False, identity_count=0
+    )
+    cand = _candidate("c1", index=10, pitch=0.0, yaw=0.0)
+    member_repo = AsyncMock()
+    member_repo.bulk_add_members_if_not_exists.return_value = ([Mock(identity_id=cand.identity.id)], 0)
+    run_ctx = Mock()
+    writer = AssignmentWriter(settings, cluster_repo, member_repo, run_context=run_ctx)
+
+    await writer.persist_assignments_chunk([_accept(cand)])
+
+    events = run_ctx.add_event.call_args_list
+    selected = [c for c in events if c.kwargs.get("event_type") == "representative_selected"]
+    upgraded = [c for c in events if c.kwargs.get("event_type") == "representative_upgraded"]
+    assert len(selected) == 1
+    assert selected[0].kwargs["payload"]["reason"] == "representative_upgrade"
+    assert len(upgraded) == 1
+
+
+@pytest.mark.asyncio
+async def test_persist_assignment_novel_pose_reason_no_upgrade_event() -> None:
+    """TA-01: a novel-pose accept records reason 'novel_pose_addition' and emits no upgrade event."""
+    settings = ClusteringSettings(
+        max_representatives_per_cluster=5,
+        pose_diversity_bonus=2,
+        representative_diversity_threshold=0.9,
+        pose_bucket_size=30.0,
+    )
+    covered = [_rep("c1", i, pitch=0.0, yaw=0.0) for i in range(5)]  # bucket (0,0) covered
+    cluster_repo = AsyncMock()
+    cluster_repo.get_all_representatives.return_value = covered
+    cluster_repo.get_by_id.return_value = IdentityCluster(
+        id="c1", tenant_id="tenant-1", label=None, is_labeled=False, identity_count=0
+    )
+    run_ctx = Mock()
+    writer = AssignmentWriter(settings, cluster_repo, AsyncMock(), run_context=run_ctx)
+
+    await writer.persist_assignment(_accept(_candidate("c1", index=10, pitch=90.0, yaw=90.0)))
+
+    events = run_ctx.add_event.call_args_list
+    selected = [c for c in events if c.kwargs.get("event_type") == "representative_selected"]
+    upgraded = [c for c in events if c.kwargs.get("event_type") == "representative_upgraded"]
+    assert len(selected) == 1
+    assert selected[0].kwargs["payload"]["reason"] == "novel_pose_addition"
+    assert upgraded == []
+
+
+@pytest.mark.asyncio
+async def test_persist_assignment_diverse_reason_no_upgrade_event() -> None:
+    """TA-01: a plain diverse accept (empty cluster) records reason 'diverse_addition', no upgrade event."""
+    settings = ClusteringSettings(
+        max_representatives_per_cluster=5,
+        pose_diversity_bonus=2,
+        representative_diversity_threshold=0.9,
+        pose_bucket_size=30.0,
+    )
+    cluster_repo = AsyncMock()
+    cluster_repo.get_all_representatives.return_value = []
+    cluster_repo.get_by_id.return_value = IdentityCluster(
+        id="c1", tenant_id="tenant-1", label=None, is_labeled=False, identity_count=0
+    )
+    run_ctx = Mock()
+    writer = AssignmentWriter(settings, cluster_repo, AsyncMock(), run_context=run_ctx)
+
+    await writer.persist_assignment(_accept(_candidate("c1", index=10)))
+
+    events = run_ctx.add_event.call_args_list
+    selected = [c for c in events if c.kwargs.get("event_type") == "representative_selected"]
+    upgraded = [c for c in events if c.kwargs.get("event_type") == "representative_upgraded"]
+    assert len(selected) == 1
+    assert selected[0].kwargs["payload"]["reason"] == "diverse_addition"
+    assert upgraded == []
+
+
+@pytest.mark.asyncio
+async def test_persist_assignment_centroid_uses_unit_normalized_mean() -> None:
+    """TA-02: the accept-path centroid equals CentroidMaintainer.unit_normalized_mean of the
+    cached reps plus the new rep — pins the single-source dedup invariant (not re-inlined math)."""
+    settings = ClusteringSettings(
+        max_representatives_per_cluster=5,
+        pose_diversity_bonus=2,
+        representative_diversity_threshold=0.9,
+        pose_bucket_size=30.0,
+    )
+    cluster_repo = AsyncMock()
+    cluster_repo.get_all_representatives.return_value = []
+    cluster = IdentityCluster(id="c1", tenant_id="tenant-1", label=None, is_labeled=False, identity_count=0)
+    cluster_repo.get_by_id.return_value = cluster
+    cand = _candidate("c1", index=10)
+    writer = AssignmentWriter(settings, cluster_repo, AsyncMock())
+
+    await writer.persist_assignment(_accept(cand))
+
+    expected = writer._centroids.unit_normalized_mean([cand.identity.embedding])
+    assert expected is not None
+    assert cluster.centroid is not None
+    assert np.allclose(cluster.centroid, expected)

@@ -11,7 +11,7 @@
 - **7B does not fit the current A1.** Measured free RAM is ~18 GB with **no swap**; MiMo-VL-7B bf16 ≈ 16 GB would sit on top of the live recognition stack and risk OOM-killing prod. Both MiMo-VL-7B and Phi-4 are **GPU-tier only** — confirmed, not theoretical.
 - **MiMo-VL has no official sub-7B variant.** Its nearest deployable-size sibling is **Qwen2.5-VL-3B** (its exact `qwen2_5_vl` base family); the newest in-vein option is **Qwen3-VL-2B/4B** (Oct 2025).
 - **Live-measured on the A1 CPU** (the real ask): **Qwen2.5-VL-3B = mean 341.5 s/image** (china 354 / flower 329), **8.4 GB RAM**, **excellent quality** — names "pagoda" *and* "dahlia" (the latter only Florence-*large* got before, at 4× the RAM), concise, **no hallucination**. ~2.7× faster than Phi-4, fits memory, far richer than Florence. **Qwen3-VL-4B** (newest) edges it on quality — mean 408 s, 9.6 GB, matching Florence-*large*'s best captions (the boats; the second dahlia bud) with no hallucination.
-- **Recommendation (present for testing):** evaluate **Qwen2.5-VL-3B** and **Qwen3-VL-4B** as the real-description model. Neither is interactive on the A1 CPU (~6–9 min/image → async-worker only), but both are memory-safe and quality is a large step up from Florence. The 7B tier (MiMo-VL / Phi-4) stays GPU-deferred. **No adapter built yet — awaiting your pick.**
+- **Recommendation (present for testing):** evaluate **Qwen2.5-VL-3B** and **Qwen3-VL-4B** as the real-description model. Neither is interactive on the A1 CPU (~6–7 min/image → async-worker only), but both are memory-safe and quality is a large step up from Florence. The 7B tier (MiMo-VL / Phi-4) stays GPU-deferred. **No adapter built yet — awaiting your pick.**
 
 ## 1. The two questions
 
@@ -87,7 +87,7 @@ All are GPU-only for *interactive* latency but fit A1 RAM (async-worker path) an
 | **MiniCPM-V (4.x)** | ~8B | research+ltd-commercial ⚠ | ~ | best edge/GGUF (phone-built); license caveat |
 | **LFM2-VL / SmolVLM2** | <2B | Apache-2.0 | efficiency-vein | ultra-light; quality below the 3–4B tier |
 
-**On current hardware specifically:** for a CPU-only A1, a sub-7B model is realistic only **(a)** async-worker (full precision, ~6–9 min/image, memory-safe) or **(b)** **Q4 GGUF via llama.cpp** (~3–5 GB RAM, ~1–3 min/image with ARM NEON) at some quality cost. Qwen3-VL/Qwen2.5-VL/MiniCPM-V all ship GGUF.
+**On current hardware specifically:** for a CPU-only A1, a sub-7B model is realistic only **(a)** async-worker (full precision, ~6–7 min/image, memory-safe) or **(b)** **Q4 GGUF via llama.cpp** (~3–5 GB RAM, ~1–3 min/image with ARM NEON) at some quality cost. Qwen3-VL/Qwen2.5-VL/MiniCPM-V all ship GGUF.
 
 ## 6. Recommendation — present for testing (no implementation yet)
 
@@ -103,5 +103,5 @@ Access is via **Tailscale** (`ubuntu@acx-backend.tail1a44b8.ts.net`) — the pub
 
 - MiMo-VL: report https://arxiv.org/abs/2506.03569 · Miloco (linked) https://arxiv.org/html/2512.17436v2 · card https://huggingface.co/XiaomiMiMo/MiMo-VL-7B-RL
 - Phi-4-multimodal: https://huggingface.co/microsoft/Phi-4-multimodal-instruct
-- Sub-7B: Qwen2.5-VL-3B https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct · Qwen3-VL-4B https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct · InternVL3-2B https://huggingface.co/OpenGVLab/InternVL3-2B · Ovis2 https://huggingface.co/AIDC-AI/Ovis2-8B
+- Sub-7B: Qwen2.5-VL-3B https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct · Qwen3-VL-4B https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct · InternVL3-2B https://huggingface.co/OpenGVLab/InternVL3-2B · Ovis2 https://huggingface.co/AIDC-AI/Ovis2-2B
 - Measured A1 anchors: companion memo `E19-1-vlm-model-candidates-a1-cpu.md`

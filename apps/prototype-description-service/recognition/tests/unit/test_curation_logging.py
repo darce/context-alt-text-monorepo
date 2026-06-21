@@ -60,34 +60,6 @@ def test_log_cluster_renamed_records_old_and_new_labels(
     assert record.__dict__["new_label"] == "Alice Smith"
 
 
-def test_log_cluster_merged_records_source_target_and_count(
-    logger_with_handler: tuple[ClusteringLogger, MemoryHandler],
-) -> None:
-    """Verify merge events include source, target, and moved count."""
-    clustering_logger, handler = logger_with_handler
-    source_id = str(generate_id())
-    target_id = str(generate_id())
-    tenant_id = str(generate_id())
-
-    result = clustering_logger.log_cluster_merged(
-        source_cluster_id=source_id,
-        target_cluster_id=target_id,
-        moved_count=15,
-        tenant_id=tenant_id,
-    )
-
-    assert result.event_type is CurationEventType.MERGE
-    assert result.cluster_id == target_id
-    assert result.details["source_cluster_id"] == source_id
-    assert result.details["target_cluster_id"] == target_id
-    assert result.details["moved_count"] == 15
-
-    assert len(handler.records) == 1
-    record = handler.records[0]
-    assert record.__dict__["event_type"] == "merge"
-    assert record.__dict__["moved_count"] == 15
-
-
 def test_log_cluster_split_records_new_clusters_and_counts(
     logger_with_handler: tuple[ClusteringLogger, MemoryHandler],
 ) -> None:

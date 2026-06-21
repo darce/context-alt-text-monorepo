@@ -6,6 +6,7 @@ after HDBSCAN to merge remaining singletons per Apple's two-pass strategy.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
@@ -334,6 +335,48 @@ async def test_singleton_hac_refinement_merges_singleton_clusters() -> None:
     assert writer.recompute_representatives.await_count == 1
     assert writer.recompute_centroid.await_count == 1
     assert writer.refresh_centroids_view.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_singleton_hac_refinement_tolerates_refresh_failure(caplog) -> None:
+    """INFRA-5: a transient post-merge MV-refresh failure must not flip the completed
+    singleton-HAC merge to FAILED — centroids are persisted; the MV heals on the next
+    scheduled refresh."""
+    tenant_id = str(uuid.uuid4())
+
+    id1 = _make_identity(np.array([1.0, 0.0, 0.0], dtype=np.float32), media_id=1)
+    id2 = _make_identity(np.array([0.99, 0.05, 0.0], dtype=np.float32), media_id=2)
+    id1.cluster_id = str(uuid.uuid4())
+    id2.cluster_id = str(uuid.uuid4())
+
+    cluster_a = IdentityCluster(id=id1.cluster_id, tenant_id=tenant_id, label=None, is_labeled=False, identity_count=1)
+    cluster_b = IdentityCluster(id=id2.cluster_id, tenant_id=tenant_id, label=None, is_labeled=False, identity_count=1)
+    if cluster_a.id is None or cluster_b.id is None:
+        raise AssertionError("Test setup requires cluster IDs")
+
+    cluster_repo = SingletonClusterRepoStub([id1, id2], {cluster_a.id: cluster_a, cluster_b.id: cluster_b})
+    member_repo = SingletonMemberRepoStub()
+    writer = SingletonWriterStub(cluster_repo, member_repo)
+    writer.refresh_centroids_view = AsyncMock(side_effect=RuntimeError("transient MV refresh failure"))
+
+    group_id = uuid.uuid4()
+    fake_hac = FakeConstrainedHAC(cluster_assignments={uuid.UUID(id1.id): group_id, uuid.UUID(id2.id): group_id})
+
+    with caplog.at_level(logging.WARNING, logger="recognition.application.orchestration.clustering.discovery_pipeline"):
+        merged = await run_singleton_hac_refinement(
+            tenant_id=tenant_id,
+            constrained_hac=fake_hac,
+            hac_settings=HACSettings(max_scope_size=10),
+            assignment_writer=writer,
+        )
+
+    # Merge still completes despite the refresh raising.
+    assert merged == 1
+    assert cluster_repo.deleted == [id2.cluster_id]
+    writer.refresh_centroids_view.assert_awaited_once()
+    assert any("refresh failed" in record.message.lower() for record in caplog.records), (
+        "a failed post-merge MV refresh must be logged"
+    )
 
 
 @pytest.mark.asyncio

@@ -11,10 +11,9 @@ import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from functools import lru_cache
-from pathlib import Path
 from typing import Any, Protocol
 
-from fastapi import Depends
+from fastapi import Depends, HTTPException, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,7 +50,6 @@ from recognition.interface_adapters.http.deps.session import (
 )
 from recognition.interface_adapters.http.deps.stores import (
     MediaIdentityService,
-    get_decision_store,
     get_mem_job_repo,
 )
 from recognition.interface_adapters.http.deps.tenant import get_tenant_id_optional
@@ -59,7 +57,6 @@ from recognition.interface_adapters.http.middleware.metrics import get_default_m
 from recognition.observability import ClusteringLogger
 from recognition.observability.curation_refresh_metrics import get_default_curation_refresh_metrics
 from recognition.observability.persistence import ObservabilityRepository
-from recognition.observability.visualization import ClusterVisualizer
 
 logger = logging.getLogger(__name__)
 
@@ -107,54 +104,6 @@ class AuditRepositoryProtocol(Protocol):
     ) -> list[dict[str, Any]]: ...
 
     async def count_events(self, tenant_id: str, event_type: str | None = None) -> int: ...
-
-
-class _NotImplementedRetentionPolicyService:
-    async def get_policy(self, tenant_id: str) -> dict[str, Any]:
-        raise NotImplementedError(f"Retention policy service is not implemented for tenant {tenant_id}")
-
-    async def update_policy(self, tenant_id: str, retention_mode: str, actor: str) -> dict[str, Any]:
-        raise NotImplementedError(f"Retention policy update is not implemented for tenant {tenant_id}")
-
-    async def apply_preset(self, tenant_id: str, preset_name: str, actor: str) -> dict[str, Any]:
-        raise NotImplementedError(f"Retention preset is not implemented for tenant {tenant_id}")
-
-    async def apply_disposal_after_ack(
-        self,
-        tenant_id: str,
-        snapshot_generation_id: str | None,
-        actor: str,
-    ) -> dict[str, Any]:
-        raise NotImplementedError(f"Retention disposal is not implemented for tenant {tenant_id}")
-
-
-class _NotImplementedRetentionExportService:
-    async def count_exportable_identities(self, tenant_id: str) -> int:
-        return 0
-
-    async def export_tenant_data(self, tenant_id: str, actor: str) -> dict[str, Any]:
-        raise NotImplementedError(f"Tenant export service is not implemented for tenant {tenant_id}")
-
-    async def start_async_export(self, tenant_id: str, actor: str) -> dict[str, Any]:
-        raise NotImplementedError(f"Async export service is not implemented for tenant {tenant_id}")
-
-    async def get_export_status(self, job_id: str, tenant_id: str) -> dict[str, Any]:
-        raise NotImplementedError(f"Export status service is not implemented for job {job_id}")
-
-
-class _NotImplementedRetentionPurgeService:
-    async def purge_tenant_data(self, tenant_id: str, actor: str, scope: str = "disposed") -> dict[str, Any]:
-        raise NotImplementedError(f"Tenant purge service is not implemented for tenant {tenant_id}")
-
-
-class _NotImplementedAuditRepository:
-    async def list_events(
-        self, tenant_id: str, limit: int, offset: int, event_type: str | None = None
-    ) -> list[dict[str, Any]]:
-        raise NotImplementedError(f"Audit repository is not implemented for tenant {tenant_id}")
-
-    async def count_events(self, tenant_id: str, event_type: str | None = None) -> int:
-        raise NotImplementedError(f"Audit repository is not implemented for tenant {tenant_id}")
 
 
 @lru_cache
@@ -255,51 +204,42 @@ async def get_media_identity_service(
 async def get_retention_policy_service(
     session: AsyncSession | None = Depends(get_optional_session),
 ) -> RetentionPolicyServiceProtocol:
-    """Return the real retention policy service when available."""
+    """Return the retention policy service, or fail fast with 503 when the DB is unavailable."""
     if session is None:
-        return _NotImplementedRetentionPolicyService()
-    try:
-        from recognition.domain.services.retention_policy_service import RetentionPolicyService
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="retention policy service unavailable: database connection is unavailable",
+        )
+    from recognition.application.services.retention_policy_service import RetentionPolicyService
 
-        return RetentionPolicyService(session=session)
-    except ModuleNotFoundError:
-        return _NotImplementedRetentionPolicyService()
+    return RetentionPolicyService(session=session)
 
 
 async def get_retention_export_service(
     session: AsyncSession = Depends(get_session),
 ) -> RetentionExportServiceProtocol:
-    """Return the real tenant export service when available."""
-    try:
-        from recognition.domain.services.export_service import TenantExportService
+    """Return the tenant export service."""
+    from recognition.application.services.export_service import TenantExportService
 
-        return TenantExportService(session=session)
-    except ModuleNotFoundError:
-        return _NotImplementedRetentionExportService()
+    return TenantExportService(session=session)
 
 
 async def get_retention_purge_service(
     session: AsyncSession = Depends(get_session),
 ) -> RetentionPurgeServiceProtocol:
-    """Return the real tenant purge service when available."""
-    try:
-        from recognition.domain.services.purge_service import TenantPurgeService
+    """Return the tenant purge service."""
+    from recognition.application.services.purge_service import TenantPurgeService
 
-        return TenantPurgeService(session=session)
-    except ModuleNotFoundError:
-        return _NotImplementedRetentionPurgeService()
+    return TenantPurgeService(session=session)
 
 
 async def get_audit_repository(
     session: AsyncSession = Depends(get_session),
 ) -> AuditRepositoryProtocol:
-    """Return the real audit repository when available."""
-    try:
-        from recognition.infrastructure.repositories.audit_repository import AuditRepository
+    """Return the audit repository."""
+    from recognition.infrastructure.repositories.audit_repository import AuditRepository
 
-        return AuditRepository(session)
-    except ModuleNotFoundError:
-        return _NotImplementedAuditRepository()
+    return AuditRepository(session)
 
 
 class TenantImportServiceProtocol(Protocol):
@@ -308,21 +248,13 @@ class TenantImportServiceProtocol(Protocol):
     async def validate_and_import(self, data: dict[str, Any], tenant_id: str, actor: str) -> dict[str, Any]: ...
 
 
-class _NotImplementedRetentionImportService:
-    async def validate_and_import(self, data: dict[str, Any], tenant_id: str, actor: str) -> dict[str, Any]:
-        raise NotImplementedError(f"Tenant import service is not implemented for tenant {tenant_id}")
-
-
 async def get_retention_import_service(
     session: AsyncSession = Depends(get_session),
 ) -> TenantImportServiceProtocol:
-    """Return the real tenant import service when available."""
-    try:
-        from recognition.domain.services.import_service import TenantImportService
+    """Return the tenant import service."""
+    from recognition.application.services.import_service import TenantImportService
 
-        return TenantImportService(session=session)
-    except ModuleNotFoundError:
-        return _NotImplementedRetentionImportService()
+    return TenantImportService(session=session)
 
 
 async def build_cluster_service(
@@ -380,8 +312,6 @@ async def build_cluster_service(
         settings=settings,
     )
 
-    charts_dir = Path("logs") / "charts"
-
     # Create HAC settings (can be overridden later via config)
     from recognition.application.settings.clustering import HACSettings
 
@@ -400,9 +330,6 @@ async def build_cluster_service(
         constraint_repository=constraint_repo,
         hac_settings=hac_settings,
         logger=ClusteringLogger(),
-        visualizer=ClusterVisualizer(output_dir=charts_dir),
-        decision_store=get_decision_store(),
-        observability_repo=ObservabilityRepository(session),
         session=session,
     )
 

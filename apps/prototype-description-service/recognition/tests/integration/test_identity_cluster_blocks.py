@@ -20,7 +20,7 @@ from recognition.infrastructure.repositories import (
     SqlAlchemyMemberRepository,
     SqlAlchemySuggestionRepository,
 )
-from recognition.interface_adapters.http import dependencies
+from recognition.interface_adapters.http import deps as dependencies
 from recognition.interface_adapters.http import router as recognition_router
 
 

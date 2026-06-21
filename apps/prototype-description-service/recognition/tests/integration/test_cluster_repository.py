@@ -191,7 +191,7 @@ async def test_update_cluster_label(db_session, tenant) -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_member_identities_for_clusters_groups_by_cluster(db_session, tenant) -> None:
+async def test_get_member_identities_for_clusters_groups_by_cluster(db_session, tenant, seed_media_identity) -> None:
     repo = SqlAlchemyClusterRepository(db_session)
     member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
 
@@ -239,6 +239,9 @@ async def test_get_member_identities_for_clusters_groups_by_cluster(db_session, 
     )
     await db_session.flush()
 
+    await seed_media_identity(identity_a2)
+    await seed_media_identity(identity_b1)
+
     await member_repo.add_member(cluster_a.id, identity_id=identity_a1, similarity=0.91)
     await member_repo.add_member(cluster_a.id, identity_id=identity_a2, similarity=0.92)
     await member_repo.add_member(cluster_b.id, identity_id=identity_b1, similarity=0.93)
@@ -258,7 +261,9 @@ async def test_get_member_identities_for_clusters_groups_by_cluster(db_session, 
 
 
 @pytest.mark.asyncio
-async def test_get_member_identities_with_similarity_can_count_and_limit(db_session, tenant) -> None:
+async def test_get_member_identities_with_similarity_can_count_and_limit(
+    db_session, tenant, seed_media_identity
+) -> None:
     repo = SqlAlchemyClusterRepository(db_session)
     member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
 
@@ -273,6 +278,8 @@ async def test_get_member_identities_with_similarity_can_count_and_limit(db_sess
         )
     )
     identity_ids = [str(uuid.uuid4()) for _ in range(3)]
+    for identity_id in identity_ids:
+        await seed_media_identity(identity_id)
     for index, identity_id in enumerate(identity_ids):
         await member_repo.add_member(cluster.id, identity_id=identity_id, similarity=0.9 + index * 0.01)
 
@@ -421,7 +428,7 @@ async def test_get_snapshot_stamps_generation_id_and_excludes_disposed_rows(db_s
 
 
 @pytest.mark.asyncio
-async def test_delete_cascades_members(db_session, tenant) -> None:
+async def test_delete_cascades_members(db_session, tenant, seed_media_identity) -> None:
     """Deleting a cluster should remove associated members."""
     cluster_repo = SqlAlchemyClusterRepository(db_session)
     member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
@@ -434,7 +441,9 @@ async def test_delete_cascades_members(db_session, tenant) -> None:
         created_at=datetime.now(tz=UTC),
     )
     saved_cluster = await cluster_repo.save(cluster)
-    await member_repo.add_member(saved_cluster.id, identity_id=str(uuid.uuid4()), similarity=0.92)
+    member_identity_id = str(uuid.uuid4())
+    await seed_media_identity(member_identity_id)
+    await member_repo.add_member(saved_cluster.id, identity_id=member_identity_id, similarity=0.92)
 
     await cluster_repo.delete(saved_cluster.id)
     members = await member_repo.get_by_cluster(saved_cluster.id)
@@ -481,7 +490,7 @@ async def test_get_by_tenant_filters_other_tenants(db_session, tenant) -> None:
 
 
 @pytest.mark.asyncio
-async def test_clear_representatives_removes_all(db_session, tenant) -> None:
+async def test_clear_representatives_removes_all(db_session, tenant, seed_media_identity) -> None:
     """clear_representatives should remove all representative rows for the cluster."""
     cluster_repo = SqlAlchemyClusterRepository(db_session)
     member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
@@ -497,6 +506,7 @@ async def test_clear_representatives_removes_all(db_session, tenant) -> None:
         )
     )
     identity_id = str(uuid.uuid4())
+    await seed_media_identity(identity_id)
     await member_repo.add_member(cluster.id, identity_id=identity_id, similarity=0.92)
 
     rep = ClusterRepresentative(

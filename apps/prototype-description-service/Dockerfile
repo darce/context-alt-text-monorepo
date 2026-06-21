@@ -69,7 +69,6 @@ COPY api/ api/
 COPY db/ db/
 COPY recognition/ recognition/
 COPY roster/ roster/
-COPY scene/ scene/
 COPY shared/ shared/
 COPY scripts/ scripts/
 COPY pyproject.toml .
@@ -80,11 +79,9 @@ RUN pip install --no-cache-dir -e . --no-deps
 # Default cache directory inside the container (mapped to a volume)
 ENV CACHE_BASE=/data/cache
 ENV HF_HOME=/data/cache/huggingface_cache
-ENV TRANSFORMERS_CACHE=/data/cache/huggingface_cache
 ENV HF_HUB_CACHE=/data/cache/huggingface_cache
 ENV INSIGHTFACE_CACHE_DIR=/data/cache/insightface
 ENV INSIGHTFACE_HOME=/data/cache/insightface
-ENV MPLCONFIGDIR=/data/cache/matplotlib
 
 EXPOSE 8000
 

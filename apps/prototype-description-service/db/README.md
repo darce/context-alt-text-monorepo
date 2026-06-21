@@ -7,7 +7,7 @@ face-scan/clustering plan:
 - PostgreSQL 15+ with the [`pgvector`](https://github.com/pgvector/pgvector)
   extension.
 - SQLAlchemy 2.x (async runtime) + Alembic migrations.
-- InsightFace embeddings stored as `VECTOR(1024)` rows in `media_faces`.
+- InsightFace embeddings stored as `VECTOR(512)` rows in `media_identities.embedding`.
 
 ## 1. Prerequisites
 
@@ -24,9 +24,12 @@ cd apps/prototype-description-service
 cp .env.example .env
 ```
 
-- `POSTGRES_DSN` — Async SQLAlchemy DSN used by the FastAPI app. Default: `postgresql+asyncpg://context:context@localhost:5432/alt_context_service`
-- `POSTGRES_SYNC_DSN` — Optional sync DSN for Alembic. If omitted we derive it from `POSTGRES_DSN`. Default: same host/DB via psycopg
-- `PGVECTOR_DIM` — Embedding dimension stored in `media_faces.embedding`. Keep at 1024 unless the embedding model changes. Default: `1024`
+The canonical connection contract is the discrete `PG*` variables (see `.env.example`); `db/settings.py` builds the async/sync DSNs from them.
+
+- `PGUSER` / `PGPASSWORD` / `PGHOST` / `PGPORT` / `DB_NAME` — primary connection settings. Defaults: `context` / `context` / `localhost` / `5432` / `alt_context_service`.
+- `POSTGRES_DSN` — *optional* full async SQLAlchemy DSN override. When unset, `db/settings.py` derives it from the `PG*` vars (and re-exports it for the app).
+- `POSTGRES_SYNC_DSN` — *optional* sync DSN override for Alembic. When unset, derived from the same `PG*` vars via psycopg.
+- `PGVECTOR_DIM` — Embedding dimension stored in `media_identities.embedding`. Keep at 512 (the InsightFace model dimension) unless the embedding model changes. Default: `512`
 
 > 💡 Both the runtime and Alembic automatically load `.env` when present.
 

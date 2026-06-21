@@ -7,11 +7,11 @@ import uuid
 import pytest
 
 from recognition.domain.cluster import IdentityCluster
-from recognition.interface_adapters.http import dependencies
+from recognition.interface_adapters.http import deps as dependencies
 
 
 @pytest.mark.asyncio
-async def test_outliers_included_when_requested(db_session, tenant) -> None:
+async def test_outliers_included_when_requested(db_session, tenant, seed_media_identity) -> None:
     """Outlier clusters (label=-1/noise) should be surfaced when include_outliers=true."""
     cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
     cluster_repo = cluster_service.assignment_writer.cluster_repository
@@ -28,7 +28,9 @@ async def test_outliers_included_when_requested(db_session, tenant) -> None:
             created_at=None,
         )
     )
-    await member_repo.add_member(cluster.id, identity_id=str(uuid.uuid4()), similarity=0.9)
+    member_id = str(uuid.uuid4())
+    await seed_media_identity(member_id)
+    await member_repo.add_member(cluster.id, identity_id=member_id, similarity=0.9)
 
     # Seed an outlier cluster that should be hidden by default
     outlier_cluster = await cluster_repo.save(

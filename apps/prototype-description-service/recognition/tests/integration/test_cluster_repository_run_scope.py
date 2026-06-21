@@ -132,7 +132,9 @@ async def test_get_top_unlabeled_respects_limit(db_session, tenant) -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_top_unlabeled_falls_back_to_members_when_representatives_missing(db_session, tenant) -> None:
+async def test_get_top_unlabeled_falls_back_to_members_when_representatives_missing(
+    db_session, tenant, seed_media_identity
+) -> None:
     """Clusters without representative rows should still expose thumbnail-capable member fallbacks."""
     cluster_repo = SqlAlchemyClusterRepository(db_session)
     member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
@@ -157,6 +159,8 @@ async def test_get_top_unlabeled_falls_back_to_members_when_representatives_miss
         (str(uuid.uuid4()), 0.70),
         (str(uuid.uuid4()), 0.30),
     ]
+    for identity_id, _similarity in identities_by_similarity:
+        await seed_media_identity(identity_id)
     for identity_id, similarity in identities_by_similarity:
         await member_repo.add_member(cluster.id, identity_id=identity_id, similarity=similarity)
     await db_session.commit()
@@ -175,7 +179,9 @@ async def test_get_top_unlabeled_falls_back_to_members_when_representatives_miss
 
 
 @pytest.mark.asyncio
-async def test_get_top_unlabeled_tops_up_partial_representatives_to_four(db_session, tenant) -> None:
+async def test_get_top_unlabeled_tops_up_partial_representatives_to_four(
+    db_session, tenant, seed_media_identity
+) -> None:
     """Clusters with fewer than 4 representatives should be topped up from members for thumbnail grids."""
     cluster_repo = SqlAlchemyClusterRepository(db_session)
     member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
@@ -199,6 +205,8 @@ async def test_get_top_unlabeled_tops_up_partial_representatives_to_four(db_sess
         (str(uuid.uuid4()), 0.70),
         (str(uuid.uuid4()), 0.60),
     ]
+    for identity_id, _similarity in identities_by_similarity:
+        await seed_media_identity(identity_id)
     for identity_id, similarity in identities_by_similarity:
         await member_repo.add_member(cluster.id, identity_id=identity_id, similarity=similarity)
 
@@ -234,7 +242,9 @@ async def test_get_top_unlabeled_tops_up_partial_representatives_to_four(db_sess
 
 
 @pytest.mark.asyncio
-async def test_get_top_unlabeled_excludes_clusters_with_accepted_member_suggestions(db_session, tenant) -> None:
+async def test_get_top_unlabeled_excludes_clusters_with_accepted_member_suggestions(
+    db_session, tenant, seed_media_identity
+) -> None:
     """Clusters with accepted member suggestions to another cluster should be excluded."""
     cluster_repo = SqlAlchemyClusterRepository(db_session)
     member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
@@ -275,6 +285,7 @@ async def test_get_top_unlabeled_excludes_clusters_with_accepted_member_suggesti
     )
 
     member_identity_id = str(uuid.uuid4())
+    await seed_media_identity(member_identity_id)
     await member_repo.add_member(source_cluster.id, identity_id=member_identity_id, similarity=0.81)
 
     db_session.add(

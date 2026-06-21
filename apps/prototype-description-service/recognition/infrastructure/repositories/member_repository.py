@@ -20,7 +20,6 @@ from sqlalchemy.sql.dml import Insert
 from db.models import IdentityMember as MemberModel
 from recognition.domain.repositories import IdentityMember, MemberRepository
 from recognition.infrastructure.repositories._helpers import coerce_uuid as _coerce_uuid
-from recognition.infrastructure.repositories._helpers import ensure_media_identity as _ensure_media_identity
 from recognition.shared.db.helpers import execute_dml, get_rowcount
 
 
@@ -66,7 +65,6 @@ class SqlAlchemyMemberRepository(MemberRepository):
         identity_uuid = _coerce_uuid(identity_id)
         if tenant_uuid is None or cluster_uuid is None or identity_uuid is None:
             raise ValueError("tenant_id, cluster_id, and identity_id must be valid UUID-compatible strings")
-        await _ensure_media_identity(self._session, tenant_uuid, identity_uuid)
 
         model = MemberModel(
             tenant_id=tenant_uuid,
@@ -92,8 +90,6 @@ class SqlAlchemyMemberRepository(MemberRepository):
         identity_uuid = _coerce_uuid(identity_id)
         if tenant_uuid is None or cluster_uuid is None or identity_uuid is None:
             raise ValueError("tenant_id, cluster_id, and identity_id must be valid UUID-compatible strings")
-
-        await _ensure_media_identity(self._session, tenant_uuid, identity_uuid)
 
         member_id = uuid.uuid4()
         values = {
@@ -137,7 +133,6 @@ class SqlAlchemyMemberRepository(MemberRepository):
             identity_uuid = _coerce_uuid(member.identity_id)
             if identity_uuid is None:
                 raise ValueError("identity_id must be a valid UUID-compatible string")
-            await _ensure_media_identity(self._session, tenant_uuid, identity_uuid)
 
         models = [
             MemberModel(
@@ -169,13 +164,12 @@ class SqlAlchemyMemberRepository(MemberRepository):
         if tenant_uuid is None or cluster_uuid is None:
             raise ValueError("tenant_id and cluster_id must be valid UUID-compatible strings")
 
-        # Validate and ensure ancestor rows exist (test scaffold; no-ops in production).
+        # Validate identity ids before building the bulk insert.
         identity_uuids: list[uuid.UUID] = []
         for member in members:
             identity_uuid = _coerce_uuid(member.identity_id)
             if identity_uuid is None:
                 raise ValueError("identity_id must be a valid UUID-compatible string")
-            await _ensure_media_identity(self._session, tenant_uuid, identity_uuid)
             identity_uuids.append(identity_uuid)
 
         # Build all rows upfront; keep a member_id -> identity_id_str map for result assembly.

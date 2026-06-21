@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Iterable
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import UUID
@@ -118,17 +118,6 @@ def _locator_payload(identity: MediaIdentity, *, include_crop_hash: bool = False
     if include_crop_hash and crop_hash:
         payload["crop_hash"] = crop_hash
     return payload
-
-
-def _locator_sort_key(locator: IdentityLocator) -> tuple[int, int, int, int, int, str]:
-    return (
-        locator.media_id,
-        locator.bbox_x,
-        locator.bbox_y,
-        locator.bbox_width,
-        locator.bbox_height,
-        locator.crop_hash or "",
-    )
 
 
 async def _build_pre_curation_state(
@@ -310,39 +299,29 @@ async def _build_pre_curation_state(
     return result
 
 
-async def generate_canonical_report(
+@dataclass(frozen=True)
+class _ResolvedReportInputs:
+    """Parsed/resolved inputs for a canonical report run."""
+
+    tenant_uuid: UUID
+    run_uuid: UUID | None
+    run: RecognitionRun | None
+    resolved_media_ids: list[int] | None
+    resolved_roster_uuid: UUID | None
+
+
+async def _resolve_report_inputs(
     session: AsyncSession,
     *,
     tenant_id: str,
-    run_id: str | None = None,
-    all_runs: bool = False,
-    compare_baseline_path: str | None = None,
-    baseline_source_type: str = "curated",
-    media_ids: Iterable[int] | None = None,
-    roster_id: str | None = None,
-    dataset_name: str | None = None,
-    dataset_notes: str | None = None,
-) -> dict[str, object]:
-    """Generate the canonical report JSON payload for a tenant/dataset.
+    run_id: str | None,
+    media_ids: Iterable[int] | None,
+    roster_id: str | None,
+) -> _ResolvedReportInputs:
+    """Parse identifiers and resolve the effective media/roster filters.
 
-    Args:
-        session: Async SQLAlchemy session.
-        tenant_id: Tenant UUID string.
-        run_id: Optional recognition_run UUID string to attach as the baseline run.
-        all_runs: If True, aggregate events from ALL runs for this tenant.
-        compare_baseline_path: Path to a saved baseline JSON file to use as ground truth
-            instead of DB clusters. Enables post-reset comparison.
-        baseline_source_type: Source of ground truth labels when using compare_baseline_path:
-            - "curated": Use canonical_clusters (user-curated labels) [default]
-            - "predicted": Use pre_curation_state.predicted_clusters (original algorithm output)
-              Use "predicted" to measure clustering reproducibility/consistency.
-        media_ids: Optional dataset filter (media IDs).
-        roster_id: Optional dataset filter (roster UUID).
-        dataset_name: Optional human-friendly dataset name.
-        dataset_notes: Optional dataset notes.
-
-    Returns:
-        dict[str, object]: Canonical report payload (JSON-serializable).
+    Falls back to the baseline run's ``dataset_selector`` for media_ids/roster_id
+    when they are not supplied explicitly.
     """
     tenant_uuid = _parse_uuid(tenant_id, field_name="tenant_id")
     run_uuid = _optional_uuid(run_id, field_name="run_id")
@@ -363,6 +342,28 @@ async def generate_canonical_report(
         if isinstance(selector_roster_id, str):
             resolved_roster_uuid = _optional_uuid(selector_roster_id, field_name="roster_id")
 
+    return _ResolvedReportInputs(
+        tenant_uuid=tenant_uuid,
+        run_uuid=run_uuid,
+        run=run,
+        resolved_media_ids=resolved_media_ids,
+        resolved_roster_uuid=resolved_roster_uuid,
+    )
+
+
+async def _build_canonical_clusters(
+    session: AsyncSession,
+    *,
+    tenant_uuid: UUID,
+    resolved_media_ids: list[int] | None,
+    resolved_roster_uuid: UUID | None,
+) -> tuple[list[dict[str, object]], set[int]]:
+    """Query user-confirmed clusters and shape their members/representatives.
+
+    Returns the canonical_clusters payload plus the set of media_ids inferred
+    from the members actually included (used to fill the dataset filter when one
+    was not supplied).
+    """
     clusters_stmt: Select[tuple[IdentityCluster]] = (
         select(IdentityCluster)
         .where(IdentityCluster.tenant_id == tenant_uuid)
@@ -463,11 +464,31 @@ async def generate_canonical_report(
             }
         )
 
-    dataset_media_ids = (
-        sorted(set(resolved_media_ids)) if resolved_media_ids is not None else sorted(inferred_media_ids)
-    )
+    return canonical_clusters, inferred_media_ids
 
-    # Build pre-curation state from events
+
+@dataclass(frozen=True)
+class _PreCurationResolution:
+    """Pre-curation state plus the run metadata gathered while building it."""
+
+    pre_curation_state: dict[str, object] | None
+    run_ids_used: list[str]
+    aggregated_settings: dict[str, object]
+    aggregated_selector: dict[str, object]
+
+
+async def _resolve_pre_curation_state(
+    session: AsyncSession,
+    *,
+    tenant_uuid: UUID,
+    run_uuid: UUID | None,
+    all_runs: bool,
+    dataset_media_ids: list[int],
+) -> _PreCurationResolution:
+    """Build pre-curation state for the selected run(s) and gather run metadata.
+
+    The aggregated settings/selector are only populated in the ``all_runs`` path.
+    """
     pre_curation_state: dict[str, object] | None = None
     run_ids_used: list[str] = []
     aggregated_settings: dict[str, object] = {}
@@ -499,9 +520,33 @@ async def generate_canonical_report(
     if pre_curation_state is not None:
         pre_curation_state["run_ids"] = run_ids_used
 
-    # 4) Build Duplicates Analysis
+    return _PreCurationResolution(
+        pre_curation_state=pre_curation_state,
+        run_ids_used=run_ids_used,
+        aggregated_settings=aggregated_settings,
+        aggregated_selector=aggregated_selector,
+    )
+
+
+@dataclass(frozen=True)
+class _DuplicatesAnalysis:
+    """Phash-grouped identities and detected cross-cluster transitivity failures."""
+
+    by_image_hash: dict[str, list[dict[str, Any]]]
+    consistency_issues: list[dict[str, Any]]
+
+
+def _analyze_duplicates(
+    pre_curation_state: dict[str, object] | None,
+    canonical_clusters: list[dict[str, object]],
+) -> _DuplicatesAnalysis:
+    """Group identities by perceptual hash and flag transitivity failures.
+
+    A transitivity failure is the same image (phash) + same bounding box being
+    assigned to more than one cluster.
+    """
     by_image_hash: dict[str, list[dict[str, Any]]] = {}
-    consistency_issues = []
+    consistency_issues: list[dict[str, Any]] = []
 
     # Collect all identity entries from both predicted and canonical clusters
     all_entries: list[dict[str, Any]] = []
@@ -580,57 +625,72 @@ async def generate_canonical_report(
                     }
                 )
 
-    # Compute metrics if we have predicted clusters
-    # Ground truth comes from either:
-    #   1) compare_baseline_path (saved JSON file) - for post-reset comparison
-    #      - baseline_source_type="curated": use canonical_clusters (user-curated labels)
-    #      - baseline_source_type="predicted": use predicted_clusters (original algorithm output)
-    #   2) canonical_clusters (DB) - for normal usage
-    metrics: dict[str, object] = {}
-    baseline_source: str | None = None
+    return _DuplicatesAnalysis(by_image_hash=by_image_hash, consistency_issues=consistency_issues)
+
+
+async def _load_baseline_canonical_labels(
+    compare_baseline_path: str,
+    baseline_source_type: str,
+) -> tuple[dict[IdentityLocator, str], str | None]:
+    """Load ground-truth labels from a saved baseline JSON file.
+
+    ``baseline_source_type`` selects curated (default) vs predicted labels.
+    Returns ``({}, None)`` when the baseline file does not exist.
+    """
+    from pathlib import Path
+
+    from recognition.application.regression_harness.serialization import (
+        load_canonical_labels,
+        load_predicted_labels,
+    )
+
     canonical_labels: dict[IdentityLocator, str] = {}
+    baseline_source: str | None = None
 
-    if compare_baseline_path:
-        # Load ground truth from saved baseline file
-        from pathlib import Path
+    baseline_async_path = AsyncPath(compare_baseline_path)
+    if await baseline_async_path.exists():
+        baseline_path = Path(compare_baseline_path)
+        if baseline_source_type == "predicted":
+            canonical_labels = load_predicted_labels(baseline_path)
+            baseline_source = f"{baseline_path} (predicted)"
+        else:
+            canonical_labels = load_canonical_labels(baseline_path)
+            baseline_source = f"{baseline_path} (curated)"
 
-        from recognition.application.regression_harness.serialization import (
-            load_canonical_labels,
-            load_predicted_labels,
-        )
+    return canonical_labels, baseline_source
 
-        baseline_async_path = AsyncPath(compare_baseline_path)
-        if await baseline_async_path.exists():
-            baseline_path = Path(compare_baseline_path)
-            if baseline_source_type == "predicted":
-                canonical_labels = load_predicted_labels(baseline_path)
-                baseline_source = f"{baseline_path} (predicted)"
-            else:
-                canonical_labels = load_canonical_labels(baseline_path)
-                baseline_source = f"{baseline_path} (curated)"
-    else:
-        # Build canonical_labels from DB clusters
-        for cc_dict in canonical_clusters:
-            final_label_obj = cc_dict.get("canonical_label")
-            if not isinstance(final_label_obj, str):
-                continue
-            final_label = final_label_obj
 
-            members_list_obj = cc_dict.get("member_identities")
-            if not isinstance(members_list_obj, list):
-                continue
-            members_list = cast(list[dict[str, Any]], members_list_obj)
+def _build_canonical_labels_from_clusters(
+    canonical_clusters: list[dict[str, object]],
+) -> dict[IdentityLocator, str]:
+    """Map each canonical cluster member's locator to its final label (DB path)."""
+    canonical_labels: dict[IdentityLocator, str] = {}
+    for cc_dict in canonical_clusters:
+        final_label_obj = cc_dict.get("canonical_label")
+        if not isinstance(final_label_obj, str):
+            continue
+        final_label = final_label_obj
 
-            for member in members_list:
-                loc_dict = member.get("identity_locator")
-                if isinstance(loc_dict, dict):
-                    try:
-                        locator = IdentityLocator.from_dict(loc_dict)
-                        canonical_labels[locator] = final_label
-                    except ValueError:
-                        pass
+        members_list_obj = cc_dict.get("member_identities")
+        if not isinstance(members_list_obj, list):
+            continue
+        members_list = cast(list[dict[str, Any]], members_list_obj)
 
-    # Build predicted_clusters_map from pre_curation_state
+        for member in members_list:
+            loc_dict = member.get("identity_locator")
+            if isinstance(loc_dict, dict):
+                try:
+                    locator = IdentityLocator.from_dict(loc_dict)
+                    canonical_labels[locator] = final_label
+                except ValueError:
+                    pass
+    return canonical_labels
+
+
+def _build_predicted_clusters_map(
+    pre_curation_state: dict[str, object] | None,
+) -> dict[IdentityLocator, str]:
+    """Map each predicted cluster member's locator to its predicted cluster id."""
     predicted_clusters_map: dict[IdentityLocator, str] = {}
     if pre_curation_state:
         predicted_list = pre_curation_state.get("predicted_clusters")
@@ -651,7 +711,17 @@ async def generate_canonical_report(
                             predicted_clusters_map[locator] = cluster_id
                         except ValueError:
                             pass
+    return predicted_clusters_map
 
+
+def _compute_metrics_payload(
+    *,
+    canonical_labels: dict[IdentityLocator, str],
+    predicted_clusters_map: dict[IdentityLocator, str],
+    baseline_source: str | None,
+) -> dict[str, object]:
+    """Compute pairwise + curation-cost metrics when both label maps are present."""
+    metrics: dict[str, object] = {}
     if canonical_labels and predicted_clusters_map:
         pairwise = compute_pairwise_metrics(
             canonical_labels=canonical_labels,
@@ -671,26 +741,117 @@ async def generate_canonical_report(
         }
         if baseline_source:
             metrics["baseline_source"] = baseline_source
+    return metrics
+
+
+async def generate_canonical_report(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    run_id: str | None = None,
+    all_runs: bool = False,
+    compare_baseline_path: str | None = None,
+    baseline_source_type: str = "curated",
+    media_ids: Iterable[int] | None = None,
+    roster_id: str | None = None,
+    dataset_name: str | None = None,
+    dataset_notes: str | None = None,
+) -> dict[str, object]:
+    """Generate the canonical report JSON payload for a tenant/dataset.
+
+    Args:
+        session: Async SQLAlchemy session.
+        tenant_id: Tenant UUID string.
+        run_id: Optional recognition_run UUID string to attach as the baseline run.
+        all_runs: If True, aggregate events from ALL runs for this tenant.
+        compare_baseline_path: Path to a saved baseline JSON file to use as ground truth
+            instead of DB clusters. Enables post-reset comparison.
+        baseline_source_type: Source of ground truth labels when using compare_baseline_path:
+            - "curated": Use canonical_clusters (user-curated labels) [default]
+            - "predicted": Use pre_curation_state.predicted_clusters (original algorithm output)
+              Use "predicted" to measure clustering reproducibility/consistency.
+        media_ids: Optional dataset filter (media IDs).
+        roster_id: Optional dataset filter (roster UUID).
+        dataset_name: Optional human-friendly dataset name.
+        dataset_notes: Optional dataset notes.
+
+    Returns:
+        dict[str, object]: Canonical report payload (JSON-serializable).
+    """
+    inputs = await _resolve_report_inputs(
+        session,
+        tenant_id=tenant_id,
+        run_id=run_id,
+        media_ids=media_ids,
+        roster_id=roster_id,
+    )
+
+    # 1) Build canonical clusters (user-curated ground truth) from the DB.
+    canonical_clusters, inferred_media_ids = await _build_canonical_clusters(
+        session,
+        tenant_uuid=inputs.tenant_uuid,
+        resolved_media_ids=inputs.resolved_media_ids,
+        resolved_roster_uuid=inputs.resolved_roster_uuid,
+    )
+
+    dataset_media_ids = (
+        sorted(set(inputs.resolved_media_ids)) if inputs.resolved_media_ids is not None else sorted(inferred_media_ids)
+    )
+
+    # 2) Build pre-curation state (original algorithm output) from events.
+    pre_curation = await _resolve_pre_curation_state(
+        session,
+        tenant_uuid=inputs.tenant_uuid,
+        run_uuid=inputs.run_uuid,
+        all_runs=all_runs,
+        dataset_media_ids=dataset_media_ids,
+    )
+    pre_curation_state = pre_curation.pre_curation_state
+
+    # 3) Build duplicates analysis (phash grouping + transitivity failures).
+    duplicates = _analyze_duplicates(pre_curation_state, canonical_clusters)
+
+    # 4) Compute metrics. Ground truth comes from either:
+    #   1) compare_baseline_path (saved JSON file) - for post-reset comparison
+    #      - baseline_source_type="curated": use canonical_clusters (user-curated labels)
+    #      - baseline_source_type="predicted": use predicted_clusters (original algorithm output)
+    #   2) canonical_clusters (DB) - for normal usage
+    if compare_baseline_path:
+        canonical_labels, baseline_source = await _load_baseline_canonical_labels(
+            compare_baseline_path, baseline_source_type
+        )
+    else:
+        canonical_labels = _build_canonical_labels_from_clusters(canonical_clusters)
+        baseline_source = None
+
+    predicted_clusters_map = _build_predicted_clusters_map(pre_curation_state)
+
+    metrics = _compute_metrics_payload(
+        canonical_labels=canonical_labels,
+        predicted_clusters_map=predicted_clusters_map,
+        baseline_source=baseline_source,
+    )
 
     # Determine settings_snapshot and dataset_selector
     # Priority: run (single run) > aggregated (all runs) > empty
-    final_settings = run.settings_snapshot if run is not None else aggregated_settings
-    final_selector = run.dataset_selector if run is not None else aggregated_selector
+    run = inputs.run
+    final_settings = run.settings_snapshot if run is not None else pre_curation.aggregated_settings
+    final_selector = run.dataset_selector if run is not None else pre_curation.aggregated_selector
 
     return {
         "schema_version": 1,
         "generated_at": datetime.now(tz=UTC).isoformat(),
-        "tenant_id": str(tenant_uuid),
+        "tenant_id": str(inputs.tenant_uuid),
         "dataset": {
             "name": dataset_name,
-            "roster_id": str(resolved_roster_uuid) if resolved_roster_uuid is not None else None,
+            "roster_id": str(inputs.resolved_roster_uuid) if inputs.resolved_roster_uuid is not None else None,
             "media_ids": dataset_media_ids,
             "notes": dataset_notes,
         },
         "baseline_run": {
-            "run_id": str(run_uuid) if run_uuid is not None else None,
+            "run_id": str(inputs.run_uuid) if inputs.run_uuid is not None else None,
             "all_runs": all_runs,
-            "run_ids": run_ids_used if run_ids_used else None,
+            "run_ids": pre_curation.run_ids_used if pre_curation.run_ids_used else None,
             "git_sha": run.git_sha if run is not None else None,
             "settings_snapshot": final_settings,
             "dataset_selector": final_selector,
@@ -699,8 +860,8 @@ async def generate_canonical_report(
         "canonical_clusters": canonical_clusters,
         "pre_curation_state": pre_curation_state,
         "duplicates": {
-            "by_image_hash": by_image_hash,
-            "consistency_issues": consistency_issues,
+            "by_image_hash": duplicates.by_image_hash,
+            "consistency_issues": duplicates.consistency_issues,
         },
         "cluster_outcomes": [],
         "metrics": metrics,

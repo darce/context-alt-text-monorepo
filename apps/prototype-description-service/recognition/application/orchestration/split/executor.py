@@ -362,7 +362,19 @@ async def split_cluster(
             await assignment_writer.recompute_representatives(affected_id)
         for affected_id in affected_cluster_ids:
             await assignment_writer.recompute_centroid(affected_id)
-        await assignment_writer.refresh_centroids_view()
+        # Best-effort: representatives/centroids for the split clusters were already
+        # recomputed and persisted above. refresh_centroids_view is fail-fast
+        # (INFRA-5), but a transient MV-refresh failure must not flip a completed
+        # split to FAILED — the worker's periodic concurrent refresh heals MV lag.
+        try:
+            await assignment_writer.refresh_centroids_view()
+        except Exception:
+            logger.warning(
+                "Post-split centroid MV refresh failed for cluster_id=%s; "
+                "centroids may lag until the next scheduled refresh",
+                cluster_id,
+                exc_info=True,
+            )
 
     if suggestion_refresh_service and (moved_identity_ids_all or anchor_key):
         impacted_ids = {*(moved_identity_ids_all), *(remaining_identity_ids if anchor_key else [])}

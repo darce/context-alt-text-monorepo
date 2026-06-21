@@ -45,7 +45,6 @@ include = [
     "db*",
     "recognition*",
     "roster*",
-    "scene*",
     "shared*",
 ]
 
@@ -53,10 +52,8 @@ include = [
 dev = [
     "ruff>=0.7.0,<1.0.0",
     "mypy>=1.7.0,<2.0.0",
-    "matplotlib>=3.8.0,<4.0.0",  # Cluster visualization charts
     "pytest>=8.3.0,<10.0.0",
     "pytest-asyncio>=0.21.0,<2.0.0",
-    "scikit-learn>=1.4.0,<2.0.0",  # Test-only: clustering accuracy metrics
     "aiosqlite>=0.19.0,<1.0.0",  # Test-only: in-memory SQLite for async tests
     "fastmcp>=3.1.1,<4.0.0",  # MCP server for agent tooling (v3 decorator semantics)
     # Type stubs for mypy
@@ -166,7 +163,6 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = [
     "recognition.application.clustering.*",
-    "recognition.application.representatives.*",
     "recognition.application.health",
     "recognition.config.*",
     "recognition.interface_adapters.http.*",

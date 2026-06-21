@@ -148,9 +148,6 @@ class LoggerStub(ClusteringLogger):
             media_id=media_id,
         )
 
-    def log_batch_start(self, identity_count, algorithm, tenant_id=None):
-        return None
-
     def log_batch_complete(self, report):
         return None
 

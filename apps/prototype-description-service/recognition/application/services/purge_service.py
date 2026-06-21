@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -12,7 +10,7 @@ from uuid import UUID
 
 from sqlalchemy import delete, inspect, or_, select
 from sqlalchemy.engine import CursorResult
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import (
     AssignmentDecision,
@@ -35,8 +33,7 @@ from db.models import (
     RecognitionRun,
     Tenant,
 )
-from db.tenant_context import enable_rls_bypass
-from recognition.domain.services.audit_service import AuditService
+from recognition.application.services.audit_service import AuditService
 from recognition.infrastructure.repositories._helpers import coerce_uuid
 from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
 
@@ -115,7 +112,13 @@ class TenantPurgeService:
         scope_ids = await self._collect_scope_ids(tenant_id, scope)
         deleted_counts = await self._delete_jobs_for_scope(tenant_id, scope)
         deleted_counts.update(await self._delete_dependency_rows(tenant_id, scope, scope_ids))
-        await self._cluster_repository.refresh_centroids_view_concurrent()
+        if not await self._cluster_repository.refresh_centroids_view_concurrent():
+            logger.warning(
+                "[purge] centroid MV refresh failed after purge (tenant_id=%s scope=%s); "
+                "centroids may be stale until the next refresh",
+                tenant_id,
+                scope,
+            )
         return deleted_counts
 
     async def _get_tenant(self, tenant_id: str) -> Tenant:
@@ -375,59 +378,3 @@ class TenantPurgeService:
     def _rowcount(result) -> int:
         cursor_result = result if isinstance(result, CursorResult) else None
         return int(cursor_result.rowcount or 0) if cursor_result is not None else 0
-
-
-class ScheduledDisposalWorker:
-    """Background entry point that periodically purges disposed rows for eligible tenants."""
-
-    def __init__(
-        self,
-        session_factory: async_sessionmaker[AsyncSession],
-        interval_seconds: float = 3600.0,
-        actor: str = "scheduled_disposal_worker",
-        stop_event: asyncio.Event | None = None,
-    ) -> None:
-        self._session_factory = session_factory
-        self._interval_seconds = interval_seconds
-        self._actor = actor
-        self._stop_event = stop_event or asyncio.Event()
-
-    async def run_once(self) -> dict[str, object]:
-        """Purge disposed rows for all tenants with dispose_after_ack mode."""
-        async with self._session_factory() as session:
-            await enable_rls_bypass(session)
-            result = await session.execute(select(Tenant.id).where(Tenant.retention_mode == "dispose_after_ack"))
-            tenant_ids = list(result.scalars().all())
-
-        results: list[dict[str, object]] = []
-        for tenant_id in tenant_ids:
-            async with self._session_factory() as purge_session:
-                await enable_rls_bypass(purge_session)
-                purge_service = TenantPurgeService(purge_session)
-                try:
-                    purge_result = await purge_service.purge_tenant_data(
-                        tenant_id=str(tenant_id),
-                        actor=self._actor,
-                        scope="disposed",
-                    )
-                    results.append(purge_result)
-                except Exception:
-                    logger.exception("Scheduled disposal failed for tenant %s", tenant_id)
-
-        return {"tenants_processed": len(results), "results": results}
-
-    async def run_forever(self) -> None:
-        """Run disposal in a loop at the configured interval.
-
-        Exits when stop_event is set (e.g. on SIGTERM/SIGINT).
-        """
-        while not self._stop_event.is_set():
-            try:
-                await self.run_once()
-            except Exception:
-                logger.exception("Scheduled disposal run failed")
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(
-                    asyncio.shield(self._stop_event.wait()),
-                    timeout=self._interval_seconds,
-                )

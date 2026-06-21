@@ -24,7 +24,7 @@ from db.models import (
 from db.models import (
     NameSuggestion as NameSuggestionModel,
 )
-from recognition.domain.services.export_service import EXPORT_SCHEMA_VERSION, TenantExportService
+from recognition.application.services.export_service import EXPORT_SCHEMA_VERSION, TenantExportService
 
 
 def _unit_embedding() -> list[float]:

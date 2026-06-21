@@ -39,6 +39,16 @@ class JobType(StrEnum):
     SPLIT = "split"
 
 
+CLUSTERING_JOB_TYPES: frozenset[JobType] = frozenset(
+    {
+        JobType.CLUSTERING,
+        JobType.CURATION,
+        JobType.SPLIT,
+    }
+)
+"""Job types persisted to the IdentityClusteringJob table (everything except ANALYZE)."""
+
+
 class ScanItemStatus(StrEnum):
     """Lifecycle states for queued scan items."""
 

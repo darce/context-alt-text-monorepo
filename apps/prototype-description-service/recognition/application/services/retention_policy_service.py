@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityCluster, IdentityClusterRepresentative, MediaIdentity, NameSuggestion, Tenant
-from recognition.domain.services.audit_service import AuditService
+from recognition.application.services.audit_service import AuditService
 from recognition.infrastructure.repositories._helpers import coerce_uuid
 
 ALLOWED_RETENTION_MODES = ("retain_all", "dispose_after_ack", "purge_on_demand")

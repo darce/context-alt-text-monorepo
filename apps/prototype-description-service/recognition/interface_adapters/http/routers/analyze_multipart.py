@@ -37,7 +37,7 @@ from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.application.storage import ObjectStore, ObjectStoreError
 from recognition.application.tasks.scan import chain_populate_and_process
 from recognition.domain.job import JobPhase, JobStatus, JobType
-from recognition.interface_adapters.http.dependencies import (
+from recognition.interface_adapters.http.deps import (
     get_optional_session,
     get_scan_queue_service_factory,
     get_scan_queue_service_optional,

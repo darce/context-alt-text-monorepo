@@ -32,22 +32,6 @@ class ClusterServiceProtocol(Protocol):
         """Retry matching after merge operations."""
 
 
-async def run_background_retry(
-    tenant_id: str,
-    cluster_id: str,
-    *,
-    session_factory: async_sessionmaker[AsyncSession],
-    cluster_service_builder: Callable[..., Awaitable[ClusterServiceProtocol]],
-) -> None:
-    """Execute post-merge matching retry in a background task with fresh session."""
-    try:
-        async with session_factory() as session:
-            cluster_service = await cluster_service_builder(session=session, tenant_id=tenant_id)
-            await cluster_service.retry_matching(target_cluster_id=cluster_id, tenant_id=tenant_id)
-    except Exception as exc:
-        logger.exception("Background merge retry failed for cluster %s: %s", cluster_id, exc)
-
-
 async def run_background_surface_suggestions(
     tenant_id: str,
     cluster_id: str,
@@ -191,29 +175,6 @@ async def run_background_surface_suggestions(
     except Exception as exc:
         logger.exception(
             "Background suggestion surfacing failed for cluster %s: %s",
-            cluster_id,
-            exc,
-        )
-
-
-async def run_background_refresh_suggestions(
-    tenant_id: str,
-    cluster_id: str,
-    *,
-    session_factory: async_sessionmaker[AsyncSession],
-    cluster_service_builder: Callable[..., Awaitable[ClusterServiceProtocol]],
-) -> None:
-    """Refresh suggestions for a cluster with a fresh session."""
-    try:
-        async with session_factory() as session:
-            cluster_service = await cluster_service_builder(session=session, tenant_id=tenant_id)
-            refresh_service = cluster_service.suggestion_refresh_service
-            if refresh_service is not None:
-                await refresh_service.refresh_for_cluster(cluster_id)
-                await session.commit()
-    except Exception as exc:
-        logger.exception(
-            "Background suggestion refresh failed for cluster %s: %s",
             cluster_id,
             exc,
         )

@@ -270,8 +270,6 @@ async def create_cluster_for_identity(
 class CurationActionType(StrEnum):
     FALSE_POSITIVE = "false_positive"
     FALSE_NEGATIVE = "false_negative"
-    NEW_IDENTITY = "new_identity"
-    BLOCK = "cannot_link"
 
 
 async def assign_outlier_to_cluster(

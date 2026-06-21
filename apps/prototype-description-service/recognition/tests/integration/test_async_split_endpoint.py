@@ -10,8 +10,8 @@ from fastapi import Response
 from db.models import IdentityClusteringJob
 from db.models import MediaIdentity as MediaIdentityModel
 from recognition.domain.cluster import IdentityCluster
-from recognition.interface_adapters.http import dependencies
-from recognition.interface_adapters.http.routers.clusters import split_cluster as split_cluster_endpoint
+from recognition.interface_adapters.http import deps as dependencies
+from recognition.interface_adapters.http.routers.clusters_topology import split_cluster as split_cluster_endpoint
 from recognition.interface_adapters.http.schemas.requests import SplitClusterRequest
 from recognition.interface_adapters.http.schemas.responses import AsyncSplitClusterResponse
 

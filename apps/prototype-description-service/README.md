@@ -122,11 +122,9 @@ under `/Volumes/Butter`:
 ```bash
 CACHE_BASE=/Volumes/Butter/cache
 HF_HOME=/Volumes/Butter/cache/huggingface_cache
-TRANSFORMERS_CACHE=/Volumes/Butter/cache/huggingface_cache
 HF_HUB_CACHE=/Volumes/Butter/cache/huggingface_cache
 TORCH_HOME=/Volumes/Butter/cache/torch
 YOLO_CONFIG_DIR=/Volumes/Butter/cache/yolo
-MPLCONFIGDIR=/Volumes/Butter/cache/matplotlib
 INSIGHTFACE_CACHE_DIR=/Volumes/Butter/cache/insightface
 INSIGHTFACE_HOME=/Volumes/Butter/cache/insightface
 ```
@@ -139,11 +137,9 @@ Match the archived service’s Dockerfile so caches live inside the container at
 ```bash
 CACHE_BASE=/data/cache
 HF_HOME=/data/cache/huggingface_cache
-TRANSFORMERS_CACHE=/data/cache/huggingface_cache
 HF_HUB_CACHE=/data/cache/huggingface_cache
 TORCH_HOME=/data/cache/torch
 YOLO_CONFIG_DIR=/data/cache/yolo
-MPLCONFIGDIR=/data/cache/matplotlib
 INSIGHTFACE_CACHE_DIR=/data/cache/insightface
 INSIGHTFACE_HOME=/data/cache/insightface
 ```

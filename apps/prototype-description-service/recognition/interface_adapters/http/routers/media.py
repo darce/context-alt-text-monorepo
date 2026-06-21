@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query, Request
 
-from recognition.interface_adapters.http.dependencies import get_media_identity_service, require_auth
+from recognition.interface_adapters.http.deps import get_media_identity_service, require_auth
 from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
 from recognition.interface_adapters.http.deps.tenant import get_tenant_id
 

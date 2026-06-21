@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
-from recognition.application.persistence.assignment_writer import (
+from recognition.application.persistence.representative_selector import (
     _find_upgradeable_representative,
     _get_pose_bucket,
     _is_novel_pose,
@@ -58,12 +58,12 @@ def test_get_pose_bucket():
 
 
 def test_get_pose_bucket_logs(caplog):
-    # Scope caplog to the assignment_writer namespace so it overrides the
+    # Scope caplog to the representative_selector namespace so it overrides the
     # INFO floor api.logging_config.configure_logging() installs on
     # "recognition.application" when a TestClient fixture elsewhere in the
     # suite imports the FastAPI app — the root-level caplog.set_level
     # otherwise cannot see DEBUG records suppressed at the per-logger level.
-    caplog.set_level(logging.DEBUG, logger="recognition.application.persistence.assignment_writer")
+    caplog.set_level(logging.DEBUG, logger="recognition.application.persistence.representative_selector")
     ident = create_identity("log-1", 45.0, 45.0)
     bucket = _get_pose_bucket(ident, 30.0)
     assert bucket == (1, 1)

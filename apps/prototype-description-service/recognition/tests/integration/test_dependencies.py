@@ -13,7 +13,7 @@ from recognition.application.orchestration import ClusterService
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.application.settings import HACSettings
 from recognition.infrastructure.repositories import SqlAlchemyClusterRepository, SqlAlchemyMemberRepository
-from recognition.interface_adapters.http import dependencies
+from recognition.interface_adapters.http import deps as dependencies
 from recognition.observability import ClusteringLogger
 
 

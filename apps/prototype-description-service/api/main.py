@@ -20,10 +20,9 @@ from recognition.application.scan.capability import (
     embedding_runtime_health_payload,
     read_embedding_runtime_capability,
 )
-from recognition.config.cache import configure_dev_cache
 from recognition.config.security import get_security_settings, validate_production_security
 from recognition.config.settings import RecognitionSettings
-from recognition.interface_adapters.http import dependencies as http_deps
+from recognition.interface_adapters.http import deps as http_deps
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.deps.auth import require_auth
 from recognition.interface_adapters.http.deps.circuit_breaker import (
@@ -107,8 +106,6 @@ def _log_startup_info() -> None:
     startup_logger.info("=== Application Startup ===")
     startup_logger.info("Git: %s (%s)", commit, branch)
     startup_logger.info("Listening on http://%s:%s", host, port)
-
-    configure_dev_cache()
 
 
 def _check_dev_key_guard() -> None:

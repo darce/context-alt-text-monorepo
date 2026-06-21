@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 
 import pytest
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 
 from recognition.config.security import (
@@ -13,7 +13,7 @@ from recognition.config.security import (
     SecuritySettings,
     validate_admin_config,
 )
-from recognition.interface_adapters.http.deps.admin_auth import require_admin
+from recognition.interface_adapters.http.deps.admin_auth import require_admin, require_same_origin
 
 _VALID_TOKEN = "x" * 40  # >= 32 chars
 
@@ -137,6 +137,106 @@ def test_malformed_basic_header_returns_401(monkeypatch: pytest.MonkeyPatch) -> 
     # Not valid base64, and no scheme padding — must not crash, just 401.
     assert client.get("/_t", headers={"Authorization": "Basic not-base64!!"}).status_code == 401
     assert client.get("/_t", headers={"Authorization": "Basic"}).status_code == 401
+
+
+# --- BR-01: non-ASCII credentials fail closed (401, not 500) ---
+
+
+def _request_with_headers(raw_headers: list[tuple[bytes, bytes]]) -> Request:
+    """Build a minimal ASGI Request carrying raw (byte) header values.
+
+    A real client/browser can transmit non-ASCII header bytes that Starlette
+    decodes (latin-1) into a non-ASCII str — the wire-level case the str-compare
+    TypeError bug hit. The TestClient rejects non-ASCII header values before they
+    reach the app, so we construct the Request directly to reproduce it.
+    """
+    return Request({"type": "http", "method": "GET", "path": "/_t", "headers": raw_headers})
+
+
+@pytest.mark.asyncio
+async def test_non_ascii_admin_token_header_returns_401_not_500(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A non-ASCII X-Admin-Token must fail closed with 401 + Basic challenge, never 500/TypeError.
+
+    Comparing str via secrets.compare_digest raises TypeError on a non-ASCII
+    code point; the byte-wise compare must reject it as a plain mismatch.
+    """
+    monkeypatch.setenv("RECOGNITION_ADMIN_ENABLED", "1")
+    monkeypatch.setenv("RECOGNITION_ADMIN_TOKEN", _VALID_TOKEN)
+    monkeypatch.delenv("RECOGNITION_ADMIN_TOKEN_HEADER", raising=False)
+
+    non_ascii = ("é" * 40).encode("utf-8")  # raw wire bytes a browser could send
+    request = _request_with_headers([(b"x-admin-token", non_ascii)])
+
+    with pytest.raises(HTTPException) as caught:
+        await require_admin(request)
+    assert caught.value.status_code == 401
+    assert caught.value.headers is not None
+    assert caught.value.headers.get("WWW-Authenticate", "").lower().startswith("basic")
+
+
+@pytest.mark.asyncio
+async def test_basic_password_decoding_to_non_ascii_returns_401_not_500(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A Basic password that decodes to non-ASCII must 401 (with Basic challenge), never 500/TypeError."""
+    monkeypatch.setenv("RECOGNITION_ADMIN_ENABLED", "1")
+    monkeypatch.setenv("RECOGNITION_ADMIN_TOKEN", _VALID_TOKEN)
+    monkeypatch.delenv("RECOGNITION_ADMIN_TOKEN_HEADER", raising=False)
+
+    raw = base64.b64encode(f"admin:{'é' * 40}".encode()).decode("ascii")
+    request = _request_with_headers([(b"authorization", f"Basic {raw}".encode("ascii"))])
+
+    with pytest.raises(HTTPException) as caught:
+        await require_admin(request)
+    assert caught.value.status_code == 401
+    assert caught.value.headers is not None
+    assert caught.value.headers.get("WWW-Authenticate", "").lower().startswith("basic")
+
+
+# --- BR-02: require_same_origin CSRF guard on form POSTs ---
+
+
+def _same_origin_client() -> TestClient:
+    """Tiny app with one POST route gated only by require_same_origin."""
+    app = FastAPI()
+
+    @app.post("/_form", dependencies=[Depends(require_same_origin)])
+    async def _form() -> dict[str, bool]:
+        return {"ok": True}
+
+    return TestClient(app)
+
+
+def test_same_origin_guard_rejects_cross_origin_post() -> None:
+    client = _same_origin_client()
+    response = client.post(
+        "/_form",
+        headers={"Origin": "https://evil.example", "Host": "admin.test"},
+    )
+    assert response.status_code == 403
+    assert "cross-origin" in response.json()["detail"]
+
+
+def test_same_origin_guard_allows_matching_origin() -> None:
+    client = _same_origin_client()
+    response = client.post("/_form", headers={"Origin": "http://admin.test", "Host": "admin.test"})
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+
+
+def test_same_origin_guard_allows_missing_origin_and_referer() -> None:
+    """Programmatic header-token clients send neither Origin nor Referer → allowed."""
+    client = _same_origin_client()
+    response = client.post("/_form", headers={"Host": "admin.test"})
+    assert response.status_code == 200
+
+
+def test_same_origin_guard_falls_back_to_referer_on_mismatch() -> None:
+    """When Origin is absent, a cross-origin Referer is still rejected."""
+    client = _same_origin_client()
+    response = client.post(
+        "/_form",
+        headers={"Referer": "https://evil.example/page", "Host": "admin.test"},
+    )
+    assert response.status_code == 403
 
 
 # --- validate_admin_config fail-closed guard ---

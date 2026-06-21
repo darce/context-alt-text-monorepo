@@ -19,6 +19,9 @@ from db.models import ApiKey
 from recognition.config.security import RateLimitTier, get_security_settings
 from recognition.infrastructure.repositories.api_key_repository import SqlAlchemyApiKeyRepository
 
+_MIN_EXPIRES_IN_DAYS = 1
+_MAX_EXPIRES_IN_DAYS = 36500  # ~100 years; bounds the timedelta so it cannot OverflowError
+
 
 async def mint_api_key(
     session: AsyncSession,
@@ -38,6 +41,10 @@ async def mint_api_key(
 
     expires_at: datetime | None = None
     if expires_in_days is not None:
+        if not (_MIN_EXPIRES_IN_DAYS <= expires_in_days <= _MAX_EXPIRES_IN_DAYS):
+            raise ValueError(
+                f"expires_in_days must be between {_MIN_EXPIRES_IN_DAYS} and {_MAX_EXPIRES_IN_DAYS}"
+            )
         expires_at = datetime.now(tz=UTC) + timedelta(days=int(expires_in_days))
 
     record = await SqlAlchemyApiKeyRepository(session).create(

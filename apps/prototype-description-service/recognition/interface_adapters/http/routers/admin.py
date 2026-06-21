@@ -42,7 +42,9 @@ from recognition.infrastructure.repositories.api_key_repository import (
     _as_utc,
 )
 from recognition.interface_adapters.http.admin_console import render_console
-from recognition.interface_adapters.http.deps.admin_auth import require_admin
+from recognition.interface_adapters.http.deps.admin_auth import require_admin, require_same_origin
+
+_CONSOLE_KEYS_PER_TENANT = 100
 
 _ADMIN_ACTOR = "admin"
 _ADMIN_SCOPE = "admin_router"
@@ -88,7 +90,7 @@ class TenantResponse(BaseModel):
 
 class MintKeyRequest(BaseModel):
     tier: RateLimitTier = RateLimitTier.STANDARD
-    expires_in_days: int | None = Field(default=None, ge=1)
+    expires_in_days: int | None = Field(default=None, ge=1, le=36500)
 
 
 class MintKeyResponse(BaseModel):
@@ -323,6 +325,11 @@ async def mint_key(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="tenant not found",
         ) from exc
+    except ValueError as exc:
+        # Defence-in-depth: Field(le=36500) already 422s out-of-range JSON, but a
+        # direct/default caller could still trip the helper's bound — map it to 400
+        # so it never surfaces as a 500.
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     return MintKeyResponse(
         key_id=record.id,
@@ -379,15 +386,35 @@ async def revoke_key(
 # renders inline so the raw key is shown once and never lands in a redirect URL.
 
 
-async def _load_console_model(session: AsyncSession) -> tuple[list[Tenant], dict[uuid.UUID, list[ApiKey]]]:
-    """Load every tenant + its keys (including revoked) for the console."""
+async def _load_console_model(
+    session: AsyncSession,
+) -> tuple[list[Tenant], dict[uuid.UUID, list[ApiKey]], dict[uuid.UUID, int]]:
+    """Load every tenant + its keys (incl. revoked) for the console in ONE key query.
+
+    Replaces the prior per-tenant ``list_for_tenant`` loop (N+1) with a single
+    ``WHERE tenant_id IN (...)`` query, then groups in-memory. Every tenant gets a
+    list (empty if it has no keys). Each tenant's list is capped at
+    ``_CONSOLE_KEYS_PER_TENANT`` most-recent keys for rendering; ``totals_by_tenant``
+    carries the pre-cap count so the view can show a "showing N of M" note.
+    """
     stmt = select(Tenant).order_by(Tenant.created_at, Tenant.id)
     tenants = list((await session.execute(stmt)).scalars().all())
-    repo = SqlAlchemyApiKeyRepository(session)
-    keys_by_tenant: dict[uuid.UUID, list[ApiKey]] = {}
-    for tenant in tenants:
-        keys_by_tenant[tenant.id] = await repo.list_for_tenant(tenant.id, include_revoked=True)
-    return tenants, keys_by_tenant
+
+    keys_by_tenant: dict[uuid.UUID, list[ApiKey]] = {tenant.id: [] for tenant in tenants}
+    totals_by_tenant: dict[uuid.UUID, int] = {tenant.id: 0 for tenant in tenants}
+    if tenants:
+        tenant_ids = [tenant.id for tenant in tenants]
+        keys_stmt = (
+            select(ApiKey)
+            .where(ApiKey.tenant_id.in_(tenant_ids))
+            .order_by(ApiKey.tenant_id, ApiKey.created_at)
+        )
+        for key in (await session.execute(keys_stmt)).scalars().all():
+            totals_by_tenant[key.tenant_id] += 1
+            bucket = keys_by_tenant[key.tenant_id]
+            if len(bucket) < _CONSOLE_KEYS_PER_TENANT:
+                bucket.append(key)
+    return tenants, keys_by_tenant, totals_by_tenant
 
 
 async def _render_console_response(
@@ -397,10 +424,11 @@ async def _render_console_response(
     message: str | None = None,
     status_code: int = status.HTTP_200_OK,
 ) -> HTMLResponse:
-    tenants, keys_by_tenant = await _load_console_model(session)
+    tenants, keys_by_tenant, totals_by_tenant = await _load_console_model(session)
     html_doc = render_console(
         tenants=tenants,
         keys_by_tenant=keys_by_tenant,
+        totals_by_tenant=totals_by_tenant,
         minted_key=minted_key,
         message=message,
     )
@@ -413,7 +441,7 @@ async def console_index(session: AsyncSession = Depends(get_admin_session)) -> H
     return await _render_console_response(session)
 
 
-@admin_router.post("/ui/tenants", include_in_schema=False)
+@admin_router.post("/ui/tenants", include_in_schema=False, dependencies=[Depends(require_same_origin)])
 async def console_create_tenant(
     tenant_id: str = Form(...),
     site_url: str = Form(...),
@@ -434,7 +462,12 @@ async def console_create_tenant(
     return RedirectResponse(url="/admin/", status_code=status.HTTP_303_SEE_OTHER)
 
 
-@admin_router.post("/ui/keys", response_class=HTMLResponse, include_in_schema=False)
+@admin_router.post(
+    "/ui/keys",
+    response_class=HTMLResponse,
+    include_in_schema=False,
+    dependencies=[Depends(require_same_origin)],
+)
 async def console_mint_key(
     tenant_id: str = Form(...),
     tier: RateLimitTier = Form(RateLimitTier.STANDARD),
@@ -461,16 +494,22 @@ async def console_mint_key(
             ) from exc
         if days < 1:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="expires_in_days must be >= 1")
+        if days > 36500:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="expires_in_days must be <= 36500")
 
     try:
         _record, raw = await mint_key_atomic(session, tenant_id=parsed_id, tier=tier, expires_in_days=days)
     except UnknownTenantError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="tenant not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     return await _render_console_response(session, minted_key=raw, message="API key minted.")
 
 
-@admin_router.post("/ui/keys/{key_id}/revoke", include_in_schema=False)
+@admin_router.post(
+    "/ui/keys/{key_id}/revoke", include_in_schema=False, dependencies=[Depends(require_same_origin)]
+)
 async def console_revoke_key(
     key_id: uuid.UUID,
     session: AsyncSession = Depends(get_admin_session),

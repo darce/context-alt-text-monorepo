@@ -25,7 +25,6 @@ from recognition.config.security import get_security_settings, validate_producti
 from recognition.config.settings import RecognitionSettings
 from recognition.interface_adapters.http import dependencies as http_deps
 from recognition.interface_adapters.http import router as recognition_router
-from scene.interface_adapters.http.router import router as scene_router
 from recognition.interface_adapters.http.deps.auth import require_auth
 from recognition.interface_adapters.http.deps.circuit_breaker import (
     get_or_create_session_dependency_circuit_breaker,
@@ -43,6 +42,7 @@ from recognition.interface_adapters.http.middleware.metrics import (
 from recognition.interface_adapters.http.middleware.upload_size import UploadSizeLimitMiddleware
 from recognition.observability.curation_refresh_metrics import get_default_curation_refresh_metrics
 from roster.interface_adapters.http.curation_router import router as roster_curation_router
+from scene.interface_adapters.http.router import router as scene_router
 from shared.health import HealthStatus
 
 # Configure logging to show diagnostic output

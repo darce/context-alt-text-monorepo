@@ -200,7 +200,7 @@ class VisualFactsService:
             media_id=row.media_id if media_id is None else media_id,
             image_hash=row.image_hash,
             context_hash=row.context_hash,
-            adapter=row.adapter,
+            adapter=row.adapter,  # type: ignore[arg-type]  # FIXME(MAINT-descsvc-mypy-greenup-20260621): row.adapter is a DB str; VisualFactsResponse expects DescriptionAdapterKind enum — flagged to VLM/E19 owner (see handoff finding)
             model_id=row.model_id,
             model_version=row.model_version,
             prompt_or_task_version=row.prompt_or_task_version,
@@ -210,7 +210,7 @@ class VisualFactsService:
             provider_disclosure=ProviderDisclosure(**row.provider_disclosure),
             cached=cached,
             duration_ms=duration_ms,
-            retention_class=row.retention_class,
+            retention_class=row.retention_class,  # type: ignore[arg-type]  # FIXME(MAINT-descsvc-mypy-greenup-20260621): row.retention_class is a DB str; VisualFactsResponse expects RetentionClass enum — flagged to VLM/E19 owner (see handoff finding)
         )
 
     def _response_to_row(self, response: VisualFactsResponse) -> ImageDescription:

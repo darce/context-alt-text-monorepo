@@ -70,7 +70,7 @@ class LocalCpuDescriptionAdapter:
             return
         with self._lock:
             if self._model is not None:
-                return
+                return  # type: ignore[unreachable]  # double-checked locking: another thread may set self._model between the pre-lock check and here
             try:
                 import torch
                 from transformers import AutoModelForCausalLM, AutoProcessor

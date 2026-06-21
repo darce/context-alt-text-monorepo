@@ -18,7 +18,8 @@ SCHEMA_PATH = (
 
 
 def _schema() -> dict:
-    return json.loads(SCHEMA_PATH.read_text())
+    data: dict = json.loads(SCHEMA_PATH.read_text())
+    return data
 
 
 def _sample() -> dict:

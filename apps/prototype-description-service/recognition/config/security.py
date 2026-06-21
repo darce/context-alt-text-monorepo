@@ -71,6 +71,9 @@ class SecuritySettings(BaseModel):
         ],
         validate_default=True,
     )
+    admin_enabled: bool = Field(default_factory=lambda: _bool_env("RECOGNITION_ADMIN_ENABLED", False))
+    admin_token: str = Field(default_factory=lambda: os.getenv("RECOGNITION_ADMIN_TOKEN", ""))
+    admin_header: str = Field(default_factory=lambda: os.getenv("RECOGNITION_ADMIN_TOKEN_HEADER", "X-Admin-Token"))
 
     @field_validator("allowed_origins")
     @classmethod
@@ -114,11 +117,50 @@ def validate_production_security(
         )
 
 
+_ADMIN_TOKEN_MIN_LENGTH = 32
+
+
+def validate_admin_config(
+    settings: SecuritySettings | None = None,
+    *,
+    runtime_mode: str | None = None,
+) -> None:
+    """Fail closed when the admin surface is enabled with an insecure config.
+
+    The ``/admin`` surface is reachable only over the tailnet, but the shared
+    admin token is the in-app authority that must hold even on that path. This
+    refuses to start when admin is enabled and the token is missing or too short
+    to resist guessing. In production it additionally requires an explicit
+    ``RECOGNITION_ADMIN_TAILNET_BOUND=1`` acknowledgement so the operator cannot
+    expose the surface on the public vhost by accident. No-op when admin is off.
+    """
+    settings = settings or get_security_settings()
+    if not settings.admin_enabled:
+        return
+
+    token = settings.admin_token
+    if not token or len(token) < _ADMIN_TOKEN_MIN_LENGTH:
+        raise InsecureProductionConfigError(
+            "RECOGNITION_ADMIN_ENABLED is set but RECOGNITION_ADMIN_TOKEN is empty or shorter than "
+            f"{_ADMIN_TOKEN_MIN_LENGTH} characters. Generate a strong token with: "
+            'python -c "import secrets; print(secrets.token_urlsafe(32))"'
+        )
+
+    runtime_mode = runtime_mode or os.environ.get("RECOGNITION_RUNTIME_MODE", "production")
+    if runtime_mode == "production" and os.environ.get("RECOGNITION_ADMIN_TAILNET_BOUND") != "1":
+        raise InsecureProductionConfigError(
+            "RECOGNITION_ADMIN_ENABLED is set in production (RECOGNITION_RUNTIME_MODE=production) without "
+            "RECOGNITION_ADMIN_TAILNET_BOUND=1. The /admin surface must be bound to the tailnet and denied on "
+            "the public vhost; set RECOGNITION_ADMIN_TAILNET_BOUND=1 to acknowledge the surface is tailnet-bound."
+        )
+
+
 __all__ = [
     "InsecureProductionConfigError",
     "RateLimitTier",
     "SecuritySettings",
     "get_security_settings",
     "tier_rpm",
+    "validate_admin_config",
     "validate_production_security",
 ]

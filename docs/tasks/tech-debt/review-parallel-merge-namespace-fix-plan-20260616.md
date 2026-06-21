@@ -13,6 +13,30 @@
 
 ## MAINT-REVPARALLEL-FIX-20260616. review-parallel scratch-namespace collision & drift fix
 
+## Implementation Status — SHIPPED / overtaken by events (2026-06-21)
+
+> This plan was authored 2026-06-16. The package + skill layers it specifies **shipped upstream afterward** (workstate v0.4.2, 2026-06-18). Verified against installed `mcp-workstate-handoff 0.13.2` and the effective `workstate-system` `review-parallel` skill. The plan is retained as the historical design spec; slice bodies below are **not** re-edited.
+
+| Slice | Status | Evidence (installed) |
+| --- | --- | --- |
+| S1 skill round-scoping + preflight + teardown | SHIPPED | `review-parallel/SKILL.md`: round-unique `<coordinator>-REV-<round>-<letter>`, round token recorded in the opening decision, commit-prefix token preferred (steps 2/5); preflight `total_matching==0` + re-token on collision; excluded-reviewer `wontfix` teardown (Recovery) |
+| S2 `superseded` CHECK migration | SHIPPED | `enums.py:92` `FindingStatus.SUPERSEDED`; `shared_schema.py:288,1349` CHECK; idempotent `_migrate_review_findings_superseded_status` v15→v16 (probes before rebuild) |
+| S3 terminal semantics | SHIPPED | `review_findings_queries.py:238` sort rank `'superseded' THEN 3` |
+| S4 merge no-reopen + disposition preserve | SHIPPED | disposition-preservation `ON CONFLICT` branch in `_batch_record_review_findings_in_conn` (`review_findings_recording.py:805`) |
+| S5 `merge(retire_sources=True)` atomic | SHIPPED | `merge_review_findings(retire_sources=True)` (`recording.py:718`); `_retire_merged_source_rows` sets `superseded` idempotently in the **same `_get_db_connection()` block** as the source SELECT + in-connection upsert (`recording.py:747–821`) |
+| S6 reconcile live drift | **DONE 2026-06-21** | `reconcile_review_findings(apply=true)` retired 8 eligible `MAINT-WPAC-HARDEN-20260614-*REV-*` rows (incl. id-1515 / `REV-B-1`) to `superseded`; both scratch refs now report 0 open |
+
+**Disposition of plan-analyze findings (PA-1..PA-17, verdict REVISE_FIRST 2026-06-17).** The triage critiqued an *unwritten* spec; the implementation has since landed, so the blocking items are resolved by shipped code rather than by re-specifying:
+
+- **PA-1** (retire UPDATE "same transaction" mechanically impossible): resolved — shipped `merge_review_findings` performs the source SELECT, the in-connection upsert (`_batch_record_review_findings_in_conn`), and `_retire_merged_source_rows` under **one** connection/transaction.
+- **PA-3 / PA-8** ("materially differs" ambiguity; preserve-vs-skip either/or): resolved — shipped disposition-preservation `ON CONFLICT` branch is the single concrete behavior.
+- **PA-4** (round-token format/generation underspecified + self-contradictory): resolved — skill specifies a concrete generator (commit-prefix token), preflight emptiness, and re-token on collision, explicitly best-effort (not a concurrency lock).
+- **PA-5** (excluded/crashed reviewer not delivered): resolved — skill Recovery flips every open row under an excluded ref to `wontfix` with "excluded and not merged" notes.
+- **PA-6 / PA-9** (Slice 6 reconcile mechanism unspecified; interim→canonical transition): resolved — `reconcile_review_findings` exposes `checks.reviewer_scratch_drift` with `eligible_for_retirement` + `apply=true` retiring via the merge-managed `superseded` path (used for S6 above).
+- **PA-10** (migration idempotency/needed-detection): resolved — `_migrate_review_findings_superseded_status` probes before rebuilding.
+- **PA-2** (CURRENT_TASK `superseded` bucket = data loss): the shipped package does **not** bucket `superseded` into the active `current_task` render (terminal/audit-only, excluded from open/deferred/resolved surfaces). Accepted as the shipped decision.
+- **PA-7 / PA-11..PA-17** (parity-test invariant, teardown-timing wording, duplication, stale line anchors, sr-007/rg-009 citations): doc-quality items on a now-historical spec; superseded by this status section.
+
 ## Objective
 
 Eliminate the cross-round finding-id collision and source/coordinator status drift produced when `/review-parallel` runs more than once against the same coordinator task. After the fix, a second parallel-review round cannot accumulate or overwrite a prior round's rows, and no scratch reviewer task retains `open` rows that diverge from the coordinator's triaged status.
@@ -173,6 +197,8 @@ Proof:
 - merge marks merged sources `superseded`; resume idempotent; `False` reproduces additive.
 
 ### Slice 6: Reconcile existing drift + id-1515 repair
+
+> **DONE 2026-06-21** — executed via the shipped path: `reconcile_review_findings(task_ref="MAINT-WPAC-HARDEN-20260614", apply=true)` retired all 8 eligible `*-REV-*` drift rows (`REV-A`: 1404/1405/1484; `REV-B`: 1406/1485/1515/1526/1527) to `superseded` (each had a terminal coordinator copy). Both scratch refs now report 0 open. Note: the shipped reconcile **retires** the rows; it does not NULL the stale resolution anchors on id-1515 — those persist on the now-terminal (`superseded`) audit row and are excluded from every open surface, which satisfies "0 open diverging rows". Anchor-nulling was never shipped and is not pursued (would re-introduce spec-beyond-code; raw-SQL anchor edits are forbidden by rg-018).
 
 **Goal**: Clean the live drift this bug already produced.
 

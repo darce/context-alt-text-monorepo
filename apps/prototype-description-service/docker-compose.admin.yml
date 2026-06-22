@@ -1,0 +1,8 @@
+# Prod-only overlay that publishes the api to the VM loopback so the tailnet
+# path (tailscale serve / ssh -L) can reach /admin. Layer it ONLY on prod:
+#   docker compose -f docker-compose.env.yml -f docker-compose.admin.yml up -d
+# /admin stays denied on the public Caddy vhost; the admin token still gates it.
+services:
+  api:
+    ports:
+      - "127.0.0.1:8000:8000"

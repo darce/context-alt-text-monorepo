@@ -3,14 +3,28 @@
 # Caddy auto-provisions Let's Encrypt TLS for all three subdomains.
 
 api.altcontext.com {
+	# /admin is tailnet-only (E15-31): deny it on the public vhost so the
+	# operator surface is reachable only over the tailnet path. 404 (not 403)
+	# avoids confirming the surface exists. The admin token still gates it.
+	@admin path /admin /admin/*
+	respond @admin 404
+
 	reverse_proxy prod-api:8000
 }
 
 staging.api.altcontext.com {
+	# Defense in depth: /admin is prod-operator-only; deny it here too.
+	@admin path /admin /admin/*
+	respond @admin 404
+
 	reverse_proxy staging-api:8000
 }
 
 dev.api.altcontext.com {
+	# Defense in depth: /admin is prod-operator-only; deny it here too.
+	@admin path /admin /admin/*
+	respond @admin 404
+
 	reverse_proxy dev-api:8000
 }
 

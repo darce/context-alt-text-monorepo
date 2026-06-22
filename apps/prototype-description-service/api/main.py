@@ -20,7 +20,11 @@ from recognition.application.scan.capability import (
     embedding_runtime_health_payload,
     read_embedding_runtime_capability,
 )
-from recognition.config.security import get_security_settings, validate_production_security
+from recognition.config.security import (
+    get_security_settings,
+    validate_admin_config,
+    validate_production_security,
+)
 from recognition.config.settings import RecognitionSettings
 from recognition.interface_adapters.http import deps as http_deps
 from recognition.interface_adapters.http import router as recognition_router
@@ -170,6 +174,21 @@ def create_app() -> FastAPI:
     app.include_router(recognition_router, prefix="/recognition")
     app.include_router(roster_curation_router, prefix="/roster")
     app.include_router(scene_router, prefix="/scene")
+
+    # Env-gated, fail-closed operator admin surface. Mounted only when explicitly
+    # enabled; validate_admin_config refuses to start on a missing/short token (or
+    # production without the tailnet-bound ack), and the env/DSN guard refuses a
+    # production runtime pointed at a local DB. Nothing is mounted when disabled.
+    if security_settings.admin_enabled:
+        from recognition.interface_adapters.http.routers.admin import (
+            admin_router,
+            assert_admin_env_dsn,
+        )
+
+        validate_admin_config(security_settings, runtime_mode=recognition_settings.runtime_mode)
+        assert_admin_env_dsn(runtime_mode=recognition_settings.runtime_mode)
+        app.include_router(admin_router, prefix="/admin")
+
     register_exception_handlers(app)
 
     register_health_probes(app)

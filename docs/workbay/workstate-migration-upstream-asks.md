@@ -285,7 +285,8 @@ these env vars into any harness config surface, so `EmbeddingProvider.from_env()
 always returns `None` and embeddings silently degrade. **Ask:**
 
 1. `workbay-bootstrap install` should, by default, download a pinned ONNX embedding
-   model (small, license-clear; e.g. a MiniLM-L6-v2 ONNX export), verify SHA256
+   model (the package's pinned `Alibaba-NLP/gte-base-en-v1.5`, int8 ONNX, 768-d, ~147 MB — must
+   match the package's `model_id` and embedding dimension), verify SHA256
    against the pinned digest, and write the four `WORKBAY_HANDOFF_EMBEDDING_*` env
    vars into a harness-owned config surface (e.g. a `.workbay/embedding.env` file
    sourced by the hook launcher, or injected into `.claude/settings.json` `env:`).
@@ -401,7 +402,7 @@ not shipped.**
   `incremental-implementation` / `scope` carry repo-overlaid design/scale/NFR cues (good), but none
   makes smell-*avoidance* (Large Class / Long Function / Data Clumps / Primitive Obsession /
   cohesion / SoC "and"-test) a **produce-first** gate — that shaping is only caught at review.
-  **Repo-fixable (mode:patch):** add a 3-4 line "produce-first shape" cue to the
+  **Routed upstream (general → workbay):** add a 3-4 line "produce-first shape" cue to the
   `incremental-implementation` effective patch (cohesion/SoC "and"-test, ≤~400-line / ≤3-nesting
   budgets, Extract-on-second-responsibility, strategy-map-over-enum-switch) → `engineering-heuristics.md`.
 

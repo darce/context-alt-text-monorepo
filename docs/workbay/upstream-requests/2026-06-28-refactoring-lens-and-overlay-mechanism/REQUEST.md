@@ -11,7 +11,7 @@
 
 The design below is written **applying the distilled concepts themselves** (idempotency,
 fail-fast, single-source-of-truth, expand→migrate→contract, characterization tests). Anchors like
-`#schema-evolution-compat` deep-link the attached `engineering-heuristics.md`.
+`#data--consistency` deep-link the attached `engineering-heuristics.md`.
 
 ---
 
@@ -46,17 +46,18 @@ to the design-thin canonical guide.
   anchors (the consumer-local guide extensions — coupling-type triage, ports&adapters,
   steady-state, schema-evolution, p99/fan-out, CQS, YAGNI gate — should become the upstream
   default; canonical guides today carry only partial Fowler smells).
-- *Concept:* **single source of truth** (`#…`, Farley) — one lexicon, referenced not copied.
+- *Concept:* **single source of truth** (Farley) — one lexicon, referenced not copied. (The lexicon
+  currently exposes section-level anchors only; add per-rule `{#slug}` anchors when adopting.)
 
 ### A2. Materialize and cross-reference the `refactor` skill
 
 The upstream `refactor` skill (`payload/skills/refactor/body.md`, full Fowler smell catalog +
-characterization-tests-before-move) **is not materialized** in this consumer's effective Claude
-tree, and **no** implementation/review skill links to it. A junior reaches it only by explicitly
-typing "refactor".
+characterization-tests-before-move) **is not materialized** in **any** effective harness tree
+(claude/codex/cursor/grok), and **no** implementation/review skill links to it. A junior reaches it
+only by explicitly typing "refactor".
 
 - Ensure `refactor` materializes into every harness's effective skill tree (confirm why it is
-  filtered out for Claude here).
+  filtered out of every harness tree here).
 - Add `See Also → refactor` + a **red-flag re-entry** to `incremental-implementation` and
   `branch-review`: *"diff is growing a second responsibility → stop, run `refactor`."*
 - *Concept:* discoverability of the rubric from the flow a junior actually runs.
@@ -98,12 +99,12 @@ prompt routes them to it. The default `reviewer_prompt_template` should explicit
 
 | # | Observed state | Root cause |
 |---|---|---|
-| 1 | Package-mode ledger (`.workbay-bootstrap.json`, `source_kind=package`, **no `remote_sha`**) but **clone-mode symlinks** — `scripts/hooks`, `.github/hooks`, `Makefile.d`, `scripts/workstate` all symlink into `.workstate/remote/…workstate-system…`; **`.workbay/remote` does not exist** | mode switch / rename did not **repoint** symlinks |
+| 1 | Package-mode ledger (`.workbay-bootstrap.json`, `source_kind=package`, **no `remote_sha`**) but **clone-mode symlinks** — symlinks **within** `scripts/hooks`, `.github/hooks`, `Makefile.d/*`, `scripts/workstate/*` resolve into `.workstate/remote/…workstate-system…`; **`.workbay/remote` does not exist** | mode switch / rename did not **repoint** symlinks |
 | 2 | `.workstate/` (≈200 MB old clone) cannot be removed — the live hooks resolve through it; no command to repoint+reclaim | no **cleanup/gc** path |
 | 3 | Effective plugin tree **stale** — predates the override-dir rename; `refactor` + the two repo skills not materialized | install did not re-run `plugins-build` after state change |
 | 4 | The review lens (`engineering-heuristics.md` + guide extensions) is **untracked, local-only** — lost on re-materialization | **no sanctioned consumer-enrichment overlay for rules/guides** (only skills have one) |
-| 5 | `.gitignore`/`Makefile` still carried **`WORKSTATE_BOOTSTRAP`** managed-block sentinels while the installer greps **`WORKBAY_BOOTSTRAP`** → next install would orphan/duplicate the block | rename didn't migrate the **managed-block contract** |
-| 6 | Vendored validators **mode-blind** — `check_harness_sync` demands `remote_sha`, `overlay_resolver` hardcodes `.workstate/remote`; both fail/degrade under package-mode | validators not part of the versioned, mode-aware surface |
+| 5 | `.gitignore`/`Makefile` carried stale **`WORKSTATE_BOOTSTRAP`** sentinels (hand-fixed here in `7a222195`) while the installer greps **`WORKBAY_BOOTSTRAP`** — an un-migrated install would orphan/duplicate the block | rename didn't migrate the **managed-block contract** |
+| 6 | Vendored validators **mode-blind** — `overlay_resolver` is keyed on `remote_sha` + hardcodes `.workstate/remote`; `check_harness_sync` also hardcodes `.workstate/remote`; both fail/degrade under package-mode | validators not part of the versioned, mode-aware surface |
 | 7 | 11 generic skills + 14 generic templates left **tracked duplicates** in the consumer | install leaves an ambiguous tracked-vs-overlay boundary |
 | 8 | Editing a `mode:patch` base file desynced the `overrides.lock.json` digest with **no regen command** surfaced | digest maintenance is manual |
 
@@ -114,7 +115,7 @@ partial state converges to the fully-materialized state: (re)point every symlink
 remote/package home, (re)write every managed block, rebuild the effective plugin tree, never
 duplicate a managed block or leave a dangling symlink.
 
-- *Concept:* **idempotency** (`#retry-without-idempotency`, Kleppmann Ch11) — install is the canonical
+- *Concept:* **idempotency** (`#resilience--failure-modes`, Kleppmann Ch11) — install is the canonical
   "apply twice = apply once".
 
 ### B2. Atomic mode-switch / rename = expand → migrate → contract
@@ -128,7 +129,7 @@ Treat it as a schema migration:
   `scripts/<tool>`), rewrite vendored path constants, regenerate the effective tree.
 - **Contract:** remove the old clone/sentinels/symlinks **only after** verifying nothing live
   resolves through them.
-- *Concept:* **expand→migrate→contract** (`#expand-migrate-contract`) — keep N and N+1 working across
+- *Concept:* **expand→migrate→contract** (`#data--consistency`) — keep N and N+1 working across
   the cutover; never strand the consumer mid-migration (as happened here).
 
 ### B3. A consumer-enrichment overlay for rules & guides (the durable fix for B0#4)
@@ -138,7 +139,7 @@ so a consumer can add `engineering-heuristics`-style lexicon or extend a guide *
 that re-materialization clobbers**. General content ships in the payload; consumer-specific deltas
 live in a tracked `*-overrides/<plugin>/rules/…` surface and compose deterministically.
 
-- *Concept:* **single source of truth + ports&adapters** (`#ports--adapters`) — the consumer extends
+- *Concept:* **single source of truth + ports&adapters** (`#refactoring--design`) — the consumer extends
   through a sanctioned seam, not by mutating upstream-owned materialized files.
 
 ### B4. Mode-aware, fail-fast validators
@@ -148,7 +149,7 @@ clone-mode and package-mode ledgers (no `remote_sha` in package mode is valid, n
 must **fail loudly with an actionable message** when the overlay is half-materialized (symlink
 target missing, sentinel drift, stale effective tree) instead of silently degrading.
 
-- *Concept:* **fail fast** (`#…`, Nygard §5.5) + **validate at load** — a half-materialized overlay is
+- *Concept:* **fail fast** (Nygard §5.5) + **validate at load** — a half-materialized overlay is
   a detectable, named failure, not a silent fallback.
 
 ### B5. Reversible cleanup / `gc`
@@ -158,7 +159,7 @@ clones (`.workstate/remote`), dangling symlinks, superseded generated trees, ves
 duplicate skills/templates — **only after** confirming no live symlink/validator resolves through
 them, printing what it will remove first.
 
-- *Concept:* **steady-state reclaimer** (`#steady-state-reclaimer`) — anything install accretes needs a
+- *Concept:* **steady-state reclaimer** (`#resilience--failure-modes`) — anything install accretes needs a
   same-rate reclaim path; **bugs are survived, not eliminated** so cleanup must be confirm-then-act,
   never a blind `rm -rf` of a load-bearing clone.
 
@@ -170,7 +171,7 @@ gitignored overlay dir** (the `docs/workbay/contracts|rules` co-location here is
 consumer file is silently ignored). Define and validate one boundary: overlay-delivered =
 gitignored; consumer-owned = a tracked, non-ignored path (e.g. `local/…`).
 
-- *Concept:* **leaky abstraction** (`#leaky-abstraction`) — don't blend two ownership domains in one
+- *Concept:* **leaky abstraction** (`#refactoring--design`) — don't blend two ownership domains in one
   regenerated directory.
 
 ### B7. Digest maintenance is a command, not a manual step
@@ -196,8 +197,9 @@ materialization mechanism (Part B) should close the three install-side gaps (det
 
 `EmbeddingProvider.from_env()` reads `WORKBAY_HANDOFF_EMBEDDING_{MODEL,TOKENIZER,…_SHA256}` paths
 that `workbay-bootstrap install` never writes, so the provider always returns `None` and
-reinjection silently degrades. Install (default-active, `--no-embeddings` opt-out) should download a
-pinned, small, license-clear ONNX model (e.g. MiniLM-L6-v2), **verify SHA256**, and write the env
+reinjection silently degrades. Install (default-active, `--no-embeddings` opt-out) should download
+**the package's pinned model** (`Alibaba-NLP/gte-base-en-v1.5`, int8 ONNX, 768-d, ~147 MB — the
+download MUST match the package's `model_id` and embedding dimension), **verify SHA256**, and write the env
 vars into a harness-owned surface (`.workbay/embedding.env` or `.claude/settings.json env:`);
 `repair` re-downloads on absence/mismatch.
 - *Concept:* **verify-then-trust + idempotent repair** — pinned digest, converges on re-run; **fail
@@ -221,10 +223,48 @@ operator sees *why* reinjection is or isn't active.
 
 ### C4. Migrate the hook's names so the wiring survives re-sync
 
-`reinject-context.py` still imports `workstate_handoff_mcp` and reads `WORKSTATE_REINJECT_*`; this
-consumer sed-patched it and the patch reverts on the next materialization. Complete the rename in
-the **payload** so the hook is correct as-shipped (ties into Part B's "consumer must not hand-patch
-overlay-owned files").
+`reinject-context.py` still reads `WORKSTATE_REINJECT_*` env-var names (its import was already
+locally sed-patched to `workbay_handoff_mcp`, and that patch reverts on the next materialization).
+Complete the rename in the **payload** so the hook is correct as-shipped (ties into Part B's
+"consumer must not hand-patch overlay-owned files").
+
+---
+
+## Part D — Greenfield posture: no legacy fallback, fail fast, de-hoist the overlay tooling
+
+This is a **greenfield** consumer (no production data, no legacy installs to migrate). Two
+consequences for the overlay surface:
+
+### D1. No legacy clone fallback — fail fast
+
+The repo resolves **only** the canonical `.workbay/remote` overlay home and **fails fast** (loud,
+actionable: "run `workbay-bootstrap install`") when it is absent — never silently degrading onto a
+stale `.workstate/remote` clone. The consumer now centralizes this in one seam
+(`scripts/_overlay_clone.py`, single source of truth — no overlay path hardcoded across scripts).
+**Ask:** the bootstrap should drop the legacy `.workstate-overlay.json` overlay *mode* entirely for
+greenfield consumers (dead code once a canonical ledger exists) and ship the hoisted tooling
+**workstate-free**.
+
+### D2. De-hoist the general overlay tooling (repo↔workbay boundary)
+
+`overlay_resolver.py`, `check_harness_sync.py`, `generate_agent_workflows.py`,
+`apply_cursor_skills_only_surface.py`, `check_skills.py`, `lint_hoisted_paths.py` are **general
+agent-harness tooling hoisted into the consumer** (E17-10) — not repo-specific, yet the consumer
+carries, patches, and must keep them workstate-free (the source of the residual
+`.workstate-overlay.json` / payload-name references and the brittle path coupling). **Ask:** workbay
+should own these as **package-provided** modules/CLIs (or expose the overlay home from the install
+ledger) so consumers neither hoist nor hand-patch them. The consumer then keeps only repo-specific
+config + the thin `_overlay_clone` seam — and that seam disappears once the package exposes the home.
+
+- *Concept:* **Ports & Adapters + single source of truth** (Farley) — the repo depends on a workbay
+  *port*, not on hoisted copies of workbay internals; **remove dead code** (the legacy mode) for the
+  greenfield case.
+
+### D3. Cross-harness portability
+
+Overlay resolution is harness-agnostic (the clone is shared across Claude/Codex/Cursor/Grok); the
+`_overlay_clone` seam resolves identically for every harness, and the produced effective trees are
+per-harness. Any de-hoisted package surface must preserve this (one resolution, N harness trees).
 
 ---
 
@@ -246,6 +286,10 @@ overlay-owned files").
 8. Semantic reinjection is **one bootstrap step from active**: model provisioned (digest-verified),
    SessionStart hook wired, toggle documented, `doctor` reports delivery state; the silent degrade
    path is preserved **and** observable; the reinject hook ships with `workbay`-correct names.
+9. The consumer resolves the overlay through a **single seam** with **no scattered hardcoded paths**
+   and **no `.workstate` literal in repo-specific code**; resolution is canonical-only + fail-fast
+   (no legacy clone fallback); the general overlay tooling is **package-provided (de-hoisted)** and
+   ships workstate-free; resolution stays cross-harness (one resolution, N harness trees).
 
 ## Test posture (apply the concepts to the mechanism)
 

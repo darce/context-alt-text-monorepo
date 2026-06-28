@@ -9,15 +9,19 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-REMOTE_GENERATOR = (
-    REPO_ROOT
-    / ".workbay/remote/packages/workbay-system/workstate_system/payload/scripts/generate_agent_workflows.py"
-)
+
+try:  # single source of truth for the overlay clone location — no hardcoded paths
+    from scripts._overlay_clone import hoisted_generator_path
+except ModuleNotFoundError:
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+    from _overlay_clone import hoisted_generator_path
+
+REMOTE_GENERATOR = hoisted_generator_path(REPO_ROOT)
 CURSOR_PATCH = REPO_ROOT / "scripts" / "apply_cursor_skills_only_surface.py"
 
 
 def _load_remote_generator():
-    if not REMOTE_GENERATOR.is_file():
+    if REMOTE_GENERATOR is None or not REMOTE_GENERATOR.is_file():
         return None
     spec = importlib.util.spec_from_file_location("_gaw_remote", REMOTE_GENERATOR)
     if spec is None or spec.loader is None:
@@ -47,9 +51,10 @@ def _runs_plugin_mode(argv: list[str]) -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    if not REMOTE_GENERATOR.is_file():
+    if REMOTE_GENERATOR is None or not REMOTE_GENERATOR.is_file():
         print(
-            f"generate_agent_workflows shim: missing hoisted generator at {REMOTE_GENERATOR}",
+            "generate_agent_workflows shim: workbay overlay not materialized "
+            "(.workbay/remote absent) — run `workbay-bootstrap install`.",
             file=sys.stderr,
         )
         return 1

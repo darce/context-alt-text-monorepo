@@ -24,7 +24,7 @@ for lane/task manifest resolution.
 Root-level doc-lock tests stay in `scripts/` when they validate monorepo-wide
 operator surfaces rather than one app. Examples include
 `test_consumer_setup_doc.py`, `test_current_task_demotion_surfaces.py`,
-`test_rg014_external_package_scope.py`, and `test_shared_agentic_surface_doc.py`.
+and `test_rg014_external_package_scope.py`.
 These tests cover shared setup guides, harness contracts, constitution rules,
 MCP launcher behavior, or cross-repo naming policy, so moving them into an app
 test tree would hide their ownership.

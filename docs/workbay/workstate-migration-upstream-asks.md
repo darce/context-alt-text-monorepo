@@ -370,3 +370,47 @@ doc-lock tests reconciled (`test_curation_refresh_status_docs.py` path; obsolete
 - Generic `docs/workbay/templates/*` (8 byte-identical to upstream, 6 drifted) remain tracked;
   offloading them to the overlay needs an overlay delivery path (installer), unlike the
   contracts/rules offload already completed.
+
+## Refactoring-lens enforcement gaps (workbay code-gen / review skills)
+
+Audited 2026-06-28 (MAINT-workbay-migration-cleanup): do the shipped code-gen/review skills
+apply + enforce the distilled engineering literature so junior agents produce well-factored
+code (less downstream refactoring)? **Partially — and the enforcement that works is repo-local,
+not shipped.**
+
+- **Upstream `refactor` skill exists but is not materialized here.** Canonical
+  `.../payload/skills/refactor/body.md` carries the full Fowler/Beck smell catalog +
+  characterization-tests-before-move, but it is absent from this repo's
+  `.workbay/generated/plugins/workbay-system/effective/claude/skills/` and is cross-referenced
+  by **zero** impl/review skills. A junior reaches it only by explicitly typing "refactor". **Ask:**
+  (a) confirm why `refactor` is filtered out of the consumer Claude tree and re-enable it; (b) add
+  a "See Also → refactor" link + a Red-Flag re-entry ("diff is growing a second responsibility →
+  stop, run refactor") to `incremental-implementation` and `branch-review`.
+
+- **The enforced lens is an untracked, local-only file.** `docs/workbay/rules/engineering-heuristics.md`
+  (the 8-book trigger→rule lexicon that `branch-review-guide.md` + `planning-review-guide.md`
+  wire in) is **not tracked, gitignored under `/docs/workbay/rules`, and not in the upstream
+  payload** — it vanishes on a fresh clone / CI / overlay re-materialization, silently reverting
+  review to the design-thin upstream guide (canonical `branch-review-guide` has only partial Fowler
+  smells, no resilience/latency/idempotency lens). **Ask:** promote `engineering-heuristics.md` and
+  the guide checklist extensions into the workbay-system payload (or move them to a tracked,
+  clearly repo-owned path) so the lens survives regeneration. Interim repo guard: a `make check-*`
+  assertion that the guides still reference `engineering-heuristics.md`.
+
+- **Generation skills nudge cadence/NFR but not smell-avoidance.** Effective `tdd` /
+  `incremental-implementation` / `scope` carry repo-overlaid design/scale/NFR cues (good), but none
+  makes smell-*avoidance* (Large Class / Long Function / Data Clumps / Primitive Obsession /
+  cohesion / SoC "and"-test) a **produce-first** gate — that shaping is only caught at review.
+  **Repo-fixable (mode:patch):** add a 3-4 line "produce-first shape" cue to the
+  `incremental-implementation` effective patch (cohesion/SoC "and"-test, ≤~400-line / ≤3-nesting
+  budgets, Extract-on-second-responsibility, strategy-map-over-enum-switch) → `engineering-heuristics.md`.
+
+- **`plan-analyze` triage is design-blind.** Its 7 passes (duplication / ambiguity / underspec /
+  constitution / coverage / terminology / impl-grounding) have no complexity / coupling / cohesion /
+  failure-mode pass, so a plan that bakes in a god-class or unbounded-result design passes triage
+  untouched. **Repo-fixable (mode:patch):** add an 8th "design-quality & failure-mode grounding"
+  pass mirroring the wiring already in `planning-review-guide.md`.
+
+- **`review-parallel` guarantees no rubric of its own** — reviewers apply the factoring/design lens
+  only if `reviewer_prompt_template` routes them to `branch-review-guide` + `engineering-heuristics`.
+  Ensure that prompt cites them explicitly.

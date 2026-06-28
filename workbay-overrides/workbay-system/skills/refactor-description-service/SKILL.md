@@ -44,30 +44,27 @@ Evidence-backed, smell-named, behavior-preserving refactor in small verified sli
 
 ## Canonical Policy
 
-Gates BEFORE any edit:
+Standard gates apply unchanged and are **not restated here** — branch isolation (code on `main` hook-blocked; `make task-start` first), MCP handoff after changes, pre-merge `handoff_close_check(enforce=True)`, greenfield (schema directly into `db/migrations/versions/001_identity_schema.py`; delete-over-flag; no data to preserve), and never relax a lint/compliance script (sr-001). Canonical text: [instructions.md](../../../docs/workbay/instructions.md), [constitution.md](../../../docs/workbay/constitution.md). This skill adds only the **refactor-specific** discipline:
 
-- **Branch isolation** — NEVER edit code on `main`. `make task-start TASK=<id> OBJECTIVE="..."` first (branch+worktree+MCP target); PreToolUse hook blocks code on main. Work from `target_worktree_path`.
-- **Tests-first safety net** — no self-checking tests = mutation, not refactoring. Missing coverage → write **characterization test** (capture current behavior, even if "wrong") first. Entry `recognition/tests/{unit,api,integration}/`. Configurable in-memory fakes (`recognition/tests/fakes.py`), never always-None (false positives — testing-python.md).
-- **Format before lint** — `make format` (= `ruff check --fix --unsafe-fixes` + `ruff format`) before hand-fixing lint.
-- **MCP handoff (mandatory)** — after code changes: `record_event(event={event_kind:"decision",...})`, notify user "Handoff updated: decision `<id>` recorded.", then `render_handoff(kind='dashboard')`. Without both = incomplete.
-- **Pre-merge gate** — no merge to main without `handoff_close_check(enforce=True)`: ≥1 review pass, zero open findings (or deferred w/ rationale), fresh `test_result` at HEAD SHA, slice-complete decision.
-- **Greenfield** — NO migrations. Schema → directly into `db/migrations/versions/001_identity_schema.py` (single baseline) + `db/models.py`, then `alembic check`. Clean rewrites over compat shims. Delete-over-flag. No data to preserve.
+- **Two Hats (Fowler Ch2).** Restructure XOR add behavior — never the same step. Don't tune perf during a refactor; profile after on well-factored code (Farley measure-don't-guess).
+- **Tests-first safety net (Fowler Ch4).** No self-checking tests = mutation. Missing coverage → write a **characterization test** in `recognition/tests/{unit,api,integration}/` first. Configurable fakes (`recognition/tests/fakes.py`), never always-None (testing-python.md).
+- **Small reversible steps.** `make format` then `make check` after each; red >1 step back → revert to last green, re-slice smaller.
 
-Repo short/regression rules that gate moves (don't refactor *into* a violation):
+Constitution `[sr/rg]` rules that gate moves (rule text in `constitution.md`; only the app anchor here):
 
-| Rule | Constraint | App anchor |
-|---|---|---|
-| sr-006 | `assert` only for internal invariants/tests; request/external-data validation raises explicit exceptions/HTTP errors | — |
-| sr-007 | status/domain values are `StrEnum`/`IntEnum`, single canonical def; don't scatter `== "pending"` | canon: `domain/job.py`, `domain/suggestion.py`, `domain/maturity.py`, `shared/health.py`; live smell `application/suggestions/label_inference.py:132`, `cluster_repository.py:1205` compare `resolution == "pending"` raw |
-| sr-008 | >8 destructured params → 2–3 typed objects | model `ScanWorkerConfig` |
-| sr-009 | transactions via shared `run_transactional(callable)`, not inline START/COMMIT/ROLLBACK | — |
-| rg-002 | preserve atomic write paths; don't split a backend atomic op into multiple steps | — |
-| rg-007 | long loops: bounded stall detection, one unit's failure ≠ halt others, exit non-zero after no-progress threshold | `scan_worker.run_forever`/`_main` |
-| rg-008 | multi-module config validated at load, not silent defaults | — |
-| rg-009 | no `if task_ref == ...` / hardcoded domain strings in generic modules → config/policy | — |
-| rg-015 | boundary adapters never fabricate contract metadata (`limit/offset/total`, `data_source`, projection status); every envelope field from request/upstream/documented-fallback | snapshot/delta/members in `schemas/responses.py` + cluster router |
+| Rule | App anchor |
+|---|---|
+| sr-006 | request/external-data validation raises explicit exceptions/HTTP errors, not `assert`. |
+| sr-007 | status = `StrEnum`/`IntEnum` (canon: `domain/job.py`,`domain/suggestion.py`,`domain/maturity.py`,`shared/health.py`); live smell: raw `resolution == "pending"` in `label_inference.py`, `cluster_repository.py`. |
+| sr-008 | >8 params → typed objects (model `ScanWorkerConfig`). |
+| sr-009 | transactions via `run_transactional(callable)`. |
+| rg-002 | preserve atomic write paths. |
+| rg-007 | long loops: bounded stall detection, exit non-zero after no-progress (`scan_worker.run_forever`/`_main`). |
+| rg-008 | multi-module config validated at load. |
+| rg-009 | no hardcoded domain strings in generic modules → config/policy. |
+| rg-015 | boundary adapters never fabricate contract metadata (`schemas/responses.py` + cluster router). |
 
-Hexagonal layer rules (backend-python-guidelines.md): no raw SQL outside `infrastructure/repositories/`; no `contextlib.suppress(Exception)`; no `getattr` duck-typing on Protocols; no presentation DTOs in domain/application; inject settings (no default-instantiated `ClusteringSettings()`); functions <40 lines.
+Hexagonal layer rules (backend-python-guidelines.md): no raw SQL outside `infrastructure/repositories/`; no `contextlib.suppress(Exception)`; no `getattr` duck-typing on Protocols; no presentation DTOs in domain/application; inject settings; functions <40 lines.
 
 ## Core Process
 
@@ -84,9 +81,9 @@ Ordered loop. Two Hats: never add behavior + restructure same step.
 
 Each: where it lives · sign · fix (book §).
 
-- **God router** — `interface_adapters/http/routers/clusters.py` (1679 LOC, ~30 endpoints). Sign: one file changes for cluster CRUD + topology + snapshots + deltas + maintenance + admission. → Divergent Change: Extract Function on fat handlers (<40 lines), then Move Function / Split Phase into cohesive routers (topology / snapshot / maintenance); register in `api/main.py` (Fowler Divergent Change, Split Phase, Move Function).
-- **God repository** — `infrastructure/repositories/cluster_repository.py` (1439). Sign: UUID coercion, media-identity bootstrap, inline+duplicated query-building. → Extract shared utils to `infrastructure/repositories/_helpers.py` (hex rule 10); Extract Class for query groups (Fowler Large Class).
-- **God service / large class** — `application/persistence/assignment_writer.py` (1097, `AssignmentWriter` ~30 methods: persist / centroid recompute / rep selection / curriculum-T / MV refresh); `application/suggestions/refresh_service.py` (835). Sign: method/field clusters by responsibility. → Extract Class per cluster; module-level pure helpers (`_compute_identity_quality`, `_select_diverse_representatives`) already extracted — continue (Fowler Large Class; Modern-SWE Ch10).
+- **God router** — `interface_adapters/http/routers/clusters.py` (~30 endpoints). Sign: one file changes for cluster CRUD + topology + snapshots + deltas + maintenance + admission. → Divergent Change: Extract Function on fat handlers (<40 lines), then Move Function / Split Phase into cohesive routers (topology / snapshot / maintenance); register in `api/main.py` (Fowler Divergent Change, Split Phase, Move Function).
+- **God repository** — `infrastructure/repositories/cluster_repository.py`. Sign: UUID coercion, media-identity bootstrap, inline+duplicated query-building. → Extract shared utils to `infrastructure/repositories/_helpers.py` (hex rule 10); Extract Class for query groups (Fowler Large Class).
+- **God service / large class** — `application/persistence/assignment_writer.py` (`AssignmentWriter` ~30 methods: persist / centroid recompute / rep selection / curriculum-T / MV refresh); `application/suggestions/refresh_service.py`. Sign: method/field clusters by responsibility. → Extract Class per cluster; module-level pure helpers (`_compute_identity_quality`, `_select_diverse_representatives`) already extracted — continue (Fowler Large Class; Modern-SWE Ch10).
 - **Mixed abstraction at a seam** — handler doing business logic + raw persistence + HTTP shaping in one scope. → Ports & Adapters: domain/application return domain types, translate at `interface_adapters` boundary (Modern-SWE Ch11/12; "and" in a description = SoC violation).
 - **Repeated switch / scattered status string** — status compared as literals across files. → Replace Conditional with Polymorphism or import the `StrEnum` (sr-007; Fowler Repeated Switches).
 - **Primitive obsession** — bbox tuples, bare `np.ndarray` embeddings, confidence floats threaded through signatures. → Replace Primitive with Object / Introduce Parameter Object where behavior accretes (sr-008).
@@ -94,9 +91,9 @@ Each: where it lives · sign · fix (book §).
 
 ### Smell catalog — async-correctness (Hattingh — HIGH)
 
-- **Blocking call in coroutine** — sync CPU/IO (InsightFace `.get`, PIL/cv2 decode, blocking DNS, `subprocess`) awaited directly stalls the loop. Sign: coroutine calls sync ML/IO fn with no `run_in_executor`/`to_thread`. Model `infrastructure/embeddings/__init__.py:156`. NOTE `_bytes_to_cv2`/`_pil_to_cv2` decode runs sync inside `detect_faces` before the executor hop — fold into the offloaded callable. → executor quarantine (Hattingh "Running Blocking Code").
-- **Missing timeout on outbound call** — `httpx.AsyncClient` / `await` on network/DB with no deadline. Tool: `application/integrations/timeouts.py` `wait_for_adapter(coro, timeout_s, adapter_name)` → `AdapterTimeoutError`. Worker is good (`scan_worker.py:193` `timeout=30.0`); audit every other outbound path. → wrap (Nygard §5.1).
-- **Fire-and-forget task** — `create_task(...)` whose exception is never awaited → "Task destroyed but pending" or silent swallow. Sign: bare `create_task`/`ensure_future` (`ensure_future` is framework-only). Correct pattern `worker/handlers/scan.py:119` `gather(*..., return_exceptions=True)`. → await or track+gather (Hattingh Pitfalls).
+- **Blocking call in coroutine** — sync CPU/IO (InsightFace `.get`, PIL/cv2 decode, blocking DNS, `subprocess`) awaited directly stalls the loop. Sign: coroutine calls sync ML/IO fn with no `run_in_executor`/`to_thread`. Model `infrastructure/embeddings/__init__.py`. NOTE `_bytes_to_cv2`/`_pil_to_cv2` decode runs sync inside `detect_faces` before the executor hop — fold into the offloaded callable. → executor quarantine (Hattingh "Running Blocking Code").
+- **Missing timeout on outbound call** — `httpx.AsyncClient` / `await` on network/DB with no deadline. Tool: `application/integrations/timeouts.py` `wait_for_adapter(coro, timeout_s, adapter_name)` → `AdapterTimeoutError`. Worker is good (`scan_worker.py` `timeout=30.0`); audit every other outbound path. → wrap (Nygard §5.1).
+- **Fire-and-forget task** — `create_task(...)` whose exception is never awaited → "Task destroyed but pending" or silent swallow. Sign: bare `create_task`/`ensure_future` (`ensure_future` is framework-only). Correct pattern `worker/handlers/scan.py` `gather(*..., return_exceptions=True)`. → await or track+gather (Hattingh Pitfalls).
 - **Unsafe shutdown/cancellation** — `except CancelledError: pass` without cleanup+re-raise; executor jobs outliving the loop. Models `domain/services/purge_service.py:run_forever` (`wait_for(shield(stop_event.wait()), timeout=)`), `scan_worker._main`. → cancellation-safe cleanup, `gather(return_exceptions=True)`, drain executor (Hattingh Startup/Shutdown). Uvicorn `--timeout-graceful-shutdown` (`make serve`).
 - **Unbounded queue / no back-pressure** — producers outrun consumers. App bounds via `claim_batch_size`/`max_concurrency` + Postgres `SKIP LOCKED`. Sign: new `asyncio.Queue()` without `maxsize`, or unbounded claim. → bounded queue + drop/throttle (Hattingh Queues; Enberg §10.5).
 - **Default-instantiated settings in async fn** — `RecognitionSettings()`/`ClusteringSettings()` inside a coroutine bypasses DI, reloads per call. → inject (hex rule 6; rg-008).
@@ -155,7 +152,7 @@ Extract Function (Long Function, <40 lines); Extract Class (god-class clusters);
 - "just add a compat shim" → greenfield: rewrite the module, delete-over-flag. No backward-compat layers, no data to preserve.
 - "broad except keeps it running" → masks failure, no log, falsely trips breakers. Narrow + log ≥WARNING, distinguish system vs app (Nygard fail-fast §5.5).
 - "I'll batch the perf fix into this extract" → Two Hats violation. Restructure first, green, then tune separately (Fowler Ch2).
-- "this status string is obvious" → scattered literals drift (sr-007 live smell at `label_inference.py:132`, `cluster_repository.py:1205`). Import the `StrEnum`.
+- "this status string is obvious" → scattered literals drift (sr-007 live smell at `label_inference.py`, `cluster_repository.py`). Import the `StrEnum`.
 
 ## Red Flags
 

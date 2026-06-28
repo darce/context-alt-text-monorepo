@@ -6,6 +6,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+try:  # single source of truth for the overlay clone location — no hardcoded paths
+    from scripts._overlay_clone import overlay_clone_root
+except ModuleNotFoundError:
+    from _overlay_clone import overlay_clone_root
+
 
 SurfaceKind = Literal["skills", "hooks", "commands", "prompts", "contracts"]
 ResolvedSource = Literal["shared", "local", "overlapping"]
@@ -38,8 +43,8 @@ CANONICAL_KIND_LEDGER_PATHS: dict[SurfaceKind, tuple[str, ...]] = {
     "prompts": (".github/prompts",),
 }
 
-# Bootstrap clone root that ``source="shared"`` surfaces symlink into.
-_CLONE_SUBDIR = (".workstate", "remote")
+# Bootstrap clone root resolution is the single source of truth in
+# scripts/_overlay_clone.py — no hardcoded overlay path here.
 
 
 class OverlayResolverError(RuntimeError):
@@ -274,12 +279,12 @@ def _validate_shared_surface(surface_root: Path, *, project_root: Path, rel: str
             f"shared overlay surface `{rel}` points to a missing bootstrap-owned target. "
             f"{remediation}"
         )
-    clone_root = project_root.joinpath(*_CLONE_SUBDIR).resolve()
+    clone_root = overlay_clone_root(project_root).resolve()
     resolved = surface_root.resolve()
     if resolved != clone_root and not str(resolved).startswith(str(clone_root) + os.sep):
         raise BrokenOverlayError(
             f"shared overlay surface `{rel}` resolves outside the bootstrap clone "
-            f"({'/'.join(_CLONE_SUBDIR)}); it points at `{resolved}`. {remediation}"
+            f"(`{clone_root}`); it points at `{resolved}`. {remediation}"
         )
 
 

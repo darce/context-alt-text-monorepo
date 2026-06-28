@@ -57,10 +57,15 @@ except ModuleNotFoundError:
         resolve_surface,
     )
 
+try:
+    from scripts._overlay_clone import overlay_packages_root
+except ModuleNotFoundError:
+    from _overlay_clone import overlay_packages_root
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
-_OVERLAY_PACKAGES = REPO_ROOT / ".workstate" / "remote" / "packages"
+_OVERLAY_PACKAGES = overlay_packages_root(REPO_ROOT)
 PACKAGES_ROOT = (
-    _OVERLAY_PACKAGES if _OVERLAY_PACKAGES.is_dir() else REPO_ROOT.parent
+    _OVERLAY_PACKAGES if _OVERLAY_PACKAGES and _OVERLAY_PACKAGES.is_dir() else REPO_ROOT.parent
 )
 CONTRACT_PATH = REPO_ROOT / "docs" / "workbay" / "contracts" / "harness-protocol.yaml"
 VSCODE_SETTINGS_PATH = REPO_ROOT / ".vscode" / "settings.json"
@@ -72,8 +77,8 @@ PYTHON_EXPORTS_PATH = (
     / "__init__.py"
 )
 CONTRACT_RELATIVE = Path("docs/workbay/contracts/harness-protocol.yaml")
-PACKAGE_CONTRACT_RELATIVE = Path("workstate_system/payload") / CONTRACT_RELATIVE
-PAYLOAD_RELATIVE = Path("workstate_system/payload")
+PACKAGE_CONTRACT_RELATIVE = Path("workbay_system/payload") / CONTRACT_RELATIVE
+PAYLOAD_RELATIVE = Path("workbay_system/payload")
 GUARD_WRAP_RELATIVE = PAYLOAD_RELATIVE / "scripts" / "_guard_wrap.py"
 GENERATOR_RELATIVE = PAYLOAD_RELATIVE / "scripts" / "generate_agent_workflows.py"
 CLAUDE_MANAGED_BY = "workbay-bootstrap"
@@ -164,7 +169,7 @@ def _load_contract(*, repo_root: Path = REPO_ROOT) -> dict:
 
 def _format_success_message(*, repo_root: Path = REPO_ROOT) -> str:
     # Overlay mode (canonical bootstrap ledger or legacy mapping) is detected
-    # through the shared resolver detector, not a raw `.workstate-overlay.json`
+    # through the shared resolver detector, not a raw legacy-overlay-manifest
     # filename probe, so a canonical `.workbay-bootstrap.json` consumer is
     # reported with surface counts instead of a bare OK.
     if detect_overlay_mode(repo_root) == "source_tree":

@@ -9,11 +9,15 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+try:  # single source of truth for the overlay clone location — no hardcoded paths
+    from scripts._overlay_clone import hoisted_generator_path
+except ModuleNotFoundError:
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+    from _overlay_clone import hoisted_generator_path
+
 PLUGIN_ROOT = REPO_ROOT / ".workbay" / "generated" / "plugins" / "workbay-system"
-REMOTE_GENERATOR = (
-    REPO_ROOT
-    / ".workbay/remote/packages/workbay-system/workstate_system/payload/scripts/generate_agent_workflows.py"
-)
+REMOTE_GENERATOR = hoisted_generator_path(REPO_ROOT)
 MARKER_NAME = ".native-skills-only"
 _FALLBACK_MARKER_BODY = (
     "# Cursor native workflows are discovered from .cursor/skills only.\n"
@@ -24,7 +28,7 @@ _FALLBACK_MARKER_BODY = (
 def _marker_body() -> str:
     # The hoisted generator owns the marker text; read it from there so an
     # upstream rewording cannot drift against a duplicated literal here.
-    if REMOTE_GENERATOR.is_file():
+    if REMOTE_GENERATOR is not None and REMOTE_GENERATOR.is_file():
         spec = importlib.util.spec_from_file_location("_gaw_remote", REMOTE_GENERATOR)
         if spec is not None and spec.loader is not None:
             module = importlib.util.module_from_spec(spec)

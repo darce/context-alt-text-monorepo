@@ -46,30 +46,28 @@ Evidence-backed, smell-named, behavior-preserving refactor of this app, applied 
 
 ## Canonical Policy
 
-Gates before ANY edit:
+Standard gates apply unchanged and are **not restated here** — branch isolation (code edits hook-blocked on `main`; `make task-start` first, MAINT-* ref for ad-hoc), MCP handoff after changes, pre-merge `handoff_close_check(enforce=True)`, greenfield (no migrations; delete-over-flag), and never relax a lint/compliance script (sr-001). Canonical text: [instructions.md](../../../docs/workbay/instructions.md), [constitution.md](../../../docs/workbay/constitution.md). This skill adds only the **refactor-specific** discipline:
 
-- **Branch isolation.** Code edits on `main` hook-blocked. `make task-start TASK=<id> OBJECTIVE="..."` → edit in `target_worktree_path`. Refactor-only still needs a task ref (MAINT-* for ad-hoc). Two Hats (Fowler Ch2): refactor hat XOR feature hat, never both in one commit.
-- **Safety net first.** Fowler Ch4: self-testing code is a prerequisite. No green tests covering the target → add a *characterization test* (capture current output, even if "wrong") before touching. Substitute Algorithm (Fowler Ch7) = "tests capture old behavior, swap impl, diff."
-- **Small reversible steps.** Compile/test after each. Test red + cause unclear → revert to last green, smaller step.
-- **Format before lint.** `make format-all` (or `cd apps/prototype-wp-alt-context && npm run format:fix` / `composer cs-fix`) auto-fixes most violations. Never hand-fix what the formatter fixes. Never relax a lint/compliance script to silence a finding (sr-001).
-- **Handoff after changes (MANDATORY).** `record_event(event={event_kind:"decision",...})` → `render_handoff(kind='dashboard')` → notify user. A refactor response without a recorded + notified decision is incomplete.
-- **Pre-merge gate.** No merge to `main` without `handoff_close_check(enforce=True)`: review pass recorded, zero open findings, fresh `test_result` tied to HEAD SHA, slice-complete decision.
+- **Two Hats (Fowler Ch2).** Refactor hat XOR feature hat — never both in one commit. No behavior change.
+- **Safety net first (Fowler Ch4).** No green tests covering the target → write a *characterization test* (capture current output, even if "wrong") before touching. Substitute Algorithm (Ch7) = capture old behavior, swap impl, diff.
+- **Small reversible steps.** Compile/test after each; red + cause unclear → revert to last green, smaller step.
+- **Format before lint.** `make format-all` (or `cd apps/prototype-wp-alt-context && npm run format:fix` / `composer cs-fix`) — never hand-fix what the formatter fixes.
 
-Repo rules that constrain moves (do not violate while refactoring):
+Constitution `[sr/rg]` rules that constrain moves (rule text lives in `constitution.md`; only the app anchor is here):
 
-| Rule | Constraint on the refactor |
+| Rule | App anchor |
 |---|---|
-| sr-004 | SCSS edits use `--acx-*` tokens (`js/admin/styles/tokens/_colors.scss`,`_typography.scss`,`_spacing.scss`). No hex/px literals. Missing token → add to token surface first. Status = color **+ icon**, never color alone. |
-| sr-005 | TS: assertion helpers (`asserts x is T`/`assertNever`) for internal invariants only. Boundary/API data validated explicitly (narrow, don't `!`). |
-| sr-007 | Centralize status values as `as const` objects / PHP enums / StrEnum. Pattern already exists — `js/admin/api/recognition/types/dataSource.ts` (`DATA_SOURCE`,`PROJECTION_STATUS`). Refactor scattered string compares toward these. |
-| sr-008 | >8 destructured params → group into 2–3 typed objects (state/actions/mutations). |
-| sr-009 | PHP transactions go through `run_transactional(callable)`, not inline START/COMMIT/ROLLBACK. |
-| rg-003 | Primary controls reachable from zero state. Don't gate a primary action behind non-zero selection during a UI refactor. |
-| rg-004 | Controlled Radix dialogs must wire `onOpenChange`. Don't drop it when extracting a panel. |
-| rg-015 | Adapters must not fabricate envelope metadata (`limit`,`total`,`data_source`). Every field from request/upstream/documented-fallback. Bad upstream shape → explicit error, not silent dual-support. |
-| rg-016 | New PHP `class-*.php`/`interface-*.php` under `src/` is NOT PSR-4 autoloaded by default. Add explicit `require_once` from the owning entrypoint (or PSR-4 filename) and verify: `php -r "require 'vendor/autoload.php'; var_export(class_exists('AltContext\\\\Foo\\\\Bar'));"` (Trait Extraction Rules: `composer dump-autoload`, `php -l` all files). |
+| sr-004 | SCSS → `--acx-*` tokens (`js/admin/styles/tokens/_*.scss`); status = color **+ icon**. |
+| sr-005 | TS assertion helpers for internal invariants only; boundary/API data validated explicitly. |
+| sr-007 | Status values centralized at `js/admin/api/recognition/types/dataSource.ts` (`DATA_SOURCE`,`PROJECTION_STATUS`). |
+| sr-008 | >8 destructured params → `{state}`/`{actions}`/`{mutations}`. |
+| sr-009 | PHP transactions via `run_transactional(callable)`. |
+| rg-003 | Primary controls reachable from zero state. |
+| rg-004 | Controlled Radix dialogs wire `onOpenChange`. |
+| rg-015 | Adapters never fabricate envelope metadata (`limit`,`total`,`data_source`). |
+| rg-016 | New PHP `class-*.php`/`interface-*.php` not PSR-4 autoloaded — add `require_once` + verify `php -r "...class_exists(...)"`. |
 
-Frontend hard limits (frontend-guidelines): 300 lines/component, 5 `useState`, 3 `useEffect`, 10 props. Extract when: JSX >50 lines, pattern 2+ times, nesting >2, or 6+ `useState`.
+Frontend hard limits (frontend-guidelines): 300 lines/component, 5 `useState`, 3 `useEffect`, 10 props. Extract when JSX >50 lines, pattern 2+ times, nesting >2, or 6+ `useState`.
 
 ## Core Process
 
@@ -95,17 +93,17 @@ Largest files (Phase A scan) are the prime hunting grounds.
 
 #### PHP — `src/api/` and `src/sovereign/`
 
-- **Large Class / God controller.** `class-cluster-mutations-controller.php` (1257 LOC), `class-analysis-jobs-controller.php` (1144, 35 methods), `class-clusters-controller.php` (770). Sign: one class registers many routes AND holds label/merge/split/dismiss/reassign logic. → **Extract Class** (Fowler Ch7) by responsibility cluster; route registration stays, handlers move to collaborators. `RecognitionController` is already the composition-root pattern — push handler logic toward focused services, not back into it.
-- **Large Class — repositories.** `class-clusters-repository.php` (1164, 34 methods), `class-identity-members-repository.php` (1045), `class-sync-state-repository.php` (689). Sign: CRUD + curation reset + delete-with-members + count derivation in one file. → **Extract Class** for cohesive method+field subsets (Modern SE Ch10: "and" in the description = SoC violation).
-- **Long Function + Repeated Switches.** Mutation handlers branch on operation/conflict_code. Same switch in controller, drain, and `ConflictResolutionService`. → **Decompose Conditional** then **Replace Conditional with Polymorphism** (Fowler Ch10) — or for source/operation dispatch, a map (see playbook). `class-split-topology-command-drain.php` (799) and `class-outbox-drain.php` (680) are loop+conditional sprawl: **Split Loop** + **Extract Function**.
+- **Large Class / God controller.** `class-cluster-mutations-controller.php`, `class-analysis-jobs-controller.php` (large), `class-clusters-controller.php`. Sign: one class registers many routes AND holds label/merge/split/dismiss/reassign logic. → **Extract Class** (Fowler Ch7) by responsibility cluster; route registration stays, handlers move to collaborators. `RecognitionController` is already the composition-root pattern — push handler logic toward focused services, not back into it.
+- **Large Class — repositories.** `class-clusters-repository.php` (large), `class-identity-members-repository.php`, `class-sync-state-repository.php`. Sign: CRUD + curation reset + delete-with-members + count derivation in one file. → **Extract Class** for cohesive method+field subsets (Modern SE Ch10: "and" in the description = SoC violation).
+- **Long Function + Repeated Switches.** Mutation handlers branch on operation/conflict_code. Same switch in controller, drain, and `ConflictResolutionService`. → **Decompose Conditional** then **Replace Conditional with Polymorphism** (Fowler Ch10) — or for source/operation dispatch, a map (see playbook). `class-split-topology-command-drain.php` and `class-outbox-drain.php` are loop+conditional sprawl: **Split Loop** + **Extract Function**.
 - **Transaction Script → domain.** Inline SQL + business rule + conflict bookkeeping in one method = Modern SE `add_to_cart1` antipattern. → push accidental complexity (persistence) behind the repository; keep handler at one abstraction level (Modern SE Ch11 Ports & Adapters; Fowler Split Phase). All mutation paths must route transactions through `run_transactional` (sr-009) and refresh `SyncStateRepository` metrics (backend-php rule).
 - **N+1 in loops.** `foreach ($rows) { $repo->list_for_cluster($uuid) }`. → batch `WHERE col IN (...)` (backend-php § Avoid N+1). Release It §9.7/§9.9 reinforces: chatty calls compound.
-- **Schema-key drift.** SQL column names vs `class-life-cycle-manager.php` (644). HIGH-severity. Confirm columns before editing SQL; add a test that fails on a non-existent key (backend-php § Schema-Key Parity; rg-005).
+- **Schema-key drift.** SQL column names vs `class-life-cycle-manager.php`. HIGH-severity. Confirm columns before editing SQL; add a test that fails on a non-existent key (backend-php § Schema-Key Parity; rg-005).
 - **Primitive Obsession / Mysterious Name.** Stringly-typed status/source/conflict_code passed around. → `ProbeOutcome`-style const class (already exists: `src/api/class-probe-outcome.php`) or **Replace Primitive with Object** (Fowler Ch7).
 
 #### TS/React — `js/admin/`
 
-- **Large component / too many hooks.** `WorkbenchContext.tsx` (416, 5 useState/3 useEffect — at the limit), `IdentityClusterItem.tsx` (416, multiple modal `useState` + derived booleans), `DeadLetterPanel.tsx` (395), `SuggestionReviewPanel.tsx` (376), `Panels.tsx` (371), `SyncStatusIndicator.tsx` (367). → **Extract Function/Component** + **Extract Hook** (move data-fetching `useState`+`useEffect` clusters into `js/admin/hooks/`; panel hooks stay local per frontend-guidelines).
+- **Large component / too many hooks.** `WorkbenchContext.tsx` (at the useState/useEffect limit), `IdentityClusterItem.tsx` (multiple modal `useState` + derived booleans), `DeadLetterPanel.tsx`, `SuggestionReviewPanel.tsx`, `Panels.tsx`, `SyncStatusIndicator.tsx`. → **Extract Function/Component** + **Extract Hook** (move data-fetching `useState`+`useEffect` clusters into `js/admin/hooks/`; panel hooks stay local per frontend-guidelines).
 - **Wordy / nested conditionals.** `IdentityClusterItem.tsx` derived flags (`canEdit`,`canMutate`,`canSearchForMatch`) gating JSX. Already partly good (named bools — Refactoring TS Ch3). Where deeper: **Guard Clauses** (Refactoring TS Ch4 / Fowler Replace Nested Conditional with Guard Clauses).
 - **Flag args / behavior-switching options.** Functions taking booleans that branch. → **Remove Flag Argument** / named wrappers (Refactoring TS Ch6; Fowler Ch11).
 - **Status-string switches.** `SyncHealth` union (`offline|stale|queued|conflicts|failures|healthy`) + transient overrides. Branch chains on it. → discriminated unions + **Replace Conditional with map / Strategy** (Refactoring TS Ch5; see playbook). Keep canonical values centralized (sr-007).

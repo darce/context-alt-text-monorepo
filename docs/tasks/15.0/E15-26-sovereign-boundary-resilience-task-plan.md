@@ -73,7 +73,7 @@ A `GET /acx/v1/recognition/sync/health` envelope reports `{breaker: {state, base
 
 ## Context Loading
 
-- Rules: `docs/workstate/rules/backend-php-guidelines.md`, `docs/workstate/rules/frontend-guidelines.md`, `docs/workstate/rules/testing-php.md`
+- Rules: `docs/workbay/rules/backend-php-guidelines.md`, `docs/workbay/rules/frontend-guidelines.md`, `docs/workbay/rules/testing-php.md`
 - Contracts: `class-sync-status-controller.php` (existing sync status shape), `class-conflict-controller.php` (existing outbox/conflict recovery REST), refa-6 plan `docs/tasks/tech-debt/REFA-6-sync-drains-task-plan.md`
 - Literature (read the cited sections before implementing): `release-it.md` §§ Circuit Breaker, Steady State, Fail Fast, Transparency; `latency-reduce-delay-in-software-systems.md` § Observability — separate queue-wait from processing time; `refactoring-ui.md` §§ Empty States, Color+Icon status.
 - Handoff/MCP: E15-26 ref; E15-7 open findings (avoid double-fixing); refa-6 REV-B findings for drain seams.

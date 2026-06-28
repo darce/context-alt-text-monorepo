@@ -21,7 +21,7 @@ Per the 2026-06-11 MVP strategy assessment ("ship the demo URL, stop polishing t
 The Slice tables below remain the deferred backlog inventory — they are **not** being worked now; do not treat unaddressed rows as in-progress. Live status: `review_findings(operation="list", status="deferred", task_ref="E15-27-REV-A"|"E15-27-REV-B")`.
 
 ## Context already shipped (do not redo)
-- BR-22 (contract docs) is **partially done**: E15-29 added `completed_with_errors`/`rejected` to the JobStatus wire vocabulary + a "Scan job terminal states" section in `docs/workstate/contracts/recognition-clustering.md`. Remaining: document the `progress_envelope` additive read shape (overlaps BR-14).
+- BR-22 (contract docs) is **partially done**: E15-29 added `completed_with_errors`/`rejected` to the JobStatus wire vocabulary + a "Scan job terminal states" section in `docs/workbay/contracts/recognition-clustering.md`. Remaining: document the `progress_envelope` additive read shape (overlaps BR-14).
 
 ## Slices
 

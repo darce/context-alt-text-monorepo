@@ -52,7 +52,7 @@ Settings page: a "Recognition target" section with two cards — Local developme
 
 ## Context Loading
 
-- Rules: `docs/workstate/rules/frontend-guidelines.md`, `docs/workstate/rules/testing-typescript.md`, `docs/workstate/rules/backend-php-guidelines.md`
+- Rules: `docs/workbay/rules/frontend-guidelines.md`, `docs/workbay/rules/testing-typescript.md`, `docs/workbay/rules/backend-php-guidelines.md`
 - Contracts: `SettingsResponse` (`js/admin/api/settingsApi.ts:4-16`), settings REST controller GET/POST/test
 - E15-12 contract: [E15-12-standard-deployment-reset-and-recognition-source-task-plan.md](E15-12-standard-deployment-reset-and-recognition-source-task-plan.md) — its shipped reset/deployment flows may rely on saved-URL-implies-service inference; characterize before Slice 2 (rg-006).
 - Handoff/MCP: E15-25 task ref; E15-1b plan for shipped UX scope; E15-24 plan for tenant fields.

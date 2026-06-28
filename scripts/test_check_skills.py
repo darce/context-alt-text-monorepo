@@ -77,11 +77,11 @@ def _make_repo(tmp_path: Path, skill_content: str) -> Path:
     repo = tmp_path / "repo"
     _write(repo / "Makefile", "review-dispatch:\n\t@true\n")
     _write(
-        repo / "docs" / "workstate" / "maps" / "mcp-tool-routing.yaml",
-        "always:\n  - workstate-handoff-mcp\non_demand: {}\n",
+        repo / "docs" / "workbay" / "maps" / "mcp-tool-routing.yaml",
+        "always:\n  - workbay-handoff-mcp\non_demand: {}\n",
     )
     _write(
-        repo / "packages" / "workstate-handoff-mcp" / "src" / "workstate_handoff_mcp" / "api.py",
+        repo / "packages" / "workbay-handoff-mcp" / "src" / "workbay_handoff_mcp" / "api.py",
         'TOOL_DESCRIPTIONS: dict[str, str] = {"review_findings": "x"}\n',
     )
     _write(repo / ".claude" / "skills" / "demo" / "SKILL.md", skill_content)
@@ -106,7 +106,7 @@ def _write_overlay_manifest(
             }
         },
     }
-    _write(repo / ".workstate-bootstrap.json", json.dumps(manifest, indent=2) + "\n")
+    _write(repo / ".workbay-bootstrap.json", json.dumps(manifest, indent=2) + "\n")
 
 
 def test_missing_frontmatter_fails_with_named_error(tmp_path: Path) -> None:
@@ -156,7 +156,7 @@ def test_local_skill_wins_when_shared_skill_is_invalid(tmp_path: Path) -> None:
 def test_overlay_manifest_falls_back_to_live_shared_skills_when_remote_root_is_missing(tmp_path: Path) -> None:
     repo = _make_repo(tmp_path, _valid_skill())
     _write(repo / "local" / ".claude" / "skills" / "local-only" / "SKILL.md", _valid_skill().replace("name: demo", "name: local-only"))
-    _write_overlay_manifest(repo, shared_root=".workstate/remote/.claude/skills")
+    _write_overlay_manifest(repo, shared_root=".workbay/remote/.claude/skills")
 
     failures, exit_code = check_skills(repo_root=repo)
 
@@ -168,10 +168,10 @@ def test_check_skills_falls_back_to_importable_mcp_api_when_local_package_source
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo = _make_repo(tmp_path, _valid_skill())
-    shutil.rmtree(repo / "packages" / "workstate-handoff-mcp")
+    shutil.rmtree(repo / "packages" / "workbay-handoff-mcp")
     site_packages = tmp_path / "site-packages"
-    _write(site_packages / "workstate_handoff_mcp" / "__init__.py", "")
-    _write(site_packages / "workstate_handoff_mcp" / "api.py", 'TOOL_DESCRIPTIONS: dict[str, str] = {"review_findings": "x"}\n')
+    _write(site_packages / "workbay_handoff_mcp" / "__init__.py", "")
+    _write(site_packages / "workbay_handoff_mcp" / "api.py", 'TOOL_DESCRIPTIONS: dict[str, str] = {"review_findings": "x"}\n')
     monkeypatch.syspath_prepend(str(site_packages))
 
     failures, exit_code = check_skills(repo_root=repo)
@@ -192,7 +192,7 @@ def test_broken_shared_skill_symlink_reports_overlay_error(tmp_path: Path) -> No
 
     assert exit_code == 1
     assert any("BrokenOverlayError" in failure for failure in failures)
-    assert any("workstate-bootstrap repair" in failure for failure in failures)
+    assert any("workbay-bootstrap repair" in failure for failure in failures)
 
 
 def test_broken_local_skill_symlink_reports_overlay_error(tmp_path: Path) -> None:
@@ -207,7 +207,7 @@ def test_broken_local_skill_symlink_reports_overlay_error(tmp_path: Path) -> Non
 
     assert exit_code == 1
     assert any("BrokenOverlayError" in failure for failure in failures)
-    assert any("workstate-bootstrap repair" in failure for failure in failures)
+    assert any("workbay-bootstrap repair" in failure for failure in failures)
 
 
 def test_main_reports_flat_skill_count_without_overlay_manifest(tmp_path: Path) -> None:
@@ -253,7 +253,7 @@ def test_main_reports_overlay_source_breakdown_when_manifest_exists(tmp_path: Pa
 
 def test_malformed_overlay_manifest_reports_infrastructure_error(tmp_path: Path) -> None:
     repo = _make_repo(tmp_path, _valid_skill())
-    (repo / ".workstate-bootstrap.json").write_text("{bad json\n", encoding="utf-8")
+    (repo / ".workbay-bootstrap.json").write_text("{bad json\n", encoding="utf-8")
 
     failures, exit_code = check_skills(repo_root=repo)
 

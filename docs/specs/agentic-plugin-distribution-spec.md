@@ -10,11 +10,11 @@
 >   - [docs/scopes/e17-10-hoisted-surface-cleanup-scope.md](../scopes/e17-10-hoisted-surface-cleanup-scope.md)
 >   - [docs/scopes/e17-12-codex-skill-discoverability-scope.md](../scopes/e17-12-codex-skill-discoverability-scope.md)
 > - **Owning epic**: E17 - Workflow Integrity & Hoisting (task E17-15)
-> - **Package version target**: `agentic-protocol-monorepo` v0.2 (plugin-emitting generator); MCP runtime package pins unchanged (`mcp-workstate-handoff==0.12.0`, `mcp-workstate-orchestrator==0.5.0`)
+> - **Package version target**: `agentic-protocol-monorepo` v0.2 (plugin-emitting generator); MCP runtime package pins unchanged (`mcp-workbay-handoff==0.2.0`, `mcp-workbay-orchestrator==0.5.0`)
 
-This spec defines how skills, slash-commands, and MCP server registrations are distributed to the two consuming AI harnesses (Claude Code and Codex) as native plugins, with a single canonical source of truth in `agentic-protocol-monorepo`. It replaces the symlink + bootstrap-CLI model from the hoist scope with harness-native plugin manifests, eliminates the SKILL.md / `.claude/commands/<name>.md` duplication observed in this monorepo, and preserves the existing `uvx mcp-workstate-handoff==0.12.0` / `uvx mcp-workstate-orchestrator==0.5.0` package-pin install path. The MCP source repositories remain private; this task does not migrate runtime installation to `git+ssh` refs.
+This spec defines how skills, slash-commands, and MCP server registrations are distributed to the two consuming AI harnesses (Claude Code and Codex) as native plugins, with a single canonical source of truth in `agentic-protocol-monorepo`. It replaces the symlink + bootstrap-CLI model from the hoist scope with harness-native plugin manifests, eliminates the SKILL.md / `.claude/commands/<name>.md` duplication observed in this monorepo, and preserves the existing `uvx mcp-workbay-handoff==0.2.0` / `uvx mcp-workbay-orchestrator==0.5.0` package-pin install path. The MCP source repositories remain private; this task does not migrate runtime installation to `git+ssh` refs.
 
-**Constraints:** The MCP server source repo (`darce/workstate`) and the `agentic-protocol-monorepo` itself remain **private** under the user's GitHub account. No public marketplace listing, no new package publication step, and no public discoverability work are in scope. VS Code Copilot is explicitly out of scope. Greenfield policy applies to the generator and plugin manifests; the consuming monorepo retains backward-compatible MCP install commands during a single migration window.
+**Constraints:** The MCP server source repo (`darce/workbay`) and the `agentic-protocol-monorepo` itself remain **private** under the user's GitHub account. No public marketplace listing, no new package publication step, and no public discoverability work are in scope. VS Code Copilot is explicitly out of scope. Greenfield policy applies to the generator and plugin manifests; the consuming monorepo retains backward-compatible MCP install commands during a single migration window.
 
 **Why now:** Three converging signals — duplicated skill bodies in `.claude/skills/<name>/SKILL.md` and `.claude/commands/<name>.md` waste tokens at picker time, the hoist-scope symlink model degrades when harnesses cache plugins in their own dirs (`~/.claude/plugins/cache/`, `~/.agents/plugins/`), and Codex's `request_plugin_install` tool plus Claude's `.claude-plugin/plugin.json` manifest are now mature enough to replace prose-driven adapters with deterministic pointers. This work re-decides the hoist model and therefore requires an ADR.
 
@@ -77,7 +77,7 @@ Consumer monorepo holds **no** authored skill bodies. Harness-specific files (`.
 - **Claude:** `.claude-plugin/plugin.json` with `skills`, `slash-commands`, and `mcpServers` keys. Skill files are referenced by relative path; bodies are copied into the plugin output directory.
 - **Codex:** `.codex-plugin/plugin.json` with `skills`, `commands`, `mcpServers`, and (optional) `apps`/`hooks`. Same skill bodies, same byte content.
 
-The generator MUST be deterministic: two clean runs produce byte-identical output. MCP server entries reference the existing package-pin invocations used by this monorepo's harness config (`uvx mcp-workstate-handoff==0.12.0 ... serve-stdio`, `uvx mcp-workstate-orchestrator==0.5.0 ... serve-stdio`); the generator does not republish, repackage, or retag the MCP servers.
+The generator MUST be deterministic: two clean runs produce byte-identical output. MCP server entries reference the existing package-pin invocations used by this monorepo's harness config (`uvx mcp-workbay-handoff==0.2.0 ... serve-stdio`, `uvx mcp-workbay-orchestrator==0.5.0 ... serve-stdio`); the generator does not republish, repackage, or retag the MCP servers.
 
 **Before** (current state):
 
@@ -169,15 +169,15 @@ If Codex requires an in-repo registry pointer (analogous to Claude's `plugins.js
 **Priority:** P0
 **ADR gate:** No — this is a constraint, not a new design decision. Documented here so the ADR cannot accidentally relax it.
 
-MCP servers (`mcp-workstate-handoff`, `mcp-workstate-orchestrator`) MUST remain installable via the current `uvx` package-pin flow and MUST NOT be listed in Anthropic's marketplace, Codex marketplace, or any new public index as part of this work. The plugin manifests emitted by APD-002 reference the existing package names and pins verbatim. Plugin installation is the registration mechanism; MCP runtime install remains the pre-existing `uvx` flow.
+MCP servers (`mcp-workbay-handoff`, `mcp-workbay-orchestrator`) MUST remain installable via the current `uvx` package-pin flow and MUST NOT be listed in Anthropic's marketplace, Codex marketplace, or any new public index as part of this work. The plugin manifests emitted by APD-002 reference the existing package names and pins verbatim. Plugin installation is the registration mechanism; MCP runtime install remains the pre-existing `uvx` flow.
 
 A future packaging or source-distribution task may flip this to `git+ssh`, private package index, or another mechanism; that task is explicitly out of scope here (see Deferred).
 
 **Done when:**
 
-- Emitted `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json` `mcpServers` entries contain `uvx` commands pinned to `mcp-workstate-handoff==0.12.0` and `mcp-workstate-orchestrator==0.5.0`.
+- Emitted `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json` `mcpServers` entries contain `uvx` commands pinned to `mcp-workbay-handoff==0.2.0` and `mcp-workbay-orchestrator==0.5.0`.
 - No new PyPI, npm, or marketplace publication step exists in `agentic-protocol-monorepo/Makefile` or CI.
-- `darce/workstate` and `darce/agentic-protocol-monorepo` GitHub visibility remains "Private" at the end of E17-15.
+- `darce/workbay` and `darce/agentic-protocol-monorepo` GitHub visibility remains "Private" at the end of E17-15.
 
 ---
 
@@ -233,17 +233,17 @@ skills:
     slash_command: /planning-review
   # ... one entry per skill
 mcp_servers:
-  - name: mcp-workstate-handoff
+  - name: mcp-workbay-handoff
     command: uvx
     args:
-      - mcp-workstate-handoff==0.12.0
+      - mcp-workbay-handoff==0.2.0
       - --workspace-root
       - .
       - serve-stdio
-  - name: mcp-workstate-orchestrator
+  - name: mcp-workbay-orchestrator
     command: uvx
     args:
-      - mcp-workstate-orchestrator==0.5.0
+      - mcp-workbay-orchestrator==0.5.0
       - --workspace-root
       - .
       - serve-stdio
@@ -262,9 +262,9 @@ mcp_servers:
     { "name": "branch-review", "skill": "branch-review" }
   ],
   "mcpServers": {
-    "mcp-workstate-handoff": {
+    "mcp-workbay-handoff": {
       "command": "uvx",
-      "args": ["mcp-workstate-handoff==0.12.0", "--workspace-root", ".", "serve-stdio"]
+      "args": ["mcp-workbay-handoff==0.2.0", "--workspace-root", ".", "serve-stdio"]
     }
   }
 }
@@ -283,9 +283,9 @@ mcp_servers:
     { "name": "branch-review", "skill": "branch-review" }
   ],
   "mcpServers": {
-    "mcp-workstate-handoff": {
+    "mcp-workbay-handoff": {
       "command": "uvx",
-      "args": ["mcp-workstate-handoff==0.12.0", "--workspace-root", ".", "serve-stdio"]
+      "args": ["mcp-workbay-handoff==0.2.0", "--workspace-root", ".", "serve-stdio"]
     }
   }
 }
@@ -390,7 +390,7 @@ git diff --exit-code dist/
 
 # Emitted manifests reference uvx package pins, not marketplace publication
 rg -n "uvx" dist/claude/.claude-plugin/plugin.json dist/codex/.codex-plugin/plugin.json
-rg -n "mcp-workstate-handoff==0.12.0|mcp-workstate-orchestrator==0.5.0" dist/claude/.claude-plugin/plugin.json dist/codex/.codex-plugin/plugin.json
+rg -n "mcp-workbay-handoff==0.2.0|mcp-workbay-orchestrator==0.5.0" dist/claude/.claude-plugin/plugin.json dist/codex/.codex-plugin/plugin.json
 rg -n "marketplace|publish" dist/ && echo "FAIL: public publish leaked" || echo "OK"
 
 # Claude and Codex skill bodies are byte-identical

@@ -5,5 +5,5 @@ repos:
         name: Guideline file token budget (2000-token cap)
         entry: python .github/hooks/token_budget.py
         language: system
-        files: docs/workstate/rules/.*\.md$
+        files: docs/workbay/rules/.*\.md$
         args: [--budget, "2000"]

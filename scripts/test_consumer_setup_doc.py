@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DOC_PATH = REPO_ROOT / "docs" / "workstate" / "consumer-setup.md"
+DOC_PATH = REPO_ROOT / "docs" / "workbay" / "consumer-setup.md"
 
 REQUIRED_HEADINGS = (
     "## Prerequisites",
@@ -22,10 +22,10 @@ REQUIRED_HEADINGS = (
 
 REQUIRED_SNIPPETS = (
     './.venv/bin/pip install "workstate-stack==0.1.12"',
-    "./.venv/bin/workstate-bootstrap install --target . --remote-ref workstate-stack-v0.1.12",
-    "./.venv/bin/workstate-bootstrap update --remote-ref workstate-stack-v0.1.12",
-    "./.venv/bin/workstate-bootstrap doctor",
-    "./.venv/bin/workstate-bootstrap repair",
+    "./.venv/bin/workbay-bootstrap install --target . --remote-ref workstate-stack-v0.1.12",
+    "./.venv/bin/workbay-bootstrap update --remote-ref workstate-stack-v0.1.12",
+    "./.venv/bin/workbay-bootstrap doctor",
+    "./.venv/bin/workbay-bootstrap repair",
     "AGENT_HANDOFF_WORKSPACE_ROOT",
     "AGENT_HANDOFF_STATE_DIR",
     "AGENT_HANDOFF_DASHBOARD_PATH",
@@ -40,7 +40,7 @@ REQUIRED_SNIPPETS = (
     "orchestrator.daemons.enabled",
     ".task-state/handoff.db",
     "plugin_overrides_path",
-    "workstate-overrides/workstate-system",
+    "workbay-overrides/workbay-system",
     "upstream_digest",
     "make check-overrides-digest",
     "SKILL.base.md",
@@ -48,12 +48,12 @@ REQUIRED_SNIPPETS = (
 
 REQUIRED_UPDATE_SNIPPETS = (
     './.venv/bin/pip install --upgrade "workstate-stack==0.1.12"',
-    "./.venv/bin/workstate-bootstrap update --remote-ref workstate-stack-v0.1.12",
+    "./.venv/bin/workbay-bootstrap update --remote-ref workstate-stack-v0.1.12",
 )
 
 
 def test_consumer_setup_doc_exists_and_is_standalone() -> None:
-    assert DOC_PATH.exists(), "docs/workstate/consumer-setup.md is missing"
+    assert DOC_PATH.exists(), "docs/workbay/consumer-setup.md is missing"
 
     text = DOC_PATH.read_text(encoding="utf-8")
 
@@ -89,10 +89,10 @@ def test_consumer_setup_doc_exists_and_is_standalone() -> None:
 def test_overlay_manifest_contract_documents_plugin_overrides_path() -> None:
     """MAINT-FB-B-02: plugin_overrides_path must be documented in the manifest contract.
 
-    The field is documented in the overlay manifest contract: workstate-bootstrap
+    The field is documented in the overlay manifest contract: workbay-bootstrap
     0.8.10+ (workstate-stack-v0.1.12) reads plugin_overrides_path when present.
     """
-    contract_path = REPO_ROOT / "docs" / "workstate" / "contracts" / "overlay-manifest.yaml"
+    contract_path = REPO_ROOT / "docs" / "workbay" / "contracts" / "overlay-manifest.yaml"
     text = contract_path.read_text(encoding="utf-8")
     assert "optional_fields" in text, "contract must declare an optional_fields section"
     assert "plugin_overrides_path" in text

@@ -56,7 +56,7 @@ After a scan/clustering run, the Workbench shows a clear findings panel without 
 
 ## Context Loading
 
-- Rules: `docs/workstate/rules/frontend-guidelines.md`, `docs/workstate/rules/testing-typescript.md`, `docs/workstate/rules/planning-review-guide.md`
+- Rules: `docs/workbay/rules/frontend-guidelines.md`, `docs/workbay/rules/testing-typescript.md`, `docs/workbay/rules/planning-review-guide.md`
 - Source scope: `docs/scopes/workbench-clustering-ui-latency-refresh-scope.md`
 - Prior plan task: `docs/tasks/15.0/WB-MONOTONIC-S1-workbench-pipeline-snapshot-task-plan.md`
 - Workbench anchors: `apps/prototype-wp-alt-context/js/admin/pages/workbench/ScanTabContent.tsx`, `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/SuggestionReviewPanel.tsx`, `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/useSuggestionReviewQueries.ts`, `apps/prototype-wp-alt-context/js/admin/hooks/useJobStateMachineEffects.ts`

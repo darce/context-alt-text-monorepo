@@ -65,7 +65,7 @@ Every edit risks a sync regression: wrong status transition, broken retry, chang
 
 ## Context Loading
 
-- Rules: `docs/workstate/rules/backend-php-guidelines.md`, constitution (sr-008/sr-009, rg-002/rg-007/rg-016).
+- Rules: `docs/workbay/rules/backend-php-guidelines.md`, constitution (sr-008/sr-009, rg-002/rg-007/rg-016).
 - Drains: the two target files + their injected collaborators in `src/sovereign/sync/` (`class-outbox-dispatcher.php`, `class-cross-plane-sequencer.php`, `class-topology-command-repository.php`) and the split-topology drain's `SyncStateRepositoryInterface` dependency in `src/sovereign/repositories/` (`class-sync-state-repository.php` / `interface-sync-state-repository.php`, defaulted to `new SyncStateRepository()`).
 - Technique: `docs/tasks/tech-debt/refactoring-evaluation.md` (Fowler Ch6/Ch7); DDIA Ch4 (append-only) for payload semantics.
 - Handoff: epic `REFA`; this task `REFA-6`.

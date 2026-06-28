@@ -10,7 +10,7 @@
 
 E19 already owns this (Phase 4 / D6). Identity→prose merge is **one component** of E19-4; per intake it is carved as a **focused standalone task, `E19-4a`**, leaving the rest of D6 (WordPress post/product/SEO context pack, output modes) for later E19-4b+. No new epic.
 
-**Prerequisites already shipped in E19-1 (done, merged to main):** description contract + 15-field visual-facts schema (`docs/workstate/contracts/image-description-api.md`), `POST /scene/describe/multipart`, Florence-2 `florence_small` adapter (inline off-thread), WordPress `DescribeController` → `/acx/v1/recognition/describe`. E19-4a builds **on top** of these; it does not re-open them.
+**Prerequisites already shipped in E19-1 (done, merged to main):** description contract + 15-field visual-facts schema (`docs/workbay/contracts/image-description-api.md`), `POST /scene/describe/multipart`, Florence-2 `florence_small` adapter (inline off-thread), WordPress `DescribeController` → `/acx/v1/recognition/describe`. E19-4a builds **on top** of these; it does not re-open them.
 
 ## MVP scope (in)
 

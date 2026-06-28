@@ -50,7 +50,7 @@ One resolution chain: `ACX_RECOGNITION_TENANT_ID` constant → `acx_recognition_
 
 ## Context Loading
 
-- Rules: `docs/workstate/rules/backend-php-guidelines.md`, `docs/workstate/rules/backend-python-guidelines.md`, `docs/workstate/rules/testing-php.md`, `docs/workstate/rules/testing-python.md`
+- Rules: `docs/workbay/rules/backend-php-guidelines.md`, `docs/workbay/rules/backend-python-guidelines.md`, `docs/workbay/rules/testing-php.md`, `docs/workbay/rules/testing-python.md`
 - Contracts: settings REST response shape (`class-settings-controller.php` GET), auth spec `docs/specs/auth-transaction-isolation-spec.md`
 - Handoff/MCP: this task ref E15-24; related deferred plans E15-8/E15-10 (auth follow-ons, v0.4.1) — do not absorb their scope.
 

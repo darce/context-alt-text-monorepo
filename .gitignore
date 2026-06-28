@@ -101,13 +101,19 @@ DASHBOARD.txt
 DASHBOARD.md
 .task-state/
 
-# --- workstate-bootstrap-managed surfaces -------------------------------
-# Regenerate via `workstate-bootstrap install` from the pinned remote_sha in
-# .workstate-bootstrap.json (which IS tracked — it is the install ledger).
-# SHARED entries are symlinks into .workstate/remote/; committing them would
+# --- workbay-bootstrap-managed surfaces -------------------------------
+# Regenerate via `workbay-bootstrap install` from the pinned remote_sha in
+# .workbay-bootstrap.json (which IS tracked — it is the install ledger).
+# SHARED entries are symlinks into .workbay/remote/; committing them would
 # leave dangling symlinks on a fresh clone. GENERATED entries are deterministic
 # generator outputs. .mcp.json / .vscode/mcp.json / .codex/config.toml are kept
 # tracked here (not gitignored) as the consumer-owned MCP server config.
+.workbay/
+# Legacy workstate overlay clone — still load-bearing via the scripts/hooks,
+# .github/hooks, Makefile.d and scripts/workstate symlinks until
+# `workbay-bootstrap install` repoints them to .workbay/remote. Physical removal
+# is deferred to that installer cutover; see
+# docs/workbay/workstate-migration-upstream-asks.md.
 .workstate/
 /scripts/hooks
 /.github/hooks
@@ -132,11 +138,15 @@ DASHBOARD.md
 # Local branch/worktree inventory files are ephemeral operator notes.
 local/*-worktrees.txt
 
-# Ephemeral Grok workstate bootstrap overlay (machine-local).
-/.grok/plugins/workstate-system
-# >>> WORKSTATE_BOOTSTRAP OVERLAY IGNORE >>>
+# Cursor overlay surfaces (machine-local, ephemeral).
 /.cursor/skills
 /.cursor/commands
 /.cursor/hooks.json
 /.cursor/mcp.json
-# <<< WORKSTATE_BOOTSTRAP OVERLAY IGNORE <<<
+# >>> WORKBAY_BOOTSTRAP OVERLAY IGNORE >>>
+/.workbay
+/docs/workbay/contracts
+/docs/workbay/rules
+/scripts/workbay
+/.grok/plugins/workbay-system
+# <<< WORKBAY_BOOTSTRAP OVERLAY IGNORE <<<

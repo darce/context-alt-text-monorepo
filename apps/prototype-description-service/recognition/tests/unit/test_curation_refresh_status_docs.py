@@ -9,7 +9,7 @@ def test_e15_13_contract_docs_adopt_curation_refresh_status() -> None:
         repo_root / "docs" / "tasks" / "15.0" / "E15-13-roster-curation-loop-task-plan.md",
         repo_root / "docs" / "specs" / "recognition-roster-curation-loop-spec.md",
         repo_root / "docs" / "adrs" / "ADR-009-recognition-curation-refresh-and-person-review-projection.md",
-        repo_root / "docs" / "workstate" / "contracts" / "curation-sync-api.md",
+        repo_root / "docs" / "workbay" / "contracts" / "curation-sync-api.md",
     ]
 
     for doc_path in doc_paths:

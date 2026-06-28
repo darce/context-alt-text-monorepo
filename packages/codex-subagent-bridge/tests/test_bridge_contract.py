@@ -106,8 +106,8 @@ def _run_bridge(payload: dict[str, Any]) -> dict[str, Any]:
 
 def test_bridge_payload_satisfies_lane_exec_contract() -> None:
     lane_exec = pytest.importorskip(
-        "workstate_orchestrator_mcp.orchestration.lane_exec",
-        reason="mcp-workstate-orchestrator not installed (dev extra)",
+        "workbay_orchestrator_mcp.orchestration.lane_exec",
+        reason="mcp-workbay-orchestrator not installed (dev extra)",
     )
     payload = _run_bridge(
         {
@@ -123,8 +123,8 @@ def test_bridge_payload_satisfies_lane_exec_contract() -> None:
 
 def test_bridge_payload_satisfies_review_runner_contract() -> None:
     review_runner = pytest.importorskip(
-        "workstate_orchestrator_mcp.orchestration.review_runner",
-        reason="mcp-workstate-orchestrator not installed (dev extra)",
+        "workbay_orchestrator_mcp.orchestration.review_runner",
+        reason="mcp-workbay-orchestrator not installed (dev extra)",
     )
     payload = _run_bridge(
         {

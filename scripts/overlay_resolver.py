@@ -16,24 +16,24 @@ DEFAULT_SURFACE_ROOTS: dict[SurfaceKind, Path] = {
     "hooks": Path(".github/hooks"),
     "commands": Path(".claude/commands"),
     "prompts": Path(".github/prompts"),
-    "contracts": Path("docs/workstate/contracts"),
+    "contracts": Path("docs/workbay/contracts"),
 }
 
 # Manifest filenames. Duplicated here (rather than imported from
-# workstate-bootstrap) so workstate-system stays decoupled from the bootstrap
+# workbay-bootstrap) so workbay-system stays decoupled from the bootstrap
 # package — the same way the validator scripts probe filenames directly today.
-BOOTSTRAP_MANIFEST_NAME = ".workstate-bootstrap.json"
+BOOTSTRAP_MANIFEST_NAME = ".workbay-bootstrap.json"
 LEGACY_OVERLAY_MANIFEST_NAME = ".workstate-overlay.json"
 
 # internal: the canonical bootstrap ledger keys surfaces by
 # filesystem ``path`` (not by resolver ``kind``), so the resolver maps each
 # kind to the ledger path(s) it owns. ``skills`` / ``commands`` are absent on
 # purpose — they moved to the generated plugin tree under
-# ``.workstate/generated/plugins/...`` and are no longer ledger surfaces; a
+# ``.workbay/generated/plugins/...`` and are no longer ledger surfaces; a
 # kind missing from this map falls through to source-tree/default resolution
 # and is never treated as broken-overlay drift.
 CANONICAL_KIND_LEDGER_PATHS: dict[SurfaceKind, tuple[str, ...]] = {
-    "contracts": ("docs/workstate/contracts",),
+    "contracts": ("docs/workbay/contracts",),
     "hooks": (".github/hooks", "scripts/hooks"),
     "prompts": (".github/prompts",),
 }
@@ -163,7 +163,7 @@ def _validate_entry(path: Path, *, project_root: Path, label: str) -> None:
     if path.is_symlink() and not path.exists():
         raise BrokenOverlayError(
             f"{path.relative_to(project_root)} points to a missing {label} overlay target. "
-            "Run workstate-bootstrap repair to restore the overlay."
+            "Run workbay-bootstrap repair to restore the overlay."
         )
 
 
@@ -171,7 +171,7 @@ def _legacy_is_bootstrap_owned(project_root: Path) -> bool:
     """Return True when the legacy file is a stale *bootstrap-owned* ledger.
 
     Bootstrap-owned ledgers carry ``surfaces`` as a *list* (the shape
-    ``workstate-bootstrap``'s ``_migrate_legacy_manifest`` migrates), whereas a
+    ``workbay-bootstrap``'s ``_migrate_legacy_manifest`` migrates), whereas a
     user-owned legacy overlay keys ``surfaces`` as a *mapping*. Only the latter
     makes a dual-manifest state genuinely ambiguous.
     """
@@ -196,13 +196,13 @@ def detect_overlay_mode(project_root: Path) -> OverlayMode:
     if has_canonical and has_legacy:
         if _legacy_is_bootstrap_owned(project_root):
             # Stale bootstrap-owned file: canonical wins; operator should let
-            # `workstate-bootstrap` migrate/remove the legacy copy.
+            # `workbay-bootstrap` migrate/remove the legacy copy.
             return "canonical"
         raise OverlayResolverError(
             f"both {BOOTSTRAP_MANIFEST_NAME} and a user-owned {LEGACY_OVERLAY_MANIFEST_NAME} "
             "exist; refusing to choose a manifest authority. Migrate or remove the legacy "
-            f"overlay, or run `workstate-bootstrap doctor --target {project_root}` followed by "
-            f"`workstate-bootstrap repair --target {project_root}`."
+            f"overlay, or run `workbay-bootstrap doctor --target {project_root}` followed by "
+            f"`workbay-bootstrap repair --target {project_root}`."
         )
     if has_canonical:
         return "canonical"
@@ -212,7 +212,7 @@ def detect_overlay_mode(project_root: Path) -> OverlayMode:
 
 
 def _load_bootstrap_manifest(project_root: Path) -> dict:
-    """Parse and shape-check the canonical ``.workstate-bootstrap.json`` ledger."""
+    """Parse and shape-check the canonical ``.workbay-bootstrap.json`` ledger."""
     manifest_path = project_root / BOOTSTRAP_MANIFEST_NAME
     try:
         payload = json.loads(manifest_path.read_text())
@@ -254,20 +254,20 @@ def _ledger_entry_by_path(manifest: dict) -> dict[str, dict]:
 def _validate_shared_surface(surface_root: Path, *, project_root: Path, rel: str) -> None:
     """Fail closed when a ``source="shared"`` ledger surface is broken.
 
-    Mirrors ``workstate-bootstrap doctor``'s ``surface_drift`` model: a shared
+    Mirrors ``workbay-bootstrap doctor``'s ``surface_drift`` model: a shared
     surface must be a bootstrap-managed symlink that still resolves *into*
-    ``.workstate/remote``. A surface that is no longer a symlink, is dangling,
+    ``.workbay/remote``. A surface that is no longer a symlink, is dangling,
     or resolves outside the clone is loud drift — never a silent source-tree
     fallback.
     """
     remediation = (
-        f"Run `workstate-bootstrap doctor --target {project_root}` then "
-        f"`workstate-bootstrap repair --target {project_root}`."
+        f"Run `workbay-bootstrap doctor --target {project_root}` then "
+        f"`workbay-bootstrap repair --target {project_root}`."
     )
     if not surface_root.is_symlink():
         raise BrokenOverlayError(
             f"bootstrap ledger records `{rel}` as a shared overlay surface but it is no longer a "
-            f"bootstrap-managed symlink into .workstate/remote. {remediation}"
+            f"bootstrap-managed symlink into .workbay/remote. {remediation}"
         )
     if not surface_root.exists():
         raise BrokenOverlayError(

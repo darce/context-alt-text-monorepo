@@ -26,7 +26,7 @@ except ModuleNotFoundError:
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SKILLS_ROOT = REPO_ROOT / ".claude" / "skills"
-ROUTING_FILE = REPO_ROOT / "docs" / "workstate" / "maps" / "mcp-tool-routing.yaml"
+ROUTING_FILE = REPO_ROOT / "docs" / "workbay" / "maps" / "mcp-tool-routing.yaml"
 
 REQUIRED_FIELDS = (
     "name",
@@ -52,8 +52,8 @@ REQUIRED_SECTIONS = (
 )
 VALID_MODES = {"advisory", "execution"}
 SERVER_API_FILES = {
-    "workstate-handoff-mcp": ("workstate_handoff_mcp", "api.py"),
-    "workstate-orchestrator-mcp": ("workstate_orchestrator_mcp", "api.py"),
+    "workbay-handoff-mcp": ("workbay_handoff_mcp", "api.py"),
+    "workbay-orchestrator-mcp": ("workbay_orchestrator_mcp", "api.py"),
 }
 MAKEFILE_RE = re.compile(r"^([A-Za-z0-9_.-]+):")
 
@@ -214,8 +214,8 @@ def _validate_sections(body: str) -> list[str]:
     return [f"missing required section `{section}`" for section in REQUIRED_SECTIONS if section not in body]
 
 
-def _has_workstate_bootstrap_manifest(repo_root: Path) -> bool:
-    manifest_path = repo_root / ".workstate-bootstrap.json"
+def _has_workbay_bootstrap_manifest(repo_root: Path) -> bool:
+    manifest_path = repo_root / ".workbay-bootstrap.json"
     if not manifest_path.is_file():
         return False
     try:
@@ -225,13 +225,13 @@ def _has_workstate_bootstrap_manifest(repo_root: Path) -> bool:
     except json.JSONDecodeError as exc:
         # A malformed manifest is an infrastructure error, not a resilient
         # fall-through; only valid-but-non-contract-shaped payloads fall back.
-        raise OverlayResolverError(f"workstate bootstrap manifest is not valid JSON: {exc}") from exc
+        raise OverlayResolverError(f"workbay bootstrap manifest is not valid JSON: {exc}") from exc
     return isinstance(payload, dict) and "surfaces" in payload
 
 
 def _resolve_skill_files(repo_root: Path, skills_root: Path) -> tuple[list[Path], list[str]]:
     try:
-        is_overlay = _has_workstate_bootstrap_manifest(repo_root)
+        is_overlay = _has_workbay_bootstrap_manifest(repo_root)
     except OverlayResolverError as exc:
         return [], [f"infrastructure error: {exc}"]
     if not is_overlay:
@@ -254,7 +254,7 @@ def _resolve_skill_files(repo_root: Path, skills_root: Path) -> tuple[list[Path]
 
 def _format_success_message(*, repo_root: Path, skills_root: Path) -> str:
     skill_files, _overlay_failures = _resolve_skill_files(repo_root, skills_root)
-    if not _has_workstate_bootstrap_manifest(repo_root):
+    if not _has_workbay_bootstrap_manifest(repo_root):
         return f"check-skills: OK ({len(skill_files)} skills)"
 
     counts: Counter[str] = Counter(
@@ -278,7 +278,7 @@ def check_skills(
         return ["infrastructure error: PyYAML is required to load skill frontmatter"], 1
 
     skills_root = skills_root or (repo_root / ".claude" / "skills")
-    routing_file = routing_file or (repo_root / "docs" / "workstate" / "maps" / "mcp-tool-routing.yaml")
+    routing_file = routing_file or (repo_root / "docs" / "workbay" / "maps" / "mcp-tool-routing.yaml")
 
     global REPO_ROOT, SKILLS_ROOT, ROUTING_FILE
     original_repo_root, original_skills_root, original_routing_file = REPO_ROOT, SKILLS_ROOT, ROUTING_FILE
@@ -313,7 +313,7 @@ def check_skills(
 def main() -> int:
     repo_root = REPO_ROOT
     skills_root = repo_root / ".claude" / "skills"
-    routing_file = repo_root / "docs" / "workstate" / "maps" / "mcp-tool-routing.yaml"
+    routing_file = repo_root / "docs" / "workbay" / "maps" / "mcp-tool-routing.yaml"
 
     failures, exit_code = check_skills(repo_root=repo_root, skills_root=skills_root, routing_file=routing_file)
     if exit_code == 1 and failures and failures[0].startswith("infrastructure error:"):

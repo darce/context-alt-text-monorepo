@@ -74,7 +74,7 @@ The 5 routes (verified, all `GET` under `/recognition/clusters`):
 
 ## Context Loading
 
-- Rules: `docs/workstate/rules/backend-php-guidelines.md`, constitution (sr-007, sr-008, rg-002/rg-015/rg-016).
+- Rules: `docs/workbay/rules/backend-php-guidelines.md`, constitution (sr-007, sr-008, rg-002/rg-015/rg-016).
 - Injection-idiom + facade precedent: `src/api/class-recognition-controller.php`; sibling pattern + host-interface precedent: `src/api/class-cluster-mutations-controller.php` + `src/api/interface-cluster-mutation-host.php` (REFA-1), `src/api/class-analysis-jobs-controller.php` + `src/api/interface-analysis-jobs-host.php` (REFA-4), and `src/api/services/`.
 - Resilience seam: `src/api/class-abstract-recognition-proxy-controller.php` (rg-015) — provides `proxy_request`, `get_tenant_id`, `should_use_local_projection_gate`, `is_projection_stale`, `can_manage_recognition`.
 - Technique: `docs/tasks/tech-debt/refactoring-evaluation.md` (Fowler Ch7).

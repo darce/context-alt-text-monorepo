@@ -8,7 +8,7 @@
 # consumer of the canonical Makefile.d/lifecycle.mk, which owns those names.
 # The orchestrator-lane variants of review-ready / review-run that previously
 # lived here are tracked as lost-functionality findings for the upstream
-# orchestrator package (see docs/workstate upstream-asks note).
+# orchestrator package (see docs/workbay upstream-asks note).
 
 .PHONY: task state list-tasks lane-list mcp-serve-http handoff-integrity-check handoff-inbox handoff-dispatch review-dispatch
 
@@ -69,7 +69,7 @@ handoff-inbox:
 	@echo ""; \
 	echo "Guidance summary:"; \
 	PYTHONPATH="$(MCP_PYTHONPATH)" \
-		$(MCP_PYTHON) -m workstate_orchestrator_mcp.orchestration.handoff_guidance_summary \
+		$(MCP_PYTHON) -m workbay_orchestrator_mcp.orchestration.handoff_guidance_summary \
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		--task-ref "$(TASK)" \
 		$(if $(LANE),--lane-id "$(LANE)",)
@@ -94,7 +94,7 @@ handoff-dispatch:
 		exit 1; \
 	fi
 	@PYTHONPATH="$(WORKTREE_MCP_PYTHONPATH)" \
-		$(MCP_PYTHON) -m workstate_orchestrator_mcp.orchestration.review_dispatch \
+		$(MCP_PYTHON) -m workbay_orchestrator_mcp.orchestration.review_dispatch \
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		--task-ref "$(TASK)" \
 		$(if $(filter 1,$(DRY_RUN)),--dry-run,)

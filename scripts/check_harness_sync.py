@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check committed harness surfaces against harness-protocol.yaml.
 
-The contract at ``docs/workstate/contracts/harness-protocol.yaml`` defines four
+The contract at ``docs/workbay/contracts/harness-protocol.yaml`` defines four
 sections that every managed harness must keep in sync:
 
 * ``cold_start.shared_steps``   — phrases that must appear in each shared
@@ -19,7 +19,7 @@ sections that every managed harness must keep in sync:
 The validator fails fast with a named error for any drift between the contract
 and the committed surface. Generated per-agent artifacts such as
 ``.claude/settings.json`` are optional at this layer; when present with
-``_managed_by: workstate-bootstrap`` the checker validates only the managed
+``_managed_by: workbay-bootstrap`` the checker validates only the managed
 subtree (hooks + plugin pins), leaving non-managed user keys untouched.
 """
 
@@ -62,24 +62,24 @@ _OVERLAY_PACKAGES = REPO_ROOT / ".workstate" / "remote" / "packages"
 PACKAGES_ROOT = (
     _OVERLAY_PACKAGES if _OVERLAY_PACKAGES.is_dir() else REPO_ROOT.parent
 )
-CONTRACT_PATH = REPO_ROOT / "docs" / "workstate" / "contracts" / "harness-protocol.yaml"
+CONTRACT_PATH = REPO_ROOT / "docs" / "workbay" / "contracts" / "harness-protocol.yaml"
 VSCODE_SETTINGS_PATH = REPO_ROOT / ".vscode" / "settings.json"
 PYTHON_EXPORTS_PATH = (
     PACKAGES_ROOT
-    / "mcp-workstate-handoff"
+    / "mcp-workbay-handoff"
     / "src"
-    / "workstate_handoff_mcp"
+    / "workbay_handoff_mcp"
     / "__init__.py"
 )
-CONTRACT_RELATIVE = Path("docs/workstate/contracts/harness-protocol.yaml")
+CONTRACT_RELATIVE = Path("docs/workbay/contracts/harness-protocol.yaml")
 PACKAGE_CONTRACT_RELATIVE = Path("workstate_system/payload") / CONTRACT_RELATIVE
 PAYLOAD_RELATIVE = Path("workstate_system/payload")
 GUARD_WRAP_RELATIVE = PAYLOAD_RELATIVE / "scripts" / "_guard_wrap.py"
 GENERATOR_RELATIVE = PAYLOAD_RELATIVE / "scripts" / "generate_agent_workflows.py"
-CLAUDE_MANAGED_BY = "workstate-bootstrap"
-CLAUDE_PLUGIN_SELECTOR = "workstate-system@workstate-marketplace"
-CLAUDE_PLUGIN_MARKETPLACE_NAME = "workstate-marketplace"
-CLAUDE_OVERRIDE_ROOT_REL = Path("workstate-overrides") / "workstate-system"
+CLAUDE_MANAGED_BY = "workbay-bootstrap"
+CLAUDE_PLUGIN_SELECTOR = "workbay-system@workbay-marketplace"
+CLAUDE_PLUGIN_MARKETPLACE_NAME = "workbay-marketplace"
+CLAUDE_OVERRIDE_ROOT_REL = Path("workbay-overrides") / "workbay-system"
 FIXTURE_COPY_FILES = (
     Path(".vscode/settings.json"),
     Path(".github/hooks/guard-main-branch.py"),
@@ -92,8 +92,8 @@ FIXTURE_COPY_FILES = (
     Path("scripts/hooks/guard-main-branch.sh"),
     Path("scripts/hooks/guard-worktree-drift.sh"),
 )
-FIXTURE_PACKAGE_SRC = Path("packages/mcp-workstate-handoff/src")
-FIXTURE_PROTOCOL_SRC = Path("packages/workstate-protocol/src")
+FIXTURE_PACKAGE_SRC = Path("packages/mcp-workbay-handoff/src")
+FIXTURE_PROTOCOL_SRC = Path("packages/workbay-protocol/src")
 EDIT_TOOL_MATCHER = "Edit|Write|apply_patch|create_file|replace_string_in_file|multi_replace_string_in_file"
 REQUIRED_VSCODE_SETTINGS = {
     "files.autoSave": "off",
@@ -118,7 +118,7 @@ REQUIRED_PROTECTED_MAIN_PATTERNS = (
 def _candidate_path(repo_root: Path, relative: Path) -> Path:
     """Resolve package-local checks against source, payload, then monorepo root."""
     candidates = [repo_root / relative, repo_root / PAYLOAD_RELATIVE / relative]
-    if repo_root.name == "workstate-system" and repo_root.parent.name == "packages":
+    if repo_root.name == "workbay-system" and repo_root.parent.name == "packages":
         candidates.append(repo_root.parent.parent / relative)
     for candidate in candidates:
         if candidate.exists():
@@ -165,7 +165,7 @@ def _load_contract(*, repo_root: Path = REPO_ROOT) -> dict:
 def _format_success_message(*, repo_root: Path = REPO_ROOT) -> str:
     # Overlay mode (canonical bootstrap ledger or legacy mapping) is detected
     # through the shared resolver detector, not a raw `.workstate-overlay.json`
-    # filename probe, so a canonical `.workstate-bootstrap.json` consumer is
+    # filename probe, so a canonical `.workbay-bootstrap.json` consumer is
     # reported with surface counts instead of a bare OK.
     if detect_overlay_mode(repo_root) == "source_tree":
         return "check-harness-sync: OK"
@@ -219,7 +219,7 @@ HOOK_STAGES: tuple[tuple[str, str], ...] = (
     ("user_prompt_submit", "UserPromptSubmit"),
 )
 GROK_PLUGIN_HOOKS_PATH = Path(
-    ".workstate/generated/plugins/workstate-system/base/grok/hooks/hooks.json"
+    ".workbay/generated/plugins/workbay-system/base/grok/hooks/hooks.json"
 )
 
 
@@ -274,9 +274,9 @@ def _load_python_exports() -> set[str]:
                     # integrity_check is implemented on api.py before __all__ catches up.
                     api_path = (
                         PACKAGES_ROOT
-                        / "mcp-workstate-handoff"
+                        / "mcp-workbay-handoff"
                         / "src"
-                        / "workstate_handoff_mcp"
+                        / "workbay_handoff_mcp"
                         / "api.py"
                     )
                     if api_path.is_file():
@@ -290,7 +290,7 @@ def _load_python_exports() -> set[str]:
                         ):
                             exports.add("integrity_check")
                     return exports
-    raise ValueError("workstate_handoff_mcp.__all__ not found")
+    raise ValueError("workbay_handoff_mcp.__all__ not found")
 
 
 def _load_grok_plugin_hook_pairs(repo_root: Path) -> set[tuple[str, str]]:
@@ -370,7 +370,7 @@ def _expected_managed_claude_hooks(
     override_root = _discover_claude_override_root(repo_root)
     if override_root is None:
         return generator.render_claude_hooks_config(hooks_spec)["hooks"]
-    from workstate_protocol.bootstrap import PluginOverrideManifest
+    from workbay_protocol.bootstrap import PluginOverrideManifest
 
     manifest = PluginOverrideManifest.model_validate(
         yaml.safe_load((override_root / "overrides.yaml").read_text()) or {}
@@ -456,8 +456,8 @@ def _check_hooks(contract: dict, *, repo_root: Path = REPO_ROOT) -> list[str]:
             # session_start / user_prompt_submit have no tool matcher.
             matcher = item.get("matcher", "")
             # Harnesses may surface MCP tools under different names (e.g.
-            # VS Code uses `mcp_workstate-handoff-mcp_*`, Claude Code and Codex
-            # use `mcp__workstate-handoff-mcp__*`). Per-harness matchers
+            # VS Code uses `mcp_workbay-handoff-mcp_*`, Claude Code and Codex
+            # use `mcp__workbay-handoff-mcp__*`). Per-harness matchers
             # override the shared `matcher` when present.
             claude_matcher = item.get("claude_matcher", matcher)
             vscode_matcher = item.get("vscode_matcher", matcher)
@@ -729,7 +729,7 @@ def _fixture_python_command() -> list[str]:
             uv_bin,
             "run",
             "--project",
-            str(PACKAGES_ROOT / "mcp-workstate-handoff"),
+            str(PACKAGES_ROOT / "mcp-workbay-handoff"),
             "python",
         ]
     return [sys.executable]
@@ -787,11 +787,11 @@ def _build_guard_fixture(
 
     package_src = repo / FIXTURE_PACKAGE_SRC
     package_src.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(PACKAGES_ROOT / "mcp-workstate-handoff" / "src", package_src)
+    shutil.copytree(PACKAGES_ROOT / "mcp-workbay-handoff" / "src", package_src)
 
     protocol_src = repo / FIXTURE_PROTOCOL_SRC
     protocol_src.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(PACKAGES_ROOT / "workstate-protocol" / "src", protocol_src)
+    shutil.copytree(PACKAGES_ROOT / "workbay-protocol" / "src", protocol_src)
 
     contract_path = repo / CONTRACT_RELATIVE
     contract_path.parent.mkdir(parents=True, exist_ok=True)
@@ -976,7 +976,7 @@ def _check_branch_isolation(
             sample_paths=(
                 "CLAUDE.md",
                 ".github/copilot-instructions.md",
-                "docs/workstate/contracts/harness-protocol.yaml",
+                "docs/workbay/contracts/harness-protocol.yaml",
                 "DASHBOARD.txt",
             ),
         )
@@ -1336,7 +1336,7 @@ def _seed_active_task(
             (
                 "import json; "
                 "from pathlib import Path; "
-                "from workstate_handoff_mcp import RuntimeConfig, configure_runtime, get_handoff_state, set_handoff_state; "
+                "from workbay_handoff_mcp import RuntimeConfig, configure_runtime, get_handoff_state, set_handoff_state; "
                 f"configure_runtime(RuntimeConfig.for_repo(Path({str(repo)!r}))); "
                 "identity = get_handoff_state(sections='identity'); "
                 "parsed = json.loads(identity) if isinstance(identity, str) else identity; "
@@ -1465,7 +1465,7 @@ _DASHBOARD_EXTRA_FILES = (
     Path(".github/copilot-instructions.md"),
     Path("Makefile"),
     Path(
-        "packages/mcp-workstate-orchestrator/src/workstate_orchestrator_mcp/orchestration/dashboard_extension.py"
+        "packages/mcp-workbay-orchestrator/src/workbay_orchestrator_mcp/orchestration/dashboard_extension.py"
     ),
 )
 
@@ -1541,7 +1541,7 @@ def _check_python_api_surface(contract: dict) -> list[str]:
     exports = _load_python_exports()
     required = set(contract.get("python_api_fallback", {}).get("required_exports", []))
     missing = sorted(required - exports)
-    return [f"missing workstate_handoff_mcp export `{name}`" for name in missing]
+    return [f"missing workbay_handoff_mcp export `{name}`" for name in missing]
 
 
 def _check_compaction_contract(contract: dict) -> list[str]:

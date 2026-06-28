@@ -3,7 +3,7 @@
 Digest convention under test: each overrides.lock.json component's
 ``upstream_digest`` is the whole-file sha256 of the materialized upstream base
 copy (``base_path``, e.g. SKILL.base.md) inside the plugin overrides directory.
-The generated base surface under .workstate/generated/ is NOT the digest
+The generated base surface under .workbay/generated/ is NOT the digest
 subject — the generator injects harness-specific sections (Global
 Instructions), so its hash legitimately differs.
 """
@@ -50,7 +50,7 @@ def _component(base_path: str, digest: str) -> dict:
 
 
 def test_matching_digest_passes(tmp_path: Path) -> None:
-    plugin = tmp_path / "workstate-system"
+    plugin = tmp_path / "workbay-system"
     base = plugin / "skills" / "branch-review" / "SKILL.base.md"
     base.parent.mkdir(parents=True)
     base.write_text("---\nname: demo\n---\nbody\n")
@@ -59,7 +59,7 @@ def test_matching_digest_passes(tmp_path: Path) -> None:
 
 
 def test_mismatched_digest_fails_with_component_and_hashes(tmp_path: Path) -> None:
-    plugin = tmp_path / "workstate-system"
+    plugin = tmp_path / "workbay-system"
     base = plugin / "skills" / "branch-review" / "SKILL.base.md"
     base.parent.mkdir(parents=True)
     base.write_text("drifted upstream body\n")
@@ -72,7 +72,7 @@ def test_mismatched_digest_fails_with_component_and_hashes(tmp_path: Path) -> No
 
 
 def test_missing_base_file_fails(tmp_path: Path) -> None:
-    plugin = tmp_path / "workstate-system"
+    plugin = tmp_path / "workbay-system"
     plugin.mkdir(parents=True)
     _write_lock(plugin, [_component("skills/branch-review/SKILL.base.md", "sha256:" + "a" * 64)])
     errors = check_overrides_locks(tmp_path)
@@ -82,7 +82,7 @@ def test_missing_base_file_fails(tmp_path: Path) -> None:
 
 
 def test_malformed_lock_fails_fast(tmp_path: Path) -> None:
-    plugin = tmp_path / "workstate-system"
+    plugin = tmp_path / "workbay-system"
     plugin.mkdir(parents=True)
     (plugin / "overrides.lock.json").write_text(json.dumps({"schema_version": 1}))
     errors = check_overrides_locks(tmp_path)
@@ -91,7 +91,7 @@ def test_malformed_lock_fails_fast(tmp_path: Path) -> None:
 
 
 def test_component_missing_digest_fails_fast(tmp_path: Path) -> None:
-    plugin = tmp_path / "workstate-system"
+    plugin = tmp_path / "workbay-system"
     base = plugin / "skills" / "branch-review" / "SKILL.base.md"
     base.parent.mkdir(parents=True)
     base.write_text("body\n")
@@ -106,7 +106,7 @@ def test_component_missing_digest_fails_fast(tmp_path: Path) -> None:
 def test_add_mode_component_skips_base_path_requirement(tmp_path: Path) -> None:
     """mode:add components are net-new local additions with no upstream base;
     null base_path/upstream_digest must not be reported as a violation."""
-    plugin = tmp_path / "workstate-system"
+    plugin = tmp_path / "workbay-system"
     plugin.mkdir(parents=True)
     add_component = {
         "component_kind": "skill",
@@ -125,7 +125,7 @@ def test_add_mode_component_skips_base_path_requirement(tmp_path: Path) -> None:
 def test_add_mode_does_not_mask_patch_component_violation(tmp_path: Path) -> None:
     """An add component is skipped, but sibling patch components in the same
     lock are still validated."""
-    plugin = tmp_path / "workstate-system"
+    plugin = tmp_path / "workbay-system"
     plugin.mkdir(parents=True)
     add_component = {
         "component_kind": "skill",
@@ -145,7 +145,7 @@ def test_add_mode_does_not_mask_patch_component_violation(tmp_path: Path) -> Non
 def test_non_dict_component_entry_fails_cleanly(tmp_path: Path) -> None:
     """A structurally invalid components entry must produce a per-component
     error, not an uncaught AttributeError traceback (rg-008)."""
-    plugin = tmp_path / "workstate-system"
+    plugin = tmp_path / "workbay-system"
     plugin.mkdir(parents=True)
     _write_lock(plugin, ["not-a-dict"])
     errors = check_overrides_locks(tmp_path)
@@ -172,7 +172,7 @@ def _write_overrides_yaml(plugin_dir: Path, digest: str) -> Path:
 
 
 def test_yaml_digest_parity_match_passes(tmp_path: Path) -> None:
-    plugin = tmp_path / "workstate-system"
+    plugin = tmp_path / "workbay-system"
     base = plugin / "skills" / "branch-review" / "SKILL.base.md"
     base.parent.mkdir(parents=True)
     base.write_text("body\n")
@@ -185,7 +185,7 @@ def test_yaml_digest_parity_match_passes(tmp_path: Path) -> None:
 def test_yaml_digest_parity_drift_fails(tmp_path: Path) -> None:
     """overrides.yaml carrying a stale duplicate upstream_digest must fail —
     the redundant copy may not silently drift from the canonical lock."""
-    plugin = tmp_path / "workstate-system"
+    plugin = tmp_path / "workbay-system"
     base = plugin / "skills" / "branch-review" / "SKILL.base.md"
     base.parent.mkdir(parents=True)
     base.write_text("body\n")
@@ -203,7 +203,7 @@ def test_no_lock_files_is_ok(tmp_path: Path) -> None:
 
 
 def test_repo_overrides_lock_is_consistent() -> None:
-    """The committed workstate-overrides tree must satisfy its own digests."""
-    overrides_root = REPO_ROOT / "workstate-overrides"
+    """The committed workbay-overrides tree must satisfy its own digests."""
+    overrides_root = REPO_ROOT / "workbay-overrides"
     assert overrides_root.is_dir()
     assert check_overrides_locks(overrides_root) == []

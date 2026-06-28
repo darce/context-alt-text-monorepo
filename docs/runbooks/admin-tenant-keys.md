@@ -2,7 +2,7 @@
 
 > **Replaces** the manual `docker exec ... python -m scripts.manage_api_keys`
 > ceremony for routine tenant + key work. The CLI remains a supported fallback
-> (see `docs/workstate/contracts/security.md` § Operator CLI: Key Rotation
+> (see `docs/workbay/contracts/security.md` § Operator CLI: Key Rotation
 > Ceremony).
 
 The `/admin` surface (E15-31) lets the single operator create tenants, mint and

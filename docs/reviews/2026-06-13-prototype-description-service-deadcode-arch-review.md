@@ -3,7 +3,7 @@
 **Date:** 2026-06-13 · **Scope:** `apps/prototype-description-service` · **Branch:** `feature/maint-descsvc-deadcode-20260613`
 **Driver:** `/review-parallel` (literature-grounded), concentrate on dead code, obsolete documentation, and "architecture easier to reason about instead of deep implementations where agents get lost."
 
-> **Findings-of-record caveat:** the `workstate-handoff-mcp` MCP tools and the local Python API were unavailable during the review (the package is not installed in this checkout). The slice-complete decision was later recorded via `uvx --from mcp-workstate-handoff` under task `MAINT-descsvc-deadcode-20260613`, but the 96 individual findings were not batch-recorded. This report is the durable findings artifact; when MCP tooling is restored, backfill the surviving findings via `review_findings(operation="batch_record")` under this branch's task ref.
+> **Findings-of-record caveat:** the `workbay-handoff-mcp` MCP tools and the local Python API were unavailable during the review (the package is not installed in this checkout). The slice-complete decision was later recorded via `uvx --from mcp-workbay-handoff` under task `MAINT-descsvc-deadcode-20260613`, but the 96 individual findings were not batch-recorded. This report is the durable findings artifact; when MCP tooling is restored, backfill the surviving findings via `review_findings(operation="batch_record")` under this branch's task ref.
 
 ## Execution status (this branch)
 

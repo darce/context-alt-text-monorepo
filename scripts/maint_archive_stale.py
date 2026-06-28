@@ -62,7 +62,7 @@ def _ensure_runtime_configured() -> None:
     fixture; we must not clobber that. Real invocations (CLI, make
     target) get a repo-rooted runtime.
     """
-    from workstate_handoff_mcp import RuntimeConfig, configure_runtime, get_runtime_config  # noqa: PLC0415
+    from workbay_handoff_mcp import RuntimeConfig, configure_runtime, get_runtime_config  # noqa: PLC0415
 
     try:
         get_runtime_config()
@@ -79,7 +79,7 @@ def _runtime_repo_root() -> Path:
     Tests point this at ``tmp_path`` via ``configure_runtime``.
     """
     try:
-        from workstate_handoff_mcp import get_runtime_config  # noqa: PLC0415
+        from workbay_handoff_mcp import get_runtime_config  # noqa: PLC0415
 
         cfg = get_runtime_config()
         root = getattr(cfg, "workspace_root", None) or getattr(cfg, "repo_root", None)
@@ -111,7 +111,7 @@ def collect_stale_maint() -> list[dict[str, Any]]:
     Stale = terminal status (``done``/``review``) OR ``in_progress``/
     ``blocked`` with a missing target worktree on disk.
     """
-    from workstate_handoff_mcp import list_active_tasks  # noqa: PLC0415
+    from workbay_handoff_mcp import list_active_tasks  # noqa: PLC0415
 
     _ensure_runtime_configured()
     stale: list[dict[str, Any]] = []
@@ -207,7 +207,7 @@ def _teardown_scaffold(
 
 def _archive_with_scaffold(row: dict[str, Any]) -> bool:
     """Archive a missing-worktree row by scaffolding its branch on demand."""
-    from workstate_handoff_mcp import archive_task_state  # noqa: PLC0415
+    from workbay_handoff_mcp import archive_task_state  # noqa: PLC0415
 
     branch = (row.get("target_branch") or "").strip()
     task_ref = row["task_ref"]
@@ -256,7 +256,7 @@ def archive_stale_maint(
     Returns the list of rows that were archived (or would be archived,
     in ``dry_run`` mode). ``yes=False`` prompts interactively per row.
     """
-    from workstate_handoff_mcp import archive_task_state  # noqa: PLC0415
+    from workbay_handoff_mcp import archive_task_state  # noqa: PLC0415
 
     _ensure_runtime_configured()
     stale = collect_stale_maint()

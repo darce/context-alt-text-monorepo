@@ -7,17 +7,17 @@
 
 ## Verdict
 
-**Removal was justified. Historical usefulness is not proven by the record.** Across the entire handoff ledger (1,006 decisions, 76 archived task snapshots, all blockers/findings/actions/errors), context7 was cited as the basis of an outcome **zero** times — the only trace it leaves is its own removal decision. In task plans it appears 237 times across 64 files, but ~almost entirely as the templated planning ritual "Confirmed `ctx7` not required" or "External docs via `ctx7` **only if** <condition>" — and the condition essentially never fired. Workstate resolves design questions from local-codebase references and pinned-version stability, not from context7-fetched docs.
+**Removal was justified. Historical usefulness is not proven by the record.** Across the entire handoff ledger (1,006 decisions, 76 archived task snapshots, all blockers/findings/actions/errors), context7 was cited as the basis of an outcome **zero** times — the only trace it leaves is its own removal decision. In task plans it appears 237 times across 64 files, but ~almost entirely as the templated planning ritual "Confirmed `ctx7` not required" or "External docs via `ctx7` **only if** <condition>" — and the condition essentially never fired. Workbay resolves design questions from local-codebase references and pinned-version stability, not from context7-fetched docs.
 
 **Do not reinstate now.** It was a nonzero-cost (zombie processes, CPU) dependency with near-zero realized utility. Reintroduce only if the trigger criteria below are met, and prefer the lightweight on-demand alternative first.
 
 ## What context7 was
 
-`@upstash/context7-mcp`, an `npx`-spawned stdio MCP server (`resolve-library-id` + `query-docs`/`get-library-docs`) providing on-demand, version-current documentation for third-party libraries. Wired as an on-demand server in `.mcp.json`/`.vscode`/`.codex` and the workstate bootstrap, surfaced via the MCP loading protocol only when a task's "External docs" entry criteria fired.
+`@upstash/context7-mcp`, an `npx`-spawned stdio MCP server (`resolve-library-id` + `query-docs`/`get-library-docs`) providing on-demand, version-current documentation for third-party libraries. Wired as an on-demand server in `.mcp.json`/`.vscode`/`.codex` and the workbay bootstrap, surfaced via the MCP loading protocol only when a task's "External docs" entry criteria fired.
 
 ## Audit method (reproducible — see Appendix)
 
-1. **Handoff DB** — searched every text surface for `context7`/`ctx7` via the `workstate_handoff_mcp` Python API (FTS + raw `LIKE` cross-check; never raw `sqlite3` on internal tables).
+1. **Handoff DB** — searched every text surface for `context7`/`ctx7` via the `workbay_handoff_mcp` Python API (FTS + raw `LIKE` cross-check; never raw `sqlite3` on internal tables).
 2. **Repository docs** — `grep` over `docs/`, categorized each mention by intent (declined / conditional / actual-use).
 3. **Git history** — reviewed commits referencing context7.
 
@@ -82,8 +82,8 @@ If reintroduced, gate it as on-demand (not always-loaded) and instrument actual 
 # Handoff DB (Python API; read-only; package owns the schema map)
 python3 - <<'PY'
 from pathlib import Path
-import workstate_handoff_mcp as w
-from workstate_handoff_mcp import core
+import workbay_handoff_mcp as w
+from workbay_handoff_mcp import core
 w.configure_runtime(w.RuntimeConfig.for_repo(Path(".")))
 with core._get_db_connection() as conn:
     for rtype,(fts,_) in core._RECORD_TYPE_FTS_MAP.items():

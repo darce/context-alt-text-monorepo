@@ -7,7 +7,7 @@
 
 ## Decision
 
-> **Decision anchor**: `claude_decision_e15_3_host_override_cohost_oci` (recorded in workstate-handoff-mcp under task_ref `E15-LIVE-DEMO-PLAN`).
+> **Decision anchor**: `claude_decision_e15_3_host_override_cohost_oci` (recorded in workbay-handoff-mcp under task_ref `E15-LIVE-DEMO-PLAN`).
 
 For the initial beta phase, run the public WordPress installation and ACX plugin on the same OCI instance that already hosts the recognition backend, behind the existing Caddy edge, using `demo.altcontext.com` for WordPress and `api.altcontext.com` for the backend API. This is a deliberate short-term override of the **E15-3 deliverable in the active public-demo epic** (`docs/epics/v0.4.0/public-demo-launch-readiness-epic.md`), specifically the design decision "WP on separate shared hosting, not on the OCI VPS … inference VPS should not run PHP" and its "Shared PHP hosting provisioned" deliverable / success criterion (epic lines 127, 208, and 365). The override is tracked by decision `claude_decision_e15_3_host_override_cohost_oci`; the long-term direction remains a dedicated PHP/WordPress host once the demo is proven and beta access needs more isolation (see Move-Off Trigger below).
 

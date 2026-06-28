@@ -23,10 +23,10 @@ def _default_manifest_path() -> Path:
         return local_manifest
     return (
         repo_root
-        / ".workstate"
+        / ".workbay"
         / "remote"
         / "packages"
-        / "workstate-system"
+        / "workbay-system"
         / "config"
         / "agent-workflows"
         / "portable_commands.json"
@@ -105,7 +105,7 @@ def _resolve_copilot(repo_root: Path, command_id: str) -> tuple[str, str]:
 
 
 def _resolve_codex(repo_root: Path, command_id: str) -> tuple[str, str]:
-    source = repo_root / "docs" / "workstate" / "generated" / "codex-command-router.md"
+    source = repo_root / "docs" / "workbay" / "generated" / "codex-command-router.md"
     content = source.read_text()
     pattern = rf"^\- `/{re.escape(command_id)}`(?: \([^)]+\))? -> skill `([^`]+)` -> `([^`]+)`$"
     match = re.search(pattern, content, re.MULTILINE)

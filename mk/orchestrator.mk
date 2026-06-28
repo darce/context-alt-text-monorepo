@@ -1,11 +1,11 @@
 # =============================================================================
 # Orchestrator / Worker Daemon Lifecycle
 # =============================================================================
-# These targets require the installed workstate-orchestrator-mcp package.
+# These targets require the installed workbay-orchestrator-mcp package.
 # Core handoff targets (task, dashboard, state, handoff-close-check) remain in mk/handoff.mk.
 # =============================================================================
 
-ORCHESTRATOR_MCP_CMD = $(UVX) --from "$(MCP_ORCHESTRATOR_PACKAGE)" mcp-workstate-orchestrator $(MCP_STATE_ARGS)
+ORCHESTRATOR_MCP_CMD = $(UVX) --from "$(MCP_ORCHESTRATOR_PACKAGE)" mcp-workbay-orchestrator $(MCP_STATE_ARGS)
 
 .PHONY: worker-daemon worker-daemon-status worker-daemon-stop worker-daemon-resume worker-daemon-tail orchestrator-daemon daemon-pause daemon-resume daemon-status
 

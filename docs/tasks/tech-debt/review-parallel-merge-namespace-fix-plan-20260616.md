@@ -2,12 +2,12 @@
 
 > - **Date**: 2026-06-16 EST
 > - **Author**: Claude Opus 4.8
-> - **Project**: workstate tooling (upstream: `darce/mcp-workstate-handoff` package + `workstate-system` plugin `review-parallel` skill)
+> - **Project**: workstate tooling (upstream: `darce/mcp-workbay-handoff` package + `workbay-system` plugin `review-parallel` skill)
 > - **Task ID**: `MAINT-REVPARALLEL-FIX-20260616`
 > - **Target Branch**: `feature/maint-revparallel-fix-20260616`
 > - **Review Coverage Target**: 2
 
-> **Boundary note:** the implementation targets live in the **workstate repos, which are out of bounds in this monorepo checkout** (Plugin Boundary Rule). This plan is the durable spec + upstream ask. The generated effective skill copy under `.workstate/generated/**` is NOT a durable edit target — it reverts on re-sync; the durable home for the skill change is the `workstate-system` plugin source.
+> **Boundary note:** the implementation targets live in the **workstate repos, which are out of bounds in this monorepo checkout** (Plugin Boundary Rule). This plan is the durable spec + upstream ask. The generated effective skill copy under `.workbay/generated/**` is NOT a durable edit target — it reverts on re-sync; the durable home for the skill change is the `workbay-system` plugin source.
 
 ---
 
@@ -15,7 +15,7 @@
 
 ## Implementation Status — SHIPPED / overtaken by events (2026-06-21)
 
-> This plan was authored 2026-06-16. The package + skill layers it specifies **shipped upstream afterward** (workstate v0.4.2, 2026-06-18). Verified against installed `mcp-workstate-handoff 0.13.2` and the effective `workstate-system` `review-parallel` skill. The plan is retained as the historical design spec; slice bodies below are **not** re-edited.
+> This plan was authored 2026-06-16. The package + skill layers it specifies **shipped upstream afterward** (workstate v0.4.2, 2026-06-18). Verified against installed `mcp-workbay-handoff 0.13.2` and the effective `workbay-system` `review-parallel` skill. The plan is retained as the historical design spec; slice bodies below are **not** re-edited.
 
 | Slice | Status | Evidence (installed) |
 | --- | --- | --- |
@@ -43,7 +43,7 @@ Eliminate the cross-round finding-id collision and source/coordinator status dri
 
 ## Problem Statement
 
-`/review-parallel` fans out reviewers under deterministic scratch task_refs `<coordinator>-REV-<letter>`, then merges their findings under the coordinator. Three layers combine into silent corruption and drift (all confirmed against installed `workstate_handoff_mcp` + skill source, and observed live on `MAINT-WPAC-HARDEN-20260614`):
+`/review-parallel` fans out reviewers under deterministic scratch task_refs `<coordinator>-REV-<letter>`, then merges their findings under the coordinator. Three layers combine into silent corruption and drift (all confirmed against installed `workbay_handoff_mcp` + skill source, and observed live on `MAINT-WPAC-HARDEN-20260614`):
 
 1. **Deterministic refs reused across rounds.** The `-REV-<letter>` suffix is a pure function of coordinator + reviewer index, so re-running on the same coordinator reuses the same scratch ref; rows from multiple rounds accumulate under one ref (`…-REV-A` held 3 sessions).
 2. **Merge never cleans the source.** `merge_review_findings` (`review_findings_recording.py:351-360`) is a read-only `SELECT` over sources that re-records into the target and touches no source row, so sources stay `open` while coordinator copies resolve — drift is **per-round**, not just cross-round.
@@ -53,7 +53,7 @@ The current state passes the pre-merge gate (the gate audits only the coordinato
 
 ## Constraints
 
-- **Boundary:** implementation lands in `darce/mcp-workstate-handoff` (package) and the `workstate-system` plugin (skill source); neither is editable from this checkout. This plan is the spec/ask, not the implementation.
+- **Boundary:** implementation lands in `darce/mcp-workbay-handoff` (package) and the `workbay-system` plugin (skill source); neither is editable from this checkout. This plan is the spec/ask, not the implementation.
 - **Greenfield does not apply to this package's schema.** Unlike the monorepo's `001_identity_schema.py`, `review_findings` has a hard `CHECK` constraint and a real migration lane (`_migrate_finding_lifecycle_states`); a new status value requires a table rebuild, not an in-place edit.
 - **Preserve invariants:** `merged_from` provenance; reviewer rows retained as an audit trail (retired, not deleted); cross-harness MCP-state parity (Claude / Codex+Copilot `run_structured_turn` / Grok `task` / degradation fallback); merge resumability/idempotency.
 - **Pre-merge gate:** `handoff_close_check` filters strictly on `status == open`, so any terminal status (incl. a new `superseded`) is excluded for free — **no close-check change is permitted or needed.**
@@ -84,8 +84,8 @@ The current state passes the pre-merge gate (the gate audits only the coordinato
 
 ## Context Loading
 
-- Skill source: `workstate-system` plugin `skills/review-parallel/SKILL.md` (effective copy for reference: `.workstate/generated/plugins/workstate-system/effective/claude/skills/review-parallel/SKILL.md`).
-- Package: `workstate_handoff_mcp/review_findings_recording.py` (`merge_review_findings`, `batch_record_review_findings`), `enums.py` (`FindingStatus`), `shared_schema.py` (`review_findings` CHECK at `:270` + migration recreate `:1296`; anchor columns `:283-290`), `review_findings_queries.py` (list ordering `:236`; open-count `:405-410`), `review_findings_updates.py` (`_validate` `:752`, `_apply_finding_update` `:626-646`), `current_task_rendering.py` (buckets `:423-433`; collectors `:206,:281`), `decisions.py` (close-check open filter `:729`), `import_export.py` (`archive_task_state` prune `:1082,:1098-1113`).
+- Skill source: `workbay-system` plugin `skills/review-parallel/SKILL.md` (effective copy for reference: `.workbay/generated/plugins/workbay-system/effective/claude/skills/review-parallel/SKILL.md`).
+- Package: `workbay_handoff_mcp/review_findings_recording.py` (`merge_review_findings`, `batch_record_review_findings`), `enums.py` (`FindingStatus`), `shared_schema.py` (`review_findings` CHECK at `:270` + migration recreate `:1296`; anchor columns `:283-290`), `review_findings_queries.py` (list ordering `:236`; open-count `:405-410`), `review_findings_updates.py` (`_validate` `:752`, `_apply_finding_update` `:626-646`), `current_task_rendering.py` (buckets `:423-433`; collectors `:206,:281`), `decisions.py` (close-check open filter `:729`), `import_export.py` (`archive_task_state` prune `:1082,:1098-1113`).
 - Handoff/MCP state: `MAINT-WPAC-HARDEN-20260614` (live drift sample) + its `*-REV-A`/`*-REV-B` scratch refs; corrupted row `…-REV-B/REV-B-1` id 1515.
 
 ## Contract and Boundary Impact
@@ -94,7 +94,7 @@ The current state passes the pre-merge gate (the gate audits only the coordinato
 | --- | --- | --- | --- | --- | --- |
 | `review_findings.status` domain | handoff package | CHECK `IN (open,fixed,wontfix,deferred,resolved_on_branch,integrated)` | add `superseded` (CHECK + enum + migration) | yes — table rebuild for existing DBs | migration test; `superseded` write succeeds |
 | `merge_review_findings` signature | handoff package | `(session, source_task_refs, target, actor)` | add `retire_sources: bool = True` | yes — default True changes merge behavior; `False` = legacy | merge marks sources superseded; `False` reproduces additive |
-| `review-parallel` skill contract | workstate-system plugin | `<coord>-REV-<letter>` + additive merge | round-scoped refs + required teardown | n/a (instruction) | 2-round dry-run: disjoint refs, 0 open sources post-merge |
+| `review-parallel` skill contract | workbay-system plugin | `<coord>-REV-<letter>` + additive merge | round-scoped refs + required teardown | n/a (instruction) | 2-round dry-run: disjoint refs, 0 open sources post-merge |
 | cross-vendor parity | orchestrator package | `test_cross_vendor_subagent_equivalence` | extend for round refs + teardown | no | parity test green across backends |
 
 ## Proposed Solution
@@ -217,7 +217,7 @@ Proof:
 
 - [ ] Loaded the minimum authoritative rules, contracts, and handoff state before editing.
 - [ ] Confirmed whether external dependency context requires `ctx7`.
-- [ ] Recorded boundary ownership (handoff package + workstate-system plugin are upstream/out-of-bounds here).
+- [ ] Recorded boundary ownership (handoff package + workbay-system plugin are upstream/out-of-bounds here).
 
 ### Checklist for Slice 1: Skill round-scoping + preflight + required teardown
 

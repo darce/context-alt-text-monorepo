@@ -11,7 +11,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REMOTE_GENERATOR = (
     REPO_ROOT
-    / ".workstate/remote/packages/workstate-system/workstate_system/payload/scripts/generate_agent_workflows.py"
+    / ".workbay/remote/packages/workbay-system/workstate_system/payload/scripts/generate_agent_workflows.py"
 )
 CURSOR_PATCH = REPO_ROOT / "scripts" / "apply_cursor_skills_only_surface.py"
 
@@ -28,7 +28,7 @@ def _load_remote_generator():
 
 
 def __getattr__(name: str):
-    # workstate-bootstrap coherence probes seams like _expected_hooks_outputs
+    # workbay-bootstrap coherence probes seams like _expected_hooks_outputs
     # by importing this script; delegate to the hoisted generator.
     module = _load_remote_generator()
     if module is None or not hasattr(module, name):

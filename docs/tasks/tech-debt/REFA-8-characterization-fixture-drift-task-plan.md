@@ -61,7 +61,7 @@ Both suites pass on `feature/refa-8` and on a clean `main`. Cluster suite gains 
 - Tests: `apps/prototype-wp-alt-context/tests/Unit/AnalysisJobsControllerCharacterizationTest.php`, `apps/prototype-wp-alt-context/tests/Unit/ClusterMutationsCharacterizationTest.php`
 - Fixtures: `apps/prototype-wp-alt-context/tests/fixtures/{analysis-jobs,cluster-mutations}/**`
 - Tooling: `apps/prototype-wp-alt-context/package.json` (format scripts), `apps/prototype-wp-alt-context/.prettierignore`
-- Rules: `docs/workstate/rules/testing-php.md`
+- Rules: `docs/workbay/rules/testing-php.md`
 - Handoff/MCP: REFA-8 task ref; REFA epic for ownership context
 - No `ctx7` needed.
 

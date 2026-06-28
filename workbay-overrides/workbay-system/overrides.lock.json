@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "plugin": "workbay-system",
+  "base_remote_sha": "38e872a1eb13cd987b4d264936ad00fd6624380d",
+  "components": [
+    {
+      "component_kind": "skill",
+      "name": "branch-review",
+      "mode": "patch",
+      "local_path": "skills/branch-review/SKILL.md",
+      "base_path": "skills/branch-review/SKILL.base.md",
+      "patch_path": null,
+      "upstream_digest": "sha256:9897904927cdff1400b06fbf24d0509a20d72fdce45954326f5244bb40db4940",
+      "last_accept_upstream": null
+    },
+    {
+      "component_kind": "skill",
+      "name": "refactor-description-service",
+      "mode": "add",
+      "local_path": "skills/refactor-description-service/SKILL.md",
+      "base_path": null,
+      "patch_path": null,
+      "upstream_digest": null,
+      "last_accept_upstream": null
+    },
+    {
+      "component_kind": "skill",
+      "name": "refactor-wp-alt-context",
+      "mode": "add",
+      "local_path": "skills/refactor-wp-alt-context/SKILL.md",
+      "base_path": null,
+      "patch_path": null,
+      "upstream_digest": null,
+      "last_accept_upstream": null
+    }
+  ]
+}

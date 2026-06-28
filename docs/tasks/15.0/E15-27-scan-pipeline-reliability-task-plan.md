@@ -54,8 +54,8 @@ Intake: `POST /recognition/analyze` and `/recognition/analyze/multipart` check t
 
 ## Context Loading
 
-- Rules: `docs/workstate/rules/backend-python-guidelines.md`, `docs/workstate/rules/testing-python.md`
-- Contracts: analyze router (`recognition/interface_adapters/http/routers/analyze.py`), multipart analyze router, scan queue service + worker, `/health/detailed` shape from E15-2, `docs/workstate/contracts/clustering-api.md`, generated plugin `RecognitionJob` type
+- Rules: `docs/workbay/rules/backend-python-guidelines.md`, `docs/workbay/rules/testing-python.md`
+- Contracts: analyze router (`recognition/interface_adapters/http/routers/analyze.py`), multipart analyze router, scan queue service + worker, `/health/detailed` shape from E15-2, `docs/workbay/contracts/clustering-api.md`, generated plugin `RecognitionJob` type
 - Handoff/MCP: E15-27 ref; E15-22 plan (progress consumer expectations); E15-3a-br21 clustering stability plan (adjacent, do not absorb).
 
 ## Contract and Boundary Impact
@@ -114,7 +114,7 @@ The API process and the scan worker are **separate processes** — separate cont
 - Add fields on the existing job-status read path (`analyze.py::get_job_status` → `job_utils.py::build_job_progress_response`): keep current `progress.completed`, `progress.total`, and `progress.phase`; add `items_failed`, `failure_reason`, and `updated_at` or explicitly record why an existing timestamp satisfies freshness. Counts come from `IdentityScanJobItem` aggregation via `SqlAlchemyScanQueueRepository`, not an N+1 loop.
 - Update counts per claimed-batch completion (every ≤10 items at current batch size), giving the plugin sub-second-fresh progress at 1s poll cadence — that satisfies the perceived-latency window without per-item write amplification (`latency-reduce-delay-in-software-systems.md §Request Batching` — amortize, don't chat).
 - Extend `JobStatus(StrEnum)` only for statuses that must be visible on accepted jobs (likely `completed_with_errors`; avoid `rejected` if Slice 1 uses 503-at-intake). Update `JobStatusResponse`, generated plugin types, and consumers exhaustively; mypy/TS tests must pass.
-- Publish a fixture JSON of the extended envelope for E15-22/plugin consumption (commit it under the service's test fixtures; reference its path in the slice decision and update `docs/workstate/contracts/clustering-api.md`).
+- Publish a fixture JSON of the extended envelope for E15-22/plugin consumption (commit it under the service's test fixtures; reference its path in the slice decision and update `docs/workbay/contracts/clustering-api.md`).
 
 ### Slice 3 notes — worker isolation + stall terminality
 
@@ -139,7 +139,7 @@ The API process and the scan worker are **separate processes** — separate cont
 | Health | `apps/prototype-description-service/api/main.py::health_detailed` | additive capability field |
 | Progress/status API | `recognition/interface_adapters/http/schemas/responses.py`, `recognition/interface_adapters/http/job_utils.py`, `recognition/application/scan/progress.py`, `recognition/infrastructure/repositories/scan_queue_repository.py` | additive failed/reason/freshness fields; status vocabulary only if accepted jobs need a new terminal state |
 | Worker | `recognition/worker/scan_worker.py`, `recognition/worker/handlers/scan.py` | publish capability transitions; preserve existing offload/isolation; add stall terminality |
-| Contracts/types | `docs/workstate/contracts/clustering-api.md`, `apps/prototype-wp-alt-context/js/admin/api/generated/recognition-job.ts` (or generator source) | update visible response/status vocabulary and generated TS type |
+| Contracts/types | `docs/workbay/contracts/clustering-api.md`, `apps/prototype-wp-alt-context/js/admin/api/generated/recognition-job.ts` (or generator source) | update visible response/status vocabulary and generated TS type |
 | Plugin error path | `apps/prototype-wp-alt-context` analyze trigger + JS/PHP proxy tests | render structured 503 reason |
 
 ## Verification Strategy

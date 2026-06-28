@@ -30,7 +30,7 @@ E15-6 already exists as a stub in `docs/tasks/15.0/E15-6-e2e-smoke-gate-automati
 - v1 ships scaffolding + Lane A + Lane C only (Slices 1–4). The three Lane B smoke specs (offline label persistence, full-cycle local-read resilience, sync-status integrity) are specified in-plan as v2 envelope slices but do not ship in v1. They land in a follow-on slice of E15-6 or split back to E16, owner decided when v2 is scheduled.
 - Auth bootstrap for v1 targets LocalWP only. No public-demo storage-state, no env-var-driven multi-target abstraction. Public-demo auth waits until E15 hosting exists.
 - **No Playwright MCP work in v1 — not even docs.** This overrides intake decision D5's "MCP as opt-in docs snippet only" allowance. v1 goal is to clear operator backlog; MCP enablement returns as a separate task once the harness is in operator hands. Decision `claude_e15-6_drop_mcp_from_v1_clear_operator_backlog_first` records this amendment.
-- Repo-local docs only. v1 docs live under `apps/prototype-wp-alt-context/docs/`. No `docs/workstate/playbooks/` entries; generic operator-evidence doctrine extracts to `agentic-protocol-monorepo` only after this repo proves the shape.
+- Repo-local docs only. v1 docs live under `apps/prototype-wp-alt-context/docs/`. No `docs/workbay/playbooks/` entries; generic operator-evidence doctrine extracts to `agentic-protocol-monorepo` only after this repo proves the shape.
 - Artifacts (storageState, traces, videos, screenshots, axe reports) are gitignored under a task-scoped path: `apps/prototype-wp-alt-context/local/playwright/<task-ref>/`. The `.gitignore` update lands in Slice 1.
 - Operator credentials never land in committed files or shell history. Convention: env vars `ACX_E2E_WP_ADMIN_USER` / `ACX_E2E_WP_ADMIN_PASS` sourced from a gitignored `apps/prototype-wp-alt-context/.env.local`; `auth.setup.ts` reads env first and only falls back to interactive `page.pause()` when env is missing.
 - v1 does not add visual regression / pixel-diff infrastructure, a cross-browser matrix beyond Chromium, a WordPress version matrix, CI integration, backend-outage helpers, or any Playwright MCP surface (scope-note Decision D5 amended by this plan).
@@ -91,7 +91,7 @@ E15-6 is now the durable source of truth for Playwright-backed operator evidence
 ## Context Loading
 
 - Scope: `docs/scopes/e15-6-playwright-operator-evidence-harness.md`
-- Rules: `docs/workstate/rules/development-workflow.md`, `docs/workstate/rules/frontend-guidelines.md`, `docs/workstate/rules/testing-typescript.md`, `docs/workstate/rules/testing-principles.md`
+- Rules: `docs/workbay/rules/development-workflow.md`, `docs/workbay/rules/frontend-guidelines.md`, `docs/workbay/rules/testing-typescript.md`, `docs/workbay/rules/testing-principles.md`
 - LocalWP: `apps/prototype-wp-alt-context/docs/localwp-development-runbook.md` (LocalWP target + admin URL)
 - Absorbed source: `docs/tasks/tech-debt/e2e-smoke-automation-path.md` (entire file folded into Slices 2 + 6–12 below; archived after Slice 3 lands)
 - Stub to update: `docs/tasks/15.0/E15-6-e2e-smoke-gate-automation-stub.md`
@@ -299,7 +299,7 @@ Absorbed-tech-debt Phase 3: remove dependency on LocalWP private GraphQL from re
 
 ## Consolidated Checklist
 
-> **Checklist scope rule:** Describe work being delivered, not finding status. Do not add rows like `(PA-04 closed)`, `(fixed in MCP)`, or "resolve E15-6-PR-02"; finding status is queried from the handoff DB via `review_findings(review={"operation":"list","status":"open","task_ref":"E15-6"})` or read from `DASHBOARD.txt`. See [`branch-review-guide.md` § Review Findings Placement](../../workstate/rules/branch-review-guide.md#review-findings-placement-mandatory).
+> **Checklist scope rule:** Describe work being delivered, not finding status. Do not add rows like `(PA-04 closed)`, `(fixed in MCP)`, or "resolve E15-6-PR-02"; finding status is queried from the handoff DB via `review_findings(review={"operation":"list","status":"open","task_ref":"E15-6"})` or read from `DASHBOARD.txt`. See [`branch-review-guide.md` § Review Findings Placement](../../workbay/rules/branch-review-guide.md#review-findings-placement-mandatory).
 
 ### Checklist for Slice 1: Repo-local docs + ignore paths + credentials template + stub + epic update
 
@@ -342,7 +342,7 @@ Absorbed-tech-debt Phase 3: remove dependency on LocalWP private GraphQL from re
 
 ## Context and Ownership
 
-- [x] Loaded the minimum authoritative rules, contracts, and handoff state before editing (`CLAUDE.md`, `docs/workstate/rules/development-workflow.md`, scope note, and current E15-6 MCP handoff state).
+- [x] Loaded the minimum authoritative rules, contracts, and handoff state before editing (`CLAUDE.md`, `docs/workbay/rules/development-workflow.md`, scope note, and current E15-6 MCP handoff state).
 - [x] Confirmed external dependency context for `@playwright/test` and `@axe-core/playwright` does not require `ctx7` for this close-out pass; no upstream API behavior changed.
 - [x] Recorded boundary ownership and compatibility expectations: WP plugin dev tooling, root Makefile wrappers, root `.gitignore`, repo-local docs surface, E15 epic + stub — all owned by this task; existing Vitest + `vitest-axe` path unchanged.
 
@@ -379,6 +379,6 @@ Absorbed-tech-debt Phase 3: remove dependency on LocalWP private GraphQL from re
 - Cross-browser matrix beyond Chromium; WordPress version matrix.
 - Public-demo storage-state and any env-var-driven multi-target auth abstraction.
 - **Playwright MCP — not even docs.** Intake decision D5's "MCP as opt-in docs snippet" allowance is amended by this plan. MCP enablement returns as a separate task once operator backlog is cleared.
-- `docs/workstate/playbooks/` entries — v1 docs are repo-local under `apps/prototype-wp-alt-context/docs/`.
+- `docs/workbay/playbooks/` entries — v1 docs are repo-local under `apps/prototype-wp-alt-context/docs/`.
 - Extraction of generic operator-evidence doctrine to `agentic-protocol-monorepo` — happens after this repo proves the shape, not in v1.
 - Modifications to production plugin code — v1 is additive test infrastructure only.

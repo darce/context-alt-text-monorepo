@@ -22,19 +22,19 @@
 | Reflect log | `.task-state/ace_reflect_log.jsonl` | **7 entries ever; last 2026-06-05** (13 days stale) |
 | Reflector | `scripts/ace/ace_reflect.py` (470 lines) | Runs, but parses the wrong file (below) |
 | Make targets | `ace-metrics`, `ace-metrics-json`, `ace-reflect`, `ace-curation-report`, `ace-trends` | `ace-metrics` **crashes**; `ace-reflect`/`ace-curation-report` no-op |
-| Playbook | `docs/workstate/playbooks/ace-pruning-playbook.md` | Defines triggers + 30-day cadence — not being followed |
-| Counters (canonical) | `docs/workstate/constitution.md` (26 bullets) | Hand-seeded; never auto-updated |
+| Playbook | `docs/workbay/playbooks/ace-pruning-playbook.md` | Defines triggers + 30-day cadence — not being followed |
+| Counters (canonical) | `docs/workbay/constitution.md` (26 bullets) | Hand-seeded; never auto-updated |
 
 ## Findings (evidence)
 
 ### 1. The tooling is pointed at the wrong file (root cause)
-`make ace-reflect` and `make ace-curation-report` both parse `--instruction-files docs/workstate/instructions.md`. But the rule bullets moved to `constitution.md` during the workstate migration:
+`make ace-reflect` and `make ace-curation-report` both parse `--instruction-files docs/workbay/instructions.md`. But the rule bullets moved to `constitution.md` during the workstate migration:
 
 | File | ACE bullets (`- [sr/rg-NNN] helpful=… harmful=…`) |
 | --- | --- |
-| `docs/workstate/constitution.md` (canonical) | **26** |
+| `docs/workbay/constitution.md` (canonical) | **26** |
 | `CLAUDE.md` (injected copy) | 26 |
-| `docs/workstate/instructions.md` (what the tools parse) | **0** |
+| `docs/workbay/instructions.md` (what the tools parse) | **0** |
 
 `make ace-curation-report` confirms it: *"Total bullets: 0 … No pruning candidates."* The application side reads zero data, so counter updates and pruning are structural no-ops regardless of what the detector logs.
 
@@ -71,7 +71,7 @@ Across 1,006 decisions: `ace_reflect`=0, `helpful=`/`harmful=`=0, `strategy bull
 ## Recommendation — decide: repair or retire
 
 **Option A — Repair (small, mechanical):**
-1. Repoint the Make targets + `ace_reflect.py` default from `instructions.md` → `docs/workstate/constitution.md` (the canonical bullet home), then re-sync the injected `CLAUDE.md` copy.
+1. Repoint the Make targets + `ace_reflect.py` default from `instructions.md` → `docs/workbay/constitution.md` (the canonical bullet home), then re-sync the injected `CLAUDE.md` copy.
 2. Run a reflect pass to apply the backlog (the `rg-008` contradiction from 2026-06-04).
 3. Fix `make ace-metrics` (pass `TASK=`, or archive stale `MAINT-*` rows so cwd resolution is unambiguous — see the context7 audit's same ambiguity).
 4. Run the overdue 30-day pruning pass and record the outcome in MCP per the playbook.
@@ -86,17 +86,17 @@ The ACE paper (*Agentic Context Engineering*, arXiv:2510.04618) draws the exact 
 
 ### Decision: the ACE loop is owned by `agentic-protocol-monorepo`
 
-The loop **mechanism** (Reflector + Curator: bullet parsing, helpful/harmful delta application, contradiction detection, dedup, pruning thresholds, metrics) is domain-agnostic and reusable by every consumer of the workstate harness → it belongs in the upstream protocol repo. The **playbook content** (this repo's `sr-*`/`rg-*` rules and their counters in `constitution.md`) is domain-specific → it stays in `context-alt-text-monorepo`.
+The loop **mechanism** (Reflector + Curator: bullet parsing, helpful/harmful delta application, contradiction detection, dedup, pruning thresholds, metrics) is domain-agnostic and reusable by every consumer of the workbay harness → it belongs in the upstream protocol repo. The **playbook content** (this repo's `sr-*`/`rg-*` rules and their counters in `constitution.md`) is domain-specific → it stays in `context-alt-text-monorepo`.
 
 This is not where the code lives today. The loop is fragmented across the boundary with **no single owner**, which is the root cause of the rot documented above:
 
 | ACE component | Maps to | Lives today | Correct owner |
 | --- | --- | --- | --- |
-| Detector (review-finding → rule signal) | feedback capture | `scripts/hooks/ace-detect.py` — **upstream overlay** (`workstate-system` payload), re-synced into this repo | upstream ✓ |
-| Metrics / trends | observability | `workstate_orchestrator_mcp.orchestration.ace_metrics` — **upstream package** | upstream ✓ |
+| Detector (review-finding → rule signal) | feedback capture | `scripts/hooks/ace-detect.py` — **upstream overlay** (`workbay-system` payload), re-synced into this repo | upstream ✓ |
+| Metrics / trends | observability | `workbay_orchestrator_mcp.orchestration.ace_metrics` — **upstream package** | upstream ✓ |
 | Reflector + Curator (apply counters, prune) | the core mechanism | `scripts/ace/ace_reflect.py` — **project-local orphan** (no source upstream; only an orphaned `test_ace_reflect.py` remains there) | **upstream — currently misplaced** |
-| Playbook (rules + counters) | domain content | `docs/workstate/constitution.md` (+ injected `CLAUDE.md`) | local ✓ |
-| Playbook file path | consumer config | hardcoded `docs/workstate/instructions.md` inside the mechanism | local config, not a mechanism default |
+| Playbook (rules + counters) | domain content | `docs/workbay/constitution.md` (+ injected `CLAUDE.md`) | local ✓ |
+| Playbook file path | consumer config | hardcoded `docs/workbay/instructions.md` inside the mechanism | local config, not a mechanism default |
 
 The reflector/curator — the one piece that is *most* domain-agnostic — is the one piece stranded in a single consumer. The detector and metrics are upstream, so detection and measurement re-sync cleanly, but the **apply** half lives nowhere shared. No repo owns the end-to-end loop, so the captured `rg-008` contradiction had nowhere to go.
 
@@ -105,24 +105,24 @@ The reflector/curator — the one piece that is *most* domain-agnostic — is th
 The bug is one config line (`ace_reflect.py:272` defaults `--instruction-files` to `instructions.md`; bullets are in `constitution.md`), but routing it correctly matters because **`ace-detect.py` is overlay-managed** — a local-only hotfix to the loop is overwritten on the next bootstrap re-sync (the documented re-break pattern). The durable fix is therefore split by seam:
 
 **Upstream — `agentic-protocol-monorepo` (the mechanism, the durable fixes):**
-1. Re-home `scripts/ace/ace_reflect.py` into the harness — alongside `ace_metrics.py` in `mcp-workstate-orchestrator`, or into the `workstate-system` overlay payload next to `ace-detect.py` — so detector + reflector + curator + metrics are one owned capability (and the orphaned upstream `test_ace_reflect.py` gets its source back).
-2. **Parameterize the playbook path.** Remove the `instructions.md` default; require the consumer to declare its playbook file(s) via an explicit flag or a workstate config key. The hardcoded default *is* the root-cause bug, and it is baked into the shared mechanism, so it must be fixed where the mechanism is owned or it re-breaks on re-sync.
+1. Re-home `scripts/ace/ace_reflect.py` into the harness — alongside `ace_metrics.py` in `mcp-workbay-orchestrator`, or into the `workbay-system` overlay payload next to `ace-detect.py` — so detector + reflector + curator + metrics are one owned capability (and the orphaned upstream `test_ace_reflect.py` gets its source back).
+2. **Parameterize the playbook path.** Remove the `instructions.md` default; require the consumer to declare its playbook file(s) via an explicit flag or a workbay config key. The hardcoded default *is* the root-cause bug, and it is baked into the shared mechanism, so it must be fixed where the mechanism is owned or it re-breaks on re-sync.
 3. Fix the `make ace-metrics` ambiguous-active-task crash (graceful task resolution; same multi-`MAINT-*` ambiguity as the context7 audit).
 4. Ship the loop as a coherent, wired capability (detect → reflect → curate) with the apply step actually reachable from the consumer.
 
 **Local — `context-alt-text-monorepo` (config + content only):**
-1. Declare this repo's playbook path as `docs/workstate/constitution.md` (via the new upstream config param). Keep the `sr-*`/`rg-*` rules and counters here — they are domain-specific and correctly local.
-2. Interim, before the upstream param exists: override the local `ace-*` Make targets to pass `--instruction-files docs/workstate/constitution.md`. Treat this as a stopgap, not the fix — it does not survive a re-sync of the shared loop and must be retired once the upstream parameter lands.
+1. Declare this repo's playbook path as `docs/workbay/constitution.md` (via the new upstream config param). Keep the `sr-*`/`rg-*` rules and counters here — they are domain-specific and correctly local.
+2. Interim, before the upstream param exists: override the local `ace-*` Make targets to pass `--instruction-files docs/workbay/constitution.md`. Treat this as a stopgap, not the fix — it does not survive a re-sync of the shared loop and must be retired once the upstream parameter lands.
 
 ### Caveat the paper forces
 
-ACE is explicit that the loop is only as good as its signal: "when ground-truth signals or reliable execution outcomes are absent, constructed contexts can become noisy or even harmful." Here the signal is *branch-review findings that reference or contradict a rule* — grounded, but sparse (7 events ever). Even a correctly-wired, upstream-owned loop earns its keep only if review findings consistently cite rule IDs. Centralizing ownership upstream also centralizes the signal-quality work already underway there (`mcp-workstate-handoff/docs/assessments/ace-metrics-signal-quality.md`). This reinforces Option A's precondition: a committed owner — now identified as the protocol repo — must run the cadence, or retire the loop (Option B).
+ACE is explicit that the loop is only as good as its signal: "when ground-truth signals or reliable execution outcomes are absent, constructed contexts can become noisy or even harmful." Here the signal is *branch-review findings that reference or contradict a rule* — grounded, but sparse (7 events ever). Even a correctly-wired, upstream-owned loop earns its keep only if review findings consistently cite rule IDs. Centralizing ownership upstream also centralizes the signal-quality work already underway there (`mcp-workbay-handoff/docs/assessments/ace-metrics-signal-quality.md`). This reinforces Option A's precondition: a committed owner — now identified as the protocol repo — must run the cadence, or retire the loop (Option B).
 
 ## Appendix — reproduce
 
 ```bash
 # bullet location (tools parse instructions.md; data lives in constitution.md)
-for f in docs/workstate/constitution.md docs/workstate/instructions.md CLAUDE.md; do
+for f in docs/workbay/constitution.md docs/workbay/instructions.md CLAUDE.md; do
   printf '%s: ' "$f"; grep -cE '^\s*-\s+\[(sr|rg)-[0-9]{3}\]\s+helpful=' "$f"; done
 
 make ace-curation-report          # -> "Total bullets: 0 ... No pruning candidates."
@@ -132,8 +132,8 @@ cat .task-state/ace_reflect_log.jsonl   # 7 entries; last 2026-06-05; one contra
 # ledger: zero ACE-curation decisions (Python API; read-only)
 python3 - <<'PY'
 from pathlib import Path
-import workstate_handoff_mcp as w
-from workstate_handoff_mcp import core
+import workbay_handoff_mcp as w
+from workbay_handoff_mcp import core
 w.configure_runtime(w.RuntimeConfig.for_repo(Path(".")))
 with core._get_db_connection() as conn:
     for t in ('%ace_reflect%','%helpful=%','%harmful=%','%ace-pruning%'):

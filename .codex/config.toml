@@ -1,19 +1,19 @@
 [features]
 codex_hooks = true
 
-[mcp_servers.workstate-handoff-mcp]
+[mcp_servers.workbay-handoff-mcp]
 type = "stdio"
-command = "uv"
-args = ["run", "--no-sync", "--project", ".workstate/remote/packages/mcp-workstate-handoff", "mcp-workstate-handoff", "--workspace-root", ".", "serve-stdio"]
+command = "uvx"
+args = ["mcp-workbay-handoff@0.2.0", "--workspace-root", ".", "serve-stdio"]
 
-[mcp_servers.workstate-orchestrator-mcp]
+[mcp_servers.workbay-orchestrator-mcp]
 type = "stdio"
-command = "uv"
-args = ["run", "--no-sync", "--project", ".workstate/remote/packages/mcp-workstate-orchestrator", "mcp-workstate-orchestrator", "--workspace-root", ".", "serve-stdio"]
+command = "uvx"
+args = ["mcp-workbay-orchestrator[bridge]@0.2.0", "--workspace-root", ".", "serve-stdio"]
 
-[marketplaces.workstate-marketplace]
+[marketplaces.workbay-marketplace]
 source_type = "local"
 source = "."
 
-[plugins."workstate-system@workstate-marketplace"]
+[plugins."workbay-system@workbay-marketplace"]
 enabled = true

@@ -52,8 +52,8 @@ The demo Workbench shows representative faces when the backend returns crop data
 
 ## Context Loading
 
-- Rules: `docs/workstate/rules/frontend-guidelines.md`, `docs/workstate/rules/testing-typescript.md`, `docs/workstate/rules/development-workflow.md`
-- Contracts: `packages/shared-contracts/schemas/recognition-cluster-top-unlabeled-response.schema.json`, `docs/workstate/contracts/cluster-snapshot-api.md`, `docs/workstate/contracts/recognition-clustering.md`
+- Rules: `docs/workbay/rules/frontend-guidelines.md`, `docs/workbay/rules/testing-typescript.md`, `docs/workbay/rules/development-workflow.md`
+- Contracts: `packages/shared-contracts/schemas/recognition-cluster-top-unlabeled-response.schema.json`, `docs/workbay/contracts/cluster-snapshot-api.md`, `docs/workbay/contracts/recognition-clustering.md`
 - Handoff/MCP state: task ref `E15-22`; intake findings `MAINT-WB-PROGRESS-PLAN-01..05`; planning-review findings `E15-22-PLAN-01..07`
 - Tech-debt inputs: `docs/tasks/tech-debt/scan-pipeline-trust-and-data-plane-canonicalization.md`, `docs/tasks/15.0/E15-6-playwright-operator-evidence-harness-task-plan.md`
 

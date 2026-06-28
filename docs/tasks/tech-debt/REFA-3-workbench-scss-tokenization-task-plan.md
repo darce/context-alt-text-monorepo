@@ -71,7 +71,7 @@ Measured against `_workbench.scss` @ `feature/refa-3` HEAD (`0931284532d7`):
 
 ## Context Loading
 
-- Rules: `docs/workstate/rules/frontend-guidelines.md`, sr-004 (CLAUDE.md Short Rules)
+- Rules: `docs/workbay/rules/frontend-guidelines.md`, sr-004 (CLAUDE.md Short Rules)
 - Token surface: `js/admin/styles/tokens/_colors.scss`, `_spacing.scss`, `_typography.scss`; `js/admin/styles/main.scss` (`@use` graph)
 - Consumers of undefined families: `js/admin/styles/components/_media-selection.scss`
 - Tests: `tests/e2e/a11y/workbench-axe.spec.ts`, `playwright.config.ts`

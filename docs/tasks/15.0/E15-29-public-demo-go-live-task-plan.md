@@ -72,7 +72,7 @@ Single OCI A1.Flex VM `129.213.40.111`; one Caddy terminates TLS for `api` / `st
 
 ## Context Loading
 
-- **Rules**: `docs/workstate/rules/development-workflow.md` (branch isolation, pre-merge gate), `infra/oci/README.md` (env layout, deploy + CORS restart SOP).
+- **Rules**: `docs/workbay/rules/development-workflow.md` (branch isolation, pre-merge gate), `infra/oci/README.md` (env layout, deploy + CORS restart SOP).
 - **Contracts/runbooks**: `infra/oci/demo/tenant-mint-runbook.md`, `infra/oci/demo/walkthrough-runbook.md`, E15-1 security baseline (CORS/rate limits), E15-24 tenant identity.
 - **Handoff/MCP**: task `E15-29` — decision 794 (intake), blocker 7 (licensing), findings `E15-29-PA-*`; E15-28 plan for carried-over exit criteria.
 - **ctx7**: not required (no upstream-library behavior in scope).

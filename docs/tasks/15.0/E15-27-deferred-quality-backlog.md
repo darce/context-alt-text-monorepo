@@ -1,6 +1,6 @@
 # E15-27 Deferred Quality Backlog (post-demo)
 
-**Inventory snapshot:** 2026-06-13 · **Source of truth:** Workstate handoff DB. This doc is a static navigation aid; status is **not** tracked here — query live.
+**Inventory snapshot:** 2026-06-13 · **Source of truth:** Workbay handoff DB. This doc is a static navigation aid; status is **not** tracked here — query live.
 
 ## Context
 
@@ -24,9 +24,9 @@ Paths below are as recorded on the finding (a mix of repo-relative and service-r
 
 | ID | Sev | Surface | Subject |
 |----|-----|---------|---------|
-| E15-27-BR-04 | med | docs/workstate/contracts/ | Boundary contracts/runbook not updated for the `embedding_runtime` health field + analyze 503 shape |
-| E15-27-BR-14 | med | docs/workstate/contracts/ | No owning contract documents the additive `progress_envelope` JobStatusResponse read shape |
-| E15-27-BR-22 | med | docs/workstate/contracts/ | clustering/job contract docs omit `completed_with_errors`, `rejected`, `progress_envelope` |
+| E15-27-BR-04 | med | docs/workbay/contracts/ | Boundary contracts/runbook not updated for the `embedding_runtime` health field + analyze 503 shape |
+| E15-27-BR-14 | med | docs/workbay/contracts/ | No owning contract documents the additive `progress_envelope` JobStatusResponse read shape |
+| E15-27-BR-22 | med | docs/workbay/contracts/ | clustering/job contract docs omit `completed_with_errors`, `rejected`, `progress_envelope` |
 | E15-27-BR-23 | med | recognition/tests/fixtures/scan_progress_envelope.json | Fixture documents only the running state; no terminal envelope examples for E15-22 consumers |
 
 ### Test coverage (6)

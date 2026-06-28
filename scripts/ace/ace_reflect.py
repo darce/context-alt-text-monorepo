@@ -1,7 +1,7 @@
 """ACE reflection helpers for instruction-file strategy bullet evolution.
 
 Project-local module — not part of any MCP package. Extracted from
-workstate-orchestrator-mcp to keep handoff-mcp and orchestrator-mcp independent
+workbay-orchestrator-mcp to keep handoff-mcp and orchestrator-mcp independent
 and reusable without project-specific documentation evolution logic.
 
 Usage:
@@ -269,7 +269,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--instruction-files",
         nargs="+",
-        default=["docs/workstate/instructions.md"],
+        default=["docs/workbay/instructions.md"],
     )
     parser.add_argument("--curation-report-only", action="store_true")
     parser.add_argument("--model-curation-backend", default=None, help="Optional backend for model-backed ACE curation.")
@@ -369,13 +369,13 @@ def _run_model_curation(
         _append_curation_log(state_dir, result)
         return result
 
-    # Late import: model-backed curation requires workstate-orchestrator-mcp
+    # Late import: model-backed curation requires workbay-orchestrator-mcp
     try:
-        from workstate_orchestrator_mcp.orchestration.backend_registry import get_adapter  # noqa: PLC0415
+        from workbay_orchestrator_mcp.orchestration.backend_registry import get_adapter  # noqa: PLC0415
     except ImportError:
         result = {
             "status": "backend_unavailable",
-            "error": "Model-backed curation requires workstate-orchestrator-mcp (backend_registry). Install it or omit --model-curation-backend.",
+            "error": "Model-backed curation requires workbay-orchestrator-mcp (backend_registry). Install it or omit --model-curation-backend.",
             "pending_entries": pending_entries,
             "pruning_candidates": pruning_candidates,
         }

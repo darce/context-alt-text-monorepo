@@ -75,8 +75,8 @@ Pattern at every Shape-A site: `if ( false === $wpdb->query( 'START TRANSACTION'
 
 ## Context Loading
 
-- Rules: `docs/workstate/rules/backend-php-guidelines.md`, `docs/workstate/rules/testing-php.md`
-- Constitution anchors: sr-009, rg-002, rg-005, rg-016 (`docs/workstate/constitution.md`)
+- Rules: `docs/workbay/rules/backend-php-guidelines.md`, `docs/workbay/rules/testing-php.md`
+- Constitution anchors: sr-009, rg-002, rg-005, rg-016 (`docs/workbay/constitution.md`)
 - Handoff/MCP: REFA-9 findings (`REFA-9-PA-01..05`), REFA-1 finding 210 (origin)
 - Code anchors: `src/support/trait-batch-limits.php` (trait precedent: `namespace AltContext\Support`, consumed via `use AltContext\Support\BatchLimits;` + `use BatchLimits;` in `class-analysis-jobs-controller.php:31,43`); `src/api/class-cluster-mutations-controller.php:7-18` (require_once block precedent)
 - No `ctx7` needed (WordPress `$wpdb` + PHPUnit only).

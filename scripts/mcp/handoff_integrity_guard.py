@@ -7,7 +7,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from workstate_handoff_mcp import (
+from workbay_handoff_mcp import (
     RuntimeConfig,
     archive_task_state,
     configure_runtime,

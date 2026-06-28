@@ -59,7 +59,7 @@ Coverage is uneven: `ClustersRepositoryTest` covers reads + snapshot-merge; `Clu
 
 ## Context Loading
 
-- Rules: `docs/workstate/rules/backend-php-guidelines.md`, constitution (sr-008, rg-002/rg-005/rg-016).
+- Rules: `docs/workbay/rules/backend-php-guidelines.md`, constitution (sr-008, rg-002/rg-005/rg-016).
 - Contract: `src/sovereign/repositories/interface-clusters-repository.php` (frozen).
 - Schema SoT: `src/support/class-life-cycle-manager.php:473-498` (clusters DDL).
 - Injection-idiom precedent: `src/api/class-recognition-controller.php`.

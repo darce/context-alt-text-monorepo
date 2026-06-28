@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import re
 from pathlib import Path
 
-from workstate_handoff_mcp import (
+from workbay_handoff_mcp import (
     RuntimeConfig,
     configure_runtime,
     get_archived_task,

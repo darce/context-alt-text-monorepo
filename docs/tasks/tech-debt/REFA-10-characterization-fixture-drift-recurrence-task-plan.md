@@ -30,7 +30,7 @@ All three characterization suites assert byte-exact string equality between a co
 - Greenfield: no migrations, no dual-format tolerance. Fixtures are regenerated from code output, never hand-edited.
 - Preserve characterization intent: the suites lock byte-exact REST response shape (key order, escaping, status). Do **not** weaken them into decoded/structural comparison — that is an explicit non-goal (see Considered Alternatives).
 - The clusters-read regen guard must be symmetric with the analysis-jobs and cluster-mutations guards: one mechanism, three suites.
-- `scripts/hooks/**` and `docs/workstate/contracts/**` are bootstrap-managed (overlay) subtrees. The pre-push change must NOT edit the overlay-managed git hook directly; it must use the repo's sanctioned, non-managed hook-extension point (resolve in Slice 2).
+- `scripts/hooks/**` and `docs/workbay/contracts/**` are bootstrap-managed (overlay) subtrees. The pre-push change must NOT edit the overlay-managed git hook directly; it must use the repo's sanctioned, non-managed hook-extension point (resolve in Slice 2).
 - PHP test runner: `cd apps/prototype-wp-alt-context && vendor/bin/phpunit` (PHPUnit 10.5, PHP 8.x, `phpunit.xml.dist`).
 
 ## Workflow Principles
@@ -63,7 +63,7 @@ All three characterization suites assert byte-exact string equality between a co
 - Fixtures: `apps/prototype-wp-alt-context/tests/fixtures/clusters-read/**`.
 - CI: `.github/workflows/` (no PHPUnit job today).
 - Hooks: `scripts/hooks/git/pre-push` (overlay-managed) and the sanctioned non-managed extension point; `make install-git-hooks`.
-- Rules: `docs/workstate/rules/testing-php.md`; overlay constraints in `docs/workstate/contracts/overlay-manifest.yaml`.
+- Rules: `docs/workbay/rules/testing-php.md`; overlay constraints in `docs/workbay/contracts/overlay-manifest.yaml`.
 - No `ctx7` needed.
 
 ## Contract and Boundary Impact
@@ -99,7 +99,7 @@ No cross-service or contract boundary is touched. REST response shapes are uncha
 | --- | --- |
 | `apps/prototype-wp-alt-context/tests/Unit/AnalysisJobsControllerCharacterizationTest.php:402` | Regen-guard pattern to mirror — context only, no change |
 | `apps/prototype-wp-alt-context/.prettierignore` | Already excludes fixtures (REFA-8); whitespace axis covered |
-| `docs/workstate/contracts/overlay-manifest.yaml` | Declares `scripts/hooks` managed — drives the pre-push extension-point constraint |
+| `docs/workbay/contracts/overlay-manifest.yaml` | Declares `scripts/hooks` managed — drives the pre-push extension-point constraint |
 
 ## Verification Strategy
 

@@ -65,8 +65,8 @@ The product promise is better image descriptions, but no description contract ex
 
 ## Context Loading
 
-- Rules: [docs/workstate/rules/backend-python-guidelines.md](../../workstate/rules/backend-python-guidelines.md), [docs/workstate/rules/backend-php-guidelines.md](../../workstate/rules/backend-php-guidelines.md), [docs/workstate/rules/testing-python.md](../../workstate/rules/testing-python.md)
-- Contracts: [docs/workstate/contracts/recognition-clustering.md](../../workstate/contracts/recognition-clustering.md) (PDS-26 wire lock; do not extend), [docs/workstate/contracts/clustering-api.md](../../workstate/contracts/clustering-api.md) (`data_source`/`502 invalid_*_envelope` precedent)
+- Rules: [docs/workbay/rules/backend-python-guidelines.md](../../workbay/rules/backend-python-guidelines.md), [docs/workbay/rules/backend-php-guidelines.md](../../workbay/rules/backend-php-guidelines.md), [docs/workbay/rules/testing-python.md](../../workbay/rules/testing-python.md)
+- Contracts: [docs/workbay/contracts/recognition-clustering.md](../../workbay/contracts/recognition-clustering.md) (PDS-26 wire lock; do not extend), [docs/workbay/contracts/clustering-api.md](../../workbay/contracts/clustering-api.md) (`data_source`/`502 invalid_*_envelope` precedent)
 - Code anchors: `apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze_multipart.py`, `.../application/storage/object_store.py`, `.../deps/{auth,object_store,session}.py`, `db/models/jobs.py`, `db/migrations/versions/001_identity_schema.py`, `apps/prototype-wp-alt-context/src/api/{class-abstract-recognition-proxy-controller.php,services/class-analyze-media-service.php,class-api.php}`, `scripts/localwp/batch-run-smoke.php`
 - Handoff/MCP: task `E19-1`; planning findings under `plan-analyze-*`/planning-review sessions.
 - External via `ctx7`: only for Florence-2 / `transformers` `trust_remote_code` load semantics during S9.
@@ -75,7 +75,7 @@ The product promise is better image descriptions, but no description contract ex
 
 | Boundary | Owner | Current Contract | Expected Change | Compatibility Needed? | Verification |
 | --- | --- | --- | --- | --- | --- |
-| `/scene/describe/multipart` | backend | none (new) | new `docs/workstate/contracts/image-description-api.md` + `packages/shared-contracts/schemas/image-description-response.schema.json` | no (greenfield) | route tests; JSON-schema validation; OpenAPI shows route |
+| `/scene/describe/multipart` | backend | none (new) | new `docs/workbay/contracts/image-description-api.md` + `packages/shared-contracts/schemas/image-description-response.schema.json` | no (greenfield) | route tests; JSON-schema validation; OpenAPI shows route |
 | `/recognition/analyze` envelope | backend | `recognition-clustering.md` (PDS-26 wire-locked) | **none** (must not extend) | n/a | test asserts analyze response shape unchanged |
 | `/acx/v1/recognition/describe` | wp-proxy | none (new) | new proxy surface section in the description contract; rg-015 provenance | no | PHPUnit fake-host body shape; `502 invalid_description_envelope` on bad upstream |
 | multipart / `ObjectStore` transport | backend | `analyze_multipart.py` + `ObjectStore` Protocol | reuse unchanged | no | route happy/negative tests |
@@ -99,7 +99,7 @@ Build the `scene` package as the description home: domain enums + frozen value o
 | backend vlm | `scene/infrastructure/vlm/{florence_local_adapter,unavailable_adapter,__init__}.py`, `scene/worker/describe_worker.py` | local-CPU adapter, fail-closed fallback, one-worker async path |
 | backend deps | `pyproject.toml`, `Dockerfile`, `Makefile`, `.env.prod.example` | `[vlm]` extra + mypy override; optional `runtime-vlm` stage; `vlm-install`/`vlm-benchmark`; documented env keys |
 | backend bench | `scripts/benchmark_local_vlm.py`, `scene/tests/seed/florence_bench_image.jpg` | A1 benchmark CLI + deterministic fixture |
-| contracts | `docs/workstate/contracts/image-description-api.md`, `packages/shared-contracts/schemas/image-description-response.schema.json` | new backend + WP-proxy contract + machine schema; cross-ref (not extend) `recognition-clustering.md` |
+| contracts | `docs/workbay/contracts/image-description-api.md`, `packages/shared-contracts/schemas/image-description-response.schema.json` | new backend + WP-proxy contract + machine schema; cross-ref (not extend) `recognition-clustering.md` |
 | plugin api | `apps/prototype-wp-alt-context/src/api/class-describe-controller.php`, `interface-describe-host.php`, `services/class-describe-media-service.php`, `class-api.php` | describe controller/service/interface + explicit require + registration |
 | plugin smoke | `apps/prototype-wp-alt-context/scripts/localwp/describe-run-smoke.php`, `Makefile` | headless one-image smoke + `localwp-describe-run-smoke` target |
 | memo | `docs/tasks/19.0/E19-1-local-cpu-vlm-benchmark-decision-memo.md` | OCI A1 runbook + fallback decision (S10) |
@@ -138,7 +138,7 @@ Build the `scene` package as the description home: domain enums + frozen value o
 
 Changes:
 - `scene/domain/description.py`, `scene/interface_adapters/http/schemas/{requests,responses}.py` (`extra='forbid'`, typed `provider_disclosure`/`context_used` submodels, `retention_class` StrEnum), `scene/application/hashing.py`, `scene/config/settings.py`
-- `docs/workstate/contracts/image-description-api.md` + `packages/shared-contracts/schemas/image-description-response.schema.json` (all 15 fields required)
+- `docs/workbay/contracts/image-description-api.md` + `packages/shared-contracts/schemas/image-description-response.schema.json` (all 15 fields required)
 
 Proof:
 - `uv run pytest apps/prototype-description-service/scene/tests/test_hashing.py -q` — identical bytes → identical `image_hash`; context key reordering → identical `context_hash`
@@ -297,7 +297,7 @@ Proof:
 
 - [x] Domain enums + request/response schemas (15 fields, `extra='forbid'`) in `scene/domain/description.py` + `scene/interface_adapters/http/schemas/`
 - [x] Pure hashing helpers in `scene/application/hashing.py`
-- [x] `docs/workstate/contracts/image-description-api.md` + `packages/shared-contracts/schemas/image-description-response.schema.json` (all 15 required)
+- [x] `docs/workbay/contracts/image-description-api.md` + `packages/shared-contracts/schemas/image-description-response.schema.json` (all 15 required)
 - [x] `uv run pytest scene/tests/test_hashing.py -q` + schema validation green *(in scene suite 61 passed @0047a08c)*
 
 ### Checklist for Slice 2 (S2): seeded adapter + protocol

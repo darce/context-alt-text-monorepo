@@ -2,7 +2,7 @@
 
 VS Code hook loading is pinned in `.vscode/settings.json`: Copilot loads the single dispatcher hook in `.vscode/copilot-hooks.json` and does not load the Claude Code `.claude/settings*.json` hook files. This prevents Claude-only guards from appearing as extra VS Code hook approvals.
 
-The dispatcher routes to the targeted Workstate guards only when the current tool call needs them: worktree drift, main-branch edits, task-plan findings placement, MCP payload shape, and compact test-output summaries. Use normal judgment and prefer native VS Code tools when they give fresher state.
+The dispatcher routes to the targeted Workbay guards only when the current tool call needs them: worktree drift, main-branch edits, task-plan findings placement, MCP payload shape, and compact test-output summaries. Use normal judgment and prefer native VS Code tools when they give fresher state.
 
 **TEST RUNS:** Run the narrowest direct test command that proves the change. Do not use `tee`; it can freeze the integrated terminal in this workspace.
 
@@ -12,7 +12,7 @@ The dispatcher routes to the targeted Workstate guards only when the current too
 - If a test run needs captured output, redirect once to `/tmp/<suite>.txt` with `> /tmp/<suite>.txt 2>&1`, then inspect it with `read_file`. Never `cat` the file in terminal.
 - Use the foreground terminal for Python tests so the app's uv-managed environment is the one being exercised.
 - Never hardcode user-local absolute filesystem paths such as `/Users/...` in commands, docs, or settings. Use environment variables such as `${env:HOME}`, `${workspaceFolder}`, and `${REPO_ROOT:-$PWD}` instead.
-- For external MCP package verification and runtime flows, do not invoke IDE Python environment-configuration tools. Use the foreground terminal with `uvx --from "mcp-workstate-handoff==0.13.0" python3`, `uvx --from "mcp-workstate-orchestrator==0.7.0" python3`, or a scratch-venv binary such as `/tmp/<env>/bin/python`. If the harness stalls at `Configuring a Python Environment` or `Preparing`, stop retrying and ask the user to run the terminal command directly.
+- For external MCP package verification and runtime flows, do not invoke IDE Python environment-configuration tools. Use the foreground terminal with `uvx --from "mcp-workbay-handoff==0.2.0" python3`, `uvx --from "mcp-workbay-orchestrator==0.2.0" python3`, or a scratch-venv binary such as `/tmp/<env>/bin/python`. If the harness stalls at `Configuring a Python Environment` or `Preparing`, stop retrying and ask the user to run the terminal command directly.
 
 Prefer native tools when they fit. These rows are agent-conduct conventions enforced by review and judgment, not by the narrow raw-Vitest terminal hook:
 
@@ -61,17 +61,17 @@ This protocol ensures you orient to the correct workspace state regardless of wh
 
 # MCP and Python API Fallback
 
-`workstate-handoff-mcp` is the primary state store for task state, decisions, findings, and review runs. `workstate-orchestrator-mcp` extends it with lane management, worker control, and review dispatch. When MCP tool calls are available, use them directly. When they are unavailable (server not started, cold start, context switch), use the Python API as a fallback.
+`workbay-handoff-mcp` is the primary state store for task state, decisions, findings, and review runs. `workbay-orchestrator-mcp` extends it with lane management, worker control, and review dispatch. When MCP tool calls are available, use them directly. When they are unavailable (server not started, cold start, context switch), use the Python API as a fallback.
 
 For Python-API fallback writes (`record_event`, `review_findings`, `set_handoff_state`, `update_task_status`, `close_slice`), always run them from the owning worktree with an explicit `cd <target_worktree_path> && ...` prefix and pass `task_ref='<task-ref>'` in the write call. The provenance guard rejects fallback writes that omit the explicit worktree `cd` or the explicit task ref because the Bash tool path otherwise cannot validate branch/SHA attribution before the write lands.
 
-> **Canonical source:** [`docs/workstate/contracts/harness-protocol.yaml`](../docs/workstate/contracts/harness-protocol.yaml) `python_api_fallback.required_exports` is the authoritative list of package-root symbols every harness must keep importable. The example below is a practical subset used by VS Code/Copilot cold-start; the contract defines the minimum surface. If the two drift, fix the contract first, then re-sync both harness docs (CLAUDE.md and this file).
+> **Canonical source:** [`docs/workbay/contracts/harness-protocol.yaml`](../docs/workbay/contracts/harness-protocol.yaml) `python_api_fallback.required_exports` is the authoritative list of package-root symbols every harness must keep importable. The example below is a practical subset used by VS Code/Copilot cold-start; the contract defines the minimum surface. If the two drift, fix the contract first, then re-sync both harness docs (CLAUDE.md and this file).
 
 **Correct import pattern** — always import from the package root, never from submodules:
 
 ```python
 from pathlib import Path
-from workstate_handoff_mcp import (
+from workbay_handoff_mcp import (
     RuntimeConfig,
     configure_runtime,
     get_handoff_state,
@@ -91,22 +91,22 @@ state = get_handoff_state(sections="identity")
 
 **Common mistakes to avoid:**
 
-- `from workstate_handoff_mcp.decisions import ...` — submodules are internal; use the top-level package
-- `from workstate_handoff_mcp.config import get_runtime_config` — `get_runtime_config` is re-exported from the package root
+- `from workbay_handoff_mcp.decisions import ...` — submodules are internal; use the top-level package
+- `from workbay_handoff_mcp.config import get_runtime_config` — `get_runtime_config` is re-exported from the package root
 - `import sqlite3; conn.execute("SELECT ...")` — never query `handoff.db` directly; the schema is internal
 
 **Running against the installed MCP package:**
 
 ```bash
-uvx --from "mcp-workstate-handoff==0.13.0" python3 -c "
+uvx --from "mcp-workbay-handoff==0.2.0" python3 -c "
 from pathlib import Path
-from workstate_handoff_mcp import RuntimeConfig, configure_runtime, get_handoff_state
+from workbay_handoff_mcp import RuntimeConfig, configure_runtime, get_handoff_state
 configure_runtime(RuntimeConfig.for_repo(Path('.')))
 print(get_handoff_state(sections='identity'))
 "
 ```
 
-This fallback resolves the standalone `workstate-handoff-mcp` package through `uvx` without depending on an IDE-managed interpreter. Use a scratch venv instead when you need a persistent installed environment.
+This fallback resolves the standalone `workbay-handoff-mcp` package through `uvx` without depending on an IDE-managed interpreter. Use a scratch venv instead when you need a persistent installed environment.
 
 When the missing surface is specifically review-run writes, prefer the repo-local wrapper over ad-hoc snippets: `make handoff-review-run TASK_REF=<task-ref> MODE=<branch|planning|release_audit> SUBJECT=<path-or-.> SUBJECT_KIND=<task_plan|epic|branch|adr|roadmap|other> VERDICT=<pass|pass_with_findings|fail|conditional_pass> DECISION=<decision-id> SESSION=<session> RUN_ID=<run-id>`. The target records the review run through the Python API fallback and refreshes `DASHBOARD.txt` plus `CURRENT_TASK.json`.
 
@@ -114,13 +114,13 @@ When the missing surface is specifically review-run writes, prefer the repo-loca
 
 # Project Instructions
 
-This is the `context-alt-text-monorepo`. Full agent instructions: `docs/workstate/instructions.md`.
-Full role routing, testing guides, and domain rules are in `docs/workstate/rules/`.
+This is the `context-alt-text-monorepo`. Full agent instructions: `docs/workbay/instructions.md`.
+Full role routing, testing guides, and domain rules are in `docs/workbay/rules/`.
 
 Key conventions at a glance:
 
 - PHP namespace `AltContext\`; prefix `acx_*` / `ACX_*`; REST namespace `acx/v1/`
 - Design tokens `--acx-*` — no raw hex/px literals in CSS
 - Greenfield project: no migrations, no backward-compat shims
-- MCP handoff required before/after every coding slice (`workstate-handoff-mcp`)
+- MCP handoff required before/after every coding slice (`workbay-handoff-mcp`)
 - `npm` for Node.js; `Composer` for PHP; `uv` for the backend Python app and `uvx` or scratch venvs for MCP/package verification

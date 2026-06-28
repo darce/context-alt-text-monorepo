@@ -75,7 +75,7 @@ The 8 routes (verified, all under `/recognition/`):
 
 ## Context Loading
 
-- Rules: `docs/workstate/rules/backend-php-guidelines.md`, constitution (sr-008, rg-002/rg-015/rg-016).
+- Rules: `docs/workbay/rules/backend-php-guidelines.md`, constitution (sr-008, rg-002/rg-015/rg-016).
 - Injection-idiom + facade precedent: `src/api/class-recognition-controller.php`; sibling pattern: `src/api/class-cluster-mutations-controller.php` (REFA-1) + `src/api/services/`.
 - Transport seam: `AnalysisJobsControllerTransportTest`, `class-recognition-proxy-policy.php` (rg-015).
 - Technique: `docs/tasks/tech-debt/refactoring-evaluation.md` (Fowler Ch6/Ch7).

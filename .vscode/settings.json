@@ -62,8 +62,8 @@
     ".github/skills": true,
     ".claude/skills": true,
     ".agents/skills": true,
-    ".workstate/generated/plugins/workstate-system/effective/codex/skills": true,
-    ".workstate/generated/plugins/workstate-system/base/codex/skills": true,
+    ".workbay/generated/plugins/workbay-system/effective/codex/skills": true,
+    ".workbay/generated/plugins/workbay-system/base/codex/skills": true,
     "~/.copilot/skills": true,
     "~/.claude/skills": true,
     "~/.agents/skills": true

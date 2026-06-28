@@ -6,7 +6,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MCP_CONFIG_PATH = REPO_ROOT / ".vscode" / "mcp.json"
-INSTRUCTIONS_PATH = REPO_ROOT / "docs" / "workstate" / "instructions.md"
+INSTRUCTIONS_PATH = REPO_ROOT / "docs" / "workbay" / "instructions.md"
 CLAUDE_PATH = REPO_ROOT / "CLAUDE.md"
 HANDOFF_MK_PATH = REPO_ROOT / "mk" / "handoff.mk"
 SLICE_START_INLINE_PATH = REPO_ROOT / "scripts" / "_slice_start_inline.py"
@@ -15,7 +15,7 @@ SLICE_START_INLINE_PATH = REPO_ROOT / "scripts" / "_slice_start_inline.py"
 def test_root_mcp_launchers_do_not_require_current_task_path() -> None:
     payload = json.loads(MCP_CONFIG_PATH.read_text(encoding="utf-8"))
 
-    for server_name in ("workstate-handoff-mcp", "workstate-orchestrator-mcp"):
+    for server_name in ("workbay-handoff-mcp", "workbay-orchestrator-mcp"):
         args = payload["servers"][server_name]["args"]
         assert "--current-task-path" not in args
         assert "${workspaceFolder}/CURRENT_TASK.json" not in args

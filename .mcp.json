@@ -1,28 +1,20 @@
 {
   "mcpServers": {
-    "workstate-handoff-mcp": {
+    "workbay-handoff-mcp": {
       "type": "stdio",
-      "command": "uv",
+      "command": "uvx",
       "args": [
-        "run",
-        "--no-sync",
-        "--project",
-        ".workstate/remote/packages/mcp-workstate-handoff",
-        "mcp-workstate-handoff",
+        "mcp-workbay-handoff@0.2.0",
         "--workspace-root",
         ".",
         "serve-stdio"
       ]
     },
-    "workstate-orchestrator-mcp": {
+    "workbay-orchestrator-mcp": {
       "type": "stdio",
-      "command": "uv",
+      "command": "uvx",
       "args": [
-        "run",
-        "--no-sync",
-        "--project",
-        ".workstate/remote/packages/mcp-workstate-orchestrator",
-        "mcp-workstate-orchestrator",
+        "mcp-workbay-orchestrator[bridge]@0.2.0",
         "--workspace-root",
         ".",
         "serve-stdio"

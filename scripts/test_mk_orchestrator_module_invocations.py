@@ -17,7 +17,7 @@ def test_handoff_integrity_make_target_uses_repo_local_guard() -> None:
     text = MK_HANDOFF_PATH.read_text(encoding="utf-8")
 
     assert '$(MCP_PYTHON) "$(WORKTREE_ROOT_REAL)/scripts/mcp/handoff_integrity_guard.py"' in text
-    assert '-m workstate_orchestrator_mcp.orchestration.handoff_integrity_guard' not in text
+    assert '-m workbay_orchestrator_mcp.orchestration.handoff_integrity_guard' not in text
 
 
 def test_remaining_mk_orchestrator_helpers_use_installed_modules() -> None:
@@ -31,19 +31,19 @@ def test_remaining_mk_orchestrator_helpers_use_installed_modules() -> None:
     )
 
     expected_snippets = (
-        '-m workstate_orchestrator_mcp.orchestration.handoff_guidance_summary',
-        '-m workstate_orchestrator_mcp.orchestration.review_dispatch',
+        '-m workbay_orchestrator_mcp.orchestration.handoff_guidance_summary',
+        '-m workbay_orchestrator_mcp.orchestration.review_dispatch',
         # review_runner run: the orchestrator-lane `make review-run` target was
         # removed in MAINT-workstate-migration-20260530 (canonical lifecycle.mk
         # owns review-run now); the lane review_runner is an audited
         # lost-functionality upstream finding, so its invocation no longer appears.
-        '-m workstate_orchestrator_mcp.orchestration.generate_lane_manifest',
-        '-m workstate_orchestrator_mcp.orchestration.bootstrap_lane',
-        '-m workstate_orchestrator_mcp.orchestration.lane_prompt',
-        '-m workstate_orchestrator_mcp.orchestration.lane_exec',
-        '-m workstate_orchestrator_mcp.orchestration.lane_result handoff',
-        '-m workstate_orchestrator_mcp.orchestration.dashboard_live',
-        '-m workstate_orchestrator_mcp.orchestration.dashboard_tui',
+        '-m workbay_orchestrator_mcp.orchestration.generate_lane_manifest',
+        '-m workbay_orchestrator_mcp.orchestration.bootstrap_lane',
+        '-m workbay_orchestrator_mcp.orchestration.lane_prompt',
+        '-m workbay_orchestrator_mcp.orchestration.lane_exec',
+        '-m workbay_orchestrator_mcp.orchestration.lane_result handoff',
+        '-m workbay_orchestrator_mcp.orchestration.dashboard_live',
+        '-m workbay_orchestrator_mcp.orchestration.dashboard_tui',
     )
     for snippet in expected_snippets:
         assert snippet in joined, f"missing installed orchestrator module invocation: {snippet}"

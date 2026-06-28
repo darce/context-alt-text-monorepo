@@ -76,7 +76,7 @@ def _make_repo(tmp_path: Path) -> tuple[Path, Path]:
         "Load the `planning-review` skill for this workflow.\n\nMakefile entry point: `make plan-review DOC=<path>`\n",
     )
     _write(
-        repo / "docs" / "workstate" / "generated" / "codex-command-router.md",
+        repo / "docs" / "workbay" / "generated" / "codex-command-router.md",
         '- `/branch-lifecycle` (write) -> skill `branch-lifecycle` -> `make task-start TASK=<task-ref> OBJECTIVE="..."`\n'
         "- `/branch-review` (verify) -> skill `branch-review` -> `make review-run`\n"
         "- `/planning-review` (verify) -> skill `planning-review` -> `make plan-review DOC=<path>`\n",

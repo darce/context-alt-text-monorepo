@@ -30,10 +30,10 @@ IN_ORCHESTRATOR_ROOT := $(if $(filter $(WORKTREE_ROOT_REAL),$(ORCHESTRATOR_ROOT)
 
 # --- MCP runtime ---
 UVX ?= uvx
-MCP_HANDOFF_PACKAGE ?= mcp-workstate-handoff==0.13.0
-MCP_ORCHESTRATOR_PACKAGE ?= mcp-workstate-orchestrator==0.7.0
+MCP_HANDOFF_PACKAGE ?= mcp-workbay-handoff==0.2.0
+MCP_ORCHESTRATOR_PACKAGE ?= mcp-workbay-orchestrator==0.2.0
 MCP_PYTHON = $(UVX) --from "$(MCP_ORCHESTRATOR_PACKAGE)" python3
-LANE_CONFIG_CMD = $(MCP_PYTHON) -m workstate_orchestrator_mcp.orchestration.lane_config
+LANE_CONFIG_CMD = $(MCP_PYTHON) -m workbay_orchestrator_mcp.orchestration.lane_config
 MCP_PYTHONPATH := $(ORCHESTRATOR_ROOT)/packages/codex-subagent-bridge/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
 WORKTREE_MCP_PYTHONPATH := $(WORKTREE_ROOT_REAL)/packages/codex-subagent-bridge/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
 MCP_CMD = $(UVX) "$(MCP_HANDOFF_PACKAGE)"
@@ -77,7 +77,7 @@ LANE_IDS ?=
 
 # --- Tooling paths (used by lane-commit, lane-clean, lane-refresh) ---
 LANE_WORKTREE_TARGET = $(if $(filter 1,$(IN_ORCHESTRATOR_ROOT)),$(LANE_WORKTREE),$(WORKTREE_ROOT_REAL))
-LANE_TOOLING_PATHS := Makefile mk docs/workstate/instructions.md docs/workstate/templates/WORKTREE_LANE_BRIEF.template.md docs/workstate/templates/WORKTREE_LANE_REPORT.template.md scripts/README.md scripts/worktree-lane
+LANE_TOOLING_PATHS := Makefile mk docs/workbay/instructions.md docs/workbay/templates/WORKTREE_LANE_BRIEF.template.md docs/workbay/templates/WORKTREE_LANE_REPORT.template.md scripts/README.md scripts/worktree-lane
 ROOT_REFRESH_PATHS := $(LANE_TOOLING_PATHS) config/lane-orchestration
 LANE_APP_TOOLING_PATHS :=
 
@@ -237,7 +237,7 @@ help:
 	@echo "  make lane-path TASK=<task-ref> LANE=<lane>"
 	@echo "  make lane-commits TASK=<task-ref> LANE=<lane>"
 	@echo "  make lane-intake TASK=<task-ref> LANE=<lane> [DRY_RUN=1] [SKIP_TESTS=1] [SKIP_POST_INTAKE=1] [POST_INTAKE_CHECK_CMD='...']"
-	@echo "    Prints the latest merge-ready lane report, cherry-picks into a scratch worktree, runs lane-local verification there, fast-forwards root if clean, verifies CURRENT_TASK.json sync with mcp-workstate-handoff handoff-close-check, then runs cross-lane post-intake verification from the orchestrator root."
+	@echo "    Prints the latest merge-ready lane report, cherry-picks into a scratch worktree, runs lane-local verification there, fast-forwards root if clean, verifies CURRENT_TASK.json sync with mcp-workbay-handoff handoff-close-check, then runs cross-lane post-intake verification from the orchestrator root."
 	@echo "    Use SKIP_TESTS=1 to bypass scratch-worktree test commands, SKIP_POST_INTAKE=1 to skip the cross-lane gate, or POST_INTAKE_CHECK_CMD to override the default post-intake check command."
 	@echo "  make orchestrator-daemon [TASK=<task-ref>] [BACKEND=codex-cli|codex-subagent]"
 	@echo "    Shared singleton orchestrator loop rooted at $(ORCHESTRATOR_ROOT). Start it from any worktree; pause/resume/status use the same shared root state."
@@ -296,12 +296,12 @@ check-all:
 # Run the full monorepo check suite before merging a feature branch to main.
 # Pairs with the external handoff-close-check evidence gate, which validates
 # recorded test_result evidence but does NOT execute checks itself (see
-# docs/workstate/workstate-migration-upstream-asks.md § K). Run by habit before
+# docs/workbay/workstate-migration-upstream-asks.md § K). Run by habit before
 # the close-check so the working tree is actually verified, not trusted.
 pre-merge:
 	@$(MAKE) check-all
 
-# Guard: every editable current-pin reference to the workstate MCP packages must
+# Guard: every editable current-pin reference to the workbay MCP packages must
 # match the Makefile MCP_*_PACKAGE canonical. Frozen records (docs/adrs|specs|tasks)
 # are exempt; overlay manifest + range/git+ssh forms surface as advisories.
 check-mcp-pins:
@@ -377,7 +377,7 @@ test-all:
 		fi
 
 # Sweep every tracked task-plan / epic markdown for pasted review-finding
-# lists. Review findings live in workstate-handoff-mcp; pasting them inline
+# lists. Review findings live in workbay-handoff-mcp; pasting them inline
 # duplicates the source of truth and bypasses the pre-merge gate. --scan-repo
 # enumerates `git ls-files '*.md'` and applies the same path scope used by
 # the Claude Code PreToolUse hook, so CI catches drift in any file the hook
@@ -405,10 +405,10 @@ lint-scripts:
 	@python3 scripts/hooks/lint-no-inline-python-heredoc.py
 	@python3 scripts/hooks/lint-expected-revision.py
 
-# MAINT-FB-B-05: validate every workstate-overrides/*/overrides.lock.json
+# MAINT-FB-B-05: validate every workbay-overrides/*/overrides.lock.json
 # component upstream_digest against the materialized upstream base copy
 # (whole-file sha256 of base_path, e.g. SKILL.base.md). The generated base
-# surface under .workstate/generated/ injects Global Instructions and is
+# surface under .workbay/generated/ injects Global Instructions and is
 # deliberately not the digest subject (MAINT-FB-A-02 convention). Without
 # this check, digest drift only surfaces on the next manual bootstrap update.
 check-overrides-digest:
@@ -533,7 +533,7 @@ dev-stop:
 # Print a markdown metrics snapshot for the current task.
 # Usage: make ace-metrics TASK=<task-ref>
 ace-metrics:
-	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m workstate_orchestrator_mcp.orchestration.ace_metrics \
+	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m workbay_orchestrator_mcp.orchestration.ace_metrics \
 		--task-ref "$(TASK)" \
 		--state-dir .task-state \
 		--logs-dir logs \
@@ -542,7 +542,7 @@ ace-metrics:
 # Print a JSON metrics snapshot (also appends to .task-state/metrics.jsonl).
 # Usage: make ace-metrics-json TASK=<task-ref>
 ace-metrics-json:
-	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m workstate_orchestrator_mcp.orchestration.ace_metrics \
+	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m workbay_orchestrator_mcp.orchestration.ace_metrics \
 		--task-ref "$(TASK)" \
 		--state-dir .task-state \
 		--logs-dir logs \
@@ -554,20 +554,20 @@ ace-metrics-json:
 ace-reflect:
 	@$(MCP_PYTHON) scripts/ace/ace_reflect.py \
 		--state-dir .task-state \
-		--instruction-files docs/workstate/instructions.md
+		--instruction-files docs/workbay/instructions.md
 
 # Show pruning candidates across instruction files.
 # Usage: make ace-curation-report
 ace-curation-report:
 	@$(MCP_PYTHON) scripts/ace/ace_reflect.py \
 		--state-dir .task-state \
-		--instruction-files docs/workstate/instructions.md \
+		--instruction-files docs/workbay/instructions.md \
 		--curation-report-only
 
 # Print time-series sparklines from accumulated metrics history.
 # Usage: make ace-trends TASK=<task-ref>
 ace-trends:
-	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m workstate_orchestrator_mcp.orchestration.ace_metrics \
+	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m workbay_orchestrator_mcp.orchestration.ace_metrics \
 		--task-ref "$(TASK)" \
 		--state-dir .task-state \
 		--sparklines
@@ -652,9 +652,9 @@ integrity-watch:
 # no-op via `?=`). Kept OUTSIDE the bootstrap-managed markers below so a future
 # overlay migration cannot strip it again (regressed during the v0.1.24 upgrade).
 LIFECYCLE_FORMATTER = $(MAKE) format-all
-# >>> WORKSTATE_BOOTSTRAP LIFECYCLE INCLUDE >>>
+# >>> WORKBAY_BOOTSTRAP LIFECYCLE INCLUDE >>>
 -include Makefile.d/*.mk
-# <<< WORKSTATE_BOOTSTRAP LIFECYCLE INCLUDE <<<
+# <<< WORKBAY_BOOTSTRAP LIFECYCLE INCLUDE <<<
 
 # Cursor discovers workflows from .cursor/skills; command markdown duplicates picker entries.
 .PHONY: apply-cursor-skills-only-surface apply-cursor-skills-only-surface-check

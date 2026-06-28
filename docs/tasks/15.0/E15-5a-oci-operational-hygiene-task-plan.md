@@ -6,7 +6,7 @@
 > **Predecessors**: None (pure OCI ops; the backend is already live).
 > **Sibling (runs in parallel)**: [E15-3a](./E15-3a-localwp-oci-roundtrip-task-plan.md) (LocalWP -> OCI round-trip verification).
 > **Relationship to E15-5**: E15-5's original Slices 2, 3, and 4 were split out to here so they can land before the public WP demo is provisioned. [E15-5](./E15-5-manual-remote-e2e-task-plan.md) now covers only the remote E2E round-trip against the public WP demo plus the ARM-compat evidence artifact.
-> **Format Note**: This is a condensed operator gate plan rather than a full feature-implementation task plan. It intentionally does not mirror every heading in `docs/workstate/templates/TASK_PLAN.template.md`; reviewers should evaluate it against the exit criteria, slice gates, and checklist evidence below.
+> **Format Note**: This is a condensed operator gate plan rather than a full feature-implementation task plan. It intentionally does not mirror every heading in `docs/workbay/templates/TASK_PLAN.template.md`; reviewers should evaluate it against the exit criteria, slice gates, and checklist evidence below.
 
 ---
 

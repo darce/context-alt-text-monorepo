@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Single VS Code Copilot hook entry point for Workstate guards.
+"""Single VS Code Copilot hook entry point for Workbay guards.
 
 VS Code currently loads hook files but ignores matcher values, so registering
-each Workstate guard as a separate hook makes every guard appear for every tool
+each Workbay guard as a separate hook makes every guard appear for every tool
 call. This dispatcher keeps VS Code to one hook while preserving the same
 tool-name routing before it invokes the underlying guard scripts.
 """

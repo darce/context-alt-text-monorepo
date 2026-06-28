@@ -7,11 +7,11 @@ the whole-file sha256 of the materialized upstream base copy referenced by
 ``base_path`` (e.g. ``skills/branch-review/SKILL.base.md``), resolved
 relative to the plugin overrides directory.
 
-The generated base surface under ``.workstate/generated/plugins/*/base/`` is
+The generated base surface under ``.workbay/generated/plugins/*/base/`` is
 deliberately NOT the digest subject: the generator injects harness-specific
 sections (e.g. ``## Global Instructions``), so its hash legitimately differs
 from the upstream body. Without this check, digest drift only surfaces on the
-next manual workstate-bootstrap update.
+next manual workbay-bootstrap update.
 
 Wired into ``make check-all`` via the ``check-overrides-digest`` target.
 """
@@ -26,7 +26,7 @@ from pathlib import Path
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-OVERRIDES_ROOT = REPO_ROOT / "workstate-overrides"
+OVERRIDES_ROOT = REPO_ROOT / "workbay-overrides"
 
 
 def _sha256_file(path: Path) -> str:

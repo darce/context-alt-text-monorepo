@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-WORKFLOW_PATH = REPO_ROOT / "docs" / "workstate" / "consumer-root-verification.md"
+WORKFLOW_PATH = REPO_ROOT / "docs" / "workbay" / "consumer-root-verification.md"
 
 REQUIRED_WORKFLOW_HEADINGS = (
     "# Consumer Root Verification",
@@ -18,7 +18,7 @@ REQUIRED_WORKFLOW_HEADINGS = (
 REQUIRED_WORKFLOW_SNIPPETS = (
     "/tmp/e17-14-scratch-consumer/",
     './.venv/bin/pip install "workstate-stack==0.1.12"',
-    "./.venv/bin/workstate-bootstrap install --target /tmp/e17-14-scratch-consumer --remote-ref v0.1.22",
+    "./.venv/bin/workbay-bootstrap install --target /tmp/e17-14-scratch-consumer --remote-ref v0.1.22",
     "task_plan_path",
     "DASHBOARD.txt",
     "render_handoff(kind='current_task'",

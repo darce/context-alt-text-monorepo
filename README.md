@@ -80,8 +80,8 @@ make test              # pytest
 
 - Branch from `main`: `feature/<description>`, `fix/<description>`, `docs/<description>`
 - [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`
-- AI agents start at [docs/workstate/instructions.md](docs/workstate/instructions.md)
-- The canonical `workstate-handoff-mcp` and `workstate-orchestrator-mcp` packages now live outside this monorepo; this workspace consumes them as external dependencies during the extraction rollout.
+- AI agents start at [docs/workbay/instructions.md](docs/workbay/instructions.md)
+- The canonical `workbay-handoff-mcp` and `workbay-orchestrator-mcp` packages now live outside this monorepo; this workspace consumes them as external dependencies during the extraction rollout.
 
 ---
 
@@ -89,10 +89,10 @@ make test              # pytest
 
 | Purpose                 | Location                                                     |
 | ----------------------- | ------------------------------------------------------------ |
-| Agent cold-start        | [docs/workstate/instructions.md](docs/workstate/instructions.md) |
-| Agent setup/MCP         | [docs/workstate/BOOTSTRAP.md](docs/workstate/BOOTSTRAP.md)       |
-| API contracts           | [docs/workstate/contracts/](docs/workstate/contracts/)           |
-| Architecture diagrams   | [docs/workstate/diagrams/](docs/workstate/diagrams/)             |
+| Agent cold-start        | [docs/workbay/instructions.md](docs/workbay/instructions.md) |
+| Agent setup/MCP         | [docs/workbay/BOOTSTRAP.md](docs/workbay/BOOTSTRAP.md)       |
+| API contracts           | [docs/workbay/contracts/](docs/workbay/contracts/)           |
+| Architecture diagrams   | [docs/workbay/diagrams/](docs/workbay/diagrams/)             |
 | Active roadmap (v0.1.0) | [docs/roadmaps/v0.1.0/](docs/roadmaps/v0.1.0/)               |
 | Roadmap overview        | [docs/roadmaps/](docs/roadmaps/)                             |
 

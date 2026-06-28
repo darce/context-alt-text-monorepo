@@ -26,7 +26,7 @@ The shared agentic workflow surface is still split across repo-local skill bodie
 
 - Planning artifacts are authored and reviewed in this monorepo first because E17 handoff, review findings, and branch lifecycle state live here.
 - Code changes for the shared plugin generator, manifest schema, emitted plugin trees, and canonical skill-body layout belong in `agentic-protocol-monorepo`, not this monorepo.
-- Remote MCP server repos remain private source owners and are referenced from plugin `mcpServers` definitions via the current `uvx` package pins: `mcp-workstate-handoff==0.12.0` and `mcp-workstate-orchestrator==0.5.0`.
+- Remote MCP server repos remain private source owners and are referenced from plugin `mcpServers` definitions via the current `uvx` package pins: `mcp-workbay-handoff==0.2.0` and `mcp-workbay-orchestrator==0.5.0`.
 - This monorepo cleanup is limited to Tier 3 consumer migration after a working plugin tree exists.
 - The root worktree must remain on `main`; all edits for this task happen on `feature/e17-15` until merge.
 
@@ -169,7 +169,7 @@ Proof:
 - Remote generator tests pass.
 - `make plugins-build && git diff --exit-code dist/` is clean after a second run.
 - Claude and Codex emitted skill bodies are byte-identical.
-- Emitted `mcpServers` entries launch `mcp-workstate-handoff==0.12.0` and `mcp-workstate-orchestrator==0.5.0` through `uvx`.
+- Emitted `mcpServers` entries launch `mcp-workbay-handoff==0.2.0` and `mcp-workbay-orchestrator==0.5.0` through `uvx`.
 
 ### Downstream 3: This Monorepo Consumer Migration
 

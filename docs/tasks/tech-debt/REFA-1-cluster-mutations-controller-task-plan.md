@@ -56,7 +56,7 @@ The 11 route handlers (verified): `cluster_media`, `reassign_cluster_identity`, 
 
 ## Context Loading
 
-- Rules: `docs/workstate/rules/backend-php-guidelines.md`, constitution (sr-008/sr-009, rg-002/rg-016).
+- Rules: `docs/workbay/rules/backend-php-guidelines.md`, constitution (sr-008/sr-009, rg-002/rg-016).
 - Injection-idiom precedent: `src/api/class-recognition-controller.php`; registrar: `src/api/class-api.php`.
 - Technique: `docs/tasks/tech-debt/refactoring-evaluation.md` (Fowler Ch7).
 - Handoff: epic `REFA`; this task `REFA-1`.

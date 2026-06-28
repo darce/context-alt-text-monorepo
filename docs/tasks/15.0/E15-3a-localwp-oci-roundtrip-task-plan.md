@@ -6,7 +6,7 @@
 > **Predecessors**: E15-1 (security baseline) merged; E15-2 (observability baseline) merged. OCI backend live at `api.altcontext.com`.
 > **Blocks**: [E15-3](./E15-3-wordpress-demo-provisioning-task-plan.md) (WP demo provisioning). A failing gate here means the OCI backend cannot yet serve a real ACX plugin instance, which makes buying shared PHP hosting premature.
 > **Sibling (runs in parallel)**: [E15-5a](./E15-5a-oci-operational-hygiene-task-plan.md) (OCI budget alerts + Tailscale + Hetzner fallback plan).
-> **Format Note**: This is an operator gate plan, so it intentionally uses a condensed checklist-first format instead of mirroring every heading in `docs/workstate/templates/TASK_PLAN.template.md`. Review it against the slice gates, evidence requirements, and handoff steps below.
+> **Format Note**: This is an operator gate plan, so it intentionally uses a condensed checklist-first format instead of mirroring every heading in `docs/workbay/templates/TASK_PLAN.template.md`. Review it against the slice gates, evidence requirements, and handoff steps below.
 
 ---
 
@@ -42,7 +42,7 @@ All six are required. Partial completion does not unblock E15-3.
   - Backend base URL: `https://api.altcontext.com`
   - API key: production key (fingerprint only in run log; never raw).
 - Run the plugin's `/settings/test` connection probe.
-- Confirm the LocalWP origin is on the backend CORS allowlist. The production configuration surface is `RECOGNITION_ALLOWED_ORIGINS` in the per-environment env file on the OCI host, `/opt/acx-backend/prod/.env` (a symlink to `secrets/.env`; see E15-5a), which is loaded by the compose file `docker-compose.env.yml` (see `apps/prototype-description-service/.env.prod.example` for the field contract and `docs/workstate/contracts/security.md`). If the origin is missing, capture the pre-change allowlist value in the run log, edit that env file, and restart the `acx-prod.service` systemd unit (`sudo systemctl restart acx-prod`) before retrying the probe; see `infra/oci/README.md` for the canonical per-environment layout. If the origin addition is only temporary for this gate, restore the pre-change allowlist immediately after Slice 3 and record the rollback timestamp; if it remains approved, record that disposition in `docs/tasks/15.0/E15-3a-cors-origin-decision.md`.
+- Confirm the LocalWP origin is on the backend CORS allowlist. The production configuration surface is `RECOGNITION_ALLOWED_ORIGINS` in the per-environment env file on the OCI host, `/opt/acx-backend/prod/.env` (a symlink to `secrets/.env`; see E15-5a), which is loaded by the compose file `docker-compose.env.yml` (see `apps/prototype-description-service/.env.prod.example` for the field contract and `docs/workbay/contracts/security.md`). If the origin is missing, capture the pre-change allowlist value in the run log, edit that env file, and restart the `acx-prod.service` systemd unit (`sudo systemctl restart acx-prod`) before retrying the probe; see `infra/oci/README.md` for the canonical per-environment layout. If the origin addition is only temporary for this gate, restore the pre-change allowlist immediately after Slice 3 and record the rollback timestamp; if it remains approved, record that disposition in `docs/tasks/15.0/E15-3a-cors-origin-decision.md`.
 
 Exit: Settings page reports a successful probe; connection attempt logged with a correlation ID visible via `cd /opt/acx-backend/prod && docker compose -f docker-compose.env.yml logs -f` (see `infra/oci/README.md` for the per-environment log surface) or the equivalent stdout log view documented in `docs/operations/observability-runbook.md`.
 
@@ -62,9 +62,9 @@ Exit: green round-trip; run log has before/after screenshots of plugin state.
 
 ### Slice 3 -- Security boundary checks
 
-- CORS rejection: from a second browser profile with a non-allowlisted origin (e.g. a throwaway `127.0.0.1:4000` dev server), issue a privileged request to the API. Capture the rejection response. Per `docs/workstate/contracts/security.md`, the expected result is that the response omits `Access-Control-Allow-Origin` for the non-allowlisted origin.
+- CORS rejection: from a second browser profile with a non-allowlisted origin (e.g. a throwaway `127.0.0.1:4000` dev server), issue a privileged request to the API. Capture the rejection response. Per `docs/workbay/contracts/security.md`, the expected result is that the response omits `Access-Control-Allow-Origin` for the non-allowlisted origin.
 - Before the rate-limit test, identify the correct production tenant UUID with `cd apps/prototype-description-service && python -m scripts.manage_api_keys --env prod tenant list --limit 20`, then provision a throwaway production-scoped test key via `cd apps/prototype-description-service && python -m scripts.manage_api_keys --env prod create --tenant <tenant_uuid>` (module-form invocation + explicit `--env prod` are mandated by the script's own usage block; the DSN host guard refuses to run otherwise). Record only the tenant UUID and key fingerprint in the run log and note that the key will be revoked immediately after the slice.
-- Rate limiting: issue sustained load against that single temporary key until a 429 is observed; cap the drive at 50 requests or 5 minutes, whichever comes first. If no 429 arrives inside that bound, stop the slice, record the observed headers/body, and file a blocker or follow-up instead of looping indefinitely. On success, capture request count plus the expected `Retry-After`, `X-RateLimit-Limit`, `X-RateLimit-Remaining: 0`, and `{"detail":"rate limit exceeded"}` evidence documented in `docs/workstate/contracts/security.md`.
+- Rate limiting: issue sustained load against that single temporary key until a 429 is observed; cap the drive at 50 requests or 5 minutes, whichever comes first. If no 429 arrives inside that bound, stop the slice, record the observed headers/body, and file a blocker or follow-up instead of looping indefinitely. On success, capture request count plus the expected `Retry-After`, `X-RateLimit-Limit`, `X-RateLimit-Remaining: 0`, and `{"detail":"rate limit exceeded"}` evidence documented in `docs/workbay/contracts/security.md`.
 - Revoke the throwaway test key immediately after evidence capture via `cd apps/prototype-description-service && python -m scripts.manage_api_keys --env prod revoke --key-id <id>` and record the revocation timestamp in the run log.
 
 Exit: CORS rejection evidence + 429 evidence filed in the run log.
@@ -72,7 +72,7 @@ Exit: CORS rejection evidence + 429 evidence filed in the run log.
 ### Slice 4 -- Sovereign local-read fallback (RFC5737 deterministic timeout)
 
 - Temporarily set the plugin backend URL to an RFC5737 address (`https://192.0.2.1`) to force a deterministic connect timeout.
-- Confirm the plugin renders cached state and surfaces the canonical outage-facing sync status used by the current UI (`sync_health=offline`, label `Waiting for service…`; see `docs/workstate/contracts/conflict-resolution-sync-contract.md` and `apps/prototype-wp-alt-context/js/admin/pages/workbench/SyncStatusIndicator.tsx`).
+- Confirm the plugin renders cached state and surfaces the canonical outage-facing sync status used by the current UI (`sync_health=offline`, label `Waiting for service…`; see `docs/workbay/contracts/conflict-resolution-sync-contract.md` and `apps/prototype-wp-alt-context/js/admin/pages/workbench/SyncStatusIndicator.tsx`).
 - Revert the URL to `https://api.altcontext.com` before finishing the slice.
 - Capture fallback-render screenshot / annotated transcript.
 
@@ -96,7 +96,7 @@ Exit: fallback behavior verified; plugin restored to production URL.
 
 - **LocalWP origin not on production CORS allowlist** -- probe returns CORS error, gate fails spuriously. Mitigation: Slice 1 includes an allowlist-update step before calling the gate failed, requires the pre-change allowlist to be captured in the run log, and defines the rollback path for temporary origins.
 - **Raw API key leak into run log / repo** -- production key exposure. Mitigation: fingerprint-only in run log (same discipline as E15-3); run log reviewed before commit.
-- **RFC5737 timeout misreads as hard failure** -- plugin might render a different error state than the canonical outage status (`sync_health=offline`, "Waiting for service…") per `docs/workstate/contracts/conflict-resolution-sync-contract.md` and the `SyncStatus` surface. Mitigation: Slice 4 captures whatever the plugin actually does, and any gap vs. the expected fallback UX becomes a new finding against E15-7 (local sync correctness), not a gate failure here.
+- **RFC5737 timeout misreads as hard failure** -- plugin might render a different error state than the canonical outage status (`sync_health=offline`, "Waiting for service…") per `docs/workbay/contracts/conflict-resolution-sync-contract.md` and the `SyncStatus` surface. Mitigation: Slice 4 captures whatever the plugin actually does, and any gap vs. the expected fallback UX becomes a new finding against E15-7 (local sync correctness), not a gate failure here.
 - **Slice 3 rate-limit test burns production key budget** -- only relevant if the key has a cost ceiling. Mitigation: use a throwaway production-scoped test key whose revocation is scheduled immediately after the slice, and bound the drive to 50 requests / 5 minutes so a misconfigured limiter cannot run indefinitely.
 
 ## Consolidated Checklist

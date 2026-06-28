@@ -3,9 +3,9 @@ name: Handoff Integrity
 on:
   pull_request:
     paths:
-      - "docs/workstate/BOOTSTRAP.md"
-      - "docs/workstate/instructions.md"
-      - "docs/workstate/rules/development-workflow.md"
+      - "docs/workbay/BOOTSTRAP.md"
+      - "docs/workbay/instructions.md"
+      - "docs/workbay/rules/development-workflow.md"
       - "Makefile"
       - ".github/workflows/handoff-integrity.yml"
   push:
@@ -14,9 +14,9 @@ on:
       - master
       - develop
     paths:
-      - "docs/workstate/BOOTSTRAP.md"
-      - "docs/workstate/instructions.md"
-      - "docs/workstate/rules/development-workflow.md"
+      - "docs/workbay/BOOTSTRAP.md"
+      - "docs/workbay/instructions.md"
+      - "docs/workbay/rules/development-workflow.md"
       - "Makefile"
 
 jobs:
@@ -34,11 +34,11 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
-      - name: Install mcp-workstate-handoff
-        run: pip install "mcp-workstate-handoff==0.13.0"
+      - name: Install mcp-workbay-handoff
+        run: pip install "mcp-workbay-handoff==0.2.0"
 
-      - name: Install mcp-workstate-orchestrator
-        run: pip install "mcp-workstate-orchestrator==0.7.0"
+      - name: Install mcp-workbay-orchestrator
+        run: pip install "mcp-workbay-orchestrator==0.2.0"
 
       - name: Run handoff integrity guard
-        run: python -m workstate_orchestrator_mcp.orchestration.handoff_integrity_guard
+        run: python -m workbay_orchestrator_mcp.orchestration.handoff_integrity_guard

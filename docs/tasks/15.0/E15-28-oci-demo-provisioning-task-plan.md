@@ -54,7 +54,7 @@ The epic's Phase 3 plan assumed ~$2–5/mo shared PHP hosting with the design ra
 
 ## Context Loading
 
-- Rules: `docs/workstate/rules/development-workflow.md`, `infra/oci/README.md` (deployment workflow, env layout)
+- Rules: `docs/workbay/rules/development-workflow.md`, `infra/oci/README.md` (deployment workflow, env layout)
 - Contracts: E15-1 security baseline (CORS/rate limits), E15-24 tenant identity plan, E15-3a proof bundle checklist
 - Handoff/MCP: E15-28 ref; E15-3/E15-3a/E15-5 plans for carried-over exit criteria.
 

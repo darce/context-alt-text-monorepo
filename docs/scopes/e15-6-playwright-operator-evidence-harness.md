@@ -24,7 +24,7 @@ This scope note defines the outcome and boundaries for the task-plan stage; it d
   - **Lane C — Axe a11y smoke (v1).** Route-level `@axe-core/playwright` checks on Dashboard, Workbench, Roster, Settings. Serious/critical violations are blockers; moderate findings are triaged unless the active task is explicitly a11y work. Stays separate from screenshot evidence — a screenshot proving avatars rendered is not an a11y pass.
 - Auth bootstrap for v1 targets LocalWP only. A documented `auth.setup.ts` global-setup pattern (interactive one-time login, gitignored `storageState.json` output) is the only auth path that ships in v1. Public-demo storage-state waits until E15 hosting exists.
 - MCP browser tooling is opt-in only. The task plan ships a documented snippet (using `@playwright/mcp` with `--isolated`, `--output-mode=file`, and a task-scoped `--user-data-dir`/output dir) but does not wire MCP into any committed workflow or default config. The snippet must explicitly call out that MCP's browser context cannot share state with `@playwright/test` runs.
-- Repo-local docs live under `apps/prototype-wp-alt-context/docs/playwright-localwp-evidence.md` (LocalWP-specific operator playbook) and `apps/prototype-wp-alt-context/docs/playwright-harness.md` (config, scripts, conventions). Generic operator-evidence doctrine extracts to `agentic-protocol-monorepo` only after this repo proves the shape; nothing lands in `docs/workstate/playbooks/` in v1.
+- Repo-local docs live under `apps/prototype-wp-alt-context/docs/playwright-localwp-evidence.md` (LocalWP-specific operator playbook) and `apps/prototype-wp-alt-context/docs/playwright-harness.md` (config, scripts, conventions). Generic operator-evidence doctrine extracts to `agentic-protocol-monorepo` only after this repo proves the shape; nothing lands in `docs/workbay/playbooks/` in v1.
 - All Playwright artifacts (storageState, traces, videos, screenshots, axe reports) live under a gitignored path scoped per task ref, e.g. `local/playwright/<task-ref>/`. The task plan picks the exact convention; `.gitignore` updates are part of Phase 0.
 - First implementation slice (v1) is intentionally narrow: docs + ignore paths + Playwright config + npm/Make wrappers + one route-load smoke test. Axe and richer seeded proof flows follow only after login/storage-state and fixture setup are boring.
 
@@ -54,7 +54,7 @@ Recorded as MCP decisions on `E15-6`:
 - No cross-browser matrix (no Firefox/WebKit projects in v1). No WordPress version matrix.
 - No public-demo storage-state, no env-var-driven multi-target auth abstraction beyond what LocalWP needs.
 - No Playwright MCP wiring in default config or any committed workflow; MCP ships as an opt-in docs snippet only.
-- No `docs/workstate/playbooks/` entries; the v1 playbook is repo-local under `apps/prototype-wp-alt-context/docs/`.
+- No `docs/workbay/playbooks/` entries; the v1 playbook is repo-local under `apps/prototype-wp-alt-context/docs/`.
 - No file-by-file implementation inventory, exact npm script names, exact ignore-path conventions, or per-route axe rule allowlists in this scope note; those belong in the task plan.
 
 ## Assumptions

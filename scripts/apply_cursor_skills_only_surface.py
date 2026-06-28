@@ -9,10 +9,10 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PLUGIN_ROOT = REPO_ROOT / ".workstate" / "generated" / "plugins" / "workstate-system"
+PLUGIN_ROOT = REPO_ROOT / ".workbay" / "generated" / "plugins" / "workbay-system"
 REMOTE_GENERATOR = (
     REPO_ROOT
-    / ".workstate/remote/packages/workstate-system/workstate_system/payload/scripts/generate_agent_workflows.py"
+    / ".workbay/remote/packages/workbay-system/workstate_system/payload/scripts/generate_agent_workflows.py"
 )
 MARKER_NAME = ".native-skills-only"
 _FALLBACK_MARKER_BODY = (
@@ -91,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
         "--plugin-root",
         type=Path,
         default=PLUGIN_ROOT,
-        help="Plugin tree root (default: .workstate/generated/plugins/workstate-system).",
+        help="Plugin tree root (default: .workbay/generated/plugins/workbay-system).",
     )
     args = parser.parse_args(argv)
     plugin_root = args.plugin_root.resolve()

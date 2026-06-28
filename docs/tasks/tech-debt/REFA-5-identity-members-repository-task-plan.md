@@ -57,7 +57,7 @@ The repository is a God Class: 28 methods (incl. ctor) spanning tenant read/quer
 
 ## Context Loading
 
-- Rules: `docs/workstate/rules/backend-php-guidelines.md`, constitution (sr-008, rg-002/rg-005/rg-016).
+- Rules: `docs/workbay/rules/backend-php-guidelines.md`, constitution (sr-008, rg-002/rg-005/rg-016).
 - Contract (frozen): `src/sovereign/repositories/interface-identity-members-repository.php`.
 - Schema cross-check (rg-005): `src/support/class-life-cycle-manager.php`.
 - Sibling precedent: `docs/tasks/tech-debt/REFA-2-clusters-repository-task-plan.md` + the extracted `class-clusters-read-repository.php` / `-snapshot-merger.php` / `-deletion-service.php` collaborators.

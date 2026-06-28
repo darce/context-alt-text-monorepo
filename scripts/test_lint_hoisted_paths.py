@@ -41,16 +41,16 @@ def test_lint_hoisted_paths_scans_overlay_resolved_local_entries(tmp_path: Path)
     repo = tmp_path / "repo"
     manifest = {
         "schema_version": 2,
-        "remote_clone_path": ".workstate/remote",
+        "remote_clone_path": ".workbay/remote",
         "remote_sha": "0123456789abcdef0123456789abcdef01234567",
         "surfaces": {
             "skills": {
-                "shared_root": ".workstate/remote/.claude/skills",
+                "shared_root": ".workbay/remote/.claude/skills",
                 "local_root": ".claude/skills",
             }
         },
     }
-    _write(repo / ".workstate-bootstrap.json", json.dumps(manifest))
+    _write(repo / ".workbay-bootstrap.json", json.dumps(manifest))
     _write(repo / ".workstate" / "remote" / ".claude" / "skills" / "demo" / "SKILL.md", "clean shared skill\n")
     _write(repo / ".claude" / "skills" / "demo" / "SKILL.md", "Use the context-alt-text-monorepo lane copy.\n")
 
@@ -65,16 +65,16 @@ def test_lint_hoisted_paths_falls_back_to_live_shared_surface_when_remote_root_i
     repo = tmp_path / "repo"
     manifest = {
         "schema_version": 2,
-        "remote_clone_path": ".workstate/remote",
+        "remote_clone_path": ".workbay/remote",
         "remote_sha": "0123456789abcdef0123456789abcdef01234567",
         "surfaces": {
             "skills": {
-                "shared_root": ".workstate/remote/.claude/skills",
+                "shared_root": ".workbay/remote/.claude/skills",
                 "local_root": "local/.claude/skills",
             }
         },
     }
-    _write(repo / ".workstate-bootstrap.json", json.dumps(manifest))
+    _write(repo / ".workbay-bootstrap.json", json.dumps(manifest))
     _write(repo / ".claude" / "skills" / "demo" / "SKILL.md", "clean shared skill\n")
     _write(repo / "local" / ".claude" / "skills" / "demo" / "SKILL.md", "Use the context-alt-text-monorepo lane copy.\n")
 
@@ -96,7 +96,7 @@ def test_lint_hoisted_paths_does_not_duplicate_hook_findings(tmp_path: Path) -> 
 
 def test_lint_hoisted_paths_reports_malformed_overlay_manifest_as_infrastructure_error(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
-    _write(repo / ".workstate-bootstrap.json", "{bad json\n")
+    _write(repo / ".workbay-bootstrap.json", "{bad json\n")
 
     findings, exit_code = lint_hoisted_paths(repo_root=repo)
 

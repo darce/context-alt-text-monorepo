@@ -26,7 +26,7 @@ Ship a single-operator `/admin` surface on the recognition FastAPI service that 
 
 ## Problem Statement
 
-`E15-1` shipped the security baseline but **explicitly deferred the HTTP admin surface**: `docs/tasks/15.0/E15-1-security-baseline-task-plan.md:196` ("Why not an HTTP admin router") and `docs/workstate/contracts/security.md:401-448` ("HTTP admin surface: deferred. No admin router ships with E15-1. A real production admin authority is required first"). Today the only admin path is the operator CLI `apps/prototype-description-service/scripts/manage_api_keys.py`, and `E15-29` go-live (`docs/tasks/15.0/E15-29-public-demo-go-live-task-plan.md:51,126`) still mints demo keys by hand on the prod VM via `docker exec`.
+`E15-1` shipped the security baseline but **explicitly deferred the HTTP admin surface**: `docs/tasks/15.0/E15-1-security-baseline-task-plan.md:196` ("Why not an HTTP admin router") and `docs/workbay/contracts/security.md:401-448` ("HTTP admin surface: deferred. No admin router ships with E15-1. A real production admin authority is required first"). Today the only admin path is the operator CLI `apps/prototype-description-service/scripts/manage_api_keys.py`, and `E15-29` go-live (`docs/tasks/15.0/E15-29-public-demo-go-live-task-plan.md:51,126`) still mints demo keys by hand on the prod VM via `docker exec`.
 
 This task resolves the deferral by naming **the Tailscale tailnet plus a shared admin token as the production admin authority** and building the deferred surface on top of it. The recognition VM is already enrolled on a tailnet for SSH (`infra/oci/README.md:130-423`), so the network substrate exists; what is missing is (a) an admin authority/auth primitive, (b) the HTTP surface, and (c) binding that surface to the tailnet while denying it on the public vhost.
 
@@ -61,12 +61,12 @@ This task resolves the deferral by naming **the Tailscale tailnet plus a shared 
 
 ## Target Outcome
 
-A `RECOGNITION_ADMIN_ENABLED`-gated `/admin` router mounted on the recognition app, every route behind `Depends(require_admin)` on a dedicated `X-Admin-Token` header, exposing JSON endpoints plus a minimal hand-written HTML console (no Jinja2/HTMX/SPA). In production the public `api.altcontext.com` vhost returns `404` for `/admin*`, and the surface is reachable only over the tailnet (via `tailscale serve` or an `ssh -L` tunnel to `prod-api:8000`); the shared token is required on top. The operator opens the console, sees live tenants + key status, mints a key (shown once), and revokes — each action audit-logged atomically. `docs/workstate/contracts/security.md` is updated to record the deferred admin surface as shipped and what authority backs it.
+A `RECOGNITION_ADMIN_ENABLED`-gated `/admin` router mounted on the recognition app, every route behind `Depends(require_admin)` on a dedicated `X-Admin-Token` header, exposing JSON endpoints plus a minimal hand-written HTML console (no Jinja2/HTMX/SPA). In production the public `api.altcontext.com` vhost returns `404` for `/admin*`, and the surface is reachable only over the tailnet (via `tailscale serve` or an `ssh -L` tunnel to `prod-api:8000`); the shared token is required on top. The operator opens the console, sees live tenants + key status, mints a key (shown once), and revokes — each action audit-logged atomically. `docs/workbay/contracts/security.md` is updated to record the deferred admin surface as shipped and what authority backs it.
 
 ## Context Loading
 
-- Rules: `docs/workstate/rules/backend-python-guidelines.md`, `docs/workstate/rules/testing-python.md`.
-- Contracts: `docs/workstate/contracts/security.md` (§ Operator CLI / HTTP admin deferral, lines 401-448).
+- Rules: `docs/workbay/rules/backend-python-guidelines.md`, `docs/workbay/rules/testing-python.md`.
+- Contracts: `docs/workbay/contracts/security.md` (§ Operator CLI / HTTP admin deferral, lines 401-448).
 - Predecessor: `docs/tasks/15.0/E15-1-security-baseline-task-plan.md:99,196,275`.
 - Deploy: `apps/prototype-description-service/Caddyfile`, `docker-compose.env.yml`, `docker-compose.caddy.yml`; host Tailscale runbook `infra/oci/README.md:130-423` (read-only reference).
 - Handoff/MCP: decisions `claude_intake_tenant_admin_scope`, `claude_plan_analyze_resolve_open_qs` (#1073); findings `tenant-admin-PA-01..06` and the planning-review findings on `E15-31`.
@@ -75,7 +75,7 @@ A `RECOGNITION_ADMIN_ENABLED`-gated `/admin` router mounted on the recognition a
 
 | Boundary | Owner | Current Contract | Expected Change | Compatibility Needed? | Verification |
 | --- | --- | --- | --- | --- | --- |
-| Recognition HTTP admin surface | backend | `docs/workstate/contracts/security.md:401-448` (admin surface "deferred") | Add `/admin` routes + admin authority; flip the deferral note to "shipped (tailnet + token)" | no — greenfield, no prior admin clients | API tests + updated contract section |
+| Recognition HTTP admin surface | backend | `docs/workbay/contracts/security.md:401-448` (admin surface "deferred") | Add `/admin` routes + admin authority; flip the deferral note to "shipped (tailnet + token)" | no — greenfield, no prior admin clients | API tests + updated contract section |
 | API-key minting | backend | mint+hash inline in `scripts/manage_api_keys.py:104-141` | Extract to shared `mint_api_key`; CLI delegates | yes — CLI behavior must be unchanged | existing `test_manage_api_keys` stays green |
 | Audit log | backend | `audit_events` written only by scene/retention | Add grant/revoke/tenant-create writers, atomic with the mutation | no | API test asserts audit row written + rollback on audit failure |
 | Deploy topology | infra (in-app) | `Caddyfile` public vhost proxies all paths; live stack = `docker-compose.env.yml` + `docker-compose.caddy.yml` | Public-vhost `/admin*` deny + tailnet exposure + env vars | no | `caddy validate` + `curl …/admin/ → 404` runtime check |
@@ -97,7 +97,7 @@ Five slices, each behavior-plus-proof. Slices 1–4 are app code with determinis
 | backend | `apps/prototype-description-service/api/main.py` | conditional `app.include_router(admin_router, prefix="/admin")` behind `admin_enabled`; call `validate_admin_config()` fail-closed at startup (mirror `_check_dev_key_guard`) |
 | deploy | `apps/prototype-description-service/Caddyfile` | public `api.altcontext.com` vhost denies `/admin*` (`respond @admin 404`) before the catch-all `reverse_proxy` |
 | deploy | `apps/prototype-description-service/docker-compose.env.yml`, `.env.prod.example` | publish api to host loopback for the tailnet path + `RECOGNITION_ADMIN_ENABLED` / `RECOGNITION_ADMIN_TOKEN` / `RECOGNITION_ADMIN_TAILNET_BOUND` env vars |
-| docs | `docs/workstate/contracts/security.md` | flip the "HTTP admin surface deferred" note (lines 401-448) to "shipped"; document the tailnet+token authority |
+| docs | `docs/workbay/contracts/security.md` | flip the "HTTP admin surface deferred" note (lines 401-448) to "shipped"; document the tailnet+token authority |
 | docs (new) | `docs/runbooks/admin-tenant-keys.md` | operator runbook: reach `/admin` over the tailnet (`tailscale serve` / `ssh -L`), replacing the manual `docker exec` flow; references `infra/oci/README.md` |
 | docs | `docs/tasks/15.0/E15-29-public-demo-go-live-task-plan.md` | point the demo-key step at the runbook instead of manual `docker exec` |
 
@@ -120,7 +120,7 @@ Five slices, each behavior-plus-proof. Slices 1–4 are app code with determinis
   - `pytest recognition/tests/api/test_admin_router.py` — create→list→mint→revoke; auth required on every route; audit row per mutation; injected audit failure rolls back the mutation; unknown tenant on mint → 404; duplicate site_url → 409; revoke-already-revoked → 200 idempotent; env/DSN guard refuses production+local-DSN (Slice 3).
   - `pytest recognition/tests/api/test_admin_mount.py` — `/admin/` 404 when disabled; mounted + console HTML renders when enabled; startup raises when enabled w/o valid token (Slice 4).
 - Contract/fixture verification:
-  - Slice 5: `grep -c "deferred" docs/workstate/contracts/security.md` returns 0 inside the rewritten Operator-CLI/admin section, and the section contains the post-edit anchors `RECOGNITION_ADMIN_TOKEN` + `tailnet`.
+  - Slice 5: `grep -c "deferred" docs/workbay/contracts/security.md` returns 0 inside the rewritten Operator-CLI/admin section, and the section contains the post-edit anchors `RECOGNITION_ADMIN_TOKEN` + `tailnet`.
 - Runtime-parity / manual verification:
   - `caddy validate --config Caddyfile --adapter caddyfile`; with the stack up, `curl -so /dev/null -w "%{http_code}" https://api.altcontext.com/admin/` returns `404`, while the tailnet path (`tailscale serve` URL or `ssh -L` tunnel) serves `/admin/`.
   - With `RECOGNITION_ADMIN_ENABLED=true` + token, mint a key over the tailnet, confirm it authenticates a recognition request, revoke it, confirm 401 thereafter.
@@ -195,12 +195,12 @@ Changes:
   (404, not 403, to avoid confirming the surface exists.)
 - Tailnet exposure (host-level Tailscale already installed per `infra/oci/README.md`): publish the api container to the VM loopback (`docker-compose.env.yml`: `ports: ["127.0.0.1:8000:8000"]`) and expose `/admin` on the tailnet via `tailscale serve --bg --https=443 --set-path /admin http://127.0.0.1:8000/admin`; **or** document an `ssh -L 8001:127.0.0.1:8000 <vm-over-tailnet>` operator tunnel. The mandatory invariant (either path): the public vhost denies `/admin*`; the tailnet path serves it; the admin token is still required.
 - `.env.prod.example`: add `RECOGNITION_ADMIN_ENABLED`, `RECOGNITION_ADMIN_TOKEN` (note: generate via `python -c "import secrets; print(secrets.token_urlsafe(32))"`), `RECOGNITION_ADMIN_TAILNET_BOUND=1`.
-- `docs/workstate/contracts/security.md:401-448`: flip "HTTP admin surface: deferred" → shipped; document tailnet + shared-token authority and the public-vhost deny.
+- `docs/workbay/contracts/security.md:401-448`: flip "HTTP admin surface: deferred" → shipped; document tailnet + shared-token authority and the public-vhost deny.
 - `docs/runbooks/admin-tenant-keys.md` (new) + `E15-29` go-live: operator reaches `/admin` over the tailnet instead of `docker exec ... manage_api_keys`; references `infra/oci/README.md`.
 
 Proof:
 - `caddy validate --config Caddyfile --adapter caddyfile`; runtime parity: `curl -so /dev/null -w "%{http_code}" https://api.altcontext.com/admin/` → `404`; tailnet path serves `/admin/`.
-- `grep -c "deferred" docs/workstate/contracts/security.md` → 0 within the rewritten admin section; section contains anchors `RECOGNITION_ADMIN_TOKEN` and `tailnet`.
+- `grep -c "deferred" docs/workbay/contracts/security.md` → 0 within the rewritten admin section; section contains anchors `RECOGNITION_ADMIN_TOKEN` and `tailnet`.
 
 ---
 
@@ -262,4 +262,4 @@ Proof:
 - [ ] `/admin` returns 401 without the admin token; the public `api.altcontext.com` vhost returns 404 for `/admin*` (the mechanism backing "unreachable off-tailnet").
 - [ ] Every mint/revoke/tenant-create writes an `audit_events` row atomically with the mutation.
 - [ ] `manage_api_keys` CLI behavior unchanged (mint logic now shared, not duplicated).
-- [ ] `docs/workstate/contracts/security.md` records the admin surface as shipped with its authority.
+- [ ] `docs/workbay/contracts/security.md` records the admin surface as shipped with its authority.

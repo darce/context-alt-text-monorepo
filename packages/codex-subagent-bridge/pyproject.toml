@@ -18,15 +18,9 @@ dev = [
     "ruff>=0.11.0,<1.0.0",
     "mypy>=1.13.0,<2.0.0",
     # Contract-test dependency: lane_exec/review_runner payload validators live in
-    # the external mcp-workstate-orchestrator package (workstate monorepo).
-    "mcp-workstate-orchestrator>=0.6.0,<0.7.0",
+    # the external mcp-workbay-orchestrator package.
+    "mcp-workbay-orchestrator>=0.2.0,<0.3.0",
 ]
-
-# Unpublished workstate packages resolve from pinned tags of the workstate monorepo.
-[tool.uv.sources]
-mcp-workstate-orchestrator = { git = "https://github.com/darce/workstate.git", tag = "mcp-workstate-orchestrator-v0.7.0", subdirectory = "packages/mcp-workstate-orchestrator" }
-mcp-workstate-handoff = { git = "https://github.com/darce/workstate.git", tag = "mcp-workstate-handoff-v0.13.0", subdirectory = "packages/mcp-workstate-handoff" }
-workstate-protocol = { git = "https://github.com/darce/workstate.git", tag = "workstate-protocol-v0.2.1", subdirectory = "packages/workstate-protocol" }
 
 [tool.setuptools]
 package-dir = {"" = "src"}

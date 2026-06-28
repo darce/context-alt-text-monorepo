@@ -1,0 +1,203 @@
+{
+  "schema_version": 2,
+  "source_kind": "package",
+  "package_version": "0.2.1",
+  "stack_distribution": "workbay",
+  "stack_version": "0.2.1",
+  "stack_members": {
+    "mcp-workbay-handoff": "0.2.0",
+    "mcp-workbay-orchestrator": "0.2.0",
+    "workbay-bootstrap": "0.2.1",
+    "workbay-protocol": "0.2.0",
+    "workbay-system": "0.2.1"
+  },
+  "profile": "all",
+  "surfaces": [
+    {
+      "path": ".github/hooks",
+      "source": "local"
+    },
+    {
+      "path": "scripts/hooks",
+      "source": "local"
+    },
+    {
+      "path": "docs/workbay/contracts",
+      "source": "local"
+    },
+    {
+      "path": "docs/workbay/rules",
+      "source": "local"
+    },
+    {
+      "path": "Makefile.d/ace.mk",
+      "source": "local"
+    },
+    {
+      "path": "Makefile.d/compaction.mk",
+      "source": "local"
+    },
+    {
+      "path": "Makefile.d/plans.mk",
+      "source": "local"
+    },
+    {
+      "path": "Makefile.d/plugins.mk",
+      "source": "local"
+    },
+    {
+      "path": "Makefile.d/workflows.mk",
+      "source": "local"
+    },
+    {
+      "path": "scripts/workbay/git-plan-cat.sh",
+      "source": "local"
+    },
+    {
+      "path": ".codex/hooks.json",
+      "source": "local"
+    },
+    {
+      "path": ".github/prompts",
+      "source": "generated"
+    },
+    {
+      "path": ".workbay/generated/plugins/workbay-system/base",
+      "source": "generated"
+    },
+    {
+      "path": ".workbay/generated/plugins/workbay-system/effective",
+      "source": "generated"
+    },
+    {
+      "path": ".cursor/hooks.json",
+      "source": "generated"
+    },
+    {
+      "path": ".grok/plugins/workbay-system",
+      "source": "generated"
+    },
+    {
+      "path": "Makefile.d/lifecycle.mk",
+      "source": "lifecycle"
+    },
+    {
+      "path": "scripts/workbay/lifecycle",
+      "source": "lifecycle"
+    },
+    {
+      "path": "Makefile.d/update.mk",
+      "source": "lifecycle"
+    },
+    {
+      "path": "scripts/workbay/update.sh",
+      "source": "lifecycle"
+    }
+  ],
+  "configs": [
+    {
+      "path": ".claude-plugin/marketplace.json",
+      "action": "unchanged"
+    },
+    {
+      "path": ".claude/settings.json",
+      "action": "unchanged"
+    },
+    {
+      "path": ".gitignore",
+      "action": "already_present"
+    },
+    {
+      "path": ".claude/settings.local.json",
+      "action": "unchanged"
+    },
+    {
+      "path": ".agents/plugins/marketplace.json",
+      "action": "unchanged"
+    },
+    {
+      "path": ".cursor",
+      "action": "updated",
+      "kind": "cursor_native_surfaces"
+    },
+    {
+      "path": ".grok/plugins/workbay-system",
+      "action": "updated",
+      "kind": "grok_plugin"
+    },
+    {
+      "path": ".mcp.json",
+      "action": "merged"
+    },
+    {
+      "path": ".vscode/mcp.json",
+      "action": "merged"
+    },
+    {
+      "path": ".codex/config.toml",
+      "action": "merged"
+    },
+    {
+      "path": ".cursor/mcp.json",
+      "action": "merged"
+    },
+    {
+      "path": ".codex/config.toml",
+      "action": "applied",
+      "kind": "codex_plugin_activation"
+    },
+    {
+      "path": ".grok/plugins/workbay-system",
+      "action": "already_present",
+      "kind": "grok_plugin_activation"
+    },
+    {
+      "path": ".cursor",
+      "action": "applied",
+      "kind": "cursor_native_surfaces_activation"
+    },
+    {
+      "path": ".claude/settings.json",
+      "action": "applied",
+      "kind": "claude_plugin_activation"
+    },
+    {
+      "path": "Makefile",
+      "action": "already_present"
+    },
+    {
+      "path": "core.hooksPath",
+      "action": "set"
+    },
+    {
+      "path": ".gitignore",
+      "action": "appended"
+    }
+  ],
+  "mcp_servers": [
+    "workbay-handoff-mcp",
+    "workbay-orchestrator-mcp"
+  ],
+  "install_steps": [
+    {
+      "step": "config_claude",
+      "status": "ok"
+    },
+    {
+      "step": "config_vscode",
+      "status": "ok"
+    },
+    {
+      "step": "config_codex",
+      "status": "ok"
+    },
+    {
+      "step": "config_cursor",
+      "status": "ok"
+    },
+    {
+      "step": "finalize_manifest",
+      "status": "ok"
+    }
+  ]
+}

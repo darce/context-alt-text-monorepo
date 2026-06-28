@@ -181,6 +181,53 @@ requiring the consumer to hand-edit the lock (as was needed here).
 
 ---
 
+## Part C — Semantic compaction reinjection: deliver it, don't just ship it
+
+The handoff package **fully implements** semantic compaction reinjection — after a 50k-token
+compaction the SessionStart `reinject-context.py` hook re-surfaces handoff concepts ranked by
+**local-ONNX embedding** cosine-similarity + MMR dedup (top-K via
+`build_semantic_reinjection_packet()` / `ReinjectionConfig`; off by default, byte-identical when
+off / model absent / `embeddings` extra missing; **never hits the network**). **None of it is
+active in this consumer**: the architecture is shipped but not *delivered*. The same
+materialization mechanism (Part B) should close the three install-side gaps (detail in
+`workstate-migration-upstream-asks.md` § M).
+
+### C1. Provision the embedding model artifact idempotently
+
+`EmbeddingProvider.from_env()` reads `WORKBAY_HANDOFF_EMBEDDING_{MODEL,TOKENIZER,…_SHA256}` paths
+that `workbay-bootstrap install` never writes, so the provider always returns `None` and
+reinjection silently degrades. Install (default-active, `--no-embeddings` opt-out) should download a
+pinned, small, license-clear ONNX model (e.g. MiniLM-L6-v2), **verify SHA256**, and write the env
+vars into a harness-owned surface (`.workbay/embedding.env` or `.claude/settings.json env:`);
+`repair` re-downloads on absence/mismatch.
+- *Concept:* **verify-then-trust + idempotent repair** — pinned digest, converges on re-run; **fail
+  fast** on digest mismatch instead of degrading silently.
+
+### C2. Wire the SessionStart reinject hook
+
+`reinject-context.py` is on disk but **no `SessionStart` entry** is written, so the hook never
+fires. Install/repair should wire it alongside the Stop hook (`compact-session.py`) — the same
+hook-wiring the improved materializer (B2) already owns.
+
+### C3. A supported activation path + observable delivery state
+
+Semantic mode is gated on `WORKBAY_REINJECT_SEMANTIC=1`, which no install step sets. Provide a
+first-class toggle (default-on when a provider resolves, else a one-time post-install advisory), and
+have `workbay-bootstrap doctor` **report the delivery state** — hook wired? `embeddings` extra
+installed? model present + digest-valid? `anchor_vector` backfilled? semantic enabled? — so the
+operator sees *why* reinjection is or isn't active.
+- *Concept:* **fail-loud observability** (Nygard) — the silent degrade path is correct behavior, but
+  the operator must be able to *see* it, not guess.
+
+### C4. Migrate the hook's names so the wiring survives re-sync
+
+`reinject-context.py` still imports `workstate_handoff_mcp` and reads `WORKSTATE_REINJECT_*`; this
+consumer sed-patched it and the patch reverts on the next materialization. Complete the rename in
+the **payload** so the hook is correct as-shipped (ties into Part B's "consumer must not hand-patch
+overlay-owned files").
+
+---
+
 ## Acceptance criteria
 
 1. `engineering-heuristics.md` ships in the payload; canonical `branch-review-guide` /
@@ -196,6 +243,9 @@ requiring the consumer to hand-edit the lock (as was needed here).
    safely with a dry-run.
 6. Validators pass under **both** ledger modes and fail loudly on a half-materialized overlay.
 7. A consumer can add a rules/guide enrichment that **survives re-materialization**.
+8. Semantic reinjection is **one bootstrap step from active**: model provisioned (digest-verified),
+   SessionStart hook wired, toggle documented, `doctor` reports delivery state; the silent degrade
+   path is preserved **and** observable; the reinject hook ships with `workbay`-correct names.
 
 ## Test posture (apply the concepts to the mechanism)
 

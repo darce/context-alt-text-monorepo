@@ -113,7 +113,7 @@ DASHBOARD.md
 # .github/hooks, Makefile.d and scripts/workstate symlinks until
 # `workbay-bootstrap install` repoints them to .workbay/remote. Physical removal
 # is deferred to that installer cutover; see
-# docs/workbay/workstate-migration-upstream-asks.md.
+# docs/workbay/upstream-requests/2026-06-28-refactoring-lens-and-overlay-mechanism/REQUEST.md.
 .workstate/
 /scripts/hooks
 /.github/hooks

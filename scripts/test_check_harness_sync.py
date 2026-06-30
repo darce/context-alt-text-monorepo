@@ -41,6 +41,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 COPY_PATHS = (
     Path("scripts/check_harness_sync.py"),
     Path("scripts/overlay_resolver.py"),
+    Path("scripts/_overlay_clone.py"),
+    Path("scripts/_guard_wrap.py"),
+    Path("scripts/generate_agent_workflows.py"),
     Path(".vscode/settings.json"),
     Path(".claude/settings.json"),
     Path(".codex/hooks.json"),

@@ -60,7 +60,14 @@ except ModuleNotFoundError:
 try:
     from scripts._overlay_clone import overlay_packages_root
 except ModuleNotFoundError:
-    from _overlay_clone import overlay_packages_root
+    try:
+        from _overlay_clone import overlay_packages_root
+    except ModuleNotFoundError:
+
+        def overlay_packages_root(repo_root: Path) -> Path | None:
+            """Fallback for fixture copies that omit scripts/_overlay_clone.py."""
+            candidate = repo_root / ".workbay" / "remote" / "packages"
+            return candidate if candidate.is_dir() else None
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 _OVERLAY_PACKAGES = overlay_packages_root(REPO_ROOT)
@@ -374,12 +381,22 @@ def _expected_managed_claude_hooks(
     hooks_spec = contract.get("hooks", {})
     override_root = _discover_claude_override_root(repo_root)
     if override_root is None:
+        if not hasattr(generator, "render_claude_hooks_config"):
+            raise ValueError(
+                "generate_agent_workflows renderer is unavailable; run "
+                "`workbay-bootstrap install` to materialize .workbay/remote"
+            )
         return generator.render_claude_hooks_config(hooks_spec)["hooks"]
     from workbay_protocol.bootstrap import PluginOverrideManifest
 
     manifest = PluginOverrideManifest.model_validate(
         yaml.safe_load((override_root / "overrides.yaml").read_text()) or {}
     )
+    if not hasattr(generator, "render_composed_claude_settings_hooks"):
+        raise ValueError(
+            "generate_agent_workflows composed renderer is unavailable; run "
+            "`workbay-bootstrap install` to materialize .workbay/remote"
+        )
     return generator.render_composed_claude_settings_hooks(
         hooks_spec,
         override_root=override_root,

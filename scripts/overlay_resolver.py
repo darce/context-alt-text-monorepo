@@ -9,7 +9,13 @@ from typing import Literal
 try:  # single source of truth for the overlay clone location — no hardcoded paths
     from scripts._overlay_clone import overlay_clone_root
 except ModuleNotFoundError:
-    from _overlay_clone import overlay_clone_root
+    try:
+        from _overlay_clone import overlay_clone_root
+    except ModuleNotFoundError:
+
+        def overlay_clone_root(repo_root: Path) -> Path:
+            """Fallback for fixture copies that omit scripts/_overlay_clone.py."""
+            return repo_root / ".workbay" / "remote"
 
 
 SurfaceKind = Literal["skills", "hooks", "commands", "prompts", "contracts"]
@@ -234,16 +240,21 @@ def _load_bootstrap_manifest(project_root: Path) -> dict:
             f"canonical bootstrap ledger {BOOTSTRAP_MANIFEST_NAME} is missing an integer "
             "`schema_version`"
         )
-    remote_sha = payload.get("remote_sha")
-    if not isinstance(remote_sha, str) or not remote_sha.strip():
-        raise OverlayResolverError(
-            f"canonical bootstrap ledger {BOOTSTRAP_MANIFEST_NAME} is missing clone metadata "
-            "(`remote_sha`)"
-        )
-    if not isinstance(payload.get("surfaces"), list):
+    surfaces = payload.get("surfaces")
+    if not isinstance(surfaces, list):
         raise OverlayResolverError(
             f"canonical bootstrap ledger {BOOTSTRAP_MANIFEST_NAME} `surfaces` must be a list "
             "of {path, source} entries"
+        )
+    has_shared_surface = any(
+        isinstance(entry, dict) and entry.get("source") == "shared"
+        for entry in surfaces
+    )
+    remote_sha = payload.get("remote_sha")
+    if has_shared_surface and (not isinstance(remote_sha, str) or not remote_sha.strip()):
+        raise OverlayResolverError(
+            f"canonical bootstrap ledger {BOOTSTRAP_MANIFEST_NAME} is missing clone metadata "
+            "(`remote_sha`)"
         )
     return payload
 

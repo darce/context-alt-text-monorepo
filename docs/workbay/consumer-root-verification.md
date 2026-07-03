@@ -6,29 +6,37 @@ Use this note when you need to prove that a scratch consumer repo can discover a
 
 ## Fixture
 
-Create a scratch repo at `/tmp/e17-14-scratch-consumer/` plus two sibling task roots. The consumer root must come from `git init`, not from a clone of this monorepo.
+Create a scratch repo at `/tmp/wb-scratch-consumer/` plus two sibling task roots. The consumer root must come from `git init`, not from a clone of this monorepo.
 
 ```bash
-rm -rf /tmp/e17-14-scratch-consumer /tmp/e17-14-scratch-consumer-task-a /tmp/e17-14-scratch-consumer-task-b
-mkdir -p /tmp/e17-14-scratch-consumer /tmp/e17-14-scratch-consumer-task-a/docs/tasks /tmp/e17-14-scratch-consumer-task-b/docs/tasks
-cd /tmp/e17-14-scratch-consumer
+rm -rf /tmp/wb-scratch-consumer /tmp/wb-scratch-consumer-task-a /tmp/wb-scratch-consumer-task-b
+mkdir -p /tmp/wb-scratch-consumer /tmp/wb-scratch-consumer-task-a/docs/tasks /tmp/wb-scratch-consumer-task-b/docs/tasks
+cd /tmp/wb-scratch-consumer
 git init
-python3 -m venv .venv
-./.venv/bin/pip install "workstate-stack==0.1.12"
-./.venv/bin/workbay-bootstrap install --target /tmp/e17-14-scratch-consumer --remote-ref v0.1.22
-./.venv/bin/workbay-bootstrap doctor
+REF=workbay-v0.3.6
+R="git+https://github.com/darce/workbay.git@$REF"
+uv tool install --no-sources \
+  --with "$R#subdirectory=packages/workbay-protocol" \
+  --with "$R#subdirectory=packages/mcp-workbay-handoff" \
+  --with "$R#subdirectory=packages/mcp-workbay-orchestrator" \
+  --with "$R#subdirectory=packages/workbay-bootstrap" \
+  --with "$R#subdirectory=packages/workbay-system" \
+  --from "$R#subdirectory=packages/workbay" \
+  workbay
+workbay install --target /tmp/wb-scratch-consumer --remote-ref "$REF"
+workbay doctor --target /tmp/wb-scratch-consumer
 ```
 
 Seed two active tasks after install. Each active row must carry a distinct `task_plan_path` plus the matching `target_worktree_path`.
 
 ```text
-set_handoff_state(task_ref='E17-14-A', target_branch='feature/a', target_worktree_path='/tmp/e17-14-scratch-consumer-task-a', task_plan_path='docs/tasks/task-a.md', status='in_progress')
-set_handoff_state(task_ref='E17-14-B', target_branch='feature/b', target_worktree_path='/tmp/e17-14-scratch-consumer-task-b', task_plan_path='docs/tasks/task-b.md', status='in_progress')
+set_handoff_state(task_ref='E17-14-A', target_branch='feature/a', target_worktree_path='/tmp/wb-scratch-consumer-task-a', task_plan_path='docs/tasks/task-a.md', status='in_progress')
+set_handoff_state(task_ref='E17-14-B', target_branch='feature/b', target_worktree_path='/tmp/wb-scratch-consumer-task-b', task_plan_path='docs/tasks/task-b.md', status='in_progress')
 ```
 
 ## Probe
 
-From `/tmp/e17-14-scratch-consumer/`, run:
+From `/tmp/wb-scratch-consumer/`, run:
 
 ```bash
 make context

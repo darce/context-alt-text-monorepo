@@ -110,14 +110,13 @@ DASHBOARD.md
 # tracked here (not gitignored) as the consumer-owned MCP server config.
 .workbay/
 # Legacy workstate overlay clone — still load-bearing via the scripts/hooks,
-# .github/hooks, Makefile.d and scripts/workstate symlinks until
+# .github/hooks and Makefile.d symlinks until
 # `workbay-bootstrap install` repoints them to .workbay/remote. Physical removal
 # is deferred to that installer cutover; see
 # docs/workbay/upstream-requests/2026-06-28-refactoring-lens-and-overlay-mechanism/REQUEST.md.
 .workstate/
 /scripts/hooks
 /.github/hooks
-/scripts/workstate
 /skills
 /Makefile.d
 /.github/prompts/

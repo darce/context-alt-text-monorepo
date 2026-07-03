@@ -157,18 +157,6 @@
           }
         ]
       }
-    ],
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/compact-session.py\"",
-            "timeout": 60
-          }
-        ]
-      }
     ]
   }
 }

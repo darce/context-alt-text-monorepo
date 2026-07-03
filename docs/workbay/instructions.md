@@ -82,7 +82,7 @@ Global instructions:
 
 If a user prompt begins with a registered `/command_id`, treat that prefix as a portable workflow command routed through `config/agent-workflows/portable_commands.json`.
 
-Current managed ids: `/scope`, `/auto-fix`, `/branch-lifecycle`, `/branch-review`, `/handoff-lifecycle`, `/investigate`, `/incremental-implementation`, `/plan-analyze`, `/planning-review`, `/review-parallel`, `/tdd`.
+Current managed ids: `/scope`, `/refactor`, `/auto-fix`, `/branch-lifecycle`, `/branch-review`, `/handoff-lifecycle`, `/investigate`, `/incremental-implementation`, `/plan-analyze`, `/planning-review`, `/review-parallel`, `/tdd`, `/workbay`.
 
 Routing rules:
 
@@ -94,6 +94,7 @@ Routing rules:
 Command map:
 
 - `/scope` (guide) -> skill `scope` -> `(in-session intake; no standalone make target)`
+- `/refactor` (guide) -> skill `refactor` -> `(in-session advisory skill; no standalone make target)`
 - `/auto-fix` (write) -> skill `auto-fix` -> `(in-session bounded-loop skill; no standalone make target)`
 - `/branch-lifecycle` (write) -> skill `branch-lifecycle` -> `make task-start TASK=<task-ref> OBJECTIVE="..."`
 - `/branch-review` (verify) -> skill `branch-review` -> `make review-run`
@@ -104,6 +105,7 @@ Command map:
 - `/planning-review` (verify) -> skill `planning-review` -> `make plan-review DOC=<path>`
 - `/review-parallel` (verify) -> skill `review-parallel` -> `(in-session coordinator skill; no standalone make target)`
 - `/tdd` (write) -> skill `tdd` -> `make slice-start TASK=<task-ref> TEST_CMD="<command>"`
+- `/workbay` (guide) -> skill `workbay` -> `(in-session harness control; no standalone make target)`
 
 <!-- END GENERATED: codex-command-router -->
 

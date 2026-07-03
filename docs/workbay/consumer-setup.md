@@ -1,32 +1,38 @@
 # Consumer Setup
 
-Use this guide when you want another private Daniel-owned repository to consume the hoisted workstate system without copying files by hand.
+Use this guide when you want another private Daniel-owned repository to consume the hoisted workbay system without copying files by hand.
 
 ## Prerequisites
 
 - macOS or Linux with `git`, `python3`, and `uv`
 - Access to the private `darce/*` GitHub repositories over SSH
-- A project-local Python 3.11+ virtual environment; the commands below use `./.venv/bin/...` explicitly to avoid PATH shadowing from global Python tool installs
 - A clean consumer repository root where the overlay should live
 
 ## Install
 
-Install the three package surfaces from PyPI, then materialize the shared overlay into the current repo:
+Install the `workbay` front-door tool from the pinned git ref (no PyPI), then materialize the overlay into the current repo. Bundle every package surface with `--with` so the single `uv tool` install resolves the whole stack from one ref:
 
 ```bash
-python3 -m venv .venv
-./.venv/bin/pip install "workstate-stack==0.1.12"
-
-./.venv/bin/workbay-bootstrap install --target . --remote-ref workstate-stack-v0.1.12
+REF=workbay-v0.3.6
+R="git+https://github.com/darce/workbay.git@$REF"
+uv tool install --no-sources \
+  --with "$R#subdirectory=packages/workbay-protocol" \
+  --with "$R#subdirectory=packages/mcp-workbay-handoff" \
+  --with "$R#subdirectory=packages/mcp-workbay-orchestrator" \
+  --with "$R#subdirectory=packages/workbay-bootstrap" \
+  --with "$R#subdirectory=packages/workbay-system" \
+  --from "$R#subdirectory=packages/workbay" \
+  workbay
+workbay install --target . --remote-ref "$REF"
 ```
 
-The install flow clones the shared workstate surface into `.workbay/remote/`, creates the overlay symlinks, writes `.workbay-bootstrap.json`, and wires the local MCP config files.
-Keep the overlay ref pinned to the reviewed workstate stack tag (`workstate-stack-v0.1.12`) until a newer release set is explicitly promoted.
+`workbay` lands on `PATH` via `uv tool`, so invoke it directly — do not shell out to `./.venv/bin/workbay-bootstrap`. The install runs in package mode: it materializes the overlay from package data (no `.workbay/remote/` clone, no symlinks), writes `.workbay-bootstrap.json`, registers the two MCP servers via the `mcp_launch.py` shim, and wires `core.hooksPath`.
+Keep the overlay ref pinned to the reviewed workbay tag (`workbay-v0.3.6`) until a newer release set is explicitly promoted.
 
 After install, run one sanity check from the consumer root:
 
 ```bash
-./.venv/bin/workbay-bootstrap doctor
+workbay doctor --target .
 ```
 
 ## State Paths
@@ -54,40 +60,48 @@ If you set explicit relative paths, they resolve from `AGENT_HANDOFF_WORKSPACE_R
 
 ## Update Workflow
 
-Use the package manager for MCP package upgrades and `workbay-bootstrap update` for the overlay clone:
+Re-run the pinned `uv tool install` to upgrade the front-door tool and every bundled package surface, then `workbay update` to re-materialize the overlay:
 
 ```bash
-./.venv/bin/pip install --upgrade "workstate-stack==0.1.12"
-
-./.venv/bin/workbay-bootstrap update --remote-ref workstate-stack-v0.1.12
+REF=workbay-v0.3.6
+R="git+https://github.com/darce/workbay.git@$REF"
+uv tool install --no-sources \
+  --with "$R#subdirectory=packages/workbay-protocol" \
+  --with "$R#subdirectory=packages/mcp-workbay-handoff" \
+  --with "$R#subdirectory=packages/mcp-workbay-orchestrator" \
+  --with "$R#subdirectory=packages/workbay-bootstrap" \
+  --with "$R#subdirectory=packages/workbay-system" \
+  --from "$R#subdirectory=packages/workbay" \
+  workbay
+workbay update --target . --remote-ref "$REF"
 ```
 
-Keep both the package versions and the overlay ref pinned to the reviewed release set. When a newer release set is approved, bump the exact package versions and the `--remote-ref` together.
+Keep both the install ref and the overlay `--remote-ref` pinned to the same reviewed release set. When a newer release set is approved, bump `REF` and the `--remote-ref` together.
 
-`workbay-bootstrap update` fetches the shared clone, checks out the requested ref, re-validates symlinks, and refreshes `.workbay-bootstrap.json` with the new remote SHA.
+`workbay update --target . --remote-ref "$REF"` re-materializes the overlay from the requested ref's package data and refreshes `.workbay-bootstrap.json` with the new pinned ref.
 
 ## Doctor and Repair
 
-Use `workbay-bootstrap doctor` when the overlay looks wrong but you want diagnosis first:
+Use `workbay doctor --target .` when the overlay looks wrong but you want diagnosis first:
 
 ```bash
-./.venv/bin/workbay-bootstrap doctor
+workbay doctor --target .
 ```
 
 Doctor should verify:
 
-- the clone exists at `.workbay/remote/`
-- overlay symlinks resolve cleanly
+- the materialized overlay surfaces are present and current against the pinned ref
+- `.workbay-bootstrap.json` records the expected pinned ref
 - `core.hooksPath` still points at `scripts/hooks/git`
 - the runtime can discover `AGENT_HANDOFF_WORKSPACE_ROOT` and `.task-state/handoff.db`
 
-Use `workbay-bootstrap repair` when the overlay is missing, corrupt, or drifted:
+Use `workbay repair --target .` when the overlay is missing, corrupt, or drifted:
 
 ```bash
-./.venv/bin/workbay-bootstrap repair
+workbay repair --target .
 ```
 
-If the shared clone contains uncommitted files, repair must stop and name the dirty files unless you pass the explicit dirty-worktree override supported by the tool.
+Repair re-materializes the overlay from package data and re-wires the local MCP config and `core.hooksPath` to match the pinned ref.
 
 ## Git Hooks
 
@@ -101,10 +115,10 @@ Bootstrap wiring sets `core.hooksPath` to `scripts/hooks/git` so client-side hoo
 
 In `context-alt-text-monorepo`, these hook and prompt payloads are
 bootstrap-managed local/generated surfaces, not product source. Keep
-`.github/hooks/`, `.github/prompts/`, `scripts/hooks/`, `scripts/workstate/`,
+`.github/hooks/`, `.github/prompts/`, `scripts/hooks/`, `scripts/workbay/`,
 and `Makefile.d/` ignored here; fixes to reusable workflow behavior belong in
-the downstream workstate/agentic-protocol source and should flow back through a
-pinned `workbay-bootstrap update`. The tracked files in this repo should stay
+the downstream workbay/agentic-protocol source and should flow back through a
+pinned `workbay update`. The tracked files in this repo should stay
 limited to the install ledger, client config pins, docs/tests that lock those
 pins, and the small Makefile shim needed to invoke the shared fragments.
 
@@ -156,9 +170,9 @@ This means the repo has more than one active task candidate for the current work
 
 This means the runtime could not infer a git-backed consumer root and you did not provide explicit path overrides. Set `AGENT_HANDOFF_WORKSPACE_ROOT` and, when needed, one or more of `AGENT_HANDOFF_STATE_DIR`, `AGENT_HANDOFF_DASHBOARD_PATH`, `AGENT_HANDOFF_CURRENT_TASK_PATH`, or `AGENT_HANDOFF_EXPORTS_DIR`.
 
-Broken overlay symlinks
+Broken or drifted overlay
 
-Run `./.venv/bin/workbay-bootstrap doctor` first. If the clone or symlinks are broken, use `./.venv/bin/workbay-bootstrap repair` instead of manually recreating links.
+Run `workbay doctor --target .` first. If the overlay is broken or drifted, use `workbay repair --target .` instead of manually editing the materialized surfaces.
 
 Wrong MCP launcher path
 
@@ -174,7 +188,7 @@ Each consumer repository keeps its own `.task-state/handoff.db`. Do not point mu
 
 The MVP target is Unix-like environments only: macOS and Linux.
 
-The overlay relies on symlinks and git-hook path wiring. Windows support is deferred until there is an explicit follow-on slice to define the expected symlink and hook behavior there.
+The overlay relies on git-hook path wiring. Windows support is deferred until there is an explicit follow-on slice to define the expected hook behavior there.
 
 ## Lessons Learned (E17-10-followon, 2026-04-22)
 

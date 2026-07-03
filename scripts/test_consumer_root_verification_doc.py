@@ -16,15 +16,24 @@ REQUIRED_WORKFLOW_HEADINGS = (
 )
 
 REQUIRED_WORKFLOW_SNIPPETS = (
-    "/tmp/e17-14-scratch-consumer/",
-    './.venv/bin/pip install "workstate-stack==0.1.12"',
-    "./.venv/bin/workbay-bootstrap install --target /tmp/e17-14-scratch-consumer --remote-ref v0.1.22",
+    "/tmp/wb-scratch-consumer/",
+    "uv tool install --no-sources",
+    "--from \"$R#subdirectory=packages/workbay\"",
+    'workbay install --target /tmp/wb-scratch-consumer --remote-ref "$REF"',
+    "workbay doctor --target /tmp/wb-scratch-consumer",
     "task_plan_path",
     "DASHBOARD.txt",
     "render_handoff(kind='current_task'",
     "CURRENT_TASK.json",
     "must not be auto-written",
     "owning task's proof artifact or slice-complete handoff decision",
+)
+
+# Obsolete install surfaces that must never regress into the doc.
+FORBIDDEN_WORKFLOW_SNIPPETS = (
+    "workstate-stack",
+    "./.venv/bin/workbay-bootstrap",
+    "/tmp/e17-14-scratch-consumer",
 )
 
 
@@ -38,6 +47,11 @@ def test_consumer_root_verification_doc_covers_runtime_probe() -> None:
 
     for snippet in REQUIRED_WORKFLOW_SNIPPETS:
         assert snippet in workflow_text, f"Workflow doc is missing snippet: {snippet}"
+
+    for snippet in FORBIDDEN_WORKFLOW_SNIPPETS:
+        assert snippet not in workflow_text, (
+            f"Workflow doc contains obsolete install surface: {snippet}"
+        )
 
     forbidden_auto_write = re.compile(
         r"CURRENT_TASK\.json\s+is\s+(auto[- ]?written|automatically\s+(written|rendered|generated))",

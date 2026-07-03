@@ -21,11 +21,12 @@ REQUIRED_HEADINGS = (
 )
 
 REQUIRED_SNIPPETS = (
-    './.venv/bin/pip install "workstate-stack==0.1.12"',
-    "./.venv/bin/workbay-bootstrap install --target . --remote-ref workstate-stack-v0.1.12",
-    "./.venv/bin/workbay-bootstrap update --remote-ref workstate-stack-v0.1.12",
-    "./.venv/bin/workbay-bootstrap doctor",
-    "./.venv/bin/workbay-bootstrap repair",
+    "REF=workbay-v0.3.6",
+    "uv tool install --no-sources",
+    "workbay install --target . --remote-ref",
+    "workbay update --target . --remote-ref",
+    "workbay doctor --target .",
+    "workbay repair --target .",
     "AGENT_HANDOFF_WORKSPACE_ROOT",
     "AGENT_HANDOFF_STATE_DIR",
     "AGENT_HANDOFF_DASHBOARD_PATH",
@@ -47,8 +48,8 @@ REQUIRED_SNIPPETS = (
 )
 
 REQUIRED_UPDATE_SNIPPETS = (
-    './.venv/bin/pip install --upgrade "workstate-stack==0.1.12"',
-    "./.venv/bin/workbay-bootstrap update --remote-ref workstate-stack-v0.1.12",
+    "uv tool install --no-sources",
+    "workbay update --target . --remote-ref",
 )
 
 

@@ -118,6 +118,7 @@ DASHBOARD.md
 /scripts/hooks
 /.github/hooks
 /scripts/workstate
+/skills
 /Makefile.d
 /.github/prompts/
 /.claude-plugin/

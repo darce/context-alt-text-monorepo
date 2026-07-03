@@ -3,13 +3,13 @@ codex_hooks = true
 
 [mcp_servers.workbay-handoff-mcp]
 type = "stdio"
-command = "uvx"
-args = ["mcp-workbay-handoff@0.2.0", "--workspace-root", ".", "serve-stdio"]
+command = "python3"
+args = ["scripts/hooks/mcp_launch.py", "workbay-handoff-mcp"]
 
 [mcp_servers.workbay-orchestrator-mcp]
 type = "stdio"
-command = "uvx"
-args = ["mcp-workbay-orchestrator[bridge]@0.2.0", "--workspace-root", ".", "serve-stdio"]
+command = "python3"
+args = ["scripts/hooks/mcp_launch.py", "workbay-orchestrator-mcp"]
 
 [marketplaces.workbay-marketplace]
 source_type = "local"

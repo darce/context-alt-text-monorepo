@@ -2,22 +2,18 @@
   "mcpServers": {
     "workbay-handoff-mcp": {
       "type": "stdio",
-      "command": "uvx",
+      "command": "python3",
       "args": [
-        "mcp-workbay-handoff@0.2.0",
-        "--workspace-root",
-        ".",
-        "serve-stdio"
+        "scripts/hooks/mcp_launch.py",
+        "workbay-handoff-mcp"
       ]
     },
     "workbay-orchestrator-mcp": {
       "type": "stdio",
-      "command": "uvx",
+      "command": "python3",
       "args": [
-        "mcp-workbay-orchestrator[bridge]@0.2.0",
-        "--workspace-root",
-        ".",
-        "serve-stdio"
+        "scripts/hooks/mcp_launch.py",
+        "workbay-orchestrator-mcp"
       ]
     }
   }

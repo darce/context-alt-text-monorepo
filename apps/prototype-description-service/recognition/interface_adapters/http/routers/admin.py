@@ -26,9 +26,10 @@ from enum import StrEnum
 from fastapi import APIRouter, Depends, Form, HTTPException, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from db.models import ApiKey, Tenant
 from db.session import async_session_factory
@@ -407,9 +408,11 @@ async def _load_console_model(
 
     Replaces the prior per-tenant ``list_for_tenant`` loop (N+1) with a single
     ``WHERE tenant_id IN (...)`` query, then groups in-memory. Every tenant gets a
-    list (empty if it has no keys). Each tenant's list is capped at
-    ``_CONSOLE_KEYS_PER_TENANT`` most-recent keys for rendering; ``totals_by_tenant``
-    carries the pre-cap count so the view can show a "showing N of M" note.
+    list (empty if it has no keys). The cap is applied in SQL (row_number over a
+    per-tenant window, newest first) so a tenant with many keys never hides the
+    key the operator just minted and over-cap rows are not materialized;
+    ``totals_by_tenant`` carries the pre-cap count so the view can show a
+    "showing N of M" note.
     """
     stmt = select(Tenant).order_by(Tenant.created_at, Tenant.id)
     tenants = list((await session.execute(stmt)).scalars().all())
@@ -418,16 +421,33 @@ async def _load_console_model(
     totals_by_tenant: dict[uuid.UUID, int] = {tenant.id: 0 for tenant in tenants}
     if tenants:
         tenant_ids = [tenant.id for tenant in tenants]
-        keys_stmt = (
-            select(ApiKey)
+        ranked_keys = (
+            select(
+                ApiKey,
+                func.row_number()
+                .over(
+                    partition_by=ApiKey.tenant_id,
+                    order_by=(ApiKey.created_at.desc(), ApiKey.id.desc()),
+                )
+                .label("key_rank"),
+                func.count().over(partition_by=ApiKey.tenant_id).label("tenant_key_count"),
+            )
             .where(ApiKey.tenant_id.in_(tenant_ids))
-            .order_by(ApiKey.tenant_id, ApiKey.created_at)
+            .subquery()
         )
-        for key in (await session.execute(keys_stmt)).scalars().all():
-            totals_by_tenant[key.tenant_id] += 1
-            bucket = keys_by_tenant[key.tenant_id]
-            if len(bucket) < _CONSOLE_KEYS_PER_TENANT:
-                bucket.append(key)
+        ranked_key = aliased(ApiKey, ranked_keys)
+        keys_stmt = (
+            select(ranked_key, ranked_keys.c.tenant_key_count)
+            .where(ranked_keys.c.key_rank <= _CONSOLE_KEYS_PER_TENANT)
+            .order_by(
+                ranked_key.tenant_id,
+                ranked_key.created_at.desc(),
+                ranked_key.id.desc(),
+            )
+        )
+        for key, tenant_key_count in (await session.execute(keys_stmt)).all():
+            totals_by_tenant[key.tenant_id] = int(tenant_key_count)
+            keys_by_tenant[key.tenant_id].append(key)
     return tenants, keys_by_tenant, totals_by_tenant
 
 

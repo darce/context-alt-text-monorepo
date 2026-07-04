@@ -76,3 +76,30 @@ returns an explicit `502 invalid_description_envelope` — never a fabricated
 
 - **Permission**: `can_manage_recognition` (`manage_options`).
 - No alt-text write in Phase 1; `_wp_attachment_image_alt` is untouched (Phase 2 / E19-2).
+
+## WordPress dry-run surface — `GET /acx/v1/recognition/describe/candidates`
+
+Read-only selection source for later description generation and write commands.
+This route does **not** call `/scene/describe/multipart` and does not mutate
+attachment meta.
+
+Query params:
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `limit` | `50` | Candidate page size, clamped by the service maximum. |
+| `offset` | `0` | Offset after missing-alt filtering. |
+
+Response fields:
+
+| Field | Meaning |
+| --- | --- |
+| `candidates` | Page of image attachments with empty `_wp_attachment_image_alt`, sorted by ascending media id. |
+| `exclusions` | Attachments skipped by the same selection scan with machine-readable `reason`. |
+| `limit`, `offset` | Normalized pagination inputs used for `candidates`. |
+| `total_candidates`, `total_exclusions` | Totals before candidate pagination. |
+
+Candidate/exclusion row fields: `media_id`, `filename`, `title`, `mime_type`,
+`current_alt_text`, `reason`.
+
+`reason` ∈ `{missing_alt, has_alt_text, unsupported_mime}`.

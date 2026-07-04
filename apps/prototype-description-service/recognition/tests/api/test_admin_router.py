@@ -14,6 +14,7 @@ import base64
 import hashlib
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
@@ -381,6 +382,33 @@ async def test_console_caps_keys_and_renders_note(
     assert resp.status_code == 200, resp.text
     body = resp.text
     assert f"Showing {_CONSOLE_KEYS_PER_TENANT} of {over_cap} keys" in body
+
+
+@pytest.mark.asyncio
+async def test_console_cap_keeps_newest_keys(admin_client: AsyncClient, db_session: AsyncSession) -> None:
+    """Capping must never hide the key the operator just minted."""
+    tenant_id = uuid.uuid4()
+    await admin_client.post(
+        "/admin/tenants",
+        json={"tenant_id": str(tenant_id), "site_url": "http://newest-cap.test"},
+        headers=_AUTH,
+    )
+
+    repo = SqlAlchemyApiKeyRepository(db_session)
+    records = []
+    for index in range(admin_module._CONSOLE_KEYS_PER_TENANT + 1):
+        record = await repo.create(tenant_id=tenant_id, hashed_key=f"ordered-{index:04d}")
+        record.created_at = datetime(2026, 1, 1, tzinfo=UTC) + timedelta(minutes=index)
+        records.append(record)
+    await db_session.commit()
+
+    _tenants, keys_by_tenant, totals = await admin_module._load_console_model(db_session)
+    rendered_ids = [record.id for record in keys_by_tenant[tenant_id]]
+
+    assert totals[tenant_id] == admin_module._CONSOLE_KEYS_PER_TENANT + 1
+    assert records[-1].id in rendered_ids
+    assert records[0].id not in rendered_ids
+    assert rendered_ids[0] == records[-1].id
 
 
 @pytest.mark.asyncio

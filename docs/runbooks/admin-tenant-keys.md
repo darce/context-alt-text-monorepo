@@ -79,7 +79,8 @@ The console prompts for HTTP Basic auth in the browser:
 - **Username**: any value (ignored).
 - **Password**: the `RECOGNITION_ADMIN_TOKEN` from step (a).
 
-(Programmatic callers may instead send the `X-Admin-Token` header.)
+(Programmatic callers send the `X-Admin-Token` header; it is mandatory for
+JSON create/mint/revoke mutations.)
 
 ---
 

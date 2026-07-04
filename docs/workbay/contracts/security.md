@@ -451,10 +451,12 @@ admin authority — neither alone is sufficient by policy:
   surface is not confirmed). `/admin` is reachable **only over the tailnet**
   (`tailscale serve` or an `ssh -L` tunnel to the prod-api loopback); see
   `docs/runbooks/admin-tenant-keys.md`.
-- **Token**: every `/admin` route requires the shared `RECOGNITION_ADMIN_TOKEN`
-  on the dedicated `X-Admin-Token` header (or HTTP Basic password), checked
-  with `secrets.compare_digest`. It never reads `AuthContext.is_admin`, the
-  tenant `X-API-Key` header, or the DB — the dev-key admin path stays banned in
+- **Token**: every `/admin` route requires the shared `RECOGNITION_ADMIN_TOKEN`,
+  checked with `secrets.compare_digest`. Browser-console routes accept it as
+  the HTTP Basic password; JSON mutations require the dedicated
+  `X-Admin-Token` header so browser credential replay cannot authorize a
+  cross-site mutation. The gate never reads `AuthContext.is_admin`, the tenant
+  `X-API-Key` header, or the DB — the dev-key admin path stays banned in
   production.
 - **Env gate / fail-closed**: the router mounts only when
   `RECOGNITION_ADMIN_ENABLED=true`. `validate_admin_config` refuses to start

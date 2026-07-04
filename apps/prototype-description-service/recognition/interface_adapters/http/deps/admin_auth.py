@@ -8,8 +8,9 @@ auth surface is not an admin authority.
 
 Two equivalent credential paths share the same shared token:
 
-* **Programmatic** — the dedicated admin header (default ``X-Admin-Token``).
-* **Browser** — HTTP Basic auth, because a browser cannot send a custom header.
+* **Programmatic** — the dedicated admin header (default ``X-Admin-Token``),
+  required for every JSON mutation.
+* **Browser console** — HTTP Basic auth, because a browser cannot send a custom header.
   The Basic *password* must equal the admin token (the username is ignored). A
   401 carries ``WWW-Authenticate: Basic`` so the browser shows a native prompt.
 """
@@ -26,6 +27,19 @@ from fastapi import HTTPException, Request, status
 from recognition.config.security import get_security_settings
 
 _BASIC_CHALLENGE = {"WWW-Authenticate": 'Basic realm="admin"'}
+
+
+def _matches(value: str, expected: str) -> bool:
+    """Constant-time credential compare on UTF-8 bytes; empty inputs never match."""
+    return bool(expected) and bool(value) and secrets.compare_digest(value.encode("utf-8"), expected.encode("utf-8"))
+
+
+def _unauthorized() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="admin authorization required",
+        headers=dict(_BASIC_CHALLENGE),
+    )
 
 
 def _basic_password(authorization: str | None) -> str | None:
@@ -66,24 +80,24 @@ async def require_admin(request: Request) -> None:
     header_token = request.headers.get(settings.admin_header) or ""
     basic_token = _basic_password(request.headers.get("Authorization")) or ""
 
-    expected_bytes = expected.encode("utf-8")
-    header_ok = (
-        bool(expected)
-        and bool(header_token)
-        and secrets.compare_digest(header_token.encode("utf-8"), expected_bytes)
-    )
-    basic_ok = (
-        bool(expected)
-        and bool(basic_token)
-        and secrets.compare_digest(basic_token.encode("utf-8"), expected_bytes)
-    )
+    header_ok = _matches(header_token, expected)
+    basic_ok = _matches(basic_token, expected)
 
     if not header_ok and not basic_ok:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="admin authorization required",
-            headers=dict(_BASIC_CHALLENGE),
-        )
+        raise _unauthorized()
+
+
+async def require_admin_header(request: Request) -> None:
+    """Require the dedicated admin header for programmatic JSON mutations.
+
+    Basic auth is deliberately NOT accepted here: a browser auto-replays Basic
+    credentials, so a cross-site page could otherwise ride the operator's
+    session into a JSON mutation. A custom header cannot be attached by a
+    cross-site form, which removes that class entirely.
+    """
+    settings = get_security_settings()
+    if not _matches(request.headers.get(settings.admin_header) or "", settings.admin_token):
+        raise _unauthorized()
 
 
 def _host_of(value: str | None) -> str | None:
@@ -126,4 +140,4 @@ async def require_same_origin(request: Request) -> None:
         )
 
 
-__all__ = ["require_admin", "require_same_origin"]
+__all__ = ["require_admin", "require_admin_header", "require_same_origin"]

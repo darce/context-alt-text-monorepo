@@ -10,7 +10,7 @@
 
 ## 1. Why a realignment
 
-The planning surfaces have drifted from reality. This roadmap re-baselines them and sequences the WBUX-1/2 backlog by visitor-facing impact.
+The planning surfaces have drifted from reality. This roadmap re-baselines them and sequences the WBUX-1/2 backlog by visitor-facing impact. Current-state claims below verified 2026-07-04 against `main` @ `06f8df16`, the handoff DB (live rows + findings), and `git branch --no-merged main`.
 
 | Surface | Documented state | Actual state (handoff DB + git, 2026-07-04) |
 | --- | --- | --- |
@@ -78,8 +78,8 @@ The scan→review→confirm loop is the demo's story. Make it one surface, one p
 
 "Workbench decides, Roster curates, Dashboard orients" (WBUX-2 §3).
 
-- **P4-A · Finish E15-17 slices 3–4** (face scrubber; cluster drawer → "Open person review"). Prerequisite for the tab deletion; do not fork its landed design (scrubber action matrix, conservative similarity copy).
-- **P4-B · Retire Roster ▸ Clusters as a management tab** (WBUX-2 S8). Clusters remain evidence-in-person-workspace + Workbench queue items; unique ops relocate (person-commit → review card, drag-fix → scrubber, sensitive rescan → Advanced drawer, bulk merge/dismiss → Workbench disclosure made atomic server-side or explicitly progressive — rg-002). Restore always-visible person list + `Add Person` (fixes the standing rg-003 violation); `?cluster=` deep links resolve into the owning person's workspace.
+- **P4-A · Finish E15-17 slices 3–4** (face scrubber; cluster drawer → "Open person review"). Executes under the **existing** [E15-17 task plan](../tasks/15.0/E15-17-roster-person-review-scrub-workspace-task-plan.md) (slices 1–2 landed) — no new plan; do not fork its landed design (scrubber action matrix, conservative similarity copy). Prerequisite for the tab deletion.
+- **P4-B · Retire Roster ▸ Clusters as a management tab** (WBUX-2 S8). Clusters remain evidence-in-person-workspace + Workbench queue items; unique ops relocate (person-commit → review card, drag-fix → scrubber, sensitive rescan → Advanced drawer). Bulk merge/dismiss moves to the Workbench disclosure as an **explicitly progressive UI** ("merging 2 of 5…") — the in-scope default, since a server-side batch endpoint would be a backend contract change (out of scope here; file as an E16/service follow-on only if progressive UX proves insufficient — rg-002). Restore always-visible person list + `Add Person` (fixes the standing rg-003 violation); `?cluster=` deep links resolve into the owning person's workspace.
 - **P4-C · Cross-surface link contract** (WBUX-2 S10). All CTAs adopt the E15-17 route vocabulary (`?person=` `?queue=` `?face=`); redirect shims for `?tab=clusters` and `?overlay=`; every Workbench person-touching confirm emits "View <name> →". Dashboard GuidanceCard CTAs retarget to the same vocabulary. Decide Retention discoverability (menu item vs dashboard footer link) — currently route-only.
 
 **Impact**: high for return visitors/curation depth; removes the duplicated-with-worse-semantics surface (WBUX-2 §2 capability matrix). **Effort**: medium; strictly after P3-A (queue must exist before the tab's ops relocate).
@@ -113,6 +113,7 @@ Phase R (realign) ─ parallel ──┤
 P1-A status model ──▶ P3-A review queue ──▶ P4-B roster tab retire ──▶ P4-C links
    │                        ▲                      ▲
    ├──▶ P1-C confirm-tab    │                      │
+   ├──▶ P3-B media compact  │                      │
    ├──▶ P3-C offline        │                P4-A E15-17 s3–4 (start anytime)
 Phase 2 tokens ─────────────┘  (before any visual re-grouping; one re-baseline)
 P1-B dashboard cull (start anytime; CTA retargeting waits on P4-C vocabulary)
@@ -134,19 +135,18 @@ Phase 5 structural (parallel after P1-A)
 | E20-3 | 1 | Confirm tab removal + Advanced drawer | E20-1 |
 | E20-4 | 2 | Design-token system (type/grey/elevation) + sr-004 sweep | — |
 | E20-5 | 3 | Unified review queue + person-commit | E20-1, E20-4 |
-| E20-6 | 3 | Media step compaction | E20-4 |
+| E20-6 | 3 | Media step compaction | E20-1, E20-4 |
 | E20-7 | 3 | Offline fail-fast + read-only mode | E20-1 |
-| E20-8 | 4 | E15-17 slices 3–4 completion (adopt or re-home) | — |
-| E20-9 | 4 | Roster Clusters-tab retirement, person-first roster | E20-5, E20-8 |
+| E20-9 | 4 | Roster Clusters-tab retirement, person-first roster | E20-5, E15-17 s3–4 (existing plan) |
 | E20-10 | 4 | Cross-surface link contract + shim/spec migration | E20-9 |
 | E20-11 | 5 | Workbench context decomposition + phase strategy map | E20-1 |
 
-Phase 0 stays under E15 (E15-29 + follow-on DNS cutover task); Phase R runs as MAINT-scoped doc slices.
+Phase 0 stays under E15 (E15-29 + follow-on DNS cutover task); P4-A stays under the existing E15-17 plan; Phase R runs as MAINT-scoped doc slices. (E20-8 intentionally unassigned to avoid duplicate ownership of E15-17.)
 
 ## 8. Success criteria
 
 - [ ] Demo live on `demo.altcontext.com` with the E15-29 clustering acceptance gate met (Phase 0).
-- [ ] One status surface per page; zero sync-internal jargon strings user-visible; sr-004 pass on all status indicators.
+- [ ] One status surface per page; sync-internal jargon absent from user-visible copy, enforced by a banned-strings test over `js/admin` UI strings (term list owned by the E20-1 slice: "topology", "replay", "projection", "dead-letter", "curation acknowledgement", raw UUIDs); sr-004 pass on all status indicators.
 - [ ] One primary CTA per screen state on the Workbench; review queue is card-at-a-time with person-commit naming.
 - [ ] Roster: person list + `Add Person` reachable from zero state (rg-003); no Clusters management tab; all cross-surface links use `?person=/?queue=/?face=`.
 - [ ] Token families complete (type/grey/primary/elevation/radius/weight); zero raw hex in component sheets; tokenization test covers all sheets.

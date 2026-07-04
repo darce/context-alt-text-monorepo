@@ -42,7 +42,11 @@ from recognition.infrastructure.repositories.api_key_repository import (
     _as_utc,
 )
 from recognition.interface_adapters.http.admin_console import render_console
-from recognition.interface_adapters.http.deps.admin_auth import require_admin, require_same_origin
+from recognition.interface_adapters.http.deps.admin_auth import (
+    require_admin,
+    require_admin_header,
+    require_same_origin,
+)
 
 _CONSOLE_KEYS_PER_TENANT = 100
 
@@ -274,7 +278,12 @@ async def revoke_key_atomic(session: AsyncSession, *, key_id: uuid.UUID) -> Revo
 # --- Routes --------------------------------------------------------------------
 
 
-@admin_router.post("/tenants", response_model=TenantResponse, status_code=status.HTTP_201_CREATED)
+@admin_router.post(
+    "/tenants",
+    response_model=TenantResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin_header)],
+)
 async def create_tenant(
     body: CreateTenantRequest,
     session: AsyncSession = Depends(get_admin_session),
@@ -302,6 +311,7 @@ async def list_tenants(session: AsyncSession = Depends(get_admin_session)) -> li
     "/tenants/{tenant_id}/keys",
     response_model=MintKeyResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin_header)],
 )
 async def mint_key(
     tenant_id: uuid.UUID,
@@ -352,7 +362,11 @@ async def list_keys(
     return [_api_key_response(record) for record in rows]
 
 
-@admin_router.post("/keys/{key_id}/revoke", response_model=RevokeKeyResponse)
+@admin_router.post(
+    "/keys/{key_id}/revoke",
+    response_model=RevokeKeyResponse,
+    dependencies=[Depends(require_admin_header)],
+)
 async def revoke_key(
     key_id: uuid.UUID,
     session: AsyncSession = Depends(get_admin_session),

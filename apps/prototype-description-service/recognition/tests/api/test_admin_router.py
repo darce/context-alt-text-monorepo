@@ -10,6 +10,7 @@ writes, audit-failure rollback, and the full error contract.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import uuid
 from collections.abc import AsyncIterator
@@ -36,6 +37,11 @@ from recognition.interface_adapters.http.routers.admin import (
 
 _VALID_TOKEN = "z" * 40  # >= 32 chars
 _AUTH = {"X-Admin-Token": _VALID_TOKEN}
+
+
+def _basic_auth() -> dict[str, str]:
+    encoded = base64.b64encode(f"admin:{_VALID_TOKEN}".encode()).decode("ascii")
+    return {"Authorization": f"Basic {encoded}"}
 
 
 @pytest_asyncio.fixture
@@ -143,6 +149,22 @@ async def test_every_route_requires_admin_token(admin_client: AsyncClient) -> No
         call = getattr(admin_client, method)
         resp = await (call(path, json=json_body) if json_body is not None else call(path))
         assert resp.status_code == 401, f"{method.upper()} {path} should require admin token"
+
+
+@pytest.mark.asyncio
+async def test_json_mutations_reject_browser_basic_auth(admin_client: AsyncClient) -> None:
+    """Basic auth is console-only; JSON mutations require the custom header."""
+    tenant_id = str(uuid.uuid4())
+    key_id = str(uuid.uuid4())
+    requests = [
+        ("/admin/tenants", {"tenant_id": tenant_id, "site_url": "http://csrf.test"}),
+        (f"/admin/tenants/{tenant_id}/keys", {}),
+        (f"/admin/keys/{key_id}/revoke", None),
+    ]
+
+    for path, json_body in requests:
+        response = await admin_client.post(path, json=json_body, headers=_basic_auth())
+        assert response.status_code == 401, path
 
 
 # --- Audit row per mutation ----------------------------------------------------

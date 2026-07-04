@@ -7,8 +7,10 @@ namespace AltContext\Api;
 require_once __DIR__ . '/interface-recognition-route-controller.php';
 require_once __DIR__ . '/class-abstract-recognition-proxy-controller.php';
 require_once __DIR__ . '/interface-describe-host.php';
+require_once __DIR__ . '/services/class-description-candidate-service.php';
 require_once __DIR__ . '/services/class-describe-media-service.php';
 
+use AltContext\Api\Services\DescriptionCandidateService;
 use AltContext\Api\Services\DescribeMediaService;
 use WP_Error;
 use WP_REST_Request;
@@ -24,9 +26,11 @@ use function register_rest_route;
  */
 class DescribeController extends AbstractRecognitionProxyController implements DescribeHostInterface {
 	private DescribeMediaService $describe_media_service;
+	private DescriptionCandidateService $description_candidate_service;
 
-	public function __construct( ?DescribeMediaService $describe_media_service = null ) {
+	public function __construct( ?DescribeMediaService $describe_media_service = null, ?DescriptionCandidateService $description_candidate_service = null ) {
 		$this->describe_media_service = $describe_media_service ?? new DescribeMediaService( $this );
+		$this->description_candidate_service = $description_candidate_service ?? new DescriptionCandidateService();
 	}
 
 	public function get_tenant_id(): string {
@@ -70,9 +74,42 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 				),
 			)
 		);
+		register_rest_route(
+			'acx/v1',
+			'/recognition/describe/candidates',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'list_description_candidates' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+				'args'                => array(
+					'limit'  => array(
+						'type'        => 'integer',
+						'required'    => false,
+						'default'     => 50,
+						'description' => 'Maximum candidate rows to return.',
+					),
+					'offset' => array(
+						'type'        => 'integer',
+						'required'    => false,
+						'default'     => 0,
+						'description' => 'Candidate offset after filtering.',
+					),
+				),
+			)
+		);
 	}
 
 	public function describe_media( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		return $this->describe_media_service->describe_media( $request );
+	}
+
+	public function list_description_candidates( WP_REST_Request $request ): WP_REST_Response {
+		return new WP_REST_Response(
+			$this->description_candidate_service->list_missing_alt_candidates(
+				(int) $request->get_param( 'limit' ),
+				(int) $request->get_param( 'offset' )
+			),
+			200
+		);
 	}
 }

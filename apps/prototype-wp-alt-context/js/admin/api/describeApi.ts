@@ -36,6 +36,31 @@ export interface VisualFactsResponse {
   retention_class: string;
 }
 
+export type DescriptionCandidateReason = 'missing_alt' | 'has_alt_text' | 'unsupported_mime';
+
+export interface DescriptionCandidateRow {
+  media_id: number;
+  filename: string;
+  title: string;
+  mime_type: string;
+  current_alt_text: string;
+  reason: DescriptionCandidateReason;
+}
+
+export interface DescriptionCandidatesResponse {
+  candidates: DescriptionCandidateRow[];
+  exclusions: DescriptionCandidateRow[];
+  limit: number;
+  offset: number;
+  total_candidates: number;
+  total_exclusions: number;
+}
+
+export interface DescriptionCandidatesParams {
+  limit?: number;
+  offset?: number;
+}
+
 export const describeMedia = async (mediaId: number): Promise<VisualFactsResponse> =>
   fetchRequiredApi<VisualFactsResponse>(getEndpoint('recognitionDescribe'), {
     method: 'POST',
@@ -45,6 +70,20 @@ export const describeMedia = async (mediaId: number): Promise<VisualFactsRespons
     // the first request can push the wall time higher.
     signal: createRecognitionTimeoutSignal(180_000),
   });
+
+export const fetchDescriptionCandidates = async ({
+  limit = 50,
+  offset = 0,
+}: DescriptionCandidatesParams = {}): Promise<DescriptionCandidatesResponse> => {
+  const endpoint = new URL(getEndpoint('recognitionDescribeCandidates'));
+  endpoint.searchParams.set('limit', String(limit));
+  endpoint.searchParams.set('offset', String(offset));
+
+  return fetchRequiredApi<DescriptionCandidatesResponse>(endpoint.toString(), {
+    method: 'GET',
+    restNonce: getConfig().nonce,
+  });
+};
 
 const parsePayload = (raw: string): Record<string, unknown> | null => {
   const start = raw.indexOf('{');

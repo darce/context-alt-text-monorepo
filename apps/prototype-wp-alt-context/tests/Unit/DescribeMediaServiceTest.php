@@ -135,6 +135,93 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertFalse($data['cached']);
     }
 
+    public function testPreviewOnlyDoesNotWriteAltTextOrProvenance(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $result = $this->controller->describe_media($req);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame('', get_post_meta(42, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta(42, '_acx_description_provenance', true));
+        $this->assertArrayNotHasKey('alt_text_write', $result->get_data());
+    }
+
+    public function testWriteIntentPersistsMissingAltTextAndProvenance(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $req->set_param('write_alt', true);
+        $result = $this->controller->describe_media($req);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame('A photo.', get_post_meta(42, '_wp_attachment_image_alt', true));
+        $this->assertSame('written', $result->get_data()['alt_text_write']['status'] ?? null);
+
+        $provenance = get_post_meta(42, '_acx_description_provenance', true);
+        $this->assertIsArray($provenance);
+        $this->assertSame('seeded', $provenance['adapter']);
+        $this->assertSame('seeded-fixtures', $provenance['model_id']);
+        $this->assertSame('1', $provenance['model_version']);
+        $this->assertSame('1', $provenance['prompt_or_task_version']);
+        $this->assertSame(str_repeat('a', 64), $provenance['image_hash']);
+        $this->assertSame(str_repeat('b', 64), $provenance['context_hash']);
+        $this->assertArrayHasKey('generated_at', $provenance);
+    }
+
+    public function testWriteIntentSkipsExistingAltTextByDefault(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $this->setPostMeta(42, '_wp_attachment_image_alt', 'Human-authored alt');
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $req->set_param('write_alt', true);
+        $result = $this->controller->describe_media($req);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame('Human-authored alt', get_post_meta(42, '_wp_attachment_image_alt', true));
+        $this->assertSame('', get_post_meta(42, '_acx_description_provenance', true));
+        $this->assertSame('skipped_existing_alt', $result->get_data()['alt_text_write']['status'] ?? null);
+    }
+
+    public function testForceWriteOverwritesExistingAltTextAndStoresProvenance(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $this->setPostMeta(42, '_wp_attachment_image_alt', 'Human-authored alt');
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $req->set_param('write_alt', true);
+        $req->set_param('force', true);
+        $result = $this->controller->describe_media($req);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame('A photo.', get_post_meta(42, '_wp_attachment_image_alt', true));
+        $this->assertSame('forced_overwrite', $result->get_data()['alt_text_write']['status'] ?? null);
+        $this->assertIsArray(get_post_meta(42, '_acx_description_provenance', true));
+    }
+
     public function testRejectsUnreadableAttachmentBeforeDispatch(): void
     {
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');

@@ -11,6 +11,10 @@ type = "stdio"
 command = "python3"
 args = ["scripts/hooks/mcp_launch.py", "workbay-orchestrator-mcp"]
 
+[mcp_servers.codebase-graph-mcp]
+type = "stdio"
+command = "python3"
+args = ["scripts/hooks/mcp_launch.py", "codebase-graph-mcp"]
 [marketplaces.workbay-marketplace]
 source_type = "local"
 source = "."

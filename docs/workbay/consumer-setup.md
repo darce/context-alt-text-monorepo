@@ -13,7 +13,7 @@ Use this guide when you want another private Daniel-owned repository to consume 
 Install the `workbay` front-door tool from the pinned git ref (no PyPI), then materialize the overlay into the current repo. Bundle every package surface with `--with` so the single `uv tool` install resolves the whole stack from one ref:
 
 ```bash
-REF=workbay-v0.3.6
+REF=workbay-v0.3.8
 R="git+https://github.com/darce/workbay.git@$REF"
 uv tool install --no-sources \
   --with "$R#subdirectory=packages/workbay-protocol" \
@@ -27,7 +27,7 @@ workbay install --target . --remote-ref "$REF"
 ```
 
 `workbay` lands on `PATH` via `uv tool`, so invoke it directly — do not shell out to `./.venv/bin/workbay-bootstrap`. The install runs in package mode: it materializes the overlay from package data (no `.workbay/remote/` clone, no symlinks), writes `.workbay-bootstrap.json`, registers the two MCP servers via the `mcp_launch.py` shim, and wires `core.hooksPath`.
-Keep the overlay ref pinned to the reviewed workbay tag (`workbay-v0.3.6`) until a newer release set is explicitly promoted.
+Keep the overlay ref pinned to the reviewed workbay tag (`workbay-v0.3.8`) until a newer release set is explicitly promoted.
 
 After install, run one sanity check from the consumer root:
 
@@ -63,7 +63,7 @@ If you set explicit relative paths, they resolve from `AGENT_HANDOFF_WORKSPACE_R
 Re-run the pinned `uv tool install` to upgrade the front-door tool and every bundled package surface, then `workbay update` to re-materialize the overlay:
 
 ```bash
-REF=workbay-v0.3.6
+REF=workbay-v0.3.8
 R="git+https://github.com/darce/workbay.git@$REF"
 uv tool install --no-sources \
   --with "$R#subdirectory=packages/workbay-protocol" \

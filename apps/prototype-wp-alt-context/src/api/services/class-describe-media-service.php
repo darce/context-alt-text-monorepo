@@ -208,6 +208,7 @@ class DescribeMediaService {
 		$draft        = is_string( $data['alt_text_draft'] ?? null ) ? trim( $data['alt_text_draft'] ) : '';
 		$existing_alt = get_post_meta( $media_id, self::ALT_TEXT_META_KEY, true );
 		$existing_alt = is_string( $existing_alt ) ? $existing_alt : '';
+		$provenance   = $this->build_generated_provenance( $data );
 
 		if ( '' !== trim( $existing_alt ) && ! $force ) {
 			$data['alt_text_write'] = array(
@@ -218,8 +219,22 @@ class DescribeMediaService {
 			return $response;
 		}
 
+		$existing_provenance = get_post_meta( $media_id, self::PROVENANCE_META_KEY, true );
+		if (
+			$force
+			&& $draft === $existing_alt
+			&& $this->matches_generated_provenance( $existing_provenance, $provenance )
+		) {
+			$data['alt_text_write'] = array(
+				'status'               => 'forced_overwrite',
+				'existing_alt_present' => true,
+			);
+			$response->set_data( $data );
+			return $response;
+		}
+
 		update_post_meta( $media_id, self::ALT_TEXT_META_KEY, $draft );
-		update_post_meta( $media_id, self::PROVENANCE_META_KEY, $this->build_generated_provenance( $data ) );
+		update_post_meta( $media_id, self::PROVENANCE_META_KEY, $provenance );
 
 		$data['alt_text_write'] = array(
 			'status'               => '' !== trim( $existing_alt ) ? 'forced_overwrite' : 'written',
@@ -227,6 +242,24 @@ class DescribeMediaService {
 		);
 		$response->set_data( $data );
 		return $response;
+	}
+
+	/**
+	 * @param mixed               $existing
+	 * @param array<string,mixed> $incoming
+	 */
+	private function matches_generated_provenance( mixed $existing, array $incoming ): bool {
+		if ( ! is_array( $existing ) ) {
+			return false;
+		}
+
+		foreach ( array( 'adapter', 'model_id', 'model_version', 'prompt_or_task_version', 'image_hash', 'context_hash' ) as $key ) {
+			if ( ( $existing[ $key ] ?? null ) !== ( $incoming[ $key ] ?? null ) ) {
+				return false;
+			}
+		}
+
+		return ( $existing['backend_result_id'] ?? null ) === ( $incoming['backend_result_id'] ?? null );
 	}
 
 	/**

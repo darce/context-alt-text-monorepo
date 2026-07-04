@@ -92,7 +92,7 @@ class DescriptionRunRepository {
 		$now = current_time( 'mysql' );
 		$existing = $this->find_item_row( $normalized_run_id, $media_id );
 		$attempts = max( 0, (int) ( $existing['attempts'] ?? 0 ) );
-		if ( in_array( $normalized_status, array( 'running', 'succeeded', 'failed', 'retryable' ), true ) ) {
+		if ( 'running' === $normalized_status ) {
 			++$attempts;
 		}
 

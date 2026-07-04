@@ -37,6 +37,8 @@ class DescriptionBulkRunServiceTest extends TestCase
         $this->assertSame(2, $status['total_items']);
         $this->assertSame(1, $status['counts']['succeeded']);
         $this->assertSame(1, $status['counts']['retryable']);
+        $this->assertSame(1, $status['items'][0]['attempts']);
+        $this->assertSame(1, $status['items'][1]['attempts']);
         $this->assertSame([302], array_column($repository->list_retryable_items('bulk-1'), 'media_id'));
     }
 

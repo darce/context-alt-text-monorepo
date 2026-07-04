@@ -91,6 +91,22 @@ class DescriptionCommandGenerateTest extends TestCase
         $this->assertSame('written', $secondPayload['rows'][0]['status']);
     }
 
+    public function testGenerateReportsNonSuccessRestResponseAsFailed(): void
+    {
+        $service = new RecordingDescribeService([
+            601 => new WP_REST_Response(['message' => 'Backend unavailable.'], 502),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        $command->__invoke(['generate'], ['media-id' => '601', 'write' => true, 'format' => 'json']);
+
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+
+        $this->assertSame('', get_post_meta(601, '_wp_attachment_image_alt', true));
+        $this->assertSame('failed', $payload['rows'][0]['status']);
+        $this->assertSame('Backend unavailable.', $payload['rows'][0]['error']);
+    }
+
     public function testGenerateRefusesUnboundedCandidateGeneration(): void
     {
         $command = new DescriptionCommand();

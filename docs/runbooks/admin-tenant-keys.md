@@ -42,6 +42,12 @@ Host-level Tailscale enrollment for the VM is the canonical
    docker compose -f docker-compose.env.yml -f docker-compose.admin.yml up -d
    ```
 
+   The checked-in prod deploy and compose-sync paths install this overlay and
+   render it into `acx-prod.service`; ordinary deploys and systemd restarts
+   therefore retain the loopback binding. If the unit predates this support,
+   run `apps/prototype-description-service/scripts/deploy-env.sh prod` once to
+   converge the compose files and unit before enabling `/admin`.
+
 ---
 
 ## (b) Reach `/admin` over the tailnet

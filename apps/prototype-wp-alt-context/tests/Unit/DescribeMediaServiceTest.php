@@ -135,6 +135,29 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertFalse($data['cached']);
     }
 
+    public function testRegisterRoutesExposesWriteIntentArgs(): void
+    {
+        $this->controller->register_routes();
+
+        $route = null;
+        foreach ($GLOBALS['__ac_rest_routes'] as $definition) {
+            if (($definition['namespace'] ?? null) === 'acx/v1' && ($definition['route'] ?? null) === '/recognition/describe') {
+                $route = $definition;
+                break;
+            }
+        }
+
+        $this->assertIsArray($route);
+        $args = $route['args']['args'] ?? array();
+        $this->assertArrayHasKey('media_id', $args);
+        $this->assertArrayHasKey('write_alt', $args);
+        $this->assertSame('boolean', $args['write_alt']['type'] ?? null);
+        $this->assertFalse($args['write_alt']['default'] ?? true);
+        $this->assertArrayHasKey('force', $args);
+        $this->assertSame('boolean', $args['force']['type'] ?? null);
+        $this->assertFalse($args['force']['default'] ?? true);
+    }
+
     public function testPreviewOnlyDoesNotWriteAltTextOrProvenance(): void
     {
         $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');

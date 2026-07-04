@@ -34,17 +34,42 @@ export interface VisualFactsResponse {
   cached: boolean;
   duration_ms: number;
   retention_class: string;
+  alt_text_write?: AltTextWriteResult;
 }
 
-export const describeMedia = async (mediaId: number): Promise<VisualFactsResponse> =>
-  fetchRequiredApi<VisualFactsResponse>(getEndpoint('recognitionDescribe'), {
+export type AltTextWriteStatus = 'written' | 'skipped_existing_alt' | 'forced_overwrite';
+
+export interface AltTextWriteResult {
+  status: AltTextWriteStatus;
+  existing_alt_present: boolean;
+}
+
+export interface DescribeMediaWriteOptions {
+  writeAlt?: boolean;
+  force?: boolean;
+}
+
+export const describeMedia = async (
+  mediaId: number,
+  options: DescribeMediaWriteOptions = {},
+): Promise<VisualFactsResponse> => {
+  const body: { media_id: number; write_alt?: boolean; force?: boolean } = { media_id: mediaId };
+  if (options.writeAlt !== undefined) {
+    body.write_alt = options.writeAlt;
+  }
+  if (options.force !== undefined) {
+    body.force = options.force;
+  }
+
+  return fetchRequiredApi<VisualFactsResponse>(getEndpoint('recognitionDescribe'), {
     method: 'POST',
-    body: { media_id: mediaId },
+    body,
     restNonce: getConfig().nonce,
     // Generous: florence_small is ~14s on the OCI A1, and the cold model load on
     // the first request can push the wall time higher.
     signal: createRecognitionTimeoutSignal(180_000),
   });
+};
 
 const parsePayload = (raw: string): Record<string, unknown> | null => {
   const start = raw.indexOf('{');

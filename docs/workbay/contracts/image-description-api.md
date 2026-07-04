@@ -63,10 +63,13 @@ Error shapes match the recognition routes: 5xx/503 use the `{error, trace_id, pa
 | Field | Source / authority |
 | --- | --- |
 | `media_id` (request param) | operator-supplied attachment id |
+| `write_alt` (request param, default `false`) | operator write intent for `_wp_attachment_image_alt` |
+| `force` (request param, default `false`) | explicit operator override for non-empty existing alt text when `write_alt=true` |
 | `request.tenant_id` | `TenantIdentity::resolve` |
 | `request.media_id` | echoes the request param (must equal the `image_<id>` part suffix) |
 | `request.context` | WordPress inert bag `{site_url, title, caption, description, filename}` — nested under the single `context` key because the backend `DescribeImageEnvelope` is `extra='forbid'` (no extra top-level keys); inert in Phase 1 |
 | every response field | **passed through from the backend payload** |
+| `alt_text_write` (response field, WP-only) | local write result added only when `write_alt=true`; never sent by the backend scene route |
 
 **rg-015 (boundary fidelity)**: the proxy MUST trace every envelope field to the
 backend payload or a documented local authority. A malformed upstream shape
@@ -75,4 +78,9 @@ returns an explicit `502 invalid_description_envelope` — never a fabricated
 (`limit`/`offset`/`total`) on this single-object response.
 
 - **Permission**: `can_manage_recognition` (`manage_options`).
-- No alt-text write in Phase 1; `_wp_attachment_image_alt` is untouched (Phase 2 / E19-2).
+- **Preview default**: when `write_alt` is absent or false, `_wp_attachment_image_alt` and `_acx_description_provenance` are untouched and the backend `VisualFactsResponse` is returned without `alt_text_write`.
+- **Write policy**: when `write_alt=true`, missing alt text is written from `alt_text_draft` and generated provenance is stored in `_acx_description_provenance`. Non-empty existing alt text returns `alt_text_write.status="skipped_existing_alt"` unless `force=true`, which returns `forced_overwrite`.
+- **Provenance meta**: `_acx_description_provenance` records `adapter`, `model_id`, `model_version`, `prompt_or_task_version`, `image_hash`, `context_hash`, `generated_at`, and `backend_result_id` when supplied by the backend payload.
+- **Idempotence**: repeated writes for the same generated tuple preserve matching existing provenance instead of refreshing `generated_at`.
+
+`alt_text_write.status` ∈ `{written, skipped_existing_alt, forced_overwrite}`.

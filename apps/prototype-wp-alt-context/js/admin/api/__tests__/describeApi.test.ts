@@ -66,6 +66,24 @@ describe('describeApi', () => {
       restNonce: 'nonce-xyz',
     });
   });
+
+  it('POSTs write intent fields when requested', async () => {
+    fetchApiMock.mockResolvedValue({
+      ...sampleResponse,
+      alt_text_write: { status: 'forced_overwrite', existing_alt_present: true },
+    });
+
+    const result = await describeMedia(42, { writeAlt: true, force: true });
+
+    expect(result.alt_text_write?.status).toBe('forced_overwrite');
+    expect(fetchApiMock).toHaveBeenCalledTimes(1);
+    const [, options] = fetchApiMock.mock.calls[0];
+    expect(options).toMatchObject({
+      method: 'POST',
+      body: { media_id: 42, write_alt: true, force: true },
+      restNonce: 'nonce-xyz',
+    });
+  });
 });
 
 describe('resolveDescribeErrorMessage', () => {

@@ -4,21 +4,32 @@ declare(strict_types=1);
 
 namespace AltContext\Cli;
 
+use AltContext\Api\DescribeController;
 use AltContext\Api\Services\DescriptionCandidateService;
+use AltContext\Api\Services\DescribeMediaService;
+use WP_REST_Request;
+use WP_REST_Response;
 
 use function absint;
 use function class_exists;
 use function count;
+use function get_post_meta;
+use function gmdate;
 use function in_array;
 use function is_numeric;
+use function is_wp_error;
 use function sprintf;
+use function trim;
+use function update_post_meta;
 use function wp_json_encode;
 
 class DescriptionCommand extends \WP_CLI_Command {
 	private DescriptionCandidateService $candidate_service;
+	private DescribeMediaService $describe_service;
 
-	public function __construct( ?DescriptionCandidateService $candidate_service = null ) {
+	public function __construct( ?DescriptionCandidateService $candidate_service = null, ?DescribeMediaService $describe_service = null ) {
 		$this->candidate_service = $candidate_service ?? new DescriptionCandidateService();
+		$this->describe_service  = $describe_service ?? new DescribeMediaService( new DescribeController() );
 	}
 
 	/**
@@ -53,7 +64,8 @@ class DescriptionCommand extends \WP_CLI_Command {
 		}
 
 		if ( 'generate' === $subcommand ) {
-			\WP_CLI::error( 'Description generation is not available until the generate slice is enabled.' );
+			$this->generate( $assoc_args );
+			return;
 		}
 
 		\WP_CLI::error( 'Usage: wp alt-context describe <status|generate>.' );
@@ -103,6 +115,132 @@ class DescriptionCommand extends \WP_CLI_Command {
 	}
 
 	/**
+	 * @param array<string,mixed> $assoc_args
+	 */
+	private function generate( array $assoc_args ): void {
+		$format   = $this->parse_format( $assoc_args['format'] ?? 'table' );
+		$media_id = $this->parse_optional_media_id( $assoc_args['media-id'] ?? null );
+		$write    = $this->truthy_flag( $assoc_args['write'] ?? false );
+		$force    = $this->truthy_flag( $assoc_args['force'] ?? false );
+
+		$media_ids = array();
+		if ( null !== $media_id ) {
+			$media_ids[] = $media_id;
+		} else {
+			if ( ! isset( $assoc_args['limit'] ) ) {
+				\WP_CLI::error( 'Pass --media-id or --limit for bounded generation.' );
+			}
+
+			foreach ( $this->candidate_service->list_missing_alt_candidates( $this->parse_limit( $assoc_args['limit'] ), 0 ) as $row ) {
+				$media_ids[] = (int) $row['media_id'];
+			}
+		}
+
+		$rows = array();
+		foreach ( $media_ids as $id ) {
+			$rows[] = $this->generate_one( $id, $write, $force );
+		}
+
+		if ( 'json' === $format ) {
+			\WP_CLI::log(
+				(string) wp_json_encode(
+					array(
+						'command' => 'generate',
+						'write'   => $write,
+						'force'   => $force,
+						'count'   => count( $rows ),
+						'rows'    => $rows,
+					)
+				)
+			);
+			return;
+		}
+
+		foreach ( $rows as $row ) {
+			\WP_CLI::log(
+				sprintf(
+					'media_id=%d status=%s alt_text_draft=%s',
+					(int) $row['media_id'],
+					(string) $row['status'],
+					(string) $row['alt_text_draft']
+				)
+			);
+		}
+
+		\WP_CLI::success( sprintf( 'Description generate rows: count=%d', count( $rows ) ) );
+	}
+
+	/**
+	 * @return array<string,mixed>
+	 */
+	private function generate_one( int $media_id, bool $write, bool $force ): array {
+		$request = new WP_REST_Request( 'POST', '/acx/v1/recognition/describe', array( 'media_id' => $media_id ) );
+		$result  = $this->describe_service->describe_media( $request );
+
+		if ( is_wp_error( $result ) ) {
+			return array(
+				'media_id'       => $media_id,
+				'status'         => 'failed',
+				'alt_text_draft' => '',
+				'error'          => $result->get_error_message(),
+			);
+		}
+
+		$data = $result instanceof WP_REST_Response && is_array( $result->get_data() ) ? $result->get_data() : array();
+		$alt_text_draft = trim( (string) ( $data['alt_text_draft'] ?? '' ) );
+
+		if ( ! $write ) {
+			return array(
+				'media_id'       => $media_id,
+				'status'         => 'dry_run',
+				'alt_text_draft' => $alt_text_draft,
+			);
+		}
+
+		$existing_alt = trim( (string) get_post_meta( $media_id, '_wp_attachment_image_alt', true ) );
+		if ( '' !== $existing_alt && ! $force ) {
+			return array(
+				'media_id'       => $media_id,
+				'status'         => 'skipped_existing_alt',
+				'alt_text_draft' => $alt_text_draft,
+			);
+		}
+
+		if ( '' === $alt_text_draft ) {
+			return array(
+				'media_id'       => $media_id,
+				'status'         => 'skipped_empty_alt_text',
+				'alt_text_draft' => '',
+			);
+		}
+
+		update_post_meta( $media_id, '_wp_attachment_image_alt', $alt_text_draft );
+		update_post_meta( $media_id, '_acx_description_provenance', $this->build_provenance( $media_id, $data ) );
+
+		return array(
+			'media_id'       => $media_id,
+			'status'         => 'written',
+			'alt_text_draft' => $alt_text_draft,
+		);
+	}
+
+	/**
+	 * @param array<string,mixed> $data
+	 * @return array<string,mixed>
+	 */
+	private function build_provenance( int $media_id, array $data ): array {
+		return array(
+			'source'                 => 'cli',
+			'media_id'               => $media_id,
+			'generated_at'           => gmdate( 'c' ),
+			'adapter'                => (string) ( $data['adapter'] ?? '' ),
+			'model_id'               => (string) ( $data['model_id'] ?? '' ),
+			'model_version'          => (string) ( $data['model_version'] ?? '' ),
+			'prompt_or_task_version' => (string) ( $data['prompt_or_task_version'] ?? '' ),
+		);
+	}
+
+	/**
 	 * @param mixed $value
 	 */
 	private function parse_format( $value ): string {
@@ -147,5 +285,16 @@ class DescriptionCommand extends \WP_CLI_Command {
 		}
 
 		return $media_id;
+	}
+
+	/**
+	 * @param mixed $value
+	 */
+	private function truthy_flag( $value ): bool {
+		if ( true === $value ) {
+			return true;
+		}
+
+		return in_array( (string) $value, array( '1', 'true', 'yes', 'on' ), true );
 	}
 }

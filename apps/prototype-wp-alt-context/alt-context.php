@@ -107,6 +107,7 @@ require_once $altContextAutoload;
 // regardless of classmap staleness.
 require_once ACX_PLUGIN_DIR . 'src/support/class-telemetry.php';
 if (defined('WP_CLI') && WP_CLI) {
+    require_once ACX_PLUGIN_DIR . 'src/api/class-describe-controller.php';
     require_once ACX_PLUGIN_DIR . 'src/api/services/class-description-candidate-service.php';
     require_once ACX_PLUGIN_DIR . 'src/cli/class-description-command.php';
     require_once ACX_PLUGIN_DIR . 'src/cli/class-mirror-integrity-command.php';

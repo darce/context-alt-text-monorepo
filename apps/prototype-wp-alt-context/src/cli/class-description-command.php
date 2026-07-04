@@ -187,6 +187,15 @@ class DescriptionCommand extends \WP_CLI_Command {
 		}
 
 		$data = $result instanceof WP_REST_Response && is_array( $result->get_data() ) ? $result->get_data() : array();
+		if ( $result instanceof WP_REST_Response && $result->get_status() >= 400 ) {
+			return array(
+				'media_id'       => $media_id,
+				'status'         => 'failed',
+				'alt_text_draft' => '',
+				'error'          => (string) ( $data['message'] ?? 'Describe request failed.' ),
+			);
+		}
+
 		$alt_text_draft = trim( (string) ( $data['alt_text_draft'] ?? '' ) );
 
 		if ( ! $write ) {

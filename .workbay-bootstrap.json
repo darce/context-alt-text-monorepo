@@ -1,22 +1,22 @@
 {
   "schema_version": 2,
   "source_kind": "package",
-  "package_version": "0.3.3",
+  "package_version": "0.3.4",
   "stack_distribution": "workbay",
-  "stack_version": "0.3.6",
+  "stack_version": "0.3.8",
   "stack_members": {
-    "mcp-workbay-handoff": "0.2.0",
-    "mcp-workbay-orchestrator": "0.2.0",
-    "workbay-bootstrap": "0.3.5",
-    "workbay-protocol": "0.2.0",
-    "workbay-system": "0.3.3"
+    "mcp-workbay-handoff": "0.2.1",
+    "mcp-workbay-orchestrator": "0.2.1",
+    "workbay-bootstrap": "0.3.6",
+    "workbay-protocol": "0.2.1",
+    "workbay-system": "0.3.4"
   },
   "profile": "all",
   "surfaces": [
     {
       "path": ".github/hooks",
       "source": "shared",
-      "provenance_key": "package:0.3.3"
+      "provenance_key": "package:0.3.4"
     },
     {
       "path": "scripts/hooks",
@@ -36,17 +36,18 @@
     },
     {
       "path": "Makefile.d/ace.mk",
-      "source": "shared"
+      "source": "shared",
+      "provenance_key": "package:0.3.4"
     },
     {
       "path": "Makefile.d/compaction.mk",
       "source": "shared",
-      "provenance_key": "package:0.3.3"
+      "provenance_key": "package:0.3.4"
     },
     {
       "path": "Makefile.d/plans.mk",
       "source": "shared",
-      "provenance_key": "package:0.3.3"
+      "provenance_key": "package:0.3.4"
     },
     {
       "path": "Makefile.d/plugins.mk",
@@ -55,16 +56,17 @@
     {
       "path": "Makefile.d/workflows.mk",
       "source": "shared",
-      "provenance_key": "package:0.3.3"
+      "provenance_key": "package:0.3.4"
     },
     {
       "path": "scripts/workbay/git-plan-cat.sh",
-      "source": "shared"
+      "source": "shared",
+      "provenance_key": "package:0.3.4"
     },
     {
       "path": ".codex/hooks.json",
       "source": "shared",
-      "provenance_key": "package:0.3.3"
+      "provenance_key": "package:0.3.4"
     },
     {
       "path": ".github/prompts",
@@ -76,13 +78,11 @@
     },
     {
       "path": "config/agent-workflows/portable_commands.json",
-      "source": "shared",
-      "provenance_key": "package:0.3.3"
+      "source": "shared"
     },
     {
       "path": "skills",
-      "source": "shared",
-      "provenance_key": "package:0.3.3"
+      "source": "shared"
     },
     {
       "path": ".workbay/generated/plugins/workbay-system/base",
@@ -198,6 +198,7 @@
     }
   ],
   "mcp_servers": [
+    "codebase-graph-mcp",
     "workbay-handoff-mcp",
     "workbay-orchestrator-mcp"
   ],

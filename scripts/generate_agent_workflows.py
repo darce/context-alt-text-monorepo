@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -18,6 +19,39 @@ except ModuleNotFoundError:
 
 REMOTE_GENERATOR = hoisted_generator_path(REPO_ROOT)
 CURSOR_PATCH = REPO_ROOT / "scripts" / "apply_cursor_skills_only_surface.py"
+LOCAL_MANIFEST = REPO_ROOT / "config" / "agent-workflows" / "portable_commands.json"
+LOCAL_SKILLS = REPO_ROOT / "skills"
+
+
+def _installed_workbay_tool() -> tuple[Path, Path] | None:
+    """Return (python, generator) for the installed uv tool payload, if present."""
+    tool_dir = os.environ.get("WORKBAY_UV_TOOL_DIR")
+    if tool_dir is None:
+        completed = subprocess.run(
+            ["uv", "tool", "dir"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            return None
+        tool_dir = completed.stdout.strip()
+    if not tool_dir:
+        return None
+
+    workbay_tool = Path(tool_dir) / "workbay"
+    python = workbay_tool / "bin" / "python"
+    site_packages_parent = workbay_tool / "lib"
+    if not python.is_file() or not site_packages_parent.is_dir():
+        return None
+    matches = sorted(
+        site_packages_parent.glob(
+            "python*/site-packages/workbay_system/payload/scripts/generate_agent_workflows.py"
+        )
+    )
+    if not matches:
+        return None
+    return python, matches[0]
 
 
 def _load_remote_generator():
@@ -52,12 +86,30 @@ def _runs_plugin_mode(argv: list[str]) -> bool:
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if REMOTE_GENERATOR is None or not REMOTE_GENERATOR.is_file():
-        print(
-            "generate_agent_workflows shim: workbay overlay not materialized "
-            "(.workbay/remote absent) — run `workbay-bootstrap install`.",
-            file=sys.stderr,
+        installed_tool = _installed_workbay_tool()
+        if installed_tool is None:
+            print(
+                "generate_agent_workflows shim: neither .workbay/remote nor the "
+                "installed workbay uv tool payload is available.",
+                file=sys.stderr,
+            )
+            return 1
+        python, generator = installed_tool
+        completed = subprocess.run(
+            [
+                str(python),
+                str(generator),
+                "--manifest",
+                str(LOCAL_MANIFEST),
+                "--skills-source-root",
+                str(LOCAL_SKILLS),
+                "--target",
+                str(REPO_ROOT),
+                *args,
+            ],
+            check=False,
         )
-        return 1
+        return completed.returncode
     if not CURSOR_PATCH.is_file():
         print(
             f"generate_agent_workflows shim: missing Cursor patch at {CURSOR_PATCH}",

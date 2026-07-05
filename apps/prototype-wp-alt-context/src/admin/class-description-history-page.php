@@ -1,0 +1,29 @@
+<?php
+
+declare(strict_types=1);
+
+namespace AltContext\Admin;
+
+/**
+ * Description history admin page shell that hosts the React SPA.
+ */
+class DescriptionHistoryPage extends AbstractSpaPage {
+	protected function getRootId(): string {
+		return 'alt-context-admin-app';
+	}
+
+	protected function getRootClass(): string {
+		return 'alt-context-description-history';
+	}
+
+	protected function getPageTitle(): string {
+		return __( 'Description Review History', 'alt-context' );
+	}
+
+	protected function getLoadingMessage(): string {
+		return __(
+			'Loading description review history. Please wait while the application initializes.',
+			'alt-context'
+		);
+	}
+}

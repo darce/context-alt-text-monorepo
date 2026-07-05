@@ -72,6 +72,18 @@ const historyItem = {
   },
 };
 
+const failedHistoryItem = {
+  ...historyItem,
+  media_id: 84,
+  title: 'Portrait',
+  current_alt_text: 'Portrait alt text',
+  generated_alt_text: 'A studio portrait.',
+  run_status: {
+    status: 'failed',
+    updated_at: '2026-07-04 11:05:00',
+  },
+};
+
 describe('DescriptionHistoryPage', () => {
   const fetchHistoryMock = vi.mocked(fetchDescriptionHistory);
   const correctHistoryMock = vi.mocked(correctDescriptionHistoryItem);
@@ -98,7 +110,7 @@ describe('DescriptionHistoryPage', () => {
     expect(screen.getByText('A bridge over water.')).toBeInTheDocument();
     expect(screen.getAllByText('Bridge at dusk')).toHaveLength(2);
     expect(screen.getByText('microsoft/Florence-2-base-ft')).toBeInTheDocument();
-    expect(screen.getByText('completed')).toBeInTheDocument();
+    expect(screen.getAllByText('completed')).toHaveLength(2);
   });
 
   it('saves human alt text corrections inline', async () => {
@@ -121,5 +133,23 @@ describe('DescriptionHistoryPage', () => {
     renderPage();
 
     expect(await screen.findByText('No generated descriptions yet.')).toBeInTheDocument();
+  });
+
+  it('filters history by search text and run status', async () => {
+    fetchHistoryMock.mockResolvedValue({ total: 2, items: [historyItem, failedHistoryItem] });
+
+    renderPage();
+
+    expect(await screen.findByText('Bridge')).toBeInTheDocument();
+    expect(screen.getByText('Portrait')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Search descriptions'), { target: { value: 'portrait' } });
+
+    expect(screen.queryByText('Bridge')).not.toBeInTheDocument();
+    expect(screen.getByText('Portrait')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Run status filter'), { target: { value: 'completed' } });
+
+    expect(screen.getByText('No history items match the current filters.')).toBeInTheDocument();
   });
 });

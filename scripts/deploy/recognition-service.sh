@@ -45,6 +45,9 @@
 #   ACX_VERIFY_ATTEMPTS      default 5  (post-deploy verify retry count for warm-up)
 #   ACX_VERIFY_SLEEP         default 5  (seconds between verify attempts)
 #   ACX_VERIFY_OPTIONAL      set to 1 to downgrade verify failure from fail to warn after deploy/promote
+#   ACX_CONVERGE_RUNTIME     default 1: 'deploy' converges the deployed compose+unit with the repo
+#                              before restart. Set 0 for an image-only hotfix restart. Use
+#                              'deploy <env> --check' for a read-only drift report (no mutation).
 #   CONFIRM                  required for prod actions: CONFIRM=PROMOTE (applies to deploy prod and promote * prod)
 #
 # Reset-specific environment overrides (see do_reset()):
@@ -257,6 +260,69 @@ do_push() {
   fi
 }
 
+env_to_compose_files() {
+  case "$1" in
+    prod)        echo "-f docker-compose.env.yml -f docker-compose.admin.yml" ;;
+    dev|staging) echo "-f docker-compose.env.yml" ;;
+    *)           fail "Unknown env: $1" ;;
+  esac
+}
+
+# Render the systemd unit for <env> from the checked-in template to stdout.
+render_unit() {
+  local env="$1" compose_files
+  compose_files="$(env_to_compose_files "$env")"
+  sed -e "s/{{ENV}}/${env}/g" -e "s|{{COMPOSE_FILES}}|${compose_files}|g" \
+    "${SERVICE_DIR}/systemd/acx-env.service.template"
+}
+
+# Converge the deployed compose file(s) + systemd unit with the repo *before*
+# the image restart, so drift (missing volume/env/overlay) cannot reach a live
+# prod. Backs up the prior compose/unit on the VM first. The Caddy edge is
+# deliberately not reshipped here (E15-29 hazard: a Caddy restart can drop it
+# off acx-demo-net); it stays owned by sync-compose.sh / sync-demo.sh.
+converge_runtime() {
+  local env="$1" remote_dir unit
+  remote_dir="$(env_to_remote_dir "$env")"
+  unit="$(env_to_unit "$env")"
+  log "Converging compose + unit for ${env} on ${SSH_TARGET} (edge proxy not reshipped)"
+  ssh "${SSH_TARGET}" "cp -f '${remote_dir}/docker-compose.env.yml' '${remote_dir}/docker-compose.env.yml.bak' 2>/dev/null || true; sudo cp -f '/etc/systemd/system/${unit}.service' '/etc/systemd/system/${unit}.service.bak' 2>/dev/null || true"
+  scp "${SERVICE_DIR}/docker-compose.env.yml" "${SSH_TARGET}:${remote_dir}/docker-compose.env.yml"
+  if [[ "$env" == "prod" ]]; then
+    scp "${SERVICE_DIR}/docker-compose.admin.yml" "${SSH_TARGET}:${remote_dir}/docker-compose.admin.yml"
+  fi
+  render_unit "$env" | ssh "${SSH_TARGET}" "cat > '/tmp/${unit}.service' && sudo cp '/tmp/${unit}.service' '/etc/systemd/system/${unit}.service' && rm -f '/tmp/${unit}.service' && sudo systemctl daemon-reload"
+  log "Runtime converged for ${env} (compose + unit match repo)"
+}
+
+# Read-only drift gate: diff the deployed compose/unit against the repo and exit
+# non-zero on any drift, without mutating the VM. Operator triage for `--check`.
+converge_check() {
+  local env="$1" remote_dir unit drift=0 rendered
+  remote_dir="$(env_to_remote_dir "$env")"
+  unit="$(env_to_unit "$env")"
+  log "Checking runtime drift for ${env} on ${SSH_TARGET} (read-only)"
+  if ! ssh "${SSH_TARGET}" "cat '${remote_dir}/docker-compose.env.yml' 2>/dev/null" \
+       | diff -u - "${SERVICE_DIR}/docker-compose.env.yml"; then
+    warn "drift: docker-compose.env.yml on ${env} differs from repo (or is missing)"; drift=1
+  fi
+  if [[ "$env" == "prod" ]]; then
+    if ! ssh "${SSH_TARGET}" "cat '${remote_dir}/docker-compose.admin.yml' 2>/dev/null" \
+         | diff -u - "${SERVICE_DIR}/docker-compose.admin.yml"; then
+      warn "drift: docker-compose.admin.yml on ${env} differs from repo (or is missing)"; drift=1
+    fi
+  fi
+  rendered="$(render_unit "$env")"
+  if ! ssh "${SSH_TARGET}" "cat '/etc/systemd/system/${unit}.service' 2>/dev/null" \
+       | diff -u - <(printf '%s\n' "$rendered"); then
+    warn "drift: ${unit}.service on ${env} differs from repo template (or is missing)"; drift=1
+  fi
+  if (( drift )); then
+    fail "runtime drift detected for ${env}; run '$0 deploy ${env}' to converge"
+  fi
+  log "no runtime drift for ${env} (compose + unit match repo)"
+}
+
 do_restart() {
   local env="$1"
   local remote_dir unit
@@ -268,7 +334,18 @@ do_restart() {
 
 #---------------------------------------------------------------- deploy
 do_deploy() {
-  local env="$1"
+  local env="$1"; shift || true
+  local check=0
+  [[ "${1:-}" == "--check" ]] && check=1
+
+  # Read-only drift check bypasses build/push and the promote confirmation.
+  if (( check )); then
+    env_to_remote_dir "$env" >/dev/null   # validate env before any network
+    preflight_ssh
+    converge_check "$env"
+    return 0
+  fi
+
   local tag
   tag="$(env_to_tag "$env")"
 
@@ -288,6 +365,13 @@ do_deploy() {
   fi
 
   do_push "$tag"
+
+  if [[ "${ACX_CONVERGE_RUNTIME:-1}" == "1" ]]; then
+    converge_runtime "$env"
+  else
+    warn "ACX_CONVERGE_RUNTIME=0: skipping compose+unit convergence (image-only restart)"
+  fi
+
   do_restart "$env"
 
   log "Deploy submitted. Verifying..."
@@ -558,7 +642,7 @@ cmd="${1:-}"; shift || true
 case "$cmd" in
   build)        do_build "${1:-dev}" ;;
   build-remote) do_build_remote "${1:-dev}" ;;
-  deploy)       [[ -n "${1:-}" ]] || fail "deploy requires <env>"; do_deploy "$1" ;;
+  deploy)       [[ -n "${1:-}" ]] || fail "deploy requires <env>"; do_deploy "$@" ;;
   promote)      [[ -n "${1:-}" && -n "${2:-}" ]] || fail "promote requires <from-env> <to-env>"; do_promote "$1" "$2" ;;
   reset)        [[ -n "${1:-}" ]] || fail "reset requires <env> (dev|staging|prod)"; do_reset "$1" ;;
   verify)       do_verify "${1:-dev}" ;;

@@ -431,7 +431,7 @@ test-hooks:
 # and retain the /admin compose overlay. Top-level scripts/test_*.py are not
 # collected by any repo-wide runner, so wire it into check-all here.
 test-deploy-contract:
-	@python3 -m pytest scripts/test_e15_31_admin_deploy_contract.py -q --tb=short
+	@python3 -m pytest scripts/test_e15_31_admin_deploy_contract.py scripts/test_e15_33_deploy_convergence.py -q --tb=short
 
 # E17-8 BR-16 / BR-22: on-demand scan for dirty protected paths on main.
 # Mirrors what post-checkout / post-commit / post-merge / post-rewrite / pre-push run.

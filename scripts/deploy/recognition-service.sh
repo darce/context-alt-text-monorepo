@@ -48,6 +48,9 @@
 #   ACX_CONVERGE_RUNTIME     default 1: 'deploy' converges the deployed compose+unit with the repo
 #                              before restart. Set 0 for an image-only hotfix restart. Use
 #                              'deploy <env> --check' for a read-only drift report (no mutation).
+#   ACX_BOOT_SMOKE           default 1: 'deploy' boots the freshly-built :SHA in a throwaway
+#                              container (import smoke + /health probe) before promoting/restarting,
+#                              aborting on failure with prod untouched. Set 0 to bypass.
 #   CONFIRM                  required for prod actions: CONFIRM=PROMOTE (applies to deploy prod and promote * prod)
 #
 # Reset-specific environment overrides (see do_reset()):
@@ -323,6 +326,62 @@ converge_check() {
   log "no runtime drift for ${env} (compose + unit match repo)"
 }
 
+# Formalize the manual E15-29 rollback step: before a new promote, tag the
+# currently-promoted image as :rollback-<id> so a bad deploy can be retagged
+# back to the previous good image. Best-effort — never blocks the deploy.
+preserve_rollback_tag() {
+  local env="$1" env_tag prev_id
+  env_tag="$(env_to_tag "$env")"
+  prev_id="$(ssh "${SSH_TARGET}" "docker image inspect --format '{{.Id}}' ${IMAGE_BASE}:${env_tag} 2>/dev/null" | sed 's/^sha256://' | cut -c1-12)"
+  if [[ -n "${prev_id}" ]]; then
+    if ssh "${SSH_TARGET}" "docker tag ${IMAGE_BASE}:${env_tag} ${IMAGE_BASE}:rollback-${prev_id}"; then
+      log "Preserved rollback tag ${IMAGE_BASE}:rollback-${prev_id}"
+    else
+      warn "could not create rollback tag for ${env} (continuing)"
+    fi
+  else
+    warn "no current ${IMAGE_BASE}:${env_tag} on ${SSH_TARGET} to preserve as rollback (first deploy?)"
+  fi
+}
+
+# Pre-promote boot smoke: boot the freshly-built :SHA in a throwaway container on
+# the VM *before* :latest is restarted, so a bad image (missing package, import
+# error, failed boot) aborts the deploy with prod still serving the old image.
+# Returns non-zero on any smoke failure. Two gates: (1) a network-free import
+# smoke that catches ModuleNotFoundError-class packaging omissions; (2) a
+# short-lived full-boot /health probe on an ephemeral port against the env net.
+do_boot_smoke() {
+  local env="$1" sha="$2" remote_dir
+  remote_dir="$(env_to_remote_dir "$env")"
+  log "Pre-promote boot smoke: ${IMAGE_BASE}:${sha:0:8} on ${SSH_TARGET} (env=${env})"
+  if ! ssh "${SSH_TARGET}" "docker pull ${IMAGE_BASE}:${sha} >/dev/null && docker run --rm --entrypoint python ${IMAGE_BASE}:${sha} -c 'import api.main'"; then
+    warn "boot smoke: 'import api.main' failed on ${IMAGE_BASE}:${sha:0:8} (packaging/import error)"
+    return 1
+  fi
+  if ! ssh "${SSH_TARGET}" "bash -s ${env} ${IMAGE_BASE}:${sha} ${remote_dir}" <<'SMOKE'
+set -euo pipefail
+env="$1"; image="$2"; remote_dir="$3"
+cd "$remote_dir"
+set -a; . ./.env; set +a
+net="${ACX_NETWORK_NAME:-acx-${env}-net}"
+name="acx-smoke-${env}-$$"
+docker run -d --rm --name "$name" --env-file ./.env --network "$net" -P "$image" >/dev/null
+trap 'docker rm -f "$name" >/dev/null 2>&1 || true' EXIT
+port="$(docker port "$name" 8000/tcp | head -1 | sed 's/.*://')"
+for _ in $(seq 1 12); do
+  if curl -fsS "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then echo "smoke health OK"; exit 0; fi
+  sleep 2
+done
+echo "smoke health FAILED after 24s" >&2
+exit 1
+SMOKE
+  then
+    warn "boot smoke: /health never came up for ${IMAGE_BASE}:${sha:0:8}"
+    return 1
+  fi
+  log "Boot smoke passed for ${IMAGE_BASE}:${sha:0:8}"
+}
+
 do_restart() {
   local env="$1"
   local remote_dir unit
@@ -346,8 +405,9 @@ do_deploy() {
     return 0
   fi
 
-  local tag
+  local tag sha
   tag="$(env_to_tag "$env")"
+  sha="$(git -C "${REPO_ROOT}" rev-parse "${GIT_REF}")"
 
   if [[ "$env" == "prod" && "${CONFIRM:-}" != "PROMOTE" ]]; then
     fail "Production deploy requires CONFIRM=PROMOTE. Re-run: CONFIRM=PROMOTE $0 deploy prod"
@@ -365,6 +425,15 @@ do_deploy() {
   fi
 
   do_push "$tag"
+
+  if [[ "${ACX_BOOT_SMOKE:-1}" == "1" ]]; then
+    preserve_rollback_tag "$env"
+    if ! do_boot_smoke "$env" "$sha"; then
+      fail "Pre-promote boot smoke failed for ${env}; prod left on the old image (no restart). Fix the build and re-run, or set ACX_BOOT_SMOKE=0 to bypass."
+    fi
+  else
+    warn "ACX_BOOT_SMOKE=0: skipping pre-promote boot smoke"
+  fi
 
   if [[ "${ACX_CONVERGE_RUNTIME:-1}" == "1" ]]; then
     converge_runtime "$env"

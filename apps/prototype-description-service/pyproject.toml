@@ -45,6 +45,7 @@ include = [
     "db*",
     "recognition*",
     "roster*",
+    "scene*",
     "shared*",
 ]
 

@@ -659,6 +659,27 @@ if (!function_exists('get_post_mime_type')) {
     }
 }
 
+if (!function_exists('wp_update_post')) {
+    function wp_update_post($postarr, $wp_error = false, $fire_after_hooks = true)
+    {
+        $postId = isset($postarr['ID']) ? (int) $postarr['ID'] : 0;
+        if ($postId <= 0) {
+            return 0;
+        }
+
+        $GLOBALS['__ac_updated_posts'][] = $postarr;
+        if (!isset($GLOBALS['__ac_posts'][$postId]) || !is_object($GLOBALS['__ac_posts'][$postId])) {
+            $GLOBALS['__ac_posts'][$postId] = (object) ['ID' => $postId];
+        }
+
+        foreach ($postarr as $key => $value) {
+            $GLOBALS['__ac_posts'][$postId]->{$key} = $value;
+        }
+
+        return $postId;
+    }
+}
+
 if (!function_exists('get_post_modified_time')) {
     function get_post_modified_time($format = 'U', $gmt = false, $post = null, $translate = false)
     {
@@ -1554,6 +1575,47 @@ if (!function_exists('wp_enqueue_script')) {
     function wp_enqueue_script($handle, $src = '', $deps = [], $ver = false, $in_footer = false): void
     {
         $GLOBALS['__ac_scripts'][$handle] = compact('src', 'deps', 'ver', 'in_footer');
+    }
+}
+
+if (!function_exists('add_menu_page')) {
+    function add_menu_page($page_title, $menu_title, $capability, $menu_slug, $callback = '', $icon_url = '', $position = null)
+    {
+        $GLOBALS['__ac_menu_pages'][] = compact(
+            'page_title',
+            'menu_title',
+            'capability',
+            'menu_slug',
+            'callback',
+            'icon_url',
+            'position'
+        );
+
+        return $menu_slug;
+    }
+}
+
+if (!function_exists('add_submenu_page')) {
+    function add_submenu_page(
+        $parent_slug,
+        $page_title,
+        $menu_title,
+        $capability,
+        $menu_slug,
+        $callback = '',
+        $position = null
+    ) {
+        $GLOBALS['__ac_submenu_pages'][] = compact(
+            'parent_slug',
+            'page_title',
+            'menu_title',
+            'capability',
+            'menu_slug',
+            'callback',
+            'position'
+        );
+
+        return $menu_slug;
     }
 }
 

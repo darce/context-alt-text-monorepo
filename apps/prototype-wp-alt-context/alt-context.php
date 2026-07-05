@@ -26,9 +26,11 @@ use AltContext\Api\Api;
 use AltContext\Api\XmpEmbedController;
 use AltContext\AltContext;
 use AltContext\Cli\DescriptionCommand;
+use AltContext\Cli\DescriptionUsageCommand;
 use AltContext\Cli\MirrorIntegrityCommand;
 use AltContext\Cli\ResetProjectionCommand;
 use AltContext\Cli\XmpBackfillCommand;
+use AltContext\Cli\DescriptionRefreshCommand;
 use AltContext\Media\XmpPersistenceFactory;
 use AltContext\Support\LifecycleManager;
 use AltContext\Admin\DashboardPage;
@@ -110,7 +112,9 @@ if (defined('WP_CLI') && WP_CLI) {
     require_once ACX_PLUGIN_DIR . 'src/api/class-describe-controller.php';
     require_once ACX_PLUGIN_DIR . 'src/api/services/class-description-candidate-service.php';
     require_once ACX_PLUGIN_DIR . 'src/cli/class-description-command.php';
+    require_once ACX_PLUGIN_DIR . 'src/cli/class-description-usage-command.php';
     require_once ACX_PLUGIN_DIR . 'src/cli/class-mirror-integrity-command.php';
+    require_once ACX_PLUGIN_DIR . 'src/cli/class-description-refresh-command.php';
 }
 
 $dotenv = Dotenv::createImmutable(ACX_PLUGIN_DIR, ['.env', '.env.local']);
@@ -248,6 +252,8 @@ function acx_register_cli_commands(): void
     }
 
     WP_CLI::add_command('acx mirror-integrity', new MirrorIntegrityCommand());
+    WP_CLI::add_command('acx description-refresh', new DescriptionRefreshCommand());
+    WP_CLI::add_command('acx description-usage', new DescriptionUsageCommand());
     WP_CLI::add_command('acx xmp-backfill', new XmpBackfillCommand());
     WP_CLI::add_command('acx reset-projection', new ResetProjectionCommand());
     WP_CLI::add_command('alt-context describe', new DescriptionCommand());

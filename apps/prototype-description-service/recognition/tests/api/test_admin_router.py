@@ -10,9 +10,11 @@ writes, audit-failure rollback, and the full error contract.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
@@ -36,6 +38,11 @@ from recognition.interface_adapters.http.routers.admin import (
 
 _VALID_TOKEN = "z" * 40  # >= 32 chars
 _AUTH = {"X-Admin-Token": _VALID_TOKEN}
+
+
+def _basic_auth() -> dict[str, str]:
+    encoded = base64.b64encode(f"admin:{_VALID_TOKEN}".encode()).decode("ascii")
+    return {"Authorization": f"Basic {encoded}"}
 
 
 @pytest_asyncio.fixture
@@ -143,6 +150,43 @@ async def test_every_route_requires_admin_token(admin_client: AsyncClient) -> No
         call = getattr(admin_client, method)
         resp = await (call(path, json=json_body) if json_body is not None else call(path))
         assert resp.status_code == 401, f"{method.upper()} {path} should require admin token"
+
+
+@pytest.mark.asyncio
+async def test_json_mutations_reject_browser_basic_auth(admin_client: AsyncClient) -> None:
+    """Basic auth is console-only; JSON mutations require the custom header."""
+    tenant_id = str(uuid.uuid4())
+    key_id = str(uuid.uuid4())
+    requests = [
+        ("/admin/tenants", {"tenant_id": tenant_id, "site_url": "http://csrf.test"}),
+        (f"/admin/tenants/{tenant_id}/keys", {}),
+        (f"/admin/keys/{key_id}/revoke", None),
+    ]
+
+    for path, json_body in requests:
+        response = await admin_client.post(path, json=json_body, headers=_basic_auth())
+        assert response.status_code == 401, path
+
+
+def test_every_json_mutation_route_has_admin_header_gate() -> None:
+    """Structural guard: a future mutating JSON route without require_admin_header
+    must fail here rather than regress silently to Basic-replayable."""
+    from fastapi.routing import APIRoute
+
+    from recognition.interface_adapters.http.deps.admin_auth import require_admin_header
+    from recognition.interface_adapters.http.routers.admin import admin_router
+
+    mutating = {"POST", "PUT", "PATCH", "DELETE"}
+    checked = 0
+    for route in admin_router.routes:
+        if not isinstance(route, APIRoute):
+            continue
+        if not (route.methods & mutating) or route.path.startswith("/ui"):
+            continue
+        deps = [d.dependency for d in route.dependencies]
+        assert require_admin_header in deps, f"{sorted(route.methods)} {route.path} lacks require_admin_header"
+        checked += 1
+    assert checked >= 3  # tenants create, key mint, key revoke
 
 
 # --- Audit row per mutation ----------------------------------------------------
@@ -359,6 +403,33 @@ async def test_console_caps_keys_and_renders_note(
     assert resp.status_code == 200, resp.text
     body = resp.text
     assert f"Showing {_CONSOLE_KEYS_PER_TENANT} of {over_cap} keys" in body
+
+
+@pytest.mark.asyncio
+async def test_console_cap_keeps_newest_keys(admin_client: AsyncClient, db_session: AsyncSession) -> None:
+    """Capping must never hide the key the operator just minted."""
+    tenant_id = uuid.uuid4()
+    await admin_client.post(
+        "/admin/tenants",
+        json={"tenant_id": str(tenant_id), "site_url": "http://newest-cap.test"},
+        headers=_AUTH,
+    )
+
+    repo = SqlAlchemyApiKeyRepository(db_session)
+    records = []
+    for index in range(admin_module._CONSOLE_KEYS_PER_TENANT + 1):
+        record = await repo.create(tenant_id=tenant_id, hashed_key=f"ordered-{index:04d}")
+        record.created_at = datetime(2026, 1, 1, tzinfo=UTC) + timedelta(minutes=index)
+        records.append(record)
+    await db_session.commit()
+
+    _tenants, keys_by_tenant, totals = await admin_module._load_console_model(db_session)
+    rendered_ids = [record.id for record in keys_by_tenant[tenant_id]]
+
+    assert totals[tenant_id] == admin_module._CONSOLE_KEYS_PER_TENANT + 1
+    assert records[-1].id in rendered_ids
+    assert records[0].id not in rendered_ids
+    assert rendered_ids[0] == records[-1].id
 
 
 @pytest.mark.asyncio

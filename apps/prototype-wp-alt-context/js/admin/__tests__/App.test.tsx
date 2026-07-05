@@ -45,6 +45,10 @@ vi.mock('../pages/SettingsPage', () => ({
   SettingsPage: () => <div>Settings</div>,
 }));
 
+vi.mock('../pages/DescriptionHistoryPage', () => ({
+  DescriptionHistoryPage: () => <div>Description History</div>,
+}));
+
 vi.mock('../hooks/useRetentionStatus', () => ({
   useRetentionStatus: vi.fn(),
   useUpdateRetentionPolicy: vi.fn(),
@@ -139,6 +143,12 @@ describe('App route boot', () => {
     expect(determineInitialRoute()).toBe('/settings');
   });
 
+  it('maps the description history admin page query arg to the history route', () => {
+    window.history.replaceState({}, '', '/wp-admin/admin.php?page=alt-context-description-history');
+
+    expect(determineInitialRoute()).toBe('/description-history');
+  });
+
   it('boots the settings page from the WordPress admin query arg', () => {
     window.history.replaceState({}, '', '/wp-admin/admin.php?page=alt-context-settings');
 
@@ -146,6 +156,15 @@ describe('App route boot', () => {
 
     expect(window.location.hash).toBe('#/settings');
     expect(screen.getByText('Settings')).toBeInTheDocument();
+  });
+
+  it('boots the description history page from the WordPress admin query arg', () => {
+    window.history.replaceState({}, '', '/wp-admin/admin.php?page=alt-context-description-history');
+
+    render(<App />);
+
+    expect(window.location.hash).toBe('#/description-history');
+    expect(screen.getByText('Description History')).toBeInTheDocument();
   });
 
   it('boots the retention page from the WordPress admin query arg and saves policy changes', async () => {

@@ -15,7 +15,10 @@ use WP_REST_Request;
 use WP_REST_Response;
 
 use function absint;
+use function array_filter;
 use function array_key_exists;
+use function array_slice;
+use function array_values;
 use function basename;
 use function get_attached_file;
 use function get_post_meta;
@@ -23,6 +26,7 @@ use function get_post;
 use function get_site_url;
 use function gmdate;
 use function is_array;
+use function is_numeric;
 use function is_object;
 use function is_readable;
 use function is_string;
@@ -30,12 +34,14 @@ use function is_wp_error;
 use function max;
 use function microtime;
 use function pathinfo;
+use function preg_match;
 use function round;
 use function sprintf;
 use function strlen;
 use function strtolower;
 use function trim;
 use function update_post_meta;
+use function wp_get_object_terms;
 use function wp_json_encode;
 
 use const PATHINFO_EXTENSION;
@@ -143,7 +149,7 @@ class DescribeMediaService {
 				array(
 					'tenant_id' => $this->host->get_tenant_id(),
 					'media_id'  => $media_id,
-					'context'   => $this->build_wp_context( $media_id, $path ),
+					'context_pack' => $this->build_context_pack( $media_id, $path ),
 				)
 			),
 			'image_' . $media_id => array(
@@ -394,26 +400,130 @@ class DescribeMediaService {
 	}
 
 	/**
-	 * Inert Phase-1 WordPress context (the seeded adapter is not scored on it).
-	 * Sent as the backend envelope's single `context` field — the backend
-	 * `DescribeImageEnvelope` is `extra='forbid'`, so site_url/title/etc. travel
-	 * inside `context`, never as extra top-level keys.
-	 *
+	 * @return array<string,mixed>
+	 */
+	private function build_context_pack( int $media_id, string $path ): array {
+		$attachment = get_post( $media_id );
+		$parent     = $this->get_public_parent_post( $attachment );
+		$context    = array(
+			'attachment' => $this->non_empty_fields(
+				array(
+					'title'       => $this->bounded_string( is_object( $attachment ) && isset( $attachment->post_title ) ? $attachment->post_title : null, 160 ),
+					'caption'     => $this->bounded_string( is_object( $attachment ) && isset( $attachment->post_excerpt ) ? $attachment->post_excerpt : null, 500 ),
+					'description' => $this->bounded_string( is_object( $attachment ) && isset( $attachment->post_content ) ? $attachment->post_content : null, 1000 ),
+					'alt_text'    => $this->bounded_string( get_post_meta( $media_id, '_wp_attachment_image_alt', true ), 500 ),
+					'filename'    => $this->bounded_string( basename( $path ), 255 ),
+				)
+			),
+		);
+
+		if ( null !== $parent ) {
+			$context['post'] = $this->non_empty_fields(
+				array(
+					'title'     => $this->bounded_string( $parent->post_title ?? null, 200 ),
+					'excerpt'   => $this->bounded_string( $parent->post_excerpt ?? null, 1000 ),
+					'post_type' => $this->bounded_string( $parent->post_type ?? null, 64 ),
+					'status'    => $this->bounded_string( $parent->post_status ?? null, 32 ),
+				)
+			);
+
+			if ( isset( $parent->ID ) ) {
+				$terms = $this->collect_taxonomy_terms( (int) $parent->ID );
+				if ( array() !== $terms ) {
+					$context['taxonomy_terms'] = $terms;
+				}
+
+				if ( 'product' === (string) ( $parent->post_type ?? '' ) ) {
+					$context['product'] = $this->non_empty_fields(
+						array(
+							'name'  => $this->bounded_string( $parent->post_title ?? null, 200 ),
+							'sku'   => $this->bounded_string( get_post_meta( (int) $parent->ID, '_sku', true ), 120 ),
+							'price' => $this->bounded_string( get_post_meta( (int) $parent->ID, '_price', true ), 64 ),
+						)
+					);
+				}
+			}
+		}
+
+		return array_filter(
+			$context,
+			static fn ( mixed $value ): bool => is_array( $value ) ? array() !== $value : null !== $value
+		);
+	}
+
+	private function get_public_parent_post( mixed $attachment ): ?object {
+		$parent_id = is_object( $attachment ) && isset( $attachment->post_parent ) ? absint( $attachment->post_parent ) : 0;
+		if ( $parent_id <= 0 ) {
+			return null;
+		}
+
+		$parent = get_post( $parent_id );
+		if ( ! is_object( $parent ) || 'publish' !== (string) ( $parent->post_status ?? '' ) ) {
+			return null;
+		}
+
+		return $parent;
+	}
+
+	/**
+	 * @return array<int,array<string,string>>
+	 */
+	private function collect_taxonomy_terms( int $object_id ): array {
+		$terms = array();
+		foreach ( array( 'category', 'post_tag', 'product_cat', 'product_tag' ) as $taxonomy ) {
+			$result = wp_get_object_terms( $object_id, $taxonomy );
+			if ( is_wp_error( $result ) || ! is_array( $result ) ) {
+				continue;
+			}
+
+			foreach ( $result as $term ) {
+				if ( ! is_object( $term ) || ! isset( $term->name, $term->taxonomy ) ) {
+					continue;
+				}
+
+				$terms[] = $this->non_empty_fields(
+					array(
+						'taxonomy' => $this->bounded_string( $term->taxonomy, 64 ),
+						'name'     => $this->bounded_string( $term->name, 120 ),
+						'slug'     => $this->bounded_string( $term->slug ?? null, 120 ),
+					)
+				);
+			}
+		}
+
+		return array_slice( array_values( array_filter( $terms ) ), 0, 20 );
+	}
+
+	/**
+	 * @param array<string,?string> $fields
 	 * @return array<string,string>
 	 */
-	private function build_wp_context( int $media_id, string $path ): array {
-		$post        = get_post( $media_id );
-		$title       = is_object( $post ) && isset( $post->post_title ) ? (string) $post->post_title : '';
-		$caption     = is_object( $post ) && isset( $post->post_excerpt ) ? (string) $post->post_excerpt : '';
-		$description = is_object( $post ) && isset( $post->post_content ) ? (string) $post->post_content : '';
-
-		return array(
-			'site_url'    => get_site_url(),
-			'title'       => $title,
-			'caption'     => $caption,
-			'description' => $description,
-			'filename'    => basename( $path ),
+	private function non_empty_fields( array $fields ): array {
+		return array_filter(
+			$fields,
+			static fn ( ?string $value ): bool => null !== $value && '' !== $value
 		);
+	}
+
+	private function bounded_string( mixed $value, int $max_length ): ?string {
+		if ( ! is_string( $value ) && ! is_numeric( $value ) ) {
+			return null;
+		}
+
+		$value = trim( (string) $value );
+		if ( '' === $value ) {
+			return null;
+		}
+
+		if ( function_exists( 'mb_substr' ) ) {
+			return mb_substr( $value, 0, $max_length, 'UTF-8' );
+		}
+
+		if ( preg_match( '/^.{0,' . $max_length . '}/us', $value, $matches ) ) {
+			return $matches[0];
+		}
+
+		return $value;
 	}
 
 	private function resolve_image_mime_type( string $path, int $media_id ): string {

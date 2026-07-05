@@ -23,8 +23,9 @@ recognition multipart/auth/object-store transport.
 - **Auth**: `require_write_access` (admin key or tenant-scoped key), `X-Api-Key`.
 - **Body** (`multipart/form-data`):
   - `request` — JSON `DescribeImageEnvelope`: `tenant_id` (UUID, canonicalized
-    lowercase), `media_id` (int > 0, must equal the part suffix), optional inert
-    `context`. Adapter selection is server-side in Phase 1.
+    lowercase), `media_id` (int > 0, must equal the part suffix), optional
+    legacy `context`, and optional typed `context_pack`. Adapter selection is
+    server-side.
   - `image_<media_id>` — exactly one image part (`image/jpeg|png|webp`).
 - **Upload cap**: `/scene/describe/multipart` is registered with the body-size
   middleware (413 on oversize).
@@ -67,9 +68,27 @@ Error shapes match the recognition routes: 5xx/503 use the `{error, trace_id, pa
 | `force` (request param, default `false`) | explicit operator override for non-empty existing alt text when `write_alt=true` |
 | `request.tenant_id` | `TenantIdentity::resolve` |
 | `request.media_id` | echoes the request param (must equal the `image_<id>` part suffix) |
-| `request.context` | WordPress inert bag `{site_url, title, caption, description, filename}` — nested under the single `context` key because the backend `DescribeImageEnvelope` is `extra='forbid'` (no extra top-level keys); inert in Phase 1 |
+| `request.context_pack.attachment` | bounded attachment title/caption/description/alt text/filename collected from the attachment post and `_wp_attachment_image_alt` |
+| `request.context_pack.post` | bounded parent post title/excerpt/type/status; included only when the parent post is public (`publish`) |
+| `request.context_pack.taxonomy_terms` | up to 20 public category/tag/product terms for the public parent post |
+| `request.context_pack.product` | bounded Woo-style product name/SKU/price when the public parent post type is `product` |
 | every response field | **passed through from the backend payload** |
 | `alt_text_write` (response field, WP-only) | local write result added only when `write_alt=true`; never sent by the backend scene route |
+
+### Context-pack bounds and privacy
+
+WordPress owns source collection and privacy filtering. The backend validates
+the typed object and owns whether/how an adapter applies it.
+
+- Top-level request keys remain `tenant_id`, `media_id`, and `context_pack` for
+  new callers; legacy `context` remains accepted by the backend for older
+  clients.
+- Parent post body content is not sent. Draft/private/non-public parents are
+  omitted entirely.
+- Strings are length-bounded before leaving WordPress; taxonomy terms are capped
+  at 20.
+- Missing context is not an error. Adapters must degrade to generic visual facts
+  and report `context_used.applied=false`.
 
 **rg-015 (boundary fidelity)**: the proxy MUST trace every envelope field to the
 backend payload or a documented local authority. A malformed upstream shape

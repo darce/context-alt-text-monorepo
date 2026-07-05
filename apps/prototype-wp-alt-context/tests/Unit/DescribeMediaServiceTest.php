@@ -209,6 +209,28 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertArrayNotHasKey('product', $contextPack);
     }
 
+    public function testContextPackTruncatesMultibyteTextWithoutBreakingJson(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $GLOBALS['__ac_posts'][42]->post_title = str_repeat('€', 170);
+
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $this->controller->describe_media($req);
+
+        $body = $this->getHttpCalls()[0]['args']['body'];
+        preg_match('/name="request".*?\r\n\r\n(\{.*?\})\r\n/s', $body, $m);
+        $envelope = json_decode($m[1], true);
+
+        $this->assertIsArray($envelope);
+        $this->assertSame(str_repeat('€', 160), $envelope['context_pack']['attachment']['title']);
+    }
+
     public function testRejectsUnreadableAttachmentBeforeDispatch(): void
     {
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');

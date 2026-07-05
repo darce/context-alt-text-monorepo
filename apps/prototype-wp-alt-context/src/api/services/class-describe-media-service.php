@@ -28,9 +28,9 @@ use function is_readable;
 use function is_string;
 use function is_wp_error;
 use function pathinfo;
+use function preg_match;
 use function sprintf;
 use function strlen;
-use function substr;
 use function strtolower;
 use function trim;
 use function wp_get_object_terms;
@@ -316,7 +316,15 @@ class DescribeMediaService {
 			return null;
 		}
 
-		return substr( $value, 0, $max_length );
+		if ( function_exists( 'mb_substr' ) ) {
+			return mb_substr( $value, 0, $max_length, 'UTF-8' );
+		}
+
+		if ( preg_match( '/^.{0,' . $max_length . '}/us', $value, $matches ) ) {
+			return $matches[0];
+		}
+
+		return $value;
 	}
 
 	private function resolve_image_mime_type( string $path, int $media_id ): string {

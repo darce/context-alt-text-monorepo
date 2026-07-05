@@ -9,6 +9,7 @@ import {
   testConnection,
   TestConnectionOutcome,
   type RecognitionSourceValue,
+  type SaveSettingsPayload,
   type SettingsResponse,
   type TestConnectionProbeMode,
 } from '../api/settingsApi';
@@ -84,7 +85,7 @@ export const SettingsPage = (): React.JSX.Element => {
     dispatch({ type: 'clearTestResult' });
 
     const data = settingsQuery.data;
-    const payload: Record<string, string> = {};
+    const payload: SaveSettingsPayload = {};
     if (state.recognitionSource !== (data?.recognition_source ?? RecognitionSource.LOCAL)) {
       payload.recognition_source = state.recognitionSource;
     }
@@ -96,6 +97,13 @@ export const SettingsPage = (): React.JSX.Element => {
     }
     if (state.apiKey) {
       payload.api_key = state.apiKey;
+    }
+    const descriptionBudgetMaxAttempts = Number.parseInt(state.descriptionBudgetMaxAttempts, 10);
+    if (
+      Number.isFinite(descriptionBudgetMaxAttempts) &&
+      descriptionBudgetMaxAttempts !== data.description_budget.max_attempts
+    ) {
+      payload.description_budget = { max_attempts: descriptionBudgetMaxAttempts };
     }
 
     if (Object.keys(payload).length === 0) {
@@ -165,6 +173,7 @@ export const SettingsPage = (): React.JSX.Element => {
         localUrl={state.localUrl}
         recognitionSource={state.recognitionSource}
         apiKey={state.apiKey}
+        descriptionBudgetMaxAttempts={state.descriptionBudgetMaxAttempts}
         sourceReadOnly={sourceReadOnly}
         urlReadOnly={urlReadOnly}
         localUrlReadOnly={localUrlReadOnly}
@@ -177,6 +186,9 @@ export const SettingsPage = (): React.JSX.Element => {
         onLocalUrlChange={(value) => dispatch({ type: 'setLocalUrl', value })}
         onRecognitionSourceChange={(value) => dispatch({ type: 'setRecognitionSource', value })}
         onApiKeyChange={(value) => dispatch({ type: 'setApiKey', value })}
+        onDescriptionBudgetMaxAttemptsChange={(value) =>
+          dispatch({ type: 'setDescriptionBudgetMaxAttempts', value })
+        }
         onSave={handleSave}
         onTest={handleTest}
         onFocusServiceUrl={() => {

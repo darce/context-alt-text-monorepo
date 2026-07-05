@@ -25,6 +25,7 @@ use AltContext\Admin\Menu;
 use AltContext\Api\Api;
 use AltContext\Api\XmpEmbedController;
 use AltContext\AltContext;
+use AltContext\Cli\DescriptionUsageCommand;
 use AltContext\Cli\MirrorIntegrityCommand;
 use AltContext\Cli\ResetProjectionCommand;
 use AltContext\Cli\XmpBackfillCommand;
@@ -107,6 +108,7 @@ require_once $altContextAutoload;
 // regardless of classmap staleness.
 require_once ACX_PLUGIN_DIR . 'src/support/class-telemetry.php';
 if (defined('WP_CLI') && WP_CLI) {
+    require_once ACX_PLUGIN_DIR . 'src/cli/class-description-usage-command.php';
     require_once ACX_PLUGIN_DIR . 'src/cli/class-mirror-integrity-command.php';
     require_once ACX_PLUGIN_DIR . 'src/cli/class-description-refresh-command.php';
 }
@@ -247,6 +249,7 @@ function acx_register_cli_commands(): void
 
     WP_CLI::add_command('acx mirror-integrity', new MirrorIntegrityCommand());
     WP_CLI::add_command('acx description-refresh', new DescriptionRefreshCommand());
+    WP_CLI::add_command('acx description-usage', new DescriptionUsageCommand());
     WP_CLI::add_command('acx xmp-backfill', new XmpBackfillCommand());
     WP_CLI::add_command('acx reset-projection', new ResetProjectionCommand());
 }

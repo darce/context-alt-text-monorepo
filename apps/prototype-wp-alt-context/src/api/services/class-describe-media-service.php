@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace AltContext\Api\Services;
 
 require_once __DIR__ . '/../../support/class-telemetry.php';
+require_once __DIR__ . '/../../sovereign/repositories/class-description-usage-repository.php';
+require_once __DIR__ . '/class-description-budget-service.php';
 
 use AltContext\Api\DescribeHostInterface;
 use AltContext\Support\Telemetry;
@@ -25,7 +27,10 @@ use function is_object;
 use function is_readable;
 use function is_string;
 use function is_wp_error;
+use function max;
+use function microtime;
 use function pathinfo;
+use function round;
 use function sprintf;
 use function strlen;
 use function strtolower;
@@ -74,18 +79,33 @@ class DescribeMediaService {
 	);
 
 	private DescribeHostInterface $host;
+	private DescriptionBudgetService $budget_service;
 
-	public function __construct( DescribeHostInterface $host ) {
-		$this->host = $host;
+	public function __construct( DescribeHostInterface $host, ?DescriptionBudgetService $budget_service = null ) {
+		$this->host           = $host;
+		$this->budget_service = $budget_service ?? new DescriptionBudgetService();
 	}
 
 	public function describe_media( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		$media_id = absint( $request->get_param( 'media_id' ) );
+		$started_at = microtime( true );
+		$media_id   = absint( $request->get_param( 'media_id' ) );
 		if ( $media_id <= 0 ) {
 			return new WP_Error(
 				'describe_invalid_media_id',
 				'A positive media_id is required.',
 				array( 'status' => 400 )
+			);
+		}
+
+		$budget_gate = $this->budget_service->check_budget();
+		if ( false === ( $budget_gate['allowed'] ?? false ) ) {
+			return new WP_Error(
+				(string) ( $budget_gate['code'] ?? 'description_budget_denied' ),
+				(string) ( $budget_gate['message'] ?? 'Description generation budget denied this request.' ),
+				array(
+					'status' => 429,
+					'budget' => $budget_gate,
+				)
 			);
 		}
 
@@ -144,15 +164,28 @@ class DescribeMediaService {
 		);
 
 		if ( is_wp_error( $response ) ) {
+			$this->record_error_from_wp_error( $media_id, $response, 'backend', true );
 			return $response;
 		}
 
-		$validated = $this->validate_description_envelope( $response, $media_id );
-		if ( is_wp_error( $validated ) || ! $this->should_write_alt_text( $request ) ) {
-			return $validated;
+		$result = $this->validate_description_envelope( $response, $media_id );
+		if ( is_wp_error( $result ) ) {
+			$this->record_error_from_wp_error( $media_id, $result, 'validation', false );
+			return $result;
 		}
 
-		return $this->apply_alt_text_write_policy( $validated, $media_id, $this->should_force_alt_text_write( $request ) );
+		if ( $result->get_status() >= 400 ) {
+			$this->record_error_from_response( $media_id, $result );
+			return $result;
+		}
+
+		$this->record_success_from_response( $media_id, $result, $started_at );
+
+		if ( ! $this->should_write_alt_text( $request ) ) {
+			return $result;
+		}
+
+		return $this->apply_alt_text_write_policy( $result, $media_id, $this->should_force_alt_text_write( $request ) );
 	}
 
 	/**
@@ -298,6 +331,55 @@ class DescribeMediaService {
 			),
 			array( 'status' => 413 )
 		);
+	}
+
+	private function record_success_from_response( int $media_id, WP_REST_Response $response, float $started_at ): void {
+		$data                = $response->get_data();
+		$provider_disclosure = is_array( $data['provider_disclosure'] ?? null ) ? $data['provider_disclosure'] : array();
+
+		$this->budget_service->record_success(
+			$media_id,
+			is_string( $data['adapter'] ?? null ) ? $data['adapter'] : 'description',
+			is_string( $provider_disclosure['provider'] ?? null ) ? $provider_disclosure['provider'] : 'service',
+			isset( $data['duration_ms'] ) ? max( 0, (int) $data['duration_ms'] ) : $this->elapsed_ms( $started_at ),
+			(bool) ( $data['cached'] ?? false ),
+			'drafted'
+		);
+	}
+
+	private function record_error_from_response( int $media_id, WP_REST_Response $response ): void {
+		$status  = $response->get_status();
+		$data    = $response->get_data();
+		$message = sprintf( 'Upstream description request failed with HTTP %d.', $status );
+		if ( is_array( $data ) && is_string( $data['detail'] ?? null ) && '' !== $data['detail'] ) {
+			$message = $data['detail'];
+		}
+
+		$this->budget_service->record_error(
+			$media_id,
+			'description',
+			'service',
+			sprintf( 'upstream_http_%d', $status ),
+			$message,
+			$status >= 500 || 429 === $status,
+			'backend'
+		);
+	}
+
+	private function record_error_from_wp_error( int $media_id, WP_Error $error, string $source, bool $retryable ): void {
+		$this->budget_service->record_error(
+			$media_id,
+			'description',
+			'service',
+			(string) $error->get_error_code(),
+			$error->get_error_message(),
+			$retryable,
+			$source
+		);
+	}
+
+	private function elapsed_ms( float $started_at ): int {
+		return max( 0, (int) round( ( microtime( true ) - $started_at ) * 1000 ) );
 	}
 
 	private function invalid_envelope_error( int $media_id, string $reason ): WP_Error {

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Api\DescribeController;
+use AltContext\Api\Services\DescriptionBudgetService;
 use AltContext\Tests\TestCase;
 use WP_Error;
 use WP_REST_Request;
@@ -133,6 +134,11 @@ class DescribeMediaServiceTest extends TestCase
         $data = $result->get_data();
         $this->assertSame('A photo.', $data['alt_text_draft']);
         $this->assertFalse($data['cached']);
+
+        $usage = (new DescriptionBudgetService())->usage_summary();
+        $this->assertSame(1, $usage['attempts']);
+        $this->assertSame(1, $usage['successes']);
+        $this->assertSame(0, $usage['failures']);
     }
 
     public function testRegisterRoutesExposesWriteIntentArgs(): void
@@ -331,6 +337,21 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertSame(array(), $this->getHttpCalls());
     }
 
+    public function testBudgetLimitBlocksBeforeBackendDispatch(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $this->setOption('acx_description_budget_max_attempts', 0);
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $result = $this->controller->describe_media($req);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('description_budget_attempt_limit_exceeded', $result->get_error_code());
+        $this->assertSame(429, $result->get_error_data()['status'] ?? null);
+        $this->assertSame(array(), $this->getHttpCalls());
+    }
+
     public function testRejectsOversizePayloadBeforeDispatch(): void
     {
         $bytes = str_repeat('A', 26 * 1024 * 1024);
@@ -381,5 +402,11 @@ class DescribeMediaServiceTest extends TestCase
 
         $this->assertInstanceOf(WP_REST_Response::class, $result);
         $this->assertSame(415, $result->get_status());
+
+        $usage = (new DescriptionBudgetService())->usage_summary();
+        $errors = (new DescriptionBudgetService())->recent_errors();
+        $this->assertSame(1, $usage['attempts']);
+        $this->assertSame(1, $usage['failures']);
+        $this->assertSame('upstream_http_415', $errors[0]['error_code']);
     }
 }

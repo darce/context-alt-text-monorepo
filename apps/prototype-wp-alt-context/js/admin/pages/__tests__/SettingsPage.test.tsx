@@ -75,6 +75,16 @@ const defaultSettings: SettingsResponse = {
   tenant_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
   tenant_id_source: 'option',
   tenant_paired: false,
+  description_budget: {
+    max_attempts: -1,
+    usage: {
+      attempts: 0,
+      successes: 0,
+      failures: 0,
+      cost_total: 0,
+    },
+    recent_errors: [],
+  },
 };
 
 const saveMutate = vi.fn();
@@ -144,6 +154,49 @@ describe('SettingsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
 
     expect(saveMutate).toHaveBeenCalledWith({ url: 'https://new-api.example.com' });
+  });
+
+  it('renders description budget usage and saves the attempt limit', () => {
+    mockUseQuery.mockReturnValue(
+      createMockQuery({
+        data: {
+          ...defaultSettings,
+          description_budget: {
+            max_attempts: 25,
+            usage: {
+              attempts: 3,
+              successes: 2,
+              failures: 1,
+              cost_total: 0.12,
+            },
+            recent_errors: [
+              {
+                media_id: 102,
+                error_code: 'rate_limited',
+                error_message: 'Rate limited',
+                retryable: true,
+                occurred_at: '2026-07-05T12:00:00Z',
+              },
+            ],
+          },
+        },
+      }),
+    );
+    render(<SettingsPage />);
+
+    expect(screen.getByText('Description budget')).toBeInTheDocument();
+    expect(screen.getByLabelText('Maximum description attempts')).toHaveValue(25);
+    expect(screen.getByText('Attempts')).toBeInTheDocument();
+    expect(screen.getByText('3')).toBeInTheDocument();
+    expect(screen.getByText('Failures')).toBeInTheDocument();
+    expect(screen.getByText('rate_limited')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Maximum description attempts'), {
+      target: { value: '50' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
+
+    expect(saveMutate).toHaveBeenCalledWith({ description_budget: { max_attempts: 50 } });
   });
 
   it('shows "no changes" when submitting without modifications', () => {

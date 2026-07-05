@@ -17,6 +17,7 @@ interface SettingsFormProps {
   localUrl: string;
   recognitionSource: RecognitionSourceValue;
   apiKey: string;
+  descriptionBudgetMaxAttempts: string;
   sourceReadOnly: boolean;
   urlReadOnly: boolean;
   localUrlReadOnly: boolean;
@@ -29,6 +30,7 @@ interface SettingsFormProps {
   onLocalUrlChange: (value: string) => void;
   onRecognitionSourceChange: (value: RecognitionSourceValue) => void;
   onApiKeyChange: (value: string) => void;
+  onDescriptionBudgetMaxAttemptsChange: (value: string) => void;
   onSave: (e: React.FormEvent) => void;
   onTest: (target: RecognitionSourceValue) => void;
   onFocusServiceUrl?: () => void;
@@ -40,6 +42,7 @@ export const SettingsForm = ({
   localUrl,
   recognitionSource,
   apiKey,
+  descriptionBudgetMaxAttempts,
   sourceReadOnly,
   urlReadOnly,
   localUrlReadOnly,
@@ -52,6 +55,7 @@ export const SettingsForm = ({
   onLocalUrlChange,
   onRecognitionSourceChange,
   onApiKeyChange,
+  onDescriptionBudgetMaxAttemptsChange,
   onSave,
   onTest,
   onFocusServiceUrl,
@@ -163,6 +167,56 @@ export const SettingsForm = ({
         <p className="description">
           {__('Save settings before scanning or testing so recognition traffic uses your edits.', 'alt-context')}
         </p>
+      ) : null}
+
+      <h3 className="acx-settings__section-title">{__('Description budget', 'alt-context')}</h3>
+      <label htmlFor="acx-settings-description-budget-max-attempts">
+        {__('Maximum description attempts', 'alt-context')}
+      </label>
+      <input
+        id="acx-settings-description-budget-max-attempts"
+        type="number"
+        className="small-text"
+        min="-1"
+        step="1"
+        value={descriptionBudgetMaxAttempts}
+        onChange={(e) => onDescriptionBudgetMaxAttemptsChange(e.target.value)}
+      />
+      <p className="description">
+        {__('-1 means unlimited. Attempts include successful and failed description generations.', 'alt-context')}
+      </p>
+
+      <div className="acx-settings__budget-summary" aria-label={__('Description usage', 'alt-context')}>
+        <dl>
+          <dt>{__('Attempts', 'alt-context')}</dt>
+          <dd>{data.description_budget.usage.attempts}</dd>
+          <dt>{__('Successes', 'alt-context')}</dt>
+          <dd>{data.description_budget.usage.successes}</dd>
+          <dt>{__('Failures', 'alt-context')}</dt>
+          <dd>{data.description_budget.usage.failures}</dd>
+        </dl>
+      </div>
+
+      {data.description_budget.recent_errors.length > 0 ? (
+        <table className="widefat striped acx-settings__recent-errors">
+          <caption>{__('Recent description errors', 'alt-context')}</caption>
+          <thead>
+            <tr>
+              <th scope="col">{__('Media', 'alt-context')}</th>
+              <th scope="col">{__('Code', 'alt-context')}</th>
+              <th scope="col">{__('Message', 'alt-context')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.description_budget.recent_errors.map((error) => (
+              <tr key={`${error.media_id}-${error.occurred_at}-${error.error_code ?? ''}`}>
+                <td>{error.media_id}</td>
+                <td>{error.error_code ?? __('unknown', 'alt-context')}</td>
+                <td>{error.error_message ?? ''}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       ) : null}
 
       <p className="submit">

@@ -56,11 +56,66 @@ class SeededDescriptionAdapter:
         )
         seed = int(hashlib.sha256(material.encode("utf-8")).hexdigest(), 16)
         fixture = _FIXTURE_POOL[random.Random(seed).randrange(len(_FIXTURE_POOL))]
+        context_sources, context_hint = self._context_pack_signals(context)
+        alt_text_draft = fixture["caption"]
+        if context_hint:
+            alt_text_draft = f"{context_hint}. {fixture['caption']}"
         return AdapterResult(
             caption=fixture["caption"],
             objects=fixture["objects"],
             ocr_text=fixture["ocr_text"],
-            alt_text_draft=fixture["caption"],
-            context_sources=(),
-            context_applied=False,
+            alt_text_draft=alt_text_draft,
+            context_sources=context_sources,
+            context_applied=bool(context_sources),
         )
+
+    def _context_pack_signals(self, context: Mapping[str, Any] | None) -> tuple[tuple[str, ...], str | None]:
+        if not isinstance(context, Mapping):
+            return (), None
+
+        attachment = context.get("attachment")
+        post = context.get("post")
+        taxonomy_terms = context.get("taxonomy_terms")
+        if (
+            not isinstance(attachment, Mapping)
+            and not isinstance(post, Mapping)
+            and not isinstance(taxonomy_terms, list)
+        ):
+            return (), None
+
+        sources: list[str] = []
+        hints: list[str] = []
+
+        if isinstance(attachment, Mapping):
+            title = self._clean_string(attachment.get("title"))
+            caption = self._clean_string(attachment.get("caption"))
+            if title:
+                sources.append("attachment.title")
+                hints.append(title)
+            if caption:
+                sources.append("attachment.caption")
+                hints.append(caption)
+
+        if isinstance(post, Mapping):
+            title = self._clean_string(post.get("title"))
+            if title:
+                sources.append("post.title")
+                hints.append(title)
+
+        term_names = []
+        if isinstance(taxonomy_terms, list):
+            for term in taxonomy_terms[:20]:
+                if not isinstance(term, Mapping):
+                    continue
+                name = self._clean_string(term.get("name"))
+                if name:
+                    term_names.append(name)
+            if term_names:
+                sources.append("taxonomy_terms")
+                hints.append(", ".join(term_names[:4]))
+
+        return tuple(sources), hints[0] if hints else None
+
+    @staticmethod
+    def _clean_string(value: Any) -> str:
+        return value.strip() if isinstance(value, str) else ""

@@ -2,9 +2,12 @@
 # Replace {{ENV}} with prod/staging/dev and {{COMPOSE_FILES}} with the
 # environment's complete compose-file list.
 #
-# Install:
+# Install (canonical path: scripts/deploy-env.sh renders + installs this unit):
 #   sudo cp acx-env.service.template /etc/systemd/system/acx-{{ENV}}.service
-#   sed -i 's/{{ENV}}/prod/g' /etc/systemd/system/acx-prod.service
+#   sed -i -e 's/{{ENV}}/prod/g' \
+#     -e 's|{{COMPOSE_FILES}}|-f docker-compose.env.yml -f docker-compose.admin.yml|g' \
+#     /etc/systemd/system/acx-prod.service
+#   (dev/staging: use -e 's|{{COMPOSE_FILES}}|-f docker-compose.env.yml|g')
 #   sudo systemctl daemon-reload && sudo systemctl enable acx-prod.service
 
 [Unit]

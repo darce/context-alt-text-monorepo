@@ -42,6 +42,20 @@ Host-level Tailscale enrollment for the VM is the canonical
    docker compose -f docker-compose.env.yml -f docker-compose.admin.yml up -d
    ```
 
+   The checked-in prod deploy and compose-sync paths install this overlay and
+   render it into `acx-prod.service`; ordinary deploys and systemd restarts
+   therefore retain the loopback binding. If the unit predates this support,
+   run `apps/prototype-description-service/scripts/deploy-env.sh prod` once to
+   converge the compose files and unit before enabling `/admin`.
+
+   **Posture note**: the overlay is installed on prod unconditionally — the
+   deploy path does not consult `RECOGNITION_ADMIN_ENABLED`. With admin
+   disabled, `/admin` routes are absent (404) but the api container still
+   binds `127.0.0.1:8000`, so the tenant API is reachable from VM-local
+   processes without traversing Caddy. Accepted for the single-operator VM
+   (loopback-only, tailnet-gated host); remove the overlay from
+   `/opt/acx-backend/prod/` and restart `acx-prod` if that posture changes.
+
 ---
 
 ## (b) Reach `/admin` over the tailnet
@@ -73,7 +87,8 @@ The console prompts for HTTP Basic auth in the browser:
 - **Username**: any value (ignored).
 - **Password**: the `RECOGNITION_ADMIN_TOKEN` from step (a).
 
-(Programmatic callers may instead send the `X-Admin-Token` header.)
+(Programmatic callers send the `X-Admin-Token` header; it is mandatory for
+JSON create/mint/revoke mutations.)
 
 ---
 

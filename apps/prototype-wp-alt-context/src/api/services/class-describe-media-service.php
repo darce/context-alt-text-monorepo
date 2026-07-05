@@ -16,8 +16,10 @@ use function absint;
 use function array_key_exists;
 use function basename;
 use function get_attached_file;
+use function get_post_meta;
 use function get_post;
 use function get_site_url;
+use function gmdate;
 use function is_array;
 use function is_object;
 use function is_readable;
@@ -27,6 +29,8 @@ use function pathinfo;
 use function sprintf;
 use function strlen;
 use function strtolower;
+use function trim;
+use function update_post_meta;
 use function wp_json_encode;
 
 use const PATHINFO_EXTENSION;
@@ -41,6 +45,8 @@ use const PATHINFO_EXTENSION;
  */
 class DescribeMediaService {
 	private const MULTIPART_MAX_BYTES = 25 * 1024 * 1024;
+	private const ALT_TEXT_META_KEY = '_wp_attachment_image_alt';
+	private const PROVENANCE_META_KEY = '_acx_description_provenance';
 
 	/**
 	 * The 15 provenance-bearing fields the backend contract guarantees. The
@@ -141,7 +147,12 @@ class DescribeMediaService {
 			return $response;
 		}
 
-		return $this->validate_description_envelope( $response, $media_id );
+		$validated = $this->validate_description_envelope( $response, $media_id );
+		if ( is_wp_error( $validated ) || ! $this->should_write_alt_text( $request ) ) {
+			return $validated;
+		}
+
+		return $this->apply_alt_text_write_policy( $validated, $media_id, $this->should_force_alt_text_write( $request ) );
 	}
 
 	/**
@@ -167,6 +178,113 @@ class DescribeMediaService {
 		}
 
 		return $response;
+	}
+
+	private function should_write_alt_text( WP_REST_Request $request ): bool {
+		return $this->truthy_request_param( $request->get_param( 'write_alt' ) );
+	}
+
+	private function should_force_alt_text_write( WP_REST_Request $request ): bool {
+		return $this->truthy_request_param( $request->get_param( 'force' ) );
+	}
+
+	private function truthy_request_param( mixed $value ): bool {
+		if ( is_bool( $value ) ) {
+			return $value;
+		}
+		if ( is_string( $value ) ) {
+			$normalized = strtolower( trim( $value ) );
+			return '1' === $normalized || 'true' === $normalized || 'yes' === $normalized || 'on' === $normalized;
+		}
+		return 1 === $value || 1.0 === $value;
+	}
+
+	private function apply_alt_text_write_policy( WP_REST_Response $response, int $media_id, bool $force ): WP_REST_Response {
+		$data = $response->get_data();
+		if ( ! is_array( $data ) ) {
+			return $response;
+		}
+
+		$draft        = is_string( $data['alt_text_draft'] ?? null ) ? trim( $data['alt_text_draft'] ) : '';
+		$existing_alt = get_post_meta( $media_id, self::ALT_TEXT_META_KEY, true );
+		$existing_alt = is_string( $existing_alt ) ? $existing_alt : '';
+		$provenance   = $this->build_generated_provenance( $data );
+
+		if ( '' !== trim( $existing_alt ) && ! $force ) {
+			$data['alt_text_write'] = array(
+				'status'               => 'skipped_existing_alt',
+				'existing_alt_present' => true,
+			);
+			$response->set_data( $data );
+			return $response;
+		}
+
+		$existing_provenance = get_post_meta( $media_id, self::PROVENANCE_META_KEY, true );
+		if (
+			$force
+			&& $draft === $existing_alt
+			&& $this->matches_generated_provenance( $existing_provenance, $provenance )
+		) {
+			$data['alt_text_write'] = array(
+				'status'               => 'forced_overwrite',
+				'existing_alt_present' => true,
+			);
+			$response->set_data( $data );
+			return $response;
+		}
+
+		update_post_meta( $media_id, self::ALT_TEXT_META_KEY, $draft );
+		update_post_meta( $media_id, self::PROVENANCE_META_KEY, $provenance );
+
+		$data['alt_text_write'] = array(
+			'status'               => '' !== trim( $existing_alt ) ? 'forced_overwrite' : 'written',
+			'existing_alt_present' => '' !== trim( $existing_alt ),
+		);
+		$response->set_data( $data );
+		return $response;
+	}
+
+	/**
+	 * @param mixed               $existing
+	 * @param array<string,mixed> $incoming
+	 */
+	private function matches_generated_provenance( mixed $existing, array $incoming ): bool {
+		if ( ! is_array( $existing ) ) {
+			return false;
+		}
+
+		foreach ( array( 'adapter', 'model_id', 'model_version', 'prompt_or_task_version', 'image_hash', 'context_hash' ) as $key ) {
+			if ( ( $existing[ $key ] ?? null ) !== ( $incoming[ $key ] ?? null ) ) {
+				return false;
+			}
+		}
+
+		return ( $existing['backend_result_id'] ?? null ) === ( $incoming['backend_result_id'] ?? null );
+	}
+
+	/**
+	 * @param array<string,mixed> $data
+	 *
+	 * @return array<string,mixed>
+	 */
+	private function build_generated_provenance( array $data ): array {
+		$provenance = array(
+			'adapter'                => $data['adapter'],
+			'model_id'               => $data['model_id'],
+			'model_version'          => $data['model_version'],
+			'prompt_or_task_version' => $data['prompt_or_task_version'],
+			'image_hash'             => $data['image_hash'],
+			'context_hash'           => $data['context_hash'],
+			'generated_at'           => gmdate( 'c' ),
+		);
+
+		if ( array_key_exists( 'backend_result_id', $data ) ) {
+			$provenance['backend_result_id'] = $data['backend_result_id'];
+		} elseif ( array_key_exists( 'result_id', $data ) ) {
+			$provenance['backend_result_id'] = $data['result_id'];
+		}
+
+		return $provenance;
 	}
 
 	private function payload_too_large_error( int $media_id, int $size_bytes ): WP_Error {

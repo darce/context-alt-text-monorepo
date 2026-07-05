@@ -50,6 +50,20 @@ describe('useDescribeMedia', () => {
     expect(result.current.data).toEqual(sample);
   });
 
+  it('passes write intent options through to describeMedia', async () => {
+    describeMediaMock.mockResolvedValue({
+      ...sample,
+      alt_text_write: { status: 'written', existing_alt_present: false },
+    });
+    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
+
+    result.current.mutate({ mediaId: 42, writeAlt: true });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(describeMediaMock).toHaveBeenCalledWith(42, { writeAlt: true, force: false });
+    expect(result.current.data?.alt_text_write?.status).toBe('written');
+  });
+
   it('threads a rejection to error state', async () => {
     describeMediaMock.mockRejectedValue(new Error('boom'));
     const { result } = renderHook(() => useDescribeMedia(), { wrapper });

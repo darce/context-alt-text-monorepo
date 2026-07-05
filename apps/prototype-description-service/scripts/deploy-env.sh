@@ -27,11 +27,19 @@ if [[ "$ENV" != "prod" && "$ENV" != "staging" && "$ENV" != "dev" ]]; then
   exit 1
 fi
 
+COMPOSE_FILES="-f docker-compose.env.yml"
+if [[ "$ENV" == "prod" ]]; then
+  COMPOSE_FILES="-f docker-compose.env.yml -f docker-compose.admin.yml"
+fi
+
 echo "=== Deploying $ENV to $SSH_TARGET ==="
 
 # Copy compose template, db-init, and Caddy files
 echo "Copying compose template..."
 scp "$SERVICE_DIR/docker-compose.env.yml" "$SSH_TARGET:/opt/acx-backend/$ENV/docker-compose.env.yml"
+if [[ "$ENV" == "prod" ]]; then
+  scp "$SERVICE_DIR/docker-compose.admin.yml" "$SSH_TARGET:/opt/acx-backend/$ENV/docker-compose.admin.yml"
+fi
 scp -r "$SERVICE_DIR/db/docker-prod-init" "$SSH_TARGET:/opt/acx-backend/$ENV/db/"
 
 echo "Copying Caddy files..."
@@ -42,7 +50,8 @@ scp "$SERVICE_DIR/Caddyfile" "$SSH_TARGET:/opt/acx-backend/Caddyfile"
 echo "Installing systemd units from repo templates..."
 
 # Render env-specific unit from template and install
-sed "s/{{ENV}}/$ENV/g" "$SYSTEMD_DIR/acx-env.service.template" > "/tmp/acx-$ENV.service"
+sed -e "s/{{ENV}}/$ENV/g" -e "s|{{COMPOSE_FILES}}|$COMPOSE_FILES|g" \
+  "$SYSTEMD_DIR/acx-env.service.template" > "/tmp/acx-$ENV.service"
 scp "/tmp/acx-$ENV.service" "$SSH_TARGET:/tmp/acx-$ENV.service"
 rm "/tmp/acx-$ENV.service"
 
@@ -64,7 +73,7 @@ REMOTE
 
 # Pull latest image and restart
 echo "Pulling image and restarting $ENV..."
-ssh "$SSH_TARGET" "cd /opt/acx-backend/$ENV && docker compose -f docker-compose.env.yml pull && sudo systemctl restart acx-$ENV"
+ssh "$SSH_TARGET" "cd /opt/acx-backend/$ENV && docker compose $COMPOSE_FILES pull && sudo systemctl restart acx-$ENV"
 
 # Restart Caddy to pick up any Caddyfile changes
 ssh "$SSH_TARGET" "sudo systemctl restart acx-caddy"

@@ -40,6 +40,8 @@ class LifecycleManager {
 		'acx_persons',
 		'acx_batch_runs',
 		'acx_batch_run_failures',
+		'acx_description_runs',
+		'acx_description_run_items',
 		'acx_sync_outbox',
 		'acx_topology_commands',
 		'acx_sync_conflicts',
@@ -456,6 +458,8 @@ class LifecycleManager {
 		$persons_table   = $wpdb->prefix . 'acx_persons';
 		$batch_runs_table = $wpdb->prefix . 'acx_batch_runs';
 		$batch_failures_table = $wpdb->prefix . 'acx_batch_run_failures';
+		$description_runs_table = $wpdb->prefix . 'acx_description_runs';
+		$description_run_items_table = $wpdb->prefix . 'acx_description_run_items';
 		$outbox_table    = $wpdb->prefix . 'acx_sync_outbox';
 		$topology_table  = $wpdb->prefix . 'acx_topology_commands';
 		$conflicts_table = $wpdb->prefix . 'acx_sync_conflicts';
@@ -565,6 +569,37 @@ class LifecycleManager {
 			KEY idx_tenant_run (tenant_id, run_id)
 		) {$charset_collate};";
 
+		$description_runs_sql = "CREATE TABLE {$description_runs_table} (
+			run_id varchar(64) NOT NULL,
+			status varchar(20) NOT NULL DEFAULT 'pending',
+			limit_count int(11) unsigned NOT NULL DEFAULT 0,
+			batch_size int(11) unsigned NOT NULL DEFAULT 0,
+			total_items int(11) unsigned NOT NULL DEFAULT 0,
+			started_at datetime DEFAULT NULL,
+			completed_at datetime DEFAULT NULL,
+			created_at datetime NOT NULL,
+			updated_at datetime NOT NULL,
+			PRIMARY KEY  (run_id),
+			KEY idx_status_created (status, created_at)
+		) {$charset_collate};";
+
+		$description_run_items_sql = "CREATE TABLE {$description_run_items_table} (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			run_id varchar(64) NOT NULL,
+			media_id bigint(20) unsigned NOT NULL,
+			status varchar(20) NOT NULL DEFAULT 'pending',
+			error_code varchar(64) DEFAULT NULL,
+			error_message text DEFAULT NULL,
+			attempts int(11) unsigned NOT NULL DEFAULT 0,
+			last_attempted_at datetime DEFAULT NULL,
+			created_at datetime NOT NULL,
+			updated_at datetime NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY uq_run_media (run_id, media_id),
+			KEY idx_run_status (run_id, status),
+			KEY idx_media (media_id)
+		) {$charset_collate};";
+
 		$outbox_sql = "CREATE TABLE {$outbox_table} (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 			tenant_id varchar(64) NOT NULL,
@@ -648,5 +683,7 @@ class LifecycleManager {
 		dbDelta( $conflicts_sql );
 		dbDelta( $batch_runs_sql );
 		dbDelta( $batch_failures_sql );
+		dbDelta( $description_runs_sql );
+		dbDelta( $description_run_items_sql );
 	}
 }

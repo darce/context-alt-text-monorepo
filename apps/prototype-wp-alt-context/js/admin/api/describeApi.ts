@@ -74,6 +74,39 @@ export interface DescriptionCandidatesParams {
   offset?: number;
 }
 
+export interface DescriptionHistoryRunStatus {
+  status?: string;
+  updated_at?: string | null;
+  [key: string]: unknown;
+}
+
+export interface DescriptionHistoryHumanEdit {
+  alt_text: string;
+  edited_at?: string | null;
+  user_id?: number | null;
+}
+
+export interface DescriptionHistoryItem {
+  media_id: number;
+  title: string;
+  mime_type: string;
+  current_alt_text: string;
+  generated_alt_text: string;
+  provenance: VisualFactsResponse | Record<string, unknown> | null;
+  human_edit: DescriptionHistoryHumanEdit | null;
+  run_status: DescriptionHistoryRunStatus | null;
+}
+
+export interface DescriptionHistoryResponse {
+  total: number;
+  items: DescriptionHistoryItem[];
+}
+
+export interface DescriptionHistoryQuery {
+  limit?: number;
+  offset?: number;
+}
+
 export const describeMedia = async (
   mediaId: number,
   options: DescribeMediaWriteOptions = {},
@@ -109,6 +142,34 @@ export const fetchDescriptionCandidates = async ({
     restNonce: getConfig().nonce,
   });
 };
+
+export const fetchDescriptionHistory = async ({
+  limit = 50,
+  offset = 0,
+}: DescriptionHistoryQuery = {}): Promise<DescriptionHistoryResponse> => {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+  });
+
+  return fetchRequiredApi<DescriptionHistoryResponse>(`${getEndpoint('recognitionDescribeHistory')}?${params}`, {
+    method: 'GET',
+    restNonce: getConfig().nonce,
+  });
+};
+
+export const correctDescriptionHistoryItem = async (
+  mediaId: number,
+  altText: string,
+): Promise<DescriptionHistoryItem> =>
+  fetchRequiredApi<DescriptionHistoryItem>(
+    `${getEndpoint('recognitionDescribeHistory')}/${encodeURIComponent(String(mediaId))}/correction`,
+    {
+      method: 'POST',
+      body: { alt_text: altText },
+      restNonce: getConfig().nonce,
+    },
+  );
 
 const parsePayload = (raw: string): Record<string, unknown> | null => {
   const start = raw.indexOf('{');

@@ -55,6 +55,7 @@ class Admin {
 		'alt-context-dashboard',
 		'alt-context-workbench',
 		'alt-context-roster',
+		'alt-context-description-history',
 		'alt-context-settings',
 	);
 
@@ -328,6 +329,7 @@ class Admin {
 					'recognitionAnalyze'             => rest_url( 'acx/v1/recognition/analyze' ),
 					'recognitionDescribe'            => rest_url( 'acx/v1/recognition/describe' ),
 					'recognitionDescribeCandidates'  => rest_url( 'acx/v1/recognition/describe/candidates' ),
+					'recognitionDescribeHistory'     => rest_url( 'acx/v1/recognition/describe/history' ),
 					'recognitionBatchRuns'           => rest_url( 'acx/v1/recognition/batch-runs' ),
 					'recognitionJobs'                => rest_url( 'acx/v1/recognition/jobs' ),
 					'recognitionCluster'             => rest_url( 'acx/v1/recognition/cluster' ),

@@ -53,6 +53,8 @@ abstract class TestCase extends PHPUnitTestCase
         $GLOBALS['__ac_rest_routes'] = [];
         $GLOBALS['__ac_scripts'] = [];
         $GLOBALS['__ac_styles'] = [];
+        $GLOBALS['__ac_menu_pages'] = [];
+        $GLOBALS['__ac_submenu_pages'] = [];
         $GLOBALS['__ac_localized_scripts'] = [];
         $GLOBALS['__ac_current_user_capabilities'] = [];
         $GLOBALS['__ac_attachment_metadata'] = [];

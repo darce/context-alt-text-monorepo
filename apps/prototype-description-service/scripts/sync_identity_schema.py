@@ -20,13 +20,16 @@ from __future__ import annotations
 import logging
 import sys
 
-from sqlalchemy import Engine, create_engine, inspect
+from sqlalchemy import Engine, create_engine, inspect, text
 
 import db.models  # noqa: F401  (import registers every ORM table on Base.metadata)
 from db.base import Base
 from db.settings import get_database_settings
 
 logger = logging.getLogger("sync_identity_schema")
+
+# Stable advisory-lock key so concurrent boots serialize on the same lock.
+_ADVISORY_LOCK_KEY = 0xAC33051D
 
 
 def sync_schema(engine: Engine) -> list[str]:
@@ -35,9 +38,18 @@ def sync_schema(engine: Engine) -> list[str]:
     Returns the sorted names of tables that were created. Additive only:
     ``create_all(checkfirst=True)`` skips existing tables and never alters or
     drops, so existing rows are untouched and a second call is a clean no-op.
+
+    The api and worker containers share the entrypoint, so they can boot
+    concurrently against a fresh/drifted DB; ``create_all(checkfirst=True)`` is
+    check-then-create and not atomic across connections, so two racers could both
+    issue ``CREATE TABLE`` and one would crash. A Postgres transaction-scoped
+    advisory lock serializes the self-heal (no-op on sqlite in tests).
     """
     before = set(inspect(engine).get_table_names())
-    Base.metadata.create_all(engine, checkfirst=True)
+    with engine.begin() as conn:
+        if conn.dialect.name == "postgresql":
+            conn.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _ADVISORY_LOCK_KEY})
+        Base.metadata.create_all(conn, checkfirst=True)
     created = sorted(set(inspect(engine).get_table_names()) - before)
     if created:
         logger.info("identity schema self-heal created tables: %s", ", ".join(created))

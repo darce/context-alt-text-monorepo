@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Api\DescribeController;
+use AltContext\Api\Services\DescriptionBudgetService;
 use AltContext\Tests\TestCase;
 use WP_Error;
 use WP_REST_Request;
@@ -133,6 +134,11 @@ class DescribeMediaServiceTest extends TestCase
         $data = $result->get_data();
         $this->assertSame('A photo.', $data['alt_text_draft']);
         $this->assertFalse($data['cached']);
+
+        $usage = (new DescriptionBudgetService())->usage_summary();
+        $this->assertSame(1, $usage['attempts']);
+        $this->assertSame(1, $usage['successes']);
+        $this->assertSame(0, $usage['failures']);
     }
 
     public function testRejectsUnreadableAttachmentBeforeDispatch(): void
@@ -221,5 +227,11 @@ class DescribeMediaServiceTest extends TestCase
 
         $this->assertInstanceOf(WP_REST_Response::class, $result);
         $this->assertSame(415, $result->get_status());
+
+        $usage = (new DescriptionBudgetService())->usage_summary();
+        $errors = (new DescriptionBudgetService())->recent_errors();
+        $this->assertSame(1, $usage['attempts']);
+        $this->assertSame(1, $usage['failures']);
+        $this->assertSame('upstream_http_415', $errors[0]['error_code']);
     }
 }

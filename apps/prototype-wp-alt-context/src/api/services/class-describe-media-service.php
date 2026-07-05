@@ -25,7 +25,10 @@ use function is_object;
 use function is_readable;
 use function is_string;
 use function is_wp_error;
+use function max;
+use function microtime;
 use function pathinfo;
+use function round;
 use function sprintf;
 use function strlen;
 use function strtolower;
@@ -78,7 +81,8 @@ class DescribeMediaService {
 	}
 
 	public function describe_media( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		$media_id = absint( $request->get_param( 'media_id' ) );
+		$started_at = microtime( true );
+		$media_id   = absint( $request->get_param( 'media_id' ) );
 		if ( $media_id <= 0 ) {
 			return new WP_Error(
 				'describe_invalid_media_id',
@@ -154,10 +158,23 @@ class DescribeMediaService {
 		);
 
 		if ( is_wp_error( $response ) ) {
+			$this->record_error_from_wp_error( $media_id, $response, 'backend', true );
 			return $response;
 		}
 
-		return $this->validate_description_envelope( $response, $media_id );
+		$result = $this->validate_description_envelope( $response, $media_id );
+		if ( is_wp_error( $result ) ) {
+			$this->record_error_from_wp_error( $media_id, $result, 'validation', false );
+			return $result;
+		}
+
+		if ( $result->get_status() >= 400 ) {
+			$this->record_error_from_response( $media_id, $result );
+			return $result;
+		}
+
+		$this->record_success_from_response( $media_id, $result, $started_at );
+		return $result;
 	}
 
 	/**
@@ -196,6 +213,55 @@ class DescribeMediaService {
 			),
 			array( 'status' => 413 )
 		);
+	}
+
+	private function record_success_from_response( int $media_id, WP_REST_Response $response, float $started_at ): void {
+		$data                = $response->get_data();
+		$provider_disclosure = is_array( $data['provider_disclosure'] ?? null ) ? $data['provider_disclosure'] : array();
+
+		$this->budget_service->record_success(
+			$media_id,
+			is_string( $data['adapter'] ?? null ) ? $data['adapter'] : 'description',
+			is_string( $provider_disclosure['provider'] ?? null ) ? $provider_disclosure['provider'] : 'service',
+			isset( $data['duration_ms'] ) ? max( 0, (int) $data['duration_ms'] ) : $this->elapsed_ms( $started_at ),
+			(bool) ( $data['cached'] ?? false ),
+			'drafted'
+		);
+	}
+
+	private function record_error_from_response( int $media_id, WP_REST_Response $response ): void {
+		$status  = $response->get_status();
+		$data    = $response->get_data();
+		$message = sprintf( 'Upstream description request failed with HTTP %d.', $status );
+		if ( is_array( $data ) && is_string( $data['detail'] ?? null ) && '' !== $data['detail'] ) {
+			$message = $data['detail'];
+		}
+
+		$this->budget_service->record_error(
+			$media_id,
+			'description',
+			'service',
+			sprintf( 'upstream_http_%d', $status ),
+			$message,
+			$status >= 500 || 429 === $status,
+			'backend'
+		);
+	}
+
+	private function record_error_from_wp_error( int $media_id, WP_Error $error, string $source, bool $retryable ): void {
+		$this->budget_service->record_error(
+			$media_id,
+			'description',
+			'service',
+			(string) $error->get_error_code(),
+			$error->get_error_message(),
+			$retryable,
+			$source
+		);
+	}
+
+	private function elapsed_ms( float $started_at ): int {
+		return max( 0, (int) round( ( microtime( true ) - $started_at ) * 1000 ) );
 	}
 
 	private function invalid_envelope_error( int $media_id, string $reason ): WP_Error {

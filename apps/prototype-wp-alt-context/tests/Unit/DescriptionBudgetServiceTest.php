@@ -48,6 +48,27 @@ class DescriptionBudgetServiceTest extends TestCase
         $this->assertSame('backend', $errors[0]['source']);
     }
 
+    public function testUsageRowsPersistAcrossRepositoryInstances(): void
+    {
+        $first = new DescriptionBudgetService();
+        $first->record_error(
+            media_id: 71,
+            adapter: 'hosted',
+            provider: 'service',
+            error_code: 'provider_timeout',
+            error_message: 'Provider timed out',
+            retryable: true,
+            source: 'backend'
+        );
+
+        $second = new DescriptionBudgetService();
+
+        $summary = $second->usage_summary();
+        $this->assertSame(1, $summary['attempts']);
+        $this->assertSame(1, $summary['failures']);
+        $this->assertSame('provider_timeout', $second->recent_errors()[0]['error_code']);
+    }
+
     public function testBudgetGateDeniesWhenAttemptLimitExceeded(): void
     {
         $this->setOption('acx_description_budget_max_attempts', 1);

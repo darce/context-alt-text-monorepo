@@ -145,6 +145,10 @@ class AdminTest extends TestCase
             'http://example.test/wp-json/acx/v1/recognition/describe',
             $localized['endpoints']['recognitionDescribe'] ?? null
         );
+        $this->assertSame(
+            'http://example.test/wp-json/acx/v1/recognition/describe/history',
+            $localized['endpoints']['recognitionDescribeHistory'] ?? null
+        );
     }
 
     public function testLocalizeSpaConfigIncludesRecognitionSource(): void

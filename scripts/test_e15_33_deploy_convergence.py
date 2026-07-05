@@ -67,12 +67,12 @@ def test_convergence_gated_by_env_flag_default_on() -> None:
     assert "ACX_CONVERGE_RUNTIME:-1" in SCRIPT_TEXT
 
 
-def test_converge_runs_before_restart_in_deploy() -> None:
+def test_converge_runs_before_restart_via_gate() -> None:
+    # Convergence now runs inside promote_gate; do_deploy must gate before restart.
     deploy = SCRIPT_TEXT.split("do_deploy()", 1)[1].split("do_promote()", 1)[0]
-    assert "converge_runtime" in deploy
-    assert deploy.index("converge_runtime") < deploy.index("do_restart"), (
-        "converge_runtime must run before the image restart"
-    )
+    assert deploy.index("promote_gate") < deploy.index("do_restart")
+    gate = SCRIPT_TEXT.split("promote_gate()", 1)[1].split("\n}\n", 1)[0]
+    assert "converge_runtime" in gate
 
 
 def test_caddy_edge_not_reshipped_by_converge() -> None:
@@ -113,3 +113,45 @@ def test_check_does_not_require_promote_confirm(tmp_path: Path) -> None:
     result = _run(["deploy", "prod", "--check"], tmp_path)
     combined = result.stdout + result.stderr
     assert "CONFIRM=PROMOTE" not in combined
+
+
+# ---- converge_runtime mutation path (hermetic, sourced) -----------------
+
+
+def _run_converge_runtime(env_arg: str, tmp_path: Path) -> str:
+    """Source the script and run `converge_runtime <env>` with recording fakes.
+
+    Returns the recorded scp target log so tests can assert which files were
+    shipped (env compose always, admin overlay only for prod, never Caddy).
+    """
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    scp_log = tmp_path / "scp.log"
+    (bindir / "ssh").write_text("#!/bin/sh\ncat >/dev/null 2>&1 || true\nexit 0\n")
+    (bindir / "scp").write_text(f'#!/bin/sh\necho "$@" >> {scp_log}\nexit 0\n')
+    for name in ("ssh", "scp"):
+        (bindir / name).chmod(0o755)
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"}
+    subprocess.run(
+        ["/bin/bash", "-c", f'source "{SCRIPT}"; converge_runtime {env_arg}'],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    return scp_log.read_text() if scp_log.exists() else ""
+
+
+def test_converge_runtime_ships_both_compose_files_for_prod(tmp_path: Path) -> None:
+    log = _run_converge_runtime("prod", tmp_path)
+    assert "docker-compose.env.yml" in log
+    assert "docker-compose.admin.yml" in log, "prod must ship the admin overlay"
+    for caddy in ("Caddyfile", "docker-compose.caddy.yml", "acx-caddy"):
+        assert caddy not in log, f"converge_runtime must never ship {caddy}"
+
+
+def test_converge_runtime_ships_only_env_compose_for_dev(tmp_path: Path) -> None:
+    log = _run_converge_runtime("dev", tmp_path)
+    assert "docker-compose.env.yml" in log
+    assert "docker-compose.admin.yml" not in log, "dev must not ship the admin overlay"

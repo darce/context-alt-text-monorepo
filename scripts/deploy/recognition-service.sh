@@ -247,19 +247,51 @@ do_build_remote() {
 
 #---------------------------------------------------------------- push / restart
 # Push both :tag and :sha so rollback by SHA stays available.
-do_push() {
-  local tag sha
-  tag="$1"
-  sha="$(git -C "${REPO_ROOT}" rev-parse "${GIT_REF}")"
+# Push a single fully-qualified image ref, honoring local vs remote-build mode.
+_push_ref() {
+  local ref="$1"
   if [[ "${REMOTE_BUILD}" == "1" ]]; then
-    preflight_remote_ocir_auth
-    log "Pushing ${IMAGE_BASE}:${tag} + :${sha:0:8} from ${SSH_TARGET}"
-    ssh "${SSH_TARGET}" "docker push ${IMAGE_BASE}:${tag} && docker push ${IMAGE_BASE}:${sha}"
+    ssh "${SSH_TARGET}" "docker push ${ref}"
   else
-    preflight_ocir_auth
-    log "Pushing ${IMAGE_BASE}:${tag} + :${sha:0:8} (local)"
-    docker push "${IMAGE_BASE}:${tag}"
-    docker push "${IMAGE_BASE}:${sha}"
+    docker push "${ref}"
+  fi
+}
+
+# Push the immutable :SHA tag. Done BEFORE the boot smoke so the candidate is
+# fetchable for the smoke without promoting the env tag (:latest) yet.
+do_push_sha() {
+  local sha; sha="$(git -C "${REPO_ROOT}" rev-parse "${GIT_REF}")"
+  if [[ "${REMOTE_BUILD}" == "1" ]]; then preflight_remote_ocir_auth; else preflight_ocir_auth; fi
+  log "Pushing ${IMAGE_BASE}:${sha:0:8}"
+  _push_ref "${IMAGE_BASE}:${sha}"
+}
+
+# Promote the env tag (e.g. :latest for prod). Called ONLY after the boot smoke
+# passes, so a bad image never poisons the env tag in OCIR.
+do_push_tag() {
+  local tag="$1"
+  log "Promoting ${IMAGE_BASE}:${tag} in OCIR"
+  _push_ref "${IMAGE_BASE}:${tag}"
+}
+
+# Shared pre-restart safety gate for <env> on candidate <image>: preserve a
+# rollback tag, boot-smoke the candidate (abort on failure), converge compose+
+# unit. Used by both do_deploy and do_promote so the prod path is uniform.
+promote_gate() {
+  local env="$1" image="$2"
+  if [[ "${ACX_BOOT_SMOKE:-1}" == "1" ]]; then
+    preserve_rollback_tag "$env"
+    if ! do_boot_smoke "$env" "$image"; then
+      fail "Pre-promote boot smoke failed for ${env} (${image}); prod left on the old image (no restart). Fix the build and re-run, or set ACX_BOOT_SMOKE=0 to bypass."
+    fi
+  else
+    warn "ACX_BOOT_SMOKE=0: skipping pre-promote boot smoke"
+  fi
+
+  if [[ "${ACX_CONVERGE_RUNTIME:-1}" == "1" ]]; then
+    converge_runtime "$env"
+  else
+    warn "ACX_CONVERGE_RUNTIME=0: skipping compose+unit convergence (image-only restart)"
   fi
 }
 
@@ -292,6 +324,8 @@ converge_runtime() {
   ssh "${SSH_TARGET}" "cp -f '${remote_dir}/docker-compose.env.yml' '${remote_dir}/docker-compose.env.yml.bak' 2>/dev/null || true; sudo cp -f '/etc/systemd/system/${unit}.service' '/etc/systemd/system/${unit}.service.bak' 2>/dev/null || true"
   scp "${SERVICE_DIR}/docker-compose.env.yml" "${SSH_TARGET}:${remote_dir}/docker-compose.env.yml"
   if [[ "$env" == "prod" ]]; then
+    # Back up the admin overlay too so a bad overlay is restorable from *.bak.
+    ssh "${SSH_TARGET}" "cp -f '${remote_dir}/docker-compose.admin.yml' '${remote_dir}/docker-compose.admin.yml.bak' 2>/dev/null || true"
     scp "${SERVICE_DIR}/docker-compose.admin.yml" "${SSH_TARGET}:${remote_dir}/docker-compose.admin.yml"
   fi
   render_unit "$env" | ssh "${SSH_TARGET}" "cat > '/tmp/${unit}.service' && sudo cp '/tmp/${unit}.service' '/etc/systemd/system/${unit}.service' && rm -f '/tmp/${unit}.service' && sudo systemctl daemon-reload"
@@ -332,7 +366,9 @@ converge_check() {
 preserve_rollback_tag() {
   local env="$1" env_tag prev_id
   env_tag="$(env_to_tag "$env")"
-  prev_id="$(ssh "${SSH_TARGET}" "docker image inspect --format '{{.Id}}' ${IMAGE_BASE}:${env_tag} 2>/dev/null" | sed 's/^sha256://' | cut -c1-12)"
+  # `|| true`: a missing image makes the pipeline exit non-zero; without this,
+  # set -e would abort the whole deploy on a first deploy / pruned image.
+  prev_id="$(ssh "${SSH_TARGET}" "docker image inspect --format '{{.Id}}' ${IMAGE_BASE}:${env_tag} 2>/dev/null" | sed 's/^sha256://' | cut -c1-12)" || true
   if [[ -n "${prev_id}" ]]; then
     if ssh "${SSH_TARGET}" "docker tag ${IMAGE_BASE}:${env_tag} ${IMAGE_BASE}:rollback-${prev_id}"; then
       log "Preserved rollback tag ${IMAGE_BASE}:rollback-${prev_id}"
@@ -351,21 +387,28 @@ preserve_rollback_tag() {
 # smoke that catches ModuleNotFoundError-class packaging omissions; (2) a
 # short-lived full-boot /health probe on an ephemeral port against the env net.
 do_boot_smoke() {
-  local env="$1" sha="$2" remote_dir
+  local env="$1" image="$2" remote_dir
   remote_dir="$(env_to_remote_dir "$env")"
-  log "Pre-promote boot smoke: ${IMAGE_BASE}:${sha:0:8} on ${SSH_TARGET} (env=${env})"
-  if ! ssh "${SSH_TARGET}" "docker pull ${IMAGE_BASE}:${sha} >/dev/null && docker run --rm --entrypoint python ${IMAGE_BASE}:${sha} -c 'import api.main'"; then
-    warn "boot smoke: 'import api.main' failed on ${IMAGE_BASE}:${sha:0:8} (packaging/import error)"
+  log "Pre-promote boot smoke: ${image} on ${SSH_TARGET} (env=${env})"
+  # Gate 1 — network-free import smoke. Catches the ModuleNotFoundError-class
+  # packaging omissions (the scene/ incident) without touching the DB.
+  if ! ssh "${SSH_TARGET}" "docker pull ${image} >/dev/null && docker run --rm --entrypoint python ${image} -c 'import api.main'"; then
+    warn "boot smoke: 'import api.main' failed on ${image} (packaging/import error)"
     return 1
   fi
-  if ! ssh "${SSH_TARGET}" "bash -s ${env} ${IMAGE_BASE}:${sha} ${remote_dir}" <<'SMOKE'
+  # Gate 2 — full-boot /health probe in a throwaway container. The entrypoint is
+  # overridden to run uvicorn ONLY (skipping the image's migrate + verify boot
+  # steps), so the smoke never mutates the live prod schema — it proves the app
+  # boots and /health answers, then is torn down. Network name is read (not
+  # sourced) from the deployed .env so a docker-only env line cannot abort it.
+  if ! ssh "${SSH_TARGET}" "bash -s ${env} ${image} ${remote_dir}" <<'SMOKE'
 set -euo pipefail
 env="$1"; image="$2"; remote_dir="$3"
-cd "$remote_dir"
-set -a; . ./.env; set +a
-net="${ACX_NETWORK_NAME:-acx-${env}-net}"
+net="$(grep -E '^ACX_NETWORK_NAME=' "${remote_dir}/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"' ")"
+net="${net:-acx-${env}-net}"
 name="acx-smoke-${env}-$$"
-docker run -d --rm --name "$name" --env-file ./.env --network "$net" -P "$image" >/dev/null
+docker run -d --rm --name "$name" --env-file "${remote_dir}/.env" --network "$net" -P \
+  --entrypoint sh "$image" -c 'cd /app && exec uvicorn api.main:app --host 0.0.0.0 --port 8000' >/dev/null
 trap 'docker rm -f "$name" >/dev/null 2>&1 || true' EXIT
 port="$(docker port "$name" 8000/tcp | head -1 | sed 's/.*://')"
 for _ in $(seq 1 12); do
@@ -376,19 +419,20 @@ echo "smoke health FAILED after 24s" >&2
 exit 1
 SMOKE
   then
-    warn "boot smoke: /health never came up for ${IMAGE_BASE}:${sha:0:8}"
+    warn "boot smoke: /health never came up for ${image}"
     return 1
   fi
-  log "Boot smoke passed for ${IMAGE_BASE}:${sha:0:8}"
+  log "Boot smoke passed for ${image}"
 }
 
 do_restart() {
   local env="$1"
-  local remote_dir unit
+  local remote_dir unit compose_files
   remote_dir="$(env_to_remote_dir "$env")"
   unit="$(env_to_unit "$env")"
+  compose_files="$(env_to_compose_files "$env")"
   log "Pulling latest image + restarting ${unit} on ${SSH_TARGET}"
-  ssh "${SSH_TARGET}" "cd ${remote_dir} && docker compose -f docker-compose.env.yml pull api && sudo systemctl restart ${unit}"
+  ssh "${SSH_TARGET}" "cd ${remote_dir} && docker compose ${compose_files} pull api && sudo systemctl restart ${unit}"
 }
 
 #---------------------------------------------------------------- deploy
@@ -424,22 +468,11 @@ do_deploy() {
     do_build "$tag"
   fi
 
-  do_push "$tag"
-
-  if [[ "${ACX_BOOT_SMOKE:-1}" == "1" ]]; then
-    preserve_rollback_tag "$env"
-    if ! do_boot_smoke "$env" "$sha"; then
-      fail "Pre-promote boot smoke failed for ${env}; prod left on the old image (no restart). Fix the build and re-run, or set ACX_BOOT_SMOKE=0 to bypass."
-    fi
-  else
-    warn "ACX_BOOT_SMOKE=0: skipping pre-promote boot smoke"
-  fi
-
-  if [[ "${ACX_CONVERGE_RUNTIME:-1}" == "1" ]]; then
-    converge_runtime "$env"
-  else
-    warn "ACX_CONVERGE_RUNTIME=0: skipping compose+unit convergence (image-only restart)"
-  fi
+  # Push :SHA first, gate on the boot smoke, and only then promote the env tag
+  # (e.g. :latest) so a failed smoke never poisons the promotion tag in OCIR.
+  do_push_sha
+  promote_gate "$env" "${IMAGE_BASE}:${sha}"
+  do_push_tag "$tag"
 
   do_restart "$env"
 
@@ -467,24 +500,30 @@ do_promote() {
     fail "Production promotion requires CONFIRM=PROMOTE. Re-run: CONFIRM=PROMOTE $0 promote $from_env $to_env"
   fi
 
+  # Pull the source image so the boot smoke can run it before it is promoted.
   if [[ "${REMOTE_BUILD}" == "1" ]]; then
     log "Mode: remote-retag (${SSH_TARGET})"
     preflight_remote_docker
     preflight_remote_ocir_auth
     log "Pulling source image ${IMAGE_BASE}:${from_tag} on ${SSH_TARGET}"
     ssh "${SSH_TARGET}" "docker pull ${IMAGE_BASE}:${from_tag}"
-    log "Tagging ${from_tag} -> ${to_tag} on ${SSH_TARGET}"
-    ssh "${SSH_TARGET}" "docker tag ${IMAGE_BASE}:${from_tag} ${IMAGE_BASE}:${to_tag}"
-    log "Pushing ${IMAGE_BASE}:${to_tag} from ${SSH_TARGET}"
-    ssh "${SSH_TARGET}" "docker push ${IMAGE_BASE}:${to_tag}"
   else
     preflight_docker
     preflight_ocir_auth
     log "Pulling source image ${IMAGE_BASE}:${from_tag}"
     docker pull "${IMAGE_BASE}:${from_tag}"
+  fi
+
+  # Same safety gate as deploy: boot-smoke the source image + converge compose/
+  # unit + preserve rollback BEFORE the source is retagged over the env tag.
+  promote_gate "$to_env" "${IMAGE_BASE}:${from_tag}"
+
+  if [[ "${REMOTE_BUILD}" == "1" ]]; then
+    log "Tagging ${from_tag} -> ${to_tag} on ${SSH_TARGET}"
+    ssh "${SSH_TARGET}" "docker tag ${IMAGE_BASE}:${from_tag} ${IMAGE_BASE}:${to_tag} && docker push ${IMAGE_BASE}:${to_tag}"
+  else
     log "Tagging ${from_tag} -> ${to_tag}"
     docker tag "${IMAGE_BASE}:${from_tag}" "${IMAGE_BASE}:${to_tag}"
-    log "Pushing ${IMAGE_BASE}:${to_tag}"
     docker push "${IMAGE_BASE}:${to_tag}"
   fi
 
@@ -707,15 +746,19 @@ do_reset() {
 }
 
 #---------------------------------------------------------------- dispatch
-cmd="${1:-}"; shift || true
-case "$cmd" in
-  build)        do_build "${1:-dev}" ;;
-  build-remote) do_build_remote "${1:-dev}" ;;
-  deploy)       [[ -n "${1:-}" ]] || fail "deploy requires <env>"; do_deploy "$@" ;;
-  promote)      [[ -n "${1:-}" && -n "${2:-}" ]] || fail "promote requires <from-env> <to-env>"; do_promote "$1" "$2" ;;
-  reset)        [[ -n "${1:-}" ]] || fail "reset requires <env> (dev|staging|prod)"; do_reset "$1" ;;
-  verify)       do_verify "${1:-dev}" ;;
-  status)       do_status ;;
-  ""|-h|--help|help) sed -n '2,40p' "$0" ;;
-  *) fail "Unknown command: ${cmd}. Run '$0 help'." ;;
-esac
+# Skip dispatch when the script is sourced (e.g. by tests calling individual
+# functions), run it only on direct execution.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  cmd="${1:-}"; shift || true
+  case "$cmd" in
+    build)        do_build "${1:-dev}" ;;
+    build-remote) do_build_remote "${1:-dev}" ;;
+    deploy)       [[ -n "${1:-}" ]] || fail "deploy requires <env>"; do_deploy "$@" ;;
+    promote)      [[ -n "${1:-}" && -n "${2:-}" ]] || fail "promote requires <from-env> <to-env>"; do_promote "$1" "$2" ;;
+    reset)        [[ -n "${1:-}" ]] || fail "reset requires <env> (dev|staging|prod)"; do_reset "$1" ;;
+    verify)       do_verify "${1:-dev}" ;;
+    status)       do_status ;;
+    ""|-h|--help|help) sed -n '2,40p' "$0" ;;
+    *) fail "Unknown command: ${cmd}. Run '$0 help'." ;;
+  esac
+fi

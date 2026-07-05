@@ -164,7 +164,9 @@ async def describe_image_multipart(
             tenant_id=tenant_uuid,
             media_id=envelope.media_id,
             image_bytes=image_bytes,
-            context=envelope.context,
+            context=envelope.context_pack.model_dump(exclude_none=True)
+            if envelope.context_pack is not None
+            else envelope.context,
         )
     except TimeoutError as exc:
         raise HTTPException(

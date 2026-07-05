@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace AltContext\Api\Services;
 
 require_once __DIR__ . '/../../support/class-telemetry.php';
+require_once __DIR__ . '/../../sovereign/repositories/class-description-usage-repository.php';
+require_once __DIR__ . '/class-description-budget-service.php';
 
 use AltContext\Api\DescribeHostInterface;
 use AltContext\Support\Telemetry;
@@ -68,9 +70,11 @@ class DescribeMediaService {
 	);
 
 	private DescribeHostInterface $host;
+	private DescriptionBudgetService $budget_service;
 
-	public function __construct( DescribeHostInterface $host ) {
-		$this->host = $host;
+	public function __construct( DescribeHostInterface $host, ?DescriptionBudgetService $budget_service = null ) {
+		$this->host           = $host;
+		$this->budget_service = $budget_service ?? new DescriptionBudgetService();
 	}
 
 	public function describe_media( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -80,6 +84,18 @@ class DescribeMediaService {
 				'describe_invalid_media_id',
 				'A positive media_id is required.',
 				array( 'status' => 400 )
+			);
+		}
+
+		$budget_gate = $this->budget_service->check_budget();
+		if ( false === ( $budget_gate['allowed'] ?? false ) ) {
+			return new WP_Error(
+				(string) ( $budget_gate['code'] ?? 'description_budget_denied' ),
+				(string) ( $budget_gate['message'] ?? 'Description generation budget denied this request.' ),
+				array(
+					'status' => 429,
+					'budget' => $budget_gate,
+				)
 			);
 		}
 

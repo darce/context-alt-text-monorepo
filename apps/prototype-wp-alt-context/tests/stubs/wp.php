@@ -659,6 +659,27 @@ if (!function_exists('get_post_mime_type')) {
     }
 }
 
+if (!function_exists('wp_update_post')) {
+    function wp_update_post($postarr, $wp_error = false, $fire_after_hooks = true)
+    {
+        $postId = isset($postarr['ID']) ? (int) $postarr['ID'] : 0;
+        if ($postId <= 0) {
+            return 0;
+        }
+
+        $GLOBALS['__ac_updated_posts'][] = $postarr;
+        if (!isset($GLOBALS['__ac_posts'][$postId]) || !is_object($GLOBALS['__ac_posts'][$postId])) {
+            $GLOBALS['__ac_posts'][$postId] = (object) ['ID' => $postId];
+        }
+
+        foreach ($postarr as $key => $value) {
+            $GLOBALS['__ac_posts'][$postId]->{$key} = $value;
+        }
+
+        return $postId;
+    }
+}
+
 if (!function_exists('get_post_modified_time')) {
     function get_post_modified_time($format = 'U', $gmt = false, $post = null, $translate = false)
     {

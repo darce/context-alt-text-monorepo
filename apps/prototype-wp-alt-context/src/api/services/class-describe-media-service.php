@@ -5,19 +5,24 @@ declare(strict_types=1);
 namespace AltContext\Api\Services;
 
 require_once __DIR__ . '/../../support/class-telemetry.php';
+require_once __DIR__ . '/../../sovereign/repositories/class-identity-members-repository.php';
 
 use AltContext\Api\DescribeHostInterface;
+use AltContext\Sovereign\Repositories\IdentityMembersRepository;
+use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
 use AltContext\Support\Telemetry;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
 
 use function absint;
+use function array_filter;
 use function array_key_exists;
+use function array_values;
 use function basename;
 use function get_attached_file;
+use function get_option;
 use function get_post;
-use function get_site_url;
 use function is_array;
 use function is_object;
 use function is_readable;
@@ -27,6 +32,7 @@ use function pathinfo;
 use function sprintf;
 use function strlen;
 use function strtolower;
+use function trim;
 use function wp_json_encode;
 
 use const PATHINFO_EXTENSION;
@@ -68,9 +74,11 @@ class DescribeMediaService {
 	);
 
 	private DescribeHostInterface $host;
+	private IdentityMembersRepositoryInterface $identity_members_repository;
 
-	public function __construct( DescribeHostInterface $host ) {
-		$this->host = $host;
+	public function __construct( DescribeHostInterface $host, ?IdentityMembersRepositoryInterface $identity_members_repository = null ) {
+		$this->host                        = $host;
+		$this->identity_members_repository = $identity_members_repository ?? new IdentityMembersRepository();
 	}
 
 	public function describe_media( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -114,12 +122,12 @@ class DescribeMediaService {
 
 		$multipart_body = array(
 			'request' => wp_json_encode(
-				array(
-					'tenant_id' => $this->host->get_tenant_id(),
-					'media_id'  => $media_id,
-					'context'   => $this->build_wp_context( $media_id, $path ),
-				)
-			),
+					array(
+						'tenant_id'     => $this->host->get_tenant_id(),
+						'media_id'      => $media_id,
+						'context_pack'  => $this->build_context_pack( $media_id, $path ),
+					)
+				),
 			'image_' . $media_id => array(
 				'filename'     => basename( $path ),
 				'content'      => $bytes,
@@ -194,25 +202,92 @@ class DescribeMediaService {
 	}
 
 	/**
-	 * Inert Phase-1 WordPress context (the seeded adapter is not scored on it).
-	 * Sent as the backend envelope's single `context` field — the backend
-	 * `DescribeImageEnvelope` is `extra='forbid'`, so site_url/title/etc. travel
-	 * inside `context`, never as extra top-level keys.
-	 *
-	 * @return array<string,string>
+	 * @return array<string,mixed>
 	 */
-	private function build_wp_context( int $media_id, string $path ): array {
+	private function build_context_pack( int $media_id, string $path ): array {
 		$post        = get_post( $media_id );
-		$title       = is_object( $post ) && isset( $post->post_title ) ? (string) $post->post_title : '';
-		$caption     = is_object( $post ) && isset( $post->post_excerpt ) ? (string) $post->post_excerpt : '';
-		$description = is_object( $post ) && isset( $post->post_content ) ? (string) $post->post_content : '';
+		$context     = array(
+			'attachment' => $this->non_empty_fields(
+				array(
+					'title'       => is_object( $post ) && isset( $post->post_title ) ? (string) $post->post_title : null,
+					'caption'     => is_object( $post ) && isset( $post->post_excerpt ) ? (string) $post->post_excerpt : null,
+					'description' => is_object( $post ) && isset( $post->post_content ) ? (string) $post->post_content : null,
+					'filename'    => basename( $path ),
+				)
+			),
+			'identity'   => $this->build_identity_context( $media_id ),
+		);
+
+		return array_filter(
+			$context,
+			static fn ( mixed $value ): bool => is_array( $value ) ? array() !== $value : null !== $value
+		);
+	}
+
+	/**
+	 * @return array<string,mixed>
+	 */
+	private function build_identity_context( int $media_id ): array {
+		$tenant_id           = $this->host->get_tenant_id();
+		$person_naming       = $this->person_naming_policy_allows() ? 'allowed' : 'disabled';
+		$rows                = $this->identity_members_repository->list_for_media_ids( $tenant_id, array( $media_id ) );
+		$confirmed_identities = array();
+		$machine_only_count  = 0;
+
+		foreach ( $rows as $row ) {
+			if ( ! is_array( $row ) ) {
+				continue;
+			}
+
+			$name = trim( (string) ( $row['cluster_label'] ?? '' ) );
+			if ( $this->is_truthy_flag( $row['is_user_confirmed'] ?? false ) && '' !== $name ) {
+				$confirmed_identities[] = $this->non_empty_fields(
+					array(
+						'name'        => $name,
+						'identity_id' => trim( (string) ( $row['identity_uuid'] ?? '' ) ),
+						'cluster_id'  => trim( (string) ( $row['cluster_uuid'] ?? '' ) ),
+						'source'      => 'roster_confirmed',
+					)
+				);
+				continue;
+			}
+
+			++$machine_only_count;
+		}
+
+		$review_reasons = array();
+		if ( 'disabled' === $person_naming && ( array() !== $confirmed_identities || $machine_only_count > 0 ) ) {
+			$review_reasons[] = 'person_naming_policy_disabled';
+			$confirmed_identities = array();
+		} elseif ( array() === $confirmed_identities && $machine_only_count > 1 ) {
+			$review_reasons[] = 'identity_ambiguous';
+		} elseif ( array() === $confirmed_identities && 1 === $machine_only_count ) {
+			$review_reasons[] = 'identity_unconfirmed';
+		}
 
 		return array(
-			'site_url'    => get_site_url(),
-			'title'       => $title,
-			'caption'     => $caption,
-			'description' => $description,
-			'filename'    => basename( $path ),
+			'policy'         => array( 'person_naming' => $person_naming ),
+			'identities'     => array_values( $confirmed_identities ),
+			'review_reasons' => $review_reasons,
+		);
+	}
+
+	private function person_naming_policy_allows(): bool {
+		return $this->is_truthy_flag( get_option( 'acx_description_allow_person_names', false ) );
+	}
+
+	private function is_truthy_flag( mixed $value ): bool {
+		return true === $value || 1 === $value || '1' === $value || 'true' === $value;
+	}
+
+	/**
+	 * @param array<string,?string> $fields
+	 * @return array<string,string>
+	 */
+	private function non_empty_fields( array $fields ): array {
+		return array_filter(
+			$fields,
+			static fn ( ?string $value ): bool => null !== $value && '' !== trim( $value )
 		);
 	}
 

@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as httpModule from '../../utils/http';
-import { describeMedia, resolveDescribeErrorMessage } from '../describeApi';
+import { describeMedia, fetchDescriptionCandidates, resolveDescribeErrorMessage } from '../describeApi';
 
 const mockConfig = {
   nonce: 'nonce-xyz',
   endpoints: {
     recognitionDescribe: 'https://example.com/acx/v1/recognition/describe',
+    recognitionDescribeCandidates: 'https://example.com/acx/v1/recognition/describe/candidates',
   } as Record<string, string>,
 };
 
@@ -83,6 +84,29 @@ describe('describeApi', () => {
       body: { media_id: 42, write_alt: true, force: true },
       restNonce: 'nonce-xyz',
     });
+  });
+
+  it('fetches dry-run description candidates without posting to the backend describe action', async () => {
+    fetchApiMock.mockResolvedValue({
+      candidates: [{ media_id: 42, filename: '42.jpg', title: 'A flower', mime_type: 'image/jpeg', current_alt_text: '', reason: 'missing_alt' }],
+      exclusions: [],
+      limit: 10,
+      offset: 0,
+      total_candidates: 1,
+      total_exclusions: 0,
+    });
+
+    const result = await fetchDescriptionCandidates({ limit: 10, offset: 0 });
+
+    expect(result.total_candidates).toBe(1);
+    expect(fetchApiMock).toHaveBeenCalledTimes(1);
+    const [endpoint, options] = fetchApiMock.mock.calls[0];
+    expect(endpoint).toBe('https://example.com/acx/v1/recognition/describe/candidates?limit=10&offset=0');
+    expect(options).toMatchObject({
+      method: 'GET',
+      restNonce: 'nonce-xyz',
+    });
+    expect(options).not.toHaveProperty('body');
   });
 });
 

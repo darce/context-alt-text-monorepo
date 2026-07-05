@@ -276,6 +276,40 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertSame('forced_overwrite', $result->get_data()['alt_text_write']['status'] ?? null);
     }
 
+    public function testRegistersAndServesMissingAltDryRunWithoutBackendCall(): void
+    {
+        $GLOBALS['__ac_posts'][42] = (object) array('ID' => 42, 'post_title' => 'Missing');
+        $GLOBALS['__ac_get_posts_results'][] = $GLOBALS['__ac_posts'][42];
+        $GLOBALS['__ac_attachment_mimes'][42] = 'image/jpeg';
+        $GLOBALS['__ac_attached_file'][42] = $this->tempDir . '/42-missing.jpg';
+        $GLOBALS['__ac_post_meta'][42]['_wp_attachment_image_alt'] = '';
+
+        $this->controller->register_routes();
+
+        $route = null;
+        foreach ($GLOBALS['__ac_rest_routes'] as $definition) {
+            if (($definition['namespace'] ?? null) === 'acx/v1' && ($definition['route'] ?? null) === '/recognition/describe/candidates') {
+                $route = $definition;
+                break;
+            }
+        }
+
+        $this->assertIsArray($route);
+        $this->assertSame('GET', $route['args']['methods'] ?? null);
+        $this->assertArrayHasKey('limit', $route['args']['args'] ?? array());
+        $this->assertArrayHasKey('offset', $route['args']['args'] ?? array());
+
+        $req = new WP_REST_Request('GET', '/acx/v1/recognition/describe/candidates');
+        $req->set_param('limit', 10);
+        $req->set_param('offset', 0);
+        $result = $this->controller->list_description_candidates($req);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame(200, $result->get_status());
+        $this->assertSame(array(42), array_column($result->get_data()['candidates'], 'media_id'));
+        $this->assertSame(array(), $this->getHttpCalls());
+    }
+
     public function testRejectsUnreadableAttachmentBeforeDispatch(): void
     {
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');

@@ -14,8 +14,10 @@ use function is_array;
 use function is_object;
 use function preg_match;
 use function preg_match_all;
+use function preg_replace;
 use function sprintf;
 use function trim;
+use function wp_update_post;
 
 /**
  * Discovers posts/pages whose embedded image alt text can be refreshed safely.
@@ -96,6 +98,94 @@ class DescriptionContentRefreshService {
 
 	/**
 	 * @param int[] $media_ids
+	 * @return array<string,mixed>
+	 */
+	public function apply( array $media_ids, int $limit = 50 ): array {
+		$media_ids = $this->normalize_media_ids( $media_ids );
+		$posts     = $this->load_candidate_posts( $limit );
+
+		$changed = array();
+		$skipped = array();
+
+		foreach ( $posts as $post ) {
+			if ( ! is_object( $post ) || ! isset( $post->ID, $post->post_content ) ) {
+				continue;
+			}
+
+			$content         = (string) $post->post_content;
+			$updated_content = $content;
+
+			foreach ( $media_ids as $media_id ) {
+				$current_alt_text = trim( (string) get_post_meta( $media_id, self::ALT_META, true ) );
+				if ( '' === $current_alt_text ) {
+					$skipped[] = $this->build_skip( $post, $media_id, 'missing_current_alt_text' );
+					continue;
+				}
+
+				$matches = $this->find_image_tags_for_media( $updated_content, $media_id );
+				if ( 0 === count( $matches ) ) {
+					continue;
+				}
+
+				if ( count( $matches ) > 1 ) {
+					$skipped[] = $this->build_skip( $post, $media_id, 'ambiguous_multiple_references' );
+					continue;
+				}
+
+				$existing_alt_text = $this->extract_alt_text( $matches[0] );
+				if ( null === $existing_alt_text ) {
+					$skipped[] = $this->build_skip( $post, $media_id, 'missing_embedded_alt_text' );
+					continue;
+				}
+
+				if ( $existing_alt_text === $current_alt_text ) {
+					$skipped[] = $this->build_skip( $post, $media_id, 'already_current' );
+					continue;
+				}
+
+				$updated_tag = $this->replace_alt_text( $matches[0], $current_alt_text );
+				if ( $updated_tag === $matches[0] ) {
+					$skipped[] = $this->build_skip( $post, $media_id, 'replacement_failed' );
+					continue;
+				}
+
+				$updated_content = $this->replace_once( $updated_content, $matches[0], $updated_tag );
+				$changed[]       = array(
+					'post_id'           => absint( $post->ID ),
+					'post_type'         => isset( $post->post_type ) ? (string) $post->post_type : '',
+					'post_title'        => isset( $post->post_title ) ? (string) $post->post_title : '',
+					'media_id'          => $media_id,
+					'existing_alt_text' => $existing_alt_text,
+					'current_alt_text'  => $current_alt_text,
+				);
+			}
+
+			if ( $updated_content !== $content ) {
+				wp_update_post(
+					array(
+						'ID'           => absint( $post->ID ),
+						'post_content' => $updated_content,
+					)
+				);
+			}
+		}
+
+		return array(
+			'summary' => array(
+				'dry_run'       => false,
+				'scanned_posts' => count( $posts ),
+				'media_ids'     => count( $media_ids ),
+				'candidates'    => count( $changed ),
+				'changed'       => count( $changed ),
+				'skipped'       => count( $skipped ),
+			),
+			'changed' => $changed,
+			'skipped' => $skipped,
+		);
+	}
+
+	/**
+	 * @param int[] $media_ids
 	 * @return int[]
 	 */
 	private function normalize_media_ids( array $media_ids ): array {
@@ -145,6 +235,22 @@ class DescriptionContentRefreshService {
 		}
 
 		return html_entity_decode( (string) $matches[2], ENT_QUOTES );
+	}
+
+	private function replace_alt_text( string $image_tag, string $alt_text ): string {
+		$replacement = ' alt="' . esc_attr( $alt_text ) . '"';
+		$updated     = preg_replace( '/\salt\s*=\s*([\'"])(.*?)\1/i', $replacement, $image_tag, 1 );
+
+		return is_string( $updated ) ? $updated : $image_tag;
+	}
+
+	private function replace_once( string $content, string $search, string $replacement ): string {
+		$position = strpos( $content, $search );
+		if ( false === $position ) {
+			return $content;
+		}
+
+		return substr( $content, 0, $position ) . $replacement . substr( $content, $position + strlen( $search ) );
 	}
 
 	/**

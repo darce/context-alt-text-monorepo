@@ -61,6 +61,7 @@ abstract class TestCase extends PHPUnitTestCase
         $GLOBALS['__ac_attached_file'] = [];
         $GLOBALS['__ac_get_posts_results'] = [];
         $GLOBALS['__ac_posts'] = [];
+        $GLOBALS['__ac_updated_posts'] = [];
         $GLOBALS['__ac_json_response'] = null;
         $GLOBALS['__ac_dbdelta_queries'] = [];
         $GLOBALS['__ac_error_log'] = [];

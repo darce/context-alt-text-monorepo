@@ -1,12 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as httpModule from '../../utils/http';
-import { describeMedia, resolveDescribeErrorMessage } from '../describeApi';
+import {
+  correctDescriptionHistoryItem,
+  describeMedia,
+  fetchDescriptionCandidates,
+  fetchDescriptionHistory,
+  resolveDescribeErrorMessage,
+} from '../describeApi';
 
 const mockConfig = {
   nonce: 'nonce-xyz',
   endpoints: {
     recognitionDescribe: 'https://example.com/acx/v1/recognition/describe',
+    recognitionDescribeCandidates: 'https://example.com/acx/v1/recognition/describe/candidates',
+    recognitionDescribeHistory: 'https://example.com/acx/v1/recognition/describe/history',
   } as Record<string, string>,
 };
 
@@ -65,6 +73,107 @@ describe('describeApi', () => {
       body: { media_id: 42 },
       restNonce: 'nonce-xyz',
     });
+  });
+
+  it('POSTs write intent fields when requested', async () => {
+    fetchApiMock.mockResolvedValue({
+      ...sampleResponse,
+      alt_text_write: { status: 'forced_overwrite', existing_alt_present: true },
+    });
+
+    const result = await describeMedia(42, { writeAlt: true, force: true });
+
+    expect(result.alt_text_write?.status).toBe('forced_overwrite');
+    expect(fetchApiMock).toHaveBeenCalledTimes(1);
+    const [, options] = fetchApiMock.mock.calls[0];
+    expect(options).toMatchObject({
+      method: 'POST',
+      body: { media_id: 42, write_alt: true, force: true },
+      restNonce: 'nonce-xyz',
+    });
+  });
+
+  it('fetches dry-run description candidates without posting to the backend describe action', async () => {
+    fetchApiMock.mockResolvedValue({
+      candidates: [{ media_id: 42, filename: '42.jpg', title: 'A flower', mime_type: 'image/jpeg', current_alt_text: '', reason: 'missing_alt' }],
+      exclusions: [],
+      limit: 10,
+      offset: 0,
+      total_candidates: 1,
+      total_exclusions: 0,
+    });
+
+    const result = await fetchDescriptionCandidates({ limit: 10, offset: 0 });
+
+    expect(result.total_candidates).toBe(1);
+    expect(fetchApiMock).toHaveBeenCalledTimes(1);
+    const [endpoint, options] = fetchApiMock.mock.calls[0];
+    expect(endpoint).toBe('https://example.com/acx/v1/recognition/describe/candidates?limit=10&offset=0');
+    expect(options).toMatchObject({
+      method: 'GET',
+      restNonce: 'nonce-xyz',
+    });
+    expect(options).not.toHaveProperty('body');
+  });
+
+  it('loads description history with pagination and the REST nonce', async () => {
+    const historyResponse = {
+      total: 1,
+      items: [
+        {
+          media_id: 42,
+          title: 'Bridge',
+          mime_type: 'image/jpeg',
+          current_alt_text: 'Bridge at dusk',
+          generated_alt_text: 'A bridge over water.',
+          provenance: sampleResponse,
+          human_edit: null,
+          run_status: null,
+        },
+      ],
+    };
+    fetchApiMock.mockResolvedValue(historyResponse);
+
+    const result = await fetchDescriptionHistory({ limit: 25, offset: 50 });
+
+    expect(result).toEqual(historyResponse);
+    expect(fetchApiMock).toHaveBeenCalledWith(
+      'https://example.com/acx/v1/recognition/describe/history?limit=25&offset=50',
+      {
+        method: 'GET',
+        restNonce: 'nonce-xyz',
+      },
+    );
+  });
+
+  it('posts an edited alt text correction for a history item', async () => {
+    const corrected = {
+      media_id: 42,
+      title: 'Bridge',
+      mime_type: 'image/jpeg',
+      current_alt_text: 'Corrected bridge alt text',
+      generated_alt_text: 'A bridge over water.',
+      provenance: sampleResponse,
+      human_edit: {
+        alt_text: 'Corrected bridge alt text',
+        edited_at: '2026-07-04 12:00:00',
+        user_id: 7,
+      },
+      run_status: null,
+    };
+    fetchApiMock.mockResolvedValue(corrected);
+
+    const result = await correctDescriptionHistoryItem(42, 'Corrected bridge alt text');
+
+    expect(result).toEqual(corrected);
+    expect(fetchApiMock).toHaveBeenCalledWith(
+      'https://example.com/acx/v1/recognition/describe/history/42/correction',
+      {
+        method: 'POST',
+        body: { alt_text: 'Corrected bridge alt text' },
+        restNonce: 'nonce-xyz',
+      },
+    );
   });
 });
 

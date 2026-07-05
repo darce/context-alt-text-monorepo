@@ -82,7 +82,7 @@ class DescriptionCommand extends \WP_CLI_Command {
 			? $this->candidate_service->list_missing_alt_candidates(
 				$this->parse_limit( $assoc_args['limit'] ?? 50 ),
 				absint( $assoc_args['offset'] ?? 0 )
-			)
+			)['candidates']
 			: $this->candidate_service->get_status_for_media_ids( array( $media_id ) );
 
 		if ( 'json' === $format ) {
@@ -131,7 +131,7 @@ class DescriptionCommand extends \WP_CLI_Command {
 				\WP_CLI::error( 'Pass --media-id or --limit for bounded generation.' );
 			}
 
-			foreach ( $this->candidate_service->list_missing_alt_candidates( $this->parse_limit( $assoc_args['limit'] ), 0 ) as $row ) {
+			foreach ( $this->candidate_service->list_missing_alt_candidates( $this->parse_limit( $assoc_args['limit'] ), 0 )['candidates'] as $row ) {
 				$media_ids[] = (int) $row['media_id'];
 			}
 		}

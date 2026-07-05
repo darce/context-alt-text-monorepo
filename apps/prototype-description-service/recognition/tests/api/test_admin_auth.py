@@ -13,7 +13,11 @@ from recognition.config.security import (
     SecuritySettings,
     validate_admin_config,
 )
-from recognition.interface_adapters.http.deps.admin_auth import require_admin, require_same_origin
+from recognition.interface_adapters.http.deps.admin_auth import (
+    require_admin,
+    require_admin_header,
+    require_same_origin,
+)
 
 _VALID_TOKEN = "x" * 40  # >= 32 chars
 
@@ -94,6 +98,61 @@ def test_admin_gate_honors_custom_header(monkeypatch: pytest.MonkeyPatch) -> Non
 
     assert client.get("/_t", headers={"X-Admin-Token": _VALID_TOKEN}).status_code == 401
     assert client.get("/_t", headers={"X-Operator-Key": _VALID_TOKEN}).status_code == 200
+
+
+# --- require_admin_header gate (JSON mutations; Basic never accepted) ---
+
+
+def _admin_header_client(monkeypatch: pytest.MonkeyPatch, *, header_env: str | None = None) -> TestClient:
+    """Build a tiny app with one route gated by require_admin_header."""
+    monkeypatch.setenv("RECOGNITION_ADMIN_ENABLED", "1")
+    monkeypatch.setenv("RECOGNITION_ADMIN_TOKEN", _VALID_TOKEN)
+    if header_env is None:
+        monkeypatch.delenv("RECOGNITION_ADMIN_TOKEN_HEADER", raising=False)
+    else:
+        monkeypatch.setenv("RECOGNITION_ADMIN_TOKEN_HEADER", header_env)
+
+    app = FastAPI()
+
+    @app.post("/_m", dependencies=[Depends(require_admin_header)])
+    async def _mutation() -> dict[str, bool]:
+        return {"ok": True}
+
+    return TestClient(app)
+
+
+def test_admin_header_gate_allows_valid_header(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _admin_header_client(monkeypatch)
+    response = client.post("/_m", headers={"X-Admin-Token": _VALID_TOKEN})
+    assert response.status_code == 200
+
+
+def test_admin_header_gate_rejects_valid_basic_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The whole point: Basic never authorizes a JSON mutation."""
+    client = _admin_header_client(monkeypatch)
+    response = client.post("/_m", headers=_basic_header(_VALID_TOKEN))
+    assert response.status_code == 401
+
+
+def test_admin_header_gate_rejects_missing_and_wrong_header(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _admin_header_client(monkeypatch)
+    assert client.post("/_m").status_code == 401
+    assert client.post("/_m", headers={"X-Admin-Token": "y" * 40}).status_code == 401
+
+
+def test_admin_header_gate_honors_custom_header(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Gate must read settings.admin_header, not a hardcoded header name."""
+    client = _admin_header_client(monkeypatch, header_env="X-Custom-Admin")
+    assert client.post("/_m", headers={"X-Custom-Admin": _VALID_TOKEN}).status_code == 200
+    assert client.post("/_m", headers={"X-Admin-Token": _VALID_TOKEN}).status_code == 401
+
+
+def test_admin_header_gate_401_omits_basic_challenge(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Header-only routes never accept Basic, so they must not challenge for it."""
+    client = _admin_header_client(monkeypatch)
+    response = client.post("/_m")
+    assert response.status_code == 401
+    assert "WWW-Authenticate" not in response.headers
 
 
 # --- HTTP Basic auth (browser path) ---

@@ -23,8 +23,9 @@ recognition multipart/auth/object-store transport.
 - **Auth**: `require_write_access` (admin key or tenant-scoped key), `X-Api-Key`.
 - **Body** (`multipart/form-data`):
   - `request` — JSON `DescribeImageEnvelope`: `tenant_id` (UUID, canonicalized
-    lowercase), `media_id` (int > 0, must equal the part suffix), optional inert
-    `context`. Adapter selection is server-side in Phase 1.
+    lowercase), `media_id` (int > 0, must equal the part suffix), optional
+    legacy `context`, and optional typed `context_pack`. Adapter selection is
+    server-side.
   - `image_<media_id>` — exactly one image part (`image/jpeg|png|webp`).
 - **Upload cap**: `/scene/describe/multipart` is registered with the body-size
   middleware (413 on oversize).
@@ -63,10 +64,31 @@ Error shapes match the recognition routes: 5xx/503 use the `{error, trace_id, pa
 | Field | Source / authority |
 | --- | --- |
 | `media_id` (request param) | operator-supplied attachment id |
+| `write_alt` (request param, default `false`) | operator write intent for `_wp_attachment_image_alt` |
+| `force` (request param, default `false`) | explicit operator override for non-empty existing alt text when `write_alt=true` |
 | `request.tenant_id` | `TenantIdentity::resolve` |
 | `request.media_id` | echoes the request param (must equal the `image_<id>` part suffix) |
-| `request.context` | WordPress inert bag `{site_url, title, caption, description, filename}` — nested under the single `context` key because the backend `DescribeImageEnvelope` is `extra='forbid'` (no extra top-level keys); inert in Phase 1 |
+| `request.context_pack.attachment` | bounded attachment title/caption/description/alt text/filename collected from the attachment post and `_wp_attachment_image_alt` |
+| `request.context_pack.post` | bounded parent post title/excerpt/type/status; included only when the parent post is public (`publish`) |
+| `request.context_pack.taxonomy_terms` | up to 20 public category/tag/product terms for the public parent post |
+| `request.context_pack.product` | bounded Woo-style product name/SKU/price when the public parent post type is `product` |
 | every response field | **passed through from the backend payload** |
+| `alt_text_write` (response field, WP-only) | local write result added only when `write_alt=true`; never sent by the backend scene route |
+
+### Context-pack bounds and privacy
+
+WordPress owns source collection and privacy filtering. The backend validates
+the typed object and owns whether/how an adapter applies it.
+
+- Top-level request keys remain `tenant_id`, `media_id`, and `context_pack` for
+  new callers; legacy `context` remains accepted by the backend for older
+  clients.
+- Parent post body content is not sent. Draft/private/non-public parents are
+  omitted entirely.
+- Strings are length-bounded before leaving WordPress; taxonomy terms are capped
+  at 20.
+- Missing context is not an error. Adapters must degrade to generic visual facts
+  and report `context_used.applied=false`.
 
 **rg-015 (boundary fidelity)**: the proxy MUST trace every envelope field to the
 backend payload or a documented local authority. A malformed upstream shape
@@ -75,4 +97,36 @@ returns an explicit `502 invalid_description_envelope` — never a fabricated
 (`limit`/`offset`/`total`) on this single-object response.
 
 - **Permission**: `can_manage_recognition` (`manage_options`).
-- No alt-text write in Phase 1; `_wp_attachment_image_alt` is untouched (Phase 2 / E19-2).
+- **Preview default**: when `write_alt` is absent or false, `_wp_attachment_image_alt` and `_acx_description_provenance` are untouched and the backend `VisualFactsResponse` is returned without `alt_text_write`.
+- **Write policy**: when `write_alt=true`, missing alt text is written from `alt_text_draft` and generated provenance is stored in `_acx_description_provenance`. Non-empty existing alt text returns `alt_text_write.status="skipped_existing_alt"` unless `force=true`, which returns `forced_overwrite`.
+- **Provenance meta**: `_acx_description_provenance` records `adapter`, `model_id`, `model_version`, `prompt_or_task_version`, `image_hash`, `context_hash`, `generated_at`, and `backend_result_id` when supplied by the backend payload.
+- **Idempotence**: repeated writes for the same generated tuple preserve matching existing provenance instead of refreshing `generated_at`.
+
+`alt_text_write.status` ∈ `{written, skipped_existing_alt, forced_overwrite}`.
+
+## WordPress dry-run surface — `GET /acx/v1/recognition/describe/candidates`
+
+Read-only selection source for later description generation and write commands.
+This route does **not** call `/scene/describe/multipart` and does not mutate
+attachment meta.
+
+Query params:
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `limit` | `50` | Candidate page size, clamped by the service maximum. |
+| `offset` | `0` | Offset after missing-alt filtering. |
+
+Response fields:
+
+| Field | Meaning |
+| --- | --- |
+| `candidates` | Page of image attachments with empty `_wp_attachment_image_alt`, sorted by ascending media id. |
+| `exclusions` | Attachments skipped by the same selection scan with machine-readable `reason`. |
+| `limit`, `offset` | Normalized pagination inputs used for `candidates`. |
+| `total_candidates`, `total_exclusions` | Totals before candidate pagination. |
+
+Candidate/exclusion row fields: `media_id`, `filename`, `title`, `mime_type`,
+`current_alt_text`, `reason`.
+
+`reason` ∈ `{missing_alt, has_alt_text, unsupported_mime}`.

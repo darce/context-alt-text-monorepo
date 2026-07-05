@@ -48,6 +48,7 @@ class DescriptionCommandStatusTest extends TestCase
         $this->assertSame('status', $payload['command']);
         $this->assertSame(1, $payload['count']);
         $this->assertSame(101, $payload['rows'][0]['media_id']);
+        $this->assertSame('Coastal image', $payload['rows'][0]['title']);
         $this->assertSame(false, $payload['rows'][0]['has_alt_text']);
         $this->assertSame('missing_alt', $payload['rows'][0]['candidate_reason']);
         $this->assertSame(
@@ -58,14 +59,16 @@ class DescriptionCommandStatusTest extends TestCase
 
     public function testStatusTableSupportsBoundedCandidateListing(): void
     {
-        $GLOBALS['__ac_get_posts_results'] = [201, 202, 203];
+        $GLOBALS['__ac_get_posts_results'] = [];
         foreach ([201, 202, 203] as $mediaId) {
-            $GLOBALS['__ac_posts'][$mediaId] = (object) [
+            $post = (object) [
                 'ID' => $mediaId,
                 'post_type' => 'attachment',
                 'post_status' => 'inherit',
                 'post_title' => 'Image ' . $mediaId,
             ];
+            $GLOBALS['__ac_posts'][$mediaId] = $post;
+            $GLOBALS['__ac_get_posts_results'][] = $post;
             $GLOBALS['__ac_attachment_mimes'][$mediaId] = 'image/png';
             $this->setPostMeta($mediaId, '_wp_attachment_image_alt', '');
         }

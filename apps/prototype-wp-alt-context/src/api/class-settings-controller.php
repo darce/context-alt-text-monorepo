@@ -7,8 +7,10 @@ namespace AltContext\Api;
 require_once __DIR__ . '/class-probe-outcome.php';
 require_once __DIR__ . '/class-recognition-endpoint-resolver.php';
 require_once __DIR__ . '/class-tenant-identity.php';
+require_once __DIR__ . '/services/class-description-budget-service.php';
 require_once __DIR__ . '/services/class-tenant-local-rekey-service.php';
 
+use AltContext\Api\Services\DescriptionBudgetService;
 use AltContext\Api\Services\TenantLocalRekeyService;
 
 use WP_Error;
@@ -20,6 +22,8 @@ use function defined;
 use function get_option;
 use function intval;
 use function is_array;
+use function is_int;
+use function is_numeric;
 use function is_string;
 use function is_wp_error;
 use function json_decode;
@@ -47,8 +51,14 @@ use function wp_remote_retrieve_response_code;
 class SettingsController {
 	private RecognitionEndpointResolver $endpoint_resolver;
 
-	public function __construct( ?RecognitionEndpointResolver $endpoint_resolver = null ) {
-		$this->endpoint_resolver = $endpoint_resolver ?? new RecognitionEndpointResolver();
+	private DescriptionBudgetService $description_budget_service;
+
+	public function __construct(
+		?RecognitionEndpointResolver $endpoint_resolver = null,
+		?DescriptionBudgetService $description_budget_service = null
+	) {
+		$this->endpoint_resolver          = $endpoint_resolver ?? new RecognitionEndpointResolver();
+		$this->description_budget_service = $description_budget_service ?? new DescriptionBudgetService();
 	}
 
 	public function register_routes(): void {
@@ -105,6 +115,7 @@ class SettingsController {
 				'tenant_id'                 => $tenant_resolution['value'],
 				'tenant_id_source'          => $tenant_resolution['source'],
 				'tenant_paired'             => TenantIdentity::is_paired(),
+				'description_budget'        => $this->get_description_budget_payload(),
 			),
 			200
 		);
@@ -159,12 +170,46 @@ class SettingsController {
 			$saved[] = 'local_url';
 		}
 
+		if ( isset( $body['description_budget'] ) && is_array( $body['description_budget'] ) ) {
+			$max_attempts = $body['description_budget']['max_attempts'] ?? null;
+			if ( ! is_int( $max_attempts ) && ! is_numeric( $max_attempts ) ) {
+				return new WP_Error(
+					'invalid_description_budget',
+					'Description budget max attempts must be an integer greater than or equal to -1.',
+					array( 'status' => 400 )
+				);
+			}
+
+			$max_attempts = (int) $max_attempts;
+			if ( $max_attempts < -1 ) {
+				return new WP_Error(
+					'invalid_description_budget',
+					'Description budget max attempts must be greater than or equal to -1.',
+					array( 'status' => 400 )
+				);
+			}
+
+			update_option( 'acx_description_budget_max_attempts', $max_attempts );
+			$saved[] = 'description_budget';
+		}
+
 		return new WP_REST_Response(
 			array(
 				'saved'  => $saved,
 				'result' => 'ok',
 			),
 			200
+		);
+	}
+
+	/**
+	 * @return array<string,mixed>
+	 */
+	private function get_description_budget_payload(): array {
+		return array(
+			'max_attempts'  => (int) get_option( 'acx_description_budget_max_attempts', -1 ),
+			'usage'         => $this->description_budget_service->usage_summary(),
+			'recent_errors' => $this->description_budget_service->recent_errors( 5 ),
 		);
 	}
 

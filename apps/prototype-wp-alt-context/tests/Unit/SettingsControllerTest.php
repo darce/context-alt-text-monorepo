@@ -6,6 +6,7 @@ namespace AltContext\Tests\Unit;
 
 use AltContext\Api\ProbeOutcome;
 use AltContext\Api\SettingsController;
+use AltContext\Api\Services\DescriptionBudgetService;
 use AltContext\Api\TenantIdentity;
 use AltContext\Tests\TestCase;
 use WP_REST_Request;
@@ -96,6 +97,26 @@ class SettingsControllerTest extends TestCase
         $this->assertSame($tenantId, $data['tenant_id']);
         $this->assertSame('option', $data['tenant_id_source']);
         $this->assertFalse($data['tenant_paired']);
+    }
+
+    public function testGetSettingsReturnsDescriptionBudgetUsageAndRecentErrors(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_description_budget_max_attempts', 25);
+
+        $budget = new DescriptionBudgetService();
+        $budget->record_success(101, 'openai', 'gpt-4.1-mini', 1200, false, 'updated', 0.04, 'USD');
+        $budget->record_error(102, 'openai', 'gpt-4.1-mini', 'rate_limited', 'Rate limited', true, 'provider', 0.01, 'USD');
+
+        $request = new WP_REST_Request('GET', '/acx/v1/settings');
+        $response = $this->controller->get_settings($request);
+
+        $descriptionBudget = $response->get_data()['description_budget'];
+        $this->assertSame(25, $descriptionBudget['max_attempts']);
+        $this->assertSame(2, $descriptionBudget['usage']['attempts']);
+        $this->assertSame(1, $descriptionBudget['usage']['successes']);
+        $this->assertSame(1, $descriptionBudget['usage']['failures']);
+        $this->assertSame('rate_limited', $descriptionBudget['recent_errors'][0]['error_code']);
     }
 
     public function testGetSettingsReturnsFilterTenantSourceWhenFilterProvides(): void
@@ -346,6 +367,41 @@ class SettingsControllerTest extends TestCase
         $this->assertContains('api_key', $data['saved']);
         $this->assertNotContains('url', $data['saved']);
         $this->assertSame('https://old.example.com', get_option('acx_recognition_url'));
+    }
+
+    public function testSaveSettingsWritesDescriptionBudgetLimit(): void
+    {
+        $this->setUserCapability('manage_options', true);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params([
+            'description_budget' => [
+                'max_attempts' => 50,
+            ],
+        ]);
+
+        $response = $this->controller->save_settings($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertContains('description_budget', $response->get_data()['saved']);
+        $this->assertSame(50, get_option('acx_description_budget_max_attempts'));
+    }
+
+    public function testSaveSettingsRejectsInvalidDescriptionBudgetLimit(): void
+    {
+        $this->setUserCapability('manage_options', true);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params([
+            'description_budget' => [
+                'max_attempts' => -2,
+            ],
+        ]);
+
+        $response = $this->controller->save_settings($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('invalid_description_budget', $response->get_error_code());
     }
 
     // --- POST /settings/test (probe dispatch) ---

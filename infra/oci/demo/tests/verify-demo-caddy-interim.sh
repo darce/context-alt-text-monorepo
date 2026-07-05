@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# E15-29 Slice 0: assert the demo Caddy vhost serves the sslip.io interim host
+# alongside demo.altcontext.com, both routing to the demo-wp upstream.
+#
+# Structural check only — the authoritative `caddy validate` runs at deploy time
+# inside scripts/deploy/sync-demo.sh (the VM has no host caddy binary either).
+#
+# Usage: bash infra/oci/demo/tests/verify-demo-caddy-interim.sh
+set -euo pipefail
+
+CADDYFILE="${CADDYFILE:-apps/prototype-description-service/Caddyfile}"
+INTERIM_HOST='129-213-40-111.sslip.io'
+
+if [[ ! -f "$CADDYFILE" ]]; then
+  echo "FAIL: Caddyfile not found at $CADDYFILE" >&2
+  exit 2
+fi
+
+fail=0
+check() { # <regex> <human description>
+  if ! grep -qE "$1" "$CADDYFILE"; then
+    echo "FAIL: missing — $2" >&2
+    fail=1
+  fi
+}
+
+check "$INTERIM_HOST" "sslip.io interim host ($INTERIM_HOST) in the demo vhost"
+check 'demo\.altcontext\.com' "demo.altcontext.com target host (kept for when operator DNS lands)"
+check 'reverse_proxy demo-wp:80' "demo-wp:80 upstream"
+check 'path /xmlrpc\.php' "xmlrpc 403 hardening preserved"
+
+# The two demo hosts must share ONE site block (comma-separated addresses), not
+# two blocks — a second block would duplicate the upstream and the xmlrpc guard.
+if ! grep -qE "demo\.altcontext\.com, *${INTERIM_HOST} *\{|${INTERIM_HOST}, *demo\.altcontext\.com *\{" "$CADDYFILE"; then
+  echo "FAIL: demo.altcontext.com and $INTERIM_HOST must be comma-separated addresses on one site block" >&2
+  fail=1
+fi
+
+# Brace balance sanity (cheap structural guard short of caddy validate).
+opens=$(grep -o '{' "$CADDYFILE" | wc -l | tr -d ' ')
+closes=$(grep -o '}' "$CADDYFILE" | wc -l | tr -d ' ')
+if [[ "$opens" != "$closes" ]]; then
+  echo "FAIL: brace imbalance — $opens '{' vs $closes '}'" >&2
+  fail=1
+fi
+
+if [[ "$fail" -ne 0 ]]; then
+  echo "verify-demo-caddy-interim: FAIL" >&2
+  exit 1
+fi
+echo "verify-demo-caddy-interim: OK — demo vhost serves $INTERIM_HOST + demo.altcontext.com -> demo-wp:80"

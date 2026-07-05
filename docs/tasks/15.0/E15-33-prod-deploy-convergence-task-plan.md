@@ -12,14 +12,14 @@
 
 ## Objective
 
-Make a prod deploy converge the **entire runtime contract** — container image, `docker-compose.env.yml`, systemd unit, and DB schema — with the repo, and catch a bad artifact **before** it restarts prod. Today `make deploy-prod` ships only the image against whatever compose/unit/schema already sit on the VM, so silent drift (missing volumes, missing tables, missing packages) reaches prod and is only discovered by a crash-looping container taking the public API down.
+Make a prod deploy converge the **entire runtime contract** — container image, `docker-compose.env.yml`, systemd unit, and DB schema — with the repo, and catch a bad artifact **before** it restarts prod. Today `CONFIRM=PROMOTE scripts/deploy/recognition-service.sh deploy prod` ships only the image against whatever compose/unit/schema already sit on the VM, so silent drift (missing volumes, missing tables, missing packages) reaches prod and is only discovered by a crash-looping container taking the public API down.
 
 ## Problem Statement
 
 Four independent drift classes each caused a prod outage or silent failure during E15-29 (see decisions 1194, 1197; blocker 10). All share one root cause: **the deploy path treats the image as the only versioned artifact, and verification runs only after the live restart.**
 
 1. **Compose/unit drift.** `scripts/deploy/recognition-service.sh` `do_restart` runs `docker compose -f docker-compose.env.yml pull api && systemctl restart acx-$env`. It never ships `docker-compose.env.yml` or the unit — that is a *separate*, manually-run `apps/prototype-description-service/scripts/deploy-env.sh`. Prod's deployed compose predated the E15-11 blob store, so `RECOGNITION_BLOB_ROOT` was unset (→ container-local `/tmp` default) and api/worker shared no `acx_blobs` volume; the worker could not read images the api uploaded (`ObjectStoreError: uri does not resolve to a file`, `recognition/application/scan/service.py:249`).
-2. **Greenfield schema drift.** `db/migrations/versions/001_identity_schema.py` is edited **in place** under a constant revision id (`001_identity_schema`), so the container entrypoint's `alembic upgrade head` is a no-op on an already-stamped DB. Four tables added to the schema since the last prod init (`assignment_decisions`, `clustering_job_reports`, `image_descriptions`, `worker_capabilities`) never existed on prod; `scripts/verify_identity_schema.py` fail-closed the boot → crash-loop → 502.
+2. **Greenfield schema drift.** `db/migrations/versions/001_identity_schema.py` is edited **in place** under a constant revision id (`001_identity_schema`), so the container entrypoint's `alembic upgrade head` is a no-op on an already-stamped DB. Four tables added to the schema since the last prod init (`assignment_decisions`, `clustering_job_reports`, `image_descriptions`, `worker_capabilities`) never existed on prod; `apps/prototype-description-service/scripts/verify_identity_schema.py` fail-closed the boot → crash-loop → 502.
 3. **Packaging omission.** `apps/prototype-description-service/Dockerfile` runtime stage copies `api/ db/ recognition/ roster/ shared/ scripts/` and `pyproject.toml` `[tool.setuptools.packages.find].include` lists them, but a new top-level package (`scene/`, imported unconditionally at `api/main.py:48`) was in neither → `ModuleNotFoundError: No module named 'scene'` at uvicorn boot. Fixed reactively in `MAINT-SCENE-DEPLOY-PKG`; nothing prevents the next such omission.
 4. **Post-hoc verify.** `recognition-service.sh` `do_verify` polls `/health` only **after** `systemctl restart`. A bad image is already live (and prod already 502ing) before the failure is detected; recovery is a manual image retag + restart.
 
@@ -35,13 +35,13 @@ Four independent drift classes each caused a prod outage or silent failure durin
 
 - **Works**: image build+push+restart+`/health` verify (`recognition-service.sh` `do_build_remote`, `do_push`, `do_restart`, `do_verify`); `deploy-env.sh` *can* converge compose+unit+Caddy but is out-of-band and operator-triggered; `verify_identity_schema.py` correctly fail-closes (it caught #2, just too late).
 - **Not done**: no single command converges image+compose+unit+schema; no pre-restart boot smoke; no packaging-completeness guard; the entrypoint cannot self-heal in-place schema additions.
-- **Misleading if unchecked**: a green `make deploy-prod` verify only proves `/health` came back — it says nothing about compose/volume/schema parity with the repo.
+- **Misleading if unchecked**: a green `deploy prod` verify only proves `/health` came back — it says nothing about compose/volume/schema parity with the repo.
 
 ## Context Loading
 
 - **Rules**: `docs/workbay/rules/development-workflow.md` (pre-merge gate), `infra/oci/README.md` (env layout, deploy SOP), `CLAUDE.md` Greenfield Policy.
 - **Deploy anchors**: `scripts/deploy/recognition-service.sh` (`do_build_remote`, `do_restart`, `do_verify`, `preflight_ssh`), `apps/prototype-description-service/scripts/deploy-env.sh`, `scripts/deploy/sync-compose.sh`, `apps/prototype-description-service/systemd/acx-env.service.template`.
-- **Runtime anchors**: `apps/prototype-description-service/Dockerfile` (runtime COPY + `pip install -e .`), `pyproject.toml` `[tool.setuptools.packages.find]`, `db/migrations/versions/001_identity_schema.py` (`EXPECTED_SCHEMA_TABLES`, `upgrade`), `scripts/verify_identity_schema.py`, `db/base.py` (`Base`), `db/models/__init__.py`, `docker-compose.env.yml`.
+- **Runtime anchors** (all service-relative to `apps/prototype-description-service/`): `Dockerfile` (runtime COPY + `pip install -e .`), `pyproject.toml` `[tool.setuptools.packages.find]`, `db/migrations/versions/001_identity_schema.py` (`EXPECTED_SCHEMA_TABLES`, `upgrade`), `scripts/verify_identity_schema.py`, `db/base.py` (`Base`), `db/models/__init__.py`, `docker-compose.env.yml`. Note `scripts/` here is the **service** scripts dir, distinct from the repo-root `scripts/deploy/` that holds `recognition-service.sh`.
 - **Handoff**: E15-29 decisions 1194 (schema drift + rollback), 1197 (admin + mint), blocker 10 (resolved); `MAINT-SCENE-DEPLOY-PKG` decision 1196 (scene fix).
 
 ## Contract and Boundary Impact
@@ -65,6 +65,7 @@ Four independent, individually-shippable slices, ordered by outage-prevention va
 - Add `apps/prototype-description-service/scripts/sync_identity_schema.py` (`main()`): opens a sync engine from `db.settings` DSN, imports `db.models` (registers all tables on `db.base.Base.metadata`), runs `Base.metadata.create_all(engine, checkfirst=True)` (additive; never alters/drops), logs created tables. Reuses the exact mechanism used to repair prod in E15-29 (decision 1194).
 - Wire it into the Dockerfile CMD **between** `alembic upgrade head` and `python -m scripts.verify_identity_schema`, so verify then passes.
 - **Error path**: on any DDL error, exit non-zero (entrypoint fails closed — no worse than today's verify failure, but now self-heal is attempted first).
+- **Scope boundary**: `create_all(checkfirst=True)` adds missing **tables** only — it never adds a **column, index, or constraint** to a pre-existing table. `verify_identity_schema.py` is likewise table-granular (`get_table_names()` vs `EXPECTED_SCHEMA_TABLES`), so a column-level in-place edit to `001` is **neither self-healed nor fail-closed** — it silently diverges on prod. This task covers **new-table** additions only; column/index/constraint drift on existing tables is explicitly out of scope (would need a column-aware verify + reconcile, tracked separately). Reviewers must reject any slice that claims column-level coverage.
 
 **Proof**: unit test seeds a DB missing one table, runs `sync_identity_schema.main()`, asserts the table exists and existing rows untouched; a second run is a clean no-op. Compose/boot test: a DB stamped at `001` but missing a table boots green after the entrypoint runs.
 
@@ -79,7 +80,7 @@ Four independent, individually-shippable slices, ordered by outage-prevention va
 
 ### Slice 3 — Deploy-time compose+unit convergence (closes silent infra drift)
 
-**Goal**: `make deploy-prod` guarantees the deployed `docker-compose.env.yml` + unit match the repo, or fails.
+**Goal**: The prod deploy (`scripts/deploy/recognition-service.sh deploy prod`) guarantees the deployed `docker-compose.env.yml` + unit match the repo, or fails.
 
 - In `recognition-service.sh` `do_restart` (or a new `converge_runtime()` called before it): before `systemctl restart`, `scp` the repo `docker-compose.env.yml` (+ prod overlay `docker-compose.admin.yml`) and re-render/install the unit from `systemd/acx-env.service.template` — i.e., fold the essential convergence of `deploy-env.sh` into the mainline deploy so it is not a separate manual step. Guard behind `ACX_CONVERGE_RUNTIME` (default `1`); `=0` preserves image-only for hotfixes.
 - **Do not** reship the Caddy edge here (E15-29 hazard: a Caddy restart can drop it off `acx-demo-net`); Caddy convergence stays owned by `sync-compose.sh`/`sync-demo.sh`. Document the seam.
@@ -109,7 +110,7 @@ Four independent, individually-shippable slices, ordered by outage-prevention va
 | Schema self-heal (new) | `apps/prototype-description-service/scripts/sync_identity_schema.py` | idempotent `create_all` runner |
 | Entrypoint | `apps/prototype-description-service/Dockerfile` | CMD: insert `python -m scripts.sync_identity_schema` before verify |
 | Packaging guard (new) | `apps/prototype-description-service/recognition/tests/deploy/test_runtime_packaging.py` | COPY/include vs `api.main` imports |
-| Deploy convergence | `scripts/deploy/recognition-service.sh` | `converge_runtime()` + `do_boot_smoke()` + `--check`; call sites in `run_deploy` |
+| Deploy convergence | `scripts/deploy/recognition-service.sh` | `converge_runtime()` + `do_boot_smoke()` + `--check`; call sites in `do_deploy()` (recognition-service.sh:270 — converge before `do_restart`, boot smoke between `do_push` and `do_restart`) |
 | Docs | `infra/oci/README.md` | document the converge seam + Caddy carve-out |
 
 ## Related Files
@@ -118,7 +119,7 @@ Four independent, individually-shippable slices, ordered by outage-prevention va
 | --- | --- |
 | `apps/prototype-description-service/scripts/deploy-env.sh` | convergence logic to fold in / reuse |
 | `scripts/deploy/sync-compose.sh`, `scripts/deploy/sync-demo.sh` | Caddy edge ownership (unchanged) |
-| `scripts/verify_identity_schema.py` | fail-closed gate the self-heal precedes |
+| `apps/prototype-description-service/scripts/verify_identity_schema.py` | fail-closed gate the self-heal precedes (table-granular: checks `get_table_names()` only) |
 | `db/base.py`, `db/models/__init__.py` | `Base.metadata` the self-heal drives |
 
 ## Verification Strategy
@@ -166,8 +167,8 @@ Four independent, individually-shippable slices, ordered by outage-prevention va
 
 ## Success Criteria
 
-- [ ] A single `make deploy-prod` converges image + compose + unit + schema; a drifted VM ends matching the repo.
-- [ ] An in-place `001_identity_schema.py` addition applies to an existing DB on deploy (no manual `create_all`).
+- [ ] A single `CONFIRM=PROMOTE scripts/deploy/recognition-service.sh deploy prod` converges image + compose + unit + schema; a drifted VM ends matching the repo.
+- [ ] An in-place **new-table** addition to `001_identity_schema.py` applies to an existing DB on deploy (no manual `create_all`); column/index/constraint drift on existing tables is out of scope (see Slice 1 Scope boundary).
 - [ ] A missing runtime package fails `make check-all`, not a prod boot.
 - [ ] A broken image is caught pre-promote; the public API never 502s from a bad deploy.
 - [ ] `handoff_close_check(enforce=True)` passes; the four E15-29 drift modes cannot silently recur.

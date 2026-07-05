@@ -94,10 +94,17 @@ async def require_admin_header(request: Request) -> None:
     credentials, so a cross-site page could otherwise ride the operator's
     session into a JSON mutation. A custom header cannot be attached by a
     cross-site form, which removes that class entirely.
+
+    The 401 deliberately omits ``WWW-Authenticate: Basic``: these routes never
+    accept Basic, so challenging would be RFC-misleading and would pop a native
+    browser login loop on any cross-site POST that reaches this gate.
     """
     settings = get_security_settings()
     if not _matches(request.headers.get(settings.admin_header) or "", settings.admin_token):
-        raise _unauthorized()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="admin header authorization required",
+        )
 
 
 def _host_of(value: str | None) -> str | None:

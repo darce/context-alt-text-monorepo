@@ -456,6 +456,7 @@ class LifecycleManager {
 		$persons_table   = $wpdb->prefix . 'acx_persons';
 		$batch_runs_table = $wpdb->prefix . 'acx_batch_runs';
 		$batch_failures_table = $wpdb->prefix . 'acx_batch_run_failures';
+		$description_usage_table = $wpdb->prefix . 'acx_description_usage';
 		$outbox_table    = $wpdb->prefix . 'acx_sync_outbox';
 		$topology_table  = $wpdb->prefix . 'acx_topology_commands';
 		$conflicts_table = $wpdb->prefix . 'acx_sync_conflicts';
@@ -565,6 +566,27 @@ class LifecycleManager {
 			KEY idx_tenant_run (tenant_id, run_id)
 		) {$charset_collate};";
 
+		$description_usage_sql = "CREATE TABLE {$description_usage_table} (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			occurred_at datetime NOT NULL,
+			media_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			outcome varchar(20) NOT NULL,
+			adapter varchar(64) NOT NULL DEFAULT '',
+			provider varchar(64) NOT NULL DEFAULT '',
+			duration_ms int(11) unsigned DEFAULT NULL,
+			cached tinyint(1) NOT NULL DEFAULT 0,
+			write_status varchar(64) DEFAULT NULL,
+			cost_amount decimal(12,6) NOT NULL DEFAULT 0,
+			cost_currency varchar(8) DEFAULT NULL,
+			error_code varchar(128) DEFAULT NULL,
+			error_message text DEFAULT NULL,
+			retryable tinyint(1) DEFAULT NULL,
+			error_source varchar(64) DEFAULT NULL,
+			PRIMARY KEY  (id),
+			KEY idx_outcome_occurred (outcome, occurred_at),
+			KEY idx_media_occurred (media_id, occurred_at)
+		) {$charset_collate};";
+
 		$outbox_sql = "CREATE TABLE {$outbox_table} (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 			tenant_id varchar(64) NOT NULL,
@@ -648,5 +670,6 @@ class LifecycleManager {
 		dbDelta( $conflicts_sql );
 		dbDelta( $batch_runs_sql );
 		dbDelta( $batch_failures_sql );
+		dbDelta( $description_usage_sql );
 	}
 }

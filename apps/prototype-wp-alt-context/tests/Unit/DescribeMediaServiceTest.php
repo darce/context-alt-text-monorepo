@@ -156,6 +156,21 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertSame(array(), $this->getHttpCalls());
     }
 
+    public function testBudgetLimitBlocksBeforeBackendDispatch(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $this->setOption('acx_description_budget_max_attempts', 0);
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $result = $this->controller->describe_media($req);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('description_budget_attempt_limit_exceeded', $result->get_error_code());
+        $this->assertSame(429, $result->get_error_data()['status'] ?? null);
+        $this->assertSame(array(), $this->getHttpCalls());
+    }
+
     public function testRejectsOversizePayloadBeforeDispatch(): void
     {
         $bytes = str_repeat('A', 26 * 1024 * 1024);

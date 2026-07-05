@@ -67,6 +67,18 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 						'required'    => true,
 						'description' => 'Attachment id to describe (single image).',
 					),
+					'write_alt' => array(
+						'type'        => 'boolean',
+						'required'    => false,
+						'default'     => false,
+						'description' => 'Persist the generated alt text to the attachment when policy allows.',
+					),
+					'force'     => array(
+						'type'        => 'boolean',
+						'required'    => false,
+						'default'     => false,
+						'description' => 'Overwrite existing attachment alt text when write_alt is true.',
+					),
 				),
 			)
 		);

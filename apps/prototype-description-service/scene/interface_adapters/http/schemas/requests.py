@@ -48,6 +48,7 @@ class ProductContext(BaseModel):
 
     name: str | None = Field(default=None, max_length=200)
     sku: str | None = Field(default=None, max_length=120)
+    price: str | None = Field(default=None, max_length=64)
     short_description: str | None = Field(default=None, max_length=1000)
 
 

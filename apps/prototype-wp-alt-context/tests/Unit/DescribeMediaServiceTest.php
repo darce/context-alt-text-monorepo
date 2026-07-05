@@ -115,24 +115,98 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertStringContainsString('name="image_42"; filename=', $body);
         $this->assertStringContainsString($bytes, $body);
 
-        // The 'request' envelope carries tenant_id + media_id + inert wp context.
+        // The 'request' envelope carries tenant_id + media_id + WP context.
         $this->assertStringContainsString("name=\"request\"\r\n", $body);
         $this->assertMatchesRegularExpression('/name="request".*?\r\n\r\n(\{.*?\})\r\n/s', $body);
         preg_match('/name="request".*?\r\n\r\n(\{.*?\})\r\n/s', $body, $m);
         $envelope = json_decode($m[1], true);
         $this->assertSame(self::currentTenantId(), $envelope['tenant_id']);
         $this->assertSame(42, $envelope['media_id']);
-        $this->assertIsArray($envelope['context']);
-        $this->assertSame('http://acx.test', $envelope['context']['site_url']);
-        $this->assertSame('Photo 42', $envelope['context']['title']);
-        $this->assertSame('42.jpg', $envelope['context']['filename']);
+        $this->assertIsArray($envelope['context_pack']);
+        $this->assertSame('Photo 42', $envelope['context_pack']['attachment']['title']);
+        $this->assertSame('42.jpg', $envelope['context_pack']['attachment']['filename']);
         // No top-level keys the backend's extra='forbid' envelope rejects.
-        $this->assertSame(array('tenant_id', 'media_id', 'context'), array_keys($envelope));
+        $this->assertSame(array('tenant_id', 'media_id', 'context_pack'), array_keys($envelope));
 
         // Response is passed through unchanged.
         $data = $result->get_data();
         $this->assertSame('A photo.', $data['alt_text_draft']);
         $this->assertFalse($data['cached']);
+    }
+
+    public function testBuildsBoundedContextPackFromAttachmentParentTermsAndProductMeta(): void
+    {
+        $bytes = "\xff\xd8\xff\xe0fake-jpeg-bytes";
+        $this->plantAttachment(42, $bytes, 'jpg');
+        $GLOBALS['__ac_posts'][42]->post_parent = 77;
+        $GLOBALS['__ac_posts'][77] = (object) array(
+            'ID'           => 77,
+            'post_title'   => 'Trail jackets for spring',
+            'post_excerpt' => 'Lightweight red jackets for spring hikes.',
+            'post_content' => 'Private body should not travel.',
+            'post_type'    => 'product',
+            'post_status'  => 'publish',
+        );
+        $this->setPostMeta(42, '_wp_attachment_image_alt', 'Model in a red jacket');
+        $this->setPostMeta(77, '_sku', 'JKT-RED-1');
+        $this->setPostMeta(77, '_price', '129.00');
+
+        $term = wp_insert_term('Jackets', 'product_cat', array('slug' => 'jackets'));
+        wp_set_object_terms(77, array($term['term_id']), 'product_cat');
+
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $result = $this->controller->describe_media($req);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $body = $this->getHttpCalls()[0]['args']['body'];
+        preg_match('/name="request".*?\r\n\r\n(\{.*?\})\r\n/s', $body, $m);
+        $contextPack = json_decode($m[1], true)['context_pack'];
+
+        $this->assertSame('Photo 42', $contextPack['attachment']['title']);
+        $this->assertSame('A caption.', $contextPack['attachment']['caption']);
+        $this->assertSame('Model in a red jacket', $contextPack['attachment']['alt_text']);
+        $this->assertSame('Trail jackets for spring', $contextPack['post']['title']);
+        $this->assertSame('product', $contextPack['post']['post_type']);
+        $this->assertSame('publish', $contextPack['post']['status']);
+        $this->assertArrayNotHasKey('description', $contextPack['post']);
+        $this->assertSame('Jackets', $contextPack['taxonomy_terms'][0]['name']);
+        $this->assertSame('JKT-RED-1', $contextPack['product']['sku']);
+        $this->assertSame('129.00', $contextPack['product']['price']);
+    }
+
+    public function testContextPackExcludesNonPublicParentPostContent(): void
+    {
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $GLOBALS['__ac_posts'][42]->post_parent = 77;
+        $GLOBALS['__ac_posts'][77] = (object) array(
+            'ID'           => 77,
+            'post_title'   => 'Draft product',
+            'post_excerpt' => 'Draft teaser',
+            'post_type'    => 'product',
+            'post_status'  => 'draft',
+        );
+
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $this->controller->describe_media($req);
+
+        $body = $this->getHttpCalls()[0]['args']['body'];
+        preg_match('/name="request".*?\r\n\r\n(\{.*?\})\r\n/s', $body, $m);
+        $contextPack = json_decode($m[1], true)['context_pack'];
+
+        $this->assertArrayNotHasKey('post', $contextPack);
+        $this->assertArrayNotHasKey('product', $contextPack);
     }
 
     public function testRejectsUnreadableAttachmentBeforeDispatch(): void

@@ -168,6 +168,7 @@ class DescribeMediaServiceTest extends TestCase
                     'identity_uuid'     => 'identity-1',
                     'cluster_uuid'      => 'cluster-1',
                     'cluster_label'     => 'Ada Lovelace',
+                    'person_name'       => 'Ada Lovelace',
                     'is_user_confirmed' => 1,
                 ),
             ),
@@ -179,6 +180,42 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertSame('Ada Lovelace', $identity['identities'][0]['name']);
         $this->assertSame('roster_confirmed', $identity['identities'][0]['source']);
         $this->assertSame(array(), $identity['review_reasons']);
+    }
+
+    public function testRosterDescriptionContextNeverNamesConfirmedClusterWithoutRosterPerson(): void
+    {
+        // A confirmed cluster with NO assigned roster person (person_id NULL) has
+        // cluster_label falling back to the machine label c.label; it must never
+        // be named, and must still surface a review reason even when a genuinely
+        // confirmed roster person is present on the same image.
+        $envelope = $this->describeEnvelopeWithIdentityRows(
+            array(
+                array(
+                    'identity_uuid'     => 'identity-1',
+                    'cluster_uuid'      => 'cluster-1',
+                    'cluster_label'     => 'Ada Lovelace',
+                    'person_name'       => 'Ada Lovelace',
+                    'is_user_confirmed' => 1,
+                ),
+                array(
+                    'identity_uuid'     => 'identity-2',
+                    'cluster_uuid'      => 'cluster-2',
+                    'cluster_label'     => 'Machine Cluster 7',
+                    'person_name'       => '',
+                    'is_user_confirmed' => 1,
+                ),
+            ),
+            true
+        );
+
+        $identity = $envelope['context_pack']['identity'];
+        $this->assertCount(1, $identity['identities']);
+        $this->assertSame('Ada Lovelace', $identity['identities'][0]['name']);
+        $this->assertContains('identity_unconfirmed', $identity['review_reasons']);
+
+        $json = json_encode($envelope);
+        $this->assertIsString($json);
+        $this->assertStringNotContainsString('Machine Cluster 7', $json);
     }
 
     public function testRosterDescriptionContextExcludesUnconfirmedMachineLabels(): void
@@ -211,6 +248,7 @@ class DescribeMediaServiceTest extends TestCase
                         'identity_uuid'     => 'identity-1',
                         'cluster_uuid'      => 'cluster-1',
                         'cluster_label'     => 'Ada Lovelace',
+                        'person_name'       => 'Ada Lovelace',
                         'is_user_confirmed' => 1,
                     ),
                 ),
@@ -246,6 +284,13 @@ class DescribeMediaServiceTest extends TestCase
         $identity = $envelope['context_pack']['identity'];
         $this->assertSame(array(), $identity['identities']);
         $this->assertContains('identity_ambiguous', $identity['review_reasons']);
+
+        // Directly verify the no-name-leak guarantee for the ambiguous path:
+        // candidate labels must never appear anywhere in the serialized envelope.
+        $json = json_encode($envelope);
+        $this->assertIsString($json);
+        $this->assertStringNotContainsString('Candidate One', $json);
+        $this->assertStringNotContainsString('Candidate Two', $json);
     }
 
     public function testRejectsUnreadableAttachmentBeforeDispatch(): void

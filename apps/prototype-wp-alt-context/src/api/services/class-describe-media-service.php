@@ -38,12 +38,17 @@ use function wp_json_encode;
 use const PATHINFO_EXTENSION;
 
 /**
- * E19-1 S6: resolve one WordPress attachment, read its bytes, attach inert
- * wp_context, and dispatch a single-image multipart request to the backend
- * `/scene/describe/multipart` route. The backend `VisualFactsResponse` is
- * passed through unchanged; a malformed upstream envelope is rejected with an
- * explicit `502 invalid_description_envelope` (rg-015 — never fabricate
- * `cached`/`data_source`/provenance fields, never add list-pagination fields).
+ * E19-1 S6 / E20-10: resolve one WordPress attachment, read its bytes, attach a
+ * bounded `context_pack` (attachment metadata + roster-bound identity context),
+ * and dispatch a single-image multipart request to the backend
+ * `/scene/describe/multipart` route. Identity guardrail (E20-10): only an
+ * assigned, user-confirmed roster person is named; unconfirmed, ambiguous, or
+ * machine-only faces are never named and surface `review_reasons` instead. The
+ * backend `VisualFactsResponse` is passed through unchanged; a malformed upstream
+ * envelope is rejected with an explicit `502 invalid_description_envelope`
+ * (rg-015 — never fabricate `cached`/`data_source`/provenance fields, never add
+ * list-pagination fields). The typed `context_pack` key is consumed by the
+ * backend `DescribeImageEnvelope` from E20-9 (merge E20-9 before E20-10).
  */
 class DescribeMediaService {
 	private const MULTIPART_MAX_BYTES = 25 * 1024 * 1024;
@@ -220,7 +225,7 @@ class DescribeMediaService {
 
 		return array_filter(
 			$context,
-			static fn ( mixed $value ): bool => is_array( $value ) ? array() !== $value : null !== $value
+			static fn ( array $value ): bool => array() !== $value
 		);
 	}
 
@@ -239,11 +244,17 @@ class DescribeMediaService {
 				continue;
 			}
 
-			$name = trim( (string) ( $row['cluster_label'] ?? '' ) );
-			if ( $this->is_truthy_flag( $row['is_user_confirmed'] ?? false ) && '' !== $name ) {
+			// Only an assigned roster person (p.name, exposed separately as
+			// `person_name`) may be named — never the COALESCE'd `cluster_label`,
+			// which falls back to the machine cluster label `c.label` when the
+			// cluster is confirmed but has no person assigned (dismissed /
+			// person-dissociated). Gating on that fallback would leak a machine
+			// label as a roster-confirmed name.
+			$person_name = trim( (string) ( $row['person_name'] ?? '' ) );
+			if ( $this->is_truthy_flag( $row['is_user_confirmed'] ?? false ) && '' !== $person_name ) {
 				$confirmed_identities[] = $this->non_empty_fields(
 					array(
-						'name'        => $name,
+						'name'        => $person_name,
 						'identity_id' => trim( (string) ( $row['identity_uuid'] ?? '' ) ),
 						'cluster_id'  => trim( (string) ( $row['cluster_uuid'] ?? '' ) ),
 						'source'      => 'roster_confirmed',
@@ -255,19 +266,22 @@ class DescribeMediaService {
 			++$machine_only_count;
 		}
 
+		// Review reasons for unnamed faces are independent of whether a confirmed
+		// identity is also present: a confirmed person can share an image with
+		// unconfirmed/machine-only faces that still need review.
 		$review_reasons = array();
 		if ( 'disabled' === $person_naming && ( array() !== $confirmed_identities || $machine_only_count > 0 ) ) {
 			$review_reasons[] = 'person_naming_policy_disabled';
 			$confirmed_identities = array();
-		} elseif ( array() === $confirmed_identities && $machine_only_count > 1 ) {
+		} elseif ( $machine_only_count > 1 ) {
 			$review_reasons[] = 'identity_ambiguous';
-		} elseif ( array() === $confirmed_identities && 1 === $machine_only_count ) {
+		} elseif ( 1 === $machine_only_count ) {
 			$review_reasons[] = 'identity_unconfirmed';
 		}
 
 		return array(
 			'policy'         => array( 'person_naming' => $person_naming ),
-			'identities'     => array_values( $confirmed_identities ),
+			'identities'     => $confirmed_identities,
 			'review_reasons' => $review_reasons,
 		);
 	}

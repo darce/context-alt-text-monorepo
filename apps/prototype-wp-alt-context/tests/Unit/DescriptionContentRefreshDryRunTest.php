@@ -77,4 +77,21 @@ class DescriptionContentRefreshDryRunTest extends TestCase
         $this->assertSame(201, $result['skipped'][0]['post_id']);
         $this->assertSame(42, $result['skipped'][0]['media_id']);
     }
+
+    public function testDryRunDoesNotReportMissingAltForUnrelatedPosts(): void
+    {
+        $GLOBALS['__ac_get_posts_results'] = [
+            (object) [
+                'ID' => 301,
+                'post_type' => 'post',
+                'post_title' => 'Unrelated post',
+                'post_content' => '<p>No matching image here.</p>',
+            ],
+        ];
+
+        $result = (new DescriptionContentRefreshService())->dry_run([42], 10);
+
+        $this->assertSame(0, $result['summary']['candidates']);
+        $this->assertSame(0, $result['summary']['skipped']);
+    }
 }

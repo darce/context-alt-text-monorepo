@@ -12,9 +12,13 @@ use function get_posts;
 use function html_entity_decode;
 use function is_array;
 use function is_object;
+use function is_string;
+use function json_decode;
+use function json_encode;
 use function preg_match;
 use function preg_match_all;
 use function preg_replace;
+use function preg_replace_callback;
 use function sprintf;
 use function trim;
 use function wp_update_post;
@@ -45,14 +49,14 @@ class DescriptionContentRefreshService {
 			$content = (string) $post->post_content;
 
 			foreach ( $media_ids as $media_id ) {
-				$current_alt_text = trim( (string) get_post_meta( $media_id, self::ALT_META, true ) );
-				if ( '' === $current_alt_text ) {
-					$skipped[] = $this->build_skip( $post, $media_id, 'missing_current_alt_text' );
+				$matches = $this->find_image_tags_for_media( $content, $media_id );
+				if ( 0 === count( $matches ) ) {
 					continue;
 				}
 
-				$matches = $this->find_image_tags_for_media( $content, $media_id );
-				if ( 0 === count( $matches ) ) {
+				$current_alt_text = trim( (string) get_post_meta( $media_id, self::ALT_META, true ) );
+				if ( '' === $current_alt_text ) {
+					$skipped[] = $this->build_skip( $post, $media_id, 'missing_current_alt_text' );
 					continue;
 				}
 
@@ -116,14 +120,14 @@ class DescriptionContentRefreshService {
 			$updated_content = $content;
 
 			foreach ( $media_ids as $media_id ) {
-				$current_alt_text = trim( (string) get_post_meta( $media_id, self::ALT_META, true ) );
-				if ( '' === $current_alt_text ) {
-					$skipped[] = $this->build_skip( $post, $media_id, 'missing_current_alt_text' );
+				$matches = $this->find_image_tags_for_media( $updated_content, $media_id );
+				if ( 0 === count( $matches ) ) {
 					continue;
 				}
 
-				$matches = $this->find_image_tags_for_media( $updated_content, $media_id );
-				if ( 0 === count( $matches ) ) {
+				$current_alt_text = trim( (string) get_post_meta( $media_id, self::ALT_META, true ) );
+				if ( '' === $current_alt_text ) {
+					$skipped[] = $this->build_skip( $post, $media_id, 'missing_current_alt_text' );
 					continue;
 				}
 
@@ -150,6 +154,7 @@ class DescriptionContentRefreshService {
 				}
 
 				$updated_content = $this->replace_once( $updated_content, $matches[0], $updated_tag );
+				$updated_content = $this->replace_block_alt_attributes( $updated_content, $media_id, $current_alt_text );
 				$changed[]       = array(
 					'post_id'           => absint( $post->ID ),
 					'post_type'         => isset( $post->post_type ) ? (string) $post->post_type : '',
@@ -251,6 +256,29 @@ class DescriptionContentRefreshService {
 		}
 
 		return substr( $content, 0, $position ) . $replacement . substr( $content, $position + strlen( $search ) );
+	}
+
+	private function replace_block_alt_attributes( string $content, int $media_id, string $alt_text ): string {
+		$updated = preg_replace_callback(
+			'/<!--\s+wp:image\s+({.*?})\s+-->/s',
+			static function ( array $matches ) use ( $media_id, $alt_text ): string {
+				$attributes = json_decode( (string) $matches[1], true );
+				if ( ! is_array( $attributes ) || absint( $attributes['id'] ?? 0 ) !== $media_id ) {
+					return (string) $matches[0];
+				}
+
+				$attributes['alt'] = $alt_text;
+				$encoded = json_encode( $attributes, JSON_UNESCAPED_SLASHES );
+				if ( ! is_string( $encoded ) ) {
+					return (string) $matches[0];
+				}
+
+				return '<!-- wp:image ' . $encoded . ' -->';
+			},
+			$content
+		);
+
+		return is_string( $updated ) ? $updated : $content;
 	}
 
 	/**

@@ -52,4 +52,22 @@ class DescriptionContentRefreshApplyTest extends TestCase
         $this->assertSame('ambiguous_multiple_references', $result['skipped'][0]['reason']);
         $this->assertCount(0, $GLOBALS['__ac_updated_posts']);
     }
+
+    public function testApplyUpdatesGutenbergBlockAltAttribute(): void
+    {
+        $this->setPostMeta(42, '_wp_attachment_image_alt', 'New bridge alt text');
+        $post = (object) [
+            'ID' => 301,
+            'post_type' => 'post',
+            'post_title' => 'Block post',
+            'post_content' => '<!-- wp:image {"id":42,"alt":"Old bridge alt"} --><figure><img class="wp-image-42" src="/bridge.jpg" alt="Old bridge alt" /></figure><!-- /wp:image -->',
+        ];
+        $GLOBALS['__ac_posts'][301] = $post;
+        $GLOBALS['__ac_get_posts_results'] = [$post];
+
+        (new DescriptionContentRefreshService())->apply([42], 10);
+
+        $this->assertStringContainsString('"alt":"New bridge alt text"', $GLOBALS['__ac_posts'][301]->post_content);
+        $this->assertStringContainsString('alt="New bridge alt text"', $GLOBALS['__ac_posts'][301]->post_content);
+    }
 }

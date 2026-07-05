@@ -7,8 +7,11 @@ namespace AltContext\Api\Services;
 require_once __DIR__ . '/../../support/class-telemetry.php';
 require_once __DIR__ . '/../../sovereign/repositories/class-description-usage-repository.php';
 require_once __DIR__ . '/class-description-budget-service.php';
+require_once __DIR__ . '/../../sovereign/repositories/class-identity-members-repository.php';
 
 use AltContext\Api\DescribeHostInterface;
+use AltContext\Sovereign\Repositories\IdentityMembersRepository;
+use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
 use AltContext\Support\Telemetry;
 use WP_Error;
 use WP_REST_Request;
@@ -21,6 +24,7 @@ use function array_slice;
 use function array_values;
 use function basename;
 use function get_attached_file;
+use function get_option;
 use function get_post_meta;
 use function get_post;
 use function get_site_url;
@@ -47,12 +51,17 @@ use function wp_json_encode;
 use const PATHINFO_EXTENSION;
 
 /**
- * E19-1 S6: resolve one WordPress attachment, read its bytes, attach inert
- * wp_context, and dispatch a single-image multipart request to the backend
- * `/scene/describe/multipart` route. The backend `VisualFactsResponse` is
- * passed through unchanged; a malformed upstream envelope is rejected with an
- * explicit `502 invalid_description_envelope` (rg-015 — never fabricate
- * `cached`/`data_source`/provenance fields, never add list-pagination fields).
+ * E19-1 S6 / E20-10: resolve one WordPress attachment, read its bytes, attach a
+ * bounded `context_pack` (attachment metadata + roster-bound identity context),
+ * and dispatch a single-image multipart request to the backend
+ * `/scene/describe/multipart` route. Identity guardrail (E20-10): only an
+ * assigned, user-confirmed roster person is named; unconfirmed, ambiguous, or
+ * machine-only faces are never named and surface `review_reasons` instead. The
+ * backend `VisualFactsResponse` is passed through unchanged; a malformed upstream
+ * envelope is rejected with an explicit `502 invalid_description_envelope`
+ * (rg-015 — never fabricate `cached`/`data_source`/provenance fields, never add
+ * list-pagination fields). The typed `context_pack` key is consumed by the
+ * backend `DescribeImageEnvelope` from E20-9 (merge E20-9 before E20-10).
  */
 class DescribeMediaService {
 	private const MULTIPART_MAX_BYTES = 25 * 1024 * 1024;
@@ -86,10 +95,12 @@ class DescribeMediaService {
 
 	private DescribeHostInterface $host;
 	private DescriptionBudgetService $budget_service;
+	private IdentityMembersRepositoryInterface $identity_members_repository;
 
-	public function __construct( DescribeHostInterface $host, ?DescriptionBudgetService $budget_service = null ) {
-		$this->host           = $host;
-		$this->budget_service = $budget_service ?? new DescriptionBudgetService();
+	public function __construct( DescribeHostInterface $host, ?DescriptionBudgetService $budget_service = null, ?IdentityMembersRepositoryInterface $identity_members_repository = null ) {
+		$this->host                        = $host;
+		$this->budget_service              = $budget_service ?? new DescriptionBudgetService();
+		$this->identity_members_repository = $identity_members_repository ?? new IdentityMembersRepository();
 	}
 
 	public function describe_media( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -415,6 +426,7 @@ class DescribeMediaService {
 					'filename'    => $this->bounded_string( basename( $path ), 255 ),
 				)
 			),
+			'identity'   => $this->build_identity_context( $media_id ),
 		);
 
 		if ( null !== $parent ) {
@@ -447,7 +459,7 @@ class DescribeMediaService {
 
 		return array_filter(
 			$context,
-			static fn ( mixed $value ): bool => is_array( $value ) ? array() !== $value : null !== $value
+			static fn ( array $value ): bool => array() !== $value
 		);
 	}
 
@@ -494,6 +506,69 @@ class DescribeMediaService {
 		return array_slice( array_values( array_filter( $terms ) ), 0, 20 );
 	}
 
+
+	private function build_identity_context( int $media_id ): array {
+		$tenant_id           = $this->host->get_tenant_id();
+		$person_naming       = $this->person_naming_policy_allows() ? 'allowed' : 'disabled';
+		$rows                = $this->identity_members_repository->list_for_media_ids( $tenant_id, array( $media_id ) );
+		$confirmed_identities = array();
+		$machine_only_count  = 0;
+
+		foreach ( $rows as $row ) {
+			if ( ! is_array( $row ) ) {
+				continue;
+			}
+
+			// Only an assigned roster person (p.name, exposed separately as
+			// `person_name`) may be named — never the COALESCE'd `cluster_label`,
+			// which falls back to the machine cluster label `c.label` when the
+			// cluster is confirmed but has no person assigned (dismissed /
+			// person-dissociated). Gating on that fallback would leak a machine
+			// label as a roster-confirmed name.
+			$person_name = trim( (string) ( $row['person_name'] ?? '' ) );
+			if ( $this->is_truthy_flag( $row['is_user_confirmed'] ?? false ) && '' !== $person_name ) {
+				$confirmed_identities[] = $this->non_empty_fields(
+					array(
+						'name'        => $person_name,
+						'identity_id' => trim( (string) ( $row['identity_uuid'] ?? '' ) ),
+						'cluster_id'  => trim( (string) ( $row['cluster_uuid'] ?? '' ) ),
+						'source'      => 'roster_confirmed',
+					)
+				);
+				continue;
+			}
+
+			++$machine_only_count;
+		}
+
+		// Review reasons for unnamed faces are independent of whether a confirmed
+		// identity is also present: a confirmed person can share an image with
+		// unconfirmed/machine-only faces that still need review.
+		$review_reasons = array();
+		if ( 'disabled' === $person_naming && ( array() !== $confirmed_identities || $machine_only_count > 0 ) ) {
+			$review_reasons[] = 'person_naming_policy_disabled';
+			$confirmed_identities = array();
+		} elseif ( $machine_only_count > 1 ) {
+			$review_reasons[] = 'identity_ambiguous';
+		} elseif ( 1 === $machine_only_count ) {
+			$review_reasons[] = 'identity_unconfirmed';
+		}
+
+		return array(
+			'policy'         => array( 'person_naming' => $person_naming ),
+			'identities'     => $confirmed_identities,
+			'review_reasons' => $review_reasons,
+		);
+	}
+
+	private function person_naming_policy_allows(): bool {
+		return $this->is_truthy_flag( get_option( 'acx_description_allow_person_names', false ) );
+	}
+
+	private function is_truthy_flag( mixed $value ): bool {
+		return true === $value || 1 === $value || '1' === $value || 'true' === $value;
+	}
+
 	/**
 	 * @param array<string,?string> $fields
 	 * @return array<string,string>
@@ -501,7 +576,7 @@ class DescribeMediaService {
 	private function non_empty_fields( array $fields ): array {
 		return array_filter(
 			$fields,
-			static fn ( ?string $value ): bool => null !== $value && '' !== $value
+			static fn ( ?string $value ): bool => null !== $value && '' !== trim( $value )
 		);
 	}
 

@@ -5,7 +5,10 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Api\DescribeController;
+use AltContext\Api\DescribeHostInterface;
+use AltContext\Api\Services\DescribeMediaService;
 use AltContext\Api\Services\DescriptionBudgetService;
+use AltContext\Tests\Stubs\NullIdentityMembersRepository;
 use AltContext\Tests\TestCase;
 use WP_Error;
 use WP_REST_Request;
@@ -86,6 +89,29 @@ class DescribeMediaServiceTest extends TestCase
         );
     }
 
+    /**
+     * @param array<int,array<string,mixed>> $identityRows
+     * @return array<string,mixed>
+     */
+    private function describeEnvelopeWithIdentityRows(array $identityRows, bool $allowPersonNames): array
+    {
+        $this->setOption('acx_description_allow_person_names', $allowPersonNames);
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0fake-jpeg-bytes", 'jpg');
+
+        $host = new DescribeMediaServiceTestHost(self::currentTenantId(), $this->validBackendBody(42));
+        $repo = new DescribeMediaServiceTestIdentityRepository($identityRows);
+        $service = new DescribeMediaService($host, null, $repo);
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $service->describe_media($req);
+
+        $body = $host->lastBody['request'] ?? '';
+        $this->assertIsString($body);
+
+        return json_decode($body, true);
+    }
+
     public function testDispatchesSingleImageMultipartToSceneRoute(): void
     {
         $bytes = "\xff\xd8\xff\xe0fake-jpeg-bytes";
@@ -116,7 +142,7 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertStringContainsString('name="image_42"; filename=', $body);
         $this->assertStringContainsString($bytes, $body);
 
-        // The 'request' envelope carries tenant_id + media_id + WP context.
+        // The 'request' envelope carries tenant_id + media_id + bounded context pack.
         $this->assertStringContainsString("name=\"request\"\r\n", $body);
         $this->assertMatchesRegularExpression('/name="request".*?\r\n\r\n(\{.*?\})\r\n/s', $body);
         preg_match('/name="request".*?\r\n\r\n(\{.*?\})\r\n/s', $body, $m);
@@ -412,6 +438,139 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertSame(str_repeat('€', 160), $envelope['context_pack']['attachment']['title']);
     }
 
+    public function testRosterDescriptionContextEmitsConfirmedIdentityWhenPolicyAllows(): void
+    {
+        $envelope = $this->describeEnvelopeWithIdentityRows(
+            array(
+                array(
+                    'identity_uuid'     => 'identity-1',
+                    'cluster_uuid'      => 'cluster-1',
+                    'cluster_label'     => 'Ada Lovelace',
+                    'person_name'       => 'Ada Lovelace',
+                    'is_user_confirmed' => 1,
+                ),
+            ),
+            true
+        );
+
+        $identity = $envelope['context_pack']['identity'];
+        $this->assertSame('allowed', $identity['policy']['person_naming']);
+        $this->assertSame('Ada Lovelace', $identity['identities'][0]['name']);
+        $this->assertSame('roster_confirmed', $identity['identities'][0]['source']);
+        $this->assertSame(array(), $identity['review_reasons']);
+    }
+
+    public function testRosterDescriptionContextNeverNamesConfirmedClusterWithoutRosterPerson(): void
+    {
+        // A confirmed cluster with NO assigned roster person (person_id NULL) has
+        // cluster_label falling back to the machine label c.label; it must never
+        // be named, and must still surface a review reason even when a genuinely
+        // confirmed roster person is present on the same image.
+        $envelope = $this->describeEnvelopeWithIdentityRows(
+            array(
+                array(
+                    'identity_uuid'     => 'identity-1',
+                    'cluster_uuid'      => 'cluster-1',
+                    'cluster_label'     => 'Ada Lovelace',
+                    'person_name'       => 'Ada Lovelace',
+                    'is_user_confirmed' => 1,
+                ),
+                array(
+                    'identity_uuid'     => 'identity-2',
+                    'cluster_uuid'      => 'cluster-2',
+                    'cluster_label'     => 'Machine Cluster 7',
+                    'person_name'       => '',
+                    'is_user_confirmed' => 1,
+                ),
+            ),
+            true
+        );
+
+        $identity = $envelope['context_pack']['identity'];
+        $this->assertCount(1, $identity['identities']);
+        $this->assertSame('Ada Lovelace', $identity['identities'][0]['name']);
+        $this->assertContains('identity_unconfirmed', $identity['review_reasons']);
+
+        $json = json_encode($envelope);
+        $this->assertIsString($json);
+        $this->assertStringNotContainsString('Machine Cluster 7', $json);
+    }
+
+    public function testRosterDescriptionContextExcludesUnconfirmedMachineLabels(): void
+    {
+        $envelopeJson = json_encode(
+            $this->describeEnvelopeWithIdentityRows(
+                array(
+                    array(
+                        'identity_uuid'     => 'identity-1',
+                        'cluster_uuid'      => 'cluster-1',
+                        'cluster_label'     => 'Grace Hopper',
+                        'is_user_confirmed' => 0,
+                    ),
+                ),
+                true
+            )
+        );
+
+        $this->assertIsString($envelopeJson);
+        $this->assertStringNotContainsString('Grace Hopper', $envelopeJson);
+        $this->assertStringContainsString('identity_unconfirmed', $envelopeJson);
+    }
+
+    public function testRosterDescriptionContextSuppressesNamesWhenPolicyDisabled(): void
+    {
+        $envelopeJson = json_encode(
+            $this->describeEnvelopeWithIdentityRows(
+                array(
+                    array(
+                        'identity_uuid'     => 'identity-1',
+                        'cluster_uuid'      => 'cluster-1',
+                        'cluster_label'     => 'Ada Lovelace',
+                        'person_name'       => 'Ada Lovelace',
+                        'is_user_confirmed' => 1,
+                    ),
+                ),
+                false
+            )
+        );
+
+        $this->assertIsString($envelopeJson);
+        $this->assertStringNotContainsString('Ada Lovelace', $envelopeJson);
+        $this->assertStringContainsString('person_naming_policy_disabled', $envelopeJson);
+    }
+
+    public function testRosterDescriptionContextRepresentsAmbiguousMachineOnlyState(): void
+    {
+        $envelope = $this->describeEnvelopeWithIdentityRows(
+            array(
+                array(
+                    'identity_uuid'     => 'identity-1',
+                    'cluster_uuid'      => 'cluster-1',
+                    'cluster_label'     => 'Candidate One',
+                    'is_user_confirmed' => 0,
+                ),
+                array(
+                    'identity_uuid'     => 'identity-2',
+                    'cluster_uuid'      => 'cluster-2',
+                    'cluster_label'     => 'Candidate Two',
+                    'is_user_confirmed' => 0,
+                ),
+            ),
+            true
+        );
+
+        $identity = $envelope['context_pack']['identity'];
+        $this->assertSame(array(), $identity['identities']);
+        $this->assertContains('identity_ambiguous', $identity['review_reasons']);
+
+        // Directly verify the no-name-leak guarantee for the ambiguous path:
+        // candidate labels must never appear anywhere in the serialized envelope.
+        $json = json_encode($envelope);
+        $this->assertIsString($json);
+        $this->assertStringNotContainsString('Candidate One', $json);
+        $this->assertStringNotContainsString('Candidate Two', $json);
+    }
+
     public function testRejectsUnreadableAttachmentBeforeDispatch(): void
     {
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
@@ -504,5 +663,54 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertSame(1, $usage['attempts']);
         $this->assertSame(1, $usage['failures']);
         $this->assertSame('upstream_http_415', $errors[0]['error_code']);
+    }
+}
+
+final class DescribeMediaServiceTestHost implements DescribeHostInterface
+{
+    /**
+     * @var array<string,mixed>
+     */
+    public array $lastBody = array();
+
+    /**
+     * @param array<string,mixed> $backendBody
+     */
+    public function __construct(private string $tenantId, private array $backendBody) {}
+
+    public function get_tenant_id(): string
+    {
+        return $this->tenantId;
+    }
+
+    public function proxy_recognition_request(
+        string $method,
+        string $path,
+        array $body = array(),
+        array $query = array(),
+        string $request_class = 'auto',
+        string $body_kind = 'json',
+        ?int $max_body_bytes = null
+    ): WP_REST_Response|WP_Error {
+        $this->lastBody = $body;
+        return new WP_REST_Response($this->backendBody, 200);
+    }
+
+    public function is_proxy_unavailable(WP_REST_Response|WP_Error $response): bool
+    {
+        return false;
+    }
+}
+
+final class DescribeMediaServiceTestIdentityRepository extends NullIdentityMembersRepository
+{
+    /**
+     * @param array<int,array<string,mixed>> $rows
+     */
+    public function __construct(private array $rows) {}
+
+    public function list_for_media_ids(string $tenant_id, array $media_ids): array
+    {
+        return $this->rows;
     }
 }

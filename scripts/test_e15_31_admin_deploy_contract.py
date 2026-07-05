@@ -22,6 +22,18 @@ def test_prod_deploy_installs_and_persists_admin_compose_overlay() -> None:
     assert "{{COMPOSE_FILES}} up --remove-orphans" in unit
     assert "{{COMPOSE_FILES}} stop" in unit
 
+    # The unit render must substitute BOTH placeholders (a unit with a literal
+    # {{COMPOSE_FILES}} fails to start), and the overlay must stay prod-only:
+    # dev/staging share the VM, so leaking the loopback port binding there
+    # would collide on 127.0.0.1:8000.
+    assert 'sed -e "s/{{ENV}}/$ENV/g" -e "s|{{COMPOSE_FILES}}|$COMPOSE_FILES|g"' in deploy
+    assert 'COMPOSE_FILES="-f docker-compose.env.yml"\n' in deploy
+    assert 'if [[ "$ENV" == "prod" ]]; then\n  COMPOSE_FILES=' in deploy
+    # Manual-install comment must also render both placeholders (rg-006:
+    # documented commands must run as written).
+    assert "sed -i -e 's/{{ENV}}/prod/g'" in unit
+    assert "{{COMPOSE_FILES}}|-f docker-compose.env.yml -f docker-compose.admin.yml" in unit
+
 
 def test_prod_compose_sync_promotes_and_applies_admin_overlay() -> None:
     sync = (ROOT / "scripts/deploy/sync-compose.sh").read_text()

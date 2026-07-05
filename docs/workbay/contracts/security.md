@@ -461,7 +461,11 @@ admin authority — neither alone is sufficient by policy:
 - **Env gate / fail-closed**: the router mounts only when
   `RECOGNITION_ADMIN_ENABLED=true`. `validate_admin_config` refuses to start
   when admin is enabled with an empty or `<32`-char token, or in production
-  without the `RECOGNITION_ADMIN_TAILNET_BOUND=1` acknowledgement.
+  without the `RECOGNITION_ADMIN_TAILNET_BOUND=1` acknowledgement. The prod
+  compose overlay's `127.0.0.1:8000` bind persists independent of this gate
+  (deploys install it unconditionally); with admin disabled that means a
+  loopback-only, VM-local path to the tenant API that bypasses Caddy —
+  documented and accepted in `docs/runbooks/admin-tenant-keys.md` §(a).
 
 The operator runbook for the surface is `docs/runbooks/admin-tenant-keys.md`;
 the CLI ceremony above remains a supported fallback.

@@ -48,6 +48,14 @@ Host-level Tailscale enrollment for the VM is the canonical
    run `apps/prototype-description-service/scripts/deploy-env.sh prod` once to
    converge the compose files and unit before enabling `/admin`.
 
+   **Posture note**: the overlay is installed on prod unconditionally — the
+   deploy path does not consult `RECOGNITION_ADMIN_ENABLED`. With admin
+   disabled, `/admin` routes are absent (404) but the api container still
+   binds `127.0.0.1:8000`, so the tenant API is reachable from VM-local
+   processes without traversing Caddy. Accepted for the single-operator VM
+   (loopback-only, tailnet-gated host); remove the overlay from
+   `/opt/acx-backend/prod/` and restart `acx-prod` if that posture changes.
+
 ---
 
 ## (b) Reach `/admin` over the tailnet

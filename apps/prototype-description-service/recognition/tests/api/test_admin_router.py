@@ -168,6 +168,27 @@ async def test_json_mutations_reject_browser_basic_auth(admin_client: AsyncClien
         assert response.status_code == 401, path
 
 
+def test_every_json_mutation_route_has_admin_header_gate() -> None:
+    """Structural guard: a future mutating JSON route without require_admin_header
+    must fail here rather than regress silently to Basic-replayable."""
+    from fastapi.routing import APIRoute
+
+    from recognition.interface_adapters.http.deps.admin_auth import require_admin_header
+    from recognition.interface_adapters.http.routers.admin import admin_router
+
+    mutating = {"POST", "PUT", "PATCH", "DELETE"}
+    checked = 0
+    for route in admin_router.routes:
+        if not isinstance(route, APIRoute):
+            continue
+        if not (route.methods & mutating) or route.path.startswith("/ui"):
+            continue
+        deps = [d.dependency for d in route.dependencies]
+        assert require_admin_header in deps, f"{sorted(route.methods)} {route.path} lacks require_admin_header"
+        checked += 1
+    assert checked >= 3  # tenants create, key mint, key revoke
+
+
 # --- Audit row per mutation ----------------------------------------------------
 
 

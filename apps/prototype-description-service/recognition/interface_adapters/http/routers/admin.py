@@ -1,7 +1,12 @@
 """Operator ``/admin`` router: tenant + API-key lifecycle over JSON.
 
-Every route is gated by :func:`require_admin` (a dedicated admin-token header,
-never the tenant auth path). Every mutation writes an ``audit_events`` row on the
+Every route is gated by :func:`require_admin` (dedicated admin-token header, or
+HTTP Basic for the browser console — never the tenant auth path). JSON mutation
+routes are ADDITIONALLY gated by :func:`require_admin_header`: Basic auth is
+console-only, so browser credential replay cannot authorize a cross-site JSON
+mutation. Any new mutating JSON route MUST attach
+``dependencies=[Depends(require_admin_header)]``; ``/ui`` form routes use
+``require_same_origin`` instead. Every mutation writes an ``audit_events`` row on the
 **same** request-scoped session as the DB change and commits exactly once, so a
 failed audit write rolls back the whole request — no un-audited state can land.
 
@@ -409,10 +414,17 @@ async def _load_console_model(
     Replaces the prior per-tenant ``list_for_tenant`` loop (N+1) with a single
     ``WHERE tenant_id IN (...)`` query, then groups in-memory. Every tenant gets a
     list (empty if it has no keys). The cap is applied in SQL (row_number over a
-    per-tenant window, newest first) so a tenant with many keys never hides the
-    key the operator just minted and over-cap rows are not materialized;
+    per-tenant window, newest first) so a tenant with many keys keeps the key
+    the operator just minted visible and over-cap rows are not materialized;
     ``totals_by_tenant`` carries the pre-cap count so the view can show a
-    "showing N of M" note.
+    "showing N of M" note. Recency ordering is exact up to ``created_at``
+    resolution: rows sharing a timestamp (e.g. bulk mints in one transaction
+    where ``now()`` is transaction-fixed) tie-break on ``id DESC``, which is
+    deterministic but not recency-meaningful for uuid4 ids. Ordering here is
+    deliberately newest-first (operational console view); the JSON
+    ``GET /admin/tenants/{id}/keys`` route and the CLI keep the repository's
+    chronological ``created_at ASC`` order (audit view) — an intentional
+    divergence, not drift.
     """
     stmt = select(Tenant).order_by(Tenant.created_at, Tenant.id)
     tenants = list((await session.execute(stmt)).scalars().all())

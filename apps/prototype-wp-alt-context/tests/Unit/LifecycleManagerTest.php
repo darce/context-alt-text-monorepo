@@ -72,7 +72,7 @@ class LifecycleManagerTest extends TestCase
 
         $queries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
         $this->assertIsArray($queries);
-        $this->assertCount(9, $queries);
+        $this->assertCount(10, $queries);
 
         $personsSql = $queries[0];
         $clustersSql = $queries[1];

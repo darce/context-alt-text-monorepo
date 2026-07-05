@@ -49,6 +49,31 @@ export interface DescribeMediaWriteOptions {
   force?: boolean;
 }
 
+export type DescriptionCandidateReason = 'missing_alt' | 'has_alt_text' | 'unsupported_mime';
+
+export interface DescriptionCandidateRow {
+  media_id: number;
+  filename: string;
+  title: string;
+  mime_type: string;
+  current_alt_text: string;
+  reason: DescriptionCandidateReason;
+}
+
+export interface DescriptionCandidatesResponse {
+  candidates: DescriptionCandidateRow[];
+  exclusions: DescriptionCandidateRow[];
+  limit: number;
+  offset: number;
+  total_candidates: number;
+  total_exclusions: number;
+}
+
+export interface DescriptionCandidatesParams {
+  limit?: number;
+  offset?: number;
+}
+
 export const describeMedia = async (
   mediaId: number,
   options: DescribeMediaWriteOptions = {},
@@ -68,6 +93,20 @@ export const describeMedia = async (
     // Generous: florence_small is ~14s on the OCI A1, and the cold model load on
     // the first request can push the wall time higher.
     signal: createRecognitionTimeoutSignal(180_000),
+  });
+};
+
+export const fetchDescriptionCandidates = async ({
+  limit = 50,
+  offset = 0,
+}: DescriptionCandidatesParams = {}): Promise<DescriptionCandidatesResponse> => {
+  const endpoint = new URL(getEndpoint('recognitionDescribeCandidates'));
+  endpoint.searchParams.set('limit', String(limit));
+  endpoint.searchParams.set('offset', String(offset));
+
+  return fetchRequiredApi<DescriptionCandidatesResponse>(endpoint.toString(), {
+    method: 'GET',
+    restNonce: getConfig().nonce,
   });
 };
 

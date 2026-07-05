@@ -13,6 +13,7 @@ interface SettingsPageState {
   localUrl: string;
   recognitionSource: RecognitionSourceValue;
   apiKey: string;
+  descriptionBudgetMaxAttempts: string;
   saveMessage: string;
   saveMessageTone: BannerTone;
   testResult: TestConnectionResponse | null;
@@ -24,6 +25,7 @@ type SettingsPageAction =
   | { type: 'setLocalUrl'; value: string }
   | { type: 'setRecognitionSource'; value: RecognitionSourceValue }
   | { type: 'setApiKey'; value: string }
+  | { type: 'setDescriptionBudgetMaxAttempts'; value: string }
   | { type: 'clearSaveMessage' }
   | { type: 'setSaveMessage'; message: string; tone: BannerTone }
   | { type: 'clearTestResult' }
@@ -34,6 +36,7 @@ const INITIAL_STATE: SettingsPageState = {
   localUrl: '',
   recognitionSource: RecognitionSource.SERVICE,
   apiKey: '',
+  descriptionBudgetMaxAttempts: '-1',
   saveMessage: '',
   saveMessageTone: 'success',
   testResult: null,
@@ -48,6 +51,7 @@ const reducer = (state: SettingsPageState, action: SettingsPageAction): Settings
         localUrl: action.settings.local_url,
         recognitionSource: action.settings.recognition_source,
         apiKey: '',
+        descriptionBudgetMaxAttempts: String(action.settings.description_budget.max_attempts),
       };
     case 'setUrl':
       return { ...state, url: action.value };
@@ -57,6 +61,8 @@ const reducer = (state: SettingsPageState, action: SettingsPageAction): Settings
       return { ...state, recognitionSource: action.value };
     case 'setApiKey':
       return { ...state, apiKey: action.value };
+    case 'setDescriptionBudgetMaxAttempts':
+      return { ...state, descriptionBudgetMaxAttempts: action.value };
     case 'clearSaveMessage':
       return { ...state, saveMessage: '', saveMessageTone: 'success' };
     case 'setSaveMessage':

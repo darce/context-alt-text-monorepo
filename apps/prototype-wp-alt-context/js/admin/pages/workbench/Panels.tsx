@@ -4,7 +4,8 @@ import type { BatchRunStatus, JobProgress } from '../../api/recognition/types/sc
 import type { RecognitionHistorySource } from '../../hooks/recognitionJobHistoryUtils';
 export { mediaEditUrl, rosterClustersUrl } from '../../utils/adminUrls';
 
-const isClusteringActive = (phase?: string | null): boolean => phase === 'clustering' || phase === 'retrying';
+export const isClusteringActive = (phase?: string | null): boolean =>
+  phase === 'clustering' || phase === 'retrying';
 
 interface ScanActionPanelProps {
   onCancelScan?: () => void;

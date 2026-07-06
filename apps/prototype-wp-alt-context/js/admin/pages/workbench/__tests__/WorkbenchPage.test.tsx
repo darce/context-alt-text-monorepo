@@ -514,11 +514,14 @@ describe('WorkbenchPage', () => {
     );
   });
 
-  it('renders pagination controls above and below the media table', () => {
-    renderWorkbench();
+  it('renders one media-region footer with pagination and analyze CTA', () => {
+    const { container } = renderWorkbench();
 
-    expect(screen.getAllByRole('navigation', { name: 'Media pagination' })).toHaveLength(2);
-    expect(screen.getAllByLabelText('Images per page')).toHaveLength(2);
+    const mediaRegion = container.querySelector('.acx-media-selection');
+    expect(mediaRegion).not.toBeNull();
+    expect(screen.getAllByRole('navigation', { name: 'Media pagination' })).toHaveLength(1);
+    expect(screen.getAllByLabelText('Images per page')).toHaveLength(1);
+    expect(mediaRegion).toContainElement(screen.getByRole('button', { name: 'Analyze selected media' }));
   });
 
   it('clamps current page when total pages shrink', async () => {

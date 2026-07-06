@@ -32,7 +32,6 @@ const NoMediaPanel = () => (
 
 export const ScanTabContent = (): React.JSX.Element => {
   const {
-    selectedMedia,
     isScanRunning,
     isCancellingScan,
     statusText,
@@ -50,7 +49,6 @@ export const ScanTabContent = (): React.JSX.Element => {
     hasIdentities,
     clusterPanel,
     dispatchClusterPanel,
-    scan,
     cancelScan,
     retryScanStream,
     activeJobIds,
@@ -68,14 +66,6 @@ export const ScanTabContent = (): React.JSX.Element => {
     anchor.focus({ preventScroll: true });
   };
 
-  const handleScanFaces = (): void => {
-    const mediaIds = selectedMedia.map((item) => item.id);
-    if (mediaIds.length === 0) {
-      return;
-    }
-    scan(mediaIds);
-  };
-
   const handleCancelScan = (): void => {
     const targets = activeJobIds.length > 0 ? activeJobIds : jobId ? [jobId] : [];
     if (targets.length === 0) {
@@ -87,8 +77,6 @@ export const ScanTabContent = (): React.JSX.Element => {
   return (
     <>
       <ScanActionPanel
-        selectedCount={selectedMedia.length}
-        onScanFaces={handleScanFaces}
         onCancelScan={handleCancelScan}
         isScanning={isScanRunning}
         isCancelling={isCancellingScan}

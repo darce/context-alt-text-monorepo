@@ -20,27 +20,9 @@ vi.mock('@wordpress/i18n', () => ({
 
 describe('ScanActionPanel', () => {
   const baseProps = {
-    selectedCount: 0,
-    onScanFaces: vi.fn(),
+    onCancelScan: vi.fn(),
     isScanning: false,
   };
-
-  it('renders zero-selection prompt and disabled button', () => {
-    render(<ScanActionPanel {...baseProps} />);
-    expect(screen.getByText('Select media items from the queue to analyze them.')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Analyze selected media' })).toBeDisabled();
-  });
-
-  it('renders item count when selection is non-zero', () => {
-    render(<ScanActionPanel {...baseProps} selectedCount={3} />);
-    expect(screen.getByText('Ready to analyze 3 media items.')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Analyze selected media' })).not.toBeDisabled();
-  });
-
-  it('shows scanning label and disables button while scanning', () => {
-    render(<ScanActionPanel {...baseProps} selectedCount={1} isScanning />);
-    expect(screen.getByRole('button', { name: 'Scanning media…' })).toBeDisabled();
-  });
 
   it('does not render progress section when total is 0', () => {
     const progress: JobProgress = { completed: 0, total: 0 };
@@ -86,7 +68,7 @@ describe('ScanActionPanel', () => {
 
   it('renders cancel button and calls handler', async () => {
     const onCancelScan = vi.fn();
-    render(<ScanActionPanel {...baseProps} selectedCount={1} isScanning onCancelScan={onCancelScan} />);
+    render(<ScanActionPanel {...baseProps} isScanning onCancelScan={onCancelScan} />);
     await userEvent.click(screen.getByRole('button', { name: 'Cancel scan' }));
     expect(onCancelScan).toHaveBeenCalledOnce();
   });
@@ -114,12 +96,6 @@ describe('ScanActionPanel', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(onRetryStream).toHaveBeenCalledOnce();
-  });
-
-  it('shows "Clustering identities…" button text when scanning and phase is clustering', () => {
-    const progress: JobProgress = { completed: 50, total: 150, phase: 'clustering' };
-    render(<ScanActionPanel {...baseProps} selectedCount={1} isScanning progress={progress} />);
-    expect(screen.getByRole('button', { name: 'Clustering identities…' })).toBeDisabled();
   });
 
   it('shows identity-based progress count during clustering phase', () => {

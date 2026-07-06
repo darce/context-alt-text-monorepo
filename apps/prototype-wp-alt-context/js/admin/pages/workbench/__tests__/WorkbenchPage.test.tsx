@@ -27,6 +27,12 @@ import { useJobProgressStream } from '../../../hooks/useJobProgressStream';
 import { useSyncStatus } from '../../../hooks/useSyncStatus';
 import { useSyncTrigger } from '../../../hooks/useSyncTrigger';
 import {
+  NEXT_ACTION_KIND,
+  NONE_REASON,
+  useWorkbenchFindings,
+  type WorkbenchFindingsViewModel,
+} from '../identity-clusters/useWorkbenchFindings';
+import {
   useScanIdentities,
   useScanStatus,
   useCancelScanJobs,
@@ -127,7 +133,29 @@ vi.mock('../../../hooks/useSyncTrigger', () => ({
   useSyncTrigger: vi.fn(),
 }));
 
+vi.mock('../identity-clusters/useWorkbenchFindings', async () => {
+  const actual = await vi.importActual<typeof import('../identity-clusters/useWorkbenchFindings')>(
+    '../identity-clusters/useWorkbenchFindings',
+  );
+  return {
+    ...actual,
+    useWorkbenchFindings: vi.fn(),
+  };
+});
+
 type ScanOutcome = 'success' | 'error';
+
+const makeFindingsViewModel = (overrides: Partial<WorkbenchFindingsViewModel> = {}): WorkbenchFindingsViewModel => ({
+  counts: { assignments: 0, merges: 0, names: 0, unlabeledClusters: 0, total: 0 },
+  previews: [],
+  hasFindings: false,
+  isLoading: false,
+  isError: false,
+  isUnavailable: false,
+  isReadOnly: false,
+  nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.EMPTY },
+  ...overrides,
+});
 
 describe('WorkbenchPage', () => {
   const baseMediaItem = {
@@ -164,6 +192,7 @@ describe('WorkbenchPage', () => {
   const mockUseJobProgressStream = vi.mocked(useJobProgressStream);
   const mockUseSyncStatus = vi.mocked(useSyncStatus);
   const mockUseSyncTrigger = vi.mocked(useSyncTrigger);
+  const mockUseWorkbenchFindings = vi.mocked(useWorkbenchFindings);
   let setCurrentPage: Dispatch<SetStateAction<number>>;
   let setPerPage: Mock<(nextPerPage: number) => void>;
 
@@ -281,6 +310,7 @@ describe('WorkbenchPage', () => {
         isPending: false,
       }),
     );
+    mockUseWorkbenchFindings.mockReturnValue(makeFindingsViewModel());
 
     mockUseMediaSelectionState.mockReturnValue({
       selection: { '11': true },
@@ -522,6 +552,59 @@ describe('WorkbenchPage', () => {
     expect(screen.getAllByRole('navigation', { name: 'Media pagination' })).toHaveLength(1);
     expect(screen.getAllByLabelText('Images per page')).toHaveLength(1);
     expect(mediaRegion).toContainElement(screen.getByRole('button', { name: 'Analyze selected media' }));
+  });
+
+  it('collapses the media region to a summary bar while findings are active', () => {
+    mockUseWorkbenchFindings.mockReturnValue(
+      makeFindingsViewModel({
+        counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 0, total: 1 },
+        hasFindings: true,
+      }),
+    );
+
+    renderWorkbench();
+
+    expect(screen.getByText('1 media item')).toBeInTheDocument();
+    expect(screen.getByText('1 selected')).toBeInTheDocument();
+    expect(screen.getByText('All media')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Show media table' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    expect(screen.queryByRole('navigation', { name: 'Media pagination' })).not.toBeInTheDocument();
+  });
+
+  it('expands the collapsed media region and preserves selection state', async () => {
+    mockUseWorkbenchFindings.mockReturnValue(
+      makeFindingsViewModel({
+        counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 0, total: 1 },
+        hasFindings: true,
+      }),
+    );
+
+    renderWorkbench();
+    await userEvent.click(screen.getByRole('button', { name: 'Show media table' }));
+
+    expect(screen.getByRole('table')).toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: 'Media pagination' })).toBeInTheDocument();
+    expect(screen.getByText('Ready to analyze 1 media item.')).toBeInTheDocument();
+  });
+
+  it.each([
+    ['loading', { isLoading: true }],
+    ['error', { isError: true }],
+    ['unavailable', { isUnavailable: true }],
+  ])('keeps the media table expanded while findings are %s', (_state, overrides) => {
+    mockUseWorkbenchFindings.mockReturnValue(
+      makeFindingsViewModel({
+        counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 0, total: 1 },
+        hasFindings: true,
+        ...overrides,
+      }),
+    );
+
+    renderWorkbench();
+
+    expect(screen.getByRole('table')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Show media table' })).not.toBeInTheDocument();
   });
 
   it('clamps current page when total pages shrink', async () => {

@@ -150,6 +150,27 @@
     font-size: 0.9rem;
   }
 
+  &__summary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--acx-space-16);
+    padding: var(--acx-space-12);
+    border: 1px solid var(--acx-color-border);
+    background-color: var(--acx-color-surface-alt);
+    border-radius: var(--acx-radius-8);
+  }
+
+  &__summary-main {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--acx-space-12);
+    color: var(--acx-color-text-muted);
+    font-size: 0.9rem;
+  }
+
   &__page-size {
     display: inline-flex;
     align-items: center;

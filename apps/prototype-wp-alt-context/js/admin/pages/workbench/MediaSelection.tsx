@@ -6,11 +6,17 @@ import type { WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
 import type { WorkbenchMediaStatus } from '../../api/workbenchMediaApi';
 import { MediaSelectionTableBody } from './MediaSelectionTableBody';
 import { MediaAnalyzeCta } from './MediaAnalyzeCta';
+import { MediaSummaryBar } from './MediaSummaryBar';
 
 import { Checkbox } from '../../../components/ui/checkbox';
 import { useWorkbenchContext } from './WorkbenchContext';
 
-export const MediaSelection = (): React.JSX.Element => {
+interface MediaSelectionProps {
+  collapsed?: boolean;
+  onExpand?: () => void;
+}
+
+export const MediaSelection = ({ collapsed = false, onExpand }: MediaSelectionProps): React.JSX.Element => {
   const {
     mediaQuery,
     statusMessage,
@@ -50,6 +56,10 @@ export const MediaSelection = (): React.JSX.Element => {
     : identityQuery.isError
       ? __('Unable to load identity data.', 'alt-context')
       : null;
+
+  if (collapsed) {
+    return <MediaSummaryBar onExpand={onExpand ?? (() => undefined)} />;
+  }
 
   return (
     <>

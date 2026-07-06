@@ -279,8 +279,11 @@ do_push_tag() {
 # unit. Used by both do_deploy and do_promote so the prod path is uniform.
 promote_gate() {
   local env="$1" image="$2"
+  # Rollback tag is non-blocking and must exist even when the smoke is
+  # bypassed (ACX_BOOT_SMOKE=0) — it is the recovery path for exactly the
+  # deploys risky enough to bypass the gate.
+  preserve_rollback_tag "$env"
   if [[ "${ACX_BOOT_SMOKE:-1}" == "1" ]]; then
-    preserve_rollback_tag "$env"
     if ! do_boot_smoke "$env" "$image"; then
       fail "Pre-promote boot smoke failed for ${env} (${image}); prod left on the old image (no restart). Fix the build and re-run, or set ACX_BOOT_SMOKE=0 to bypass."
     fi
@@ -404,7 +407,7 @@ do_boot_smoke() {
   if ! ssh "${SSH_TARGET}" "bash -s ${env} ${image} ${remote_dir}" <<'SMOKE'
 set -euo pipefail
 env="$1"; image="$2"; remote_dir="$3"
-net="$(grep -E '^ACX_NETWORK_NAME=' "${remote_dir}/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"' ")"
+net="$(grep -E '^ACX_NETWORK_NAME=' "${remote_dir}/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"' " || true)"
 net="${net:-acx-${env}-net}"
 name="acx-smoke-${env}-$$"
 docker run -d --rm --name "$name" --env-file "${remote_dir}/.env" --network "$net" -P \

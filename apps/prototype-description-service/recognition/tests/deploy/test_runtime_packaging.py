@@ -121,3 +121,25 @@ def test_subpackage_only_include_does_not_cover_top_level_package(tmp_path: Path
     f = _make_fixture(tmp_path, copy_scene=True, include_scene="scene.*")
     _, missing_include = _missing(f["main"], tmp_path, f["dockerfile"], f["pyproject"])
     assert "scene" in missing_include
+
+
+def test_entrypoint_cmd_chain_modules_are_copied() -> None:
+    # BR2-05: the CMD chain (alembic → sync → verify → uvicorn) and every
+    # `python -m scripts.<mod>` it invokes must be runnable from the image:
+    # ordered chain present, and each -m module's package COPYd + file present.
+    text = DOCKERFILE.read_text()
+    cmd = next(line for line in text.splitlines() if line.startswith("CMD"))
+    chain = [
+        "alembic",
+        "scripts.sync_identity_schema",
+        "scripts.verify_identity_schema",
+        "uvicorn api.main:app",
+    ]
+    for a, b in zip(chain, chain[1:], strict=False):
+        assert cmd.index(a) < cmd.index(b), cmd
+
+    copied = _dockerfile_copied_packages()
+    for mod in re.findall(r"python -m ([\w.]+)", cmd):
+        pkg, _, leaf = mod.partition(".")
+        assert pkg in copied, f"{pkg} not COPYd but CMD runs python -m {mod}"
+        assert (SERVICE_ROOT / pkg / f"{leaf}.py").is_file(), f"missing module file for {mod}"

@@ -32,6 +32,17 @@ logger = logging.getLogger("sync_identity_schema")
 _ADVISORY_LOCK_KEY = 0xAC33051D
 
 
+def _locked_sync(conn) -> list[str]:
+    """Create missing tables on ``conn`` and return exactly the ones created.
+
+    The missing-set is computed on the already-locked connection, so a boot
+    that lost the advisory-lock race never reports tables the winner created.
+    """
+    missing = sorted(set(Base.metadata.tables) - set(inspect(conn).get_table_names()))
+    Base.metadata.create_all(conn, checkfirst=True)
+    return missing
+
+
 def sync_schema(engine: Engine) -> list[str]:
     """Additively create any missing table on ``engine``.
 
@@ -45,12 +56,10 @@ def sync_schema(engine: Engine) -> list[str]:
     issue ``CREATE TABLE`` and one would crash. A Postgres transaction-scoped
     advisory lock serializes the self-heal (no-op on sqlite in tests).
     """
-    before = set(inspect(engine).get_table_names())
     with engine.begin() as conn:
         if conn.dialect.name == "postgresql":
             conn.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _ADVISORY_LOCK_KEY})
-        Base.metadata.create_all(conn, checkfirst=True)
-    created = sorted(set(inspect(engine).get_table_names()) - before)
+        created = _locked_sync(conn)
     if created:
         logger.info("identity schema self-heal created tables: %s", ", ".join(created))
     else:

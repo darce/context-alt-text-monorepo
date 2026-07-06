@@ -161,3 +161,41 @@ def test_created_report_excludes_tables_created_by_a_lock_racer(tmp_path: Path) 
         assert "image_descriptions" not in created, created
     finally:
         engine.dispose()
+
+
+def test_postgres_boot_takes_advisory_lock_before_syncing(monkeypatch) -> None:
+    # BR2-10 (PA-02): on a postgresql connection, pg_advisory_xact_lock must be
+    # issued inside the transaction BEFORE the locked sync runs. Every other
+    # test runs sqlite where the lock branch is skipped, so this wiring is
+    # asserted with a recording fake connection.
+    import scripts.sync_identity_schema as mod
+
+    calls: list[str] = []
+
+    class FakeDialect:
+        name = "postgresql"
+
+    class FakeConn:
+        dialect = FakeDialect()
+
+        def execute(self, stmt, params=None):  # noqa: ANN001
+            assert "pg_advisory_xact_lock" in str(stmt)
+            assert params == {"key": mod._ADVISORY_LOCK_KEY}
+            calls.append("lock")
+
+    class FakeBegin:
+        def __enter__(self):
+            return FakeConn()
+
+        def __exit__(self, *exc):  # noqa: ANN002
+            return False
+
+    class FakeEngine:
+        def begin(self):
+            return FakeBegin()
+
+    monkeypatch.setattr(mod, "_locked_sync", lambda conn: calls.append("sync") or [])
+
+    mod.sync_schema(FakeEngine())
+
+    assert calls == ["lock", "sync"]

@@ -243,3 +243,12 @@ def test_clusters_paginates_until_short_page():  # S2-08
     result = client.clusters()
     assert len(result) == 201  # both pages aggregated, not just the first 200
     assert pages["seen_offsets"] == [0, 200]
+
+
+def test_clusters_pagination_is_bounded():  # S2-08 rg-007 stall bound
+    # a route that ignores offset and always returns a full page must not loop forever
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{"id": f"c{i}", "label": None} for i in range(200)])
+
+    with pytest.raises(RemoteClientError, match="pagination exceeded"):
+        _client(handler).clusters()

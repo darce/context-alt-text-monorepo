@@ -47,6 +47,8 @@ def _validate_record_kind(run_record: dict[str, Any]) -> None:
         raise ReportError(f"unknown run-record schema {schema!r}; expected {SCHEMA!r}")
     if "items" not in run_record:
         raise ReportError("run record has no 'items' key — is this a report file passed as a run record?")
+    if "provenance" not in run_record:
+        raise ReportError("run record has no 'provenance' block")
 
 
 def _model_provenance(items: list[dict[str, Any]]) -> dict[str, list[str]]:
@@ -122,8 +124,9 @@ def score_run_record(
         caption_scores.append(scores)
         # Ground-truth total faces (incl. non-roster strangers), not just named
         # roster identities — otherwise every stranger face is a detection FP and
-        # true_rejections is unreachable (S3-01, HARM-04).
-        face_count = int(entry.get("face_count", len(entry["present_identities"])))
+        # true_rejections is unreachable (S3-01, HARM-04). Required, not defaulted:
+        # a missing face_count must fail loud, never silently re-create the bug.
+        face_count = int(entry["face_count"])
         stranger_faces = max(face_count - len(entry["present_identities"]), 0)
         detections.append(
             ImageDetection(

@@ -2,6 +2,7 @@
 
 import pytest
 
+from scripts.eval_harness.remote_client import CircuitOpenError, RemoteClientError
 from scripts.eval_harness.seed_roster import CROP_MEDIA_ID_BASE, seed
 
 
@@ -102,3 +103,33 @@ def test_crop_media_ids_do_not_collide_with_manifest_range(entities_dir):
     media_ids = [m for m, _, _ in client.analyzed]
     assert all(m >= CROP_MEDIA_ID_BASE for m in media_ids)
     assert CROP_MEDIA_ID_BASE > 38  # golden manifest uses 1..38
+
+
+def test_systemic_patch_failure_halts_seed(entities_dir):  # S2-04
+    client = StubClient(
+        clusters=[{"id": "c1", "label": None}],
+        members={"c1": {"members": [{"media_id": CROP_MEDIA_ID_BASE + 0}]}},
+    )
+
+    def boom(cluster_id, tenant_id, label):
+        raise CircuitOpenError("circuit open after 3 consecutive failures")
+
+    client.patch_cluster = boom
+    # a breaker-open / outage is not a per-unit conflict; it must halt the seed
+    # rather than be swallowed as skipped_conflict.
+    with pytest.raises(CircuitOpenError):
+        seed(str(entities_dir), client, tenant_id="eval-tenant")
+
+
+def test_409_label_conflict_recorded_not_raised(entities_dir):  # S2-04
+    client = StubClient(
+        clusters=[{"id": "c1", "label": None}],
+        members={"c1": {"members": [{"media_id": CROP_MEDIA_ID_BASE + 0}]}},
+    )
+
+    def conflict(cluster_id, tenant_id, label):
+        raise RemoteClientError("PATCH /clusters/c1 failed: 409 label taken", status_code=409)
+
+    client.patch_cluster = conflict
+    summary = seed(str(entities_dir), client, tenant_id="eval-tenant")
+    assert summary.skipped_conflict == {"c1": "Alice Example"}

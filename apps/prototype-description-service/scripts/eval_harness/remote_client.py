@@ -15,15 +15,31 @@ from typing import Any
 
 import httpx
 
+from recognition.domain.job import JobStatus
+
 _DEFAULT_TIMEOUT_S = 60.0
 _BREAKER_THRESHOLD = 3
 _DEFAULT_MAX_POLL_ATTEMPTS = 60
-_TERMINAL_FAILURE_STATUSES = {"failed", "error", "cancelled"}
-_TERMINAL_SUCCESS_STATUSES = {"completed", "done", "succeeded"}
+_CLUSTERS_PAGE_SIZE = 200
+# Mirror the live JobStatus contract (recognition/domain/job.py) exactly — no
+# invented statuses (rg-005/rg-015). completed_with_errors is a terminal partial
+# success (return the payload; per-item failures are isolated downstream);
+# rejected/failed are terminal failures.
+_TERMINAL_SUCCESS_STATUSES = frozenset({JobStatus.COMPLETED.value, JobStatus.COMPLETED_WITH_ERRORS.value})
+_TERMINAL_FAILURE_STATUSES = frozenset({JobStatus.REJECTED.value, JobStatus.FAILED.value})
 
 
 class RemoteClientError(Exception):
-    """Request-level failure (HTTP error status, transport error, bad payload)."""
+    """Request-level failure (HTTP error status, transport error, bad payload).
+
+    ``status_code`` carries the HTTP status when the failure was an error
+    response so callers can distinguish a genuine 409 label conflict from a
+    systemic outage without string-matching the message (S2-04).
+    """
+
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class CircuitOpenError(RemoteClientError):
@@ -80,21 +96,26 @@ class RemoteSceneClient:
                 response = self._client.request(method, url, **kwargs)
                 if response.status_code == 429:
                     # Expected under the per-key RPM budget (STANDARD = 60 rpm);
-                    # back off and retry without charging the breaker.
+                    # back off and retry. Individual 429s do not charge the
+                    # breaker, but terminal exhaustion is a request-level failure
+                    # like any other and must strike it (S2-02) so a persistently
+                    # rate-limited key can open the circuit instead of hammering
+                    # the live box for ~50 min.
                     rate_limit_retries += 1
                     if rate_limit_retries > self._max_rate_limit_retries:
+                        self._consecutive_failures += 1
                         raise RemoteClientError(
                             f"{method} {url} failed: 429 rate limit persisted after "
                             f"{self._max_rate_limit_retries} backoff retries"
                         )
-                    retry_after = float(response.headers.get("Retry-After", self._rate_limit_wait))
-                    time.sleep(max(retry_after, self._rate_limit_wait) if retry_after else self._rate_limit_wait)
+                    time.sleep(self._retry_after_seconds(response.headers.get("Retry-After")))
                     continue
                 response.raise_for_status()
                 payload = response.json()
             except (httpx.HTTPError, json.JSONDecodeError) as exc:
                 self._consecutive_failures += 1
-                raise RemoteClientError(f"{method} {url} failed: {exc}") from exc
+                status_code = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+                raise RemoteClientError(f"{method} {url} failed: {exc}", status_code=status_code) from exc
             self._consecutive_failures = 0
             return payload
 
@@ -103,6 +124,23 @@ class RemoteSceneClient:
         if not isinstance(payload, dict):
             raise RemoteClientError(f"{method} {url}: expected JSON object, got {type(payload).__name__}")
         return payload
+
+    def _retry_after_seconds(self, header_value: str | None) -> float:
+        """Seconds to sleep before a 429 retry, floored at ``rate_limit_wait``.
+
+        Retry-After may be a delay in seconds or an HTTP-date (RFC 9110, plausible
+        from a CDN/nginx fronting the box); a date or any malformed value must not
+        escape as an uncaught ValueError outside the typed-error contract (S2-03) —
+        fall back to the configured floor instead.
+        """
+        floor = self._rate_limit_wait
+        if header_value is None:
+            return floor
+        try:
+            seconds = float(header_value)
+        except ValueError:
+            return floor
+        return max(seconds, floor)
 
     def describe(
         self,
@@ -134,13 +172,18 @@ class RemoteSceneClient:
         )
 
     def analyze(self, images: list[tuple[int, str, bytes]]) -> str:
-        """POST /recognition/analyze/multipart (one image_<media_id> part each) -> job_id."""
+        """POST /recognition/analyze/multipart (one image_<media_id> part each) -> job_id.
+
+        The route envelope requires only ``tenant_id``; media ids are derived
+        server-side from the ``image_<media_id>`` part names, so the client must
+        not invent a ``media_ids`` envelope field the route ignores (rg-015).
+        """
         files = [(f"image_{media_id}", (filename, image_bytes)) for media_id, filename, image_bytes in images]
         payload = self._request(
             "POST",
             "/recognition/analyze/multipart",
             files=files,
-            data={"request": json.dumps({"tenant_id": self.tenant_id, "media_ids": [str(m) for m, _, _ in images]})},
+            data={"request": json.dumps({"tenant_id": self.tenant_id})},
         )
         job_id = payload.get("id") or payload.get("job_id")  # JobStatusResponse uses `id`
         if not isinstance(job_id, str) or not job_id:
@@ -176,13 +219,28 @@ class RemoteSceneClient:
             json={"tenant_id": tenant_id, "mode": mode},
         )
 
-    def clusters(self, labeled_only: bool = False) -> Any:
-        """GET /recognition/clusters (tenant from API key)."""
-        return self._request(
-            "GET",
-            "/recognition/clusters",
-            params={"labeled_only": labeled_only, "limit": 200},
-        )
+    def clusters(self, labeled_only: bool = False) -> list[dict[str, Any]]:
+        """GET /recognition/clusters (tenant from API key), fully paginated.
+
+        The route returns a bare ``list[ClusterResponse]`` capped by the server's
+        ``max_page_size``; walk offsets until a short page so clusters beyond the
+        first page are never silently invisible (S2-08) — the seed's idempotency
+        early-return and coverage re-check both depend on seeing every cluster.
+        """
+        all_clusters: list[dict[str, Any]] = []
+        offset = 0
+        while True:
+            page = self._request(
+                "GET",
+                "/recognition/clusters",
+                params={"labeled_only": labeled_only, "limit": _CLUSTERS_PAGE_SIZE, "offset": offset},
+            )
+            if not isinstance(page, list):
+                raise RemoteClientError(f"GET /recognition/clusters: expected JSON array, got {type(page).__name__}")
+            all_clusters.extend(page)
+            if len(page) < _CLUSTERS_PAGE_SIZE:
+                return all_clusters
+            offset += _CLUSTERS_PAGE_SIZE
 
     def cluster_members(self, cluster_id: str) -> dict[str, Any]:
         """GET /recognition/clusters/{id}/members (members carry media_id)."""

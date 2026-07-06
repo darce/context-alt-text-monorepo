@@ -93,6 +93,25 @@ def test_tag_coverage_none_without_objects():
     assert scores.tag_coverage is None
 
 
+def test_tag_coverage_word_boundary_no_substring_hit():  # S2-06
+    # object tag 'cat' must not match 'scattered'
+    scores = score_caption(
+        "Leaves are scattered on the ground.",
+        **_entry(must_right=[], present_identities=[]),
+        objects=["cat"],
+    )
+    assert scores.tag_coverage == 0.0
+
+
+def test_identity_word_boundary_no_substring_hit():  # S2-06
+    # 'Cristina' must not match inside 'Cristinas'
+    scores = score_caption(
+        "Cristinas belongings sit on a table.", **_entry(present_identities=["Cristina"], must_right=[])
+    )
+    assert scores.inserted_identities == []
+    assert scores.missing_identities == ["Cristina"]
+
+
 def test_first_sentence_gist_flag():
     ok = score_caption("Short gist. " + "x" * 300, **_entry(must_right=[]))
     assert ok.first_sentence_gist_ok is True

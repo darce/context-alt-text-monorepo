@@ -14,18 +14,7 @@ import re
 from pathlib import Path
 
 from .manifest import ManifestError
-
-_IMAGE_EXTS = {".jpg", ".jpeg", ".png"}
-_VARIANT_SUFFIX = re.compile(r"-\d+$")
-
-
-def _entity_slug(filename: str) -> str:
-    stem = Path(filename).stem.removeprefix("entity-")
-    return _VARIANT_SUFFIX.sub("", stem)
-
-
-def _display_name(slug: str) -> str:
-    return " ".join(part.capitalize() for part in slug.split("-"))
+from .naming import IMAGE_EXTS, display_name, entity_slug
 
 
 def generate_draft_manifest(fixtures_dir: str) -> tuple[dict, list[str]]:
@@ -42,8 +31,8 @@ def generate_draft_manifest(fixtures_dir: str) -> tuple[dict, list[str]]:
             "set GOLDEN_IMAGES_DIR to the rsync-bootstrapped copy (see scene/tests/seed/README.md)"
         )
 
-    slugs = sorted({_entity_slug(p.name) for p in entities_dir.iterdir() if p.suffix.lower() in _IMAGE_EXTS})
-    roster = [_display_name(s) for s in slugs]
+    slugs = sorted({entity_slug(p.name) for p in entities_dir.iterdir() if p.suffix.lower() in IMAGE_EXTS})
+    roster = [display_name(s) for s in slugs]
     token_to_name: dict[str, str] = {}
     for slug, name in zip(slugs, roster, strict=True):
         for token in slug.split("-"):
@@ -53,7 +42,7 @@ def generate_draft_manifest(fixtures_dir: str) -> tuple[dict, list[str]]:
     entries: list[dict] = []
     media_id = 0
     for image in sorted(images_dir.iterdir(), key=lambda p: p.name):
-        if image.suffix.lower() not in _IMAGE_EXTS:
+        if image.suffix.lower() not in IMAGE_EXTS:
             continue
         media_id += 1
         stem_tokens = re.split(r"[-_.\s]+", image.stem.lower())
@@ -81,6 +70,9 @@ def generate_draft_manifest(fixtures_dir: str) -> tuple[dict, list[str]]:
                 "path": f"mock_images/{image.name}",
                 "sha256": hashlib.sha256(image.read_bytes()).hexdigest(),
                 "media_id": media_id,
+                # Draft floor: at least the matched identities. The operator sets
+                # the true total (including non-roster strangers) during review.
+                "face_count": len(matched),
                 "present_identities": matched,
                 "context_pack": {},
                 "must_right": [],

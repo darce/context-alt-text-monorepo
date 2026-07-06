@@ -15,7 +15,7 @@ export GOLDEN_IMAGES_DIR=~/Development/eval-fixtures
 export ACX_EVAL_LIVE=1                    # safety gate for live subcommands
 export ACX_EVAL_BASE_URL=https://api.altcontext.com
 export ACX_EVAL_API_KEY=<eval-tenant key>
-export ACX_EVAL_TENANT_ID=<eval tenant UUID>   # seed-roster only
+export ACX_EVAL_TENANT_ID=<eval tenant UUID>   # required by ALL live subcommands (fetch/run/seed-roster)
 ```
 
 ## Usage
@@ -47,13 +47,30 @@ uv run python -m scripts.eval_harness.cli score --run-record scripts/eval_harnes
 
 ## Report schema (`acx-eval/v1`, E19-1 extension)
 
-JSON sections: `provenance` (manifest sha256, base_url, HEAD sha, started_at),
-`counts`, `caption` (insertion_rate, Must-Right failed images, policy
-violations, mean gated score), `faces.detection` (count-based P/R),
-`faces.identification` (micro + macro P/R, per-identity table, wrong_names
-listed individually, true_rejections, excluded policy-disabled images),
-`per_image`, `failures`. Deterministic sections are bit-identical across
-re-scores of the same run record.
+Every eval document carries `schema: acx-eval/v1` plus a `kind` discriminator
+(`run_record` for a raw fetch, `report` for a scored report) so the two are never
+confused; `score` rejects a report file passed as a run record.
+
+JSON sections: `provenance` (fetch-time `manifest_sha256`, `score_manifest_sha256`
++ `manifest_matches_fetch` flag, base_url, HEAD sha, started_at, and a `model`
+block naming the **adapter(s)/model_id(s)/model_version(s)** that produced the
+captions), `counts`, `caption` (insertion_rate, Must-Right failed + rubric-defined
+images, policy violations, mean gated score), `faces.detection` (count-based P/R
+against ground-truth `face_count`), `faces.identification` (micro + macro P/R,
+per-identity table, wrong_names listed individually, true_rejections, excluded
+policy-disabled images), `per_image`, `failures`. Deterministic sections are
+bit-identical across re-scores of the same run record.
+
+**Baseline caveat:** the committed `docs/tasks/vlm/VLM-2A-baseline-*` artifacts were
+produced by the model-free `seeded` stub adapter (`adapter=seeded`,
+`model_id=seeded-fixtures`) as a harness shakedown — the report's `model` block and
+markdown header say so explicitly. They are **not** a caption-model baseline; a
+real-model baseline must be captured with a live run before the §12 bake-off gate.
+
+**Rubric caveat (MVP):** the golden corpus currently ships with empty `must_right`
+/ `easy_wrong` for every entry, so the Must-Right hard gate and Easy-Wrong rubric
+are vacuous. The loader emits a `RubricEmptyWarning` and the report surfaces
+`must_right_defined_images: 0`, so this is disclosed, not silent.
 
 ## Failure semantics (rg-007)
 

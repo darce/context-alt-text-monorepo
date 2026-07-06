@@ -174,7 +174,10 @@ class DescriptionCommand extends \WP_CLI_Command {
 	 * @return array<string,mixed>
 	 */
 	private function generate_one( int $media_id, bool $write, bool $force ): array {
-		$request = new WP_REST_Request( 'POST', '/acx/v1/recognition/describe', array( 'media_id' => $media_id ) );
+		// The third constructor argument is route *attributes*, which
+		// get_param() never reads; media_id must go through set_param().
+		$request = new WP_REST_Request( 'POST', '/acx/v1/recognition/describe' );
+		$request->set_param( 'media_id', $media_id );
 		$result  = $this->describe_service->describe_media( $request );
 
 		if ( is_wp_error( $result ) ) {
@@ -192,7 +195,7 @@ class DescriptionCommand extends \WP_CLI_Command {
 				'media_id'       => $media_id,
 				'status'         => 'failed',
 				'alt_text_draft' => '',
-				'error'          => (string) ( $data['message'] ?? 'Describe request failed.' ),
+				'error'          => (string) ( $data['message'] ?? $data['detail'] ?? 'Describe request failed.' ),
 			);
 		}
 

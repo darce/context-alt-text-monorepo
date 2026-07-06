@@ -40,6 +40,21 @@ class DescriptionCommandGenerateTest extends TestCase
         $this->assertSame('A red barn at sunrise.', $payload['rows'][0]['alt_text_draft']);
     }
 
+    public function testGenerateSurfacesUpstreamDetailOnErrorResponse(): void
+    {
+        $service = new RecordingDescribeService([
+            302 => new WP_REST_Response(['detail' => 'tenant mismatch'], 403),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        $command->__invoke(['generate'], ['media-id' => '302', 'format' => 'json']);
+
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+
+        $this->assertSame('failed', $payload['rows'][0]['status']);
+        $this->assertSame('tenant mismatch', $payload['rows'][0]['error']);
+    }
+
     public function testGenerateWriteStoresAltTextAndProvenance(): void
     {
         $service = new RecordingDescribeService([

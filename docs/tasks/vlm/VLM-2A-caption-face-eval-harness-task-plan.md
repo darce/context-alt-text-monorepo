@@ -174,6 +174,9 @@ Proof:
 
 Owner: description-service backend lane. Fixture confirmation pass requires the operator (labels reference real people from the archive test bed). All other work is agent-executable.
 
+- [ ] Loaded the minimum authoritative rules, contracts, and handoff state before editing.
+- [ ] Recorded boundary ownership and compatibility expectations if any contract is touched.
+
 ### Checklist for Slice 1: Golden manifest + fixture bootstrap
 
 - [ ] `manifest.py` + pydantic schema + loader tests (missing/hash-mismatch/malformed)
@@ -194,12 +197,14 @@ Owner: description-service backend lane. Fixture confirmation pass requires the 
 
 ## Review Readiness
 
-Each slice closes with `close_slice` + fresh `test_result` evidence tied to HEAD; branch review via `/branch-review` before merge; pre-merge gate (`handoff_close_check(enforce=True)`) applies.
+- [ ] No boundary-touching implementation is left without matching contract/doc/fixture evidence (boundary table row 3 contingency recorded in slice decision if exercised).
+- [ ] Runtime-parity checks included where tests can mask real behavior (env-gated live smoke).
+- [ ] Each slice closes with `close_slice` + fresh `test_result` evidence tied to HEAD; branch review via `/branch-review` before merge; pre-merge gate (`handoff_close_check(enforce=True)`) applies.
 
 ## Stretch Goals
 
-- Manifest entries for the remaining assessment §6b taxonomy classes (abstract, UI screenshot, context-conflict) as images are curated.
-- Offline re-score mode consuming archived run records for metric iteration without re-hitting the service.
+- [ ] Manifest entries for the remaining assessment §6b taxonomy classes (abstract, UI screenshot, context-conflict) as images are curated.
+- [ ] Offline re-score mode consuming archived run records for metric iteration without re-hitting the service.
 
 ## Success Criteria
 

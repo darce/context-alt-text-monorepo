@@ -136,3 +136,28 @@ def test_main_fails_closed_and_disposes_on_error(monkeypatch) -> None:
     # Fail-closed: non-zero exit so the container entrypoint aborts before verify.
     assert mod.main() == 1
     assert engine.disposed is True  # disposed via finally even on failure
+
+
+def test_created_report_excludes_tables_created_by_a_lock_racer(tmp_path: Path) -> None:
+    # BR2-08: the created-set must be computed inside the locked transaction
+    # (_locked_sync), so a boot that loses the advisory-lock race never reports
+    # tables the winner created. Simulated: the racer's table already exists by
+    # the time the locked section runs.
+    from scripts.sync_identity_schema import _locked_sync
+
+    engine = _engine(tmp_path)
+    try:
+        Base.metadata.create_all(engine)
+        with engine.begin() as conn:
+            conn.execute(text("DROP TABLE image_descriptions"))
+            conn.execute(text("DROP TABLE export_jobs"))
+        # Racer (lock winner) already created image_descriptions.
+        Base.metadata.tables["image_descriptions"].create(engine)
+
+        with engine.begin() as conn:
+            created = _locked_sync(conn)
+
+        assert "export_jobs" in created
+        assert "image_descriptions" not in created, created
+    finally:
+        engine.dispose()

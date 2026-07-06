@@ -1,45 +1,39 @@
-# golden.json draft review notes (operator confirmation pass, VLM-2A Slice 1)
+# golden.json label review — after agent visual pass (2026-07-06)
 
-Heuristic label drafts needing confirmation. Edit `golden.json` `present_identities`
-directly, then delete this file. Likely nickname/initial mappings to verify:
-`ccqw`→Caitlin Weaver?, `mcm`/`k.mcc`→Kirstie Mccarrel?, `rrw`→Ryann Wiseman?,
-`example-ellynheald-goldleaf`→Ellyn Heald, `nina-machiavelli`→stranger (not in roster).
+A full visual pass (all 38 scenes vs the 18 entity crops) replaced the filename
+heuristics. High-confidence resolutions applied directly to `golden.json`:
+`ccqw-*` → Caitlin Weaver (race bib "CAITLIN" in ccqw-running); `mcm-*` +
+`Breiðamerkurjökull` → Maria Correonero (same trip/outfit as mcm-icecave, ombré
+hair matches crop); `k.mcc-1` → Kirstie Mccarrel (sash woman matches crops);
+`example-ellynheald-goldleaf` → Ellyn Heald; `liam-maloney-painting` → [] (a
+painting, not a person); `nina-machiavelli` → [] (a dog); `rrw-mirror` → []
+(stranger — watermark reads @rachelrabbitwhite, not Ryann).
 
-- [ ] Breiðamerkurjökull.jpg: no roster match (tokens: breiðamerkurjökull) — confirm no known identities present
-- [ ] bea-nye.jpg: matched Bea Burke; unresolved tokens: nye — confirm labels
-- [ ] ccqw-antartica.jpg: no roster match (tokens: ccqw, antartica) — confirm no known identities present
-- [ ] ccqw-bar.jpg: no roster match (tokens: ccqw, bar) — confirm no known identities present
-- [ ] ccqw-erika.jpg: matched Erika Hansen Miller; unresolved tokens: ccqw — confirm labels
-- [ ] ccqw-flowers.jpg: no roster match (tokens: ccqw, flowers) — confirm no known identities present
-- [ ] ccqw-hair.jpg: no roster match (tokens: ccqw, hair) — confirm no known identities present
-- [ ] ccqw-occlusion-2.jpg: no roster match (tokens: ccqw, occlusion, 2) — confirm no known identities present
-- [ ] ccqw-occlusion.jpg: no roster match (tokens: ccqw, occlusion) — confirm no known identities present
-- [ ] ccqw-purple.jpg: no roster match (tokens: ccqw, purple) — confirm no known identities present
-- [ ] ccqw-running-2.jpg: no roster match (tokens: ccqw, running, 2) — confirm no known identities present
-- [ ] ccqw-running.jpg: no roster match (tokens: ccqw, running) — confirm no known identities present
-- [ ] ccqw-sunglasses-flowers.jpg: no roster match (tokens: ccqw, sunglasses, flowers) — confirm no known identities present
-- [ ] ccqw-sunglasses.jpg: no roster match (tokens: ccqw, sunglasses) — confirm no known identities present
-- [ ] ccqw-underexposed.jpg: no roster match (tokens: ccqw, underexposed) — confirm no known identities present
-- [ ] ccqw.blurry.jpg: no roster match (tokens: ccqw, blurry) — confirm no known identities present
-- [ ] cristina-1.jpg: matched Cristina Quintana; unresolved tokens: 1 — confirm labels
-- [ ] example-ellynheald-goldleaf.jpeg: no roster match (tokens: example, ellynheald, goldleaf) — confirm no known identities present
-- [ ] k.mcc-1.jpg: no roster match (tokens: k, mcc, 1) — confirm no known identities present
-- [ ] kirstie-1.jpeg: matched Kirstie Mccarrel; unresolved tokens: 1 — confirm labels
-- [ ] kirstie-boat.jpg: matched Kirstie Mccarrel; unresolved tokens: boat — confirm labels
-- [ ] kirstie-boat_detected.jpg: matched Kirstie Mccarrel; unresolved tokens: boat, detected — confirm labels
-- [ ] kirstie-daniel-sunglasses.jpg: matched Daniel Arce, Kirstie Mccarrel; unresolved tokens: sunglasses — confirm labels
-- [ ] kirstie-pool.jpg: matched Kirstie Mccarrel; unresolved tokens: pool — confirm labels
-- [ ] liam-maloney-2.jpg: matched Liam Maloney; unresolved tokens: 2 — confirm labels
-- [ ] liam-maloney-home.jpg: matched Liam Maloney; unresolved tokens: home — confirm labels
-- [ ] liam-maloney-painting.jpg: matched Liam Maloney; unresolved tokens: painting — confirm labels
-- [ ] maria-cocktail.jpg: matched Maria Correonero; unresolved tokens: cocktail — confirm labels
-- [ ] maria-party.jpg: matched Maria Correonero; unresolved tokens: party — confirm labels
-- [ ] maria-pool.jpg: matched Maria Correonero; unresolved tokens: pool — confirm labels
-- [ ] mcm-eye-blocked.jpg: no roster match (tokens: mcm, eye, blocked) — confirm no known identities present
-- [ ] mcm-icecave.jpg: no roster match (tokens: mcm, icecave) — confirm no known identities present
-- [ ] mcm-planecrash.jpg: no roster match (tokens: mcm, planecrash) — confirm no known identities present
-- [ ] nina-machiavelli.jpeg: no roster match (tokens: nina, machiavelli) — confirm no known identities present
-- [ ] rrw-mirror.jpg: no roster match (tokens: rrw, mirror) — confirm no known identities present
-- [ ] ryann-bar.jpg: matched Ryann Wiseman; unresolved tokens: bar — confirm labels
-- [ ] ryann-group-party.jpg: matched Ryann Wiseman; unresolved tokens: group, party — confirm labels
-- [ ] ryann-party.jpg: matched Ryann Wiseman; unresolved tokens: party — confirm labels
+## Rows still needing operator adjudication (edit `present_identities`, then delete this file)
+
+- [ ] `cristina-1.jpg` — set to [Caitlin?, Cristina?, Kirstie?]: three women at a
+  party. Middle (sheep hood, pale, blonde braids) reads as Kirstie; right (dark
+  hair, full bangs, blue lips) reads as Caitlin; LEFT (dark high pony, pink
+  fishnet, tattoos) assumed Cristina from filename but does NOT resemble her
+  platinum-pixie crop. Confirm all three.
+- [ ] `kirstie-1.jpeg` — set to [Kirstie]: warm-blonde woman with dog + blue
+  eyes + nose stud, rounder-faced than Kirstie's other shots; could be Erika.
+- [ ] `kirstie-boat.jpg` / `kirstie-boat_detected.jpg` — set to [Erika?, Kirstie]:
+  right (pink bucket hat, floral arm tattoos) is clearly Kirstie; LEFT (red
+  swimsuit, warm blonde, sunglasses) assumed Erika — confirm. Boat driver in
+  background = stranger.
+- [ ] `ccqw-erika.jpg` — set to [Caitlin, Erika]: foreground blonde assumed
+  Erika; woman in red + man in mirror — is the red-shirt woman Caitlin, or a
+  stranger? Confirm the pair.
+- [ ] `ryann-group-party.jpg` — set to [Ryann]: six women in pink satin PJs;
+  confirm which (if any others) are roster members.
+- [ ] `mcm-eye-blocked.jpg` — set to [Maria]: stylized blue-lit portrait, hair
+  up, dark lips, Rubik-cube prop; face consistent with Maria but least certain
+  of the mcm set.
+- [ ] `ryann-party.jpg` — set to [Ryann]: left blonde matches Ryann's png crop;
+  right dark-haired woman assumed stranger — confirm.
+
+Stranger faces (correct as absent, useful for true-rejection accounting):
+ccqw-running (bearded runner, bib "BEN…"), k.mcc-1 (glasses+face-gems woman),
+maria-cocktail (3), maria-party (2), ryann-party (1), boat driver, rrw-mirror
+(1), ccqw-underexposed background pedestrian.

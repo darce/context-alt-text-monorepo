@@ -1,7 +1,7 @@
 {
   "caption": {
     "insertion_rate": 0.0,
-    "mean_gated_score": 0.5526,
+    "mean_gated_score": 0.0789,
     "must_right_failed_images": 0,
     "policy_violations": 0
   },
@@ -12,17 +12,17 @@
   },
   "faces": {
     "detection": {
-      "fn": 0,
-      "fp": 48,
-      "precision": 0.2727272727272727,
-      "recall": 1.0,
-      "tp": 18
+      "fn": 1,
+      "fp": 26,
+      "precision": 0.6060606060606061,
+      "recall": 0.975609756097561,
+      "tp": 40
     },
     "identification": {
       "excluded_images": [],
       "ignored_wrong_names": [],
-      "macro_precision": 0.5416666666666666,
-      "macro_recall": 0.275,
+      "macro_precision": 1.0,
+      "macro_recall": 0.32571428571428573,
       "per_identity": {
         "Bea Burke": {
           "fn": 1,
@@ -32,11 +32,11 @@
           "tp": 0
         },
         "Caitlin Weaver": {
-          "fn": 0,
-          "fp": 1,
-          "precision": 0.0,
-          "recall": null,
-          "tp": 0
+          "fn": 14,
+          "fp": 0,
+          "precision": 1.0,
+          "recall": 0.06666666666666667,
+          "tp": 1
         },
         "Cristina Quintana": {
           "fn": 1,
@@ -54,38 +54,38 @@
         },
         "Ellyn Heald": {
           "fn": 0,
-          "fp": 1,
-          "precision": 0.0,
-          "recall": null,
-          "tp": 0
+          "fp": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "tp": 1
         },
         "Erika Hansen Miller": {
-          "fn": 1,
+          "fn": 3,
           "fp": 0,
           "precision": null,
           "recall": 0.0,
           "tp": 0
         },
         "Kirstie Mccarrel": {
-          "fn": 4,
-          "fp": 1,
-          "precision": 0.5,
-          "recall": 0.2,
-          "tp": 1
-        },
-        "Liam Maloney": {
-          "fn": 1,
+          "fn": 5,
           "fp": 0,
           "precision": 1.0,
-          "recall": 0.6666666666666666,
+          "recall": 0.2857142857142857,
+          "tp": 2
+        },
+        "Liam Maloney": {
+          "fn": 0,
+          "fp": 0,
+          "precision": 1.0,
+          "recall": 1.0,
           "tp": 2
         },
         "Maria Correonero": {
-          "fn": 0,
-          "fp": 1,
-          "precision": 0.75,
-          "recall": 1.0,
-          "tp": 3
+          "fn": 3,
+          "fp": 0,
+          "precision": 1.0,
+          "recall": 0.5714285714285714,
+          "tp": 4
         },
         "Ryann Wiseman": {
           "fn": 2,
@@ -95,27 +95,10 @@
           "tp": 1
         }
       },
-      "precision": 0.6363636363636364,
-      "recall": 0.3888888888888889,
+      "precision": 1.0,
+      "recall": 0.2682926829268293,
       "true_rejections": 0,
-      "wrong_names": [
-        [
-          "mock_images/ccqw-antartica.jpg",
-          "Caitlin Weaver"
-        ],
-        [
-          "mock_images/example-ellynheald-goldleaf.jpeg",
-          "Ellyn Heald"
-        ],
-        [
-          "mock_images/k.mcc-1.jpg",
-          "Kirstie Mccarrel"
-        ],
-        [
-          "mock_images/mcm-planecrash.jpg",
-          "Maria Correonero"
-        ]
-      ]
+      "wrong_names": []
     }
   },
   "failures": [],
@@ -124,10 +107,12 @@
       "cache_hit": false,
       "first_sentence_gist_ok": true,
       "fkre": 75.5,
-      "gated_score": 1.0,
+      "gated_score": 0.0,
       "inserted_identities": [],
       "media_id": 1,
-      "missing_identities": [],
+      "missing_identities": [
+        "Maria Correonero"
+      ],
       "must_right_failures": [],
       "path": "mock_images/Breiðamerkurjökull.jpg",
       "policy_violation": false,
@@ -154,10 +139,12 @@
       "cache_hit": false,
       "first_sentence_gist_ok": true,
       "fkre": 92.97,
-      "gated_score": 1.0,
+      "gated_score": 0.0,
       "inserted_identities": [],
       "media_id": 3,
-      "missing_identities": [],
+      "missing_identities": [
+        "Caitlin Weaver"
+      ],
       "must_right_failures": [],
       "path": "mock_images/ccqw-antartica.jpg",
       "policy_violation": false,
@@ -168,10 +155,12 @@
       "cache_hit": false,
       "first_sentence_gist_ok": true,
       "fkre": 71.82,
-      "gated_score": 1.0,
+      "gated_score": 0.0,
       "inserted_identities": [],
       "media_id": 4,
-      "missing_identities": [],
+      "missing_identities": [
+        "Caitlin Weaver"
+      ],
       "must_right_failures": [],
       "path": "mock_images/ccqw-bar.jpg",
       "policy_violation": false,
@@ -186,6 +175,7 @@
       "inserted_identities": [],
       "media_id": 5,
       "missing_identities": [
+        "Caitlin Weaver",
         "Erika Hansen Miller"
       ],
       "must_right_failures": [],
@@ -198,10 +188,12 @@
       "cache_hit": false,
       "first_sentence_gist_ok": true,
       "fkre": 92.97,
-      "gated_score": 1.0,
+      "gated_score": 0.0,
       "inserted_identities": [],
       "media_id": 6,
-      "missing_identities": [],
+      "missing_identities": [
+        "Caitlin Weaver"
+      ],
       "must_right_failures": [],
       "path": "mock_images/ccqw-flowers.jpg",
       "policy_violation": false,
@@ -212,10 +204,12 @@
       "cache_hit": false,
       "first_sentence_gist_ok": true,
       "fkre": 92.97,
-      "gated_score": 1.0,
+      "gated_score": 0.0,
       "inserted_identities": [],
       "media_id": 7,
-      "missing_identities": [],
+      "missing_identities": [
+        "Caitlin Weaver"
+      ],
       "must_right_failures": [],
       "path": "mock_images/ccqw-hair.jpg",
       "policy_violation": false,
@@ -226,10 +220,12 @@
       "cache_hit": false,
       "first_sentence_gist_ok": true,
       "fkre": 92.97,
-      "gated_score": 1.0,
+      "gated_score": 0.0,
       "inserted_identities": [],
       "media_id": 8,
-      "missing_identities": [],
+      "missing_identities": [
+        "Caitlin Weaver"
+      ],
       "must_right_failures": [],
       "path": "mock_images/ccqw-occlusion-2.jpg",
       "policy_violation": false,
@@ -240,10 +236,12 @@
       "cache_hit": false,
       "first_sentence_gist_ok": true,
       "fkre": 75.5,
-      "gated_score": 1.0,
+      "gated_score": 0.0,
       "inserted_identities": [],
       "media_id": 9,
-      "missing_identities": [],
+      "missing_identities": [
+        "Caitlin Weaver"
+      ],
       "must_right_failures": [],
       "path": "mock_images/ccqw-occlusion.jpg",
       "policy_violation": false,
@@ -254,10 +252,12 @@
       "cache_hit": false,
       "first_sentence_gist_ok": true,
       "fkre": 45.65,
-      "gated_score": 1.0,
+      "gated_score": 0.0,
       "inserted_identities": [],
       "media_id": 10,
-      "missing_identities": [],
+      "missing_identities": [
+        "Caitlin Weaver"
+      ],
       "must_right_failures": [],
       "path": "mock_images/ccqw-purple.jpg",
       "policy_violation": false,
@@ -268,10 +268,12 @@
       "cache_hit": false,
       "first_sentence_gist_ok": true,
       "fkre": 45.65,
-      "gated_score": 1.0,
+      "gated_score": 0.0,
       "inserted_identities": [],
       "media_id": 11,
-      "missing_identities": [],
+      "missing_identities": [
+        "Caitlin Weaver"
+      ],
       "must_right_failures": [],
       "path": "mock_images/ccqw-running-2.jpg",
       "policy_violation": false,
@@ -282,10 +284,12 @@
       "cache_hit": false,
       "first_sentence_gist_ok": true,
       "fkre": 75.5,
-      "gated_score": 1.0,
+      "gated_score": 0.0,
       "inserted_identities": [],
       "media_id": 12,
-      "missing_identities": [],
+      "missing_identities": [
+        "Caitlin Weaver"
+      ],
       "must_right_failures": [],
       "path": "mock_images/ccqw-running.jpg",
       "policy_violation": false,
@@ -296,10 +300,12 @@
       "cache_hit": false,
       "first_sentence_gist_ok": true,
       "fkre": 31.55,
-      "gated_score": 1.0,
+      "gated_score": 0.0,
       "inserted_identities": [],
       "media_id": 13,
-      "missing_identities": [],
+      "missing_identities": [
+        "Caitlin Weaver"
+      ],
       "must_right_failures": [],
       "path": "mock_images/ccqw-sunglasses-flowers.jpg",
       "policy_violation": false,
@@ -310,10 +316,12 @@
       "cache_hit": false,
       "first_sentence_gist_ok": true,
       "fkre": 50.67,
-      "gated_score": 1.0,
+      "gated_score": 0.0,
       "inserted_identities": [],
       "media_id": 14,
-      "missing_identities": [],
+      "missing_identities": [
+        "Caitlin Weaver"
+      ],
       "must_right_failures": [],
       "path": "mock_images/ccqw-sunglasses.jpg",
       "policy_violation": false,
@@ -324,10 +332,12 @@
       "cache_hit": false,
       "first_sentence_gist_ok": true,
       "fkre": 45.65,
-      "gated_score": 1.0,
+      "gated_score": 0.0,
       "inserted_identities": [],
       "media_id": 15,
-      "missing_identities": [],
+      "missing_identities": [
+        "Caitlin Weaver"
+      ],
       "must_right_failures": [],
       "path": "mock_images/ccqw-underexposed.jpg",
       "policy_violation": false,
@@ -338,10 +348,12 @@
       "cache_hit": false,
       "first_sentence_gist_ok": true,
       "fkre": 50.67,
-      "gated_score": 1.0,
+      "gated_score": 0.0,
       "inserted_identities": [],
       "media_id": 16,
-      "missing_identities": [],
+      "missing_identities": [
+        "Caitlin Weaver"
+      ],
       "must_right_failures": [],
       "path": "mock_images/ccqw.blurry.jpg",
       "policy_violation": false,
@@ -356,7 +368,9 @@
       "inserted_identities": [],
       "media_id": 17,
       "missing_identities": [
-        "Cristina Quintana"
+        "Caitlin Weaver",
+        "Cristina Quintana",
+        "Kirstie Mccarrel"
       ],
       "must_right_failures": [],
       "path": "mock_images/cristina-1.jpg",
@@ -368,10 +382,12 @@
       "cache_hit": false,
       "first_sentence_gist_ok": true,
       "fkre": 71.82,
-      "gated_score": 1.0,
+      "gated_score": 0.0,
       "inserted_identities": [],
       "media_id": 18,
-      "missing_identities": [],
+      "missing_identities": [
+        "Ellyn Heald"
+      ],
       "must_right_failures": [],
       "path": "mock_images/example-ellynheald-goldleaf.jpeg",
       "policy_violation": false,
@@ -382,10 +398,12 @@
       "cache_hit": false,
       "first_sentence_gist_ok": true,
       "fkre": 92.97,
-      "gated_score": 1.0,
+      "gated_score": 0.0,
       "inserted_identities": [],
       "media_id": 19,
-      "missing_identities": [],
+      "missing_identities": [
+        "Kirstie Mccarrel"
+      ],
       "must_right_failures": [],
       "path": "mock_images/k.mcc-1.jpg",
       "policy_violation": false,
@@ -416,6 +434,7 @@
       "inserted_identities": [],
       "media_id": 21,
       "missing_identities": [
+        "Erika Hansen Miller",
         "Kirstie Mccarrel"
       ],
       "must_right_failures": [],
@@ -432,6 +451,7 @@
       "inserted_identities": [],
       "media_id": 22,
       "missing_identities": [
+        "Erika Hansen Miller",
         "Kirstie Mccarrel"
       ],
       "must_right_failures": [],
@@ -509,12 +529,10 @@
       "cache_hit": false,
       "first_sentence_gist_ok": true,
       "fkre": 75.5,
-      "gated_score": 0.0,
+      "gated_score": 1.0,
       "inserted_identities": [],
       "media_id": 27,
-      "missing_identities": [
-        "Liam Maloney"
-      ],
+      "missing_identities": [],
       "must_right_failures": [],
       "path": "mock_images/liam-maloney-painting.jpg",
       "policy_violation": false,
@@ -573,10 +591,12 @@
       "cache_hit": false,
       "first_sentence_gist_ok": true,
       "fkre": 88.0,
-      "gated_score": 1.0,
+      "gated_score": 0.0,
       "inserted_identities": [],
       "media_id": 31,
-      "missing_identities": [],
+      "missing_identities": [
+        "Maria Correonero"
+      ],
       "must_right_failures": [],
       "path": "mock_images/mcm-eye-blocked.jpg",
       "policy_violation": false,
@@ -587,10 +607,12 @@
       "cache_hit": false,
       "first_sentence_gist_ok": true,
       "fkre": 50.67,
-      "gated_score": 1.0,
+      "gated_score": 0.0,
       "inserted_identities": [],
       "media_id": 32,
-      "missing_identities": [],
+      "missing_identities": [
+        "Maria Correonero"
+      ],
       "must_right_failures": [],
       "path": "mock_images/mcm-icecave.jpg",
       "policy_violation": false,
@@ -601,10 +623,12 @@
       "cache_hit": false,
       "first_sentence_gist_ok": true,
       "fkre": 92.97,
-      "gated_score": 1.0,
+      "gated_score": 0.0,
       "inserted_identities": [],
       "media_id": 33,
-      "missing_identities": [],
+      "missing_identities": [
+        "Maria Correonero"
+      ],
       "must_right_failures": [],
       "path": "mock_images/mcm-planecrash.jpg",
       "policy_violation": false,

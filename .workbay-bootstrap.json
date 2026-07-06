@@ -132,7 +132,7 @@
     },
     {
       "path": ".claude/settings.local.json",
-      "action": "unchanged"
+      "action": "updated"
     },
     {
       "path": ".agents/plugins/marketplace.json",

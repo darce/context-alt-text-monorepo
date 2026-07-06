@@ -140,17 +140,18 @@ def prune_out_dir(out_dir: str, *, keep: int = DEFAULT_KEEP, pattern: str = "run
     return removed
 
 
-def _require_live_env() -> tuple[str, str]:
+def _require_live_env() -> tuple[str, str, str]:
     if os.environ.get("ACX_EVAL_LIVE") != "1":
         sys.exit("live subcommand requires ACX_EVAL_LIVE=1 (safety gate; see README)")
     base_url = os.environ.get("ACX_EVAL_BASE_URL", "")
     api_key = os.environ.get("ACX_EVAL_API_KEY", "")
-    if not base_url or not api_key:
+    tenant_id = os.environ.get("ACX_EVAL_TENANT_ID", "")
+    if not base_url or not api_key or not tenant_id:
         sys.exit(
-            "ACX_EVAL_BASE_URL and ACX_EVAL_API_KEY are required — use the dedicated "
-            "eval-tenant key minted via /admin, never the demo tenant's key"
+            "ACX_EVAL_BASE_URL, ACX_EVAL_API_KEY, and ACX_EVAL_TENANT_ID are required — "
+            "use the dedicated eval tenant, never the demo tenant"
         )
-    return base_url, api_key
+    return base_url, api_key, tenant_id
 
 
 def _head_sha() -> str:
@@ -178,10 +179,10 @@ def _load_ignore_list(out_dir: Path) -> dict[str, Any] | None:
 
 
 def _cmd_fetch(args: argparse.Namespace) -> str:
-    base_url, api_key = _require_live_env()
+    base_url, api_key, tenant_id = _require_live_env()
     images_dir = _images_dir()
     manifest = load_manifest(args.manifest, images_dir=images_dir)
-    client = RemoteSceneClient(base_url=base_url, api_key=api_key)
+    client = RemoteSceneClient(base_url=base_url, api_key=api_key, tenant_id=tenant_id)
     started_at = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     try:
         record = fetch_run_record(
@@ -237,11 +238,8 @@ def _cmd_run(args: argparse.Namespace) -> None:
 
 
 def _cmd_seed_roster(args: argparse.Namespace) -> None:
-    base_url, api_key = _require_live_env()
-    tenant_id = os.environ.get("ACX_EVAL_TENANT_ID", "")
-    if not tenant_id:
-        sys.exit("ACX_EVAL_TENANT_ID is required for seed-roster (the dedicated eval tenant UUID)")
-    client = RemoteSceneClient(base_url=base_url, api_key=api_key)
+    base_url, api_key, tenant_id = _require_live_env()
+    client = RemoteSceneClient(base_url=base_url, api_key=api_key, tenant_id=tenant_id)
     try:
         summary = seed(args.entities, client, tenant_id=tenant_id)
     finally:

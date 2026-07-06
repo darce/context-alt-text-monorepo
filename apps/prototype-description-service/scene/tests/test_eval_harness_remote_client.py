@@ -16,6 +16,7 @@ def _client(handler, **kwargs) -> RemoteSceneClient:
     return RemoteSceneClient(
         base_url="http://testserver",
         api_key="test-key",
+        tenant_id="00000000-0000-4000-8000-0000000000e1",
         transport=transport,
         poll_interval=0.0,
         **kwargs,
@@ -29,6 +30,7 @@ def test_describe_posts_multipart_with_auth_and_returns_payload():
         seen["path"] = request.url.path
         seen["auth"] = request.headers.get("X-API-Key")
         seen["content_type"] = request.headers.get("content-type", "")
+        seen["body"] = request.read()
         return httpx.Response(200, json={"alt_text_draft": "A lake.", "media_id": 7})
 
     client = _client(handler)
@@ -37,6 +39,9 @@ def test_describe_posts_multipart_with_auth_and_returns_payload():
     assert seen["path"] == "/scene/describe/multipart"
     assert seen["auth"] == "test-key"
     assert seen["content_type"].startswith("multipart/form-data")
+    # describe.py contract: single part named image_<media_id>; envelope has tenant_id
+    assert b'name="image_7"' in seen["body"]
+    assert b"00000000-0000-4000-8000-0000000000e1" in seen["body"]
 
 
 def test_analyze_uses_image_media_id_part_names_and_returns_job_id():
@@ -50,6 +55,9 @@ def test_analyze_uses_image_media_id_part_names_and_returns_job_id():
     job_id = client.analyze(images=[(42, "a.jpg", b"img-bytes")])
     assert job_id == "job-1"
     assert b'name="image_42"' in seen["body"]
+    # analyze_multipart.py contract: envelope needs tenant_id; media_ids are strings
+    assert b'"tenant_id": "00000000-0000-4000-8000-0000000000e1"' in seen["body"]
+    assert b'"media_ids": ["42"]' in seen["body"]
 
 
 def test_wait_job_polls_until_done():

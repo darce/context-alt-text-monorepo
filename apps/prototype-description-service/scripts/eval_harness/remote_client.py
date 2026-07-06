@@ -40,15 +40,20 @@ class RemoteSceneClient:
         base_url: str,
         api_key: str,
         *,
+        tenant_id: str = "",
         timeout_s: float = _DEFAULT_TIMEOUT_S,
         max_poll_attempts: int = _DEFAULT_MAX_POLL_ATTEMPTS,
         poll_interval: float = 2.0,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self.base_url = base_url
+        self.tenant_id = tenant_id
+        headers = {"X-API-Key": api_key}
+        if tenant_id:
+            headers["X-Tenant-ID"] = tenant_id  # required by get_tenant_id deps (media routes)
         self._client = httpx.Client(
             base_url=base_url,
-            headers={"X-API-Key": api_key},
+            headers=headers,
             timeout=httpx.Timeout(timeout_s),
             transport=transport,
         )
@@ -89,12 +94,25 @@ class RemoteSceneClient:
         media_id: int,
         context_pack: dict[str, Any],
     ) -> dict[str, Any]:
-        """POST /scene/describe/multipart -> visual facts + alt-text draft."""
+        """POST /scene/describe/multipart -> visual facts + alt-text draft.
+
+        Contract (describe.py): single part named ``image_<media_id>``; envelope
+        requires ``tenant_id`` + ``media_id``; legacy ``context`` dict carries the
+        WP title/caption fields used by the golden manifest's context packs.
+        """
         return self._request_dict(
             "POST",
             "/scene/describe/multipart",
-            files={"image": (filename, image_bytes)},
-            data={"request": json.dumps({"media_id": media_id, "wp_context": context_pack})},
+            files={f"image_{media_id}": (filename, image_bytes)},
+            data={
+                "request": json.dumps(
+                    {
+                        "tenant_id": self.tenant_id,
+                        "media_id": media_id,
+                        "context": context_pack or None,
+                    }
+                )
+            },
         )
 
     def analyze(self, images: list[tuple[int, str, bytes]]) -> str:
@@ -104,11 +122,11 @@ class RemoteSceneClient:
             "POST",
             "/recognition/analyze/multipart",
             files=files,
-            data={"request": json.dumps({"media_ids": [m for m, _, _ in images]})},
+            data={"request": json.dumps({"tenant_id": self.tenant_id, "media_ids": [str(m) for m, _, _ in images]})},
         )
-        job_id = payload.get("job_id")
+        job_id = payload.get("id") or payload.get("job_id")  # JobStatusResponse uses `id`
         if not isinstance(job_id, str) or not job_id:
-            raise RemoteClientError(f"analyze response missing job_id: {payload!r}")
+            raise RemoteClientError(f"analyze response missing job id: {payload!r}")
         return job_id
 
     def wait_job(self, job_id: str) -> dict[str, Any]:

@@ -118,3 +118,31 @@ def test_concurrent_sync_entrypoints_serialize_on_advisory_lock(pg_empty_engine)
     assert all(isinstance(r, list) for r in results)
     missing = set(MIGRATION.EXPECTED_SCHEMA_TABLES) - _table_names(pg_empty_engine)
     assert not missing, f"concurrent heal left tables missing: {sorted(missing)}"
+
+
+def test_verifier_detects_dropped_policy_then_heal_repairs(pg_empty_engine) -> None:
+    # Slice 4 E2E: dropped policy -> verifier exit 1 naming the table; heal ->
+    # verifier OK. (Revision check passes because heal-only DBs have no
+    # alembic_version — stamp it manually to isolate the RLS drift.)
+    from scripts.verify_identity_schema import EXIT_HEAL_REPAIRABLE, collect_and_validate
+
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+        conn.execute(text("CREATE TABLE alembic_version (version_num varchar(64) PRIMARY KEY)"))
+        conn.execute(text("INSERT INTO alembic_version VALUES (:rev)"), {"rev": MIGRATION.revision})
+
+    with pg_empty_engine.connect() as conn:
+        assert collect_and_validate(conn)["ok"] is True
+
+    with pg_empty_engine.begin() as conn:
+        conn.execute(text("DROP POLICY tenant_isolation_export_jobs ON export_jobs"))
+
+    with pg_empty_engine.connect() as conn:
+        report = collect_and_validate(conn)
+    assert report["exit_code"] == EXIT_HEAL_REPAIRABLE
+    assert report["policy_gaps"] == ["export_jobs"]
+
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+    with pg_empty_engine.connect() as conn:
+        assert collect_and_validate(conn)["ok"] is True

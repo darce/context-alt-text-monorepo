@@ -1,4 +1,4 @@
-.PHONY: help check fix format lint typecheck arch test test-watch check-php php-cs php-cs-fix php-test phpstan mcp projection-reset localwp-link localwp-verify-activation localwp-mirror-integrity localwp-batch-run-smoke localwp-describe-run-smoke gate-package worker-daemon _js-deps _php-deps FORCE
+.PHONY: help check fix format lint typecheck arch test test-watch check-php php-cs php-cs-fix php-test phpstan mcp projection-reset localwp-link localwp-verify-activation localwp-mirror-integrity localwp-batch-run-smoke localwp-describe-run-smoke localwp-description-cli-smoke gate-package worker-daemon _js-deps _php-deps FORCE
 
 NPM ?= corepack npm
 
@@ -19,6 +19,7 @@ help:
 	@echo "  make localwp-mirror-integrity - Run the mirror integrity WP-CLI check through the LocalWP wrapper"
 	@echo "  make localwp-batch-run-smoke - Submit a real LocalWP batch scan through the REST API and poll the BatchRun aggregate"
 	@echo "  make localwp-describe-run-smoke - Describe one real LocalWP image attachment twice and prove the cache (first miss, repeat hit)"
+	@echo "  make localwp-description-cli-smoke - Run WP-CLI description status/generate smoke checks against LocalWP"
 	@echo "  make gate-package - Build the reproducible plugin ZIP for release/gate verification"
 	@echo "  make projection-reset - Truncate ACX projection tables (guarded; requires WP_PATH + confirmation)"
 	@echo "  make mcp        - Start the MCP server for AI agents (monorepo-wide)"
@@ -380,3 +381,57 @@ localwp-describe-run-smoke:
 		_run_wp --path="$(WP_PATH)" option update acx_recognition_source local >/dev/null; \
 	fi; \
 	_run_wp --path="$(WP_PATH)" eval-file "$(CURDIR)/scripts/localwp/describe-run-smoke.php" "$(if $(MEDIA_ID),$(MEDIA_ID),0)"
+
+# Run the headless description CLI surface against one LocalWP attachment.
+# Dry-run is always executed; set WRITE=1 to also write alt text with --force
+# only when FORCE=1 is provided.
+# Usage:
+#   make localwp-description-cli-smoke WP_PATH="/path/to/wordpress/site" MEDIA_ID="6624"
+#   make localwp-description-cli-smoke WP_PATH="/path/to/wordpress/site" MEDIA_ID="6624" WRITE=1 FORCE=1
+localwp-description-cli-smoke:
+	@if [ -z "$(WP_PATH)" ]; then \
+		echo "WP_PATH is required (path to WordPress root containing wp-load.php)."; \
+		echo "Example: make localwp-description-cli-smoke WP_PATH=\"$$HOME/Development/wp-context-alt-text/app/public\" MEDIA_ID=\"6624\""; \
+		exit 1; \
+	fi
+	@if [ -z "$(MEDIA_ID)" ]; then \
+		echo "MEDIA_ID is required for the CLI smoke target."; \
+		exit 1; \
+	fi
+	@if [ ! -f "$(WP_PATH)/wp-load.php" ]; then \
+		echo "Invalid WP_PATH: $(WP_PATH) (missing wp-load.php)"; \
+		exit 1; \
+	fi
+	@_LOCALWP_WP="$$(git rev-parse --show-toplevel)/scripts/localwp-wp.sh"; \
+	if [ ! -x "$$_LOCALWP_WP" ]; then \
+		echo "LocalWP WP-CLI wrapper missing or not executable: $$_LOCALWP_WP"; \
+		exit 1; \
+	fi; \
+	_run_wp() { "$$_LOCALWP_WP" "$$@"; }; \
+	SITE_URL_RAW="$$(_run_wp --quiet --skip-plugins --skip-themes --path="$(WP_PATH)" option get siteurl 2>&1 || true)"; \
+	if printf '%s\n' "$$SITE_URL_RAW" | grep -qi 'Error establishing a database connection\|Can'"'"'t connect\|Connection refused'; then \
+		echo "Database connection failed at $(WP_PATH)."; \
+		echo "Start your local WordPress environment (e.g. LocalWP) and try again."; \
+		echo "WP-CLI output: $$SITE_URL_RAW"; \
+		exit 1; \
+	fi; \
+	SITE_URL="$$(printf '%s\n' "$$SITE_URL_RAW" | sed '/^Deprecated:/d;/^Warning:/d;/^Notice:/d;/^PHP Deprecated:/d;/^PHP Warning:/d;/^PHP Notice:/d;/^PHP Fatal/d;/^Error:/d' | awk 'NF { print; exit }')"; \
+	if [ -z "$$SITE_URL" ]; then \
+		echo "Unable to read siteurl from WordPress at $(WP_PATH)."; \
+		echo "WP-CLI output: $$SITE_URL_RAW"; \
+		exit 1; \
+	fi; \
+	case "$$SITE_URL" in \
+		*localhost*|*127.0.0.1*|*.local*|*.test*) ;; \
+		*) \
+			echo "Refusing to run against non-local siteurl: $$SITE_URL"; \
+			exit 1; \
+			;; \
+	esac; \
+	_run_wp --path="$(WP_PATH)" alt-context describe status --media-id="$(MEDIA_ID)" --format=json; \
+	_run_wp --path="$(WP_PATH)" alt-context describe generate --media-id="$(MEDIA_ID)" --format=json; \
+	if [ "$(WRITE)" = "1" ]; then \
+		FORCE_ARG=""; \
+		if [ "$(FORCE)" = "1" ]; then FORCE_ARG="--force"; fi; \
+		_run_wp --path="$(WP_PATH)" alt-context describe generate --media-id="$(MEDIA_ID)" --write $$FORCE_ARG --format=json; \
+	fi

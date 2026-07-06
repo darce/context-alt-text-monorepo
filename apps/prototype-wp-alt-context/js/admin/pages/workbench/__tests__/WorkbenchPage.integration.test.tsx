@@ -115,11 +115,11 @@ describe('WorkbenchPage (integration-lite)', () => {
     }
   }
 
-  const renderWithClient = (client: QueryClient) => {
+  const renderWithClient = (client: QueryClient, initialEntries: string[] = ['/']) => {
     queryClient = client;
     const wrapper = ({ children }: { children: ReactNode }) => (
       <QueryClientProvider client={client}>
-        <MemoryRouter>{children}</MemoryRouter>
+        <MemoryRouter initialEntries={initialEntries}>{children}</MemoryRouter>
       </QueryClientProvider>
     );
     return render(<WorkbenchPage />, { wrapper });
@@ -280,8 +280,13 @@ describe('WorkbenchPage (integration-lite)', () => {
 
     renderWithClient(client);
 
-    const rowCheckbox = await screen.findByRole('checkbox', { name: /Select media item Photo Name/i });
     const user = userEvent.setup();
+    const showMediaTable = await screen.findByRole('button', { name: 'Show media table' });
+    if (showMediaTable) {
+      await user.click(showMediaTable);
+    }
+
+    const rowCheckbox = await screen.findByRole('checkbox', { name: /Select media item Photo Name/i });
     await user.click(rowCheckbox);
 
     const scanButton = screen.getByRole('button', { name: /Analyze selected media/i });
@@ -559,6 +564,42 @@ describe('WorkbenchPage (integration-lite)', () => {
 
     expect(await screen.findByText('Photo Page Two')).toBeInTheDocument();
     expect(screen.queryByText('Photo Page One')).not.toBeInTheDocument();
+  });
+
+  it('hydrates the missing-status media query from the workbench URL', async () => {
+    vi.mocked(recognitionApi.fetchMediaIdentities).mockResolvedValue({
+      identities_by_media: { '11': [] },
+    });
+    vi.mocked(recognitionApi.fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+          staleTime: Infinity,
+          refetchOnMount: false,
+          refetchOnWindowFocus: false,
+          refetchOnReconnect: false,
+        },
+      },
+    });
+    client.setQueryData(
+      queryKeys.media.workbenchPage({ page: 1, perPage: 10, search: '', status: 'missing' }),
+      baseMediaResponse,
+    );
+    client.setQueryData(queryKeys.media.identitiesByIds([11]), { identities_by_media: { '11': [] } });
+
+    renderWithClient(client, ['/workbench?status=missing']);
+
+    expect(await screen.findByText('Photo Name')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Status' })).toHaveTextContent('Missing alt text');
+    expect(
+      client.getQueryData(queryKeys.media.workbenchPage({ page: 1, perPage: 10, search: '', status: 'missing' })),
+    ).toEqual(baseMediaResponse);
   });
 
   it('paints new findings after projection-ready without reload or remount (E15-23 / E15-24 gate)', async () => {

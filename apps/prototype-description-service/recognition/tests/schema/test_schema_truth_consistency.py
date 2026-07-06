@@ -81,3 +81,27 @@ def test_runtime_written_tables_exist_in_orm() -> None:
     # stay real ORM tables, else assertion (c) silently checks nothing.
     missing = RUNTIME_WRITTEN_ORM_TABLES - set(Base.metadata.tables)
     assert not missing, f"RUNTIME_WRITTEN_ORM_TABLES entries not in Base.metadata: {sorted(missing)}"
+
+
+# ORM tables intentionally absent from the verifier contract (with rationale).
+EXPECTED_EXEMPT_ORM_TABLES = {
+    "mv_identity_cluster_centroids": "materialized view: created by ensure_matview, not a table",
+}
+
+
+def test_every_orm_table_is_in_the_verifier_contract_or_exempt() -> None:
+    # (d) ORM -> migration direction: a new ORM table missing from
+    # EXPECTED_SCHEMA_TABLES (and so from heal/verify coverage) fails CI.
+    expected = set(MIGRATION.EXPECTED_SCHEMA_TABLES)
+    offenders = set(Base.metadata.tables) - expected - set(EXPECTED_EXEMPT_ORM_TABLES)
+    assert not offenders, (
+        f"ORM tables outside the verifier contract (add to EXPECTED_SCHEMA_TABLES "
+        f"+ ensure_tables, or exempt with rationale): {sorted(offenders)}"
+    )
+
+
+def test_tenant_and_raw_sql_tables_are_subsets_of_expected() -> None:
+    # (e) internal consistency of the migration's own constants.
+    expected = set(MIGRATION.EXPECTED_SCHEMA_TABLES)
+    assert set(MIGRATION.TENANT_TABLES) <= expected, sorted(set(MIGRATION.TENANT_TABLES) - expected)
+    assert set(MIGRATION.RAW_SQL_TABLES) <= expected, sorted(set(MIGRATION.RAW_SQL_TABLES) - expected)

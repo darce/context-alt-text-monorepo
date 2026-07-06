@@ -194,8 +194,8 @@ Owner: description-service backend lane. Fixture confirmation pass requires the 
 
 ### Checklist for Slice 3: Reports, make target, baseline evidence
 
-- [ ] `report.py` JSON + markdown + ignore-list, golden-file test
-- [ ] `cli.py` `fetch`/`score`/`run`; `make eval-captions`
+- [x] `report.py` JSON + markdown + ignore-list, golden-file test
+- [x] `cli.py` `fetch`/`score`/`run`; `make eval-captions`
 - [ ] Live smoke + committed baseline + determinism re-run
 
 ## Review Readiness

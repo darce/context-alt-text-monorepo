@@ -1,6 +1,6 @@
 # Public MVP UX/UI Polish Roadmap (2026-07-04)
 
-> **Status**: Roadmap seed (pre-epic) — decompose into an epic (proposed short ID **E20**) before execution.
+> **Status**: Roadmap seed (pre-epic) — decompose into an epic (proposed short ID **E21**) before execution.
 > **Task**: ROADMAP-REALIGN · `feature/roadmap-realign`
 > **Grounding**: [workbench-ui-refactor-assessment-2026-07-04.md](../assessments/current/workbench-ui-refactor-assessment-2026-07-04.md) (WBUX-1) + [roster-dashboard-workbench-ux-assessment-2026-07-04.md](../assessments/current/roster-dashboard-workbench-ux-assessment-2026-07-04.md) (WBUX-2); epic/roadmap/tech-debt realignment audit (handoff task `ROADMAP-REALIGN`).
 > **Goal**: take the public demo (`demo.altcontext.com`, partially launched via E15-29) from "functionally live" to a **polished public MVP** — UX/UI/design quality a first-time visitor reads as a finished product.
@@ -130,23 +130,23 @@ Phase 5 structural (parallel after P1-A)
 
 | ID | Phase | Title | Depends on |
 | --- | --- | --- | --- |
-| E20-1 | 1 | Sync status view-model + single strip | — |
-| E20-2 | 1 | Dashboard cull pass | — |
-| E20-3 | 1 | Confirm tab removal + Advanced drawer | E20-1 |
-| E20-4 | 2 | Design-token system (type/grey/elevation) + sr-004 sweep | — |
-| E20-5 | 3 | Unified review queue + person-commit | E20-1, E20-4 |
-| E20-6 | 3 | Media step compaction | E20-1, E20-4 |
-| E20-7 | 3 | Offline fail-fast + read-only mode | E20-1 |
-| E20-9 | 4 | Roster Clusters-tab retirement, person-first roster | E20-5, E15-17 s3–4 (existing plan) |
-| E20-10 | 4 | Cross-surface link contract + shim/spec migration | E20-9 |
-| E20-11 | 5 | Workbench context decomposition + phase strategy map | E20-1 |
+| E21-1 | 1 | Sync status view-model + single strip | — |
+| E21-2 | 1 | Dashboard cull pass | — |
+| E21-3 | 1 | Confirm tab removal + Advanced drawer | E21-1 |
+| E21-4 | 2 | Design-token system (type/grey/elevation) + sr-004 sweep | — |
+| E21-5 | 3 | Unified review queue + person-commit | E21-1, E21-4 |
+| E21-6 | 3 | Media step compaction | E21-1, E21-4 |
+| E21-7 | 3 | Offline fail-fast + read-only mode | E21-1 |
+| E21-9 | 4 | Roster Clusters-tab retirement, person-first roster | E21-5, E15-17 s3–4 (existing plan) |
+| E21-10 | 4 | Cross-surface link contract + shim/spec migration | E21-9 |
+| E21-11 | 5 | Workbench context decomposition + phase strategy map | E21-1 |
 
-Phase 0 stays under E15 (E15-29 + follow-on DNS cutover task); P4-A stays under the existing E15-17 plan; Phase R runs as MAINT-scoped doc slices. (E20-8 intentionally unassigned to avoid duplicate ownership of E15-17.)
+Phase 0 stays under E15 (E15-29 + follow-on DNS cutover task); P4-A stays under the existing E15-17 plan; Phase R runs as MAINT-scoped doc slices. (E21-8 intentionally unassigned to avoid duplicate ownership of E15-17.)
 
 ## 8. Success criteria
 
 - [ ] Demo live on `demo.altcontext.com` with the E15-29 clustering acceptance gate met (Phase 0).
-- [ ] One status surface per page; sync-internal jargon absent from user-visible copy, enforced by a banned-strings test over `js/admin` UI strings (term list owned by the E20-1 slice: "topology", "replay", "projection", "dead-letter", "curation acknowledgement", raw UUIDs); sr-004 pass on all status indicators.
+- [ ] One status surface per page; sync-internal jargon absent from user-visible copy, enforced by a banned-strings test over `js/admin` UI strings (term list owned by the E21-1 slice: "topology", "replay", "projection", "dead-letter", "curation acknowledgement", raw UUIDs); sr-004 pass on all status indicators.
 - [ ] One primary CTA per screen state on the Workbench; review queue is card-at-a-time with person-commit naming.
 - [ ] Roster: person list + `Add Person` reachable from zero state (rg-003); no Clusters management tab; all cross-surface links use `?person=/?queue=/?face=`.
 - [ ] Token families complete (type/grey/primary/elevation/radius/weight); zero raw hex in component sheets; tokenization test covers all sheets.

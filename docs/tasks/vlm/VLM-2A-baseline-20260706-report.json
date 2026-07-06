@@ -13,16 +13,16 @@
   "faces": {
     "detection": {
       "fn": 1,
-      "fp": 26,
-      "precision": 0.6060606060606061,
-      "recall": 0.975609756097561,
-      "tp": 40
+      "fp": 30,
+      "precision": 0.5454545454545454,
+      "recall": 0.972972972972973,
+      "tp": 36
     },
     "identification": {
       "excluded_images": [],
       "ignored_wrong_names": [],
       "macro_precision": 1.0,
-      "macro_recall": 0.32571428571428573,
+      "macro_recall": 0.33095238095238094,
       "per_identity": {
         "Bea Burke": {
           "fn": 1,
@@ -32,10 +32,10 @@
           "tp": 0
         },
         "Caitlin Weaver": {
-          "fn": 14,
+          "fn": 13,
           "fp": 0,
           "precision": 1.0,
-          "recall": 0.06666666666666667,
+          "recall": 0.07142857142857142,
           "tp": 1
         },
         "Cristina Quintana": {
@@ -60,17 +60,17 @@
           "tp": 1
         },
         "Erika Hansen Miller": {
-          "fn": 3,
+          "fn": 1,
           "fp": 0,
           "precision": null,
           "recall": 0.0,
           "tp": 0
         },
         "Kirstie Mccarrel": {
-          "fn": 5,
+          "fn": 4,
           "fp": 0,
           "precision": 1.0,
-          "recall": 0.2857142857142857,
+          "recall": 0.3333333333333333,
           "tp": 2
         },
         "Liam Maloney": {
@@ -96,7 +96,7 @@
         }
       },
       "precision": 1.0,
-      "recall": 0.2682926829268293,
+      "recall": 0.2972972972972973,
       "true_rejections": 0,
       "wrong_names": []
     }
@@ -368,9 +368,7 @@
       "inserted_identities": [],
       "media_id": 17,
       "missing_identities": [
-        "Caitlin Weaver",
-        "Cristina Quintana",
-        "Kirstie Mccarrel"
+        "Cristina Quintana"
       ],
       "must_right_failures": [],
       "path": "mock_images/cristina-1.jpg",
@@ -434,7 +432,6 @@
       "inserted_identities": [],
       "media_id": 21,
       "missing_identities": [
-        "Erika Hansen Miller",
         "Kirstie Mccarrel"
       ],
       "must_right_failures": [],
@@ -451,7 +448,6 @@
       "inserted_identities": [],
       "media_id": 22,
       "missing_identities": [
-        "Erika Hansen Miller",
         "Kirstie Mccarrel"
       ],
       "must_right_failures": [],

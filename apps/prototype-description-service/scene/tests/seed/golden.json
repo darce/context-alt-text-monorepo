@@ -243,9 +243,7 @@
       "sha256": "cb5adbad2760babea68a7317800f9f2e3abe9d7e21e327f8d2c5f36e2b799ac6",
       "media_id": 17,
       "present_identities": [
-        "Caitlin Weaver",
-        "Cristina Quintana",
-        "Kirstie Mccarrel"
+        "Cristina Quintana"
       ],
       "context_pack": {},
       "must_right": [],
@@ -301,7 +299,6 @@
       "sha256": "241b1974868d7c4cf76f166066fb8c419dddd70e5793a9ebb7c1a7e7fb1cc6ff",
       "media_id": 21,
       "present_identities": [
-        "Erika Hansen Miller",
         "Kirstie Mccarrel"
       ],
       "context_pack": {},
@@ -316,7 +313,6 @@
       "sha256": "648573b4d21c3e1b7d8029246ed20f5a516f685f6c698af2249109183cf524bd",
       "media_id": 22,
       "present_identities": [
-        "Erika Hansen Miller",
         "Kirstie Mccarrel"
       ],
       "context_pack": {},

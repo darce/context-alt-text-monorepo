@@ -16,12 +16,12 @@
 
 ## Face detection (identity-agnostic)
 
-- precision: 0.606 recall: 0.976 (tp=40 fp=26 fn=1)
+- precision: 0.545 recall: 0.973 (tp=36 fp=30 fn=1)
 
 ## Face identification (named assertions)
 
-- micro precision: 1.000 recall: 0.268
-- macro precision: 1.000 recall: 0.326
+- micro precision: 1.000 recall: 0.297
+- macro precision: 1.000 recall: 0.331
 - true rejections (strangers): 0
 
 ### Wrong-name errors (top product risk — every instance listed)
@@ -32,12 +32,12 @@
 ### Per-identity (macro components)
 
 - Bea Burke: precision=null recall=0.000 (tp=0 fp=0 fn=1)
-- Caitlin Weaver: precision=1.000 recall=0.067 (tp=1 fp=0 fn=14)
+- Caitlin Weaver: precision=1.000 recall=0.071 (tp=1 fp=0 fn=13)
 - Cristina Quintana: precision=null recall=0.000 (tp=0 fp=0 fn=1)
 - Daniel Arce: precision=null recall=0.000 (tp=0 fp=0 fn=1)
 - Ellyn Heald: precision=1.000 recall=1.000 (tp=1 fp=0 fn=0)
-- Erika Hansen Miller: precision=null recall=0.000 (tp=0 fp=0 fn=3)
-- Kirstie Mccarrel: precision=1.000 recall=0.286 (tp=2 fp=0 fn=5)
+- Erika Hansen Miller: precision=null recall=0.000 (tp=0 fp=0 fn=1)
+- Kirstie Mccarrel: precision=1.000 recall=0.333 (tp=2 fp=0 fn=4)
 - Liam Maloney: precision=1.000 recall=1.000 (tp=2 fp=0 fn=0)
 - Maria Correonero: precision=1.000 recall=0.571 (tp=4 fp=0 fn=3)
 - Ryann Wiseman: precision=1.000 recall=0.333 (tp=1 fp=0 fn=2)

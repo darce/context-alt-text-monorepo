@@ -1,0 +1,508 @@
+{
+  "manifest_version": 1,
+  "roster": [
+    "Bea Burke",
+    "Caitlin Weaver",
+    "Cristina Quintana",
+    "Daniel Arce",
+    "Ellyn Heald",
+    "Erika Hansen Miller",
+    "Kirstie Mccarrel",
+    "Liam Maloney",
+    "Maria Correonero",
+    "Ryann Wiseman"
+  ],
+  "entries": [
+    {
+      "path": "mock_images/Breiðamerkurjökull.jpg",
+      "sha256": "58e508329d4b3d4cf0c5eb8973e68d363d8b1c4eb60faecf327e17adc65143e9",
+      "media_id": 1,
+      "present_identities": [],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/bea-nye.jpg",
+      "sha256": "3a51b1ce34db0bc33c0aa89b224c284af087cdc2099e1b9e9053335450fc4fda",
+      "media_id": 2,
+      "present_identities": [
+        "Bea Burke"
+      ],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/ccqw-antartica.jpg",
+      "sha256": "431bcbcf8e6d1f8122e86b4f6aaf1f0dbbdb6072259dcbcfd4a1ac31e5696f90",
+      "media_id": 3,
+      "present_identities": [],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/ccqw-bar.jpg",
+      "sha256": "2ec3f90fff1d32ea8c17d5099958329e3c896671f9c8390eccf457030bc7ffd6",
+      "media_id": 4,
+      "present_identities": [],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/ccqw-erika.jpg",
+      "sha256": "34271e1e49ba12f01a0494b6b560709d45c4941a95c88faef929092a0a33dd27",
+      "media_id": 5,
+      "present_identities": [
+        "Erika Hansen Miller"
+      ],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/ccqw-flowers.jpg",
+      "sha256": "24ee356113a210d502072299ee77ccf84ca9a0aa2d743d91c88ae4d222acd969",
+      "media_id": 6,
+      "present_identities": [],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/ccqw-hair.jpg",
+      "sha256": "c7f0051132ae985a01364f3ec4fb04e1b62f745a9d99f52e93675b31d4cbf2bd",
+      "media_id": 7,
+      "present_identities": [],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/ccqw-occlusion-2.jpg",
+      "sha256": "6babb9bbf95538128235c024ecf1c62db4eb5ce4d832e895698a85babeb55de3",
+      "media_id": 8,
+      "present_identities": [],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/ccqw-occlusion.jpg",
+      "sha256": "c34b723d5623195bd06aa8289951f929c57059ddde7957f7ab8a07faf2ed152c",
+      "media_id": 9,
+      "present_identities": [],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/ccqw-purple.jpg",
+      "sha256": "54cc9f8738e080771a7fd35e468a9537a5fb1230406a25cb68852f77a88faf70",
+      "media_id": 10,
+      "present_identities": [],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/ccqw-running-2.jpg",
+      "sha256": "df3e4b8407dc8d272ccc5e02e56647bec6d65c5fbbe0377f50da1241da601bb9",
+      "media_id": 11,
+      "present_identities": [],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/ccqw-running.jpg",
+      "sha256": "013bca0b2b1ebb367445ec1783e76b48fe1c13a2ab56f2f19f4335ceeb21feaa",
+      "media_id": 12,
+      "present_identities": [],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/ccqw-sunglasses-flowers.jpg",
+      "sha256": "da81e95506167c33abdc77962ab68473d596f2a118110d9dcb5804aadc338e19",
+      "media_id": 13,
+      "present_identities": [],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/ccqw-sunglasses.jpg",
+      "sha256": "4163f17f853f80f7e7b38fd80ea53af1c3c93441d5865dbdb382ac5f5b782adf",
+      "media_id": 14,
+      "present_identities": [],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/ccqw-underexposed.jpg",
+      "sha256": "6e341aa64418923f9e2ea18eb20e733d094ccb53ac68d565fb4aa1dc4f6722f4",
+      "media_id": 15,
+      "present_identities": [],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/ccqw.blurry.jpg",
+      "sha256": "054a9b14823ef9d7ca0cb8bb4d44c4908b9c5bf7de7080306e65e03523caba5b",
+      "media_id": 16,
+      "present_identities": [],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/cristina-1.jpg",
+      "sha256": "cb5adbad2760babea68a7317800f9f2e3abe9d7e21e327f8d2c5f36e2b799ac6",
+      "media_id": 17,
+      "present_identities": [
+        "Cristina Quintana"
+      ],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/example-ellynheald-goldleaf.jpeg",
+      "sha256": "6e8002b984909c7545f8c7e87453721772b92376ef00532cb94f6327ea890c04",
+      "media_id": 18,
+      "present_identities": [],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/k.mcc-1.jpg",
+      "sha256": "17778829d56efc06b51a0ede6db7c8db36e48db9348d726aabe665fb281d5d28",
+      "media_id": 19,
+      "present_identities": [],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/kirstie-1.jpeg",
+      "sha256": "ed83b4f5861fe50cd6b0548a6e18d5633846f59bd68a4995a1745861c5b811da",
+      "media_id": 20,
+      "present_identities": [
+        "Kirstie Mccarrel"
+      ],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/kirstie-boat.jpg",
+      "sha256": "241b1974868d7c4cf76f166066fb8c419dddd70e5793a9ebb7c1a7e7fb1cc6ff",
+      "media_id": 21,
+      "present_identities": [
+        "Kirstie Mccarrel"
+      ],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/kirstie-boat_detected.jpg",
+      "sha256": "648573b4d21c3e1b7d8029246ed20f5a516f685f6c698af2249109183cf524bd",
+      "media_id": 22,
+      "present_identities": [
+        "Kirstie Mccarrel"
+      ],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/kirstie-daniel-sunglasses.jpg",
+      "sha256": "88e91c52269a49d7176ddac5e40aa91295cb055565f34129b9e1e4bdfac8f603",
+      "media_id": 23,
+      "present_identities": [
+        "Daniel Arce",
+        "Kirstie Mccarrel"
+      ],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/kirstie-pool.jpg",
+      "sha256": "52e20b0e2a5079d25dc2af25c8c4eeff07408252a0b2adb288db91c955d389a8",
+      "media_id": 24,
+      "present_identities": [
+        "Kirstie Mccarrel"
+      ],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/liam-maloney-2.jpg",
+      "sha256": "33c54fbb5d4762dc1497725a748ec9ee4a850a2de49bad34348a9353c34a45dc",
+      "media_id": 25,
+      "present_identities": [
+        "Liam Maloney"
+      ],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/liam-maloney-home.jpg",
+      "sha256": "4e0ce9a2ccc7ace3de4a8968c9badd75d5ae3c83c9ea81082ca44a9658b9bc98",
+      "media_id": 26,
+      "present_identities": [
+        "Liam Maloney"
+      ],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/liam-maloney-painting.jpg",
+      "sha256": "4e9ecee469b6a48a55c95e6a32688498d7065b2ba403eb697f06ddb65a541416",
+      "media_id": 27,
+      "present_identities": [
+        "Liam Maloney"
+      ],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/maria-cocktail.jpg",
+      "sha256": "19413ef423beccfff22a0f962ec0262c33a73b3899438f4b8e660296f69d6147",
+      "media_id": 28,
+      "present_identities": [
+        "Maria Correonero"
+      ],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/maria-party.jpg",
+      "sha256": "5e51ec4730c5e5c1ebb8f0122e26e69e19c38068125ab55801957d9499597e61",
+      "media_id": 29,
+      "present_identities": [
+        "Maria Correonero"
+      ],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/maria-pool.jpg",
+      "sha256": "4b98847d196ea19d6fc1181f0f16533c61ef6dfe8ba0da18bfc13d77afc404c1",
+      "media_id": 30,
+      "present_identities": [
+        "Maria Correonero"
+      ],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/mcm-eye-blocked.jpg",
+      "sha256": "d77b26f9e20d222ee8d578e619b91db4af106f8811c106e33d4cfbd3a1f41f1a",
+      "media_id": 31,
+      "present_identities": [],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/mcm-icecave.jpg",
+      "sha256": "e949ba1d682e60f24b94cf57d2e11109a912ffbc75ba7b1754e532b1a37fc170",
+      "media_id": 32,
+      "present_identities": [],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/mcm-planecrash.jpg",
+      "sha256": "4dd4c1ddb589fce8335891680a18367e4e8e9db449569de889826b692f0ca053",
+      "media_id": 33,
+      "present_identities": [],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/nina-machiavelli.jpeg",
+      "sha256": "a3bba8687c958f4a4c61bee2db4c154fb435fe3d8e2ceee835a3ac46b22a7a4f",
+      "media_id": 34,
+      "present_identities": [],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/rrw-mirror.jpg",
+      "sha256": "2b57b7a7d498cafbad6b5587ddabeb8d4c2fc8d1c4763f120d7374df188644f4",
+      "media_id": 35,
+      "present_identities": [],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/ryann-bar.jpg",
+      "sha256": "dbbf96ca265c69610b3974ba2a58920224af83130613ccd13e6a41fd7886e05e",
+      "media_id": 36,
+      "present_identities": [
+        "Ryann Wiseman"
+      ],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/ryann-group-party.jpg",
+      "sha256": "e7081767186f95d469cbd8792a0361d6580e14637688beab9914ec55eb158740",
+      "media_id": 37,
+      "present_identities": [
+        "Ryann Wiseman"
+      ],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    },
+    {
+      "path": "mock_images/ryann-party.jpg",
+      "sha256": "7c1a1592345f0fbcb9ee33991665ebab093234800fac1debcc35d6ac31b636db",
+      "media_id": 38,
+      "present_identities": [
+        "Ryann Wiseman"
+      ],
+      "context_pack": {},
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      }
+    }
+  ]
+}

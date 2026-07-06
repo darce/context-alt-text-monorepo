@@ -280,8 +280,13 @@ describe('WorkbenchPage (integration-lite)', () => {
 
     renderWithClient(client);
 
-    const rowCheckbox = await screen.findByRole('checkbox', { name: /Select media item Photo Name/i });
     const user = userEvent.setup();
+    const showMediaTable = await screen.findByRole('button', { name: 'Show media table' });
+    if (showMediaTable) {
+      await user.click(showMediaTable);
+    }
+
+    const rowCheckbox = await screen.findByRole('checkbox', { name: /Select media item Photo Name/i });
     await user.click(rowCheckbox);
 
     const scanButton = screen.getByRole('button', { name: /Analyze selected media/i });

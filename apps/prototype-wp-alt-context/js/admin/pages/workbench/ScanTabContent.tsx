@@ -10,6 +10,7 @@ import {
   SuggestionReviewPanel,
   WorkbenchFindingsPanel,
 } from './identity-clusters';
+import { useWorkbenchFindings } from './identity-clusters/useWorkbenchFindings';
 import { MediaSelection } from './MediaSelection';
 import { useWorkbenchContext } from './WorkbenchContext';
 
@@ -55,6 +56,23 @@ export const ScanTabContent = (): React.JSX.Element => {
   } = useWorkbenchContext();
 
   const findingsDetailRef = React.useRef<HTMLDivElement>(null);
+  const findings = useWorkbenchFindings();
+  const [userExpandedMedia, setUserExpandedMedia] = React.useState(false);
+  const previousHasFindings = React.useRef(findings.hasFindings);
+
+  React.useEffect(() => {
+    if (findings.hasFindings && !previousHasFindings.current) {
+      setUserExpandedMedia(false);
+    }
+    previousHasFindings.current = findings.hasFindings;
+  }, [findings.hasFindings]);
+
+  const isMediaCollapsed =
+    findings.hasFindings &&
+    !userExpandedMedia &&
+    !findings.isLoading &&
+    !findings.isError &&
+    !findings.isUnavailable;
 
   const handleTargetFindings = (): void => {
     const anchor = findingsDetailRef.current;
@@ -131,7 +149,7 @@ export const ScanTabContent = (): React.JSX.Element => {
           )}
         </div>
       </ErrorBoundary>
-      <MediaSelection />
+      <MediaSelection collapsed={isMediaCollapsed} onExpand={() => setUserExpandedMedia(true)} />
     </>
   );
 };

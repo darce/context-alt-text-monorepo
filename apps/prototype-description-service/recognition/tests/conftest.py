@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 import pytest_asyncio
 from sqlalchemy import Table, event, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
@@ -277,3 +278,72 @@ def cluster_service(
         logger=None,  # Logging not needed for functional integration tests
         session=db_session,  # Required for DB operations in cluster_unclustered_identities
     )
+
+
+# ---- E15-34 PG schema substrate -----------------------------------------
+#
+# Session-scoped scratch database for `-m pg` schema tests. The default URL
+# targets the Homebrew Postgres from `make postgres-start`; override with
+# IDENTITY_PG_TEST_URL (sync psycopg URL — DDL and the verifier run on sync
+# engines; derive an asyncpg variant inside tests that exercise async writers).
+# Skips (never fails) when Postgres is unreachable.
+
+IDENTITY_PG_TEST_URL = os.environ.get(
+    "IDENTITY_PG_TEST_URL",
+    "postgresql+psycopg://context:context@localhost:5432/acx_identity_test",
+)
+
+
+@pytest.fixture(scope="session")
+def pg_migrated_engine():
+    """Empty scratch DB with the identity migration applied, torn down after."""
+    import subprocess
+    import sys
+    from urllib.parse import urlsplit
+
+    from sqlalchemy import create_engine
+
+    parts = urlsplit(IDENTITY_PG_TEST_URL)
+    db_name = parts.path.lstrip("/")
+    db_owner = parts.username or "context"
+    # create/drop database needs a role with CREATEDB; the Homebrew superuser
+    # (the OS user, no password) is the local default. Override for CI.
+    admin_url = os.environ.get("IDENTITY_PG_ADMIN_URL", "postgresql+psycopg://localhost:5432/postgres")
+
+    admin = create_engine(admin_url, isolation_level="AUTOCOMMIT")
+    try:
+        with admin.connect() as conn:
+            conn.execute(text(f'DROP DATABASE IF EXISTS "{db_name}"'))
+            conn.execute(text(f'CREATE DATABASE "{db_name}" OWNER "{db_owner}"'))
+        # CREATE EXTENSION needs superuser; pre-create it so the migration's
+        # CREATE EXTENSION IF NOT EXISTS no-ops under the app role.
+        scratch_admin_url = admin_url.rsplit("/", 1)[0] + f"/{db_name}"
+        scratch_admin = create_engine(scratch_admin_url, isolation_level="AUTOCOMMIT")
+        with scratch_admin.connect() as conn:
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        scratch_admin.dispose()
+    except OperationalError:
+        admin.dispose()
+        pytest.skip(f"Postgres unreachable at {admin_url}; start it with `make postgres-start`")
+
+    # env.py derives the URL from PG*/DB_NAME env vars (ignores alembic.ini's
+    # sqlalchemy.url), and db.settings caches resolution — run the upgrade in a
+    # subprocess with DB_NAME pointed at the scratch database.
+    upgrade = subprocess.run(
+        [sys.executable, "-m", "alembic", "-c", "db/alembic.ini", "upgrade", "head"],
+        env={**os.environ, "DB_NAME": db_name},
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    if upgrade.returncode != 0:
+        raise RuntimeError(f"alembic upgrade failed on {db_name}:\n{upgrade.stdout}\n{upgrade.stderr}")
+
+    engine = create_engine(IDENTITY_PG_TEST_URL)
+    try:
+        yield engine
+    finally:
+        engine.dispose()
+        with admin.connect() as conn:
+            conn.execute(text(f'DROP DATABASE IF EXISTS "{db_name}" WITH (FORCE)'))
+        admin.dispose()

@@ -30,6 +30,14 @@ class DescriptionCandidateServiceTest extends TestCase
         $this->assertSame('20-no-alt-first.jpg', $result['candidates'][0]['filename']);
         $this->assertSame('', $result['candidates'][0]['current_alt_text']);
 
+        // Unified row set: every candidate row also carries the CLI-consumed
+        // fields, with candidate_reason mirroring reason (reconciliation rule).
+        $this->assertSame('No alt first', $result['candidates'][0]['title']);
+        $this->assertSame('image/png', $result['candidates'][0]['mime_type']);
+        $this->assertSame('missing_alt', $result['candidates'][0]['candidate_reason']);
+        $this->assertFalse($result['candidates'][0]['has_alt_text']);
+        $this->assertNull($result['candidates'][0]['provenance']);
+
         $this->assertSame(2, $result['total_exclusions']);
         $this->assertSame(
             array(
@@ -44,6 +52,12 @@ class DescriptionCandidateServiceTest extends TestCase
                 $result['exclusions']
             )
         );
+
+        // Exclusion rows carry the same unified set so both consumers read
+        // consistent fields off any partition.
+        $this->assertTrue($result['exclusions'][0]['has_alt_text']);
+        $this->assertSame('has_alt_text', $result['exclusions'][0]['candidate_reason']);
+        $this->assertSame('A human-written description.', $result['exclusions'][0]['current_alt_text']);
     }
 
     public function testPaginatesCandidatesAfterFiltering(): void

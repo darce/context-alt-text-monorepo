@@ -55,6 +55,11 @@ def _context_pack():
             {"taxonomy": "product_cat", "name": "Jackets", "slug": "jackets"},
             {"taxonomy": "product_tag", "name": "Spring", "slug": "spring"},
         ],
+        "identity": {
+            "policy": {"person_naming": "disabled"},
+            "identities": [],
+            "review_reasons": ["person_naming_policy_disabled"],
+        },
     }
 
 
@@ -67,6 +72,9 @@ def test_request_accepts_typed_context_pack_and_rejects_unbounded_terms():
     assert envelope.context_pack.attachment is not None
     assert envelope.context_pack.attachment.title == "Summer sale hero"
     assert envelope.context_pack.taxonomy_terms[0].name == "Jackets"
+    assert envelope.context_pack.identity is not None
+    assert envelope.context_pack.identity.policy.person_naming == "disabled"
+    assert envelope.context_pack.identity.review_reasons == ["person_naming_policy_disabled"]
 
     bad = {"tenant_id": TENANT_ID, "media_id": 7, "context_pack": {"taxonomy_terms": []}}
     bad["context_pack"]["taxonomy_terms"] = [

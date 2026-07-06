@@ -10,6 +10,7 @@ import {
   SuggestionReviewPanel,
   WorkbenchFindingsPanel,
 } from './identity-clusters';
+import { useWorkbenchFindings } from './identity-clusters/useWorkbenchFindings';
 import { MediaSelection } from './MediaSelection';
 import { useWorkbenchContext } from './WorkbenchContext';
 
@@ -32,7 +33,6 @@ const NoMediaPanel = () => (
 
 export const ScanTabContent = (): React.JSX.Element => {
   const {
-    selectedMedia,
     isScanRunning,
     isCancellingScan,
     statusText,
@@ -50,13 +50,29 @@ export const ScanTabContent = (): React.JSX.Element => {
     hasIdentities,
     clusterPanel,
     dispatchClusterPanel,
-    scan,
     cancelScan,
     retryScanStream,
     activeJobIds,
   } = useWorkbenchContext();
 
   const findingsDetailRef = React.useRef<HTMLDivElement>(null);
+  const findings = useWorkbenchFindings();
+  const [userExpandedMedia, setUserExpandedMedia] = React.useState(false);
+  const previousHasFindings = React.useRef(findings.hasFindings);
+
+  React.useEffect(() => {
+    if (findings.hasFindings && !previousHasFindings.current) {
+      setUserExpandedMedia(false);
+    }
+    previousHasFindings.current = findings.hasFindings;
+  }, [findings.hasFindings]);
+
+  const isMediaCollapsed =
+    findings.hasFindings &&
+    !userExpandedMedia &&
+    !findings.isLoading &&
+    !findings.isError &&
+    !findings.isUnavailable;
 
   const handleTargetFindings = (): void => {
     const anchor = findingsDetailRef.current;
@@ -66,14 +82,6 @@ export const ScanTabContent = (): React.JSX.Element => {
     anchor.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
     // WHY: move keyboard/SR focus with the scroll so "Review next" lands users on the queues.
     anchor.focus({ preventScroll: true });
-  };
-
-  const handleScanFaces = (): void => {
-    const mediaIds = selectedMedia.map((item) => item.id);
-    if (mediaIds.length === 0) {
-      return;
-    }
-    scan(mediaIds);
   };
 
   const handleCancelScan = (): void => {
@@ -87,8 +95,6 @@ export const ScanTabContent = (): React.JSX.Element => {
   return (
     <>
       <ScanActionPanel
-        selectedCount={selectedMedia.length}
-        onScanFaces={handleScanFaces}
         onCancelScan={handleCancelScan}
         isScanning={isScanRunning}
         isCancelling={isCancellingScan}
@@ -143,7 +149,7 @@ export const ScanTabContent = (): React.JSX.Element => {
           )}
         </div>
       </ErrorBoundary>
-      <MediaSelection />
+      <MediaSelection collapsed={isMediaCollapsed} onExpand={() => setUserExpandedMedia(true)} />
     </>
   );
 };

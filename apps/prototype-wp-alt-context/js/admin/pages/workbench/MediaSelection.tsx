@@ -5,11 +5,18 @@ import { __ } from '@wordpress/i18n';
 import type { WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
 import type { WorkbenchMediaStatus } from '../../api/workbenchMediaApi';
 import { MediaSelectionTableBody } from './MediaSelectionTableBody';
+import { MediaAnalyzeCta } from './MediaAnalyzeCta';
+import { MediaSummaryBar } from './MediaSummaryBar';
 
 import { Checkbox } from '../../../components/ui/checkbox';
 import { useWorkbenchContext } from './WorkbenchContext';
 
-export const MediaSelection = (): React.JSX.Element => {
+interface MediaSelectionProps {
+  collapsed?: boolean;
+  onExpand?: () => void;
+}
+
+export const MediaSelection = ({ collapsed = false, onExpand }: MediaSelectionProps): React.JSX.Element => {
   const {
     mediaQuery,
     statusMessage,
@@ -50,6 +57,10 @@ export const MediaSelection = (): React.JSX.Element => {
       ? __('Unable to load identity data.', 'alt-context')
       : null;
 
+  if (collapsed) {
+    return <MediaSummaryBar onExpand={onExpand ?? (() => undefined)} />;
+  }
+
   return (
     <>
       <div className="acx-media-selection">
@@ -61,15 +72,6 @@ export const MediaSelection = (): React.JSX.Element => {
           statusMessage={statusMessage}
           isError={isError}
           onRetry={onRetry}
-        />
-
-        <MediaSelectionPagination
-          currentPage={currentPage}
-          totalPages={totalPages}
-          perPage={perPage}
-          onPerPageChange={onPerPageChange}
-          onPageChange={onPageChange}
-          labelId="acx-media-page-size-label-top"
         />
 
         <table className="acx-media-selection__table">
@@ -101,14 +103,17 @@ export const MediaSelection = (): React.JSX.Element => {
           </tbody>
         </table>
 
-        <MediaSelectionPagination
-          currentPage={currentPage}
-          totalPages={totalPages}
-          perPage={perPage}
-          onPerPageChange={onPerPageChange}
-          onPageChange={onPageChange}
-          labelId="acx-media-page-size-label-bottom"
-        />
+        <div className="acx-media-selection__footer">
+          <MediaSelectionPagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            perPage={perPage}
+            onPerPageChange={onPerPageChange}
+            onPageChange={onPageChange}
+            labelId="acx-media-page-size-label"
+          />
+          <MediaAnalyzeCta />
+        </div>
       </div>
       {detailStatusMessage && (
         <div className="acx-identity-status">

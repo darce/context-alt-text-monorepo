@@ -386,9 +386,7 @@ async def revoke_key(
     try:
         outcome = await revoke_key_atomic(session, key_id=key_id)
     except UnknownKeyError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="api key not found"
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="api key not found") from exc
     return RevokeKeyResponse(
         key_id=outcome.record.id,
         tenant_id=outcome.record.tenant_id,
@@ -553,9 +551,7 @@ async def console_mint_key(
     return await _render_console_response(session, minted_key=raw, message="API key minted.")
 
 
-@admin_router.post(
-    "/ui/keys/{key_id}/revoke", include_in_schema=False, dependencies=[Depends(require_same_origin)]
-)
+@admin_router.post("/ui/keys/{key_id}/revoke", include_in_schema=False, dependencies=[Depends(require_same_origin)])
 async def console_revoke_key(
     key_id: uuid.UUID,
     session: AsyncSession = Depends(get_admin_session),
@@ -585,7 +581,9 @@ def assert_admin_env_dsn(*, runtime_mode: str | None = None, dsn: str | None = N
 
     from scripts.manage_api_keys import _validate_env_vs_dsn
 
-    resolved_mode = runtime_mode if runtime_mode is not None else os.environ.get("RECOGNITION_RUNTIME_MODE", "production")
+    resolved_mode = (
+        runtime_mode if runtime_mode is not None else os.environ.get("RECOGNITION_RUNTIME_MODE", "production")
+    )
     env_token = "prod" if resolved_mode == "production" else "local"
     resolved_dsn = dsn if dsn is not None else get_database_settings().postgres_dsn
 

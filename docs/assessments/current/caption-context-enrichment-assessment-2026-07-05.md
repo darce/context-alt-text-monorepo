@@ -5,6 +5,7 @@
 > **Task:** `VLM-2` (branch `feature/vlm-2`)
 > **Question evaluated:** How to raise generated image-description quality by (a) adopting a context-fusion caption architecture (arXiv 2606.18553), (b) using OpenCV 5 for CPU-only scene analysis and dependency reduction, (c) adding user-defined brand/logo detection that auto-tags instances via the clustering engine, and (d) exploiting PostgreSQL 18/19 features.
 > **Source inputs:** arXiv [2606.18553v1](https://arxiv.org/html/2606.18553v1) (Hierarchical Multi-Modal Retrieval for Knowledge-Grounded News Image Captioning, EVENTA 2025); [opencv.org/opencv-5](https://opencv.org/opencv-5/); [PostgreSQL 18 announcement](https://www.postgresql.org/about/news/postgresql-18-released-3142/); [PostgreSQL 19.0 release notes](https://www.postgresql.org/docs/release/19.0/) (beta); `literature/extracted/refactoring/distilled/`; code (`apps/prototype-description-service`); [identity-prose-merge-design-2026-06-15.md](./identity-prose-merge-design-2026-06-15.md); [segmentation-vlm-pipeline-feasibility-2026-06-15.md](./segmentation-vlm-pipeline-feasibility-2026-06-15.md); [context-aware-image-description-roadmap-2026-06-13.md](../../roadmaps/context-aware-image-description-roadmap-2026-06-13.md); [roadmap-pg18-upgrade.md](../../roadmaps/roadmap-pg18-upgrade.md); [e19-4a-identity-prose-merge-scope.md](../../scopes/e19-4a-identity-prose-merge-scope.md).
+> **Revision B (2026-07-05):** folded a 12-paper sweep — [BACON 2407.03314](https://arxiv.org/pdf/2407.03314), ["Inserting Faces inside Captions" 2405.02305](https://arxiv.org/pdf/2405.02305), [PerceptionRubrics 2606.28322](https://arxiv.org/html/2606.28322v2), [BLV curator study 2605.31080](https://arxiv.org/html/2605.31080v1), [HBoP 2502.10118](https://arxiv.org/html/2502.10118v2), [VISE 2606.27373](https://arxiv.org/html/2606.27373v1), [MosAIC 2411.11758](https://arxiv.org/html/2411.11758v1), [HyFL-CLIP 2607.00428](https://arxiv.org/html/2607.00428v1), [DataComp-VLM 2606.28551](https://arxiv.org/html/2606.28551v2), [CANVAS 2606.09846](https://arxiv.org/abs/2606.09846), [Accessible-XAI 2603.02486](https://arxiv.org/html/2603.02486v1), [TICR 2410.06314](https://arxiv.org/html/2410.06314v1) — plus the local library (`~/Documents/research papers/`, 14 further papers incl. the deployed Eluvio sports-captioning system, CoTalk, Ensemble Decoding, Whitened CLIP, RE-VLM, CIAN) and a July-2026 small-VLM landscape survey. Adds §§3a, 9–11; rewrites §6; re-sequences §12. BLV framing sharpened: the target is captions that "paint the image" for blind/low-vision users.
 
 ---
 
@@ -14,7 +15,9 @@
 2. **OpenCV 5 is a credible dependency-reducer — spike-gated, not a commitment.** The rewritten CPU DNN engine (>80% ONNX op coverage, QDQ quantized models, beats onnxruntime by 11–36% on their CPU benchmarks) is a candidate replacement for `onnxruntime` (InsightFace path), and native VLM inference (PaliGemma, Qwen 2.5) is a candidate replacement for torch/transformers (Florence path). Kept SIFT/ORB plus new ALIKED + LightGlueMatcher are the enabling layer for brand detection. Risks: SFace model-weight license history, text-detection zoo models unverified under the new engine, ENGINE_NEW is CPU-only (fine for A1).
 3. **Brand detection: template feature-matching first, open-vocab later.** Tenant uploads a logo (or selects a bbox in an existing image) → keypoint template (ORB/ALIKED) + a global crop embedding in pgvector → per-image matching (LightGlue/BF) emits bbox + confidence → instances stored in the existing identity tables under a non-face `identity_type` → confirmed brand names enter the `ContextPack` and flow through the **same fusion stage as identities**. No new clustering algorithm needed; the curation loop (confirm/reject) is reused as-is.
 4. **PG18 yes (per existing roadmap), PG19 no (beta).** PG18 is GA and already has an adoption roadmap; nothing here changes it — uuidv7 for the new brand tables, AIO + skip scan help pgvector-filtered reads. PG19 is beta-1: track `INSERT … ON CONFLICT DO SELECT` (one-round-trip caption-cache get-or-insert) and `REPACK CONCURRENTLY` (online bloat reclaim on churny embedding tables) for adoption **after GA**; build nothing against it now.
-5. **Quality target needs a measuring stick.** The repo has **no** caption-quality benchmark — the E19-1 harness measures latency/RSS with eyeball quality. Before fusion work lands, freeze a small tenant-representative reference set and score description drafts (deterministic checks + LLM-judge rubric); otherwise "higher quality captions" is unfalsifiable.
+5. **Quality target needs a measuring stick.** The repo has **no** caption-quality benchmark — the E19-1 harness measures latency/RSS with eyeball quality. Before fusion work lands, freeze a small tenant-representative reference set and score description drafts (deterministic checks + LLM-judge rubric); otherwise "higher quality captions" is unfalsifiable. §6 (rev B) specifies the harness: PerceptionRubrics-style gated Must-Right/Easy-Wrong rubrics + insertion-rate KPI + cheap CPU gates.
+6. **The deterministic identity merge is production-validated (rev B).** "Inserting Faces inside Captions" (2405.02305) is our E19-4a design implemented: post-hoc name insertion via attention-heatmap ∩ face-bbox overlap hit **93.2% insertion rate** and lifted *every* caption metric on *every* base model — and they *discarded* LLM rewriting for bias. Our Florence-2 phrase-grounding boxes are strictly stronger than their diffuse proxy heatmaps (Θ=0.05). Eluvio's Super Bowl LIX captioner is deployed proof of **constrain-then-map**: the model emits only roster-checkable tokens with HIGH/LOW confidence; names are mapped from the roster, never generated (91.2 vs 81.0 BERTScore). Deterministic-first, LLM-later is no longer a bet; it is the published consensus.
+7. **A slow "detailed description" tier is realistic on the A1 now (rev B).** Qwen3-VL-4B-Instruct — E19-1's measured quality winner (408 s/img unquantized, 9.6 GB, no hallucination) — now ships **official GGUF**; Q4 via llama.cpp is estimated 1–3 min/img on ARM (unverified, re-benchmark). Async-worker only, opt-in, with user-facing expectation setting ("detailed description, takes a few minutes"). Bake off against **CapRL-Qwen3VL-4B** (caption-specialized RL tune, Apache-2.0, official GGUF) and MiniCPM-V. No Florence-3 exists; Florence-2 stays the fast interactive tier.
 
 ---
 
@@ -66,6 +69,25 @@ Contract changes implied (all greenfield, no migration): structure `VisualFacts`
 
 That cache observation is the single biggest latency/quality win available without touching models: **an 11–17 s Florence pass is currently re-run whenever a post title or taxonomy term changes.**
 
+### 3a. Refinements from the paper sweep (rev B)
+
+**Naming discipline — constrain-then-map (Eluvio, deployed):** no stage ever *generates* a person or brand name. Detectors emit only roster-checkable tokens (cluster/template IDs + HIGH/LOW confidence); names are mapped from the roster/brand registry deterministically at merge time. Uncertain identities never enter any prompt — the caption says "a person at the podium" instead. Few-shot exemplars *hurt* entity accuracy in their production system; prefer tight instructions.
+
+**VisualFacts schema conventions (BACON):** number same-category instances (`person 1`, `person 2`) — exactly the slot structure the face-name merge joins on; carry a bbox per object as a first-class field; split foreground/background and style/theme; keep the serialization regex-parseable for models without JSON mode. BACON's ablation (element-wise structured queries beat "describe this image" by +26–50% semantic consistency) is direct evidence for structured facts over one dense caption.
+
+**Prose contract for BLV output (HBoP + curator study 2605.31080 + CANVAS):** tiered composition — scene-level sentence(s) first (orientation/setting), then regional groupings, then fine detail; sensory vocabulary (color, texture, mood, atmosphere); hard length cap; jargon ban; **hedge uncertain claims** ("appears to be…") and surface provenance in phrasing for roster facts ("identified from your site's people roster"). Region selection is deterministic CPU math (size-ranked NMS + K-means over boxes, ~20 lines); Florence-2's native region captioning replaces HBoP's SAM+BLIP stack. Anti-hallucination instruction (FAST-GOAL, tested): "describe ONLY what is visibly present; do not speculate about events outside the frame."
+
+**Fact merge with source precedence (RE-VLM):** every fact is tagged with its source; on conflict, trust order wins — identity facts *only* from roster, appearance facts from the VLM, contextual facts from the context pack. The fusion stage is **merge-only**: no new semantic units may appear that aren't traceable to an input fact (CoTalk's `units_out ⊆ units_in` contract — machine-checkable).
+
+**Context pre-summarization (CIAN):** never dump raw post bodies into the fusion prompt; summarize/select first (the Stage-2 relevance filter from §2 or a cheap extractive step). Do not adopt CIAN's n-gram refinement (metric cosmetics, hallucination-risky).
+
+**CPU-cheap verification layer (VISE + Ensemble Decoding + Whitened CLIP + 2405.02305):**
+- *Crop-and-reinspect:* re-run Florence-2 on face-cluster bbox crops; keep only facts consistent across full-image and crop passes (hallucination drops sharply with fewer irrelevant objects in frame).
+- *Ghosting probe:* blur a claimed entity's region and re-query; if the claim survives, it was prior-driven — flag it.
+- *Geometric consistency:* flip/transform the image, re-detect, GIoU against the projected roster box as a confidence gate before naming.
+- *Name-correction rule:* replace any captioner-guessed name with the roster-confirmed one (kills an entire hallucination class); count-aware syntax rules ("two men" → both names or neither).
+- *Whitened CLIP:* near-free (one CLIP pass + a matvec) image-OOD gate (screenshots/renders → conservative template) and name-insertion likelihood-delta sanity check — never standalone, always paired with roster confidence.
+
 ## 4. OpenCV 5 evaluation (CPU-only fit)
 
 Confirmed from the release surface (June 2026, Apache-2.0, C++17, Python w/ NumPy 2.x):
@@ -104,13 +126,24 @@ Recommendation: one bounded **spike task** producing a benchmark artifact in the
 
 **Risks:** false positives on lookalike marks (mitigated: confirm-before-context, the same human-in-the-loop stance as person naming); tiny/low-res logos below keypoint density (declare a min-size floor, surface as `review_reasons`); per-template scan cost grows linearly with template count (bound templates per tenant; pgvector shortlist before keypoint match).
 
-## 6. Caption-quality evaluation gap
+## 6. Caption-quality evaluation design (rewritten rev B)
 
-"Higher-quality captions" currently has no measurement. Standard benchmarks (COCO/NoCaps) mis-fit the product (alt-text + named-context, tenant imagery). Minimal viable eval, before fusion work merges:
-- Freeze **20–30 reference images** (extend the E19-1 set: people-with-roster-matches, products, logos, text-in-image, no-context scenes) + human-written reference alt text.
-- Deterministic assertions: confirmed names present iff policy allows; no unconfirmed names (hallucinated-identity check = the E19-4a top risk, now testable); brand named iff confirmed instance; length/format bounds.
-- Rubric score (accuracy/completeness/fluency/context-integration, 1–5) via LLM-judge with the rubric checked in; store both scores per run in the existing benchmark JSON schema so every adapter/fusion change ships a before/after artifact.
-- CIDEr/CLIPScore optional later via E20-11's hosted harness; not a gate.
+"Higher-quality captions" currently has no measurement. Standard benchmarks (COCO/NoCaps) mis-fit the product (alt-text + named-context, tenant imagery). Design, assembled from the sweep:
+
+**Golden set:** freeze **20–30 reference images** (extend the E19-1 set: people-with-roster-matches, products, logos, text-in-image, no-context scenes) + human-written reference alt text. External anchor: [AstroCaptions](https://huggingface.co/datasets/momentslab/AstroCaptions) (44k NASA images, 13k named persons, public) for name-insertion regression at scale.
+
+**Gated rubric scoring (PerceptionRubrics — adopt):** per golden image, two rubric lists of atomic booleans. *Must-Right* = context-pack facts (roster-confirmed names iff policy allows, confirmed brands, key objects) — **any Must-Right failure zeroes the image's score**. *Easy-Wrong* = hallucination traps **mined from our own failure modes** (run the pipeline over a corpus, collect frequent hallucinations — e.g. Florence's "dining table" on a flower — convert to standing trap rubrics); score = fraction of traps passed. An LLM judge answers each boolean; gated scoring correlates with human ranking at r=0.916 vs ~0.45–0.60 for DOCCI/DetailCaps-style metrics.
+
+**KPIs:**
+- **Insertion rate** (% of confirmed identities that land in the caption) — 2405.02305's benchmark is 93.2%; ours should beat it with real phrase-grounding boxes.
+- **Semantic-unit traceability** (CoTalk): parse the caption into object/attribute units; richness = unit count, hallucination = units not traceable to a Florence fact, context-pack field, or roster identity. Enforces the merge-only fusion contract.
+- **Tag-coverage completeness** (MosAIC) vs Florence's object list; CHAIR/POPE-style object probes as the hallucination regression suite.
+
+**Cheap CPU gates (no LLM):** FKRE readability band ~50–70 (flag below 45); length error vs reference; repetition ratio (1 − unique/total tokens); Div-2/mBLEU-4 diversity + SBERT relevance (all-MiniLM-L6-v2, CPU-fast) for the detailed tier.
+
+**Judge discipline (curator study):** LLM judges align with BLV humans only on visually-grounded traits (composition/colour, ρ≈0.5–0.6) — trust them there; do **not** trust judge scores for vividness/emotional tone without a small human BLV calibration pass. Score coverage of atomic facts, not word count — PerceptionRubrics confirmed verbose ≠ better.
+
+Store all scores per run in the existing E19-1 benchmark JSON schema so every adapter/fusion change ships a before/after artifact. CIDEr/CLIPScore optional later via E20-11's hosted harness; not a gate. MosAIC's warning stands: free-form enrichment raised completeness but *dropped* correctness (60.2% vs 64.6% baseline) — the gated Must-Right design exists precisely to catch that trade.
 
 ## 7. Refactoring-literature crosswalk (why this shape resists rot)
 
@@ -130,21 +163,82 @@ Recommendation: one bounded **spike task** producing a benchmark artifact in the
 
 **PG19 (beta-1 2026-06-04): track, do not build.** Two features earmarked for the caption workload at GA: `INSERT … ON CONFLICT DO SELECT … RETURNING` collapses the describe-path cache get-or-insert to one round trip; `REPACK CONCURRENTLY` reclaims bloat on churny `media_identities`/description-cache tables without exclusive locks (today's answer is VACUUM FULL downtime). Also noteworthy at GA: autovacuum parallel workers, lz4 TOAST default (JSONB `visual_facts` blobs), SQL/PGQ property-graph queries (speculative fit for cluster/identity relationship queries). pgvector-on-19 compatibility unverified.
 
-## 9. Recommended sequencing
+## 9. Paper sweep — verdict table (rev B)
 
-1. **E19-4a identity-prose merge (Tier 0)** — already scoped; unblocked; the paper strengthens its LLM-seam design. Includes structuring `VisualFacts` (paper S1 shape) while the contract is still cheap to change.
-2. **Phase-split caching** — key the VLM pass without `context_hash`; recompose prose cheaply on context change. Largest UX win per effort (§3).
-3. **Quality eval harness (§6)** — small; must precede 4–6 so wins are measurable.
-4. **OpenCV 5 spike** — the three head-to-heads in §4; decision memo in E19-1 format.
-5. **Brand detection Tier A (§5)** — template registration + matcher + curation reuse + `ContextPack.brands`; depends on 4 only for the ORB-vs-ALIKED choice, not for viability.
-6. **Fusion Tier 1** — instructed fusion behind the E19-4a seam, using whichever model the spike + E20-11 hosted-benchmark work selects.
-7. **PG18 upgrade** — per existing roadmap, independently schedulable; PG19 items parked until GA.
+| Paper | Verdict | What we take |
+| --- | --- | --- |
+| **["Inserting Faces inside Captions" 2405.02305](https://arxiv.org/pdf/2405.02305)** | **Adopt (design)** | E19-4a validated end-to-end; insertion-rate KPI (93.2% benchmark); candidate person-word lexicon + count-aware syntax rules; name-correction rule; ≥90% ID-confidence gate; AstroCaptions eval set; their own ablation justifies deferring LLM fusion. Our phrase-grounding boxes replace their weakest component (proxy attention heatmaps) |
+| **[BACON 2407.03314](https://arxiv.org/pdf/2407.03314)** | Steal-ideas | VisualFacts schema conventions: numbered same-category instances, per-object bbox, fg/bg + style/theme split, regex-parseable serialization; description-based CLIP re-ranking to disambiguate same-category instances; structured queries beat dense-caption prompting. Skip its 13B pipeline/dataset |
+| **[PerceptionRubrics 2606.28322](https://arxiv.org/html/2606.28322v2)** | **Adopt (methodology)** | Gated Must-Right/Easy-Wrong rubric eval (§6); Easy-Wrong mining recipe from own failure modes; length ≠ quality guardrail |
+| **Eluvio Stylized Sports Captioning** (local PDF; deployed Super Bowl LIX) | Steal-ideas (strongly) | Constrain-then-map naming in production; confidence field on identity items; HIGH-only naming gate; no uncertain names in any prompt; instructions over few-shot |
+| **[BLV curator study 2605.31080](https://arxiv.org/html/2605.31080v1)** | Steal-ideas | Prototype-as-prompt-contract (orientation-first structure, verbosity spec); 5-trait BLV rubric; judge-calibration protocol; length-error/repetition CI gates |
+| **[HBoP 2502.10118](https://arxiv.org/html/2502.10118v2)** | Steal-ideas (borderline adopt) | Global→regional→fine tiered caption schema mapped onto Florence-2 region captioning; NMS+K-means region selection; Div-2/mBLEU-4/SBERT diversity-relevance eval |
+| **[VISE 2606.27373](https://arxiv.org/html/2606.27373v1)** | Steal-ideas | Ghosting + GIoU geometric-consistency checks as CPU verification primitives; CHAIR/POPE regression metrics |
+| **CoTalk** (local PDF) | Steal-ideas | Semantic-unit traceability metric; merge-only fusion contract (`units_out ⊆ units_in`) |
+| **Ensemble Decoding (ICLR 2025)** (local PDF) | Steal-ideas | Crop-and-reinspect: second Florence pass on face crops + cross-pass fact agreement — cheapest strong hallucination lever |
+| **Whitened CLIP (ICML 2025)** (local PDF) | Steal-ideas | Near-free image-OOD gate + name-insertion likelihood delta (never standalone) |
+| **RE-VLM** (local PDF) | Steal-ideas | Source-tagged fact graph with trust-order arbitration; human correction-rate as a metric |
+| **CIAN** (local PDF) | Steal-ideas | Summarize-before-inject for long context; do NOT copy n-gram refinement |
+| **[MosAIC 2411.11758](https://arxiv.org/html/2411.11758v1)** | Steal-ideas | Tag-coverage completeness metric; question-slot decomposition as one deterministic checklist; hard evidence free-form enrichment hurts correctness |
+| **[CANVAS 2606.09846](https://arxiv.org/abs/2606.09846)** | Skip (mine) | FKRE readability gate; sensory-vocabulary + hedging prompt language. (High-school Zapier demo otherwise) |
+| **[Accessible-XAI 2603.02486](https://arxiv.org/html/2603.02486v1)** | Skip (one idea) | Provenance wording in captions ("identified from your site's roster" vs "appears to be") |
+| **[HyFL-CLIP 2607.00428](https://arxiv.org/html/2607.00428v1)**, **[DataComp-VLM 2606.28551](https://arxiv.org/html/2606.28551v2)**, **[TICR 2410.06314](https://arxiv.org/html/2410.06314v1)** | Skip | Retrieval embeddings / training-data curation / archival retrieval competition — wrong layer for us. (Bookmark: DCVLM-trained small checkpoints may become the best 1–2B open VLMs) |
+| Local PDFs: FAST-GOAL, GRIP, PhaseWin, Sub-Semantic Seg., TC-JEPA, AI-Safety, Beyond Self-Attention, ImageAuditor | Skip | One harvest: FAST-GOAL's tested anti-hallucination prompt clause (§3a). ImageAuditor footnote: tenant rosters are structurally an image-RAG DB; roster-only naming is already the right defensive shape |
 
-**Non-goals (explicit):** paper's retrieval stack; unsupervised logo clustering; any PG19-dependent code; replacing InsightFace before the spike proves parity; caption benchmarks against COCO-style datasets.
+## 10. Model landscape (July 2026) and the "slow but detailed" tier
 
-## 10. Open risks
+**What actually changed since E19-1 (June 16):** not architectures — **deployment paths**. Official GGUF + llama.cpp support landed for the exact models we measured. E19-1's numbers (Qwen3-VL-4B: 408 s/img, 9.6 GB; Qwen2.5-VL-3B: 341 s, 8.4 GB) were unquantized transformers/BLAS; Q4_K_M GGUF (~3.3 GB) on the A1's 4 cores should be several-fold faster (est. 1–3 min/img — **unverified, re-benchmark**). No Florence-3; no Phi-5-vision (rumor only); MiMo-VL still 7B-only (GPU-deferred per E19-1); SmolVLM3 does not exist.
 
-- Small-model fusion quality unproven (paper never names its VLM/LLM); Tier-1 quality on A1-class hardware is the open question the spike + eval harness must answer.
-- OpenCV 5 is a .0 release (June 2026): pin carefully, keep ORT path behind the port until parity is demonstrated on ARM/A1 specifically.
-- Wrong-name/wrong-brand insertion remains the top product risk (per identity-prose-merge assessment); the deterministic checks in §6 are the regression net.
+| Candidate | Params / license | CPU path | Note |
+| --- | --- | --- | --- |
+| **CapRL-Qwen3VL-4B** | 4B, Apache-2.0 | official GGUF | Caption-*specialized* RL tune of our measured quality winner; claims > Qwen2.5-VL-72B caption quality, reduced hallucination. **Risk: context-injection obedience unverified** — RL for captions may fight instruction-following |
+| **Qwen3-VL-4B-Instruct** | 4B, Apache-2.0 | official GGUF | Known quality (E19-1 winner); strongest instruction-following of the group → best bet for weaving injected names |
+| **MiniCPM-V 4.5** | 8B, Apache-2.0* | official GGUF/Ollama | Best hallucination story (RLAIF-V; tops ObjectHalBench). Slowest — deep-detail opt-in only |
+| **MiniCPM-V 4.6** | 1.3B, Apache-2.0* | llama.cpp day one | **Fast-tier upgrade candidate over Florence-2**: real instruction-following (can take a context block — Florence cannot), 262k ctx, HallusionBench 58.1 |
+| **Qwen3.5-4B/9B** (Mar 2026) | Apache-2.0 | GGUF+mmproj (llama.cpp only) | Newest native-multimodal; vision-hallucination data thin — unverified |
+| **Gemma 4 E4B** (Apr 2026) | Apache-2.0 (license change from Gemma 3) | llama.cpp at launch | Low-hallucination captioner lineage; detail depth vs Qwen unclear |
+| Moondream 3 preview | 9B-A2B MoE, **BSL 1.1** | unverified | License likely blocks a paid alt-text service — excluded |
+
+\* MiniCPM: Apache-2.0 weights with a free-commercial registration questionnaire — verify terms before shipping.
+
+**Two-tier serving design (users informed — the accepted premise):**
+- **Fast tier (interactive, ≤20 s):** Florence-2-base-ft today; spike MiniCPM-V 4.6 (1.3B) as successor — it accepts instructions + context blocks, which Florence structurally cannot, making it the first fast-tier model that can do Tier-1 fusion natively.
+- **Detailed tier (opt-in, async, minutes):** Qwen3-VL-4B-class via Q4 GGUF/llama.cpp behind the existing async-worker plan (E19-1 Part C shape). UX: explicit expectation setting ("richer description — takes a few minutes"), job status in the workbench, cache-forever once computed (phase-split caching in §3 means context changes don't re-run it). This directly serves the BLV "paint the image" goal: the E19-1 transcripts show the 4B tier catching the boats and the second dahlia bud that Florence-base misses.
+- **Bake-off before adapter build (10 golden images, real context packs):** CapRL-4B vs Qwen3-VL-4B-GGUF vs MiniCPM-V 4.5, scored with §6 (insertion rate, Must-Right gates, hallucinated-unit count, FKRE). No public benchmark measures injected-name weaving — we must test it ourselves. One `DescriptionAdapter` behind the existing protocol once picked; greedy decoding; `/no_think` if reasoning-tuned; torchvision is a required dep if the transformers (non-GGUF) path is used.
+
+## 11. What is realistically implementable now (CPU-only A1) — consolidated
+
+Everything below runs on current hardware; items 1–5 need no new model at all:
+1. **E19-4a deterministic merge** (SQL join + containment + reflow) with §3a's constrain-then-map, name-correction, and count-aware rules — production-validated pattern, sub-millisecond.
+2. **Structured VisualFacts** (BACON conventions + paper-S1 dimensions) emitted by the existing Florence adapter's multi-task passes.
+3. **Verification layer** (§3a): crop-and-reinspect, ghosting probe, GIoU consistency, Whitened CLIP gates — each a Florence/CLIP pass or pure math.
+4. **Tiered BLV prose contract** (§3a) in the composition stage + provenance/hedging phrasing.
+5. **Eval harness** (§6): gated rubrics, insertion rate, unit traceability, FKRE/repetition gates.
+6. **Detailed tier** (§10): GGUF 4B async worker — minutes-per-image, opt-in, informed users.
+7. **Brand detection Tier A** (§5): keypoint matching is milliseconds on CPU.
+
+GPU procurement changes *which model* fills the detailed/fusion tiers (MiMo-VL-7B-RL per E19-1), not this architecture.
+
+## 12. Recommended sequencing (revised rev B)
+
+1. **Quality eval harness (§6)** — promoted to first: golden set + gated rubrics + insertion-rate KPI. Everything after must ship before/after artifacts. Small, no model work.
+2. **E19-4a identity-prose merge (Tier 0)** — already scoped; unblocked; now carries §3a's constrain-then-map + name-correction + count rules. Includes structuring `VisualFacts` (BACON conventions) while the contract is cheap to change.
+3. **Phase-split caching** — key the VLM pass without `context_hash`; recompose prose cheaply on context change (§3). Prerequisite for an affordable detailed tier.
+4. **Detailed-tier bake-off + adapter (§10)** — GGUF re-benchmark on A1, 3-model bake-off scored by the harness, then one adapter + async worker. Delivers the user-visible "richer caption" win.
+5. **Verification layer (§3a)** — crop-and-reinspect first (cheapest strong lever), then ghosting/GIoU gates wired into the merge's confidence decision.
+6. **OpenCV 5 spike** — the three head-to-heads in §4; decision memo in E19-1 format.
+7. **Brand detection Tier A (§5)** — template registration + matcher + curation reuse + `ContextPack.brands`; depends on 6 only for the ORB-vs-ALIKED choice.
+8. **Fusion Tier 1** — instructed fusion behind the E19-4a seam (merge-only contract, source precedence), using the bake-off winner; MiniCPM-V 4.6 spike for a fusion-capable fast tier.
+9. **PG18 upgrade** — per existing roadmap, independently schedulable; PG19 items parked until GA.
+
+**Non-goals (explicit):** paper retrieval stacks (2606.18553 Phase A, CIAN SigLIP retrieval); multi-agent captioning (MosAIC — compute-prohibitive, hurts correctness); LoRA fine-tuning (curator study — revisit if a GPU lands); unsupervised logo clustering; any PG19-dependent code; replacing InsightFace before the spike proves parity; COCO-style benchmark chasing.
+
+## 13. Open risks
+
+- Small-model fusion quality unproven (2606.18553 never names its VLM/LLM); the bake-off + eval harness answer this before any adapter is built.
+- **GGUF quantization quality loss unmeasured on our images** — the 1–3 min/img estimate and Q4 quality parity are both unverified on ARM/A1; re-benchmark before promising the detailed tier.
+- **CapRL's instruction obedience unknown** — a caption-RL model may ignore injected context; that's disqualifying regardless of caption quality, and only our own bake-off will show it.
+- OpenCV 5 is a .0 release: pin carefully, keep the ORT path behind the port until ARM/A1 parity is demonstrated.
+- Wrong-name/wrong-brand insertion remains the top product risk; the §6 gated rubrics + §3a verification layer are the regression net. LLM judges are only trustworthy on visually-grounded traits — budget a small human BLV calibration pass.
+- MiniCPM commercial-registration terms and Moondream BSL need license review before either enters a paid tier.
 - `IdentityContext` E20 work is in flight on `main` (uncommitted at assessment time); `ContextPack.brands` must be sequenced after it lands to avoid schema churn.

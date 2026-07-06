@@ -65,7 +65,12 @@ if (!class_exists('WP_REST_Request')) {
         /**
          * @param string|array<string,mixed> $method HTTP method or params array (backward compatible)
          * @param string $route REST route
-         * @param array<string,mixed> $params Request parameters
+         * @param array<string,mixed> $params Request parameters. DIVERGES from
+         *     real WordPress, where the third constructor argument is route
+         *     *attributes* and is never readable via get_param(). Tests may use
+         *     this convenience for controller requests (real WP routing fills
+         *     params), but production code constructing WP_REST_Request itself
+         *     must use set_param() — see DescriptionCommand::generate_one().
          */
         public function __construct($method = 'GET', string $route = '', array $params = [])
         {

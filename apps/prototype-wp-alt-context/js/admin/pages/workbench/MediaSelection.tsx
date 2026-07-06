@@ -5,6 +5,7 @@ import { __ } from '@wordpress/i18n';
 import type { WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
 import type { WorkbenchMediaStatus } from '../../api/workbenchMediaApi';
 import { MediaSelectionTableBody } from './MediaSelectionTableBody';
+import { MediaAnalyzeCta } from './MediaAnalyzeCta';
 
 import { Checkbox } from '../../../components/ui/checkbox';
 import { useWorkbenchContext } from './WorkbenchContext';
@@ -63,15 +64,6 @@ export const MediaSelection = (): React.JSX.Element => {
           onRetry={onRetry}
         />
 
-        <MediaSelectionPagination
-          currentPage={currentPage}
-          totalPages={totalPages}
-          perPage={perPage}
-          onPerPageChange={onPerPageChange}
-          onPageChange={onPageChange}
-          labelId="acx-media-page-size-label-top"
-        />
-
         <table className="acx-media-selection__table">
           <thead>
             <tr>
@@ -101,14 +93,17 @@ export const MediaSelection = (): React.JSX.Element => {
           </tbody>
         </table>
 
-        <MediaSelectionPagination
-          currentPage={currentPage}
-          totalPages={totalPages}
-          perPage={perPage}
-          onPerPageChange={onPerPageChange}
-          onPageChange={onPageChange}
-          labelId="acx-media-page-size-label-bottom"
-        />
+        <div className="acx-media-selection__footer">
+          <MediaSelectionPagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            perPage={perPage}
+            onPerPageChange={onPerPageChange}
+            onPageChange={onPageChange}
+            labelId="acx-media-page-size-label"
+          />
+          <MediaAnalyzeCta />
+        </div>
       </div>
       {detailStatusMessage && (
         <div className="acx-identity-status">

@@ -7,8 +7,6 @@ export { mediaEditUrl, rosterClustersUrl } from '../../utils/adminUrls';
 const isClusteringActive = (phase?: string | null): boolean => phase === 'clustering' || phase === 'retrying';
 
 interface ScanActionPanelProps {
-  selectedCount: number;
-  onScanFaces: () => void;
   onCancelScan?: () => void;
   onRetryStream?: () => void;
   isScanning: boolean;
@@ -24,8 +22,6 @@ interface ScanActionPanelProps {
 }
 
 export const ScanActionPanel = ({
-  selectedCount,
-  onScanFaces,
   onCancelScan,
   onRetryStream,
   isScanning,
@@ -40,26 +36,6 @@ export const ScanActionPanel = ({
   isSynced,
 }: ScanActionPanelProps): React.JSX.Element => (
   <div className="acx-apply-panel">
-    <p>
-      {selectedCount === 0
-        ? __('Select media items from the queue to analyze them.', 'alt-context')
-        : sprintf(
-            _n('Ready to analyze %d media item.', 'Ready to analyze %d media items.', selectedCount, 'alt-context'),
-            selectedCount,
-          )}
-    </p>
-    <button
-      type="button"
-      className="acx-apply-panel__scan"
-      onClick={onScanFaces}
-      disabled={isScanning || selectedCount === 0}
-    >
-      {isScanning
-        ? isClusteringActive(progress?.phase)
-          ? __('Clustering identities…', 'alt-context')
-          : __('Scanning media…', 'alt-context')
-        : __('Analyze selected media', 'alt-context')}
-    </button>
     {onCancelScan && (
       <button
         type="button"

@@ -111,6 +111,8 @@
 
   &__pagination {
     display: flex;
+    flex: 1 1 22rem;
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--acx-space-12);
 
@@ -119,6 +121,33 @@
       border: 1px solid var(--acx-color-border);
       background-color: var(--acx-color-surface-alt);
     }
+  }
+
+  &__footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--acx-space-16);
+    padding: var(--acx-space-12);
+    border: 1px solid var(--acx-color-border);
+    background-color: var(--acx-color-surface-alt);
+    border-radius: var(--acx-radius-8);
+  }
+
+  &__analyze {
+    display: flex;
+    flex: 0 1 26rem;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--acx-space-12);
+  }
+
+  &__analyze-copy {
+    margin: 0;
+    color: var(--acx-color-text-muted);
+    font-size: 0.9rem;
   }
 
   &__page-size {

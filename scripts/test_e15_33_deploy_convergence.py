@@ -121,14 +121,14 @@ def test_check_does_not_require_promote_confirm(tmp_path: Path) -> None:
 def _run_converge_runtime(env_arg: str, tmp_path: Path) -> str:
     """Source the script and run `converge_runtime <env>` with recording fakes.
 
-    Returns the recorded scp target log so tests can assert which files were
-    shipped (env compose always, admin overlay only for prod, never Caddy).
+    Returns the recorded ssh/scp command log so tests can assert which files
+    were shipped (env compose always, admin overlay only for prod, never Caddy).
     """
     bindir = tmp_path / "bin"
     bindir.mkdir()
-    scp_log = tmp_path / "scp.log"
-    (bindir / "ssh").write_text("#!/bin/sh\ncat >/dev/null 2>&1 || true\nexit 0\n")
-    (bindir / "scp").write_text(f'#!/bin/sh\necho "$@" >> {scp_log}\nexit 0\n')
+    scp_log = tmp_path / "ship.log"
+    (bindir / "ssh").write_text(f'#!/bin/sh\necho "$@" >> {scp_log}\ncat >/dev/null 2>&1 || true\nexit 0\n')
+    (bindir / "scp").write_text(f'#!/bin/sh\necho "SCP $@" >> {scp_log}\nexit 0\n')
     for name in ("ssh", "scp"):
         (bindir / name).chmod(0o755)
     env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"}
@@ -145,15 +145,16 @@ def _run_converge_runtime(env_arg: str, tmp_path: Path) -> str:
 
 def test_converge_runtime_ships_both_compose_files_for_prod(tmp_path: Path) -> None:
     log = _run_converge_runtime("prod", tmp_path)
-    assert "docker-compose.env.yml" in log
-    assert "docker-compose.admin.yml" in log, "prod must ship the admin overlay"
+    assert "sudo cp '/tmp/docker-compose.env.yml'" in log
+    assert "sudo cp '/tmp/docker-compose.admin.yml'" in log, "prod must ship the admin overlay"
+    assert "SCP " not in log, "compose files must not travel via direct scp (root-owned targets)"
     for caddy in ("Caddyfile", "docker-compose.caddy.yml", "acx-caddy"):
         assert caddy not in log, f"converge_runtime must never ship {caddy}"
 
 
 def test_converge_runtime_ships_only_env_compose_for_dev(tmp_path: Path) -> None:
     log = _run_converge_runtime("dev", tmp_path)
-    assert "docker-compose.env.yml" in log
+    assert "sudo cp '/tmp/docker-compose.env.yml'" in log
     assert "docker-compose.admin.yml" not in log, "dev must not ship the admin overlay"
 
 
@@ -190,3 +191,15 @@ exit 0
     combined = proc.stdout + proc.stderr
     assert proc.returncode == 0, combined
     assert "no runtime drift" in combined
+
+
+def test_converge_ships_compose_files_via_sudo_install(tmp_path: Path) -> None:
+    # E15-34-DEPLOYFIX: compose files on the VM can be root-owned (the E15-29
+    # admin overlay was installed via sudo), so a plain `scp` to the final path
+    # fails with Permission denied. Both compose ships must go through the same
+    # /tmp + `sudo cp` pattern the unit file uses.
+    body = SCRIPT_TEXT.split("converge_runtime()", 1)[1].split("\n}\n", 1)[0]
+    assert 'scp "' not in body, "converge_runtime must not scp directly to the target path"
+    # Structural: the shared ship helper stages under /tmp and installs with
+    # sudo cp; the behavioral tests above assert the expanded per-file commands.
+    assert "sudo cp '/tmp/" in body, "compose ship must go via /tmp + sudo cp"

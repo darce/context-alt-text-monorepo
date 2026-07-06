@@ -325,11 +325,18 @@ converge_runtime() {
   unit="$(env_to_unit "$env")"
   log "Converging compose + unit for ${env} on ${SSH_TARGET} (edge proxy not reshipped)"
   ssh "${SSH_TARGET}" "cp -f '${remote_dir}/docker-compose.env.yml' '${remote_dir}/docker-compose.env.yml.bak' 2>/dev/null || true; sudo cp -f '/etc/systemd/system/${unit}.service' '/etc/systemd/system/${unit}.service.bak' 2>/dev/null || true"
-  scp "${SERVICE_DIR}/docker-compose.env.yml" "${SSH_TARGET}:${remote_dir}/docker-compose.env.yml"
+  # Ship via /tmp + sudo cp (same pattern as the unit file): the deployed
+  # files can be root-owned (the E15-29 admin overlay was installed via sudo),
+  # so a plain scp to the final path fails with Permission denied.
+  _ship_file() {
+    local src="$1" dest="$2" name; name="$(basename "$dest")"
+    ssh "${SSH_TARGET}" "cat > '/tmp/${name}' && sudo cp '/tmp/${name}' '${dest}' && rm -f '/tmp/${name}'" < "$src"
+  }
+  _ship_file "${SERVICE_DIR}/docker-compose.env.yml" "${remote_dir}/docker-compose.env.yml"
   if [[ "$env" == "prod" ]]; then
     # Back up the admin overlay too so a bad overlay is restorable from *.bak.
     ssh "${SSH_TARGET}" "cp -f '${remote_dir}/docker-compose.admin.yml' '${remote_dir}/docker-compose.admin.yml.bak' 2>/dev/null || true"
-    scp "${SERVICE_DIR}/docker-compose.admin.yml" "${SSH_TARGET}:${remote_dir}/docker-compose.admin.yml"
+    _ship_file "${SERVICE_DIR}/docker-compose.admin.yml" "${remote_dir}/docker-compose.admin.yml"
   fi
   render_unit "$env" | ssh "${SSH_TARGET}" "cat > '/tmp/${unit}.service' && sudo cp '/tmp/${unit}.service' '/etc/systemd/system/${unit}.service' && rm -f '/tmp/${unit}.service' && sudo systemctl daemon-reload"
   log "Runtime converged for ${env} (compose + unit match repo)"

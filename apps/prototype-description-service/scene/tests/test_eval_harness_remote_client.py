@@ -145,3 +145,28 @@ def test_http_error_carries_status_and_does_not_crash():
     client = _client(handler)
     with pytest.raises(RemoteClientError, match="401"):
         client.media_identities([1])
+
+
+def test_429_backs_off_and_retries_without_breaker_strike():
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            return httpx.Response(429, text="rate limit exceeded", headers={"Retry-After": "0"})
+        return httpx.Response(200, json={"identities": {}})
+
+    client = _client(handler, rate_limit_wait=0.0)
+    assert client.media_identities([1]) == {"identities": {}}
+    assert calls["n"] == 3
+    # 429s did not count toward the 3-strike breaker
+    assert client._consecutive_failures == 0
+
+
+def test_429_exhaustion_raises_remote_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, text="rate limit exceeded", headers={"Retry-After": "0"})
+
+    client = _client(handler, rate_limit_wait=0.0, max_rate_limit_retries=2)
+    with pytest.raises(RemoteClientError, match="429"):
+        client.media_identities([1])

@@ -43,7 +43,15 @@ IGNORE_LIST_NAME = "ignore-list.json"
 
 
 class BoundedStallError(RuntimeError):
-    """Aborted after too many consecutive per-item failures (rg-007)."""
+    """Aborted after too many consecutive per-item failures (rg-007).
+
+    Carries the partial run record (``aborted: true``) so an aborted run is
+    still diagnosable — the per-item errors are the whole point of the abort.
+    """
+
+    def __init__(self, message: str, partial_record: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.partial_record = partial_record
 
 
 def fetch_run_record(
@@ -61,6 +69,21 @@ def fetch_run_record(
     entries = manifest.entries[:limit] if limit else manifest.entries
     items: list[dict[str, Any]] = []
     consecutive_failures = 0
+
+    def _record(aborted: bool = False) -> dict[str, Any]:
+        record: dict[str, Any] = {
+            "schema": SCHEMA,
+            "provenance": {
+                "manifest_sha256": _manifest_sha(manifest),
+                "base_url": getattr(client, "base_url", "unknown"),
+                "head_sha": head_sha,
+                "started_at": started_at,
+            },
+            "items": items,
+        }
+        if aborted:
+            record["aborted"] = True
+        return record
 
     for entry in entries:
         image_path = images_root / entry.path
@@ -90,23 +113,16 @@ def fetch_run_record(
             item["error"] = f"{type(exc).__name__}: {exc}"
             consecutive_failures += 1
             if consecutive_failures >= stall_limit:
+                items.append(item)
                 raise BoundedStallError(
-                    f"{consecutive_failures} consecutive item failures (last: {entry.path}); aborting run"
+                    f"{consecutive_failures} consecutive item failures (last: {entry.path}); aborting run",
+                    partial_record=_record(aborted=True),
                 ) from exc
         else:
             consecutive_failures = 0
         items.append(item)
 
-    return {
-        "schema": SCHEMA,
-        "provenance": {
-            "manifest_sha256": _manifest_sha(manifest),
-            "base_url": getattr(client, "base_url", "unknown"),
-            "head_sha": head_sha,
-            "started_at": started_at,
-        },
-        "items": items,
-    }
+    return _record()
 
 
 def _extract_identities(payload: Any, media_id: int) -> tuple[list[str], int]:
@@ -184,6 +200,9 @@ def _cmd_fetch(args: argparse.Namespace) -> str:
     manifest = load_manifest(args.manifest, images_dir=images_dir)
     client = RemoteSceneClient(base_url=base_url, api_key=api_key, tenant_id=tenant_id)
     started_at = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    OUT_DIR.mkdir(exist_ok=True)
+    stamp = started_at.replace(":", "").replace("-", "").replace("T", "-").rstrip("Z")
+    record_path = OUT_DIR / f"run-{stamp}.json"
     try:
         record = fetch_run_record(
             manifest,
@@ -194,11 +213,12 @@ def _cmd_fetch(args: argparse.Namespace) -> str:
             stall_limit=args.stall_limit,
             started_at=started_at,
         )
+    except BoundedStallError as exc:
+        aborted_path = OUT_DIR / f"run-{stamp}-aborted.json"
+        aborted_path.write_text(json.dumps(exc.partial_record, indent=2, sort_keys=True) + "\n")
+        sys.exit(f"BoundedStallError: {exc} — partial record saved to {aborted_path}")
     finally:
         client.close()
-    OUT_DIR.mkdir(exist_ok=True)
-    stamp = started_at.replace(":", "").replace("-", "").replace("T", "-").rstrip("Z")
-    record_path = OUT_DIR / f"run-{stamp}.json"
     record_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
     prune_out_dir(str(OUT_DIR), keep=args.keep)
     print(record_path)

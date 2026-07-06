@@ -99,3 +99,13 @@ def test_prune_out_dir_keeps_last_n(tmp_path):
     assert remaining == [f"run-2026070{i}-000000.json" for i in (4, 5, 6)]
     assert len(removed) == 4
     assert (tmp_path / "ignore-list.json").exists()  # never pruned
+
+
+def test_stall_abort_preserves_partial_record(images_dir):
+    client = FlakyClient({f"img-{i}.jpg" for i in range(1, 6)})
+    with pytest.raises(BoundedStallError) as excinfo:
+        fetch_run_record(_manifest(5), str(images_dir), client, head_sha="f" * 40, stall_limit=3)
+    partial = excinfo.value.partial_record
+    assert partial["aborted"] is True
+    assert len(partial["items"]) == 3
+    assert all(item["error"] for item in partial["items"])

@@ -59,7 +59,8 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
   }, []);
 
   useEffect(() => {
-    const goOnline = () => setIsOnline(true), goOffline = () => setIsOnline(false);
+    const goOnline = () => setIsOnline(true);
+    const goOffline = () => setIsOnline(false);
 
     window.addEventListener('online', goOnline);
     window.addEventListener('offline', goOffline);

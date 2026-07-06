@@ -28,7 +28,7 @@
   }
 
   &__status {
-    font-size: 0.9rem;
+    font-size: var(--acx-text-sm);
     color: var(--acx-color-text-muted);
   }
 
@@ -147,7 +147,7 @@
   &__analyze-copy {
     margin: 0;
     color: var(--acx-color-text-muted);
-    font-size: 0.9rem;
+    font-size: var(--acx-text-sm);
   }
 
   &__summary {
@@ -168,7 +168,7 @@
     align-items: center;
     gap: var(--acx-space-12);
     color: var(--acx-color-text-muted);
-    font-size: 0.9rem;
+    font-size: var(--acx-text-sm);
   }
 
   &__page-size {
@@ -176,7 +176,7 @@
     align-items: center;
     gap: var(--acx-space-8);
     margin-left: auto;
-    font-size: 0.9rem;
+    font-size: var(--acx-text-sm);
     color: var(--acx-color-text-muted);
 
     &-trigger {
@@ -242,7 +242,7 @@
     display: inline-flex;
     align-items: center;
     gap: var(--acx-space-8);
-    font-size: 0.9rem;
+    font-size: var(--acx-text-sm);
     color: var(--acx-color-text-muted);
 
     &-trigger {

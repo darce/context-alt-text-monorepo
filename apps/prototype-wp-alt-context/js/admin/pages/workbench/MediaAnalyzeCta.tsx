@@ -1,8 +1,7 @@
 import { __, _n, sprintf } from '@wordpress/i18n';
 
+import { isClusteringActive } from './Panels';
 import { useWorkbenchContext } from './WorkbenchContext';
-
-const isClusteringActive = (phase?: string | null): boolean => phase === 'clustering' || phase === 'retrying';
 
 export const MediaAnalyzeCta = (): React.JSX.Element => {
   const { selectedMedia, isScanRunning, currentPhase, scanProgress, clusterProgress, scan } = useWorkbenchContext();

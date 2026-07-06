@@ -112,6 +112,7 @@ const openWorkbench = async (baseURL: string, page: Page): Promise<void> => {
   await expect(page.locator(WORKBENCH_SHELL_SELECTOR)).toBeVisible();
   await expect(page.getByRole('tablist', { name: /Workbench steps/i })).toBeVisible();
   await expect(page.getByRole('heading', { name: /Scan Media Queue/i })).toBeVisible();
+  await expect(page.getByRole('combobox', { name: 'Status' })).toContainText('Missing alt text');
 };
 
 const timelineHasLabel = async (page: Page, label: string): Promise<boolean> => {

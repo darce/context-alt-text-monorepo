@@ -1,9 +1,13 @@
 import { ChangeEvent, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import type { WorkbenchMediaStatus } from '../api/workbenchMediaApi';
+import { WORKBENCH_MEDIA_STATUSES, type WorkbenchMediaStatus } from '../api/workbenchMediaApi';
 
 const MEDIA_PAGE_SIZE_OPTIONS = [10, 50, 100] as const;
 const DEFAULT_MEDIA_PAGE_SIZE = MEDIA_PAGE_SIZE_OPTIONS[0];
+const WORKBENCH_MEDIA_STATUS_SET: ReadonlySet<string> = new Set(WORKBENCH_MEDIA_STATUSES);
+
+const parseWorkbenchMediaStatus = (value: string | null): WorkbenchMediaStatus =>
+  value && WORKBENCH_MEDIA_STATUS_SET.has(value) ? (value as WorkbenchMediaStatus) : 'all';
 
 export const useWorkbenchFilters = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -16,7 +20,7 @@ export const useWorkbenchFilters = () => {
   const perPage = MEDIA_PAGE_SIZE_OPTIONS.includes(perPageParsed as (typeof MEDIA_PAGE_SIZE_OPTIONS)[number])
     ? perPageParsed
     : DEFAULT_MEDIA_PAGE_SIZE;
-  const statusFilter = (searchParams.get('status') as WorkbenchMediaStatus) || 'all';
+  const statusFilter = parseWorkbenchMediaStatus(searchParams.get('status'));
 
   const handleSearchChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {

@@ -46,7 +46,8 @@ interface WorkbenchMediaDetailApiResponse {
 
 const DEFAULT_WORKBENCH_MEDIA_DETAIL_LIMIT = 100;
 
-export type WorkbenchMediaStatus = 'all' | 'missing';
+export const WORKBENCH_MEDIA_STATUSES = ['all', 'missing'] as const;
+export type WorkbenchMediaStatus = (typeof WORKBENCH_MEDIA_STATUSES)[number];
 
 interface FetchWorkbenchMediaParams {
   page: number;

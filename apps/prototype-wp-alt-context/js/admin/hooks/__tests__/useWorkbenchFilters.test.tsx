@@ -14,6 +14,16 @@ const wrapper = ({ children }: { children: ReactNode }) => (
   </MemoryRouter>
 );
 
+const wrapperForUrl =
+  (url: string) =>
+  ({ children }: { children: ReactNode }) => (
+    <MemoryRouter initialEntries={[url]}>
+      <Routes>
+        <Route path="/" element={<>{children}</>} />
+      </Routes>
+    </MemoryRouter>
+  );
+
 describe('useWorkbenchFilters', () => {
   it('defaults to page 1, empty search, and all status', () => {
     const { result } = renderHook(() => useWorkbenchFilters(), { wrapper });
@@ -56,16 +66,20 @@ describe('useWorkbenchFilters', () => {
     expect(result.current.currentPage).toBe(1);
   });
 
-  it('hydrates perPage from the URL and resets page when perPage changes', () => {
-    const urlWrapper = ({ children }: { children: ReactNode }) => (
-      <MemoryRouter initialEntries={['/?p=4&perPage=50']}>
-        <Routes>
-          <Route path="/" element={<>{children}</>} />
-        </Routes>
-      </MemoryRouter>
-    );
+  it('hydrates missing status from the URL', () => {
+    const { result } = renderHook(() => useWorkbenchFilters(), { wrapper: wrapperForUrl('/?status=missing') });
 
-    const { result } = renderHook(() => useWorkbenchFilters(), { wrapper: urlWrapper });
+    expect(result.current.statusFilter).toBe('missing');
+  });
+
+  it('falls back to all status for invalid URL values', () => {
+    const { result } = renderHook(() => useWorkbenchFilters(), { wrapper: wrapperForUrl('/?status=garbage') });
+
+    expect(result.current.statusFilter).toBe('all');
+  });
+
+  it('hydrates perPage from the URL and resets page when perPage changes', () => {
+    const { result } = renderHook(() => useWorkbenchFilters(), { wrapper: wrapperForUrl('/?p=4&perPage=50') });
 
     expect(result.current.currentPage).toBe(4);
     expect(result.current.perPage).toBe(50);

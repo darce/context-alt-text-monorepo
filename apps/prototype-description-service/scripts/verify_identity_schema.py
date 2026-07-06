@@ -36,6 +36,7 @@ MATVIEW_NAME = "mv_identity_cluster_centroids"
 EXIT_OK = 0
 EXIT_HEAL_REPAIRABLE = 1
 EXIT_OPERATOR_REQUIRED = 2
+EXIT_INFRA = 3  # could not collect facts (DB unreachable etc.); retry, not schema drift
 
 
 class SchemaStateReport(TypedDict):
@@ -47,6 +48,7 @@ class SchemaStateReport(TypedDict):
     unexpected_tables: list[str]
     rls_gaps: list[str]
     policy_gaps: list[str]
+    table_impostors: list[str]
     matview_relkind: str | None
 
 
@@ -58,14 +60,15 @@ def _validate_schema_state(
     expected_revision: str = EXPECTED_REVISION,
     tenant_tables: Iterable[str] = TENANT_TABLES,
     rls_state: Mapping[str, tuple[bool, bool]] | None = None,
-    policy_names: Iterable[str] | None = None,
+    policy_names: Iterable[tuple[str, str]] | None = None,
+    table_relkinds: Mapping[str, str] | None = None,
     matview_relkind: str | None = "m",
 ) -> SchemaStateReport:
     """Pure classification of collected schema facts.
 
     ``rls_state`` maps table -> (rowsecurity, forcerowsecurity); tables absent
-    from the mapping count as RLS gaps. ``policy_names`` is the set of policy
-    names present. Passing ``None`` for either skips that check (unit-test /
+    from the mapping count as RLS gaps. ``policy_names`` is the set of
+    (tablename, policyname) pairs present. Passing ``None`` for either skips that check (unit-test /
     legacy callers); ``main()`` always collects both.
     """
     actual_table_set = set(actual_tables)
@@ -79,13 +82,25 @@ def _validate_schema_state(
     if rls_state is not None:
         rls_gaps = sorted(t for t in tenant_tables if rls_state.get(t) != (True, True))
     if policy_names is not None:
+        # (table, policy) pairs: a policy name on the WRONG table must not
+        # satisfy another table's check (cross-table name collision).
         present = set(policy_names)
-        policy_gaps = sorted(t for t in tenant_tables if f"tenant_isolation_{t}" not in present)
+        policy_gaps = sorted(t for t in tenant_tables if (t, f"tenant_isolation_{t}") not in present)
+
+    # An expected-table name occupied by a non-table relation is NOT
+    # heal-repairable: the heal fails loudly on it; classify as operator.
+    table_impostors: list[str] = []
+    if table_relkinds is not None:
+        table_impostors = sorted(
+            name
+            for name, kind in table_relkinds.items()
+            if name in expected_table_set and name != "mv_identity_cluster_centroids" and kind not in ("r", "p")
+        )
 
     matview_impostor = matview_relkind not in (None, "m")
     matview_missing = matview_relkind is None
 
-    if not revision_matches or matview_impostor:
+    if not revision_matches or matview_impostor or table_impostors:
         exit_code = EXIT_OPERATOR_REQUIRED
     elif missing_tables or rls_gaps or policy_gaps or matview_missing:
         exit_code = EXIT_HEAL_REPAIRABLE
@@ -101,6 +116,7 @@ def _validate_schema_state(
         "unexpected_tables": unexpected_tables,
         "rls_gaps": rls_gaps,
         "policy_gaps": policy_gaps,
+        "table_impostors": table_impostors,
         "matview_relkind": matview_relkind,
     }
 
@@ -125,9 +141,21 @@ def collect_and_validate(connection) -> SchemaStateReport:
         )
     }
     policy_names = {
-        row[0]
-        for row in connection.execute(text("SELECT policyname FROM pg_policies WHERE schemaname = current_schema()"))
+        (row[0], row[1])
+        for row in connection.execute(
+            text("SELECT tablename, policyname FROM pg_policies WHERE schemaname = current_schema()")
+        )
     }
+    table_relkinds = dict(
+        connection.execute(
+            text(
+                "SELECT c.relname, c.relkind FROM pg_class c "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = current_schema() AND c.relname = ANY(:names)"
+            ),
+            {"names": list(EXPECTED_TABLES)},
+        ).all()
+    )
     matview_relkind = connection.execute(
         text(
             "SELECT c.relkind FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
@@ -141,6 +169,7 @@ def collect_and_validate(connection) -> SchemaStateReport:
         actual_revision=actual_revision,
         rls_state=rls_state,
         policy_names=policy_names,
+        table_relkinds=table_relkinds,
         matview_relkind=matview_relkind,
     )
 
@@ -151,8 +180,15 @@ def main() -> int:
     try:
         with engine.connect() as connection:
             report = collect_and_validate(connection)
+    except Exception as exc:  # infra failure, not schema drift — distinct exit code
+        print(f"identity schema verification could not run: {exc}", file=sys.stderr)
+        return EXIT_INFRA
     finally:
         engine.dispose()
+
+    if report["unexpected_tables"]:
+        # advisory only: never affects the exit code, but surface the drift
+        print(f"warning: unexpected_tables={','.join(report['unexpected_tables'])}", file=sys.stderr)
 
     if report["ok"]:
         print(f"identity schema verified: revision={report['actual_revision']} rls_ok={len(TENANT_TABLES)} matview=m")
@@ -163,7 +199,7 @@ def main() -> int:
         f"expected_revision={report['expected_revision']} actual_revision={report['actual_revision']}",
         file=sys.stderr,
     )
-    for key in ("missing_tables", "rls_gaps", "policy_gaps"):
+    for key in ("missing_tables", "rls_gaps", "policy_gaps", "table_impostors"):
         if report[key]:
             print(f"{key}={','.join(report[key])}", file=sys.stderr)
     if report["matview_relkind"] != "m":

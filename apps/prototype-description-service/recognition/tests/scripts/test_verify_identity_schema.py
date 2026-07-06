@@ -50,7 +50,7 @@ def _complete_kwargs(script) -> dict:
         "expected_tables": tables,
         "tenant_tables": tenant,
         "rls_state": dict.fromkeys(tenant, (True, True)),
-        "policy_names": {f"tenant_isolation_{t}" for t in tenant},
+        "policy_names": {(t, f"tenant_isolation_{t}") for t in tenant},
         "matview_relkind": "m",
     }
 
@@ -58,7 +58,7 @@ def _complete_kwargs(script) -> dict:
 def test_dropped_policy_is_heal_repairable_and_named() -> None:
     script = _import_script()
     kwargs = _complete_kwargs(script)
-    kwargs["policy_names"] = {"tenant_isolation_image_descriptions"}
+    kwargs["policy_names"] = {("image_descriptions", "tenant_isolation_image_descriptions")}
 
     report = script._validate_schema_state(**kwargs)
 

@@ -125,13 +125,27 @@ def _relkind(op, name: str) -> str | None:
 
 
 def _ensure_table(op, table_name: str, *columns, **kw) -> None:
-    if _relkind(op, table_name) is None:
+    relkind = _relkind(op, table_name)
+    if relkind is None:
         op.create_table(table_name, *columns, **kw)
+    elif relkind not in ("r", "p"):
+        # Loud impostor guard (mirrors ensure_matview): silently accepting a
+        # view/matview/index under a table name yields an unrepairable state.
+        raise RuntimeError(
+            f"{table_name!r} exists with relkind {relkind!r} (expected a table); "
+            "drop the impostor relation before healing (operator action)"
+        )
 
 
 def _ensure_index(op, index_name: str, table_name: str, columns, **kw) -> None:
-    if _relkind(op, index_name) is None:
+    relkind = _relkind(op, index_name)
+    if relkind is None:
         op.create_index(index_name, table_name, columns, **kw)
+    elif relkind not in ("i", "I"):
+        raise RuntimeError(
+            f"{index_name!r} exists with relkind {relkind!r} (expected an index); "
+            "drop the impostor relation before healing (operator action)"
+        )
 
 
 def ensure_tables(op) -> None:
@@ -1318,22 +1332,18 @@ def ensure_rls(op) -> None:
             op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
         if not flags[1]:
             op.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
-        has_policy = bind.execute(
-            sa.text(
-                "SELECT 1 FROM pg_policies WHERE schemaname = current_schema() "
-                "AND tablename = :table AND policyname = :policy"
-            ),
-            {"table": table, "policy": f"tenant_isolation_{table}"},
-        ).first()
-        if not has_policy:
-            op.execute(
-                f"""
-                CREATE POLICY tenant_isolation_{table} ON {table}
-                FOR ALL
-                USING (tenant_id = {SAFE_TENANT_EXPR} OR {BYPASS_RLS_EXPR})
-                WITH CHECK (tenant_id = {SAFE_TENANT_EXPR} OR {BYPASS_RLS_EXPR})
-                """
-            )
+        # Drop+recreate converges the policy BODY, not just its name — a
+        # drifted/permissive expression (e.g. USING (true)) would otherwise
+        # survive healing forever. Transactional DDL: no unprotected window.
+        op.execute(f"DROP POLICY IF EXISTS tenant_isolation_{table} ON {table}")
+        op.execute(
+            f"""
+            CREATE POLICY tenant_isolation_{table} ON {table}
+            FOR ALL
+            USING (tenant_id = {SAFE_TENANT_EXPR} OR {BYPASS_RLS_EXPR})
+            WITH CHECK (tenant_id = {SAFE_TENANT_EXPR} OR {BYPASS_RLS_EXPR})
+            """
+        )
 
 
 def ensure_refresh_queue(op) -> None:

@@ -72,7 +72,7 @@ class LifecycleManagerTest extends TestCase
 
         $queries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
         $this->assertIsArray($queries);
-        $this->assertCount(9, $queries);
+        $this->assertCount(12, $queries);
 
         $personsSql = $queries[0];
         $clustersSql = $queries[1];
@@ -83,6 +83,7 @@ class LifecycleManagerTest extends TestCase
         $conflictsSql = $queries[6];
         $batchRunsSql = $queries[7];
         $batchFailuresSql = $queries[8];
+        $descriptionUsageSql = $queries[11];
 
         $this->assertStringContainsString('CREATE TABLE wp_acx_persons', $personsSql);
         $this->assertStringContainsString('person_uuid', $personsSql);
@@ -137,6 +138,11 @@ class LifecycleManagerTest extends TestCase
         $this->assertStringContainsString('run_id', $batchFailuresSql);
         $this->assertStringContainsString('batch_index', $batchFailuresSql);
         $this->assertStringContainsString('error_code', $batchFailuresSql);
+
+        $this->assertStringContainsString('CREATE TABLE wp_acx_description_usage', $descriptionUsageSql);
+        $this->assertStringContainsString('media_id', $descriptionUsageSql);
+        $this->assertStringContainsString('outcome', $descriptionUsageSql);
+        $this->assertStringContainsString('cost_amount', $descriptionUsageSql);
     }
 
     public function testActivateProjectionDbDeltaIsIdempotentAcrossReactivation(): void
@@ -145,7 +151,7 @@ class LifecycleManagerTest extends TestCase
         $this->manager->activate();
 
         $queries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
-        $this->assertCount(18, $queries);
+        $this->assertCount(24, $queries);
         $this->assertStringNotContainsString('DROP TABLE', \implode("\n", $queries));
     }
 

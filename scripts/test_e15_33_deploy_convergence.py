@@ -155,3 +155,38 @@ def test_converge_runtime_ships_only_env_compose_for_dev(tmp_path: Path) -> None
     log = _run_converge_runtime("dev", tmp_path)
     assert "docker-compose.env.yml" in log
     assert "docker-compose.admin.yml" not in log, "dev must not ship the admin overlay"
+
+
+def test_check_passes_clean_when_deployed_matches_repo(tmp_path: Path) -> None:
+    # BR2-11: the no-drift branch of converge_check must exit 0 — a fake ssh
+    # cats the repo's own compose/admin/rendered-unit content back, so every
+    # diff matches.
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "ssh").write_text(
+        """#!/bin/sh
+case "$*" in
+  *docker-compose.env.yml*) cat "$REPO_ENV_COMPOSE" ;;
+  *docker-compose.admin.yml*) cat "$REPO_ADMIN_COMPOSE" ;;
+  *.service*) cat "$RENDERED_UNIT" ;;
+esac
+exit 0
+"""
+    )
+    (bindir / "ssh").chmod(0o755)
+    unit_file = tmp_path / "unit.txt"
+    script = (
+        f'source "{SCRIPT}"; '
+        f'render_unit prod > "{unit_file}"; '
+        f'export REPO_ENV_COMPOSE="$SERVICE_DIR/docker-compose.env.yml"; '
+        f'export REPO_ADMIN_COMPOSE="$SERVICE_DIR/docker-compose.admin.yml"; '
+        f'export RENDERED_UNIT="{unit_file}"; '
+        "converge_check prod"
+    )
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"}
+    proc = subprocess.run(
+        ["/bin/bash", "-c", script], env=env, capture_output=True, text=True, timeout=30
+    )
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 0, combined
+    assert "no runtime drift" in combined

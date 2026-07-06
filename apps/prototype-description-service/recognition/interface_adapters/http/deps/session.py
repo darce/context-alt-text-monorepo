@@ -304,6 +304,13 @@ async def get_observability_session(
             await session.execute(text("SELECT 1"))
             probe_ms = (_time.perf_counter() - probe_started_at) * 1000
             await _apply_postgres_session_safety_settings(session)
+            # E15-34: observability tables are FORCE-RLS tenant tables now.
+            # This dep is the documented no-tenant-validation diagnostics
+            # surface, so reads must bypass RLS or every query silently
+            # returns zero rows. SET LOCAL scopes the bypass to the current
+            # transaction only — it cannot leak through the pool.
+            if is_postgres(session):
+                await session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
             conn_id = await _resolve_connection_id(session)
             pg_backend_pid = await _resolve_pg_backend_pid(session)
         except ValueError:

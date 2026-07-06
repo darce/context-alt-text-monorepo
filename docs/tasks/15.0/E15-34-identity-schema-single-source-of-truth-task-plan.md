@@ -211,8 +211,8 @@ Proof:
 
 ### Checklist for Slice 1: Truth-consistency CI ratchet
 
-- [ ] `RAW_SQL_TABLES` exported from `001_identity_schema.py`.
-- [ ] `test_schema_truth_consistency.py` with three set-relation assertions + documented allowlists.
+- [x] `RAW_SQL_TABLES` exported from `001_identity_schema.py`.
+- [x] `test_schema_truth_consistency.py` with three set-relation assertions + documented allowlists.
 - [ ] `make -C apps/prototype-description-service test` evidence captured; deliberate-breakage check demonstrated.
 
 ### Checklist for Slice 2: PG test substrate
@@ -224,7 +224,7 @@ Proof:
 ### Checklist for Slice 3: Idempotent DDL helpers + delegating heal
 
 - [ ] `ensure_*` helpers extracted; `upgrade()` composes them; Slice 2 baseline still green.
-- [ ] `heal()` + thin `sync_identity_schema.py` under advisory lock; no `create_all` remains.
+- [x] `heal()` + thin `sync_identity_schema.py` under advisory lock; no `create_all` remains.
 - [ ] Slice-1 assertion (c) tightened from the EXPECTED-membership proxy to heal-creatable tables.
 - [ ] Double-heal idempotence, BR2-01/BR2-02 regressions, and concurrent-heal advisory-lock test green; Dockerfile CMD wired to the exact documented string.
 

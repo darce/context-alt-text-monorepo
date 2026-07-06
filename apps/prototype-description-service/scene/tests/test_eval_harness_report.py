@@ -213,6 +213,13 @@ def test_unknown_schema_rejected():  # S3-04
         score_run_record(record, _manifest_entries())
 
 
+def test_missing_provenance_rejected():  # S3-04 malformed-doc guard
+    record = _run_record()
+    del record["provenance"]
+    with pytest.raises(ReportError, match="provenance"):
+        score_run_record(record, _manifest_entries())
+
+
 def test_rubric_defined_images_surfaced():  # S1-02
     scored = score_run_record(_run_record(), _manifest_entries())
     assert scored["caption"]["must_right_defined_images"] == 1  # only alice-pool has must_right

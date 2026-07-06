@@ -21,6 +21,7 @@ _DEFAULT_TIMEOUT_S = 60.0
 _BREAKER_THRESHOLD = 3
 _DEFAULT_MAX_POLL_ATTEMPTS = 60
 _CLUSTERS_PAGE_SIZE = 200
+_MAX_CLUSTER_PAGES = 100  # rg-007 stall bound: refuse to page forever if the route ignores offset
 # Mirror the live JobStatus contract (recognition/domain/job.py) exactly — no
 # invented statuses (rg-005/rg-015). completed_with_errors is a terminal partial
 # success (return the payload; per-item failures are isolated downstream);
@@ -228,19 +229,27 @@ class RemoteSceneClient:
         early-return and coverage re-check both depend on seeing every cluster.
         """
         all_clusters: list[dict[str, Any]] = []
-        offset = 0
-        while True:
+        for _page in range(_MAX_CLUSTER_PAGES):
             page = self._request(
                 "GET",
                 "/recognition/clusters",
-                params={"labeled_only": labeled_only, "limit": _CLUSTERS_PAGE_SIZE, "offset": offset},
+                params={
+                    "labeled_only": labeled_only,
+                    "limit": _CLUSTERS_PAGE_SIZE,
+                    "offset": len(all_clusters),
+                },
             )
             if not isinstance(page, list):
                 raise RemoteClientError(f"GET /recognition/clusters: expected JSON array, got {type(page).__name__}")
             all_clusters.extend(page)
             if len(page) < _CLUSTERS_PAGE_SIZE:
                 return all_clusters
-            offset += _CLUSTERS_PAGE_SIZE
+        # Bounded loop (rg-007): a route that ignored offset and always returned a
+        # full page would otherwise spin forever against the live box.
+        raise RemoteClientError(
+            f"GET /recognition/clusters: pagination exceeded {_MAX_CLUSTER_PAGES} pages "
+            f"({_MAX_CLUSTER_PAGES * _CLUSTERS_PAGE_SIZE} clusters); refusing to loop unboundedly"
+        )
 
     def cluster_members(self, cluster_id: str) -> dict[str, Any]:
         """GET /recognition/clusters/{id}/members (members carry media_id)."""

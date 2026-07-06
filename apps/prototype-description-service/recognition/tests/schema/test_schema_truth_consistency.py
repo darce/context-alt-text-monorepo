@@ -28,18 +28,14 @@ MIGRATION = importlib.import_module("db.migrations.versions.001_identity_schema"
 RLS_EXEMPT_ALLOWLIST = {
     "api_keys": "pre-tenant-context lookup path; RLS would break key resolution (documented in E15-34 scope Not-Doing)",
     "mv_identity_cluster_centroids": "materialized view; Postgres does not support RLS on matviews",
-    "assignment_decisions": "removed in Slice 5",
-    "clustering_job_reports": "removed in Slice 5",
 }
 
 # ORM tables written by runtime code that the migration/verifier must own.
 RUNTIME_WRITTEN_ORM_TABLES = {"assignment_decisions", "clustering_job_reports"}
 
 # Runtime-written tables temporarily absent from EXPECTED_SCHEMA_TABLES.
-MIGRATION_GAP_ALLOWLIST = {
-    "assignment_decisions": "removed in Slice 5",
-    "clustering_job_reports": "removed in Slice 5",
-}
+# Slice 5 emptied this: runtime-written tables are all migration-owned now.
+MIGRATION_GAP_ALLOWLIST: dict[str, str] = {}
 
 
 def test_every_tenant_id_orm_table_is_rls_governed_or_allowlisted() -> None:

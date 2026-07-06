@@ -35,6 +35,8 @@ TENANT_TABLES = [
     "curation_replay_records",
     "export_jobs",
     "image_descriptions",
+    "clustering_job_reports",
+    "assignment_decisions",
 ]
 
 # Tables this migration creates via raw SQL only — no ORM model exists for
@@ -68,9 +70,13 @@ EXPECTED_SCHEMA_TABLES = [
     "export_jobs",
     "identity_cluster_refresh_queue",
     "image_descriptions",
+    "clustering_job_reports",
+    "assignment_decisions",
 ]
 
 DOWNGRADE_TABLE_ORDER = [
+    "assignment_decisions",
+    "clustering_job_reports",
     "worker_capabilities",
     "image_descriptions",
     "audit_events",
@@ -1246,6 +1252,52 @@ def ensure_tables(op) -> None:
         ),
     )
     _ensure_index(op, "idx_image_descriptions_tenant", "image_descriptions", ["tenant_id"])
+
+    # E15-34 Slice 5: observability tables adopted from db/models/observability.py
+    # (previously ORM-only; written live by the recognition runtime).
+    _ensure_table(
+        op,
+        "clustering_job_reports",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column("tenant_id", sa.dialects.postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id"), nullable=True),
+        sa.Column("job_id", sa.String(length=64), nullable=False),
+        sa.Column("algorithm", sa.String(length=50), nullable=False),
+        sa.Column("started_at", sa.TIMESTAMP(timezone=True), nullable=False),
+        sa.Column("completed_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("total_identities", sa.Integer(), nullable=False),
+        sa.Column("accept_count", sa.Integer(), nullable=False),
+        sa.Column("suggest_count", sa.Integer(), nullable=False),
+        sa.Column("reject_count", sa.Integer(), nullable=False),
+        sa.Column("clusters_created", sa.Integer(), nullable=False),
+        sa.Column("avg_similarity", sa.Float(), nullable=True),
+        sa.Column("success_rate", sa.Float(), nullable=False),
+        sa.Column("duration_ms", sa.Float(), nullable=False),
+        sa.Column("payload", sa.JSON(), nullable=False),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+    )
+    _ensure_index(op, "idx_clustering_reports_tenant", "clustering_job_reports", ["tenant_id"])
+    _ensure_index(op, "idx_clustering_reports_job", "clustering_job_reports", ["job_id"])
+
+    _ensure_table(
+        op,
+        "assignment_decisions",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column("tenant_id", sa.dialects.postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id"), nullable=True),
+        sa.Column("identity_id", sa.String(length=64), nullable=False),
+        sa.Column("cluster_id", sa.String(length=64), nullable=True),
+        sa.Column("decision", sa.String(length=10), nullable=False),
+        sa.Column("similarity", sa.Float(), nullable=True),
+        sa.Column("reason", sa.Text(), nullable=True),
+        sa.Column("algorithm", sa.String(length=50), nullable=True),
+        sa.Column("job_id", sa.String(length=64), nullable=True),
+        sa.Column("metadata_json", sa.JSON(), nullable=True),
+        sa.Column("timestamp", sa.TIMESTAMP(timezone=True), nullable=False),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+    )
+    _ensure_index(op, "idx_assignment_decisions_tenant", "assignment_decisions", ["tenant_id"])
+    _ensure_index(op, "idx_assignment_decisions_cluster", "assignment_decisions", ["cluster_id"])
+    _ensure_index(op, "idx_assignment_decisions_decision", "assignment_decisions", ["decision"])
+    _ensure_index(op, "idx_assignment_decisions_timestamp", "assignment_decisions", ["timestamp"])
 
 
 def ensure_rls(op) -> None:

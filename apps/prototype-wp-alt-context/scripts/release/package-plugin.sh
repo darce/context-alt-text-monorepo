@@ -205,6 +205,13 @@ VERSION="$(extract_plugin_version)"
 PACKAGE_VERSION="$(extract_package_json_version)"
 validate_version_consistency "${VERSION}" "${PACKAGE_VERSION}"
 
+# Reuse the validated plugin version as Composer's root version so `composer
+# install` does not warn "could not detect the root package version" and default
+# to 1.0.0. Derived from the single source of truth (alt-context.php == package.json)
+# rather than hardcoding `version` in composer.json (which would add a third sync
+# point). Exported so the staging-dir composer subshell inherits it.
+export COMPOSER_ROOT_VERSION="${VERSION}"
+
 ZIP_NAME="${PLUGIN_SLUG}-${VERSION}.zip"
 ZIP_PATH="${DIST_DIR}/${ZIP_NAME}"
 CHECKSUM_PATH="${ZIP_PATH}.sha256"

@@ -18,6 +18,28 @@ export interface SettingsResponse {
   tenant_id: string;
   tenant_id_source: 'constant' | 'option' | 'filter' | 'default' | 'derived';
   tenant_paired: boolean;
+  description_budget: DescriptionBudget;
+}
+
+export interface DescriptionBudgetUsage {
+  attempts: number;
+  successes: number;
+  failures: number;
+  cost_total: number;
+}
+
+export interface DescriptionBudgetError {
+  media_id: number;
+  error_code: string | null;
+  error_message: string | null;
+  retryable: boolean | null;
+  occurred_at: string;
+}
+
+export interface DescriptionBudget {
+  max_attempts: number;
+  usage: DescriptionBudgetUsage;
+  recent_errors: DescriptionBudgetError[];
 }
 
 export const RecognitionSource = {
@@ -32,6 +54,9 @@ export interface SaveSettingsPayload {
   local_url?: string;
   recognition_source?: RecognitionSourceValue;
   api_key?: string;
+  description_budget?: {
+    max_attempts: number;
+  };
 }
 
 export interface SaveSettingsResponse {

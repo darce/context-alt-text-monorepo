@@ -8,18 +8,21 @@ class Menu {
 	private DashboardPage $dashboardPage;
 	private WorkbenchPage $workbenchPage;
 	private RosterPage $rosterPage;
+	private DescriptionHistoryPage $descriptionHistoryPage;
 	private SettingsPage $settingsPage;
 
 	public function __construct(
 		DashboardPage $dashboardPage,
 		WorkbenchPage $workbenchPage,
 		RosterPage $rosterPage,
-		SettingsPage $settingsPage
+		SettingsPage $settingsPage,
+		?DescriptionHistoryPage $descriptionHistoryPage = null
 	) {
-		$this->dashboardPage  = $dashboardPage;
-		$this->workbenchPage  = $workbenchPage;
-		$this->rosterPage = $rosterPage;
-		$this->settingsPage = $settingsPage;
+		$this->dashboardPage           = $dashboardPage;
+		$this->workbenchPage           = $workbenchPage;
+		$this->rosterPage              = $rosterPage;
+		$this->settingsPage            = $settingsPage;
+		$this->descriptionHistoryPage  = $descriptionHistoryPage ?? new DescriptionHistoryPage();
 	}
 
 	public function init(): void {
@@ -66,6 +69,15 @@ class Menu {
 
 		add_submenu_page(
 			'alt-context-dashboard',
+			__( 'Description Review History', 'alt-context' ),
+			__( 'Review History', 'alt-context' ),
+			'manage_options',
+			'alt-context-description-history',
+			array( $this, 'render_description_history_page' )
+		);
+
+		add_submenu_page(
+			'alt-context-dashboard',
 			__( 'Alt Context Settings', 'alt-context' ),
 			__( 'Settings', 'alt-context' ),
 			'manage_options',
@@ -84,6 +96,10 @@ class Menu {
 
 	public function render_roster_page(): void {
 		$this->rosterPage->render();
+	}
+
+	public function render_description_history_page(): void {
+		$this->descriptionHistoryPage->render();
 	}
 
 	public function render_settings_page(): void {

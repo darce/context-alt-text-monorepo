@@ -34,17 +34,142 @@ export interface VisualFactsResponse {
   cached: boolean;
   duration_ms: number;
   retention_class: string;
+  alt_text_write?: AltTextWriteResult;
 }
 
-export const describeMedia = async (mediaId: number): Promise<VisualFactsResponse> =>
-  fetchRequiredApi<VisualFactsResponse>(getEndpoint('recognitionDescribe'), {
+export type AltTextWriteStatus = 'written' | 'skipped_existing_alt' | 'forced_overwrite';
+
+export interface AltTextWriteResult {
+  status: AltTextWriteStatus;
+  existing_alt_present: boolean;
+}
+
+export interface DescribeMediaWriteOptions {
+  writeAlt?: boolean;
+  force?: boolean;
+}
+
+export type DescriptionCandidateReason = 'missing_alt' | 'has_alt_text' | 'unsupported_mime';
+
+export interface DescriptionCandidateRow {
+  media_id: number;
+  filename: string;
+  title: string;
+  mime_type: string;
+  current_alt_text: string;
+  reason: DescriptionCandidateReason;
+}
+
+export interface DescriptionCandidatesResponse {
+  candidates: DescriptionCandidateRow[];
+  exclusions: DescriptionCandidateRow[];
+  limit: number;
+  offset: number;
+  total_candidates: number;
+  total_exclusions: number;
+}
+
+export interface DescriptionCandidatesParams {
+  limit?: number;
+  offset?: number;
+}
+
+export interface DescriptionHistoryRunStatus {
+  status?: string;
+  updated_at?: string | null;
+  [key: string]: unknown;
+}
+
+export interface DescriptionHistoryHumanEdit {
+  alt_text: string;
+  edited_at?: string | null;
+  user_id?: number | null;
+}
+
+export interface DescriptionHistoryItem {
+  media_id: number;
+  title: string;
+  mime_type: string;
+  current_alt_text: string;
+  generated_alt_text: string;
+  provenance: VisualFactsResponse | Record<string, unknown> | null;
+  human_edit: DescriptionHistoryHumanEdit | null;
+  run_status: DescriptionHistoryRunStatus | null;
+}
+
+export interface DescriptionHistoryResponse {
+  total: number;
+  items: DescriptionHistoryItem[];
+}
+
+export interface DescriptionHistoryQuery {
+  limit?: number;
+  offset?: number;
+}
+
+export const describeMedia = async (
+  mediaId: number,
+  options: DescribeMediaWriteOptions = {},
+): Promise<VisualFactsResponse> => {
+  const body: { media_id: number; write_alt?: boolean; force?: boolean } = { media_id: mediaId };
+  if (options.writeAlt !== undefined) {
+    body.write_alt = options.writeAlt;
+  }
+  if (options.force !== undefined) {
+    body.force = options.force;
+  }
+
+  return fetchRequiredApi<VisualFactsResponse>(getEndpoint('recognitionDescribe'), {
     method: 'POST',
-    body: { media_id: mediaId },
+    body,
     restNonce: getConfig().nonce,
     // Generous: florence_small is ~14s on the OCI A1, and the cold model load on
     // the first request can push the wall time higher.
     signal: createRecognitionTimeoutSignal(180_000),
   });
+};
+
+export const fetchDescriptionCandidates = async ({
+  limit = 50,
+  offset = 0,
+}: DescriptionCandidatesParams = {}): Promise<DescriptionCandidatesResponse> => {
+  const endpoint = new URL(getEndpoint('recognitionDescribeCandidates'));
+  endpoint.searchParams.set('limit', String(limit));
+  endpoint.searchParams.set('offset', String(offset));
+
+  return fetchRequiredApi<DescriptionCandidatesResponse>(endpoint.toString(), {
+    method: 'GET',
+    restNonce: getConfig().nonce,
+  });
+};
+
+export const fetchDescriptionHistory = async ({
+  limit = 50,
+  offset = 0,
+}: DescriptionHistoryQuery = {}): Promise<DescriptionHistoryResponse> => {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+  });
+
+  return fetchRequiredApi<DescriptionHistoryResponse>(`${getEndpoint('recognitionDescribeHistory')}?${params}`, {
+    method: 'GET',
+    restNonce: getConfig().nonce,
+  });
+};
+
+export const correctDescriptionHistoryItem = async (
+  mediaId: number,
+  altText: string,
+): Promise<DescriptionHistoryItem> =>
+  fetchRequiredApi<DescriptionHistoryItem>(
+    `${getEndpoint('recognitionDescribeHistory')}/${encodeURIComponent(String(mediaId))}/correction`,
+    {
+      method: 'POST',
+      body: { alt_text: altText },
+      restNonce: getConfig().nonce,
+    },
+  );
 
 const parsePayload = (raw: string): Record<string, unknown> | null => {
   const start = raw.indexOf('{');

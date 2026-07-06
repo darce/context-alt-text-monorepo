@@ -451,15 +451,21 @@ admin authority — neither alone is sufficient by policy:
   surface is not confirmed). `/admin` is reachable **only over the tailnet**
   (`tailscale serve` or an `ssh -L` tunnel to the prod-api loopback); see
   `docs/runbooks/admin-tenant-keys.md`.
-- **Token**: every `/admin` route requires the shared `RECOGNITION_ADMIN_TOKEN`
-  on the dedicated `X-Admin-Token` header (or HTTP Basic password), checked
-  with `secrets.compare_digest`. It never reads `AuthContext.is_admin`, the
-  tenant `X-API-Key` header, or the DB — the dev-key admin path stays banned in
+- **Token**: every `/admin` route requires the shared `RECOGNITION_ADMIN_TOKEN`,
+  checked with `secrets.compare_digest`. Browser-console routes accept it as
+  the HTTP Basic password; JSON mutations require the dedicated
+  `X-Admin-Token` header so browser credential replay cannot authorize a
+  cross-site mutation. The gate never reads `AuthContext.is_admin`, the tenant
+  `X-API-Key` header, or the DB — the dev-key admin path stays banned in
   production.
 - **Env gate / fail-closed**: the router mounts only when
   `RECOGNITION_ADMIN_ENABLED=true`. `validate_admin_config` refuses to start
   when admin is enabled with an empty or `<32`-char token, or in production
-  without the `RECOGNITION_ADMIN_TAILNET_BOUND=1` acknowledgement.
+  without the `RECOGNITION_ADMIN_TAILNET_BOUND=1` acknowledgement. The prod
+  compose overlay's `127.0.0.1:8000` bind persists independent of this gate
+  (deploys install it unconditionally); with admin disabled that means a
+  loopback-only, VM-local path to the tenant API that bypasses Caddy —
+  documented and accepted in `docs/runbooks/admin-tenant-keys.md` §(a).
 
 The operator runbook for the surface is `docs/runbooks/admin-tenant-keys.md`;
 the CLI ceremony above remains a supported fallback.

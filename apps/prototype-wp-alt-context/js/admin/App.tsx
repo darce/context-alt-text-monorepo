@@ -6,6 +6,7 @@ import { RetentionPage } from './pages/RetentionPage';
 import { WorkbenchPage } from './pages/WorkbenchPage';
 import { RosterPage } from './pages/RosterPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { DescriptionHistoryPage } from './pages/DescriptionHistoryPage';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { ToastProvider } from './context/ToastContext';
 import { DegradedModeBanner } from './pages/workbench/DegradedModeBanner';
@@ -71,6 +72,14 @@ export const App = (): React.JSX.Element => {
                 </ErrorBoundary>
               }
             />
+            <Route
+              path="/description-history"
+              element={
+                <ErrorBoundary>
+                  <DescriptionHistoryPage />
+                </ErrorBoundary>
+              }
+            />
             <Route path="*" element={<Navigate to={DEFAULT_ROUTE} replace />} />
           </Routes>
         </HashRouter>
@@ -102,6 +111,10 @@ export const determineInitialRoute = (): RoutePath => {
 
   if (page === 'alt-context-settings') {
     return '/settings';
+  }
+
+  if (page === 'alt-context-description-history') {
+    return '/description-history';
   }
 
   return DEFAULT_ROUTE;

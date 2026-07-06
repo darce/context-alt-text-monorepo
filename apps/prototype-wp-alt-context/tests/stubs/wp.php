@@ -65,7 +65,12 @@ if (!class_exists('WP_REST_Request')) {
         /**
          * @param string|array<string,mixed> $method HTTP method or params array (backward compatible)
          * @param string $route REST route
-         * @param array<string,mixed> $params Request parameters
+         * @param array<string,mixed> $params Request parameters. DIVERGES from
+         *     real WordPress, where the third constructor argument is route
+         *     *attributes* and is never readable via get_param(). Tests may use
+         *     this convenience for controller requests (real WP routing fills
+         *     params), but production code constructing WP_REST_Request itself
+         *     must use set_param() — see DescriptionCommand::generate_one().
          */
         public function __construct($method = 'GET', string $route = '', array $params = [])
         {
@@ -656,6 +661,27 @@ if (!function_exists('get_post_mime_type')) {
     function get_post_mime_type($postId)
     {
         return $GLOBALS['__ac_attachment_mimes'][$postId] ?? false;
+    }
+}
+
+if (!function_exists('wp_update_post')) {
+    function wp_update_post($postarr, $wp_error = false, $fire_after_hooks = true)
+    {
+        $postId = isset($postarr['ID']) ? (int) $postarr['ID'] : 0;
+        if ($postId <= 0) {
+            return 0;
+        }
+
+        $GLOBALS['__ac_updated_posts'][] = $postarr;
+        if (!isset($GLOBALS['__ac_posts'][$postId]) || !is_object($GLOBALS['__ac_posts'][$postId])) {
+            $GLOBALS['__ac_posts'][$postId] = (object) ['ID' => $postId];
+        }
+
+        foreach ($postarr as $key => $value) {
+            $GLOBALS['__ac_posts'][$postId]->{$key} = $value;
+        }
+
+        return $postId;
     }
 }
 
@@ -1554,6 +1580,47 @@ if (!function_exists('wp_enqueue_script')) {
     function wp_enqueue_script($handle, $src = '', $deps = [], $ver = false, $in_footer = false): void
     {
         $GLOBALS['__ac_scripts'][$handle] = compact('src', 'deps', 'ver', 'in_footer');
+    }
+}
+
+if (!function_exists('add_menu_page')) {
+    function add_menu_page($page_title, $menu_title, $capability, $menu_slug, $callback = '', $icon_url = '', $position = null)
+    {
+        $GLOBALS['__ac_menu_pages'][] = compact(
+            'page_title',
+            'menu_title',
+            'capability',
+            'menu_slug',
+            'callback',
+            'icon_url',
+            'position'
+        );
+
+        return $menu_slug;
+    }
+}
+
+if (!function_exists('add_submenu_page')) {
+    function add_submenu_page(
+        $parent_slug,
+        $page_title,
+        $menu_title,
+        $capability,
+        $menu_slug,
+        $callback = '',
+        $position = null
+    ) {
+        $GLOBALS['__ac_submenu_pages'][] = compact(
+            'parent_slug',
+            'page_title',
+            'menu_title',
+            'capability',
+            'menu_slug',
+            'callback',
+            'position'
+        );
+
+        return $menu_slug;
     }
 }
 

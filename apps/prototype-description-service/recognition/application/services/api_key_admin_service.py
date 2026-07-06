@@ -42,9 +42,7 @@ async def mint_api_key(
     expires_at: datetime | None = None
     if expires_in_days is not None:
         if not (_MIN_EXPIRES_IN_DAYS <= expires_in_days <= _MAX_EXPIRES_IN_DAYS):
-            raise ValueError(
-                f"expires_in_days must be between {_MIN_EXPIRES_IN_DAYS} and {_MAX_EXPIRES_IN_DAYS}"
-            )
+            raise ValueError(f"expires_in_days must be between {_MIN_EXPIRES_IN_DAYS} and {_MAX_EXPIRES_IN_DAYS}")
         expires_at = datetime.now(tz=UTC) + timedelta(days=int(expires_in_days))
 
     record = await SqlAlchemyApiKeyRepository(session).create(

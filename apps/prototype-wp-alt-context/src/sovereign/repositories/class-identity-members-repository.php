@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Sovereign\Repositories;
 
+require_once __DIR__ . '/interface-identity-members-repository.php';
 require_once __DIR__ . '/class-identity-members-read-repository.php';
 require_once __DIR__ . '/class-identity-member-curation-writer.php';
 require_once __DIR__ . '/class-member-conflict-recorder.php';

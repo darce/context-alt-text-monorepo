@@ -1,28 +1,29 @@
 {
   "caption": {
     "insertion_rate": 0.0,
-    "mean_gated_score": 0.0789,
+    "mean_gated_score": 0.0811,
+    "must_right_defined_images": 0,
     "must_right_failed_images": 0,
     "policy_violations": 0
   },
   "counts": {
     "failed": 0,
-    "scored": 38,
-    "total": 38
+    "scored": 37,
+    "total": 37
   },
   "faces": {
     "detection": {
-      "fn": 1,
-      "fp": 30,
-      "precision": 0.5454545454545454,
-      "recall": 0.972972972972973,
-      "tp": 36
+      "fn": 3,
+      "fp": 15,
+      "precision": 0.7619047619047619,
+      "recall": 0.9411764705882353,
+      "tp": 48
     },
     "identification": {
       "excluded_images": [],
       "ignored_wrong_names": [],
       "macro_precision": 1.0,
-      "macro_recall": 0.33095238095238094,
+      "macro_recall": 0.3376190476190476,
       "per_identity": {
         "Bea Burke": {
           "fn": 1,
@@ -67,10 +68,10 @@
           "tp": 0
         },
         "Kirstie Mccarrel": {
-          "fn": 4,
+          "fn": 3,
           "fp": 0,
           "precision": 1.0,
-          "recall": 0.3333333333333333,
+          "recall": 0.4,
           "tp": 2
         },
         "Liam Maloney": {
@@ -96,15 +97,16 @@
         }
       },
       "precision": 1.0,
-      "recall": 0.2972972972972973,
-      "true_rejections": 0,
+      "recall": 0.3055555555555556,
+      "true_rejections": 6,
       "wrong_names": []
     }
   },
   "failures": [],
+  "kind": "report",
   "per_image": [
     {
-      "cache_hit": false,
+      "cache_hit": true,
       "first_sentence_gist_ok": true,
       "fkre": 75.5,
       "gated_score": 0.0,
@@ -117,10 +119,10 @@
       "path": "mock_images/Breiðamerkurjökull.jpg",
       "policy_violation": false,
       "repetition_ratio": 0.1111,
-      "tag_coverage": 1.0
+      "tag_coverage": 0.5
     },
     {
-      "cache_hit": false,
+      "cache_hit": true,
       "first_sentence_gist_ok": true,
       "fkre": 45.65,
       "gated_score": 0.0,
@@ -136,7 +138,7 @@
       "tag_coverage": 0.3333333333333333
     },
     {
-      "cache_hit": false,
+      "cache_hit": true,
       "first_sentence_gist_ok": true,
       "fkre": 92.97,
       "gated_score": 0.0,
@@ -152,7 +154,7 @@
       "tag_coverage": 1.0
     },
     {
-      "cache_hit": false,
+      "cache_hit": true,
       "first_sentence_gist_ok": true,
       "fkre": 71.82,
       "gated_score": 0.0,
@@ -168,7 +170,7 @@
       "tag_coverage": 1.0
     },
     {
-      "cache_hit": false,
+      "cache_hit": true,
       "first_sentence_gist_ok": true,
       "fkre": 78.87,
       "gated_score": 0.0,
@@ -185,7 +187,7 @@
       "tag_coverage": 0.5
     },
     {
-      "cache_hit": false,
+      "cache_hit": true,
       "first_sentence_gist_ok": true,
       "fkre": 92.97,
       "gated_score": 0.0,
@@ -201,7 +203,7 @@
       "tag_coverage": 1.0
     },
     {
-      "cache_hit": false,
+      "cache_hit": true,
       "first_sentence_gist_ok": true,
       "fkre": 92.97,
       "gated_score": 0.0,
@@ -217,7 +219,7 @@
       "tag_coverage": 1.0
     },
     {
-      "cache_hit": false,
+      "cache_hit": true,
       "first_sentence_gist_ok": true,
       "fkre": 92.97,
       "gated_score": 0.0,
@@ -233,7 +235,7 @@
       "tag_coverage": 1.0
     },
     {
-      "cache_hit": false,
+      "cache_hit": true,
       "first_sentence_gist_ok": true,
       "fkre": 75.5,
       "gated_score": 0.0,
@@ -246,10 +248,10 @@
       "path": "mock_images/ccqw-occlusion.jpg",
       "policy_violation": false,
       "repetition_ratio": 0.1111,
-      "tag_coverage": 1.0
+      "tag_coverage": 0.5
     },
     {
-      "cache_hit": false,
+      "cache_hit": true,
       "first_sentence_gist_ok": true,
       "fkre": 45.65,
       "gated_score": 0.0,
@@ -265,7 +267,7 @@
       "tag_coverage": 0.3333333333333333
     },
     {
-      "cache_hit": false,
+      "cache_hit": true,
       "first_sentence_gist_ok": true,
       "fkre": 45.65,
       "gated_score": 0.0,
@@ -281,7 +283,7 @@
       "tag_coverage": 0.3333333333333333
     },
     {
-      "cache_hit": false,
+      "cache_hit": true,
       "first_sentence_gist_ok": true,
       "fkre": 75.5,
       "gated_score": 0.0,
@@ -294,10 +296,10 @@
       "path": "mock_images/ccqw-running.jpg",
       "policy_violation": false,
       "repetition_ratio": 0.1111,
-      "tag_coverage": 1.0
+      "tag_coverage": 0.5
     },
     {
-      "cache_hit": false,
+      "cache_hit": true,
       "first_sentence_gist_ok": true,
       "fkre": 31.55,
       "gated_score": 0.0,
@@ -313,7 +315,7 @@
       "tag_coverage": 0.0
     },
     {
-      "cache_hit": false,
+      "cache_hit": true,
       "first_sentence_gist_ok": true,
       "fkre": 50.67,
       "gated_score": 0.0,
@@ -329,7 +331,7 @@
       "tag_coverage": 1.0
     },
     {
-      "cache_hit": false,
+      "cache_hit": true,
       "first_sentence_gist_ok": true,
       "fkre": 45.65,
       "gated_score": 0.0,
@@ -345,7 +347,7 @@
       "tag_coverage": 0.3333333333333333
     },
     {
-      "cache_hit": false,
+      "cache_hit": true,
       "first_sentence_gist_ok": true,
       "fkre": 50.67,
       "gated_score": 0.0,
@@ -361,7 +363,7 @@
       "tag_coverage": 1.0
     },
     {
-      "cache_hit": false,
+      "cache_hit": true,
       "first_sentence_gist_ok": true,
       "fkre": 45.65,
       "gated_score": 0.0,
@@ -377,7 +379,7 @@
       "tag_coverage": 0.3333333333333333
     },
     {
-      "cache_hit": false,
+      "cache_hit": true,
       "first_sentence_gist_ok": true,
       "fkre": 71.82,
       "gated_score": 0.0,
@@ -393,7 +395,7 @@
       "tag_coverage": 1.0
     },
     {
-      "cache_hit": false,
+      "cache_hit": true,
       "first_sentence_gist_ok": true,
       "fkre": 92.97,
       "gated_score": 0.0,
@@ -409,7 +411,7 @@
       "tag_coverage": 1.0
     },
     {
-      "cache_hit": false,
+      "cache_hit": true,
       "first_sentence_gist_ok": true,
       "fkre": 92.97,
       "gated_score": 0.0,
@@ -425,7 +427,7 @@
       "tag_coverage": 1.0
     },
     {
-      "cache_hit": false,
+      "cache_hit": true,
       "first_sentence_gist_ok": true,
       "fkre": 71.82,
       "gated_score": 0.0,
@@ -441,23 +443,7 @@
       "tag_coverage": 1.0
     },
     {
-      "cache_hit": false,
-      "first_sentence_gist_ok": true,
-      "fkre": 31.55,
-      "gated_score": 0.0,
-      "inserted_identities": [],
-      "media_id": 22,
-      "missing_identities": [
-        "Kirstie Mccarrel"
-      ],
-      "must_right_failures": [],
-      "path": "mock_images/kirstie-boat_detected.jpg",
-      "policy_violation": false,
-      "repetition_ratio": 0.0,
-      "tag_coverage": 0.0
-    },
-    {
-      "cache_hit": false,
+      "cache_hit": true,
       "first_sentence_gist_ok": true,
       "fkre": 92.97,
       "gated_score": 0.0,
@@ -533,7 +519,7 @@
       "path": "mock_images/liam-maloney-painting.jpg",
       "policy_violation": false,
       "repetition_ratio": 0.1111,
-      "tag_coverage": 1.0
+      "tag_coverage": 0.5
     },
     {
       "cache_hit": false,
@@ -705,13 +691,26 @@
       "path": "mock_images/ryann-party.jpg",
       "policy_violation": false,
       "repetition_ratio": 0.1111,
-      "tag_coverage": 1.0
+      "tag_coverage": 0.5
     }
   ],
   "provenance": {
     "base_url": "https://api.altcontext.com",
     "head_sha": "2fe574fac42acc260afd04ccfb2fdb68774459d8",
+    "manifest_matches_fetch": false,
     "manifest_sha256": "9f9b134a71e5e1c2e5aa361d7139680081877841abefc0c4f3f7c55917e9927c",
+    "model": {
+      "adapters": [
+        "seeded"
+      ],
+      "model_ids": [
+        "seeded-fixtures"
+      ],
+      "model_versions": [
+        "1"
+      ]
+    },
+    "score_manifest_sha256": "ee94088b7cc9d43532b8457c3787251877328f5f800375c942b245218bee5fe0",
     "started_at": "2026-07-06T20:11:45Z"
   },
   "schema": "acx-eval/v1"

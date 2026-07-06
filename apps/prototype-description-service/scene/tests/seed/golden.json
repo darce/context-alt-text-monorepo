@@ -77,7 +77,7 @@
       "path": "mock_images/ccqw-erika.jpg",
       "sha256": "34271e1e49ba12f01a0494b6b560709d45c4941a95c88faef929092a0a33dd27",
       "media_id": 5,
-      "face_count": 2,
+      "face_count": 4,
       "present_identities": [
         "Caitlin Weaver",
         "Erika Hansen Miller"
@@ -407,7 +407,7 @@
       "path": "mock_images/maria-cocktail.jpg",
       "sha256": "19413ef423beccfff22a0f962ec0262c33a73b3899438f4b8e660296f69d6147",
       "media_id": 28,
-      "face_count": 1,
+      "face_count": 4,
       "present_identities": [
         "Maria Correonero"
       ],
@@ -422,7 +422,7 @@
       "path": "mock_images/maria-party.jpg",
       "sha256": "5e51ec4730c5e5c1ebb8f0122e26e69e19c38068125ab55801957d9499597e61",
       "media_id": 29,
-      "face_count": 1,
+      "face_count": 3,
       "present_identities": [
         "Maria Correonero"
       ],
@@ -510,7 +510,7 @@
       "path": "mock_images/rrw-mirror.jpg",
       "sha256": "2b57b7a7d498cafbad6b5587ddabeb8d4c2fc8d1c4763f120d7374df188644f4",
       "media_id": 35,
-      "face_count": 0,
+      "face_count": 2,
       "present_identities": [],
       "context_pack": {},
       "must_right": [],
@@ -538,7 +538,7 @@
       "path": "mock_images/ryann-group-party.jpg",
       "sha256": "e7081767186f95d469cbd8792a0361d6580e14637688beab9914ec55eb158740",
       "media_id": 37,
-      "face_count": 1,
+      "face_count": 6,
       "present_identities": [
         "Ryann Wiseman"
       ],
@@ -553,7 +553,7 @@
       "path": "mock_images/ryann-party.jpg",
       "sha256": "7c1a1592345f0fbcb9ee33991665ebab093234800fac1debcc35d6ac31b636db",
       "media_id": 38,
-      "face_count": 1,
+      "face_count": 2,
       "present_identities": [
         "Ryann Wiseman"
       ],

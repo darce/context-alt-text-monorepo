@@ -49,7 +49,7 @@ def _complete_kwargs(script) -> dict:
         "actual_revision": script.EXPECTED_REVISION,
         "expected_tables": tables,
         "tenant_tables": tenant,
-        "rls_state": {t: (True, True) for t in tenant},
+        "rls_state": dict.fromkeys(tenant, (True, True)),
         "policy_names": {f"tenant_isolation_{t}" for t in tenant},
         "matview_relkind": "m",
     }

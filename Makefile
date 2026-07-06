@@ -533,6 +533,14 @@ dev-stop:
 	@cd apps/prototype-description-service && make stop 2>/dev/null || true
 	@echo "✅ Development environment stopped"
 
+# VLM-2A caption + face eval harness (laptop CLI, remote OCI inference).
+# Requires: ACX_EVAL_LIVE=1, ACX_EVAL_BASE_URL, ACX_EVAL_API_KEY (dedicated
+# eval-tenant key, never the demo tenant's), GOLDEN_IMAGES_DIR. Details:
+# apps/prototype-description-service/scripts/eval_harness/README.md
+.PHONY: eval-captions
+eval-captions:
+	@cd apps/prototype-description-service && uv run python -m scripts.eval_harness.cli run $(EVAL_ARGS)
+
 # =============================================================================
 # ACE Observability
 # =============================================================================

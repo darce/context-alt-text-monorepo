@@ -1,7 +1,12 @@
 """Operator ``/admin`` router: tenant + API-key lifecycle over JSON.
 
-Every route is gated by :func:`require_admin` (a dedicated admin-token header,
-never the tenant auth path). Every mutation writes an ``audit_events`` row on the
+Every route is gated by :func:`require_admin` (dedicated admin-token header, or
+HTTP Basic for the browser console — never the tenant auth path). JSON mutation
+routes are ADDITIONALLY gated by :func:`require_admin_header`: Basic auth is
+console-only, so browser credential replay cannot authorize a cross-site JSON
+mutation. Any new mutating JSON route MUST attach
+``dependencies=[Depends(require_admin_header)]``; ``/ui`` form routes use
+``require_same_origin`` instead. Every mutation writes an ``audit_events`` row on the
 **same** request-scoped session as the DB change and commits exactly once, so a
 failed audit write rolls back the whole request — no un-audited state can land.
 
@@ -26,9 +31,10 @@ from enum import StrEnum
 from fastapi import APIRouter, Depends, Form, HTTPException, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from db.models import ApiKey, Tenant
 from db.session import async_session_factory
@@ -42,7 +48,11 @@ from recognition.infrastructure.repositories.api_key_repository import (
     _as_utc,
 )
 from recognition.interface_adapters.http.admin_console import render_console
-from recognition.interface_adapters.http.deps.admin_auth import require_admin, require_same_origin
+from recognition.interface_adapters.http.deps.admin_auth import (
+    require_admin,
+    require_admin_header,
+    require_same_origin,
+)
 
 _CONSOLE_KEYS_PER_TENANT = 100
 
@@ -274,7 +284,12 @@ async def revoke_key_atomic(session: AsyncSession, *, key_id: uuid.UUID) -> Revo
 # --- Routes --------------------------------------------------------------------
 
 
-@admin_router.post("/tenants", response_model=TenantResponse, status_code=status.HTTP_201_CREATED)
+@admin_router.post(
+    "/tenants",
+    response_model=TenantResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin_header)],
+)
 async def create_tenant(
     body: CreateTenantRequest,
     session: AsyncSession = Depends(get_admin_session),
@@ -302,6 +317,7 @@ async def list_tenants(session: AsyncSession = Depends(get_admin_session)) -> li
     "/tenants/{tenant_id}/keys",
     response_model=MintKeyResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin_header)],
 )
 async def mint_key(
     tenant_id: uuid.UUID,
@@ -352,7 +368,11 @@ async def list_keys(
     return [_api_key_response(record) for record in rows]
 
 
-@admin_router.post("/keys/{key_id}/revoke", response_model=RevokeKeyResponse)
+@admin_router.post(
+    "/keys/{key_id}/revoke",
+    response_model=RevokeKeyResponse,
+    dependencies=[Depends(require_admin_header)],
+)
 async def revoke_key(
     key_id: uuid.UUID,
     session: AsyncSession = Depends(get_admin_session),
@@ -366,9 +386,7 @@ async def revoke_key(
     try:
         outcome = await revoke_key_atomic(session, key_id=key_id)
     except UnknownKeyError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="api key not found"
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="api key not found") from exc
     return RevokeKeyResponse(
         key_id=outcome.record.id,
         tenant_id=outcome.record.tenant_id,
@@ -393,9 +411,18 @@ async def _load_console_model(
 
     Replaces the prior per-tenant ``list_for_tenant`` loop (N+1) with a single
     ``WHERE tenant_id IN (...)`` query, then groups in-memory. Every tenant gets a
-    list (empty if it has no keys). Each tenant's list is capped at
-    ``_CONSOLE_KEYS_PER_TENANT`` most-recent keys for rendering; ``totals_by_tenant``
-    carries the pre-cap count so the view can show a "showing N of M" note.
+    list (empty if it has no keys). The cap is applied in SQL (row_number over a
+    per-tenant window, newest first) so a tenant with many keys keeps the key
+    the operator just minted visible and over-cap rows are not materialized;
+    ``totals_by_tenant`` carries the pre-cap count so the view can show a
+    "showing N of M" note. Recency ordering is exact up to ``created_at``
+    resolution: rows sharing a timestamp (e.g. bulk mints in one transaction
+    where ``now()`` is transaction-fixed) tie-break on ``id DESC``, which is
+    deterministic but not recency-meaningful for uuid4 ids. Ordering here is
+    deliberately newest-first (operational console view); the JSON
+    ``GET /admin/tenants/{id}/keys`` route and the CLI keep the repository's
+    chronological ``created_at ASC`` order (audit view) — an intentional
+    divergence, not drift.
     """
     stmt = select(Tenant).order_by(Tenant.created_at, Tenant.id)
     tenants = list((await session.execute(stmt)).scalars().all())
@@ -404,16 +431,33 @@ async def _load_console_model(
     totals_by_tenant: dict[uuid.UUID, int] = {tenant.id: 0 for tenant in tenants}
     if tenants:
         tenant_ids = [tenant.id for tenant in tenants]
-        keys_stmt = (
-            select(ApiKey)
+        ranked_keys = (
+            select(
+                ApiKey,
+                func.row_number()
+                .over(
+                    partition_by=ApiKey.tenant_id,
+                    order_by=(ApiKey.created_at.desc(), ApiKey.id.desc()),
+                )
+                .label("key_rank"),
+                func.count().over(partition_by=ApiKey.tenant_id).label("tenant_key_count"),
+            )
             .where(ApiKey.tenant_id.in_(tenant_ids))
-            .order_by(ApiKey.tenant_id, ApiKey.created_at)
+            .subquery()
         )
-        for key in (await session.execute(keys_stmt)).scalars().all():
-            totals_by_tenant[key.tenant_id] += 1
-            bucket = keys_by_tenant[key.tenant_id]
-            if len(bucket) < _CONSOLE_KEYS_PER_TENANT:
-                bucket.append(key)
+        ranked_key = aliased(ApiKey, ranked_keys)
+        keys_stmt = (
+            select(ranked_key, ranked_keys.c.tenant_key_count)
+            .where(ranked_keys.c.key_rank <= _CONSOLE_KEYS_PER_TENANT)
+            .order_by(
+                ranked_key.tenant_id,
+                ranked_key.created_at.desc(),
+                ranked_key.id.desc(),
+            )
+        )
+        for key, tenant_key_count in (await session.execute(keys_stmt)).all():
+            totals_by_tenant[key.tenant_id] = int(tenant_key_count)
+            keys_by_tenant[key.tenant_id].append(key)
     return tenants, keys_by_tenant, totals_by_tenant
 
 
@@ -507,9 +551,7 @@ async def console_mint_key(
     return await _render_console_response(session, minted_key=raw, message="API key minted.")
 
 
-@admin_router.post(
-    "/ui/keys/{key_id}/revoke", include_in_schema=False, dependencies=[Depends(require_same_origin)]
-)
+@admin_router.post("/ui/keys/{key_id}/revoke", include_in_schema=False, dependencies=[Depends(require_same_origin)])
 async def console_revoke_key(
     key_id: uuid.UUID,
     session: AsyncSession = Depends(get_admin_session),
@@ -539,7 +581,9 @@ def assert_admin_env_dsn(*, runtime_mode: str | None = None, dsn: str | None = N
 
     from scripts.manage_api_keys import _validate_env_vs_dsn
 
-    resolved_mode = runtime_mode if runtime_mode is not None else os.environ.get("RECOGNITION_RUNTIME_MODE", "production")
+    resolved_mode = (
+        runtime_mode if runtime_mode is not None else os.environ.get("RECOGNITION_RUNTIME_MODE", "production")
+    )
     env_token = "prod" if resolved_mode == "production" else "local"
     resolved_dsn = dsn if dsn is not None else get_database_settings().postgres_dsn
 

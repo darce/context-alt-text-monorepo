@@ -28,7 +28,12 @@ dev.api.altcontext.com {
 	reverse_proxy dev-api:8000
 }
 
-demo.altcontext.com {
+# 129-213-40-111.sslip.io is the VM-native interim host (E15-29): it resolves to
+# the VM IP with no external DNS, so Caddy ALPN-issues a real cert for it today.
+# demo.altcontext.com stays listed so it auto-serves once the operator adds the
+# A-record — no Caddy edit needed at cutover. WordPress' canonical WP_HOME/
+# WP_SITEURL points at the interim until then (set in demo secrets/.env).
+demo.altcontext.com, 129-213-40-111.sslip.io {
 	@xmlrpc path /xmlrpc.php
 	respond @xmlrpc "Forbidden" 403
 

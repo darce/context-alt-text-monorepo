@@ -96,13 +96,42 @@ DOWNGRADE_TABLE_ORDER = [
 ]
 
 
-def upgrade() -> None:
-    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
-    # NOTE: DROP statements removed - they were causing data loss when alembic version tracking
-    # got corrupted. Use scripts/reset_dev_db.sh explicitly if you need a clean slate.
-    # The migration is the baseline - if tables already exist, alembic won't re-run this.
+# --------------------------------------------------------------------------
+# E15-34: idempotent DDL helpers. `upgrade()` and the boot heal compose the
+# same `ensure_*` units, so schema truth lives here alone. Every helper is
+# safe to re-run against a partially-provisioned database.
+# --------------------------------------------------------------------------
 
-    op.create_table(
+
+def _relkind(op, name: str) -> str | None:
+    return (
+        op.get_bind()
+        .execute(
+            sa.text(
+                "SELECT c.relkind FROM pg_class c "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = current_schema() AND c.relname = :name"
+            ),
+            {"name": name},
+        )
+        .scalar()
+    )
+
+
+def _ensure_table(op, table_name: str, *columns, **kw) -> None:
+    if _relkind(op, table_name) is None:
+        op.create_table(table_name, *columns, **kw)
+
+
+def _ensure_index(op, index_name: str, table_name: str, columns, **kw) -> None:
+    if _relkind(op, index_name) is None:
+        op.create_index(index_name, table_name, columns, **kw)
+
+
+def ensure_tables(op) -> None:
+    """Create every migration-owned regular table (and its indexes) if missing."""
+    _ensure_table(
+        op,
         "tenants",
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column("site_url", sa.String(length=255), nullable=False, unique=True),
@@ -121,7 +150,8 @@ def upgrade() -> None:
         ),
     )
 
-    op.create_table(
+    _ensure_table(
+        op,
         "api_keys",
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
@@ -138,7 +168,8 @@ def upgrade() -> None:
         sa.Column("revoked_at", sa.TIMESTAMP(timezone=True), nullable=True),
     )
 
-    op.create_table(
+    _ensure_table(
+        op,
         "worker_capabilities",
         sa.Column("worker_kind", sa.String(length=64), primary_key=True),
         sa.Column("capability", sa.String(length=64), primary_key=True),
@@ -152,7 +183,8 @@ def upgrade() -> None:
         ),
     )
 
-    op.create_table(
+    _ensure_table(
+        op,
         "media_identities",
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
@@ -202,7 +234,8 @@ def upgrade() -> None:
         ),
         sa.UniqueConstraint("tenant_id", "media_id", "identity_type", "bbox_x", "bbox_y", name="unique_media_identity"),
     )
-    op.create_table(
+    _ensure_table(
+        op,
         "curation_replay_records",
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
@@ -234,7 +267,8 @@ def upgrade() -> None:
         sa.UniqueConstraint("tenant_id", "idempotency_key", name="uq_curation_replay_tenant_idempotency"),
     )
 
-    op.create_table(
+    _ensure_table(
+        op,
         "identity_clusters",
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
@@ -296,7 +330,8 @@ def upgrade() -> None:
         sa.UniqueConstraint("tenant_id", "identity_type", "label", name="unique_tenant_identity_label"),
     )
 
-    op.create_table(
+    _ensure_table(
+        op,
         "identity_members",
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
@@ -326,7 +361,8 @@ def upgrade() -> None:
         sa.UniqueConstraint("tenant_id", "identity_id", name="unique_identity_membership"),
     )
 
-    op.create_table(
+    _ensure_table(
+        op,
         "identity_cluster_representatives",
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
@@ -363,7 +399,8 @@ def upgrade() -> None:
         sa.UniqueConstraint("cluster_id", "identity_id", name="unique_cluster_representative"),
     )
 
-    op.create_table(
+    _ensure_table(
+        op,
         "identity_scan_jobs",
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
@@ -408,7 +445,8 @@ def upgrade() -> None:
         sa.Column("created_by_user_id", sa.Integer()),
     )
 
-    op.create_table(
+    _ensure_table(
+        op,
         "identity_scan_job_items",
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
@@ -455,7 +493,8 @@ def upgrade() -> None:
         ),
     )
 
-    op.create_table(
+    _ensure_table(
+        op,
         "identity_clustering_jobs",
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
@@ -501,7 +540,8 @@ def upgrade() -> None:
 
     # Identity suggestions for borderline cluster matches (0.55-0.68 avg_member similarity)
     # These are surfaced to users for confirmation rather than being silently rejected.
-    op.create_table(
+    _ensure_table(
+        op,
         "identity_suggestions",
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
@@ -577,7 +617,8 @@ def upgrade() -> None:
         ),
     )
 
-    op.create_table(
+    _ensure_table(
+        op,
         "cluster_merge_suggestions",
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
@@ -637,7 +678,8 @@ def upgrade() -> None:
         ),
     )
 
-    op.create_table(
+    _ensure_table(
+        op,
         "name_suggestions",
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
@@ -681,7 +723,8 @@ def upgrade() -> None:
         ),
     )
 
-    op.create_table(
+    _ensure_table(
+        op,
         "identity_cluster_blocks",
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
@@ -714,7 +757,8 @@ def upgrade() -> None:
         ),
     )
 
-    op.create_table(
+    _ensure_table(
+        op,
         "identity_constraints",
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
@@ -742,14 +786,16 @@ def upgrade() -> None:
         sa.UniqueConstraint("tenant_id", "identity_a", "identity_b", name="unique_identity_constraint"),
         sa.CheckConstraint("identity_a < identity_b", name="canonical_ordering"),
     )
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_identity_constraints_lookup",
         "identity_constraints",
         ["tenant_id", "identity_a", "identity_b"],
     )
 
     # Canonical evaluation + regression harness (Phase 1 "runs + events")
-    op.create_table(
+    _ensure_table(
+        op,
         "recognition_runs",
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
@@ -794,7 +840,8 @@ def upgrade() -> None:
         ),
     )
 
-    op.create_table(
+    _ensure_table(
+        op,
         "recognition_events",
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
@@ -836,7 +883,8 @@ def upgrade() -> None:
         ),
     )
 
-    op.create_table(
+    _ensure_table(
+        op,
         "clustering_feedback",
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
@@ -855,7 +903,8 @@ def upgrade() -> None:
         sa.Column("variant", sa.String(length=64)),
     )
 
-    op.create_table(
+    _ensure_table(
+        op,
         "audit_events",
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
@@ -877,230 +926,267 @@ def upgrade() -> None:
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
     )
 
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_media_identities_tenant",
         "media_identities",
         ["tenant_id"],
     )
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_media_identities_tenant_type",
         "media_identities",
         ["tenant_id", "identity_type"],
     )
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_media_identities_phash",
         "media_identities",
         ["tenant_id", "image_phash"],
         postgresql_where=sa.text("image_phash IS NOT NULL"),
     )
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_media_identities_embedding",
         "media_identities",
         ["embedding"],
         postgresql_using="ivfflat",
         postgresql_ops={"embedding": "vector_cosine_ops"},
     )
-    op.create_index("idx_identity_clusters_tenant", "identity_clusters", ["tenant_id"])
-    op.create_index(
+    _ensure_index(op, "idx_identity_clusters_tenant", "identity_clusters", ["tenant_id"])
+    _ensure_index(
+        op,
         "idx_identity_clusters_tenant_type",
         "identity_clusters",
         ["tenant_id", "identity_type"],
     )
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_identity_clusters_roster",
         "identity_clusters",
         ["roster_id"],
         postgresql_where=sa.text("roster_id IS NOT NULL"),
     )
-    op.create_index("idx_curation_replay_tenant", "curation_replay_records", ["tenant_id"])
-    op.create_index("idx_identity_members_cluster", "identity_members", ["cluster_id"])
-    op.create_index("idx_identity_members_identity", "identity_members", ["identity_id"])
-    op.create_index("idx_identity_scan_jobs_tenant", "identity_scan_jobs", ["tenant_id"])
-    op.create_index(
+    _ensure_index(op, "idx_curation_replay_tenant", "curation_replay_records", ["tenant_id"])
+    _ensure_index(op, "idx_identity_members_cluster", "identity_members", ["cluster_id"])
+    _ensure_index(op, "idx_identity_members_identity", "identity_members", ["identity_id"])
+    _ensure_index(op, "idx_identity_scan_jobs_tenant", "identity_scan_jobs", ["tenant_id"])
+    _ensure_index(
+        op,
         "idx_identity_scan_jobs_status",
         "identity_scan_jobs",
         ["status"],
         postgresql_where=sa.text("status IN ('pending', 'running')"),
     )
-    op.create_index("idx_scan_job_items_job", "identity_scan_job_items", ["job_id"])
-    op.create_index(
+    _ensure_index(op, "idx_scan_job_items_job", "identity_scan_job_items", ["job_id"])
+    _ensure_index(
+        op,
         "idx_scan_job_items_pending",
         "identity_scan_job_items",
         ["job_id", "status"],
         postgresql_where=sa.text("status = 'pending'"),
     )
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_scan_job_items_stale",
         "identity_scan_job_items",
         ["status", "started_at"],
         postgresql_where=sa.text("status = 'processing'"),
     )
-    op.create_index("idx_identity_clustering_jobs_tenant", "identity_clustering_jobs", ["tenant_id"])
-    op.create_index(
+    _ensure_index(op, "idx_identity_clustering_jobs_tenant", "identity_clustering_jobs", ["tenant_id"])
+    _ensure_index(
+        op,
         "idx_identity_clustering_jobs_status",
         "identity_clustering_jobs",
         ["status"],
         postgresql_where=sa.text("status IN ('pending', 'running')"),
     )
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_media_identities_tenant_id",
         "media_identities",
         ["tenant_id", "id"],
     )
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_identity_clusters_tenant_id",
         "identity_clusters",
         ["tenant_id", "id"],
     )
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_identity_members_tenant_id",
         "identity_members",
         ["tenant_id", "id"],
     )
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_identity_scan_jobs_tenant_id",
         "identity_scan_jobs",
         ["tenant_id", "id"],
     )
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_scan_job_items_tenant_id",
         "identity_scan_job_items",
         ["tenant_id", "id"],
     )
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_media_identities_tenant_media",
         "media_identities",
         ["tenant_id", "media_id"],
     )
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_cluster_reps_tenant",
         "identity_cluster_representatives",
         ["tenant_id"],
     )
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_cluster_reps_cluster",
         "identity_cluster_representatives",
         ["cluster_id"],
     )
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_cluster_reps_embedding",
         "identity_cluster_representatives",
         ["embedding"],
         postgresql_using="ivfflat",
         postgresql_ops={"embedding": "vector_cosine_ops"},
     )
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_cluster_reps_diversity",
         "identity_cluster_representatives",
         ["cluster_id", "diversity_score"],
     )
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_cluster_reps_user_selected",
         "identity_cluster_representatives",
         ["cluster_id", "is_user_selected"],
         postgresql_where=sa.text("is_user_selected = true"),
     )
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_cluster_reps_provisional",
         "identity_cluster_representatives",
         ["cluster_id", "is_provisional"],
         postgresql_where=sa.text("is_provisional = true"),
     )
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_identity_suggestions_tenant",
         "identity_suggestions",
         ["tenant_id"],
     )
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_identity_suggestions_identity",
         "identity_suggestions",
         ["identity_id"],
     )
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_identity_suggestions_cluster",
         "identity_suggestions",
         ["suggested_cluster_id"],
     )
     # Partial index for pending suggestions ordered by priority then confidence
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_identity_suggestions_pending",
         "identity_suggestions",
         ["tenant_id", "priority", "confidence_score"],
         postgresql_where=sa.text("resolution = 'pending'"),
     )
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_identity_suggestions_tenant_id",
         "identity_suggestions",
         ["tenant_id", "id"],
     )
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_cluster_merge_suggestions_tenant",
         "cluster_merge_suggestions",
         ["tenant_id"],
     )
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_cluster_merge_suggestions_cluster_a",
         "cluster_merge_suggestions",
         ["cluster_a_id"],
     )
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_cluster_merge_suggestions_cluster_b",
         "cluster_merge_suggestions",
         ["cluster_b_id"],
     )
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_cluster_merge_suggestions_pending",
         "cluster_merge_suggestions",
         ["tenant_id", "confidence_score"],
         postgresql_where=sa.text("resolution = 'pending'"),
     )
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_name_suggestions_tenant",
         "name_suggestions",
         ["tenant_id"],
     )
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_name_suggestions_cluster",
         "name_suggestions",
         ["cluster_id"],
     )
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_name_suggestions_pending",
         "name_suggestions",
         ["tenant_id", "confidence_score"],
         postgresql_where=sa.text("resolution = 'pending'"),
     )
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_identity_cluster_blocks_identity",
         "identity_cluster_blocks",
         ["tenant_id", "identity_id"],
     )
-    op.create_index(
+    _ensure_index(
+        op,
         "idx_identity_cluster_blocks_cluster",
         "identity_cluster_blocks",
         ["tenant_id", "blocked_cluster_id"],
     )
 
-    op.create_index("idx_recognition_runs_tenant", "recognition_runs", ["tenant_id"])
-    op.create_index("idx_recognition_runs_status", "recognition_runs", ["status"])
-    op.create_index("idx_recognition_runs_scan_job", "recognition_runs", ["scan_job_id"])
-    op.create_index("idx_recognition_runs_clustering_job", "recognition_runs", ["clustering_job_id"])
-    op.create_index("idx_api_keys_tenant", "api_keys", ["tenant_id"])
-    op.create_index("idx_api_keys_hash", "api_keys", ["api_key_hash"])
+    _ensure_index(op, "idx_recognition_runs_tenant", "recognition_runs", ["tenant_id"])
+    _ensure_index(op, "idx_recognition_runs_status", "recognition_runs", ["status"])
+    _ensure_index(op, "idx_recognition_runs_scan_job", "recognition_runs", ["scan_job_id"])
+    _ensure_index(op, "idx_recognition_runs_clustering_job", "recognition_runs", ["clustering_job_id"])
+    _ensure_index(op, "idx_api_keys_tenant", "api_keys", ["tenant_id"])
+    _ensure_index(op, "idx_api_keys_hash", "api_keys", ["api_key_hash"])
 
-    op.create_index("idx_recognition_events_tenant", "recognition_events", ["tenant_id"])
-    op.create_index("idx_recognition_events_run_time", "recognition_events", ["run_id", "timestamp"])
-    op.create_index("idx_recognition_events_type", "recognition_events", ["event_type"])
-    op.create_index("idx_recognition_events_identity", "recognition_events", ["identity_id"])
-    op.create_index("idx_recognition_events_cluster", "recognition_events", ["cluster_id"])
-    op.create_index("idx_clustering_feedback_tenant", "clustering_feedback", ["tenant_id"])
-    op.create_index("idx_clustering_feedback_identity", "clustering_feedback", ["identity_id"])
-    op.create_index("idx_clustering_feedback_cluster", "clustering_feedback", ["cluster_id"])
-    op.create_index("idx_clustering_feedback_action", "clustering_feedback", ["user_action"])
-    op.create_index("idx_audit_events_tenant_event", "audit_events", ["tenant_id", "event_type"])
-    op.create_index("idx_audit_events_tenant_created", "audit_events", ["tenant_id", "created_at"])
+    _ensure_index(op, "idx_recognition_events_tenant", "recognition_events", ["tenant_id"])
+    _ensure_index(op, "idx_recognition_events_run_time", "recognition_events", ["run_id", "timestamp"])
+    _ensure_index(op, "idx_recognition_events_type", "recognition_events", ["event_type"])
+    _ensure_index(op, "idx_recognition_events_identity", "recognition_events", ["identity_id"])
+    _ensure_index(op, "idx_recognition_events_cluster", "recognition_events", ["cluster_id"])
+    _ensure_index(op, "idx_clustering_feedback_tenant", "clustering_feedback", ["tenant_id"])
+    _ensure_index(op, "idx_clustering_feedback_identity", "clustering_feedback", ["identity_id"])
+    _ensure_index(op, "idx_clustering_feedback_cluster", "clustering_feedback", ["cluster_id"])
+    _ensure_index(op, "idx_clustering_feedback_action", "clustering_feedback", ["user_action"])
+    _ensure_index(op, "idx_audit_events_tenant_event", "audit_events", ["tenant_id", "event_type"])
+    _ensure_index(op, "idx_audit_events_tenant_created", "audit_events", ["tenant_id", "created_at"])
 
-    op.create_table(
+    _ensure_table(
+        op,
         "export_jobs",
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
@@ -1123,9 +1209,10 @@ def upgrade() -> None:
             name="valid_export_job_status",
         ),
     )
-    op.create_index("idx_export_jobs_tenant", "export_jobs", ["tenant_id"])
+    _ensure_index(op, "idx_export_jobs_tenant", "export_jobs", ["tenant_id"])
 
-    op.create_table(
+    _ensure_table(
+        op,
         "image_descriptions",
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
@@ -1158,21 +1245,49 @@ def upgrade() -> None:
             name="uq_image_descriptions_cache_key",
         ),
     )
-    op.create_index("idx_image_descriptions_tenant", "image_descriptions", ["tenant_id"])
+    _ensure_index(op, "idx_image_descriptions_tenant", "image_descriptions", ["tenant_id"])
 
+
+def ensure_rls(op) -> None:
+    """Enable+force RLS and (re)create the tenant-isolation policy per TENANT_TABLES."""
+    bind = op.get_bind()
     for table in TENANT_TABLES:
-        op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
-        op.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
-        op.execute(
-            f"""
-            CREATE POLICY tenant_isolation_{table} ON {table}
-            FOR ALL
-            USING (tenant_id = {SAFE_TENANT_EXPR} OR {BYPASS_RLS_EXPR})
-            WITH CHECK (tenant_id = {SAFE_TENANT_EXPR} OR {BYPASS_RLS_EXPR})
-            """
-        )
+        flags = bind.execute(
+            sa.text(
+                "SELECT c.relrowsecurity, c.relforcerowsecurity FROM pg_class c "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = current_schema() AND c.relname = :name"
+            ),
+            {"name": table},
+        ).first()
+        if flags is None:
+            raise RuntimeError(f"ensure_rls: tenant table {table!r} does not exist; run ensure_tables first")
+        if not flags[0]:
+            op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
+        if not flags[1]:
+            op.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
+        has_policy = bind.execute(
+            sa.text(
+                "SELECT 1 FROM pg_policies WHERE schemaname = current_schema() "
+                "AND tablename = :table AND policyname = :policy"
+            ),
+            {"table": table, "policy": f"tenant_isolation_{table}"},
+        ).first()
+        if not has_policy:
+            op.execute(
+                f"""
+                CREATE POLICY tenant_isolation_{table} ON {table}
+                FOR ALL
+                USING (tenant_id = {SAFE_TENANT_EXPR} OR {BYPASS_RLS_EXPR})
+                WITH CHECK (tenant_id = {SAFE_TENANT_EXPR} OR {BYPASS_RLS_EXPR})
+                """
+            )
 
-    op.create_table(
+
+def ensure_refresh_queue(op) -> None:
+    """Create the raw-SQL centroid refresh queue table if missing."""
+    _ensure_table(
+        op,
         "identity_cluster_refresh_queue",
         sa.Column(
             "cluster_id",
@@ -1187,6 +1302,9 @@ def upgrade() -> None:
         ),
     )
 
+
+def ensure_triggers(op) -> None:
+    """(Re)create the centroid-dirty functions and triggers (CREATE OR REPLACE)."""
     op.execute(
         """
         CREATE OR REPLACE FUNCTION notify_cluster_centroid_dirty(target_cluster uuid)
@@ -1230,7 +1348,7 @@ def upgrade() -> None:
 
     op.execute(
         """
-        CREATE TRIGGER trg_mark_centroid_dirty_on_members
+        CREATE OR REPLACE TRIGGER trg_mark_centroid_dirty_on_members
         AFTER INSERT OR UPDATE OR DELETE ON identity_members
         FOR EACH ROW
         EXECUTE FUNCTION mark_dirty_on_identity_members();
@@ -1272,16 +1390,26 @@ def upgrade() -> None:
 
     op.execute(
         """
-        CREATE TRIGGER trg_mark_centroid_dirty_on_media
+        CREATE OR REPLACE TRIGGER trg_mark_centroid_dirty_on_media
         AFTER UPDATE OR DELETE ON media_identities
         FOR EACH ROW
         EXECUTE FUNCTION mark_dirty_on_media_identities();
         """
     )
 
+
+def ensure_matview(op) -> None:
+    """Create the centroid materialized view + indexes; fail loudly on a plain-table impostor."""
+    relkind = _relkind(op, "mv_identity_cluster_centroids")
+    if relkind not in (None, "m"):
+        raise RuntimeError(
+            "mv_identity_cluster_centroids exists with relkind "
+            f"{relkind!r} (expected materialized view); drop the impostor relation "
+            "before healing (operator action, see E15-33-BR2-04)"
+        )
     op.execute(
         f"""
-        CREATE MATERIALIZED VIEW mv_identity_cluster_centroids AS
+        CREATE MATERIALIZED VIEW IF NOT EXISTS mv_identity_cluster_centroids AS
         WITH normalized_embeddings AS (
             SELECT
                 im.cluster_id,
@@ -1319,26 +1447,56 @@ def upgrade() -> None:
 
     op.execute(
         """
-        CREATE UNIQUE INDEX mv_cluster_centroids_cluster_id
+        CREATE UNIQUE INDEX IF NOT EXISTS mv_cluster_centroids_cluster_id
         ON mv_identity_cluster_centroids (cluster_id);
         """
     )
 
     op.execute(
         """
-        CREATE INDEX mv_cluster_centroids_tenant_idx
+        CREATE INDEX IF NOT EXISTS mv_cluster_centroids_tenant_idx
         ON mv_identity_cluster_centroids (tenant_id);
         """
     )
 
     op.execute(
         f"""
-        CREATE INDEX mv_cluster_centroids_vector_idx
+        CREATE INDEX IF NOT EXISTS mv_cluster_centroids_vector_idx
         ON mv_identity_cluster_centroids
         USING ivfflat ((centroid::vector({EMBEDDING_DIMENSION})) vector_cosine_ops)
         WHERE centroid IS NOT NULL;
         """
     )
+
+
+def heal(connection) -> None:
+    """Boot-time reconciliation: converge any partial schema to the full one.
+
+    Composes the exact `ensure_*` units `upgrade()` runs, on an existing
+    connection (the sync entrypoint holds the advisory lock around this).
+    """
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+
+    ops = Operations(MigrationContext.configure(connection))
+    connection.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
+    ensure_tables(ops)
+    ensure_rls(ops)
+    ensure_refresh_queue(ops)
+    ensure_triggers(ops)
+    ensure_matview(ops)
+
+
+def upgrade() -> None:
+    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
+    # NOTE: DROP statements removed - they were causing data loss when alembic version tracking
+    # got corrupted. Use scripts/reset_dev_db.sh explicitly if you need a clean slate.
+    # The migration is the baseline - if tables already exist, alembic won't re-run this.
+    ensure_tables(op)
+    ensure_rls(op)
+    ensure_refresh_queue(op)
+    ensure_triggers(op)
+    ensure_matview(op)
 
 
 def downgrade() -> None:

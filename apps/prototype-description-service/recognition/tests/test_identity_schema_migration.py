@@ -22,6 +22,27 @@ class _RecordingOp:
     def execute(self, sql: str) -> None:
         self.executed_sql.append(sql)
 
+    def get_bind(self):
+        # The E15-34 ensure_* helpers consult the catalog before emitting DDL;
+        # report "nothing exists, RLS off" so every create/alter is recorded.
+        class _FakeResult:
+            def __init__(self, row):
+                self._row = row
+
+            def scalar(self):
+                return self._row[0] if self._row else None
+
+            def first(self):
+                return self._row
+
+        class _FakeBind:
+            def execute(self, stmt, params=None):  # noqa: ANN001
+                if "relrowsecurity" in str(stmt):
+                    return _FakeResult((False, False))
+                return _FakeResult(None)
+
+        return _FakeBind()
+
     def create_table(self, name: str, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
         self.created_tables.append(name)
         self.created_table_args[name] = args

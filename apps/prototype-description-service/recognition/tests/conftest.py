@@ -347,3 +347,33 @@ def pg_migrated_engine():
         with admin.connect() as conn:
             conn.execute(text(f'DROP DATABASE IF EXISTS "{db_name}" WITH (FORCE)'))
         admin.dispose()
+
+
+@pytest.fixture
+def pg_empty_engine():
+    """Function-scoped bare scratch DB (vector extension only, no migration)."""
+    from sqlalchemy import create_engine
+
+    db_name = "acx_identity_heal_test"
+    admin_url = os.environ.get("IDENTITY_PG_ADMIN_URL", "postgresql+psycopg://localhost:5432/postgres")
+    admin = create_engine(admin_url, isolation_level="AUTOCOMMIT")
+    try:
+        with admin.connect() as conn:
+            conn.execute(text(f'DROP DATABASE IF EXISTS "{db_name}" WITH (FORCE)'))
+            conn.execute(text(f'CREATE DATABASE "{db_name}" OWNER "context"'))
+    except OperationalError:
+        admin.dispose()
+        pytest.skip(f"Postgres unreachable at {admin_url}; start it with `make postgres-start`")
+    scratch_admin = create_engine(admin_url.rsplit("/", 1)[0] + f"/{db_name}", isolation_level="AUTOCOMMIT")
+    with scratch_admin.connect() as conn:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+    scratch_admin.dispose()
+
+    engine = create_engine(f"postgresql+psycopg://context:context@localhost:5432/{db_name}")
+    try:
+        yield engine
+    finally:
+        engine.dispose()
+        with admin.connect() as conn:
+            conn.execute(text(f'DROP DATABASE IF EXISTS "{db_name}" WITH (FORCE)'))
+        admin.dispose()

@@ -7,10 +7,11 @@ Truth C: the ``EXPECTED_SCHEMA_TABLES`` list the boot verifier consumes.
 
 No database: pure set-relation assertions, so any new divergence fails CI
 immediately. Known divergence is held in the explicit allowlists below; each
-entry names the slice that removes it. NOTE: assertion (c) uses
-``EXPECTED_SCHEMA_TABLES`` membership as a *proxy* for migration-DDL coverage
-until Slice 3 ships the ``ensure_*`` helpers and tightens it to
-"creatable by ``heal()``".
+entry names the slice that removes it. Assertion (c) is anchored to real heal
+coverage since Slice 3: ``heal()`` provably creates every
+``EXPECTED_SCHEMA_TABLES`` member (PG test
+``test_heal_from_empty_db_converges_to_full_schema_with_rls``), so membership
+in that list IS the heal-creatable contract, no longer a proxy.
 """
 
 from __future__ import annotations
@@ -69,8 +70,9 @@ def test_raw_sql_tables_have_no_orm_shadow() -> None:
 
 
 def test_runtime_written_tables_are_migration_owned_or_allowlisted() -> None:
-    # (c) proxy until Slice 3: runtime-written ORM tables must be in the
-    # verifier contract (=> migration-owned) or in the shrinking gap allowlist.
+    # (c) runtime-written ORM tables must be heal-creatable (EXPECTED
+    # membership, anchored by the Slice-3 PG heal test) or in the shrinking
+    # gap allowlist.
     expected = set(MIGRATION.EXPECTED_SCHEMA_TABLES)
     offenders = RUNTIME_WRITTEN_ORM_TABLES - expected - set(MIGRATION_GAP_ALLOWLIST)
     assert not offenders, (

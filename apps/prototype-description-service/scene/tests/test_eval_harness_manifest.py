@@ -2,12 +2,14 @@
 
 import hashlib
 import json
+import unicodedata
 
 import pytest
 
 from scripts.eval_harness.manifest import (
     GoldenManifest,
     ManifestError,
+    RubricEmptyWarning,
     load_manifest,
 )
 
@@ -22,6 +24,7 @@ def _valid_manifest_dict() -> dict:
                 "path": "mock_images/scene-001.jpg",
                 "sha256": img_hash,
                 "media_id": 1,
+                "face_count": 1,
                 "present_identities": ["Alice Example"],
                 "context_pack": {"title": "A title", "caption": "A caption"},
                 "must_right": ["Alice Example"],
@@ -32,6 +35,7 @@ def _valid_manifest_dict() -> dict:
                 "path": "mock_images/scene-002.jpg",
                 "sha256": img_hash,
                 "media_id": 2,
+                "face_count": 0,
                 "present_identities": [],
                 "context_pack": {},
                 "must_right": [],
@@ -132,3 +136,83 @@ def test_missing_images_dir_is_actionable(tmp_path):
             _write_manifest(tmp_path, data),
             images_dir=str(tmp_path / "nonexistent"),
         )
+
+
+def test_duplicate_path_rejected(tmp_path):  # S1-04
+    data = _valid_manifest_dict()
+    data["entries"][1]["path"] = data["entries"][0]["path"]
+    with pytest.raises(ManifestError, match="duplicate path"):
+        load_manifest(_write_manifest(tmp_path, data))
+
+
+def test_empty_entries_rejected(tmp_path):  # S1-04
+    data = _valid_manifest_dict()
+    data["entries"] = []
+    with pytest.raises(ManifestError, match="no entries"):
+        load_manifest(_write_manifest(tmp_path, data))
+
+
+def test_unsupported_manifest_version_rejected(tmp_path):  # S1-04
+    data = _valid_manifest_dict()
+    data["manifest_version"] = 999
+    with pytest.raises(ManifestError, match="manifest_version"):
+        load_manifest(_write_manifest(tmp_path, data))
+
+
+def test_face_count_below_labeled_rejected(tmp_path):  # HARM-04 / S3-01 schema
+    data = _valid_manifest_dict()
+    data["entries"][0]["face_count"] = 0  # but present_identities has 1 name
+    with pytest.raises(ManifestError, match="face_count"):
+        load_manifest(_write_manifest(tmp_path, data))
+
+
+def test_must_right_name_not_in_roster_rejected(tmp_path):  # S1-05
+    data = _valid_manifest_dict()
+    data["entries"][0]["must_right"] = ["Nobody Known"]
+    with pytest.raises(ManifestError, match="roster"):
+        load_manifest(_write_manifest(tmp_path, data))
+
+
+def test_easy_wrong_name_not_in_roster_rejected(tmp_path):  # S1-05
+    data = _valid_manifest_dict()
+    data["entries"][0]["easy_wrong"] = ["Nobody Known"]
+    with pytest.raises(ManifestError, match="roster"):
+        load_manifest(_write_manifest(tmp_path, data))
+
+
+def test_unknown_entry_key_rejected(tmp_path):  # S1-05 extra='forbid'
+    data = _valid_manifest_dict()
+    data["entries"][0]["surprise"] = True
+    with pytest.raises(ManifestError):
+        load_manifest(_write_manifest(tmp_path, data))
+
+
+def test_policy_missing_recognition_enabled_rejected(tmp_path):  # S1-03
+    data = _valid_manifest_dict()
+    data["entries"][0]["policy"] = {"recogntion_enabled": True}  # typo -> extra key + missing required
+    with pytest.raises(ManifestError):
+        load_manifest(_write_manifest(tmp_path, data))
+
+
+def test_rubric_empty_warns(tmp_path):  # S1-02
+    data = _valid_manifest_dict()
+    for entry in data["entries"]:
+        entry["must_right"] = []
+        entry["easy_wrong"] = []
+    with pytest.warns(RubricEmptyWarning):
+        load_manifest(_write_manifest(tmp_path, data))
+
+
+def test_non_ascii_path_resolves_across_normalization_forms(tmp_path):  # S1-07
+    decomposed = unicodedata.normalize("NFD", "Breiðamerkurjökull.jpg")
+    composed = unicodedata.normalize("NFC", "Breiðamerkurjökull.jpg")
+    body = b"glacier bytes"
+    data = _valid_manifest_dict()
+    data["entries"][0]["path"] = f"mock_images/{decomposed}"  # manifest in NFD
+    data["entries"][0]["sha256"] = hashlib.sha256(body).hexdigest()
+    images = tmp_path / "images"
+    (images / "mock_images").mkdir(parents=True)
+    (images / "mock_images" / composed).write_bytes(body)  # file on disk in NFC
+    (images / "mock_images" / "scene-002.jpg").write_bytes(b"fake image bytes")
+    manifest = load_manifest(_write_manifest(tmp_path, data), images_dir=str(images))
+    assert len(manifest.entries) == 2

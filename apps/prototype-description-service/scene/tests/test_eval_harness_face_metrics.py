@@ -77,6 +77,26 @@ def test_identification_stranger_true_rejection_not_penalized():
     assert result.precision is None  # no assertions made: undefined, not 1.0
 
 
+def test_identification_stranger_true_rejection_in_mixed_image():  # S2-05
+    # roster person correctly named AND a stranger present with no wrong name:
+    # the stranger is a true rejection even though the image is not all-empty.
+    items = [
+        ImageIdentities(image="group.jpg", predicted=["Ryann"], labeled=["Ryann"], stranger_faces=2),
+    ]
+    result = identification_pr(items)
+    assert result.true_rejections == 1
+    assert result.true_positives == 1
+
+
+def test_identification_wrong_name_on_stranger_image_is_not_a_true_rejection():  # S2-05
+    items = [
+        ImageIdentities(image="group.jpg", predicted=["Bob"], labeled=["Ryann"], stranger_faces=1),
+    ]
+    result = identification_pr(items)
+    assert result.true_rejections == 0  # a wrong name was asserted -> not a clean rejection
+    assert result.wrong_names == [("group.jpg", "Bob")]
+
+
 def test_identification_policy_disabled_excluded():
     items = [
         ImageIdentities(

@@ -20,7 +20,16 @@ _VOWEL_GROUP_RE = re.compile(r"[aeiouy]+")
 
 
 def _contains(haystack: str, needle: str) -> bool:
-    return needle.lower() in haystack.lower()
+    """Case-insensitive, word-boundary match (S2-06).
+
+    Raw substring matching over-counted: object tag ``cat`` hit ``scattered``,
+    a name matched inside a longer token (``Cristina`` in ``Cristinas``),
+    inflating insertion/tag coverage and flipping policy violations on
+    coincidental hits. Anchor on non-word boundaries so only whole tokens match.
+    """
+    if not needle:
+        return False
+    return re.search(rf"(?<!\w){re.escape(needle)}(?!\w)", haystack, re.IGNORECASE) is not None
 
 
 def _syllables(word: str) -> int:

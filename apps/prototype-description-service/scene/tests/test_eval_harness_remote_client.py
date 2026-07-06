@@ -49,15 +49,25 @@ def test_analyze_uses_image_media_id_part_names_and_returns_job_id():
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen["body"] = request.read()
-        return httpx.Response(202, json={"job_id": "job-1", "status": "queued"})
+        # live JobStatusResponse contract uses 'id' (the reason for hotfix 2fe574fa)
+        return httpx.Response(202, json={"id": "job-1", "status": "queued"})
 
     client = _client(handler)
     job_id = client.analyze(images=[(42, "a.jpg", b"img-bytes")])
     assert job_id == "job-1"
     assert b'name="image_42"' in seen["body"]
-    # analyze_multipart.py contract: envelope needs tenant_id; media_ids are strings
+    # analyze_multipart.py contract: envelope needs only tenant_id; media ids are
+    # derived server-side from the image_<id> part names, so the client must not
+    # invent a media_ids envelope field the route ignores (rg-015, S2-07).
     assert b'"tenant_id": "00000000-0000-4000-8000-0000000000e1"' in seen["body"]
-    assert b'"media_ids": ["42"]' in seen["body"]
+    assert b"media_ids" not in seen["body"]
+
+
+def test_analyze_accepts_legacy_job_id_field():  # S2-07 back-compat fallback
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(202, json={"job_id": "job-legacy", "status": "queued"})
+
+    assert _client(handler).analyze(images=[(1, "a.jpg", b"x")]) == "job-legacy"
 
 
 def test_wait_job_polls_until_done():
@@ -90,6 +100,23 @@ def test_wait_job_failed_status_raises():
     client = _client(handler)
     with pytest.raises(RemoteClientError, match="failed"):
         client.wait_job("job-1")
+
+
+def test_wait_job_completed_with_errors_is_terminal_success():  # S2-01
+    # Matches the live JobStatus contract: partial success is terminal, returns.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"job_id": "job-1", "status": "completed_with_errors"})
+
+    result = _client(handler, max_poll_attempts=3).wait_job("job-1")
+    assert result["status"] == "completed_with_errors"
+
+
+def test_wait_job_rejected_status_raises():  # S2-01
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"job_id": "job-1", "status": "rejected"})
+
+    with pytest.raises(RemoteClientError, match="rejected"):
+        _client(handler).wait_job("job-1")
 
 
 def test_media_identities_query():
@@ -163,10 +190,56 @@ def test_429_backs_off_and_retries_without_breaker_strike():
     assert client._consecutive_failures == 0
 
 
-def test_429_exhaustion_raises_remote_error():
+def test_429_exhaustion_raises_and_charges_breaker():  # S2-02
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(429, text="rate limit exceeded", headers={"Retry-After": "0"})
 
     client = _client(handler, rate_limit_wait=0.0, max_rate_limit_retries=2)
     with pytest.raises(RemoteClientError, match="429"):
         client.media_identities([1])
+    # terminal exhaustion is a request-level failure -> strikes the breaker so a
+    # persistently rate-limited key can eventually open the circuit
+    assert client._consecutive_failures == 1
+
+
+def test_429_exhaustion_eventually_opens_circuit():  # S2-02
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, text="rate limit exceeded", headers={"Retry-After": "0"})
+
+    client = _client(handler, rate_limit_wait=0.0, max_rate_limit_retries=1)
+    for _ in range(3):
+        with pytest.raises(RemoteClientError):
+            client.media_identities([1])
+    with pytest.raises(CircuitOpenError):
+        client.media_identities([1])
+
+
+def test_retry_after_http_date_does_not_crash():  # S2-03
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # HTTP-date form (RFC 9110), not a bare number -> must not raise ValueError
+            return httpx.Response(429, headers={"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"})
+        return httpx.Response(200, json={"ok": True})
+
+    client = _client(handler, rate_limit_wait=0.0)
+    assert client.media_identities([1]) == {"ok": True}
+    assert calls["n"] == 2
+
+
+def test_clusters_paginates_until_short_page():  # S2-08
+    pages = {"seen_offsets": []}
+    full = [{"id": f"c{i}", "label": None} for i in range(200)]
+    tail = [{"id": "c200", "label": None}]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        offset = int(request.url.params.get("offset", "0"))
+        pages["seen_offsets"].append(offset)
+        return httpx.Response(200, json=full if offset == 0 else tail)
+
+    client = _client(handler)
+    result = client.clusters()
+    assert len(result) == 201  # both pages aggregated, not just the first 200
+    assert pages["seen_offsets"] == [0, 200]

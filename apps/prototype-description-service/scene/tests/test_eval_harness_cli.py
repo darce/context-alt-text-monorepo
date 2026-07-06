@@ -18,6 +18,7 @@ def _manifest(n: int) -> GoldenManifest:
                 path=f"mock_images/img-{i}.jpg",
                 sha256=sha,
                 media_id=i,
+                face_count=0,
                 present_identities=[],
                 context_pack={"title": f"t{i}"},
                 must_right=[],
@@ -93,12 +94,36 @@ def test_prune_out_dir_keeps_last_n(tmp_path):
     for i in range(7):
         (tmp_path / f"run-2026070{i}-000000.json").write_text("{}")
     (tmp_path / "ignore-list.json").write_text(json.dumps({"wrong_names": []}))
-    removed = prune_out_dir(str(tmp_path), keep=3, pattern="run-*.json")
+    removed = prune_out_dir(str(tmp_path), keep=3)
     remaining = sorted(p.name for p in tmp_path.glob("run-*.json"))
     assert len(remaining) == 3
     assert remaining == [f"run-2026070{i}-000000.json" for i in (4, 5, 6)]
     assert len(removed) == 4
     assert (tmp_path / "ignore-list.json").exists()  # never pruned
+
+
+def test_prune_out_dir_removes_reports_with_their_run(tmp_path):  # S3-02
+    # Each run = record + report.json + report.md; stale runs drop as a unit and
+    # markdown reports never accumulate unbounded.
+    for i in range(4):
+        stamp = f"2026070{i}-000000"
+        (tmp_path / f"run-{stamp}.json").write_text("{}")
+        (tmp_path / f"run-{stamp}-report.json").write_text("{}")
+        (tmp_path / f"run-{stamp}-report.md").write_text("#")
+    prune_out_dir(str(tmp_path), keep=2)
+    remaining = sorted(p.name for p in tmp_path.glob("run-*"))
+    # only the 2 newest stamps survive, each with all three files ('-' sorts before '.')
+    assert remaining == [
+        f"run-2026070{i}-000000{suffix}" for i in (2, 3) for suffix in ("-report.json", "-report.md", ".json")
+    ]
+
+
+def test_prune_out_dir_rejects_keep_below_one(tmp_path):  # S3-07
+    (tmp_path / "run-20260701-000000.json").write_text("{}")
+    for bad in (0, -1):
+        with pytest.raises(ValueError, match="keep must be >= 1"):
+            prune_out_dir(str(tmp_path), keep=bad)
+    assert (tmp_path / "run-20260701-000000.json").exists()  # nothing deleted
 
 
 def test_stall_abort_preserves_partial_record(images_dir):

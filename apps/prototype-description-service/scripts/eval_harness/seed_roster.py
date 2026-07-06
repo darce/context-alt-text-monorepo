@@ -19,12 +19,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-from .draft_labels import _display_name, _entity_slug
 from .manifest import ManifestError
+from .naming import IMAGE_EXTS, display_name, entity_slug
+from .remote_client import RemoteClientError
 
 CROP_MEDIA_ID_BASE = 1001
 
-_IMAGE_EXTS = {".jpg", ".jpeg", ".png"}
+_LABEL_CONFLICT_STATUS = 409
 
 
 class SeedClient(Protocol):
@@ -50,11 +51,11 @@ def _load_crops(entities_dir: Path) -> list[tuple[int, str, bytes, str]]:
     """(media_id, filename, bytes, display_name) per crop, name-sorted for stable ids."""
     crops = []
     files = sorted(
-        (p for p in entities_dir.iterdir() if p.suffix.lower() in _IMAGE_EXTS),
+        (p for p in entities_dir.iterdir() if p.suffix.lower() in IMAGE_EXTS),
         key=lambda p: p.name,
     )
     for offset, path in enumerate(files):
-        name = _display_name(_entity_slug(path.name))
+        name = display_name(entity_slug(path.name))
         crops.append((CROP_MEDIA_ID_BASE + offset, path.name, path.read_bytes(), name))
     return crops
 
@@ -97,12 +98,17 @@ def seed(entities_dir: str, client: SeedClient, *, tenant_id: str) -> SeedSummar
             }
         )
         if len(names) == 1:
-            # A name can already be taken by another cluster (e.g. duplicate
-            # clusters from a re-uploaded crop set) — 409 there means the name
-            # is covered; record and continue rather than failing the seed.
+            # Only a genuine 409 label conflict is a per-cluster skip: the name is
+            # already covered by another cluster (e.g. duplicate clusters from a
+            # re-uploaded crop set). A circuit-open, transport error, or 5xx is a
+            # systemic failure — not a per-unit conflict — and must halt the seed
+            # (S2-04) rather than silently leaving the eval tenant unlabeled; the
+            # bare `except Exception` masked all of them as conflicts.
             try:
                 client.patch_cluster(cluster_id, tenant_id, names[0])
-            except Exception:  # noqa: BLE001 — per-cluster isolation; coverage re-checked below
+            except RemoteClientError as exc:
+                if exc.status_code != _LABEL_CONFLICT_STATUS:
+                    raise
                 conflicts[cluster_id] = names[0]
             else:
                 labeled[cluster_id] = names[0]

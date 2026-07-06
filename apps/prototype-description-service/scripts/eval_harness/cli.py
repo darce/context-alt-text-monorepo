@@ -24,6 +24,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -32,14 +33,23 @@ from typing import Any
 
 from .manifest import GoldenManifest, ManifestError, load_manifest
 from .remote_client import RemoteClientError, RemoteSceneClient
-from .report import build_reports, score_run_record
+from .report import ReportError, build_reports, score_run_record
+from .schema import SCHEMA, DocKind
 from .seed_roster import seed
 
-SCHEMA = "acx-eval/v1"
 DEFAULT_KEEP = 10
 DEFAULT_STALL_LIMIT = 5
 OUT_DIR = Path(__file__).parent / "out"
 IGNORE_LIST_NAME = "ignore-list.json"
+_RUN_STAMP_RE = re.compile(r"^run-(\d{8}-\d{6})")
+
+
+def _keep_arg(raw: str) -> int:
+    """argparse type for ``--keep``: at least 1 so a run never prunes its own record (S3-07)."""
+    value = int(raw)
+    if value < 1:
+        raise argparse.ArgumentTypeError("must be >= 1")
+    return value
 
 
 class BoundedStallError(RuntimeError):
@@ -73,6 +83,7 @@ def fetch_run_record(
     def _record(aborted: bool = False) -> dict[str, Any]:
         record: dict[str, Any] = {
             "schema": SCHEMA,
+            "kind": DocKind.RUN_RECORD.value,
             "provenance": {
                 "manifest_sha256": _manifest_sha(manifest),
                 "base_url": getattr(client, "base_url", "unknown"),
@@ -101,7 +112,7 @@ def fetch_run_record(
                 image_bytes=image_bytes,
                 filename=image_path.name,
                 media_id=entry.media_id,
-                context_pack=entry.context_pack,
+                context_pack=entry.context_pack.model_dump(exclude_none=True),
             )
             job_id = client.analyze([(entry.media_id, image_path.name, image_bytes)])
             client.wait_job(job_id)
@@ -145,14 +156,30 @@ def _manifest_sha(manifest: GoldenManifest) -> str:
     return hashlib.sha256(canonical).hexdigest()
 
 
-def prune_out_dir(out_dir: str, *, keep: int = DEFAULT_KEEP, pattern: str = "run-*.json") -> list[str]:
-    """Keep the newest ``keep`` files matching pattern (by name); never touch the ignore list."""
+def prune_out_dir(out_dir: str, *, keep: int = DEFAULT_KEEP) -> list[str]:
+    """Keep the newest ``keep`` runs; delete each stale run's record + reports together.
+
+    Group every ``run-<stamp>*`` file (record, ``-report.json``, ``-report.md``,
+    ``-aborted.json``) by its timestamp and prune whole stale runs, so markdown
+    reports no longer accumulate unbounded and a report is never deleted while its
+    record survives (S3-02). ``keep`` must be >= 1 so a run flow can never delete
+    the record it just wrote (S3-07); the ignore list is never touched.
+    """
+    if keep < 1:
+        raise ValueError(f"keep must be >= 1, got {keep}")
     root = Path(out_dir)
-    candidates = sorted(p for p in root.glob(pattern) if p.name != IGNORE_LIST_NAME)
-    removed = []
-    for path in candidates[:-keep] if keep else candidates:
-        path.unlink()
-        removed.append(path.name)
+    groups: dict[str, list[Path]] = {}
+    for path in root.glob("run-*"):
+        if path.name == IGNORE_LIST_NAME:
+            continue
+        match = _RUN_STAMP_RE.match(path.name)
+        if match:
+            groups.setdefault(match.group(1), []).append(path)
+    removed: list[str] = []
+    for stamp in sorted(groups)[:-keep]:
+        for path in groups[stamp]:
+            path.unlink()
+            removed.append(path.name)
     return removed
 
 
@@ -184,17 +211,48 @@ def _images_dir() -> str:
     return images_dir
 
 
-def _load_ignore_list(out_dir: Path) -> dict[str, Any] | None:
-    path = out_dir / IGNORE_LIST_NAME
+def _load_ignore_list(source_dir: Path) -> dict[str, Any] | None:
+    """Load ``ignore-list.json`` from beside the run record being scored.
+
+    Reading it from the record's own directory (not always ``OUT_DIR``) removes an
+    ambient input that silently changed a committed baseline's re-score depending
+    on the machine's ``out/`` contents (S3-05c). Structure is validated fail-fast:
+    a malformed ``wrong_names`` value can no longer no-op silently (S3-05a, rg-008).
+
+    Known limitation (S3-05b): ignored pairs are keyed on (path, name) with no
+    expiry/commit binding, so a pair triaged once stays suppressed even if the
+    same wrong-name later genuinely regresses. Every suppressed pair is still
+    surfaced under ``ignored_wrong_names`` in the report so it is never invisible.
+    """
+    path = source_dir / IGNORE_LIST_NAME
     if not path.is_file():
         return None
-    payload = json.loads(path.read_text())  # malformed file must fail loudly (rg-008)
+    try:
+        payload = json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        raise ManifestError(f"{path} is not valid JSON: {exc}") from exc
     if not isinstance(payload, dict):
         raise ManifestError(f"{path} must contain a JSON object")
+    wrong = payload.get("wrong_names", [])
+    if not isinstance(wrong, list) or not all(
+        isinstance(pair, list) and len(pair) == 2 and all(isinstance(part, str) for part in pair) for pair in wrong
+    ):
+        raise ManifestError(f"{path}: 'wrong_names' must be a list of [path, name] string pairs")
     return payload
 
 
+def _reject_llm_judge(args: argparse.Namespace) -> None:
+    """Reject the stub LLM-judge tier before any live work (§6c tiers 3-4 out of MVP).
+
+    Checked at the top of fetch/run/score so ``run --llm-judge`` and
+    ``fetch --llm-judge`` fail fast instead of burning 38 remote calls first (S3-06).
+    """
+    if getattr(args, "llm_judge", False):
+        sys.exit("--llm-judge is a stub: the LLM-judge tier is not implemented in this MVP (§6c)")
+
+
 def _cmd_fetch(args: argparse.Namespace) -> str:
+    _reject_llm_judge(args)
     base_url, api_key, tenant_id = _require_live_env()
     images_dir = _images_dir()
     manifest = load_manifest(args.manifest, images_dir=images_dir)
@@ -226,23 +284,28 @@ def _cmd_fetch(args: argparse.Namespace) -> str:
 
 
 def _cmd_score(args: argparse.Namespace) -> None:
-    if args.llm_judge:
-        sys.exit("--llm-judge is a stub: the LLM-judge tier is not implemented in this MVP (§6c)")
-    record = json.loads(Path(args.run_record).read_text())
+    _reject_llm_judge(args)
+    record_path = Path(args.run_record)
+    record = json.loads(record_path.read_text())
     manifest = load_manifest(args.manifest)
     entries = [e.model_dump() for e in manifest.entries]
-    ignore_list = _load_ignore_list(OUT_DIR)
-    json_doc, md_doc = build_reports(record, entries, ignore_list=ignore_list)
+    # Stamp the report with the manifest actually scored against, and verify it
+    # against the run record's fetch-time sha instead of copying it blind (S3-04).
+    manifest_sha = _manifest_sha(manifest)
+    ignore_list = _load_ignore_list(record_path.parent)
+    json_doc, md_doc = build_reports(record, entries, ignore_list=ignore_list, score_manifest_sha256=manifest_sha)
     if args.check_determinism:
-        json_again, md_again = build_reports(record, entries, ignore_list=ignore_list)
+        json_again, md_again = build_reports(
+            record, entries, ignore_list=ignore_list, score_manifest_sha256=manifest_sha
+        )
         if json_doc != json_again or md_doc != md_again:
             sys.exit("determinism check FAILED: re-score produced different output")
         print("determinism check passed: re-score is bit-identical")
-    base = Path(args.run_record).with_suffix("")
+    base = record_path.with_suffix("")
     json_path, md_path = Path(f"{base}-report.json"), Path(f"{base}-report.md")
     json_path.write_text(json_doc)
     md_path.write_text(md_doc)
-    scored = score_run_record(record, entries, ignore_list=ignore_list)
+    scored = score_run_record(record, entries, ignore_list=ignore_list, score_manifest_sha256=manifest_sha)
     print(md_path)
     print(
         f"scored={scored['counts']['scored']}/{scored['counts']['total']} "
@@ -277,7 +340,7 @@ def main(argv: list[str] | None = None) -> None:
         p.add_argument("--manifest", default="scene/tests/seed/golden.json")
         p.add_argument("--limit", type=int, default=None)
         p.add_argument("--stall-limit", type=int, default=DEFAULT_STALL_LIMIT)
-        p.add_argument("--keep", type=int, default=DEFAULT_KEEP)
+        p.add_argument("--keep", type=_keep_arg, default=DEFAULT_KEEP)
         p.add_argument("--llm-judge", action="store_true", help="stub — not implemented (§6c)")
         p.add_argument("--check-determinism", action="store_true")
 
@@ -301,7 +364,7 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     try:
         args.func(args)
-    except (ManifestError, RemoteClientError, BoundedStallError) as exc:
+    except (ManifestError, RemoteClientError, BoundedStallError, ReportError) as exc:
         sys.exit(f"{type(exc).__name__}: {exc}")
 
 

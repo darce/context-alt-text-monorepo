@@ -18,8 +18,12 @@ from typing import Any
 
 from .caption_metrics import CaptionScores, insertion_rate, score_caption
 from .face_metrics import ImageDetection, ImageIdentities, detection_pr, identification_pr
+from .schema import SCHEMA, DocKind
 
-SCHEMA = "acx-eval/v1"
+
+class ReportError(Exception):
+    """The run record cannot be scored: wrong document kind, unknown schema, or a
+    run-record item whose media_id is absent from the score-time manifest."""
 
 
 def _entry_index(manifest_entries: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
@@ -30,12 +34,53 @@ def _pr_dict(precision: float | None, recall: float | None) -> dict[str, float |
     return {"precision": precision, "recall": recall}
 
 
+def _validate_record_kind(run_record: dict[str, Any]) -> None:
+    """Reject a report file (or foreign doc) passed where a run record is expected (HARM-06, S3-04)."""
+    kind = run_record.get("kind")
+    if kind is not None and kind != DocKind.RUN_RECORD.value:
+        raise ReportError(
+            f"expected a '{DocKind.RUN_RECORD.value}' document but got kind={kind!r}; "
+            "did you pass a report file to score?"
+        )
+    schema = run_record.get("schema")
+    if schema is not None and schema != SCHEMA:
+        raise ReportError(f"unknown run-record schema {schema!r}; expected {SCHEMA!r}")
+    if "items" not in run_record:
+        raise ReportError("run record has no 'items' key — is this a report file passed as a run record?")
+
+
+def _model_provenance(items: list[dict[str, Any]]) -> dict[str, list[str]]:
+    """Adapter/model that actually produced the captions (HARM-01).
+
+    Surfaced so a report is never mistaken for a caption-model baseline when it
+    actually scored a model-free 'seeded' stub run — every artifact stamped with
+    the adapter/model version (scope Q5).
+    """
+    adapters, model_ids, model_versions = set(), set(), set()
+    for item in items:
+        describe = item.get("describe") or {}
+        if describe.get("adapter"):
+            adapters.add(str(describe["adapter"]))
+        if describe.get("model_id"):
+            model_ids.add(str(describe["model_id"]))
+        if describe.get("model_version") is not None:
+            model_versions.add(str(describe["model_version"]))
+    return {
+        "adapters": sorted(adapters),
+        "model_ids": sorted(model_ids),
+        "model_versions": sorted(model_versions),
+    }
+
+
 def score_run_record(
     run_record: dict[str, Any],
     manifest_entries: list[dict[str, Any]],
     ignore_list: dict[str, Any] | None = None,
+    *,
+    score_manifest_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Pure scoring: run record + manifest labels -> metrics dict."""
+    _validate_record_kind(run_record)
     entries = _entry_index(manifest_entries)
     caption_scores: list[CaptionScores] = []
     per_image: list[dict[str, Any]] = []
@@ -44,12 +89,25 @@ def score_run_record(
     failures: list[dict[str, Any]] = []
 
     for item in run_record["items"]:
-        entry = entries[int(item["media_id"])]
+        media_id = int(item["media_id"])
+        entry = entries.get(media_id)
+        if entry is None:
+            # Score-time manifest differs from fetch-time (e.g. an image was
+            # pruned from the corpus). Record it, don't crash with a bare
+            # KeyError (S3-04).
+            failures.append(
+                {
+                    "path": str(item.get("path", f"media_id:{media_id}")),
+                    "media_id": media_id,
+                    "error": f"media_id {media_id} not in score-time manifest",
+                }
+            )
+            continue
         path = str(entry["path"])
         if item.get("error"):
-            failures.append({"path": path, "media_id": int(item["media_id"]), "error": str(item["error"])})
+            failures.append({"path": path, "media_id": media_id, "error": str(item["error"])})
             continue
-        recognition_enabled = bool(entry.get("policy", {}).get("recognition_enabled", True))
+        recognition_enabled = bool(entry["policy"]["recognition_enabled"])
         describe = item.get("describe") or {}
         caption = str(describe.get("alt_text_draft", ""))
         objects = list((describe.get("visual_facts") or {}).get("objects", []))
@@ -62,12 +120,16 @@ def score_run_record(
             objects=objects or None,
         )
         caption_scores.append(scores)
-        labeled_faces = len(entry["present_identities"])
+        # Ground-truth total faces (incl. non-roster strangers), not just named
+        # roster identities — otherwise every stranger face is a detection FP and
+        # true_rejections is unreachable (S3-01, HARM-04).
+        face_count = int(entry.get("face_count", len(entry["present_identities"])))
+        stranger_faces = max(face_count - len(entry["present_identities"]), 0)
         detections.append(
             ImageDetection(
                 image=path,
                 pred_faces=int(item.get("face_count", 0)),
-                labeled_faces=labeled_faces,
+                labeled_faces=face_count,
             )
         )
         identifications.append(
@@ -76,12 +138,13 @@ def score_run_record(
                 predicted=list(item.get("identities", [])),
                 labeled=list(entry["present_identities"]),
                 recognition_enabled=recognition_enabled,
+                stranger_faces=stranger_faces,
             )
         )
         per_image.append(
             {
                 "path": path,
-                "media_id": int(item["media_id"]),
+                "media_id": media_id,
                 "gated_score": scores.gated_score,
                 "must_right_failures": scores.must_right_failures,
                 "policy_violation": scores.policy_violation,
@@ -91,7 +154,7 @@ def score_run_record(
                 "repetition_ratio": round(scores.repetition_ratio, 4),
                 "tag_coverage": scores.tag_coverage,
                 "first_sentence_gist_ok": scores.first_sentence_gist_ok,
-                "cache_hit": bool(describe.get("cache_hit", False)),
+                "cache_hit": bool(describe.get("cached", False)),  # contract field is 'cached' (HARM-02)
             }
         )
 
@@ -102,9 +165,24 @@ def score_run_record(
     live_wrong = [list(p) for p in ident.wrong_names if tuple(p) not in ignored_pairs]
     ignored_wrong = [list(p) for p in ident.wrong_names if tuple(p) in ignored_pairs]
 
+    fetch_provenance = dict(run_record["provenance"])
+    provenance = {
+        **fetch_provenance,
+        # Manifest actually scored against — the fetch-time manifest_sha256 above
+        # can differ if golden labels changed after the run (HARM-03).
+        "score_manifest_sha256": score_manifest_sha256,
+        "manifest_matches_fetch": (
+            None if score_manifest_sha256 is None else score_manifest_sha256 == fetch_provenance.get("manifest_sha256")
+        ),
+        "model": _model_provenance(run_record["items"]),
+    }
+
+    rubric_images = sum(1 for e in manifest_entries if e.get("must_right") or e.get("easy_wrong"))
+
     return {
         "schema": SCHEMA,
-        "provenance": run_record["provenance"],
+        "kind": DocKind.REPORT.value,
+        "provenance": provenance,
         "counts": {
             "total": len(run_record["items"]),
             "scored": len(per_image),
@@ -113,6 +191,7 @@ def score_run_record(
         "caption": {
             "insertion_rate": insertion_rate(caption_scores),
             "must_right_failed_images": sum(1 for s in caption_scores if not s.must_right_pass),
+            "must_right_defined_images": rubric_images,  # 0 => hard gate vacuous (S1-02)
             "policy_violations": sum(1 for s in caption_scores if s.policy_violation),
             "mean_gated_score": (
                 round(sum(s.gated_score for s in caption_scores) / len(caption_scores), 4) if caption_scores else None
@@ -155,24 +234,41 @@ def _fmt(value: float | None) -> str:
 
 def _markdown(scored: dict[str, Any]) -> str:
     prov = scored["provenance"]
+    model = prov.get("model", {})
     cap = scored["caption"]
     det = scored["faces"]["detection"]
     ident = scored["faces"]["identification"]
+    adapters = ", ".join(model.get("adapters", [])) or "unknown"
+    model_ids = ", ".join(model.get("model_ids", [])) or "unknown"
     lines = [
         "# Caption + Face Eval Report",
         "",
-        f"- schema: `{scored['schema']}`",
+        f"- schema: `{scored['schema']}` kind: `{scored.get('kind', 'report')}`",
+        f"- adapter(s): `{adapters}` model(s): `{model_ids}` version(s): "
+        f"`{', '.join(model.get('model_versions', [])) or 'unknown'}`",
         f"- head_sha: `{prov.get('head_sha', 'unknown')}`",
         f"- base_url: {prov.get('base_url', 'unknown')}",
-        f"- manifest_sha256: `{prov.get('manifest_sha256', 'unknown')}`",
+        f"- fetch manifest_sha256: `{prov.get('manifest_sha256', 'unknown')}`",
+        f"- score manifest_sha256: `{prov.get('score_manifest_sha256', 'unknown')}` "
+        f"(matches fetch: {prov.get('manifest_matches_fetch')})",
         f"- started_at: {prov.get('started_at', 'unknown')}",
         f"- images: {scored['counts']['scored']}/{scored['counts']['total']} scored, "
         f"{scored['counts']['failed']} failed",
+    ]
+    if "seeded" in model.get("adapters", []):
+        lines.append(
+            "- ⚠ produced by the model-free `seeded` stub adapter — harness-shakedown "
+            "numbers, NOT a caption-model baseline."
+        )
+    if cap["must_right_defined_images"] == 0:
+        lines.append("- ⚠ no Must-Right/Easy-Wrong rubric entries in the corpus — the caption hard gate is vacuous.")
+    lines += [
         "",
         "## Caption metrics (deterministic tier)",
         "",
         f"- insertion rate: {_fmt(cap['insertion_rate'])}",
-        f"- Must-Right failed images (hard gate): {cap['must_right_failed_images']}",
+        f"- Must-Right failed images (hard gate): {cap['must_right_failed_images']} "
+        f"(rubric-defined images: {cap['must_right_defined_images']})",
         f"- policy violations: {cap['policy_violations']}",
         f"- mean gated score: {_fmt(cap['mean_gated_score'])}",
         "",
@@ -214,7 +310,11 @@ def build_reports(
     run_record: dict[str, Any],
     manifest_entries: list[dict[str, Any]],
     ignore_list: dict[str, Any] | None = None,
+    *,
+    score_manifest_sha256: str | None = None,
 ) -> tuple[str, str]:
     """Return (json_report, markdown_report) — deterministic for identical inputs."""
-    scored = score_run_record(run_record, manifest_entries, ignore_list=ignore_list)
+    scored = score_run_record(
+        run_record, manifest_entries, ignore_list=ignore_list, score_manifest_sha256=score_manifest_sha256
+    )
     return json.dumps(scored, indent=2, sort_keys=True, ensure_ascii=False) + "\n", _markdown(scored)

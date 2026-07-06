@@ -109,10 +109,12 @@ def identification_pr(items: Sequence[ImageIdentities]) -> PrResult:
             continue
         predicted = sorted(set(item.predicted))
         labeled = set(item.labeled)
-        if not predicted and not labeled:
-            if item.stranger_faces > 0:
-                true_rejections += 1
-            continue
+        # Stranger true rejection: the image has non-roster faces and the model
+        # asserted no wrong name on it — the strangers were correctly left
+        # unnamed. Counted even when a labeled roster person is also present and
+        # correctly named (a common mixed case), not only on all-empty images.
+        if item.stranger_faces > 0 and not any(name not in labeled for name in predicted):
+            true_rejections += 1
         for name in predicted:
             if name in labeled:
                 tp += 1

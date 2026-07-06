@@ -535,7 +535,8 @@ dev-stop:
 
 # VLM-2A caption + face eval harness (laptop CLI, remote OCI inference).
 # Requires: ACX_EVAL_LIVE=1, ACX_EVAL_BASE_URL, ACX_EVAL_API_KEY (dedicated
-# eval-tenant key, never the demo tenant's), GOLDEN_IMAGES_DIR. Details:
+# eval-tenant key, never the demo tenant's), ACX_EVAL_TENANT_ID (eval tenant
+# UUID, required by all live subcommands), GOLDEN_IMAGES_DIR. Details:
 # apps/prototype-description-service/scripts/eval_harness/README.md
 .PHONY: eval-captions
 eval-captions:

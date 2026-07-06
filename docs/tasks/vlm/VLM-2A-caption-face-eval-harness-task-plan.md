@@ -188,9 +188,9 @@ Owner: description-service backend lane. Fixture confirmation pass requires the 
 
 ### Checklist for Slice 2: Remote client + metric engines
 
-- [ ] `remote_client.py` (describe/analyze/wait_job/media_identities) with Nygard discipline + provenance capture
-- [ ] `seed_roster.py` idempotent seeding; seeded identity verified via `/media/identities`
-- [ ] `caption_metrics.py`, `face_metrics.py` + table-driven edge-ledger tests
+- [x] `remote_client.py` (describe/analyze/wait_job/media_identities) with Nygard discipline + provenance capture
+- [x] `seed_roster.py` idempotent seeding; seeded identity verified via `/media/identities`
+- [x] `caption_metrics.py`, `face_metrics.py` + table-driven edge-ledger tests
 
 ### Checklist for Slice 3: Reports, make target, baseline evidence
 

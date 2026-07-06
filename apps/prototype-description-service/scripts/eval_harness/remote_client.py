@@ -45,6 +45,7 @@ class RemoteSceneClient:
         poll_interval: float = 2.0,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
+        self.base_url = base_url
         self._client = httpx.Client(
             base_url=base_url,
             headers={"X-API-Key": api_key},

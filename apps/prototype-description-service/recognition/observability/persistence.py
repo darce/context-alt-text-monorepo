@@ -23,8 +23,8 @@ class ObservabilityRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def save_batch_report(self, report: BatchJobReport, tenant_id: str | None = None) -> ClusteringJobReport:
-        """Persist a clustering batch report."""
+    async def save_batch_report(self, report: BatchJobReport, tenant_id: str) -> ClusteringJobReport:
+        """Persist a clustering batch report (tenant required: FORCE-RLS table)."""
         payload = json.loads(report.to_json())
         row = ClusteringJobReport(
             tenant_id=parse_optional_uuid(tenant_id),
@@ -50,12 +50,12 @@ class ObservabilityRepository:
         self,
         decision: DecisionLog,
         *,
-        tenant_id: str | None = None,
+        tenant_id: str,
         algorithm: str | None = None,
         job_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> AssignmentDecision:
-        """Persist a single decision log."""
+        """Persist a single decision log (tenant required: FORCE-RLS table)."""
         row = AssignmentDecision(
             tenant_id=parse_optional_uuid(tenant_id),
             identity_id=str(decision.identity_id),

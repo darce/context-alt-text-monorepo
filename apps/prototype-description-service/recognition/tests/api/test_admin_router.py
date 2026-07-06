@@ -46,9 +46,7 @@ def _basic_auth() -> dict[str, str]:
 
 
 @pytest_asyncio.fixture
-async def admin_client(
-    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
-) -> AsyncIterator[AsyncClient]:
+async def admin_client(db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[AsyncClient]:
     """Async client over the ASGI app; admin session bound to the test db_session."""
     monkeypatch.setenv("RECOGNITION_ADMIN_ENABLED", "1")
     monkeypatch.setenv("RECOGNITION_ADMIN_TOKEN", _VALID_TOKEN)
@@ -347,9 +345,7 @@ async def test_console_mint_form_out_of_range_expiry_returns_400_not_500(
 
 
 @pytest.mark.asyncio
-async def test_console_mint_form_rejects_cross_origin(
-    admin_client: AsyncClient, db_session: AsyncSession
-) -> None:
+async def test_console_mint_form_rejects_cross_origin(admin_client: AsyncClient, db_session: AsyncSession) -> None:
     tenant_id = str(uuid.uuid4())
     await admin_client.post(
         "/admin/tenants", json={"tenant_id": tenant_id, "site_url": "http://csrf.test"}, headers=_AUTH
@@ -363,9 +359,7 @@ async def test_console_mint_form_rejects_cross_origin(
 
 
 @pytest.mark.asyncio
-async def test_console_mint_form_allows_same_origin(
-    admin_client: AsyncClient, db_session: AsyncSession
-) -> None:
+async def test_console_mint_form_allows_same_origin(admin_client: AsyncClient, db_session: AsyncSession) -> None:
     tenant_id = str(uuid.uuid4())
     await admin_client.post(
         "/admin/tenants", json={"tenant_id": tenant_id, "site_url": "http://ok-origin.test"}, headers=_AUTH
@@ -382,9 +376,7 @@ async def test_console_mint_form_allows_same_origin(
 
 
 @pytest.mark.asyncio
-async def test_console_caps_keys_and_renders_note(
-    admin_client: AsyncClient, db_session: AsyncSession
-) -> None:
+async def test_console_caps_keys_and_renders_note(admin_client: AsyncClient, db_session: AsyncSession) -> None:
     """A tenant with > cap keys renders the 'showing N of M' note and is capped."""
     from recognition.interface_adapters.http.routers.admin import _CONSOLE_KEYS_PER_TENANT
 

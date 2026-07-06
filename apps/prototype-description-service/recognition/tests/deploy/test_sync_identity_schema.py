@@ -1,101 +1,102 @@
-"""E15-33 Slice 1: entrypoint identity-schema self-heal is additive + idempotent.
+"""Entrypoint contract for ``scripts.sync_identity_schema`` (E15-34 Slice 3).
 
-The self-heal runs at container boot between ``alembic upgrade head`` and the
-fail-closed ``verify_identity_schema`` so an in-place *new-table* addition to
-``001_identity_schema.py`` reaches an already-stamped DB without a new alembic
-revision. Scope boundary: it creates missing *tables* only — never columns,
-indexes, or constraints on pre-existing tables (see E15-33 Slice 1).
+The heal itself is Postgres-only (raw RLS/matview DDL) and is behaviorally
+covered by ``recognition/tests/schema/test_identity_schema_heal_pg.py``.
+This module unit-tests the entrypoint wiring: advisory lock taken before the
+migration ``heal()`` runs, created-set computed inside the locked
+transaction, and ``main()``'s fail-closed exit codes.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.orm import Session
-
-import db.models  # noqa: F401  (import registers every ORM table on Base.metadata)
-from db.base import Base
-from db.models.tenant import Tenant
-from scripts.sync_identity_schema import sync_schema
+import pytest
 
 
-def _engine(tmp_path: Path):
-    # File-based sqlite so inspect()'s fresh connections observe the same DB.
-    return create_engine(f"sqlite:///{tmp_path / 'identity.db'}")
+def test_postgres_boot_takes_advisory_lock_before_heal(monkeypatch) -> None:
+    # PA-02 / BR2-10 wiring: on a postgresql connection, pg_advisory_xact_lock
+    # must be issued inside the transaction BEFORE the migration heal runs.
+    import scripts.sync_identity_schema as mod
+
+    calls: list[str] = []
+
+    class FakeDialect:
+        name = "postgresql"
+
+    class FakeResult:
+        def __iter__(self):
+            return iter([])
+
+    class FakeConn:
+        dialect = FakeDialect()
+
+        def execute(self, stmt, params=None):
+            stmt_text = str(stmt)
+            if "pg_advisory_xact_lock" in stmt_text:
+                assert params == {"key": mod._ADVISORY_LOCK_KEY}
+                calls.append("lock")
+            return FakeResult()
+
+    class FakeBegin:
+        def __enter__(self):
+            return FakeConn()
+
+        def __exit__(self, *exc):
+            return False
+
+    class FakeEngine:
+        def begin(self):
+            return FakeBegin()
+
+    class FakeMigration:
+        @staticmethod
+        def heal(conn):
+            calls.append("heal")
+
+    monkeypatch.setattr(mod.importlib, "import_module", lambda name: FakeMigration)
+
+    created = mod.sync_schema(FakeEngine())
+
+    assert calls == ["lock", "heal"]
+    assert created == []
 
 
-def test_sync_creates_missing_table_and_preserves_existing_rows(tmp_path: Path) -> None:
-    engine = _engine(tmp_path)
-    try:
-        # Seed a DB that is stamped-but-drifted: all tables minus exactly one.
-        Base.metadata.create_all(engine)
-        with Session(engine) as session:
-            session.add(Tenant(site_url="http://seed.test"))
-            session.commit()
-        with engine.begin() as conn:
-            conn.execute(text("DROP TABLE image_descriptions"))
-        assert "image_descriptions" not in inspect(engine).get_table_names()
+def test_created_report_reflects_tables_heal_added(monkeypatch) -> None:
+    # The created-set is the delta of pg_tables across heal() inside the same
+    # locked transaction — a lock-race loser reports nothing.
+    import scripts.sync_identity_schema as mod
 
-        created = sync_schema(engine)
+    state = {"tables": [("tenants",)]}
 
-        assert "image_descriptions" in created
-        assert "image_descriptions" in inspect(engine).get_table_names()
-        # Additive: the pre-existing row is untouched.
-        with engine.connect() as conn:
-            rows = conn.execute(text("SELECT site_url FROM tenants")).fetchall()
-        assert rows == [("http://seed.test",)]
-    finally:
-        engine.dispose()
+    class FakeDialect:
+        name = "postgresql"
 
+    class FakeConn:
+        dialect = FakeDialect()
 
-def test_sync_is_noop_when_schema_in_sync(tmp_path: Path) -> None:
-    engine = _engine(tmp_path)
-    try:
-        Base.metadata.create_all(engine)
-        # First run over an already-complete schema creates nothing...
-        assert sync_schema(engine) == []
-        # ...and a second run is likewise a clean no-op (idempotent).
-        assert sync_schema(engine) == []
-    finally:
-        engine.dispose()
+        def execute(self, stmt, params=None):
+            if "pg_advisory_xact_lock" in str(stmt):
+                return []
+            return list(state["tables"])
 
+    class FakeBegin:
+        def __enter__(self):
+            return FakeConn()
 
-def test_sync_after_a_real_creation_is_a_noop(tmp_path: Path) -> None:
-    # Idempotence over the actual self-heal path: create → heal → re-heal is empty.
-    engine = _engine(tmp_path)
-    try:
-        Base.metadata.create_all(engine)
-        with engine.begin() as conn:
-            conn.execute(text("DROP TABLE image_descriptions"))
-        assert "image_descriptions" in sync_schema(engine)
-        tables_after_heal = set(inspect(engine).get_table_names())
-        # A second heal right after a real creation must create nothing.
-        assert sync_schema(engine) == []
-        assert set(inspect(engine).get_table_names()) == tables_after_heal
-    finally:
-        engine.dispose()
+        def __exit__(self, *exc):
+            return False
 
+    class FakeEngine:
+        def begin(self):
+            return FakeBegin()
 
-def test_sync_does_not_add_columns_to_existing_table(tmp_path: Path) -> None:
-    # Scope boundary: create_all(checkfirst=True) is table-granular — it never
-    # alters a pre-existing table, so a drifted/missing column is NOT added.
-    engine = _engine(tmp_path)
-    try:
-        with engine.begin() as conn:
-            conn.execute(text("CREATE TABLE tenants (id TEXT PRIMARY KEY)"))
-            conn.execute(text("INSERT INTO tenants (id) VALUES ('t1')"))
+    class FakeMigration:
+        @staticmethod
+        def heal(conn):
+            state["tables"] = [("tenants",), ("export_jobs",)]
 
-        created = sync_schema(engine)
+    monkeypatch.setattr(mod.importlib, "import_module", lambda name: FakeMigration)
 
-        assert "tenants" not in created, "pre-existing table must not be recreated"
-        with engine.connect() as conn:
-            cols = [row[1] for row in conn.execute(text("PRAGMA table_info(tenants)")).fetchall()]
-            rows = conn.execute(text("SELECT id FROM tenants")).fetchall()
-        assert cols == ["id"], "self-heal must not add columns to an existing table"
-        assert rows == [("t1",)]
-    finally:
-        engine.dispose()
+    assert mod.sync_schema(FakeEngine()) == ["export_jobs"]
 
 
 class _RecordingEngine:
@@ -133,69 +134,15 @@ def test_main_fails_closed_and_disposes_on_error(monkeypatch) -> None:
         raise RuntimeError("DDL error")
 
     monkeypatch.setattr(mod, "sync_schema", _boom)
-    # Fail-closed: non-zero exit so the container entrypoint aborts before verify.
     assert mod.main() == 1
-    assert engine.disposed is True  # disposed via finally even on failure
+    assert engine.disposed is True
 
 
-def test_created_report_excludes_tables_created_by_a_lock_racer(tmp_path: Path) -> None:
-    # BR2-08: the created-set must be computed inside the locked transaction
-    # (_locked_sync), so a boot that loses the advisory-lock race never reports
-    # tables the winner created. Simulated: the racer's table already exists by
-    # the time the locked section runs.
-    from scripts.sync_identity_schema import _locked_sync
+def test_no_create_all_anywhere() -> None:
+    # E15-34 contract: the entrypoint must never re-derive schema from the ORM.
+    import inspect as pyinspect
 
-    engine = _engine(tmp_path)
-    try:
-        Base.metadata.create_all(engine)
-        with engine.begin() as conn:
-            conn.execute(text("DROP TABLE image_descriptions"))
-            conn.execute(text("DROP TABLE export_jobs"))
-        # Racer (lock winner) already created image_descriptions.
-        Base.metadata.tables["image_descriptions"].create(engine)
-
-        with engine.begin() as conn:
-            created = _locked_sync(conn)
-
-        assert "export_jobs" in created
-        assert "image_descriptions" not in created, created
-    finally:
-        engine.dispose()
-
-
-def test_postgres_boot_takes_advisory_lock_before_syncing(monkeypatch) -> None:
-    # BR2-10 (PA-02): on a postgresql connection, pg_advisory_xact_lock must be
-    # issued inside the transaction BEFORE the locked sync runs. Every other
-    # test runs sqlite where the lock branch is skipped, so this wiring is
-    # asserted with a recording fake connection.
     import scripts.sync_identity_schema as mod
 
-    calls: list[str] = []
-
-    class FakeDialect:
-        name = "postgresql"
-
-    class FakeConn:
-        dialect = FakeDialect()
-
-        def execute(self, stmt, params=None):  # noqa: ANN001
-            assert "pg_advisory_xact_lock" in str(stmt)
-            assert params == {"key": mod._ADVISORY_LOCK_KEY}
-            calls.append("lock")
-
-    class FakeBegin:
-        def __enter__(self):
-            return FakeConn()
-
-        def __exit__(self, *exc):  # noqa: ANN002
-            return False
-
-    class FakeEngine:
-        def begin(self):
-            return FakeBegin()
-
-    monkeypatch.setattr(mod, "_locked_sync", lambda conn: calls.append("sync") or [])
-
-    mod.sync_schema(FakeEngine())
-
-    assert calls == ["lock", "sync"]
+    source = pyinspect.getsource(mod)
+    assert ".create_all(" not in source  # docstring mentions the banned API; calls do not

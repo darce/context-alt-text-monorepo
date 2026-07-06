@@ -10,6 +10,7 @@ Product and architecture roadmaps for the Alt Context monorepo.
 | [roadmap-v4.md](roadmap-v4.md)             | Product and architecture roadmap for the next recognition UX wave                                        | Historical roadmap draft      |
 | [roadmap-pg18-upgrade.md](roadmap-pg18-upgrade.md) | PostgreSQL upgrade evaluation and phased migration planning                                      | Technical roadmap             |
 | [context-aware-image-description-roadmap-2026-06-13.md](context-aware-image-description-roadmap-2026-06-13.md) | Roadmap seed for context-aware image description, visual facts, WordPress alt-text workflow, and provider adapters | Roadmap seed (pre-epic) |
+| [public-mvp-ux-polish-roadmap-2026-07-04.md](public-mvp-ux-polish-roadmap-2026-07-04.md) | Impact-ordered UX/UI/design polish roadmap for the public MVP demo, grounded in the WBUX-1/WBUX-2 assessments; includes planning-surface realignment | Roadmap seed (pre-epic) |
 
 ## How to use
 

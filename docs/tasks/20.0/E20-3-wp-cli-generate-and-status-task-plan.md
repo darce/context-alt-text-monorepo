@@ -129,13 +129,13 @@ Proof:
 
 - [ ] Command class registered only under WP-CLI.
 - [ ] `status` is read-only and supports JSON/table.
-- [ ] `composer test -- --filter DescriptionCommandStatus` green.
+- [x] `composer test -- --filter DescriptionCommandStatus` green.
 
 ### Checklist for Slice 2: Generate with dry-run/write/force
 
 - [ ] `generate` supports bounded dry-run/write/force.
 - [ ] LocalWP CLI smoke target added.
-- [ ] `composer test -- --filter DescriptionCommandGenerate` green.
+- [x] `composer test -- --filter DescriptionCommandGenerate` green.
 
 ## Review Readiness
 

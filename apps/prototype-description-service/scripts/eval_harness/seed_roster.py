@@ -42,6 +42,7 @@ class SeedSummary:
     already_labeled: dict[str, str] = field(default_factory=dict)
     labeled: dict[str, str] = field(default_factory=dict)
     skipped_ambiguous: dict[str, list[str]] = field(default_factory=dict)
+    skipped_conflict: dict[str, str] = field(default_factory=dict)
     unlabeled_roster_names: list[str] = field(default_factory=list)
 
 
@@ -82,6 +83,7 @@ def seed(entities_dir: str, client: SeedClient, *, tenant_id: str) -> SeedSummar
     media_to_name = {m: name for m, _, _, name in crops}
     labeled: dict[str, str] = {}
     skipped: dict[str, list[str]] = {}
+    conflicts: dict[str, str] = {}
     for cluster in client.clusters():
         cluster_id = str(cluster["id"])
         if cluster.get("label"):
@@ -95,16 +97,28 @@ def seed(entities_dir: str, client: SeedClient, *, tenant_id: str) -> SeedSummar
             }
         )
         if len(names) == 1:
-            client.patch_cluster(cluster_id, tenant_id, names[0])
-            labeled[cluster_id] = names[0]
+            # A name can already be taken by another cluster (e.g. duplicate
+            # clusters from a re-uploaded crop set) — 409 there means the name
+            # is covered; record and continue rather than failing the seed.
+            try:
+                client.patch_cluster(cluster_id, tenant_id, names[0])
+            except Exception:  # noqa: BLE001 — per-cluster isolation; coverage re-checked below
+                conflicts[cluster_id] = names[0]
+            else:
+                labeled[cluster_id] = names[0]
         elif len(names) > 1:
             skipped[cluster_id] = names
 
-    covered = existing_names | set(labeled.values())
+    covered = (
+        existing_names
+        | set(labeled.values())
+        | {str(c["label"]) for c in client.clusters(labeled_only=True) if c.get("label")}
+    )
     return SeedSummary(
         roster=roster,
         already_labeled=existing,
         labeled=labeled,
         skipped_ambiguous=skipped,
+        skipped_conflict=conflicts,
         unlabeled_roster_names=[n for n in roster if n not in covered],
     )

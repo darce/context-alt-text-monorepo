@@ -12,37 +12,34 @@
 - insertion rate: 0.000
 - Must-Right failed images (hard gate): 0
 - policy violations: 0
-- mean gated score: 0.553
+- mean gated score: 0.079
 
 ## Face detection (identity-agnostic)
 
-- precision: 0.273 recall: 1.000 (tp=18 fp=48 fn=0)
+- precision: 0.606 recall: 0.976 (tp=40 fp=26 fn=1)
 
 ## Face identification (named assertions)
 
-- micro precision: 0.636 recall: 0.389
-- macro precision: 0.542 recall: 0.275
+- micro precision: 1.000 recall: 0.268
+- macro precision: 1.000 recall: 0.326
 - true rejections (strangers): 0
 
 ### Wrong-name errors (top product risk — every instance listed)
 
-- `mock_images/ccqw-antartica.jpg` → asserted **Caitlin Weaver**
-- `mock_images/example-ellynheald-goldleaf.jpeg` → asserted **Ellyn Heald**
-- `mock_images/k.mcc-1.jpg` → asserted **Kirstie Mccarrel**
-- `mock_images/mcm-planecrash.jpg` → asserted **Maria Correonero**
+- none
 - ignored (triaged): 0
 
 ### Per-identity (macro components)
 
 - Bea Burke: precision=null recall=0.000 (tp=0 fp=0 fn=1)
-- Caitlin Weaver: precision=0.000 recall=null (tp=0 fp=1 fn=0)
+- Caitlin Weaver: precision=1.000 recall=0.067 (tp=1 fp=0 fn=14)
 - Cristina Quintana: precision=null recall=0.000 (tp=0 fp=0 fn=1)
 - Daniel Arce: precision=null recall=0.000 (tp=0 fp=0 fn=1)
-- Ellyn Heald: precision=0.000 recall=null (tp=0 fp=1 fn=0)
-- Erika Hansen Miller: precision=null recall=0.000 (tp=0 fp=0 fn=1)
-- Kirstie Mccarrel: precision=0.500 recall=0.200 (tp=1 fp=1 fn=4)
-- Liam Maloney: precision=1.000 recall=0.667 (tp=2 fp=0 fn=1)
-- Maria Correonero: precision=0.750 recall=1.000 (tp=3 fp=1 fn=0)
+- Ellyn Heald: precision=1.000 recall=1.000 (tp=1 fp=0 fn=0)
+- Erika Hansen Miller: precision=null recall=0.000 (tp=0 fp=0 fn=3)
+- Kirstie Mccarrel: precision=1.000 recall=0.286 (tp=2 fp=0 fn=5)
+- Liam Maloney: precision=1.000 recall=1.000 (tp=2 fp=0 fn=0)
+- Maria Correonero: precision=1.000 recall=0.571 (tp=4 fp=0 fn=3)
 - Ryann Wiseman: precision=1.000 recall=0.333 (tp=1 fp=0 fn=2)
 
 ## Per-item failures

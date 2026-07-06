@@ -37,6 +37,13 @@ TENANT_TABLES = [
     "image_descriptions",
 ]
 
+# Tables this migration creates via raw SQL only — no ORM model exists for
+# them, so any ORM-metadata-based mechanism (create_all heals, model-driven
+# tooling) can never produce them. Consumed by the truth-consistency ratchet.
+RAW_SQL_TABLES = [
+    "identity_cluster_refresh_queue",
+]
+
 EXPECTED_SCHEMA_TABLES = [
     "tenants",
     "api_keys",

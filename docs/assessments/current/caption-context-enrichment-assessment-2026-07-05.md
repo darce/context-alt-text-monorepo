@@ -5,6 +5,7 @@
 > **Task:** `VLM-2` (branch `feature/vlm-2`)
 > **Question evaluated:** How to raise generated image-description quality by (a) adopting a context-fusion caption architecture (arXiv 2606.18553), (b) using OpenCV 5 for CPU-only scene analysis and dependency reduction, (c) adding user-defined brand/logo detection that auto-tags instances via the clustering engine, and (d) exploiting PostgreSQL 18/19 features.
 > **Source inputs:** arXiv [2606.18553v1](https://arxiv.org/html/2606.18553v1) (Hierarchical Multi-Modal Retrieval for Knowledge-Grounded News Image Captioning, EVENTA 2025); [opencv.org/opencv-5](https://opencv.org/opencv-5/); [PostgreSQL 18 announcement](https://www.postgresql.org/about/news/postgresql-18-released-3142/); [PostgreSQL 19.0 release notes](https://www.postgresql.org/docs/release/19.0/) (beta); `literature/extracted/refactoring/distilled/`; code (`apps/prototype-description-service`); [identity-prose-merge-design-2026-06-15.md](./identity-prose-merge-design-2026-06-15.md); [segmentation-vlm-pipeline-feasibility-2026-06-15.md](./segmentation-vlm-pipeline-feasibility-2026-06-15.md); [context-aware-image-description-roadmap-2026-06-13.md](../../roadmaps/context-aware-image-description-roadmap-2026-06-13.md); [roadmap-pg18-upgrade.md](../../roadmaps/roadmap-pg18-upgrade.md); [e19-4a-identity-prose-merge-scope.md](../../scopes/e19-4a-identity-prose-merge-scope.md).
+> **Revision C (2026-07-05):** harness-inventory audit across `/Volumes/Butter/archives/archived-recognition.4.2.3`, `/Volumes/Butter/archives/archived-recognition-service`, the monorepo root, and the description service — **no caption-quality harness was ever started**; §6a records the inventory and the bare-MVP build plan, §6b the golden-set image taxonomy, §6c the metric stack (precision-gated, not recall-first). Ingested the 13 PDFs newly added to `~/Documents/research papers/` — adopts: Williams et al. 0–4 alt-text rubric (W4A'22), Rescribe G1–G8 + coherence/informativeness metrics (UIST'20), Screen Parsing UI-description framing (UIST'21); rest skips (§9 addendum). Length policy revised: summary-first, no hard cap on the detailed tier (Williams: longer scored *higher*).
 > **Revision B (2026-07-05):** folded a 12-paper sweep — [BACON 2407.03314](https://arxiv.org/pdf/2407.03314), ["Inserting Faces inside Captions" 2405.02305](https://arxiv.org/pdf/2405.02305), [PerceptionRubrics 2606.28322](https://arxiv.org/html/2606.28322v2), [BLV curator study 2605.31080](https://arxiv.org/html/2605.31080v1), [HBoP 2502.10118](https://arxiv.org/html/2502.10118v2), [VISE 2606.27373](https://arxiv.org/html/2606.27373v1), [MosAIC 2411.11758](https://arxiv.org/html/2411.11758v1), [HyFL-CLIP 2607.00428](https://arxiv.org/html/2607.00428v1), [DataComp-VLM 2606.28551](https://arxiv.org/html/2606.28551v2), [CANVAS 2606.09846](https://arxiv.org/abs/2606.09846), [Accessible-XAI 2603.02486](https://arxiv.org/html/2603.02486v1), [TICR 2410.06314](https://arxiv.org/html/2410.06314v1) — plus the local library (`~/Documents/research papers/`, 14 further papers incl. the deployed Eluvio sports-captioning system, CoTalk, Ensemble Decoding, Whitened CLIP, RE-VLM, CIAN) and a July-2026 small-VLM landscape survey. Adds §§3a, 9–11; rewrites §6; re-sequences §12. BLV framing sharpened: the target is captions that "paint the image" for blind/low-vision users.
 
 ---
@@ -75,7 +76,7 @@ That cache observation is the single biggest latency/quality win available witho
 
 **VisualFacts schema conventions (BACON):** number same-category instances (`person 1`, `person 2`) — exactly the slot structure the face-name merge joins on; carry a bbox per object as a first-class field; split foreground/background and style/theme; keep the serialization regex-parseable for models without JSON mode. BACON's ablation (element-wise structured queries beat "describe this image" by +26–50% semantic consistency) is direct evidence for structured facts over one dense caption.
 
-**Prose contract for BLV output (HBoP + curator study 2605.31080 + CANVAS):** tiered composition — scene-level sentence(s) first (orientation/setting), then regional groupings, then fine detail; sensory vocabulary (color, texture, mood, atmosphere); hard length cap; jargon ban; **hedge uncertain claims** ("appears to be…") and surface provenance in phrasing for roster facts ("identified from your site's people roster"). Region selection is deterministic CPU math (size-ranked NMS + K-means over boxes, ~20 lines); Florence-2's native region captioning replaces HBoP's SAM+BLIP stack. Anti-hallucination instruction (FAST-GOAL, tested): "describe ONLY what is visibly present; do not speculate about events outside the frame."
+**Prose contract for BLV output (HBoP + curator study 2605.31080 + CANVAS; length policy revised rev C):** tiered composition — scene-level sentence(s) first (orientation/setting; first sentence ≤125 chars gist per Trewin/Williams), then regional groupings, then fine detail; sensory vocabulary (color, texture, mood, atmosphere); concrete quantified detail over evaluative adjectives (tactile-graphics study); jargon ban; **no hard length cap on the detailed tier** — Williams et al. found longer descriptions score *higher* (4-scoring μ=117 words vs 2-scoring μ=34); penalize missing content, not word count (the fast alt-text tier stays bounded for the attribute); don't restate what the surrounding post already says (Rescribe G2 — the context pack tells us what's already said); **hedge uncertain claims** ("appears to be…") and surface provenance in phrasing for roster facts ("identified from your site's people roster"). Region selection is deterministic CPU math (size-ranked NMS + K-means over boxes, ~20 lines); Florence-2's native region captioning replaces HBoP's SAM+BLIP stack. Anti-hallucination instruction (FAST-GOAL, tested): "describe ONLY what is visibly present; do not speculate about events outside the frame."
 
 **Fact merge with source precedence (RE-VLM):** every fact is tagged with its source; on conflict, trust order wins — identity facts *only* from roster, appearance facts from the VLM, contextual facts from the context pack. The fusion stage is **merge-only**: no new semantic units may appear that aren't traceable to an input fact (CoTalk's `units_out ⊆ units_in` contract — machine-checkable).
 
@@ -145,6 +146,74 @@ Recommendation: one bounded **spike task** producing a benchmark artifact in the
 
 Store all scores per run in the existing E19-1 benchmark JSON schema so every adapter/fusion change ships a before/after artifact. CIDEr/CLIPScore optional later via E20-11's hosted harness; not a gate. MosAIC's warning stands: free-form enrichment raised completeness but *dropped* correctness (60.2% vs 64.6% baseline) — the gated Must-Right design exists precisely to catch that trade.
 
+### 6a. Harness inventory — nothing to revive; build the bare MVP (rev C)
+
+Audited 2026-07-05 across both Butter archives, the monorepo root, and the description service: **no caption-accuracy scoring (BLEU/CIDEr/CLIP-score/judge-vs-reference) was ever started anywhere** — zero content-grep hits. What exists, and what each contributes to the MVP:
+
+| Artifact | State | Reuse |
+| --- | --- | --- |
+| `scripts/benchmark_local_vlm.py` (E19-1 S10) | working, latency/RSS only; prints prose for eyeball judgment | **The skeleton**: adapter loading, per-image loop, JSON artifact emission — add a scoring step + golden manifest and it *is* the harness |
+| `scene/tests/seed/` | empty placeholder (`.gitkeep` + README) | The intended checked-in fixture slot — put the golden set here |
+| `archived-recognition-service/scripts/mock_images/` (~42 real photos) + `mock_entities/` (~18 face crops) | image corpus, **no reference captions** | Seed corpus for several golden classes (people, landscapes); references must be authored |
+| `recognition/application/regression_harness/` | fully built — for **face clustering** | Structural template: baseline JSON + report builder + regression assertions; copy the pattern, share no code |
+| E20-11 task plan | plan only, zero code | Different axis (provider cost/latency/privacy); the golden manifest should be reusable by it later |
+| Remote `bench.py` (E19-1 memos) | never committed | ignore |
+
+**Bare-MVP definition (1–2 days, CPU-only, no LLM judge required to be useful):** `scripts/eval_captions.py` + a golden manifest (`scene/tests/seed/golden.json`: per image — path, context_pack fixture, reference facts list, Must-Right rubrics, Easy-Wrong traps, expected identities). Runs any configured adapter(s), computes the deterministic metric tier of §6c (insertion rate, Must-Right string/policy checks, unit-traceability against the fact list, FKRE, length error, repetition ratio, tag coverage), emits E19-1-schema JSON + a markdown report (regression-harness report-builder pattern, with the accessibility-report dedupe/ignore-list ergonomics so triaged judge errors stay suppressed across runs). The LLM-judge tier (0–4 rubric, Easy-Wrong adjudication) is a second pass behind a flag. **Verdict: yes — build it now; it is the cheapest item in the whole program and every subsequent decision (bake-off, merge, fusion) is blind without it.**
+
+### 6b. Golden-set image taxonomy (rev C)
+
+~24–30 images, every class chosen to *discriminate between models/pipeline stages*, not to average them. Roster-dependent classes use our own seeded people; corpus classes can start from the archive `mock_images/`.
+
+**Identity classes (discriminate merge + recognition):**
+1. Single roster person, frontal, well-lit — insertion baseline.
+2. Roster person in profile / partially occluded / backlit — grounding + detection floor.
+3. **Same person young vs old** (two images, one cluster) — embedding drift; does the name survive age gap.
+4. Two roster people + strangers in one frame — *association precision*: right name on right person, strangers stay generic.
+5. **Crowd** (10+ faces, 1–2 roster-confirmed) — naming restraint; "a crowd outside the arena, including NAME" vs. hallucinated enumeration.
+6. Look-alike of a roster person (non-roster) — the false-positive naming trap; canonical Easy-Wrong rubric.
+7. Roster person mid-action — verb + gender accuracy (Florence's documented failure mode).
+8. Roster person present but `person_naming` policy disabled — must NOT name; policy-compliance gate.
+
+**Scene classes (discriminate visual-facts quality):**
+9. **Abstract art / pure texture** — hallucination pressure; models invent objects here.
+10. Landscape, no people — spatial layering, general→specific ordering.
+11. Busy interior, many small objects — detail *selection* (does it pick the salient 5 or ramble).
+12. Low-light / motion blur / low-res — OOD gate + hedging behavior.
+13. Color-critical scene (sunset, product colorways) — color fidelity (the trait LLM judges score reliably).
+14. Explicit spatial relations (X left of Y, foreground/background) — the orientation information BLV users rank highest.
+15. Emotionally salient scene — mood/atmosphere dimension (judge-caution zone; human-calibrate).
+
+**Text / brand / structured classes:**
+16. Legible sign or slide text — transcription fidelity, no paraphrase-invention.
+17. Logo, large and clean — brand Tier A baseline.
+18. Logo, small / skewed / partial — matcher floor + min-size behavior.
+19. Stylized brand on product/apparel — the Tier A vs Tier B (OWLv2) discriminator.
+20. **UI screenshot** — structured description per Screen Parsing: screen type, major groups, actionable controls, reading order.
+21. Chart/graph — summary-first data description (Williams rubric's home turf).
+
+**Context-pack interplay classes (discriminate fusion):**
+22. Context adds non-visible facts (event, place) — weaves without contradicting pixels.
+23. **Context conflicts with pixels** (post says X, image shows Y) — source precedence: pixels win for appearance, context never overrides what's visible.
+24. No context at all — graceful degradation to pure visual description.
+
+### 6c. What the harness measures — precision-gated, recall second (rev C)
+
+Direct answer to "recall vs other metrics": **recall alone is the wrong primary.** For BLV users a false fact (wrong name, invented object) is strictly worse than a missing fact — MosAIC showed richness and correctness trade against each other, and a screen-reader user cannot cheaply detect the lie. Measure in tiers:
+
+| Tier | Metric | Cost | Gate? |
+| --- | --- | --- | --- |
+| 1. Correctness gates | Must-Right rubric pass (identity/policy/brand facts); Easy-Wrong trap pass; policy compliance (no naming when disabled) | deterministic / cheap judge | **hard gate — any Must-Right miss zeroes the image** |
+| 2. Identity recall | **Insertion rate** (% confirmed identities named; benchmark 93.2%); association accuracy (right name ↔ right person) | deterministic | target, not gate |
+| 3. Unit precision/recall | Semantic-unit traceability (CoTalk): precision = units traceable to a Florence fact / context field / roster row (1 − hallucination rate); recall = coverage of reference units (= richness) | one judge or parser pass | report as a **pair**; never optimize recall alone |
+| 4. Holistic quality | **Williams 0–4 rubric** (validated, κ=0.91) as the headline score; summary-first structure check (first sentence = gist, ≤125 chars) | judge / partly deterministic | trend metric |
+| 5. Readability & specificity | FKRE band 50–70; informativeness = corpus-rarity-weighted nouns (Rescribe) — rewards "Breiðamerkurjökull", penalizes "a scenic view"; repetition ratio; length error *vs. missing content, not vs. a cap* | deterministic | CI warning |
+| 6. Richness (detailed tier only) | Div-2 / mBLEU-4 diversity; SBERT relevance; tag-coverage vs Florence object list | deterministic, CPU | trend metric |
+| 7. Ops | latency, peak RSS, cold load (existing E19-1 harness) | existing | budget gate per tier |
+| 8. Human calibration | small BLV pilot pass on a rubric sample — LLM judges align with BLV humans only on visually-grounded traits (ρ≈0.5–0.6 composition/colour), and technical metrics passing while users stay unsatisfied is a documented failure mode (sign-language CHI'25) | periodic, manual | calibrates tiers 3–4 |
+
+Context-complementarity principle (Williams): judge the alt text *jointly with* the surrounding post content — redundancy with visible text is a flaw, complement is a strength; the context pack makes this mechanically checkable (caption units ∩ post units should be small).
+
 ## 7. Refactoring-literature crosswalk (why this shape resists rot)
 
 | Concept (source) | Application here |
@@ -184,6 +253,10 @@ Store all scores per run in the existing E19-1 benchmark JSON schema so every ad
 | **[Accessible-XAI 2603.02486](https://arxiv.org/html/2603.02486v1)** | Skip (one idea) | Provenance wording in captions ("identified from your site's roster" vs "appears to be") |
 | **[HyFL-CLIP 2607.00428](https://arxiv.org/html/2607.00428v1)**, **[DataComp-VLM 2606.28551](https://arxiv.org/html/2606.28551v2)**, **[TICR 2410.06314](https://arxiv.org/html/2410.06314v1)** | Skip | Retrieval embeddings / training-data curation / archival retrieval competition — wrong layer for us. (Bookmark: DCVLM-trained small checkpoints may become the best 1–2B open VLMs) |
 | Local PDFs: FAST-GOAL, GRIP, PhaseWin, Sub-Semantic Seg., TC-JEPA, AI-Safety, Beyond Self-Attention, ImageAuditor | Skip | One harvest: FAST-GOAL's tested anti-hallucination prompt clause (§3a). ImageAuditor footnote: tenant rosters are structurally an image-RAG DB; roster-only naming is already the right defensive shape |
+| **Williams et al., "Quality Alt Text in Computing Publications" (W4A'22)** *(rev C)* | **Adopt** | Validated 0–4 rubric (κ=0.91) as headline quality score; summary-first structure rule; longer-scores-higher evidence (no length caps); judge caption jointly with surrounding content |
+| **Rescribe (UIST'20)** *(rev C)* | Steal-ideas | Codified AD rules G1–G8 (general→specific, no editorializing, don't restate other channels); coherence (LM log-loss) + informativeness (rarity-weighted nouns) as cheap CPU metrics |
+| **Screen Parsing (UIST 2021)** *(rev C)* | Steal-ideas | UI screenshots need structured descriptions (screen type, element groups, reading order) — caption template + golden class 20; modern detection via Florence region tasks, not their 2021 stack |
+| *(rev C)* Tactile-graphics ASSETS'21; FixAlly; Apple accessibility-reports TOCHI'23; Sign-language CHI'25; V-JEPA 2.1; SD visual-ICL; DiffMAViL; IMU thesis; Rule-22 CA; JPEG spec (Wallace); EVC codec .docx | Skip | Kept: concrete-detail-over-adjectives; verify-loop acceptance (fused caption must beat deterministic baseline without new hallucinations); dedupe/ignore-list report ergonomics; metrics-pass-users-unsatisfied caution; exemplar-retrieval-by-CLIP-similarity for golden exemplars |
 
 ## 10. Model landscape (July 2026) and the "slow but detailed" tier
 
@@ -221,7 +294,7 @@ GPU procurement changes *which model* fills the detailed/fusion tiers (MiMo-VL-7
 
 ## 12. Recommended sequencing (revised rev B)
 
-1. **Quality eval harness (§6)** — promoted to first: golden set + gated rubrics + insertion-rate KPI. Everything after must ship before/after artifacts. Small, no model work.
+1. **Quality eval harness (§6, build plan §6a)** — promoted to first: extend `benchmark_local_vlm.py` into `eval_captions.py` + golden manifest in `scene/tests/seed/`; deterministic metric tier first, judge tier behind a flag; seed images from the archive `mock_images/` corpus + the §6b taxonomy. Everything after must ship before/after artifacts. 1–2 days, no model work.
 2. **E19-4a identity-prose merge (Tier 0)** — already scoped; unblocked; now carries §3a's constrain-then-map + name-correction + count rules. Includes structuring `VisualFacts` (BACON conventions) while the contract is cheap to change.
 3. **Phase-split caching** — key the VLM pass without `context_hash`; recompose prose cheaply on context change (§3). Prerequisite for an affordable detailed tier.
 4. **Detailed-tier bake-off + adapter (§10)** — GGUF re-benchmark on A1, 3-model bake-off scored by the harness, then one adapter + async worker. Delivers the user-visible "richer caption" win.

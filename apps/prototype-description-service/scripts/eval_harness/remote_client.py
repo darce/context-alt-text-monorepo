@@ -44,6 +44,8 @@ class RemoteSceneClient:
         timeout_s: float = _DEFAULT_TIMEOUT_S,
         max_poll_attempts: int = _DEFAULT_MAX_POLL_ATTEMPTS,
         poll_interval: float = 2.0,
+        rate_limit_wait: float = 20.0,
+        max_rate_limit_retries: int = 4,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self.base_url = base_url
@@ -59,6 +61,8 @@ class RemoteSceneClient:
         )
         self._max_poll_attempts = max_poll_attempts
         self._poll_interval = poll_interval
+        self._rate_limit_wait = rate_limit_wait
+        self._max_rate_limit_retries = max_rate_limit_retries
         self._consecutive_failures = 0
 
     def close(self) -> None:
@@ -70,15 +74,29 @@ class RemoteSceneClient:
                 f"circuit open after {self._consecutive_failures} consecutive failures; "
                 "aborting before further remote calls"
             )
-        try:
-            response = self._client.request(method, url, **kwargs)
-            response.raise_for_status()
-            payload = response.json()
-        except (httpx.HTTPError, json.JSONDecodeError) as exc:
-            self._consecutive_failures += 1
-            raise RemoteClientError(f"{method} {url} failed: {exc}") from exc
-        self._consecutive_failures = 0
-        return payload
+        rate_limit_retries = 0
+        while True:
+            try:
+                response = self._client.request(method, url, **kwargs)
+                if response.status_code == 429:
+                    # Expected under the per-key RPM budget (STANDARD = 60 rpm);
+                    # back off and retry without charging the breaker.
+                    rate_limit_retries += 1
+                    if rate_limit_retries > self._max_rate_limit_retries:
+                        raise RemoteClientError(
+                            f"{method} {url} failed: 429 rate limit persisted after "
+                            f"{self._max_rate_limit_retries} backoff retries"
+                        )
+                    retry_after = float(response.headers.get("Retry-After", self._rate_limit_wait))
+                    time.sleep(max(retry_after, self._rate_limit_wait) if retry_after else self._rate_limit_wait)
+                    continue
+                response.raise_for_status()
+                payload = response.json()
+            except (httpx.HTTPError, json.JSONDecodeError) as exc:
+                self._consecutive_failures += 1
+                raise RemoteClientError(f"{method} {url} failed: {exc}") from exc
+            self._consecutive_failures = 0
+            return payload
 
     def _request_dict(self, method: str, url: str, **kwargs: Any) -> dict[str, Any]:
         payload = self._request(method, url, **kwargs)

@@ -52,6 +52,35 @@ class ProductContext(BaseModel):
     short_description: str | None = Field(default=None, max_length=1000)
 
 
+class IdentityPolicyContext(BaseModel):
+    """Bounded identity policy signal collected by WordPress."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    person_naming: str = Field(max_length=32)
+
+
+class IdentityContextItem(BaseModel):
+    """A user-confirmed roster identity safe for description context."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(max_length=200)
+    identity_id: str | None = Field(default=None, max_length=120)
+    cluster_id: str | None = Field(default=None, max_length=120)
+    source: str | None = Field(default=None, max_length=64)
+
+
+class IdentityContext(BaseModel):
+    """Roster-bound identity context and review reasons from WordPress."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    policy: IdentityPolicyContext
+    identities: list[IdentityContextItem] = Field(default_factory=list, max_length=20)
+    review_reasons: list[str] = Field(default_factory=list, max_length=20)
+
+
 class ContextPack(BaseModel):
     """Typed context pack consumed by description adapters.
 
@@ -65,6 +94,7 @@ class ContextPack(BaseModel):
     post: PostContext | None = None
     taxonomy_terms: list[TaxonomyTermContext] = Field(default_factory=list, max_length=20)
     product: ProductContext | None = None
+    identity: IdentityContext | None = None
 
 
 class DescribeImageEnvelope(BaseModel):

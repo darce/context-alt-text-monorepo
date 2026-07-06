@@ -93,6 +93,8 @@ def test_identity_schema_declares_expected_table_set() -> None:
         "export_jobs",
         "identity_cluster_refresh_queue",
         "image_descriptions",
+        "clustering_job_reports",
+        "assignment_decisions",
     ]
 
 

@@ -8,6 +8,12 @@ present, including non-roster strangers — detection P/R scores against this, n
 just the named identities), present-identity labels, context-pack fixture,
 Must-Right/Easy-Wrong rubric entries, policy flags.
 
+`face_count` counting rule (operator-confirmed): count each visible human face
+region, **including** a mirror reflection that shows a face (a detector sees it
+as a face), but **excluding** depicted faces (paintings, phone/screen images,
+posters) and backs of heads. `face_count >= len(present_identities)` is enforced
+at load; the difference is the stranger-face count feeding true-rejection.
+
 `must_right`/`easy_wrong` are empty for every entry in this MVP corpus, so the
 caption Must-Right hard gate and Easy-Wrong rubric are vacuous; the loader emits
 a `RubricEmptyWarning` and the report shows `must_right_defined_images: 0` rather

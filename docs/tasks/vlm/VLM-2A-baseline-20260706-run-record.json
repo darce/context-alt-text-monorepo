@@ -794,43 +794,6 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Two people seated indoors in conversation.",
-        "cached": true,
-        "context_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-        "context_used": {
-          "applied": false,
-          "sources": []
-        },
-        "duration_ms": 1,
-        "image_hash": "648573b4d21c3e1b7d8029246ed20f5a516f685f6c698af2249109183cf524bd",
-        "media_id": 22,
-        "model_id": "seeded-fixtures",
-        "model_version": "1",
-        "prompt_or_task_version": "1",
-        "provider_disclosure": {
-          "left_service_boundary": false,
-          "provider": "none"
-        },
-        "retention_class": "retain_all",
-        "tenant_id": "00000000-0000-4000-8000-0000000000e1",
-        "visual_facts": {
-          "caption": "Two people seated indoors in conversation.",
-          "objects": [
-            "person",
-            "chair"
-          ],
-          "ocr_text": null
-        }
-      },
-      "error": null,
-      "face_count": 3,
-      "identities": [],
-      "media_id": 22,
-      "path": "mock_images/kirstie-boat_detected.jpg"
-    },
-    {
-      "describe": {
-        "adapter": "seeded",
         "alt_text_draft": "A plate of food on a wooden table.",
         "cached": true,
         "context_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
@@ -1434,6 +1397,7 @@
       "path": "mock_images/ryann-party.jpg"
     }
   ],
+  "kind": "run_record",
   "provenance": {
     "base_url": "https://api.altcontext.com",
     "head_sha": "2fe574fac42acc260afd04ccfb2fdb68774459d8",

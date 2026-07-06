@@ -90,9 +90,7 @@ def test_admin_enabled_console_requires_basic_auth(monkeypatch: pytest.MonkeyPat
 
 
 @pytest_asyncio.fixture
-async def admin_app_client(
-    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
-) -> AsyncIterator[AsyncClient]:
+async def admin_app_client(db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[AsyncClient]:
     """Async client over the real app with the admin session bound to db_session."""
     _enable_admin(monkeypatch)
     from api.main import create_app

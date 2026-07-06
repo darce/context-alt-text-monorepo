@@ -1,29 +1,25 @@
-"""Idempotent identity-schema self-heal for the container entrypoint.
+"""Identity-schema self-heal for the container entrypoint (E15-34 Slice 3).
 
 Runs at boot **after** ``alembic upgrade head`` and **before** the fail-closed
 ``verify_identity_schema``. Because the greenfield schema lives in a single
 in-place ``001_identity_schema.py`` under a constant revision id, ``alembic
-upgrade head`` is a no-op on an already-stamped DB and new tables never appear.
-This module closes that gap by additively creating any missing table on the
-live DB, so an in-place *new-table* addition reaches prod without abandoning the
-single-file schema model (E15-33 Slice 1; mirrors the manual E15-29 repair,
-decision 1194).
-
-Scope boundary: ``create_all(checkfirst=True)`` creates missing **tables** only.
-It never alters or drops, and does **not** add columns, indexes, or constraints
-to a pre-existing table. Column/index/constraint drift is out of scope here and
-is not self-healed (nor caught by the table-granular ``verify_identity_schema``).
+upgrade head`` is a no-op on an already-stamped DB and new schema objects
+never appear. This entrypoint closes that gap by delegating to the
+migration's own idempotent ``heal()`` (the same ``ensure_*`` units
+``upgrade()`` composes), so healing converges to the full schema — tables,
+RLS policies, refresh queue, triggers, materialized view — from any partial
+state. No ORM ``create_all`` anywhere: the migration is the single source of
+truth (replaces the E15-33 interim heal; findings E15-33-BR2-01/02/04).
 """
 
 from __future__ import annotations
 
+import importlib
 import logging
 import sys
 
-from sqlalchemy import Engine, create_engine, inspect, text
+from sqlalchemy import Engine, create_engine, text
 
-import db.models  # noqa: F401  (import registers every ORM table on Base.metadata)
-from db.base import Base
 from db.settings import get_database_settings
 
 logger = logging.getLogger("sync_identity_schema")
@@ -31,39 +27,34 @@ logger = logging.getLogger("sync_identity_schema")
 # Stable advisory-lock key so concurrent boots serialize on the same lock.
 _ADVISORY_LOCK_KEY = 0xAC33051D
 
-
-def _locked_sync(conn) -> list[str]:
-    """Create missing tables on ``conn`` and return exactly the ones created.
-
-    The missing-set is computed on the already-locked connection, so a boot
-    that lost the advisory-lock race never reports tables the winner created.
-    """
-    missing = sorted(set(Base.metadata.tables) - set(inspect(conn).get_table_names()))
-    Base.metadata.create_all(conn, checkfirst=True)
-    return missing
+_MIGRATION_MODULE = "db.migrations.versions.001_identity_schema"
 
 
 def sync_schema(engine: Engine) -> list[str]:
-    """Additively create any missing table on ``engine``.
+    """Heal any missing schema object on ``engine`` via the migration's ``heal()``.
 
-    Returns the sorted names of tables that were created. Additive only:
-    ``create_all(checkfirst=True)`` skips existing tables and never alters or
-    drops, so existing rows are untouched and a second call is a clean no-op.
-
-    The api and worker containers share the entrypoint, so they can boot
-    concurrently against a fresh/drifted DB; ``create_all(checkfirst=True)`` is
-    check-then-create and not atomic across connections, so two racers could both
-    issue ``CREATE TABLE`` and one would crash. A Postgres transaction-scoped
-    advisory lock serializes the self-heal (no-op on sqlite in tests).
+    Returns the sorted names of tables that were created (computed inside the
+    locked transaction, so a boot that lost the advisory-lock race never
+    reports the winner's work). The api and worker containers share the
+    entrypoint and can boot concurrently against a fresh/drifted DB; a
+    Postgres transaction-scoped advisory lock serializes the heal.
     """
+    migration = importlib.import_module(_MIGRATION_MODULE)
     with engine.begin() as conn:
         if conn.dialect.name == "postgresql":
             conn.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _ADVISORY_LOCK_KEY})
-        created = _locked_sync(conn)
+        before = {
+            row[0] for row in conn.execute(text("SELECT tablename FROM pg_tables WHERE schemaname = current_schema()"))
+        }
+        migration.heal(conn)
+        after = {
+            row[0] for row in conn.execute(text("SELECT tablename FROM pg_tables WHERE schemaname = current_schema()"))
+        }
+        created = sorted(after - before)
     if created:
-        logger.info("identity schema self-heal created tables: %s", ", ".join(created))
+        logger.info("identity schema heal created tables: %s", ", ".join(created))
     else:
-        logger.info("identity schema self-heal: no missing tables")
+        logger.info("identity schema heal: no missing tables")
     return created
 
 
@@ -73,7 +64,7 @@ def main() -> int:
     try:
         sync_schema(engine)
     except Exception:  # fail closed at the entrypoint — no worse than verify failing
-        logger.exception("identity schema self-heal failed")
+        logger.exception("identity schema heal failed")
         return 1
     finally:
         engine.dispose()

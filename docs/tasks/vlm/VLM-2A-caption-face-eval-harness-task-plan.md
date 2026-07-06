@@ -182,7 +182,7 @@ Owner: description-service backend lane. Fixture confirmation pass requires the 
 
 ### Checklist for Slice 1: Golden manifest + fixture bootstrap
 
-- [ ] `manifest.py` + pydantic schema + loader tests (missing/hash-mismatch/malformed)
+- [x] `manifest.py` + pydantic schema + loader tests (missing/hash-mismatch/malformed)
 - [ ] Heuristic label draft generator + operator confirmation captured
 - [ ] `seed/README.md` bootstrap instructions
 

@@ -98,7 +98,7 @@ Add a **sibling fetch** to the existing eval harness that swaps the describe tra
 | tests/fixture | `apps/prototype-description-service/scene/tests/seed/bakeoff_golden.json` | New ~10-image bake-off manifest: real name-injected `context_pack`, `present_identities`, `must_right`/`easy_wrong`, `policy` per entry (validated by `manifest.load_manifest`) |
 | tooling | `apps/prototype-description-service/scripts/eval_harness/bakeoff.py` | New `BakeoffClient` (candidate llama.cpp transport, Nygard discipline) + `fetch_bakeoff_record()` (per-item isolation, bounded stall) + `__main__` CLI shaping captions into `acx-eval/v1` run records |
 | tests | `apps/prototype-description-service/scripts/eval_harness/tests/test_bakeoff.py` | Unit tests: run-record shaping, per-item isolation, bounded-stall exit, greedy/`/no_think` prompt construction, `report.build_reports` scores a candidate record deterministically (stub transport, no network) |
-| docs (evidence) | `apps/prototype-description-service/docs/tasks/vlm/` or repo `docs/tasks/vlm/` | Per-candidate `acx-eval/v1` REPORT artifacts (curated baselines, promoted by hand per `cli.py` retention note) |
+| docs (evidence) | `docs/tasks/vlm/` (repo-level, matching `cli.py` retention docstring) | Per-candidate `acx-eval/v1` REPORT artifacts (curated baselines, promoted by hand per `cli.py` retention note) |
 | docs (decision) | `docs/tasks/vlm/VLM-2B-detailed-tier-decision-memo.md` | Decision memo: comparison table, one winner, license verdict, disqualifiers, cited artifacts |
 
 ## Related Files

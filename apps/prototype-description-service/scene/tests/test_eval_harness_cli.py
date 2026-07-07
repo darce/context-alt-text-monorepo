@@ -4,8 +4,16 @@ import json
 
 import pytest
 
-from scripts.eval_harness.cli import BoundedStallError, fetch_run_record, prune_out_dir
+from scripts.eval_harness.cli import (
+    BoundedStallError,
+    MaxCostExceededError,
+    ProviderMismatchError,
+    fetch_run_record,
+    main,
+    prune_out_dir,
+)
 from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest
+from scripts.eval_harness.report import build_reports
 
 
 def _manifest(n: int) -> GoldenManifest:
@@ -124,6 +132,169 @@ def test_prune_out_dir_rejects_keep_below_one(tmp_path):  # S3-07
         with pytest.raises(ValueError, match="keep must be >= 1"):
             prune_out_dir(str(tmp_path), keep=bad)
     assert (tmp_path / "run-20260701-000000.json").exists()  # nothing deleted
+
+
+# --------------------------------------------------- provider matrix (E20-11)
+
+
+class HostedClient(HappyClient):
+    """Hosted-style fake: describe response discloses the boundary crossing."""
+
+    model_id = "gpt-4o-mini"
+    cached = False
+
+    def describe(self, **kwargs):
+        return {
+            "alt_text_draft": "A photo.",
+            "visual_facts": {"objects": []},
+            "model_id": self.model_id,
+            "cached": self.cached,
+            "provider_disclosure": {"provider": "hosted", "left_service_boundary": True},
+        }
+
+
+def test_fetch_stamps_provider_and_cost_into_provenance(images_dir):
+    record = fetch_run_record(
+        _manifest(2),
+        str(images_dir),
+        HostedClient(),
+        head_sha="f" * 40,
+        provider="hosted_gpt4o",
+        cost_per_image_usd=0.01,
+    )
+    prov = record["provenance"]
+    assert prov["provider"] == "hosted_gpt4o"
+    assert prov["cost_per_image_usd"] == 0.01
+    assert prov["est_cost_usd"] == pytest.approx(0.02)
+
+
+def test_hosted_items_carry_boundary_disclosure_and_latency(images_dir):
+    record = fetch_run_record(_manifest(2), str(images_dir), HostedClient(), head_sha="f" * 40, provider="hosted_gpt4o")
+    for item in record["items"]:
+        assert item["describe"]["provider_disclosure"]["left_service_boundary"] is True
+        assert item["latency_s"] >= 0
+
+
+def test_max_cost_aborts_before_further_paid_calls(images_dir):
+    with pytest.raises(MaxCostExceededError) as excinfo:
+        fetch_run_record(
+            _manifest(5),
+            str(images_dir),
+            HostedClient(),
+            head_sha="f" * 40,
+            provider="hosted_gpt4o",
+            cost_per_image_usd=1.0,
+            max_cost_usd=2.5,
+        )
+    partial = excinfo.value.partial_record
+    assert partial["aborted"] is True
+    assert len(partial["items"]) == 2  # third paid call would exceed the cap; never made
+
+
+def test_cached_describes_are_not_billed(images_dir):
+    # Cache-hit describes never reach the provider; est_cost must exclude them (R2A-01).
+    client = HostedClient()
+    client.cached = True
+    record = fetch_run_record(
+        _manifest(3),
+        str(images_dir),
+        client,
+        head_sha="f" * 40,
+        provider="hosted_gpt4o",
+        cost_per_image_usd=1.0,
+    )
+    assert record["provenance"]["paid_describe_calls"] == 0
+    assert record["provenance"]["est_cost_usd"] == 0.0
+
+
+def test_provider_mismatch_on_wrong_hosted_model(images_dir):
+    # provider_disclosure alone cannot disambiguate WHICH hosted profile; a response
+    # model_id that contradicts the claimed profile must abort (R2A-03).
+    client = HostedClient()
+    client.model_id = "gpt-4o"  # claimed profile hosted_gpt4o expects gpt-4o-mini
+    with pytest.raises(ProviderMismatchError):
+        fetch_run_record(_manifest(2), str(images_dir), client, head_sha="f" * 40, provider="hosted_gpt4o")
+
+
+class SlowIdentitiesClient(HostedClient):
+    """Describe is instant; the recognition wait dominates the item wall time."""
+
+    def wait_job(self, job_id):
+        import time as _time
+
+        _time.sleep(0.05)
+        return {"status": "completed"}
+
+
+def test_latency_times_describe_only(images_dir):
+    # latency_s must not absorb analyze/wait_job/identity polling (R2A-02).
+    record = fetch_run_record(
+        _manifest(1), str(images_dir), SlowIdentitiesClient(), head_sha="f" * 40, provider="hosted_gpt4o"
+    )
+    assert record["items"][0]["latency_s"] < 0.05
+
+
+def test_provider_run_record_scores_with_existing_reports(images_dir):
+    manifest = _manifest(2)
+    record = fetch_run_record(manifest, str(images_dir), HostedClient(), head_sha="f" * 40, provider="hosted_gpt4o")
+    entries = [e.model_dump() for e in manifest.entries]
+    json_doc, md_doc = build_reports(record, entries)
+    assert json_doc and md_doc
+
+
+def test_cli_provider_flag_is_accepted_and_live_gated(monkeypatch):
+    monkeypatch.delenv("ACX_EVAL_LIVE", raising=False)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["fetch", "--provider", "hosted_gpt4o", "--cost-per-image", "0.01", "--max-cost", "1.0"])
+    assert "ACX_EVAL_LIVE" in str(excinfo.value)
+
+
+def test_provider_mismatch_aborts_with_partial_record(images_dir):
+    # HappyClient's describe has no provider_disclosure — a --provider claim the
+    # service does not corroborate must abort, never stamp mislabeled evidence (rg-015).
+    with pytest.raises(ProviderMismatchError) as excinfo:
+        fetch_run_record(_manifest(3), str(images_dir), HappyClient(), head_sha="f" * 40, provider="hosted_gpt4o")
+    partial = excinfo.value.partial_record
+    assert partial["aborted"] is True
+    assert len(partial["items"]) == 1  # aborted on the first uncorroborated item
+
+
+def test_max_cost_counts_prior_matrix_spend(images_dir):
+    # spent_usd carries earlier matrix legs: 2.0 already spent + 1.0/image with a
+    # 2.5 cap means the first paid call of this leg would exceed the cap.
+    with pytest.raises(MaxCostExceededError) as excinfo:
+        fetch_run_record(
+            _manifest(3),
+            str(images_dir),
+            HostedClient(),
+            head_sha="f" * 40,
+            provider="hosted_gpt4o",
+            cost_per_image_usd=1.0,
+            max_cost_usd=2.5,
+            spent_usd=2.0,
+        )
+    assert len(excinfo.value.partial_record["items"]) == 0
+
+
+def test_cli_max_cost_requires_cost_per_image():
+    with pytest.raises(SystemExit) as excinfo:
+        main(["fetch", "--provider", "hosted_gpt4o", "--max-cost", "1.0"])
+    assert excinfo.value.code == 2  # argparse parser.error
+
+
+def test_cli_provider_rejects_unknown_and_empty_values():
+    for bad in ("florence_small", "not_a_profile", ""):
+        with pytest.raises(SystemExit) as excinfo:
+            main(["fetch", "--provider", bad])
+        assert excinfo.value.code == 2  # argparse type error, before any live work
+
+
+def test_cli_score_rejects_provider_flags(tmp_path):
+    record = tmp_path / "run-x.json"
+    record.write_text("{}")
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--run-record", str(record), "--provider", "hosted_gpt4o"])
+    assert excinfo.value.code == 2  # unrecognized argument: score is pure/offline
 
 
 def test_stall_abort_preserves_partial_record(images_dir):

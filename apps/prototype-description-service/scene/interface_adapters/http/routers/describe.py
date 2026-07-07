@@ -28,6 +28,7 @@ from scene.application.settings.vlm import VlmSettings
 from scene.application.visual_facts_service import VisualFactsService
 from scene.config.settings import DescriptionSettings
 from scene.domain.description import DescriptionAdapterKind
+from scene.infrastructure.provider.hosted_provider_adapter import HostedProviderError
 from scene.infrastructure.vlm.unavailable_adapter import DescriptionAdapterUnavailableError
 from scene.interface_adapters.http.deps import get_description_adapter
 from scene.interface_adapters.http.schemas.requests import DescribeImageEnvelope
@@ -177,6 +178,10 @@ async def describe_image_multipart(
         # A deferred/stub profile (florence_large, gpu_phi4) or a missing [vlm]
         # extra: surface an actionable 503 instead of an opaque 500.
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    except HostedProviderError as exc:
+        # Upstream hosted-provider fault (key missing, provider 5xx/timeout,
+        # malformed body): 502 keeps the fail-closed contract actionable.
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
     if session is not None:
         await session.commit()
     return response

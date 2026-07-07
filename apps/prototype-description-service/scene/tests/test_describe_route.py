@@ -223,3 +223,20 @@ def test_stub_profile_returns_503_with_reason():
         r = _post(client, TENANT_ID)
         assert r.status_code == 503, r.text
         assert "async describe worker" in r.json()["detail"]
+
+
+def test_hosted_provider_fault_returns_502_with_reason():
+    # A hosted-provider fault (key missing, provider 5xx, malformed body) must
+    # surface as an actionable 502, not an opaque 500 (E20-11-S1A-08).
+    from scene.infrastructure.provider.hosted_provider_adapter import (
+        HostedProviderDescriptionAdapter,
+    )
+
+    def _boom(*, image_bytes, context, timeout_s, model):
+        raise RuntimeError("provider 500: upstream exploded")
+
+    adapter = HostedProviderDescriptionAdapter(model_id="gpt-4o-mini", model_version="gpt-4o-mini", invoke=_boom)
+    with _client(adapter=adapter) as client:
+        r = _post(client, TENANT_ID)
+        assert r.status_code == 502, r.text
+        assert "upstream exploded" in r.json()["detail"]

@@ -118,6 +118,7 @@ Add a hosted-provider `DescriptionAdapter` implementation and register it as a f
   - Assert default profile (`seeded`) is unchanged — no hosted adapter is constructed without the opt-in env.
 - Manual / runtime-parity (env-gated, real network, opt-in):
   - Real-provider matrix run recorded in the memo: `cd apps/prototype-description-service && ACX_EVAL_LIVE=1 ACX_EVAL_BASE_URL=... ACX_EVAL_API_KEY=<eval-tenant> ACX_EVAL_TENANT_ID=<eval-tenant> uv run python -m scripts.eval_harness.cli run --provider <profile> --limit <N>` against a service running the hosted profile, bounded by `--limit`/max-cost cap.
+  - **Waived under disposition `reject` (2026-07-06):** the governance outcome forbids any paid provider call, so no real run exists or will be produced; the deterministic fake-client harness tests are the standing proof for this task (memo § Benchmark evidence).
 
 ## Slice Delivery
 
@@ -151,7 +152,7 @@ Changes:
 Proof:
 
 - Decision memo names exactly one disposition ∈ `ship | benchmark_only | defer_byok | reject` and its follow-on scope.
-- Report JSON from the real run validates against `schema.SCHEMA` (`acx-eval/v1`) and `report.score_run_record` re-score is bit-identical.
+- Report JSON from the real run validates against `schema.SCHEMA` (`acx-eval/v1`) and `report.score_run_record` re-score is bit-identical. **Waived under disposition `reject`:** no paid run is permitted; the fake-client tests in `scene/tests/test_eval_harness_cli.py` (schema-valid record, `build_reports` scoring) stand in as the proof.
 - Contract doc includes provider disclosure and opt-in/fail-closed language.
 
 ## Consolidated Checklist
@@ -191,5 +192,3 @@ Proof:
 - [x] The existing eval harness can benchmark hosted providers over the golden manifest and emits `acx-eval/v1` reports — no parallel harness (proven with hosted-style fake client in `scene/tests/test_eval_harness_cli.py`; no live run under disposition `reject`).
 - [x] Hosted results disclose bytes leaving the boundary (`left_service_boundary == True` asserted in Slice 1 tests) and the default path is unaffected (`test_default_profile_unaffected_by_hosted_optin`).
 - [x] The decision memo records exactly one disposition ∈ `ship | benchmark_only | defer_byok | reject` — `reject` — with privacy/subprocessor posture and follow-on scope; BYOK documented as not implemented (`docs/tasks/20.0/E20-11-hosted-provider-decision-memo.md`).
-</content>
-</invoke>

@@ -30,16 +30,27 @@ class HostedProviderError(RuntimeError):
     """The hosted provider call failed; the adapter fails closed (no partial result)."""
 
 
-def openai_chat_invoke(*, image_bytes: bytes, context: Mapping[str, Any] | None, timeout_s: float) -> AdapterResult:
+def _media_type(image_bytes: bytes) -> str:
+    """Sniff the data-URL media type; the service accepts jpeg/png/webp."""
+    if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/jpeg"
+
+
+def openai_chat_invoke(
+    *, image_bytes: bytes, context: Mapping[str, Any] | None, timeout_s: float, model: str
+) -> AdapterResult:
     """One image -> one OpenAI chat-completions vision call -> AdapterResult.
 
-    Requires ``ACX_HOSTED_PROVIDER_API_KEY``; the model is fixed by the calling
-    adapter's profile spec via ``ACX_HOSTED_PROVIDER_MODEL`` (default gpt-4o-mini).
+    Requires ``ACX_HOSTED_PROVIDER_API_KEY``. ``model`` is the adapter's
+    ``model_id`` so wire/audit provenance can never diverge from the model
+    actually invoked (rg-015).
     """
     api_key = os.environ.get("ACX_HOSTED_PROVIDER_API_KEY", "")
     if not api_key:
         raise HostedProviderError("ACX_HOSTED_PROVIDER_API_KEY is not set")
-    model = os.environ.get("ACX_HOSTED_PROVIDER_MODEL", "gpt-4o-mini")
     prompt = "Describe this image in one concise, factual sentence suitable as alt text."
     payload = {
         "model": model,
@@ -50,7 +61,9 @@ def openai_chat_invoke(*, image_bytes: bytes, context: Mapping[str, Any] | None,
                     {"type": "text", "text": prompt},
                     {
                         "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{base64.b64encode(image_bytes).decode()}"},
+                        "image_url": {
+                            "url": f"data:{_media_type(image_bytes)};base64,{base64.b64encode(image_bytes).decode()}"
+                        },
                     },
                 ],
             }
@@ -65,9 +78,10 @@ def openai_chat_invoke(*, image_bytes: bytes, context: Mapping[str, Any] | None,
     )
     response.raise_for_status()
     body = response.json()
-    caption = str(body["choices"][0]["message"]["content"]).strip()
-    if not caption:
-        raise HostedProviderError("provider returned an empty caption")
+    content = body["choices"][0]["message"].get("content")
+    if not isinstance(content, str) or not content.strip():
+        raise HostedProviderError("provider returned an empty or non-text caption (null/filtered content)")
+    caption = content.strip()
     return AdapterResult(
         caption=caption,
         objects=(),
@@ -100,7 +114,9 @@ class HostedProviderDescriptionAdapter:
 
     def describe(self, *, image_bytes: bytes, context: Mapping[str, Any] | None) -> AdapterResult:
         try:
-            result = self._invoke(image_bytes=image_bytes, context=context, timeout_s=self._timeout_s)
+            result = self._invoke(
+                image_bytes=image_bytes, context=context, timeout_s=self._timeout_s, model=self.model_id
+            )
         except HostedProviderError:
             raise
         except Exception as exc:  # noqa: BLE001 — fail closed on any provider fault, never a partial result

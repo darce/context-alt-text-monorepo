@@ -7,6 +7,7 @@ import pytest
 from scripts.eval_harness.cli import (
     BoundedStallError,
     MaxCostExceededError,
+    ProviderMismatchError,
     fetch_run_record,
     main,
     prune_out_dir,
@@ -198,6 +199,54 @@ def test_cli_provider_flag_is_accepted_and_live_gated(monkeypatch):
     with pytest.raises(SystemExit) as excinfo:
         main(["fetch", "--provider", "hosted_gpt4o", "--cost-per-image", "0.01", "--max-cost", "1.0"])
     assert "ACX_EVAL_LIVE" in str(excinfo.value)
+
+
+def test_provider_mismatch_aborts_with_partial_record(images_dir):
+    # HappyClient's describe has no provider_disclosure — a --provider claim the
+    # service does not corroborate must abort, never stamp mislabeled evidence (rg-015).
+    with pytest.raises(ProviderMismatchError) as excinfo:
+        fetch_run_record(_manifest(3), str(images_dir), HappyClient(), head_sha="f" * 40, provider="hosted_gpt4o")
+    partial = excinfo.value.partial_record
+    assert partial["aborted"] is True
+    assert len(partial["items"]) == 1  # aborted on the first uncorroborated item
+
+
+def test_max_cost_counts_prior_matrix_spend(images_dir):
+    # spent_usd carries earlier matrix legs: 2.0 already spent + 1.0/image with a
+    # 2.5 cap means the first paid call of this leg would exceed the cap.
+    with pytest.raises(MaxCostExceededError) as excinfo:
+        fetch_run_record(
+            _manifest(3),
+            str(images_dir),
+            HostedClient(),
+            head_sha="f" * 40,
+            provider="hosted_gpt4o",
+            cost_per_image_usd=1.0,
+            max_cost_usd=2.5,
+            spent_usd=2.0,
+        )
+    assert len(excinfo.value.partial_record["items"]) == 0
+
+
+def test_cli_max_cost_requires_cost_per_image():
+    with pytest.raises(SystemExit) as excinfo:
+        main(["fetch", "--provider", "hosted_gpt4o", "--max-cost", "1.0"])
+    assert excinfo.value.code == 2  # argparse parser.error
+
+
+def test_cli_provider_rejects_unknown_and_empty_values():
+    for bad in ("florence_small", "not_a_profile", ""):
+        with pytest.raises(SystemExit) as excinfo:
+            main(["fetch", "--provider", bad])
+        assert excinfo.value.code == 2  # argparse type error, before any live work
+
+
+def test_cli_score_rejects_provider_flags(tmp_path):
+    record = tmp_path / "run-x.json"
+    record.write_text("{}")
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--run-record", str(record), "--provider", "hosted_gpt4o"])
+    assert excinfo.value.code == 2  # unrecognized argument: score is pure/offline
 
 
 def test_stall_abort_preserves_partial_record(images_dir):

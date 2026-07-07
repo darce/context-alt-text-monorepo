@@ -50,7 +50,6 @@ class ProfileSpec:
     num_beams: int | None = None
     max_new_tokens: int | None = None
     unavailable_reason: str | None = None
-    provider: str | None = None
 
 
 PROFILE_SPECS: dict[DescriptionProfile, ProfileSpec] = {
@@ -104,7 +103,6 @@ PROFILE_SPECS: dict[DescriptionProfile, ProfileSpec] = {
         model_id="gpt-4o-mini",
         model_revision=None,
         model_version="gpt-4o-mini",
-        provider="openai",
         unavailable_reason=(
             "hosted_gpt4o sends image bytes to a third-party provider; opt in explicitly "
             "with ACX_HOSTED_PROVIDER_OPTIN=1 (server-side, eval/benchmark use only)."

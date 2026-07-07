@@ -15,17 +15,11 @@ from scene.application.identity_merge import (
     merge_identities,
     normalize_bbox,
 )
+from scene.tests.identity_merge_helpers import make_face
 
 
 def _face(label: str, box: NormalizedBox, *, confidence: float = 0.95) -> ConfirmedFace:
-    return ConfirmedFace(
-        identity_id=f"identity-{label}",
-        cluster_id=f"cluster-id-{label}",
-        roster_id=f"roster-{label}",
-        label=label,
-        detection_confidence=confidence,
-        box=box,
-    )
+    return make_face(label, box=box, roster_id=f"roster-{label}", confidence=confidence)
 
 
 def _person_phrase(phrase: str, box: NormalizedBox, start: int = 0) -> PhraseBox:

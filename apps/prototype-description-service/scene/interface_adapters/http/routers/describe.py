@@ -143,9 +143,10 @@ async def _naming_preview(
 ) -> tuple[str, NamingProvenanceModel]:
     """Compute the named preview draft (E19-4a). Draft-only — never writes alt text.
 
-    ``phrase_boxes`` are the adapter's caption-grounding boxes (S4); empty on
-    cache hits and for adapters without grounding, where naming degrades to
-    the positional fallback when eligible.
+    ``phrase_boxes`` are the caption-grounding boxes (S4) — adapter output on
+    generation, restored from the persisted cache row on hits. Empty for
+    adapters without grounding, where naming degrades to the positional
+    fallback when eligible.
     """
     if session is None or tenant is None:
         return generic_draft, _provenance_model(
@@ -280,7 +281,6 @@ async def describe_image_multipart(
         # Upstream hosted-provider fault (key missing, provider 5xx/timeout,
         # malformed body): 502 keeps the fail-closed contract actionable.
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
-    adapter_result = service.last_adapter_result
     named_draft, naming_provenance = await _naming_preview(
         session=session,
         tenant=tenant_record,
@@ -288,7 +288,9 @@ async def describe_image_multipart(
         media_id=envelope.media_id,
         image_bytes=image_bytes,
         generic_draft=response.alt_text_draft,
-        phrase_boxes=adapter_result.phrase_boxes if adapter_result is not None else (),
+        # Adapter output on generation; restored from the cached row on cache
+        # hits — both paths yield the same named draft (E19-4A-S4-BR-03).
+        phrase_boxes=service.last_phrase_boxes,
     )
     response = response.model_copy(
         update={

@@ -23,31 +23,19 @@ from scene.application.identity_merge import (
 )
 from scene.application.identity_merge.merge import IdentityAssociation
 from scene.infrastructure.vlm.florence_local_adapter import LocalCpuDescriptionAdapter
+from scene.tests.identity_merge_helpers import make_association, make_face, make_phrase_box
 
 
 def _face(label, *, x=0.4, y=0.2, w=0.05, h=0.08, roster_id="roster-1", confidence=0.95):
-    return ConfirmedFace(
-        identity_id=f"identity-{label}-{x}",
-        cluster_id=f"cluster-id-{label}",
-        roster_id=roster_id,
-        label=label,
-        detection_confidence=confidence,
-        box=NormalizedBox(x=x, y=y, width=w, height=h),
-    )
+    return make_face(label, x=x, y=y, w=w, h=h, roster_id=roster_id, confidence=confidence)
 
 
 def _pb(phrase, caption, box, occurrence=0):
-    start = -1
-    for _ in range(occurrence + 1):
-        start = caption.index(phrase, start + 1)
-    return PhraseBox(phrase=phrase, span_start=start, span_end=start + len(phrase), box=box)
+    return make_phrase_box(phrase, caption, box=box, occurrence=occurrence)
 
 
 def _assoc(caption, phrase, label, box=None, occurrence=0):
-    return IdentityAssociation(
-        face=_face(label),
-        phrase_box=_pb(phrase, caption, box or NormalizedBox(x=0.3, y=0.1, width=0.3, height=0.7), occurrence),
-    )
+    return make_association(caption, phrase, label, box=box, occurrence=occurrence)
 
 
 class TestS1MergeCore:

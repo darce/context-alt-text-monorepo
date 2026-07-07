@@ -1,4 +1,4 @@
-# Task Plan Template
+# Task Plan
 
 > **Metadata**
 >
@@ -24,7 +24,7 @@ Add a deterministic, model-independent layer that turns a generated description 
 
 - **Scope one-pager**: `docs/scopes/e19-4a-identity-prose-merge-scope.md`
 - **Design source**: `docs/assessments/current/identity-prose-merge-design-2026-06-15.md`
-- **Not-Doing (confirmed at intake)**: no on-box reflow LLM (Approach D — seam only); no write to `_wp_attachment_image_alt` (E19-2); no prompt-injection/instruction-VLM (Approach C); no per-person opt-in (suppress-list only); no WordPress post/product/SEO context pack or output modes (E19-4b+); no changes to the E19-1 description contract, schema, route, or Florence adapter internals beyond the additive grounding task in S4.
+- **Not-Doing (confirmed at intake)**: no on-box reflow LLM (Approach D — seam only); no write to `_wp_attachment_image_alt` (E19-2); no prompt-injection/instruction-VLM (Approach C); no per-person opt-in (suppress-list only); no WordPress post/product/SEO context pack or output modes (E19-4b+); no breaking changes to the E19-1 description contract, schema, or route — the only contract deltas are the additive optional preview fields (S3) and the additive grounding task + optional `AdapterResult.phrase_boxes` (S4).
 
 ### Plan-Analyze findings folded in (explicit)
 
@@ -36,7 +36,7 @@ Add a deterministic, model-independent layer that turns a generated description 
 
 - **Depends on VLM-2C (golden manifest population)** — branch `feature/vlm-2c`. E19-4a's **harness acceptance gate** (PA-01) and the merge's **phrase-box containment** consume fixtures that VLM-2C owns and seeds; they do not exist in `golden.json` until VLM-2C lands. VLM-2C seeds: scene-image face bboxes, `present_identities`/`must_right`/`easy_wrong` rubrics, populated `context_packs`, a base caption, and a roster+stranger entry.
   - **Seam 1 — phrase boxes:** `apps/prototype-description-service/scene/tests/seed/phrase_boxes.json`, VLM-2C-owned. Coords normalized `[0,1]` (fractions of original `W×H`), **origin top-left**, keyed by `media_id`. E19-4a consumes this exact format for face-center-in-smallest-person-phrase-box containment — it does **not** define a separate phrase-box contract.
-  - **Seam 2 — base caption:** additive `GoldenEntry.base_caption` field (golden **manifest v2**), VLM-2C-owned. The merge layer reflows this base caption into the named draft; generic draft is the untouched base caption.
+  - **Seam 2 — base caption:** additive `GoldenEntry.base_caption` field (golden **manifest v2**), VLM-2C-owned — including the loader bump: `scripts/eval_harness/manifest.py::SUPPORTED_MANIFEST_VERSION` is currently `1` and the validator hard-rejects any other version, so E19-4a must not touch it. The merge layer reflows this base caption into the named draft; generic draft is the untouched base caption.
 - **Consumed by:** Slice 4 (real/seeded phrase boxes → merge core) and the Slice 3 + Verification-Strategy harness acceptance gate (PA-01). Both are unrunnable until VLM-2C populates the fixtures; see E19-4A-PR-01 / PR-03 (deferred to VLM-2C).
 
 ## Problem Statement
@@ -56,7 +56,7 @@ The recognition/roster system already persists confirmed identities with face bo
 
 ## Workflow Principles
 
-- **Never guess a name.** Name only when `user_confirmed=TRUE`, `label` present, cluster not dismissed, a single 1:1 high-confidence containment match, agreement active, and the person not suppressed. Any miss → generic phrasing. This is enforced as a gated metric, not a comment.
+- **Never guess a name.** Name only when `user_confirmed=TRUE`, `label` present and not a `cluster-%` placeholder, cluster not dismissed, a single 1:1 high-confidence containment match, agreement active, and the person not suppressed. Any miss → generic phrasing. This is enforced as a gated metric, not a comment.
 - **Single source of truth for roster names.** Names are WordPress-authoritative (ADR-003); the backend cluster carries the synced `label`/`roster_id`. Reuse `scripts/eval_harness/naming.py::display_name`/`entity_slug` where the harness needs name strings so golden, seeding, and scoring stay byte-identical.
 - **Seam over inline.** Reflow is chosen via the `ReflowRealizer` Protocol, never an `if reflow_mode ==` ladder inside the merge function.
 - **Deterministic tests before runtime parity.** S1–S3 land pure-Python unit/integration coverage; harness scoring (PA-01) is the regression gate; LocalWP is demo evidence only (S5).
@@ -73,7 +73,7 @@ The recognition/roster system already persists confirmed identities with face bo
 
 ## Current State Analysis
 
-- **Works today**: recognition/roster persistence (`db/models/identity.py`: `MediaIdentity` lines 41–101, `IdentityCluster` lines 104–176, `IdentityMember` lines 279–306); E19-1 description pipeline (`scene/interface_adapters/http/routers/describe.py::describe_image_multipart`, `scene/application/description_adapter.py::AdapterResult`/`DescriptionAdapter`); the merged VLM-2A eval harness (`scripts/eval_harness/` — `manifest.py`, `remote_client.py`, `caption_metrics.py`, `face_metrics.py`, `report.py`, `schema.py`, plus `draft_labels.py`, `naming.py`, `seed_roster.py`, `cli.py`) with golden manifest `scene/tests/seed/golden.json` (roster + entries carrying `present_identities`, `must_right`, `easy_wrong`, `policy.recognition_enabled`).
+- **Works today**: recognition/roster persistence (`db/models/identity.py`: `MediaIdentity` lines 41–101, `IdentityCluster` lines 104–181, `IdentityMember` lines 279–306); E19-1 description pipeline (`scene/interface_adapters/http/routers/describe.py::describe_image_multipart`, `scene/application/description_adapter.py::AdapterResult`/`DescriptionAdapter`); the merged VLM-2A eval harness (`scripts/eval_harness/` — `manifest.py`, `remote_client.py`, `caption_metrics.py`, `face_metrics.py`, `report.py`, `schema.py`, plus `draft_labels.py`, `naming.py`, `seed_roster.py`, `cli.py`) with golden manifest `scene/tests/seed/golden.json` (manifest v1: 10-name roster + 37 entries with populated `present_identities`/`face_count`/`policy.recognition_enabled` — but `must_right`, `easy_wrong`, and `context_pack` are **empty on every entry**, and there are no face bboxes, no `base_caption`, no phrase boxes; those are exactly the fixtures VLM-2C populates, see Dependencies).
 - **Absent / to build**: no identity→prose merge module (`grep` for `named_prose`/`reflow`/`containment` in `scene/` returns nothing); no `<CAPTION_TO_PHRASE_GROUNDING>` in the Florence adapter (`grep PHRASE_GROUNDING` in `scene/` is empty — the adapter only runs `_CAPTION_TASK="<MORE_DETAILED_CAPTION>"` and `_OD_TASK="<OD>"`); no tenant naming-agreement flag (`db/models/tenant.py::Tenant` has no such column); no suppress-list model.
 - **Misleading assumption to correct**: the scope note names "active `E19-1-REV-A/B/C/D`" as a coordination blocker for S4 — **stale** (E19-1 is done/merged). See PA-02; S4 has no cross-agent dependency.
 
@@ -90,7 +90,7 @@ Given a `media_id` with ≥1 `user_confirmed` identity and the agreement flag on
 - Describe surface: `apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py`, `apps/prototype-description-service/scene/application/description_adapter.py`
 - Florence adapter (S4): `apps/prototype-description-service/scene/infrastructure/vlm/florence_local_adapter.py`
 - Eval harness + golden: `apps/prototype-description-service/scripts/eval_harness/{caption_metrics,face_metrics,manifest,report,schema,naming,draft_labels}.py`, `apps/prototype-description-service/scene/tests/seed/golden.json`
-- Contract (do not change): `docs/workbay/contracts/image-description-api.md`
+- Contract (additive-only; S3 documents the new optional preview fields there): `docs/workbay/contracts/image-description-api.md`
 - Rules: `docs/workbay/rules/backend-python-guidelines.md`, `docs/workbay/rules/testing-python.md`
 - Handoff/MCP: task ref `E19-4a`; open findings via `review_findings(review={"operation":"list","status":"open","task_ref":"E19-4a"})`.
 
@@ -98,8 +98,8 @@ Given a `media_id` with ≥1 `user_confirmed` identity and the agreement flag on
 
 | Boundary | Owner | Current Contract | Expected Change | Compatibility Needed? | Verification |
 | --- | --- | --- | --- | --- | --- |
-| `POST /scene/describe/multipart` preview response | backend | `docs/workbay/contracts/image-description-api.md` (`VisualFactsResponse`) | **Additive** optional preview fields: `generic_draft`, `named_draft`, `naming_provenance`. No removal/rename of E19-1 fields. | yes — additive only; absent when agreement off/no confirmed identities | `scene/tests/test_describe_route.py` + response-schema parity test |
-| Identity SQL join | backend | `db/models/identity.py` (`MediaIdentity`/`IdentityMember`/`IdentityCluster`) read-only | none (read-only join, filter `user_confirmed=TRUE`, `label IS NOT NULL`, `dismissed_at IS NULL`) | no | merge integration test on seeded fixtures |
+| `POST /scene/describe/multipart` preview response | backend | `docs/workbay/contracts/image-description-api.md` (`VisualFactsResponse`) | **Additive** optional preview fields: `generic_draft`, `named_draft`, `naming_provenance`. No removal/rename of E19-1 fields. | yes — additive only; absent when agreement off/no confirmed identities | `scene/tests/test_describe_route.py` + response-schema parity test + contract doc updated in S3 |
+| Identity SQL join | backend | `db/models/identity.py` (`MediaIdentity`/`IdentityMember`/`IdentityCluster`) read-only | none (read-only join, filter `user_confirmed=TRUE`, `label IS NOT NULL`, `label NOT LIKE 'cluster-%'`, `dismissed_at IS NULL`) | no | merge integration test on seeded fixtures |
 | Tenant naming-agreement flag | backend | `db/models/tenant.py::Tenant` | **Additive** column `naming_agreement_enabled` (bool, default per signed agreement) | no (greenfield: edit `001_identity_schema.py` directly) | model/migration test |
 | Per-`roster_id` suppress list | backend | none | **New** `IdentityNameSuppression` model (tenant_id, roster_id) | no (greenfield) | suppress-gate unit test |
 | Florence adapter grounding (S4) | backend | `florence_local_adapter.py::LocalCpuDescriptionAdapter` | **Additive** `<CAPTION_TO_PHRASE_GROUNDING>` task token + parse; no change to existing `<MORE_DETAILED_CAPTION>`/`<OD>` behavior | no | `scene/tests/test_local_vlm_adapter.py` extension |
@@ -129,6 +129,7 @@ Build a new `scene/application/identity_merge/` package as a pure, model-indepen
 | backend | `apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py` | Surface `generic_draft`/`named_draft`/`naming_provenance` in the preview response (no alt-text write). |
 | backend | `apps/prototype-description-service/scene/infrastructure/vlm/florence_local_adapter.py` | S4: add `_PHRASE_GROUNDING_TASK="<CAPTION_TO_PHRASE_GROUNDING>"`, parse boxes in `_run_task`/`describe`, expose phrase boxes on `AdapterResult`. |
 | backend | `apps/prototype-description-service/scene/application/description_adapter.py` | S4: add optional `phrase_boxes` field to `AdapterResult`. |
+| docs | `docs/workbay/contracts/image-description-api.md` | S3: document the additive optional `generic_draft`/`named_draft`/`naming_provenance` preview fields on `VisualFactsResponse`. |
 | tests (new) | `apps/prototype-description-service/scene/tests/test_identity_merge_*.py` | Unit + integration per slice (see checklists). |
 | tests | `apps/prototype-description-service/scene/tests/test_describe_route.py` | Assert additive preview fields. |
 | harness (regression) | reuse `scripts/eval_harness/caption_metrics.py`, `face_metrics.py`, `golden.json` | PA-01 acceptance scoring — no new metric code unless a gap is found; extend golden entries' `must_right`/`present_identities` only if fixtures require. |
@@ -168,7 +169,7 @@ Build a new `scene/application/identity_merge/` package as a pure, model-indepen
 > **Depends on VLM-2C** for `scene/tests/seed/phrase_boxes.json` (coords `[0,1]`, top-left origin, per `media_id`) — the fixtures this slice's containment match consumes. See Dependencies.
 
 Changes:
-- `identity_merge/join.py::load_confirmed_faces` — read-only SQL join (`MediaIdentity`→`IdentityMember`→`IdentityCluster`), filter `user_confirmed=TRUE`, `label IS NOT NULL`, `dismissed_at IS NULL`.
+- `identity_merge/join.py::load_confirmed_faces` — read-only SQL join (`MediaIdentity`→`IdentityMember`→`IdentityCluster`), filter `user_confirmed=TRUE`, `label IS NOT NULL`, `label NOT LIKE 'cluster-%'` (placeholder-label exclusion — match the human-label semantics of `recognition/infrastructure/repositories/cluster_repository.py::get_confirmed_labeled`), `dismissed_at IS NULL`.
 - `identity_merge/merge.py::normalize_bbox` (pixels→`[0,1]` of orig `W×H`, top-left origin to match VLM-2C's `phrase_boxes.json` frame), `containment_match` (face-center in smallest person-phrase box, 1:1), `merge_identities` returning association list + `MergeResult` skeleton.
 - Unit tests: normalization resolution-independence; containment picks smallest box; ambiguous many-to-one → no match; area-ratio guard.
 
@@ -195,9 +196,10 @@ Proof:
 Changes:
 - `Tenant.naming_agreement_enabled` (default per signed agreement) in `tenant.py` + `001_identity_schema.py`.
 - `IdentityNameSuppression` model (tenant_id, roster_id) in `identity.py` + `__all__`.
-- `identity_merge/policy.py::NamingPolicy` + `resolve_naming_allowed(...)` enforcing: `user_confirmed` + `label` present + 1:1 high-confidence containment + detection/grounding thresholds + agreement active + not suppressed; any miss → generic. `NamingProvenance` (injected names, `cluster_id`/`roster_id`, match confidence) on every result.
-- `describe.py` surfaces additive `generic_draft`/`named_draft`/`naming_provenance` (preview only — **no** `_wp_attachment_image_alt` write).
-- Tests: agreement-off suppresses; suppress-list by `roster_id` suppresses; provenance present on every named result; generic always returned; route additive-fields test.
+- `identity_merge/policy.py::NamingPolicy` + `resolve_naming_allowed(...)` enforcing: `user_confirmed` + non-placeholder `label` present + 1:1 high-confidence containment + detection/grounding thresholds + agreement active + not suppressed; any miss → generic. `NamingProvenance` (injected names, `cluster_id`/`roster_id`, match confidence) on every result.
+- `describe.py` surfaces additive `generic_draft`/`named_draft`/`naming_provenance` (preview only — **no** `_wp_attachment_image_alt` write). The route's session is `Depends(get_optional_session)` (`describe.py:97`): when the session is `None` the join is skipped and the preview is **generic-only** (named draft = generic draft, no names; provenance marks the DB-absent reason).
+- `docs/workbay/contracts/image-description-api.md` gains the three additive optional preview fields (same slice as the response change — contract owner is this boundary).
+- Tests: agreement-off suppresses; suppress-list by `roster_id` suppresses; provenance present on every named result; generic always returned; route additive-fields test; DB-absent route test (session `None` → named draft identical to generic).
 
 Proof:
 - `uv run pytest scene/tests/test_identity_merge_policy.py scene/tests/test_describe_route.py -q` green.
@@ -239,7 +241,7 @@ Proof:
 
 ### Checklist for Slice 1: Merge core
 
-- [ ] `load_confirmed_faces` join implemented with the four filters (`user_confirmed`, `label` present, not dismissed, `media_id`).
+- [ ] `load_confirmed_faces` join implemented with the five filters (`user_confirmed`, `label` present, no `cluster-%` placeholder label, not dismissed, `media_id`).
 - [ ] `normalize_bbox` + `containment_match` + `merge_identities` skeleton implemented (1:1, smallest-box, area-ratio guard).
 - [ ] Unit tests: normalization resolution-independence, smallest-box selection, ambiguous→no-match; green.
 
@@ -254,6 +256,7 @@ Proof:
 - [ ] `Tenant.naming_agreement_enabled` + `IdentityNameSuppression` added (schema edited directly, greenfield).
 - [ ] `NamingPolicy`/`resolve_naming_allowed` enforces the full name-only-when-all-hold rule; degrades to generic otherwise.
 - [ ] `NamingProvenance` on every named result; both drafts always returned; describe preview surfaces additive fields (no alt-text write).
+- [ ] `image-description-api.md` documents the three additive optional preview fields.
 - [ ] Policy + route tests green.
 - [ ] **PA-01 harness gate** `test_identity_merge_harness_gate.py` asserts expected-identities match, `wrong_names==[]`/`precision==1.0`, `must_right_pass`/no `policy_violation` over `golden.json`.
 

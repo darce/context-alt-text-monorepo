@@ -2,10 +2,10 @@
 
 - schema: `acx-eval/v1` kind: `report`
 - adapter(s): `seeded` model(s): `seeded-fixtures` version(s): `1`
-- head_sha: `0000000000000000000000000000000000000000`
+- head_sha: `b9fe952f2be5f5070025d881e2b040f5feeac57b`
 - base_url: seeded://stub
-- fetch manifest_sha256: `4a24b06a7606fa00fbb5f089b9d2bafe9e812ed0a866f6c1eb0283aec82bf030`
-- score manifest_sha256: `003b4a52cbaceee8ef7e931917cb12ad7a41c42389dd967a14d781eca1c3bd64` (matches fetch: False)
+- fetch manifest_sha256: `003b4a52cbaceee8ef7e931917cb12ad7a41c42389dd967a14d781eca1c3bd64`
+- score manifest_sha256: `003b4a52cbaceee8ef7e931917cb12ad7a41c42389dd967a14d781eca1c3bd64` (matches fetch: True)
 - started_at: 2026-07-07T00:00:00Z
 - images: 37/37 scored, 0 failed
 - ⚠ produced by the model-free `seeded` stub adapter — harness-shakedown numbers, NOT a caption-model baseline.

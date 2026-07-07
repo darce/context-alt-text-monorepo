@@ -73,6 +73,7 @@ def test_phrase_boxes_containment_is_one_to_one():
             fc["center"] for fc in scene["face_centers"]
         ], "expected_containment must echo face_centers 1:1"
         entry = by_id[scene["media_id"]]
+        named = []
         for exp in expected:
             resolved = _resolve(exp["face_center"], scene["phrase_boxes"])
             assert resolved == exp["resolved_identity"], (
@@ -80,6 +81,12 @@ def test_phrase_boxes_containment_is_one_to_one():
             )
             if resolved is not None:
                 assert resolved in entry.present_identities
+                named.append(resolved)
+        # VLM-2C-S3-BR-03: one face per identity, every present identity resolved,
+        # and exactly the stranger faces resolve to no name.
+        assert len(named) == len(set(named)), f"media {scene['media_id']}: identity resolved twice"
+        assert set(named) == set(entry.present_identities)
+        assert len(expected) - len(named) == entry.face_count - len(entry.present_identities)
 
 
 def test_phrase_boxes_include_stranger_null_case():

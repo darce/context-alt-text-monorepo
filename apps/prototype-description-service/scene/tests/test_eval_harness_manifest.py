@@ -266,6 +266,11 @@ def test_seed_corpus_reconciles_with_fixture_scan():  # VLM-2C S1
     # kirstie-boat_detected.jpg is a detection-annotated near-duplicate VLM-2A
     # removed deliberately (seed/README.md); the draft scan re-introduces it.
     excluded = {"mock_images/kirstie-boat_detected.jpg"}
+    draft_paths = {e["path"] for e in draft["entries"]}
+    assert excluded <= draft_paths, (
+        "excluded near-duplicate missing from fixture scan — exclusion is vacuous; "
+        "re-bootstrap the fixtures or update the exclusion list"
+    )
     draft_by_path = {e["path"]: e for e in draft["entries"] if e["path"] not in excluded}
     golden_by_path = {e.path: e for e in manifest.entries}
     assert set(draft_by_path) == set(golden_by_path)
@@ -288,9 +293,9 @@ def test_seed_corpus_caption_fixtures_populated():  # VLM-2C S2
         assert entry.base_caption, f"{entry.path}: missing base_caption"
         for name in entry.present_identities:
             assert name in entry.base_caption, f"{entry.path}: base_caption misses {name}"
-            assert name in (pack.title or "") + (pack.caption or "") + (pack.description or ""), (
-                f"{entry.path}: context_pack never injects {name}"
-            )
+            assert any(
+                name in field for field in (pack.title, pack.caption, pack.description) if field
+            ), f"{entry.path}: context_pack never injects {name}"
         assert set(entry.must_right) == set(entry.present_identities), (
             f"{entry.path}: must_right must equal the confirmed present identities"
         )

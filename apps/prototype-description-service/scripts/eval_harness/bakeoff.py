@@ -25,7 +25,9 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import mimetypes
 import os
+import re
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -33,7 +35,7 @@ from typing import Any
 
 import httpx
 
-from .cli import DEFAULT_STALL_LIMIT, BoundedStallError, _head_sha, fetch_run_record
+from .cli import DEFAULT_KEEP, DEFAULT_STALL_LIMIT, BoundedStallError, _head_sha, fetch_run_record, prune_out_dir
 from .manifest import ManifestError, load_manifest
 from .remote_client import RemoteClientError, RemoteSceneClient
 
@@ -149,23 +151,60 @@ def _render_context(context_pack: dict[str, Any]) -> str:
 
 
 def _data_url(image_bytes: bytes, filename: str) -> str:
-    suffix = Path(filename).suffix.lower().lstrip(".") or "jpeg"
-    mime = {"jpg": "jpeg"}.get(suffix, suffix)
-    return f"data:image/{mime};base64,{base64.b64encode(image_bytes).decode()}"
+    """data: URL with a byte-agnostic mime guessed from the filename (jpeg fallback)."""
+    mime, _ = mimetypes.guess_type(filename)
+    if mime is None or not mime.startswith("image/"):
+        mime = "image/jpeg"
+    return f"data:{mime};base64,{base64.b64encode(image_bytes).decode()}"
 
 
 def _extract_caption(payload: dict[str, Any]) -> str:
     try:
-        content = payload["choices"][0]["message"]["content"]
+        message = payload["choices"][0]["message"]
     except (KeyError, IndexError, TypeError) as exc:
-        raise RemoteClientError(f"chat completion missing choices[0].message.content: {payload!r}") from exc
+        raise RemoteClientError(f"chat completion missing choices[0].message: {payload!r}") from exc
+    content = message.get("content") if isinstance(message, dict) else None
+
+    # OpenAI content-parts array shape: join the text parts.
+    if isinstance(content, list):
+        text = " ".join(
+            part.get("text", "") for part in content if isinstance(part, dict) and part.get("type") == "text"
+        ).strip()
+        if text:
+            return text
+        raise RemoteClientError(f"chat completion returned no text content parts: {payload!r}")
+
     if not isinstance(content, str) or not content.strip():
+        # Known live failure mode (MiniCPM-V 4.5): reasoning-tuned models that do not exit
+        # thinking mode burn the whole token budget inside reasoning_content and emit empty
+        # content — name it so the operator reaches for --no-think / a no-think chat template.
+        reasoning = message.get("reasoning_content") if isinstance(message, dict) else None
+        if isinstance(reasoning, str) and reasoning.strip():
+            raise RemoteClientError(
+                "chat completion emitted reasoning_content but empty content — the model never "
+                "exited thinking mode (budget consumed as reasoning); retry with --no-think or a "
+                f"chat template that disables reasoning. payload: {payload!r}"
+            )
         raise RemoteClientError(f"chat completion returned empty caption: {payload!r}")
     return content.strip()
 
 
+def _safe_model_slug(model_id: str) -> str:
+    """Filesystem-safe slug of an HF-style model id (``Qwen/Qwen3-VL-4B`` -> ``Qwen_Qwen3-VL-4B``)."""
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", model_id).strip("_") or "model"
+
+
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(prog="bakeoff", description=__doc__)
+    parser = argparse.ArgumentParser(
+        prog="bakeoff",
+        description=__doc__,
+        epilog=(
+            "Breaker: the inherited 3-strike circuit has no half-open reset. Three consecutive "
+            "request failures (e.g. images that blow --timeout) open it for the rest of the run; "
+            "remaining items record CircuitOpenError until bounded-stall aborts. Size --timeout "
+            "and --image-max-tokens (server-side) so healthy items stay under the ceiling."
+        ),
+    )
     parser.add_argument("--endpoint", required=True, help="candidate llama.cpp base URL, e.g. http://host:8080")
     parser.add_argument("--model-id", required=True)
     parser.add_argument("--model-version", default=None, help="e.g. GGUF quant tag Q4_K_M")
@@ -173,8 +212,14 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--manifest", default="scene/tests/seed/bakeoff_golden.json")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--stall-limit", type=int, default=DEFAULT_STALL_LIMIT)
-    parser.add_argument("--timeout", type=float, default=None, help="per-request wall-clock seconds")
-    parser.add_argument("--out", default=None, help="run-record path (default: out/bakeoff-<model>-<stamp>.json)")
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=900.0,
+        help="per-request wall-clock seconds (default 900; the measured live protocol ceiling)",
+    )
+    parser.add_argument("--keep", type=int, default=DEFAULT_KEEP, help="run-records to retain in out/ (prune older)")
+    parser.add_argument("--out", default=None, help="run-record path (default: out/run-<stamp>-bakeoff-<model>.json)")
     args = parser.parse_args(argv)
 
     if os.environ.get("ACX_EVAL_LIVE") != "1":
@@ -195,7 +240,18 @@ def main(argv: list[str] | None = None) -> None:
     stamp = started_at.replace(":", "").replace("-", "").replace("T", "-").rstrip("Z")
     out_dir = Path(__file__).parent / "out"
     out_dir.mkdir(exist_ok=True)
-    record_path = Path(args.out) if args.out else out_dir / f"bakeoff-{args.model_id}-{stamp}.json"
+    # ``run-<stamp>-*`` so cli.prune_out_dir groups these records; slug the model id so
+    # HF-style ids ('Qwen/Qwen3-VL-4B') do not inject a '/' into the default filename.
+    record_path = (
+        Path(args.out) if args.out else out_dir / f"run-{stamp}-bakeoff-{_safe_model_slug(args.model_id)}.json"
+    )
+
+    # rg-008 fail-fast: prove the output path is writable BEFORE the multi-image live run so a
+    # bad --out parent does not discard ~100 min of work with an uncaught FileNotFoundError.
+    try:
+        record_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        sys.exit(f"run-record parent directory is not writable ({record_path.parent}): {exc}")
 
     try:
         record = fetch_run_record(
@@ -215,6 +271,7 @@ def main(argv: list[str] | None = None) -> None:
         client.close()
 
     record_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+    prune_out_dir(str(out_dir), keep=args.keep)
     print(record_path)
 
 

@@ -14,17 +14,21 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | Qwen3-VL-4B-Instruct | `Qwen/Qwen3-VL-4B-Instruct-GGUF` + `mmproj-…-Q8_0` | Q4_K_M | 27.2 | 229.8 | 7,029 | yes |
 | CapRL-Qwen3VL-4B | `internlm/CapRL-Qwen3VL-4B-GGUF` + `…-mmproj-Q8_0` | Q4_K_M | 37.3 | 236.4 | 6,935 | yes |
-| MiniCPM-V 4.5 | `openbmb/MiniCPM-V-4_5-gguf` + `mmproj-model-f16` | Q4_K_M | 72.8 | 231.5 | 11,165 | yes |
+| MiniCPM-V 4.5 | `openbmb/MiniCPM-V-4_5-gguf` + `mmproj-model-f16` | Q4_K_M | 72.8 | 231.5 | 11,165 | on 1 bench image only¹ |
+
+> These are **single-image bench numbers on the uncapped serving config** (`ccqw-antartica.jpg`, one greedy caption). They are NOT the live-run profile — see Slice-4 corrections: the live protocol added `--image-max-tokens 1536`, and the golden-corpus live mean was ~206–208 s/img (the number the decision memo quotes). The two latency figures belong to two different configs; do not reconcile them.
+
+¹ MiniCPM produced a sane caption on this one bench image, but the Slice-4 live run exposed a disqualifier: 4/10 golden images returned **empty captions** (hybrid thinking consumed the 512-token budget as `reasoning_content`; neither `--reasoning-budget 0` nor `/no_think` reliably disabled it). See the decision memo — the §13 "none disqualifies on feasibility" line reflects only the single-image bench, not the live run.
 
 Prompt-eval dominates: the Qwen-family mmproj encodes the image to ~1,571 prompt tokens (MiniCPM: 703) and CPU prefill is the bottleneck; completion length barely moves the total.
 
 ## §13 estimate: resolved
 
-The assessment's **1–3 min/img estimate is denied** — measured ≈ **3.8–3.9 min/img** for all three candidates at Q4_K_M, 3 threads, greedy, single 512-token caption. All three load and run; none disqualifies on feasibility. MiniCPM-V 4.5 needs ~11 GB peak RSS (8B params) — fits the 24 GB box alongside the demo stack, but only one candidate may be resident at a time.
+The assessment's **1–3 min/img estimate is denied.** A single greedy caption of one bench image (`ccqw-antartica.jpg`, uncapped) measured ≈ **3.8–3.9 min/img**; this is an n=1 point estimate and image-token count scales with input size, so it is neither an upper bound (larger uncapped goldens exceeded 600 s) nor the eventual mean (the capped live run settled at ~3.4 min/img — memo quotes ~3.5). The directional verdict holds: no candidate runs in 1–3 min/img, and all three load and run. MiniCPM-V 4.5 needs ~11 GB peak RSS (8B params) — fits the 24 GB box alongside the demo stack, but only one candidate may be resident at a time.
 
 ## Per-request timeout ceiling
 
-**600 s** (`--timeout 600` on `scripts.eval_harness.bakeoff`): ~2.5× the measured worst case (236 s), absorbing shared-box jitter without letting a hung request stall the run unboundedly (rg-007; breaker + bounded-stall still apply). Full bake-off cost estimate: 10 images × ~4 min × 3 candidates ≈ **2 h serial**.
+**Final: 900 s** (`--timeout 900`, the code default in `scripts.eval_harness.bakeoff`). The Slice-2 value of **600 s** was superseded in Slice 4: uncapped Qwen3-VL dynamic resolution pushed large golden images past 600 s and the first live run aborted via bounded-stall (rg-007 working as designed). The live protocol raised the ceiling to 900 s **and** added `--image-max-tokens 1536` (see Slice-4 corrections); with the cap, healthy items run ~206–208 s/img, well under the ceiling. Breaker + bounded-stall still apply. Full bake-off cost estimate: 10 images × ~3.5 min × 3 candidates ≈ **1.75 h serial**.
 
 ## Slice-4 corrections (live-run findings)
 
@@ -42,4 +46,13 @@ cd ~/vlm2b
 ./bench.sh MiniCPM-V-4_5-Q4_K_M.gguf mmproj-model-f16.gguf minicpm-v45
 ```
 
-Serving for the Slice 4 live runs uses the same flags; the laptop drives the endpoint through an SSH tunnel (`ssh -L 8099:127.0.0.1:8099 …`), so no candidate port is ever exposed off-box.
+Serving for the Slice 4 live runs uses the bench flags **plus `--image-max-tokens 1536`** (required — without it Qwen3-VL dynamic resolution blows the timeout on large images; see Slice-4 corrections). The full live serving command is:
+
+```bash
+llama-server --threads 3 --parallel 1 --ctx-size 8192 --image-max-tokens 1536 \
+  -m <model>.gguf --mmproj <mmproj>.gguf --host 127.0.0.1 --port 8099
+# driver: python -m scripts.eval_harness.bakeoff --endpoint http://127.0.0.1:8099 \
+#   --model-id <id> --model-version Q4_K_M --timeout 900 [--no-think]
+```
+
+The laptop drives the endpoint through an SSH tunnel (`ssh -L 8099:127.0.0.1:8099 …`), so no candidate port is ever exposed off-box.

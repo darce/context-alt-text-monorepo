@@ -24,8 +24,10 @@ A **bursty, scale-to-zero GPU serving path** for the detailed-description tier, 
 - On-demand OCI GPU instance (A10 / L40S class), one model at a time, **off the A1 demo path**.
 - **Scale-to-zero via stop-not-terminate** (idle = boot-volume storage only, ~$0 GPU compute), **not** an always-on VM.
 - **Boot/load reduction (explicit build items):** (a) **custom golden image** with drivers + runtime + model weights baked in; (b) **load-once-per-burst** — the serving process (vLLM/TGI/llama.cpp) stays warm for the whole batch so model load amortizes per-burst not per-image; (c) optional **OKE GPU node-pool scale-to-zero** with a warm-node buffer; (d) quantized weights + local NVMe / mmap load.
-- **Async queue + progress**; the GPU burst pool is **bulkheaded** from the always-on recognition/description service (a spike can't starve the A1 box — Release-It).
-- **Degrade:** if GPU cold-start exceeds budget or the GPU is unavailable, serve the **CPU tier (Florence/Qwen) as a provisional answer**, upgrade to the GPU result when ready (circuit breaker).
+- **Async queue + progress** via the existing async-worker seam (`recognition/worker/scan_worker.py` pattern; the `florence_large` async describe worker is a documented **stub** — VLM-3 either promotes it or builds the describe queue net-new, decided in the task plan). The GPU burst pool is **bulkheaded** from the always-on recognition/description service (a spike can't starve the A1 box — Release-It).
+- **Warm-start budget (PA-01):** target **warm-start p95 ≤ 90 s** from a stopped instance and **queue→first-token p95 ≤ 120 s**; these are the concrete thresholds the degrade path and §5 criterion 3 test against (confirmed/revised by the spike).
+- **Degrade (circuit breaker):** if warm-start exceeds the budget above or the GPU is unavailable, serve the **CPU tier (Florence/Qwen) as a provisional answer**, then upgrade to the GPU result when ready. **Supersede contract (PA-03):** each describe result carries a `tier` (`provisional_cpu` | `final_gpu`) + a monotonic `generation`; the final GPU result overwrites by `media_id` and the client learns of it via the same progress/poll channel (read-your-writes on the async result).
+- **Idle-reaper / steady-state (PA-02):** a bounded idle-timeout reaper stops/terminates any GPU instance with no in-flight work after N idle seconds, and a periodic GC sweeps orphaned instances + stopped boot volumes so a mid-burst controller crash cannot leak billing or storage (rg-007 bounded-stall analogue for the GPU pool).
 
 **C. OWLv2 Tier B brand detection (GPU consumer):**
 - Image-conditioned open-vocab detection for non-rigid/stylized logos where CPU keypoint matching (Scope A) fails; runs on the same burst pool; confirmed instances flow to `ContextPack.brands` exactly like Tier A.
@@ -60,7 +62,7 @@ A **bursty, scale-to-zero GPU serving path** for the detailed-description tier, 
 
 1. Each GPU candidate produces a scored acx-eval/v1 REPORT over the VLM-2B corpus with real context packs; re-score is bit-identical.
 2. A decision memo names **one** GPU detailed-tier winner, cites artifacts, and records measured GPU latency/RSS + the CPU→GPU speedup.
-3. The bursty path serves a detailed description end-to-end via an OCI GPU instance that is **stopped (≈$0 GPU compute) between bursts**, with measured warm-start ≤ a stated budget.
+3. The bursty path serves a detailed description end-to-end via an OCI GPU instance that is **stopped (≈$0 GPU compute) between bursts**, with measured warm-start within the §2 budget (p95 ≤ 90 s), and the idle-reaper leaves no running/orphaned GPU instance after a burst.
 4. Cold/unavailable GPU degrades to a CPU provisional answer without failing the request; a GPU burst never degrades the A1 service (bulkhead proven).
 5. The spike artifact records real GPU s/img, OCI GPU $/hr + quota, and warm-start times — enough to confirm/deny the intake cost model.
 
@@ -79,3 +81,4 @@ A **bursty, scale-to-zero GPU serving path** for the detailed-description tier, 
 - **Bigger models (32B)** may exceed a single A10's 24 GB — L40S (48 GB) or quantization required; the bake-off gates this.
 - Larger/quantized models may **regress name-injection** vs the 4B CPU winner — the gated Must-Right rubric is the net.
 - OWLv2 Tier B **couples** brand-detection quality to GPU availability — Tier A (CPU) remains the always-available baseline.
+- **Cross-scope dependency (PA-05):** slice 5 (OWLv2 Tier B) is **blocked on Scope A landing `ContextPack.brands`** (`opencv5-brand-detection-tier-a-scope.md`). The two scopes ship independently for slices 1–4; only slice 5 carries this edge — sequence Scope A's context surface first or defer slice 5.

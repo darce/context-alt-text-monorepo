@@ -23,8 +23,8 @@ Captions can name **people** (curated identity clusters → `ContextPack` → id
 **Detection path (Tier A — CPU, no training, no GPU):**
 1. **Template registration:** normalize crop → keypoints + descriptors (**ORB baseline, ALIKED upgrade** if the OpenCV 5 spike wins) stored as a blob; one global crop embedding in **pgvector** for candidate shortlisting.
 2. **Per-image scan** (on upload / backfill): keypoint match template↔image via **LightGlue/BF + homography RANSAC** geometric verification → bbox + inlier-ratio confidence. Milliseconds per template.
-3. **Persistence:** reuse identity tables — add a `brand` value to `media_identities.identity_type` (greenfield: edit `001_identity_schema.py` directly); a tenant-scoped **`brand_templates`** table (RLS) holds template metadata + descriptor blob. **Template-matching is classification against a known template — no HDBSCAN / clustering.** What is reused is the curation loop (`user_confirmed`, confirmation_source, review workbench) + WP-authoritative naming (ADR-003 symmetry).
-4. **Context surface:** confirmed instances → **`ContextPack.brands`** (WordPress collects + policy-filters, mirroring `IdentityContext`) → composition names the brand like a person.
+3. **Persistence:** reuse identity tables — `media_identities.identity_type` **already permits `'brand'`** (`001_identity_schema.py:256` — `identity_type IN ('face','brand','pose','gait')`); **no enum change needed.** Net-new schema is only a tenant-scoped **`brand_templates`** table (RLS) holding template metadata + descriptor blob, plus `identity_type='brand'` instance rows. **Template-matching is classification against a known template — no HDBSCAN / clustering.** What is reused is the curation loop (`user_confirmed`, confirmation_source, review workbench) + WP-authoritative naming (ADR-003 symmetry).
+4. **Context surface:** confirmed instances → a **net-new `brands` field on `scene/interface_adapters/http/schemas/requests.py:ContextPack`** (that model is `extra="forbid"`, so `brands` must be added explicitly, not passed through; a sibling `product: ProductContext` already exists → open design choice: `brands` as a sibling list vs nested under product). WordPress collects + policy-filters, mirroring `IdentityContext`; composition names the brand like a person.
 
 **Deliverables:**
 1. `brand_templates` schema + `identity_type='brand'` instance rows (in `001_identity_schema.py`).
@@ -68,7 +68,8 @@ Captions can name **people** (curated identity clusters → `ContextPack` → id
 ## 7. Open Risks
 
 - **False positives on lookalike marks** — mitigated by confirm-before-context; detector precision is secondary to the human gate.
-- **Tiny/low-res logos** below keypoint density — declared min-size floor + `review_reasons`; do not silently drop.
+- **Tiny/low-res logos** below keypoint density — declared min-size floor + `review_reasons`; do not silently drop. **Thresholds (PA-08):** the min-size floor (provisional ~48 px on the shorter logo edge) and the RANSAC inlier-ratio confidence threshold (provisional ~0.25) are **task-plan-to-pin**, tuned on the §6 synthetic-logo benchmark — not decided at scope stage.
+- **Cross-scope dependency (PA-05):** the `ContextPack.brands` context surface is shared with the GPU scope's OWLv2 Tier B (`gpu-detailed-tier-oci-bursty-scope.md` slice 5). This scope **owns and must land `ContextPack.brands` first**; Tier B consumes it. Sequence Scope A's slice 3 before that GPU slice.
 - **Per-template scan cost grows linearly** with template count — bound templates per tenant; pgvector shortlist before keypoint match.
 - **ALIKED/LightGlue require OpenCV 5** — if the §4 spike shows no ARM/A1 parity, Tier A ships on ORB (OpenCV 4.x) and the ALIKED upgrade defers.
 - **SFace/text-detection zoo-model license + engine questions** are irrelevant to Tier A (features-module only), but relevant if the dependency swap is later pursued.

@@ -740,8 +740,8 @@
   "kind": "run_record",
   "provenance": {
     "base_url": "seeded://stub",
-    "head_sha": "0000000000000000000000000000000000000000",
-    "manifest_sha256": "4a24b06a7606fa00fbb5f089b9d2bafe9e812ed0a866f6c1eb0283aec82bf030",
+    "head_sha": "b9fe952f2be5f5070025d881e2b040f5feeac57b",
+    "manifest_sha256": "003b4a52cbaceee8ef7e931917cb12ad7a41c42389dd967a14d781eca1c3bd64",
     "started_at": "2026-07-07T00:00:00Z"
   },
   "schema": "acx-eval/v1"

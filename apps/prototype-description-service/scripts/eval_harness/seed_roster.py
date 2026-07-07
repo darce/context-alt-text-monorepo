@@ -140,6 +140,7 @@ class SceneSeedClient(Protocol):
 class SceneSeedSummary:
     seeded: list[int]
     already_present: list[int]
+    skipped_zero_face: list[int]
     total_scenes: int
 
 
@@ -150,18 +151,28 @@ def seed_scenes(manifest_path: str, images_dir: str, client: SceneSeedClient) ->
     ``media_id`` so recognition holds server-side ``MediaIdentity`` face regions
     keyed on the same ids the run record and phrase-box fixture use (E19-4a's
     SQL join input). A scene whose ``media_id`` already has identity rows on the
-    tenant is skipped, preserving the idempotent re-run contract.
+    tenant is skipped, preserving the idempotent re-run contract. Scenes with
+    ``face_count == 0`` are excluded up front: they can never produce identity
+    rows, so the presence probe cannot distinguish "not ingested" from
+    "ingested, no faces" and they would re-upload on every run — and they
+    contribute no ``MediaIdentity`` bboxes for E19-4a anyway.
     """
     manifest = load_manifest(manifest_path, images_dir=images_dir)
-    ids = [entry.media_id for entry in manifest.entries]
+    seedable = [entry for entry in manifest.entries if entry.face_count > 0]
+    ids = [entry.media_id for entry in seedable]
     rows = client.media_identities(ids)
+    if not isinstance(rows, list):
+        raise ManifestError(
+            f"media_identities returned {type(rows).__name__}, expected a list of "
+            "identity rows — refusing to treat a malformed payload as an empty tenant (rg-015)"
+        )
     present = {
         int(row["media_id"])
-        for row in (rows if isinstance(rows, list) else [])
+        for row in rows
         if isinstance(row, dict) and int(row.get("media_id", -1)) in set(ids)
     }
     root = Path(images_dir)
-    to_seed = [entry for entry in manifest.entries if entry.media_id not in present]
+    to_seed = [entry for entry in seedable if entry.media_id not in present]
     if to_seed:
         images = [
             (entry.media_id, Path(entry.path).name, (root / entry.path).read_bytes())
@@ -172,5 +183,6 @@ def seed_scenes(manifest_path: str, images_dir: str, client: SceneSeedClient) ->
     return SceneSeedSummary(
         seeded=[entry.media_id for entry in to_seed],
         already_present=sorted(present),
+        skipped_zero_face=[e.media_id for e in manifest.entries if e.face_count == 0],
         total_scenes=len(manifest.entries),
     )

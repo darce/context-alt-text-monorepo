@@ -195,8 +195,51 @@ def test_seed_scenes_fresh_uploads_all(tmp_path):
     summary = seed_scenes(manifest_path, images_dir, client)
     assert summary.seeded == [1, 2]
     assert summary.already_present == []
+    assert summary.skipped_zero_face == []
     assert summary.total_scenes == 2
     assert [m for m, _, _ in client.analyzed] == [1, 2]
+
+
+def test_seed_scenes_zero_face_scene_never_uploaded(tmp_path):  # VLM-2C-S3-BR-01
+    import hashlib
+    import json
+
+    manifest_path, images_dir = _scene_fixture(tmp_path)
+    data = json.loads(open(manifest_path).read())
+    body = b"no-faces"
+    (tmp_path / "images" / "mock_images" / "landscape.jpg").write_bytes(body)
+    data["entries"].append(
+        {
+            "path": "mock_images/landscape.jpg",
+            "sha256": hashlib.sha256(body).hexdigest(),
+            "media_id": 3,
+            "face_count": 0,
+            "present_identities": [],
+            "context_pack": {"title": "t"},
+            "must_right": [],
+            "easy_wrong": ["Bob Example"],
+            "policy": {"recognition_enabled": True},
+        }
+    )
+    open(manifest_path, "w").write(json.dumps(data))
+    client = SceneStubClient()
+    first = seed_scenes(manifest_path, images_dir, client)
+    assert first.seeded == [1, 2]
+    assert first.skipped_zero_face == [3]
+    client.analyzed.clear()
+    second = seed_scenes(manifest_path, images_dir, client)
+    assert second.seeded == []
+    assert client.analyzed == [], "zero-face scene must not re-upload on re-run"
+
+
+def test_seed_scenes_rejects_non_list_identities_payload(tmp_path):  # VLM-2C-S3-BR-02
+    from scripts.eval_harness.manifest import ManifestError
+
+    manifest_path, images_dir = _scene_fixture(tmp_path)
+    client = SceneStubClient()
+    client.media_identities = lambda media_ids: {"error": "boom"}
+    with pytest.raises(ManifestError, match="media_identities"):
+        seed_scenes(manifest_path, images_dir, client)
 
 
 def test_seed_scenes_idempotent_rerun_uploads_nothing(tmp_path):

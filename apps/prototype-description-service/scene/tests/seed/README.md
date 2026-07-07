@@ -23,9 +23,12 @@ non-roster face — the minimal mixed true-rejection case).
 
 Rubrics are populated for all 37 entries (VLM-2C): `must_right` equals the
 confirmed present identities and `easy_wrong` lists believable roster
-confusions not in the scene, so the caption Must-Right hard gate and the
-wrong-name trap are active corpus-wide (`must_right_defined_images: 37`, no
-`RubricEmptyWarning`). Rubric lists are roster-closed by the loader. A
+confusions not in the scene. The Must-Right hard gate is active on the 34
+entries with present identities (vacuously satisfied on the three
+zero-identity scenes, whose `must_right` is necessarily empty); the Easy-Wrong
+wrong-name trap is active corpus-wide. `must_right_defined_images: 37` counts
+entries with either rubric defined, and the loader emits no
+`RubricEmptyWarning`. Rubric lists are roster-closed by the loader. A
 face-detection-annotated derivative (`kirstie-boat_detected.jpg`) was removed
 so no near-duplicate biases the metrics.
 
@@ -59,9 +62,11 @@ Label provenance: drafts were generated from filename heuristics
 every scene), corrected four operator-ratified `face_count` values, and
 designated the stranger fixture; the confirmation log lives at
 `docs/tasks/vlm/VLM-2C-confirmation-pass-20260706.md`. Recognition-side
-seeding: `seed_roster.seed` labels crop clusters; `seed_roster.seed_scenes`
+seeding: `seed_roster.seed` labels crop clusters (CLI `seed-roster`);
+`seed_roster.seed_scenes` (CLI `seed-scenes`, gated by `ACX_EVAL_LIVE=1`)
 idempotently ingests the scene images under their golden `media_id`s so the
 eval tenant holds server-side `MediaIdentity` face regions for E19-4a.
+Zero-face scenes are skipped (they produce no identity rows or bboxes).
 
 Deterministic scoring evidence (seeded stub, `cli score --check-determinism`):
 `docs/tasks/vlm/VLM-2C-seeded-stub-score-20260707-report.md`.

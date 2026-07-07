@@ -79,7 +79,7 @@ Add a hosted-provider `DescriptionAdapter` implementation and register it as a f
 
 **Integration seam.** The eval CLI's `fetch_run_record(manifest, images_dir, client, ...)` (`cli.py`) already accepts any `client` exposing `describe(...)`; `RemoteSceneClient.describe` (`remote_client.py`) POSTs `/scene/describe/multipart` to a running service. A hosted benchmark therefore runs the existing harness against an **eval-tenant service instance configured with the hosted profile** (server-side, opt-in). `--provider <profile>` selects/stamps the profile for the run and, for the multi-provider matrix, iterates profiles, writing one `acx-eval/v1` run record + report per provider via `report.build_reports`. Face-recognition tiers are provider-independent and out of scope for the provider matrix; the provider run scores the caption tier (`caption_metrics.score_caption`).
 
-**Scoring caveat — what the current golden set can measure.** All 37 `golden.json` entries ship empty `context_pack: {}`, empty `must_right`/`easy_wrong`, and no `objects`. Consequently, on the corpus as-is a hosted provider run yields meaningful signal only for the **context-independent** caption metrics (`fkre`/readability, `repetition_ratio`, first-sentence `gist_ok`, word/char count) plus **latency and cost**. `insertion_rate`, `tag_coverage`, and `must_right_failures` are structurally floor/inert here: `insertion_rate` measures whether the caption contains a `present_identities` name the generic provider was never given (no per-entry context injected), `tag_coverage` is `None` without `objects`, and `must_right_failures` is empty without `must_right`. The memo must therefore scope provider comparison to the measurable metrics + latency + cost; any insertion/named-entity claim requires first populating context packs (and confirming the hosted describe path injects recognized identities into the prompt) — a named prerequisite, not assumed by this task.
+**Scoring caveat — what the current golden set can measure.** All 37 `golden.json` entries ship empty `context_pack: {}`, empty `must_right`/`easy_wrong`, and no `objects`. Consequently, on the corpus as-is a hosted provider run yields meaningful signal only for the **context-independent** caption metrics (`fkre`/readability, `repetition_ratio`, `first_sentence_gist_ok`, word/char count) plus **latency and cost**. `insertion_rate`, `tag_coverage`, and `must_right_failures` are structurally floor/inert here: `insertion_rate` measures whether the caption contains a `present_identities` name the generic provider was never given (no per-entry context injected), `tag_coverage` is `None` without `objects`, and `must_right_failures` is empty without `must_right`. The memo must therefore scope provider comparison to the measurable metrics + latency + cost; any insertion/named-entity claim requires first populating context packs (and confirming the hosted describe path injects recognized identities into the prompt) — that population work is owned by **VLM-2C** (golden-manifest population, handoff-tracked; no repo plan doc yet), a prerequisite this task does not assume.
 
 **Cost/latency capture without E20-7.** Latency is derived from the harness run (per-item timing added to the run-record items); estimated cost per image is computed from the provider's published per-request price and recorded in the run-record provenance. These land in the harness's own JSON under `scripts/eval_harness/out/` (git-ignored) and are promoted by hand into the decision memo. **Ledger integration is explicitly deferred** to E20-7 (or a named `E20-11-followon` if E20-7 does not land): when the E20-7 usage/budget ledger schema exists, a follow-on maps these fields into it. This task depends on no E20-7 field.
 
@@ -93,7 +93,7 @@ Add a hosted-provider `DescriptionAdapter` implementation and register it as a f
 | DI resolution | `apps/prototype-description-service/scene/interface_adapters/http/deps.py` | Extend `get_description_adapter()` to resolve a hosted profile to `HostedProviderDescriptionAdapter` **only** when the opt-in env flag is set, else `UnavailableDescriptionAdapter` (fail-closed), mirroring the existing florence/gpu stub branch |
 | Eval CLI | `apps/prototype-description-service/scripts/eval_harness/cli.py` | Add `--provider <profile>` (and matrix iteration) to `_common`/`main`; stamp provider/profile into the run-record provenance; reuse `fetch_run_record`, `build_reports`, bounded-failure path unchanged |
 | Tests | `apps/prototype-description-service/scene/tests/test_description_profiles.py` | Add: hosted profile resolves fail-closed unless opted in; opted-in hosted profile yields a `DescriptionAdapter` whose describe sets `left_service_boundary` True |
-| Tests | `apps/prototype-description-service/scripts/eval_harness/tests/` (existing harness tests dir) | Add `--provider` CLI plumbing test using `FakeHostedProviderAdapter`; no live network |
+| Tests | `apps/prototype-description-service/scene/tests/test_eval_harness_cli.py` (existing harness CLI test module) | Add `--provider` CLI plumbing test using a hosted-style fake client (mirror the module's `HappyClient`, returning `provider_disclosure.left_service_boundary == True`); no live network |
 | Docs | `docs/tasks/20.0/E20-11-hosted-provider-decision-memo.md` (new) | Governance decision memo; disposition ∈ `ship \| benchmark_only \| defer_byok \| reject`; cost/latency/privacy/retention evidence table; follow-on scope |
 | Contract | `docs/workbay/contracts/image-description-api.md` | Provider disclosure + opt-in/fail-closed language (reference existing `left_service_boundary`) |
 
@@ -111,13 +111,13 @@ Add a hosted-provider `DescriptionAdapter` implementation and register it as a f
 ## Verification Strategy
 
 - Deterministic tests (no network):
-  - `uv run pytest apps/prototype-description-service/scene/tests/test_description_profiles.py -q` — hosted profile fail-closed unless opted in; opted-in adapter satisfies `DescriptionAdapter` and drives `left_service_boundary`.
-  - `uv run pytest apps/prototype-description-service/scripts/eval_harness/tests -q` — `--provider` CLI plumbing with `FakeHostedProviderAdapter`; run record is valid `acx-eval/v1`; `report.build_reports` scores it; `report.score_run_record` re-score is bit-identical (existing determinism check).
+  - `cd apps/prototype-description-service && uv run pytest scene/tests/test_description_profiles.py -q` — hosted profile fail-closed unless opted in; opted-in adapter satisfies `DescriptionAdapter` and drives `left_service_boundary`. `FakeHostedProviderAdapter` lives at this layer (adapter unit tests).
+  - `cd apps/prototype-description-service && uv run pytest scene/tests/test_eval_harness_cli.py -q` — `--provider` CLI plumbing with a hosted-style fake **client** (the harness seam is `fetch_run_record`'s `client`, per the module's existing `HappyClient`/`FlakyClient` doubles — not the adapter); run record is valid `acx-eval/v1`; `report.build_reports` scores it; `report.score_run_record` re-score is bit-identical (existing `--check-determinism`).
 - Contract/fixture verification:
   - Assert a hosted describe response carries `provider_disclosure.left_service_boundary == True` and `provider == ProviderMode.HOSTED`.
   - Assert default profile (`seeded`) is unchanged — no hosted adapter is constructed without the opt-in env.
 - Manual / runtime-parity (env-gated, real network, opt-in):
-  - Real-provider matrix run recorded in the memo: `ACX_EVAL_LIVE=1 ACX_EVAL_BASE_URL=... ACX_EVAL_API_KEY=<eval-tenant> ACX_EVAL_TENANT_ID=<eval-tenant> uv run python -m scripts.eval_harness.cli run --provider <profile> --limit <N>` against a service running the hosted profile, bounded by `--limit`/max-cost cap.
+  - Real-provider matrix run recorded in the memo: `cd apps/prototype-description-service && ACX_EVAL_LIVE=1 ACX_EVAL_BASE_URL=... ACX_EVAL_API_KEY=<eval-tenant> ACX_EVAL_TENANT_ID=<eval-tenant> uv run python -m scripts.eval_harness.cli run --provider <profile> --limit <N>` against a service running the hosted profile, bounded by `--limit`/max-cost cap.
 
 ## Slice Delivery
 
@@ -130,13 +130,13 @@ Changes:
 - Add `HostedProviderDescriptionAdapter` (`scene/infrastructure/provider/hosted_provider_adapter.py`) implementing the `DescriptionAdapter` protocol, with a per-call timeout and fail-closed error path; add `FakeHostedProviderAdapter` for tests.
 - Register `DescriptionProfile.HOSTED_<provider>` in `PROFILE_SPECS` (`profiles.py`) as `available=False`; resolve it in `get_description_adapter()` (`deps.py`) to the hosted adapter only under the opt-in env, else `UnavailableDescriptionAdapter`.
 - Add `--provider` (matrix-capable) to `cli.py` `_common`/`main`; stamp provider into run-record provenance; reuse `fetch_run_record` + `build_reports` unchanged.
-- Add non-functional failure posture (see PA-04): reuse `RemoteSceneClient`'s per-request timeout (`_DEFAULT_TIMEOUT_S`) + 3-strike `CircuitOpenError`, and the CLI's per-item isolation + `BoundedStallError` (`--stall-limit`, default 5); add an explicit `--limit`/`--max-images` cap and a `--max-cost` estimated-spend cap that aborts before further paid calls. The adapter itself fails closed (no partial byte leak) on provider timeout/error.
+- Add non-functional failure posture: reuse `RemoteSceneClient`'s per-request timeout (`_DEFAULT_TIMEOUT_S`) + 3-strike `CircuitOpenError`, the CLI's per-item isolation + `BoundedStallError` (`--stall-limit`), and the **existing** `--limit` image cap (`cli.py` `_common`); add only a new `--max-cost` estimated-spend cap that aborts before further paid calls. The adapter itself fails closed (no partial byte leak) on provider timeout/error.
 
 Proof:
 
-- `uv run pytest apps/prototype-description-service/scene/tests/test_description_profiles.py apps/prototype-description-service/scripts/eval_harness/tests -q` green.
+- `cd apps/prototype-description-service && uv run pytest scene/tests/test_description_profiles.py scene/tests/test_eval_harness_cli.py -q` green.
 - Hosted profile with opt-in off resolves to `UnavailableDescriptionAdapter`; default `seeded` unchanged.
-- `--provider` run over the golden manifest with `FakeHostedProviderAdapter` writes a valid `acx-eval/v1` run record + report; each hosted run-record item's `describe.provider_disclosure.left_service_boundary == True` (the harness stores the full describe response under `item["describe"]`; the boundary flag lives there, not in the scored report).
+- `--provider` run over the golden manifest with a hosted-style fake client writes a valid `acx-eval/v1` run record + report; each hosted run-record item's `describe.provider_disclosure.left_service_boundary == True` (the harness stores the full describe response under `item["describe"]`; the boundary flag lives there, not in the scored report).
 
 ### Slice 2: Real-provider runbook and governance decision memo
 
@@ -166,8 +166,8 @@ Proof:
 - [ ] `HostedProviderDescriptionAdapter` implements `DescriptionAdapter`; `FakeHostedProviderAdapter` added for tests.
 - [ ] Hosted profile registered `available=False`; resolves fail-closed unless opt-in env set; default `seeded` unchanged.
 - [ ] `--provider` matrix flag added to existing `cli.py`; reuses `fetch_run_record`/`build_reports`; provider stamped into provenance.
-- [ ] Failure posture: per-request timeout + circuit breaker + per-item isolation + `--stall-limit` reused; `--limit`/`--max-images` and `--max-cost` caps enforced; adapter fails closed on provider error.
-- [ ] `uv run pytest apps/prototype-description-service/scene/tests/test_description_profiles.py apps/prototype-description-service/scripts/eval_harness/tests -q` green.
+- [ ] Failure posture: per-request timeout + circuit breaker + per-item isolation + `--stall-limit` + existing `--limit` reused; new `--max-cost` cap enforced; adapter fails closed on provider error.
+- [ ] `cd apps/prototype-description-service && uv run pytest scene/tests/test_description_profiles.py scene/tests/test_eval_harness_cli.py -q` green.
 
 ### Checklist for Slice 2: Real-provider runbook and decision memo
 

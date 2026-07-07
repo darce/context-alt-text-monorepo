@@ -67,8 +67,10 @@ nothing here writes `_wp_attachment_image_alt`, that write path is E19-2):
   no_confirmed_identities, no_eligible_identities, ambiguous_grounding,
   merge_error, null}` when the draft stayed generic.
 
-Naming is gated tenant-side by `tenants.naming_agreement_enabled` plus the
-per-`roster_id` `identity_name_suppressions` list.
+Naming is gated tenant-side by `tenants.naming_agreement_enabled`, the
+per-`roster_id` `identity_name_suppressions` list, a **roster requirement**
+(an identity without a `roster_id` is never nameable — it would otherwise be
+unsuppressable), and a minimum face-detection confidence (0.8).
 
 ### Errors
 

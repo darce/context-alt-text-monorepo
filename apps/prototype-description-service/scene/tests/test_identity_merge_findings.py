@@ -99,7 +99,15 @@ class TestS2Realizer:
         [
             ("A man opens the door. A man is waving.", "Daniel opens the door. They are waving."),
             ("A man opens the door. A man has a beard.", "Daniel opens the door. They have a beard."),
-            ("A man opens the door. A man watches the sea.", "Daniel opens the door. They watch the sea."),
+            # AF-BR-01 round 2: e-final stems keep their 'e'; ambiguous -es
+            # families (watch/ache, focus/use) keep the name instead.
+            ("A man opens the door. A man gazes at the sea.", "Daniel opens the door. They gaze at the sea."),
+            ("A man opens the door. A man pushes the cart.", "Daniel opens the door. They push the cart."),
+            ("A man opens the door. A man watches the sea.", "Daniel opens the door. Daniel watches the sea."),
+            ("A man opens the door. A man focuses the lens.", "Daniel opens the door. Daniel focuses the lens."),
+            # AF-BR-02: capitalized word after the mention is a proper noun,
+            # never a verb to mutate.
+            ("A man opens the door. A man Smith waves.", "Daniel opens the door. Daniel Smith waves."),
         ],
     )
     def test_br02_r4_verb_agreement(self, caption, expected):

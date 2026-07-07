@@ -263,6 +263,12 @@ def _markdown(scored: dict[str, Any]) -> str:
             "- ⚠ produced by the model-free `seeded` stub adapter — harness-shakedown "
             "numbers, NOT a caption-model baseline."
         )
+    if "bakeoff" in model.get("adapters", []):
+        lines.append(
+            "- ⚠ produced by the throwaway `bakeoff` transport (VLM-2B) — face detection/"
+            "identification sections below are **vacuous by design** (stub `analyze`/"
+            "`media_identities`); 0% is expected, NOT a recognition regression."
+        )
     if cap["must_right_defined_images"] == 0:
         lines.append("- ⚠ no Must-Right/Easy-Wrong rubric entries in the corpus — the caption hard gate is vacuous.")
     lines += [

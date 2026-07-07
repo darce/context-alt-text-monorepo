@@ -19,7 +19,7 @@ from scripts.eval_harness.manifest import (
 def _valid_manifest_dict() -> dict:
     img_hash = hashlib.sha256(b"fake image bytes").hexdigest()
     return {
-        "manifest_version": 1,
+        "manifest_version": 2,
         "roster": ["Alice Example", "Bob Example"],
         "entries": [
             {
@@ -272,3 +272,29 @@ def test_seed_corpus_reconciles_with_fixture_scan():  # VLM-2C S1
     for path, golden_entry in golden_by_path.items():
         assert draft_by_path[path]["sha256"] == golden_entry.sha256, path
         assert draft_by_path[path]["media_id"] == golden_entry.media_id, path
+
+
+def test_seed_corpus_caption_fixtures_populated():  # VLM-2C S2
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        manifest = load_manifest(_SEED_MANIFEST)
+    assert not [w for w in caught if issubclass(w.category, RubricEmptyWarning)], (
+        "seed corpus must define Must-Right/Easy-Wrong rubrics (RubricEmptyWarning fired)"
+    )
+    assert manifest.manifest_version == 2
+    for entry in manifest.entries:
+        pack = entry.context_pack
+        assert pack.title or pack.caption or pack.description, f"{entry.path}: empty context_pack"
+        assert entry.base_caption, f"{entry.path}: missing base_caption"
+        for name in entry.present_identities:
+            assert name in entry.base_caption, f"{entry.path}: base_caption misses {name}"
+            assert name in (pack.title or "") + (pack.caption or "") + (pack.description or ""), (
+                f"{entry.path}: context_pack never injects {name}"
+            )
+        assert set(entry.must_right) == set(entry.present_identities), (
+            f"{entry.path}: must_right must equal the confirmed present identities"
+        )
+        assert entry.easy_wrong, f"{entry.path}: no wrong-name trap authored"
+        assert not set(entry.easy_wrong) & set(entry.present_identities), (
+            f"{entry.path}: easy_wrong may not contain a present identity"
+        )

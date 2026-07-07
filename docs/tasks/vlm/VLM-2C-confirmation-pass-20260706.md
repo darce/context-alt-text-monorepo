@@ -32,3 +32,16 @@ No delta is an unlabeled roster member or a depicted face; all six sit on `recog
 Rationale: exactly one roster identity (Ryann Wiseman) plus exactly one genuine non-roster face — the minimal *mixed* true-rejection case (`face_metrics.py` S2-05 branch) and precisely the phrase-box stranger template in the task plan (one phrase box, two face centers, one resolving to `null`). `ryann-group-party.jpg` (media_id 37, delta 5) is the natural candidate for the stretch-goal second stranger entry; `rrw-mirror.jpg` (media_id 35) covers the all-stranger/empty-roster shape already exercised by unit tests.
 
 Pinned by `test_seed_corpus_has_designated_stranger_entry` and `test_seed_corpus_reconciles_with_fixture_scan` (`scene/tests/test_eval_harness_manifest.py`).
+
+## Addendum (Slice 2 visual pass): possible face_count undercounts — operator review requested
+
+While authoring caption fixtures the agent viewed all 37 scenes. Four entries appear to show more visible face regions than their recorded `face_count`; per the never-fabricate rule the recorded values were **left unchanged**. Operator: confirm or correct.
+
+| media_id | path | recorded | agent count | note |
+| --- | --- | --- | --- | --- |
+| 12 | ccqw-running.jpg | 1 | 2 | second marathoner (male, bib 967) runs beside Caitlin, face clearly visible |
+| 17 | cristina-1.jpg | 1 | 3 | three costumed women posed together, all faces visible |
+| 19 | k.mcc-1.jpg | 1 | 2 | two women under the balloon arch, both faces visible |
+| 21 | kirstie-boat.jpg | 1 | 3 | friend in red swimsuit beside Kirstie + boat driver behind windshield |
+
+Ambiguous (left as recorded): media_id 11 `ccqw-running-2.jpg` — blurred spectator faces behind the barricade; countability per the README rule is an operator judgment call. If any count changes, `stranger_faces` deltas and detection P/R shift; re-run the seeded-stub score after correcting.

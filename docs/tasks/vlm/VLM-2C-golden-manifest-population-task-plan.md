@@ -316,7 +316,7 @@ Both lists are roster-closed in full: `load_manifest` validates EVERY rubric str
 
 ## Success Criteria
 
-- [ ] `cli score` against a seeded stub run record yields non-vacuous, non-zero caption + `insertion_rate` + face detection/identification P/R; `must_right_defined_images > 0`; no `RubricEmptyWarning`.
+- [x] `cli score` against a seeded stub run record yields non-vacuous, non-zero caption + `insertion_rate` + face detection/identification P/R; `must_right_defined_images > 0`; no `RubricEmptyWarning`.
 - [ ] The stranger entry yields `identification_pr(...).true_rejections >= 1`, not a wrong name.
 - [ ] `load_manifest(golden.json, images_dir=$GOLDEN_IMAGES_DIR)` passes at `manifest_version: 2`.
 - [ ] `cli score --check-determinism` is bit-identical across re-runs.

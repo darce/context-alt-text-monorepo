@@ -11,7 +11,7 @@ from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest
 def _manifest(n: int) -> GoldenManifest:
     sha = "a" * 64
     return GoldenManifest(
-        manifest_version=1,
+        manifest_version=2,
         roster=["Alice Example"],
         entries=[
             GoldenEntry(

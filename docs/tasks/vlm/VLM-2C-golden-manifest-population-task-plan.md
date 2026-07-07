@@ -128,12 +128,14 @@ Four slices, each producing fixtures plus proof. Draft mechanically with `draft_
 Changes:
 
 - Regenerate the draft via `draft_labels.generate_draft_manifest(fixtures_dir)`; reconcile against current `golden.json`. **Drop `mock_images/kirstie-boat_detected.jpg`**: `draft_labels` iterates all 38 `mock_images` files with no exclusion and re-introduces this detection-annotated near-duplicate that VLM-2A deliberately removed (`seed/README.md:20`); keep the corpus at 37 usable scenes.
-- Operator pass: confirm identities, set `face_count` incl. non-roster strangers (per `seed/README.md` counting rule), introduce/confirm ≥1 stranger entry (`recognition_enabled=true`, `face_count > len(present_identities)`).
+- Operator pass: confirm identities, set `face_count` incl. non-roster strangers (per `seed/README.md` counting rule).
+- **Stranger confirmation is an explicit Slice-1 step — do not assume a stranger entry already exists.** No current entry may be treated as a validated stranger without operator confirmation; the pre-existing `face_count > len(present_identities)` on some entries (e.g. `ccqw-erika.jpg`) is unverified and must be re-confirmed, not inherited. During the labeling pass, identify/confirm ≥1 scene with `recognition_enabled=true` where a real non-roster human face is present, and record it as the stranger entry. If the confirmation pass surfaces zero genuine strangers, add a scene that has one rather than manufacturing the condition on a roster-only image.
+- **Never fabricate `face_count`.** Derive every `face_count` (and therefore every `stranger_faces = face_count - len(present_identities)` delta) directly from the operator confirmation pass counting each visible face region per the `seed/README.md` rule. Do not back-fill a number to force a stranger delta.
 - Refresh `sha256` for any changed/added entry.
 
 Proof:
 
-- `load_manifest(..., images_dir=$GOLDEN_IMAGES_DIR)` passes; a test asserts ≥1 entry with `face_count > len(present_identities)`.
+- `load_manifest(..., images_dir=$GOLDEN_IMAGES_DIR)` passes; a test asserts ≥1 **operator-confirmed** entry with `face_count > len(present_identities)`, and the confirmation-pass log records the counted face regions that justify each `face_count`.
 
 ### Slice 2: Caption fixtures + schema extension
 
@@ -155,7 +157,7 @@ Proof:
 Changes:
 
 - `seed_roster.py`: additive scene-image seeding path (parallel to crop seeding; idempotent re-run preserved) producing `MediaIdentity` bboxes per scene `media_id`.
-- NEW `scene/tests/seed/phrase_boxes.json`: mock phrase boxes (`[0,1]` fractions) + face→phrase→identity 1:1 containment mapping, keyed by `media_id`; ≥1 stranger case where containment yields no name.
+- NEW `scene/tests/seed/phrase_boxes.json`: mock phrase boxes (`[0,1]` fractions) + face→phrase→identity 1:1 containment mapping, keyed by `media_id`; ≥1 stranger case where containment yields no name. Author to the pinned schema in **§ Fixture Schemas and Worked Example / `phrase_boxes.json` schema** (top-left axis, face-center-in-smallest-box containment, offline).
 
 Proof:
 
@@ -173,6 +175,98 @@ Changes:
 Proof:
 
 - `cli score --check-determinism` bit-identical across two passes; report artifact archived under `docs/tasks/vlm/` per VLM-2A retention convention.
+
+---
+
+## Fixture Schemas and Worked Example
+
+### `phrase_boxes.json` schema (E19-4a coordination seam)
+
+`scene/tests/seed/phrase_boxes.json` is the coordination seam E19-4a's containment-match consumes. It is a **static, offline** fixture — no live recognition call is made to build or consume it; face centers and phrase boxes are authored ground truth read straight from JSON.
+
+Coordinate contract (pin — E19-4a matches against exactly this):
+
+- **All coordinates are normalized `[0,1]` image fractions.** A value of `0.0` is the left/top edge; `1.0` is the right/bottom edge. No pixel coordinates appear in this file.
+- **Axis convention: origin top-left, x increases rightward, y increases downward.** This matches image-raster convention and the recognition service's stored bbox space, so no axis flip is needed on either side.
+- **Per-scene keying by `media_id`.** The `scenes` object is keyed by the scene's stringified `media_id` from `golden.json` (the same synthetic id used for the run record and the seeded `MediaIdentity`), so a consumer joins phrase boxes to a golden entry by `media_id` alone.
+- **Face center** = the INPUT point E19-4a tests for containment: `[x, y]` fractions of the face region's center in the scene image.
+- **Phrase box** = a person-phrase bounding box `[x_min, y_min, x_max, y_max]` in the same `[0,1]` top-left axis, with `x_min < x_max` and `y_min < y_max`.
+
+Containment rule (what E19-4a's merge does against this format): for each face center, find the **smallest-area person-phrase box that contains the face center** (`x_min <= x <= x_max and y_min <= y <= y_max`); the contained box's `phrase` resolves the face to that identity. A face center contained by **no** phrase box resolves to **no name** (the stranger / true-rejection case — E19-4a must emit no guessed name). "Smallest" breaks the tie when nested boxes both contain a center.
+
+Shape:
+
+```json
+{
+  "schema": "phrase_boxes/v1",
+  "axis": { "origin": "top-left", "x": "right", "y": "down", "units": "image_fraction_[0,1]" },
+  "scenes": {
+    "5": {
+      "media_id": 5,
+      "path": "mock_images/ccqw-erika.jpg",
+      "face_centers": [
+        { "center": [0.31, 0.42] },
+        { "center": [0.68, 0.39] }
+      ],
+      "phrase_boxes": [
+        { "phrase": "Caitlin Weaver",       "box": [0.20, 0.25, 0.45, 0.72] },
+        { "phrase": "Erika Hansen Miller",   "box": [0.55, 0.22, 0.82, 0.70] }
+      ],
+      "expected_containment": [
+        { "face_center": [0.31, 0.42], "resolved_identity": "Caitlin Weaver" },
+        { "face_center": [0.68, 0.39], "resolved_identity": "Erika Hansen Miller" }
+      ]
+    },
+    "<stranger_media_id>": {
+      "media_id": 0,
+      "path": "mock_images/<stranger-scene>.jpg",
+      "face_centers": [
+        { "center": [0.30, 0.40] },
+        { "center": [0.90, 0.35] }
+      ],
+      "phrase_boxes": [
+        { "phrase": "<roster person>", "box": [0.18, 0.24, 0.44, 0.71] }
+      ],
+      "expected_containment": [
+        { "face_center": [0.30, 0.40], "resolved_identity": "<roster person>" },
+        { "face_center": [0.90, 0.35], "resolved_identity": null }
+      ]
+    }
+  }
+}
+```
+
+`expected_containment` is the authored answer key: E19-4a's merge run over `face_centers` + `phrase_boxes` must reproduce it 1:1, including the `null` (no-name) result for the stranger face that lands in no phrase box. Coordinates in `expected_containment` echo the `face_centers` so the fixture is self-checking without recomputation. `media_id` keys are illustrative placeholders here (`5` is real; `0`/`<stranger_media_id>` are filled from the Slice-1 confirmation pass — not fabricated).
+
+### Worked golden-entry example (authoring template)
+
+The following is ONE fully worked entry showing the shape every `golden.json` entry must reach in Slice 2. It uses a **real corpus scene** (`ccqw-erika.jpg`, `media_id 5`). The `context_pack`/`base_caption`/rubric text below is an **illustrative authoring sample** to fix the format; `present_identities` and `face_count` are set by the Slice-1 operator confirmation pass, not by this template.
+
+```json
+{
+  "path": "mock_images/ccqw-erika.jpg",
+  "sha256": "34271e1e49ba12f01a0494b6b560709d45c4941a95c88faef929092a0a33dd27",
+  "media_id": 5,
+  "face_count": 4,
+  "present_identities": ["Caitlin Weaver", "Erika Hansen Miller"],
+  "context_pack": {
+    "title": "Caitlin Weaver and Erika Hansen Miller in Antarctica",
+    "caption": "Caitlin Weaver and Erika Hansen Miller on the expedition deck.",
+    "description": "Two travelers, Caitlin Weaver and Erika Hansen Miller, bundled in parkas during an Antarctic cruise."
+  },
+  "base_caption": "Two people in heavy parkas stand together on a ship deck with grey water behind them.",
+  "must_right": ["Caitlin Weaver", "Erika Hansen Miller", "two people", "parkas"],
+  "easy_wrong": ["Bea Burke", "Ryann Wiseman", "beach", "summer dresses"],
+  "policy": { "recognition_enabled": true }
+}
+```
+
+Authoring rule for `must_right` vs `easy_wrong`:
+
+- **`must_right`** = facts that MUST appear / names that MUST be correct: the confirmed identities present in the scene plus the load-bearing visual facts the caption cannot omit. Names here must be in `present_identities` (and therefore in `roster`); the caption Must-Right hard gate (`caption_metrics.py:72`) fails the entry if any is missing.
+- **`easy_wrong`** = plausible traps that must NOT appear: roster names of people **not** in this scene (wrong-name insertion — the top product risk) and plausible-but-false visual claims. A caption is penalized if any `easy_wrong` string appears. Every name in `easy_wrong` must still be in `roster` (loader roster-closure applies to `easy_wrong` too), so these are believable confusions, not nonsense.
+
+Both lists are roster-closed for names; non-name entries (`"parkas"`, `"beach"`) are free strings scored by substring/normalized match per `caption_metrics.score_caption`.
 
 ---
 

@@ -32,6 +32,13 @@ Add a deterministic, model-independent layer that turns a generated description 
 - **E19-4A-PA-02 (medium, stale coordination blocker)** — The scope's "active `E19-1-REV-A/B/C/D`" coordination risk is **stale**: E19-1 is done and merged to `main`. S4 is therefore re-scoped from "wait for adapter work to settle / wire existing capability" to **adding the `<CAPTION_TO_PHRASE_GROUNDING>` capability that does not exist today** — grep confirms no `PHRASE_GROUNDING` token anywhere in `scene/`. S4 adds the task token + post-processing to `scene/infrastructure/vlm/florence_local_adapter.py::LocalCpuDescriptionAdapter` (named file/function below) and wires the resulting phrase boxes into the merge layer. No cross-agent sequencing dependency remains.
 - **E19-4A-PA-03 (low, realizer specificity)** — S2's "grammar-aware NLG reflow" names a concrete **realizer module** (`scene/application/identity_merge/realizer.py::DeterministicNlgRealizer`, implementing the `ReflowRealizer` Protocol seam) and enumerates the reflow rules as **individually testable units**: (R1) article elision + case, (R2) subject vs. possessive/object form, (R3) list aggregation ("Daniel and Sarah"), (R4) repeated-mention coreference (pronoun on later mentions). Each rule is a named method with its own unit test; the positional fallback is a separate realizer behind the same seam.
 
+## Dependencies
+
+- **Depends on VLM-2C (golden manifest population)** — branch `feature/vlm-2c`. E19-4a's **harness acceptance gate** (PA-01) and the merge's **phrase-box containment** consume fixtures that VLM-2C owns and seeds; they do not exist in `golden.json` until VLM-2C lands. VLM-2C seeds: scene-image face bboxes, `present_identities`/`must_right`/`easy_wrong` rubrics, populated `context_packs`, a base caption, and a roster+stranger entry.
+  - **Seam 1 — phrase boxes:** `apps/prototype-description-service/scene/tests/seed/phrase_boxes.json`, VLM-2C-owned. Coords normalized `[0,1]` (fractions of original `W×H`), **origin top-left**, keyed by `media_id`. E19-4a consumes this exact format for face-center-in-smallest-person-phrase-box containment — it does **not** define a separate phrase-box contract.
+  - **Seam 2 — base caption:** additive `GoldenEntry.base_caption` field (golden **manifest v2**), VLM-2C-owned. The merge layer reflows this base caption into the named draft; generic draft is the untouched base caption.
+- **Consumed by:** Slice 4 (real/seeded phrase boxes → merge core) and the Slice 3 + Verification-Strategy harness acceptance gate (PA-01). Both are unrunnable until VLM-2C populates the fixtures; see E19-4A-PR-01 / PR-03 (deferred to VLM-2C).
+
 ## Problem Statement
 
 The recognition/roster system already persists confirmed identities with face boxes (`MediaIdentity`, `IdentityCluster`, `IdentityMember`), and E19-1 already produces descriptions. Nothing today joins the two: a generated alt-text draft cannot name a confirmed person even though the operator curated that identity in WordPress. The merge is a spatial-join + grammar-aware string realization — pure Python/SQL, no model cost — but it is **absent**, so operators get only generic prose. The correctness crux is that naming the **wrong** person is a worse failure than not naming at all; the layer must degrade to generic on any ambiguity and prove it does with harness metrics.
@@ -42,7 +49,7 @@ The recognition/roster system already persists confirmed identities with face bo
 - **Preview/draft only**: never write `_wp_attachment_image_alt`; that path is **E19-2**. Output is returned in the response, not persisted to WordPress alt text.
 - **Consent gate**: a single tenant-level naming-agreement flag (default reflects the signed operator agreement) **plus** a per-`roster_id` suppress list. **No per-person opt-in.**
 - **Both drafts + provenance always**: every result returns the generic draft alongside the named draft, and provenance recording which names were injected, from which `cluster_id`/`roster_id`, at what match confidence.
-- **Build order**: merge layer first against **seeded/mock phrase boxes + existing recognition data** (S1–S3), Florence grounding added later (S4). S4 depends only on E19-1 (merged), not on any active review task.
+- **Build order**: merge layer first against **VLM-2C's seeded `phrase_boxes.json` + `base_caption` + existing recognition data** (S1–S3), Florence grounding added later (S4). The S1–S3 build and the PA-01 harness gate consume VLM-2C fixtures; S4's adapter work depends only on E19-1 (merged), not on any active review task.
 - **Reflow is an LLM-ready seam**: the realizer is one implementation behind a `ReflowRealizer` Protocol shaped so a constrained on-box LLM (Qwen2.5-1.5B, Approach D) can drop in later without rework. **No LLM shipped in v1.**
 - **No E19-1 contract/schema/route regressions**; S4's only adapter change is the additive `<CAPTION_TO_PHRASE_GROUNDING>` task token + parsing.
 - **Harness-first regression evidence** (PA-01): golden manifest + eval harness metrics, not LocalWP screenshots (LocalWP is the S5 demo-diff artifact only).
@@ -56,9 +63,9 @@ The recognition/roster system already persists confirmed identities with face bo
 
 ## Terminology
 
-- **Phrase box**: a `<CAPTION_TO_PHRASE_GROUNDING>` bounding box per noun phrase of the model's own caption, with its character span. Mocked/seeded in S1–S3; real in S4.
+- **Phrase box**: a `<CAPTION_TO_PHRASE_GROUNDING>` bounding box per noun phrase of the model's own caption, with its character span. In S1–S3 these come from **VLM-2C's `scene/tests/seed/phrase_boxes.json`** (coords normalized `[0,1]`, origin top-left, keyed by `media_id`); real Florence boxes in S4. E19-4a consumes the VLM-2C format as-is — no separate phrase-box contract.
 - **Face box**: `MediaIdentity` pixel bbox of a detected face (small); source for the confirmed-identity side of the match.
-- **Containment match**: face-box center inside the smallest person-phrase box, `area(face) ≪ area(person)`, 1:1 only. IoU is explicitly wrong here.
+- **Containment match**: face-center in the smallest person-phrase box, both in the same `[0,1]` top-left-origin frame, `area(face) ≪ area(person)`, 1:1 only. IoU is explicitly wrong here.
 - **Named draft / generic draft**: the two prose outputs always returned together.
 - **Provenance**: the per-result record of injected names, source `cluster_id`/`roster_id`, and match confidence.
 - **Reflow seam**: the `ReflowRealizer` Protocol; v1 impl is `DeterministicNlgRealizer` (+ positional fallback).
@@ -140,7 +147,7 @@ Build a new `scene/application/identity_merge/` package as a pure, model-indepen
 
 - **Deterministic tests** (S1–S3, no VLM):
   - `cd apps/prototype-description-service && uv run pytest scene/tests/test_identity_merge_merge.py scene/tests/test_identity_merge_realizer.py scene/tests/test_identity_merge_policy.py scene/tests/test_identity_merge_join.py -q`
-- **Harness regression gate (PA-01)** — bind named-draft acceptance to `golden.json`:
+- **Harness regression gate (PA-01)** — bind named-draft acceptance to `golden.json`. **Gate prerequisite:** VLM-2C must have populated `golden.json` (scene face bboxes, `phrase_boxes.json`, `base_caption`, context packs, Must-Right/Easy-Wrong rubrics, stranger entry); until then the gate is unrunnable (see Dependencies, PR-01/PR-03 deferred). Merge consumes VLM-2C's `phrase_boxes.json` `[0,1]` top-left coords for containment:
   - Expected-identities match: for each entry, `score_caption(named_draft, present_identities=..., must_right=..., easy_wrong=..., recognition_enabled=...).inserted_identities == present_identities` and `missing_identities == []` for the confirmed set.
   - Insertion precision (never a guessed name): `identification_pr(items).wrong_names == []` and `identification_pr(items).precision == 1.0` (or `None` when no positives); assert no name appears in a draft whose entry lacks it.
   - Must-Right name-string/policy gate: `score_caption(...).must_right_pass is True` and `.policy_violation is False` on every scored entry; corpus `gated_score` never zeroed by a merge-injected name; `insertion_rate(scores)` reported as coverage (not a pass/fail gate).
@@ -156,11 +163,13 @@ Build a new `scene/application/identity_merge/` package as a pure, model-indepen
 
 ### Slice 1: Merge core — join + normalize + containment match
 
-**Goal**: A pure `merge_identities(...)` that, given seeded phrase boxes + confirmed faces, produces 1:1 name↔region associations (no reflow yet).
+**Goal**: A pure `merge_identities(...)` that, given VLM-2C's seeded `phrase_boxes.json` + confirmed faces, produces 1:1 name↔region associations (no reflow yet).
+
+> **Depends on VLM-2C** for `scene/tests/seed/phrase_boxes.json` (coords `[0,1]`, top-left origin, per `media_id`) — the fixtures this slice's containment match consumes. See Dependencies.
 
 Changes:
 - `identity_merge/join.py::load_confirmed_faces` — read-only SQL join (`MediaIdentity`→`IdentityMember`→`IdentityCluster`), filter `user_confirmed=TRUE`, `label IS NOT NULL`, `dismissed_at IS NULL`.
-- `identity_merge/merge.py::normalize_bbox` (pixels→`[0,1]` of orig `W×H`), `containment_match` (face-center in smallest person box, 1:1), `merge_identities` returning association list + `MergeResult` skeleton.
+- `identity_merge/merge.py::normalize_bbox` (pixels→`[0,1]` of orig `W×H`, top-left origin to match VLM-2C's `phrase_boxes.json` frame), `containment_match` (face-center in smallest person-phrase box, 1:1), `merge_identities` returning association list + `MergeResult` skeleton.
 - Unit tests: normalization resolution-independence; containment picks smallest box; ambiguous many-to-one → no match; area-ratio guard.
 
 Proof:
@@ -192,14 +201,14 @@ Changes:
 
 Proof:
 - `uv run pytest scene/tests/test_identity_merge_policy.py scene/tests/test_describe_route.py -q` green.
-- **Harness gate (PA-01)**: `uv run pytest scene/tests/test_identity_merge_harness_gate.py -q` — expected-identities match, `wrong_names==[]`/`precision==1.0`, `must_right_pass`/no `policy_violation` across `golden.json`.
+- **Harness gate (PA-01)**: `uv run pytest scene/tests/test_identity_merge_harness_gate.py -q` — expected-identities match, `wrong_names==[]`/`precision==1.0`, `must_right_pass`/no `policy_violation` across `golden.json`. **Requires VLM-2C-populated fixtures** (scene face bboxes, `phrase_boxes.json`, `base_caption`, context packs, rubrics, stranger entry); unrunnable until VLM-2C lands (Dependencies; PR-01/PR-03 deferred).
 
 ### Slice 4: Florence `<CAPTION_TO_PHRASE_GROUNDING>` grounding (re-scoped per PA-02)
 
-**Goal**: Add the phrase-grounding capability the adapter lacks today and feed real phrase boxes into the merge core.
+**Goal**: Add the phrase-grounding capability the adapter lacks today and feed real phrase boxes into the merge core, in the same `[0,1]` top-left frame as VLM-2C's seeded `phrase_boxes.json`.
 
 Changes:
-- `florence_local_adapter.py`: add `_PHRASE_GROUNDING_TASK="<CAPTION_TO_PHRASE_GROUNDING>"`; run it in `_run_task`/`describe`; parse `post_process_generation` phrase spans + boxes; expose them on `AdapterResult`.
+- `florence_local_adapter.py`: add `_PHRASE_GROUNDING_TASK="<CAPTION_TO_PHRASE_GROUNDING>"`; run it in `_run_task`/`describe`; parse `post_process_generation` phrase spans + boxes; normalize to `[0,1]` top-left; expose them on `AdapterResult` in the same shape S1–S3 consumed from VLM-2C's `phrase_boxes.json`.
 - `description_adapter.py::AdapterResult`: add optional `phrase_boxes` field (default empty — E19-1 callers unaffected).
 - Merge core consumes real phrase boxes; `PositionalFallbackRealizer` engages when grounding absent/low-confidence.
 - Coordinate-fidelity check: normalized boxes align across full-res recognition and downsampled description.

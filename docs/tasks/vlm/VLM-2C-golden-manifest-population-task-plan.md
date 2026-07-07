@@ -48,7 +48,7 @@ VLM-2A shipped the harness code but not its fixtures. `golden.json` holds 37 ent
 ## Terminology
 
 - **Context pack**: WP `title`/`caption`/`description` echoed to the describe route — the name-injected TEXT the model sees; the `insertion_rate` signal source.
-- **Base caption**: per-entry reference caption string the deterministic score matches and E19-4a reflows.
+- **Base caption**: per-entry reference caption. NOT read by the scorer — scoring matches `describe.alt_text_draft` in the run record (`report.py:114`); `base_caption` is the source copied into the seeded stub run record and E19-4a's reflow input.
 - **Stranger entry**: a scene with `recognition_enabled=true` and `face_count > len(present_identities)` → `stranger_faces > 0` → drives true-rejection.
 - **Phrase box**: a person-phrase bounding box (`[0,1]` fractions) for E19-4a containment match.
 
@@ -91,7 +91,7 @@ Four slices, each producing fixtures plus proof. Draft mechanically with `draft_
 | harness (seed, additive) | `apps/prototype-description-service/scripts/eval_harness/seed_roster.py` | Add scene-image seeding path so recognition produces `MediaIdentity` bboxes per scene `media_id` (parallel to crop seeding; keeps the idempotent re-run contract) |
 | fixture (data, NEW) | `apps/prototype-description-service/scene/tests/seed/phrase_boxes.json` | **NEW** — mock phrase boxes (`[0,1]` fractions) + expected face→phrase→identity containment mapping, keyed by scene `media_id`, for E19-4a offline merge tests |
 | docs | `apps/prototype-description-service/scene/tests/seed/README.md` | Update version note, rubric/confirmation status, rsync bootstrap, and phrase-box fixture provenance |
-| tests | `apps/prototype-description-service/scene/tests/` (or `scripts/eval_harness/tests/`) | Add/extend fixture-integrity + stranger-true-rejection + deterministic-score tests |
+| tests | `apps/prototype-description-service/scene/tests/` (or `scripts/eval_harness/tests/`) | Add/extend fixture-integrity + stranger-true-rejection + deterministic-score tests; **update the hard-coded `manifest_version=1` literals in `test_eval_harness_manifest.py:20` and `test_eval_harness_cli.py:14` to 2** — the version bump makes them fail the loader otherwise |
 
 ## Related Files
 
@@ -102,7 +102,8 @@ Four slices, each producing fixtures plus proof. Draft mechanically with `draft_
 | `scripts/eval_harness/report.py` | `score_run_record` / `build_reports` — builds `ImageDetection`/`ImageIdentities` from run record + manifest; not edited |
 | `scripts/eval_harness/draft_labels.py` | `generate_draft_manifest` (`:20`) — Slice-1 draft source (filename heuristics) |
 | `scripts/eval_harness/naming.py` | `entity_slug`/`display_name` (`:21`,`:27`) — canonical name derivation |
-| `scripts/eval_harness/cli.py` | `score` subcommand (`--run-record`, `:350`) + `--check-determinism` (`:344`) — offline proof harness |
+| `scripts/eval_harness/cli.py` | `score` subcommand (`--run-record`, `:353`) + `--check-determinism` (`:345`); `_cmd_score` loads the manifest with no `images_dir` (`:290`), so scoring is fully offline — no live model needed |
+| `scene/tests/test_eval_harness_report.py` | Committed run-record stub template: `{kind, schema, provenance, items:[{media_id, path, describe:{alt_text_draft, adapter:"seeded", visual_facts:{objects}}, identities, face_count}]}` (`:15-55`) — copy this shape for the seeded stub |
 | `docs/scopes/e19-4a-identity-prose-merge-scope.md` | Consumer contract for phrase boxes / containment / stranger gate |
 
 ## Verification Strategy
@@ -126,7 +127,7 @@ Four slices, each producing fixtures plus proof. Draft mechanically with `draft_
 
 Changes:
 
-- Regenerate the draft via `draft_labels.generate_draft_manifest(fixtures_dir)`; reconcile against current `golden.json`.
+- Regenerate the draft via `draft_labels.generate_draft_manifest(fixtures_dir)`; reconcile against current `golden.json`. **Drop `mock_images/kirstie-boat_detected.jpg`**: `draft_labels` iterates all 38 `mock_images` files with no exclusion and re-introduces this detection-annotated near-duplicate that VLM-2A deliberately removed (`seed/README.md:20`); keep the corpus at 37 usable scenes.
 - Operator pass: confirm identities, set `face_count` incl. non-roster strangers (per `seed/README.md` counting rule), introduce/confirm ≥1 stranger entry (`recognition_enabled=true`, `face_count > len(present_identities)`).
 - Refresh `sha256` for any changed/added entry.
 

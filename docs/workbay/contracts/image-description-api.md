@@ -71,6 +71,9 @@ unavoidable so future adapters never change the wire:
 | 403 | auth tenant claim ≠ envelope `tenant_id` |
 | 413 | body exceeds the upload cap |
 | 415 | unsupported image MIME |
+| 502 | hosted-provider fault (opted-in hosted profile only: provider 5xx/timeout, missing key, malformed body; fail-closed, no partial result) |
+| 503 | description adapter unavailable (deferred/stub profile, hosted profile without `ACX_HOSTED_PROVIDER_OPTIN=1`, or missing `[vlm]` extra) |
+| 504 | description generation exceeded the configured timeout |
 
 Error shapes match the recognition routes: 5xx/503 use the `{error, trace_id, path}` envelope (via the shared exception handlers); 4xx validation errors use FastAPI's default `{detail}` shape.
 

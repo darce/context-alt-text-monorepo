@@ -140,10 +140,15 @@ def test_prune_out_dir_rejects_keep_below_one(tmp_path):  # S3-07
 class HostedClient(HappyClient):
     """Hosted-style fake: describe response discloses the boundary crossing."""
 
+    model_id = "gpt-4o-mini"
+    cached = False
+
     def describe(self, **kwargs):
         return {
             "alt_text_draft": "A photo.",
             "visual_facts": {"objects": []},
+            "model_id": self.model_id,
+            "cached": self.cached,
             "provider_disclosure": {"provider": "hosted", "left_service_boundary": True},
         }
 
@@ -184,6 +189,49 @@ def test_max_cost_aborts_before_further_paid_calls(images_dir):
     partial = excinfo.value.partial_record
     assert partial["aborted"] is True
     assert len(partial["items"]) == 2  # third paid call would exceed the cap; never made
+
+
+def test_cached_describes_are_not_billed(images_dir):
+    # Cache-hit describes never reach the provider; est_cost must exclude them (R2A-01).
+    client = HostedClient()
+    client.cached = True
+    record = fetch_run_record(
+        _manifest(3),
+        str(images_dir),
+        client,
+        head_sha="f" * 40,
+        provider="hosted_gpt4o",
+        cost_per_image_usd=1.0,
+    )
+    assert record["provenance"]["paid_describe_calls"] == 0
+    assert record["provenance"]["est_cost_usd"] == 0.0
+
+
+def test_provider_mismatch_on_wrong_hosted_model(images_dir):
+    # provider_disclosure alone cannot disambiguate WHICH hosted profile; a response
+    # model_id that contradicts the claimed profile must abort (R2A-03).
+    client = HostedClient()
+    client.model_id = "gpt-4o"  # claimed profile hosted_gpt4o expects gpt-4o-mini
+    with pytest.raises(ProviderMismatchError):
+        fetch_run_record(_manifest(2), str(images_dir), client, head_sha="f" * 40, provider="hosted_gpt4o")
+
+
+class SlowIdentitiesClient(HostedClient):
+    """Describe is instant; the recognition wait dominates the item wall time."""
+
+    def wait_job(self, job_id):
+        import time as _time
+
+        _time.sleep(0.05)
+        return {"status": "completed"}
+
+
+def test_latency_times_describe_only(images_dir):
+    # latency_s must not absorb analyze/wait_job/identity polling (R2A-02).
+    record = fetch_run_record(
+        _manifest(1), str(images_dir), SlowIdentitiesClient(), head_sha="f" * 40, provider="hosted_gpt4o"
+    )
+    assert record["items"][0]["latency_s"] < 0.05
 
 
 def test_provider_run_record_scores_with_existing_reports(images_dir):

@@ -190,38 +190,38 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded assessment §10/§12/§6c/§11/§13, the scope note, and the VLM-2A harness surfaces before editing.
-- [ ] Confirmed the bake-off reuses `acx-eval/v1` schema + manifest schema with **no** new fields and **no** `PROFILE_SPECS` change.
+- [x] Loaded assessment §10/§12/§6c/§11/§13, the scope note, and the VLM-2A harness surfaces before editing.
+- [x] Confirmed the bake-off reuses `acx-eval/v1` schema + manifest schema with **no** new fields and **no** `PROFILE_SPECS` change.
 
 ### Checklist for Slice 1: Bake-off manifest + real context packs
 
 - [x] Add `bakeoff_golden.json` (~10 images, §6b discriminating classes) with real name-injected context packs, rubrics, policy flags.
-- [ ] Document image-bytes bootstrap for any new images in the seed README.
-- [ ] `load_manifest` passes; test asserts non-empty context packs + insertion-rate cohort.
+- [x] Document image-bytes bootstrap for any new images in the seed README.
+- [x] `load_manifest` passes; test asserts non-empty context packs + insertion-rate cohort.
 
 ### Checklist for Slice 2: Candidate serving + A1 re-benchmark
 
-- [ ] Serve all three candidates on the A1 via llama.cpp (concurrency 1, off-path).
-- [ ] Record cold-load + per-image latency + peak RSS per candidate; set the per-request timeout ceiling.
+- [x] Serve all three candidates on the A1 via llama.cpp (concurrency 1, off-path).
+- [x] Record cold-load + per-image latency + peak RSS per candidate; set the per-request timeout ceiling.
 - [x] Confirm or deny the §13 1–3 min/img estimate in `docs/tasks/vlm/VLM-2B-a1-serving-notes.md`.
 
 ### Checklist for Slice 3: Bake-off transport
 
 - [x] Add `bakeoff.py` (`BakeoffClient` with Nygard timeout + 3-strike breaker; `analyze`/`wait_job`/`media_identities` no-op stubs) driven by the **unchanged `cli.fetch_run_record`** — no forked walker.
-- [ ] Greedy decode + `/no_think` for reasoning-tuned candidates; anchor-visual/inject-factual prompt renders `context_pack` names into the model prompt.
-- [ ] Add `scene/tests/test_eval_harness_bakeoff.py`; `pytest` green (`describe` shape, name-into-prompt, prompt construction, inert stubs, `build_reports` scoring). Isolation/bounded-stall not re-tested (covered by reused walker).
+- [x] Greedy decode + `/no_think` for reasoning-tuned candidates; anchor-visual/inject-factual prompt renders `context_pack` names into the model prompt.
+- [x] Add `scene/tests/test_eval_harness_bakeoff.py`; `pytest` green (`describe` shape, name-into-prompt, prompt construction, inert stubs, `build_reports` scoring). Isolation/bounded-stall not re-tested (covered by reused walker).
 
 ### Checklist for Slice 4: Score, compare, decide
 
-- [ ] Produce a per-candidate REPORT artifact; commit curated artifacts under `docs/tasks/vlm/`.
+- [x] Produce a per-candidate REPORT artifact; commit curated artifacts under `docs/tasks/vlm/`.
 - [x] `score --check-determinism` passes per captured record.
-- [ ] Decision memo picks one winner with a comparison table, license verdict, and disqualifiers; winner numbers reconcile with its artifact.
+- [x] Decision memo picks one winner with a comparison table, license verdict, and disqualifiers; winner numbers reconcile with its artifact.
 
 ## Review Readiness
 
-- [ ] No boundary-touching change lacks matching contract/fixture evidence (schema + manifest reuse verified, no profile change).
-- [ ] Live-A1 runtime parity captured where pure tests cannot (latency/RSS, injection obedience).
-- [ ] Handoff decision records the bake-off outcome, the chosen model, verification, and the follow-on adapter-build hand-off.
+- [x] No boundary-touching change lacks matching contract/fixture evidence (schema + manifest reuse verified, no profile change).
+- [x] Live-A1 runtime parity captured where pure tests cannot (latency/RSS, injection obedience).
+- [x] Handoff decision records the bake-off outcome, the chosen model, verification, and the follow-on adapter-build hand-off.
 
 ## Stretch Goals
 
@@ -230,8 +230,8 @@ Proof:
 
 ## Success Criteria
 
-- [ ] Three candidates each produce a deterministic, reproducible `acx-eval/v1` REPORT over the ~10-image name-injected bake-off subset.
-- [ ] Candidates are comparable on insertion rate, Must-Right gate passes, wrong-fact signal, FKRE, and A1 latency/RSS.
-- [ ] A decision memo names exactly one winner with cited evidence, the license verdict, and recorded disqualifiers.
-- [ ] The bake-off never degrades the live demo box (concurrency 1, off-path) and never aborts the whole run on a single item/candidate failure (rg-007 bounded-stall only).
-- [ ] No `DescriptionAdapter`/`PROFILE_SPECS` productionization occurs (deferred to the follow-on).
+- [x] Three candidates each produce a deterministic, reproducible `acx-eval/v1` REPORT over the ~10-image name-injected bake-off subset.
+- [x] Candidates are comparable on insertion rate, Must-Right gate passes, wrong-fact signal, FKRE, and A1 latency/RSS.
+- [x] A decision memo names exactly one winner with cited evidence, the license verdict, and recorded disqualifiers.
+- [x] The bake-off never degrades the live demo box (concurrency 1, off-path) and never aborts the whole run on a single item/candidate failure (rg-007 bounded-stall only).
+- [x] No `DescriptionAdapter`/`PROFILE_SPECS` productionization occurs (deferred to the follow-on).

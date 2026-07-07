@@ -1,0 +1,236 @@
+# Task Plan
+
+> **Metadata**
+>
+> - **Date**: 2026-07-06 EST
+> - **Author**: Claude Opus 4.8
+> - **Project**: `apps/prototype-description-service` (standalone task plan; feeds **Epic E19** detailed-description tier)
+> - **Task ID**: `VLM-2B`
+> - **Target Branch**: `feature/vlm-2b`
+> - **Review Coverage Target**: 2
+> - **Grounding docs**: [caption-context-enrichment-assessment-2026-07-05.md](../../assessments/current/caption-context-enrichment-assessment-2026-07-05.md) §10, §12 item 4, §6c, §11, §13 · [vlm-2b-detailed-tier-bakeoff-scope.md](../../scopes/vlm-2b-detailed-tier-bakeoff-scope.md) · [VLM-2A-caption-face-eval-harness-task-plan.md](./VLM-2A-caption-face-eval-harness-task-plan.md)
+
+---
+
+## VLM-2B. Detailed-Tier Caption Model Bake-Off
+
+## Objective
+
+Bake off three GGUF detailed-tier caption candidates — **CapRL-Qwen3VL-4B**, **Qwen3-VL-4B-Instruct**, **MiniCPM-V 4.5** — over ~10 golden images with real (name-injected) context packs, score each with the VLM-2A deterministic caption-metric tier, and produce **one decision memo picking a single model with evidence**. The winning model becomes a `DescriptionAdapter` in a follow-on task; this task ends at the pick.
+
+## Intake
+
+- **Scope one-pager**: [docs/scopes/vlm-2b-detailed-tier-bakeoff-scope.md](../../scopes/vlm-2b-detailed-tier-bakeoff-scope.md)
+- **Derivation**: approved parent assessment (decision input); no P0 Q&A — assumptions documented in the scope note §3.
+- **Not-Doing**: adapter productionization; `DescriptionProfile`/`PROFILE_SPECS` registry entry; ROC/threshold/TAR@FAR sweeps; LLM-judge implementation; fusion / E19-4a merge / phase-split caching; new auth/endpoints/server paths; OpenCV 5 / brand / PG18-19; CI gating/dashboards/UI; fast-tier (MiniCPM-V 4.6) evaluation; vendoring weights or corpus in git.
+
+## Problem Statement
+
+The assessment commits to a detailed-description tier but leaves the model unchosen, and **no public benchmark measures injected-name weaving** — the property that decides product fitness (assessment §10). CapRL's instruction obedience is explicitly unknown and potentially disqualifying (§13); the 1–3 min/img A1 GGUF estimate is unverified (§13). VLM-2A shipped the scoring harness (`scripts/eval_harness/`) but scored only the deployed `seeded`/`florence_small` path — the detailed-tier candidates are unscored. Without an owned, deterministic bake-off, the detailed-tier model choice is a blind bet on the top product risk (wrong-name/wrong-fact insertion).
+
+## Constraints
+
+- **Infra posture (same as VLM-2A):** the laptop performs **no** model inference; each candidate runs as a llama.cpp server on the **OCI A1 CPU**, driven remotely. **Concurrency 1**; run one model at a time, off the live-demo path — the shared box must not degrade.
+- **Failure posture:** per-request timeout, per-item failure isolation, **bounded consecutive-failure exit (rg-007)** — mirror the discipline in `scripts/eval_harness/remote_client.py` (`_BREAKER_THRESHOLD = 3`, `_DEFAULT_TIMEOUT_S = 60.0`) and `scripts/eval_harness/cli.py` (`BoundedStallError`, `DEFAULT_STALL_LIMIT = 5`).
+- **Decoding:** greedy; append `/no_think` for any reasoning-tuned candidate; identical decode config across candidates for comparability.
+- **Deterministic metric tier only** — the LLM-judge tier stays a stub (VLM-2A rejects `--llm-judge` in `cli._reject_llm_judge`).
+- **Greenfield:** no schema migration; the bake-off manifest is a new fixture, not a change to `scene/tests/seed/golden.json` structure — it reuses the `manifest.GoldenManifest` schema (`SUPPORTED_MANIFEST_VERSION = 1`) with no new fields.
+- **No productionized adapter:** the bake-off runner is throwaway benchmark code; it must **not** register a `DescriptionProfile` or add a `PROFILE_SPECS` entry.
+
+## Workflow Principles
+
+- **Split Phase (as VLM-2A):** a fetch phase produces an `acx-eval/v1` run record of raw candidate outputs + provenance; a pure score phase (`report.score_run_record`) consumes it offline, bit-identical for unchanged inputs.
+- **Reuse over rebuild:** scoring, manifest validation, schema ids, and the markdown report builder are reused unchanged from `scripts/eval_harness/`; only the fetch client (candidate llama.cpp endpoints instead of `/scene/describe/multipart`) and the bake-off manifest are new.
+- **Merge-only naming discipline (assessment §3a):** the prompt supplies roster names in the context block under an anchor-visual/inject-factual contract; the metric measures whether the model *weaves the supplied name*, never whether it guesses one.
+- **Evidence before verdict:** every candidate ships a before/after-comparable artifact; the memo cites artifacts, never prose impressions.
+
+## Terminology
+
+- **Bake-off subset manifest**: a new `~10`-image golden manifest (e.g. `scene/tests/seed/bakeoff_golden.json`) validated by `manifest.load_manifest`; per image — path, `sha256`, `media_id`, `present_identities`, **real `context_pack` carrying injected roster names + non-visible facts**, `must_right`/`easy_wrong` rubrics, `policy`.
+- **Injected-name weaving / insertion rate**: `% present_identities` that appear in the caption when their names are supplied in the context block (`caption_metrics.insertion_rate`) — the primary discriminator.
+- **Candidate run record**: an `acx-eval/v1` `DocKind.RUN_RECORD` doc whose items carry `describe.alt_text_draft` (candidate caption) + `describe.adapter/model_id/model_version` so `report.score_run_record` scores it unchanged.
+- **Bake-off runner**: throwaway remote client hitting a candidate's llama.cpp endpoint; **not** a `DescriptionAdapter`.
+
+## Current State Analysis
+
+- **Scoring harness exists and is reusable** (`apps/prototype-description-service/scripts/eval_harness/`): `caption_metrics.score_caption()` + `caption_metrics.insertion_rate()` compute the deterministic caption tier; `report.score_run_record()` / `report.build_reports()` emit the `acx-eval/v1` JSON + markdown; `schema.SCHEMA = "acx-eval/v1"` with `schema.DocKind.{RUN_RECORD,REPORT}`; `manifest.load_manifest()` fail-fast-validates the golden manifest. All pure, CPU-only, no network.
+- **Fetch path targets the deployed service**, not raw models: `remote_client.RemoteSceneClient.describe()` calls `POST /scene/describe/multipart`; `cli.fetch_run_record()` walks the manifest with per-item isolation + `BoundedStallError`. The bake-off needs a *sibling* fetch that calls candidate llama.cpp endpoints instead — the scoring half is untouched.
+- **Report reads exactly two describe fields**: `report.score_run_record()` scores `describe["alt_text_draft"]` and `describe["visual_facts"]["objects"]`, and provenance-stamps `describe["adapter"]/["model_id"]/["model_version"]` via `report._model_provenance()`. A candidate run-record item must populate those keys.
+- **Golden corpus lacks context packs** (verified): `scene/tests/seed/golden.json` = `manifest_version 1`, roster of 10 names, **37 entries, all `context_pack` empty (`{}`), all `recognition_enabled=true`**. Insertion rate is structurally zero without name-carrying context packs → Slice 1 must author a bake-off subset with real ones.
+- **Adapter seam is stable** (target for the *follow-on*, informational here): `scene/application/description_adapter.py` `DescriptionAdapter` Protocol + `AdapterResult`; `scene/domain/description.py` `DescriptionAdapterKind`; `scene/config/profiles.py` `DescriptionProfile`/`ProfileSpec`/`PROFILE_SPECS`/`get_profile_spec()`. Precedent for a local-model benchmark runner: `scripts/benchmark_local_vlm.py` `main()` (adapter loop + JSON artifact + peak-RSS via `resource.getrusage`).
+- **Model facts** (assessment §10): all three candidates ship official GGUF; A1 latency estimate (1–3 min/img) and CapRL injection obedience are both unverified (§13).
+
+## Target Outcome
+
+From the laptop, `python -m eval_harness.bakeoff` (description-service scoped, driving remote A1 llama.cpp endpoints, concurrency 1) runs the ~10-image bake-off manifest against each candidate, writes an `acx-eval/v1` run record per candidate, and `report.build_reports` scores each into a JSON + markdown REPORT stamped with the candidate model id/version. A comparison table ranks candidates on insertion rate, Must-Right gate passes, wrong-fact signal, FKRE, and A1 latency/RSS. A decision memo picks one model with cited evidence and the license verdict. Re-scoring any captured run record is bit-identical.
+
+## Context Loading
+
+- Assessment §10 (candidate table + two-tier design), §12 item 4 (bake-off before adapter build), §6c (metric tiers + precision-gated philosophy), §11 (CPU-only A1 feasibility), §13 (open risks: GGUF quant loss, CapRL obedience, MiniCPM license).
+- Scope note: [vlm-2b-detailed-tier-bakeoff-scope.md](../../scopes/vlm-2b-detailed-tier-bakeoff-scope.md).
+- Harness surfaces to reuse: `scripts/eval_harness/{schema.py,manifest.py,caption_metrics.py,report.py,cli.py,remote_client.py}`; golden fixture `scene/tests/seed/golden.json` + `scene/tests/seed/README.md` (image rsync bootstrap, `GOLDEN_IMAGES_DIR`).
+- Adapter seam (follow-on target, informational): `scene/application/description_adapter.py`, `scene/domain/description.py`, `scene/config/profiles.py`, `scripts/benchmark_local_vlm.py`.
+- Rules: `docs/workbay/rules/testing-python.md`; rg-007 (bounded stall), rg-008 (fail-fast config), rg-015 (no fabricated envelope metadata).
+
+## Contract and Boundary Impact
+
+| Boundary | Owner | Current Contract | Expected Change | Compatibility Needed? | Verification |
+| --- | --- | --- | --- | --- | --- |
+| `acx-eval/v1` eval artifact schema | description-service (`scripts/eval_harness/schema.py`) | `schema="acx-eval/v1"`, `DocKind.{RUN_RECORD,REPORT}` | **none** — bake-off run records/reports reuse the identical schema; candidate model id/version fill existing `describe.model_id/model_version` fields | no | `report.build_reports` scores a candidate run record without change; `_cmd_score --check-determinism` passes |
+| golden manifest schema | description-service (`scripts/eval_harness/manifest.py`) | `GoldenManifest` v1, `extra='forbid'`, `ContextPack extra='allow'` | **none** — new bake-off manifest instance, no new fields; context packs use the existing `ContextPack` extensibility | no | `manifest.load_manifest(bakeoff_golden.json)` passes fail-fast validation |
+| candidate llama.cpp endpoint (A1) | infra (bake-off transient) | new: llama.cpp `/v1/chat/completions` or `/completion` per candidate | new throwaway client, not a service route; no change to `/scene/describe/multipart` | no | live A1 run under concurrency 1; per-item isolation + bounded-stall exit observed |
+| `DescriptionAdapter` protocol / profiles | description-service (`scene/`) | `DescriptionAdapter`, `PROFILE_SPECS` | **none this task** — winner adapter is a follow-on; bake-off adds **no** profile entry | no | no diff under `scene/config/profiles.py` or `scene/application/description_adapter.py` |
+
+## Proposed Solution
+
+Add a **sibling fetch** to the existing eval harness that swaps the describe transport (candidate llama.cpp endpoint) while reusing the entire scoring half:
+
+1. **Author a ~10-image bake-off manifest** with real, name-injected context packs + rubrics (assessment §6b discriminating classes), validated by `manifest.load_manifest`.
+2. **Serve each candidate on the A1** via llama.cpp; re-benchmark A1 latency/RSS to resolve the §13 estimate and set the per-request timeout ceiling.
+3. **Bake-off runner** (`scripts/eval_harness/bakeoff.py`): a `BakeoffClient` mirroring `RemoteSceneClient`'s Nygard discipline (timeout, 3-strike breaker, bounded poll) that prompts a candidate (greedy, `/no_think` if reasoning-tuned, anchor-visual/inject-factual context contract) and returns caption text; a `fetch_bakeoff_record()` mirroring `cli.fetch_run_record()` (per-item isolation, `BoundedStallError` bounded-stall) that shapes each caption into an `acx-eval/v1` `RUN_RECORD` item with `describe.alt_text_draft` + candidate `model_id/model_version`.
+4. **Score** each run record with the unchanged `report.build_reports()`; assemble a comparison table across candidates.
+5. **Decision memo** picking one model, citing artifacts + license verdict + disqualifiers.
+
+## Files and Surfaces to Change
+
+| Surface | File | Change |
+| --- | --- | --- |
+| tests/fixture | `apps/prototype-description-service/scene/tests/seed/bakeoff_golden.json` | New ~10-image bake-off manifest: real name-injected `context_pack`, `present_identities`, `must_right`/`easy_wrong`, `policy` per entry (validated by `manifest.load_manifest`) |
+| tooling | `apps/prototype-description-service/scripts/eval_harness/bakeoff.py` | New `BakeoffClient` (candidate llama.cpp transport, Nygard discipline) + `fetch_bakeoff_record()` (per-item isolation, bounded stall) + `__main__` CLI shaping captions into `acx-eval/v1` run records |
+| tests | `apps/prototype-description-service/scripts/eval_harness/tests/test_bakeoff.py` | Unit tests: run-record shaping, per-item isolation, bounded-stall exit, greedy/`/no_think` prompt construction, `report.build_reports` scores a candidate record deterministically (stub transport, no network) |
+| docs (evidence) | `apps/prototype-description-service/docs/tasks/vlm/` or repo `docs/tasks/vlm/` | Per-candidate `acx-eval/v1` REPORT artifacts (curated baselines, promoted by hand per `cli.py` retention note) |
+| docs (decision) | `docs/tasks/vlm/VLM-2B-detailed-tier-decision-memo.md` | Decision memo: comparison table, one winner, license verdict, disqualifiers, cited artifacts |
+
+## Related Files
+
+| File | Note |
+| --- | --- |
+| `scripts/eval_harness/caption_metrics.py` | `score_caption()`, `insertion_rate()`, `CaptionScores.gated_score` — reused unchanged for the deterministic tier |
+| `scripts/eval_harness/report.py` | `score_run_record()`, `build_reports()`, `_model_provenance()` — reused unchanged; reads `describe.alt_text_draft` + `describe.visual_facts.objects` |
+| `scripts/eval_harness/schema.py` | `SCHEMA="acx-eval/v1"`, `DocKind` — shared artifact ids |
+| `scripts/eval_harness/manifest.py` | `load_manifest()`, `GoldenManifest`, `ContextPack`, `EntryPolicy` — validates the bake-off manifest |
+| `scripts/eval_harness/remote_client.py` | `RemoteSceneClient`, `_BREAKER_THRESHOLD`, `_DEFAULT_TIMEOUT_S` — Nygard-discipline template for `BakeoffClient` |
+| `scripts/eval_harness/cli.py` | `fetch_run_record()`, `BoundedStallError`, `DEFAULT_STALL_LIMIT` — per-item-isolation template for `fetch_bakeoff_record()` |
+| `scripts/benchmark_local_vlm.py` | `main()` + `_peak_rss_mb()` — precedent for a model benchmark runner emitting a JSON artifact |
+| `scene/config/profiles.py` | `DescriptionProfile`/`PROFILE_SPECS` — the follow-on adapter's registration target (do **not** edit this task) |
+| `scene/tests/seed/README.md` | `GOLDEN_IMAGES_DIR` rsync bootstrap for image bytes (not vendored) |
+
+## Verification Strategy
+
+- Deterministic tests (CPU, no network):
+  - `uv run pytest scripts/eval_harness/tests/test_bakeoff.py` — run-record shaping, per-item isolation, bounded-stall non-zero exit, prompt construction (greedy + `/no_think`), and `report.build_reports` scoring a candidate record.
+  - `python -m eval_harness.cli score --run-record <captured>.json --manifest scene/tests/seed/bakeoff_golden.json --check-determinism` — re-score is bit-identical.
+  - `python -c "from eval_harness.manifest import load_manifest; load_manifest('scene/tests/seed/bakeoff_golden.json')"` — manifest passes fail-fast validation.
+- Runtime-parity / environment checks (live A1, gated behind the VLM-2A live env-var pattern):
+  - Serve each candidate on the A1; capture load time + per-image latency + peak RSS; confirm/deny the §13 1–3 min/img estimate; record the per-request timeout ceiling.
+  - One live bake-off pass per candidate (concurrency 1, off-path) → run record → REPORT artifact.
+- Contract/fixture verification:
+  - A candidate run record scores through `report.build_reports` with the caption section populated and `provenance.model` stamped with the candidate id/version.
+- Manual verification:
+  - Decision memo comparison table reconciles with the committed per-candidate REPORT artifacts; the named winner's numbers match its artifact.
+
+## Slice Delivery
+
+### Slice 1: Bake-off manifest + real context packs
+
+**Goal**: A validated ~10-image bake-off manifest whose context packs inject roster names so insertion rate is measurable.
+
+Changes:
+
+- Add `scene/tests/seed/bakeoff_golden.json` — ~10 images spanning assessment §6b discriminating classes (single roster person, two-roster-plus-strangers association, policy-disabled, abstract/hallucination-pressure, legible-text, context-conflicts-pixels, no-context degradation), each with a real name-injected `context_pack`, `present_identities`, `must_right`/`easy_wrong`, `policy`.
+- Document the image-bytes bootstrap (`GOLDEN_IMAGES_DIR`) in the seed README if the subset draws new images.
+
+Proof:
+
+- `load_manifest('scene/tests/seed/bakeoff_golden.json')` passes; a unit test asserts every entry has a non-empty context pack and at least one `present_identity` for the insertion-rate cohort.
+
+### Slice 2: Candidate serving + A1 re-benchmark
+
+**Goal**: All three candidates load and run on the A1 with measured latency/RSS, resolving the §13 estimate and setting the timeout ceiling.
+
+Changes:
+
+- Serve CapRL-Qwen3VL-4B, Qwen3-VL-4B-Instruct, MiniCPM-V 4.5 as llama.cpp servers on the A1 (official GGUF quants), concurrency 1, off the demo path.
+- Record cold-load + per-image latency + peak RSS per candidate into an `acx-eval`-adjacent notes artifact; set the per-request wall-clock timeout.
+
+Proof:
+
+- A latency/RSS table per candidate on the A1; a candidate that cannot load or exceeds the ceiling is marked fail-per-item (not a run-aborter) — recorded, not fatal.
+
+### Slice 3: Bake-off runner (fetch → run record)
+
+**Goal**: A throwaway runner that elicits a greedy caption per candidate under the injected-context contract and shapes it into an `acx-eval/v1` run record, with per-item isolation and bounded-stall exit.
+
+Changes:
+
+- Add `scripts/eval_harness/bakeoff.py`: `BakeoffClient` (candidate llama.cpp transport; per-request timeout; 3-strike breaker; `/no_think` when reasoning-tuned; anchor-visual/inject-factual prompt) + `fetch_bakeoff_record()` (mirrors `cli.fetch_run_record` isolation + `BoundedStallError`) emitting `RUN_RECORD` items with `describe.alt_text_draft` + candidate `model_id/model_version`.
+- Add `scripts/eval_harness/tests/test_bakeoff.py` (stub transport, no network).
+
+Proof:
+
+- `pytest scripts/eval_harness/tests/test_bakeoff.py` green: shaping, isolation, bounded-stall non-zero exit, prompt construction; a shaped record scores through `report.build_reports`.
+
+### Slice 4: Score, compare, decide
+
+**Goal**: Per-candidate REPORT artifacts + a comparison table + a decision memo picking one model with evidence.
+
+Changes:
+
+- Run each candidate live (Slice 2 servers) → run record → `report.build_reports` REPORT artifact; commit curated artifacts under `docs/tasks/vlm/`.
+- Add `docs/tasks/vlm/VLM-2B-detailed-tier-decision-memo.md`: comparison table (insertion rate, Must-Right passes, wrong-fact signal, FKRE, latency/RSS), one winner, license verdict (MiniCPM registration), disqualifiers (e.g. CapRL context obedience per §13).
+
+Proof:
+
+- Three committed REPORT artifacts + a memo naming one winner whose numbers reconcile with its artifact; `score --check-determinism` passes on each captured record.
+
+---
+
+## Consolidated Checklist
+
+## Context and Ownership
+
+- [ ] Loaded assessment §10/§12/§6c/§11/§13, the scope note, and the VLM-2A harness surfaces before editing.
+- [ ] Confirmed the bake-off reuses `acx-eval/v1` schema + manifest schema with **no** new fields and **no** `PROFILE_SPECS` change.
+
+### Checklist for Slice 1: Bake-off manifest + real context packs
+
+- [ ] Add `bakeoff_golden.json` (~10 images, §6b discriminating classes) with real name-injected context packs, rubrics, policy flags.
+- [ ] Document image-bytes bootstrap for any new images in the seed README.
+- [ ] `load_manifest` passes; test asserts non-empty context packs + insertion-rate cohort.
+
+### Checklist for Slice 2: Candidate serving + A1 re-benchmark
+
+- [ ] Serve all three candidates on the A1 via llama.cpp (concurrency 1, off-path).
+- [ ] Record cold-load + per-image latency + peak RSS per candidate; set the per-request timeout ceiling.
+- [ ] Confirm or deny the §13 1–3 min/img estimate in an evidence artifact.
+
+### Checklist for Slice 3: Bake-off runner
+
+- [ ] Add `bakeoff.py` (`BakeoffClient` + `fetch_bakeoff_record`) with Nygard discipline (timeout, 3-strike breaker, bounded stall).
+- [ ] Greedy decode + `/no_think` for reasoning-tuned candidates; anchor-visual/inject-factual prompt.
+- [ ] Add `test_bakeoff.py`; `pytest` green (shaping, isolation, bounded-stall, prompt construction, `build_reports` scoring).
+
+### Checklist for Slice 4: Score, compare, decide
+
+- [ ] Produce a per-candidate REPORT artifact; commit curated artifacts under `docs/tasks/vlm/`.
+- [ ] `score --check-determinism` passes per captured record.
+- [ ] Decision memo picks one winner with a comparison table, license verdict, and disqualifiers; winner numbers reconcile with its artifact.
+
+## Review Readiness
+
+- [ ] No boundary-touching change lacks matching contract/fixture evidence (schema + manifest reuse verified, no profile change).
+- [ ] Live-A1 runtime parity captured where pure tests cannot (latency/RSS, injection obedience).
+- [ ] Handoff decision records the bake-off outcome, the chosen model, verification, and the follow-on adapter-build hand-off.
+
+## Stretch Goals
+
+- [ ] Capture a fourth candidate (e.g. Qwen3.5-4B GGUF) if A1 time allows — informational, non-blocking.
+- [ ] Note MiniCPM-V 4.6 fast-tier feasibility as a hand-off to the fast-tier task (do not evaluate here).
+
+## Success Criteria
+
+- [ ] Three candidates each produce a deterministic, reproducible `acx-eval/v1` REPORT over the ~10-image name-injected bake-off subset.
+- [ ] Candidates are comparable on insertion rate, Must-Right gate passes, wrong-fact signal, FKRE, and A1 latency/RSS.
+- [ ] A decision memo names exactly one winner with cited evidence, the license verdict, and recorded disqualifiers.
+- [ ] The bake-off never degrades the live demo box (concurrency 1, off-path) and never aborts the whole run on a single item/candidate failure (rg-007 bounded-stall only).
+- [ ] No `DescriptionAdapter`/`PROFILE_SPECS` productionization occurs (deferred to the follow-on).

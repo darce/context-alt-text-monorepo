@@ -236,47 +236,47 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded scope, design, identity/tenant models, describe surface, and eval-harness anchors before editing.
-- [ ] Recorded boundary ownership: additive preview response fields + additive Tenant column + new suppress model + additive Florence task (compatibility expectations in the table above).
+- [x] Loaded scope, design, identity/tenant models, describe surface, and eval-harness anchors before editing.
+- [x] Recorded boundary ownership: additive preview response fields + additive Tenant column + new suppress model + additive Florence task (compatibility expectations in the table above).
 
 ### Checklist for Slice 1: Merge core
 
-- [ ] `load_confirmed_faces` join implemented with the five filters (`user_confirmed`, `label` present, no `cluster-%` placeholder label, not dismissed, `media_id`).
-- [ ] `normalize_bbox` + `containment_match` + `merge_identities` skeleton implemented (1:1, smallest-box, area-ratio guard).
-- [ ] Unit tests: normalization resolution-independence, smallest-box selection, ambiguous→no-match; green.
+- [x] `load_confirmed_faces` join implemented with the five filters (`user_confirmed`, `label` present, no `cluster-%` placeholder label, not dismissed, `media_id`).
+- [x] `normalize_bbox` + `containment_match` + `merge_identities` skeleton implemented (1:1, smallest-box, area-ratio guard).
+- [x] Unit tests: normalization resolution-independence, smallest-box selection, ambiguous→no-match; green.
 
 ### Checklist for Slice 2: NLG reflow behind the seam (PA-03)
 
-- [ ] `ReflowRealizer` Protocol + `DeterministicNlgRealizer` with methods for R1 (article/case), R2 (subject/possessive), R3 (aggregation), R4 (coreference).
-- [ ] `PositionalFallbackRealizer` implemented and selected on absent/low-confidence grounding.
-- [ ] One unit test per rule R1–R4 + fallback + seam-swap; green.
+- [x] `ReflowRealizer` Protocol + `DeterministicNlgRealizer` with methods for R1 (article/case), R2 (subject/possessive), R3 (aggregation), R4 (coreference).
+- [x] `PositionalFallbackRealizer` implemented and selected on absent/low-confidence grounding.
+- [x] One unit test per rule R1–R4 + fallback + seam-swap; green.
 
 ### Checklist for Slice 3: Consent gate + provenance
 
-- [ ] `Tenant.naming_agreement_enabled` + `IdentityNameSuppression` added (schema edited directly, greenfield).
-- [ ] `NamingPolicy`/`resolve_naming_allowed` enforces the full name-only-when-all-hold rule; degrades to generic otherwise.
-- [ ] `NamingProvenance` on every named result; both drafts always returned; describe preview surfaces additive fields (no alt-text write).
+- [x] `Tenant.naming_agreement_enabled` + `IdentityNameSuppression` added (schema edited directly, greenfield).
+- [x] `NamingPolicy`/`resolve_naming_allowed` enforces the full name-only-when-all-hold rule; degrades to generic otherwise.
+- [x] `NamingProvenance` on every named result; both drafts always returned; describe preview surfaces additive fields (no alt-text write).
 - [x] `image-description-api.md` documents the three additive optional preview fields.
-- [ ] Policy + route tests green.
-- [ ] **PA-01 harness gate** `test_identity_merge_harness_gate.py` asserts expected-identities match, `wrong_names==[]`/`precision==1.0`, `must_right_pass`/no `policy_violation` over `golden.json`.
+- [x] Policy + route tests green.
+- [x] **PA-01 harness gate** `test_identity_merge_harness_gate.py` asserts expected-identities match, `wrong_names==[]`/`precision==1.0`, `must_right_pass`/no `policy_violation` over `golden.json`.
 
 ### Checklist for Slice 4: Florence grounding (PA-02)
 
-- [ ] `<CAPTION_TO_PHRASE_GROUNDING>` task token added to `LocalCpuDescriptionAdapter`; boxes parsed and exposed on `AdapterResult.phrase_boxes`.
-- [ ] Existing `<MORE_DETAILED_CAPTION>`/`<OD>` behavior unchanged; E19-1 callers unaffected (optional field default).
-- [ ] Coordinate-fidelity check (full-res vs. downsampled) passes; adapter test green.
+- [x] `<CAPTION_TO_PHRASE_GROUNDING>` task token added to `LocalCpuDescriptionAdapter`; boxes parsed and exposed on `AdapterResult.phrase_boxes`.
+- [x] Existing `<MORE_DETAILED_CAPTION>`/`<OD>` behavior unchanged; E19-1 callers unaffected (optional field default).
+- [x] Coordinate-fidelity check (full-res vs. downsampled) passes; adapter test green.
 
 ### Checklist for Slice 5: LocalWP demo evidence
 
-- [ ] Same-image generic-vs-named preview draft + provenance captured on LocalWP.
-- [ ] Evidence path recorded in the handoff decision (not pasted into the plan).
+- [x] Same-image generic-vs-named preview draft + provenance captured on LocalWP.
+- [x] Evidence path recorded in the handoff decision (not pasted into the plan).
 
 ## Review Readiness
 
-- [ ] No boundary-touching change (preview response, Tenant column, suppress model, Florence task) lacks matching contract-note/test evidence.
-- [ ] Named-draft correctness is regression-gated by the eval harness against `golden.json` (PA-01), not by LocalWP screenshots.
-- [ ] Runtime-parity S4 coordinate-fidelity check included where unit tests could mask real box misalignment.
-- [ ] Handoff decision records the change, verification (harness gate + deterministic tests), and the additive contract implications.
+- [x] No boundary-touching change (preview response, Tenant column, suppress model, Florence task) lacks matching contract-note/test evidence.
+- [x] Named-draft correctness is regression-gated by the eval harness against `golden.json` (PA-01), not by LocalWP screenshots.
+- [x] Runtime-parity S4 coordinate-fidelity check included where unit tests could mask real box misalignment.
+- [x] Handoff decision records the change, verification (harness gate + deterministic tests), and the additive contract implications.
 
 ## Stretch Goals
 
@@ -285,9 +285,9 @@ Proof:
 
 ## Success Criteria
 
-- [ ] Given a `media_id` with ≥1 `user_confirmed` identity and agreement on, the describe preview returns a named draft where each named region maps 1:1 to a confirmed face, plus the generic draft and provenance.
-- [ ] Ambiguous / low-confidence / suppressed / agreement-off → named draft carries **no** name (identical to generic); **never a guessed name**.
-- [ ] **PA-01 harness gate passes** on `golden.json`: expected-identities match; `identification_pr.wrong_names == []` and `precision == 1.0`; `score_caption(...).must_right_pass` True and `policy_violation` False on every scored entry (no `gated_score` zeroed by a merge-injected name).
-- [ ] Merge layer unit/integration tests pass with **no VLM dependency** (S1–S3).
-- [ ] S4 adds `<CAPTION_TO_PHRASE_GROUNDING>` to the Florence adapter with existing caption/OD behavior intact and coordinate fidelity verified.
-- [ ] S5 context-diff demo artifact (same image, generic vs. named) captured on LocalWP and referenced from the handoff decision.
+- [x] Given a `media_id` with ≥1 `user_confirmed` identity and agreement on, the describe preview returns a named draft where each named region maps 1:1 to a confirmed face, plus the generic draft and provenance.
+- [x] Ambiguous / low-confidence / suppressed / agreement-off → named draft carries **no** name (identical to generic); **never a guessed name**.
+- [x] **PA-01 harness gate passes** on `golden.json`: expected-identities match; `identification_pr.wrong_names == []` and `precision == 1.0`; `score_caption(...).must_right_pass` True and `policy_violation` False on every scored entry (no `gated_score` zeroed by a merge-injected name).
+- [x] Merge layer unit/integration tests pass with **no VLM dependency** (S1–S3).
+- [x] S4 adds `<CAPTION_TO_PHRASE_GROUNDING>` to the Florence adapter with existing caption/OD behavior intact and coordinate fidelity verified.
+- [x] S5 context-diff demo artifact (same image, generic vs. named) captured on LocalWP and referenced from the handoff decision.

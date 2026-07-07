@@ -259,7 +259,7 @@ source = { editable = "." }
 
 [package.optional-dependencies]
 dev = [
-    { name = "mcp-workstate-orchestrator" },
+    { name = "mcp-workbay-orchestrator" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "ruff" },
@@ -270,7 +270,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "mcp-workstate-orchestrator", marker = "extra == 'dev'", git = "https://github.com/darce/workstate.git?subdirectory=packages%2Fmcp-workstate-orchestrator&tag=mcp-workstate-orchestrator-v0.7.0" },
+    { name = "mcp-workbay-orchestrator", marker = "extra == 'dev'", specifier = ">=0.2.0,<0.3.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.13.0,<2.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.0.0" },
@@ -752,28 +752,32 @@ wheels = [
 ]
 
 [[package]]
-name = "mcp-workstate-handoff"
-version = "0.13.0"
+name = "mcp-workbay-handoff"
+version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastmcp" },
     { name = "pydantic" },
     { name = "tiktoken" },
-    { name = "workstate-protocol" },
+    { name = "workbay-protocol" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a0/69/67695f227e221f935fc7c16016375a65ce6d7392f5e137e19f4a2bfb74ca/mcp_workstate_handoff-0.13.0.tar.gz", hash = "sha256:d89016c073e6e62d411cb9459ad78938776f8aa520bbf085e6e38dfc4c9a1fc6", size = 257092, upload-time = "2026-06-12T04:13:46.101Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0d/c9/c05c64225a167727409756407606958b103053992afb7cf0c07fe880934b/mcp_workbay_handoff-0.2.0.tar.gz", hash = "sha256:89cd2a76633a0773d47d05448028255bf43d0fe16065e477933d1939e2b0d081", size = 300014, upload-time = "2026-06-27T02:29:35.726Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1b/0c/17d32e195bc36468aec12bc94b9695593f3d12257c7ce2300019e9888bff/mcp_workstate_handoff-0.13.0-py3-none-any.whl", hash = "sha256:d1502b1cb211344d6fc4124778091124f44ba8e3aca495324c4c8306a1dd6a39", size = 278346, upload-time = "2026-06-12T04:13:44.492Z" },
+    { url = "https://files.pythonhosted.org/packages/85/fd/995c68c6904a1ff01cbda103a8ddec2b448384785030c7e1242030f77f15/mcp_workbay_handoff-0.2.0-py3-none-any.whl", hash = "sha256:acc0aea2f06db6003fc919fcd558f2a8bbf6d7a5170f6650346560e6e1b9da79", size = 327487, upload-time = "2026-06-27T02:29:22.636Z" },
 ]
 
 [[package]]
-name = "mcp-workstate-orchestrator"
-version = "0.7.0"
-source = { git = "https://github.com/darce/workstate.git?subdirectory=packages%2Fmcp-workstate-orchestrator&tag=mcp-workstate-orchestrator-v0.7.0#ecfc6123ef53a0b30029f96564bce5a045419d1d" }
+name = "mcp-workbay-orchestrator"
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastmcp" },
-    { name = "mcp-workstate-handoff" },
-    { name = "workstate-protocol" },
+    { name = "mcp-workbay-handoff" },
+    { name = "workbay-protocol" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/95/01/df54b6f8e36b7546aa634b9a39ac68d132008ec653fad7cd66ac647819b6/mcp_workbay_orchestrator-0.2.0.tar.gz", hash = "sha256:1cd5fa2f1167c24dcd38c9c3a7d1e23af0ac83b7c4019b3371a3b4d3067e08d6", size = 197072, upload-time = "2026-06-27T02:29:36.739Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7e/de/cf831e23dcd032250606db462fdf15c92a82e16d98a7a460e6efb4a6858a/mcp_workbay_orchestrator-0.2.0-py3-none-any.whl", hash = "sha256:2d67c649b27e875f65e8f6ecaaf45bb7154bd6abf6e7abe46809fbb6d617ba14", size = 229351, upload-time = "2026-06-27T02:29:24.969Z" },
 ]
 
 [[package]]
@@ -1746,9 +1750,13 @@ wheels = [
 ]
 
 [[package]]
-name = "workstate-protocol"
-version = "0.3.0"
-source = { git = "https://github.com/darce/workstate.git?subdirectory=packages%2Fworkstate-protocol&tag=mcp-workstate-orchestrator-v0.7.0#ecfc6123ef53a0b30029f96564bce5a045419d1d" }
+name = "workbay-protocol"
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/91/ab/80be796158c94ff63a332ec3f52991d04a713894d0fc5b67c3d8342f3587/workbay_protocol-0.2.0.tar.gz", hash = "sha256:f99acc0e7c7d0b83f6349df2e7ef5880a221f35a56260fc8cb0e84212f4e9506", size = 27911, upload-time = "2026-06-27T02:29:34.743Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/09/12/b13d986efacbfde101db2c66eee5b14bd33fba08fef9060bfbedb2e9f0bc/workbay_protocol-0.2.0-py3-none-any.whl", hash = "sha256:123463ae650e6126ce943e72eb0f1c6a473a39df77bff0f9d4890890a76fd001", size = 21127, upload-time = "2026-06-27T02:29:20.009Z" },
 ]

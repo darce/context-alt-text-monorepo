@@ -2,7 +2,9 @@
 
 import hashlib
 import json
+import os
 import unicodedata
+import warnings
 
 import pytest
 
@@ -216,3 +218,57 @@ def test_non_ascii_path_resolves_across_normalization_forms(tmp_path):  # S1-07
     (images / "mock_images" / "scene-002.jpg").write_bytes(b"fake image bytes")
     manifest = load_manifest(_write_manifest(tmp_path, data), images_dir=str(images))
     assert len(manifest.entries) == 2
+
+
+# --- VLM-2C Slice 1: real seed-corpus ground truth (operator-confirmed) ---
+
+_SEED_MANIFEST = os.path.join(os.path.dirname(__file__), "seed", "golden.json")
+
+# Operator-designated stranger fixture (VLM-2C Slice 1 confirmation pass):
+# ryann-party.jpg — Ryann Wiseman + one genuine non-roster face on a
+# recognition-enabled scene (the mixed true-rejection case E19-4a consumes).
+_DESIGNATED_STRANGER_MEDIA_ID = 38
+
+
+def _load_seed_manifest() -> GoldenManifest:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RubricEmptyWarning)
+        return load_manifest(_SEED_MANIFEST)
+
+
+def test_seed_corpus_has_designated_stranger_entry():  # VLM-2C S1
+    manifest = _load_seed_manifest()
+    deltas = [
+        e
+        for e in manifest.entries
+        if e.policy.recognition_enabled and e.face_count > len(e.present_identities)
+    ]
+    assert deltas, "seed corpus must keep >=1 recognition-enabled stranger-delta entry"
+    designated = [e for e in deltas if e.media_id == _DESIGNATED_STRANGER_MEDIA_ID]
+    assert designated, (
+        f"designated stranger fixture media_id={_DESIGNATED_STRANGER_MEDIA_ID} "
+        "missing or no longer carries a stranger delta"
+    )
+    entry = designated[0]
+    assert entry.path == "mock_images/ryann-party.jpg"
+    assert entry.present_identities == ["Ryann Wiseman"]
+    assert entry.face_count - len(entry.present_identities) == 1
+
+
+def test_seed_corpus_reconciles_with_fixture_scan():  # VLM-2C S1
+    images_dir = os.environ.get("GOLDEN_IMAGES_DIR")
+    if not images_dir:
+        pytest.skip("GOLDEN_IMAGES_DIR not set (fixture bytes not vendored)")
+    from scripts.eval_harness.draft_labels import generate_draft_manifest
+
+    draft, _notes = generate_draft_manifest(images_dir)
+    manifest = _load_seed_manifest()
+    # kirstie-boat_detected.jpg is a detection-annotated near-duplicate VLM-2A
+    # removed deliberately (seed/README.md); the draft scan re-introduces it.
+    excluded = {"mock_images/kirstie-boat_detected.jpg"}
+    draft_by_path = {e["path"]: e for e in draft["entries"] if e["path"] not in excluded}
+    golden_by_path = {e.path: e for e in manifest.entries}
+    assert set(draft_by_path) == set(golden_by_path)
+    for path, golden_entry in golden_by_path.items():
+        assert draft_by_path[path]["sha256"] == golden_entry.sha256, path
+        assert draft_by_path[path]["media_id"] == golden_entry.media_id, path

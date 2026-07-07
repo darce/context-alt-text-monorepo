@@ -134,11 +134,13 @@ async def _naming_preview(
     media_id: int,
     image_bytes: bytes,
     generic_draft: str,
+    phrase_boxes,
 ) -> tuple[str, NamingProvenanceModel]:
     """Compute the named preview draft (E19-4a). Draft-only — never writes alt text.
 
-    Phrase grounding arrives in S4; until then the merge runs with no phrase
-    boxes and names via the positional fallback when eligible.
+    ``phrase_boxes`` are the adapter's caption-grounding boxes (S4); empty on
+    cache hits and for adapters without grounding, where naming degrades to
+    the positional fallback when eligible.
     """
     if session is None or tenant is None:
         return generic_draft, _provenance_model(
@@ -160,7 +162,12 @@ async def _naming_preview(
         agreement_enabled=tenant.naming_agreement_enabled,
         suppressed_roster_ids=await load_suppressed_roster_ids(session, tenant_id=tenant_uuid),
     )
-    result = merge_identities(caption=generic_draft, phrase_boxes=[], confirmed_faces=faces, policy=policy)
+    result = merge_identities(
+        caption=generic_draft,
+        phrase_boxes=list(phrase_boxes),
+        confirmed_faces=faces,
+        policy=policy,
+    )
     return result.named_draft, _provenance_model(result.provenance)
 
 
@@ -258,6 +265,7 @@ async def describe_image_multipart(
         # A deferred/stub profile (florence_large, gpu_phi4) or a missing [vlm]
         # extra: surface an actionable 503 instead of an opaque 500.
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    adapter_result = service.last_adapter_result
     named_draft, naming_provenance = await _naming_preview(
         session=session,
         tenant=tenant_record,
@@ -265,6 +273,7 @@ async def describe_image_multipart(
         media_id=envelope.media_id,
         image_bytes=image_bytes,
         generic_draft=response.alt_text_draft,
+        phrase_boxes=adapter_result.phrase_boxes if adapter_result is not None else (),
     )
     response = response.model_copy(
         update={

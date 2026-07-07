@@ -20,13 +20,16 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from scene.application.description_adapter import AdapterResult
+from scene.application.identity_merge.merge import NormalizedBox, PhraseBox
 from scene.domain.description import DescriptionAdapterKind
 
 # Florence-2 task tokens. MORE_DETAILED_CAPTION drives the caption + alt-text
-# draft; OD supplies inspectable object labels.
+# draft; OD supplies inspectable object labels; CAPTION_TO_PHRASE_GROUNDING
+# (E19-4a S4) grounds the caption's noun phrases for the identity merge.
 _CAPTION_TASK = "<MORE_DETAILED_CAPTION>"
 _OD_TASK = "<OD>"
-_DEFAULT_TASKS = (_CAPTION_TASK, _OD_TASK)
+_PHRASE_GROUNDING_TASK = "<CAPTION_TO_PHRASE_GROUNDING>"
+_DEFAULT_TASKS = (_CAPTION_TASK, _OD_TASK, _PHRASE_GROUNDING_TASK)
 _DEFAULT_MODEL_ID = "microsoft/Florence-2-base-ft"
 
 
@@ -101,10 +104,11 @@ class LocalCpuDescriptionAdapter:
         scale = self._max_edge / float(longest)
         return image.resize((max(1, int(w * scale)), max(1, int(h * scale))))
 
-    def _run_task(self, image, task: str) -> Any:
+    def _run_task(self, image, task: str, *, text_input: str | None = None) -> Any:
         import torch
 
-        inputs = self._processor(text=task, images=image, return_tensors="pt").to(self._device)
+        prompt = task if text_input is None else f"{task}{text_input}"
+        inputs = self._processor(text=prompt, images=image, return_tensors="pt").to(self._device)
         with torch.no_grad():
             generated_ids = self._model.generate(
                 input_ids=inputs["input_ids"],
@@ -116,6 +120,49 @@ class LocalCpuDescriptionAdapter:
         text = self._processor.batch_decode(generated_ids, skip_special_tokens=False)[0]
         return self._processor.post_process_generation(text, task=task, image_size=(image.width, image.height))
 
+    @staticmethod
+    def _parse_phrase_grounding(
+        parsed: Mapping[str, Any], *, caption: str, image_width: float, image_height: float
+    ) -> tuple[PhraseBox, ...]:
+        """Map Florence grounding output to the VLM-2C phrase-box shape.
+
+        Boxes arrive as pixel ``[x1, y1, x2, y2]`` in the (downsampled) frame
+        the task ran on; normalizing by that frame's W×H yields the same [0,1]
+        top-left fractions as full-res normalization (aspect preserved). Spans
+        are recovered by case-insensitive left-to-right search over the caption
+        (Florence returns labels only); an unmatched label gets span (-1, -1),
+        which the realizer treats as unverifiable and never replaces.
+        """
+        bboxes = parsed.get("bboxes") or []
+        labels = parsed.get("labels") or []
+        lowered = caption.lower()
+        cursor_by_label: dict[str, int] = {}
+        phrase_boxes: list[PhraseBox] = []
+        for bbox, label in zip(bboxes, labels, strict=False):
+            x1, y1, x2, y2 = (float(v) for v in bbox)
+            key = str(label).lower()
+            start = lowered.find(key, cursor_by_label.get(key, 0))
+            if start == -1:
+                phrase, span = str(label), (-1, -1)
+            else:
+                end = start + len(key)
+                cursor_by_label[key] = end
+                phrase, span = caption[start:end], (start, end)
+            phrase_boxes.append(
+                PhraseBox(
+                    phrase=phrase,
+                    span_start=span[0],
+                    span_end=span[1],
+                    box=NormalizedBox(
+                        x=x1 / image_width,
+                        y=y1 / image_height,
+                        width=(x2 - x1) / image_width,
+                        height=(y2 - y1) / image_height,
+                    ),
+                )
+            )
+        return tuple(phrase_boxes)
+
     def describe(self, *, image_bytes: bytes, context: Mapping[str, Any] | None) -> AdapterResult:
         from PIL import Image
 
@@ -124,7 +171,11 @@ class LocalCpuDescriptionAdapter:
 
         caption = ""
         objects: tuple[str, ...] = ()
-        for task in self._tasks:
+        phrase_boxes: tuple[PhraseBox, ...] = ()
+        # Grounding consumes the caption, so it always runs after the caption task.
+        ordered_tasks = [t for t in self._tasks if t != _PHRASE_GROUNDING_TASK]
+        run_grounding = _PHRASE_GROUNDING_TASK in self._tasks
+        for task in ordered_tasks:
             parsed = self._run_task(image, task)
             value = parsed.get(task, parsed)
             if task == _CAPTION_TASK and isinstance(value, str):
@@ -137,6 +188,14 @@ class LocalCpuDescriptionAdapter:
                     seen.setdefault(str(label), None)
                 objects = tuple(seen.keys())
 
+        if run_grounding and caption:
+            parsed = self._run_task(image, _PHRASE_GROUNDING_TASK, text_input=caption)
+            value = parsed.get(_PHRASE_GROUNDING_TASK, parsed)
+            if isinstance(value, dict):
+                phrase_boxes = self._parse_phrase_grounding(
+                    value, caption=caption, image_width=image.width, image_height=image.height
+                )
+
         if not caption:
             caption = "An image."
         return AdapterResult(
@@ -146,4 +205,5 @@ class LocalCpuDescriptionAdapter:
             alt_text_draft=caption,
             context_sources=(),
             context_applied=False,
+            phrase_boxes=phrase_boxes,
         )

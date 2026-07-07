@@ -256,7 +256,7 @@ Proof:
 - [ ] `Tenant.naming_agreement_enabled` + `IdentityNameSuppression` added (schema edited directly, greenfield).
 - [ ] `NamingPolicy`/`resolve_naming_allowed` enforces the full name-only-when-all-hold rule; degrades to generic otherwise.
 - [ ] `NamingProvenance` on every named result; both drafts always returned; describe preview surfaces additive fields (no alt-text write).
-- [ ] `image-description-api.md` documents the three additive optional preview fields.
+- [x] `image-description-api.md` documents the three additive optional preview fields.
 - [ ] Policy + route tests green.
 - [ ] **PA-01 harness gate** `test_identity_merge_harness_gate.py` asserts expected-identities match, `wrong_names==[]`/`precision==1.0`, `must_right_pass`/no `policy_violation` over `golden.json`.
 

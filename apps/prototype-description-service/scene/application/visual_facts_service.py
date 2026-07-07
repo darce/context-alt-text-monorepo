@@ -14,7 +14,7 @@ from collections.abc import Mapping
 from typing import Any, Protocol
 
 from db.models.scene import ImageDescription
-from scene.application.description_adapter import DescriptionAdapter
+from scene.application.description_adapter import AdapterResult, DescriptionAdapter
 from scene.application.description_repository import ImageDescriptionRepository
 from scene.application.hashing import compute_context_hash, compute_image_hash
 from scene.domain.description import DescriptionAdapterKind, ProviderMode, RetentionClass
@@ -67,6 +67,10 @@ class VisualFactsService:
         self._metrics = metrics
         self._retention = retention_class
         self._timeout = generation_timeout_seconds
+        # E19-4a S4: the freshly generated AdapterResult (None on cache hits).
+        # The service is constructed per request, so this is request-scoped;
+        # the route reads phrase_boxes from it for the naming preview.
+        self.last_adapter_result: AdapterResult | None = None
 
     async def describe(
         self,
@@ -101,6 +105,7 @@ class VisualFactsService:
         adapter_start = time.perf_counter()
         call = asyncio.to_thread(self._adapter.describe, image_bytes=image_bytes, context=context)
         result = await (asyncio.wait_for(call, self._timeout) if self._timeout else call)
+        self.last_adapter_result = result
         self._observe_adapter_duration(time.perf_counter() - adapter_start)
         response = self._result_to_response(
             tenant_id=tenant_id,

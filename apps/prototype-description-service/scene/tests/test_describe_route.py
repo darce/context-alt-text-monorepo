@@ -352,6 +352,51 @@ def test_suppress_list_blocks_naming_by_roster_id():
         assert body["naming_provenance"]["injected_names"] == []
 
 
+class _GroundedAdapter:
+    """Adapter exposing phrase boxes (S4): drives the NLG span-replacement path."""
+
+    kind = DescriptionAdapterKind.SEEDED
+    model_id = "grounded-fake"
+    model_version = "1"
+    prompt_or_task_version = "1"
+
+    def describe(self, *, image_bytes, context):
+        from scene.application.identity_merge import NormalizedBox, PhraseBox
+
+        caption = "A man stands by the window."
+        return AdapterResult(
+            caption=caption,
+            objects=(),
+            ocr_text=None,
+            alt_text_draft=caption,
+            context_sources=(),
+            context_applied=False,
+            phrase_boxes=(
+                PhraseBox(
+                    phrase="A man",
+                    span_start=0,
+                    span_end=5,
+                    box=NormalizedBox(x=0.0, y=0.0, width=0.5, height=1.0),
+                ),
+            ),
+        )
+
+
+def test_grounded_adapter_names_via_span_replacement():
+    # Face bbox (10,10,20,20) in a 100x50 PNG → center (0.2, 0.4), inside the
+    # phrase box → NLG replacement, not the positional fallback.
+    with _client(
+        adapter=_GroundedAdapter(),
+        seed=_seed_confirmed_identity("Daniel", roster_id=uuid.uuid4()),
+    ) as client:
+        r = _post_png(client, TENANT_ID)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["named_draft"] == "Daniel stands by the window."
+        assert body["generic_draft"] == "A man stands by the window."
+        assert [n["name"] for n in body["naming_provenance"]["injected_names"]] == ["Daniel"]
+
+
 def test_stub_profile_returns_503_with_reason():
     # A deferred/stub profile (florence_large, gpu_phi4) resolves to a fail-closed
     # UnavailableDescriptionAdapter; the route must surface its reason as 503, not

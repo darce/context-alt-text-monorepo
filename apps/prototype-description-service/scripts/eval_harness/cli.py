@@ -27,6 +27,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -64,6 +65,18 @@ class BoundedStallError(RuntimeError):
         self.partial_record = partial_record
 
 
+class MaxCostExceededError(RuntimeError):
+    """Aborted before a paid provider call would push estimated spend past ``--max-cost`` (E20-11).
+
+    Like ``BoundedStallError``, carries the partial record so the capped run is
+    still scoreable evidence.
+    """
+
+    def __init__(self, message: str, partial_record: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.partial_record = partial_record
+
+
 def fetch_run_record(
     manifest: GoldenManifest,
     images_dir: str,
@@ -73,23 +86,38 @@ def fetch_run_record(
     limit: int | None = None,
     stall_limit: int = DEFAULT_STALL_LIMIT,
     started_at: str = "1970-01-01T00:00:00Z",
+    provider: str | None = None,
+    cost_per_image_usd: float | None = None,
+    max_cost_usd: float | None = None,
 ) -> dict[str, Any]:
-    """Walk manifest entries sequentially; isolate per-item failures; bound stalls."""
+    """Walk manifest entries sequentially; isolate per-item failures; bound stalls.
+
+    E20-11: ``provider`` stamps the hosted description profile under test into the
+    provenance; ``cost_per_image_usd`` (the provider's published per-request price)
+    yields ``est_cost_usd``; ``max_cost_usd`` aborts *before* the paid call that
+    would exceed the cap.
+    """
     images_root = Path(images_dir)
     entries = manifest.entries[:limit] if limit else manifest.entries
     items: list[dict[str, Any]] = []
     consecutive_failures = 0
 
     def _record(aborted: bool = False) -> dict[str, Any]:
+        provenance: dict[str, Any] = {
+            "manifest_sha256": _manifest_sha(manifest),
+            "base_url": getattr(client, "base_url", "unknown"),
+            "head_sha": head_sha,
+            "started_at": started_at,
+        }
+        if provider is not None:
+            provenance["provider"] = provider
+        if cost_per_image_usd is not None:
+            provenance["cost_per_image_usd"] = cost_per_image_usd
+            provenance["est_cost_usd"] = round(cost_per_image_usd * len(items), 6)
         record: dict[str, Any] = {
             "schema": SCHEMA,
             "kind": DocKind.RUN_RECORD.value,
-            "provenance": {
-                "manifest_sha256": _manifest_sha(manifest),
-                "base_url": getattr(client, "base_url", "unknown"),
-                "head_sha": head_sha,
-                "started_at": started_at,
-            },
+            "provenance": provenance,
             "items": items,
         }
         if aborted:
@@ -97,6 +125,14 @@ def fetch_run_record(
         return record
 
     for entry in entries:
+        if max_cost_usd is not None and cost_per_image_usd is not None:
+            projected = cost_per_image_usd * (len(items) + 1)
+            if projected > max_cost_usd:
+                raise MaxCostExceededError(
+                    f"next paid call would raise estimated spend to ${projected:.4f} "
+                    f"(> --max-cost ${max_cost_usd:.4f}); aborting before {entry.path}",
+                    partial_record=_record(aborted=True),
+                )
         image_path = images_root / entry.path
         item: dict[str, Any] = {
             "media_id": entry.media_id,
@@ -105,7 +141,9 @@ def fetch_run_record(
             "identities": [],
             "face_count": 0,
             "error": None,
+            "latency_s": None,
         }
+        item_started = time.monotonic()
         try:
             image_bytes = image_path.read_bytes()
             item["describe"] = client.describe(
@@ -122,6 +160,7 @@ def fetch_run_record(
             item["face_count"] = face_count
         except Exception as exc:  # noqa: BLE001 — per-item isolation is the contract (rg-007)
             item["error"] = f"{type(exc).__name__}: {exc}"
+            item["latency_s"] = round(time.monotonic() - item_started, 3)
             consecutive_failures += 1
             if consecutive_failures >= stall_limit:
                 items.append(item)
@@ -130,6 +169,7 @@ def fetch_run_record(
                     partial_record=_record(aborted=True),
                 ) from exc
         else:
+            item["latency_s"] = round(time.monotonic() - item_started, 3)
             consecutive_failures = 0
         items.append(item)
 
@@ -251,36 +291,45 @@ def _reject_llm_judge(args: argparse.Namespace) -> None:
         sys.exit("--llm-judge is a stub: the LLM-judge tier is not implemented in this MVP (§6c)")
 
 
-def _cmd_fetch(args: argparse.Namespace) -> str:
+def _cmd_fetch(args: argparse.Namespace) -> list[str]:
+    """Fetch one run record per ``--provider`` value (or a single unstamped run)."""
     _reject_llm_judge(args)
     base_url, api_key, tenant_id = _require_live_env()
     images_dir = _images_dir()
     manifest = load_manifest(args.manifest, images_dir=images_dir)
-    client = RemoteSceneClient(base_url=base_url, api_key=api_key, tenant_id=tenant_id)
-    started_at = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    providers: list[str | None] = args.provider or [None]
     OUT_DIR.mkdir(exist_ok=True)
-    stamp = started_at.replace(":", "").replace("-", "").replace("T", "-").rstrip("Z")
-    record_path = OUT_DIR / f"run-{stamp}.json"
-    try:
-        record = fetch_run_record(
-            manifest,
-            images_dir,
-            client,
-            head_sha=_head_sha(),
-            limit=args.limit,
-            stall_limit=args.stall_limit,
-            started_at=started_at,
-        )
-    except BoundedStallError as exc:
-        aborted_path = OUT_DIR / f"run-{stamp}-aborted.json"
-        aborted_path.write_text(json.dumps(exc.partial_record, indent=2, sort_keys=True) + "\n")
-        sys.exit(f"BoundedStallError: {exc} — partial record saved to {aborted_path}")
-    finally:
-        client.close()
-    record_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+    record_paths: list[str] = []
+    for provider in providers:
+        client = RemoteSceneClient(base_url=base_url, api_key=api_key, tenant_id=tenant_id)
+        started_at = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        stamp = started_at.replace(":", "").replace("-", "").replace("T", "-").rstrip("Z")
+        suffix = f"-{provider}" if provider else ""
+        record_path = OUT_DIR / f"run-{stamp}{suffix}.json"
+        try:
+            record = fetch_run_record(
+                manifest,
+                images_dir,
+                client,
+                head_sha=_head_sha(),
+                limit=args.limit,
+                stall_limit=args.stall_limit,
+                started_at=started_at,
+                provider=provider,
+                cost_per_image_usd=args.cost_per_image,
+                max_cost_usd=args.max_cost,
+            )
+        except (BoundedStallError, MaxCostExceededError) as exc:
+            aborted_path = OUT_DIR / f"run-{stamp}{suffix}-aborted.json"
+            aborted_path.write_text(json.dumps(exc.partial_record, indent=2, sort_keys=True) + "\n")
+            sys.exit(f"{type(exc).__name__}: {exc} — partial record saved to {aborted_path}")
+        finally:
+            client.close()
+        record_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+        record_paths.append(str(record_path))
+        print(record_path)
     prune_out_dir(str(OUT_DIR), keep=args.keep)
-    print(record_path)
-    return str(record_path)
+    return record_paths
 
 
 def _cmd_score(args: argparse.Namespace) -> None:
@@ -315,9 +364,9 @@ def _cmd_score(args: argparse.Namespace) -> None:
 
 
 def _cmd_run(args: argparse.Namespace) -> None:
-    record_path = _cmd_fetch(args)
-    args.run_record = record_path
-    _cmd_score(args)
+    for record_path in _cmd_fetch(args):
+        args.run_record = record_path
+        _cmd_score(args)
 
 
 def _cmd_seed_roster(args: argparse.Namespace) -> None:
@@ -343,6 +392,24 @@ def main(argv: list[str] | None = None) -> None:
         p.add_argument("--keep", type=_keep_arg, default=DEFAULT_KEEP)
         p.add_argument("--llm-judge", action="store_true", help="stub — not implemented (§6c)")
         p.add_argument("--check-determinism", action="store_true")
+        p.add_argument(
+            "--provider",
+            action="append",
+            default=None,
+            help="hosted description profile under test; repeat for a provider matrix (one record per value)",
+        )
+        p.add_argument(
+            "--cost-per-image",
+            type=float,
+            default=None,
+            help="provider's published per-request price (USD); stamps est_cost_usd into provenance",
+        )
+        p.add_argument(
+            "--max-cost",
+            type=float,
+            default=None,
+            help="abort before any paid call that would push estimated spend (USD) past this cap",
+        )
 
     fetch_p = sub.add_parser("fetch", help="manifest -> remote calls -> run record")
     _common(fetch_p)
@@ -364,7 +431,7 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     try:
         args.func(args)
-    except (ManifestError, RemoteClientError, BoundedStallError, ReportError) as exc:
+    except (ManifestError, RemoteClientError, BoundedStallError, MaxCostExceededError, ReportError) as exc:
         sys.exit(f"{type(exc).__name__}: {exc}")
 
 

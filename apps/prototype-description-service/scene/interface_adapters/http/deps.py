@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import os
+
 from scene.application.description_adapter import DescriptionAdapter
 from scene.application.seeded_adapter import SeededDescriptionAdapter
 from scene.config.profiles import DescriptionProfile, get_profile_spec
 from scene.config.settings import DescriptionSettings
+from scene.domain.description import DescriptionAdapterKind
 from scene.infrastructure.vlm.unavailable_adapter import UnavailableDescriptionAdapter
 
 
@@ -30,6 +33,25 @@ def get_description_adapter() -> DescriptionAdapter:
         return SeededDescriptionAdapter(
             model_version=settings.model_version,
             prompt_or_task_version=settings.prompt_or_task_version,
+        )
+
+    if spec.adapter_kind is DescriptionAdapterKind.HOSTED_PROVIDER:
+        # Registered available=False; usable only behind the explicit opt-in env
+        # because image bytes leave the service boundary (E20-11).
+        if os.environ.get("ACX_HOSTED_PROVIDER_OPTIN") == "1":
+            from scene.infrastructure.provider.hosted_provider_adapter import (
+                HostedProviderDescriptionAdapter,
+            )
+
+            return HostedProviderDescriptionAdapter(
+                model_id=spec.model_id or "unavailable",
+                model_version=spec.model_version,
+            )
+        return UnavailableDescriptionAdapter(
+            spec.unavailable_reason or f"profile '{spec.profile.value}' is not available",
+            kind=spec.adapter_kind,
+            model_id=spec.model_id or "unavailable",
+            model_version=spec.model_version,
         )
 
     if not spec.available:

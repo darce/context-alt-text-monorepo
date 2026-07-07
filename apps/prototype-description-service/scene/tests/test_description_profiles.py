@@ -9,7 +9,7 @@ an UnavailableDescriptionAdapter whose ``describe`` raises a clear error.
 
 import pytest
 
-from scene.application.description_adapter import DescriptionAdapter
+from scene.application.description_adapter import AdapterResult, DescriptionAdapter
 from scene.config.profiles import (
     PROFILE_SPECS,
     DescriptionProfile,
@@ -17,6 +17,11 @@ from scene.config.profiles import (
 )
 from scene.config.settings import DescriptionSettings
 from scene.domain.description import DescriptionAdapterKind
+from scene.infrastructure.provider.hosted_provider_adapter import (
+    FakeHostedProviderAdapter,
+    HostedProviderDescriptionAdapter,
+    HostedProviderError,
+)
 from scene.infrastructure.vlm.unavailable_adapter import (
     DescriptionAdapterUnavailableError,
     UnavailableDescriptionAdapter,
@@ -32,12 +37,13 @@ def _reset_singleton():
 # ----------------------------------------------------------------- the switch
 
 
-def test_profile_enum_has_exactly_the_four_operator_options():
+def test_profile_enum_has_exactly_the_five_operator_options():
     assert [p.value for p in DescriptionProfile] == [
         "seeded",
         "florence_small",
         "florence_large",
         "gpu_phi4",
+        "hosted_gpt4o",
     ]
 
 
@@ -130,6 +136,72 @@ def test_resolve_stub_profiles_are_fail_closed(monkeypatch, profile, kind):
     assert isinstance(adapter, UnavailableDescriptionAdapter)
     assert adapter.kind is kind
     with pytest.raises(DescriptionAdapterUnavailableError):
+        adapter.describe(image_bytes=b"x", context=None)
+
+
+# --------------------------------------------------- hosted provider (E20-11)
+
+
+def test_hosted_profile_is_registered_fail_closed():
+    spec = get_profile_spec(DescriptionProfile.HOSTED_GPT4O)
+    assert spec.available is False
+    assert spec.adapter_kind is DescriptionAdapterKind.HOSTED_PROVIDER
+    assert spec.model_id == "gpt-4o-mini"
+    assert spec.unavailable_reason and "ACX_HOSTED_PROVIDER_OPTIN" in spec.unavailable_reason
+
+
+def test_resolve_hosted_is_fail_closed_without_optin(monkeypatch):
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "hosted_gpt4o")
+    monkeypatch.delenv("ACX_HOSTED_PROVIDER_OPTIN", raising=False)
+    from scene.interface_adapters.http.deps import get_description_adapter
+
+    adapter = get_description_adapter()
+    assert isinstance(adapter, UnavailableDescriptionAdapter)
+    assert adapter.kind is DescriptionAdapterKind.HOSTED_PROVIDER
+    with pytest.raises(DescriptionAdapterUnavailableError):
+        adapter.describe(image_bytes=b"x", context=None)
+
+
+def test_resolve_hosted_optin_yields_hosted_adapter(monkeypatch):
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "hosted_gpt4o")
+    monkeypatch.setenv("ACX_HOSTED_PROVIDER_OPTIN", "1")
+    from scene.interface_adapters.http.deps import get_description_adapter
+
+    adapter = get_description_adapter()
+    assert isinstance(adapter, HostedProviderDescriptionAdapter)
+    assert isinstance(adapter, DescriptionAdapter)
+    assert adapter.kind is DescriptionAdapterKind.HOSTED_PROVIDER
+    assert adapter.model_id == "gpt-4o-mini"
+
+
+def test_default_profile_unaffected_by_hosted_optin(monkeypatch):
+    monkeypatch.delenv("ACX_DESCRIPTION_ADAPTER", raising=False)
+    monkeypatch.setenv("ACX_HOSTED_PROVIDER_OPTIN", "1")
+    from scene.interface_adapters.http.deps import get_description_adapter
+
+    assert get_description_adapter().kind is DescriptionAdapterKind.SEEDED
+
+
+def test_fake_hosted_adapter_satisfies_protocol_with_canned_result():
+    fake = FakeHostedProviderAdapter()
+    assert isinstance(fake, DescriptionAdapter)
+    assert fake.kind is DescriptionAdapterKind.HOSTED_PROVIDER
+    result = fake.describe(image_bytes=b"x", context=None)
+    assert isinstance(result, AdapterResult)
+    assert result.caption
+
+
+def test_hosted_adapter_fails_closed_on_provider_error():
+    def _boom(*, image_bytes, context, timeout_s):
+        raise RuntimeError("provider 500")
+
+    adapter = HostedProviderDescriptionAdapter(
+        model_id="gpt-4o-mini",
+        model_version="gpt-4o-mini",
+        prompt_or_task_version="1",
+        invoke=_boom,
+    )
+    with pytest.raises(HostedProviderError):
         adapter.describe(image_bytes=b"x", context=None)
 
 

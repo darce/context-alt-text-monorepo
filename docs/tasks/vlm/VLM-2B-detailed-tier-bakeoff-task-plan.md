@@ -138,7 +138,8 @@ Add a **new transport client** to the existing eval harness and inject it into t
 
 Changes:
 
-- Add `scene/tests/seed/bakeoff_golden.json` — ~10 images spanning assessment §6b discriminating classes (single roster person, two-roster-plus-strangers association, policy-disabled, abstract/hallucination-pressure, legible-text, context-conflicts-pixels, no-context degradation), each with a real name-injected `context_pack`, `face_count` (≥ `len(present_identities)` per the `GoldenEntry` validator), `present_identities`, `must_right`/`easy_wrong`, `policy`.
+- Add `scene/tests/seed/bakeoff_golden.json` — ~10 images spanning assessment §6b discriminating classes (single roster person, two-roster-plus-strangers association, policy-disabled, abstract/hallucination-pressure, ~~legible-text~~, context-conflicts-pixels, no-context degradation), each with a real name-injected `context_pack`, `face_count` (≥ `len(present_identities)` per the `GoldenEntry` validator), `present_identities`, `must_right`/`easy_wrong`, `policy`.
+  - **Scope note (Slice 1, dropped class):** *legible-text* is intentionally **not** covered as a measured class. The reused golden corpus (shared with VLM-2C — do not fork ground truth) has no committed image with legible in-image text paired with a name-injected context pack; the only text-subject image, `nina-machiavelli.jpeg`, is dual-purposed as the no-context degradation entry (empty `context_pack`). Adding a scoreable legible-text entry would require a new golden image + rubric, out of scope for a throwaway bake-off whose winner does not turn on text transcription. The other six classes remain covered and pinned by `test_manifest_covers_discriminating_classes`.
 - Document the image-bytes bootstrap (`GOLDEN_IMAGES_DIR`) in the seed README if the subset draws new images.
 
 Proof:

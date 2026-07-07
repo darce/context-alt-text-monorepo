@@ -139,9 +139,7 @@
         "description": "A quiet afternoon at the hotel pool during the summer trip."
       },
       "must_right": [],
-      "easy_wrong": [
-        "Maria Correonero"
-      ],
+      "easy_wrong": [],
       "policy": {
         "recognition_enabled": false
       }

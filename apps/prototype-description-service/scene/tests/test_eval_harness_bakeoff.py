@@ -20,9 +20,10 @@ from pathlib import Path
 import httpx
 import pytest
 
-from scripts.eval_harness.bakeoff import BakeoffClient
-from scripts.eval_harness.cli import fetch_run_record
+from scripts.eval_harness.bakeoff import BakeoffClient, _extract_caption
+from scripts.eval_harness.cli import BoundedStallError, fetch_run_record
 from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest, load_manifest
+from scripts.eval_harness.remote_client import RemoteClientError
 from scripts.eval_harness.report import build_reports
 
 BAKEOFF_MANIFEST = Path(__file__).parent / "seed" / "bakeoff_golden.json"
@@ -76,6 +77,11 @@ def test_policy_disabled_trap_exists_and_leaks_no_names(manifest: GoldenManifest
         text = _context_text(entry)
         for name in entry.present_identities:
             assert name not in text, f"{entry.path}: policy-disabled entry leaks {name!r} into context"
+        # policy is the sole disabled-naming trap; a must_right on a policy-disabled entry is
+        # self-contradictory ground truth (score_caption zeroes must_right when recognition is off).
+        assert not entry.must_right, (
+            f"{entry.path}: policy-disabled entry must not carry a must_right name — the gate can never demand it"
+        )
 
 
 def test_no_context_degradation_entry_exists(manifest: GoldenManifest) -> None:
@@ -91,10 +97,37 @@ def test_rubrics_are_not_vacuous(manifest: GoldenManifest) -> None:
 @pytest.mark.filterwarnings("ignore::scripts.eval_harness.manifest.RubricEmptyWarning")
 def test_entries_reuse_golden_corpus_images(manifest: GoldenManifest) -> None:
     golden = load_manifest(str(GOLDEN_MANIFEST))
-    golden_by_path = {e.path: e.sha256 for e in golden.entries}
+    golden_by_path = {e.path: e for e in golden.entries}
     for entry in manifest.entries:
         assert entry.path in golden_by_path, f"{entry.path}: not in golden corpus (new image needs README bootstrap)"
-        assert entry.sha256 == golden_by_path[entry.path], f"{entry.path}: sha256 drifted from golden corpus"
+        gold = golden_by_path[entry.path]
+        # Do not fork ground truth: image bytes AND identity labels must match the golden corpus,
+        # since the analyze contract keys uploads/identity reads by media_id (a drifted id would
+        # misattribute identities in any future non-stub run).
+        assert entry.sha256 == gold.sha256, f"{entry.path}: sha256 drifted from golden corpus"
+        assert entry.media_id == gold.media_id, f"{entry.path}: media_id drifted from golden corpus"
+        assert entry.face_count == gold.face_count, f"{entry.path}: face_count drifted from golden corpus"
+        assert entry.present_identities == gold.present_identities, (
+            f"{entry.path}: present_identities drifted from golden corpus"
+        )
+
+
+def test_manifest_covers_discriminating_classes(manifest: GoldenManifest) -> None:
+    """Pin the §6b discriminating classes so a later 'reuse VLM-2C packs' edit cannot silently
+    delete the entries that give the bake-off its discriminating power."""
+    entries = manifest.entries
+    # two-roster-plus-strangers association: more faces than named present identities.
+    assert any(e.face_count > len(e.present_identities) and len(e.present_identities) >= 2 for e in entries), (
+        "manifest lost its multi-person-plus-strangers association entry"
+    )
+    # abstract / hallucination-pressure: no faces but an attribution must_right.
+    assert any(e.face_count == 0 and e.must_right for e in entries), (
+        "manifest lost its abstract/attribution (face_count 0 + must_right) entry"
+    )
+    # context-conflicts-pixels: the plane-crash entry whose context labels a garden picnic.
+    assert any(e.path.endswith("mcm-planecrash.jpg") for e in entries), (
+        "manifest lost its context-conflicts-pixels (mcm-planecrash) entry"
+    )
 
 
 # --- Slice 3: BakeoffClient transport (stubbed endpoint, no network) ---
@@ -209,3 +242,107 @@ def test_fetch_run_record_with_bakeoff_client_scores_deterministically(tmp_path:
     scored = json.loads(first[0])
     assert scored["caption"]["insertion_rate"] == 1.0
     assert "qwen3-vl-4b-instruct" in scored["provenance"]["model"]["model_ids"]
+
+
+# --- Slice 3: extraction + transport failure modes ---
+
+
+def test_extract_caption_reasoning_only_names_reasoning_content() -> None:
+    """The observed live MiniCPM failure: 200 with empty content + filled reasoning_content."""
+    payload = {"choices": [{"message": {"content": "", "reasoning_content": "long chain of thought"}}]}
+    with pytest.raises(RemoteClientError, match="reasoning_content"):
+        _extract_caption(payload)
+
+
+def test_extract_caption_content_none_is_empty_error() -> None:
+    payload = {"choices": [{"message": {"content": None}}]}
+    with pytest.raises(RemoteClientError, match="empty caption"):
+        _extract_caption(payload)
+
+
+def test_extract_caption_joins_content_parts_array() -> None:
+    payload = {
+        "choices": [{"message": {"content": [{"type": "text", "text": "Caitlin"}, {"type": "text", "text": "Weaver"}]}}]
+    }
+    assert _extract_caption(payload) == "Caitlin Weaver"
+
+
+def test_timeout_wires_through_to_httpx_client() -> None:
+    """--timeout must reach the underlying httpx client, not silently fall back to the 60s default."""
+    client = BakeoffClient(
+        base_url="http://candidate.test:8080",
+        model_id="qwen3-vl-4b-instruct",
+        timeout_s=900.0,
+        transport=_chat_transport([]),
+    )
+    try:
+        assert client._client.timeout.read == 900.0
+    finally:
+        client.close()
+
+
+def _status_transport(status: int, json_body: dict | None = None) -> httpx.MockTransport:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, json=json_body if json_body is not None else {"error": "boom"})
+
+    return httpx.MockTransport(handler)
+
+
+def test_fetch_run_record_surfaces_transport_error_as_per_item_error(tmp_path: Path) -> None:
+    """A non-2xx from the candidate must isolate to a per-item error string, not crash the walk."""
+    manifest = GoldenManifest.model_validate(
+        {
+            "manifest_version": 1,
+            "roster": ["Caitlin Weaver"],
+            "entries": [
+                {
+                    "path": "img.jpg",
+                    "sha256": "0" * 64,
+                    "media_id": 7,
+                    "face_count": 1,
+                    "present_identities": ["Caitlin Weaver"],
+                    "context_pack": {"caption": "Caitlin Weaver in Antarctica."},
+                    "must_right": ["Caitlin Weaver"],
+                    "easy_wrong": [],
+                    "policy": {"recognition_enabled": True},
+                }
+            ],
+        }
+    )
+    (tmp_path / "img.jpg").write_bytes(b"fake image bytes")
+    client = BakeoffClient(base_url="http://candidate.test:8080", model_id="m", transport=_status_transport(500))
+    try:
+        record = fetch_run_record(manifest, str(tmp_path), client, head_sha="deadbeef")
+    finally:
+        client.close()
+    assert record["items"][0]["describe"] is None
+    assert record["items"][0]["error"] is not None
+    assert "RemoteClientError" in record["items"][0]["error"]
+
+
+def test_fetch_run_record_bounded_stall_aborts_on_repeated_failures(tmp_path: Path) -> None:
+    entries = []
+    for i in range(6):
+        (tmp_path / f"img{i}.jpg").write_bytes(b"fake image bytes")
+        entries.append(
+            {
+                "path": f"img{i}.jpg",
+                "sha256": f"{i}" * 64,
+                "media_id": 100 + i,
+                "face_count": 0,
+                "present_identities": [],
+                "context_pack": {"caption": "x"},
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+            }
+        )
+    manifest = GoldenManifest.model_validate({"manifest_version": 1, "roster": ["Caitlin Weaver"], "entries": entries})
+    client = BakeoffClient(base_url="http://candidate.test:8080", model_id="m", transport=_status_transport(500))
+    try:
+        with pytest.raises(BoundedStallError) as excinfo:
+            fetch_run_record(manifest, str(tmp_path), client, head_sha="deadbeef", stall_limit=3)
+    finally:
+        client.close()
+    assert excinfo.value.partial_record["aborted"] is True
+    assert all(item["error"] is not None for item in excinfo.value.partial_record["items"])

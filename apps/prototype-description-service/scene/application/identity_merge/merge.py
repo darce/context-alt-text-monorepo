@@ -132,15 +132,36 @@ def merge_identities(
     caption: str,
     phrase_boxes: list[PhraseBox],
     confirmed_faces: list[ConfirmedFace],
+    realizer: Any | None = None,
 ) -> MergeResult:
     """Produce both drafts plus 1:1 name↔region associations.
 
-    Slice 1 skeleton: the named draft equals the generic draft (the untouched
-    caption); reflow arrives with the realizer seam in Slice 2.
+    Realizer selection lives here, behind the ``ReflowRealizer`` seam — no
+    inline mode ladder inside realizers. An injected ``realizer`` always wins;
+    otherwise: grounded associations → ``DeterministicNlgRealizer``; no phrase
+    boxes at all → ``PositionalFallbackRealizer`` (Approach B); phrase boxes
+    present but matching ambiguous/empty → generic (never guess).
     """
+    # Function-level import: realizer.py imports the dataclasses from this
+    # module, so the seam is bound late to keep the package acyclic.
+    from scene.application.identity_merge.realizer import (
+        DeterministicNlgRealizer,
+        PositionalFallbackRealizer,
+    )
+
     associations = containment_match(confirmed_faces, phrase_boxes)
+    if realizer is None:
+        if associations:
+            realizer = DeterministicNlgRealizer()
+        elif not phrase_boxes and confirmed_faces:
+            realizer = PositionalFallbackRealizer()
+    named_draft = (
+        realizer.realize(caption=caption, associations=associations, confirmed_faces=confirmed_faces)
+        if realizer is not None
+        else caption
+    )
     return MergeResult(
         generic_draft=caption,
-        named_draft=caption,
+        named_draft=named_draft,
         associations=tuple(associations),
     )

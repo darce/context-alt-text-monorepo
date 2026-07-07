@@ -59,10 +59,13 @@ nothing here writes `_wp_attachment_image_alt`, that write path is E19-2):
   (agreement off, suppressed, ambiguous, low confidence, DB absent). Never a
   guessed name.
 - `naming_provenance` (`object|null`) — `injected_names[]` (`name`,
-  `cluster_id`, `roster_id`, `match_confidence`), `naming_allowed` (bool), and
-  `reason` ∈ `{agreement_disabled, db_unavailable, image_unreadable,
-  no_confirmed_identities, no_eligible_identities, ambiguous_grounding, null}`
-  when the draft stayed generic.
+  `cluster_id`, `roster_id`, `detection_confidence` — the face detector's
+  score for the matched region, not a face↔phrase match strength),
+  `naming_allowed` (bool), `mode` ∈ `{grounded, positional, null}` (span
+  replacement vs. appended "Pictured from left" sentence), and `reason` ∈
+  `{agreement_disabled, db_unavailable, image_unreadable,
+  no_confirmed_identities, no_eligible_identities, ambiguous_grounding,
+  merge_error, null}` when the draft stayed generic.
 
 Naming is gated tenant-side by `tenants.naming_agreement_enabled` plus the
 per-`roster_id` `identity_name_suppressions` list.

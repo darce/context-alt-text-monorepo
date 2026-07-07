@@ -96,7 +96,7 @@ class TestMergeWithPolicy:
         assert injected.name == "Daniel"
         assert injected.cluster_id == "cluster-id-Daniel"
         assert injected.roster_id == "roster-1"
-        assert injected.match_confidence == 0.95
+        assert injected.detection_confidence == 0.95
 
     def test_no_confirmed_faces_reason(self):
         policy = NamingPolicy(agreement_enabled=True, suppressed_roster_ids=frozenset())

@@ -28,6 +28,14 @@ class NamingSkipReason(StrEnum):
     NO_CONFIRMED_IDENTITIES = "no_confirmed_identities"
     NO_ELIGIBLE_IDENTITIES = "no_eligible_identities"
     AMBIGUOUS_GROUNDING = "ambiguous_grounding"
+    MERGE_ERROR = "merge_error"
+
+
+class NamingMode(StrEnum):
+    """How the named draft was realized. Wire values are the enum values."""
+
+    GROUNDED = "grounded"
+    POSITIONAL = "positional"
 
 
 @dataclass(frozen=True)
@@ -41,12 +49,17 @@ class NamingPolicy:
 
 @dataclass(frozen=True)
 class InjectedName:
-    """One name actually inserted into the named draft, with its source."""
+    """One name actually inserted into the named draft, with its source.
+
+    ``detection_confidence`` is the face detector's score for the matched
+    region (``MediaIdentity.confidence``) — honest naming: it is not a
+    face↔phrase match strength.
+    """
 
     name: str
     cluster_id: Any
     roster_id: Any | None
-    match_confidence: float
+    detection_confidence: float
 
 
 @dataclass(frozen=True)
@@ -56,12 +69,20 @@ class NamingProvenance:
     injected_names: tuple[InjectedName, ...] = field(default_factory=tuple)
     naming_allowed: bool = False
     reason: NamingSkipReason | None = None
+    mode: NamingMode | None = None
 
 
 def resolve_naming_allowed(face: ConfirmedFace, policy: NamingPolicy) -> bool:
-    """Per-face consent gate. The join already guarantees confirmed + labeled."""
+    """Per-face consent gate. The join already guarantees confirmed + labeled.
+
+    A face without a ``roster_id`` is never nameable: the per-roster suppress
+    list is the only per-person opt-out, so a roster-less identity would be
+    unsuppressable — consent must remain revocable for every named person.
+    """
     if not policy.agreement_enabled:
         return False
-    if face.roster_id is not None and face.roster_id in policy.suppressed_roster_ids:
+    if face.roster_id is None:
+        return False
+    if face.roster_id in policy.suppressed_roster_ids:
         return False
     return face.detection_confidence >= policy.min_detection_confidence

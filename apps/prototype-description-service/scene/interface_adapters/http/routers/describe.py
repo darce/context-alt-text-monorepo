@@ -117,12 +117,13 @@ def _provenance_model(provenance) -> NamingProvenanceModel:
                 name=n.name,
                 cluster_id=str(n.cluster_id),
                 roster_id=str(n.roster_id) if n.roster_id is not None else None,
-                match_confidence=n.match_confidence,
+                detection_confidence=n.detection_confidence,
             )
             for n in provenance.injected_names
         ],
         naming_allowed=provenance.naming_allowed,
         reason=str(provenance.reason) if provenance.reason is not None else None,
+        mode=str(provenance.mode) if provenance.mode is not None else None,
     )
 
 
@@ -146,29 +147,34 @@ async def _naming_preview(
         return generic_draft, _provenance_model(
             NamingProvenance(naming_allowed=False, reason=NamingSkipReason.DB_UNAVAILABLE)
         )
-    dims = _image_dimensions(image_bytes)
-    if dims is None:
-        return generic_draft, _provenance_model(
-            NamingProvenance(naming_allowed=False, reason=NamingSkipReason.IMAGE_UNREADABLE)
+    try:
+        dims = _image_dimensions(image_bytes)
+        if dims is None:
+            return generic_draft, _provenance_model(
+                NamingProvenance(naming_allowed=False, reason=NamingSkipReason.IMAGE_UNREADABLE)
+            )
+        faces = await load_confirmed_faces(
+            session,
+            tenant_id=tenant_uuid,
+            media_id=media_id,
+            image_width=dims[0],
+            image_height=dims[1],
         )
-    faces = await load_confirmed_faces(
-        session,
-        tenant_id=tenant_uuid,
-        media_id=media_id,
-        image_width=dims[0],
-        image_height=dims[1],
-    )
-    policy = NamingPolicy(
-        agreement_enabled=tenant.naming_agreement_enabled,
-        suppressed_roster_ids=await load_suppressed_roster_ids(session, tenant_id=tenant_uuid),
-    )
-    result = merge_identities(
-        caption=generic_draft,
-        phrase_boxes=list(phrase_boxes),
-        confirmed_faces=faces,
-        policy=policy,
-    )
-    return result.named_draft, _provenance_model(result.provenance)
+        policy = NamingPolicy(
+            agreement_enabled=tenant.naming_agreement_enabled,
+            suppressed_roster_ids=await load_suppressed_roster_ids(session, tenant_id=tenant_uuid),
+        )
+        result = merge_identities(
+            caption=generic_draft,
+            phrase_boxes=list(phrase_boxes),
+            confirmed_faces=faces,
+            policy=policy,
+        )
+        return result.named_draft, _provenance_model(result.provenance)
+    except Exception:  # noqa: BLE001 - preview must never break the core describe response
+        return generic_draft, _provenance_model(
+            NamingProvenance(naming_allowed=False, reason=NamingSkipReason.MERGE_ERROR)
+        )
 
 
 def _generation_timeout_seconds(settings: DescriptionSettings, adapter) -> float:

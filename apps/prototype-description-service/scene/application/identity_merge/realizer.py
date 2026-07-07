@@ -13,12 +13,44 @@ implementations are deterministic:
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
-from scene.application.identity_merge.merge import ConfirmedFace, IdentityAssociation
+from scene.application.identity_merge.merge import (
+    ConfirmedFace,
+    IdentityAssociation,
+    span_replaceable,
+)
 
 _ARTICLES = ("a ", "an ", "the ")
+# Possessive marker on the head noun only (straight or curly apostrophe):
+# "man's hat" → group(1)="man". An embedded possessive ("man holding his
+# son's toy") does not match, so the whole phrase degrades to the bare name.
+_HEAD_POSSESSIVE = re.compile(r"^([^\s'’]+)('s|’s)(.*)$", re.DOTALL)
+# Third-person-singular → plural (for singular-they agreement). None = no
+# confident transform; the caller must keep the name instead of a pronoun.
+_IRREGULAR_VERBS = {"is": "are", "was": "were", "has": "have", "does": "do", "goes": "go"}
+# Common 's'-ending words that are not third-person verbs; seeing one right
+# after the mention means we cannot locate the verb — keep the name.
+_S_ENDING_NON_VERBS = frozenset(
+    {
+        "always",
+        "perhaps",
+        "sometimes",
+        "besides",
+        "towards",
+        "upstairs",
+        "downstairs",
+        "alas",
+        "yes",
+        "his",
+        "hers",
+        "its",
+        "this",
+        "thus",
+    }
+)
 
 
 @runtime_checkable
@@ -47,17 +79,25 @@ class DeterministicNlgRealizer:
         ordered = sorted(associations, key=lambda a: a.phrase_box.span_start)
         seen_labels: set[str] = set()
         replacements: list[tuple[int, int, str]] = []
+        last_end = 0
         for assoc in ordered:
             phrase = assoc.phrase_box.phrase
             start, end = assoc.phrase_box.span_start, assoc.phrase_box.span_end
-            if caption[start:end] != phrase:
-                continue  # stale span: never replace text we cannot verify
+            if not span_replaceable(caption, assoc.phrase_box):
+                continue  # stale/degenerate span: never replace text we cannot verify
+            if start < last_end:
+                continue  # overlapping span: replacing both would corrupt the text
             if assoc.face.label in seen_labels:
-                text, end = self._coreference(caption, end, capitalize=phrase[:1].isupper())  # R4
+                coref = self._coreference(caption, end, capitalize=phrase[:1].isupper())  # R4
+                if coref is None:
+                    text = self._name_phrase(phrase, assoc.face.label)  # no confident pronoun: keep the name
+                else:
+                    text, end = coref
             else:
                 seen_labels.add(assoc.face.label)
                 text = self._name_phrase(phrase, assoc.face.label)  # R1/R2
             replacements.append((start, end, text))
+            last_end = end
 
         named = caption
         for start, end, text in sorted(replacements, reverse=True):
@@ -75,26 +115,45 @@ class DeterministicNlgRealizer:
         return ", ".join(names[:-1]) + " and " + names[-1]
 
     def _name_phrase(self, phrase: str, name: str) -> str:
-        """R1 article elision + case; R2 possessive/object form."""
+        """R1 article elision + case; R2 possessive form on the head noun only."""
         stripped = phrase
         lowered = stripped.lower()
         for article in _ARTICLES:
             if lowered.startswith(article):
                 stripped = stripped[len(article) :]
                 break
-        # R2: keep everything from the possessive marker on ("man's hat" →
-        # "Daniel's hat"); otherwise the proper name replaces the whole phrase.
-        marker = stripped.find("'s")
-        if marker != -1:
-            return name + stripped[marker:]
+        # R2: only a possessive marker attached to the head noun transfers to
+        # the name ("man's hat" → "Daniel's hat"). Embedded possessives
+        # ("man holding his son's toy") degrade to the bare name — attributing
+        # someone else's possession to the named person is a wrong draft.
+        m = _HEAD_POSSESSIVE.match(stripped)
+        if m:
+            return name + m.group(2) + m.group(3)
         return name
 
-    def _coreference(self, caption: str, end: int, *, capitalize: bool) -> tuple[str, int]:
+    @staticmethod
+    def _pluralize_verb(verb: str) -> str | None:
+        """Third-person-singular → plural, or None when not confident."""
+        lowered = verb.lower()
+        if lowered in _S_ENDING_NON_VERBS:
+            return None
+        if lowered in _IRREGULAR_VERBS:
+            return _IRREGULAR_VERBS[lowered]
+        if len(lowered) > 4 and lowered.endswith("ies"):
+            return verb[:-3] + "y"
+        if len(lowered) > 3 and lowered.endswith(("ches", "shes", "sses", "xes", "zes", "oes")):
+            return verb[:-2]
+        if len(lowered) > 3 and lowered.endswith("s") and not lowered.endswith(("ss", "us", "is")):
+            return verb[:-1]
+        return None
+
+    def _coreference(self, caption: str, end: int, *, capitalize: bool) -> tuple[str, int] | None:
         """R4: pronoun on later mentions of an already-named identity.
 
-        Uses singular-they (no gender inference), with naive subject-verb
-        agreement: an immediately following third-person-singular verb loses
-        its trailing 's' ("waves" → "wave").
+        Uses singular-they (no gender inference). Subject-verb agreement is
+        applied only when the immediately following word has a confident
+        plural transform; otherwise returns None and the caller keeps the
+        name — a repeated name beats a garbled verb.
         """
         pronoun = "They" if capitalize else "they"
         rest = caption[end:]
@@ -103,10 +162,13 @@ class DeterministicNlgRealizer:
         while verb_end < len(rest) and rest[verb_end].isalpha():
             verb_end += 1
         verb = rest[verb_start:verb_end]
-        if len(verb) > 2 and verb.endswith("s") and not verb.endswith("ss"):
-            new_end = end + verb_end
-            return pronoun + rest[:verb_start] + verb[:-1], new_end
-        return pronoun, end
+        if not verb.endswith("s") and verb.lower() not in _IRREGULAR_VERBS:
+            # Next word needs no agreement change ("waved", "will", ...).
+            return pronoun, end
+        plural = self._pluralize_verb(verb)
+        if plural is None:
+            return None
+        return pronoun + rest[:verb_start] + plural, end + verb_end
 
 
 class PositionalFallbackRealizer:
@@ -124,6 +186,8 @@ class PositionalFallbackRealizer:
         ordered = sorted(confirmed_faces, key=lambda f: f.box.center[0])
         names = DeterministicNlgRealizer.aggregate_names([f.label for f in ordered])
         base = caption.rstrip()
-        if base and base[-1] not in ".!?":
+        if not base:
+            return f"Pictured from left: {names}."
+        if base[-1] not in ".!?":
             base += "."
         return f"{base} Pictured from left: {names}."

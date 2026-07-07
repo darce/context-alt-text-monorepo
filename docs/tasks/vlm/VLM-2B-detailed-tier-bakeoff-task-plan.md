@@ -195,7 +195,7 @@ Proof:
 
 ### Checklist for Slice 1: Bake-off manifest + real context packs
 
-- [ ] Add `bakeoff_golden.json` (~10 images, §6b discriminating classes) with real name-injected context packs, rubrics, policy flags.
+- [x] Add `bakeoff_golden.json` (~10 images, §6b discriminating classes) with real name-injected context packs, rubrics, policy flags.
 - [ ] Document image-bytes bootstrap for any new images in the seed README.
 - [ ] `load_manifest` passes; test asserts non-empty context packs + insertion-rate cohort.
 

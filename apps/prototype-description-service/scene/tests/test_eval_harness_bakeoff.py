@@ -1,18 +1,29 @@
-"""VLM-2B bake-off fixtures: manifest ground-truth invariants (Slice 1).
+"""VLM-2B bake-off: manifest invariants (Slice 1) + BakeoffClient transport (Slice 3).
 
 The bake-off subset manifest must make insertion rate *measurable*: every
 recognition-enabled entry with labeled identities carries those names in the
 ``context_pack`` text the candidate model actually sees. Policy-disabled and
 no-context entries are deliberate traps and are asserted separately.
+
+Transport tests stub the candidate llama.cpp endpoint (httpx.MockTransport, no
+network) and verify the prompt-render contract: every injected context name
+reaches the candidate prompt verbatim, decoding is greedy, and the face-metric
+methods are inert no-ops. Per-item isolation + bounded-stall stay covered by
+the reused ``cli.fetch_run_record`` tests — not duplicated here.
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
+import httpx
 import pytest
 
+from scripts.eval_harness.bakeoff import BakeoffClient
+from scripts.eval_harness.cli import fetch_run_record
 from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest, load_manifest
+from scripts.eval_harness.report import build_reports
 
 BAKEOFF_MANIFEST = Path(__file__).parent / "seed" / "bakeoff_golden.json"
 GOLDEN_MANIFEST = Path(__file__).parent / "seed" / "golden.json"
@@ -84,3 +95,117 @@ def test_entries_reuse_golden_corpus_images(manifest: GoldenManifest) -> None:
     for entry in manifest.entries:
         assert entry.path in golden_by_path, f"{entry.path}: not in golden corpus (new image needs README bootstrap)"
         assert entry.sha256 == golden_by_path[entry.path], f"{entry.path}: sha256 drifted from golden corpus"
+
+
+# --- Slice 3: BakeoffClient transport (stubbed endpoint, no network) ---
+
+
+def _chat_transport(captured: list[dict], content: str = "A caption naming Caitlin Weaver.") -> httpx.MockTransport:
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        captured.append({"path": request.url.path, "payload": payload})
+        return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+
+    return httpx.MockTransport(handler)
+
+
+def _client(
+    captured: list[dict], *, no_think: bool = False, content: str = "A caption naming Caitlin Weaver."
+) -> BakeoffClient:
+    return BakeoffClient(
+        base_url="http://candidate.test:8080",
+        model_id="qwen3-vl-4b-instruct",
+        model_version="Q4_K_M",
+        no_think=no_think,
+        transport=_chat_transport(captured, content=content),
+    )
+
+
+def _describe(client: BakeoffClient, context_pack: dict) -> dict:
+    return client.describe(
+        image_bytes=b"\x89PNG fake bytes",
+        filename="img.jpg",
+        media_id=7,
+        context_pack=context_pack,
+    )
+
+
+def test_describe_returns_scoreable_shape() -> None:
+    captured: list[dict] = []
+    describe = _describe(_client(captured), {"caption": "Caitlin Weaver in Antarctica."})
+    assert describe["alt_text_draft"] == "A caption naming Caitlin Weaver."
+    assert describe["adapter"] == "bakeoff"
+    assert describe["model_id"] == "qwen3-vl-4b-instruct"
+    assert describe["model_version"] == "Q4_K_M"
+
+
+def test_context_pack_names_render_into_prompt_verbatim() -> None:
+    captured: list[dict] = []
+    pack = {
+        "title": "Antarctica expedition",
+        "caption": "Caitlin Weaver on the peninsula.",
+        "description": "Erika Hansen Miller took the photo.",
+    }
+    _describe(_client(captured), pack)
+    prompt_text = json.dumps(captured[0]["payload"])
+    for fragment in ("Caitlin Weaver", "Erika Hansen Miller", "Antarctica expedition"):
+        assert fragment in prompt_text, f"injected context {fragment!r} never reached the candidate prompt"
+
+
+def test_decoding_is_greedy_and_no_think_is_optional() -> None:
+    captured: list[dict] = []
+    _describe(_client(captured), {})
+    payload = captured[0]["payload"]
+    assert payload["temperature"] == 0
+    assert "/no_think" not in json.dumps(payload)
+
+    captured.clear()
+    _describe(_client(captured, no_think=True), {})
+    assert "/no_think" in json.dumps(captured[0]["payload"])
+
+
+def test_face_metric_methods_are_inert_stubs() -> None:
+    captured: list[dict] = []
+    client = _client(captured)
+    job_id = client.analyze([(7, "img.jpg", b"bytes")])
+    assert isinstance(job_id, str)
+    assert client.wait_job(job_id) == {}
+    assert client.media_identities([7]) == []
+    assert captured == [], "face-metric stubs must not touch the network"
+
+
+def test_fetch_run_record_with_bakeoff_client_scores_deterministically(tmp_path: Path) -> None:
+    manifest = GoldenManifest.model_validate(
+        {
+            "manifest_version": 1,
+            "roster": ["Caitlin Weaver"],
+            "entries": [
+                {
+                    "path": "img.jpg",
+                    "sha256": "0" * 64,
+                    "media_id": 7,
+                    "face_count": 1,
+                    "present_identities": ["Caitlin Weaver"],
+                    "context_pack": {"caption": "Caitlin Weaver in Antarctica."},
+                    "must_right": ["Caitlin Weaver"],
+                    "easy_wrong": [],
+                    "policy": {"recognition_enabled": True},
+                }
+            ],
+        }
+    )
+    (tmp_path / "img.jpg").write_bytes(b"fake image bytes")
+    captured: list[dict] = []
+    record = fetch_run_record(manifest, str(tmp_path), _client(captured), head_sha="deadbeef")
+
+    assert record["items"][0]["error"] is None
+    assert record["items"][0]["describe"]["alt_text_draft"] == "A caption naming Caitlin Weaver."
+    assert record["provenance"]["base_url"] == "http://candidate.test:8080"
+
+    entries = [e.model_dump() for e in manifest.entries]
+    first = build_reports(record, entries)
+    second = build_reports(record, entries)
+    assert first == second, "re-score must be bit-identical"
+    scored = json.loads(first[0])
+    assert scored["caption"]["insertion_rate"] == 1.0
+    assert "qwen3-vl-4b-instruct" in scored["provenance"]["model"]["model_ids"]

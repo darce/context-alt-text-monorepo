@@ -9,9 +9,10 @@ seam. Pure application layer — no HTTP/DB imports.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
+from scene.application.identity_merge.merge import PhraseBox
 from scene.domain.description import DescriptionAdapterKind
 
 
@@ -25,6 +26,9 @@ class AdapterResult:
     alt_text_draft: str
     context_sources: tuple[str, ...]
     context_applied: bool
+    # E19-4a S4: caption phrase-grounding boxes ([0,1] top-left frame, the
+    # VLM-2C phrase_boxes.json shape). Default empty — E19-1 callers unaffected.
+    phrase_boxes: tuple[PhraseBox, ...] = field(default_factory=tuple)
 
 
 @runtime_checkable

@@ -238,11 +238,7 @@ def _load_seed_manifest() -> GoldenManifest:
 
 def test_seed_corpus_has_designated_stranger_entry():  # VLM-2C S1
     manifest = _load_seed_manifest()
-    deltas = [
-        e
-        for e in manifest.entries
-        if e.policy.recognition_enabled and e.face_count > len(e.present_identities)
-    ]
+    deltas = [e for e in manifest.entries if e.policy.recognition_enabled and e.face_count > len(e.present_identities)]
     assert deltas, "seed corpus must keep >=1 recognition-enabled stranger-delta entry"
     designated = [e for e in deltas if e.media_id == _DESIGNATED_STRANGER_MEDIA_ID]
     assert designated, (
@@ -293,9 +289,9 @@ def test_seed_corpus_caption_fixtures_populated():  # VLM-2C S2
         assert entry.base_caption, f"{entry.path}: missing base_caption"
         for name in entry.present_identities:
             assert name in entry.base_caption, f"{entry.path}: base_caption misses {name}"
-            assert any(
-                name in field for field in (pack.title, pack.caption, pack.description) if field
-            ), f"{entry.path}: context_pack never injects {name}"
+            assert any(name in field for field in (pack.title, pack.caption, pack.description) if field), (
+                f"{entry.path}: context_pack never injects {name}"
+            )
         assert set(entry.must_right) == set(entry.present_identities), (
             f"{entry.path}: must_right must equal the confirmed present identities"
         )

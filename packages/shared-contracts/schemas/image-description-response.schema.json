@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://context-alt-text.dev/schemas/image-description-response.schema.json",
   "title": "VisualFactsResponse",
-  "description": "Response of POST /scene/describe/multipart. All 15 fields are required so model/provider provenance and retention state are unavoidable on the wire.",
+  "description": "Response of POST /scene/describe/multipart. All 15 fields are required so model/provider provenance and retention state are unavoidable on the wire. The 15 core fields are required; generic_draft/named_draft/naming_provenance are E19-4a additive optional preview fields (draft-only, never written to alt text).",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -23,45 +23,211 @@
     "retention_class"
   ],
   "properties": {
-    "tenant_id": { "type": "string", "description": "Canonical lowercase tenant UUID." },
-    "media_id": { "type": "integer" },
-    "image_hash": { "type": "string", "description": "sha256 hex of the raw image bytes." },
-    "context_hash": { "type": "string", "description": "sha256 hex of canonical-JSON context; cache-key dimension surfaced on the wire." },
-    "adapter": { "type": "string", "enum": ["seeded", "local_cpu", "hosted_provider"] },
-    "model_id": { "type": "string" },
-    "model_version": { "type": "string" },
-    "prompt_or_task_version": { "type": "string" },
+    "tenant_id": {
+      "type": "string",
+      "description": "Canonical lowercase tenant UUID."
+    },
+    "media_id": {
+      "type": "integer"
+    },
+    "image_hash": {
+      "type": "string",
+      "description": "sha256 hex of the raw image bytes."
+    },
+    "context_hash": {
+      "type": "string",
+      "description": "sha256 hex of canonical-JSON context; cache-key dimension surfaced on the wire."
+    },
+    "adapter": {
+      "type": "string",
+      "enum": [
+        "seeded",
+        "local_cpu",
+        "hosted_provider"
+      ]
+    },
+    "model_id": {
+      "type": "string"
+    },
+    "model_version": {
+      "type": "string"
+    },
+    "prompt_or_task_version": {
+      "type": "string"
+    },
     "visual_facts": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["caption"],
+      "required": [
+        "caption"
+      ],
       "properties": {
-        "caption": { "type": "string" },
-        "objects": { "type": "array", "items": { "type": "string" } },
-        "ocr_text": { "type": ["string", "null"] }
+        "caption": {
+          "type": "string"
+        },
+        "objects": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ocr_text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       }
     },
-    "alt_text_draft": { "type": "string" },
+    "alt_text_draft": {
+      "type": "string"
+    },
     "context_used": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["sources", "applied"],
+      "required": [
+        "sources",
+        "applied"
+      ],
       "properties": {
-        "sources": { "type": "array", "items": { "type": "string" } },
-        "applied": { "type": "boolean" }
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "applied": {
+          "type": "boolean"
+        }
       }
     },
     "provider_disclosure": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["provider", "left_service_boundary"],
+      "required": [
+        "provider",
+        "left_service_boundary"
+      ],
       "properties": {
-        "provider": { "type": "string", "enum": ["none", "local", "hosted"] },
-        "left_service_boundary": { "type": "boolean" }
+        "provider": {
+          "type": "string",
+          "enum": [
+            "none",
+            "local",
+            "hosted"
+          ]
+        },
+        "left_service_boundary": {
+          "type": "boolean"
+        }
       }
     },
-    "cached": { "type": "boolean" },
-    "duration_ms": { "type": "integer", "minimum": 0 },
-    "retention_class": { "type": "string", "enum": ["retain_all", "dispose_after_ack", "purge_on_demand"] }
+    "cached": {
+      "type": "boolean"
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "retention_class": {
+      "type": "string",
+      "enum": [
+        "retain_all",
+        "dispose_after_ack",
+        "purge_on_demand"
+      ]
+    },
+    "generic_draft": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "E19-4a preview: the untouched generic draft (equals alt_text_draft)."
+    },
+    "named_draft": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "E19-4a preview: identity-named draft; identical to generic_draft when naming is not allowed. Never a guessed name."
+    },
+    "naming_provenance": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "E19-4a preview: which names were injected, from which cluster/roster, at what confidence \u2014 or the reason the draft stayed generic.",
+      "additionalProperties": false,
+      "required": [
+        "injected_names",
+        "naming_allowed",
+        "reason",
+        "mode"
+      ],
+      "properties": {
+        "injected_names": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "cluster_id",
+              "roster_id",
+              "detection_confidence"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "cluster_id": {
+                "type": "string"
+              },
+              "roster_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "detection_confidence": {
+                "type": "number",
+                "description": "Face-detector score for the matched region (MediaIdentity.confidence); not a face-to-phrase match strength."
+              }
+            }
+          }
+        },
+        "naming_allowed": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "agreement_disabled",
+            "db_unavailable",
+            "image_unreadable",
+            "no_confirmed_identities",
+            "no_eligible_identities",
+            "ambiguous_grounding",
+            "merge_error",
+            null
+          ]
+        },
+        "mode": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "grounded",
+            "positional",
+            null
+          ],
+          "description": "How the named draft was realized: grounded span replacement or the positional appended sentence; null when no naming occurred."
+        }
+      }
+    }
   }
 }

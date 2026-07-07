@@ -26,6 +26,12 @@ The assessment's **1–3 min/img estimate is denied** — measured ≈ **3.8–3
 
 **600 s** (`--timeout 600` on `scripts.eval_harness.bakeoff`): ~2.5× the measured worst case (236 s), absorbing shared-box jitter without letting a hung request stall the run unboundedly (rg-007; breaker + bounded-stall still apply). Full bake-off cost estimate: 10 images × ~4 min × 3 candidates ≈ **2 h serial**.
 
+## Slice-4 corrections (live-run findings)
+
+- **`--image-max-tokens 1536` is required.** The bench image encoded to ~1.5 k prompt tokens, but Qwen3-VL dynamic resolution scales image tokens with input size: larger golden images blew past 600 s and the first Qwen run aborted via bounded-stall (rg-007 behaving as designed). Capping image tokens at 1536 restores the bench profile (mean 206–208 s/img) identically for all candidates; the ceiling was raised to **900 s** for headroom.
+- **MiniCPM-V 4.5 hybrid thinking**: neither `--reasoning-budget 0` (ignored by the GGUF chat template) nor `/no_think` reliably disables it — 4/10 images returned empty captions with the 512-token budget consumed by `reasoning_content`. See the decision memo.
+- **Tailscale SSH quirks** (driver plumbing): `pkill -f` patterns match the SSH session's own `--cmd` string (kill and launch must be separate calls), and launch sessions never exit even for `setsid`-daemonized children (background the local `ssh` and kill it explicitly).
+
 ## Reproduce
 
 ```bash

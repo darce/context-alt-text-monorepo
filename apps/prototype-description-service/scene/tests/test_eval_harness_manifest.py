@@ -298,3 +298,10 @@ def test_seed_corpus_caption_fixtures_populated():  # VLM-2C S2
         assert not set(entry.easy_wrong) & set(entry.present_identities), (
             f"{entry.path}: easy_wrong may not contain a present identity"
         )
+
+
+def test_seed_readme_documents_v2_corpus():  # VLM-2C S4
+    readme = open(os.path.join(os.path.dirname(__file__), "seed", "README.md")).read()
+    assert "are empty for every entry" not in readme, "stale VLM-2A rubric-empty claim"
+    assert "manifest_version" in readme and "base_caption" in readme
+    assert "phrase_boxes.json" in readme

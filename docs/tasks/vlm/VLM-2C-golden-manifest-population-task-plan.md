@@ -294,8 +294,8 @@ Both lists are roster-closed in full: `load_manifest` validates EVERY rubric str
 
 ### Checklist for Slice 3: Face/region fixtures for E19-4a
 
-- [ ] Extended `seed_roster.py` with an idempotent scene-image seed path.
-- [ ] Authored `phrase_boxes.json` (mock boxes + 1:1 containment mapping, incl. stranger case).
+- [x] Extended `seed_roster.py` with an idempotent scene-image seed path.
+- [x] Authored `phrase_boxes.json` (mock boxes + 1:1 containment mapping, incl. stranger case).
 - [ ] Proof: `identification_pr.true_rejections >= 1`; containment 1:1 offline.
 
 ### Checklist for Slice 4: Bootstrap doc + version note + evidence
@@ -320,4 +320,4 @@ Both lists are roster-closed in full: `load_manifest` validates EVERY rubric str
 - [ ] The stranger entry yields `identification_pr(...).true_rejections >= 1`, not a wrong name.
 - [ ] `load_manifest(golden.json, images_dir=$GOLDEN_IMAGES_DIR)` passes at `manifest_version: 2`.
 - [ ] `cli score --check-determinism` is bit-identical across re-runs.
-- [ ] E19-4a can load `phrase_boxes.json` + seeded scene-face bboxes and exercise 1:1 containment offline.
+- [x] E19-4a can load `phrase_boxes.json` + seeded scene-face bboxes and exercise 1:1 containment offline.

@@ -8,6 +8,7 @@ from db.models.base_imports import (
     TIMESTAMP,
     UUID,
     Base,
+    Boolean,
     ForeignKey,
     Index,
     Integer,
@@ -40,6 +41,9 @@ class Tenant(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     site_url: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     next_person_number: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
+    # E19-4a consent gate: default true reflects the signed operator naming
+    # agreement; per-person opt-out is the IdentityNameSuppression list.
+    naming_agreement_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     retention_mode: Mapped[str] = mapped_column(String(30), nullable=False, server_default=text("'retain_all'"))
     last_export_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     last_purge_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))

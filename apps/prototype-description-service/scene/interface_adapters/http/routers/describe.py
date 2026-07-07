@@ -10,6 +10,7 @@ ObjectStore staging, which is the S9 ``local_cpu`` async path. Mounted at
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -24,6 +25,14 @@ from recognition.interface_adapters.http.deps import (
 )
 from recognition.interface_adapters.http.middleware.metrics import get_default_metrics
 from scene.application.description_repository import ImageDescriptionRepository
+from scene.application.identity_merge import (
+    NamingPolicy,
+    NamingProvenance,
+    NamingSkipReason,
+    load_confirmed_faces,
+    load_suppressed_roster_ids,
+    merge_identities,
+)
 from scene.application.settings.vlm import VlmSettings
 from scene.application.visual_facts_service import VisualFactsService
 from scene.config.settings import DescriptionSettings
@@ -32,9 +41,17 @@ from scene.infrastructure.provider.hosted_provider_adapter import HostedProvider
 from scene.infrastructure.vlm.unavailable_adapter import DescriptionAdapterUnavailableError
 from scene.interface_adapters.http.deps import get_description_adapter
 from scene.interface_adapters.http.schemas.requests import DescribeImageEnvelope
+from scene.interface_adapters.http.schemas.responses import (
+    InjectedName as InjectedNameModel,
+)
+from scene.interface_adapters.http.schemas.responses import (
+    NamingProvenance as NamingProvenanceModel,
+)
 from scene.interface_adapters.http.schemas.responses import VisualFactsResponse
 
 router = APIRouter(tags=["describe"])
+
+_logger = logging.getLogger(__name__)
 
 _IMAGE_KEY_PREFIX = "image_"
 
@@ -83,6 +100,87 @@ def _read_request_part(raw) -> dict:
     if not isinstance(envelope, dict):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "'request' part must decode to a JSON object")
     return envelope
+
+
+def _image_dimensions(image_bytes: bytes) -> tuple[int, int] | None:
+    from io import BytesIO
+
+    from PIL import Image, UnidentifiedImageError
+
+    try:
+        with Image.open(BytesIO(image_bytes)) as img:
+            return img.size
+    except (UnidentifiedImageError, OSError):
+        return None
+
+
+def _provenance_model(provenance) -> NamingProvenanceModel:
+    return NamingProvenanceModel(
+        injected_names=[
+            InjectedNameModel(
+                name=n.name,
+                cluster_id=str(n.cluster_id),
+                roster_id=str(n.roster_id) if n.roster_id is not None else None,
+                detection_confidence=n.detection_confidence,
+            )
+            for n in provenance.injected_names
+        ],
+        naming_allowed=provenance.naming_allowed,
+        reason=str(provenance.reason) if provenance.reason is not None else None,
+        mode=str(provenance.mode) if provenance.mode is not None else None,
+    )
+
+
+async def _naming_preview(
+    *,
+    session,
+    tenant,
+    tenant_uuid: uuid.UUID,
+    media_id: int,
+    image_bytes: bytes,
+    generic_draft: str,
+    phrase_boxes,
+) -> tuple[str, NamingProvenanceModel]:
+    """Compute the named preview draft (E19-4a). Draft-only — never writes alt text.
+
+    ``phrase_boxes`` are the caption-grounding boxes (S4) — adapter output on
+    generation, restored from the persisted cache row on hits. Empty for
+    adapters without grounding, where naming degrades to the positional
+    fallback when eligible.
+    """
+    if session is None or tenant is None:
+        return generic_draft, _provenance_model(
+            NamingProvenance(naming_allowed=False, reason=NamingSkipReason.DB_UNAVAILABLE)
+        )
+    try:
+        dims = _image_dimensions(image_bytes)
+        if dims is None:
+            return generic_draft, _provenance_model(
+                NamingProvenance(naming_allowed=False, reason=NamingSkipReason.IMAGE_UNREADABLE)
+            )
+        faces = await load_confirmed_faces(
+            session,
+            tenant_id=tenant_uuid,
+            media_id=media_id,
+            image_width=dims[0],
+            image_height=dims[1],
+        )
+        policy = NamingPolicy(
+            agreement_enabled=tenant.naming_agreement_enabled,
+            suppressed_roster_ids=await load_suppressed_roster_ids(session, tenant_id=tenant_uuid),
+        )
+        result = merge_identities(
+            caption=generic_draft,
+            phrase_boxes=list(phrase_boxes),
+            confirmed_faces=faces,
+            policy=policy,
+        )
+        return result.named_draft, _provenance_model(result.provenance)
+    except Exception:  # noqa: BLE001 - preview must never break the core describe response
+        _logger.exception("naming preview failed for media_id=%s; degrading to generic draft", media_id)
+        return generic_draft, _provenance_model(
+            NamingProvenance(naming_allowed=False, reason=NamingSkipReason.MERGE_ERROR)
+        )
 
 
 def _generation_timeout_seconds(settings: DescriptionSettings, adapter) -> float:
@@ -142,6 +240,7 @@ async def describe_image_multipart(
     tenant_uuid = uuid.UUID(envelope.tenant_id)
     repository = None
     audit_sink = None
+    tenant_record = None
     if session is not None:
         # RLS: scope the session to the tenant before any read/write on
         # image_descriptions — both the cache SELECT (USING) and the INSERT
@@ -149,7 +248,7 @@ async def describe_image_multipart(
         # recognition routes (e.g. clusters.py).
         await set_tenant_context(session, tenant_uuid)
         # Surface an unprovisioned tenant as the structured 403, not an FK 500.
-        await require_tenant_record(session, tenant_uuid)
+        tenant_record = await require_tenant_record(session, tenant_uuid)
         repository = ImageDescriptionRepository(session)
         audit_sink = _DescriptionAuditSink(AuditRepository(session))
     effective_timeout = _generation_timeout_seconds(settings, adapter)
@@ -182,6 +281,24 @@ async def describe_image_multipart(
         # Upstream hosted-provider fault (key missing, provider 5xx/timeout,
         # malformed body): 502 keeps the fail-closed contract actionable.
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    named_draft, naming_provenance = await _naming_preview(
+        session=session,
+        tenant=tenant_record,
+        tenant_uuid=tenant_uuid,
+        media_id=envelope.media_id,
+        image_bytes=image_bytes,
+        generic_draft=response.alt_text_draft,
+        # Adapter output on generation; restored from the cached row on cache
+        # hits — both paths yield the same named draft (E19-4A-S4-BR-03).
+        phrase_boxes=service.last_phrase_boxes,
+    )
+    response = response.model_copy(
+        update={
+            "generic_draft": response.alt_text_draft,
+            "named_draft": named_draft,
+            "naming_provenance": naming_provenance,
+        }
+    )
     if session is not None:
         await session.commit()
     return response

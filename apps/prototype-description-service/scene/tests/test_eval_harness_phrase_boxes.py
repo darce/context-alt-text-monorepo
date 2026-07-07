@@ -69,9 +69,9 @@ def test_phrase_boxes_containment_is_one_to_one():
     by_id = {e.media_id: e for e in manifest.entries}
     for scene in data["scenes"].values():
         expected = scene["expected_containment"]
-        assert [e["face_center"] for e in expected] == [
-            fc["center"] for fc in scene["face_centers"]
-        ], "expected_containment must echo face_centers 1:1"
+        assert [e["face_center"] for e in expected] == [fc["center"] for fc in scene["face_centers"]], (
+            "expected_containment must echo face_centers 1:1"
+        )
         entry = by_id[scene["media_id"]]
         named = []
         for exp in expected:

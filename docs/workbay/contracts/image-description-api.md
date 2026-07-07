@@ -63,6 +63,30 @@ unavoidable so future adapters never change the wire:
   fail-closed unless a future epic-level decision supersedes the memo
   (`docs/tasks/20.0/E20-11-hosted-provider-decision-memo.md`).
 
+#### E19-4a additive optional preview fields
+
+Three **optional** fields (never in the schema `required` set; draft-only —
+nothing here writes `_wp_attachment_image_alt`, that write path is E19-2):
+
+- `generic_draft` (`string|null`) — the untouched generic draft (equals `alt_text_draft`).
+- `named_draft` (`string|null`) — identity-named draft merging confirmed roster
+  identities; identical to `generic_draft` whenever naming is not allowed
+  (agreement off, suppressed, ambiguous, low confidence, DB absent). Never a
+  guessed name.
+- `naming_provenance` (`object|null`) — `injected_names[]` (`name`,
+  `cluster_id`, `roster_id`, `detection_confidence` — the face detector's
+  score for the matched region, not a face↔phrase match strength),
+  `naming_allowed` (bool), `mode` ∈ `{grounded, positional, null}` (span
+  replacement vs. appended "Pictured from left" sentence), and `reason` ∈
+  `{agreement_disabled, db_unavailable, image_unreadable,
+  no_confirmed_identities, no_eligible_identities, ambiguous_grounding,
+  merge_error, null}` when the draft stayed generic.
+
+Naming is gated tenant-side by `tenants.naming_agreement_enabled`, the
+per-`roster_id` `identity_name_suppressions` list, a **roster requirement**
+(an identity without a `roster_id` is never nameable — it would otherwise be
+unsuppressable), and a minimum face-detection confidence (0.8).
+
 ### Errors
 
 | Status | When |

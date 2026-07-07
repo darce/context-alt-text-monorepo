@@ -9,6 +9,8 @@ from scene.domain.description import DescriptionAdapterKind, ProviderMode, Reten
 from scene.interface_adapters.http.schemas.requests import DescribeImageEnvelope
 from scene.interface_adapters.http.schemas.responses import VisualFactsResponse
 
+# 15 contract-locked core fields + the E19-4a additive optional preview trio.
+PREVIEW_FIELDS = {"generic_draft", "named_draft", "naming_provenance"}
 EXPECTED_FIELDS = {
     "tenant_id",
     "media_id",
@@ -49,7 +51,7 @@ def _sample_response() -> dict:
 
 
 def test_response_has_exactly_15_contract_fields():
-    assert set(VisualFactsResponse.model_fields) == EXPECTED_FIELDS
+    assert set(VisualFactsResponse.model_fields) == EXPECTED_FIELDS | PREVIEW_FIELDS
     assert len(EXPECTED_FIELDS) == 15
 
 
@@ -58,7 +60,9 @@ def test_response_round_trip_typed_provenance():
     assert r.adapter is DescriptionAdapterKind.SEEDED
     assert r.retention_class is RetentionClass.RETAIN_ALL
     assert r.provider_disclosure.provider is ProviderMode.NONE
-    assert set(r.model_dump().keys()) == EXPECTED_FIELDS
+    assert set(r.model_dump().keys()) == EXPECTED_FIELDS | PREVIEW_FIELDS
+    # Preview fields default to None when the merge layer is not run.
+    assert r.generic_draft is None and r.named_draft is None and r.naming_provenance is None
 
 
 def test_response_forbids_extra_provenance_field():

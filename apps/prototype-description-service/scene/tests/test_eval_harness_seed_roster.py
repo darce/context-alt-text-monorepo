@@ -206,7 +206,8 @@ def test_seed_scenes_zero_face_scene_never_uploaded(tmp_path):  # VLM-2C-S3-BR-0
     import json
 
     manifest_path, images_dir = _scene_fixture(tmp_path)
-    data = json.loads(open(manifest_path).read())
+    with open(manifest_path) as handle:
+        data = json.loads(handle.read())
     body = b"no-faces"
     (tmp_path / "images" / "mock_images" / "landscape.jpg").write_bytes(body)
     data["entries"].append(
@@ -222,7 +223,8 @@ def test_seed_scenes_zero_face_scene_never_uploaded(tmp_path):  # VLM-2C-S3-BR-0
             "policy": {"recognition_enabled": True},
         }
     )
-    open(manifest_path, "w").write(json.dumps(data))
+    with open(manifest_path, "w") as handle:
+        handle.write(json.dumps(data))
     client = SceneStubClient()
     first = seed_scenes(manifest_path, images_dir, client)
     assert first.seeded == [1, 2]
@@ -285,7 +287,8 @@ def test_seed_scenes_resolves_nfd_filenames(tmp_path):  # VLM-2C-R2-HARM-BR-01
     import unicodedata
 
     manifest_path, images_dir = _scene_fixture(tmp_path)
-    data = json.loads(open(manifest_path).read())
+    with open(manifest_path) as handle:
+        data = json.loads(handle.read())
     body = b"glacier"
     nfd_name = unicodedata.normalize("NFD", "Brei\u00f0amerkurj\u00f6kull.jpg")
     nfc_name = unicodedata.normalize("NFC", "Brei\u00f0amerkurj\u00f6kull.jpg")
@@ -303,7 +306,8 @@ def test_seed_scenes_resolves_nfd_filenames(tmp_path):  # VLM-2C-R2-HARM-BR-01
             "policy": {"recognition_enabled": True},
         }
     )
-    open(manifest_path, "w").write(json.dumps(data))
+    with open(manifest_path, "w") as handle:
+        handle.write(json.dumps(data))
     client = SceneStubClient()
     summary = seed_scenes(manifest_path, images_dir, client)
     assert 4 in summary.seeded, "NFC manifest path must resolve an NFD file on disk"

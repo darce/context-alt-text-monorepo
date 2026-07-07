@@ -1,4 +1,4 @@
-"""Eval-harness CLI: fetch / score / run / seed-roster.
+"""Eval-harness CLI: fetch / score / run / seed-roster / seed-scenes.
 
 Split Phase: ``fetch`` walks the golden manifest against the remote OCI service
 (concurrency 1) and writes a run record; ``score`` is pure and offline;
@@ -39,7 +39,7 @@ from .manifest import GoldenManifest, ManifestError, load_manifest
 from .remote_client import RemoteClientError, RemoteSceneClient
 from .report import ReportError, build_reports, score_run_record
 from .schema import SCHEMA, DocKind
-from .seed_roster import seed
+from .seed_roster import seed, seed_scenes
 
 DEFAULT_KEEP = 10
 DEFAULT_STALL_LIMIT = 5
@@ -252,7 +252,12 @@ def fetch_run_record(
 
 def _extract_identities(payload: Any, media_id: int) -> tuple[list[str], int]:
     """Normalize /media/identities rows for one media_id -> (names, face_count)."""
-    rows = payload if isinstance(payload, list) else []
+    if not isinstance(payload, list):
+        raise RemoteClientError(
+            f"media_identities returned {type(payload).__name__}, expected a list of "
+            "identity rows (rg-015) — per-item isolation records this as an item error"
+        )
+    rows = payload
     names: list[str] = []
     face_count = 0
     for row in rows:
@@ -464,6 +469,21 @@ def _cmd_seed_roster(args: argparse.Namespace) -> None:
         sys.exit(f"seeding incomplete: unlabeled roster names {summary.unlabeled_roster_names}")
 
 
+def _cmd_seed_scenes(args: argparse.Namespace) -> None:
+    base_url, api_key, tenant_id = _require_live_env()
+    images_dir = _images_dir()
+    client = RemoteSceneClient(base_url=base_url, api_key=api_key, tenant_id=tenant_id)
+    try:
+        summary = seed_scenes(args.manifest, images_dir, client)
+    finally:
+        client.close()
+    print(json.dumps(summary.__dict__, indent=2, sort_keys=True))
+    if summary.unverified_media_ids:
+        sys.exit(
+            f"seeding incomplete: no identity rows detected for media_ids {summary.unverified_media_ids}"
+        )
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="eval_harness", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -520,6 +540,10 @@ def main(argv: list[str] | None = None) -> None:
     seed_p = sub.add_parser("seed-roster", help="idempotent eval-tenant roster seeding")
     seed_p.add_argument("--entities", required=True, help="<GOLDEN_IMAGES_DIR>/mock_entities")
     seed_p.set_defaults(func=_cmd_seed_roster)
+
+    scenes_p = sub.add_parser("seed-scenes", help="idempotent eval-tenant scene-image seeding (E19-4a bboxes)")
+    scenes_p.add_argument("--manifest", default="scene/tests/seed/golden.json")
+    scenes_p.set_defaults(func=_cmd_seed_scenes)
 
     args = parser.parse_args(argv)
     if getattr(args, "max_cost", None) is not None and getattr(args, "cost_per_image", None) is None:

@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-from .manifest import ManifestError
+from .manifest import ManifestError, _resolve_image, load_manifest
 from .naming import IMAGE_EXTS, display_name, entity_slug
 from .remote_client import RemoteClientError
 
@@ -127,4 +127,83 @@ def seed(entities_dir: str, client: SeedClient, *, tenant_id: str) -> SeedSummar
         skipped_ambiguous=skipped,
         skipped_conflict=conflicts,
         unlabeled_roster_names=[n for n in roster if n not in covered],
+    )
+
+
+class SceneSeedClient(Protocol):
+    def analyze(self, images: list[tuple[int, str, bytes]]) -> str: ...
+    def wait_job(self, job_id: str) -> dict[str, Any]: ...
+    def media_identities(self, media_ids: list[int]) -> Any: ...
+
+
+@dataclass(frozen=True)
+class SceneSeedSummary:
+    seeded: list[int]
+    already_present: list[int]
+    skipped_zero_face: list[int]
+    unverified_media_ids: list[int]
+    total_scenes: int
+
+
+def seed_scenes(manifest_path: str, images_dir: str, client: SceneSeedClient) -> SceneSeedSummary:
+    """Idempotently ingest golden-manifest scene images into the eval tenant.
+
+    Parallel to :func:`seed` (crop clusters): uploads each scene under its golden
+    ``media_id`` so recognition holds server-side ``MediaIdentity`` face regions
+    keyed on the same ids the run record and phrase-box fixture use (E19-4a's
+    SQL join input). A scene whose ``media_id`` already has identity rows on the
+    tenant is skipped, preserving the idempotent re-run contract. Scenes with
+    ``face_count == 0`` are excluded up front: they can never produce identity
+    rows, so the presence probe cannot distinguish "not ingested" from
+    "ingested, no faces" and they would re-upload on every run — and they
+    contribute no ``MediaIdentity`` bboxes for E19-4a anyway.
+    """
+    manifest = load_manifest(manifest_path, images_dir=images_dir)
+    seedable = [entry for entry in manifest.entries if entry.face_count > 0]
+    ids = [entry.media_id for entry in seedable]
+    rows = client.media_identities(ids)
+    if not isinstance(rows, list):
+        raise ManifestError(
+            f"media_identities returned {type(rows).__name__}, expected a list of "
+            "identity rows — refusing to treat a malformed payload as an empty tenant (rg-015)"
+        )
+    present = {
+        int(row["media_id"])
+        for row in rows
+        if isinstance(row, dict) and int(row.get("media_id", -1)) in set(ids)
+    }
+    root = Path(images_dir)
+    to_seed = [entry for entry in seedable if entry.media_id not in present]
+    if to_seed:
+        images = []
+        for entry in to_seed:
+            image_path = _resolve_image(root, entry.path)
+            if image_path is None:
+                raise ManifestError(f"image file missing: {entry.path} (under {root})")
+            images.append((entry.media_id, image_path.name, image_path.read_bytes()))
+        job_id = client.analyze(images)
+        client.wait_job(job_id)
+    # Post-seed verification: a face_count>0 scene with no identity rows after
+    # analyze is a persistent detector miss — surface it instead of silently
+    # re-uploading on every future run.
+    unverified: list[int] = []
+    if to_seed:
+        after = client.media_identities([entry.media_id for entry in to_seed])
+        if not isinstance(after, list):
+            raise ManifestError(
+                f"media_identities returned {type(after).__name__} during post-seed "
+                "verification, expected a list of identity rows (rg-015)"
+            )
+        found = {
+            int(row["media_id"])
+            for row in after
+            if isinstance(row, dict) and "media_id" in row
+        }
+        unverified = [entry.media_id for entry in to_seed if entry.media_id not in found]
+    return SceneSeedSummary(
+        seeded=[entry.media_id for entry in to_seed],
+        already_present=sorted(present),
+        skipped_zero_face=[e.media_id for e in manifest.entries if e.face_count == 0],
+        unverified_media_ids=unverified,
+        total_scenes=len(manifest.entries),
     )

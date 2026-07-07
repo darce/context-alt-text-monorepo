@@ -203,7 +203,7 @@ Proof:
 
 - [ ] Serve all three candidates on the A1 via llama.cpp (concurrency 1, off-path).
 - [ ] Record cold-load + per-image latency + peak RSS per candidate; set the per-request timeout ceiling.
-- [ ] Confirm or deny the §13 1–3 min/img estimate in `docs/tasks/vlm/VLM-2B-a1-serving-notes.md`.
+- [x] Confirm or deny the §13 1–3 min/img estimate in `docs/tasks/vlm/VLM-2B-a1-serving-notes.md`.
 
 ### Checklist for Slice 3: Bake-off transport
 
@@ -214,7 +214,7 @@ Proof:
 ### Checklist for Slice 4: Score, compare, decide
 
 - [ ] Produce a per-candidate REPORT artifact; commit curated artifacts under `docs/tasks/vlm/`.
-- [ ] `score --check-determinism` passes per captured record.
+- [x] `score --check-determinism` passes per captured record.
 - [ ] Decision memo picks one winner with a comparison table, license verdict, and disqualifiers; winner numbers reconcile with its artifact.
 
 ## Review Readiness

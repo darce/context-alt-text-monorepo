@@ -1,0 +1,142 @@
+{
+  "items": [
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Caitlin Weaver smiles with her eyes closed while wearing a black hooded jacket and white running vest, standing on a muddy, rocky shore beside a calm blue lake under a pale sky. Behind her, snow-dusted mountains stretch across the Antarctic peninsula during her 2023 research residency.",
+        "model_id": "CapRL-Qwen3VL-4B",
+        "model_version": "Q4_K_M"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "media_id": 3,
+      "path": "mock_images/ccqw-antartica.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Bea Burke takes a playful mirror selfie at a science fair, wearing a \u201cYOGA YACHTIE\u201d tiara and sticking her tongue out while holding a glittery phone. She\u2019s dressed in a blue crop top and white pants, with a scrunchie on her wrist, likely during her role as a judge at the regional science fair where she has judged for three years running.",
+        "model_id": "CapRL-Qwen3VL-4B",
+        "model_version": "Q4_K_M"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "media_id": 2,
+      "path": "mock_images/bea-nye.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "In a warmly lit, upside-down photo, Caitlin Weaver smiles with long blonde hair, while Erika Hansen Miller is on the right, also smiling. Below them, two other people are reflected in a mirror: one in a red top and another in a dark jacket holding a phone. The image appears to be taken in a dimly lit bar or restaurant with a glowing vertical light source.",
+        "model_id": "CapRL-Qwen3VL-4B",
+        "model_version": "Q4_K_M"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "media_id": 5,
+      "path": "mock_images/ccqw-erika.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Kirstie Mccarrel and Daniel Arce relax on a blue and purple checkered towel at the coast, both wearing sunglasses. Kirstie, in a black bikini top and a tan New York Yankees cap, smiles while wearing a floral tattoo on her arm. Daniel, shirtless and wearing geometric sunglasses, lies beside her with a yellow textured pillow behind them.",
+        "model_id": "CapRL-Qwen3VL-4B",
+        "model_version": "Q4_K_M"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "media_id": 23,
+      "path": "mock_images/kirstie-daniel-sunglasses.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Ryann Wiseman, in a pink satin dress, celebrates with friends at a birthday party, surrounded by women in matching pink outfits and a glittery pink backdrop with a number \u201c2\u201d balloon. One woman holds a lit candle in a lampshade, while another raises a red marker, and others smile and kiss in celebration.",
+        "model_id": "CapRL-Qwen3VL-4B",
+        "model_version": "Q4_K_M"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "media_id": 37,
+      "path": "mock_images/ryann-group-party.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "A woman in a red and blue bikini smiles while sitting on a glittery, gold-toned mermaid tail float in a bright blue pool, making a peace sign with her hand. The float, branded \u201cAbdul\u2019s Blue Boutique x SUNNYLIFE,\u201d is decorated with sparkles and stickers. The scene captures a relaxed, sunny afternoon at the hotel pool.",
+        "model_id": "CapRL-Qwen3VL-4B",
+        "model_version": "Q4_K_M"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "media_id": 30,
+      "path": "mock_images/maria-pool.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "This is an abstract portrait painting titled \"Untitled No. 7\" by Liam Maloney, created in 2024. The artwork, an oil on linen, depicts a man with dark, spiky hair and a mustache, wearing a jacket with pockets, rendered in a stylized, monochromatic style with a signature visible in the lower right corner. It is presented in a gold-colored frame and hangs on a light-colored wall.",
+        "model_id": "CapRL-Qwen3VL-4B",
+        "model_version": "Q4_K_M"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "media_id": 27,
+      "path": "mock_images/liam-maloney-painting.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Ryann Wiseman stands at a pink-lit bar, holding a drink with a lemon slice, wearing a black top and patterned leggings, with her back to the camera. Behind her is a vintage radiator and a gold-framed mirror, while a Pink Panther poster reading \u201cRASPBERRY OAT MILK\u201d hangs on the wall. She is at a neighborhood bar after work on a Friday evening.",
+        "model_id": "CapRL-Qwen3VL-4B",
+        "model_version": "Q4_K_M"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "media_id": 36,
+      "path": "mock_images/ryann-bar.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Maria Correonero crouches inside the wreckage of a damaged airplane, framed by its broken metal frame against a dark, volcanic-sand landscape. She wears a black coat and pants, with long brown hair, and looks toward the camera. The setting is a desolate, black-sand plane crash site, likely in Iceland, as noted in the album\u2019s description.",
+        "model_id": "CapRL-Qwen3VL-4B",
+        "model_version": "Q4_K_M"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "media_id": 33,
+      "path": "mock_images/mcm-planecrash.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "A black dog with a collar, likely a Rottweiler, sits on a leash at the end of a narrow alleyway lined with brick buildings and white garage doors. The scene is set at dusk, with a warm orange sky above and lights glowing from the buildings\u2019 windows. The dog faces down a cracked asphalt path between two rows of townhouses, with a tree and distant building visible at the end.",
+        "model_id": "CapRL-Qwen3VL-4B",
+        "model_version": "Q4_K_M"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "media_id": 34,
+      "path": "mock_images/nina-machiavelli.jpeg"
+    }
+  ],
+  "kind": "run_record",
+  "provenance": {
+    "base_url": "http://127.0.0.1:8099",
+    "head_sha": "7537eca39b9d19782f432a1fa5759597983c604c",
+    "manifest_sha256": "1701e471455afd740c5c1474d81dee9a0c470efe253a167f55f15202ea65952b",
+    "started_at": "2026-07-07T16:33:42Z"
+  },
+  "schema": "acx-eval/v1"
+}

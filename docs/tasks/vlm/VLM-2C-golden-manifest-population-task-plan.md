@@ -14,7 +14,7 @@
 
 ## Objective
 
-Populate the VLM-2A golden manifest (`scene/tests/seed/golden.json`) with the ground truth the harness code already expects but never received: context packs, base captions, Must-Right/Easy-Wrong rubrics, confirmed identities, at least one stranger entry, and seeded scene-image face regions + a phrase-box fixture. When complete, caption/insertion/face-P-R metrics read non-zero and the wrong-name gate is exercised, unblocking E19-4a, VLM-2B, and E20-11.
+Populate the VLM-2A golden manifest (`scene/tests/seed/golden.json`) with the ground truth the harness code already expects but never received: context packs, base captions, Must-Right/Easy-Wrong rubrics, an operator-designated stranger entry, and seeded scene-image face regions + a phrase-box fixture. When complete, caption/insertion metrics read non-zero (0.000/vacuous in the 2026-07-06 baseline), the Must-Right/Easy-Wrong wrong-name gate is active, and a seeded-stub `cli score` proves it end to end — unblocking E19-4a, VLM-2B, and E20-11.
 
 ## Intake
 
@@ -23,19 +23,19 @@ Populate the VLM-2A golden manifest (`scene/tests/seed/golden.json`) with the gr
 
 ## Problem Statement
 
-VLM-2A shipped the harness code but not its fixtures. `golden.json` holds 37 entries, all with `context_pack {}`, `must_right []`, `easy_wrong []`, `face_count == len(present_identities)`, and no base caption. Consequences, each grounded in code:
+VLM-2A shipped the harness code but not its caption fixtures. `golden.json` holds 37 entries, all with `context_pack {}`, `must_right []`, `easy_wrong []`, and no base caption. Identities and `face_count` ARE operator-confirmed (VLM-2A pass; 6 entries carry a `face_count > len(present_identities)` stranger delta). Baseline evidence (`docs/tasks/vlm/VLM-2A-baseline-20260706-report.md`): `insertion_rate 0.000`, `must_right_defined_images: 0`, `true_rejections: 6`. Consequences, each grounded in code:
 
-- `context_pack` empty → the describe route echoes no name-injected WP text, so `caption_metrics.insertion_rate` (`caption_metrics.py:127`) has no signal to measure.
+- `context_pack` empty → the describe route echoes no name-injected WP text, so `caption_metrics.insertion_rate` (`caption_metrics.py:127`) reads 0.000 — captions can never contain roster names.
 - `must_right`/`easy_wrong` empty → `load_manifest` emits `RubricEmptyWarning` (`manifest.py:166`); the `gated_score` Must-Right hard gate (`caption_metrics.py:72`) is vacuous corpus-wide.
-- No stranger entry (`face_count > len(present_identities)`) → `identification_pr`'s true-rejection branch (`face_metrics.py:116`) never fires; wrong-name insertion, the top product risk, is untested.
-- `seed_roster.seed` seeds only crop clusters at `CROP_MEDIA_ID_BASE = 1001` (`seed_roster.py:26,59`) → no server-side `MediaIdentity` bbox per scene `media_id`, which E19-4a's SQL join requires.
+- `easy_wrong` empty → wrong-name insertion, the top product risk, has no caption-side trap; and while the baseline already fires `identification_pr`'s true-rejection branch (`face_metrics.py:116`) on the 6 stranger-delta entries, no entry is operator-designated as a genuine non-roster stranger fixture with a phrase-box no-name case for E19-4a's "never a guessed name" gate.
+- `seed_roster.seed` seeds only crop clusters at `CROP_MEDIA_ID_BASE = 1001` (`seed_roster.py:26,59`) → no idempotently seeded server-side `MediaIdentity` bbox per scene `media_id` (scenes reach recognition only as a per-run `fetch` side effect, `cli.py:117`), which E19-4a's SQL join requires.
 - No base caption → no deterministic reference string for offline scoring or E19-4a reflow input.
 
 ## Constraints
 
-- **Fixtures, not scoring changes.** `caption_metrics.py`, `face_metrics.py`, and `report.py` scoring logic stay untouched. The only sanctioned code edit is an **additive** manifest-schema extension in `manifest.py` (new optional field + version bump) that carries the new fixtures.
+- **Fixtures, not scoring changes.** `caption_metrics.py`, `face_metrics.py`, and `report.py` scoring logic stay untouched. Sanctioned code edits are additive only: the manifest-schema extension in `manifest.py` (new optional field + version bump), the parallel scene-seed path in `seed_roster.py` (Slice 3), and the `manifest_version` literal sync in `draft_labels.py:84` + tests.
 - **Strict schema.** `GoldenEntry` is `extra='forbid'` (`manifest.py:71`); `EntryPolicy` is `extra='forbid'` (`manifest.py:65`). Any new per-entry key requires a real field. `ContextPack` is `extra='allow'` (`manifest.py:51`) — WP keys extend freely, known keys stay typed.
-- **Roster closure.** Every name in `present_identities`/`must_right`/`easy_wrong` must be in `manifest.roster` or `load_manifest` raises (`manifest.py:161`).
+- **Roster closure.** Every entry in `present_identities`/`must_right`/`easy_wrong` — not just names — must be in `manifest.roster` or `load_manifest` raises (`manifest.py:161`). Rubric lists are therefore roster-name lists; non-name visual facts belong to `visual_facts.objects` tag coverage (stretch), not rubrics.
 - **Hash integrity.** Every `sha256` must match the byte content under `$GOLDEN_IMAGES_DIR/<path>` (`manifest.py:179`); images are not vendored (59 MB).
 - **Load discipline / provenance** carry over from VLM-2A Q5 (concurrency 1, artifacts stamped with manifest version + git HEAD).
 
@@ -48,15 +48,15 @@ VLM-2A shipped the harness code but not its fixtures. `golden.json` holds 37 ent
 ## Terminology
 
 - **Context pack**: WP `title`/`caption`/`description` echoed to the describe route — the name-injected TEXT the model sees; the `insertion_rate` signal source.
-- **Base caption**: per-entry reference caption. NOT read by the scorer — scoring matches `describe.alt_text_draft` in the run record (`report.py:114`); `base_caption` is the source copied into the seeded stub run record and E19-4a's reflow input.
+- **Base caption**: per-entry reference caption, naming every confirmed present identity (see authoring rule). NOT read by the scorer — scoring matches `describe.alt_text_draft` in the run record (`report.py:114`); `base_caption` is the source copied into the seeded stub run record and E19-4a's reflow input.
 - **Stranger entry**: a scene with `recognition_enabled=true` and `face_count > len(present_identities)` → `stranger_faces > 0` → drives true-rejection.
 - **Phrase box**: a person-phrase bounding box (`[0,1]` fractions) for E19-4a containment match.
 
 ## Current State Analysis
 
 - **Works**: loader/validator (`manifest.py`), caption + face metrics (`caption_metrics.py`, `face_metrics.py`), report builder (`report.py`), CLI `fetch|score|run|seed-roster` (`cli.py`), crop-roster seeding (`seed_roster.py`), draft generator (`draft_labels.py`), `make eval-captions`.
-- **Broken/vacuous**: all 37 entries' `context_pack`/`must_right`/`easy_wrong` empty; no base caption; zero stranger entries; scene images never seeded into recognition; no phrase-box fixture.
-- **Misleading**: `seed/README.md:39` claims "confirmed by an operator pass" and rubric-empty is stated as an MVP choice — VLM-2C supersedes both (rubrics + confirmation now delivered).
+- **Broken/vacuous**: all 37 entries' `context_pack`/`must_right`/`easy_wrong` empty; no base caption; no operator-designated stranger fixture (6 entries carry stranger deltas from the VLM-2A face-count pass; baseline `true_rejections: 6`); scene images reach recognition only as a per-run `fetch` side effect (`cli.py:117`), no idempotent seed path; no phrase-box fixture.
+- **Stale after this task**: `seed/README.md:17` states rubric-empty as an MVP choice and `:39` scopes the operator pass to identity/`face_count` labels — both need updating once rubrics/context/base captions are authored and the stranger fixture is designated.
 
 ## Target Outcome
 
@@ -68,6 +68,7 @@ VLM-2A shipped the harness code but not its fixtures. `golden.json` holds 37 ent
 - Harness: `apps/prototype-description-service/scripts/eval_harness/{manifest,caption_metrics,face_metrics,draft_labels,seed_roster,naming,report,cli}.py`
 - Fixtures/docs: `apps/prototype-description-service/scene/tests/seed/{golden.json,README.md}`
 - Scopes: `docs/scopes/vlm-2c-golden-manifest-population-scope.md`, `docs/scopes/e19-4a-identity-prose-merge-scope.md`, `docs/scopes/vlm-2a-caption-face-eval-harness-scope.md`
+- Baseline evidence: `docs/tasks/vlm/VLM-2A-baseline-20260706-report.md`, `docs/tasks/vlm/VLM-2A-baseline-20260706-run-record.json`
 - Handoff/MCP state: task ref `VLM-2C`, findings on `feature/vlm-2c`.
 
 ## Contract and Boundary Impact
@@ -89,9 +90,10 @@ Four slices, each producing fixtures plus proof. Draft mechanically with `draft_
 | fixture (data) | `apps/prototype-description-service/scene/tests/seed/golden.json` | Populate `context_pack`, `base_caption`, `must_right`, `easy_wrong`, confirmed `present_identities`, true `face_count`; add ≥1 stranger entry; refresh `sha256`; bump `manifest_version`→2 |
 | harness (schema, additive) | `apps/prototype-description-service/scripts/eval_harness/manifest.py` | Add optional `GoldenEntry.base_caption: str \| None`; bump `SUPPORTED_MANIFEST_VERSION` 1→2 (`_version_is_supported`) — **no scoring change** |
 | harness (seed, additive) | `apps/prototype-description-service/scripts/eval_harness/seed_roster.py` | Add scene-image seeding path so recognition produces `MediaIdentity` bboxes per scene `media_id` (parallel to crop seeding; keeps the idempotent re-run contract) |
+| harness (draft, literal) | `apps/prototype-description-service/scripts/eval_harness/draft_labels.py` | Sync the hard-coded `"manifest_version": 1` literal (`:84`) to 2 so regenerated drafts stay loadable after the version bump |
 | fixture (data, NEW) | `apps/prototype-description-service/scene/tests/seed/phrase_boxes.json` | **NEW** — mock phrase boxes (`[0,1]` fractions) + expected face→phrase→identity containment mapping, keyed by scene `media_id`, for E19-4a offline merge tests |
 | docs | `apps/prototype-description-service/scene/tests/seed/README.md` | Update version note, rubric/confirmation status, rsync bootstrap, and phrase-box fixture provenance |
-| tests | `apps/prototype-description-service/scene/tests/` (or `scripts/eval_harness/tests/`) | Add/extend fixture-integrity + stranger-true-rejection + deterministic-score tests; **update the hard-coded `manifest_version=1` literals in `test_eval_harness_manifest.py:20` and `test_eval_harness_cli.py:14` to 2** — the version bump makes them fail the loader otherwise |
+| tests | `apps/prototype-description-service/scene/tests/` | Add/extend fixture-integrity + stranger-true-rejection + deterministic-score tests; **update the hard-coded `manifest_version=1` literals in `test_eval_harness_manifest.py:20` and `test_eval_harness_cli.py:14` to 2** — the version bump makes them fail the loader otherwise |
 
 ## Related Files
 
@@ -129,7 +131,7 @@ Changes:
 
 - Regenerate the draft via `draft_labels.generate_draft_manifest(fixtures_dir)`; reconcile against current `golden.json`. **Drop `mock_images/kirstie-boat_detected.jpg`**: `draft_labels` iterates all 38 `mock_images` files with no exclusion and re-introduces this detection-annotated near-duplicate that VLM-2A deliberately removed (`seed/README.md:20`); keep the corpus at 37 usable scenes.
 - Operator pass: confirm identities, set `face_count` incl. non-roster strangers (per `seed/README.md` counting rule).
-- **Stranger confirmation is an explicit Slice-1 step — do not assume a stranger entry already exists.** No current entry may be treated as a validated stranger without operator confirmation; the pre-existing `face_count > len(present_identities)` on some entries (e.g. `ccqw-erika.jpg`) is unverified and must be re-confirmed, not inherited. During the labeling pass, identify/confirm ≥1 scene with `recognition_enabled=true` where a real non-roster human face is present, and record it as the stranger entry. If the confirmation pass surfaces zero genuine strangers, add a scene that has one rather than manufacturing the condition on a roster-only image.
+- **Stranger designation is an explicit Slice-1 step — do not inherit one silently.** Six entries already carry `face_count > len(present_identities)` from the VLM-2A face-count pass (e.g. `ccqw-erika.jpg`: 4 faces / 2 identities), but none is designated as THE stranger fixture. During the labeling pass, confirm ≥1 of these deltas is a genuine non-roster human face (not an unlabeled roster member or a depicted face) on a `recognition_enabled=true` scene, and record it as the stranger entry. If the pass surfaces zero genuine strangers, add a scene that has one rather than manufacturing the condition on a roster-only image.
 - **Never fabricate `face_count`.** Derive every `face_count` (and therefore every `stranger_faces = face_count - len(present_identities)` delta) directly from the operator confirmation pass counting each visible face region per the `seed/README.md` rule. Do not back-fill a number to force a stranger delta.
 - Refresh `sha256` for any changed/added entry.
 
@@ -143,7 +145,7 @@ Proof:
 
 Changes:
 
-- `manifest.py`: add optional `GoldenEntry.base_caption: str | None`; bump `SUPPORTED_MANIFEST_VERSION` 1→2. No scoring change.
+- `manifest.py`: add optional `GoldenEntry.base_caption: str | None`; bump `SUPPORTED_MANIFEST_VERSION` 1→2. Sync the `manifest_version` literals in `draft_labels.py:84`, `test_eval_harness_manifest.py:20`, `test_eval_harness_cli.py:14`. No scoring change.
 - `golden.json`: populate `context_pack {title,caption,description}` with name-injected WP text; author `base_caption`, `must_right`, `easy_wrong` (roster-closed); set `manifest_version: 2`.
 
 Proof:
@@ -254,19 +256,20 @@ The following is ONE fully worked entry showing the shape every `golden.json` en
     "caption": "Caitlin Weaver and Erika Hansen Miller on the expedition deck.",
     "description": "Two travelers, Caitlin Weaver and Erika Hansen Miller, bundled in parkas during an Antarctic cruise."
   },
-  "base_caption": "Two people in heavy parkas stand together on a ship deck with grey water behind them.",
-  "must_right": ["Caitlin Weaver", "Erika Hansen Miller", "two people", "parkas"],
-  "easy_wrong": ["Bea Burke", "Ryann Wiseman", "beach", "summer dresses"],
+  "base_caption": "Caitlin Weaver and Erika Hansen Miller stand together in heavy parkas on a ship deck with grey water behind them.",
+  "must_right": ["Caitlin Weaver", "Erika Hansen Miller"],
+  "easy_wrong": ["Bea Burke", "Ryann Wiseman"],
   "policy": { "recognition_enabled": true }
 }
 ```
 
 Authoring rule for `must_right` vs `easy_wrong`:
 
-- **`must_right`** = facts that MUST appear / names that MUST be correct: the confirmed identities present in the scene plus the load-bearing visual facts the caption cannot omit. Names here must be in `present_identities` (and therefore in `roster`); the caption Must-Right hard gate (`caption_metrics.py:72`) fails the entry if any is missing.
-- **`easy_wrong`** = plausible traps that must NOT appear: roster names of people **not** in this scene (wrong-name insertion — the top product risk) and plausible-but-false visual claims. A caption is penalized if any `easy_wrong` string appears. Every name in `easy_wrong` must still be in `roster` (loader roster-closure applies to `easy_wrong` too), so these are believable confusions, not nonsense.
+- **`must_right`** = names that MUST be correct: the confirmed identities present in the scene (⊆ `present_identities` ⊆ `roster`); the caption Must-Right hard gate (`caption_metrics.py:72`) fails the entry if any is missing from the caption.
+- **`easy_wrong`** = wrong-name traps that must NOT appear: roster names of people **not** in this scene (wrong-name insertion — the top product risk). Believable confusions, not nonsense.
+- **`base_caption`** must name every confirmed present identity — the seeded stub copies it as the caption, so a name-free base caption would zero the Must-Right gate and `insertion_rate` (Slice-2 proof depends on this).
 
-Both lists are roster-closed for names; non-name entries (`"parkas"`, `"beach"`) are free strings scored by substring/normalized match per `caption_metrics.score_caption`.
+Both lists are roster-closed in full: `load_manifest` validates EVERY rubric string against `manifest.roster` (`manifest.py:161`) and raises on any non-roster entry, so free-string visual facts (`"parkas"`, `"beach"`) cannot appear in rubrics. Non-name visual facts are scored via `score_caption(objects=...)` tag coverage from the run record's `visual_facts.objects` (stretch goal), not via rubrics.
 
 ---
 
@@ -285,7 +288,7 @@ Both lists are roster-closed for names; non-name entries (`"parkas"`, `"beach"`)
 
 ### Checklist for Slice 2: Caption fixtures + schema extension
 
-- [ ] Added optional `GoldenEntry.base_caption`; bumped `SUPPORTED_MANIFEST_VERSION`→2.
+- [ ] Added optional `GoldenEntry.base_caption`; bumped `SUPPORTED_MANIFEST_VERSION`→2; synced `draft_labels.py:84` + test version literals.
 - [ ] Populated `context_pack`, `base_caption`, `must_right`, `easy_wrong` (roster-closed); set `manifest_version: 2`.
 - [ ] Proof: no `RubricEmptyWarning`; stub-score insertion/Must-Right non-zero.
 

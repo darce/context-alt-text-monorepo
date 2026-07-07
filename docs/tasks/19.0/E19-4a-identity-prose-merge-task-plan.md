@@ -118,7 +118,7 @@ Build a new `scene/application/identity_merge/` package as a pure, model-indepen
 | backend (new) | `.../identity_merge/join.py` | `load_confirmed_faces(session, tenant_id, media_id) -> list[ConfirmedFace]` — the read-only join. |
 | backend | `apps/prototype-description-service/db/models/tenant.py` | Add `naming_agreement_enabled` bool column to `Tenant`. |
 | backend (new) | `apps/prototype-description-service/db/models/identity.py` | Add `IdentityNameSuppression` model (tenant_id, roster_id, created_at) + `__all__` entry. |
-| backend | `apps/prototype-description-service/db/migrations/001_identity_schema.py` | Schema changes directly (greenfield, no migration file). |
+| backend | `apps/prototype-description-service/db/migrations/versions/001_identity_schema.py` | Schema changes directly (greenfield, no new migration file). |
 | backend | `apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py` | Surface `generic_draft`/`named_draft`/`naming_provenance` in the preview response (no alt-text write). |
 | backend | `apps/prototype-description-service/scene/infrastructure/vlm/florence_local_adapter.py` | S4: add `_PHRASE_GROUNDING_TASK="<CAPTION_TO_PHRASE_GROUNDING>"`, parse boxes in `_run_task`/`describe`, expose phrase boxes on `AdapterResult`. |
 | backend | `apps/prototype-description-service/scene/application/description_adapter.py` | S4: add optional `phrase_boxes` field to `AdapterResult`. |

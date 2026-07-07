@@ -30,7 +30,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
-SUPPORTED_MANIFEST_VERSION = 1
+SUPPORTED_MANIFEST_VERSION = 2
 
 
 class ManifestError(Exception):
@@ -76,6 +76,7 @@ class GoldenEntry(BaseModel):
     face_count: int = Field(ge=0)
     present_identities: list[str]
     context_pack: ContextPack = Field(default_factory=ContextPack)
+    base_caption: str | None = None
     must_right: list[str]
     easy_wrong: list[str]
     policy: EntryPolicy

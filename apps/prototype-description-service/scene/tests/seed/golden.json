@@ -1,5 +1,5 @@
 {
-  "manifest_version": 1,
+  "manifest_version": 2,
   "roster": [
     "Bea Burke",
     "Caitlin Weaver",
@@ -21,12 +21,22 @@
       "present_identities": [
         "Maria Correonero"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Maria Correonero inside the Breiðamerkurjökull ice cave",
+        "caption": "Maria Correonero crouching beneath blue glacial ice in Iceland.",
+        "description": "Maria Correonero, in a white climbing helmet with a headlamp and a fur-hooded black parka, crouches on wet rocks inside the blue ice cave at Breiðamerkurjökull with a camera at her side."
+      },
+      "must_right": [
+        "Maria Correonero"
+      ],
+      "easy_wrong": [
+        "Caitlin Weaver",
+        "Ellyn Heald"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Maria Correonero crouches on wet dark rocks inside a blue glacial ice cave, wearing a white helmet with a headlamp and a fur-trimmed black parka, a camera slung beside her."
     },
     {
       "path": "mock_images/bea-nye.jpg",
@@ -36,12 +46,22 @@
       "present_identities": [
         "Bea Burke"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Bea Burke's birthday mirror selfie",
+        "caption": "Bea Burke in a Happy Birthday tiara sticking her tongue out.",
+        "description": "Bea Burke takes a hotel-bathroom mirror selfie in a rhinestone Happy Birthday tiara and teal crop top, sticking her tongue out."
+      },
+      "must_right": [
+        "Bea Burke"
+      ],
+      "easy_wrong": [
+        "Ryann Wiseman",
+        "Kirstie Mccarrel"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Bea Burke, wearing a rhinestone Happy Birthday tiara and a teal top, sticks her tongue out while taking a mirror selfie with her phone in a marble hotel bathroom."
     },
     {
       "path": "mock_images/ccqw-antartica.jpg",
@@ -51,12 +71,22 @@
       "present_identities": [
         "Caitlin Weaver"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Caitlin Weaver at a windswept lagoon",
+        "caption": "Caitlin Weaver smiling into the wind on a rocky shore.",
+        "description": "Caitlin Weaver, hood up on a black rain shell over a white running vest, smiles with closed eyes on a windswept rocky shore with snow-patched hills behind a pale lagoon."
+      },
+      "must_right": [
+        "Caitlin Weaver"
+      ],
+      "easy_wrong": [
+        "Maria Correonero",
+        "Ellyn Heald"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Caitlin Weaver stands hooded in a black rain jacket over a white hydration vest, eyes closed and hair blowing across her face, on a rocky shore with a pale lagoon and snow-patched hills behind her."
     },
     {
       "path": "mock_images/ccqw-bar.jpg",
@@ -66,12 +96,22 @@
       "present_identities": [
         "Caitlin Weaver"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Caitlin Weaver at the bar",
+        "caption": "Caitlin Weaver leaning on a wooden bar counter.",
+        "description": "Caitlin Weaver rests her arms on a worn wooden bar counter in a cream graphic tee, bottles and taps lining the back bar behind her."
+      },
+      "must_right": [
+        "Caitlin Weaver"
+      ],
+      "easy_wrong": [
+        "Maria Correonero",
+        "Ellyn Heald"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Caitlin Weaver leans on a dark wooden bar counter in a cream t-shirt with a dark graphic, with liquor bottles and bar taps lit behind her."
     },
     {
       "path": "mock_images/ccqw-erika.jpg",
@@ -82,12 +122,23 @@
         "Caitlin Weaver",
         "Erika Hansen Miller"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Caitlin Weaver and Erika Hansen Miller on a night out",
+        "caption": "Caitlin Weaver and Erika Hansen Miller at a warmly lit bar.",
+        "description": "Caitlin Weaver and Erika Hansen Miller share a night out at a warmly lit bar, with other patrons reflected in the mirror behind them."
+      },
+      "must_right": [
+        "Caitlin Weaver",
+        "Erika Hansen Miller"
+      ],
+      "easy_wrong": [
+        "Ryann Wiseman",
+        "Bea Burke"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Caitlin Weaver and Erika Hansen Miller pose together at a warmly lit bar table, with other patrons visible in the background near a mirror."
     },
     {
       "path": "mock_images/ccqw-flowers.jpg",
@@ -97,12 +148,22 @@
       "present_identities": [
         "Caitlin Weaver"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Caitlin Weaver behind the bouquet",
+        "caption": "Caitlin Weaver peeking through a bouquet of flowers.",
+        "description": "Caitlin Weaver peers with one eye between pink roses, white alstroemeria, and blue delphinium stems, reaching a hand toward the camera."
+      },
+      "must_right": [
+        "Caitlin Weaver"
+      ],
+      "easy_wrong": [
+        "Maria Correonero",
+        "Ellyn Heald"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Caitlin Weaver peeks through a bouquet of pink roses, white alstroemeria, and blue delphinium, one eye visible as she reaches a hand toward the camera."
     },
     {
       "path": "mock_images/ccqw-hair.jpg",
@@ -112,12 +173,22 @@
       "present_identities": [
         "Caitlin Weaver"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Caitlin Weaver in the wind",
+        "caption": "Caitlin Weaver with hair blowing across her face under a blue sky.",
+        "description": "Caitlin Weaver stands under a deep blue sky in a mustard-yellow scarf, denim jacket, and pink sweater, long brown hair whipping across her face."
+      },
+      "must_right": [
+        "Caitlin Weaver"
+      ],
+      "easy_wrong": [
+        "Maria Correonero",
+        "Ellyn Heald"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Caitlin Weaver stands against a deep blue sky in a mustard scarf, denim jacket, and pink sweater, her long brown hair blowing across her face."
     },
     {
       "path": "mock_images/ccqw-occlusion-2.jpg",
@@ -127,12 +198,22 @@
       "present_identities": [
         "Caitlin Weaver"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Caitlin Weaver with her rangefinder",
+        "caption": "Caitlin Weaver holding a rangefinder camera to her cheek.",
+        "description": "Caitlin Weaver, in a red knit halter top with a black leather camera strap around her neck, holds a black rangefinder camera against her cheek."
+      },
+      "must_right": [
+        "Caitlin Weaver"
+      ],
+      "easy_wrong": [
+        "Maria Correonero",
+        "Ellyn Heald"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Caitlin Weaver holds a black rangefinder camera up beside her face, wearing a red knit halter top and a black leather camera strap around her neck."
     },
     {
       "path": "mock_images/ccqw-occlusion.jpg",
@@ -142,12 +223,22 @@
       "present_identities": [
         "Caitlin Weaver"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Caitlin Weaver shooting film",
+        "caption": "Caitlin Weaver raising a camera to her eye.",
+        "description": "Caitlin Weaver raises a black rangefinder camera to her right eye with both hands, hair pulled back, in front of a white wall and stacked books."
+      },
+      "must_right": [
+        "Caitlin Weaver"
+      ],
+      "easy_wrong": [
+        "Maria Correonero",
+        "Ellyn Heald"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Caitlin Weaver raises a black rangefinder camera to her eye with both hands, hair pulled back, standing before a white wall with stacked books at the edge of the frame."
     },
     {
       "path": "mock_images/ccqw-purple.jpg",
@@ -157,12 +248,22 @@
       "present_identities": [
         "Caitlin Weaver"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Caitlin Weaver in violet light",
+        "caption": "Caitlin Weaver lit in purple neon looking away.",
+        "description": "Caitlin Weaver, in a blue jacket, gazes downward in saturated purple-violet room light, loose hair falling over her shoulder."
+      },
+      "must_right": [
+        "Caitlin Weaver"
+      ],
+      "easy_wrong": [
+        "Maria Correonero",
+        "Ellyn Heald"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Caitlin Weaver looks down and to the side in saturated purple-violet light, wearing a blue jacket with loose hair over her shoulder."
     },
     {
       "path": "mock_images/ccqw-running-2.jpg",
@@ -172,27 +273,47 @@
       "present_identities": [
         "Caitlin Weaver"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Caitlin Weaver crosses the finish line",
+        "caption": "Caitlin Weaver mid-stride at a winter road race.",
+        "description": "Caitlin Weaver, in a teal beanie, sunglasses, black neck gaiter, and green running kit with a race bib and a magenta layer tied at her waist, leaps mid-stride past spectators lining the barricades."
+      },
+      "must_right": [
+        "Caitlin Weaver"
+      ],
+      "easy_wrong": [
+        "Maria Correonero",
+        "Ellyn Heald"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Caitlin Weaver runs mid-leap at a winter road race in a teal beanie, sunglasses, black neck gaiter, and green running outfit with a race bib, spectators watching from behind barricades."
     },
     {
       "path": "mock_images/ccqw-running.jpg",
       "sha256": "013bca0b2b1ebb367445ec1783e76b48fe1c13a2ab56f2f19f4335ceeb21feaa",
       "media_id": 12,
-      "face_count": 1,
+      "face_count": 2,
       "present_identities": [
         "Caitlin Weaver"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Caitlin Weaver on the marathon course",
+        "caption": "Caitlin Weaver running a seaside marathon.",
+        "description": "Caitlin Weaver, in a pink cap, mirrored sunglasses, white race vest, and a bib reading Caitlin, runs along a coastal road beside another marathoner."
+      },
+      "must_right": [
+        "Caitlin Weaver"
+      ],
+      "easy_wrong": [
+        "Maria Correonero",
+        "Ellyn Heald"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Caitlin Weaver runs along a coastal road in a pink cap, mirrored sunglasses, and a white race vest with a bib, another runner keeping pace beside her."
     },
     {
       "path": "mock_images/ccqw-sunglasses-flowers.jpg",
@@ -202,12 +323,22 @@
       "present_identities": [
         "Caitlin Weaver"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Caitlin Weaver under the magnolias",
+        "caption": "Caitlin Weaver smiling beneath pink magnolia blossoms.",
+        "description": "Caitlin Weaver, in a grey cap and rose-tinted sunglasses with low pigtails, smiles under a canopy of pink magnolia blossoms against a blue sky."
+      },
+      "must_right": [
+        "Caitlin Weaver"
+      ],
+      "easy_wrong": [
+        "Maria Correonero",
+        "Ellyn Heald"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Caitlin Weaver smiles beneath pink magnolia blossoms in a grey cap and rose-tinted sunglasses, sunlight flaring through the branches against a blue sky."
     },
     {
       "path": "mock_images/ccqw-sunglasses.jpg",
@@ -217,12 +348,22 @@
       "present_identities": [
         "Caitlin Weaver"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Caitlin Weaver on the rooftop",
+        "caption": "Caitlin Weaver in sunglasses under a clear blue sky.",
+        "description": "Caitlin Weaver smiles in dark sunglasses and a cream hoodie on a rooftop terrace, windblown hair catching the sun, city towers on the horizon."
+      },
+      "must_right": [
+        "Caitlin Weaver"
+      ],
+      "easy_wrong": [
+        "Maria Correonero",
+        "Ellyn Heald"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Caitlin Weaver smiles in dark sunglasses and a cream hoodie on a sunny rooftop, her windblown hair lit by the sun, with a small tree and city skyline behind her."
     },
     {
       "path": "mock_images/ccqw-underexposed.jpg",
@@ -232,12 +373,22 @@
       "present_identities": [
         "Caitlin Weaver"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Caitlin Weaver on the street",
+        "caption": "Caitlin Weaver in a grainy black-and-white street shot.",
+        "description": "Caitlin Weaver pauses mid-stride on a city sidewalk with a shoulder bag, in a grainy, underexposed black-and-white frame beside a beverage truck."
+      },
+      "must_right": [
+        "Caitlin Weaver"
+      ],
+      "easy_wrong": [
+        "Maria Correonero",
+        "Ellyn Heald"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Caitlin Weaver walks along a city sidewalk carrying a large shoulder bag in a grainy, underexposed black-and-white photograph, a beverage truck parked across the street."
     },
     {
       "path": "mock_images/ccqw.blurry.jpg",
@@ -247,27 +398,47 @@
       "present_identities": [
         "Caitlin Weaver"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Caitlin Weaver at the show",
+        "caption": "Caitlin Weaver blurred in pink stage light.",
+        "description": "Caitlin Weaver's face glows out of focus behind netting and bokeh lights, washed in pink concert lighting."
+      },
+      "must_right": [
+        "Caitlin Weaver"
+      ],
+      "easy_wrong": [
+        "Maria Correonero",
+        "Ellyn Heald"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Caitlin Weaver's face appears soft and out of focus behind netting and glowing bokeh lights, bathed in pink and magenta light."
     },
     {
       "path": "mock_images/cristina-1.jpg",
       "sha256": "cb5adbad2760babea68a7317800f9f2e3abe9d7e21e327f8d2c5f36e2b799ac6",
       "media_id": 17,
-      "face_count": 1,
+      "face_count": 3,
       "present_identities": [
         "Cristina Quintana"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Cristina Quintana at the costume party",
+        "caption": "Cristina Quintana with friends at a warehouse party.",
+        "description": "Cristina Quintana poses with two costumed friends against a grey brick wall at a party, drinks in hand."
+      },
+      "must_right": [
+        "Cristina Quintana"
+      ],
+      "easy_wrong": [
+        "Kirstie Mccarrel",
+        "Bea Burke"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Cristina Quintana poses with two costumed friends against a grey brick wall at a party, red drinks in hand."
     },
     {
       "path": "mock_images/example-ellynheald-goldleaf.jpeg",
@@ -277,27 +448,47 @@
       "present_identities": [
         "Ellyn Heald"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Ellyn Heald in gold leaf",
+        "caption": "Ellyn Heald wearing gold leaf makeup and red lipstick.",
+        "description": "Ellyn Heald, hair pinned up, wears flakes of gold leaf across her face, shoulders, and chest with bold red lipstick and gold drop earrings, standing in a kitchen."
+      },
+      "must_right": [
+        "Ellyn Heald"
+      ],
+      "easy_wrong": [
+        "Maria Correonero",
+        "Caitlin Weaver"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Ellyn Heald stands in a kitchen with her hair pinned up, gold leaf flaking across her face, shoulders, and chest, wearing red lipstick, a gold collar necklace, and gold drop earrings."
     },
     {
       "path": "mock_images/k.mcc-1.jpg",
       "sha256": "17778829d56efc06b51a0ede6db7c8db36e48db9348d726aabe665fb281d5d28",
       "media_id": 19,
-      "face_count": 1,
+      "face_count": 2,
       "present_identities": [
         "Kirstie Mccarrel"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Kirstie Mccarrel's birthday princess moment",
+        "caption": "Kirstie Mccarrel celebrating under the balloon arch.",
+        "description": "Kirstie Mccarrel celebrates at a birthday party beneath a purple, green, and gold balloon arch, with a Birthday Princess sash and tiara in the mix."
+      },
+      "must_right": [
+        "Kirstie Mccarrel"
+      ],
+      "easy_wrong": [
+        "Ryann Wiseman",
+        "Cristina Quintana"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Kirstie Mccarrel celebrates at a birthday party beneath an arch of purple, green, and gold balloons in front of a round mirror, a Birthday Princess sash and tiara completing the look."
     },
     {
       "path": "mock_images/kirstie-1.jpeg",
@@ -307,27 +498,47 @@
       "present_identities": [
         "Kirstie Mccarrel"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Kirstie Mccarrel and her Aussie",
+        "caption": "Kirstie Mccarrel hugging an Australian Shepherd by the fireplace.",
+        "description": "Kirstie Mccarrel, in a cream sweater, kneels on a wood floor hugging a blue merle Australian Shepherd in front of a marble fireplace."
+      },
+      "must_right": [
+        "Kirstie Mccarrel"
+      ],
+      "easy_wrong": [
+        "Ryann Wiseman",
+        "Cristina Quintana"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Kirstie Mccarrel kneels in a cream sweater beside a marble fireplace, smiling with her arms around a fluffy blue merle Australian Shepherd."
     },
     {
       "path": "mock_images/kirstie-boat.jpg",
       "sha256": "241b1974868d7c4cf76f166066fb8c419dddd70e5793a9ebb7c1a7e7fb1cc6ff",
       "media_id": 21,
-      "face_count": 1,
+      "face_count": 3,
       "present_identities": [
         "Kirstie Mccarrel"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Kirstie Mccarrel out on the water",
+        "caption": "Kirstie Mccarrel in her pink bucket hat on the bow.",
+        "description": "Kirstie Mccarrel, in a pink bucket hat and striped top, lounges on the bow of a motorboat with a friend on a hazy summer day."
+      },
+      "must_right": [
+        "Kirstie Mccarrel"
+      ],
+      "easy_wrong": [
+        "Ryann Wiseman",
+        "Cristina Quintana"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Kirstie Mccarrel sits on the bow of a motorboat in a pink bucket hat and striped crop top, smiling beside a friend in a red swimsuit on a hazy day on the water."
     },
     {
       "path": "mock_images/kirstie-daniel-sunglasses.jpg",
@@ -338,12 +549,23 @@
         "Daniel Arce",
         "Kirstie Mccarrel"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Kirstie Mccarrel and Daniel Arce at the beach",
+        "caption": "Kirstie Mccarrel and Daniel Arce lying on beach towels.",
+        "description": "Kirstie Mccarrel, in a tan NY cap and aviators, and Daniel Arce, in dark sunglasses, lie side by side on checkered beach towels in an overhead selfie."
+      },
+      "must_right": [
+        "Daniel Arce",
+        "Kirstie Mccarrel"
+      ],
+      "easy_wrong": [
+        "Liam Maloney",
+        "Ryann Wiseman"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Kirstie Mccarrel in a tan NY baseball cap and aviator sunglasses lies beside Daniel Arce in dark sunglasses on blue checkered beach towels in an overhead beach selfie."
     },
     {
       "path": "mock_images/kirstie-pool.jpg",
@@ -353,12 +575,22 @@
       "present_identities": [
         "Kirstie Mccarrel"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Kirstie Mccarrel in the pool",
+        "caption": "Kirstie Mccarrel floating in a tiled indoor pool.",
+        "description": "Kirstie Mccarrel floats on her back in a black swimsuit in the pale green water of a tiled indoor pool, near the Shallow Water lettering at the pool edge."
+      },
+      "must_right": [
+        "Kirstie Mccarrel"
+      ],
+      "easy_wrong": [
+        "Ryann Wiseman",
+        "Cristina Quintana"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Kirstie Mccarrel floats on her back in a black swimsuit in the pale green water of a tiled indoor pool, her tattooed arm sweeping the surface."
     },
     {
       "path": "mock_images/liam-maloney-2.jpg",
@@ -368,12 +600,21 @@
       "present_identities": [
         "Liam Maloney"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Liam Maloney in black and white",
+        "caption": "Liam Maloney looking up in round glasses.",
+        "description": "Liam Maloney, bald with round black-rimmed glasses, lies back against a patterned pillow in a high-contrast black-and-white overhead portrait."
+      },
+      "must_right": [
+        "Liam Maloney"
+      ],
+      "easy_wrong": [
+        "Daniel Arce"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Liam Maloney, bald and wearing round black-rimmed glasses, looks up at the camera in a high-contrast black-and-white portrait against a dark pillow."
     },
     {
       "path": "mock_images/liam-maloney-home.jpg",
@@ -383,12 +624,21 @@
       "present_identities": [
         "Liam Maloney"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Liam Maloney at home",
+        "caption": "Liam Maloney in his kitchen wearing a Pirates tee.",
+        "description": "Liam Maloney takes a kitchen selfie in a faded cap and wire-rimmed glasses, wearing a black Pittsburgh Steal Your Base tee, vintage shelves and a steel fridge behind him."
+      },
+      "must_right": [
+        "Liam Maloney"
+      ],
+      "easy_wrong": [
+        "Daniel Arce"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Liam Maloney takes a selfie in his kitchen wearing a faded two-tone cap, wire-rimmed glasses, and a black t-shirt with a yellow Pittsburgh baseball skull graphic, colorful vintage kitchenware shelved behind him."
     },
     {
       "path": "mock_images/liam-maloney-painting.jpg",
@@ -396,12 +646,20 @@
       "media_id": 27,
       "face_count": 0,
       "present_identities": [],
-      "context_pack": {},
+      "context_pack": {
+        "title": "Portrait painting in a gold frame",
+        "caption": "An expressionist portrait painting hangs on the wall.",
+        "description": "A framed expressionist portrait painting of a dark-haired man in muted greys hangs on a white wall in an ornate gold frame."
+      },
       "must_right": [],
-      "easy_wrong": [],
+      "easy_wrong": [
+        "Liam Maloney",
+        "Daniel Arce"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "A framed expressionist portrait painting of a dark-haired man rendered in muted greys hangs on a white wall in an ornate gold frame."
     },
     {
       "path": "mock_images/maria-cocktail.jpg",
@@ -411,12 +669,22 @@
       "present_identities": [
         "Maria Correonero"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Maria Correonero at the gala dinner",
+        "caption": "Maria Correonero and friends dressed up at a formal dinner.",
+        "description": "Maria Correonero, in a white slip dress and red lipstick, takes a selfie with three friends in evening dresses at a set table in an ornate gilded dining room."
+      },
+      "must_right": [
+        "Maria Correonero"
+      ],
+      "easy_wrong": [
+        "Caitlin Weaver",
+        "Ellyn Heald"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Maria Correonero, wearing a white slip dress and red lipstick, leans into a selfie with three friends in evening dresses around a set table in an ornate dining room with gilded mouldings and velvet drapes."
     },
     {
       "path": "mock_images/maria-party.jpg",
@@ -426,12 +694,22 @@
       "present_identities": [
         "Maria Correonero"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Maria Correonero and the cake",
+        "caption": "Maria Correonero biting into a slice of cake.",
+        "description": "Maria Correonero, in a sparkly top, bites a striped slice of cake while a phone on a selfie stick films her, a couple embracing in the background of the party room."
+      },
+      "must_right": [
+        "Maria Correonero"
+      ],
+      "easy_wrong": [
+        "Caitlin Weaver",
+        "Ellyn Heald"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Maria Correonero bites into a striped slice of cake in a sparkly top while a phone screen shows her live, with a couple embracing near shelves in the background."
     },
     {
       "path": "mock_images/maria-pool.jpg",
@@ -441,12 +719,22 @@
       "present_identities": [
         "Maria Correonero"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Maria Correonero on the mermaid float",
+        "caption": "Maria Correonero flashing a peace sign from a pool float.",
+        "description": "Maria Correonero, in a red-and-navy bikini, flashes a peace sign from a rose-gold glitter mermaid-tail float in a sunlit blue pool."
+      },
+      "must_right": [
+        "Maria Correonero"
+      ],
+      "easy_wrong": [
+        "Caitlin Weaver",
+        "Ellyn Heald"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Maria Correonero lounges on a rose-gold glitter mermaid-tail pool float in a red-and-navy bikini, smiling and flashing a peace sign over the bright blue water."
     },
     {
       "path": "mock_images/mcm-eye-blocked.jpg",
@@ -456,12 +744,22 @@
       "present_identities": [
         "Maria Correonero"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Maria Correonero, eye blocked",
+        "caption": "Maria Correonero holding a puzzle toy over one eye.",
+        "description": "Maria Correonero, in dark lipstick and washed in blue-and-teal light, stretches a cord holding a geometric puzzle toy over her right eye."
+      },
+      "must_right": [
+        "Maria Correonero"
+      ],
+      "easy_wrong": [
+        "Caitlin Weaver",
+        "Ellyn Heald"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Maria Correonero, lit in blue and teal and wearing dark lipstick, stretches a black cord to hold a small geometric puzzle toy over one eye."
     },
     {
       "path": "mock_images/mcm-icecave.jpg",
@@ -471,12 +769,22 @@
       "present_identities": [
         "Maria Correonero"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Maria Correonero in the ice cave",
+        "caption": "Maria Correonero crouched under glacier ice with her camera.",
+        "description": "Maria Correonero, in a white Black Diamond helmet with headlamp, fur-hooded parka, and crampon-fitted boots, crouches on rocks inside a glacial ice cave with a DSLR at her knee."
+      },
+      "must_right": [
+        "Maria Correonero"
+      ],
+      "easy_wrong": [
+        "Caitlin Weaver",
+        "Ellyn Heald"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Maria Correonero crouches on wet rocks inside a dark glacial ice cave wearing a white helmet with a headlamp, a fur-hooded black parka, and crampon-fitted boots, a DSLR camera resting at her knee."
     },
     {
       "path": "mock_images/mcm-planecrash.jpg",
@@ -486,12 +794,22 @@
       "present_identities": [
         "Maria Correonero"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Maria Correonero at the plane wreck",
+        "caption": "Maria Correonero climbing into the wrecked fuselage.",
+        "description": "Maria Correonero, in a fur-hooded parka, steps up into the torn aluminum fuselage of the abandoned DC-3 wreck on a grey black-sand plain."
+      },
+      "must_right": [
+        "Maria Correonero"
+      ],
+      "easy_wrong": [
+        "Caitlin Weaver",
+        "Ellyn Heald"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Maria Correonero climbs into the torn aluminum fuselage of an abandoned plane wreck in a fur-hooded black parka, a flat grey black-sand plain stretching behind her."
     },
     {
       "path": "mock_images/nina-machiavelli.jpeg",
@@ -499,12 +817,20 @@
       "media_id": 34,
       "face_count": 0,
       "present_identities": [],
-      "context_pack": {},
+      "context_pack": {
+        "title": "Machiavelli watches the sunset",
+        "caption": "A black dog watching the sunset down a garage lane.",
+        "description": "A black dog on a leash, wearing a collar stitched Machiavelli, sits in a garage-lined laneway watching an orange sunset behind the townhouses."
+      },
       "must_right": [],
-      "easy_wrong": [],
+      "easy_wrong": [
+        "Ryann Wiseman",
+        "Maria Correonero"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "A black dog on a leash sits in the middle of a garage-lined laneway at dusk, watching an orange sunset glow behind townhouses and trees."
     },
     {
       "path": "mock_images/rrw-mirror.jpg",
@@ -512,12 +838,20 @@
       "media_id": 35,
       "face_count": 2,
       "present_identities": [],
-      "context_pack": {},
+      "context_pack": {
+        "title": "Mirror kiss in the vintage bathroom",
+        "caption": "A woman kisses her reflection in an ornate mirror.",
+        "description": "In a green-and-gold vintage bathroom, a dark-haired woman in a pale blue dress and white knee-high boots crouches on the sink counter to kiss her own reflection."
+      },
       "must_right": [],
-      "easy_wrong": [],
+      "easy_wrong": [
+        "Ryann Wiseman",
+        "Maria Correonero"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "A dark-haired woman in a pale blue dress and white knee-high boots crouches on a bathroom counter, kissing her reflection in an ornate mirror amid green wallpaper and a gold-framed shower."
     },
     {
       "path": "mock_images/ryann-bar.jpg",
@@ -527,12 +861,22 @@
       "present_identities": [
         "Ryann Wiseman"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Ryann Wiseman at the pink bar",
+        "caption": "Ryann Wiseman with a margarita under pink neon.",
+        "description": "Ryann Wiseman, in a black backless top and sheer patterned skirt, holds a salt-rimmed margarita at a pink-lit bar beneath a Pink Panther poster and an antique mirror."
+      },
+      "must_right": [
+        "Ryann Wiseman"
+      ],
+      "easy_wrong": [
+        "Kirstie Mccarrel",
+        "Bea Burke"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Ryann Wiseman stands at a pink-lit bar in a black backless top and sheer patterned skirt, holding a salt-rimmed margarita near a Pink Panther poster, her hair reflected in an antique mirror."
     },
     {
       "path": "mock_images/ryann-group-party.jpg",
@@ -542,12 +886,22 @@
       "present_identities": [
         "Ryann Wiseman"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Ryann Wiseman's pajama party",
+        "caption": "Ryann Wiseman dancing with friends in matching pink satin.",
+        "description": "Ryann Wiseman raises a drink among five friends in matching pink satin pajamas, dancing by an iridescent foil curtain and a silver number balloon."
+      },
+      "must_right": [
+        "Ryann Wiseman"
+      ],
+      "easy_wrong": [
+        "Bea Burke",
+        "Kirstie Mccarrel"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Ryann Wiseman celebrates with five friends in matching pink satin pajamas beside an iridescent pink foil curtain, one raising a red drink high under a silver balloon."
     },
     {
       "path": "mock_images/ryann-party.jpg",
@@ -557,12 +911,22 @@
       "present_identities": [
         "Ryann Wiseman"
       ],
-      "context_pack": {},
-      "must_right": [],
-      "easy_wrong": [],
+      "context_pack": {
+        "title": "Ryann Wiseman on the couch",
+        "caption": "Ryann Wiseman in pearls with a friend at a dress-up party.",
+        "description": "Ryann Wiseman, in a white lace bralette and layered pearls, sits close with a dark-haired friend in a black corset and boa on a couch beneath a red wall clock and framed photos."
+      },
+      "must_right": [
+        "Ryann Wiseman"
+      ],
+      "easy_wrong": [
+        "Maria Correonero",
+        "Kirstie Mccarrel"
+      ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": "Ryann Wiseman, wearing a white lace bralette with layered pearl necklaces, sits on a couch beside a dark-haired friend in a black corset with a white feather boa, framed pictures and a red clock on the wall behind them."
     }
   ]
 }

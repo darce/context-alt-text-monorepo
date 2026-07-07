@@ -81,5 +81,5 @@ def generate_draft_manifest(fixtures_dir: str) -> tuple[dict, list[str]]:
             }
         )
 
-    draft = {"manifest_version": 1, "roster": roster, "entries": entries}
+    draft = {"manifest_version": 2, "roster": roster, "entries": entries}
     return draft, notes

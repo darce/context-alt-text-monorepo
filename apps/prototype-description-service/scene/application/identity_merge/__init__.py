@@ -11,13 +11,21 @@ from scene.application.identity_merge.merge import (
     merge_identities,
     normalize_bbox,
 )
+from scene.application.identity_merge.realizer import (
+    DeterministicNlgRealizer,
+    PositionalFallbackRealizer,
+    ReflowRealizer,
+)
 
 __all__ = [
     "ConfirmedFace",
+    "DeterministicNlgRealizer",
     "IdentityAssociation",
     "MergeResult",
     "NormalizedBox",
     "PhraseBox",
+    "PositionalFallbackRealizer",
+    "ReflowRealizer",
     "containment_match",
     "load_confirmed_faces",
     "merge_identities",

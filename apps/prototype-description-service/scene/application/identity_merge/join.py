@@ -13,7 +13,12 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models.identity import IdentityCluster, IdentityMember, MediaIdentity
+from db.models.identity import (
+    IdentityCluster,
+    IdentityMember,
+    IdentityNameSuppression,
+    MediaIdentity,
+)
 from scene.application.identity_merge.merge import ConfirmedFace, normalize_bbox
 
 
@@ -75,3 +80,13 @@ async def load_confirmed_faces(
         )
         for row in rows
     ]
+
+
+async def load_suppressed_roster_ids(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+) -> frozenset[uuid.UUID]:
+    """Per-roster_id do-not-name set for the tenant's naming policy."""
+    stmt = select(IdentityNameSuppression.roster_id).where(IdentityNameSuppression.tenant_id == tenant_id)
+    return frozenset((await session.execute(stmt)).scalars().all())

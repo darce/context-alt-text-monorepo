@@ -48,7 +48,9 @@ class TestNormalizeBbox:
 
     def test_center_and_area(self):
         box = NormalizedBox(x=0.2, y=0.2, width=0.4, height=0.2)
-        assert box.center == (pytest.approx(0.4), pytest.approx(0.3))
+        cx, cy = box.center
+        assert cx == pytest.approx(0.4)
+        assert cy == pytest.approx(0.3)
         assert box.area == pytest.approx(0.08)
 
 

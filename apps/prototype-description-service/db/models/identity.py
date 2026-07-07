@@ -306,6 +306,26 @@ class IdentityMember(Base):
     )
 
 
+class IdentityNameSuppression(Base):
+    """Per-roster_id do-not-name escape hatch for the E19-4a naming gate."""
+
+    __tablename__ = "identity_name_suppressions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    roster_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
+
+    tenant: Mapped[Tenant] = relationship()
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "roster_id", name="unique_name_suppression"),
+        Index("idx_identity_name_suppressions_tenant", "tenant_id"),
+    )
+
+
 __all__ = [
     "MediaIdentity",
     "IdentityCluster",
@@ -313,4 +333,5 @@ __all__ = [
     "ClusterCentroid",
     "IdentityClusterRepresentative",
     "IdentityMember",
+    "IdentityNameSuppression",
 ]

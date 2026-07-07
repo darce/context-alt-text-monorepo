@@ -48,6 +48,25 @@ unavoidable so future adapters never change the wire:
 - `provider_disclosure.provider` ∈ `{none, local, hosted}`; seeded/local keep
   bytes inside the service boundary.
 
+#### E19-4a additive optional preview fields
+
+Three **optional** fields (never in the schema `required` set; draft-only —
+nothing here writes `_wp_attachment_image_alt`, that write path is E19-2):
+
+- `generic_draft` (`string|null`) — the untouched generic draft (equals `alt_text_draft`).
+- `named_draft` (`string|null`) — identity-named draft merging confirmed roster
+  identities; identical to `generic_draft` whenever naming is not allowed
+  (agreement off, suppressed, ambiguous, low confidence, DB absent). Never a
+  guessed name.
+- `naming_provenance` (`object|null`) — `injected_names[]` (`name`,
+  `cluster_id`, `roster_id`, `match_confidence`), `naming_allowed` (bool), and
+  `reason` ∈ `{agreement_disabled, db_unavailable, image_unreadable,
+  no_confirmed_identities, no_eligible_identities, ambiguous_grounding, null}`
+  when the draft stayed generic.
+
+Naming is gated tenant-side by `tenants.naming_agreement_enabled` plus the
+per-`roster_id` `identity_name_suppressions` list.
+
 ### Errors
 
 | Status | When |

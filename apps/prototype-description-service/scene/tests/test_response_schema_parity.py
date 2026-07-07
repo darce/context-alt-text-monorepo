@@ -42,14 +42,39 @@ def _sample() -> dict:
     }
 
 
+# E19-4a additive optional preview fields: never in `required`, always in
+# `properties` — the 15 core-contract fields stay locked.
+PREVIEW_FIELDS = {"generic_draft", "named_draft", "naming_provenance"}
+
+
 def test_schema_required_matches_model_fields():
     schema = _schema()
-    assert set(schema["required"]) == set(VisualFactsResponse.model_fields)
+    assert set(schema["required"]) == set(VisualFactsResponse.model_fields) - PREVIEW_FIELDS
     assert len(schema["required"]) == 15
+    assert set(schema["properties"]) == set(VisualFactsResponse.model_fields)
 
 
 def test_sample_validates_against_schema():
     jsonschema.validate(_sample(), _schema())
+
+
+def test_sample_with_preview_fields_validates():
+    sample = _sample()
+    sample["generic_draft"] = "A cat sitting on a mat."
+    sample["named_draft"] = "A cat sitting on a mat. Pictured from left: Daniel."
+    sample["naming_provenance"] = {
+        "injected_names": [
+            {
+                "name": "Daniel",
+                "cluster_id": "00000000-0000-0000-0000-000000000002",
+                "roster_id": "00000000-0000-0000-0000-000000000003",
+                "match_confidence": 0.97,
+            }
+        ],
+        "naming_allowed": True,
+        "reason": None,
+    }
+    jsonschema.validate(sample, _schema())
 
 
 def test_missing_provenance_field_fails_schema():

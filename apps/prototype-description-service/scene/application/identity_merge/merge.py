@@ -73,11 +73,14 @@ class IdentityAssociation:
 
 @dataclass(frozen=True)
 class MergeResult:
-    """Both drafts plus the associations that justify any naming."""
+    """Both drafts plus the associations and provenance that justify any naming."""
 
     generic_draft: str
     named_draft: str
     associations: tuple[IdentityAssociation, ...] = field(default_factory=tuple)
+    # NamingProvenance when a NamingPolicy was applied; None on policy-less
+    # (pre-Slice-3) calls. Typed Any to keep the package acyclic.
+    provenance: Any = None
 
 
 def normalize_bbox(
@@ -133,35 +136,91 @@ def merge_identities(
     phrase_boxes: list[PhraseBox],
     confirmed_faces: list[ConfirmedFace],
     realizer: Any | None = None,
+    policy: Any | None = None,
 ) -> MergeResult:
-    """Produce both drafts plus 1:1 name↔region associations.
+    """Produce both drafts plus 1:1 name↔region associations and provenance.
 
     Realizer selection lives here, behind the ``ReflowRealizer`` seam — no
     inline mode ladder inside realizers. An injected ``realizer`` always wins;
     otherwise: grounded associations → ``DeterministicNlgRealizer``; no phrase
     boxes at all → ``PositionalFallbackRealizer`` (Approach B); phrase boxes
     present but matching ambiguous/empty → generic (never guess).
+
+    When a ``NamingPolicy`` is passed, the consent gate filters faces before
+    matching and the result carries ``NamingProvenance`` (generic-only results
+    name the skip reason).
     """
-    # Function-level import: realizer.py imports the dataclasses from this
-    # module, so the seam is bound late to keep the package acyclic.
+    # Function-level imports: realizer.py/policy.py import the dataclasses
+    # from this module, so the seam is bound late to keep the package acyclic.
+    from scene.application.identity_merge.policy import (
+        InjectedName,
+        NamingProvenance,
+        NamingSkipReason,
+        resolve_naming_allowed,
+    )
     from scene.application.identity_merge.realizer import (
         DeterministicNlgRealizer,
         PositionalFallbackRealizer,
     )
 
-    associations = containment_match(confirmed_faces, phrase_boxes)
+    def _generic(reason: Any) -> MergeResult:
+        provenance = NamingProvenance(naming_allowed=False, reason=reason) if policy is not None else None
+        return MergeResult(generic_draft=caption, named_draft=caption, provenance=provenance)
+
+    faces = list(confirmed_faces)
+    if policy is not None:
+        if not policy.agreement_enabled:
+            return _generic(NamingSkipReason.AGREEMENT_DISABLED)
+        if not faces:
+            return _generic(NamingSkipReason.NO_CONFIRMED_IDENTITIES)
+        faces = [f for f in faces if resolve_naming_allowed(f, policy)]
+        if not faces:
+            return _generic(NamingSkipReason.NO_ELIGIBLE_IDENTITIES)
+
+    associations = containment_match(faces, phrase_boxes)
+    named_faces: list[ConfirmedFace]
+    if associations:
+        named_faces = [a.face for a in associations]
+    elif not phrase_boxes and faces:
+        named_faces = sorted(faces, key=lambda f: f.box.center[0])  # fallback order
+    else:
+        named_faces = []
+
     if realizer is None:
         if associations:
             realizer = DeterministicNlgRealizer()
-        elif not phrase_boxes and confirmed_faces:
+        elif not phrase_boxes and faces:
             realizer = PositionalFallbackRealizer()
     named_draft = (
-        realizer.realize(caption=caption, associations=associations, confirmed_faces=confirmed_faces)
+        realizer.realize(caption=caption, associations=associations, confirmed_faces=faces)
         if realizer is not None
         else caption
     )
+
+    provenance = None
+    if policy is not None:
+        if named_faces and named_draft != caption:
+            provenance = NamingProvenance(
+                injected_names=tuple(
+                    InjectedName(
+                        name=f.label,
+                        cluster_id=f.cluster_id,
+                        roster_id=f.roster_id,
+                        match_confidence=f.detection_confidence,
+                    )
+                    for f in named_faces
+                ),
+                naming_allowed=True,
+                reason=None,
+            )
+        else:
+            provenance = NamingProvenance(
+                naming_allowed=False,
+                reason=NamingSkipReason.AMBIGUOUS_GROUNDING,
+            )
     return MergeResult(
         generic_draft=caption,
         named_draft=named_draft,
         associations=tuple(associations),
+        provenance=provenance,
     )

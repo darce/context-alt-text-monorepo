@@ -46,8 +46,34 @@ class ProviderDisclosure(BaseModel):
     left_service_boundary: bool = False
 
 
+class InjectedName(BaseModel):
+    """One name injected into the named draft, with its curation source."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    cluster_id: str
+    roster_id: str | None = None
+    match_confidence: float
+
+
+class NamingProvenance(BaseModel):
+    """E19-4a preview provenance: what was named, from where, or why not."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    injected_names: list[InjectedName] = Field(default_factory=list)
+    naming_allowed: bool = False
+    reason: str | None = None
+
+
 class VisualFactsResponse(BaseModel):
-    """The 15-field describe response. Field set is contract-locked."""
+    """The 15 contract-locked core fields plus the E19-4a additive optional
+    preview trio (``generic_draft``/``named_draft``/``naming_provenance``).
+
+    Preview fields are draft-only: nothing here writes
+    ``_wp_attachment_image_alt`` (that write path is E19-2).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -66,3 +92,7 @@ class VisualFactsResponse(BaseModel):
     cached: bool
     duration_ms: int = Field(ge=0)
     retention_class: RetentionClass
+    # E19-4a additive optional preview fields (never in the schema `required`).
+    generic_draft: str | None = None
+    named_draft: str | None = None
+    naming_provenance: NamingProvenance | None = None

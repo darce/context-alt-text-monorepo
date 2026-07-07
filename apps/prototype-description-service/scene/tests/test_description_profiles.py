@@ -192,7 +192,7 @@ def test_fake_hosted_adapter_satisfies_protocol_with_canned_result():
 
 
 def test_hosted_adapter_fails_closed_on_provider_error():
-    def _boom(*, image_bytes, context, timeout_s):
+    def _boom(*, image_bytes, context, timeout_s, model):
         raise RuntimeError("provider 500")
 
     adapter = HostedProviderDescriptionAdapter(
@@ -203,6 +203,51 @@ def test_hosted_adapter_fails_closed_on_provider_error():
     )
     with pytest.raises(HostedProviderError):
         adapter.describe(image_bytes=b"x", context=None)
+
+
+class _FakeHttpxResponse:
+    def __init__(self, body):
+        self._body = body
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self._body
+
+
+def _capture_httpx_post(monkeypatch, body):
+    from scene.infrastructure.provider import hosted_provider_adapter as mod
+
+    calls = {}
+
+    def _post(url, *, json, headers, timeout):
+        calls["payload"] = json
+        return _FakeHttpxResponse(body)
+
+    monkeypatch.setattr(mod.httpx, "post", _post)
+    monkeypatch.setenv("ACX_HOSTED_PROVIDER_API_KEY", "test-key")
+    return calls
+
+
+def test_openai_invoke_uses_adapter_model_and_sniffed_mime(monkeypatch):
+    from scene.infrastructure.provider.hosted_provider_adapter import openai_chat_invoke
+
+    calls = _capture_httpx_post(monkeypatch, {"choices": [{"message": {"content": "A caption."}}]})
+    png = b"\x89PNG\r\n\x1a\n" + b"rest"
+    result = openai_chat_invoke(image_bytes=png, context=None, timeout_s=5.0, model="gpt-4o-mini")
+    assert result.caption == "A caption."
+    assert calls["payload"]["model"] == "gpt-4o-mini"  # rg-015: provenance model == invoked model
+    image_url = calls["payload"]["messages"][0]["content"][1]["image_url"]["url"]
+    assert image_url.startswith("data:image/png;base64,")
+
+
+def test_openai_invoke_fails_closed_on_null_content(monkeypatch):
+    from scene.infrastructure.provider.hosted_provider_adapter import openai_chat_invoke
+
+    _capture_httpx_post(monkeypatch, {"choices": [{"message": {"content": None}}]})
+    with pytest.raises(HostedProviderError):
+        openai_chat_invoke(image_bytes=b"\xff\xd8jpeg", context=None, timeout_s=5.0, model="gpt-4o-mini")
 
 
 def test_florence_small_degrades_to_unavailable_when_vlm_missing(monkeypatch):

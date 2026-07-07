@@ -53,17 +53,26 @@ export ACX_DESCRIPTION_ADAPTER=hosted_gpt4o
 export ACX_HOSTED_PROVIDER_OPTIN=1          # without this the profile fail-closes (503)
 export ACX_HOSTED_PROVIDER_API_KEY=<provider key — server-side only, never in the repo>
 
-# Harness side: same live gates as above (eval tenant — NEVER the demo tenant),
+# Harness side: same live gates as § Setup (eval tenant — NEVER the demo tenant),
 # plus image + spend caps. --cost-per-image is the provider's published price.
+export ACX_EVAL_LIVE=1
 uv run python -m scripts.eval_harness.cli run \
   --provider hosted_gpt4o --limit 10 \
   --cost-per-image 0.01 --max-cost 1.00
 ```
 
-- `--provider` repeats for a matrix; each value writes its own
-  `run-<stamp>-<provider>.json` record + reports.
-- `--max-cost` aborts **before** the paid call that would exceed the cap and
-  saves the partial record (`*-aborted.json`) — capped runs stay scoreable.
+- `--provider` names the hosted profile **the target service is serving** — the
+  flag cannot switch the server profile (that is fixed by
+  `ACX_DESCRIPTION_ADAPTER` on the service). The harness verifies each
+  response's `provider_disclosure` and aborts (`ProviderMismatchError`) rather
+  than stamping mislabeled evidence. It repeats for a matrix (one
+  `run-<stamp>-<provider>.json` record + reports per value), but each matrix
+  leg requires re-exporting `ACX_DESCRIPTION_ADAPTER` and restarting the
+  service between invocations.
+- `--max-cost` caps the **whole invocation** (all matrix legs combined,
+  requires `--cost-per-image`): it aborts **before** the paid call that would
+  exceed the cap and saves the partial record (`*-aborted.json`) — capped runs
+  stay scoreable.
 - Provider, per-image price, estimated spend, and per-item `latency_s` land in
   the run-record provenance/items; each hosted item's
   `describe.provider_disclosure.left_service_boundary` is `true`.

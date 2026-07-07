@@ -34,6 +34,7 @@ class DescriptionProfile(StrEnum):
     FLORENCE_SMALL = "florence_small"
     FLORENCE_LARGE = "florence_large"
     GPU_PHI4 = "gpu_phi4"
+    HOSTED_GPT4O = "hosted_gpt4o"
 
 
 @dataclass(frozen=True)
@@ -93,6 +94,18 @@ PROFILE_SPECS: dict[DescriptionProfile, ProfileSpec] = {
         unavailable_reason=(
             "gpu_phi4 (~900s/image on A1 CPU, ~60x Florence) requires a GPU host; "
             f"stub pending GPU deployment. See {_ASYNC_NOTES}."
+        ),
+    ),
+    DescriptionProfile.HOSTED_GPT4O: ProfileSpec(
+        profile=DescriptionProfile.HOSTED_GPT4O,
+        adapter_kind=DescriptionAdapterKind.HOSTED_PROVIDER,
+        available=False,  # fail-closed: image bytes leave the service boundary (E20-11)
+        model_id="gpt-4o-mini",
+        model_revision=None,
+        model_version="gpt-4o-mini",
+        unavailable_reason=(
+            "hosted_gpt4o sends image bytes to a third-party provider; opt in explicitly "
+            "with ACX_HOSTED_PROVIDER_OPTIN=1 (server-side, eval/benchmark use only)."
         ),
     ),
 }

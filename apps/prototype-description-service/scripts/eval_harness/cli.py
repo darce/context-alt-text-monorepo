@@ -1,4 +1,4 @@
-"""Eval-harness CLI: fetch / score / run / seed-roster.
+"""Eval-harness CLI: fetch / score / run / seed-roster / seed-scenes.
 
 Split Phase: ``fetch`` walks the golden manifest against the remote OCI service
 (concurrency 1) and writes a run record; ``score`` is pure and offline;
@@ -27,15 +27,19 @@ import os
 import re
 import subprocess
 import sys
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from scene.config.profiles import PROFILE_SPECS, DescriptionProfile
+from scene.domain.description import DescriptionAdapterKind
 
 from .manifest import GoldenManifest, ManifestError, load_manifest
 from .remote_client import RemoteClientError, RemoteSceneClient
 from .report import ReportError, build_reports, score_run_record
 from .schema import SCHEMA, DocKind
-from .seed_roster import seed
+from .seed_roster import seed, seed_scenes
 
 DEFAULT_KEEP = 10
 DEFAULT_STALL_LIMIT = 5
@@ -52,11 +56,50 @@ def _keep_arg(raw: str) -> int:
     return value
 
 
+def _provider_value(raw: str) -> str:
+    """argparse type for ``--provider``: a registered hosted description profile (rg-008, sr-007)."""
+    value = raw.strip()
+    try:
+        profile = DescriptionProfile(value)
+    except ValueError:
+        hosted = [p.value for p, s in PROFILE_SPECS.items() if s.adapter_kind is DescriptionAdapterKind.HOSTED_PROVIDER]
+        raise argparse.ArgumentTypeError(f"{raw!r} is not a description profile; hosted profiles: {hosted}") from None
+    if PROFILE_SPECS[profile].adapter_kind is not DescriptionAdapterKind.HOSTED_PROVIDER:
+        raise argparse.ArgumentTypeError(f"{raw!r} is not a hosted profile (adapter_kind != hosted_provider)")
+    return value
+
+
 class BoundedStallError(RuntimeError):
     """Aborted after too many consecutive per-item failures (rg-007).
 
     Carries the partial run record (``aborted: true``) so an aborted run is
     still diagnosable — the per-item errors are the whole point of the abort.
+    """
+
+    def __init__(self, message: str, partial_record: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.partial_record = partial_record
+
+
+class MaxCostExceededError(RuntimeError):
+    """Aborted before a paid provider call would push estimated spend past ``--max-cost`` (E20-11).
+
+    Like ``BoundedStallError``, carries the partial record so the capped run is
+    still scoreable evidence.
+    """
+
+    def __init__(self, message: str, partial_record: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.partial_record = partial_record
+
+
+class ProviderMismatchError(RuntimeError):
+    """The service's describe response does not corroborate the claimed ``--provider`` (rg-015).
+
+    The flag cannot switch the server profile (that is fixed by
+    ``ACX_DESCRIPTION_ADAPTER`` on the service), so the harness verifies each
+    item's ``provider_disclosure`` and aborts rather than stamping mislabeled
+    benchmark evidence. Carries the partial record for diagnosis.
     """
 
     def __init__(self, message: str, partial_record: dict[str, Any]) -> None:
@@ -73,23 +116,54 @@ def fetch_run_record(
     limit: int | None = None,
     stall_limit: int = DEFAULT_STALL_LIMIT,
     started_at: str = "1970-01-01T00:00:00Z",
+    provider: str | None = None,
+    cost_per_image_usd: float | None = None,
+    max_cost_usd: float | None = None,
+    spent_usd: float = 0.0,
 ) -> dict[str, Any]:
-    """Walk manifest entries sequentially; isolate per-item failures; bound stalls."""
+    """Walk manifest entries sequentially; isolate per-item failures; bound stalls.
+
+    E20-11: ``provider`` stamps the hosted description profile under test into the
+    provenance and is *verified* against each item's ``provider_disclosure``
+    (``ProviderMismatchError`` on drift — the flag cannot switch the server
+    profile, so unverified stamping would fabricate evidence, rg-015).
+    ``cost_per_image_usd`` (the provider's published per-request price) is billed
+    per *attempted, non-cached* describe call — cache hits (``cached: true``) are
+    refunded and analyze/identity calls are provider-free — yielding
+    ``est_cost_usd``/``paid_describe_calls``; ``max_cost_usd`` aborts *before* the
+    paid call that would push ``spent_usd`` + this run's estimate past the cap
+    (``spent_usd`` carries spend from earlier legs of a matrix invocation).
+    ``latency_s`` times the describe call only, not the recognition job polling.
+    """
     images_root = Path(images_dir)
     entries = manifest.entries[:limit] if limit else manifest.entries
     items: list[dict[str, Any]] = []
     consecutive_failures = 0
+    paid_calls = 0
+    expected_model_id: str | None = None
+    if provider is not None:
+        try:
+            expected_model_id = PROFILE_SPECS[DescriptionProfile(provider)].model_id
+        except ValueError:
+            expected_model_id = None  # direct callers may pass labels outside the registry
 
     def _record(aborted: bool = False) -> dict[str, Any]:
+        provenance: dict[str, Any] = {
+            "manifest_sha256": _manifest_sha(manifest),
+            "base_url": getattr(client, "base_url", "unknown"),
+            "head_sha": head_sha,
+            "started_at": started_at,
+        }
+        if provider is not None:
+            provenance["provider"] = provider
+        if cost_per_image_usd is not None:
+            provenance["cost_per_image_usd"] = cost_per_image_usd
+            provenance["paid_describe_calls"] = paid_calls
+            provenance["est_cost_usd"] = round(cost_per_image_usd * paid_calls, 6)
         record: dict[str, Any] = {
             "schema": SCHEMA,
             "kind": DocKind.RUN_RECORD.value,
-            "provenance": {
-                "manifest_sha256": _manifest_sha(manifest),
-                "base_url": getattr(client, "base_url", "unknown"),
-                "head_sha": head_sha,
-                "started_at": started_at,
-            },
+            "provenance": provenance,
             "items": items,
         }
         if aborted:
@@ -97,6 +171,16 @@ def fetch_run_record(
         return record
 
     for entry in entries:
+        if max_cost_usd is not None and cost_per_image_usd is not None:
+            # Pre-call the cache state is unknown, so the projection is conservative:
+            # the next describe is assumed paid.
+            projected = spent_usd + cost_per_image_usd * (paid_calls + 1)
+            if projected > max_cost_usd:
+                raise MaxCostExceededError(
+                    f"next paid call would raise estimated spend to ${projected:.4f} "
+                    f"(> --max-cost ${max_cost_usd:.4f}); aborting before {entry.path}",
+                    partial_record=_record(aborted=True),
+                )
         image_path = images_root / entry.path
         item: dict[str, Any] = {
             "media_id": entry.media_id,
@@ -105,15 +189,23 @@ def fetch_run_record(
             "identities": [],
             "face_count": 0,
             "error": None,
+            "latency_s": None,
         }
+        describe_started: float | None = None
         try:
             image_bytes = image_path.read_bytes()
+            describe_started = time.monotonic()
+            # Billed on attempt (a failed call may still charge); refunded on cache hit.
+            paid_calls += 1
             item["describe"] = client.describe(
                 image_bytes=image_bytes,
                 filename=image_path.name,
                 media_id=entry.media_id,
                 context_pack=entry.context_pack.model_dump(exclude_none=True),
             )
+            item["latency_s"] = round(time.monotonic() - describe_started, 3)
+            if isinstance(item["describe"], dict) and item["describe"].get("cached") is True:
+                paid_calls -= 1
             job_id = client.analyze([(entry.media_id, image_path.name, image_bytes)])
             client.wait_job(job_id)
             identities_payload = client.media_identities([entry.media_id])
@@ -122,6 +214,8 @@ def fetch_run_record(
             item["face_count"] = face_count
         except Exception as exc:  # noqa: BLE001 — per-item isolation is the contract (rg-007)
             item["error"] = f"{type(exc).__name__}: {exc}"
+            if item["latency_s"] is None and describe_started is not None:
+                item["latency_s"] = round(time.monotonic() - describe_started, 3)
             consecutive_failures += 1
             if consecutive_failures >= stall_limit:
                 items.append(item)
@@ -131,6 +225,26 @@ def fetch_run_record(
                 ) from exc
         else:
             consecutive_failures = 0
+            if provider is not None:
+                describe = item["describe"] if isinstance(item["describe"], dict) else {}
+                disclosure = describe.get("provider_disclosure")
+                response_model = describe.get("model_id")
+                corroborated = (
+                    isinstance(disclosure, dict)
+                    and disclosure.get("provider") == "hosted"
+                    and disclosure.get("left_service_boundary") is True
+                    # Disambiguate WHICH hosted profile when both sides expose a model id.
+                    and (response_model is None or expected_model_id is None or response_model == expected_model_id)
+                )
+                if not corroborated:
+                    items.append(item)
+                    raise ProviderMismatchError(
+                        f"--provider {provider!r} claimed but {entry.path}'s describe response does not "
+                        f"corroborate it (provider_disclosure={disclosure!r}, model_id={response_model!r}, "
+                        f"expected model {expected_model_id!r}); the service profile is fixed server-side "
+                        "by ACX_DESCRIPTION_ADAPTER — refusing to stamp mislabeled evidence",
+                        partial_record=_record(aborted=True),
+                    )
         items.append(item)
 
     return _record()
@@ -138,7 +252,12 @@ def fetch_run_record(
 
 def _extract_identities(payload: Any, media_id: int) -> tuple[list[str], int]:
     """Normalize /media/identities rows for one media_id -> (names, face_count)."""
-    rows = payload if isinstance(payload, list) else []
+    if not isinstance(payload, list):
+        raise RemoteClientError(
+            f"media_identities returned {type(payload).__name__}, expected a list of "
+            "identity rows (rg-015) — per-item isolation records this as an item error"
+        )
+    rows = payload
     names: list[str] = []
     face_count = 0
     for row in rows:
@@ -251,36 +370,54 @@ def _reject_llm_judge(args: argparse.Namespace) -> None:
         sys.exit("--llm-judge is a stub: the LLM-judge tier is not implemented in this MVP (§6c)")
 
 
-def _cmd_fetch(args: argparse.Namespace) -> str:
+def _cmd_fetch(args: argparse.Namespace) -> list[str]:
+    """Fetch one run record per ``--provider`` value (or a single unstamped run)."""
     _reject_llm_judge(args)
     base_url, api_key, tenant_id = _require_live_env()
     images_dir = _images_dir()
     manifest = load_manifest(args.manifest, images_dir=images_dir)
-    client = RemoteSceneClient(base_url=base_url, api_key=api_key, tenant_id=tenant_id)
-    started_at = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # Dedupe (order-preserving): a repeated matrix value would overwrite its own
+    # same-second record path and double-spend for identical evidence.
+    providers: list[str | None] = list(dict.fromkeys(args.provider)) if args.provider else [None]
     OUT_DIR.mkdir(exist_ok=True)
-    stamp = started_at.replace(":", "").replace("-", "").replace("T", "-").rstrip("Z")
-    record_path = OUT_DIR / f"run-{stamp}.json"
-    try:
-        record = fetch_run_record(
-            manifest,
-            images_dir,
-            client,
-            head_sha=_head_sha(),
-            limit=args.limit,
-            stall_limit=args.stall_limit,
-            started_at=started_at,
-        )
-    except BoundedStallError as exc:
-        aborted_path = OUT_DIR / f"run-{stamp}-aborted.json"
-        aborted_path.write_text(json.dumps(exc.partial_record, indent=2, sort_keys=True) + "\n")
-        sys.exit(f"BoundedStallError: {exc} — partial record saved to {aborted_path}")
-    finally:
-        client.close()
-    record_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
-    prune_out_dir(str(OUT_DIR), keep=args.keep)
-    print(record_path)
-    return str(record_path)
+    record_paths: list[str] = []
+    spent_usd = 0.0
+    for provider in providers:
+        client = RemoteSceneClient(base_url=base_url, api_key=api_key, tenant_id=tenant_id)
+        started_at = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        stamp = started_at.replace(":", "").replace("-", "").replace("T", "-").rstrip("Z")
+        suffix = f"-{provider}" if provider else ""
+        record_path = OUT_DIR / f"run-{stamp}{suffix}.json"
+        try:
+            record = fetch_run_record(
+                manifest,
+                images_dir,
+                client,
+                head_sha=_head_sha(),
+                limit=args.limit,
+                stall_limit=args.stall_limit,
+                started_at=started_at,
+                provider=provider,
+                cost_per_image_usd=args.cost_per_image,
+                max_cost_usd=args.max_cost,
+                spent_usd=spent_usd,
+            )
+        except (BoundedStallError, MaxCostExceededError, ProviderMismatchError) as exc:
+            aborted_path = OUT_DIR / f"run-{stamp}{suffix}-aborted.json"
+            aborted_path.write_text(json.dumps(exc.partial_record, indent=2, sort_keys=True) + "\n")
+            sys.exit(f"{type(exc).__name__}: {exc} — partial record saved to {aborted_path}")
+        finally:
+            client.close()
+        if args.cost_per_image is not None:
+            # --max-cost caps the whole invocation, not each matrix leg; est_cost_usd
+            # already excludes cache hits and never-issued calls.
+            spent_usd += record["provenance"].get("est_cost_usd", 0.0)
+        record_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+        record_paths.append(str(record_path))
+        print(record_path)
+    # Never prune records this invocation just wrote (S3-07 across the matrix).
+    prune_out_dir(str(OUT_DIR), keep=max(args.keep, len(record_paths)))
+    return record_paths
 
 
 def _cmd_score(args: argparse.Namespace) -> None:
@@ -315,9 +452,9 @@ def _cmd_score(args: argparse.Namespace) -> None:
 
 
 def _cmd_run(args: argparse.Namespace) -> None:
-    record_path = _cmd_fetch(args)
-    args.run_record = record_path
-    _cmd_score(args)
+    for record_path in _cmd_fetch(args):
+        args.run_record = record_path
+        _cmd_score(args)
 
 
 def _cmd_seed_roster(args: argparse.Namespace) -> None:
@@ -332,6 +469,21 @@ def _cmd_seed_roster(args: argparse.Namespace) -> None:
         sys.exit(f"seeding incomplete: unlabeled roster names {summary.unlabeled_roster_names}")
 
 
+def _cmd_seed_scenes(args: argparse.Namespace) -> None:
+    base_url, api_key, tenant_id = _require_live_env()
+    images_dir = _images_dir()
+    client = RemoteSceneClient(base_url=base_url, api_key=api_key, tenant_id=tenant_id)
+    try:
+        summary = seed_scenes(args.manifest, images_dir, client)
+    finally:
+        client.close()
+    print(json.dumps(summary.__dict__, indent=2, sort_keys=True))
+    if summary.unverified_media_ids:
+        sys.exit(
+            f"seeding incomplete: no identity rows detected for media_ids {summary.unverified_media_ids}"
+        )
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="eval_harness", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -344,8 +496,35 @@ def main(argv: list[str] | None = None) -> None:
         p.add_argument("--llm-judge", action="store_true", help="stub — not implemented (§6c)")
         p.add_argument("--check-determinism", action="store_true")
 
+    def _provider_flags(p: argparse.ArgumentParser) -> None:
+        # fetch/run only — score is pure/offline and must not accept paid-run flags.
+        p.add_argument(
+            "--provider",
+            action="append",
+            type=_provider_value,
+            default=None,
+            help=(
+                "hosted description profile the target service is serving; verified against each "
+                "response's provider_disclosure. Repeatable, but the server profile is fixed per "
+                "deployment — each matrix leg needs the service reconfigured between invocations"
+            ),
+        )
+        p.add_argument(
+            "--cost-per-image",
+            type=float,
+            default=None,
+            help="provider's published per-request price (USD); stamps est_cost_usd into provenance",
+        )
+        p.add_argument(
+            "--max-cost",
+            type=float,
+            default=None,
+            help="whole-invocation cap: abort before any paid call that would push estimated spend (USD) past it",
+        )
+
     fetch_p = sub.add_parser("fetch", help="manifest -> remote calls -> run record")
     _common(fetch_p)
+    _provider_flags(fetch_p)
     fetch_p.set_defaults(func=_cmd_fetch)
 
     score_p = sub.add_parser("score", help="run record -> reports (pure, offline)")
@@ -355,16 +534,30 @@ def main(argv: list[str] | None = None) -> None:
 
     run_p = sub.add_parser("run", help="fetch then score")
     _common(run_p)
+    _provider_flags(run_p)
     run_p.set_defaults(func=_cmd_run)
 
     seed_p = sub.add_parser("seed-roster", help="idempotent eval-tenant roster seeding")
     seed_p.add_argument("--entities", required=True, help="<GOLDEN_IMAGES_DIR>/mock_entities")
     seed_p.set_defaults(func=_cmd_seed_roster)
 
+    scenes_p = sub.add_parser("seed-scenes", help="idempotent eval-tenant scene-image seeding (E19-4a bboxes)")
+    scenes_p.add_argument("--manifest", default="scene/tests/seed/golden.json")
+    scenes_p.set_defaults(func=_cmd_seed_scenes)
+
     args = parser.parse_args(argv)
+    if getattr(args, "max_cost", None) is not None and getattr(args, "cost_per_image", None) is None:
+        parser.error("--max-cost requires --cost-per-image (the cap is estimated spend; without a price it is a no-op)")
     try:
         args.func(args)
-    except (ManifestError, RemoteClientError, BoundedStallError, ReportError) as exc:
+    except (
+        ManifestError,
+        RemoteClientError,
+        BoundedStallError,
+        MaxCostExceededError,
+        ProviderMismatchError,
+        ReportError,
+    ) as exc:
         sys.exit(f"{type(exc).__name__}: {exc}")
 
 

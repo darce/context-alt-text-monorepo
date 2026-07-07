@@ -47,6 +47,21 @@ unavoidable so future adapters never change the wire:
   mirrors the recognition retention vocabulary.
 - `provider_disclosure.provider` ∈ `{none, local, hosted}`; seeded/local keep
   bytes inside the service boundary.
+- **Hosted providers are opt-in and fail-closed (E20-11).** A hosted profile
+  (e.g. `ACX_DESCRIPTION_ADAPTER=hosted_gpt4o`) resolves to a fail-closed
+  unavailable adapter (503) unless the server sets
+  `ACX_HOSTED_PROVIDER_OPTIN=1` explicitly; there is no client-side or
+  per-request enablement. When a hosted adapter does run, image bytes leave the
+  Alt Context service boundary to a third-party subprocessor and the response
+  discloses it: `provider_disclosure.provider = "hosted"` and
+  `provider_disclosure.left_service_boundary = true`. The default profile
+  (`seeded`) and the local Florence profiles never set either. Hosted provider
+  keys are server-side deployment secrets (`ACX_HOSTED_PROVIDER_API_KEY`);
+  BYOK (customer-supplied keys) is not implemented. The E20-11 governance
+  disposition is **`reject`**: the product runs only self-hosted CPU models, so
+  no deployment sets the opt-in env and the hosted path stays permanently
+  fail-closed unless a future epic-level decision supersedes the memo
+  (`docs/tasks/20.0/E20-11-hosted-provider-decision-memo.md`).
 
 #### E19-4a additive optional preview fields
 
@@ -80,6 +95,9 @@ unsuppressable), and a minimum face-detection confidence (0.8).
 | 403 | auth tenant claim ≠ envelope `tenant_id` |
 | 413 | body exceeds the upload cap |
 | 415 | unsupported image MIME |
+| 502 | hosted-provider fault (opted-in hosted profile only: provider 5xx/timeout, missing key, malformed body; fail-closed, no partial result) |
+| 503 | description adapter unavailable (deferred/stub profile, hosted profile without `ACX_HOSTED_PROVIDER_OPTIN=1`, or missing `[vlm]` extra) |
+| 504 | description generation exceeded the configured timeout |
 
 Error shapes match the recognition routes: 5xx/503 use the `{error, trace_id, path}` envelope (via the shared exception handlers); 4xx validation errors use FastAPI's default `{detail}` shape.
 

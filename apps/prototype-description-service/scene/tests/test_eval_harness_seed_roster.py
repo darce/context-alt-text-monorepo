@@ -133,3 +133,177 @@ def test_409_label_conflict_recorded_not_raised(entities_dir):  # S2-04
     client.patch_cluster = conflict
     summary = seed(str(entities_dir), client, tenant_id="eval-tenant")
     assert summary.skipped_conflict == {"c1": "Alice Example"}
+
+
+# --- VLM-2C Slice 3: scene-image seeding (server-side MediaIdentity bboxes) ---
+
+from scripts.eval_harness.seed_roster import seed_scenes  # noqa: E402
+
+
+class SceneStubClient:
+    def __init__(self, existing_rows=None):
+        self._rows = list(existing_rows or [])
+        self.analyzed = []
+        self.identity_queries = []
+
+    def analyze(self, images):
+        self.analyzed.extend(images)
+        for media_id, _fname, _data in images:
+            self._rows.append({"media_id": media_id, "label": None})
+        return "job-scenes"
+
+    def wait_job(self, job_id):
+        return {"job_id": job_id, "status": "completed"}
+
+    def media_identities(self, media_ids):
+        self.identity_queries.append(list(media_ids))
+        return [r for r in self._rows if r["media_id"] in media_ids]
+
+
+def _scene_fixture(tmp_path):
+    import hashlib
+    import json
+
+    images = tmp_path / "images" / "mock_images"
+    images.mkdir(parents=True)
+    entries = []
+    for media_id, name in [(1, "alice-pool.jpg"), (2, "bob-beach.jpg")]:
+        body = name.encode()
+        (images / name).write_bytes(body)
+        entries.append(
+            {
+                "path": f"mock_images/{name}",
+                "sha256": hashlib.sha256(body).hexdigest(),
+                "media_id": media_id,
+                "face_count": 1,
+                "present_identities": ["Alice Example"],
+                "context_pack": {"title": "t"},
+                "must_right": ["Alice Example"],
+                "easy_wrong": ["Bob Example"],
+                "policy": {"recognition_enabled": True},
+            }
+        )
+    manifest = {"manifest_version": 2, "roster": ["Alice Example", "Bob Example"], "entries": entries}
+    manifest_path = tmp_path / "golden.json"
+    manifest_path.write_text(json.dumps(manifest))
+    return str(manifest_path), str(tmp_path / "images")
+
+
+def test_seed_scenes_fresh_uploads_all(tmp_path):
+    manifest_path, images_dir = _scene_fixture(tmp_path)
+    client = SceneStubClient()
+    summary = seed_scenes(manifest_path, images_dir, client)
+    assert summary.seeded == [1, 2]
+    assert summary.already_present == []
+    assert summary.skipped_zero_face == []
+    assert summary.unverified_media_ids == []
+    assert summary.total_scenes == 2
+    assert [m for m, _, _ in client.analyzed] == [1, 2]
+
+
+def test_seed_scenes_zero_face_scene_never_uploaded(tmp_path):  # VLM-2C-S3-BR-01
+    import hashlib
+    import json
+
+    manifest_path, images_dir = _scene_fixture(tmp_path)
+    data = json.loads(open(manifest_path).read())
+    body = b"no-faces"
+    (tmp_path / "images" / "mock_images" / "landscape.jpg").write_bytes(body)
+    data["entries"].append(
+        {
+            "path": "mock_images/landscape.jpg",
+            "sha256": hashlib.sha256(body).hexdigest(),
+            "media_id": 3,
+            "face_count": 0,
+            "present_identities": [],
+            "context_pack": {"title": "t"},
+            "must_right": [],
+            "easy_wrong": ["Bob Example"],
+            "policy": {"recognition_enabled": True},
+        }
+    )
+    open(manifest_path, "w").write(json.dumps(data))
+    client = SceneStubClient()
+    first = seed_scenes(manifest_path, images_dir, client)
+    assert first.seeded == [1, 2]
+    assert first.skipped_zero_face == [3]
+    client.analyzed.clear()
+    second = seed_scenes(manifest_path, images_dir, client)
+    assert second.seeded == []
+    assert client.analyzed == [], "zero-face scene must not re-upload on re-run"
+
+
+def test_seed_scenes_rejects_non_list_identities_payload(tmp_path):  # VLM-2C-S3-BR-02
+    from scripts.eval_harness.manifest import ManifestError
+
+    manifest_path, images_dir = _scene_fixture(tmp_path)
+    client = SceneStubClient()
+    client.media_identities = lambda media_ids: {"error": "boom"}
+    with pytest.raises(ManifestError, match="media_identities"):
+        seed_scenes(manifest_path, images_dir, client)
+
+
+def test_seed_scenes_idempotent_rerun_uploads_nothing(tmp_path):
+    manifest_path, images_dir = _scene_fixture(tmp_path)
+    client = SceneStubClient()
+    seed_scenes(manifest_path, images_dir, client)
+    client.analyzed.clear()
+    summary = seed_scenes(manifest_path, images_dir, client)
+    assert summary.seeded == []
+    assert summary.already_present == [1, 2]
+    assert client.analyzed == []
+
+
+def test_seed_scenes_partial_seeds_only_missing(tmp_path):
+    manifest_path, images_dir = _scene_fixture(tmp_path)
+    client = SceneStubClient(existing_rows=[{"media_id": 1, "label": "Alice Example"}])
+    summary = seed_scenes(manifest_path, images_dir, client)
+    assert summary.seeded == [2]
+    assert summary.already_present == [1]
+    assert [m for m, _, _ in client.analyzed] == [2]
+
+
+def test_seed_scenes_reports_detector_misses_as_unverified(tmp_path):  # VLM-2C-R2-S3/S5-BR-01
+    manifest_path, images_dir = _scene_fixture(tmp_path)
+    client = SceneStubClient()
+    real_analyze = client.analyze
+
+    def analyze_missing_media_2(images):
+        job = real_analyze(images)
+        client._rows = [r for r in client._rows if r["media_id"] != 2]
+        return job
+
+    client.analyze = analyze_missing_media_2
+    summary = seed_scenes(manifest_path, images_dir, client)
+    assert summary.seeded == [1, 2]
+    assert summary.unverified_media_ids == [2], "detector miss must be surfaced, not masked"
+
+
+def test_seed_scenes_resolves_nfd_filenames(tmp_path):  # VLM-2C-R2-HARM-BR-01
+    import hashlib
+    import json
+    import unicodedata
+
+    manifest_path, images_dir = _scene_fixture(tmp_path)
+    data = json.loads(open(manifest_path).read())
+    body = b"glacier"
+    nfd_name = unicodedata.normalize("NFD", "Brei\u00f0amerkurj\u00f6kull.jpg")
+    nfc_name = unicodedata.normalize("NFC", "Brei\u00f0amerkurj\u00f6kull.jpg")
+    (tmp_path / "images" / "mock_images" / nfd_name).write_bytes(body)
+    data["entries"].append(
+        {
+            "path": f"mock_images/{nfc_name}",
+            "sha256": hashlib.sha256(body).hexdigest(),
+            "media_id": 4,
+            "face_count": 1,
+            "present_identities": ["Alice Example"],
+            "context_pack": {"title": "t"},
+            "must_right": ["Alice Example"],
+            "easy_wrong": ["Bob Example"],
+            "policy": {"recognition_enabled": True},
+        }
+    )
+    open(manifest_path, "w").write(json.dumps(data))
+    client = SceneStubClient()
+    summary = seed_scenes(manifest_path, images_dir, client)
+    assert 4 in summary.seeded, "NFC manifest path must resolve an NFD file on disk"

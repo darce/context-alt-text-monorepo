@@ -127,15 +127,25 @@ def fetch_run_record(
     provenance and is *verified* against each item's ``provider_disclosure``
     (``ProviderMismatchError`` on drift — the flag cannot switch the server
     profile, so unverified stamping would fabricate evidence, rg-015).
-    ``cost_per_image_usd`` (the provider's published per-request price) yields
-    ``est_cost_usd``; ``max_cost_usd`` aborts *before* the paid call that would
-    push ``spent_usd`` + this run's estimate past the cap (``spent_usd`` carries
-    spend from earlier legs of a matrix invocation).
+    ``cost_per_image_usd`` (the provider's published per-request price) is billed
+    per *attempted, non-cached* describe call — cache hits (``cached: true``) are
+    refunded and analyze/identity calls are provider-free — yielding
+    ``est_cost_usd``/``paid_describe_calls``; ``max_cost_usd`` aborts *before* the
+    paid call that would push ``spent_usd`` + this run's estimate past the cap
+    (``spent_usd`` carries spend from earlier legs of a matrix invocation).
+    ``latency_s`` times the describe call only, not the recognition job polling.
     """
     images_root = Path(images_dir)
     entries = manifest.entries[:limit] if limit else manifest.entries
     items: list[dict[str, Any]] = []
     consecutive_failures = 0
+    paid_calls = 0
+    expected_model_id: str | None = None
+    if provider is not None:
+        try:
+            expected_model_id = PROFILE_SPECS[DescriptionProfile(provider)].model_id
+        except ValueError:
+            expected_model_id = None  # direct callers may pass labels outside the registry
 
     def _record(aborted: bool = False) -> dict[str, Any]:
         provenance: dict[str, Any] = {
@@ -148,7 +158,8 @@ def fetch_run_record(
             provenance["provider"] = provider
         if cost_per_image_usd is not None:
             provenance["cost_per_image_usd"] = cost_per_image_usd
-            provenance["est_cost_usd"] = round(cost_per_image_usd * len(items), 6)
+            provenance["paid_describe_calls"] = paid_calls
+            provenance["est_cost_usd"] = round(cost_per_image_usd * paid_calls, 6)
         record: dict[str, Any] = {
             "schema": SCHEMA,
             "kind": DocKind.RUN_RECORD.value,
@@ -161,7 +172,9 @@ def fetch_run_record(
 
     for entry in entries:
         if max_cost_usd is not None and cost_per_image_usd is not None:
-            projected = spent_usd + cost_per_image_usd * (len(items) + 1)
+            # Pre-call the cache state is unknown, so the projection is conservative:
+            # the next describe is assumed paid.
+            projected = spent_usd + cost_per_image_usd * (paid_calls + 1)
             if projected > max_cost_usd:
                 raise MaxCostExceededError(
                     f"next paid call would raise estimated spend to ${projected:.4f} "
@@ -178,15 +191,21 @@ def fetch_run_record(
             "error": None,
             "latency_s": None,
         }
-        item_started = time.monotonic()
+        describe_started: float | None = None
         try:
             image_bytes = image_path.read_bytes()
+            describe_started = time.monotonic()
+            # Billed on attempt (a failed call may still charge); refunded on cache hit.
+            paid_calls += 1
             item["describe"] = client.describe(
                 image_bytes=image_bytes,
                 filename=image_path.name,
                 media_id=entry.media_id,
                 context_pack=entry.context_pack.model_dump(exclude_none=True),
             )
+            item["latency_s"] = round(time.monotonic() - describe_started, 3)
+            if isinstance(item["describe"], dict) and item["describe"].get("cached") is True:
+                paid_calls -= 1
             job_id = client.analyze([(entry.media_id, image_path.name, image_bytes)])
             client.wait_job(job_id)
             identities_payload = client.media_identities([entry.media_id])
@@ -195,7 +214,8 @@ def fetch_run_record(
             item["face_count"] = face_count
         except Exception as exc:  # noqa: BLE001 — per-item isolation is the contract (rg-007)
             item["error"] = f"{type(exc).__name__}: {exc}"
-            item["latency_s"] = round(time.monotonic() - item_started, 3)
+            if item["latency_s"] is None and describe_started is not None:
+                item["latency_s"] = round(time.monotonic() - describe_started, 3)
             consecutive_failures += 1
             if consecutive_failures >= stall_limit:
                 items.append(item)
@@ -204,22 +224,25 @@ def fetch_run_record(
                     partial_record=_record(aborted=True),
                 ) from exc
         else:
-            item["latency_s"] = round(time.monotonic() - item_started, 3)
             consecutive_failures = 0
             if provider is not None:
-                disclosure = item["describe"].get("provider_disclosure") if isinstance(item["describe"], dict) else None
+                describe = item["describe"] if isinstance(item["describe"], dict) else {}
+                disclosure = describe.get("provider_disclosure")
+                response_model = describe.get("model_id")
                 corroborated = (
                     isinstance(disclosure, dict)
                     and disclosure.get("provider") == "hosted"
                     and disclosure.get("left_service_boundary") is True
+                    # Disambiguate WHICH hosted profile when both sides expose a model id.
+                    and (response_model is None or expected_model_id is None or response_model == expected_model_id)
                 )
                 if not corroborated:
                     items.append(item)
                     raise ProviderMismatchError(
                         f"--provider {provider!r} claimed but {entry.path}'s describe response does not "
-                        f"disclose a hosted provider (provider_disclosure={disclosure!r}); the service "
-                        "profile is fixed server-side by ACX_DESCRIPTION_ADAPTER — refusing to stamp "
-                        "mislabeled evidence",
+                        f"corroborate it (provider_disclosure={disclosure!r}, model_id={response_model!r}, "
+                        f"expected model {expected_model_id!r}); the service profile is fixed server-side "
+                        "by ACX_DESCRIPTION_ADAPTER — refusing to stamp mislabeled evidence",
                         partial_record=_record(aborted=True),
                     )
         items.append(item)
@@ -381,8 +404,9 @@ def _cmd_fetch(args: argparse.Namespace) -> list[str]:
         finally:
             client.close()
         if args.cost_per_image is not None:
-            # --max-cost caps the whole invocation, not each matrix leg.
-            spent_usd += args.cost_per_image * len(record["items"])
+            # --max-cost caps the whole invocation, not each matrix leg; est_cost_usd
+            # already excludes cache hits and never-issued calls.
+            spent_usd += record["provenance"].get("est_cost_usd", 0.0)
         record_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
         record_paths.append(str(record_path))
         print(record_path)

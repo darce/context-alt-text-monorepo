@@ -207,7 +207,7 @@ Proof:
 
 ### Checklist for Slice 3: Bake-off transport
 
-- [ ] Add `bakeoff.py` (`BakeoffClient` with Nygard timeout + 3-strike breaker; `analyze`/`wait_job`/`media_identities` no-op stubs) driven by the **unchanged `cli.fetch_run_record`** — no forked walker.
+- [x] Add `bakeoff.py` (`BakeoffClient` with Nygard timeout + 3-strike breaker; `analyze`/`wait_job`/`media_identities` no-op stubs) driven by the **unchanged `cli.fetch_run_record`** — no forked walker.
 - [ ] Greedy decode + `/no_think` for reasoning-tuned candidates; anchor-visual/inject-factual prompt renders `context_pack` names into the model prompt.
 - [ ] Add `scene/tests/test_eval_harness_bakeoff.py`; `pytest` green (`describe` shape, name-into-prompt, prompt construction, inert stubs, `build_reports` scoring). Isolation/bounded-stall not re-tested (covered by reused walker).
 

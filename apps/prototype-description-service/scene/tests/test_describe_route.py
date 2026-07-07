@@ -14,7 +14,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Table
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from db.models.base_imports import Base
+from db.models.base_imports import _DB_SETTINGS, Base
+from db.models.identity import (
+    IdentityCluster,
+    IdentityMember,
+    IdentityNameSuppression,
+    MediaIdentity,
+)
 from db.models.observability import AuditEvent
 from db.models.scene import ImageDescription
 from db.models.tenant import Tenant
@@ -55,7 +61,7 @@ class _SlowLocalAdapter:
         )
 
 
-def _make_db():
+def _make_db(naming_agreement_enabled=True):
     path = os.path.join(tempfile.gettempdir(), f"e19_route_{uuid.uuid4().hex}.db")
     url = f"sqlite+aiosqlite:///{path}"
 
@@ -64,11 +70,28 @@ def _make_db():
         async with engine.begin() as conn:
             await conn.run_sync(
                 Base.metadata.create_all,
-                tables=cast(list[Table], [Tenant.__table__, ImageDescription.__table__, AuditEvent.__table__]),
+                tables=cast(
+                    list[Table],
+                    [
+                        Tenant.__table__,
+                        ImageDescription.__table__,
+                        AuditEvent.__table__,
+                        MediaIdentity.__table__,
+                        IdentityCluster.__table__,
+                        IdentityMember.__table__,
+                        IdentityNameSuppression.__table__,
+                    ],
+                ),
             )
         sf = async_sessionmaker(engine, expire_on_commit=False)
         async with sf() as s:  # provision the tenant so require_tenant_record passes
-            s.add(Tenant(id=uuid.UUID(TENANT_ID), site_url="http://test.local"))
+            s.add(
+                Tenant(
+                    id=uuid.UUID(TENANT_ID),
+                    site_url="http://test.local",
+                    naming_agreement_enabled=naming_agreement_enabled,
+                )
+            )
             await s.commit()
         await engine.dispose()
 
@@ -77,8 +100,17 @@ def _make_db():
 
 
 @contextmanager
-def _client(auth_tenant=None, adapter=None):
-    path, url = _make_db()
+def _client(auth_tenant=None, adapter=None, naming_agreement_enabled=True, db_absent=False, seed=None):
+    path, url = _make_db(naming_agreement_enabled=naming_agreement_enabled)
+    if seed is not None:
+        sf_seed = async_sessionmaker(create_async_engine(url), expire_on_commit=False)
+
+        async def _run_seed():
+            async with sf_seed() as s:
+                await seed(s)
+                await s.commit()
+
+        asyncio.run(_run_seed())
     sf = async_sessionmaker(create_async_engine(url), expire_on_commit=False)
 
     async def _session():
@@ -88,7 +120,7 @@ def _client(auth_tenant=None, adapter=None):
     app = FastAPI()
     app.include_router(scene_router, prefix="/scene")
     app.dependency_overrides[require_write_access] = lambda: _Auth(tenant_claim=auth_tenant)
-    app.dependency_overrides[get_optional_session] = _session
+    app.dependency_overrides[get_optional_session] = (lambda: None) if db_absent else _session
     if adapter is not None:
         app.dependency_overrides[get_description_adapter] = lambda: adapter
     try:
@@ -113,7 +145,7 @@ def test_happy_path_returns_15_fields_then_cached():
         r1 = _post(client, tenant)
         assert r1.status_code == 200, r1.text
         body = r1.json()
-        assert len(body) == 15
+        assert len(body) == 18  # 15 core-contract fields + 3 additive preview fields (E19-4a)
         assert body["cached"] is False
         assert body["media_id"] == 42
         assert body["adapter"] == "seeded"
@@ -205,6 +237,119 @@ def test_local_cpu_route_uses_vlm_timeout(monkeypatch):
         # Message must report the VLM cap that actually fired, not the 60s
         # description timeout (regression guard for E19-1-REV-A-2 / REV-B-1).
         assert "0.001" in r.json()["detail"]
+
+
+def _png_bytes(width=100, height=50):
+    from io import BytesIO
+
+    from PIL import Image
+
+    buf = BytesIO()
+    Image.new("RGB", (width, height), color=(120, 120, 120)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _post_png(client, tenant, *, media_id=42):
+    return client.post(
+        "/scene/describe/multipart",
+        data={"request": json.dumps({"tenant_id": str(tenant), "media_id": media_id})},
+        files={f"image_{media_id}": ("x.png", _png_bytes(), "image/png")},
+    )
+
+
+def _seed_confirmed_identity(label="Daniel", *, media_id=42, roster_id=None, suppressed=False):
+    async def _seed(s):
+        identity = MediaIdentity(
+            tenant_id=uuid.UUID(TENANT_ID),
+            media_id=media_id,
+            media_url="http://test.local/42.png",
+            bbox_x=10,
+            bbox_y=10,
+            bbox_width=20,
+            bbox_height=20,
+            confidence=0.97,
+            embedding=[1.0] + [0.0] * (_DB_SETTINGS.pgvector_dimension - 1),
+        )
+        cluster = IdentityCluster(
+            tenant_id=uuid.UUID(TENANT_ID),
+            label=label,
+            user_confirmed=True,
+            roster_id=roster_id,
+        )
+        s.add_all([identity, cluster])
+        await s.flush()
+        s.add(
+            IdentityMember(
+                tenant_id=uuid.UUID(TENANT_ID),
+                cluster_id=cluster.id,
+                identity_id=identity.id,
+                similarity=0.9,
+            )
+        )
+        if suppressed:
+            s.add(IdentityNameSuppression(tenant_id=uuid.UUID(TENANT_ID), roster_id=roster_id))
+
+    return _seed
+
+
+def test_preview_fields_generic_when_no_identities():
+    with _client() as client:
+        r = _post_png(client, TENANT_ID)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["generic_draft"] == body["alt_text_draft"]
+        assert body["named_draft"] == body["generic_draft"]
+        prov = body["naming_provenance"]
+        assert prov["naming_allowed"] is False
+        assert prov["reason"] == "no_confirmed_identities"
+        assert prov["injected_names"] == []
+
+
+def test_db_absent_named_draft_identical_to_generic():
+    with _client(db_absent=True) as client:
+        r = _post(client, TENANT_ID)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["named_draft"] == body["generic_draft"] == body["alt_text_draft"]
+        assert body["naming_provenance"]["reason"] == "db_unavailable"
+        assert body["naming_provenance"]["injected_names"] == []
+
+
+def test_confirmed_identity_named_in_preview():
+    roster = uuid.uuid4()
+    with _client(seed=_seed_confirmed_identity("Daniel", roster_id=roster)) as client:
+        r = _post_png(client, TENANT_ID)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["named_draft"].endswith("Pictured from left: Daniel.")
+        assert body["generic_draft"] == body["alt_text_draft"]
+        prov = body["naming_provenance"]
+        assert prov["naming_allowed"] is True
+        assert prov["reason"] is None
+        assert [n["name"] for n in prov["injected_names"]] == ["Daniel"]
+        assert prov["injected_names"][0]["roster_id"] == str(roster)
+
+
+def test_agreement_off_suppresses_naming():
+    with _client(
+        naming_agreement_enabled=False,
+        seed=_seed_confirmed_identity("Daniel", roster_id=uuid.uuid4()),
+    ) as client:
+        r = _post_png(client, TENANT_ID)
+        body = r.json()
+        assert body["named_draft"] == body["generic_draft"]
+        assert body["naming_provenance"]["reason"] == "agreement_disabled"
+        assert body["naming_provenance"]["injected_names"] == []
+
+
+def test_suppress_list_blocks_naming_by_roster_id():
+    roster = uuid.uuid4()
+    with _client(seed=_seed_confirmed_identity("Daniel", roster_id=roster, suppressed=True)) as client:
+        r = _post_png(client, TENANT_ID)
+        body = r.json()
+        assert body["named_draft"] == body["generic_draft"]
+        assert body["naming_provenance"]["reason"] == "no_eligible_identities"
+        assert body["naming_provenance"]["injected_names"] == []
 
 
 def test_stub_profile_returns_503_with_reason():

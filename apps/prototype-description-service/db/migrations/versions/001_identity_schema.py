@@ -19,6 +19,7 @@ TENANT_TABLES = [
     "media_identities",
     "identity_clusters",
     "identity_members",
+    "identity_name_suppressions",
     "identity_scan_jobs",
     "identity_scan_job_items",
     "identity_cluster_representatives",
@@ -54,6 +55,7 @@ EXPECTED_SCHEMA_TABLES = [
     "curation_replay_records",
     "identity_clusters",
     "identity_members",
+    "identity_name_suppressions",
     "identity_cluster_representatives",
     "identity_scan_jobs",
     "identity_scan_job_items",
@@ -90,6 +92,7 @@ DOWNGRADE_TABLE_ORDER = [
     "identity_scan_job_items",
     "recognition_runs",
     "identity_cluster_representatives",
+    "identity_name_suppressions",
     "identity_members",
     "curation_replay_records",
     "identity_scan_jobs",
@@ -156,6 +159,7 @@ def ensure_tables(op) -> None:
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column("site_url", sa.String(length=255), nullable=False, unique=True),
         sa.Column("next_person_number", sa.Integer(), nullable=False, server_default=sa.text("1")),
+        sa.Column("naming_agreement_enabled", sa.Boolean(), nullable=False, server_default=sa.text("true")),
         sa.Column("retention_mode", sa.String(length=30), nullable=False, server_default=sa.text("'retain_all'")),
         sa.Column("last_export_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("last_purge_at", sa.TIMESTAMP(timezone=True), nullable=True),
@@ -379,6 +383,21 @@ def ensure_tables(op) -> None:
         sa.CheckConstraint("similarity >= 0 AND similarity <= 1", name="similarity_range"),
         sa.UniqueConstraint("cluster_id", "identity_id", name="unique_identity_member"),
         sa.UniqueConstraint("tenant_id", "identity_id", name="unique_identity_membership"),
+    )
+
+    _ensure_table(
+        op,
+        "identity_name_suppressions",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("roster_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now()),
+        sa.UniqueConstraint("tenant_id", "roster_id", name="unique_name_suppression"),
     )
 
     _ensure_table(
@@ -990,6 +1009,7 @@ def ensure_tables(op) -> None:
     _ensure_index(op, "idx_curation_replay_tenant", "curation_replay_records", ["tenant_id"])
     _ensure_index(op, "idx_identity_members_cluster", "identity_members", ["cluster_id"])
     _ensure_index(op, "idx_identity_members_identity", "identity_members", ["identity_id"])
+    _ensure_index(op, "idx_identity_name_suppressions_tenant", "identity_name_suppressions", ["tenant_id"])
     _ensure_index(op, "idx_identity_scan_jobs_tenant", "identity_scan_jobs", ["tenant_id"])
     _ensure_index(
         op,

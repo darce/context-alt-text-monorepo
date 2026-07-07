@@ -43,7 +43,7 @@ Hosted provider models may improve caption quality and latency, but they carry p
 
 ## Current State Analysis
 
-- `DescriptionAdapterKind.HOSTED_PROVIDER = "hosted_provider"` already exists (`scene/domain/description.py:18`) and maps to `ProviderMode.HOSTED` in `visual_facts_service._ADAPTER_PROVIDER_MODE` (lines 29-33).
+- `DescriptionAdapterKind.HOSTED_PROVIDER = "hosted_provider"` already exists (`scene/domain/description.py:18`) and maps to `ProviderMode.HOSTED` in `visual_facts_service._PROVIDER_FOR_ADAPTER` (lines 28-34).
 - `ProviderDisclosure.left_service_boundary` (`scene/interface_adapters/http/schemas/responses.py:46`) already communicates boundary crossing; the service sets it True for hosted results.
 - The VLM-2A eval harness is merged and owns scoring, provenance, and bounded failure: `cli.py` (`fetch_run_record`, `_cmd_fetch`, `main`, `--limit`/`--stall-limit`, `BoundedStallError`), `remote_client.py` (`RemoteSceneClient`, `_DEFAULT_TIMEOUT_S = 60.0`, `_BREAKER_THRESHOLD = 3`, `CircuitOpenError`), `report.py` (`build_reports`, `score_run_record`, `_model_provenance`), `caption_metrics.py` (`score_caption`, `insertion_rate`), `manifest.py` (`load_manifest`, `GoldenManifest`), `schema.py` (`SCHEMA`, `DocKind`).
 - Golden corpus is `scene/tests/seed/golden.json` (37 entries, roster of 10, `manifest_version` 1) — the pinned image set for this benchmark.
@@ -77,7 +77,9 @@ The existing eval harness (`scripts/eval_harness/cli.py`) can, with a new `--pro
 
 Add a hosted-provider `DescriptionAdapter` implementation and register it as a fail-closed profile, then extend the **existing** eval harness with a `--provider` flag so the current `fetch`/`run` path benchmarks hosted profiles over the pinned golden corpus. Scoring, provenance, run-record/report JSON, and bounded-failure handling are entirely reused from `report.py`/`caption_metrics.py`/`cli.py` — no parallel harness, no second schema.
 
-**Integration seam.** The eval CLI's `fetch_run_record(manifest, images_dir, client, ...)` (`cli.py`) already accepts any `client` exposing `describe(...)`; `RemoteSceneClient.describe` (`remote_client.py`) POSTs `/scene/describe/multipart` to a running service. A hosted benchmark therefore runs the existing harness against an **eval-tenant service instance configured with the hosted profile** (server-side, opt-in). `--provider <profile>` selects/stamps the profile for the run and, for the multi-provider matrix, iterates profiles, writing one `acx-eval/v1` run record + report per provider via `report.build_reports`. Face-recognition tiers are provider-independent and out of scope for the provider matrix; the provider run scores the caption tier (`caption_metrics.score_caption`, `insertion_rate`).
+**Integration seam.** The eval CLI's `fetch_run_record(manifest, images_dir, client, ...)` (`cli.py`) already accepts any `client` exposing `describe(...)`; `RemoteSceneClient.describe` (`remote_client.py`) POSTs `/scene/describe/multipart` to a running service. A hosted benchmark therefore runs the existing harness against an **eval-tenant service instance configured with the hosted profile** (server-side, opt-in). `--provider <profile>` selects/stamps the profile for the run and, for the multi-provider matrix, iterates profiles, writing one `acx-eval/v1` run record + report per provider via `report.build_reports`. Face-recognition tiers are provider-independent and out of scope for the provider matrix; the provider run scores the caption tier (`caption_metrics.score_caption`).
+
+**Scoring caveat — what the current golden set can measure.** All 37 `golden.json` entries ship empty `context_pack: {}`, empty `must_right`/`easy_wrong`, and no `objects`. Consequently, on the corpus as-is a hosted provider run yields meaningful signal only for the **context-independent** caption metrics (`fkre`/readability, `repetition_ratio`, first-sentence `gist_ok`, word/char count) plus **latency and cost**. `insertion_rate`, `tag_coverage`, and `must_right_failures` are structurally floor/inert here: `insertion_rate` measures whether the caption contains a `present_identities` name the generic provider was never given (no per-entry context injected), `tag_coverage` is `None` without `objects`, and `must_right_failures` is empty without `must_right`. The memo must therefore scope provider comparison to the measurable metrics + latency + cost; any insertion/named-entity claim requires first populating context packs (and confirming the hosted describe path injects recognized identities into the prompt) — a named prerequisite, not assumed by this task.
 
 **Cost/latency capture without E20-7.** Latency is derived from the harness run (per-item timing added to the run-record items); estimated cost per image is computed from the provider's published per-request price and recorded in the run-record provenance. These land in the harness's own JSON under `scripts/eval_harness/out/` (git-ignored) and are promoted by hand into the decision memo. **Ledger integration is explicitly deferred** to E20-7 (or a named `E20-11-followon` if E20-7 does not land): when the E20-7 usage/budget ledger schema exists, a follow-on maps these fields into it. This task depends on no E20-7 field.
 
@@ -101,7 +103,7 @@ Add a hosted-provider `DescriptionAdapter` implementation and register it as a f
 | --- | --- |
 | `apps/prototype-description-service/scene/application/seeded_adapter.py` | `SeededDescriptionAdapter` — reference implementation of the `DescriptionAdapter` protocol to mirror |
 | `apps/prototype-description-service/scene/infrastructure/vlm/unavailable_adapter.py` | `UnavailableDescriptionAdapter` — the fail-closed stub the hosted profile degrades to |
-| `apps/prototype-description-service/scene/application/visual_facts_service.py` | `_ADAPTER_PROVIDER_MODE` mapping + `left_service_boundary` disclosure wiring (lines 29-33, 183) |
+| `apps/prototype-description-service/scene/application/visual_facts_service.py` | `_PROVIDER_FOR_ADAPTER` mapping + `left_service_boundary` disclosure wiring (lines 28-34, 183) |
 | `apps/prototype-description-service/scripts/eval_harness/README.md` | Live-run safety gates (`ACX_EVAL_LIVE=1`, `ACX_EVAL_BASE_URL`, `ACX_EVAL_API_KEY`, `ACX_EVAL_TENANT_ID`) reused by the provider benchmark |
 | `docs/tasks/19.0/E19-1-local-cpu-vlm-benchmark-decision-memo.md` | Decision-memo precedent (structure to follow) |
 | `docs/tasks/20.0/E20-7-error-logs-usage-accounting-and-budget-controls-task-plan.md` | Sibling plan (not landed) that later owns the usage/budget ledger for deferred integration |
@@ -134,7 +136,7 @@ Proof:
 
 - `uv run pytest apps/prototype-description-service/scene/tests/test_description_profiles.py apps/prototype-description-service/scripts/eval_harness/tests -q` green.
 - Hosted profile with opt-in off resolves to `UnavailableDescriptionAdapter`; default `seeded` unchanged.
-- `--provider` run over the golden manifest with `FakeHostedProviderAdapter` writes a valid `acx-eval/v1` run record + report; `left_service_boundary == True` on hosted items.
+- `--provider` run over the golden manifest with `FakeHostedProviderAdapter` writes a valid `acx-eval/v1` run record + report; each hosted run-record item's `describe.provider_disclosure.left_service_boundary == True` (the harness stores the full describe response under `item["describe"]`; the boundary flag lives there, not in the scored report).
 
 ### Slice 2: Real-provider runbook and governance decision memo
 

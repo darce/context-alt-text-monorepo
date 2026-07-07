@@ -20,7 +20,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from scene.application.description_adapter import AdapterResult
-from scene.application.identity_merge.merge import NormalizedBox, PhraseBox
+from scene.application.identity_merge.merge import PhraseBox, normalize_bbox
 from scene.domain.description import DescriptionAdapterKind
 
 # Florence-2 task tokens. MORE_DETAILED_CAPTION drives the caption + alt-text
@@ -139,25 +139,35 @@ class LocalCpuDescriptionAdapter:
         cursor_by_label: dict[str, int] = {}
         phrase_boxes: list[PhraseBox] = []
         for bbox, label in zip(bboxes, labels, strict=False):
-            x1, y1, x2, y2 = (float(v) for v in bbox)
+            try:
+                x1, y1, x2, y2 = (float(v) for v in bbox)
+            except (TypeError, ValueError):
+                continue  # malformed row (quad-style, non-numeric): skip, never crash the request
+            if x2 <= x1 or y2 <= y1:
+                continue
             key = str(label).lower()
-            start = lowered.find(key, cursor_by_label.get(key, 0))
-            if start == -1:
-                phrase, span = str(label), (-1, -1)
+            if not key.strip():
+                phrase, span = "", (-1, -1)  # empty label is unverifiable, never (0, 0)
             else:
-                end = start + len(key)
-                cursor_by_label[key] = end
-                phrase, span = caption[start:end], (start, end)
+                start = lowered.find(key, cursor_by_label.get(key, 0))
+                if start == -1:
+                    phrase, span = str(label), (-1, -1)
+                else:
+                    end = start + len(key)
+                    cursor_by_label[key] = end
+                    phrase, span = caption[start:end], (start, end)
             phrase_boxes.append(
                 PhraseBox(
                     phrase=phrase,
                     span_start=span[0],
                     span_end=span[1],
-                    box=NormalizedBox(
-                        x=x1 / image_width,
-                        y=y1 / image_height,
-                        width=(x2 - x1) / image_width,
-                        height=(y2 - y1) / image_height,
+                    box=normalize_bbox(
+                        x=x1,
+                        y=y1,
+                        width=x2 - x1,
+                        height=y2 - y1,
+                        image_width=image_width,
+                        image_height=image_height,
                     ),
                 )
             )

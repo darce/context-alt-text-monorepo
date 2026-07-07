@@ -68,13 +68,25 @@ def test_sample_with_preview_fields_validates():
                 "name": "Daniel",
                 "cluster_id": "00000000-0000-0000-0000-000000000002",
                 "roster_id": "00000000-0000-0000-0000-000000000003",
-                "match_confidence": 0.97,
+                "detection_confidence": 0.97,
             }
         ],
         "naming_allowed": True,
         "reason": None,
+        "mode": "grounded",
     }
     jsonschema.validate(sample, _schema())
+
+
+def test_schema_reason_enum_matches_naming_skip_reason():
+    from scene.application.identity_merge import NamingMode, NamingSkipReason
+
+    schema = _schema()
+    provenance = schema["properties"]["naming_provenance"]
+    reasons = set(provenance["properties"]["reason"]["enum"]) - {None}
+    assert reasons == {r.value for r in NamingSkipReason}
+    modes = set(provenance["properties"]["mode"]["enum"]) - {None}
+    assert modes == {m.value for m in NamingMode}
 
 
 def test_missing_provenance_field_fails_schema():

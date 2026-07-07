@@ -1601,6 +1601,7 @@ def downgrade() -> None:
     op.drop_index("idx_identity_scan_jobs_tenant", table_name="identity_scan_jobs")
     op.drop_index("idx_identity_members_identity", table_name="identity_members")
     op.drop_index("idx_identity_members_cluster", table_name="identity_members")
+    op.drop_index("idx_identity_name_suppressions_tenant", table_name="identity_name_suppressions")
     op.drop_index("idx_identity_clusters_roster", table_name="identity_clusters")
     op.drop_index("idx_curation_replay_tenant", table_name="curation_replay_records")
     op.drop_index("idx_identity_clusters_tenant_type", table_name="identity_clusters")

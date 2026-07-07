@@ -54,7 +54,9 @@ class InjectedName(BaseModel):
     name: str
     cluster_id: str
     roster_id: str | None = None
-    match_confidence: float
+    # The face detector's score for the matched region — not a face↔phrase
+    # match strength.
+    detection_confidence: float
 
 
 class NamingProvenance(BaseModel):
@@ -65,6 +67,9 @@ class NamingProvenance(BaseModel):
     injected_names: list[InjectedName] = Field(default_factory=list)
     naming_allowed: bool = False
     reason: str | None = None
+    # "grounded" (phrase-box span replacement) or "positional" (appended
+    # left-to-right sentence); null when no naming occurred.
+    mode: str | None = None
 
 
 class VisualFactsResponse(BaseModel):

@@ -55,31 +55,46 @@ async def load_confirmed_faces(
         .join(IdentityCluster, IdentityCluster.id == IdentityMember.cluster_id)
         .where(MediaIdentity.tenant_id == tenant_id)
         .where(MediaIdentity.media_id == media_id)
+        .where(MediaIdentity.disposed_at.is_(None))
+        # Defense-in-depth: tenant predicate on every joined table, so a
+        # corrupted cross-tenant membership row can never leak a name.
+        .where(IdentityMember.tenant_id == tenant_id)
+        .where(IdentityCluster.tenant_id == tenant_id)
         .where(IdentityCluster.user_confirmed.is_(True))
         .where(IdentityCluster.label.is_not(None))
         .where(~IdentityCluster.label.startswith("cluster-"))
         .where(IdentityCluster.dismissed_at.is_(None))
+        .where(IdentityCluster.disposed_at.is_(None))
         .order_by(MediaIdentity.bbox_x)
     )
     rows = (await session.execute(stmt)).all()
-    return [
-        ConfirmedFace(
-            identity_id=row.id,
-            cluster_id=row.cluster_id,
-            roster_id=row.roster_id,
-            label=row.label,
-            detection_confidence=row.confidence,
-            box=normalize_bbox(
-                x=row.bbox_x,
-                y=row.bbox_y,
-                width=row.bbox_width,
-                height=row.bbox_height,
-                image_width=image_width,
-                image_height=image_height,
-            ),
+    faces: list[ConfirmedFace] = []
+    for row in rows:
+        label = (row.label or "").strip()
+        # Python-side re-check: whitespace-only labels and case-variant
+        # placeholders ("CLUSTER-3") pass the SQL filters on some dialects.
+        if not label or label.lower().startswith("cluster-"):
+            continue
+        if row.bbox_width <= 0 or row.bbox_height <= 0:
+            continue  # degenerate detection box carries no containment signal
+        faces.append(
+            ConfirmedFace(
+                identity_id=row.id,
+                cluster_id=row.cluster_id,
+                roster_id=row.roster_id,
+                label=label,
+                detection_confidence=row.confidence,
+                box=normalize_bbox(
+                    x=row.bbox_x,
+                    y=row.bbox_y,
+                    width=row.bbox_width,
+                    height=row.bbox_height,
+                    image_width=image_width,
+                    image_height=image_height,
+                ),
+            )
         )
-        for row in rows
-    ]
+    return faces
 
 
 async def load_suppressed_roster_ids(

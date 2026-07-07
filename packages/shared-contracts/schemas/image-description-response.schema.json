@@ -161,7 +161,8 @@
       "required": [
         "injected_names",
         "naming_allowed",
-        "reason"
+        "reason",
+        "mode"
       ],
       "properties": {
         "injected_names": {
@@ -173,7 +174,7 @@
               "name",
               "cluster_id",
               "roster_id",
-              "match_confidence"
+              "detection_confidence"
             ],
             "properties": {
               "name": {
@@ -188,8 +189,9 @@
                   "null"
                 ]
               },
-              "match_confidence": {
-                "type": "number"
+              "detection_confidence": {
+                "type": "number",
+                "description": "Face-detector score for the matched region (MediaIdentity.confidence); not a face-to-phrase match strength."
               }
             }
           }
@@ -209,8 +211,21 @@
             "no_confirmed_identities",
             "no_eligible_identities",
             "ambiguous_grounding",
+            "merge_error",
             null
           ]
+        },
+        "mode": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "grounded",
+            "positional",
+            null
+          ],
+          "description": "How the named draft was realized: grounded span replacement or the positional appended sentence; null when no naming occurred."
         }
       }
     }

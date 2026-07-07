@@ -382,6 +382,23 @@ class _GroundedAdapter:
         )
 
 
+def test_naming_preview_failure_degrades_to_generic_with_merge_error(monkeypatch):
+    # S3-BR-02: a mid-preview exception must never break the core describe
+    # response — both drafts still return, reason=merge_error.
+    from scene.interface_adapters.http.routers import describe as describe_module
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("db exploded mid-preview")
+
+    monkeypatch.setattr(describe_module, "load_confirmed_faces", boom)
+    with _client() as client:
+        r = _post_png(client, TENANT_ID)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["named_draft"] == body["generic_draft"] == body["alt_text_draft"]
+        assert body["naming_provenance"]["reason"] == "merge_error"
+
+
 def test_grounded_adapter_names_via_span_replacement():
     # Face bbox (10,10,20,20) in a 100x50 PNG → center (0.2, 0.4), inside the
     # phrase box → NLG replacement, not the positional fallback.

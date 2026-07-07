@@ -158,29 +158,29 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded the eval-harness modules and the `DescriptionAdapter` seam before editing; confirmed no second harness/schema is introduced.
-- [ ] Confirmed E20-7 is a plan doc only; recorded that cost/latency land in harness JSON with ledger integration deferred to a named follow-on.
+- [x] Loaded the eval-harness modules and the `DescriptionAdapter` seam before editing; confirmed no second harness/schema is introduced (Slice 1 extends `scripts/eval_harness/cli.py` in place).
+- [x] Confirmed E20-7 is a plan doc only; recorded that cost/latency land in harness JSON with ledger integration deferred (memo § Follow-on scope in `docs/tasks/20.0/E20-11-hosted-provider-decision-memo.md`).
 
 ### Checklist for Slice 1: Hosted adapter + fail-closed profile + `--provider` flag
 
-- [ ] `HostedProviderDescriptionAdapter` implements `DescriptionAdapter`; `FakeHostedProviderAdapter` added for tests.
-- [ ] Hosted profile registered `available=False`; resolves fail-closed unless opt-in env set; default `seeded` unchanged.
-- [ ] `--provider` matrix flag added to existing `cli.py`; reuses `fetch_run_record`/`build_reports`; provider stamped into provenance.
-- [ ] Failure posture: per-request timeout + circuit breaker + per-item isolation + `--stall-limit` + existing `--limit` reused; new `--max-cost` cap enforced; adapter fails closed on provider error.
-- [ ] `cd apps/prototype-description-service && uv run pytest scene/tests/test_description_profiles.py scene/tests/test_eval_harness_cli.py -q` green.
+- [x] `HostedProviderDescriptionAdapter` implements `DescriptionAdapter`; `FakeHostedProviderAdapter` added for tests (`scene/infrastructure/provider/hosted_provider_adapter.py`, Slice 1).
+- [x] Hosted profile registered `available=False`; resolves fail-closed unless opt-in env set; default `seeded` unchanged (`scene/config/profiles.py`, `scene/interface_adapters/http/deps.py`).
+- [x] `--provider` matrix flag added to existing `cli.py`; reuses `fetch_run_record`/`build_reports`; provider stamped into provenance (`scripts/eval_harness/cli.py`, Slice 1).
+- [x] Failure posture: per-request timeout + circuit breaker + per-item isolation + `--stall-limit` + existing `--limit` reused; new `--max-cost` cap enforced; adapter fails closed on provider error (decision `fable_slice_complete_E20-11_hosted_adapter_provider_flag`).
+- [x] `cd apps/prototype-description-service && uv run pytest scene/tests/test_description_profiles.py scene/tests/test_eval_harness_cli.py -q` green (32 passed; full `scene` suite 180 passed, Slice 1).
 
 ### Checklist for Slice 2: Real-provider runbook and decision memo
 
-- [ ] Env-gated real-provider runbook documents the `ACX_EVAL_LIVE` command, eval-tenant-only key, and cost/image caps.
-- [ ] Decision memo records cost/latency/privacy/retention evidence and one canonical disposition.
-- [ ] Contract docs include provider disclosure and opt-in/fail-closed language.
+- [x] Env-gated real-provider runbook documents the `ACX_EVAL_LIVE` command, eval-tenant-only key, and cost/image caps (`scripts/eval_harness/README.md` § Hosted provider matrix, marked dormant under `reject`).
+- [x] Decision memo records privacy/retention posture and one canonical disposition — `reject`; no paid evidence run by governance choice (`docs/tasks/20.0/E20-11-hosted-provider-decision-memo.md`).
+- [x] Contract docs include provider disclosure and opt-in/fail-closed language (`docs/workbay/contracts/image-description-api.md`).
 
 ## Review Readiness
 
-- [ ] No provider enabled by default; hosted profile is fail-closed without the opt-in env.
-- [ ] No second benchmark harness, test module, or JSON schema introduced — the VLM-2A harness is reused.
-- [ ] BYOK is explicitly deferred (disposition `defer_byok`) or scoped as a named follow-on; not implied by benchmark code.
-- [ ] Handoff decision records the governance verdict using the canonical disposition enum.
+- [x] No provider enabled by default; hosted profile is fail-closed without the opt-in env (`scene/tests/test_description_profiles.py`, Slice 1).
+- [x] No second benchmark harness, test module, or JSON schema introduced — the VLM-2A harness is reused (`scripts/eval_harness/cli.py`, Slice 1).
+- [x] BYOK is not implied by benchmark code; disposition `reject` means no BYOK follow-on (memo § Follow-on scope).
+- [x] Handoff decision records the governance verdict using the canonical disposition enum (decision `e20_11_governance_disposition_reject`).
 
 ## Stretch Goals
 
@@ -188,8 +188,8 @@ Proof:
 
 ## Success Criteria
 
-- [ ] The existing eval harness benchmarks hosted providers over `scene/tests/seed/golden.json` and emits `acx-eval/v1` reports — no parallel harness.
-- [ ] Hosted results disclose bytes leaving the boundary (`left_service_boundary == True`) and the default path is unaffected.
-- [ ] The decision memo records exactly one disposition ∈ `ship | benchmark_only | defer_byok | reject`, with privacy/subprocessor disclosure and follow-on scope; BYOK is documented and not implied by benchmark code.
+- [x] The existing eval harness can benchmark hosted providers over the golden manifest and emits `acx-eval/v1` reports — no parallel harness (proven with hosted-style fake client in `scene/tests/test_eval_harness_cli.py`; no live run under disposition `reject`).
+- [x] Hosted results disclose bytes leaving the boundary (`left_service_boundary == True` asserted in Slice 1 tests) and the default path is unaffected (`test_default_profile_unaffected_by_hosted_optin`).
+- [x] The decision memo records exactly one disposition ∈ `ship | benchmark_only | defer_byok | reject` — `reject` — with privacy/subprocessor posture and follow-on scope; BYOK documented as not implemented (`docs/tasks/20.0/E20-11-hosted-provider-decision-memo.md`).
 </content>
 </invoke>

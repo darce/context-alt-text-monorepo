@@ -36,6 +36,42 @@ uv run python -m scripts.eval_harness.cli run --limit 3
 uv run python -m scripts.eval_harness.cli score --run-record scripts/eval_harness/out/run-<stamp>.json --check-determinism
 ```
 
+## Hosted provider matrix (E20-11)
+
+> **Governance: disposition `reject`** — the product uses only self-hosted CPU
+> models, so this path is dormant: no deployment sets the opt-in env or holds a
+> provider key. The capability is documented for any future epic-level
+> re-evaluation (see `docs/tasks/20.0/E20-11-hosted-provider-decision-memo.md`).
+
+Benchmarks hosted description providers (image bytes **leave the service
+boundary**) over the same golden corpus. Opt-in, fail-closed, and paid — every
+gate below is deliberate.
+
+```bash
+# Service side (eval instance only): hosted profile + explicit opt-in + provider key
+export ACX_DESCRIPTION_ADAPTER=hosted_gpt4o
+export ACX_HOSTED_PROVIDER_OPTIN=1          # without this the profile fail-closes (503)
+export ACX_HOSTED_PROVIDER_API_KEY=<provider key — server-side only, never in the repo>
+
+# Harness side: same live gates as above (eval tenant — NEVER the demo tenant),
+# plus image + spend caps. --cost-per-image is the provider's published price.
+uv run python -m scripts.eval_harness.cli run \
+  --provider hosted_gpt4o --limit 10 \
+  --cost-per-image 0.01 --max-cost 1.00
+```
+
+- `--provider` repeats for a matrix; each value writes its own
+  `run-<stamp>-<provider>.json` record + reports.
+- `--max-cost` aborts **before** the paid call that would exceed the cap and
+  saves the partial record (`*-aborted.json`) — capped runs stay scoreable.
+- Provider, per-image price, estimated spend, and per-item `latency_s` land in
+  the run-record provenance/items; each hosted item's
+  `describe.provider_disclosure.left_service_boundary` is `true`.
+- Scoring caveat: the MVP corpus ships empty context packs/rubrics, so provider
+  comparison is scoped to context-independent caption metrics + latency + cost
+  (see the E20-11 decision memo). Insertion/named-entity claims need the
+  VLM-2C manifest population first.
+
 ## Artifacts and retention
 
 - Run records + reports land in `scripts/eval_harness/out/` (git-ignored),

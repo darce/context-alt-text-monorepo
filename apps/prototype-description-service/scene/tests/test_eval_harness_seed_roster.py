@@ -196,6 +196,7 @@ def test_seed_scenes_fresh_uploads_all(tmp_path):
     assert summary.seeded == [1, 2]
     assert summary.already_present == []
     assert summary.skipped_zero_face == []
+    assert summary.unverified_media_ids == []
     assert summary.total_scenes == 2
     assert [m for m, _, _ in client.analyzed] == [1, 2]
 
@@ -260,3 +261,49 @@ def test_seed_scenes_partial_seeds_only_missing(tmp_path):
     assert summary.seeded == [2]
     assert summary.already_present == [1]
     assert [m for m, _, _ in client.analyzed] == [2]
+
+
+def test_seed_scenes_reports_detector_misses_as_unverified(tmp_path):  # VLM-2C-R2-S3/S5-BR-01
+    manifest_path, images_dir = _scene_fixture(tmp_path)
+    client = SceneStubClient()
+    real_analyze = client.analyze
+
+    def analyze_missing_media_2(images):
+        job = real_analyze(images)
+        client._rows = [r for r in client._rows if r["media_id"] != 2]
+        return job
+
+    client.analyze = analyze_missing_media_2
+    summary = seed_scenes(manifest_path, images_dir, client)
+    assert summary.seeded == [1, 2]
+    assert summary.unverified_media_ids == [2], "detector miss must be surfaced, not masked"
+
+
+def test_seed_scenes_resolves_nfd_filenames(tmp_path):  # VLM-2C-R2-HARM-BR-01
+    import hashlib
+    import json
+    import unicodedata
+
+    manifest_path, images_dir = _scene_fixture(tmp_path)
+    data = json.loads(open(manifest_path).read())
+    body = b"glacier"
+    nfd_name = unicodedata.normalize("NFD", "Brei\u00f0amerkurj\u00f6kull.jpg")
+    nfc_name = unicodedata.normalize("NFC", "Brei\u00f0amerkurj\u00f6kull.jpg")
+    (tmp_path / "images" / "mock_images" / nfd_name).write_bytes(body)
+    data["entries"].append(
+        {
+            "path": f"mock_images/{nfc_name}",
+            "sha256": hashlib.sha256(body).hexdigest(),
+            "media_id": 4,
+            "face_count": 1,
+            "present_identities": ["Alice Example"],
+            "context_pack": {"title": "t"},
+            "must_right": ["Alice Example"],
+            "easy_wrong": ["Bob Example"],
+            "policy": {"recognition_enabled": True},
+        }
+    )
+    open(manifest_path, "w").write(json.dumps(data))
+    client = SceneStubClient()
+    summary = seed_scenes(manifest_path, images_dir, client)
+    assert 4 in summary.seeded, "NFC manifest path must resolve an NFD file on disk"

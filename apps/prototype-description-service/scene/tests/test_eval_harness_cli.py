@@ -134,3 +134,13 @@ def test_stall_abort_preserves_partial_record(images_dir):
     assert partial["aborted"] is True
     assert len(partial["items"]) == 3
     assert all(item["error"] for item in partial["items"])
+
+
+def test_extract_identities_rejects_non_list_payload():  # VLM-2C-R2-S5-BR-02
+    import pytest
+
+    from scripts.eval_harness.cli import _extract_identities
+    from scripts.eval_harness.remote_client import RemoteClientError
+
+    with pytest.raises(RemoteClientError, match="media_identities"):
+        _extract_identities({"error": "boom"}, media_id=1)

@@ -278,46 +278,46 @@ Both lists are roster-closed in full: `load_manifest` validates EVERY rubric str
 ## Context and Ownership
 
 - [x] Loaded harness modules, scopes (VLM-2A, VLM-2C, E19-4a), and the `manifest.py` schema before editing.
-- [ ] Recorded the additive schema-extension boundary (new optional field + version bump) and the E19-4a phrase-box coordination point.
+- [x] Recorded the additive schema-extension boundary (new optional field + version bump) and the E19-4a phrase-box coordination point.
 
 ### Checklist for Slice 1: Draft + human-confirm ground truth
 
-- [ ] Regenerated the `draft_labels` draft and reconciled with `golden.json`.
-- [ ] Operator confirmation pass: identities, `face_count` incl. strangers, ≥1 stranger entry.
-- [ ] Refreshed `sha256`; `load_manifest(..., images_dir=...)` passes.
+- [x] Regenerated the `draft_labels` draft and reconciled with `golden.json`.
+- [x] Operator confirmation pass: identities, `face_count` incl. strangers, ≥1 stranger entry.
+- [x] Refreshed `sha256`; `load_manifest(..., images_dir=...)` passes.
 
 ### Checklist for Slice 2: Caption fixtures + schema extension
 
-- [ ] Added optional `GoldenEntry.base_caption`; bumped `SUPPORTED_MANIFEST_VERSION`→2; synced `draft_labels.py:84` + test version literals.
-- [ ] Populated `context_pack`, `base_caption`, `must_right`, `easy_wrong` (roster-closed); set `manifest_version: 2`.
-- [ ] Proof: no `RubricEmptyWarning`; stub-score insertion/Must-Right non-zero.
+- [x] Added optional `GoldenEntry.base_caption`; bumped `SUPPORTED_MANIFEST_VERSION`→2; synced `draft_labels.py:84` + test version literals.
+- [x] Populated `context_pack`, `base_caption`, `must_right`, `easy_wrong` (roster-closed); set `manifest_version: 2`.
+- [x] Proof: no `RubricEmptyWarning`; stub-score insertion/Must-Right non-zero.
 
 ### Checklist for Slice 3: Face/region fixtures for E19-4a
 
 - [x] Extended `seed_roster.py` with an idempotent scene-image seed path.
 - [x] Authored `phrase_boxes.json` (mock boxes + 1:1 containment mapping, incl. stranger case).
-- [ ] Proof: `identification_pr.true_rejections >= 1`; containment 1:1 offline.
+- [x] Proof: `identification_pr.true_rejections >= 1`; containment 1:1 offline.
 
 ### Checklist for Slice 4: Bootstrap doc + version note + evidence
 
-- [ ] Updated `seed/README.md` (version, rubric/confirmation status, rsync, phrase boxes).
-- [ ] Captured deterministic seeded-stub score evidence; archived report.
+- [x] Updated `seed/README.md` (version, rubric/confirmation status, rsync, phrase boxes).
+- [x] Captured deterministic seeded-stub score evidence; archived report.
 
 ## Review Readiness
 
 - [x] No scoring-logic edits; only the additive `base_caption` field + version bump in `manifest.py`.
-- [ ] Fixture integrity verified against `$GOLDEN_IMAGES_DIR` (sha256, roster closure, `face_count`).
-- [ ] Handoff decision records the population, the stranger-entry gate result, and the E19-4a coordination point.
+- [x] Fixture integrity verified against `$GOLDEN_IMAGES_DIR` (sha256, roster closure, `face_count`).
+- [x] Handoff decision records the population, the stranger-entry gate result, and the E19-4a coordination point.
 
 ## Stretch Goals
 
 - [ ] Objects/tag-coverage fixtures for `score_caption(objects=...)` tag-coverage signal.
-- [ ] Second stranger entry with a roster person also present (mixed true-rejection case, `face_metrics.py:116`).
+- [x] Second stranger entry with a roster person also present (mixed true-rejection case, `face_metrics.py:116`).
 
 ## Success Criteria
 
 - [x] `cli score` against a seeded stub run record yields non-vacuous, non-zero caption + `insertion_rate` + face detection/identification P/R; `must_right_defined_images > 0`; no `RubricEmptyWarning`.
-- [ ] The stranger entry yields `identification_pr(...).true_rejections >= 1`, not a wrong name.
-- [ ] `load_manifest(golden.json, images_dir=$GOLDEN_IMAGES_DIR)` passes at `manifest_version: 2`.
+- [x] The stranger entry yields `identification_pr(...).true_rejections >= 1`, not a wrong name.
+- [x] `load_manifest(golden.json, images_dir=$GOLDEN_IMAGES_DIR)` passes at `manifest_version: 2`.
 - [x] `cli score --check-determinism` is bit-identical across re-runs.
 - [x] E19-4a can load `phrase_boxes.json` + seeded scene-face bboxes and exercise 1:1 containment offline.

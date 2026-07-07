@@ -14,30 +14,21 @@ from scene.application.identity_merge import (
     merge_identities,
 )
 from scene.application.identity_merge.merge import IdentityAssociation
+from scene.tests.identity_merge_helpers import make_face, make_phrase_box
 
 
 def _face(label: str, *, x: float = 0.4) -> ConfirmedFace:
-    return ConfirmedFace(
-        identity_id=f"identity-{label}",
-        cluster_id=f"cluster-id-{label}",
-        roster_id=f"roster-{label}",
-        label=label,
-        detection_confidence=0.95,
-        box=NormalizedBox(x=x, y=0.2, width=0.05, height=0.08),
-    )
+    return make_face(label, x=x, roster_id=f"roster-{label}")
 
 
 def _assoc(caption: str, phrase: str, label: str, *, occurrence: int = 0, x: float = 0.4) -> IdentityAssociation:
-    start = -1
-    for _ in range(occurrence + 1):
-        start = caption.index(phrase, start + 1)
     return IdentityAssociation(
         face=_face(label, x=x),
-        phrase_box=PhraseBox(
-            phrase=phrase,
-            span_start=start,
-            span_end=start + len(phrase),
+        phrase_box=make_phrase_box(
+            phrase,
+            caption,
             box=NormalizedBox(x=x - 0.1, y=0.1, width=0.3, height=0.7),
+            occurrence=occurrence,
         ),
     )
 

@@ -53,6 +53,9 @@ class ImageDescription(Base):
     alt_text_draft: Mapped[str] = mapped_column(Text, nullable=False)
     context_used: Mapped[dict] = mapped_column(_json_col(), nullable=False)
     provider_disclosure: Mapped[dict] = mapped_column(_json_col(), nullable=False)
+    # E19-4a: caption phrase-grounding boxes ([{phrase, span, box}, ...] in the
+    # [0,1] top-left frame) so cache hits keep grounded-naming parity.
+    phrase_boxes: Mapped[list | None] = mapped_column(_json_col(), nullable=True)
     retention_class: Mapped[str] = mapped_column(String(32), nullable=False)
     duration_ms: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())

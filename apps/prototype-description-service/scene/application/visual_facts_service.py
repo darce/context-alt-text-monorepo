@@ -17,6 +17,7 @@ from db.models.scene import ImageDescription
 from scene.application.description_adapter import AdapterResult, DescriptionAdapter
 from scene.application.description_repository import ImageDescriptionRepository
 from scene.application.hashing import compute_context_hash, compute_image_hash
+from scene.application.identity_merge.merge import NormalizedBox, PhraseBox
 from scene.domain.description import DescriptionAdapterKind, ProviderMode, RetentionClass
 from scene.interface_adapters.http.schemas.responses import (
     ContextUsed,
@@ -50,6 +51,40 @@ def _elapsed_ms(start: float) -> int:
     return max(0, int((time.perf_counter() - start) * 1000))
 
 
+def _phrase_boxes_to_json(phrase_boxes) -> list[dict[str, Any]] | None:
+    if not phrase_boxes:
+        return None
+    return [
+        {
+            "phrase": pb.phrase,
+            "span": [pb.span_start, pb.span_end],
+            "box": [pb.box.x, pb.box.y, pb.box.width, pb.box.height],
+        }
+        for pb in phrase_boxes
+    ]
+
+
+def _phrase_boxes_from_json(payload) -> tuple[PhraseBox, ...]:
+    if not payload:
+        return ()
+    boxes: list[PhraseBox] = []
+    for item in payload:
+        try:
+            x, y, w, h = (float(v) for v in item["box"])
+            start, end = (int(v) for v in item["span"])
+            boxes.append(
+                PhraseBox(
+                    phrase=str(item["phrase"]),
+                    span_start=start,
+                    span_end=end,
+                    box=NormalizedBox(x=x, y=y, width=w, height=h),
+                )
+            )
+        except (KeyError, TypeError, ValueError):
+            continue  # malformed persisted row: skip, naming degrades safely
+    return tuple(boxes)
+
+
 class VisualFactsService:
     def __init__(
         self,
@@ -68,9 +103,12 @@ class VisualFactsService:
         self._retention = retention_class
         self._timeout = generation_timeout_seconds
         # E19-4a S4: the freshly generated AdapterResult (None on cache hits).
-        # The service is constructed per request, so this is request-scoped;
-        # the route reads phrase_boxes from it for the naming preview.
+        # The service is constructed per request, so this is request-scoped.
         self.last_adapter_result: AdapterResult | None = None
+        # Phrase-grounding boxes for the naming preview — from the adapter on
+        # generation, restored from the cached row on cache hits so both paths
+        # produce the same named draft (E19-4A-S4-BR-03).
+        self.last_phrase_boxes: tuple[PhraseBox, ...] = ()
 
     async def describe(
         self,
@@ -95,6 +133,7 @@ class VisualFactsService:
             )
             if row is not None:
                 response = self._row_to_response(row, cached=True, duration_ms=_elapsed_ms(start), media_id=media_id)
+                self.last_phrase_boxes = _phrase_boxes_from_json(row.phrase_boxes)
                 await self._record_cache_hit(tenant_id=tenant_id, media_id=media_id, image_hash=image_hash)
                 return response
 
@@ -106,6 +145,7 @@ class VisualFactsService:
         call = asyncio.to_thread(self._adapter.describe, image_bytes=image_bytes, context=context)
         result = await (asyncio.wait_for(call, self._timeout) if self._timeout else call)
         self.last_adapter_result = result
+        self.last_phrase_boxes = tuple(result.phrase_boxes)
         self._observe_adapter_duration(time.perf_counter() - adapter_start)
         response = self._result_to_response(
             tenant_id=tenant_id,
@@ -122,9 +162,12 @@ class VisualFactsService:
         )
 
         if self._repo is not None:
-            row, inserted = await self._repo.insert_or_get_existing(self._response_to_row(response))
+            new_row = self._response_to_row(response)
+            new_row.phrase_boxes = _phrase_boxes_to_json(result.phrase_boxes)
+            row, inserted = await self._repo.insert_or_get_existing(new_row)
             if not inserted:
                 response = self._row_to_response(row, cached=True, duration_ms=_elapsed_ms(start), media_id=media_id)
+                self.last_phrase_boxes = _phrase_boxes_from_json(row.phrase_boxes)
                 await self._record_cache_hit(tenant_id=tenant_id, media_id=media_id, image_hash=image_hash)
                 return response
             if self._audit is not None:

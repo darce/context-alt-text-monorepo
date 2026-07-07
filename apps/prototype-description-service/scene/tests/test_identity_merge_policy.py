@@ -9,27 +9,15 @@ from scene.application.identity_merge import (
     merge_identities,
     resolve_naming_allowed,
 )
+from scene.tests.identity_merge_helpers import make_face, make_phrase_box
 
 
 def _face(label: str, *, roster_id="roster-1", confidence=0.95, x=0.4) -> ConfirmedFace:
-    return ConfirmedFace(
-        identity_id=f"identity-{label}",
-        cluster_id=f"cluster-id-{label}",
-        roster_id=roster_id,
-        label=label,
-        detection_confidence=confidence,
-        box=NormalizedBox(x=x, y=0.2, width=0.05, height=0.08),
-    )
+    return make_face(label, x=x, roster_id=roster_id, confidence=confidence)
 
 
 def _person_box(caption: str, phrase: str) -> PhraseBox:
-    start = caption.index(phrase)
-    return PhraseBox(
-        phrase=phrase,
-        span_start=start,
-        span_end=start + len(phrase),
-        box=NormalizedBox(x=0.3, y=0.1, width=0.3, height=0.7),
-    )
+    return make_phrase_box(phrase, caption)
 
 
 CAPTION = "A man stands by the window."

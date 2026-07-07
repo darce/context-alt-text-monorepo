@@ -1272,6 +1272,9 @@ def ensure_tables(op) -> None:
         sa.Column("alt_text_draft", sa.Text(), nullable=False),
         sa.Column("context_used", sa.dialects.postgresql.JSONB(), nullable=False),
         sa.Column("provider_disclosure", sa.dialects.postgresql.JSONB(), nullable=False),
+        # E19-4a: caption phrase-grounding boxes persisted with the cached
+        # description so cache hits produce the same named preview draft.
+        sa.Column("phrase_boxes", sa.dialects.postgresql.JSONB(), nullable=True),
         sa.Column("retention_class", sa.String(length=32), nullable=False),
         sa.Column("duration_ms", sa.Integer(), nullable=False),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),

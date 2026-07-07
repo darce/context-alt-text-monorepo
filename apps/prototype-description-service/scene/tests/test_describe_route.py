@@ -414,6 +414,22 @@ def test_grounded_adapter_names_via_span_replacement():
         assert [n["name"] for n in body["naming_provenance"]["injected_names"]] == ["Daniel"]
 
 
+def test_cache_hit_keeps_grounded_naming_parity():
+    # E19-4A-S4-BR-03: phrase boxes persist with the cached row, so the second
+    # (cache-hit) call produces the identical grounded named draft — not the
+    # positional fallback.
+    with _client(
+        adapter=_GroundedAdapter(),
+        seed=_seed_confirmed_identity("Daniel", roster_id=uuid.uuid4()),
+    ) as client:
+        first = _post_png(client, TENANT_ID).json()
+        second = _post_png(client, TENANT_ID).json()
+        assert second["cached"] is True
+        assert second["named_draft"] == first["named_draft"] == "Daniel stands by the window."
+        assert second["naming_provenance"]["mode"] == first["naming_provenance"]["mode"] == "grounded"
+        assert second["naming_provenance"]["injected_names"] == first["naming_provenance"]["injected_names"]
+
+
 def test_stub_profile_returns_503_with_reason():
     # A deferred/stub profile (florence_large, gpu_phi4) resolves to a fail-closed
     # UnavailableDescriptionAdapter; the route must surface its reason as 503, not

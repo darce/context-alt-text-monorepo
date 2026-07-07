@@ -133,3 +133,87 @@ def test_409_label_conflict_recorded_not_raised(entities_dir):  # S2-04
     client.patch_cluster = conflict
     summary = seed(str(entities_dir), client, tenant_id="eval-tenant")
     assert summary.skipped_conflict == {"c1": "Alice Example"}
+
+
+# --- VLM-2C Slice 3: scene-image seeding (server-side MediaIdentity bboxes) ---
+
+from scripts.eval_harness.seed_roster import seed_scenes  # noqa: E402
+
+
+class SceneStubClient:
+    def __init__(self, existing_rows=None):
+        self._rows = list(existing_rows or [])
+        self.analyzed = []
+        self.identity_queries = []
+
+    def analyze(self, images):
+        self.analyzed.extend(images)
+        for media_id, _fname, _data in images:
+            self._rows.append({"media_id": media_id, "label": None})
+        return "job-scenes"
+
+    def wait_job(self, job_id):
+        return {"job_id": job_id, "status": "completed"}
+
+    def media_identities(self, media_ids):
+        self.identity_queries.append(list(media_ids))
+        return [r for r in self._rows if r["media_id"] in media_ids]
+
+
+def _scene_fixture(tmp_path):
+    import hashlib
+    import json
+
+    images = tmp_path / "images" / "mock_images"
+    images.mkdir(parents=True)
+    entries = []
+    for media_id, name in [(1, "alice-pool.jpg"), (2, "bob-beach.jpg")]:
+        body = name.encode()
+        (images / name).write_bytes(body)
+        entries.append(
+            {
+                "path": f"mock_images/{name}",
+                "sha256": hashlib.sha256(body).hexdigest(),
+                "media_id": media_id,
+                "face_count": 1,
+                "present_identities": ["Alice Example"],
+                "context_pack": {"title": "t"},
+                "must_right": ["Alice Example"],
+                "easy_wrong": ["Bob Example"],
+                "policy": {"recognition_enabled": True},
+            }
+        )
+    manifest = {"manifest_version": 2, "roster": ["Alice Example", "Bob Example"], "entries": entries}
+    manifest_path = tmp_path / "golden.json"
+    manifest_path.write_text(json.dumps(manifest))
+    return str(manifest_path), str(tmp_path / "images")
+
+
+def test_seed_scenes_fresh_uploads_all(tmp_path):
+    manifest_path, images_dir = _scene_fixture(tmp_path)
+    client = SceneStubClient()
+    summary = seed_scenes(manifest_path, images_dir, client)
+    assert summary.seeded == [1, 2]
+    assert summary.already_present == []
+    assert summary.total_scenes == 2
+    assert [m for m, _, _ in client.analyzed] == [1, 2]
+
+
+def test_seed_scenes_idempotent_rerun_uploads_nothing(tmp_path):
+    manifest_path, images_dir = _scene_fixture(tmp_path)
+    client = SceneStubClient()
+    seed_scenes(manifest_path, images_dir, client)
+    client.analyzed.clear()
+    summary = seed_scenes(manifest_path, images_dir, client)
+    assert summary.seeded == []
+    assert summary.already_present == [1, 2]
+    assert client.analyzed == []
+
+
+def test_seed_scenes_partial_seeds_only_missing(tmp_path):
+    manifest_path, images_dir = _scene_fixture(tmp_path)
+    client = SceneStubClient(existing_rows=[{"media_id": 1, "label": "Alice Example"}])
+    summary = seed_scenes(manifest_path, images_dir, client)
+    assert summary.seeded == [2]
+    assert summary.already_present == [1]
+    assert [m for m, _, _ in client.analyzed] == [2]

@@ -277,7 +277,7 @@ Both lists are roster-closed in full: `load_manifest` validates EVERY rubric str
 
 ## Context and Ownership
 
-- [ ] Loaded harness modules, scopes (VLM-2A, VLM-2C, E19-4a), and the `manifest.py` schema before editing.
+- [x] Loaded harness modules, scopes (VLM-2A, VLM-2C, E19-4a), and the `manifest.py` schema before editing.
 - [ ] Recorded the additive schema-extension boundary (new optional field + version bump) and the E19-4a phrase-box coordination point.
 
 ### Checklist for Slice 1: Draft + human-confirm ground truth
@@ -305,7 +305,7 @@ Both lists are roster-closed in full: `load_manifest` validates EVERY rubric str
 
 ## Review Readiness
 
-- [ ] No scoring-logic edits; only the additive `base_caption` field + version bump in `manifest.py`.
+- [x] No scoring-logic edits; only the additive `base_caption` field + version bump in `manifest.py`.
 - [ ] Fixture integrity verified against `$GOLDEN_IMAGES_DIR` (sha256, roster closure, `face_count`).
 - [ ] Handoff decision records the population, the stranger-entry gate result, and the E19-4a coordination point.
 

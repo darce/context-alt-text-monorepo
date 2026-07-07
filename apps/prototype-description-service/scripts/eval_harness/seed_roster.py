@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-from .manifest import ManifestError
+from .manifest import ManifestError, load_manifest
 from .naming import IMAGE_EXTS, display_name, entity_slug
 from .remote_client import RemoteClientError
 
@@ -127,4 +127,50 @@ def seed(entities_dir: str, client: SeedClient, *, tenant_id: str) -> SeedSummar
         skipped_ambiguous=skipped,
         skipped_conflict=conflicts,
         unlabeled_roster_names=[n for n in roster if n not in covered],
+    )
+
+
+class SceneSeedClient(Protocol):
+    def analyze(self, images: list[tuple[int, str, bytes]]) -> str: ...
+    def wait_job(self, job_id: str) -> dict[str, Any]: ...
+    def media_identities(self, media_ids: list[int]) -> Any: ...
+
+
+@dataclass(frozen=True)
+class SceneSeedSummary:
+    seeded: list[int]
+    already_present: list[int]
+    total_scenes: int
+
+
+def seed_scenes(manifest_path: str, images_dir: str, client: SceneSeedClient) -> SceneSeedSummary:
+    """Idempotently ingest golden-manifest scene images into the eval tenant.
+
+    Parallel to :func:`seed` (crop clusters): uploads each scene under its golden
+    ``media_id`` so recognition holds server-side ``MediaIdentity`` face regions
+    keyed on the same ids the run record and phrase-box fixture use (E19-4a's
+    SQL join input). A scene whose ``media_id`` already has identity rows on the
+    tenant is skipped, preserving the idempotent re-run contract.
+    """
+    manifest = load_manifest(manifest_path, images_dir=images_dir)
+    ids = [entry.media_id for entry in manifest.entries]
+    rows = client.media_identities(ids)
+    present = {
+        int(row["media_id"])
+        for row in (rows if isinstance(rows, list) else [])
+        if isinstance(row, dict) and int(row.get("media_id", -1)) in set(ids)
+    }
+    root = Path(images_dir)
+    to_seed = [entry for entry in manifest.entries if entry.media_id not in present]
+    if to_seed:
+        images = [
+            (entry.media_id, Path(entry.path).name, (root / entry.path).read_bytes())
+            for entry in to_seed
+        ]
+        job_id = client.analyze(images)
+        client.wait_job(job_id)
+    return SceneSeedSummary(
+        seeded=[entry.media_id for entry in to_seed],
+        already_present=sorted(present),
+        total_scenes=len(manifest.entries),
     )

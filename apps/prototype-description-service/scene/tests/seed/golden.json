@@ -294,7 +294,7 @@
       "path": "mock_images/ccqw-running.jpg",
       "sha256": "013bca0b2b1ebb367445ec1783e76b48fe1c13a2ab56f2f19f4335ceeb21feaa",
       "media_id": 12,
-      "face_count": 1,
+      "face_count": 2,
       "present_identities": [
         "Caitlin Weaver"
       ],
@@ -419,7 +419,7 @@
       "path": "mock_images/cristina-1.jpg",
       "sha256": "cb5adbad2760babea68a7317800f9f2e3abe9d7e21e327f8d2c5f36e2b799ac6",
       "media_id": 17,
-      "face_count": 1,
+      "face_count": 3,
       "present_identities": [
         "Cristina Quintana"
       ],
@@ -469,7 +469,7 @@
       "path": "mock_images/k.mcc-1.jpg",
       "sha256": "17778829d56efc06b51a0ede6db7c8db36e48db9348d726aabe665fb281d5d28",
       "media_id": 19,
-      "face_count": 1,
+      "face_count": 2,
       "present_identities": [
         "Kirstie Mccarrel"
       ],
@@ -519,7 +519,7 @@
       "path": "mock_images/kirstie-boat.jpg",
       "sha256": "241b1974868d7c4cf76f166066fb8c419dddd70e5793a9ebb7c1a7e7fb1cc6ff",
       "media_id": 21,
-      "face_count": 1,
+      "face_count": 3,
       "present_identities": [
         "Kirstie Mccarrel"
       ],

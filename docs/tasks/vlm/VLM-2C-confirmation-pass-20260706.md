@@ -33,15 +33,15 @@ Rationale: exactly one roster identity (Ryann Wiseman) plus exactly one genuine 
 
 Pinned by `test_seed_corpus_has_designated_stranger_entry` and `test_seed_corpus_reconciles_with_fixture_scan` (`scene/tests/test_eval_harness_manifest.py`).
 
-## Addendum (Slice 2 visual pass): possible face_count undercounts — operator review requested
+## Addendum (Slice 2 visual pass): face_count undercounts — RESOLVED by operator (2026-07-07)
 
-While authoring caption fixtures the agent viewed all 37 scenes. Four entries appear to show more visible face regions than their recorded `face_count`; per the never-fabricate rule the recorded values were **left unchanged**. Operator: confirm or correct.
+Four entries showed more visible face regions than recorded. The operator confirmed the agent counts and located each identity; `golden.json` was corrected in Slice 3:
 
-| media_id | path | recorded | agent count | note |
-| --- | --- | --- | --- | --- |
-| 12 | ccqw-running.jpg | 1 | 2 | second marathoner (male, bib 967) runs beside Caitlin, face clearly visible |
-| 17 | cristina-1.jpg | 1 | 3 | three costumed women posed together, all faces visible |
-| 19 | k.mcc-1.jpg | 1 | 2 | two women under the balloon arch, both faces visible |
-| 21 | kirstie-boat.jpg | 1 | 3 | friend in red swimsuit beside Kirstie + boat driver behind windshield |
+| media_id | path | face_count | operator ruling |
+| --- | --- | --- | --- |
+| 12 | ccqw-running.jpg | 1 → 2 | Caitlin Weaver left; runner on right is a stranger |
+| 17 | cristina-1.jpg | 1 → 3 | Cristina Quintana far right; two women on left are strangers |
+| 19 | k.mcc-1.jpg | 1 → 2 | Kirstie Mccarrel left; woman on right is a stranger |
+| 21 | kirstie-boat.jpg | 1 → 3 | Kirstie Mccarrel right; two others are strangers |
 
-Ambiguous (left as recorded): media_id 11 `ccqw-running-2.jpg` — blurred spectator faces behind the barricade; countability per the README rule is an operator judgment call. If any count changes, `stranger_faces` deltas and detection P/R shift; re-run the seeded-stub score after correcting.
+Stranger-delta entries: 6 → 10. Ambiguous media_id 11 `ccqw-running-2.jpg` (blurred spectator crowd) stays as recorded (`face_count: 1`). The operator also ratified the media_id 38 stranger designation (Slice 3 proceeds).

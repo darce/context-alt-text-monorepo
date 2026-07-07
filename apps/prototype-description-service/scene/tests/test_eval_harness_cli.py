@@ -4,8 +4,15 @@ import json
 
 import pytest
 
-from scripts.eval_harness.cli import BoundedStallError, fetch_run_record, prune_out_dir
+from scripts.eval_harness.cli import (
+    BoundedStallError,
+    MaxCostExceededError,
+    fetch_run_record,
+    main,
+    prune_out_dir,
+)
 from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest
+from scripts.eval_harness.report import build_reports
 
 
 def _manifest(n: int) -> GoldenManifest:
@@ -124,6 +131,73 @@ def test_prune_out_dir_rejects_keep_below_one(tmp_path):  # S3-07
         with pytest.raises(ValueError, match="keep must be >= 1"):
             prune_out_dir(str(tmp_path), keep=bad)
     assert (tmp_path / "run-20260701-000000.json").exists()  # nothing deleted
+
+
+# --------------------------------------------------- provider matrix (E20-11)
+
+
+class HostedClient(HappyClient):
+    """Hosted-style fake: describe response discloses the boundary crossing."""
+
+    def describe(self, **kwargs):
+        return {
+            "alt_text_draft": "A photo.",
+            "visual_facts": {"objects": []},
+            "provider_disclosure": {"provider": "hosted", "left_service_boundary": True},
+        }
+
+
+def test_fetch_stamps_provider_and_cost_into_provenance(images_dir):
+    record = fetch_run_record(
+        _manifest(2),
+        str(images_dir),
+        HostedClient(),
+        head_sha="f" * 40,
+        provider="hosted_gpt4o",
+        cost_per_image_usd=0.01,
+    )
+    prov = record["provenance"]
+    assert prov["provider"] == "hosted_gpt4o"
+    assert prov["cost_per_image_usd"] == 0.01
+    assert prov["est_cost_usd"] == pytest.approx(0.02)
+
+
+def test_hosted_items_carry_boundary_disclosure_and_latency(images_dir):
+    record = fetch_run_record(_manifest(2), str(images_dir), HostedClient(), head_sha="f" * 40, provider="hosted_gpt4o")
+    for item in record["items"]:
+        assert item["describe"]["provider_disclosure"]["left_service_boundary"] is True
+        assert item["latency_s"] >= 0
+
+
+def test_max_cost_aborts_before_further_paid_calls(images_dir):
+    with pytest.raises(MaxCostExceededError) as excinfo:
+        fetch_run_record(
+            _manifest(5),
+            str(images_dir),
+            HostedClient(),
+            head_sha="f" * 40,
+            provider="hosted_gpt4o",
+            cost_per_image_usd=1.0,
+            max_cost_usd=2.5,
+        )
+    partial = excinfo.value.partial_record
+    assert partial["aborted"] is True
+    assert len(partial["items"]) == 2  # third paid call would exceed the cap; never made
+
+
+def test_provider_run_record_scores_with_existing_reports(images_dir):
+    manifest = _manifest(2)
+    record = fetch_run_record(manifest, str(images_dir), HostedClient(), head_sha="f" * 40, provider="hosted_gpt4o")
+    entries = [e.model_dump() for e in manifest.entries]
+    json_doc, md_doc = build_reports(record, entries)
+    assert json_doc and md_doc
+
+
+def test_cli_provider_flag_is_accepted_and_live_gated(monkeypatch):
+    monkeypatch.delenv("ACX_EVAL_LIVE", raising=False)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["fetch", "--provider", "hosted_gpt4o", "--cost-per-image", "0.01", "--max-cost", "1.0"])
+    assert "ACX_EVAL_LIVE" in str(excinfo.value)
 
 
 def test_stall_abort_preserves_partial_record(images_dir):

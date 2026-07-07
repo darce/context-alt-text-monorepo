@@ -10,6 +10,7 @@ ObjectStore staging, which is the S9 ``local_cpu`` async path. Mounted at
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -48,6 +49,8 @@ from scene.interface_adapters.http.schemas.responses import (
 from scene.interface_adapters.http.schemas.responses import VisualFactsResponse
 
 router = APIRouter(tags=["describe"])
+
+_logger = logging.getLogger(__name__)
 
 _IMAGE_KEY_PREFIX = "image_"
 
@@ -172,6 +175,7 @@ async def _naming_preview(
         )
         return result.named_draft, _provenance_model(result.provenance)
     except Exception:  # noqa: BLE001 - preview must never break the core describe response
+        _logger.exception("naming preview failed for media_id=%s; degrading to generic draft", media_id)
         return generic_draft, _provenance_model(
             NamingProvenance(naming_allowed=False, reason=NamingSkipReason.MERGE_ERROR)
         )

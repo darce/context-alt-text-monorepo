@@ -133,7 +133,12 @@ class DeterministicNlgRealizer:
 
     @staticmethod
     def _pluralize_verb(verb: str) -> str | None:
-        """Third-person-singular → plural, or None when not confident."""
+        """Third-person-singular → plural, or None when not confident.
+
+        The surface form alone is ambiguous for several -es families
+        ("watches" = watch+es but "aches" = ache+s; "focuses" = focus+es but
+        "uses" = use+s), so those return None and the caller keeps the name.
+        """
         lowered = verb.lower()
         if lowered in _S_ENDING_NON_VERBS:
             return None
@@ -141,10 +146,12 @@ class DeterministicNlgRealizer:
             return _IRREGULAR_VERBS[lowered]
         if len(lowered) > 4 and lowered.endswith("ies"):
             return verb[:-3] + "y"
-        if len(lowered) > 3 and lowered.endswith(("ches", "shes", "sses", "xes", "zes", "oes")):
-            return verb[:-2]
+        if len(lowered) > 3 and lowered.endswith(("shes", "sses", "xes", "zzes")):
+            return verb[:-2]  # unambiguous sibilant stems: pushes, passes, fixes, buzzes
+        if lowered.endswith(("ches", "ses")):
+            return None  # ambiguous: watch/ache, focus/use — never risk a garbled stem
         if len(lowered) > 3 and lowered.endswith("s") and not lowered.endswith(("ss", "us", "is")):
-            return verb[:-1]
+            return verb[:-1]  # covers e-final stems too: gazes→gaze, dozes→doze
         return None
 
     def _coreference(self, caption: str, end: int, *, capitalize: bool) -> tuple[str, int] | None:
@@ -162,6 +169,10 @@ class DeterministicNlgRealizer:
         while verb_end < len(rest) and rest[verb_end].isalpha():
             verb_end += 1
         verb = rest[verb_start:verb_end]
+        if verb[:1].isupper():
+            # Capitalized word after the mention is a proper noun ("A man
+            # Smith waves."), not a verb — keep the name, never mutate it.
+            return None
         if not verb.endswith("s") and verb.lower() not in _IRREGULAR_VERBS:
             # Next word needs no agreement change ("waved", "will", ...).
             return pronoun, end

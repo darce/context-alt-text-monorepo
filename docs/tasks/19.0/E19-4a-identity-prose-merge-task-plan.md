@@ -48,7 +48,7 @@ The recognition/roster system already persists confirmed identities with face bo
 - **Deterministic / model-independent** merge layer: a pure function `(caption, phrase_boxes, confirmed_faces, policy) → (generic_draft, named_draft, provenance)`. No VLM dependency in S1–S3.
 - **Preview/draft only**: never write `_wp_attachment_image_alt`; that path is **E19-2**. Output is returned in the response, not persisted to WordPress alt text.
 - **Consent gate**: a single tenant-level naming-agreement flag (default reflects the signed operator agreement) **plus** a per-`roster_id` suppress list. **No per-person opt-in.**
-- **Both drafts + provenance always**: every result returns the generic draft alongside the named draft, and provenance recording which names were injected, from which `cluster_id`/`roster_id`, at what match confidence.
+- **Both drafts + provenance always**: every result returns the generic draft alongside the named draft, and provenance recording which names were injected, from which `cluster_id`/`roster_id`, at what detection confidence (the matched face's detector score; not a face↔phrase match strength).
 - **Build order**: merge layer first against **VLM-2C's seeded `phrase_boxes.json` + `base_caption` + existing recognition data** (S1–S3), Florence grounding added later (S4). The S1–S3 build and the PA-01 harness gate consume VLM-2C fixtures; S4's adapter work depends only on E19-1 (merged), not on any active review task.
 - **Reflow is an LLM-ready seam**: the realizer is one implementation behind a `ReflowRealizer` Protocol shaped so a constrained on-box LLM (Qwen2.5-1.5B, Approach D) can drop in later without rework. **No LLM shipped in v1.**
 - **No E19-1 contract/schema/route regressions**; S4's only adapter change is the additive `<CAPTION_TO_PHRASE_GROUNDING>` task token + parsing.
@@ -67,7 +67,7 @@ The recognition/roster system already persists confirmed identities with face bo
 - **Face box**: `MediaIdentity` pixel bbox of a detected face (small); source for the confirmed-identity side of the match.
 - **Containment match**: face-center in the smallest person-phrase box, both in the same `[0,1]` top-left-origin frame, `area(face) ≪ area(person)`, 1:1 only. IoU is explicitly wrong here.
 - **Named draft / generic draft**: the two prose outputs always returned together.
-- **Provenance**: the per-result record of injected names, source `cluster_id`/`roster_id`, and match confidence.
+- **Provenance**: the per-result record of injected names, source `cluster_id`/`roster_id`, and detection confidence.
 - **Reflow seam**: the `ReflowRealizer` Protocol; v1 impl is `DeterministicNlgRealizer` (+ positional fallback).
 - **Suppress list**: per-`roster_id` do-not-name escape hatch (not a per-person opt-in).
 
@@ -98,7 +98,7 @@ Given a `media_id` with ≥1 `user_confirmed` identity and the agreement flag on
 
 | Boundary | Owner | Current Contract | Expected Change | Compatibility Needed? | Verification |
 | --- | --- | --- | --- | --- | --- |
-| `POST /scene/describe/multipart` preview response | backend | `docs/workbay/contracts/image-description-api.md` (`VisualFactsResponse`) | **Additive** optional preview fields: `generic_draft`, `named_draft`, `naming_provenance`. No removal/rename of E19-1 fields. | yes — additive only; absent when agreement off/no confirmed identities | `scene/tests/test_describe_route.py` + response-schema parity test + contract doc updated in S3 |
+| `POST /scene/describe/multipart` preview response | backend | `docs/workbay/contracts/image-description-api.md` (`VisualFactsResponse`) | **Additive** optional preview fields: `generic_draft`, `named_draft`, `naming_provenance`. No removal/rename of E19-1 fields. | yes — additive only; always populated by the route (named draft identical to generic + skip reason when naming not allowed) | `scene/tests/test_describe_route.py` + response-schema parity test + contract doc updated in S3 |
 | Identity SQL join | backend | `db/models/identity.py` (`MediaIdentity`/`IdentityMember`/`IdentityCluster`) read-only | none (read-only join, filter `user_confirmed=TRUE`, `label IS NOT NULL`, `label NOT LIKE 'cluster-%'`, `dismissed_at IS NULL`) | no | merge integration test on seeded fixtures |
 | Tenant naming-agreement flag | backend | `db/models/tenant.py::Tenant` | **Additive** column `naming_agreement_enabled` (bool, default per signed agreement) | no (greenfield: edit `001_identity_schema.py` directly) | model/migration test |
 | Per-`roster_id` suppress list | backend | none | **New** `IdentityNameSuppression` model (tenant_id, roster_id) | no (greenfield) | suppress-gate unit test |
@@ -196,7 +196,7 @@ Proof:
 Changes:
 - `Tenant.naming_agreement_enabled` (default per signed agreement) in `tenant.py` + `001_identity_schema.py`.
 - `IdentityNameSuppression` model (tenant_id, roster_id) in `identity.py` + `__all__`.
-- `identity_merge/policy.py::NamingPolicy` + `resolve_naming_allowed(...)` enforcing: `user_confirmed` + non-placeholder `label` present + 1:1 high-confidence containment + detection/grounding thresholds + agreement active + not suppressed; any miss → generic. `NamingProvenance` (injected names, `cluster_id`/`roster_id`, match confidence) on every result.
+- `identity_merge/policy.py::NamingPolicy` + `resolve_naming_allowed(...)` enforcing: `user_confirmed` + non-placeholder `label` present + 1:1 high-confidence containment + detection/grounding thresholds + agreement active + not suppressed; any miss → generic. `NamingProvenance` (injected names, `cluster_id`/`roster_id`, detection confidence) on every result.
 - `describe.py` surfaces additive `generic_draft`/`named_draft`/`naming_provenance` (preview only — **no** `_wp_attachment_image_alt` write). The route's session is `Depends(get_optional_session)` (`describe.py:97`): when the session is `None` the join is skipped and the preview is **generic-only** (named draft = generic draft, no names; provenance marks the DB-absent reason).
 - `docs/workbay/contracts/image-description-api.md` gains the three additive optional preview fields (same slice as the response change — contract owner is this boundary).
 - Tests: agreement-off suppresses; suppress-list by `roster_id` suppresses; provenance present on every named result; generic always returned; route additive-fields test; DB-absent route test (session `None` → named draft identical to generic).

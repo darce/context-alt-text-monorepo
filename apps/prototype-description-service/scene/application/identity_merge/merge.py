@@ -206,10 +206,12 @@ def merge_identities(
     named_faces: list[ConfirmedFace]
     if associations:
         # Provenance counts only faces whose span the realizer will actually
-        # replace; duplicate mentions of one identity collapse to one entry.
-        dedup: dict[str, ConfirmedFace] = {}
+        # replace; duplicate mentions of one person collapse to one entry.
+        # Keyed by cluster_id (the person), not label, so provenance stays
+        # correct even if label uniqueness were ever relaxed.
+        dedup: dict[Any, ConfirmedFace] = {}
         for a in associations:
-            dedup.setdefault(a.face.label, a.face)
+            dedup.setdefault(a.face.cluster_id, a.face)
         named_faces = list(dedup.values())
         mode = NamingMode.GROUNDED
     elif not phrase_boxes and faces:

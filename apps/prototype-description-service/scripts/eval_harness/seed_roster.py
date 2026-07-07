@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-from .manifest import ManifestError, load_manifest
+from .manifest import ManifestError, _resolve_image, load_manifest
 from .naming import IMAGE_EXTS, display_name, entity_slug
 from .remote_client import RemoteClientError
 
@@ -141,6 +141,7 @@ class SceneSeedSummary:
     seeded: list[int]
     already_present: list[int]
     skipped_zero_face: list[int]
+    unverified_media_ids: list[int]
     total_scenes: int
 
 
@@ -174,15 +175,35 @@ def seed_scenes(manifest_path: str, images_dir: str, client: SceneSeedClient) ->
     root = Path(images_dir)
     to_seed = [entry for entry in seedable if entry.media_id not in present]
     if to_seed:
-        images = [
-            (entry.media_id, Path(entry.path).name, (root / entry.path).read_bytes())
-            for entry in to_seed
-        ]
+        images = []
+        for entry in to_seed:
+            image_path = _resolve_image(root, entry.path)
+            if image_path is None:
+                raise ManifestError(f"image file missing: {entry.path} (under {root})")
+            images.append((entry.media_id, image_path.name, image_path.read_bytes()))
         job_id = client.analyze(images)
         client.wait_job(job_id)
+    # Post-seed verification: a face_count>0 scene with no identity rows after
+    # analyze is a persistent detector miss — surface it instead of silently
+    # re-uploading on every future run.
+    unverified: list[int] = []
+    if to_seed:
+        after = client.media_identities([entry.media_id for entry in to_seed])
+        if not isinstance(after, list):
+            raise ManifestError(
+                f"media_identities returned {type(after).__name__} during post-seed "
+                "verification, expected a list of identity rows (rg-015)"
+            )
+        found = {
+            int(row["media_id"])
+            for row in after
+            if isinstance(row, dict) and "media_id" in row
+        }
+        unverified = [entry.media_id for entry in to_seed if entry.media_id not in found]
     return SceneSeedSummary(
         seeded=[entry.media_id for entry in to_seed],
         already_present=sorted(present),
         skipped_zero_face=[e.media_id for e in manifest.entries if e.face_count == 0],
+        unverified_media_ids=unverified,
         total_scenes=len(manifest.entries),
     )

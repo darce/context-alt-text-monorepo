@@ -138,7 +138,12 @@ def fetch_run_record(
 
 def _extract_identities(payload: Any, media_id: int) -> tuple[list[str], int]:
     """Normalize /media/identities rows for one media_id -> (names, face_count)."""
-    rows = payload if isinstance(payload, list) else []
+    if not isinstance(payload, list):
+        raise RemoteClientError(
+            f"media_identities returned {type(payload).__name__}, expected a list of "
+            "identity rows (rg-015) — per-item isolation records this as an item error"
+        )
+    rows = payload
     names: list[str] = []
     face_count = 0
     for row in rows:
@@ -341,6 +346,10 @@ def _cmd_seed_scenes(args: argparse.Namespace) -> None:
     finally:
         client.close()
     print(json.dumps(summary.__dict__, indent=2, sort_keys=True))
+    if summary.unverified_media_ids:
+        sys.exit(
+            f"seeding incomplete: no identity rows detected for media_ids {summary.unverified_media_ids}"
+        )
 
 
 def main(argv: list[str] | None = None) -> None:

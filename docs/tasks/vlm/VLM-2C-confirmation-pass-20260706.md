@@ -1,8 +1,8 @@
 # VLM-2C Slice 1 — Confirmation Pass (2026-07-06)
 
-Ground-truth provenance: `present_identities` and `face_count` for all 37 entries are **inherited unchanged from the VLM-2A operator pass** (see `scene/tests/seed/README.md` counting rule). This pass adds (a) a draft-regeneration reconciliation, (b) a visual review of the six stranger-delta entries against the roster crops, and (c) the stranger-fixture designation.
+Ground-truth provenance: `present_identities` and `face_count` for all 37 entries were initially **inherited from the VLM-2A operator pass** (see `scene/tests/seed/README.md` counting rule); the Slice-2 visual pass then flagged four undercounts, which the operator **ratified and corrected on 2026-07-07** (media 12/17/19/21 — see the resolved addendum below). This pass adds (a) a draft-regeneration reconciliation, (b) a visual review of the six original stranger-delta entries against the roster crops, and (c) the stranger-fixture designation.
 
-Visual pass performed by agent (Claude Fable 5) against `mock_entities/` roster crops; **designation pending operator ratification** — flag any correction and the manifest/tests will be updated before Slice 3 consumes it.
+Visual pass performed by agent (Claude Fable 5) against `mock_entities/` roster crops; the media_id 38 stranger designation was **ratified by the operator on 2026-07-07** together with the face_count corrections.
 
 ## Draft reconciliation
 

@@ -149,6 +149,33 @@ export interface DescribeRunResponse {
   gpu_state: null;
 }
 
+/** One describe-run item as the operator reviews it before write-back (INT-01d).
+ * `existing_alt` is the WP-side post-meta fact (INT-01b) that buckets drafts safe
+ * to auto-apply (false) from those that would clobber operator alt text (true). */
+export interface DescribeRunItem {
+  media_id: number;
+  status: string;
+  alt_text_draft: string | null;
+  caption: string | null;
+  provenance: VisualFactsResponse | Record<string, unknown> | null;
+  existing_alt: boolean;
+}
+
+export interface DescribeRunItemsResponse {
+  run_id: string;
+  items: DescribeRunItem[];
+}
+
+/** Result buckets from a guarded bulk apply (INT-01c): media ids written, ids
+ * skipped because they already had alt (no explicit overwrite), and ids skipped
+ * because the describe produced no draft. */
+export interface ApplyDescribeRunResponse {
+  run_id: string;
+  applied: number[];
+  skipped_existing: number[];
+  skipped_no_draft: number[];
+}
+
 export const describeMedia = async (
   mediaId: number,
   options: DescribeMediaWriteOptions = {},
@@ -242,6 +269,42 @@ export const cancelBulkDescribeRun = async (runId: string): Promise<DescribeRunR
     `${getEndpoint('recognitionDescribeRuns')}/${encodeURIComponent(runId)}/cancel`,
     {
       method: 'POST',
+      restNonce: getConfig().nonce,
+      signal: createRecognitionTimeoutSignal(30_000),
+    },
+  );
+
+/**
+ * Read a completed run's per-item drafts (INT-01d). The WP proxy annotates each
+ * item with `existing_alt` so the History run view can bucket drafts safe to
+ * auto-apply from those that need an explicit overwrite. A cheap read like the
+ * status poll — short timeout, retried by react-query on failure.
+ */
+export const fetchDescribeRunItems = async (runId: string): Promise<DescribeRunItemsResponse> =>
+  fetchRequiredApi<DescribeRunItemsResponse>(
+    `${getEndpoint('recognitionDescribeRuns')}/${encodeURIComponent(runId)}/items`,
+    {
+      method: 'GET',
+      restNonce: getConfig().nonce,
+      signal: createRecognitionTimeoutSignal(10_000),
+    },
+  );
+
+/**
+ * Apply a completed run's drafts to attachment alt text (INT-01d → INT-01c).
+ * `overwriteMediaIds` is the operator's explicit per-item opt-in to clobber
+ * existing alt; the default empty list never overwrites operator text. Writes
+ * post meta WP-side, so a modest timeout above the read budget.
+ */
+export const applyDescribeRunDrafts = async (
+  runId: string,
+  overwriteMediaIds: number[] = [],
+): Promise<ApplyDescribeRunResponse> =>
+  fetchRequiredApi<ApplyDescribeRunResponse>(
+    `${getEndpoint('recognitionDescribeRuns')}/${encodeURIComponent(runId)}/apply`,
+    {
+      method: 'POST',
+      body: { overwrite_media_ids: overwriteMediaIds },
       restNonce: getConfig().nonce,
       signal: createRecognitionTimeoutSignal(30_000),
     },

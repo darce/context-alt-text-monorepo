@@ -425,3 +425,8 @@
     transform: rotate(360deg);
   }
 }
+
+// WBUX-4 INT-01d: link from a completed bulk run to the run-scoped apply surface.
+.acx-media-selection__bulk-describe-review {
+  align-self: flex-start;
+}

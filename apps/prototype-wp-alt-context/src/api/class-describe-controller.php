@@ -251,6 +251,16 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 				'permission_callback' => array( $this, 'can_manage_recognition' ),
 			)
 		);
+
+		register_rest_route(
+			'acx/v1',
+			'/recognition/describe/runs/(?P<run_id>[a-f0-9-]+)/items',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'get_describe_run_items' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+			)
+		);
 	}
 
 	public function describe_media( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -403,6 +413,45 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 
 	public function get_describe_run_stream_max_hold_seconds(): int {
 		return self::DESCRIBE_RUN_STREAM_MAX_HOLD_SECONDS;
+	}
+
+	/**
+	 * WBUX-4 INT-01b: read a completed run's per-item drafts so the operator can
+	 * review/apply them. Proxies the backend items endpoint (read class, like
+	 * status), then annotates each item with `existing_alt` — a WP-side post-meta
+	 * fact the backend cannot know — so the History UI can bucket drafts safe to
+	 * auto-apply (no existing alt) from those that would clobber operator text.
+	 */
+	public function get_describe_run_items( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$run_id = $this->normalize_run_id( $request );
+		if ( '' === $run_id ) {
+			return new WP_Error( 'missing_run_id', 'Run ID is required.', array( 'status' => 400 ) );
+		}
+
+		$response = $this->proxy_recognition_request(
+			'GET',
+			sprintf( '/scene/describe/run/%s/items', $run_id ),
+			array(),
+			array( 'tenant_id' => $this->get_tenant_id() ),
+			'post_scan_read'
+		);
+
+		if ( is_wp_error( $response ) || $this->is_proxy_unavailable( $response ) ) {
+			return $response;
+		}
+
+		$data = $response->get_data();
+		if ( is_array( $data ) && isset( $data['items'] ) && is_array( $data['items'] ) ) {
+			foreach ( $data['items'] as $index => $item ) {
+				$media_id      = isset( $item['media_id'] ) ? (int) $item['media_id'] : 0;
+				$existing_alt  = trim( (string) get_post_meta( $media_id, '_wp_attachment_image_alt', true ) );
+				$item['existing_alt'] = '' !== $existing_alt;
+				$data['items'][ $index ] = $item;
+			}
+			$response->set_data( $data );
+		}
+
+		return $response;
 	}
 
 	/**

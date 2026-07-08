@@ -40,7 +40,7 @@ Facts come from two sources — the VLM visual pass and the tenant's `ContextPac
 ## Workflow Principles
 
 - **Provenance over prose** — per-fact attachment is a surfaced contract field, not hidden in the caption (heuristic: *leaky abstraction*).
-- **Pixels win** — a supplied fact conflicting with the visual prior is dropped with a `review_reason`.
+- **Pixels win — scoped to what the deterministic rule can prove (FUSION-PR-03)**: MVP drops/withholds only **detector-backed** conflicts — a name whose face isn't detected is not object-attached (via `merge_identities`); a brand whose logo isn't matched is not attached. Detecting a **semantic** conflict between a caption-level event/place fact and the visual prior (e.g. "garden picnic" vs a wreck) needs the **LLM-judge reconciler (stretch)**, not deterministic code. In MVP an unsupported event/place fact stays caption-level (not asserted as visible), it is not auto-dropped.
 - **Reuse the merge** — Stage 3 *calls* `merge_identities`; it does not reimplement E19-4a.
 
 ## Terminology
@@ -72,7 +72,7 @@ A describe request runs: Stage 1 visual prior (separate pass on async tiers; cap
 | `VisualFactsResponse` (`responses.py:75`) | backend | E19-4a preview trio | Add **additive-optional** per-fact attachment-provenance field (~line 105); `extra="forbid"` → declared, never required | No (greenfield) | schema fixture |
 | `VisualFactsService.describe` (`visual_facts_service.py:113`) | backend | adapter→`_result_to_response` | Insert fusion stage between adapter call (~148) and `_result_to_response` (201) | No | service test |
 | Identity merge (`merge_identities` `merge.py:153`) | backend | shipped | Stage 3 **calls** it; no internal change | No | reuse test |
-| Describe route (`describe.py:193`) | backend/proxy | validation guards only | New **decorative/eligibility gate** (skip before `service.describe`) | No | route test |
+| Describe route (`describe.py:193`) | backend/proxy | validation guards only | New **decorative/eligibility gate** (skip before `service.describe`). **Signal path (FUSION-PR-02):** the WP-authoritative "mark as decorative" flag arrives as a new optional `decorative: bool` on `DescribeImageEnvelope` (`requests.py:100`); the **WP plugin (`DescribeMediaService`) is the primary skip** (never POSTs a decorative image), the server gate is the backstop. | No | route + envelope test |
 | `ContextPack` (E20-9 + brands) | backend | E20-9 contract | **Consumed**, not defined | must land first | fixture parity |
 
 ## Proposed Solution
@@ -137,7 +137,7 @@ Proof: `pytest test_fusion_response_provenance.py test_describe_eligibility.py` 
 
 **Goal**: Measure staged fusion vs ad-hoc.
 
-Changes: author mis-attachment labels (which fact should attach where; extend VLM-2B `present_identities`/`must_right` with event/place altitude); bake-off via `build_reports`; `E20-FUSION-decision-memo.md`.
+Changes: author mis-attachment labels (which fact should attach where; extend VLM-2B `present_identities`/`must_right` with event/place altitude); a **fusion eval runner** (new — drives `VisualFactsService`/the fusion stage over `bakeoff_golden.json` to emit acx-eval/v1 run-records; **distinct from `bakeoff.py`**, which produces a raw single-VLM caption, not the fusion output — FUSION-PR-01), then score via `build_reports`; `E20-FUSION-decision-memo.md`.
 
 Proof: committed REPORTs + memo with `Must-Right`/insertion/`Easy-Wrong`/mis-attachment deltas; deterministic re-score.
 
@@ -185,4 +185,4 @@ Proof: committed REPORTs + memo with `Must-Right`/insertion/`Easy-Wrong`/mis-att
 - [ ] One committed bake-off REPORT compares staged fusion vs ad-hoc on `bakeoff_golden.json`, re-score bit-identical.
 - [ ] Adopted **iff** it lowers mis-attachment + `Easy-Wrong` without lowering `Must-Right`/insertion.
 - [ ] Every description carries per-fact attachment provenance (object/caption/dropped + reason).
-- [ ] A context-vs-pixel conflict (`mcm-planecrash`) drops the conflicting fact with a `review_reason`; a decorative image is skipped.
+- [ ] A **detector-backed** conflict (`mcm-planecrash`: `Maria Correonero`'s face not confirmed → the name is **not object-attached**; caption-level stays non-asserted) is handled deterministically with a `review_reason`; semantic event/place conflict-drop is the LLM-judge stretch. A decorative image is skipped.

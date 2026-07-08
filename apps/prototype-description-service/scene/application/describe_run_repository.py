@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy import select, update
@@ -33,9 +33,11 @@ class DescribeRunRepository:
         tenant_id: uuid.UUID,
         media_ids: Sequence[int],
         created_by_user_id: int | None = None,
+        images: Mapping[int, tuple[bytes, str | None]] | None = None,
     ) -> uuid.UUID:
         request = DescribeRunRequest(tenant_id=tenant_id, media_ids=media_ids, max_items=self._max_items)
         request.validate()
+        images = images or {}
         run = DescribeRun(
             tenant_id=tenant_id,
             status=DescribeRunStatus.PENDING,
@@ -53,12 +55,55 @@ class DescribeRunRepository:
                 media_id=media_id,
                 status=DescribeItemStatus.QUEUED,
                 attempts=0,
+                image_bytes=images.get(media_id, (None, None))[0],
+                image_content_type=images.get(media_id, (None, None))[1],
             )
             for media_id in media_ids
         ]
         self._session.add(run)
         await self._session.flush()
         return run.id
+
+    async def record_item_result(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        run_id: uuid.UUID,
+        media_id: int,
+        alt_text_draft: str | None,
+        caption: str | None,
+        provenance: dict | None,
+    ) -> bool:
+        """Persist the describe output for one item and clear its image bytes."""
+        item = await self._get_item(tenant_id=tenant_id, run_id=run_id, media_id=media_id)
+        if item is None:
+            return False
+        item.alt_text_draft = alt_text_draft
+        item.caption = caption
+        item.provenance = provenance
+        item.image_bytes = None
+        await self._session.flush()
+        return True
+
+    async def mark_run_failed(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        run_id: uuid.UUID,
+        error_message: str | None = None,
+        now: datetime | None = None,
+    ) -> bool:
+        """Force a run terminal-FAILED on an unexpected fatal worker error."""
+        run = await self.get_run(tenant_id=tenant_id, run_id=run_id)
+        if run is None:
+            return False
+        run.status = DescribeRunStatus.FAILED
+        run.phase = DescribeRunPhase.FAILED
+        run.completed_at = now or datetime.now(tz=UTC)
+        if error_message:
+            run.error_message = error_message
+        await self._session.flush()
+        return True
 
     async def get_run(self, *, tenant_id: uuid.UUID, run_id: uuid.UUID) -> DescribeRun | None:
         result = await self._session.execute(
@@ -170,7 +215,11 @@ class DescribeRunRepository:
             run.started_at = now
 
         if terminal >= run.total_items:
-            if skipped and not failed and completed == 0:
+            if run.cancel_requested:
+                # A cancel that lands mid-run ends CANCELLED even if some items
+                # completed before the cancel took effect. (S1-01)
+                status = DescribeRunStatus.CANCELLED
+            elif skipped and not failed and completed == 0:
                 status = DescribeRunStatus.CANCELLED
             elif failed:
                 status = DescribeRunStatus.COMPLETED_WITH_ERRORS

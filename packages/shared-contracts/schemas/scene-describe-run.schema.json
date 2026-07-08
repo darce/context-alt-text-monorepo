@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://context-alt-text.dev/schemas/scene-describe-run.schema.json",
   "title": "Scene Describe Run",
-  "description": "Async scene describe-run status payload.",
+  "description": "Async scene describe-run status payload. Submitted via POST /scene/describe/run as multipart/form-data: form fields 'tenant_id' (uuid) and 'media_ids' (JSON int array), plus one file part 'image_<media_id>' (raw bytes) per media id.",
   "type": "object",
   "required": [
     "tenant_id",
@@ -14,6 +14,7 @@
     "skipped",
     "total",
     "cancel_requested",
+    "eta_seconds",
     "gpu_state"
   ],
   "properties": {
@@ -51,6 +52,11 @@
     },
     "cancel_requested": {
       "type": "boolean"
+    },
+    "eta_seconds": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Estimated seconds remaining; null unless the run is in-flight with measured progress."
     },
     "gpu_state": {
       "type": "null",

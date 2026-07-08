@@ -12,6 +12,7 @@
     "completed",
     "total",
     "phase",
+    "eta_seconds",
     "desc",
     "gpu_state"
   ],
@@ -43,6 +44,11 @@
     "phase": {
       "type": "string",
       "enum": ["queued", "describing", "complete", "failed", "cancelled"]
+    },
+    "eta_seconds": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Estimated seconds remaining; null unless the run is in-flight with measured progress."
     },
     "desc": {
       "type": ["string", "null"]

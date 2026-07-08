@@ -118,4 +118,7 @@ class DescribeRunResponse(BaseModel):
     skipped: int
     total: int
     cancel_requested: bool = False
+    # WBUX-3 (S7-01): honest remaining-time estimate; null unless the run is
+    # in-flight with measured progress.
+    eta_seconds: float | None = None
     gpu_state: None = None

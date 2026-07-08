@@ -1357,6 +1357,12 @@ def ensure_tables(op) -> None:
         sa.Column("status", sa.String(length=20), nullable=False, server_default=sa.text("'queued'")),
         sa.Column("attempts", sa.Integer(), nullable=False, server_default=sa.text("0")),
         sa.Column("last_error", sa.Text(), nullable=True),
+        # WBUX-3: raw submitted image bytes, cleared to NULL after describe.
+        sa.Column("image_bytes", sa.LargeBinary(), nullable=True),
+        sa.Column("image_content_type", sa.String(length=255), nullable=True),
+        sa.Column("alt_text_draft", sa.Text(), nullable=True),
+        sa.Column("caption", sa.Text(), nullable=True),
+        sa.Column("provenance", sa.dialects.postgresql.JSONB(), nullable=True),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("started_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("completed_at", sa.TIMESTAMP(timezone=True), nullable=True),

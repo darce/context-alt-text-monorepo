@@ -1,5 +1,8 @@
 import json
+import subprocess
 from pathlib import Path
+
+import yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -20,11 +23,27 @@ def test_gpu_instance_uses_configurable_a10_shape_and_dedicated_cloud_init() -> 
 
 def test_gpu_cloud_init_bakes_qwen_measurement_candidate() -> None:
     cloud_init = (OCI_ROOT / "gpu-cloud-init.yaml").read_text()
+    parsed = yaml.safe_load(cloud_init)
 
+    assert parsed["write_files"]
     assert "Qwen3-VL-30B-A3B-Instruct" in cloud_init
     assert "/opt/acx-gpu/models" in cloud_init
+    assert "qwen3-vl-30b-a3b-instruct-mmproj.gguf" in cloud_init
+    assert "docker image inspect ghcr.io/ggerganov/llama.cpp:server-cuda" in cloud_init
     assert "acx-gpu-vlm.service" in cloud_init
     assert "nvidia-container-toolkit" in cloud_init
+
+
+def test_terraform_configuration_validates() -> None:
+    result = subprocess.run(
+        ["terraform", "-chdir=infra/oci", "validate"],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_spike_artifact_records_e19_1_measurement_fields() -> None:

@@ -16,14 +16,7 @@ def test_gpu_remote_adapter_posts_image_context_and_returns_adapter_result() -> 
         captured.append({"path": request.url.path, "payload": json.loads(request.content)})
         return httpx.Response(
             200,
-            json={
-                "caption": "A detailed GPU caption.",
-                "objects": ["person", "banner"],
-                "ocr_text": "HELLO",
-                "alt_text_draft": "A detailed GPU caption.",
-                "context_sources": ["attachment.caption"],
-                "context_applied": True,
-            },
+            json={"choices": [{"message": {"content": "A detailed GPU caption."}}]},
         )
 
     adapter = GpuRemoteDescriptionAdapter(
@@ -39,12 +32,12 @@ def test_gpu_remote_adapter_posts_image_context_and_returns_adapter_result() -> 
     assert isinstance(result, AdapterResult)
     assert adapter.kind is DescriptionAdapterKind.GPU
     assert result.alt_text_draft == "A detailed GPU caption."
-    assert result.objects == ("person", "banner")
-    assert result.context_sources == ("attachment.caption",)
-    assert captured[0]["path"] == "/describe"
+    assert result.objects == ()
+    assert result.context_sources == ("context.caption",)
+    assert captured[0]["path"] == "/v1/chat/completions"
     assert captured[0]["payload"]["model"] == "Qwen3-VL-30B-A3B-Instruct"
-    assert captured[0]["payload"]["context"]["caption"] == "Launch day"
-    assert captured[0]["payload"]["image"]["media_type"] == "image/png"
+    assert "Launch day" in json.dumps(captured[0]["payload"])
+    assert "data:image/png;base64" in json.dumps(captured[0]["payload"])
 
 
 def test_gpu_remote_adapter_rejects_empty_caption() -> None:
@@ -52,7 +45,9 @@ def test_gpu_remote_adapter_rejects_empty_caption() -> None:
         endpoint_url="http://gpu.test:8000",
         model_id="Qwen3-VL-30B-A3B-Instruct",
         model_version="Q4_GGUF",
-        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"caption": ""})),
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
+        ),
     )
 
     try:

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+from ipaddress import ip_address
+from urllib.parse import urlparse
 
 from scene.application.description_adapter import DescriptionAdapter
 from scene.application.seeded_adapter import SeededDescriptionAdapter
@@ -10,6 +12,42 @@ from scene.config.profiles import DescriptionProfile, get_profile_spec
 from scene.config.settings import DescriptionSettings
 from scene.domain.description import DescriptionAdapterKind
 from scene.infrastructure.vlm.unavailable_adapter import UnavailableDescriptionAdapter
+
+
+def _is_private_gpu_endpoint(endpoint_url: str) -> bool:
+    parsed = urlparse(endpoint_url)
+    host = parsed.hostname
+    if host is None:
+        return False
+    if host in {"localhost", "acx-gpu-burst"} or host.endswith(".local") or host.endswith(".internal"):
+        return True
+    try:
+        addr = ip_address(host)
+    except ValueError:
+        return False
+    return addr.is_private or addr.is_loopback
+
+
+def get_gpu_description_adapter() -> DescriptionAdapter:
+    """Resolve the provisional Qwen GPU profile, independent of the default profile."""
+    settings = DescriptionSettings()
+    spec = get_profile_spec(DescriptionProfile.GPU_QWEN30B)
+    if settings.gpu_endpoint_url and _is_private_gpu_endpoint(settings.gpu_endpoint_url):
+        from scene.infrastructure.vlm.gpu_remote_adapter import GpuRemoteDescriptionAdapter
+
+        return GpuRemoteDescriptionAdapter(
+            endpoint_url=settings.gpu_endpoint_url,
+            model_id=spec.model_id or "unavailable",
+            model_version=spec.model_version,
+            prompt_or_task_version=settings.prompt_or_task_version,
+            timeout_s=settings.generation_timeout_seconds,
+        )
+    return UnavailableDescriptionAdapter(
+        "ACX_GPU_ENDPOINT_URL must be set to a private/loopback in-tenancy endpoint for the GPU profile",
+        kind=DescriptionAdapterKind.GPU,
+        model_id=spec.model_id or "unavailable",
+        model_version=spec.model_version,
+    )
 
 
 def get_description_adapter() -> DescriptionAdapter:
@@ -55,22 +93,7 @@ def get_description_adapter() -> DescriptionAdapter:
         )
 
     if spec.adapter_kind is DescriptionAdapterKind.GPU and spec.available:
-        if settings.gpu_endpoint_url:
-            from scene.infrastructure.vlm.gpu_remote_adapter import GpuRemoteDescriptionAdapter
-
-            return GpuRemoteDescriptionAdapter(
-                endpoint_url=settings.gpu_endpoint_url,
-                model_id=spec.model_id or "unavailable",
-                model_version=spec.model_version,
-                prompt_or_task_version=settings.prompt_or_task_version,
-                timeout_s=settings.generation_timeout_seconds,
-            )
-        return UnavailableDescriptionAdapter(
-            "ACX_GPU_ENDPOINT_URL is required for the GPU detailed-description profile",
-            kind=spec.adapter_kind,
-            model_id=spec.model_id or "unavailable",
-            model_version=spec.model_version,
-        )
+        return get_gpu_description_adapter()
 
     if not spec.available:
         return UnavailableDescriptionAdapter(

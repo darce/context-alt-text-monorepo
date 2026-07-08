@@ -35,8 +35,11 @@ async def run_describe_job(
     job = store.mark_running(job_id)
     try:
         cpu_result = await asyncio.to_thread(cpu_adapter.describe, image_bytes=job.image_bytes, context=job.context)
-        store.set_provisional(job_id, visual_facts=_result_payload(cpu_result, adapter=cpu_adapter))
+        provisional = store.set_provisional(job_id, visual_facts=_result_payload(cpu_result, adapter=cpu_adapter))
         gpu_result = await asyncio.to_thread(gpu_adapter.describe, image_bytes=job.image_bytes, context=job.context)
         return store.set_final(job_id, visual_facts=_result_payload(gpu_result, adapter=gpu_adapter))
     except Exception as exc:  # noqa: BLE001 - persist terminal job failure
-        return store.set_failed(job_id, error=f"{type(exc).__name__}: {exc}")
+        error = f"{type(exc).__name__}: {exc}"
+        if "provisional" in locals() and provisional.visual_facts is not None:
+            return store.set_degraded(job_id, error=error)
+        return store.set_failed(job_id, error=error)

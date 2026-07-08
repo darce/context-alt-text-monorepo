@@ -43,3 +43,10 @@ class ProviderMode(StrEnum):
     NONE = "none"
     LOCAL = "local"
     HOSTED = "hosted"
+
+
+class DescriptionResultTier(StrEnum):
+    """Whether a description is a CPU fallback or the final GPU result."""
+
+    PROVISIONAL_CPU = "provisional_cpu"
+    FINAL_GPU = "final_gpu"

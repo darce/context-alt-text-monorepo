@@ -105,3 +105,16 @@ class VisualFactsResponse(BaseModel):
     generic_draft: str | None = None
     named_draft: str | None = None
     naming_provenance: NamingProvenance | None = None
+
+
+class DescribeJobResult(BaseModel):
+    """Async describe job poll result."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: str
+    status: str
+    tier: str | None = None
+    result_generation: int = Field(default=0, ge=0)
+    visual_facts: dict | None = None
+    error: str | None = None

@@ -1,0 +1,1 @@
+{"schema":"acx-eval/v1","task_ref":"VLM-3","model_id":"Molmo-7B-D","status":"pending_live_gpu_bakeoff","reason":"Requires OCI GPU endpoint and golden images."}

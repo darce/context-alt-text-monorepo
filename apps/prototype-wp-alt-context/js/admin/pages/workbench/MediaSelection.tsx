@@ -1,4 +1,4 @@
-import { ChangeEvent } from 'react';
+import { ChangeEvent, useState } from 'react';
 import * as Select from '@radix-ui/react-select';
 import {
   AlertTriangle,
@@ -61,8 +61,17 @@ export const MediaSelection = ({ collapsed = false, onExpand }: MediaSelectionPr
     .filter((id) => Number.isFinite(id) && id > 0);
   const describeProgress = bulkDescribe.progress;
   const activeDescribeRunId = bulkDescribe.runId;
+  // Run started and still making progress: a polling error does NOT count as an
+  // active run, so the primary CTA is never left permanently disabled (FE-02).
   const isDescribeRunning =
-    bulkDescribe.submit.isPending || (activeDescribeRunId !== null && !describeProgress.isTerminal);
+    bulkDescribe.submit.isPending ||
+    (activeDescribeRunId !== null && !describeProgress.isTerminal && !describeProgress.isError);
+  // The result panel stays visible through the terminal state so the operator
+  // sees the outcome, until they explicitly dismiss that run (FE-01).
+  const [dismissedRunId, setDismissedRunId] = useState<string | null>(null);
+  const hasDescribeActivity = bulkDescribe.submit.isPending || activeDescribeRunId !== null;
+  const isDescribePanelVisible =
+    hasDescribeActivity && (activeDescribeRunId === null || dismissedRunId !== activeDescribeRunId);
 
   const onToggleAll = (checked: boolean) => toggleAll(items, checked);
   const onToggleRow = (item: WorkbenchMediaItem, checked: boolean) => toggleRow(item, checked);
@@ -139,13 +148,19 @@ export const MediaSelection = ({ collapsed = false, onExpand }: MediaSelectionPr
             isRunning={isDescribeRunning}
             runId={activeDescribeRunId}
             progress={describeProgress}
+            isPanelVisible={isDescribePanelVisible}
             errorMessage={bulkDescribe.submit.error?.message ?? bulkDescribe.cancel.error?.message ?? null}
-            onSubmit={() => bulkDescribe.submit.mutate(selectedMediaIds)}
+            onSubmit={() => {
+              setDismissedRunId(null);
+              bulkDescribe.submit.mutate(selectedMediaIds);
+            }}
             onCancel={() => {
               if (activeDescribeRunId) {
                 bulkDescribe.cancel.mutate(activeDescribeRunId);
               }
             }}
+            onDismiss={() => setDismissedRunId(activeDescribeRunId)}
+            onRetryPolling={() => describeProgress.retry()}
           />
           <MediaAnalyzeCta />
         </div>
@@ -253,9 +268,12 @@ interface BulkDescribeCtaProps {
   isRunning: boolean;
   runId: string | null;
   progress: DescribeRunProgress;
+  isPanelVisible: boolean;
   errorMessage: string | null;
   onSubmit: () => void;
   onCancel: () => void;
+  onDismiss: () => void;
+  onRetryPolling: () => void;
 }
 
 const BulkDescribeCta = ({
@@ -265,30 +283,45 @@ const BulkDescribeCta = ({
   isRunning,
   runId,
   progress,
+  isPanelVisible,
   errorMessage,
   onSubmit,
   onCancel,
-}: BulkDescribeCtaProps) => (
-  <div className="acx-media-selection__bulk-describe">
-    <div className="acx-media-selection__bulk-describe-actions">
-      <button
-        type="button"
-        className="button"
-        disabled={selectedCount === 0 || isSubmitting || isRunning}
-        onClick={onSubmit}
-      >
-        {isSubmitting ? __('Starting describe run…', 'alt-context') : __('Describe selected', 'alt-context')}
-      </button>
-      {isRunning && runId ? (
-        <button type="button" className="button button-link" disabled={isCancelling} onClick={onCancel}>
-          {isCancelling ? __('Cancelling…', 'alt-context') : __('Cancel describe run', 'alt-context')}
+  onDismiss,
+  onRetryPolling,
+}: BulkDescribeCtaProps) => {
+  const canCancel = isRunning && runId !== null && !progress.isTerminal && !progress.isError;
+  // Cannot cancel an errored/finished run — offer to clear the panel instead so a
+  // new run can start from the terminal state (FE-01, rg-003).
+  const canDismiss = isPanelVisible && (progress.isTerminal || progress.isError);
+
+  return (
+    <div className="acx-media-selection__bulk-describe">
+      <div className="acx-media-selection__bulk-describe-actions">
+        <button
+          type="button"
+          className="button"
+          disabled={selectedCount === 0 || isSubmitting || isRunning}
+          onClick={onSubmit}
+        >
+          {isSubmitting ? __('Starting describe run…', 'alt-context') : __('Describe selected', 'alt-context')}
         </button>
-      ) : null}
+        {canCancel ? (
+          <button type="button" className="button button-link" disabled={isCancelling} onClick={onCancel}>
+            {isCancelling ? __('Cancelling…', 'alt-context') : __('Cancel describe run', 'alt-context')}
+          </button>
+        ) : null}
+        {canDismiss ? (
+          <button type="button" className="button button-link" onClick={onDismiss}>
+            {__('Dismiss', 'alt-context')}
+          </button>
+        ) : null}
+      </div>
+      {isPanelVisible ? <BulkDescribeProgress progress={progress} onRetry={onRetryPolling} /> : null}
+      {errorMessage ? <span className="acx-media-selection__bulk-describe-error">{errorMessage}</span> : null}
     </div>
-    {isRunning && runId ? <BulkDescribeProgress progress={progress} /> : null}
-    {errorMessage ? <span className="acx-media-selection__bulk-describe-error">{errorMessage}</span> : null}
-  </div>
-);
+  );
+};
 
 interface DescribeRunStatusMeta {
   label: string;
@@ -332,8 +365,31 @@ const formatEtaLabel = (etaSeconds: number | null): string => {
   return sprintf(__('~%1$dm %2$ds remaining', 'alt-context'), minutes, seconds);
 };
 
-const BulkDescribeProgress = ({ progress }: { progress: DescribeRunProgress }) => {
-  const { run, status, progressFraction, etaSeconds, stalledForSeconds } = progress;
+const BulkDescribeProgress = ({
+  progress,
+  onRetry,
+}: {
+  progress: DescribeRunProgress;
+  onRetry: () => void;
+}) => {
+  const { run, status, progressFraction, etaSeconds, stalledForSeconds, isTerminal, isError } = progress;
+
+  if (isError) {
+    return (
+      <div className="acx-media-selection__bulk-describe-progress" role="alert" aria-live="assertive">
+        <span className="acx-media-selection__bulk-describe-status acx-media-selection__bulk-describe-status--danger">
+          <AlertTriangle aria-hidden="true" size={16} />
+          {__('Lost connection to the describe run.', 'alt-context')}
+        </span>
+        <div className="acx-media-selection__bulk-describe-meta">
+          <span>{__('Progress updates paused. Retry to resume.', 'alt-context')}</span>
+          <button type="button" className="button button-link" onClick={onRetry}>
+            {__('Retry', 'alt-context')}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (run === null || status === null) {
     return (
@@ -385,7 +441,14 @@ const BulkDescribeProgress = ({ progress }: { progress: DescribeRunProgress }) =
             {sprintf(__('%d failed', 'alt-context'), run.failed)}
           </span>
         ) : null}
-        <span className="acx-media-selection__bulk-describe-eta">{formatEtaLabel(etaSeconds)}</span>
+        {run.skipped > 0 ? (
+          <span className="acx-media-selection__bulk-describe-skipped">
+            {sprintf(__('%d skipped', 'alt-context'), run.skipped)}
+          </span>
+        ) : null}
+        {!isTerminal ? (
+          <span className="acx-media-selection__bulk-describe-eta">{formatEtaLabel(etaSeconds)}</span>
+        ) : null}
       </div>
       {stalledForSeconds !== null ? (
         <span className="acx-media-selection__bulk-describe-stall">

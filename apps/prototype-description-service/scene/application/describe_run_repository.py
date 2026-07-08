@@ -7,7 +7,7 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models.scene import DescribeRun, DescribeRunItem
@@ -35,6 +35,9 @@ class DescribeRunRepository:
         created_by_user_id: int | None = None,
         images: Mapping[int, tuple[bytes, str | None]] | None = None,
     ) -> uuid.UUID:
+        # PHP-04: dedup while preserving first-seen order so a caller cannot
+        # trigger redundant VLM inference by repeating a media_id.
+        media_ids = list(dict.fromkeys(media_ids))
         request = DescribeRunRequest(tenant_id=tenant_id, media_ids=media_ids, max_items=self._max_items)
         request.validate()
         images = images or {}
@@ -159,26 +162,15 @@ class DescribeRunRepository:
             item.completed_at = now
             if error_message:
                 item.last_error = error_message
+            # BE-04: reclaim stored image bytes on ANY terminal state (including
+            # SKIPPED on cancel), not only the worker's success/failure path.
+            item.image_bytes = None
         else:
             item.status = status
 
         await self._recompute_run_totals(tenant_id=tenant_id, run_id=run_id, now=now)
         await self._session.flush()
         return True
-
-    async def reclaim_interrupted_runs(self, *, tenant_id: uuid.UUID, cutoff: datetime) -> int:
-        result = await self._session.execute(
-            update(DescribeRunItem)
-            .where(
-                DescribeRunItem.tenant_id == tenant_id,
-                DescribeRunItem.status == DescribeItemStatus.RUNNING,
-                DescribeRunItem.started_at.is_not(None),
-                DescribeRunItem.started_at < cutoff,
-            )
-            .values(status=DescribeItemStatus.QUEUED, started_at=None)
-        )
-        await self._session.flush()
-        return int(result.rowcount or 0)
 
     async def _get_item(
         self,

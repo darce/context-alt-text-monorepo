@@ -292,7 +292,9 @@ def test_worker_cancel_before_run_skips_all_items():
         sf = async_sessionmaker(engine, expire_on_commit=False)
         async with sf() as s:
             repo = DescribeRunRepository(s)
-            run_id = await repo.create_run(tenant_id=TENANT_ID, media_ids=[9, 10])
+            run_id = await repo.create_run(
+                tenant_id=TENANT_ID, media_ids=[9, 10], images=dict.fromkeys((9, 10), (b"rawbytes", "image/png"))
+            )
             assert await repo.request_cancel(tenant_id=TENANT_ID, run_id=run_id)
             await s.commit()
 
@@ -311,6 +313,8 @@ def test_worker_cancel_before_run_skips_all_items():
         assert run is not None
         assert run.status == DescribeRunStatus.CANCELLED
         assert [item.status for item in items] == [DescribeItemStatus.SKIPPED, DescribeItemStatus.SKIPPED]
+        # BE-04: skipped items must not leak image bytes
+        assert all(item.image_bytes is None for item in items)
         await engine.dispose()
         os.unlink(path)
 
@@ -366,6 +370,81 @@ def test_worker_cancel_mid_run_ends_cancelled_not_completed(monkeypatch):
         os.unlink(path)
 
     asyncio.run(body())
+
+
+def test_submit_rejects_oversized_image_part(monkeypatch):
+    monkeypatch.setenv("ACX_DESCRIPTION_MAX_IMAGE_BYTES", "10")
+    with _client() as (client, _):
+        files = [("image_1", ("1.png", b"x" * 64, "image/png"))]
+        data = {"tenant_id": str(TENANT_ID), "media_ids": json.dumps([1])}
+        resp = client.post("/scene/describe/run", data=data, files=files)
+    assert resp.status_code == 413, resp.text
+
+
+def test_submit_rejects_unsupported_content_type():
+    with _client() as (client, _):
+        files = [("image_1", ("1.bin", b"payload", "application/octet-stream"))]
+        data = {"tenant_id": str(TENANT_ID), "media_ids": json.dumps([1])}
+        resp = client.post("/scene/describe/run", data=data, files=files)
+    assert resp.status_code == 415, resp.text
+
+
+def test_create_run_dedups_media_ids():
+    async def body():
+        path, url = await _make_db_async()
+        engine = create_async_engine(url)
+        sf = async_sessionmaker(engine, expire_on_commit=False)
+        async with sf() as s:
+            run_id = await DescribeRunRepository(s).create_run(tenant_id=TENANT_ID, media_ids=[5, 5, 7, 5, 7])
+            await s.commit()
+
+        async with sf() as s:
+            repo = DescribeRunRepository(s)
+            run = await repo.get_run(tenant_id=TENANT_ID, run_id=run_id)
+            items = await repo.list_run_items(tenant_id=TENANT_ID, run_id=run_id)
+
+        assert run is not None
+        assert run.total_items == 2
+        assert run.media_ids == [5, 7]  # first-seen order preserved
+        assert [item.media_id for item in items] == [5, 7]
+        await engine.dispose()
+        os.unlink(path)
+
+    asyncio.run(body())
+
+
+def test_worker_sets_tenant_context_on_its_session(monkeypatch):
+    """BE-01: the worker's run session must scope RLS (else zero rows on Postgres)."""
+    import scene.application.describe_run_worker as wmod
+
+    calls: list = []
+    real = wmod.set_tenant_context
+
+    async def recorder(session, tenant_id):
+        calls.append(tenant_id)
+        await real(session, tenant_id)
+
+    monkeypatch.setattr(wmod, "set_tenant_context", recorder)
+
+    async def body():
+        path, url = await _make_db_async()
+        engine = create_async_engine(url)
+        sf = async_sessionmaker(engine, expire_on_commit=False)
+        async with sf() as s:
+            run_id = await DescribeRunRepository(s).create_run(tenant_id=TENANT_ID, media_ids=[1])
+            await s.commit()
+
+        async def describe_one(media_id, image_bytes, content_type):
+            return DescribeItemOutcome(alt_text_draft="x")
+
+        await run_describe_job(
+            tenant_id=TENANT_ID, run_id=run_id, session_factory=sf, describe_one=describe_one, timeout_seconds=0.5
+        )
+        await engine.dispose()
+        os.unlink(path)
+
+    asyncio.run(body())
+    assert TENANT_ID in calls
 
 
 def test_worker_fatal_error_marks_run_failed(monkeypatch):

@@ -177,7 +177,13 @@ def _parse_media_ids(raw: object) -> list[int]:
     return parsed
 
 
-async def _read_image_parts(form) -> Mapping[int, tuple[bytes, str | None]]:
+async def _read_image_parts(form, settings: DescriptionSettings) -> Mapping[int, tuple[bytes, str | None]]:
+    """Read + bound each image_<media_id> part, mirroring describe.py's caps.
+
+    BE-03: enforce the allowed content-type set (415) and the per-file byte cap
+    (413) so a caller cannot stream unbounded bytes into memory or smuggle a
+    non-image part into the run.
+    """
     images: dict[int, tuple[bytes, str | None]] = {}
     for key, value in form.multi_items():
         if not key.startswith(_IMAGE_KEY_PREFIX):
@@ -191,10 +197,21 @@ async def _read_image_parts(form) -> Mapping[int, tuple[bytes, str | None]]:
             ) from exc
         if not isinstance(value, UploadFile):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, f"form key '{key}' must be a file upload")
+        content_type = value.content_type or ""
+        if content_type not in settings.allowed_description_mime_types:
+            raise HTTPException(
+                status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                f"unsupported image content-type '{content_type}' for part '{key}'",
+            )
         data = await value.read()
         if not data:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"image part '{key}' is empty")
-        images[media_id] = (data, value.content_type)
+        if len(data) > settings.max_description_image_bytes:
+            raise HTTPException(
+                status.HTTP_413_CONTENT_TOO_LARGE,
+                f"image part '{key}' exceeds the description size cap ({settings.max_description_image_bytes} bytes)",
+            )
+        images[media_id] = (data, content_type)
     return images
 
 
@@ -222,7 +239,7 @@ async def create_describe_run(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "tenant mismatch between auth and request envelope")
 
     media_ids = _parse_media_ids(form.get("media_ids"))
-    images = await _read_image_parts(form)
+    images = await _read_image_parts(form, DescriptionSettings())
     missing = [m for m in media_ids if m not in images]
     if missing:
         raise HTTPException(
@@ -307,6 +324,9 @@ async def stream_describe_run(
         try:
             while True:
                 async with session_factory() as fresh:
+                    # RLS: scope every fresh poll session or FORCE RLS on Postgres
+                    # returns zero rows and the stream never sees worker progress.
+                    await set_tenant_context(fresh, tenant_id)
                     run = await DescribeRunRepository(fresh).get_run(tenant_id=tenant_id, run_id=run_id)
                 if run is None:
                     yield {"event": "error", "data": json.dumps({"error": "describe run not found"})}

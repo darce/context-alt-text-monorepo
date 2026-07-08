@@ -88,7 +88,7 @@ class DescribeRun(Base):
     )
     status: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'pending'"))
     phase: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'queued'"))
-    media_ids: Mapped[list[int]] = mapped_column(JSON, nullable=False)
+    media_ids: Mapped[list[int]] = mapped_column(_json_col(), nullable=False)
     total_items: Mapped[int] = mapped_column(Integer, nullable=False)
     completed_items: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     failed_items: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))

@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import UTC, datetime, timedelta
 from typing import cast
 
 import pytest
-from sqlalchemy import Table, select
+from sqlalchemy import Table
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from db.models.base_imports import Base
@@ -90,52 +89,3 @@ def test_create_run_rejects_empty_and_oversize_lists():
     asyncio.run(body())
 
 
-def test_reclaim_interrupted_runs_resets_only_stale_running_items():
-    async def body():
-        engine, sf = await _sessionmaker()
-        tenant = uuid.uuid4()
-        now = datetime.now(tz=UTC)
-        async with sf() as s:
-            repo = DescribeRunRepository(s, max_items=5)
-            run_id = await repo.create_run(tenant_id=tenant, media_ids=[201, 202, 203])
-            await repo.mark_item(
-                tenant_id=tenant,
-                run_id=run_id,
-                media_id=201,
-                status=DescribeItemStatus.RUNNING,
-                now=now - timedelta(minutes=10),
-            )
-            await repo.mark_item(
-                tenant_id=tenant,
-                run_id=run_id,
-                media_id=202,
-                status=DescribeItemStatus.RUNNING,
-                now=now,
-            )
-            await repo.mark_item(
-                tenant_id=tenant,
-                run_id=run_id,
-                media_id=203,
-                status=DescribeItemStatus.COMPLETED,
-                now=now - timedelta(minutes=10),
-            )
-            reclaimed = await repo.reclaim_interrupted_runs(tenant_id=tenant, cutoff=now - timedelta(minutes=5))
-            await s.commit()
-
-        async with sf() as s:
-            rows = (
-                await s.execute(
-                    select(DescribeRunItem.media_id, DescribeRunItem.status, DescribeRunItem.started_at)
-                    .where(DescribeRunItem.run_id == run_id)
-                    .order_by(DescribeRunItem.media_id)
-                )
-            ).all()
-
-        assert reclaimed == 1
-        assert rows[0] == (201, DescribeItemStatus.QUEUED, None)
-        assert rows[1][0:2] == (202, DescribeItemStatus.RUNNING)
-        assert rows[1][2] is not None
-        assert rows[2][0:2] == (203, DescribeItemStatus.COMPLETED)
-        await engine.dispose()
-
-    asyncio.run(body())

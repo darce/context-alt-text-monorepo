@@ -32,9 +32,11 @@ Our describe pipeline has facts from two sources — **what the model sees** (VL
 
 1. **Facts already arrive via `ContextPack`** — no external retrieval/RAG; Stage 2 reconciles supplied facts, it does not fetch new ones (heuristic: *YAGNI* — don't build retrieval we don't need).
 2. **Deterministic reconciliation first** — the pixels-win + altitude rules are code, gated by the eval harness (heuristic: *measure, don't guess*); an LLM-judge reconciler is a later, separately-gated upgrade.
-3. **Runs on any tier** — fusion is a composition stage, cheap relative to inference; unlike VLM-4 it is **not** N× and is **not** GPU-tier-gated. It applies to Florence, the Qwen CPU tier, and the VLM-3 GPU tier alike.
-4. **Stage 1 is shared with VLM-4** — the same visual-in-isolation pass; factor it once to avoid two implementations (heuristic: *coincidental vs real duplication* — this is real shared behavior).
-5. **Provenance is a contract field** — per-fact attachment (object/caption/dropped) is surfaced (mirrors `AdapterResult.context_sources`/`context_applied`), so WP + the eval harness can audit *why* each fact did/didn't land.
+3. **Reconciliation (Stage 2/3) is cheap and runs on any tier**, but **Stage 1 as a *separate* visual-in-isolation pass ~doubles inference** (FUSION-PA-01, *tail-latency / capacity-multiplier*). So: on the **async GPU / Qwen tiers** Stage 1 is a dedicated pass; on the **fast Florence tier (~14 s interactive)** a second pass breaks the budget → derive visual facts from the **single existing caption** (or skip staged fusion on that tier). The tier decides Stage-1's form, not the contract.
+4. **Stage 1 is shared with VLM-4** — the same visual-in-isolation pass; factor it once (heuristic: *coincidental vs real duplication* — real shared behavior). **Ownership (FUSION-PA-03):** whichever of VLM-4 / E20-FUSION ships first owns the shared visual-facts component; the other consumes it.
+5. **Object-attachment is detector-backed only (FUSION-PA-02)** — Stage 2 can only attach a fact to an object that has a **detector**: identities via the identity-prose merge, brands via E20-BRAND-A. Arbitrary objects and events/places have **no visual anchor** → always caption-level. **No new grounding model is built here** (YAGNI).
+6. **Depends on E20-9 landed** — Stage 2 consumes the E20-9 context-pack contract + `ContextPack.brands`; both must land first (FUSION-PA-03).
+7. **Provenance is a contract field** — per-fact attachment (object/caption/dropped) is surfaced (mirrors `AdapterResult.context_sources`/`context_applied`), so WP + the eval harness can audit *why* each fact did/didn't land.
 
 ## 4. Not-Doing (explicit out-of-scope)
 
@@ -58,7 +60,7 @@ Our describe pipeline has facts from two sources — **what the model sees** (VL
 1. **Stage 1 — shared visual-facts pass** (factored so VLM-4 reuses it) + its structured output.
 2. **Stage 2 — reconciliation rule** (pixels-win + altitude + policy veto) with per-fact provenance.
 3. **Stage 3 — synthesis** wiring to the identity-prose merge; describe-eligibility gate incl. "Mark as decorative".
-4. **Bake-off + decision memo** — staged fusion vs ad-hoc, mis-attachment metric.
+4. **Mis-attachment labels + bake-off + decision memo** — author the corpus labels the mis-attachment metric needs (which supplied fact should attach to which object/altitude; extends VLM-2B's `present_identities`/`must_right` with event/place altitude labels — FUSION-PA-04), then bake-off staged fusion vs ad-hoc.
 
 ## 7. Heuristic-Driven Decisions (picked, not asked — veto any)
 

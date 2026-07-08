@@ -139,13 +139,21 @@ def _post(client, tenant, *, media_id=42, image_key="image_42", content_type="im
     )
 
 
+def _post_async(client, tenant, *, media_id=42, image_key="image_42", content_type="image/jpeg", body=b"image-bytes"):
+    return client.post(
+        "/scene/describe/async",
+        data={"request": json.dumps({"tenant_id": str(tenant), "media_id": media_id})},
+        files={image_key: ("x.jpg", body, content_type)},
+    )
+
+
 def test_happy_path_returns_15_fields_then_cached():
     tenant = TENANT_ID
     with _client() as client:
         r1 = _post(client, tenant)
         assert r1.status_code == 200, r1.text
         body = r1.json()
-        assert len(body) == 18  # 15 core-contract fields + 3 additive preview fields (E19-4a)
+        assert len(body) == 20  # 17 core-contract fields + 3 additive preview fields (E19-4a)
         assert body["cached"] is False
         assert body["media_id"] == 42
         assert body["adapter"] == "seeded"
@@ -211,6 +219,25 @@ def test_unsupported_mime_415():
     tenant = TENANT_ID
     with _client() as client:
         assert _post(client, tenant, content_type="text/plain").status_code == 415
+
+
+def test_async_unsupported_mime_415():
+    tenant = TENANT_ID
+    with _client() as client:
+        assert _post_async(client, tenant, content_type="text/plain").status_code == 415
+
+
+def test_async_empty_image_422():
+    tenant = TENANT_ID
+    with _client() as client:
+        assert _post_async(client, tenant, body=b"").status_code == 422
+
+
+def test_async_oversized_image_413(monkeypatch):
+    monkeypatch.setenv("ACX_DESCRIPTION_MAX_IMAGE_BYTES", "4")
+    tenant = TENANT_ID
+    with _client() as client:
+        assert _post_async(client, tenant, body=b"12345").status_code == 413
 
 
 def test_create_app_registers_route_and_upload_cap():

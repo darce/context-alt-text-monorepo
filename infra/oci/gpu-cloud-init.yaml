@@ -65,4 +65,5 @@ runcmd:
   - chown -R ubuntu:ubuntu /opt/acx-gpu
   - systemctl daemon-reload
   - systemctl enable acx-gpu-vlm.service
+  - systemctl start acx-gpu-vlm.service
   - echo "ACX GPU cloud-init bootstrap complete"

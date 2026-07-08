@@ -193,6 +193,26 @@ def _generation_timeout_seconds(settings: DescriptionSettings, adapter) -> float
     return settings.generation_timeout_seconds
 
 
+async def _read_validated_image_upload(
+    *,
+    value: UploadFile,
+    key: str,
+    settings: DescriptionSettings,
+) -> bytes:
+    content_type = value.content_type or ""
+    if content_type not in settings.allowed_description_mime_types:
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, f"unsupported image content-type '{content_type}'")
+    image_bytes = await value.read()
+    if not image_bytes:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"image part '{key}' is empty")
+    if len(image_bytes) > settings.max_description_image_bytes:
+        raise HTTPException(
+            status.HTTP_413_CONTENT_TOO_LARGE,
+            f"image exceeds the description size cap ({settings.max_description_image_bytes} bytes)",
+        )
+    return image_bytes
+
+
 def _job_result(job: DescribeJob) -> DescribeJobResult:
     return DescribeJobResult(
         job_id=job.job_id,
@@ -240,17 +260,7 @@ async def describe_image_multipart(
         )
 
     settings = DescriptionSettings()
-    content_type = value.content_type or ""
-    if content_type not in settings.allowed_description_mime_types:
-        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, f"unsupported image content-type '{content_type}'")
-    image_bytes = await value.read()
-    if not image_bytes:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"image part '{key}' is empty")
-    if len(image_bytes) > settings.max_description_image_bytes:
-        raise HTTPException(
-            status.HTTP_413_CONTENT_TOO_LARGE,
-            f"image exceeds the description size cap ({settings.max_description_image_bytes} bytes)",
-        )
+    image_bytes = await _read_validated_image_upload(value=value, key=key, settings=settings)
 
     tenant_uuid = uuid.UUID(envelope.tenant_id)
     repository = None
@@ -351,15 +361,19 @@ async def enqueue_describe_image(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             f"image part key '{key}' must be the canonical 'image_{envelope.media_id}'",
         )
-    image_bytes = await value.read()
-    job = _ASYNC_JOBS.enqueue(
-        tenant_id=uuid.UUID(envelope.tenant_id),
-        media_id=envelope.media_id,
-        image_bytes=image_bytes,
-        context=envelope.context_pack.model_dump(exclude_none=True)
-        if envelope.context_pack is not None
-        else envelope.context,
-    )
+    settings = DescriptionSettings()
+    image_bytes = await _read_validated_image_upload(value=value, key=key, settings=settings)
+    try:
+        job = _ASYNC_JOBS.enqueue(
+            tenant_id=uuid.UUID(envelope.tenant_id),
+            media_id=envelope.media_id,
+            image_bytes=image_bytes,
+            context=envelope.context_pack.model_dump(exclude_none=True)
+            if envelope.context_pack is not None
+            else envelope.context,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
     background_tasks.add_task(
         run_describe_job,
         store=_ASYNC_JOBS,

@@ -15,6 +15,7 @@ import type { WorkbenchMediaStatus } from '../../api/workbenchMediaApi';
 import { MediaSelectionTableBody } from './MediaSelectionTableBody';
 import { MediaAnalyzeCta } from './MediaAnalyzeCta';
 import { MediaSummaryBar } from './MediaSummaryBar';
+import { BulkDescribeReviewLink } from './BulkDescribeReviewLink';
 
 import { Checkbox } from '../../../components/ui/checkbox';
 import { useBulkDescribe } from '../../hooks/useBulkDescribe';
@@ -316,6 +317,11 @@ const BulkDescribeCta = ({
             {__('Dismiss', 'alt-context')}
           </button>
         ) : null}
+        <BulkDescribeReviewLink
+          runId={runId}
+          isTerminal={progress.isTerminal}
+          appliedCount={progress.run ? progress.run.completed : 0}
+        />
       </div>
       {isPanelVisible ? <BulkDescribeProgress progress={progress} onRetry={onRetryPolling} /> : null}
       {errorMessage ? <span className="acx-media-selection__bulk-describe-error">{errorMessage}</span> : null}

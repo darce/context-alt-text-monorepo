@@ -1,9 +1,14 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DescriptionHistoryPage } from '../DescriptionHistoryPage';
-import { correctDescriptionHistoryItem, fetchDescriptionHistory } from '../../api/describeApi';
+import {
+  correctDescriptionHistoryItem,
+  fetchDescribeRunItems,
+  fetchDescriptionHistory,
+} from '../../api/describeApi';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -24,10 +29,12 @@ vi.mock('../../api/describeApi', async () => {
     ...actual,
     fetchDescriptionHistory: vi.fn(),
     correctDescriptionHistoryItem: vi.fn(),
+    fetchDescribeRunItems: vi.fn(),
+    applyDescribeRunDrafts: vi.fn(),
   };
 });
 
-const renderPage = () => {
+const renderPage = (initialEntries: string[] = ['/description-history']) => {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -37,7 +44,9 @@ const renderPage = () => {
 
   return render(
     <QueryClientProvider client={queryClient}>
-      <DescriptionHistoryPage />
+      <MemoryRouter initialEntries={initialEntries}>
+        <DescriptionHistoryPage />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 };
@@ -87,19 +96,22 @@ const failedHistoryItem = {
 describe('DescriptionHistoryPage', () => {
   const fetchHistoryMock = vi.mocked(fetchDescriptionHistory);
   const correctHistoryMock = vi.mocked(correctDescriptionHistoryItem);
+  const fetchRunItemsMock = vi.mocked(fetchDescribeRunItems);
 
   beforeEach(() => {
     vi.clearAllMocks();
     fetchHistoryMock.mockResolvedValue({ total: 1, items: [historyItem] });
-    correctHistoryMock.mockImplementation(async (_mediaId, altText) => ({
-      ...historyItem,
-      current_alt_text: altText,
-      human_edit: {
-        alt_text: altText,
-        edited_at: '2026-07-04 12:00:00',
-        user_id: 7,
-      },
-    }));
+    correctHistoryMock.mockImplementation((_mediaId, altText) =>
+      Promise.resolve({
+        ...historyItem,
+        current_alt_text: altText,
+        human_edit: {
+          alt_text: altText,
+          edited_at: '2026-07-04 12:00:00',
+          user_id: 7,
+        },
+      }),
+    );
   });
 
   it('renders generated history with provenance and current alt text', async () => {
@@ -151,5 +163,22 @@ describe('DescriptionHistoryPage', () => {
     fireEvent.change(screen.getByLabelText('Run status filter'), { target: { value: 'completed' } });
 
     expect(screen.getByText('No history items match the current filters.')).toBeInTheDocument();
+  });
+
+  it('switches to the run-apply surface when a ?run= deep link is present', async () => {
+    fetchRunItemsMock.mockResolvedValue({
+      run_id: 'run-abc',
+      items: [
+        { media_id: 71, status: 'completed', alt_text_draft: 'A red flower.', caption: 'A flower.', provenance: null, existing_alt: false },
+      ],
+    });
+
+    renderPage(['/description-history?run=run-abc']);
+
+    expect(await screen.findByText('Apply generated descriptions')).toBeInTheDocument();
+    expect(await screen.findByText('A red flower.')).toBeInTheDocument();
+    expect(fetchRunItemsMock).toHaveBeenCalledWith('run-abc');
+    // The full-history list query must not fire in run-scoped mode.
+    expect(fetchHistoryMock).not.toHaveBeenCalled();
   });
 });

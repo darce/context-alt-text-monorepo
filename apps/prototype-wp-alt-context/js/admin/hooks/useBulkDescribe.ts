@@ -5,10 +5,15 @@ import {
   type DescribeRunResponse,
   submitBulkDescribeRun,
 } from '../api/describeApi';
+import { useDescribeRunProgress, type DescribeRunProgress } from './useDescribeRunProgress';
 
 export interface UseBulkDescribeResult {
   submit: ReturnType<typeof useMutation<DescribeRunResponse, Error, number[]>>;
   cancel: ReturnType<typeof useMutation<DescribeRunResponse, Error, string>>;
+  /** run_id of the run this session started/cancelled, or null before submit. */
+  runId: string | null;
+  /** Live honest-progress state polled from the run status endpoint. */
+  progress: DescribeRunProgress;
 }
 
 export const useBulkDescribe = (): UseBulkDescribeResult => {
@@ -19,5 +24,8 @@ export const useBulkDescribe = (): UseBulkDescribeResult => {
     mutationFn: (runId) => cancelBulkDescribeRun(runId),
   });
 
-  return { submit, cancel };
+  const runId = submit.data?.run_id ?? cancel.data?.run_id ?? null;
+  const progress = useDescribeRunProgress(runId);
+
+  return { submit, cancel, runId, progress };
 };

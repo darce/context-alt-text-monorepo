@@ -96,6 +96,28 @@ def compute_eta_seconds(run, *, now: datetime | None = None) -> float | None:
     return remaining / rate
 
 
+def terminal_run_status(
+    *, completed: int, failed: int, skipped: int, cancel_requested: bool
+) -> DescribeRunStatus:
+    """Map terminal item outcomes to a run's terminal status.
+
+    Single source of truth shared by the live recompute path and startup
+    reclaim so both agree on the mapping (S5-01):
+    - cancel requested -> CANCELLED (a cancel that lands mid-run wins even if
+      some items completed first);
+    - only skips, nothing completed -> CANCELLED (cancel-before-run);
+    - any failure -> COMPLETED_WITH_ERRORS;
+    - otherwise -> COMPLETED.
+    """
+    if cancel_requested:
+        return DescribeRunStatus.CANCELLED
+    if skipped and not failed and completed == 0:
+        return DescribeRunStatus.CANCELLED
+    if failed:
+        return DescribeRunStatus.COMPLETED_WITH_ERRORS
+    return DescribeRunStatus.COMPLETED
+
+
 def phase_for_status(status: DescribeRunStatus) -> DescribeRunPhase:
     if status == DescribeRunStatus.PENDING:
         return DescribeRunPhase.QUEUED

@@ -174,6 +174,11 @@ export interface ApplyDescribeRunResponse {
   applied: number[];
   skipped_existing: number[];
   skipped_no_draft: number[];
+  // Media ids skipped because they are not attachment posts (untrusted upstream
+  // media_id guard) and ids whose alt-text write failed — both reported so the
+  // History UI never over-reports `applied`.
+  skipped_invalid: number[];
+  failed: number[];
 }
 
 export const describeMedia = async (

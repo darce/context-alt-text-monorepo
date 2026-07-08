@@ -198,6 +198,8 @@ describe('describeApi', () => {
       applied: [71, 70],
       skipped_existing: [],
       skipped_no_draft: [72],
+      skipped_invalid: [],
+      failed: [],
     };
     fetchApiMock.mockResolvedValue(applyResponse);
 
@@ -220,6 +222,8 @@ describe('describeApi', () => {
       applied: [71],
       skipped_existing: [70],
       skipped_no_draft: [],
+      skipped_invalid: [],
+      failed: [],
     });
 
     await applyDescribeRunDrafts('run-abc');

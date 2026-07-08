@@ -56,7 +56,9 @@ export const DescriptionHistoryPage = (): React.JSX.Element => {
   // A `?run=<id>` deep-link (from the workbench after a bulk run) switches the
   // page into the run-scoped apply surface; otherwise show the full history.
   if (runId !== null && runId.trim() !== '') {
-    return <DescribeRunApplyView runId={runId} />;
+    // `key={runId}` remounts on a run switch so overwrite selection starts empty
+    // for each run and cannot carry a stale checked overwrite across deep links.
+    return <DescribeRunApplyView key={runId} runId={runId} />;
   }
 
   return <DescriptionHistoryList />;

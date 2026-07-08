@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 
 import { useDescribeRunApply } from '../hooks/useDescribeRunApply';
@@ -24,6 +24,16 @@ const itemHeading = (item: DescribeRunItem): string =>
 export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): React.JSX.Element => {
   const { itemsQuery, buckets, apply } = useDescribeRunApply(runId);
   const [overwriteIds, setOverwriteIds] = useState<Set<number>>(new Set());
+
+  // Clear the checked overwrites once a write lands so a second apply cannot
+  // re-clobber the same existing alt with a stale selection. (Per-run reset is
+  // handled by remounting via `key={runId}` in DescriptionHistoryPage.)
+  const applySucceeded = apply.isSuccess;
+  useEffect(() => {
+    if (applySucceeded) {
+      setOverwriteIds(new Set());
+    }
+  }, [applySucceeded]);
 
   const toggleOverwrite = (mediaId: number): void => {
     setOverwriteIds((current) => {
@@ -96,6 +106,12 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
               : ''}{' '}
             {apply.data.skipped_no_draft.length > 0
               ? sprintf(__('%d had no draft.', 'alt-context'), apply.data.skipped_no_draft.length)
+              : ''}{' '}
+            {apply.data.failed.length > 0
+              ? sprintf(__('%d failed to write.', 'alt-context'), apply.data.failed.length)
+              : ''}{' '}
+            {apply.data.skipped_invalid.length > 0
+              ? sprintf(__('%d were not valid attachments.', 'alt-context'), apply.data.skipped_invalid.length)
               : ''}
           </p>
         </div>

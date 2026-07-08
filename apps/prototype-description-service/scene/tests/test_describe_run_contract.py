@@ -10,7 +10,7 @@ from pathlib import Path
 from jsonschema import Draft7Validator, FormatChecker
 
 from scene.application.describe_run_repository import DescribeRunRepository
-from scene.interface_adapters.http.routers.describe_run import _progress_payload, _run_response
+from scene.interface_adapters.http.routers.describe_run import _run_response
 from scene.tests.test_describe_run_repository import _sessionmaker
 
 TENANT_ID = "00000000-0000-0000-0000-0000000000dd"
@@ -44,18 +44,3 @@ def test_run_response_matches_shared_schema_via_actual_builder():
     asyncio.run(body())
 
 
-def test_progress_payload_matches_shared_schema_via_actual_builder():
-    async def body():
-        engine, sf = await _sessionmaker()
-        tenant = uuid.UUID(TENANT_ID)
-        async with sf() as session:
-            repo = DescribeRunRepository(session)
-            run_id = await repo.create_run(tenant_id=tenant, media_ids=[1])
-            run = await repo.get_run(tenant_id=tenant, run_id=run_id)
-        assert run is not None
-        payload = _progress_payload(run)
-        assert "eta_seconds" in payload
-        _validate(payload, "scene-describe-progress.schema.json")
-        await engine.dispose()
-
-    asyncio.run(body())

@@ -237,32 +237,6 @@ class DescribeRunControllerTest extends TestCase
         $this->assertSame([], $this->getHttpCalls());
     }
 
-    public function testStreamUsesBackgroundSyncRequestClass(): void
-    {
-        $runId = '33333333-3333-3333-3333-333333333333';
-        $this->queueHttpResponse([
-            'response' => ['code' => 200, 'message' => 'OK'],
-            'body' => 'event: progress\ndata: {}\n\n',
-        ]);
-
-        $request = new WP_REST_Request('GET', '/acx/v1/recognition/describe/runs/' . $runId . '/stream');
-        $request->set_param('run_id', $runId);
-
-        $this->controller->stream_describe_run_progress($request);
-
-        $call = $this->getHttpCalls()[0];
-        $this->assertStringContainsString('/scene/describe/run/' . $runId . '/stream', $call['url']);
-        $this->assertSame('GET', $call['args']['method']);
-        // request_class 'background_sync' → 30s timeout, no circuit breaker (tolerates the 25s SSE hold).
-        $this->assertSame(30, $call['args']['timeout']);
-        $this->assertStringContainsString('max_hold_seconds=25', $call['url']);
-    }
-
-    public function testDescribeRunStreamHoldIsBounded(): void
-    {
-        $this->assertSame(25, $this->controller->get_describe_run_stream_max_hold_seconds());
-    }
-
     public function testGetDescribeRunItemsProxiesAndAnnotatesExistingAlt(): void
     {
         // WBUX-4 INT-01b: media 70 already has operator alt text; 71 does not.

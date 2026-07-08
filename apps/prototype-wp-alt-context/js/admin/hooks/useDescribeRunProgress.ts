@@ -70,13 +70,17 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
     setStalledForSeconds(null);
   }, [runId]);
 
-  // Record the wall-clock time each time `completed` advances (or on first data).
+  // Record the wall-clock time each time the processed count advances (or on
+  // first data). "Processed" is every terminal item (completed + failed +
+  // skipped), not just successes — otherwise a run advancing purely via
+  // failures/skips would look stalled and the bar would never fill.
   useEffect(() => {
     if (run === null) {
       return;
     }
-    if (lastCompletedRef.current === null || run.completed > lastCompletedRef.current) {
-      lastCompletedRef.current = run.completed;
+    const processed = run.completed + run.failed + run.skipped;
+    if (lastCompletedRef.current === null || processed > lastCompletedRef.current) {
+      lastCompletedRef.current = processed;
       lastProgressAtRef.current = Date.now();
       setStalledForSeconds(null);
     }
@@ -106,8 +110,12 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
     return () => window.clearInterval(intervalId);
   }, [runId, isTerminal]);
 
+  // Terminal (processed) items over total: completed + failed + skipped, so the
+  // bar reaches 100% when every item is done regardless of per-item outcome.
   const progressFraction =
-    run !== null && run.total > 0 ? Math.min(1, Math.max(0, run.completed / run.total)) : null;
+    run !== null && run.total > 0
+      ? Math.min(1, Math.max(0, (run.completed + run.failed + run.skipped) / run.total))
+      : null;
 
   return {
     run,

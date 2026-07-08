@@ -348,9 +348,12 @@ const BulkDescribeProgress = ({ progress }: { progress: DescribeRunProgress }) =
 
   const meta = describeRunStatusMeta(status);
   const percent = progressFraction === null ? null : Math.round(progressFraction * 100);
+  // Processed = every terminal item (completed + failed + skipped) so the bar
+  // and count reflect true progress, not just successes.
+  const processed = run.completed + run.failed + run.skipped;
   const countsLabel = sprintf(
-    __('%1$d of %2$d described', 'alt-context'),
-    run.completed,
+    __('%1$d of %2$d processed', 'alt-context'),
+    processed,
     run.total,
   );
 
@@ -369,7 +372,7 @@ const BulkDescribeProgress = ({ progress }: { progress: DescribeRunProgress }) =
       <progress
         className="acx-media-selection__bulk-describe-bar"
         max={run.total > 0 ? run.total : 1}
-        value={run.completed}
+        value={processed}
         aria-label={countsLabel}
       />
       <div className="acx-media-selection__bulk-describe-meta">

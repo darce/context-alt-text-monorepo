@@ -15,7 +15,7 @@
 
 ## Objective
 
-Let a tenant register a brand/logo (upload or bbox), then auto-detect and surface its instances in the existing confirm/reject curation workbench, and — once confirmed — name the brand in generated captions via a new `ContextPack.brands` surface. Detection is **CPU-only classical template matching** (OpenCV features + LightGlue + homography), no training, no GPU.
+Let a tenant register a brand/logo (upload or bbox), then auto-detect and surface its instances in the existing confirm/reject curation workbench, and — once confirmed — name the brand in generated captions via a new `ContextPack.brands` surface. Detection is **CPU-only classical template matching** (OpenCV 4.x ORB descriptors + BF/FLANN matching + homography), no training, no GPU.
 
 ## Intake (new feature)
 
@@ -33,7 +33,7 @@ Captions can name **people** (curated identity clusters → `ContextPack.identit
 - **Reuse the curation loop, not a new pipeline**: template matching is classification against a known template — **no HDBSCAN / clustering**. Reuse `user_confirmed` / `confirmation_source` / the workbench.
 - **Greenfield schema**: no migrations; new tables/columns go directly in `db/migrations/versions/001_identity_schema.py`. `media_identities.identity_type` **already permits `'brand'`** (`001_identity_schema.py:256`) — no enum change.
 - **Sequencing**: the `ContextPack.brands` context surface depends on the E20-9 context-pack contract (`docs/tasks/20.0/E20-9-context-pack-contract-and-backend-enrichment-task-plan.md`); land it after E20-9's contract, before VLM-3 slice 6 consumes it.
-- **OpenCV pin**: `opencv-python>=4.12,<4.15` today. ORB works on 4.x; ALIKED/LightGlue require OpenCV 5 — **gated on a separate spike**, so Tier A ships on ORB and treats ALIKED as an upgrade.
+- **OpenCV pin**: `opencv-python>=4.12,<4.15` today. Tier-A MVP uses **ORB + BF/FLANN** (both in OpenCV 4.x). ALIKED/DISK, **LightGlue**, and **Annoy** (OpenCV 5's ANN search that **replaces FLANN**) all require **OpenCV 5** — **gated on a separate spike**; so Tier A ships on ORB + BF/FLANN (4.x), and the OpenCV-5 upgrade swaps in ALIKED+LightGlue and FLANN→Annoy together.
 - **RLS / tenant scoping**: `brand_templates` is tenant-scoped like every identity table.
 
 ## Workflow Principles
@@ -44,7 +44,7 @@ Captions can name **people** (curated identity clusters → `ContextPack.identit
 
 ## Terminology
 
-- **Template**: a registered logo crop → keypoints + descriptors (blob) + a global crop embedding (pgvector).
+- **Template**: a registered logo crop → keypoints + descriptors (blob). Crop embeddings are deferred until a non-face embedder exists.
 - **Instance**: a detected occurrence — a `media_identities` row with `identity_type='brand'`, bbox, confidence.
 - **Confirmed brand**: an instance a human accepted; its name (WP-authoritative) is eligible for `ContextPack.brands`.
 
@@ -76,15 +76,15 @@ Tenant registers "Acme" (logo upload or a bbox on existing media) → a template
 
 ## Proposed Solution
 
-Four slices: (1) schema + registration + curation reuse — `brand_templates`, template registration (upload/bbox), instances surfaced in the existing confirm/reject workbench; (2) the CPU matcher — ORB keypoints + LightGlue/BF + homography RANSAC → bbox + confidence, min-size floor + `review_reasons`; (3) `ContextPack.brands` context surface + composition naming (after E20-9); (4) descriptor benchmark (ORB vs ALIKED+LightGlue) that gates whether the OpenCV 5 dependency is pulled in. Slices 1–2 stand alone; slice 3 carries the E20-9 dependency; slice 4 is the spike that gates the ALIKED upgrade.
+Four slices: (1) schema + registration + curation reuse — `brand_templates`, template registration (upload/bbox), instances surfaced in the existing confirm/reject workbench; (2) the CPU matcher — ORB keypoints + BF/FLANN descriptor matching + homography RANSAC → bbox + confidence, min-size floor + `review_reasons`; (3) `ContextPack.brands` context surface + composition naming (after E20-9); (4) descriptor benchmark (ORB vs ALIKED+LightGlue) that gates whether the OpenCV 5 dependency is pulled in. Slices 1–2 stand alone; slice 3 carries the E20-9 dependency; slice 4 is the spike that gates the ALIKED upgrade.
 
 ## Files and Surfaces to Change
 
 | Surface | File | Change |
 | --- | --- | --- |
-| schema | `db/migrations/versions/001_identity_schema.py` | New `brand_templates` table (tenant-scoped, RLS, descriptor blob + crop embedding); no `identity_type` enum change |
+| schema | `db/migrations/versions/001_identity_schema.py` | New `brand_templates` table (tenant-scoped, RLS, keypoint descriptor blob, per-tenant cap metadata); no crop embedding in Tier A; no `identity_type` enum change |
 | backend | `recognition/application/brand/template_store.py` (new) | Register/list/delete templates; per-tenant template cap (no embedding shortlist in MVP) |
-| backend | `recognition/application/brand/matcher.py` (new) | ORB + LightGlue/BF + homography RANSAC → bbox + inlier-ratio confidence; min-size floor |
+| backend | `recognition/application/brand/matcher.py` (new) | ORB + BF/FLANN descriptor matching + homography RANSAC → bbox + inlier-ratio confidence; min-size floor |
 | backend | `recognition/interface_adapters/http/routers/brands.py` (new) | Registration endpoint (upload/bbox); brand instances reuse confirm/reject from `clusters_admission.py` |
 | backend | `scene/interface_adapters/http/schemas/requests.py` | Add `brands` to `ContextPack` (`:84`) |
 | backend | `scene/application/description_adapter.py` / composition | Consume `ContextPack.brands` in caption composition (name like a person) |
@@ -161,21 +161,21 @@ Proof:
 
 ## Consolidated Checklist
 
-## Context and Ownership
+### Context and Ownership
 
 - [ ] Loaded the scope note, E20-9 context-pack contract, and identity-schema/curation anchors before editing.
 - [ ] Recorded the `ContextPack` contract change (add `brands`) and its E20-9 sequencing.
 
 ### Checklist for Slice 1: Schema + registration + curation reuse
 
-- [ ] `brand_templates` table (tenant-scoped, RLS, descriptor blob + embedding); no `identity_type` enum change.
+- [ ] `brand_templates` table (tenant-scoped, RLS, keypoint descriptor blob, cap metadata); no crop embedding in Tier A; no `identity_type` enum change.
 - [ ] Template register/list/delete + registration endpoint (upload/bbox); brand instances reuse confirm/reject.
 - [ ] Migration load + workbench route tests green.
 
 ### Checklist for Slice 2: CPU matcher
 
-- [ ] ORB + LightGlue/BF + homography RANSAC → bbox + confidence; min-size floor + `review_reasons`.
-- [ ] pgvector shortlist bounds per-tenant scan cost.
+- [ ] ORB + BF/FLANN descriptor matching + homography RANSAC → bbox + confidence; min-size floor + `review_reasons`.
+- [ ] Per-tenant template cap bounds scan cost; no pgvector shortlist until the non-face embedder stretch.
 - [ ] Matcher tests (positive/negative/tiny) green.
 
 ### Checklist for Slice 3: ContextPack.brands + composition

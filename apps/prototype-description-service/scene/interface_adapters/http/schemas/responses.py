@@ -9,6 +9,8 @@ typed placeholders rather than nulls.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from scene.domain.description import DescriptionAdapterKind, ProviderMode, RetentionClass
@@ -97,6 +99,8 @@ class VisualFactsResponse(BaseModel):
     cached: bool
     duration_ms: int = Field(ge=0)
     retention_class: RetentionClass
+    tier: Literal["provisional_cpu", "final_gpu"] = "provisional_cpu"
+    result_generation: int = Field(default=1, ge=1)
     # E19-4a additive optional preview fields (never in the schema `required`).
     generic_draft: str | None = None
     named_draft: str | None = None

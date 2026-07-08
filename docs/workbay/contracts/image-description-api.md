@@ -24,8 +24,8 @@ recognition multipart/auth/object-store transport.
 - **Body** (`multipart/form-data`):
   - `request` — JSON `DescribeImageEnvelope`: `tenant_id` (UUID, canonicalized
     lowercase), `media_id` (int > 0, must equal the part suffix), optional
-    legacy `context`, and optional typed `context_pack`. Adapter selection is
-    server-side.
+    legacy `context`, optional typed `context_pack`, and optional `tier` hint
+    (`cpu|gpu`). Adapter selection remains server-side.
   - `image_<media_id>` — exactly one image part (`image/jpeg|png|webp`).
 - **Upload cap**: `/scene/describe/multipart` is registered with the body-size
   middleware (413 on oversize).
@@ -33,12 +33,13 @@ recognition multipart/auth/object-store transport.
 ### Response — `VisualFactsResponse` (200)
 
 Machine schema: [`image-description-response.schema.json`](../../../packages/shared-contracts/schemas/image-description-response.schema.json).
-All **15** fields are required; model/provider provenance and retention are
+All **17** core fields are required; model/provider provenance, tier state, and retention are
 unavoidable so future adapters never change the wire:
 
 `tenant_id`, `media_id`, `image_hash`, `context_hash`, `adapter`, `model_id`,
 `model_version`, `prompt_or_task_version`, `visual_facts`, `alt_text_draft`,
-`context_used`, `provider_disclosure`, `cached`, `duration_ms`, `retention_class`.
+`context_used`, `provider_disclosure`, `cached`, `duration_ms`,
+`retention_class`, `tier`, `result_generation`.
 
 - **Cache key**: `(tenant_id, image_hash, adapter, model_version,
   prompt_or_task_version, context_hash)`. A repeated identical call returns
@@ -47,6 +48,10 @@ unavoidable so future adapters never change the wire:
   mirrors the recognition retention vocabulary.
 - `provider_disclosure.provider` ∈ `{none, local, hosted}`; seeded/local keep
   bytes inside the service boundary.
+- `tier` ∈ `{provisional_cpu, final_gpu}`. Inline CPU/local/seeded results use
+  `provisional_cpu`; GPU profile results use `final_gpu`. The async path may
+  supersede provisional rows later with monotonically increasing
+  `result_generation`.
 - **Hosted providers are opt-in and fail-closed (E20-11).** A hosted profile
   (e.g. `ACX_DESCRIPTION_ADAPTER=hosted_gpt4o`) resolves to a fail-closed
   unavailable adapter (503) unless the server sets

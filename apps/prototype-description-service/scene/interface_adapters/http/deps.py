@@ -26,10 +26,10 @@ def get_description_adapter() -> DescriptionAdapter:
     VisualFactsService) but still inline within the request; the DB-backed async
     worker is deferred (see the profile registry impl-notes pointer).
     """
-    spec = get_profile_spec(DescriptionSettings().profile)
+    settings = DescriptionSettings()
+    spec = get_profile_spec(settings.profile)
 
     if spec.profile is DescriptionProfile.SEEDED:
-        settings = DescriptionSettings()
         return SeededDescriptionAdapter(
             model_version=settings.model_version,
             prompt_or_task_version=settings.prompt_or_task_version,
@@ -49,6 +49,24 @@ def get_description_adapter() -> DescriptionAdapter:
             )
         return UnavailableDescriptionAdapter(
             spec.unavailable_reason or f"profile '{spec.profile.value}' is not available",
+            kind=spec.adapter_kind,
+            model_id=spec.model_id or "unavailable",
+            model_version=spec.model_version,
+        )
+
+    if spec.adapter_kind is DescriptionAdapterKind.GPU and spec.available:
+        if settings.gpu_endpoint_url:
+            from scene.infrastructure.vlm.gpu_remote_adapter import GpuRemoteDescriptionAdapter
+
+            return GpuRemoteDescriptionAdapter(
+                endpoint_url=settings.gpu_endpoint_url,
+                model_id=spec.model_id or "unavailable",
+                model_version=spec.model_version,
+                prompt_or_task_version=settings.prompt_or_task_version,
+                timeout_s=settings.generation_timeout_seconds,
+            )
+        return UnavailableDescriptionAdapter(
+            "ACX_GPU_ENDPOINT_URL is required for the GPU detailed-description profile",
             kind=spec.adapter_kind,
             model_id=spec.model_id or "unavailable",
             model_version=spec.model_version,

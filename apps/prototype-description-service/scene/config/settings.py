@@ -36,3 +36,4 @@ class DescriptionSettings(BaseModel):
     generation_timeout_seconds: float = Field(
         default_factory=lambda: float(os.environ.get("ACX_DESCRIPTION_TIMEOUT_SECONDS", "180"))
     )
+    gpu_endpoint_url: str | None = Field(default_factory=lambda: os.environ.get("ACX_GPU_ENDPOINT_URL") or None)

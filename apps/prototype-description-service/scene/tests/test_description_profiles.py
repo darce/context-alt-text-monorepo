@@ -43,6 +43,7 @@ def test_profile_enum_has_exactly_the_five_operator_options():
         "florence_small",
         "florence_large",
         "gpu_phi4",
+        "gpu_qwen30b",
         "hosted_gpt4o",
     ]
 
@@ -81,6 +82,14 @@ def test_gpu_phi4_is_a_gpu_stub():
     assert spec.adapter_kind is DescriptionAdapterKind.GPU
     assert spec.model_id == "microsoft/Phi-4-multimodal-instruct"
     assert spec.unavailable_reason and "gpu" in spec.unavailable_reason.lower()
+
+
+def test_gpu_qwen30b_profile_is_available_endpoint_profile():
+    spec = get_profile_spec(DescriptionProfile.GPU_QWEN30B)
+    assert spec.available is True
+    assert spec.adapter_kind is DescriptionAdapterKind.GPU
+    assert spec.model_id == "Qwen3-VL-30B-A3B-Instruct"
+    assert spec.model_version == "Q4_GGUF"
 
 
 # ------------------------------------------------------------- settings wiring
@@ -137,6 +146,29 @@ def test_resolve_stub_profiles_are_fail_closed(monkeypatch, profile, kind):
     assert adapter.kind is kind
     with pytest.raises(DescriptionAdapterUnavailableError):
         adapter.describe(image_bytes=b"x", context=None)
+
+
+def test_resolve_gpu_qwen30b_requires_endpoint_optin(monkeypatch):
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "gpu_qwen30b")
+    monkeypatch.delenv("ACX_GPU_ENDPOINT_URL", raising=False)
+    from scene.interface_adapters.http.deps import get_description_adapter
+
+    adapter = get_description_adapter()
+    assert isinstance(adapter, UnavailableDescriptionAdapter)
+    assert adapter.kind is DescriptionAdapterKind.GPU
+
+
+def test_resolve_gpu_qwen30b_yields_gpu_adapter(monkeypatch):
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "gpu_qwen30b")
+    monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://gpu.test:8000")
+    from scene.infrastructure.vlm.gpu_remote_adapter import GpuRemoteDescriptionAdapter
+    from scene.interface_adapters.http.deps import get_description_adapter
+
+    adapter = get_description_adapter()
+    assert isinstance(adapter, GpuRemoteDescriptionAdapter)
+    assert isinstance(adapter, DescriptionAdapter)
+    assert adapter.kind is DescriptionAdapterKind.GPU
+    assert adapter.model_id == "Qwen3-VL-30B-A3B-Instruct"
 
 
 # --------------------------------------------------- hosted provider (E20-11)

@@ -88,6 +88,17 @@ resource "oci_core_security_list" "acx_security_list" {
     }
   }
 
+  # GPU VLM endpoint, reachable only from inside the ACX VCN.
+  ingress_security_rules {
+    description = "GPU VLM endpoint from ACX VCN"
+    protocol    = "6"
+    source      = "10.0.0.0/16"
+    stateless   = false
+    tcp_options {
+      min = 8000
+      max = 8000
+    }
+  }
 
 
   # Egress
@@ -143,5 +154,37 @@ resource "oci_core_instance" "acx_backend" {
   freeform_tags = {
     "project" = "acx"
     "env"     = "production"
+  }
+}
+
+resource "oci_core_instance" "acx_gpu_burst" {
+  compartment_id      = var.compartment_ocid
+  availability_domain = var.availability_domain
+  display_name        = "acx-gpu-burst"
+  shape               = var.gpu_shape
+
+  source_details {
+    source_type             = "image"
+    source_id               = var.gpu_image_ocid
+    boot_volume_size_in_gbs = var.gpu_boot_volume_size_in_gbs
+  }
+
+  create_vnic_details {
+    subnet_id        = oci_core_subnet.acx_public_subnet.id
+    assign_public_ip = false
+    display_name     = "acx-gpu-burst-vnic"
+    hostname_label   = "acx-gpu-burst"
+  }
+
+  metadata = {
+    ssh_authorized_keys = file(pathexpand(var.ssh_public_key_path))
+    user_data           = base64encode(file("${path.module}/gpu-cloud-init.yaml"))
+  }
+
+  freeform_tags = {
+    "project"       = "acx"
+    "env"           = "production"
+    "role"          = "gpu-burst"
+    "scale_to_zero" = "true"
   }
 }

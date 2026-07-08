@@ -53,8 +53,6 @@ use const PATHINFO_EXTENSION;
  * the wire-locked `/recognition/analyze` surface (PDS-26).
  */
 class DescribeController extends AbstractRecognitionProxyController implements DescribeHostInterface {
-	private const DESCRIBE_RUN_STREAM_MAX_HOLD_SECONDS = 25;
-
 	/**
 	 * Default per-run media-id cap. Filterable via `acx_describe_run_max_items`.
 	 * MUST be kept aligned with the backend `ACX_DESCRIBE_RUN_MAX_ITEMS` env var
@@ -244,16 +242,6 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 
 		register_rest_route(
 			'acx/v1',
-			'/recognition/describe/runs/(?P<run_id>[a-f0-9-]+)/stream',
-			array(
-				'methods'             => 'GET',
-				'callback'            => array( $this, 'stream_describe_run_progress' ),
-				'permission_callback' => array( $this, 'can_manage_recognition' ),
-			)
-		);
-
-		register_rest_route(
-			'acx/v1',
 			'/recognition/describe/runs/(?P<run_id>[a-f0-9-]+)/items',
 			array(
 				'methods'             => 'GET',
@@ -404,33 +392,6 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			array(),
 			array( 'tenant_id' => $this->get_tenant_id() )
 		);
-	}
-
-	public function stream_describe_run_progress( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		$run_id = $this->normalize_run_id( $request );
-		if ( '' === $run_id ) {
-			return new WP_Error( 'missing_run_id', 'Run ID is required.', array( 'status' => 400 ) );
-		}
-
-		// The stream endpoint holds the connection open server-side for up to
-		// DESCRIBE_RUN_STREAM_MAX_HOLD_SECONDS (SSE). The default 'auto'+GET class
-		// resolves to `ui_read` (2s timeout + circuit breaker), which would time
-		// out the hold and trip the shared recognition breaker. `background_sync`
-		// (30s timeout, no breaker) tolerates the 25s hold. (S5-01)
-		return $this->proxy_recognition_request(
-			'GET',
-			sprintf( '/scene/describe/run/%s/stream', $run_id ),
-			array(),
-			array(
-				'tenant_id'        => $this->get_tenant_id(),
-				'max_hold_seconds' => self::DESCRIBE_RUN_STREAM_MAX_HOLD_SECONDS,
-			),
-			'background_sync'
-		);
-	}
-
-	public function get_describe_run_stream_max_hold_seconds(): int {
-		return self::DESCRIBE_RUN_STREAM_MAX_HOLD_SECONDS;
 	}
 
 	/**

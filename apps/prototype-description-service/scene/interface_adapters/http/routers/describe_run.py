@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
-import time
 import uuid
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import Mapping
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sse_starlette.sse import EventSourceResponse
 from starlette.datastructures import UploadFile
 
 from db.tenant_context import require_tenant_record, set_tenant_context
@@ -23,8 +20,6 @@ from scene.application.description_repository import ImageDescriptionRepository
 from scene.application.visual_facts_service import VisualFactsService
 from scene.config.settings import DescriptionSettings
 from scene.domain.describe_run import (
-    TERMINAL_RUN_STATUSES,
-    DescribeRunStatus,
     compute_eta_seconds,
 )
 from scene.interface_adapters.http.deps import get_description_adapter
@@ -42,9 +37,6 @@ from scene.interface_adapters.http.schemas.responses import (
 router = APIRouter(tags=["describe-runs"])
 
 _IMAGE_KEY_PREFIX = "image_"
-_STREAM_MAX_HOLD_DEFAULT = 25.0
-_STREAM_MAX_HOLD_CAP = 60.0
-_STREAM_POLL_INTERVAL = 1.0
 
 
 def _run_response(run) -> DescribeRunResponse:
@@ -78,21 +70,6 @@ def _run_items_response(run, items) -> DescribeRunItemsResponse:
             for item in items
         ],
     )
-
-
-def _progress_payload(run) -> dict[str, object]:
-    return {
-        "type": "describe_progress",
-        "run_id": str(run.id),
-        "tenant_id": str(run.tenant_id),
-        "status": str(run.status),
-        "completed": run.completed_items + run.failed_items + run.skipped_items,
-        "total": run.total_items,
-        "phase": str(run.phase),
-        "eta_seconds": compute_eta_seconds(run),
-        "desc": None,
-        "gpu_state": None,
-    }
 
 
 def _require_tenant_uuid(auth) -> uuid.UUID:
@@ -343,42 +320,3 @@ async def cancel_describe_run(
     if run is None:  # pragma: no cover - defensive only
         raise HTTPException(status.HTTP_404_NOT_FOUND, "describe run not found")
     return _run_response(run)
-
-
-@router.get("/describe/run/{run_id}/stream")
-async def stream_describe_run(
-    run_id: uuid.UUID,
-    auth=Depends(require_write_access),
-    session=Depends(get_optional_session),
-    max_hold_seconds: float = Query(default=_STREAM_MAX_HOLD_DEFAULT, gt=0),
-) -> EventSourceResponse:
-    tenant_id = _require_tenant_uuid(auth)
-    await _prepare_repo(session=session, auth=auth, tenant_id=tenant_id)
-    hold = min(max_hold_seconds, _STREAM_MAX_HOLD_CAP)
-    session_factory = _worker_session_factory(session)
-
-    async def events() -> AsyncIterator[dict[str, str]]:
-        loop_start = time.monotonic()
-        try:
-            while True:
-                async with session_factory() as fresh:
-                    # RLS: scope every fresh poll session or FORCE RLS on Postgres
-                    # returns zero rows and the stream never sees worker progress.
-                    await set_tenant_context(fresh, tenant_id)
-                    run = await DescribeRunRepository(fresh).get_run(tenant_id=tenant_id, run_id=run_id)
-                if run is None:
-                    yield {"event": "error", "data": json.dumps({"error": "describe run not found"})}
-                    return
-                payload = _progress_payload(run)
-                yield {"event": "progress", "data": json.dumps(payload)}
-                if DescribeRunStatus(run.status) in TERMINAL_RUN_STATUSES:
-                    yield {"event": "done", "data": json.dumps(payload)}
-                    return
-                if time.monotonic() - loop_start >= hold:
-                    yield {"event": "done", "data": json.dumps(payload)}
-                    return
-                await asyncio.sleep(_STREAM_POLL_INTERVAL)
-        except (asyncio.CancelledError, GeneratorExit):  # client disconnect
-            return
-
-    return EventSourceResponse(events())

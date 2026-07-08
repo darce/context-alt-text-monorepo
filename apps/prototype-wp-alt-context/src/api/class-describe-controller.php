@@ -467,7 +467,11 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			return $this->payload_too_large_error( $media_id, $running_total + $stat_size, $max_body_bytes );
 		}
 
-		$bytes = @file_get_contents( $path );
+		// Bounded read: never buffer more than the remaining body budget (+1 to
+		// detect overflow), so a false/stale filesize() cannot defeat the memory
+		// cap by falling through to an unbounded read (SRV-01).
+		$remaining = $max_body_bytes - $running_total;
+		$bytes     = @file_get_contents( $path, false, null, 0, $remaining + 1 );
 		if ( false === $bytes || '' === $bytes ) {
 			return new WP_Error(
 				'describe_run_attachment_unreadable',
@@ -476,9 +480,9 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			);
 		}
 
-		// Exact guard for the case where filesize() was unavailable (false) or
-		// stale versus the bytes actually read.
-		if ( $running_total + strlen( $bytes ) > $max_body_bytes ) {
+		// Overflow guard covering the case where filesize() was unavailable
+		// (false) or stale versus the bytes actually read.
+		if ( strlen( $bytes ) > $remaining ) {
 			return $this->payload_too_large_error( $media_id, $running_total + strlen( $bytes ), $max_body_bytes );
 		}
 

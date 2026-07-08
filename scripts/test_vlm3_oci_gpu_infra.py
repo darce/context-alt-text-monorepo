@@ -31,6 +31,7 @@ def test_gpu_cloud_init_bakes_qwen_measurement_candidate() -> None:
     assert "qwen3-vl-30b-a3b-instruct-mmproj.gguf" in cloud_init
     assert "docker image inspect ghcr.io/ggerganov/llama.cpp:server-cuda" in cloud_init
     assert "acx-gpu-vlm.service" in cloud_init
+    assert "systemctl start acx-gpu-vlm.service" in cloud_init
     assert "nvidia-container-toolkit" in cloud_init
 
 

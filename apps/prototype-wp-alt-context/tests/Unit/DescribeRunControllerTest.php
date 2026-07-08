@@ -262,4 +262,55 @@ class DescribeRunControllerTest extends TestCase
     {
         $this->assertSame(25, $this->controller->get_describe_run_stream_max_hold_seconds());
     }
+
+    public function testGetDescribeRunItemsProxiesAndAnnotatesExistingAlt(): void
+    {
+        // WBUX-4 INT-01b: media 70 already has operator alt text; 71 does not.
+        $this->setPostMeta(70, '_wp_attachment_image_alt', 'human-authored alt');
+
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runId,
+                'items' => [
+                    ['media_id' => 70, 'status' => 'completed', 'alt_text_draft' => 'a cat on a sofa', 'caption' => 'cat', 'provenance' => ['adapter' => 'florence']],
+                    ['media_id' => 71, 'status' => 'completed', 'alt_text_draft' => 'a dog in a park', 'caption' => 'dog', 'provenance' => null],
+                ],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/describe/runs/' . $runId . '/items');
+        $request->set_param('run_id', $runId);
+
+        $response = $this->controller->get_describe_run_items($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $this->assertSame(200, $response->get_status());
+
+        // Read-class proxy: post_scan_read (10s, no shared breaker) like status.
+        $call = $this->getHttpCalls()[0];
+        $this->assertStringContainsString('/scene/describe/run/' . $runId . '/items', $call['url']);
+        $this->assertSame('GET', $call['args']['method']);
+
+        $data = $response->get_data();
+        $items = [];
+        foreach ($data['items'] as $item) {
+            $items[$item['media_id']] = $item;
+        }
+        // existing_alt bucketing is computed in WP from post meta, not the backend.
+        $this->assertTrue($items[70]['existing_alt']);
+        $this->assertFalse($items[71]['existing_alt']);
+        // Draft passthrough is preserved unchanged.
+        $this->assertSame('a cat on a sofa', $items[70]['alt_text_draft']);
+        $this->assertSame('a dog in a park', $items[71]['alt_text_draft']);
+    }
+
+    public function testGetDescribeRunItemsRequiresRunId(): void
+    {
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/describe/runs//items');
+        $request->set_param('run_id', '');
+        $response = $this->controller->get_describe_run_items($request);
+        $this->assertInstanceOf(\WP_Error::class, $response);
+    }
 }

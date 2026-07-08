@@ -37,7 +37,7 @@ from db.models.observability import (
     RecognitionEvent,
     RecognitionRun,
 )
-from db.models.scene import ImageDescription
+from db.models.scene import DescribeRun, DescribeRunItem, ImageDescription
 from db.models.tenant import ApiKey, Tenant
 from db.models.worker_capability import WorkerCapability
 
@@ -72,6 +72,8 @@ __all__ = [
     "IdentityConstraint",
     # Scene (image description)
     "ImageDescription",
+    "DescribeRun",
+    "DescribeRunItem",
     # Worker capability
     "WorkerCapability",
 ]

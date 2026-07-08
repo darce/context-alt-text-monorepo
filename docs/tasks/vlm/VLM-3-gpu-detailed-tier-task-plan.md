@@ -84,7 +84,7 @@ Deliver in six slices: (1) prove the OCI GPU host + golden-image warm-start and 
 
 | Surface | File | Change |
 | --- | --- | --- |
-| infra | `infra/oci/main.tf` | New `oci_core_instance` GPU resource (VM.GPU.A10/L40S), `variables.tf` shape var, GPU `cloud-init` (golden-image + weights bake) |
+| infra | `infra/oci/main.tf` | New `oci_core_instance` GPU resource defaulting to **`VM.GPU.A10.1` (24 GB)**, `variables.tf` shape var (override to `VM.GPU.A100.1`/`VM.GPU.A10.2` for headroom), GPU `cloud-init` (golden-image + weights bake) |
 | infra | `infra/oci/gpu-lifecycle/` (new) | Spin-on-queue → warm-per-burst → stop-on-idle controller + idle-reaper (OCI SDK) |
 | tooling | `scripts/eval_harness/bakeoff.py` | Reuse `BakeoffClient`/`main` against the GPU `--endpoint`; add candidate model ids; no fork |
 | docs | `docs/tasks/vlm/VLM-3-gpu-detailed-tier-decision-memo.md` (new) | Bake-off winner + measured GPU latency/RSS + license |
@@ -131,8 +131,8 @@ Deliver in six slices: (1) prove the OCI GPU host + golden-image warm-start and 
 **Goal**: Prove an OCI GPU instance can warm-start from stopped within budget and measure one candidate's s/img.
 
 Changes:
-- New `oci_core_instance` GPU resource (`infra/oci/main.tf`) + shape var (`variables.tf`) + GPU cloud-init. This slice's golden image bakes **one measurement candidate's** weights only, to time warm-start (VLM3-PR-03); the **production golden image (the bake-off winner)** is built in Slice 4/5 after the decision memo.
-- Bench script (E19-1 JSON format) capturing cold-boot, stopped→warm-start, model-load, and one-candidate s/img; confirm OCI GPU shape/quota in-region + note serverless-GPU availability.
+- New `oci_core_instance` GPU resource (`infra/oci/main.tf`, default **`VM.GPU.A10.1` / 24 GB**) + shape var (`variables.tf`) + GPU cloud-init. This slice's golden image bakes **one measurement candidate** — **Qwen3-VL-30B-A3B-Instruct @ Q4 GGUF** (the a-priori favorite, ~18 GB, proves the 24 GB fit) — to time warm-start (VLM3-PR-03); the **production golden image (the bake-off winner)** is built in Slice 4/5 after the decision memo.
+- Bench script (E19-1 JSON format) capturing cold-boot, stopped→warm-start, model-load, and s/img; **confirm A10-24 GB fit + in-region A10 quota** (and whether A100/L40S is reachable for the headroom candidates) + note serverless-GPU availability.
 
 Proof:
 - Committed spike artifact `docs/tasks/vlm/VLM-3-gpu-spike-<date>.json`; `terraform validate` passes; warm-start p95 recorded vs the 90 s target.
@@ -141,21 +141,23 @@ Proof:
 
 **Goal**: Score the GPU candidates on the VLM-2B corpus via the existing harness.
 
-**Candidate slate (refreshed 2026-07-07 for the GPU tier; prune to a runnable set at spike time):**
+**Hardware target (the binding constraint is VRAM/"space"):** the bursty scale-to-zero shape is **`VM.GPU.A10.1` — a single NVIDIA A10, 24 GB VRAM** (cheapest OCI GPU VM, easy start/stop). Budget ~20 GB usable after KV-cache + image tokens. Headroom option if the bake-off demands it: **`VM.GPU.A100.1` (40 GB)** or `VM.GPU.A10.2` (48 GB), at higher $/hr. Every candidate below is annotated for A10-24 GB fit; anything that only fits a bigger shape is flagged.
 
-- **Tier 1 — MoE "A3B" (bursty-optimal: big-model quality at ~3.3B *active* params → low GPU s/img + cost).** *VRAM note: MoE sizes to **total** params (all experts resident), not active — 30B-class needs ~Q4 GGUF (~18 GB, fits A10 24 GB) or L40S 48 GB at bf16.*
-  - **Qwen3-VL-30B-A3B-Instruct** (Alibaba; 30.5B total / 3.3B active; GGUF + vLLM; strong grounding + agentic) — **new a-priori favorite** for a bursty GPU, same family as the CPU winner.
-  - **InternVL3.5-30B-A3B** (Shanghai AI Lab/OpenGVLab; Cascade-RL + Visual-Resolution-Router).
-  - **Kimi-VL-A3B-2506** (Moonshot; MoE frontier, MIT).
-- **Tier 2 — dense mid-size quality anchors.**
-  - **Qwen3-VL-8B / -32B-Instruct** (Apache-2.0; 32B = quality ceiling, needs L40S/A100).
-  - **InternVL3.5-8B / -14B** (supersedes the InternVL3-8B/-14B originally listed).
-  - **Molmo-7B-D** (AllenAI; best-in-class pointing/grounding → phrase-box name placement).
-  - **GLM-4.6V** (Z.ai/Zhipu; native multimodal tool use, 128K ctx).
-  - **Llama-3.2-Vision-11B** (Meta; broad baseline — ⚠ Llama license, non-OSI, flag for a public demo).
-- **Tier 3 — reference baselines (per operator request).**
-  - **MiMo-VL-7B-RL** (Xiaomi; E19-1's retained GPU-tier reference — beats Phi-4, MMMU 70.6, MIT, Qwen2.5-VL arch → vLLM-native; run `/no_think`).
-  - **Phi-4-multimodal** (Microsoft; the original `gpu_phi4` stub baseline — MMMU 55.1, mid-tier; anchors the "why we moved past the stub" comparison).
+**Candidate slate (refreshed + hardware-constrained 2026-07-07; prune to a runnable set at spike time):**
+
+- **Tier 1 — headline: 30B-class quality *inside* 24 GB via MoE-A3B + quant.** MoE weights size to **total** params (all experts resident), but only ~3.3B activate per token → low s/img at 30B quality.
+  - **Qwen3-VL-30B-A3B-Instruct @ Q4 GGUF** (~18 GB — **fits A10 24 GB** ✅; 30.5B total / 3.3B active; llama.cpp + vLLM; strong grounding + agentic; same family as the CPU winner) — **the a-priori favorite for the A10 bursty tier.**
+  - **Kimi-VL-A3B-2506 @ Q4/Q8** (~16B total; Q4 ~10 GB / Q8 ~17 GB — **fits** ✅; Moonshot, MIT).
+  - *InternVL3.5-30B-A3B @ Q4 (~18 GB, fits ✅) — include only if the spike shows GGUF/vLLM support is mature; else defer.*
+- **Tier 2 — dense models that fit A10 24 GB at bf16/light quant.**
+  - **Qwen3-VL-8B-Instruct** (bf16 ~16 GB ✅ / Q8 ~9 GB) — Apache-2.0; strongest dense name-weaving in-family.
+  - **InternVL3.5-8B** (bf16 ~16 GB ✅), **InternVL3.5-14B @ Q8** (~15 GB ✅; bf16 ~28 GB ❌ needs A100).
+  - **Molmo-7B-D** (bf16 ~15 GB ✅; AllenAI; best-in-class pointing/grounding → phrase-box name placement).
+  - **Llama-3.2-Vision-11B @ Q8** (~12 GB ✅; bf16 ~22 GB tight — ⚠ Llama license, non-OSI, flag for a public demo).
+- **Tier 3 — reference baselines (per operator request; both fit A10 24 GB).**
+  - **MiMo-VL-7B-RL** (8B; bf16 ~16 GB tight ✅ / AWQ-INT4 safer; Xiaomi; E19-1's retained GPU-tier reference — beats Phi-4, MMMU 70.6, MIT, Qwen2.5-VL arch → vLLM-native; run `/no_think`).
+  - **Phi-4-multimodal** (5.6B; ~11 GB ✅; Microsoft; the original `gpu_phi4` stub baseline — MMMU 55.1, mid-tier; anchors the "why we moved past the stub" comparison).
+- **Explicitly OUT for the A10-24 GB bursty tier (too big even quantized — revisit only on A100/L40S):** **GLM-4.6V** (GLM-4.5V-class ~106B-A12B MoE ≈ ~55 GB @ Q4), **Qwen3-VL-32B** (Q4 ~18–20 GB fits but leaves no context headroom → A100 only for bf16), and all 78B/235B/241B giants.
 
 Changes:
 - Serve each selected candidate on the GPU; run `scripts/eval_harness/bakeoff.py --endpoint <gpu-url> --model-id <id> [--no-think]` per candidate (reuse `BakeoffClient`/`fetch_run_record`, no fork); score via `report.build_reports`. Reasoning-tuned/Thinking variants run with `/no_think` for alt-text shape, identical decoding across candidates.

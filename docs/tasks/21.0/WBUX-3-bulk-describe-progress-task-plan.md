@@ -163,8 +163,8 @@ Integration test: a fake-latency describe run of N images asserts the bar reflec
 - [x] `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest scene/tests/test_describe_run_repository.py scene/tests/test_describe_run_worker.py scene/tests/test_describe_run_stream.py -q` green (MCP tests `593`/`594`)
 
 ### Checklist for Slice 4: Contracts
-- [ ] `scene-describe-run` + `scene-describe-progress` schemas + regenerated TS mirror
-- [ ] `python3 scripts/check_shared_contract_fixtures.py` + `cd apps/prototype-description-service && uv run pytest scene/tests -k describe_run_contract` green
+- [x] `scene-describe-run` + `scene-describe-progress` schemas + regenerated TS mirror (`packages/shared-contracts/schemas/scene-describe-run.schema.json`, `packages/shared-contracts/schemas/scene-describe-progress.schema.json`)
+- [x] `python3 scripts/check_shared_contract_fixtures.py` + `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest scene/tests/test_describe_run_contract.py -q` green (MCP tests `595`/`596`)
 
 ### Checklist for Slice 5: WP proxy routes
 - [ ] Submit/status/stream/cancel routes + read-only mirror wiring; autoload parity in `apps/prototype-wp-alt-context`

@@ -94,6 +94,8 @@ Deliver in six slices: (1) prove the OCI GPU host + golden-image warm-start and 
 | backend | `scene/config/settings.py` | Add `ACX_GPU_ENDPOINT_URL` (+ opt-in flag) to `DescriptionSettings` (`:19`) |
 | backend | `scene/interface_adapters/http/schemas/responses.py` | Add `tier` + `result_generation` to `VisualFactsResponse` (`:75`) |
 | backend | `scene/interface_adapters/http/schemas/requests.py` | Add optional `tier` hint to `DescribeImageEnvelope` (`:100`) |
+| backend | `scene/interface_adapters/http/routers/describe.py` | New async routes `POST /describe/async` (enqueue → `job_id`) + `GET /describe/jobs/{job_id}` (poll → `DescribeJobResult`) |
+| backend | `scene/interface_adapters/http/schemas/responses.py` | New `DescribeJobResult` model (`job_id`, `status`, `tier`, `result_generation`, optional `visual_facts`) |
 | backend | `scene/application/describe_jobs.py` (new) | Describe job store + enqueue + retrieval (net-new; no describe queue exists) |
 | backend | `scene/application/description_worker.py` (new) | Async describe worker draining the job store to the GPU adapter; CPU-provisional supersede |
 | tests | `scene/tests/test_gpu_remote_adapter.py`, `test_describe_jobs.py`, `test_describe_tier_degrade.py` (new) | Adapter (MockTransport), job store, provisional→final supersede |
@@ -129,7 +131,7 @@ Deliver in six slices: (1) prove the OCI GPU host + golden-image warm-start and 
 **Goal**: Prove an OCI GPU instance can warm-start from stopped within budget and measure one candidate's s/img.
 
 Changes:
-- New `oci_core_instance` GPU resource (`infra/oci/main.tf`) + shape var (`variables.tf`) + GPU cloud-init that bakes drivers/runtime + one candidate's weights (golden image).
+- New `oci_core_instance` GPU resource (`infra/oci/main.tf`) + shape var (`variables.tf`) + GPU cloud-init. This slice's golden image bakes **one measurement candidate's** weights only, to time warm-start (VLM3-PR-03); the **production golden image (the bake-off winner)** is built in Slice 4/5 after the decision memo.
 - Bench script (E19-1 JSON format) capturing cold-boot, stopped→warm-start, model-load, and one-candidate s/img; confirm OCI GPU shape/quota in-region + note serverless-GPU availability.
 
 Proof:
@@ -171,10 +173,13 @@ Proof:
 
 **Goal**: Enqueue describe jobs, warm the GPU per burst, degrade to CPU-provisional, and reap idle instances.
 
+> **May split into reviewable sub-slices (VLM3-PR-04):** (5a) job store + async worker; (5b) OCI lifecycle controller + reaper; (5c) CPU-provisional degrade + supersede. Each has a separable proof.
+
 Changes:
+- **Async describe API surface (net-new — describe is synchronous today, describe.py:192):** an enqueue route `POST /describe/async` → returns `{job_id}`; a poll route `GET /describe/jobs/{job_id}` → returns a `DescribeJobResult` (`job_id`, `status` ∈ `queued|running|provisional|final|failed`, `tier`, `result_generation`, `visual_facts?`). The synchronous `VisualFactsResponse.tier` (Slice 4) stays for inline calls; the async job-result model is distinct.
 - Net-new describe job store + enqueue + retrieval (`scene/application/describe_jobs.py`) and async worker (`scene/application/description_worker.py`) draining to the GPU adapter.
-- OCI lifecycle controller (`infra/oci/gpu-lifecycle/`): spin-on-queue-depth → warm-per-burst → stop-on-idle; bounded **idle-reaper** + orphaned-instance/boot-volume GC (PA-02).
-- CPU-provisional degrade + supersede contract: `tier` transitions `provisional_cpu`→`final_gpu` by `media_id`, monotonic `result_generation`, delivered via the job progress/poll channel (PA-03); GPU pool bulkheaded from the A1 service.
+- **OCI lifecycle controller (`infra/oci/gpu-lifecycle/`) runs out-of-band (VLM3-PR-02):** a small OCI-SDK process/cron on the **A1 host** (or OCI Functions) — never on the GPU instance it stops, and decoupled from the synchronous request path so it cannot block or starve the A1 service. Spin-on-queue-depth → warm-per-burst → stop-on-idle; bounded **idle-reaper** + orphaned-instance/boot-volume GC.
+- CPU-provisional degrade + supersede contract: `tier` transitions `provisional_cpu`→`final_gpu` by `media_id`, monotonic `result_generation`, delivered via the `GET /describe/jobs/{job_id}` poll channel; GPU pool bulkheaded from the A1 service.
 
 Proof:
 - `pytest test_describe_jobs.py test_describe_tier_degrade.py` green (enqueue, provisional-then-final supersede, reaper stops instance with no in-flight work); manual: cold GPU → provisional then upgrade; queue drains → instance stopped, reaper leaves nothing.

@@ -76,7 +76,9 @@ A GPU-tier describe request (opted in) runs the winning technique: either a sing
 
 ## Proposed Solution
 
-Five slices: (1) the **shared visual-facts (Stage-1) component** (reused by E20-FUSION); (2) the **ensemble-decode core** behind the GPU adapter (attention-weighted + logit-only fallback, bounded N, caption-only vote); (3) a **bake-off** (baseline vs ensemble vs visual-prior vs composed) on the VLM-2B corpus; (4) a **decision memo**; (5) stretch region proposals + optional Whitened-CLIP re-ranker. Sequenced strictly after VLM-3.
+Five slices: (1) the **shared visual-facts (Stage-1) component** (reused by E20-FUSION); (2) the **ensemble-decode core** behind the GPU adapter (attention-weighted + logit-only fallback, bounded N, caption-only vote); (3) a **bake-off** (baseline vs ensemble vs visual-prior vs composed) on the VLM-2B corpus; (4) a **decision memo**; (5) stretch region proposals + optional Whitened-CLIP re-ranker.
+
+**Slice sequencing vs VLM-3 (VLM4-PR-02):** **Slice 1 is VLM-3-independent** — `visual_facts_pass.py` runs against any adapter, can start immediately, and E20-FUSION needs it. **Slices 2–5 are gated on VLM-3** (require `gpu_remote_adapter.py` + the async describe path + attention/logprob exposure).
 
 ## Files and Surfaces to Change
 
@@ -118,7 +120,9 @@ Proof: `pytest test_visual_facts_pass.py` (structured output from a stubbed adap
 
 **Goal**: N-view attention-weighted (or logit-only) caption synthesis behind the GPU adapter.
 
-Changes: `ensemble_decode.py` — view construction (grid/attention-seeded, **pinned here**), per-view passes, logit ensemble weighted by attention with logit-only fallback, adaptive plausibility, bounded N; caption-only vote, objects/phrase_boxes from the full-image pass; opt-in flag in `profiles.py`/`deps.py`.
+Changes: `ensemble_decode.py` — view construction (grid/attention-seeded, **pinned here**), per-view passes, logit ensemble, adaptive plausibility, bounded N; caption-only vote, objects/phrase_boxes from the full-image pass; opt-in flag in `profiles.py`/`deps.py`.
+
+**Attention-weighting mechanism (VLM4-PR-01), per arXiv 2505.17529:** at each decode step, for each view take the generated token's **cross-attention to that view's image patches**, reduce it to a per-view scalar (mean attention mass on image tokens = "is the model looking at the image, not just prior text"), softmax-normalize across views → weights `w_v`; the ensembled next-token distribution is `softmax(Σ_v w_v · logits_v)`, then the adaptive-plausibility constraint masks low-probability tokens. **Logit-only fallback (no attention):** unweighted mean of per-view `logprobs` (or confidence-weighted by each view's top-token probability) — a strictly weaker vote, quantified in the bake-off.
 
 Proof: `pytest test_ensemble_decode.py` (attention + logit-only vote math on stubbed logits; N bound; AdapterResult intact); `isinstance(..., DescriptionAdapter)`.
 
@@ -142,7 +146,7 @@ Proof: memo names the verdict, cites the Slice-3 REPORTs.
 
 **Goal**: Better views + a cheap filter.
 
-Changes: SAM-class masks as views (re-run bake-off); Whitened-CLIP candidate re-ranker.
+Changes: SAM-class masks as views (re-run bake-off); Whitened-CLIP candidate re-ranker. **(VLM4-PR-03) Whitened-CLIP adds a net-new CLIP model dependency** — the service has no CLIP today (recognition uses InsightFace buffalo_l, not CLIP), same new-embedder class as E20-BRAND-A's OpenCLIP question → optional/stretch, spike-gated, not a free guardrail.
 
 Proof: region views beat grid on the rubric (or the memo records they don't); re-ranker flags an over-specific caption in a test.
 

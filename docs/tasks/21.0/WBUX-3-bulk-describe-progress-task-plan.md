@@ -153,9 +153,9 @@ Integration test: a fake-latency describe run of N images asserts the bar reflec
 - [x] `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest scene/tests/test_describe_run_repository.py -q` green (red first, including reclaim; MCP tests `588`/`589`)
 
 ### Checklist for Slice 2: Submit endpoint + worker
-- [ ] `POST /scene/describe/run` with explicit validation + `ACX_DESCRIBE_RUN_MAX_ITEMS` cap (422 on oversize)
-- [ ] Tracked, bounded, cancellable `run_describe_job` with per-image timeout and startup reclaim
-- [ ] `cd apps/prototype-description-service && uv run pytest scene/tests -k describe_run_worker` green (failure-continues, cancel, timeout, oversize, stale-run resume)
+- [x] `POST /scene/describe/run` with explicit validation + `ACX_DESCRIBE_RUN_MAX_ITEMS` cap (422 on oversize) (`apps/prototype-description-service/scene/interface_adapters/http/routers/describe_run.py`)
+- [x] Tracked, bounded, cancellable `run_describe_job` with per-image timeout and startup reclaim (`apps/prototype-description-service/scene/application/describe_run_worker.py`; reclaim repository landed in Slice 1)
+- [x] `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest scene/tests/test_describe_run_repository.py scene/tests/test_describe_run_worker.py -q` green (failure-continues, cancel, timeout, oversize; MCP tests `590`/`592`)
 
 ### Checklist for Slice 3: SSE + status/cancel
 - [ ] `GET /stream` coalesced `EventSourceResponse` (progress/done/error, gpu_state reserved)

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from scene.domain.describe_run import DescribeRunPhase, DescribeRunStatus
 from scene.domain.description import DescriptionAdapterKind, ProviderMode, RetentionClass
 
 
@@ -101,3 +102,20 @@ class VisualFactsResponse(BaseModel):
     generic_draft: str | None = None
     named_draft: str | None = None
     naming_provenance: NamingProvenance | None = None
+
+
+class DescribeRunResponse(BaseModel):
+    """Async describe-run status returned by submit/status endpoints."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tenant_id: str
+    run_id: str
+    status: DescribeRunStatus
+    phase: DescribeRunPhase
+    completed: int
+    failed: int
+    skipped: int
+    total: int
+    cancel_requested: bool = False
+    gpu_state: None = None

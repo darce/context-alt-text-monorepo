@@ -120,3 +120,24 @@ class DescribeImageEnvelope(BaseModel):
     def _canonical_uuid(cls, value: str) -> str:
         # uuid.UUID() raises ValueError on malformed input -> pydantic ValidationError.
         return str(uuid.UUID(value))
+
+
+class DescribeRunCreateRequest(BaseModel):
+    """JSON request for an async bulk describe run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tenant_id: str = Field(description="Tenant UUID; canonicalized to lowercase.")
+    media_ids: list[int] = Field(description="WordPress attachment ids to describe.")
+
+    @field_validator("tenant_id")
+    @classmethod
+    def _canonical_run_uuid(cls, value: str) -> str:
+        return str(uuid.UUID(value))
+
+    @field_validator("media_ids")
+    @classmethod
+    def _positive_media_ids(cls, value: list[int]) -> list[int]:
+        if any(media_id <= 0 for media_id in value):
+            raise ValueError("media_ids must be positive integers")
+        return value

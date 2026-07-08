@@ -24,6 +24,7 @@ from recognition.interface_adapters.http.deps import (
     require_write_access,
 )
 from recognition.interface_adapters.http.middleware.metrics import get_default_metrics
+from scene.application.describe_jobs import DescribeJob, InMemoryDescribeJobStore
 from scene.application.description_repository import ImageDescriptionRepository
 from scene.application.identity_merge import (
     NamingPolicy,
@@ -41,19 +42,20 @@ from scene.infrastructure.provider.hosted_provider_adapter import HostedProvider
 from scene.infrastructure.vlm.unavailable_adapter import DescriptionAdapterUnavailableError
 from scene.interface_adapters.http.deps import get_description_adapter
 from scene.interface_adapters.http.schemas.requests import DescribeImageEnvelope
+from scene.interface_adapters.http.schemas.responses import DescribeJobResult, VisualFactsResponse
 from scene.interface_adapters.http.schemas.responses import (
     InjectedName as InjectedNameModel,
 )
 from scene.interface_adapters.http.schemas.responses import (
     NamingProvenance as NamingProvenanceModel,
 )
-from scene.interface_adapters.http.schemas.responses import VisualFactsResponse
 
 router = APIRouter(tags=["describe"])
 
 _logger = logging.getLogger(__name__)
 
 _IMAGE_KEY_PREFIX = "image_"
+_ASYNC_JOBS = InMemoryDescribeJobStore()
 
 
 class _DescriptionAuditSink:
@@ -189,6 +191,17 @@ def _generation_timeout_seconds(settings: DescriptionSettings, adapter) -> float
     return settings.generation_timeout_seconds
 
 
+def _job_result(job: DescribeJob) -> DescribeJobResult:
+    return DescribeJobResult(
+        job_id=job.job_id,
+        status=job.status.value,
+        tier=job.tier,
+        result_generation=job.result_generation,
+        visual_facts=job.visual_facts,
+        error=job.error,
+    )
+
+
 @router.post("/describe/multipart", response_model=VisualFactsResponse)
 async def describe_image_multipart(
     request: Request,
@@ -302,3 +315,53 @@ async def describe_image_multipart(
     if session is not None:
         await session.commit()
     return response
+
+
+@router.post("/describe/async", response_model=DescribeJobResult)
+async def enqueue_describe_image(
+    request: Request,
+    auth=Depends(require_write_access),
+) -> DescribeJobResult:
+    form = await request.form()
+    try:
+        envelope = DescribeImageEnvelope.model_validate(_read_request_part(form.get("request")))
+    except ValidationError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, f"invalid 'request' envelope: {exc.errors()}"
+        ) from exc
+    auth_tenant = (getattr(auth, "tenant_claim", None) or "").strip()
+    if auth_tenant and auth_tenant != envelope.tenant_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "tenant mismatch between auth and request envelope")
+    image_parts = [(k, v) for k, v in form.multi_items() if k.startswith(_IMAGE_KEY_PREFIX)]
+    if len(image_parts) != 1:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"exactly one image_<media_id> part is required; got {len(image_parts)}",
+        )
+    key, value = image_parts[0]
+    if not isinstance(value, UploadFile):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"form key '{key}' must be a file upload")
+    if key[len(_IMAGE_KEY_PREFIX) :] != str(envelope.media_id):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"image part key '{key}' must be the canonical 'image_{envelope.media_id}'",
+        )
+    image_bytes = await value.read()
+    job = _ASYNC_JOBS.enqueue(
+        tenant_id=uuid.UUID(envelope.tenant_id),
+        media_id=envelope.media_id,
+        image_bytes=image_bytes,
+        context=envelope.context_pack.model_dump(exclude_none=True)
+        if envelope.context_pack is not None
+        else envelope.context,
+    )
+    return _job_result(job)
+
+
+@router.get("/describe/jobs/{job_id}", response_model=DescribeJobResult)
+async def get_describe_job(job_id: str, auth=Depends(require_write_access)) -> DescribeJobResult:
+    del auth
+    job = _ASYNC_JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "describe job not found")
+    return _job_result(job)

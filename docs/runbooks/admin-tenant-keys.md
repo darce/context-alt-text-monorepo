@@ -19,6 +19,37 @@ Host-level Tailscale enrollment for the VM is the canonical
 
 ---
 
+## Local development (`make admin-dev`)
+
+For local work there is no tailnet or compose overlay — the token alone gates
+`/admin`, and `RECOGNITION_ADMIN_TAILNET_BOUND` is not required
+(`RECOGNITION_RUNTIME_MODE=development`). From
+`apps/prototype-description-service`:
+
+```sh
+make admin-dev     # enable admin in .env, start service, open console, print token
+make admin-test    # JSON smoke harness: create -> mint -> list -> revoke (idempotent) + unauth 401
+make admin-token   # print the current admin token
+make admin-status  # down | up_no_admin | up_admin
+make admin-down    # stop the local service
+```
+
+`make admin-dev` upserts `RECOGNITION_ADMIN_ENABLED=true` and a generated
+`RECOGNITION_ADMIN_TOKEN` (≥32 chars) into the local `.env`, brings the service
+up, and prints access details. Browse **`http://localhost:8000/admin/`** and
+authenticate per section (c). These targets wrap
+`apps/prototype-description-service/scripts/admin_dev.sh`; env knobs: `PORT`,
+`ADMIN_DEV_HOST`, `ADMIN_DEV_READY_TIMEOUT`, `ADMIN_DEV_NO_OPEN=1`.
+
+> **RLS note:** admin writes touch RLS-forced tables (e.g. `audit_events`). The
+> cross-tenant `get_admin_session` enables `app.bypass_rls` (SET LOCAL,
+> transaction-scoped, authorized by the admin-token gate), so writes succeed
+> under any runtime DB role — including the local `context` role, which lacks
+> the `BYPASSRLS` attribute. Without this the create/mint paths 500 on the
+> tenant-isolation policy.
+
+---
+
 ## (a) Enable `/admin` on the prod VM
 
 1. In the prod env file (`/opt/acx-backend/prod/secrets/.env`), set:

@@ -18,7 +18,10 @@ which declares a ``tenant_id`` *query* parameter that collides with the
 ``{tenant_id}`` *path* parameter on these routes (FastAPI rejects the mix), and
 its only RLS-setting branch is gated on a tenant header admin never sends. The
 admin session therefore never sets the RLS ``app.current_tenant`` GUC — exactly
-what a cross-tenant operator surface needs.
+what a cross-tenant operator surface needs — and instead enables
+``app.bypass_rls`` (see ``get_admin_session``) so writes to RLS-forced tables
+like ``audit_events`` succeed under any runtime DB role, authorized by the
+admin-token gate rather than the connection role's ``BYPASSRLS`` attribute.
 """
 
 from __future__ import annotations
@@ -39,6 +42,7 @@ from sqlalchemy.orm import aliased
 from db.models import ApiKey, Tenant
 from db.session import async_session_factory
 from db.settings import get_database_settings
+from db.tenant_context import enable_rls_bypass
 from recognition.application.services.api_key_admin_service import mint_api_key
 from recognition.application.services.audit_service import AuditService
 from recognition.config.security import RateLimitTier
@@ -61,13 +65,22 @@ _ADMIN_SCOPE = "admin_router"
 
 
 async def get_admin_session() -> AsyncIterator[AsyncSession]:
-    """Yield an unscoped session for cross-tenant admin work (no RLS GUC).
+    """Yield an unscoped, RLS-bypassing session for cross-tenant admin work.
+
+    The operator surface is cross-tenant, so it must not scope to a single
+    ``app.current_tenant``. It enables ``app.bypass_rls`` (SET LOCAL,
+    transaction-scoped) so admin writes clear the tenant-isolation policy on
+    RLS-forced tables (e.g. ``audit_events``) regardless of the runtime DB
+    role's ``BYPASSRLS`` attribute — the bypass is authorized by the admin-token
+    gate on every route, not by the connection role. The bypass is confined to
+    this session's transaction and never leaks into tenant request sessions.
 
     Handlers own commits explicitly; this dependency rolls back and re-raises on
     any unhandled error so a failed audit write cannot leave un-audited state.
     """
     session = async_session_factory()
     try:
+        await enable_rls_bypass(session)
         yield session
     except Exception:
         await session.rollback()

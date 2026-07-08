@@ -49,17 +49,33 @@ class GpuRemoteDescriptionAdapter:
         self._transport = transport
 
     def describe(self, *, image_bytes: bytes, context: Mapping[str, Any] | None) -> AdapterResult:
+        prompt = "Describe this image in 2-4 plain sentences suitable as alt text."
+        if context:
+            prompt = f"{prompt}\nContext: {dict(context)}"
         payload = {
             "model": self.model_id,
-            "image": {
-                "media_type": _media_type(image_bytes),
-                "base64": base64.b64encode(image_bytes).decode(),
-            },
-            "context": dict(context or {}),
+            "temperature": 0,
+            "max_tokens": 512,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": (
+                                    f"data:{_media_type(image_bytes)};base64,{base64.b64encode(image_bytes).decode()}"
+                                )
+                            },
+                        },
+                    ],
+                }
+            ],
         }
         try:
             with httpx.Client(timeout=self._timeout_s, transport=self._transport) as client:
-                response = client.post(f"{self.endpoint_url}/describe", json=payload)
+                response = client.post(f"{self.endpoint_url}/v1/chat/completions", json=payload)
                 response.raise_for_status()
                 body = response.json()
         except GpuRemoteAdapterError:
@@ -67,18 +83,31 @@ class GpuRemoteDescriptionAdapter:
         except Exception as exc:  # noqa: BLE001 - fail closed on endpoint faults
             raise GpuRemoteAdapterError(f"GPU endpoint call failed: {type(exc).__name__}: {exc}") from exc
 
-        caption = body.get("caption")
-        alt_text_draft = body.get("alt_text_draft", caption)
+        caption = _extract_caption(body)
+        alt_text_draft = caption
         if not isinstance(caption, str) or not caption.strip():
             raise GpuRemoteAdapterError("GPU endpoint returned an empty caption")
-        if not isinstance(alt_text_draft, str) or not alt_text_draft.strip():
-            raise GpuRemoteAdapterError("GPU endpoint returned an empty alt_text_draft")
 
         return AdapterResult(
             caption=caption.strip(),
-            objects=tuple(str(item) for item in body.get("objects", ())),
-            ocr_text=body.get("ocr_text") if isinstance(body.get("ocr_text"), str) else None,
+            objects=(),
+            ocr_text=None,
             alt_text_draft=alt_text_draft.strip(),
-            context_sources=tuple(str(item) for item in body.get("context_sources", ())),
-            context_applied=bool(body.get("context_applied", False)),
+            context_sources=tuple(f"context.{key}" for key in (context or {})),
+            context_applied=bool(context),
         )
+
+
+def _extract_caption(body: dict[str, Any]) -> str:
+    try:
+        message = body["choices"][0]["message"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise GpuRemoteAdapterError(f"GPU endpoint response missing choices[0].message: {body!r}") from exc
+    content = message.get("content") if isinstance(message, dict) else None
+    if isinstance(content, list):
+        content = " ".join(
+            part.get("text", "") for part in content if isinstance(part, dict) and part.get("type") == "text"
+        )
+    if not isinstance(content, str) or not content.strip():
+        raise GpuRemoteAdapterError("GPU endpoint returned an empty caption")
+    return content.strip()

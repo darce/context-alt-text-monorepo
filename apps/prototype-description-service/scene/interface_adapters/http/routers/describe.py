@@ -13,7 +13,7 @@ import json
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from pydantic import ValidationError
 from starlette.datastructures import UploadFile
 
@@ -26,6 +26,7 @@ from recognition.interface_adapters.http.deps import (
 from recognition.interface_adapters.http.middleware.metrics import get_default_metrics
 from scene.application.describe_jobs import DescribeJob, InMemoryDescribeJobStore
 from scene.application.description_repository import ImageDescriptionRepository
+from scene.application.description_worker import run_describe_job
 from scene.application.identity_merge import (
     NamingPolicy,
     NamingProvenance,
@@ -34,13 +35,14 @@ from scene.application.identity_merge import (
     load_suppressed_roster_ids,
     merge_identities,
 )
+from scene.application.seeded_adapter import SeededDescriptionAdapter
 from scene.application.settings.vlm import VlmSettings
 from scene.application.visual_facts_service import VisualFactsService
 from scene.config.settings import DescriptionSettings
 from scene.domain.description import DescriptionAdapterKind
 from scene.infrastructure.provider.hosted_provider_adapter import HostedProviderError
 from scene.infrastructure.vlm.unavailable_adapter import DescriptionAdapterUnavailableError
-from scene.interface_adapters.http.deps import get_description_adapter
+from scene.interface_adapters.http.deps import get_description_adapter, get_gpu_description_adapter
 from scene.interface_adapters.http.schemas.requests import DescribeImageEnvelope
 from scene.interface_adapters.http.schemas.responses import DescribeJobResult, VisualFactsResponse
 from scene.interface_adapters.http.schemas.responses import (
@@ -264,9 +266,10 @@ async def describe_image_multipart(
         tenant_record = await require_tenant_record(session, tenant_uuid)
         repository = ImageDescriptionRepository(session)
         audit_sink = _DescriptionAuditSink(AuditRepository(session))
-    effective_timeout = _generation_timeout_seconds(settings, adapter)
+    effective_adapter = get_gpu_description_adapter() if envelope.tier == "gpu" else adapter
+    effective_timeout = _generation_timeout_seconds(settings, effective_adapter)
     service = VisualFactsService(
-        adapter=adapter,
+        adapter=effective_adapter,
         repository=repository,
         audit_sink=audit_sink,
         metrics=_DescriptionMetricsSink(),
@@ -319,8 +322,10 @@ async def describe_image_multipart(
 
 @router.post("/describe/async", response_model=DescribeJobResult)
 async def enqueue_describe_image(
+    background_tasks: BackgroundTasks,
     request: Request,
     auth=Depends(require_write_access),
+    gpu_adapter=Depends(get_gpu_description_adapter),
 ) -> DescribeJobResult:
     form = await request.form()
     try:
@@ -355,13 +360,22 @@ async def enqueue_describe_image(
         if envelope.context_pack is not None
         else envelope.context,
     )
+    background_tasks.add_task(
+        run_describe_job,
+        store=_ASYNC_JOBS,
+        job_id=job.job_id,
+        cpu_adapter=SeededDescriptionAdapter(),
+        gpu_adapter=gpu_adapter,
+    )
     return _job_result(job)
 
 
 @router.get("/describe/jobs/{job_id}", response_model=DescribeJobResult)
 async def get_describe_job(job_id: str, auth=Depends(require_write_access)) -> DescribeJobResult:
-    del auth
     job = _ASYNC_JOBS.get(job_id)
     if job is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "describe job not found")
+    auth_tenant = (getattr(auth, "tenant_claim", None) or "").strip()
+    if auth_tenant and auth_tenant != str(job.tenant_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "describe job not found")
     return _job_result(job)

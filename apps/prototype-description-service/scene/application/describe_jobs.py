@@ -1,4 +1,9 @@
-"""In-memory async describe job store for the bursty GPU path."""
+"""Bounded in-memory async describe job store for the bursty GPU path.
+
+This store is intentionally process-local for the MVP route. Production
+multi-worker deployments must either run the async describe surface in a
+single-worker process or replace this class with a shared DB/Redis store.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +11,9 @@ import uuid
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from threading import Lock
-from typing import Any, Literal
+from typing import Any
+
+from scene.domain.description import DescriptionResultTier
 
 
 class DescribeJobStatus(StrEnum):
@@ -14,10 +21,8 @@ class DescribeJobStatus(StrEnum):
     RUNNING = "running"
     PROVISIONAL = "provisional"
     FINAL = "final"
+    DEGRADED = "degraded"
     FAILED = "failed"
-
-
-DescribeTier = Literal["provisional_cpu", "final_gpu"]
 
 
 @dataclass(frozen=True)
@@ -28,7 +33,7 @@ class DescribeJob:
     image_bytes: bytes
     context: dict[str, Any] | None
     status: DescribeJobStatus
-    tier: DescribeTier | None = None
+    tier: DescriptionResultTier | None = None
     result_generation: int = 0
     visual_facts: dict[str, Any] | None = None
     error: str | None = None
@@ -37,9 +42,10 @@ class DescribeJob:
 class InMemoryDescribeJobStore:
     """Process-local queue used by the MVP async route and tests."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, max_jobs: int = 1000) -> None:
         self._jobs: dict[str, DescribeJob] = {}
         self._order: list[str] = []
+        self._max_jobs = max_jobs
         self._lock = Lock()
 
     def enqueue(
@@ -51,6 +57,7 @@ class InMemoryDescribeJobStore:
         context: dict[str, Any] | None,
     ) -> DescribeJob:
         with self._lock:
+            self._evict_over_capacity_locked()
             job = DescribeJob(
                 job_id=str(uuid.uuid4()),
                 tenant_id=tenant_id,
@@ -79,30 +86,41 @@ class InMemoryDescribeJobStore:
         return self._replace(job_id, status=DescribeJobStatus.RUNNING)
 
     def set_provisional(self, job_id: str, *, visual_facts: dict[str, Any]) -> DescribeJob:
-        return self._replace(
+        return self._replace_with_next_generation(
             job_id,
             status=DescribeJobStatus.PROVISIONAL,
-            tier="provisional_cpu",
-            result_generation=self._next_generation(job_id),
+            tier=DescriptionResultTier.PROVISIONAL_CPU,
             visual_facts=visual_facts,
             error=None,
         )
 
     def set_final(self, job_id: str, *, visual_facts: dict[str, Any]) -> DescribeJob:
-        return self._replace(
+        return self._replace_with_next_generation(
             job_id,
             status=DescribeJobStatus.FINAL,
-            tier="final_gpu",
-            result_generation=self._next_generation(job_id),
+            tier=DescriptionResultTier.FINAL_GPU,
             visual_facts=visual_facts,
+            image_bytes=b"",
             error=None,
         )
 
-    def set_failed(self, job_id: str, *, error: str) -> DescribeJob:
-        return self._replace(job_id, status=DescribeJobStatus.FAILED, error=error)
+    def set_degraded(self, job_id: str, *, error: str) -> DescribeJob:
+        return self._replace(
+            job_id,
+            status=DescribeJobStatus.DEGRADED,
+            image_bytes=b"",
+            error=error,
+        )
 
-    def _next_generation(self, job_id: str) -> int:
-        return self._jobs[job_id].result_generation + 1
+    def set_failed(self, job_id: str, *, error: str) -> DescribeJob:
+        return self._replace(job_id, status=DescribeJobStatus.FAILED, image_bytes=b"", error=error)
+
+    def _replace_with_next_generation(self, job_id: str, **changes: Any) -> DescribeJob:
+        with self._lock:
+            job = self._jobs[job_id]
+            updated = replace(job, result_generation=job.result_generation + 1, **changes)
+            self._jobs[job_id] = updated
+            return updated
 
     def _replace(self, job_id: str, **changes: Any) -> DescribeJob:
         with self._lock:
@@ -110,3 +128,14 @@ class InMemoryDescribeJobStore:
             updated = replace(job, **changes)
             self._jobs[job_id] = updated
             return updated
+
+    def _evict_over_capacity_locked(self) -> None:
+        while len(self._jobs) >= self._max_jobs:
+            for job_id in list(self._order):
+                job = self._jobs[job_id]
+                if job.status in {DescribeJobStatus.FINAL, DescribeJobStatus.DEGRADED, DescribeJobStatus.FAILED}:
+                    self._jobs.pop(job_id, None)
+                    self._order.remove(job_id)
+                    break
+            else:
+                raise RuntimeError("describe job queue is full")

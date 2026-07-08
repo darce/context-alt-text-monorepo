@@ -160,7 +160,7 @@ def test_resolve_gpu_qwen30b_requires_endpoint_optin(monkeypatch):
 
 def test_resolve_gpu_qwen30b_yields_gpu_adapter(monkeypatch):
     monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "gpu_qwen30b")
-    monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://gpu.test:8000")
+    monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://10.0.1.42:8000")
     from scene.infrastructure.vlm.gpu_remote_adapter import GpuRemoteDescriptionAdapter
     from scene.interface_adapters.http.deps import get_description_adapter
 
@@ -169,6 +169,15 @@ def test_resolve_gpu_qwen30b_yields_gpu_adapter(monkeypatch):
     assert isinstance(adapter, DescriptionAdapter)
     assert adapter.kind is DescriptionAdapterKind.GPU
     assert adapter.model_id == "Qwen3-VL-30B-A3B-Instruct"
+
+
+def test_resolve_gpu_qwen30b_rejects_public_endpoint(monkeypatch):
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "gpu_qwen30b")
+    monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "https://example.com")
+    from scene.interface_adapters.http.deps import get_description_adapter
+
+    adapter = get_description_adapter()
+    assert isinstance(adapter, UnavailableDescriptionAdapter)
 
 
 # --------------------------------------------------- hosted provider (E20-11)

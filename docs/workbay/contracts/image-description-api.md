@@ -25,7 +25,8 @@ recognition multipart/auth/object-store transport.
   - `request` — JSON `DescribeImageEnvelope`: `tenant_id` (UUID, canonicalized
     lowercase), `media_id` (int > 0, must equal the part suffix), optional
     legacy `context`, optional typed `context_pack`, and optional `tier` hint
-    (`cpu|gpu`). Adapter selection remains server-side.
+    (`cpu|gpu`). `tier=gpu` routes the request to the server-side GPU profile;
+    otherwise the configured default adapter is used.
   - `image_<media_id>` — exactly one image part (`image/jpeg|png|webp`).
 - **Upload cap**: `/scene/describe/multipart` is registered with the body-size
   middleware (413 on oversize).
@@ -48,6 +49,8 @@ unavoidable so future adapters never change the wire:
   mirrors the recognition retention vocabulary.
 - `provider_disclosure.provider` ∈ `{none, local, hosted}`; seeded/local keep
   bytes inside the service boundary.
+- GPU endpoints must be private/loopback/in-tenancy (`ACX_GPU_ENDPOINT_URL`);
+  public endpoints fail closed before image bytes are sent.
 - `tier` ∈ `{provisional_cpu, final_gpu}`. Inline CPU/local/seeded results use
   `provisional_cpu`; GPU profile results use `final_gpu`. The async path may
   supersede provisional rows later with monotonically increasing
@@ -105,6 +108,21 @@ unsuppressable), and a minimum face-detection confidence (0.8).
 | 504 | description generation exceeded the configured timeout |
 
 Error shapes match the recognition routes: 5xx/503 use the `{error, trace_id, path}` envelope (via the shared exception handlers); 4xx validation errors use FastAPI's default `{detail}` shape.
+
+## Backend async route — `POST /scene/describe/async`
+
+The MVP async surface enqueues a single image, immediately schedules a
+background worker in the same process, writes a CPU provisional result first,
+then supersedes it with GPU final when the GPU endpoint succeeds.
+
+- `POST /scene/describe/async` returns `DescribeJobResult` with `status=queued`
+  and `job_id`.
+- `GET /scene/describe/jobs/{job_id}` returns `queued|running|provisional|final|degraded|failed`.
+- `degraded` means the CPU provisional result is retained after GPU failure.
+- Job reads are tenant-scoped; a valid key for another tenant receives 404.
+- The in-memory store is bounded and process-local. Production multi-worker
+  deployments must either pin this async surface to one worker or replace the
+  store with a shared DB/Redis-backed implementation.
 
 ## WordPress proxy surface — `POST /acx/v1/recognition/describe`
 

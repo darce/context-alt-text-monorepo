@@ -20,8 +20,10 @@ def test_gpu_bakeoff_candidate_artifact_uses_existing_harness_endpoint_commands(
     assert "Qwen3-VL-30B-A3B-Instruct" in model_ids
     assert "Phi-4-multimodal" in model_ids
 
+    budget = artifact["hardware_target"]["usable_vram_budget_gb"]
     for candidate in artifact["candidates"]:
-        assert candidate["a10_24gb_fit"] in {"yes", "tight", "headroom_only"}
+        expected_fit = _expected_fit(candidate["estimated_model_gb"], budget)
+        assert candidate["a10_24gb_fit"] == expected_fit
         command = candidate["command"]
         assert "-m scripts.eval_harness.bakeoff --endpoint" in command
         assert f"--model-id {candidate['model_id']}" in command
@@ -38,3 +40,14 @@ def test_gpu_bakeoff_report_placeholders_are_marked_pending_live_gpu() -> None:
         assert report["task_ref"] == "VLM-3"
         assert report["model_id"] == candidate["model_id"]
         assert report["status"] == "pending_live_gpu_bakeoff"
+
+
+def _expected_fit(estimated_gb: float, usable_budget_gb: float) -> str:
+    ratio = estimated_gb / usable_budget_gb
+    if ratio <= 0.60:
+        return "headroom"
+    if ratio <= 0.85:
+        return "yes"
+    if ratio <= 1.0:
+        return "tight"
+    return "headroom_only"

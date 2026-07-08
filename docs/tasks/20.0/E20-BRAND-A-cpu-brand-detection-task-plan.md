@@ -39,7 +39,7 @@ Captions can name **people** (curated identity clusters → `ContextPack.identit
 ## Workflow Principles
 
 - **Human gate over detector accuracy**: precision matters less than confirm-before-context.
-- **Bound per-tenant scan cost**: pgvector shortlist before keypoint match; cap templates per tenant.
+- **Bound per-tenant scan cost**: a per-tenant template cap (brute-force keypoint match in MVP); the pgvector embedding shortlist is a scale-stretch that needs a net-new non-face embedder.
 - **Fail loud on low confidence**: below the min-size floor, surface a `review_reason`, never silently drop.
 
 ## Terminology
@@ -83,7 +83,7 @@ Four slices: (1) schema + registration + curation reuse — `brand_templates`, t
 | Surface | File | Change |
 | --- | --- | --- |
 | schema | `db/migrations/versions/001_identity_schema.py` | New `brand_templates` table (tenant-scoped, RLS, descriptor blob + crop embedding); no `identity_type` enum change |
-| backend | `recognition/application/brand/template_store.py` (new) | Register/list/delete templates; pgvector shortlist |
+| backend | `recognition/application/brand/template_store.py` (new) | Register/list/delete templates; per-tenant template cap (no embedding shortlist in MVP) |
 | backend | `recognition/application/brand/matcher.py` (new) | ORB + LightGlue/BF + homography RANSAC → bbox + inlier-ratio confidence; min-size floor |
 | backend | `recognition/interface_adapters/http/routers/brands.py` (new) | Registration endpoint (upload/bbox); brand instances reuse confirm/reject from `clusters_admission.py` |
 | backend | `scene/interface_adapters/http/schemas/requests.py` | Add `brands` to `ContextPack` (`:84`) |
@@ -119,8 +119,9 @@ Four slices: (1) schema + registration + curation reuse — `brand_templates`, t
 **Goal**: Register a brand template and surface detected instances in the existing confirm/reject workbench.
 
 Changes:
-- `brand_templates` table (`001_identity_schema.py`): tenant-scoped, RLS, descriptor blob + crop embedding; instance rows use `identity_type='brand'` (no enum change).
+- `brand_templates` table (`001_identity_schema.py`): tenant-scoped, RLS, **keypoint descriptor blob** + a **per-tenant template cap**; instance rows use `identity_type='brand'` (no enum change). **No crop-embedding column in Tier A MVP** (BRANDA-PR-01): the only embedder in-service is InsightFace buffalo_l (face-only, 512-d, `media_identities.embedding` unit-norm) — a logo needs a different model, so the embedding-shortlist is deferred to a stretch item (OpenCLIP, its own vector column). MVP matches keypoints against all tenant templates, bounded by the cap.
 - `template_store.py` (register/list/delete) + `brands.py` registration endpoint (upload or bbox on existing media); brand instances reuse `clusters_admission.py` confirm/reject.
+- **Dev DB**: adding `brand_templates` to the already-applied `001_identity_schema.py` requires a local reset — run `make reset-local` (sr-010) before the migration load test (BRANDA-PR-04).
 
 Proof:
 - `pytest test_brand_templates.py` green; a registered template + a seeded brand instance appears as unconfirmed in the workbench REST; confirm/reject flips `user_confirmed`.
@@ -130,10 +131,11 @@ Proof:
 **Goal**: Detect a registered logo in an image on CPU and write an instance with bbox + confidence.
 
 Changes:
-- `matcher.py`: ORB keypoints + LightGlue/BF match + homography RANSAC → bbox + inlier-ratio confidence; **min-size floor (provisional ~48 px shorter edge)** and inlier-ratio threshold (**provisional ~0.25**, tuned in Slice 4); below-floor → `review_reason`, not a drop; pgvector shortlist bounds per-tenant scan cost.
+- `matcher.py`: **ORB keypoints + BF/FLANN descriptor match + homography RANSAC** (OpenCV 4.x — **no LightGlue in Tier A**, BRANDA-PR-02; LightGlue/ALIKED is the OpenCV-5-gated upgrade in Slice 4) → bbox + inlier-ratio confidence; **min-size floor (provisional ~48 px shorter edge)** and inlier-ratio threshold (**provisional ~0.25**, tuned in Slice 4); below-floor → `review_reason`, not a drop; per-tenant **template cap** bounds scan cost (no embedding shortlist in MVP).
+- **Integration seam (BRANDA-PR-03):** the matcher fires on the recognition **analyze/scan path** — extend `recognition/interface_adapters/http/routers/analyze.py` (the existing per-media processing entry) with a brand-scan step, and trigger a **backfill scan** over existing tenant media on template registration. Not a new upload endpoint.
 
 Proof:
-- `pytest test_brand_matcher.py` green (positive match on a planted logo, no-match on a clean image, tiny-logo → `review_reason`); scan cost bounded by template count.
+- `pytest test_brand_matcher.py` green (positive match on a planted logo, no-match on a clean image, tiny-logo → `review_reason`); scan cost bounded by the per-tenant template cap; analyze-path integration test writes a brand instance.
 
 ### Slice 3: `ContextPack.brands` + composition naming
 
@@ -195,7 +197,7 @@ Proof:
 ## Stretch Goals
 
 - [ ] ALIKED + LightGlue descriptor upgrade (gated on the OpenCV 5 spike).
-- [ ] Back-fill scan over existing media on template registration.
+- [ ] pgvector embedding shortlist with a net-new non-face crop embedder (OpenCLIP), on its own `brand_templates` vector column — a scale optimization once template counts grow past brute-force.
 
 ## Success Criteria
 

@@ -51,7 +51,7 @@ describe('DescribeRunApplyView', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     fetchItemsMock.mockResolvedValue(mixedItems);
-    applyMock.mockResolvedValue({ run_id: 'run-abc', applied: [71, 90], skipped_existing: [70], skipped_no_draft: [72] });
+    applyMock.mockResolvedValue({ run_id: 'run-abc', applied: [71, 90], skipped_existing: [70], skipped_no_draft: [72], skipped_invalid: [], failed: [] });
   });
 
   it('buckets drafts and offers a primary apply for the no-existing-alt group', async () => {
@@ -85,6 +85,41 @@ describe('DescribeRunApplyView', () => {
     fireEvent.click(screen.getByRole('button', { name: /Apply 3 descriptions/ }));
 
     await waitFor(() => expect(applyMock).toHaveBeenCalledWith('run-abc', [70]));
+  });
+
+  it('clears checked overwrites after a successful apply so a second apply cannot re-clobber', async () => {
+    renderView();
+    await screen.findByText('A red flower.');
+
+    fireEvent.click(screen.getByLabelText(/Overwrite existing alt text for media 70/));
+    expect(screen.getByLabelText(/Overwrite existing alt text for media 70/)).toBeChecked();
+    fireEvent.click(screen.getByRole('button', { name: /Apply 3 descriptions/ }));
+
+    await waitFor(() => expect(applyMock).toHaveBeenCalledWith('run-abc', [70]));
+
+    // After the write lands the overwrite selection resets, so the checkbox is
+    // unchecked and a repeat apply sends the safe bucket only ([] overwrites).
+    await waitFor(() =>
+      expect(screen.getByLabelText(/Overwrite existing alt text for media 70/)).not.toBeChecked(),
+    );
+
+    applyMock.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: /Apply all 2 without alt text/ }));
+    await waitFor(() => expect(applyMock).toHaveBeenCalledWith('run-abc', []));
+  });
+
+  it('starts a fresh runId with no checked overwrites', async () => {
+    const { unmount } = renderView('run-abc');
+    await screen.findByText('A red flower.');
+    fireEvent.click(screen.getByLabelText(/Overwrite existing alt text for media 70/));
+    expect(screen.getByLabelText(/Overwrite existing alt text for media 70/)).toBeChecked();
+    unmount();
+
+    // A different run gets a fresh mount (DescriptionHistoryPage keys on runId),
+    // so no overwrite selection carries across the ?run= deep link.
+    renderView('run-def');
+    await screen.findByText('A red flower.');
+    expect(screen.getByLabelText(/Overwrite existing alt text for media 70/)).not.toBeChecked();
   });
 
   it('lists items with no usable draft as skipped and never applies them', async () => {

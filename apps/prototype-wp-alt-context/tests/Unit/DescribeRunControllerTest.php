@@ -288,6 +288,30 @@ class DescribeRunControllerTest extends TestCase
         $this->assertInstanceOf(\WP_Error::class, $response);
     }
 
+    private function plantPostType(int $id, string $type = 'attachment'): void
+    {
+        $GLOBALS['__ac_posts'][$id] = (object) ['ID' => $id, 'post_type' => $type];
+    }
+
+    private function queueRunStatusResponse(string $runId, string $status = 'completed'): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runId,
+                'status' => $status,
+                'phase' => 'complete',
+                'completed' => 2,
+                'failed' => 0,
+                'skipped' => 1,
+                'total' => 3,
+                'cancel_requested' => false,
+                'gpu_state' => null,
+            ]),
+        ]);
+    }
+
     private function queueRunItemsResponse(string $runId): void
     {
         // media 70: has draft, WILL have existing alt planted by the test.
@@ -310,7 +334,11 @@ class DescribeRunControllerTest extends TestCase
     public function testApplyRunDraftsAutoAppliesEmptyAltAndGuardsExisting(): void
     {
         $runId = '11111111-1111-1111-1111-111111111111';
+        $this->plantPostType(70);
+        $this->plantPostType(71);
+        $this->plantPostType(72);
         $this->setPostMeta(70, '_wp_attachment_image_alt', 'human-authored alt');
+        $this->queueRunStatusResponse($runId, 'completed');
         $this->queueRunItemsResponse($runId);
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
@@ -325,6 +353,8 @@ class DescribeRunControllerTest extends TestCase
         $this->assertSame([71], $data['applied']);
         $this->assertSame([70], $data['skipped_existing']);
         $this->assertSame([72], $data['skipped_no_draft']);
+        $this->assertSame([], $data['skipped_invalid']);
+        $this->assertSame([], $data['failed']);
 
         // 71 written; 70 NOT clobbered; provenance persisted for the written item.
         $this->assertSame('a dog in a park', get_post_meta(71, '_wp_attachment_image_alt', true));
@@ -332,12 +362,20 @@ class DescribeRunControllerTest extends TestCase
         $prov = get_post_meta(71, '_acx_description_provenance', true);
         $this->assertIsArray($prov);
         $this->assertSame('florence', $prov['adapter']);
+        // S3-06: WP-stamped bulk-apply provenance is injected on the written item.
+        $this->assertSame('bulk_describe_run', $prov['source']);
+        $this->assertSame($runId, $prov['run_id']);
+        $this->assertArrayHasKey('applied_at', $prov);
     }
 
     public function testApplyRunDraftsOverwritesOnlyExplicitlyListedMedia(): void
     {
         $runId = '11111111-1111-1111-1111-111111111111';
+        $this->plantPostType(70);
+        $this->plantPostType(71);
+        $this->plantPostType(72);
         $this->setPostMeta(70, '_wp_attachment_image_alt', 'human-authored alt');
+        $this->queueRunStatusResponse($runId, 'completed');
         $this->queueRunItemsResponse($runId);
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
@@ -354,5 +392,132 @@ class DescribeRunControllerTest extends TestCase
 
         // 70 overwritten because it was explicitly listed.
         $this->assertSame('a cat on a sofa', get_post_meta(70, '_wp_attachment_image_alt', true));
+    }
+
+    public function testApplyRejectsNonCompletedRunWith409(): void
+    {
+        // S3-03: an in-flight run must not have its drafts written.
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $this->plantPostType(71);
+        $this->queueRunStatusResponse($runId, 'running');
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('describe_run_not_applicable', $response->get_error_code());
+        $this->assertSame(409, $response->get_error_data()['status'] ?? null);
+        // Rejected after the status read, before fetching items or writing.
+        $this->assertCount(1, $this->getHttpCalls());
+        $this->assertSame('', get_post_meta(71, '_wp_attachment_image_alt', true));
+    }
+
+    public function testApplySkipsNonAttachmentMediaId(): void
+    {
+        // S3-01: 73 carries a valid draft but is NOT an attachment (a post id the
+        // backend echoed) — it must never be stamped onto _wp_attachment_image_alt.
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $this->plantPostType(73, 'post');
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runId,
+                'items' => [
+                    ['media_id' => 73, 'status' => 'completed', 'alt_text_draft' => 'not an attachment', 'caption' => null, 'provenance' => ['adapter' => 'florence']],
+                ],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $data = $response->get_data();
+        $this->assertSame([73], $data['skipped_invalid']);
+        $this->assertSame([], $data['applied']);
+        // Nothing written to the non-attachment id.
+        $this->assertSame('', get_post_meta(73, '_wp_attachment_image_alt', true));
+    }
+
+    public function testApplyGuardsPerItemAcrossTwoExistingAltItems(): void
+    {
+        // S3-06: two existing-alt items, only one opted into overwrite → the guard
+        // is per-item, not run-wide.
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $this->plantPostType(70);
+        $this->plantPostType(71);
+        $this->setPostMeta(70, '_wp_attachment_image_alt', 'human 70');
+        $this->setPostMeta(71, '_wp_attachment_image_alt', 'human 71');
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runId,
+                'items' => [
+                    ['media_id' => 70, 'status' => 'completed', 'alt_text_draft' => 'draft 70', 'caption' => null, 'provenance' => ['adapter' => 'florence', 'model_id' => 'florence-2']],
+                    ['media_id' => 71, 'status' => 'completed', 'alt_text_draft' => 'draft 71', 'caption' => null, 'provenance' => ['adapter' => 'florence']],
+                ],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+        $request->set_param('overwrite_media_ids', [70]);
+
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $data = $response->get_data();
+
+        $this->assertSame([70], $data['applied']);
+        $this->assertSame([71], $data['skipped_existing']);
+        $this->assertSame('draft 70', get_post_meta(70, '_wp_attachment_image_alt', true));
+        $this->assertSame('human 71', get_post_meta(71, '_wp_attachment_image_alt', true));
+
+        // Injected provenance stamped on the written item.
+        $prov = get_post_meta(70, '_acx_description_provenance', true);
+        $this->assertIsArray($prov);
+        $this->assertSame('bulk_describe_run', $prov['source']);
+        $this->assertSame($runId, $prov['run_id']);
+        $this->assertArrayHasKey('applied_at', $prov);
+        $this->assertSame('florence', $prov['adapter']);
+    }
+
+    public function testGetRunItemsPassesThroughProxyWpErrorUnchanged(): void
+    {
+        // S2-02: a transport-level WP_Error from the proxy is returned untouched.
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $this->queueHttpResponse(new \WP_Error('http_request_failed', 'connection refused'));
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/describe/runs/' . $runId . '/items');
+        $request->set_param('run_id', $runId);
+
+        $response = $this->controller->get_describe_run_items($request);
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('http_request_failed', $response->get_error_code());
+    }
+
+    public function testGetRunItemsPassesThroughBodyMissingItemsKey(): void
+    {
+        // S2-02: a 200 body without an 'items' key is passed through untouched.
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode(['tenant_id' => self::currentTenantId(), 'run_id' => $runId]),
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/describe/runs/' . $runId . '/items');
+        $request->set_param('run_id', $runId);
+
+        $response = $this->controller->get_describe_run_items($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $data = $response->get_data();
+        $this->assertArrayNotHasKey('items', $data);
+        $this->assertSame($runId, $data['run_id']);
     }
 }

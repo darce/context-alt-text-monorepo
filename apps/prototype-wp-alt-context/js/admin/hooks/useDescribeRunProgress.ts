@@ -12,9 +12,9 @@ import { JOB_PROGRESS_STALL_THRESHOLD_MS } from './useJobProgressStream';
 /**
  * Honest per-image progress for a bulk describe run (WBUX-3 S6-02).
  *
- * Transport is polling, not SSE: the WP stream proxy returns after a bounded
- * hold (~25s) rather than a true passthrough, so a status poll is the robust
- * honest-progress channel. React Query drives the interval and stops once the
+ * Transport is polling, not SSE: there is no describe SSE surface (the WP stream
+ * proxy was removed in INT-03), so polling the run status route is the sole
+ * progress channel. React Query drives the interval and stops once the
  * run reaches a terminal status. ETA is taken verbatim from the backend
  * (`eta_seconds`) — never recomputed client-side. Stall is derived locally as
  * the time since `completed` last advanced, mirroring useJobProgressStream.

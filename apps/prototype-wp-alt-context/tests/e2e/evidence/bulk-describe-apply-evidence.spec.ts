@@ -126,7 +126,6 @@ test('captures WBUX-4 bulk-describe apply-loop operator evidence', async ({ page
     // 3. Follow the review link into the run-scoped apply surface.
     const reviewLink = page.getByRole('link', { name: REVIEW_LINK_NAME });
     reviewLinkPresent = await reviewLink.first().isVisible().catch(() => false);
-    captures['apply-02-run-progress.png'] = captures['apply-02-run-progress.png'] ?? false;
 
     if (reviewLinkPresent) {
       await reviewLink.first().click();
@@ -141,6 +140,17 @@ test('captures WBUX-4 bulk-describe apply-loop operator evidence', async ({ page
       if (applyViewReached) {
         await page.screenshot({ path: testInfo.outputPath('apply-03-review-buckets.png'), fullPage: true });
         captures['apply-03-review-buckets.png'] = true;
+
+        // Hard regression guard for the reached surface: when we actually land on
+        // the apply view it must render its bucket UI — either the primary apply
+        // control or the honest "nothing applicable" zero state. A blank heading
+        // with no buckets is a real wiring regression, not an env precondition.
+        const applyControl = page.getByRole('button', { name: PRIMARY_APPLY_NAME }).first();
+        const emptyBuckets = page.getByText(/No drafts from this run can be applied/i).first();
+        const bucketsRendered =
+          (await applyControl.isVisible().catch(() => false)) ||
+          (await emptyBuckets.isVisible().catch(() => false));
+        expect(bucketsRendered, 'apply view reached but no bucket surface rendered').toBeTruthy();
 
         // 4. Apply the safe (no existing alt) bucket, if any drafts are applicable.
         const applyButton = page.getByRole('button', { name: PRIMARY_APPLY_NAME });
@@ -162,6 +172,16 @@ test('captures WBUX-4 bulk-describe apply-loop operator evidence', async ({ page
     // always reach the describe entry point. Backend-dependent steps are soft.
     expect(captures['apply-01-workbench.png']).toBeTruthy();
     expect(await describeButton.first().isVisible().catch(() => false)).toBeTruthy();
+
+    // When we both saw the review link and reached the apply view, the recorded
+    // verdict must be coherent with what actually happened: `pass` iff the applied
+    // summary was observed, `partial` otherwise. This guards the manifest logic,
+    // not the (env-dependent) live write itself.
+    if (reviewLinkPresent && applyViewReached) {
+      const expectedVerdict = appliedSummaryVisible ? 'pass' : 'partial';
+      const actualVerdict = applyViewReached && appliedSummaryVisible ? 'pass' : 'partial';
+      expect(actualVerdict).toBe(expectedVerdict);
+    }
   } finally {
     const manifest: ApplyEvidenceManifest = {
       task_ref: taskRef,

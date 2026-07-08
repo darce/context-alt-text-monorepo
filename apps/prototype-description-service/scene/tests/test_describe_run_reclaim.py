@@ -12,6 +12,9 @@ from __future__ import annotations
 import asyncio
 import uuid
 
+import pytest
+
+import scene.application.describe_run_repository as repo_mod
 from scene.application.describe_run_repository import (
     DescribeRunRepository,
     run_startup_reclaim,
@@ -20,13 +23,18 @@ from scene.domain.describe_run import DescribeItemStatus, DescribeRunStatus
 from scene.tests.test_describe_run_repository import _sessionmaker
 
 
-def test_reclaim_marks_orphaned_nonterminal_runs_failed_and_preserves_completed_items():
+def test_reclaim_derives_terminal_status_and_preserves_completed_items():
     async def body():
         engine, sf = await _sessionmaker()
         tenant = uuid.uuid4()
         async with sf() as s:
             repo = DescribeRunRepository(s, max_items=3)
-            run_id = await repo.create_run(tenant_id=tenant, media_ids=[101, 102])
+            # 102 carries real stranded image bytes to prove the clearing path runs.
+            run_id = await repo.create_run(
+                tenant_id=tenant,
+                media_ids=[101, 102],
+                images={102: (b"strandedbytes", "image/png")},
+            )
             # 101 finished before the crash; 102 was still queued.
             await repo.record_item_result(
                 tenant_id=tenant,
@@ -39,6 +47,9 @@ def test_reclaim_marks_orphaned_nonterminal_runs_failed_and_preserves_completed_
             await repo.mark_item(
                 tenant_id=tenant, run_id=run_id, media_id=101, status=DescribeItemStatus.COMPLETED
             )
+            # Sanity: the stranded bytes are actually present before reclaim.
+            queued = {i.media_id: i for i in await repo.list_run_items(tenant_id=tenant, run_id=run_id)}
+            assert queued[102].image_bytes == b"strandedbytes"
             # Run left non-terminal (RUNNING) as if the process died mid-run.
             run = await repo.get_run(tenant_id=tenant, run_id=run_id)
             run.status = DescribeRunStatus.RUNNING
@@ -52,7 +63,9 @@ def test_reclaim_marks_orphaned_nonterminal_runs_failed_and_preserves_completed_
             run = await repo.get_run(tenant_id=tenant, run_id=run_id)
             items = {i.media_id: i for i in await repo.list_run_items(tenant_id=tenant, run_id=run_id)}
 
-        assert run.status == DescribeRunStatus.FAILED
+        # One completed + one force-failed item -> honest COMPLETED_WITH_ERRORS,
+        # not a blanket FAILED (S5-01).
+        assert run.status == DescribeRunStatus.COMPLETED_WITH_ERRORS
         assert run.completed_at is not None
         assert run.error_message
         # completed item kept its draft; queued item failed; bytes cleared.
@@ -67,6 +80,76 @@ def test_reclaim_marks_orphaned_nonterminal_runs_failed_and_preserves_completed_
         await engine.dispose()
 
     asyncio.run(body())
+
+
+def test_reclaim_honors_cancel_requested_as_cancelled():
+    """S5-04: a run with cancel_requested reclaims to CANCELLED, not FAILED."""
+
+    async def body():
+        engine, sf = await _sessionmaker()
+        tenant = uuid.uuid4()
+        async with sf() as s:
+            repo = DescribeRunRepository(s, max_items=2)
+            run_id = await repo.create_run(tenant_id=tenant, media_ids=[301])
+            run = await repo.get_run(tenant_id=tenant, run_id=run_id)
+            run.status = DescribeRunStatus.RUNNING
+            run.cancel_requested = True
+            await s.commit()
+
+        reclaimed = await run_startup_reclaim(sf)
+        assert reclaimed == 1
+
+        async with sf() as s:
+            run = await DescribeRunRepository(s).get_run(tenant_id=tenant, run_id=run_id)
+        assert run.status == DescribeRunStatus.CANCELLED
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+class _NotBypassedResult:
+    def scalar(self):
+        return None  # current_setting('app.bypass_rls', true) unset -> NULL
+
+
+class _NotBypassedSession:
+    """Minimal async session whose bypass probe reports RLS bypass is NOT active."""
+
+    async def execute(self, *_args, **_kwargs):
+        return _NotBypassedResult()
+
+
+def test_reclaim_fails_closed_when_rls_bypass_not_active(monkeypatch):
+    """S5-02/S5-03b: on a non-SQLite session without RLS bypass, reclaim raises
+    rather than running an under-scoped partial sweep. SQLite no-ops the real
+    guard, so force the Postgres branch via is_sqlite=False."""
+    monkeypatch.setattr(repo_mod, "is_sqlite", lambda _session: False)
+    repo = DescribeRunRepository(_NotBypassedSession(), max_items=1)
+    with pytest.raises(RuntimeError, match="RLS-bypassed system session"):
+        asyncio.run(repo.reclaim_interrupted_runs())
+
+
+def test_startup_reclaim_failure_does_not_block_boot_and_is_wired(monkeypatch):
+    """S5-03a: a reclaim exception must not block boot, and create_app must wire
+    the reclaim into the app lifespan (proven by the patched call firing)."""
+    from fastapi.testclient import TestClient
+
+    from api.main import create_app
+
+    called = {"n": 0}
+
+    async def boom(*_args, **_kwargs):
+        called["n"] += 1
+        raise RuntimeError("reclaim boom")
+
+    monkeypatch.setattr(repo_mod, "run_startup_reclaim", boom)
+
+    app = create_app()
+    with TestClient(app) as client:  # __enter__ runs the lifespan startup
+        resp = client.get("/health")
+        assert resp.status_code == 200, resp.text
+    # The lifespan invoked reclaim exactly once (wired) and swallowed the error (boot survived).
+    assert called["n"] == 1
 
 
 def test_reclaim_leaves_terminal_runs_untouched():

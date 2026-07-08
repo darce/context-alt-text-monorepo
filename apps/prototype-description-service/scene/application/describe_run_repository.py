@@ -7,10 +7,11 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models.scene import DescribeRun, DescribeRunItem
+from recognition.shared.db.dialect import is_sqlite
 from scene.domain.describe_run import (
     TERMINAL_ITEM_STATUSES,
     DescribeItemStatus,
@@ -19,7 +20,10 @@ from scene.domain.describe_run import (
     DescribeRunStatus,
     describe_run_max_items,
     phase_for_status,
+    terminal_run_status,
 )
+
+_TRUTHY_PG_SETTINGS = {"true", "on", "1", "yes"}
 
 
 class DescribeRunRepository:
@@ -172,16 +176,45 @@ class DescribeRunRepository:
         await self._session.flush()
         return True
 
+    async def _require_rls_bypass(self) -> None:
+        """Fail closed unless this session has RLS bypass active (S5-02).
+
+        ``reclaim_interrupted_runs`` sweeps ALL tenants with no tenant filter, so
+        it MUST run on a system-scoped, RLS-bypassed session — otherwise RLS
+        would silently hide most rows and the sweep would be a partial, wrong
+        no-op. On SQLite (tests) there is no RLS, so this is a graceful no-op.
+        """
+        if is_sqlite(self._session):
+            return
+        result = await self._session.execute(text("SELECT current_setting('app.bypass_rls', true)"))
+        value = result.scalar()
+        if value is None or str(value).strip().lower() not in _TRUTHY_PG_SETTINGS:
+            raise RuntimeError(
+                "reclaim_interrupted_runs requires an RLS-bypassed system session "
+                "(current_setting('app.bypass_rls') is not truthy); call it via "
+                "run_startup_reclaim or enable_rls_bypass(session) first"
+            )
+
     async def reclaim_interrupted_runs(self, *, now: datetime | None = None) -> int:
-        """WBUX-4 INT-02: mark orphaned non-terminal runs terminal-FAILED.
+        """WBUX-4 INT-02: drive orphaned non-terminal runs to an honest terminal state.
 
         The worker runs in-process, so a run still PENDING/RUNNING at startup is
-        orphaned by a restart — nothing will finish it. Fail it (honest terminal
-        state so polling stops), fail its still-non-terminal items, clear
-        stranded image bytes, and recompute counters. The caller MUST provide a
-        system-scoped / RLS-bypassed session: this sweeps ALL tenants and takes
-        no tenant filter.
+        orphaned by a restart — nothing will finish it. Fail its still-non-terminal
+        items, clear stranded image bytes, then derive the run's terminal status
+        the same way the live recompute path does (S5-01/S5-04): a cancel that was
+        requested wins (CANCELLED), any failure -> COMPLETED_WITH_ERRORS, else
+        COMPLETED. The caller MUST provide a system-scoped / RLS-bypassed session:
+        this sweeps ALL tenants and takes no tenant filter.
+
+        S5-05 (single-process assumption): this sweep is only safe because the
+        bulk worker runs in a single in-process FastAPI task (no ``--workers`` /
+        no horizontal replicas). It unconditionally fails every non-terminal run
+        it sees, so under multiple replicas a booting replica would kill runs that
+        another replica is actively processing. Horizontal scaling MUST first add
+        a boot-time/heartbeat ownership guard (rg-007) before removing this
+        assumption.
         """
+        await self._require_rls_bypass()
         now = now or datetime.now(tz=UTC)
         result = await self._session.execute(
             select(DescribeRun).where(
@@ -201,13 +234,23 @@ class DescribeRunRepository:
                     item.last_error = item.last_error or "interrupted by service restart"
                 item.image_bytes = None
             statuses = Counter(item.status for item in items)
-            run.completed_items = statuses[DescribeItemStatus.COMPLETED]
-            run.failed_items = statuses[DescribeItemStatus.FAILED]
-            run.skipped_items = statuses[DescribeItemStatus.SKIPPED]
-            run.status = DescribeRunStatus.FAILED
-            run.phase = DescribeRunPhase.FAILED
+            completed = statuses[DescribeItemStatus.COMPLETED]
+            failed = statuses[DescribeItemStatus.FAILED]
+            skipped = statuses[DescribeItemStatus.SKIPPED]
+            run.completed_items = completed
+            run.failed_items = failed
+            run.skipped_items = skipped
+            status = terminal_run_status(
+                completed=completed,
+                failed=failed,
+                skipped=skipped,
+                cancel_requested=run.cancel_requested,
+            )
+            run.status = status
+            run.phase = phase_for_status(status)
             run.completed_at = now
-            run.error_message = run.error_message or "interrupted by service restart"
+            if status in {DescribeRunStatus.FAILED, DescribeRunStatus.COMPLETED_WITH_ERRORS}:
+                run.error_message = run.error_message or "interrupted by service restart"
         await self._session.flush()
         return len(runs)
 
@@ -246,16 +289,12 @@ class DescribeRunRepository:
             run.started_at = now
 
         if terminal >= run.total_items:
-            if run.cancel_requested:
-                # A cancel that lands mid-run ends CANCELLED even if some items
-                # completed before the cancel took effect. (S1-01)
-                status = DescribeRunStatus.CANCELLED
-            elif skipped and not failed and completed == 0:
-                status = DescribeRunStatus.CANCELLED
-            elif failed:
-                status = DescribeRunStatus.COMPLETED_WITH_ERRORS
-            else:
-                status = DescribeRunStatus.COMPLETED
+            status = terminal_run_status(
+                completed=completed,
+                failed=failed,
+                skipped=skipped,
+                cancel_requested=run.cancel_requested,
+            )
             run.status = status
             run.phase = phase_for_status(status)
             run.completed_at = now

@@ -421,6 +421,21 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 
 		$data = $response->get_data();
 		if ( is_array( $data ) && isset( $data['items'] ) && is_array( $data['items'] ) ) {
+			// S2-01: prime the post-meta cache in one query for every media_id
+			// instead of an uncached get_post_meta() per item (N+1). update_meta_cache
+			// is a WP-core optimization; guard so the unit-test harness (no object
+			// cache) falls through to direct get_post_meta reads.
+			$media_ids = array();
+			foreach ( $data['items'] as $item ) {
+				$media_id = isset( $item['media_id'] ) ? (int) $item['media_id'] : 0;
+				if ( $media_id > 0 ) {
+					$media_ids[] = $media_id;
+				}
+			}
+			if ( array() !== $media_ids && function_exists( 'update_meta_cache' ) ) {
+				update_meta_cache( 'post', array_values( array_unique( $media_ids ) ) );
+			}
+
 			foreach ( $data['items'] as $index => $item ) {
 				$media_id      = isset( $item['media_id'] ) ? (int) $item['media_id'] : 0;
 				$existing_alt  = trim( (string) get_post_meta( $media_id, '_wp_attachment_image_alt', true ) );
@@ -439,10 +454,39 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 	 * that already have operator alt text are NEVER clobbered unless their
 	 * media_id is in `overwrite_media_ids` (an explicit per-item opt-in mirroring
 	 * the single-image `write_alt`+`force` policy). Items without a draft (failed
-	 * describes) are skipped. Returns the applied / skipped-existing /
-	 * skipped-no-draft buckets so the History UI can report honestly.
+	 * describes) are skipped. A run is applyable only once terminal-with-drafts
+	 * (status `completed` / `completed_with_errors`); a pending / running / failed /
+	 * cancelled run is rejected with a 409 so drafts are never written mid-flight
+	 * (S3-03).
+	 *
+	 * Response buckets (frontend contract — the History UI reports each honestly):
+	 * `applied`, `skipped_existing` (operator alt guarded), `skipped_no_draft`
+	 * (failed describe / empty draft), `skipped_invalid` (media_id is not an
+	 * attachment post, S3-01), and `failed` (the alt-text write returned false,
+	 * S3-02). `skipped_invalid` and `failed` are additions to the prior three-bucket
+	 * shape — the TS contract needs a follow-up to surface them.
 	 */
 	public function apply_describe_run_drafts( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		// S3-03: gate on the authoritative run status. The /items endpoint carries
+		// only per-item statuses, not a run-level status, so read it from the
+		// status endpoint before writing anything.
+		$status_response = $this->get_describe_run_status( $request );
+		if ( is_wp_error( $status_response ) || $this->is_proxy_unavailable( $status_response ) ) {
+			return $status_response;
+		}
+		$status_data = $status_response->get_data();
+		$run_status  = is_array( $status_data ) ? (string) ( $status_data['status'] ?? '' ) : '';
+		if ( 'completed' !== $run_status && 'completed_with_errors' !== $run_status ) {
+			return new WP_Error(
+				'describe_run_not_applicable',
+				sprintf(
+					'Describe run must be completed before applying drafts (current status: %s).',
+					'' === $run_status ? 'unknown' : $run_status
+				),
+				array( 'status' => 409 )
+			);
+		}
+
 		$items_response = $this->get_describe_run_items( $request );
 		if ( is_wp_error( $items_response ) || $this->is_proxy_unavailable( $items_response ) ) {
 			return $items_response;
@@ -451,14 +495,22 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 		$data  = $items_response->get_data();
 		$items = ( is_array( $data ) && is_array( $data['items'] ?? null ) ) ? $data['items'] : array();
 
+		// S3-05: reject non-positive overwrite ids rather than absint()-coercing a
+		// negative id into a positive one (-70 → 70 would opt in the wrong media).
 		$overwrite = array();
 		foreach ( (array) $request->get_param( 'overwrite_media_ids' ) as $raw_id ) {
-			$overwrite[ absint( $raw_id ) ] = true;
+			$overwrite_id = (int) $raw_id;
+			if ( $overwrite_id > 0 ) {
+				$overwrite[ $overwrite_id ] = true;
+			}
 		}
 
 		$applied          = array();
 		$skipped_existing = array();
 		$skipped_no_draft = array();
+		$skipped_invalid  = array();
+		$failed           = array();
+		$run_id           = (string) ( $data['run_id'] ?? '' );
 
 		foreach ( $items as $item ) {
 			$media_id = isset( $item['media_id'] ) ? (int) $item['media_id'] : 0;
@@ -469,30 +521,81 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 				continue;
 			}
 
+			// S3-01: media_id is backend-echoed data that becomes the post meta
+			// target — refuse to stamp alt text onto anything that is not an
+			// attachment post.
+			$post = get_post( $media_id );
+			if ( ! is_object( $post ) || 'attachment' !== (string) ( $post->post_type ?? '' ) ) {
+				$skipped_invalid[] = $media_id;
+				continue;
+			}
+
 			if ( ! empty( $item['existing_alt'] ) && ! isset( $overwrite[ $media_id ] ) ) {
 				$skipped_existing[] = $media_id;
 				continue;
 			}
 
-			$provenance                = is_array( $item['provenance'] ?? null ) ? $item['provenance'] : array();
-			$provenance['source']      = 'bulk_describe_run';
-			$provenance['run_id']      = (string) ( $data['run_id'] ?? '' );
-			$provenance['applied_at']  = gmdate( 'c' );
+			// S3-04: persist a WP-controlled provenance envelope, not the backend
+			// blob verbatim — whitelist the same generated-provenance fields the
+			// single-image write records, then stamp the bulk-apply origin.
+			$provenance = $this->build_run_apply_provenance( $item['provenance'] ?? null, $run_id );
 
-			update_post_meta( $media_id, '_wp_attachment_image_alt', $draft );
+			// S3-02: honor the update_post_meta() return. It also returns false when
+			// the stored value is byte-identical to $draft (a no-op overwrite);
+			// distinguish that from a real failure via a read-back so an unchanged
+			// value still counts as applied rather than landing in `failed`.
+			$alt_written = update_post_meta( $media_id, '_wp_attachment_image_alt', $draft );
+			if ( false === $alt_written ) {
+				$current = get_post_meta( $media_id, '_wp_attachment_image_alt', true );
+				if ( ! is_string( $current ) || $draft !== $current ) {
+					$failed[] = $media_id;
+					continue;
+				}
+			}
+
 			update_post_meta( $media_id, '_acx_description_provenance', $provenance );
 			$applied[] = $media_id;
 		}
 
 		return new WP_REST_Response(
 			array(
-				'run_id'           => (string) ( $data['run_id'] ?? '' ),
+				'run_id'           => $run_id,
 				'applied'          => $applied,
 				'skipped_existing' => $skipped_existing,
 				'skipped_no_draft' => $skipped_no_draft,
+				'skipped_invalid'  => $skipped_invalid,
+				'failed'           => $failed,
 			),
 			200
 		);
+	}
+
+	/**
+	 * S3-04: build the provenance envelope persisted alongside a bulk-applied
+	 * draft. Whitelists the same fields the single-image write records
+	 * (DescribeMediaService::build_generated_provenance) from the backend item
+	 * provenance so no arbitrary upstream keys are stored verbatim, then stamps the
+	 * bulk-apply origin. `generated_at` is carried through only when the backend
+	 * supplied it — never fabricated at apply time.
+	 *
+	 * @param mixed $incoming Backend-supplied item provenance (may be null/scalar).
+	 *
+	 * @return array<string,mixed>
+	 */
+	private function build_run_apply_provenance( mixed $incoming, string $run_id ): array {
+		$incoming   = is_array( $incoming ) ? $incoming : array();
+		$provenance = array();
+		foreach ( array( 'adapter', 'model_id', 'model_version', 'prompt_or_task_version', 'image_hash', 'context_hash', 'generated_at', 'backend_result_id' ) as $key ) {
+			if ( array_key_exists( $key, $incoming ) ) {
+				$provenance[ $key ] = $incoming[ $key ];
+			}
+		}
+
+		$provenance['source']     = 'bulk_describe_run';
+		$provenance['run_id']     = $run_id;
+		$provenance['applied_at'] = gmdate( 'c' );
+
+		return $provenance;
 	}
 
 	/**

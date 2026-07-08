@@ -1,7 +1,15 @@
 import { ChangeEvent } from 'react';
 import * as Select from '@radix-ui/react-select';
-import { Check, ChevronDown } from 'lucide-react';
-import { __ } from '@wordpress/i18n';
+import {
+  AlertTriangle,
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  Clock,
+  Loader2,
+  XCircle,
+} from 'lucide-react';
+import { __, sprintf } from '@wordpress/i18n';
 import type { WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
 import type { WorkbenchMediaStatus } from '../../api/workbenchMediaApi';
 import { MediaSelectionTableBody } from './MediaSelectionTableBody';
@@ -10,6 +18,8 @@ import { MediaSummaryBar } from './MediaSummaryBar';
 
 import { Checkbox } from '../../../components/ui/checkbox';
 import { useBulkDescribe } from '../../hooks/useBulkDescribe';
+import type { DescribeRunProgress } from '../../hooks/useDescribeRunProgress';
+import { DESCRIBE_RUN_STATUS, type DescribeRunStatus } from '../../api/describeApi';
 import { useWorkbenchContext } from './WorkbenchContext';
 
 interface MediaSelectionProps {
@@ -49,15 +59,10 @@ export const MediaSelection = ({ collapsed = false, onExpand }: MediaSelectionPr
     .filter(([, selected]) => selected)
     .map(([id]) => Number(id))
     .filter((id) => Number.isFinite(id) && id > 0);
-  const activeDescribeRunId = bulkDescribe.submit.data?.run_id ?? bulkDescribe.cancel.data?.run_id ?? null;
+  const describeProgress = bulkDescribe.progress;
+  const activeDescribeRunId = bulkDescribe.runId;
   const isDescribeRunning =
-    bulkDescribe.submit.isPending ||
-    (bulkDescribe.submit.isSuccess &&
-      bulkDescribe.submit.data?.status !== 'completed' &&
-      bulkDescribe.submit.data?.status !== 'completed_with_errors' &&
-      bulkDescribe.submit.data?.status !== 'failed' &&
-      bulkDescribe.submit.data?.status !== 'cancelled' &&
-      !bulkDescribe.cancel.isSuccess);
+    bulkDescribe.submit.isPending || (activeDescribeRunId !== null && !describeProgress.isTerminal);
 
   const onToggleAll = (checked: boolean) => toggleAll(items, checked);
   const onToggleRow = (item: WorkbenchMediaItem, checked: boolean) => toggleRow(item, checked);
@@ -133,6 +138,7 @@ export const MediaSelection = ({ collapsed = false, onExpand }: MediaSelectionPr
             isCancelling={bulkDescribe.cancel.isPending}
             isRunning={isDescribeRunning}
             runId={activeDescribeRunId}
+            progress={describeProgress}
             errorMessage={bulkDescribe.submit.error?.message ?? bulkDescribe.cancel.error?.message ?? null}
             onSubmit={() => bulkDescribe.submit.mutate(selectedMediaIds)}
             onCancel={() => {
@@ -246,6 +252,7 @@ interface BulkDescribeCtaProps {
   isCancelling: boolean;
   isRunning: boolean;
   runId: string | null;
+  progress: DescribeRunProgress;
   errorMessage: string | null;
   onSubmit: () => void;
   onCancel: () => void;
@@ -257,31 +264,138 @@ const BulkDescribeCta = ({
   isCancelling,
   isRunning,
   runId,
+  progress,
   errorMessage,
   onSubmit,
   onCancel,
 }: BulkDescribeCtaProps) => (
   <div className="acx-media-selection__bulk-describe">
-    <button
-      type="button"
-      className="button"
-      disabled={selectedCount === 0 || isSubmitting || isRunning}
-      onClick={onSubmit}
-    >
-      {isSubmitting
-        ? __('Starting describe run…', 'alt-context')
-        : selectedCount > 0
-          ? __('Describe selected', 'alt-context')
-          : __('Describe selected', 'alt-context')}
-    </button>
-    {isRunning && runId ? (
-      <button type="button" className="button button-link" disabled={isCancelling} onClick={onCancel}>
-        {isCancelling ? __('Cancelling…', 'alt-context') : __('Cancel describe run', 'alt-context')}
+    <div className="acx-media-selection__bulk-describe-actions">
+      <button
+        type="button"
+        className="button"
+        disabled={selectedCount === 0 || isSubmitting || isRunning}
+        onClick={onSubmit}
+      >
+        {isSubmitting ? __('Starting describe run…', 'alt-context') : __('Describe selected', 'alt-context')}
       </button>
-    ) : null}
+      {isRunning && runId ? (
+        <button type="button" className="button button-link" disabled={isCancelling} onClick={onCancel}>
+          {isCancelling ? __('Cancelling…', 'alt-context') : __('Cancel describe run', 'alt-context')}
+        </button>
+      ) : null}
+    </div>
+    {isRunning && runId ? <BulkDescribeProgress progress={progress} /> : null}
     {errorMessage ? <span className="acx-media-selection__bulk-describe-error">{errorMessage}</span> : null}
   </div>
 );
+
+interface DescribeRunStatusMeta {
+  label: string;
+  Icon: typeof Clock;
+  tone: 'pending' | 'running' | 'success' | 'warning' | 'danger' | 'muted';
+  spin?: boolean;
+}
+
+const describeRunStatusMeta = (status: DescribeRunStatus): DescribeRunStatusMeta => {
+  switch (status) {
+    case DESCRIBE_RUN_STATUS.PENDING:
+      return { label: __('Queued', 'alt-context'), Icon: Clock, tone: 'pending' };
+    case DESCRIBE_RUN_STATUS.RUNNING:
+      return { label: __('Describing', 'alt-context'), Icon: Loader2, tone: 'running', spin: true };
+    case DESCRIBE_RUN_STATUS.COMPLETED:
+      return { label: __('Completed', 'alt-context'), Icon: CheckCircle2, tone: 'success' };
+    case DESCRIBE_RUN_STATUS.COMPLETED_WITH_ERRORS:
+      return { label: __('Completed with errors', 'alt-context'), Icon: AlertTriangle, tone: 'warning' };
+    case DESCRIBE_RUN_STATUS.FAILED:
+      return { label: __('Failed', 'alt-context'), Icon: XCircle, tone: 'danger' };
+    case DESCRIBE_RUN_STATUS.CANCELLED:
+      return { label: __('Cancelled', 'alt-context'), Icon: XCircle, tone: 'muted' };
+    default: {
+      // Exhaustiveness guard: a new status must be handled above.
+      const unreachable: never = status;
+      return unreachable;
+    }
+  }
+};
+
+const formatEtaLabel = (etaSeconds: number | null): string => {
+  if (etaSeconds === null) {
+    return __('calculating…', 'alt-context');
+  }
+  const total = Math.max(0, Math.round(etaSeconds));
+  if (total < 60) {
+    return sprintf(__('~%ds remaining', 'alt-context'), total);
+  }
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return sprintf(__('~%1$dm %2$ds remaining', 'alt-context'), minutes, seconds);
+};
+
+const BulkDescribeProgress = ({ progress }: { progress: DescribeRunProgress }) => {
+  const { run, status, progressFraction, etaSeconds, stalledForSeconds } = progress;
+
+  if (run === null || status === null) {
+    return (
+      <div className="acx-media-selection__bulk-describe-progress" role="status" aria-live="polite">
+        <span className="acx-media-selection__bulk-describe-status acx-media-selection__bulk-describe-status--running">
+          <Loader2 className="acx-media-selection__bulk-describe-spin" aria-hidden="true" size={16} />
+          {__('Starting describe run…', 'alt-context')}
+        </span>
+      </div>
+    );
+  }
+
+  const meta = describeRunStatusMeta(status);
+  const percent = progressFraction === null ? null : Math.round(progressFraction * 100);
+  const countsLabel = sprintf(
+    __('%1$d of %2$d described', 'alt-context'),
+    run.completed,
+    run.total,
+  );
+
+  return (
+    <div className="acx-media-selection__bulk-describe-progress" role="status" aria-live="polite">
+      <span
+        className={`acx-media-selection__bulk-describe-status acx-media-selection__bulk-describe-status--${meta.tone}`}
+      >
+        <meta.Icon
+          className={meta.spin ? 'acx-media-selection__bulk-describe-spin' : undefined}
+          aria-hidden="true"
+          size={16}
+        />
+        {meta.label}
+      </span>
+      <progress
+        className="acx-media-selection__bulk-describe-bar"
+        max={run.total > 0 ? run.total : 1}
+        value={run.completed}
+        aria-label={countsLabel}
+      />
+      <div className="acx-media-selection__bulk-describe-meta">
+        <span>
+          {countsLabel}
+          {percent !== null ? ` (${percent}%)` : ''}
+        </span>
+        {run.failed > 0 ? (
+          <span className="acx-media-selection__bulk-describe-failed">
+            {sprintf(__('%d failed', 'alt-context'), run.failed)}
+          </span>
+        ) : null}
+        <span className="acx-media-selection__bulk-describe-eta">{formatEtaLabel(etaSeconds)}</span>
+      </div>
+      {stalledForSeconds !== null ? (
+        <span className="acx-media-selection__bulk-describe-stall">
+          <AlertTriangle aria-hidden="true" size={16} />
+          {sprintf(
+            __('No progress for %ds — the run may be stalled.', 'alt-context'),
+            stalledForSeconds,
+          )}
+        </span>
+      ) : null}
+    </div>
+  );
+};
 
 interface MediaSelectionPaginationProps {
   currentPage: number;

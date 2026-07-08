@@ -107,8 +107,32 @@ export interface DescriptionHistoryQuery {
   offset?: number;
 }
 
-export type DescribeRunStatus = 'pending' | 'running' | 'completed' | 'completed_with_errors' | 'failed' | 'cancelled';
+/**
+ * Canonical describe-run status set. Single source of truth for status
+ * comparisons — do not scatter `=== 'completed'` string literals (sr-007).
+ */
+export const DESCRIBE_RUN_STATUS = {
+  PENDING: 'pending',
+  RUNNING: 'running',
+  COMPLETED: 'completed',
+  COMPLETED_WITH_ERRORS: 'completed_with_errors',
+  FAILED: 'failed',
+  CANCELLED: 'cancelled',
+} as const;
+
+export type DescribeRunStatus = (typeof DESCRIBE_RUN_STATUS)[keyof typeof DESCRIBE_RUN_STATUS];
 export type DescribeRunPhase = 'queued' | 'describing' | 'complete' | 'failed' | 'cancelled';
+
+const TERMINAL_DESCRIBE_RUN_STATUSES: ReadonlySet<DescribeRunStatus> = new Set([
+  DESCRIBE_RUN_STATUS.COMPLETED,
+  DESCRIBE_RUN_STATUS.COMPLETED_WITH_ERRORS,
+  DESCRIBE_RUN_STATUS.FAILED,
+  DESCRIBE_RUN_STATUS.CANCELLED,
+]);
+
+/** A run is terminal once it can no longer make progress (success, partial, failure, or cancel). */
+export const isDescribeRunTerminal = (status: DescribeRunStatus): boolean =>
+  TERMINAL_DESCRIBE_RUN_STATUSES.has(status);
 
 export interface DescribeRunResponse {
   tenant_id: string;
@@ -120,6 +144,8 @@ export interface DescribeRunResponse {
   skipped: number;
   total: number;
   cancel_requested: boolean;
+  // Backend-owned honest ETA for the remaining items; null while it cannot yet be estimated.
+  eta_seconds: number | null;
   gpu_state: null;
 }
 
@@ -194,6 +220,16 @@ export const submitBulkDescribeRun = async (mediaIds: number[]): Promise<Describ
     restNonce: getConfig().nonce,
     signal: createRecognitionTimeoutSignal(30_000),
   });
+
+export const fetchBulkDescribeRun = async (runId: string): Promise<DescribeRunResponse> =>
+  fetchRequiredApi<DescribeRunResponse>(
+    `${getEndpoint('recognitionDescribeRuns')}/${encodeURIComponent(runId)}`,
+    {
+      method: 'GET',
+      restNonce: getConfig().nonce,
+      signal: createRecognitionTimeoutSignal(30_000),
+    },
+  );
 
 export const cancelBulkDescribeRun = async (runId: string): Promise<DescribeRunResponse> =>
   fetchRequiredApi<DescribeRunResponse>(

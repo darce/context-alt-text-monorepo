@@ -158,9 +158,9 @@ Integration test: a fake-latency describe run of N images asserts the bar reflec
 - [x] `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest scene/tests/test_describe_run_repository.py scene/tests/test_describe_run_worker.py -q` green (failure-continues, cancel, timeout, oversize; MCP tests `590`/`592`)
 
 ### Checklist for Slice 3: SSE + status/cancel
-- [ ] `GET /stream` coalesced `EventSourceResponse` (progress/done/error, gpu_state reserved)
-- [ ] `GET /{id}` status + `DELETE /{id}` cancel
-- [ ] `cd apps/prototype-description-service && uv run pytest scene/tests -k describe_run_stream` green
+- [x] `GET /stream` coalesced `EventSourceResponse` (progress/done/error, gpu_state reserved) (`apps/prototype-description-service/scene/interface_adapters/http/routers/describe_run.py`)
+- [x] `GET /{id}` status + `DELETE /{id}` cancel (`apps/prototype-description-service/scene/interface_adapters/http/routers/describe_run.py`)
+- [x] `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest scene/tests/test_describe_run_repository.py scene/tests/test_describe_run_worker.py scene/tests/test_describe_run_stream.py -q` green (MCP tests `593`/`594`)
 
 ### Checklist for Slice 4: Contracts
 - [ ] `scene-describe-run` + `scene-describe-progress` schemas + regenerated TS mirror

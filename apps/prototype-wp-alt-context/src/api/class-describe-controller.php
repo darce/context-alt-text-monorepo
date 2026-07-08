@@ -19,13 +19,26 @@ use WP_REST_Request;
 use WP_REST_Response;
 
 use function absint;
+use function array_filter;
 use function array_map;
 use function array_values;
+use function basename;
 use function count;
+use function file_get_contents;
+use function get_attached_file;
 use function is_array;
+use function is_readable;
+use function is_string;
+use function is_wp_error;
+use function pathinfo;
 use function register_rest_route;
 use function sanitize_text_field;
 use function sprintf;
+use function strtolower;
+use function wp_check_filetype;
+use function wp_json_encode;
+
+use const PATHINFO_EXTENSION;
 
 /**
  * E19-1 S6: WordPress `POST /acx/v1/recognition/describe`. A single-image
@@ -35,6 +48,15 @@ use function sprintf;
  */
 class DescribeController extends AbstractRecognitionProxyController implements DescribeHostInterface {
 	private const DESCRIBE_RUN_STREAM_MAX_HOLD_SECONDS = 25;
+	private const DESCRIBE_RUN_MAX_MEDIA_IDS = 200;
+
+	/**
+	 * Overall serialized multipart body cap for a bulk describe run. The backend
+	 * `/scene/describe/run` route is not behind the single-image
+	 * UploadSizeLimitMiddleware, so bound the aggregate raw-bytes payload here to
+	 * protect proxy memory (200 images × raw bytes + framing).
+	 */
+	private const DESCRIBE_RUN_MULTIPART_MAX_BYTES = 200 * 1024 * 1024;
 
 	private DescribeMediaService $describe_media_service;
 	private DescriptionCandidateService $description_candidate_service;
@@ -250,17 +272,41 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 
 	public function submit_describe_run( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		$media_ids = $this->normalize_media_ids( $request->get_param( 'media_ids' ) );
+		if ( is_wp_error( $media_ids ) ) {
+			return $media_ids;
+		}
 		if ( array() === $media_ids ) {
 			return new WP_Error( 'missing_media_ids', 'Please provide one or more media IDs to describe.', array( 'status' => 400 ) );
+		}
+
+		// The browser→WP contract is JSON { media_ids: int[] } — the browser has
+		// no image bytes. WP loads each attachment's bytes and forwards a
+		// multipart/form-data body to the backend: field `tenant_id`, field
+		// `media_ids` (JSON int array as string), and one `image_<media_id>` file
+		// part per id. The backend 422s if any media_id lacks an image part, so a
+		// file we cannot read fails the whole run fast (400 naming the id) instead
+		// of silently dropping it.
+		$multipart_body = array(
+			'tenant_id' => $this->get_tenant_id(),
+			'media_ids' => wp_json_encode( array_values( $media_ids ) ),
+		);
+
+		foreach ( $media_ids as $media_id ) {
+			$file_part = $this->load_media_file_part( $media_id );
+			if ( is_wp_error( $file_part ) ) {
+				return $file_part;
+			}
+			$multipart_body[ 'image_' . $media_id ] = $file_part;
 		}
 
 		return $this->proxy_recognition_request(
 			'POST',
 			'/scene/describe/run',
-			array(
-				'tenant_id'  => $this->get_tenant_id(),
-				'media_ids' => $media_ids,
-			)
+			$multipart_body,
+			array(),
+			'description',
+			'multipart',
+			self::DESCRIBE_RUN_MULTIPART_MAX_BYTES
 		);
 	}
 
@@ -298,6 +344,11 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			return new WP_Error( 'missing_run_id', 'Run ID is required.', array( 'status' => 400 ) );
 		}
 
+		// The stream endpoint holds the connection open server-side for up to
+		// DESCRIBE_RUN_STREAM_MAX_HOLD_SECONDS (SSE). The default 'auto'+GET class
+		// resolves to `ui_read` (2s timeout + circuit breaker), which would time
+		// out the hold and trip the shared recognition breaker. `background_sync`
+		// (30s timeout, no breaker) tolerates the 25s hold. (S5-01)
 		return $this->proxy_recognition_request(
 			'GET',
 			sprintf( '/scene/describe/run/%s/stream', $run_id ),
@@ -305,7 +356,8 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			array(
 				'tenant_id'        => $this->get_tenant_id(),
 				'max_hold_seconds' => self::DESCRIBE_RUN_STREAM_MAX_HOLD_SECONDS,
-			)
+			),
+			'background_sync'
 		);
 	}
 
@@ -314,9 +366,14 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 	}
 
 	/**
-	 * @return int[]
+	 * Normalize the requested media IDs. Non-positive ids are filtered out. More
+	 * than DESCRIBE_RUN_MAX_MEDIA_IDS valid ids returns a WP_Error rather than
+	 * silently truncating the run to the first 200 — a silent slice would drop
+	 * work the caller believes it queued. (S5-02)
+	 *
+	 * @return int[]|WP_Error
 	 */
-	private function normalize_media_ids( mixed $value ): array {
+	private function normalize_media_ids( mixed $value ): array|WP_Error {
 		if ( ! is_array( $value ) ) {
 			return array();
 		}
@@ -328,7 +385,73 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			)
 		);
 
-		return count( $media_ids ) > 200 ? array_slice( $media_ids, 0, 200 ) : $media_ids;
+		if ( count( $media_ids ) > self::DESCRIBE_RUN_MAX_MEDIA_IDS ) {
+			return new WP_Error(
+				'too_many_media_ids',
+				sprintf( 'Please describe at most %d media IDs per run.', self::DESCRIBE_RUN_MAX_MEDIA_IDS ),
+				array( 'status' => 400 )
+			);
+		}
+
+		return $media_ids;
+	}
+
+	/**
+	 * Load a single attachment's bytes as a multipart file part for the bulk run
+	 * body. Returns a WP_Error (400) naming the failing media_id when the file is
+	 * missing, unreadable, or empty — the backend would otherwise 422 the whole
+	 * run for a missing `image_<media_id>` part.
+	 *
+	 * @return array{filename:string,content:string,content_type:string}|WP_Error
+	 */
+	private function load_media_file_part( int $media_id ): array|WP_Error {
+		$path = get_attached_file( $media_id, true );
+		if ( ! is_string( $path ) || '' === $path || ! is_readable( $path ) ) {
+			return new WP_Error(
+				'describe_run_attachment_unreadable',
+				sprintf( 'Attachment file for media_id=%d is missing or not readable.', $media_id ),
+				array( 'status' => 400 )
+			);
+		}
+
+		$bytes = @file_get_contents( $path );
+		if ( false === $bytes || '' === $bytes ) {
+			return new WP_Error(
+				'describe_run_attachment_unreadable',
+				sprintf( 'Attachment file for media_id=%d is empty or unreadable.', $media_id ),
+				array( 'status' => 400 )
+			);
+		}
+
+		return array(
+			'filename'     => basename( $path ),
+			'content'      => $bytes,
+			'content_type' => $this->resolve_image_mime_type( $path, $media_id ),
+		);
+	}
+
+	private function resolve_image_mime_type( string $path, int $media_id ): string {
+		if ( function_exists( 'wp_check_filetype' ) ) {
+			$detected = wp_check_filetype( $path );
+			if ( is_array( $detected ) && ! empty( $detected['type'] ) ) {
+				return (string) $detected['type'];
+			}
+		}
+		if ( isset( $GLOBALS['__ac_attachment_mimes'][ $media_id ] ) ) {
+			return (string) $GLOBALS['__ac_attachment_mimes'][ $media_id ];
+		}
+		$extension = strtolower( pathinfo( $path, PATHINFO_EXTENSION ) );
+		switch ( $extension ) {
+			case 'jpg':
+			case 'jpeg':
+				return 'image/jpeg';
+			case 'png':
+				return 'image/png';
+			case 'webp':
+				return 'image/webp';
+			default:
+				return 'application/octet-stream';
+		}
 	}
 
 	private function normalize_run_id( WP_REST_Request $request ): string {

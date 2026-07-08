@@ -9,6 +9,7 @@ import { MediaAnalyzeCta } from './MediaAnalyzeCta';
 import { MediaSummaryBar } from './MediaSummaryBar';
 
 import { Checkbox } from '../../../components/ui/checkbox';
+import { useBulkDescribe } from '../../hooks/useBulkDescribe';
 import { useWorkbenchContext } from './WorkbenchContext';
 
 interface MediaSelectionProps {
@@ -43,6 +44,20 @@ export const MediaSelection = ({ collapsed = false, onExpand }: MediaSelectionPr
     items.length > 0 && items.every((item: WorkbenchMediaItem) => selection[item.id.toString()]);
   const identityQuery = mediaQuery.identitiesQuery;
   const detailQuery = mediaQuery.detailQuery;
+  const bulkDescribe = useBulkDescribe();
+  const selectedMediaIds = Object.entries(selection)
+    .filter(([, selected]) => selected)
+    .map(([id]) => Number(id))
+    .filter((id) => Number.isFinite(id) && id > 0);
+  const activeDescribeRunId = bulkDescribe.submit.data?.run_id ?? bulkDescribe.cancel.data?.run_id ?? null;
+  const isDescribeRunning =
+    bulkDescribe.submit.isPending ||
+    (bulkDescribe.submit.isSuccess &&
+      bulkDescribe.submit.data?.status !== 'completed' &&
+      bulkDescribe.submit.data?.status !== 'completed_with_errors' &&
+      bulkDescribe.submit.data?.status !== 'failed' &&
+      bulkDescribe.submit.data?.status !== 'cancelled' &&
+      !bulkDescribe.cancel.isSuccess);
 
   const onToggleAll = (checked: boolean) => toggleAll(items, checked);
   const onToggleRow = (item: WorkbenchMediaItem, checked: boolean) => toggleRow(item, checked);
@@ -111,6 +126,20 @@ export const MediaSelection = ({ collapsed = false, onExpand }: MediaSelectionPr
             onPerPageChange={onPerPageChange}
             onPageChange={onPageChange}
             labelId="acx-media-page-size-label"
+          />
+          <BulkDescribeCta
+            selectedCount={selectedMediaIds.length}
+            isSubmitting={bulkDescribe.submit.isPending}
+            isCancelling={bulkDescribe.cancel.isPending}
+            isRunning={isDescribeRunning}
+            runId={activeDescribeRunId}
+            errorMessage={bulkDescribe.submit.error?.message ?? bulkDescribe.cancel.error?.message ?? null}
+            onSubmit={() => bulkDescribe.submit.mutate(selectedMediaIds)}
+            onCancel={() => {
+              if (activeDescribeRunId) {
+                bulkDescribe.cancel.mutate(activeDescribeRunId);
+              }
+            }}
           />
           <MediaAnalyzeCta />
         </div>
@@ -208,6 +237,49 @@ const MediaSelectionToolbar = ({
         </button>
       )}
     </div>
+  </div>
+);
+
+interface BulkDescribeCtaProps {
+  selectedCount: number;
+  isSubmitting: boolean;
+  isCancelling: boolean;
+  isRunning: boolean;
+  runId: string | null;
+  errorMessage: string | null;
+  onSubmit: () => void;
+  onCancel: () => void;
+}
+
+const BulkDescribeCta = ({
+  selectedCount,
+  isSubmitting,
+  isCancelling,
+  isRunning,
+  runId,
+  errorMessage,
+  onSubmit,
+  onCancel,
+}: BulkDescribeCtaProps) => (
+  <div className="acx-media-selection__bulk-describe">
+    <button
+      type="button"
+      className="button"
+      disabled={selectedCount === 0 || isSubmitting || isRunning}
+      onClick={onSubmit}
+    >
+      {isSubmitting
+        ? __('Starting describe run…', 'alt-context')
+        : selectedCount > 0
+          ? __('Describe selected', 'alt-context')
+          : __('Describe selected', 'alt-context')}
+    </button>
+    {isRunning && runId ? (
+      <button type="button" className="button button-link" disabled={isCancelling} onClick={onCancel}>
+        {isCancelling ? __('Cancelling…', 'alt-context') : __('Cancel describe run', 'alt-context')}
+      </button>
+    ) : null}
+    {errorMessage ? <span className="acx-media-selection__bulk-describe-error">{errorMessage}</span> : null}
   </div>
 );
 

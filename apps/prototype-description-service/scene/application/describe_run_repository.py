@@ -172,6 +172,45 @@ class DescribeRunRepository:
         await self._session.flush()
         return True
 
+    async def reclaim_interrupted_runs(self, *, now: datetime | None = None) -> int:
+        """WBUX-4 INT-02: mark orphaned non-terminal runs terminal-FAILED.
+
+        The worker runs in-process, so a run still PENDING/RUNNING at startup is
+        orphaned by a restart — nothing will finish it. Fail it (honest terminal
+        state so polling stops), fail its still-non-terminal items, clear
+        stranded image bytes, and recompute counters. The caller MUST provide a
+        system-scoped / RLS-bypassed session: this sweeps ALL tenants and takes
+        no tenant filter.
+        """
+        now = now or datetime.now(tz=UTC)
+        result = await self._session.execute(
+            select(DescribeRun).where(
+                DescribeRun.status.in_([DescribeRunStatus.PENDING, DescribeRunStatus.RUNNING])
+            )
+        )
+        runs = list(result.scalars().all())
+        for run in runs:
+            items_res = await self._session.execute(
+                select(DescribeRunItem).where(DescribeRunItem.run_id == run.id)
+            )
+            items = list(items_res.scalars().all())
+            for item in items:
+                if item.status not in TERMINAL_ITEM_STATUSES:
+                    item.status = DescribeItemStatus.FAILED
+                    item.completed_at = now
+                    item.last_error = item.last_error or "interrupted by service restart"
+                item.image_bytes = None
+            statuses = Counter(item.status for item in items)
+            run.completed_items = statuses[DescribeItemStatus.COMPLETED]
+            run.failed_items = statuses[DescribeItemStatus.FAILED]
+            run.skipped_items = statuses[DescribeItemStatus.SKIPPED]
+            run.status = DescribeRunStatus.FAILED
+            run.phase = DescribeRunPhase.FAILED
+            run.completed_at = now
+            run.error_message = run.error_message or "interrupted by service restart"
+        await self._session.flush()
+        return len(runs)
+
     async def _get_item(
         self,
         *,
@@ -226,3 +265,19 @@ class DescribeRunRepository:
         else:
             run.status = DescribeRunStatus.PENDING
             run.phase = DescribeRunPhase.QUEUED
+
+
+async def run_startup_reclaim(session_factory) -> int:
+    """WBUX-4 INT-02: reclaim interrupted describe runs once at service startup.
+
+    Opens a system-scoped session with RLS bypassed so the sweep spans all
+    tenants, marks orphaned non-terminal runs terminal, and commits. Best-effort
+    and idempotent — safe to call on every boot. Returns the number reclaimed.
+    """
+    from db.tenant_context import enable_rls_bypass
+
+    async with session_factory() as session:
+        await enable_rls_bypass(session)
+        count = await DescribeRunRepository(session).reclaim_interrupted_runs()
+        await session.commit()
+    return count

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import StrEnum
 
 
@@ -62,6 +63,37 @@ class DescribeRunRequest:
             raise ValueError("describe run requires at least one media item")
         if total > self.max_items:
             raise ValueError(f"describe run accepts at most {self.max_items} media items")
+
+
+def compute_eta_seconds(run, *, now: datetime | None = None) -> float | None:
+    """Honest ETA for an in-flight run.
+
+    Returns ``None`` unless the run has started, has recorded at least one
+    terminal item, and is not itself terminal — then ``remaining / rate`` where
+    ``rate = done / elapsed``. Any degenerate input (no elapsed time, zero rate)
+    yields ``None`` rather than a fabricated estimate. (S7-01)
+    """
+    started = getattr(run, "started_at", None)
+    if started is None:
+        return None
+    if DescribeRunStatus(run.status) in TERMINAL_RUN_STATUSES:
+        return None
+    done = run.completed_items + run.failed_items + run.skipped_items
+    if done <= 0:
+        return None
+    now = now or datetime.now(tz=UTC)
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=UTC)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=UTC)
+    elapsed = (now - started).total_seconds()
+    if elapsed <= 0:
+        return None
+    rate = done / elapsed
+    if rate <= 0:
+        return None
+    remaining = max(run.total_items - done, 0)
+    return remaining / rate
 
 
 def phase_for_status(status: DescribeRunStatus) -> DescribeRunPhase:

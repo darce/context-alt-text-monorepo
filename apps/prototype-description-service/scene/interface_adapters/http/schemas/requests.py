@@ -122,22 +122,6 @@ class DescribeImageEnvelope(BaseModel):
         return str(uuid.UUID(value))
 
 
-class DescribeRunCreateRequest(BaseModel):
-    """JSON request for an async bulk describe run."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    tenant_id: str = Field(description="Tenant UUID; canonicalized to lowercase.")
-    media_ids: list[int] = Field(description="WordPress attachment ids to describe.")
-
-    @field_validator("tenant_id")
-    @classmethod
-    def _canonical_run_uuid(cls, value: str) -> str:
-        return str(uuid.UUID(value))
-
-    @field_validator("media_ids")
-    @classmethod
-    def _positive_media_ids(cls, value: list[int]) -> list[int]:
-        if any(media_id <= 0 for media_id in value):
-            raise ValueError("media_ids must be positive integers")
-        return value
+# NOTE (WBUX-3): the async bulk describe submit is now multipart/form-data
+# (tenant_id + media_ids form fields + one image_<media_id> file part each), so
+# there is no JSON body model here — parsing lives in the describe_run router.

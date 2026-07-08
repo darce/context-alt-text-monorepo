@@ -107,6 +107,22 @@ export interface DescriptionHistoryQuery {
   offset?: number;
 }
 
+export type DescribeRunStatus = 'pending' | 'running' | 'completed' | 'completed_with_errors' | 'failed' | 'cancelled';
+export type DescribeRunPhase = 'queued' | 'describing' | 'complete' | 'failed' | 'cancelled';
+
+export interface DescribeRunResponse {
+  tenant_id: string;
+  run_id: string;
+  status: DescribeRunStatus;
+  phase: DescribeRunPhase;
+  completed: number;
+  failed: number;
+  skipped: number;
+  total: number;
+  cancel_requested: boolean;
+  gpu_state: null;
+}
+
 export const describeMedia = async (
   mediaId: number,
   options: DescribeMediaWriteOptions = {},
@@ -168,6 +184,24 @@ export const correctDescriptionHistoryItem = async (
       method: 'POST',
       body: { alt_text: altText },
       restNonce: getConfig().nonce,
+    },
+  );
+
+export const submitBulkDescribeRun = async (mediaIds: number[]): Promise<DescribeRunResponse> =>
+  fetchRequiredApi<DescribeRunResponse>(getEndpoint('recognitionDescribeRuns'), {
+    method: 'POST',
+    body: { media_ids: mediaIds },
+    restNonce: getConfig().nonce,
+    signal: createRecognitionTimeoutSignal(30_000),
+  });
+
+export const cancelBulkDescribeRun = async (runId: string): Promise<DescribeRunResponse> =>
+  fetchRequiredApi<DescribeRunResponse>(
+    `${getEndpoint('recognitionDescribeRuns')}/${encodeURIComponent(runId)}/cancel`,
+    {
+      method: 'POST',
+      restNonce: getConfig().nonce,
+      signal: createRecognitionTimeoutSignal(30_000),
     },
   );
 

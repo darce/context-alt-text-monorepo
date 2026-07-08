@@ -172,8 +172,8 @@ Integration test: a fake-latency describe run of N images asserts the bar reflec
 - [x] `cd apps/prototype-wp-alt-context && composer test -- --filter 'DescribeRunControllerTest|DescribeControllerAutoloadTest'` green (MCP tests `600`/`601`)
 
 ### Checklist for Slice 6: WP panel + consumer
-- [ ] Shared `useJobProgressStream` extraction + `useBulkDescribe` + panel
-- [ ] `cd apps/prototype-wp-alt-context && npm run test:agent -- useBulkDescribe` green
+- [x] Shared `useJobProgressStream` extraction + `useBulkDescribe` + panel (`apps/prototype-wp-alt-context/js/admin/hooks/useBulkDescribe.ts`, `apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx`)
+- [x] `cd apps/prototype-wp-alt-context && ./node_modules/.bin/vitest run useBulkDescribe` green (MCP tests `602`/`603`)
 
 ### Checklist for Slice 7: ETA proof
 - [ ] ETA ±20 % mid-batch integration test + run-log artifact (`cd apps/prototype-description-service && uv run pytest scene/tests -k describe_run_eta_tolerance`)

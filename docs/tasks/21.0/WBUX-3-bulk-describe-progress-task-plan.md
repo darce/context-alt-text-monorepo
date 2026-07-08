@@ -176,7 +176,7 @@ Integration test: a fake-latency describe run of N images asserts the bar reflec
 - [x] `cd apps/prototype-wp-alt-context && ./node_modules/.bin/vitest run useBulkDescribe` green (MCP tests `602`/`603`)
 
 ### Checklist for Slice 7: ETA proof
-- [ ] ETA ±20 % mid-batch integration test + run-log artifact (`cd apps/prototype-description-service && uv run pytest scene/tests -k describe_run_eta_tolerance`)
+- [x] ETA ±20 % mid-batch integration test + run-log artifact (`docs/operations/wbux-3-eta-run-log.json`; `cd apps/prototype-wp-alt-context && ./node_modules/.bin/vitest run bulkDescribeEtaTolerance`)
 
 ## Review Readiness
 - Fresh `test_result` evidence at HEAD for scene (`make check`), WP (`npm test`, `composer test`), and contracts.

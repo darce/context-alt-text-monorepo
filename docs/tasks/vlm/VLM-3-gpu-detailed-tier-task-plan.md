@@ -139,13 +139,29 @@ Proof:
 
 ### Slice 2: GPU bake-off
 
-**Goal**: Score every GPU candidate on the VLM-2B corpus via the existing harness.
+**Goal**: Score the GPU candidates on the VLM-2B corpus via the existing harness.
+
+**Candidate slate (refreshed 2026-07-07 for the GPU tier; prune to a runnable set at spike time):**
+
+- **Tier 1 — MoE "A3B" (bursty-optimal: big-model quality at ~3.3B *active* params → low GPU s/img + cost).** *VRAM note: MoE sizes to **total** params (all experts resident), not active — 30B-class needs ~Q4 GGUF (~18 GB, fits A10 24 GB) or L40S 48 GB at bf16.*
+  - **Qwen3-VL-30B-A3B-Instruct** (Alibaba; 30.5B total / 3.3B active; GGUF + vLLM; strong grounding + agentic) — **new a-priori favorite** for a bursty GPU, same family as the CPU winner.
+  - **InternVL3.5-30B-A3B** (Shanghai AI Lab/OpenGVLab; Cascade-RL + Visual-Resolution-Router).
+  - **Kimi-VL-A3B-2506** (Moonshot; MoE frontier, MIT).
+- **Tier 2 — dense mid-size quality anchors.**
+  - **Qwen3-VL-8B / -32B-Instruct** (Apache-2.0; 32B = quality ceiling, needs L40S/A100).
+  - **InternVL3.5-8B / -14B** (supersedes the InternVL3-8B/-14B originally listed).
+  - **Molmo-7B-D** (AllenAI; best-in-class pointing/grounding → phrase-box name placement).
+  - **GLM-4.6V** (Z.ai/Zhipu; native multimodal tool use, 128K ctx).
+  - **Llama-3.2-Vision-11B** (Meta; broad baseline — ⚠ Llama license, non-OSI, flag for a public demo).
+- **Tier 3 — reference baselines (per operator request).**
+  - **MiMo-VL-7B-RL** (Xiaomi; E19-1's retained GPU-tier reference — beats Phi-4, MMMU 70.6, MIT, Qwen2.5-VL arch → vLLM-native; run `/no_think`).
+  - **Phi-4-multimodal** (Microsoft; the original `gpu_phi4` stub baseline — MMMU 55.1, mid-tier; anchors the "why we moved past the stub" comparison).
 
 Changes:
-- Serve each candidate (Qwen3-VL-8B/-32B, InternVL3-8B/-14B, Molmo-7B-D, Llama-3.2-Vision-11B) on the GPU; run `scripts/eval_harness/bakeoff.py --endpoint <gpu-url>` per candidate (reuse `BakeoffClient`/`fetch_run_record`, no fork); score via `report.build_reports`.
+- Serve each selected candidate on the GPU; run `scripts/eval_harness/bakeoff.py --endpoint <gpu-url> --model-id <id> [--no-think]` per candidate (reuse `BakeoffClient`/`fetch_run_record`, no fork); score via `report.build_reports`. Reasoning-tuned/Thinking variants run with `/no_think` for alt-text shape, identical decoding across candidates.
 
 Proof:
-- Per-candidate `acx-eval/v1` REPORT artifacts under `docs/tasks/vlm/`; deterministic re-score bit-identical; comparison table assembled.
+- Per-candidate `acx-eval/v1` REPORT artifacts under `docs/tasks/vlm/`; deterministic re-score bit-identical; comparison table (incl. license + MoE-vs-dense serving cost) assembled.
 
 ### Slice 3: Decision memo
 
@@ -198,7 +214,7 @@ Proof:
 
 ## Consolidated Checklist
 
-## Context and Ownership
+### Context and Ownership
 
 - [ ] Loaded the scope note, VLM-2B decision memo, adapter protocol, and profile resolver before editing.
 - [ ] Recorded the describe response/request contract change (`tier`/`result_generation`) and its WP-read compatibility.

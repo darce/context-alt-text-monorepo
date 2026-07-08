@@ -19,21 +19,27 @@ use WP_REST_Request;
 use WP_REST_Response;
 
 use function absint;
+use function apply_filters;
 use function array_filter;
 use function array_map;
+use function array_unique;
 use function array_values;
 use function basename;
 use function count;
 use function file_get_contents;
+use function filesize;
 use function get_attached_file;
 use function is_array;
+use function is_int;
 use function is_readable;
 use function is_string;
 use function is_wp_error;
+use function max;
 use function pathinfo;
 use function register_rest_route;
 use function sanitize_text_field;
 use function sprintf;
+use function strlen;
 use function strtolower;
 use function wp_check_filetype;
 use function wp_json_encode;
@@ -48,15 +54,24 @@ use const PATHINFO_EXTENSION;
  */
 class DescribeController extends AbstractRecognitionProxyController implements DescribeHostInterface {
 	private const DESCRIBE_RUN_STREAM_MAX_HOLD_SECONDS = 25;
-	private const DESCRIBE_RUN_MAX_MEDIA_IDS = 200;
 
 	/**
-	 * Overall serialized multipart body cap for a bulk describe run. The backend
-	 * `/scene/describe/run` route is not behind the single-image
-	 * UploadSizeLimitMiddleware, so bound the aggregate raw-bytes payload here to
-	 * protect proxy memory (200 images × raw bytes + framing).
+	 * Default per-run media-id cap. Filterable via `acx_describe_run_max_items`.
+	 * MUST be kept aligned with the backend `ACX_DESCRIBE_RUN_MAX_ITEMS` env var
+	 * (backend default 200): the backend rejects runs above its own cap, so a WP
+	 * value above the backend value would surface a raw 4xx instead of this clean
+	 * 400.
 	 */
-	private const DESCRIBE_RUN_MULTIPART_MAX_BYTES = 200 * 1024 * 1024;
+	private const DESCRIBE_RUN_MAX_MEDIA_IDS_DEFAULT = 200;
+
+	/**
+	 * Default aggregate raw-bytes cap for a bulk describe run. Filterable via
+	 * `acx_describe_run_max_body_bytes`. The backend `/scene/describe/run` route
+	 * is not behind the single-image UploadSizeLimitMiddleware, so bound the
+	 * aggregate raw-bytes payload here to protect proxy memory (raw image bytes
+	 * checked incrementally before each read).
+	 */
+	private const DESCRIBE_RUN_MULTIPART_MAX_BYTES_DEFAULT = 200 * 1024 * 1024;
 
 	private DescribeMediaService $describe_media_service;
 	private DescriptionCandidateService $description_candidate_service;
@@ -291,12 +306,19 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			'media_ids' => wp_json_encode( array_values( $media_ids ) ),
 		);
 
+		// PHP-01: bound aggregate raw bytes BEFORE loading them. Stat each file
+		// and reject on a single-file or running-total overflow so a large run
+		// returns a clean 413 instead of OOM-fataling while buffering every
+		// attachment in memory.
+		$max_body_bytes = $this->describe_run_max_body_bytes();
+		$running_total  = 0;
 		foreach ( $media_ids as $media_id ) {
-			$file_part = $this->load_media_file_part( $media_id );
+			$file_part = $this->load_media_file_part( $media_id, $max_body_bytes, $running_total );
 			if ( is_wp_error( $file_part ) ) {
 				return $file_part;
 			}
-			$multipart_body[ 'image_' . $media_id ] = $file_part;
+			$running_total                          += strlen( $file_part['content'] );
+			$multipart_body[ 'image_' . $media_id ]  = $file_part;
 		}
 
 		return $this->proxy_recognition_request(
@@ -306,8 +328,20 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			array(),
 			'description',
 			'multipart',
-			self::DESCRIBE_RUN_MULTIPART_MAX_BYTES
+			$max_body_bytes
 		);
+	}
+
+	private function describe_run_max_media_ids(): int {
+		$max = (int) apply_filters( 'acx_describe_run_max_items', self::DESCRIBE_RUN_MAX_MEDIA_IDS_DEFAULT );
+
+		return max( 1, $max );
+	}
+
+	private function describe_run_max_body_bytes(): int {
+		$max = (int) apply_filters( 'acx_describe_run_max_body_bytes', self::DESCRIBE_RUN_MULTIPART_MAX_BYTES_DEFAULT );
+
+		return max( 1, $max );
 	}
 
 	public function get_describe_run_status( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -316,11 +350,17 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			return new WP_Error( 'missing_run_id', 'Run ID is required.', array( 'status' => 400 ) );
 		}
 
+		// PHP-02: status is polled repeatedly during a long bulk run. The default
+		// 'auto'+GET class resolves to `ui_read` (2s + circuit breaker ON), which
+		// would trip the SHARED recognition breaker and 503 every recognition
+		// endpoint. `post_scan_read` (10s, no breaker) matches the sibling read
+		// pattern.
 		return $this->proxy_recognition_request(
 			'GET',
 			sprintf( '/scene/describe/run/%s', $run_id ),
 			array(),
-			array( 'tenant_id' => $this->get_tenant_id() )
+			array( 'tenant_id' => $this->get_tenant_id() ),
+			'post_scan_read'
 		);
 	}
 
@@ -366,10 +406,12 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 	}
 
 	/**
-	 * Normalize the requested media IDs. Non-positive ids are filtered out. More
-	 * than DESCRIBE_RUN_MAX_MEDIA_IDS valid ids returns a WP_Error rather than
-	 * silently truncating the run to the first 200 — a silent slice would drop
-	 * work the caller believes it queued. (S5-02)
+	 * Normalize the requested media IDs. Non-positive ids are filtered out and
+	 * duplicates are collapsed (first-seen order preserved, PHP-04) so a caller
+	 * cannot trigger redundant inference. More than the per-run cap of distinct
+	 * ids returns a WP_Error rather than silently truncating — a silent slice
+	 * would drop work the caller believes it queued (S5-02). The cap is
+	 * filterable via `acx_describe_run_max_items` (PHP-03).
 	 *
 	 * @return int[]|WP_Error
 	 */
@@ -379,16 +421,19 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 		}
 
 		$media_ids = array_values(
-			array_filter(
-				array_map( 'absint', $value ),
-				static fn (int $media_id): bool => $media_id > 0
+			array_unique(
+				array_filter(
+					array_map( 'absint', $value ),
+					static fn (int $media_id): bool => $media_id > 0
+				)
 			)
 		);
 
-		if ( count( $media_ids ) > self::DESCRIBE_RUN_MAX_MEDIA_IDS ) {
+		$max_media_ids = $this->describe_run_max_media_ids();
+		if ( count( $media_ids ) > $max_media_ids ) {
 			return new WP_Error(
 				'too_many_media_ids',
-				sprintf( 'Please describe at most %d media IDs per run.', self::DESCRIBE_RUN_MAX_MEDIA_IDS ),
+				sprintf( 'Please describe at most %d media IDs per run.', $max_media_ids ),
 				array( 'status' => 400 )
 			);
 		}
@@ -400,11 +445,13 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 	 * Load a single attachment's bytes as a multipart file part for the bulk run
 	 * body. Returns a WP_Error (400) naming the failing media_id when the file is
 	 * missing, unreadable, or empty — the backend would otherwise 422 the whole
-	 * run for a missing `image_<media_id>` part.
+	 * run for a missing `image_<media_id>` part. Returns a WP_Error (413) when the
+	 * file alone, or the running body total including it, exceeds $max_body_bytes
+	 * — checked on a cheap stat BEFORE reading the bytes into memory (PHP-01).
 	 *
 	 * @return array{filename:string,content:string,content_type:string}|WP_Error
 	 */
-	private function load_media_file_part( int $media_id ): array|WP_Error {
+	private function load_media_file_part( int $media_id, int $max_body_bytes, int $running_total ): array|WP_Error {
 		$path = get_attached_file( $media_id, true );
 		if ( ! is_string( $path ) || '' === $path || ! is_readable( $path ) ) {
 			return new WP_Error(
@@ -412,6 +459,12 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 				sprintf( 'Attachment file for media_id=%d is missing or not readable.', $media_id ),
 				array( 'status' => 400 )
 			);
+		}
+
+		// Cheap pre-read guard: reject before buffering the file into memory.
+		$stat_size = @filesize( $path );
+		if ( is_int( $stat_size ) && ( $stat_size > $max_body_bytes || $running_total + $stat_size > $max_body_bytes ) ) {
+			return $this->payload_too_large_error( $media_id, $running_total + $stat_size, $max_body_bytes );
 		}
 
 		$bytes = @file_get_contents( $path );
@@ -423,10 +476,29 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			);
 		}
 
+		// Exact guard for the case where filesize() was unavailable (false) or
+		// stale versus the bytes actually read.
+		if ( $running_total + strlen( $bytes ) > $max_body_bytes ) {
+			return $this->payload_too_large_error( $media_id, $running_total + strlen( $bytes ), $max_body_bytes );
+		}
+
 		return array(
 			'filename'     => basename( $path ),
 			'content'      => $bytes,
 			'content_type' => $this->resolve_image_mime_type( $path, $media_id ),
+		);
+	}
+
+	private function payload_too_large_error( int $media_id, int $total_bytes, int $max_body_bytes ): WP_Error {
+		return new WP_Error(
+			'describe_run_payload_too_large',
+			sprintf(
+				'describe run payload too large: media_id=%d pushed the run to %d bytes, exceeding the %d-byte cap.',
+				$media_id,
+				$total_bytes,
+				$max_body_bytes
+			),
+			array( 'status' => 413 )
 		);
 	}
 

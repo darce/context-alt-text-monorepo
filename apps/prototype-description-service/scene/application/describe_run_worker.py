@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from db.tenant_context import set_tenant_context
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.settings.vlm import VlmSettings
 from scene.domain.describe_run import DescribeItemStatus
@@ -35,8 +36,6 @@ DescribeOne = Callable[
     [int, bytes | None, str | None],
     Awaitable[DescribeItemOutcome | None] | DescribeItemOutcome | None,
 ]
-
-_RUN_TASKS: dict[uuid.UUID, asyncio.Task] = {}
 
 
 async def _call_describe_one(
@@ -67,6 +66,9 @@ async def run_describe_job(
     timeout = timeout_seconds if timeout_seconds is not None else VlmSettings().inference_timeout_seconds
     try:
         async with session_factory() as session:
+            # RLS: every session touching the tenant-scoped run/item tables must
+            # set app.current_tenant, else FORCE RLS on Postgres returns zero rows.
+            await set_tenant_context(session, tenant_id)
             repo = DescribeRunRepository(session)
             items = await repo.list_run_items(tenant_id=tenant_id, run_id=run_id)
             for item in items:
@@ -135,18 +137,10 @@ async def run_describe_job(
         logger.exception("describe run fatal error run_id=%s", run_id)
         try:
             async with session_factory() as session:
+                await set_tenant_context(session, tenant_id)
                 await DescribeRunRepository(session).mark_run_failed(
                     tenant_id=tenant_id, run_id=run_id, error_message=str(fatal)
                 )
                 await session.commit()
         except Exception:  # noqa: BLE001 - best-effort terminal write
             logger.exception("failed to mark run FAILED run_id=%s", run_id)
-
-
-def track_describe_task(run_id: uuid.UUID, task: asyncio.Task) -> None:
-    _RUN_TASKS[run_id] = task
-    task.add_done_callback(lambda _: _RUN_TASKS.pop(run_id, None))
-
-
-def get_tracked_describe_task(run_id: uuid.UUID) -> asyncio.Task | None:
-    return _RUN_TASKS.get(run_id)

@@ -171,8 +171,70 @@ class DescribeRunControllerTest extends TestCase
         $calls = $this->getHttpCalls();
         $this->assertStringContainsString('/scene/describe/run/' . $runId, $calls[0]['url']);
         $this->assertSame('GET', $calls[0]['args']['method']);
+        // Status polling uses 'post_scan_read' (10s, no breaker) so it never trips
+        // the shared recognition circuit breaker during a long run. (PHP-02)
+        $this->assertSame(10, $calls[0]['args']['timeout']);
         $this->assertStringContainsString('/scene/describe/run/' . $runId, $calls[1]['url']);
         $this->assertSame('DELETE', $calls[1]['args']['method']);
+    }
+
+    public function testSubmitDeduplicatesMediaIdsPreservingFirstSeenOrder(): void
+    {
+        $this->plantAttachment(101, "\xff\xd8\xff\xe0jpeg-101", 'jpg');
+        $this->plantAttachment(202, "\x89PNG\r\n\x1a\npng-202", 'png');
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 202, 'message' => 'Accepted'],
+            'body' => '{"run_id":"11111111-1111-1111-1111-111111111111","status":"pending","phase":"queued","completed":0,"failed":0,"skipped":0,"total":2,"cancel_requested":false,"gpu_state":null}',
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
+        $request->set_param('media_ids', [101, 202, 101, 202, 101]);
+
+        $response = $this->controller->submit_describe_run($request);
+
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $body = (string) $this->getHttpCalls()[0]['args']['body'];
+        // Distinct, first-seen order preserved; no redundant inference.
+        $this->assertStringContainsString('[101,202]', $body);
+        $this->assertSame(1, substr_count($body, 'name="image_101"'));
+        $this->assertSame(1, substr_count($body, 'name="image_202"'));
+    }
+
+    public function testSubmitRejectsRunExceedingBodyCapWith413(): void
+    {
+        // Shrink the aggregate cap so a small planted file overflows it, without
+        // materializing hundreds of MB of test bytes. (PHP-01 / PHP-03)
+        add_filter('acx_describe_run_max_body_bytes', static fn (): int => 8);
+        $this->plantAttachment(101, 'too-many-bytes-here', 'jpg');
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
+        $request->set_param('media_ids', [101]);
+
+        $response = $this->controller->submit_describe_run($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('describe_run_payload_too_large', $response->get_error_code());
+        $this->assertSame(413, $response->get_error_data()['status'] ?? null);
+        $this->assertStringContainsString('101', $response->get_error_message());
+        // Rejected before any backend dispatch (and before OOM-buffering).
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
+    public function testMaxItemsCapIsFilterable(): void
+    {
+        // Operators align the WP cap with the backend ACX_DESCRIBE_RUN_MAX_ITEMS. (PHP-03)
+        add_filter('acx_describe_run_max_items', static fn (): int => 2);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
+        $request->set_param('media_ids', [1, 2, 3]);
+
+        $response = $this->controller->submit_describe_run($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('too_many_media_ids', $response->get_error_code());
+        $this->assertStringContainsString('2 media IDs', $response->get_error_message());
+        $this->assertSame([], $this->getHttpCalls());
     }
 
     public function testStreamUsesBackgroundSyncRequestClass(): void

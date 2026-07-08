@@ -233,6 +233,10 @@
     color: var(--acx-color-danger);
   }
 
+  &__bulk-describe-skipped {
+    color: var(--acx-color-text-muted);
+  }
+
   &__bulk-describe-stall {
     display: inline-flex;
     align-items: center;

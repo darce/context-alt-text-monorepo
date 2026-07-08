@@ -122,6 +122,28 @@ def test_stream_emits_multiple_progress_events_as_run_advances(monkeypatch):
     assert "pending" in statuses and "running" in statuses
 
 
+def test_stream_sets_tenant_context_on_each_poll_session(monkeypatch):
+    """BE-02: each fresh poll session must scope RLS, not just _prepare_repo."""
+    _no_worker(monkeypatch)
+    calls: list = []
+    real = describe_run_mod.set_tenant_context
+
+    async def recorder(session, tenant_id):
+        calls.append(tenant_id)
+        await real(session, tenant_id)
+
+    monkeypatch.setattr(describe_run_mod, "set_tenant_context", recorder)
+    with _client() as (client, _):
+        run_id = _create_run(client)
+        client.delete(f"/scene/describe/run/{run_id}")  # PENDING -> CANCELLED (terminal)
+        calls.clear()
+        with client.stream("GET", f"/scene/describe/run/{run_id}/stream") as response:
+            "".join(response.iter_text())
+    # _prepare_repo scopes the request session (1) + the poll loop scopes its own
+    # fresh session (>=1) -> requiring >=2 proves the poll session was scoped.
+    assert calls.count(TENANT_ID) >= 2
+
+
 def test_stream_missing_run_emits_error(monkeypatch):
     async def fake_get_run(self, *, tenant_id, run_id):
         return None

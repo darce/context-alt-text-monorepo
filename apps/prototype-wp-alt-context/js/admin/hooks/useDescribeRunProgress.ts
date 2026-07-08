@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import {
@@ -20,6 +20,9 @@ import { JOB_PROGRESS_STALL_THRESHOLD_MS } from './useJobProgressStream';
  * the time since `completed` last advanced, mirroring useJobProgressStream.
  */
 const DESCRIBE_RUN_POLL_INTERVAL_MS = 2_000;
+// Bounded retry so a single transient poll failure self-heals instead of freezing
+// the run (FE-02). Backoff caps at 8s; after these attempts the error is surfaced.
+const DESCRIBE_RUN_POLL_RETRIES = 3;
 
 export interface DescribeRunProgress {
   run: DescribeRunResponse | null;
@@ -29,10 +32,13 @@ export interface DescribeRunProgress {
   isTerminal: boolean;
   stalledForSeconds: number | null;
   isPolling: boolean;
+  isError: boolean;
+  error: Error | null;
+  retry: () => void;
 }
 
 export const useDescribeRunProgress = (runId: string | null): DescribeRunProgress => {
-  const query = useQuery<DescribeRunResponse>({
+  const query = useQuery<DescribeRunResponse, Error>({
     queryKey: ['bulkDescribeRun', runId],
     queryFn: () => {
       // Internal invariant: React Query never runs queryFn while `enabled` is false.
@@ -42,7 +48,8 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
       return fetchBulkDescribeRun(runId);
     },
     enabled: runId !== null,
-    retry: false,
+    retry: DESCRIBE_RUN_POLL_RETRIES,
+    retryDelay: (attempt) => Math.min(1_000 * 2 ** attempt, 8_000),
     refetchInterval: (q) => {
       if (q.state.status === 'error') {
         return false;
@@ -58,6 +65,12 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
   const run = query.data ?? null;
   const status = run?.status ?? null;
   const isTerminal = status !== null && isDescribeRunTerminal(status);
+  const isError = query.isError;
+
+  const { refetch } = query;
+  const retry = useCallback(() => {
+    void refetch();
+  }, [refetch]);
 
   const lastCompletedRef = useRef<number | null>(null);
   const lastProgressAtRef = useRef<number | null>(null);
@@ -86,9 +99,10 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
     }
   }, [run]);
 
-  // Tick the stall indicator once per second while the run is live.
+  // Tick the stall indicator once per second while the run is live. A polling
+  // error surfaces its own Retry affordance, so suppress the stall banner then.
   useEffect(() => {
-    if (runId === null || isTerminal) {
+    if (runId === null || isTerminal || isError) {
       setStalledForSeconds(null);
       return;
     }
@@ -108,7 +122,7 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
     updateStallState();
     const intervalId = window.setInterval(updateStallState, 1_000);
     return () => window.clearInterval(intervalId);
-  }, [runId, isTerminal]);
+  }, [runId, isTerminal, isError]);
 
   // Terminal (processed) items over total: completed + failed + skipped, so the
   // bar reaches 100% when every item is done regardless of per-item outcome.
@@ -124,6 +138,9 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
     etaSeconds: run?.eta_seconds ?? null,
     isTerminal,
     stalledForSeconds,
-    isPolling: runId !== null && !isTerminal,
+    isPolling: runId !== null && !isTerminal && !isError,
+    isError,
+    error: query.error ?? null,
+    retry,
   };
 };

@@ -117,5 +117,37 @@ describe('useDescribeRunProgress', () => {
       expect(result.current.stalledForSeconds).not.toBeNull();
       expect(result.current.stalledForSeconds ?? 0).toBeGreaterThanOrEqual(30);
     });
+
+    it('surfaces a poll error after bounded retries and recovers via retry()', async () => {
+      fetchBulkDescribeRunMock.mockRejectedValue(new Error('network down'));
+
+      const { result } = renderHook(() => useDescribeRunProgress('run-err'), { wrapper });
+
+      // Advance through the bounded retry backoff until the error surfaces.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(20_000);
+      });
+
+      expect(result.current.isError).toBe(true);
+      expect(result.current.error?.message).toBe('network down');
+      // A frozen poll must not leave the run looking active: polling stops and
+      // the stall banner is suppressed (its own Retry affordance takes over).
+      expect(result.current.isPolling).toBe(false);
+      expect(result.current.stalledForSeconds).toBeNull();
+
+      // Manual retry that succeeds clears the error and resumes live progress.
+      fetchBulkDescribeRunMock.mockResolvedValue(
+        runResponse({ run_id: 'run-err', status: 'running', completed: 2, total: 4, eta_seconds: 30 }),
+      );
+      await act(async () => {
+        result.current.retry();
+        await vi.advanceTimersByTimeAsync(20_000);
+      });
+
+      expect(result.current.isError).toBe(false);
+      expect(result.current.status).toBe('running');
+      expect(result.current.etaSeconds).toBe(30);
+      expect(result.current.isPolling).toBe(true);
+    });
   });
 });

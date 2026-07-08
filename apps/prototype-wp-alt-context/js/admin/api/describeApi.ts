@@ -227,7 +227,9 @@ export const fetchBulkDescribeRun = async (runId: string): Promise<DescribeRunRe
     {
       method: 'GET',
       restNonce: getConfig().nonce,
-      signal: createRecognitionTimeoutSignal(30_000),
+      // Status is a cheap read polled every ~2s; a short timeout keeps a slow
+      // poll from hanging and lets the next interval retry (INT-04).
+      signal: createRecognitionTimeoutSignal(10_000),
     },
   );
 

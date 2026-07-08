@@ -218,7 +218,11 @@ export const submitBulkDescribeRun = async (mediaIds: number[]): Promise<Describ
     method: 'POST',
     body: { media_ids: mediaIds },
     restNonce: getConfig().nonce,
-    signal: createRecognitionTimeoutSignal(30_000),
+    // WP loads attachment bytes and forwards a multipart body under the proxy's
+    // 180s 'description' budget; the browser timeout must exceed it so a slow
+    // bulk upload cannot abort client-side after the run was already created
+    // (which would orphan an untracked run — CLI-01).
+    signal: createRecognitionTimeoutSignal(185_000),
   });
 
 export const fetchBulkDescribeRun = async (runId: string): Promise<DescribeRunResponse> =>

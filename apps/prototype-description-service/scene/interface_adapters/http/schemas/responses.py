@@ -12,7 +12,7 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from scene.domain.describe_run import DescribeRunPhase, DescribeRunStatus
-from scene.domain.description import DescriptionAdapterKind, ProviderMode, RetentionClass
+from scene.domain.description import DescriptionAdapterKind, DescriptionResultTier, ProviderMode, RetentionClass
 
 
 class VisualFacts(BaseModel):
@@ -98,10 +98,25 @@ class VisualFactsResponse(BaseModel):
     cached: bool
     duration_ms: int = Field(ge=0)
     retention_class: RetentionClass
+    tier: DescriptionResultTier = DescriptionResultTier.PROVISIONAL_CPU
+    result_generation: int = Field(default=1, ge=1)
     # E19-4a additive optional preview fields (never in the schema `required`).
     generic_draft: str | None = None
     named_draft: str | None = None
     naming_provenance: NamingProvenance | None = None
+
+
+class DescribeJobResult(BaseModel):
+    """Async describe job poll result."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: str
+    status: str
+    tier: DescriptionResultTier | None = None
+    result_generation: int = Field(default=0, ge=0)
+    visual_facts: dict | None = None
+    error: str | None = None
 
 
 class DescribeRunResponse(BaseModel):

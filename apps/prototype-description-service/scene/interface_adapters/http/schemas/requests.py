@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -114,6 +114,7 @@ class DescribeImageEnvelope(BaseModel):
         description="Legacy WP context: title/caption/description/filename.",
     )
     context_pack: ContextPack | None = Field(default=None, description="Typed bounded WordPress context pack.")
+    tier: Literal["cpu", "gpu"] | None = Field(default=None, description="Optional detailed-tier routing hint.")
 
     @field_validator("tenant_id")
     @classmethod

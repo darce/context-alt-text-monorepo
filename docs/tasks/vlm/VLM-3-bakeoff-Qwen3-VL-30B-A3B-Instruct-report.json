@@ -1,0 +1,1 @@
+{"schema":"acx-eval/v1","task_ref":"VLM-3","model_id":"Qwen3-VL-30B-A3B-Instruct","status":"pending_live_gpu_bakeoff","reason":"Requires OCI GPU endpoint and golden images."}

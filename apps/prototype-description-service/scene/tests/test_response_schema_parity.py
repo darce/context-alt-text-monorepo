@@ -39,18 +39,20 @@ def _sample() -> dict:
         "cached": False,
         "duration_ms": 12,
         "retention_class": "retain_all",
+        "tier": "provisional_cpu",
+        "result_generation": 1,
     }
 
 
 # E19-4a additive optional preview fields: never in `required`, always in
-# `properties` — the 15 core-contract fields stay locked.
+# `properties` — the 17 core-contract fields stay locked.
 PREVIEW_FIELDS = {"generic_draft", "named_draft", "naming_provenance"}
 
 
 def test_schema_required_matches_model_fields():
     schema = _schema()
     assert set(schema["required"]) == set(VisualFactsResponse.model_fields) - PREVIEW_FIELDS
-    assert len(schema["required"]) == 15
+    assert len(schema["required"]) == 17
     assert set(schema["properties"]) == set(VisualFactsResponse.model_fields)
 
 

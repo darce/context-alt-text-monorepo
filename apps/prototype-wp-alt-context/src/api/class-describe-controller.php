@@ -261,6 +261,24 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 				'permission_callback' => array( $this, 'can_manage_recognition' ),
 			)
 		);
+
+		register_rest_route(
+			'acx/v1',
+			'/recognition/describe/runs/(?P<run_id>[a-f0-9-]+)/apply',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( $this, 'apply_describe_run_drafts' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+				'args'                => array(
+					'overwrite_media_ids' => array(
+						'type'        => 'array',
+						'required'    => false,
+						'items'       => array( 'type' => 'integer' ),
+						'description' => 'Media ids whose existing alt text the operator explicitly chose to overwrite.',
+					),
+				),
+			)
+		);
 	}
 
 	public function describe_media( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -452,6 +470,68 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 		}
 
 		return $response;
+	}
+
+	/**
+	 * WBUX-4 INT-01c: apply a completed run's drafts to attachment alt text with
+	 * a guarded smart default — items with no existing alt are written; items
+	 * that already have operator alt text are NEVER clobbered unless their
+	 * media_id is in `overwrite_media_ids` (an explicit per-item opt-in mirroring
+	 * the single-image `write_alt`+`force` policy). Items without a draft (failed
+	 * describes) are skipped. Returns the applied / skipped-existing /
+	 * skipped-no-draft buckets so the History UI can report honestly.
+	 */
+	public function apply_describe_run_drafts( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$items_response = $this->get_describe_run_items( $request );
+		if ( is_wp_error( $items_response ) || $this->is_proxy_unavailable( $items_response ) ) {
+			return $items_response;
+		}
+
+		$data  = $items_response->get_data();
+		$items = ( is_array( $data ) && is_array( $data['items'] ?? null ) ) ? $data['items'] : array();
+
+		$overwrite = array();
+		foreach ( (array) $request->get_param( 'overwrite_media_ids' ) as $raw_id ) {
+			$overwrite[ absint( $raw_id ) ] = true;
+		}
+
+		$applied          = array();
+		$skipped_existing = array();
+		$skipped_no_draft = array();
+
+		foreach ( $items as $item ) {
+			$media_id = isset( $item['media_id'] ) ? (int) $item['media_id'] : 0;
+			$draft    = is_string( $item['alt_text_draft'] ?? null ) ? trim( $item['alt_text_draft'] ) : '';
+
+			if ( 0 === $media_id || '' === $draft ) {
+				$skipped_no_draft[] = $media_id;
+				continue;
+			}
+
+			if ( ! empty( $item['existing_alt'] ) && ! isset( $overwrite[ $media_id ] ) ) {
+				$skipped_existing[] = $media_id;
+				continue;
+			}
+
+			$provenance                = is_array( $item['provenance'] ?? null ) ? $item['provenance'] : array();
+			$provenance['source']      = 'bulk_describe_run';
+			$provenance['run_id']      = (string) ( $data['run_id'] ?? '' );
+			$provenance['applied_at']  = gmdate( 'c' );
+
+			update_post_meta( $media_id, '_wp_attachment_image_alt', $draft );
+			update_post_meta( $media_id, '_acx_description_provenance', $provenance );
+			$applied[] = $media_id;
+		}
+
+		return new WP_REST_Response(
+			array(
+				'run_id'           => (string) ( $data['run_id'] ?? '' ),
+				'applied'          => $applied,
+				'skipped_existing' => $skipped_existing,
+				'skipped_no_draft' => $skipped_no_draft,
+			),
+			200
+		);
 	}
 
 	/**

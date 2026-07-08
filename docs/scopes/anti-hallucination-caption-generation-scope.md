@@ -30,13 +30,16 @@ The current and planned tiers (Florence CPU; Qwen3-VL CPU; the VLM-3 GPU tier) a
 **Tier B (stretch): DETECTURE-style region proposals.**
 - Replace the naive sub-region views with **SAM-class promptable-segmenter masks** as the per-region views (better-grounded regions → better ensemble). Reuses the OpenCV-5/segmentation surface only if that spike lands; otherwise a lightweight segmenter behind an adapter.
 
+**Companion candidate — visual-analysis-first prior (EVENTA Stage 1).**
+- From the Hierarchical Multi-Modal Retrieval / EVENTA solution (arXiv 2606.18553; ref impl [github.com/mf0212/EVENTA-Challange](https://github.com/mf0212/EVENTA-Challange)): **analyze the image *in isolation* first** — one structured VLM pass extracting visual facts across fixed dimensions (objects / attributes / spatial / text) **before** any supplied `ContextPack` text is applied — "to mitigate the risk of textual context overpowering the visual content." The final caption is then synthesized **anchored to that visual prior**, so injected names/facts can only attach to what was actually seen. Cheap (one extra structured pass, not N), inference-time, off-the-shelf → a second bake-off candidate alongside ensemble decoding; the two are composable (visual-prior + ensemble vote). **Only the Stage-1 faithfulness step is in scope — not EVENTA's external-article RAG (see Not-Doing).**
+
 **Companion (cheap, optional): a hallucination *filter*.**
 - **Whitened-CLIP** (arXiv 2505.06934) as a **training-free candidate re-ranker** — score each caption's CLIP-distribution likelihood; over-specific/ungrounded phrasing scores low → flag or down-rank. A near-free guardrail independent of the generator.
 
 **Deliverables:**
 1. An ensemble-decoding decode path behind the existing `DescriptionAdapter` seam (ports & adapters — no bespoke describe route).
-2. A bake-off-style REPORT (acx-eval/v1) comparing single-pass vs ensemble-decoding on the VLM-2B corpus: hallucination (`Easy-Wrong`), `Must-Right`, insertion rate, FKRE, **and the latency/cost multiplier**.
-3. A decision memo: adopt / adopt-with-region-proposals / reject, with the measured deltas.
+2. A bake-off-style REPORT (acx-eval/v1) comparing, on the VLM-2B corpus: **single-pass baseline vs ensemble-decoding vs visual-prior-first (EVENTA Stage 1) vs the two composed** — on hallucination (`Easy-Wrong`), `Must-Right`, insertion rate, FKRE, **and the latency/cost multiplier** (visual-prior is +1 pass; ensemble is +N).
+3. A decision memo: which technique(s) to adopt (or reject), with measured deltas and the cost each buys.
 
 ## 3. Stated Assumptions
 
@@ -50,6 +53,7 @@ The current and planned tiers (Florence CPU; Qwen3-VL CPU; the VLM-3 GPU tier) a
 
 - **No model training / fine-tuning** — no trained Bridge, no LoRA, no graph-constrained generator (RE-VLM/CIAN/DETECTURE training paths are references only).
 - **No ensemble of *different* models** in MVP — same-VLM multi-view first (cheaper, isolates the technique); cross-model ensembling is a later question.
+- **No external-document / news RAG (EVENTA's retrieval half)** — knowledge/context *enrichment* is a different axis from *don't-invent*, and our facts already arrive via the WP `ContextPack`. Only EVENTA's Stage-1 visual-faithfulness step is in scope; its hierarchical retrieval + LLM synthesis over external articles belongs to the **separate context-fusion / enrichment track** (see §9).
 - **No event-camera / depth input** — the survey found **no paper recommends depth-first captioning**; explicitly excluded.
 - **No new async/serving infra** — reuses VLM-3's GPU tier, adapter seam, job store, and eval harness.
 - **No fast-tier (Florence) ensemble** — cost-prohibitive on CPU.
@@ -66,10 +70,19 @@ The current and planned tiers (Florence CPU; Qwen3-VL CPU; the VLM-3 GPU tier) a
 ## 6. Slice Outline (detail in the task plan)
 
 1. **Ensemble-decode core** — the N-view decode loop (attention-weighted + logit-only fallback), bounded N, adaptive plausibility, behind the GPU adapter.
-2. **Bake-off** — single-pass vs ensemble over the VLM-2B corpus via `report.build_reports`; REPORT + latency multiplier.
-3. **Decision memo** — adopt / adopt-with-regions / reject, measured.
-4. **(Stretch) Region proposals** — SAM-class masks as views; re-run the bake-off.
-5. **(Optional) Whitened-CLIP re-ranker** — cheap hallucination filter as a guardrail.
+2. **Visual-prior-first path (EVENTA Stage 1)** — a structured visual-facts pass in isolation, then context-anchored synthesis; +1 pass, composable with slice 1.
+3. **Bake-off** — baseline vs ensemble vs visual-prior vs composed, over the VLM-2B corpus via `report.build_reports`; REPORT + latency multiplier.
+4. **Decision memo** — which technique(s) to adopt, measured.
+5. **(Stretch) Region proposals** — SAM-class masks as views; re-run the bake-off.
+6. **(Optional) Whitened-CLIP re-ranker** — cheap hallucination filter as a guardrail.
+
+## 9. Related deferred track (NOT this scope)
+
+**Context / knowledge enrichment** — adding *true external facts* (vs suppressing invented ones) is a separate axis and a separate scope-to-be:
+
+- The **3-stage context-fusion caption architecture** (arXiv 2606.18553 / EVENTA control flow: visual-analysis → reconcile-with-context → synthesize) and **CIAN**-style multi-stage RAG.
+- For our product the "retrieval" half is largely **already solved** by the WP `ContextPack` (tenant supplies names/events/places) + the identity-prose merge; the adoptable part is the **control flow**, not news-article RAG.
+- This maps to the **E20 context-pack enrichment** track (E20-9) — flag a future `context-fusion` scope there, not here. VLM-4 borrows only EVENTA's Stage-1 faithfulness step.
 
 ## 7. Heuristic-Driven Decisions (picked, not asked — veto any)
 

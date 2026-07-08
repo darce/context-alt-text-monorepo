@@ -36,6 +36,11 @@ The current and planned tiers (Florence CPU; Qwen3-VL CPU; the VLM-3 GPU tier) a
 **Companion (cheap, optional): a hallucination *filter*.**
 - **Whitened-CLIP** (arXiv 2505.06934) as a **training-free candidate re-ranker** — score each caption's CLIP-distribution likelihood; over-specific/ungrounded phrasing scores low → flag or down-rank. A near-free guardrail independent of the generator.
 
+**Scope notes (from plan-analyze):**
+- **Shared Stage 1 with E20-FUSION (VLM4-PA-01):** the visual-prior (analyze-in-isolation) pass is the *same* component E20-FUSION factors as its Stage 1. Build it **once** — whichever of VLM-4 / E20-FUSION lands first owns the shared visual-facts component; the other consumes it.
+- **Ensemble scope (VLM4-PA-03):** the ensemble/vote applies to the **caption / `alt_text_draft`** only; `objects` / `ocr_text` / `phrase_boxes` on `AdapterResult` come from a **designated single pass** (the full-image view), so the adapter contract stays satisfied.
+- **Task-plan pins (VLM4-PA-02):** view-selection strategy (fixed grid vs attention-seeded crops), the N default, and the paper's adaptive-plausibility calibration are pinned in the task plan and tuned on the eval corpus.
+
 **Deliverables:**
 1. An ensemble-decoding decode path behind the existing `DescriptionAdapter` seam (ports & adapters — no bespoke describe route).
 2. A bake-off-style REPORT (acx-eval/v1) comparing, on the VLM-2B corpus: **single-pass baseline vs ensemble-decoding vs visual-prior-first (EVENTA Stage 1) vs the two composed** — on hallucination (`Easy-Wrong`), `Must-Right`, insertion rate, FKRE, **and the latency/cost multiplier** (visual-prior is +1 pass; ensemble is +N).

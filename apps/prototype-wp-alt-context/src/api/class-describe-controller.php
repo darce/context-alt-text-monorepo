@@ -19,7 +19,13 @@ use WP_REST_Request;
 use WP_REST_Response;
 
 use function absint;
+use function array_map;
+use function array_values;
+use function count;
+use function is_array;
 use function register_rest_route;
+use function sanitize_text_field;
+use function sprintf;
 
 /**
  * E19-1 S6: WordPress `POST /acx/v1/recognition/describe`. A single-image
@@ -28,6 +34,8 @@ use function register_rest_route;
  * the wire-locked `/recognition/analyze` surface (PDS-26).
  */
 class DescribeController extends AbstractRecognitionProxyController implements DescribeHostInterface {
+	private const DESCRIBE_RUN_STREAM_MAX_HOLD_SECONDS = 25;
+
 	private DescribeMediaService $describe_media_service;
 	private DescriptionCandidateService $description_candidate_service;
 	private DescriptionHistoryService $description_history_service;
@@ -158,6 +166,54 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 				),
 			)
 		);
+
+		register_rest_route(
+			'acx/v1',
+			'/recognition/describe/runs',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( $this, 'submit_describe_run' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+				'args'                => array(
+					'media_ids' => array(
+						'type'        => 'array',
+						'required'    => true,
+						'items'       => array( 'type' => 'integer' ),
+						'description' => 'Attachment ids to describe in bulk.',
+					),
+				),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/recognition/describe/runs/(?P<run_id>[a-f0-9-]+)',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'get_describe_run_status' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/recognition/describe/runs/(?P<run_id>[a-f0-9-]+)/cancel',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( $this, 'cancel_describe_run' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/recognition/describe/runs/(?P<run_id>[a-f0-9-]+)/stream',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'stream_describe_run_progress' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+			)
+		);
 	}
 
 	public function describe_media( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -190,5 +246,92 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 				(string) $request->get_param( 'alt_text' )
 			)
 		);
+	}
+
+	public function submit_describe_run( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$media_ids = $this->normalize_media_ids( $request->get_param( 'media_ids' ) );
+		if ( array() === $media_ids ) {
+			return new WP_Error( 'missing_media_ids', 'Please provide one or more media IDs to describe.', array( 'status' => 400 ) );
+		}
+
+		return $this->proxy_recognition_request(
+			'POST',
+			'/scene/describe/run',
+			array(
+				'tenant_id'  => $this->get_tenant_id(),
+				'media_ids' => $media_ids,
+			)
+		);
+	}
+
+	public function get_describe_run_status( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$run_id = $this->normalize_run_id( $request );
+		if ( '' === $run_id ) {
+			return new WP_Error( 'missing_run_id', 'Run ID is required.', array( 'status' => 400 ) );
+		}
+
+		return $this->proxy_recognition_request(
+			'GET',
+			sprintf( '/scene/describe/run/%s', $run_id ),
+			array(),
+			array( 'tenant_id' => $this->get_tenant_id() )
+		);
+	}
+
+	public function cancel_describe_run( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$run_id = $this->normalize_run_id( $request );
+		if ( '' === $run_id ) {
+			return new WP_Error( 'missing_run_id', 'Run ID is required.', array( 'status' => 400 ) );
+		}
+
+		return $this->proxy_recognition_request(
+			'DELETE',
+			sprintf( '/scene/describe/run/%s', $run_id ),
+			array(),
+			array( 'tenant_id' => $this->get_tenant_id() )
+		);
+	}
+
+	public function stream_describe_run_progress( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$run_id = $this->normalize_run_id( $request );
+		if ( '' === $run_id ) {
+			return new WP_Error( 'missing_run_id', 'Run ID is required.', array( 'status' => 400 ) );
+		}
+
+		return $this->proxy_recognition_request(
+			'GET',
+			sprintf( '/scene/describe/run/%s/stream', $run_id ),
+			array(),
+			array(
+				'tenant_id'        => $this->get_tenant_id(),
+				'max_hold_seconds' => self::DESCRIBE_RUN_STREAM_MAX_HOLD_SECONDS,
+			)
+		);
+	}
+
+	public function get_describe_run_stream_max_hold_seconds(): int {
+		return self::DESCRIBE_RUN_STREAM_MAX_HOLD_SECONDS;
+	}
+
+	/**
+	 * @return int[]
+	 */
+	private function normalize_media_ids( mixed $value ): array {
+		if ( ! is_array( $value ) ) {
+			return array();
+		}
+
+		$media_ids = array_values(
+			array_filter(
+				array_map( 'absint', $value ),
+				static fn (int $media_id): bool => $media_id > 0
+			)
+		);
+
+		return count( $media_ids ) > 200 ? array_slice( $media_ids, 0, 200 ) : $media_ids;
+	}
+
+	private function normalize_run_id( WP_REST_Request $request ): string {
+		return sanitize_text_field( (string) $request->get_param( 'run_id' ) );
 	}
 }

@@ -167,9 +167,9 @@ Integration test: a fake-latency describe run of N images asserts the bar reflec
 - [x] `python3 scripts/check_shared_contract_fixtures.py` + `cd apps/prototype-description-service && VIRTUAL_ENV= uv run --locked --extra dev python -m pytest scene/tests/test_describe_run_contract.py -q` green (MCP tests `595`/`596`)
 
 ### Checklist for Slice 5: WP proxy routes
-- [ ] Submit/status/stream/cancel routes + read-only mirror wiring; autoload parity in `apps/prototype-wp-alt-context`
-- [ ] Bounded SSE hold + reconnect/poll fallback documented in the WP stream service tests for Slice 5
-- [ ] `cd apps/prototype-wp-alt-context && composer test` (describe-run class) green
+- [x] Submit/status/stream/cancel routes + read-only mirror wiring; autoload parity in `apps/prototype-wp-alt-context` (`apps/prototype-wp-alt-context/src/api/class-describe-controller.php`)
+- [x] Bounded SSE hold + reconnect/poll fallback documented in the WP stream service tests for Slice 5 (`get_describe_run_stream_max_hold_seconds()` = 25s)
+- [x] `cd apps/prototype-wp-alt-context && composer test -- --filter 'DescribeRunControllerTest|DescribeControllerAutoloadTest'` green (MCP tests `600`/`601`)
 
 ### Checklist for Slice 6: WP panel + consumer
 - [ ] Shared `useJobProgressStream` extraction + `useBulkDescribe` + panel

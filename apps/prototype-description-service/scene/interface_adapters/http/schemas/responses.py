@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from scene.domain.describe_run import DescribeRunPhase, DescribeRunStatus
+from scene.domain.describe_run import DescribeItemStatus, DescribeRunPhase, DescribeRunStatus
 from scene.domain.description import DescriptionAdapterKind, DescriptionResultTier, ProviderMode, RetentionClass
 
 
@@ -137,3 +137,27 @@ class DescribeRunResponse(BaseModel):
     # in-flight with measured progress.
     eta_seconds: float | None = None
     gpu_state: None = None
+
+
+class DescribeRunItemResponse(BaseModel):
+    """One item's persisted describe output. WBUX-4 INT-01a: the read path that
+    surfaces per-item drafts to the operator. Draft/caption/provenance are null
+    until the worker describes the item; never fabricated."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    media_id: int
+    status: DescribeItemStatus
+    alt_text_draft: str | None = None
+    caption: str | None = None
+    provenance: dict | None = None
+
+
+class DescribeRunItemsResponse(BaseModel):
+    """Per-item drafts for one run, media-id ordered."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tenant_id: str
+    run_id: str
+    items: list[DescribeRunItemResponse]

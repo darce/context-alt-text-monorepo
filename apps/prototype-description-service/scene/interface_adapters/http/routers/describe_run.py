@@ -33,7 +33,11 @@ from scene.interface_adapters.http.routers.describe import (
     _DescriptionMetricsSink,
     _generation_timeout_seconds,
 )
-from scene.interface_adapters.http.schemas.responses import DescribeRunResponse
+from scene.interface_adapters.http.schemas.responses import (
+    DescribeRunItemResponse,
+    DescribeRunItemsResponse,
+    DescribeRunResponse,
+)
 
 router = APIRouter(tags=["describe-runs"])
 
@@ -56,6 +60,23 @@ def _run_response(run) -> DescribeRunResponse:
         cancel_requested=run.cancel_requested,
         eta_seconds=compute_eta_seconds(run),
         gpu_state=None,
+    )
+
+
+def _run_items_response(run, items) -> DescribeRunItemsResponse:
+    return DescribeRunItemsResponse(
+        tenant_id=str(run.tenant_id),
+        run_id=str(run.id),
+        items=[
+            DescribeRunItemResponse(
+                media_id=item.media_id,
+                status=item.status,
+                alt_text_draft=item.alt_text_draft,
+                caption=item.caption,
+                provenance=item.provenance,
+            )
+            for item in items
+        ],
     )
 
 
@@ -288,6 +309,23 @@ async def get_describe_run(
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "describe run not found")
     return _run_response(run)
+
+
+@router.get("/describe/run/{run_id}/items", response_model=DescribeRunItemsResponse)
+async def list_describe_run_items(
+    run_id: uuid.UUID,
+    auth=Depends(require_write_access),
+    session=Depends(get_optional_session),
+) -> DescribeRunItemsResponse:
+    """WBUX-4 INT-01a: per-item drafts so a completed run's work product is
+    reachable by the operator (the WP History write-back consumer)."""
+    tenant_id = _require_tenant_uuid(auth)
+    repo = await _prepare_repo(session=session, auth=auth, tenant_id=tenant_id)
+    run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
+    if run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "describe run not found")
+    items = await repo.list_run_items(tenant_id=tenant_id, run_id=run_id)
+    return _run_items_response(run, items)
 
 
 @router.delete("/describe/run/{run_id}", response_model=DescribeRunResponse)

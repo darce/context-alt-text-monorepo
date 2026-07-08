@@ -313,4 +313,72 @@ class DescribeRunControllerTest extends TestCase
         $response = $this->controller->get_describe_run_items($request);
         $this->assertInstanceOf(\WP_Error::class, $response);
     }
+
+    private function queueRunItemsResponse(string $runId): void
+    {
+        // media 70: has draft, WILL have existing alt planted by the test.
+        // media 71: has draft, no existing alt (safe auto-apply).
+        // media 72: failed item, no draft.
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => self::currentTenantId(),
+                'run_id' => $runId,
+                'items' => [
+                    ['media_id' => 70, 'status' => 'completed', 'alt_text_draft' => 'a cat on a sofa', 'caption' => 'cat', 'provenance' => ['adapter' => 'florence', 'model_id' => 'florence-2']],
+                    ['media_id' => 71, 'status' => 'completed', 'alt_text_draft' => 'a dog in a park', 'caption' => 'dog', 'provenance' => ['adapter' => 'florence', 'model_id' => 'florence-2']],
+                    ['media_id' => 72, 'status' => 'failed', 'alt_text_draft' => null, 'caption' => null, 'provenance' => null],
+                ],
+            ]),
+        ]);
+    }
+
+    public function testApplyRunDraftsAutoAppliesEmptyAltAndGuardsExisting(): void
+    {
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $this->setPostMeta(70, '_wp_attachment_image_alt', 'human-authored alt');
+        $this->queueRunItemsResponse($runId);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+        // No overwrite list → existing-alt items are guarded.
+
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $this->assertSame(200, $response->get_status());
+
+        $data = $response->get_data();
+        $this->assertSame([71], $data['applied']);
+        $this->assertSame([70], $data['skipped_existing']);
+        $this->assertSame([72], $data['skipped_no_draft']);
+
+        // 71 written; 70 NOT clobbered; provenance persisted for the written item.
+        $this->assertSame('a dog in a park', get_post_meta(71, '_wp_attachment_image_alt', true));
+        $this->assertSame('human-authored alt', get_post_meta(70, '_wp_attachment_image_alt', true));
+        $prov = get_post_meta(71, '_acx_description_provenance', true);
+        $this->assertIsArray($prov);
+        $this->assertSame('florence', $prov['adapter']);
+    }
+
+    public function testApplyRunDraftsOverwritesOnlyExplicitlyListedMedia(): void
+    {
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $this->setPostMeta(70, '_wp_attachment_image_alt', 'human-authored alt');
+        $this->queueRunItemsResponse($runId);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+        $request->set_param('overwrite_media_ids', [70]);
+
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+
+        $data = $response->get_data();
+        $this->assertContains(70, $data['applied']);
+        $this->assertContains(71, $data['applied']);
+        $this->assertSame([], $data['skipped_existing']);
+
+        // 70 overwritten because it was explicitly listed.
+        $this->assertSame('a cat on a sofa', get_post_meta(70, '_wp_attachment_image_alt', true));
+    }
 }

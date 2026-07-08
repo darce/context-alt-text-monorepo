@@ -18,7 +18,7 @@ from scene.application.description_adapter import AdapterResult, DescriptionAdap
 from scene.application.description_repository import ImageDescriptionRepository
 from scene.application.hashing import compute_context_hash, compute_image_hash
 from scene.application.identity_merge.merge import NormalizedBox, PhraseBox
-from scene.domain.description import DescriptionAdapterKind, ProviderMode, RetentionClass
+from scene.domain.description import DescriptionAdapterKind, DescriptionResultTier, ProviderMode, RetentionClass
 from scene.interface_adapters.http.schemas.responses import (
     ContextUsed,
     ProviderDisclosure,
@@ -233,6 +233,10 @@ class VisualFactsService:
             cached=False,
             duration_ms=duration_ms,
             retention_class=self._retention,
+            tier=DescriptionResultTier.FINAL_GPU
+            if self._adapter.kind is DescriptionAdapterKind.GPU
+            else DescriptionResultTier.PROVISIONAL_CPU,
+            result_generation=1,
         )
 
     def _row_to_response(
@@ -259,6 +263,10 @@ class VisualFactsService:
             cached=cached,
             duration_ms=duration_ms,
             retention_class=row.retention_class,  # type: ignore[arg-type]  # FIXME(MAINT-descsvc-mypy-greenup-20260621): row.retention_class is a DB str; VisualFactsResponse expects RetentionClass enum — flagged to VLM/E19 owner (see handoff finding)
+            tier=DescriptionResultTier.FINAL_GPU
+            if row.adapter == DescriptionAdapterKind.GPU.value
+            else DescriptionResultTier.PROVISIONAL_CPU,
+            result_generation=1,
         )
 
     def _response_to_row(self, response: VisualFactsResponse) -> ImageDescription:

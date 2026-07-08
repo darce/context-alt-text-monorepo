@@ -125,7 +125,7 @@ def gate_results():
 
 
 def test_gate_a_expected_identities_match(gate_results):
-    for scene, entry, result, resolved, expected, score, _ in gate_results:
+    for scene, entry, _result, resolved, expected, score, _ in gate_results:
         assert resolved == expected, f"media {scene['media_id']}: containment resolved {resolved} != {expected}"
         assert set(score.inserted_identities) == set(entry["present_identities"])
         assert score.missing_identities == []
@@ -161,7 +161,7 @@ def test_gate_b_adversarial_confirmed_stranger_never_named(gate_results):
 
 
 def test_gate_c_must_right_and_policy(gate_results):
-    for scene, entry, result, resolved, expected, score, _ in gate_results:
+    for scene, _entry, _result, _resolved, _expected, score, _ in gate_results:
         assert score.must_right_pass is True, f"media {scene['media_id']}: must-right failed"
         assert score.policy_violation is False
         assert score.gated_score > 0, f"media {scene['media_id']}: gated_score zeroed"

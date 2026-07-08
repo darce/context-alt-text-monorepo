@@ -24,8 +24,9 @@ recognition multipart/auth/object-store transport.
 - **Body** (`multipart/form-data`):
   - `request` — JSON `DescribeImageEnvelope`: `tenant_id` (UUID, canonicalized
     lowercase), `media_id` (int > 0, must equal the part suffix), optional
-    legacy `context`, and optional typed `context_pack`. Adapter selection is
-    server-side.
+    legacy `context`, optional typed `context_pack`, and optional `tier` hint
+    (`cpu|gpu`). `tier=gpu` routes the request to the server-side GPU profile;
+    otherwise the configured default adapter is used.
   - `image_<media_id>` — exactly one image part (`image/jpeg|png|webp`).
 - **Upload cap**: `/scene/describe/multipart` is registered with the body-size
   middleware (413 on oversize).
@@ -33,12 +34,13 @@ recognition multipart/auth/object-store transport.
 ### Response — `VisualFactsResponse` (200)
 
 Machine schema: [`image-description-response.schema.json`](../../../packages/shared-contracts/schemas/image-description-response.schema.json).
-All **15** fields are required; model/provider provenance and retention are
+All **17** core fields are required; model/provider provenance, tier state, and retention are
 unavoidable so future adapters never change the wire:
 
 `tenant_id`, `media_id`, `image_hash`, `context_hash`, `adapter`, `model_id`,
 `model_version`, `prompt_or_task_version`, `visual_facts`, `alt_text_draft`,
-`context_used`, `provider_disclosure`, `cached`, `duration_ms`, `retention_class`.
+`context_used`, `provider_disclosure`, `cached`, `duration_ms`,
+`retention_class`, `tier`, `result_generation`.
 
 - **Cache key**: `(tenant_id, image_hash, adapter, model_version,
   prompt_or_task_version, context_hash)`. A repeated identical call returns
@@ -47,6 +49,12 @@ unavoidable so future adapters never change the wire:
   mirrors the recognition retention vocabulary.
 - `provider_disclosure.provider` ∈ `{none, local, hosted}`; seeded/local keep
   bytes inside the service boundary.
+- GPU endpoints must be private/loopback/in-tenancy (`ACX_GPU_ENDPOINT_URL`);
+  public endpoints fail closed before image bytes are sent.
+- `tier` ∈ `{provisional_cpu, final_gpu}`. Inline CPU/local/seeded results use
+  `provisional_cpu`; GPU profile results use `final_gpu`. The async path may
+  supersede provisional rows later with monotonically increasing
+  `result_generation`.
 - **Hosted providers are opt-in and fail-closed (E20-11).** A hosted profile
   (e.g. `ACX_DESCRIPTION_ADAPTER=hosted_gpt4o`) resolves to a fail-closed
   unavailable adapter (503) unless the server sets
@@ -100,6 +108,21 @@ unsuppressable), and a minimum face-detection confidence (0.8).
 | 504 | description generation exceeded the configured timeout |
 
 Error shapes match the recognition routes: 5xx/503 use the `{error, trace_id, path}` envelope (via the shared exception handlers); 4xx validation errors use FastAPI's default `{detail}` shape.
+
+## Backend async route — `POST /scene/describe/async`
+
+The MVP async surface enqueues a single image, immediately schedules a
+background worker in the same process, writes a CPU provisional result first,
+then supersedes it with GPU final when the GPU endpoint succeeds.
+
+- `POST /scene/describe/async` returns `DescribeJobResult` with `status=queued`
+  and `job_id`.
+- `GET /scene/describe/jobs/{job_id}` returns `queued|running|provisional|final|degraded|failed`.
+- `degraded` means the CPU provisional result is retained after GPU failure.
+- Job reads are tenant-scoped; a valid key for another tenant receives 404.
+- The in-memory store is bounded and process-local. Production multi-worker
+  deployments must either pin this async surface to one worker or replace the
+  store with a shared DB/Redis-backed implementation.
 
 ## WordPress proxy surface — `POST /acx/v1/recognition/describe`
 

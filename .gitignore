@@ -51,8 +51,11 @@ apps/archived-wp-context-alt-text/**
 # uncomment the next line
 #/wp-content/themes
 
-# Reference library (PDFs, extracted notes, marketing — not project planning)
-literature/
+# Reference library — tracked since 2026-07-09 (remote is private; distilled
+# corpus is load-bearing for the heuristics lexicons). Only the embedded
+# gstack clone stays out (it is its own git repo).
+literature/process/gstack/
+literature/process/product-deploy-agents/
 .DS_Store
 # .vscode/settings.json
 # .vscode/

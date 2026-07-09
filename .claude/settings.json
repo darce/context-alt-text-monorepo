@@ -72,6 +72,16 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "mcp__workbay-handoff-mcp__review_findings",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/guard-review-finding-resolve.py\"",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PostToolUse": [

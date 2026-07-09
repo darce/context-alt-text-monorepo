@@ -85,6 +85,11 @@ export const SettingsPage = (): React.JSX.Element => {
     dispatch({ type: 'clearTestResult' });
 
     const data = settingsQuery.data;
+    if (!data) {
+      // Save is only reachable from the loaded form (render guards isLoading/
+      // isError below); bail defensively so the diff never derefs undefined.
+      return;
+    }
     const payload: SaveSettingsPayload = {};
     if (state.recognitionSource !== (data?.recognition_source ?? RecognitionSource.LOCAL)) {
       payload.recognition_source = state.recognitionSource;

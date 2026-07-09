@@ -196,7 +196,7 @@ def test_resolve_gpu_qwen30b_accepts_oraclevcn_host_when_dns_is_private(monkeypa
 
     adapter = get_description_adapter()
     assert isinstance(adapter, GpuRemoteDescriptionAdapter)
-    assert adapter.prompt_or_task_version == "2"
+    assert adapter.prompt_or_task_version == "3"
 
 
 def test_resolve_gpu_qwen30b_rejects_allowlisted_host_resolving_public_ip(monkeypatch):

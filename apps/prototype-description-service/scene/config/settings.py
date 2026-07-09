@@ -36,7 +36,7 @@ class DescriptionSettings(BaseModel):
     )
     allowed_description_mime_types: tuple[str, ...] = ("image/jpeg", "image/png", "image/webp")
     prompt_or_task_version: str = Field(default_factory=lambda: os.environ.get("ACX_DESCRIPTION_PROMPT_VERSION", "1"))
-    gpu_prompt_or_task_version: str = Field(default_factory=lambda: os.environ.get("ACX_GPU_PROMPT_VERSION", "2"))
+    gpu_prompt_or_task_version: str = Field(default_factory=lambda: os.environ.get("ACX_GPU_PROMPT_VERSION", "3"))
     model_version: str = Field(default_factory=lambda: os.environ.get("ACX_DESCRIPTION_MODEL_VERSION", "1"))
     # Generous default so the slow local_cpu (Florence) inline POC is not prematurely
     # 504'd (~30-95s incl. cold load); seeded never approaches it. Tune via env for prod.

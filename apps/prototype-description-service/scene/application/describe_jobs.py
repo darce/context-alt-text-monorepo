@@ -43,10 +43,21 @@ class DescribeJob:
     result_fetched: bool = False
 
 
+# Default retained-image budget is intentionally far below max_jobs * max_image_bytes.
+# A budget equal to the theoretical worst case never engages under the per-image cap
+# (VLMRP-S4-07). 256 MiB ≈ 10 full 25 MiB images queued/in-flight.
+_DEFAULT_MAX_RETAINED_IMAGE_BYTES = 256 * 1024 * 1024
+
+
 class InMemoryDescribeJobStore:
     """Process-local queue used by the MVP async route and tests."""
 
-    def __init__(self, *, max_jobs: int = 1000, max_retained_image_bytes: int = 25_000_000_000) -> None:
+    def __init__(
+        self,
+        *,
+        max_jobs: int = 1000,
+        max_retained_image_bytes: int = _DEFAULT_MAX_RETAINED_IMAGE_BYTES,
+    ) -> None:
         self._jobs: dict[str, DescribeJob] = {}
         self._order: list[str] = []
         self._max_jobs = max_jobs

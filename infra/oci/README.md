@@ -240,6 +240,41 @@ The deploy automation (`scripts/deploy/recognition-service.sh`) is fully
 SSH-routed in remote-build mode (rsync, ssh build, ssh push, ssh restart);
 all of it inherits the address automatically.
 
+##### Expose `/admin` over the tailnet (no SSH tunnel)
+
+The operator `/admin` console (tenant + API-key lifecycle) is `404`'d on the
+public `api.altcontext.com` vhost by design (`apps/prototype-description-service/Caddyfile`);
+it is reachable only over the tailnet. To manage tenants/keys from your laptop
+without an SSH tunnel, publish the loopback admin port with `tailscale serve`:
+
+1. Layer the admin overlay on the VM (binds the api to `127.0.0.1:8000`):
+   ```bash
+   docker compose -f docker-compose.env.yml -f docker-compose.admin.yml up -d
+   ```
+2. Publish it over the tailnet (one-time; `--bg` survives reboots). Requires
+   **MagicDNS + HTTPS** enabled in the tailnet admin console
+   (*Settings → HTTPS Certificates*):
+   ```bash
+   sudo tailscale serve --bg --https=443 http://127.0.0.1:8000
+   sudo tailscale serve status   # confirm https://acx-backend.<tailnet>.ts.net → 127.0.0.1:8000
+   ```
+3. From any tailnet device, browse `https://acx-backend.<tailnet>.ts.net/admin/`
+   and auth with the VM's `RECOGNITION_ADMIN_TOKEN` (HTTP Basic in the browser).
+
+From the repo, `make -C apps/prototype-description-service admin-oci-serve` runs
+step 2 over SSH and `make -C apps/prototype-description-service admin-oci` opens
+the console; both honour `OCI_HOST` / `OCI_USER` (same env contract as
+`scripts/deploy/*`).
+
+This opens no public port — `tailscale serve` binds the tailnet interface only,
+the public vhost still `404`s `/admin`, and the admin token still gates every
+route. Note the serve command publishes the api **root** (`http://127.0.0.1:8000`),
+so all routes — not just `/admin` — are reachable from tailnet devices; that is
+harmless (tailnet-private, and every route is still auth-gated) but it is why the
+name is "expose /admin" rather than a path-scoped mount. It is also why a key
+minted in the *local* `make admin-dev` console never authenticates against the
+OCI deployment: they are separate tenant databases.
+
 ##### 4. (Optional) Drop public port 22
 
 Once tailnet SSH is proven, tighten `infra/oci/terraform.tfvars` to drop the

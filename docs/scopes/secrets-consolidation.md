@@ -24,11 +24,11 @@ There is not one secrets problem but **five trust domains** smeared across files
 |---|---|---|---|---|
 | 1 | Infra | `PG*` / `APP_PG*`, OCI/deploy | env (local) / **OCI Vault** (prod) | `apps/prototype-description-service/.env`, `infra/oci/demo/.env` |
 | 2 | Service root-of-trust | `RECOGNITION_ADMIN_TOKEN` | env / **OCI Vault** | service `.env` |
-| 3 | **Tenant API keys** (plugin→service) | minted keys | **service DB via `/admin`** | *both* DB **and** static `RECOGNITION_ALLOWED_API_KEYS` env ← the drift |
+| 3 | **Tenant API keys** (plugin→service) | minted keys | **service DB via `/admin`** (prod already DB-only) | DB (prod) + `RECOGNITION_ALLOWED_API_KEYS` **dev-only bypass**, hard-blocked in prod (`recognition/config/security.py:103,114`) |
 | 4 | Human accounts | WP admin user/pass | WordPress user store (per site) | `infra/oci/demo/.env` (`acx-demo-admin`), LocalWP |
 | 5 | Test creds | `ACX_E2E_WP_ADMIN_*` | gitignored `.env.local` | `apps/prototype-wp-alt-context/.env.local` |
 
-**Root cause:** no documented source-of-truth per secret; domain #3 has *two* sources (env allowlist + DB) — the exact thing `/admin` exists to own. Plus a **dead root `.env`** and undocumented `.env.example`s.
+**Root cause:** no documented source-of-truth per secret. Domain #3 is **not** production drift — `RECOGNITION_ALLOWED_API_KEYS` is a **dev-only bypass** already blocked when `RECOGNITION_RUNTIME_MODE=production` (`recognition/config/security.py:103,114`; `api/main.py:127-130`), so in prod the DB via `/admin` is already the sole source. The real gaps are a **dead root `.env`**, undocumented `.env.example`s, no ownership map, and an *optional* decision on whether to keep the dev bypass at all.
 
 **Grounding (verified):**
 - `/admin` (`recognition/interface_adapters/http/routers/admin.py`) mints/revokes tenant API keys in the service DB; gated by `RECOGNITION_ADMIN_TOKEN` (header) or HTTP Basic (browser console) via `deps/admin_auth.py`.
@@ -56,13 +56,15 @@ Heuristics: *be a pessimist → smallest shippable cut*; *branch-by-abstraction*
 2. **Delete dead root `.env`.**
 3. **One documented `.env.example` per deployable** — each var annotated with domain + source + consumer.
 4. **Load-time validation (rg-008):** each service fails fast with a clear message on a missing *required* secret; no silent empty defaults.
-5. **Retire `RECOGNITION_ALLOWED_API_KEYS`** via expand→contract: confirm the DB-key path covers every live key → migrate the one active key into the DB via `/admin` → delete the env read + config field. Bootstrap stays clean: `RECOGNITION_ADMIN_TOKEN` mints the first key.
-6. **One onboarding command** (`make dev-setup`): copies examples, prompts for values.
+5. **Decide the fate of `RECOGNITION_ALLOWED_API_KEYS` (a dev-only bypass, not prod drift** — already blocked in prod per `recognition/config/security.py:103,114` and `api/main.py:127-130`**).** Choose: **(a) remove it** — devs/CI must mint a real key via `/admin`; costs local ergonomics but leaves one code path; or **(b) keep it, hard-gated to non-prod, documented as a dev bypass.** If (a): expand→contract — enumerate active DB keys via the `/admin` list / `api_key_repository`, grep the static-list consumers (`recognition/config/security.py:61` `dev_api_keys` default_factory + `api/main.py:127-130`), confirm no prod consumer, then delete the config field. Prod bootstrap is unaffected (`RECOGNITION_ADMIN_TOKEN` mints the first key). **Recommendation: (a)**, adding a `make dev-mint-key` helper to offset the ergonomics loss.
+6. **One onboarding command** (`make dev-setup`): copies examples, prompts for values, mints a dev key via `/admin` if (a) is chosen.
+7. **Document the other in-scope secret classes (doc-only — not relocated into app auth):** test creds (`ACX_E2E_WP_ADMIN_*`) — confirm `.env.local` is gitignored, ship `.env.local.example`; demo/human accounts (`WP_ADMIN_*`, `acx-demo-admin`) — record ownership (WordPress user store; demo-bootstrap-only) and confirm never committed. A human login ≠ a machine key, so consolidation here = documentation + gitignore verification, not merging them into the key system.
 
-*Success:* new dev runs one command; `grep -r RECOGNITION_ALLOWED_API_KEYS` = 0; every service errors clearly on a missing secret.
+*Success:* new dev runs one command; the allowlist decision is recorded and enacted; every service errors clearly on a missing secret; every secret class has a documented owner.
 
 ### Phase 2 — SecretProvider seam (branch-by-abstraction; pure refactor)
-- Introduce `SecretProvider.get_secret(name)` in the description-service (WP equivalent as needed); default `EnvSecretProvider`. Route **all** secret reads through it — no `os.getenv` for secrets outside the provider. Zero behavior change.
+- Introduce `SecretProvider.get_secret(name)` in the **description-service (Python) only**; default `EnvSecretProvider`. Route **all** service secret reads through it — no `os.getenv` for secrets outside the provider. Zero behavior change.
+- **The WP plugin is out of the seam/Vault path** — its tenant key lives in a WP option (`acx_recognition_api_key`, set via the Settings page / future provisioning), not fetched from Vault. Phase 2/3 do not touch the plugin.
 
 *Success:* the seam exists; Phase 3 can swap backends without touching consumers.
 
@@ -73,6 +75,12 @@ Heuristics: *be a pessimist → smallest shippable cut*; *branch-by-abstraction*
 - **Failure-mode decision:** Vault unreachable at boot → **fail-fast** (do not serve without secrets), surfaced explicitly.
 
 *Success:* prod boots and pulls secrets via instance principal; no plaintext on host; rotating a secret is a single Vault operation.
+
+## Testability (required in the per-phase task plans)
+
+- **Phase 1 — load-time validation (rg-008):** a startup test that a missing *required* secret aborts boot with a clear message (not a silent empty default).
+- **Phase 3 — Vault unreachable:** an out-of-spec failure-injection test (mocks replay only in-spec errors) — inject an unreachable Vault at boot and assert fail-fast + clear error + no partial serve.
+- **Phase 1 — allowlist retirement:** if option (a), a test that a request with a non-DB key is rejected in a prod-mode runtime (the bypass is gone).
 
 ## Not-doing (MVP boundary / YAGNI)
 
@@ -150,7 +158,7 @@ Separate **two distinct auth concerns** — they have opposite answers:
 
 ## Open questions / assumptions
 
-- **A1 (assumption):** exactly one live tenant key is in real use (the `/admin` list shows one active STANDARD key on tenant `…00aa`); Phase-1 allowlist retirement must first confirm no other consumer relies on the static env list. *Verify before contract step.*
+- **A1 (assumption):** exactly one live tenant key is in real use (the `/admin` list shows one active STANDARD key on tenant `…00aa`); Phase-1 allowlist retirement must first confirm no other consumer relies on the static env list. *Verify before the contract step via the `/admin` list + `api_key_repository`, and grep the static-list consumers at `recognition/config/security.py:61` and `api/main.py:127-130`.*
 - **A2 (assumption):** the prod/demo VM can be granted an OCI **dynamic group + instance-principal policy** to read the Vault secret compartment. *Confirm OCI IAM access before Phase 3.*
 - **Q1:** for prod, one Vault compartment shared across services, or per-service compartments? (affects blast radius + IAM policy granularity).
 - **Q2:** SOPS(age)-encrypted compose `.env` in git as an interim (Phase 1.5), or jump straight to Vault (Phase 3)?

@@ -68,6 +68,29 @@ The script prevents concurrent runs via `flock` when available, with a lock-dire
 
 The script will skip immediately if a previous apply is still in progress.
 
+## GPU burst host (acx_gpu_burst)
+
+- Provisioned **STOPPED** (`state = "STOPPED"`) so apply does not start A10 billing.
+- Placed on the **private subnet** (`10.0.2.0/24`) with `assign_public_ip = false` and **NAT gateway** egress for pulls/updates.
+- VLM port **8000** and **SSH 22** ingress are VCN-scoped (`10.0.0.0/16`); jump via `acx-backend`.
+- After apply, wire the description service:
+
+```bash
+terraform -chdir=infra/oci output -raw gpu_endpoint_url   # → ACX_GPU_ENDPOINT_URL
+terraform -chdir=infra/oci output -raw gpu_instance_id    # → idle reaper
+```
+
+Idle reaper (decision → fence → OCI STOP):
+
+```bash
+python -m infra.oci.gpu_lifecycle \
+  --instance-id "$(terraform -chdir=infra/oci output -raw gpu_instance_id)" \
+  --idle-seconds 300 \
+  --load-json /run/acx/describe-load.json
+```
+
+See `docs/tasks/vlm/VLM-3-gpu-detailed-tier-decision-memo.md` § Activation preconditions.
+
 ## Teardown
 
 To destroy the infrastructure and stop incurring costs (or free up Always Free slots):

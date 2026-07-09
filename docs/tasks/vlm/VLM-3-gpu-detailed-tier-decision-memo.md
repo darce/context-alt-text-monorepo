@@ -44,3 +44,26 @@ CPU to GPU speedup: provisional target is 207 s/img divided by measured GPU s/im
 ## License verdict
 
 Provisional pass for private in-tenancy evaluation. Final license verdict is blocked on the exact downloaded artifact license for Qwen3-VL-30B-A3B-Instruct Q4 GGUF and must be rechecked before public demo distribution.
+
+## Activation preconditions
+
+Do not treat `terraform apply` alone as tier activation. Before setting the service to the GPU detailed tier, all of the following must hold:
+
+1. **Infra-produced endpoint URL.** After apply, read:
+   - `terraform -chdir=infra/oci output -raw gpu_endpoint_url` → set as `ACX_GPU_ENDPOINT_URL` on the description service (shape `http://<private-ip>:8000`).
+   - `terraform -chdir=infra/oci output -raw gpu_private_ip` is the VCN-private address; `gpu_instance_id` feeds the idle reaper.
+   - The service allowlist (`deps._is_private_gpu_endpoint`) accepts private IP literals and the `acx-gpu-burst` hostname alias — not public endpoints and not bare `*.oraclevcn.com` FQDNs unless they resolve to a private IP already allowlisted as a literal.
+2. **Adapter env contract.** `ACX_DESCRIPTION_ADAPTER=gpu_qwen30b` plus a valid private `ACX_GPU_ENDPOINT_URL`. Missing or public endpoint fails closed (503) before image bytes leave the service.
+3. **GPU instance start.** Terraform provisions `acx_gpu_burst` in `state = "STOPPED"` (no A10 compute bill at apply). Start on demand (`oci compute instance action --action START` or console) before serving; the idle reaper STOPs when the describe job store reports `queue_depth=0` and `in_flight=0` for the configured idle window.
+4. **Idle reaper wired.** Run the out-of-band actuator periodically (cron/systemd timer on the backend host or operator workstation with OCI CLI):
+
+   ```bash
+   python -m infra.oci.gpu_lifecycle \
+     --instance-id "$(terraform -chdir=infra/oci output -raw gpu_instance_id)" \
+     --idle-seconds 300 \
+     --load-json /run/acx/describe-load.json \
+     --fence-delay-seconds 1
+   ```
+
+   Load JSON must mirror `InMemoryDescribeJobStore.load_snapshot()`: `{"queue_depth": N, "in_flight": M}`. The reaper re-samples after a fence delay and cancels STOP if work appeared (decision→STOP fencing).
+5. **Bake-off evidence.** Live OCI bake-off replaces pending REPORT stubs and updates the spike artifact before promoting this memo from provisional to final (see Decision above).

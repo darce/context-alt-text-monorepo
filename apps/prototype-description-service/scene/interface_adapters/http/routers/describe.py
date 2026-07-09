@@ -63,13 +63,17 @@ _logger = logging.getLogger(__name__)
 
 _IMAGE_KEY_PREFIX = "image_"
 _DEFAULT_MAX_JOBS = 1000
+# Independent of job-count capacity: bound resident image payload so a burst of
+# max-size uploads hits 503 before process OOM (VLMRP-S4-07). Count-cap alone
+# still allows ~max_jobs * max_image_bytes (~25 GiB at defaults).
+_MAX_RETAINED_IMAGE_SLOTS = 8
 
 
 def _async_job_store() -> InMemoryDescribeJobStore:
     settings = DescriptionSettings()
     return InMemoryDescribeJobStore(
         max_jobs=_DEFAULT_MAX_JOBS,
-        max_retained_image_bytes=_DEFAULT_MAX_JOBS * settings.max_description_image_bytes,
+        max_retained_image_bytes=_MAX_RETAINED_IMAGE_SLOTS * settings.max_description_image_bytes,
     )
 
 

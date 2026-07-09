@@ -42,7 +42,7 @@ def test_gpu_remote_adapter_posts_bakeoff_aligned_prompt_and_returns_adapter_res
         endpoint_url="http://gpu.test:8000",
         model_id="Qwen3-VL-30B-A3B-Instruct",
         model_version="Q4_K_M",
-        prompt_or_task_version="2",
+        prompt_or_task_version="3",
         api_key="gpu-secret",
         transport=httpx.MockTransport(handler),
     )
@@ -52,7 +52,7 @@ def test_gpu_remote_adapter_posts_bakeoff_aligned_prompt_and_returns_adapter_res
 
     assert isinstance(result, AdapterResult)
     assert adapter.kind is DescriptionAdapterKind.GPU
-    assert adapter.prompt_or_task_version == "2"
+    assert adapter.prompt_or_task_version == "3"
     assert result.alt_text_draft == "A detailed GPU caption."
     assert result.caption == "A detailed GPU caption."
     assert result.objects == ()
@@ -64,13 +64,15 @@ def test_gpu_remote_adapter_posts_bakeoff_aligned_prompt_and_returns_adapter_res
     assert payload["model"] == "Qwen3-VL-30B-A3B-Instruct"
     messages = payload["messages"]
     assert messages[0]["role"] == "system"
+    assert "<<<CONTEXT>>>" in messages[0]["content"]
     assert "Never name or guess" in messages[0]["content"]
     user_content = messages[1]["content"]
     user_text = next(part["text"] for part in user_content if part["type"] == "text")
-    assert "Context block:" in user_text
-    assert "```" in user_text
-    assert "- caption: Launch day" in user_text
-    assert "/no_think" in user_text
+    assert user_text.index("/no_think") < user_text.index("<<<CONTEXT>>>")
+    assert "Context block (editorial metadata only):" in user_text
+    assert "<<<CONTEXT>>>" in user_text
+    assert "<<<END_CONTEXT>>>" in user_text
+    assert 'caption: "Launch day"' in user_text
     assert "data:image/png;base64" in json.dumps(user_content)
 
 

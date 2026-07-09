@@ -72,3 +72,29 @@ def test_job_store_byte_budget_rejects_oversized_enqueue() -> None:
 
     with pytest.raises(RuntimeError, match="byte budget exceeded"):
         store.enqueue(tenant_id=uuid.uuid4(), media_id=2, image_bytes=b"123456", context=None)
+
+
+def test_job_store_byte_budget_engages_before_count_cap() -> None:
+    """S4-07: budget must be lower than max_jobs * image_size or it never fires."""
+    store = InMemoryDescribeJobStore(max_jobs=100, max_retained_image_bytes=15)
+    store.enqueue(tenant_id=uuid.uuid4(), media_id=1, image_bytes=b"1234567890", context=None)
+    store.enqueue(tenant_id=uuid.uuid4(), media_id=2, image_bytes=b"12345", context=None)
+
+    with pytest.raises(RuntimeError, match="byte budget exceeded"):
+        store.enqueue(tenant_id=uuid.uuid4(), media_id=3, image_bytes=b"1", context=None)
+
+
+def test_async_route_store_budget_is_slot_based_not_count_times_max() -> None:
+    """Production wiring must not set retained_bytes = max_jobs * max_image (dead budget)."""
+    from scene.interface_adapters.http.routers import describe as describe_module
+
+    assert describe_module._MAX_RETAINED_IMAGE_SLOTS < describe_module._DEFAULT_MAX_JOBS
+    settings_max = 25 * 1024 * 1024
+    budget = describe_module._MAX_RETAINED_IMAGE_SLOTS * settings_max
+    assert budget == 8 * settings_max
+    assert budget < describe_module._DEFAULT_MAX_JOBS * settings_max
+    store = InMemoryDescribeJobStore(
+        max_jobs=describe_module._DEFAULT_MAX_JOBS,
+        max_retained_image_bytes=budget,
+    )
+    assert store._max_retained_image_bytes == budget

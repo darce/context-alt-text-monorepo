@@ -10,7 +10,7 @@ Proposed
 
 ## Context
 
-The product shape is settled: media lives in the local WordPress plugin; **new** recognition and alt-text inference is sent over the wire to a **single shared hosted recognition service** (`altcontext.com`) running on one GPU box, with per-customer isolation enforced by **Postgres RLS** at the database level. Customers do not run their own recognition hardware.
+The product shape is settled: media lives in the local WordPress plugin; **new** recognition and alt-text inference is sent over the wire to a **single shared hosted recognition service** (`altcontext.com`) — one backend for all customers, GPU-bound per the E14 target (the live OCI instance is A1.Flex / ARM CPU today) — with per-customer isolation enforced by **Postgres RLS** at the database level. Customers do not run their own recognition hardware.
 
 The recognition service (`apps/prototype-description-service`) was built **local-first**: it can run on-device (dev/host machine, CPU InsightFace models) *and* against a hosted service, selected by a plugin-side `local` / `service` mode. That dual mode, combined with a tenant identity **derived from the WordPress site URL**, produces recurring operational confusion — most visibly the "tenant mismatch → Unreachable" trap where a valid key is rejected because the plugin's *claimed* (URL-derived) tenant does not match the key's *bound* tenant.
 
@@ -22,7 +22,7 @@ This ADR resolves the design question: **retire on-device recognition, collapse 
 
 > Established by product-owner clarification (2026-07-09). Non-negotiable.
 
-- **Single shared backend.** One GPU box (`altcontext.com`) serves all customers; isolation is Postgres RLS, not per-customer servers or hardware. There is no customer-run recognition server.
+- **Single shared backend.** One backend (`altcontext.com`) serves all customers — GPU-bound per the E14 target; the live OCI instance is A1.Flex / ARM (CPU) today. Isolation is Postgres RLS, not per-customer servers or hardware. There is no customer-run recognition server.
 - **No local recognition models.** On-device inference is retired entirely.
 - **Plugin sovereignty = offline display.** Users MUST always be able to view their media, already-computed identity clusters, and already-inferred alt-text captions **with no remote connection**. Only *new* recognition/inference requires the remote service. Remote-unreachable must degrade to "cannot compute new," never "cannot view existing."
 
@@ -55,10 +55,10 @@ Retire on-device recognition. Collapse the plugin to a **single remote path** ag
 ### Chosen design rules
 
 1. **Remote-only recognition.** All new recognition/inference targets the single shared hosted service (`altcontext.com`). Remove the on-device recognition runtime, local model provisioning, and the local recognition-Postgres product path. Delete-over-flag (greenfield policy) — no `local`/`service` mode branches remain.
-2. **Single shared, RLS-isolated backend.** The service endpoint is the hosted service; it is **not** a customer-facing "choose your server" control. Isolation is Postgres RLS per tenant. Internal dev/staging/eval endpoints may remain as **advanced/constant** overrides (`ACX_RECOGNITION_BASE_URL`), never as a user-facing mode.
+2. **Single shared, RLS-isolated backend.** The service endpoint is the hosted service; it is **not** a customer-facing "choose your server" control. Isolation is Postgres RLS per tenant. Internal dev/staging/eval endpoints may remain as **advanced/constant** overrides (the `ACX_RECOGNITION_URL` constant or the `acx_recognition_base_url` filter — see `class-recognition-endpoint-resolver.php:25`), never as a user-facing mode.
 3. **Key-driven tenant adoption.** The plugin adopts the tenant **bound to its API key** (via `GET /recognition/tenant/whoami`) at key-save time, and persists it. Derive-from-site-URL is dropped as the tenant *source of truth*. This eliminates the tenant-mismatch class: paste key → plugin reads the key's tenant → done. The plugin must not send a stale, self-derived `X-Tenant-ID` that can 403 the probe before adoption.
 4. **Offline sovereignty for display.** Rendering media, computed clusters, and inferred captions reads **only** from the WP sovereign mirror and MUST NOT depend on remote reachability. Remote calls are required solely to compute *new* recognition/inference. A down remote surface disables "analyze new," never "view existing."
-5. **Remote-only settings UI + identity display.** Remove the local/hosted service toggle; show a single hosted-service view. Add **Key ID** and **Tenant ID** (read-only, copyable, sourced from `/tenant/whoami`) to the settings page so clients can self-identify for support.
+5. **Remote-only settings UI + identity display.** Remove the local/hosted service toggle; show a single hosted-service view. Add **Key ID** and **Tenant ID** (read-only, copyable, sourced from `/recognition/tenant/whoami`) to the settings page so clients can self-identify for support.
 
 ### Target outcome
 
@@ -71,7 +71,7 @@ Retire on-device recognition. Collapse the plugin to a **single remote path** ag
 
 ### GPU-remote dominates on-device
 
-CPU InsightFace/VLM inference on the WordPress host is slower and lower quality than the shared GPU backend. Post-GPU there is no scenario where on-device inference is the right choice, so the second code path is pure liability.
+CPU InsightFace/VLM inference on the WordPress host is slower and lower quality than the shared backend (and dramatically so once the backend is GPU-bound per the E14 target). There is no scenario where on-device inference is the right choice, so the second code path is pure liability.
 
 ### One path deletes three defects at once
 
@@ -121,18 +121,18 @@ Rejected. It violates the hard offline-display constraint: users must always see
 ### Guardrails for the follow-on implementation task
 
 - **Never gate display on remote reachability.** Media/cluster/caption reads come from the sovereign mirror only; those code paths must make no network call. Add a test that renders the roster/clusters/captions with the remote endpoint stubbed unreachable.
-- **Tenant source of truth = the key's tenant via `/tenant/whoami`.** Remove derive-from-URL as authority. Do not send a self-derived `X-Tenant-ID` that can 403 a probe; send only the adopted tenant, or omit the header and let the key's claim stand.
+- **Tenant source of truth = the key's tenant via `/recognition/tenant/whoami`.** Remove derive-from-URL as authority. Do not send a self-derived `X-Tenant-ID` that can 403 a probe; send only the adopted tenant, or omit the header and let the key's claim stand.
 - **Delete-over-flag.** Remove `local`-mode branches wholesale, not behind a feature flag (greenfield policy — no production users/data to preserve).
-- **Settings UI:** single hosted-service view; no local/hosted toggle; Key ID + Tenant ID read-only + copyable, sourced from `/tenant/whoami`.
+- **Settings UI:** single hosted-service view; no local/hosted toggle; Key ID + Tenant ID read-only + copyable, sourced from `/recognition/tenant/whoami`.
 - **Fix or moot the label:** surface the real probe outcome (`invalid_key`, `tenant_mismatch`, `rate_limited`, …) instead of collapsing to `Unreachable`. Key-driven adoption should make `tenant_mismatch` unreachable in practice, but the label must still be honest for the remaining outcomes.
 
 ## Implementation Plan (follow-on task, derived from this ADR)
 
 > Sliced for the derived task plan; not tracked here.
 
-1. **Key-driven tenant adoption.** Adopt the key's tenant via `/tenant/whoami` on key save; drop derive-from-URL authority; stop sending the stale `X-Tenant-ID`; remove the pairing deadlock.
+1. **Key-driven tenant adoption.** Adopt the key's tenant via `/recognition/tenant/whoami` on key save; drop derive-from-URL authority; stop sending the stale `X-Tenant-ID`; remove the pairing deadlock.
 2. **Settings UI → remote-only + identity.** Remove the local/hosted toggle; single hosted-service view; add read-only, copyable **Key ID** + **Tenant ID**; fix the `Unreachable` label to reflect the real outcome.
-3. **Remove on-device recognition.** Delete local-mode code paths in the plugin and the local recognition runtime / local-Postgres product path in the service.
+3. **Remove on-device recognition.** Delete the plugin's `local`-mode code paths (endpoint resolver `local` branch, `Admin::get_recognition_source()` local case, the `local` health-probe branch). On the service side, the derived task plan must first **inventory then remove** the local-only product surfaces — candidates to confirm against the tree: the local Postgres bring-up (`apps/prototype-description-service/docker-compose.db.yml`), the `make admin-dev` / `make dev-ready` local-run flow, local InsightFace model provisioning, and any local-only worker-daemon path. Keep the recognition service itself deployable to OCI; remove only the "run it on the WordPress/dev host as a product mode" surfaces.
 4. **Offline-display proof.** Add tests asserting media/clusters/captions render with the remote surface unreachable.
 
 ## References

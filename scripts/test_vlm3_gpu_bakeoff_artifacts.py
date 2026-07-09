@@ -34,16 +34,34 @@ def test_gpu_bakeoff_candidate_artifact_uses_existing_harness_endpoint_commands(
         if candidate["reasoning_tuned"]:
             assert "--no-think" in command
 
+    # S2-06: Kimi-VL-A3B-2506 is the Thinking-2506 refresh, not non-thinking Instruct.
+    kimi = next(c for c in artifact["candidates"] if c["model_id"] == "Kimi-VL-A3B-2506")
+    assert kimi["reasoning_tuned"] is True
+    assert "--no-think" in kimi["command"]
+    notes = kimi.get("notes", "")
+    assert "Thinking" in notes or "thinking" in notes
+
 
 def test_gpu_bakeoff_report_placeholders_are_marked_pending_live_gpu() -> None:
+    """Pending stubs must be distinguishable from scored acx-eval/v1 REPORTs (S2-02).
+
+    Real REPORTs carry kind=report plus counts/provenance/per_image. Placeholders
+    keep the schema family for discoverability but use kind=pending_report and an
+    explicit pending status so consumers never treat them as measured evidence.
+    """
     index = json.loads((VLM_DOCS / "VLM-3-gpu-bakeoff-candidates-2026-07-08.json").read_text())
+    real_report_keys = {"counts", "provenance", "per_image", "caption", "faces", "failures"}
     for candidate in index["candidates"]:
         report_path = VLM_DOCS / candidate["report_artifact"]
         report = json.loads(report_path.read_text())
         assert report["schema"] == "acx-eval/v1"
+        assert report["kind"] == "pending_report"
+        assert report["kind"] != "report"
         assert report["task_ref"] == "VLM-3"
         assert report["model_id"] == candidate["model_id"]
         assert report["status"] == "pending_live_gpu_bakeoff"
+        assert str(report["status"]).startswith("pending")
+        assert real_report_keys.isdisjoint(report.keys())
 
 
 def _expected_fit(estimated_gb: float, usable_budget_gb: float) -> str:

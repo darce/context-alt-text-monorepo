@@ -43,8 +43,9 @@
       "a10_24gb_fit": "headroom",
       "estimated_model_gb": 10,
       "license": "MIT",
-      "reasoning_tuned": false,
-      "command": "ACX_EVAL_LIVE=1 GOLDEN_IMAGES_DIR=<golden> uv run python -m scripts.eval_harness.bakeoff --endpoint http://acx-gpu-burst:8000 --model-id Kimi-VL-A3B-2506 --model-version Q4_GGUF --out ../../../docs/tasks/vlm/VLM-3-bakeoff-Kimi-VL-A3B-2506-run-record.json",
+      "reasoning_tuned": true,
+      "notes": "HF id Kimi-VL-A3B-2506 is the Thinking-2506 refresh (Kimi-VL-A3B-Thinking-2506), not the original non-thinking Kimi-VL-A3B-Instruct. Bake-off must pass --no-think so reasoning tokens do not inflate latency or empty captions (VLM-2B MiniCPM failure mode). Download/serve the Thinking-2506 checkpoint under this model_id.",
+      "command": "ACX_EVAL_LIVE=1 GOLDEN_IMAGES_DIR=<golden> uv run python -m scripts.eval_harness.bakeoff --endpoint http://acx-gpu-burst:8000 --model-id Kimi-VL-A3B-2506 --model-version Q4_GGUF --no-think --out ../../../docs/tasks/vlm/VLM-3-bakeoff-Kimi-VL-A3B-2506-run-record.json",
       "report_artifact": "VLM-3-bakeoff-Kimi-VL-A3B-2506-report.json"
     },
     {

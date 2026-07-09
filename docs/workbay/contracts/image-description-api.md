@@ -55,6 +55,11 @@ unavoidable so future adapters never change the wire:
   `provisional_cpu`; GPU profile results use `final_gpu`. The async path may
   supersede provisional rows later with monotonically increasing
   `result_generation`.
+- **Term collision (DOM-03):** response field `tier` is the **compute** tier
+  (`provisional_cpu` | `final_gpu`). It is unrelated to the WordPress plugin
+  billing option `acx_tier` (`free` | `pro` | … in `trait-batch-limits.php`).
+  WP proxy consumers must not conflate the two; the describe proxy passes
+  response `tier` through as wire provenance only.
 - **Hosted providers are opt-in and fail-closed (E20-11).** A hosted profile
   (e.g. `ACX_DESCRIPTION_ADAPTER=hosted_gpt4o`) resolves to a fail-closed
   unavailable adapter (503) unless the server sets

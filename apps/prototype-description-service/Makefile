@@ -1,4 +1,4 @@
-.PHONY: help test lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready logs-tail logs-rotate logs-clean logs-archive worker-daemon db-reset reset FORCE
+.PHONY: help test lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready logs-tail logs-rotate logs-clean logs-archive worker-daemon db-reset reset admin-dev admin-test admin-open admin-token admin-status admin-down admin-oci-serve admin-oci FORCE
 
 UV := VIRTUAL_ENV= uv
 UV_RUN := $(UV) run --locked --extra dev
@@ -21,6 +21,14 @@ help:
 	@echo "  make clean      - Remove cache and build files"
 	@echo "  make reset      - Drop and recreate the local database (alias: db-reset)"
 	@echo "  make mcp        - Start the MCP server for AI agents (monorepo-wide)"
+	@echo ""
+	@echo "Admin console (local /admin tenant management):"
+	@echo "  make admin-dev    - Enable admin env, start service, open /admin, print token"
+	@echo "  make admin-test   - Run the /admin JSON smoke harness (tenant/key lifecycle)"
+	@echo "  make admin-token  - Print the current admin token"
+	@echo "  make admin-open   - Open the /admin console in a browser"
+	@echo "  make admin-status - Show service/admin reachability state"
+	@echo "  make admin-down   - Stop the local service"
 	@echo "  make lane-*     - Worktree lane commands (forwarded to root Makefile; run 'make help' from repo root for full list)"
 	@echo "  make worker-daemon* - Worker daemon controls (run/status/stop/resume/tail) forwarded to root Makefile"
 	@echo ""
@@ -95,6 +103,52 @@ serve: dev-ready
 # Stop development server
 stop:
 	@./scripts/start_prototype_local.sh stop
+
+# =============================================================================
+# Admin console (local /admin tenant management)
+# =============================================================================
+# Wraps scripts/admin_dev.sh. `admin-dev` enables the env-gated /admin router in
+# .env (RECOGNITION_ADMIN_ENABLED + a generated RECOGNITION_ADMIN_TOKEN), starts
+# the service, opens the console, and prints the token. `admin-test` exercises
+# the JSON admin API end to end.
+
+admin-dev:
+	@./scripts/admin_dev.sh up
+
+admin-test:
+	@./scripts/admin_dev.sh test
+
+admin-open:
+	@./scripts/admin_dev.sh open
+
+admin-token:
+	@./scripts/admin_dev.sh token
+
+admin-status:
+	@./scripts/admin_dev.sh status
+
+admin-down:
+	@./scripts/admin_dev.sh down
+
+# --- OCI /admin over the tailnet (no SSH tunnel) ------------------------------
+# The /admin console is 404'd on the public api.altcontext.com vhost by design;
+# it is reachable only over the tailnet. `admin-oci-serve` publishes the VM
+# loopback admin port over the tailnet (one-time; requires the admin compose
+# overlay layered on the VM and MagicDNS+HTTPS enabled in the tailnet console).
+# `admin-oci` opens the tailnet console in a local browser. Both honour OCI_HOST
+# and OCI_USER (same env contract as scripts/deploy/*).
+OCI_HOST ?= acx-backend.tail1a44b8.ts.net
+OCI_USER ?= ubuntu
+
+admin-oci-serve:
+	@echo "Publishing 127.0.0.1:8000 over the tailnet on $(OCI_HOST) ..."
+	@ssh $(OCI_USER)@$(OCI_HOST) 'sudo tailscale serve --bg --https=443 http://127.0.0.1:8000 && sudo tailscale serve status'
+
+admin-oci:
+	@echo "Opening https://$(OCI_HOST)/admin/ (tailnet; auth with RECOGNITION_ADMIN_TOKEN) ..."
+	@open "https://$(OCI_HOST)/admin/" 2>/dev/null \
+		|| xdg-open "https://$(OCI_HOST)/admin/" 2>/dev/null \
+		|| echo "Browse to https://$(OCI_HOST)/admin/"
 
 # Reset local database (db-reset is an alias)
 reset db-reset:

@@ -182,6 +182,36 @@ make clean
 make help
 ```
 
+### Admin console (local `/admin` tenant management)
+
+The env-gated operator `/admin` console (create tenants, mint/revoke API keys)
+is off by default. These targets wrap `scripts/admin_dev.sh` to bring it up
+locally and exercise it — no Tailscale or compose overlay needed (that path is
+prod-only; see [the runbook](../../docs/runbooks/admin-tenant-keys.md)).
+
+```bash
+# Enable admin in .env (sets RECOGNITION_ADMIN_ENABLED=true + generates a
+# >=32-char RECOGNITION_ADMIN_TOKEN if missing), start the service, wait for
+# /admin, open the browser console, and print the token.
+make admin-dev
+
+# JSON smoke harness against the admin API:
+# create tenant -> re-upsert -> mint key -> list -> revoke -> idempotent re-revoke,
+# plus an unauthenticated-request-is-401 check. Exits non-zero on any failure.
+make admin-test
+
+make admin-token    # print the current admin token (stdout)
+make admin-open     # open the /admin console in a browser
+make admin-status   # print reachability: down | up_no_admin | up_admin
+make admin-down     # stop the local service
+```
+
+The console is served at **`http://localhost:8000/admin/`** (trailing slash).
+Authenticate with HTTP Basic: **username = anything, password = the admin
+token** (`make admin-token`). Programmatic callers send `X-Admin-Token: <token>`
+instead. `admin_dev.sh` honors `PORT`, `ADMIN_DEV_HOST`,
+`ADMIN_DEV_READY_TIMEOUT`, and `ADMIN_DEV_NO_OPEN=1` (skip auto-open).
+
 ### Available health endpoints
 
 - `GET /health` — Liveness probe (PR-01). No I/O; returns `{status: "ok", timestamp}` as long as the process can respond. Used by the Caddy active probe on a 10s interval.

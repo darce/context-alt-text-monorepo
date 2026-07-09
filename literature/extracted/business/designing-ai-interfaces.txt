@@ -1,0 +1,2397 @@
+
+
+===== FILE: OEBPS/ch01.html =====
+
+Chapter 1. Computation: Designing for the Processing and Generation Phase
+
+ 
+ 
+
+A Note for Early Release Readers
+
+With Early Release ebooks, you get books in their earliest form—the author’s raw and unedited content as they write—so you can take advantage of these technologies long before the official release of these titles.
+
+This will be the 4th chapter of the final book. Please note that the GitHub repo will be made active later on.
+
+If you’d like to be actively involved in reviewing and commenting on this draft, please reach out to the editor at ccollins@oreilly.com.
+
+ 
+On July 20, 1969, during the final descent of Apollo 11 toward the Moon, a warning alarm lit up the astronauts’ display: 1202. 
+
+ 
+No one in the cockpit knew what it meant. The computer wasn’t crashing, but what it was doing wasn’t clear either. For a few tense moments, everything hung in the balance. Mission Control scrambled to interpret the message. The world held its breath. And in that gap was the quiet power of a system doing exactly what it was designed to do, even though it looked like failure.
+
+ 
+The 1202 alarm turned out to be a low-priority overload warning. The onboard computer was shedding nonessential tasks to stay focused on landing-critical ones. It was an elegant act of triage, not a malfunction. But to the astronauts, it looked like a black box glitch. They had no way to see how the system was allocating its computational resources, or why some functions were dropped while others were preserved. The system was working under strain, but because that logic was invisible, it became a source of confusion and near-abort.
+
+ 
+Encountering an error in AI feels much the same. Many parts of the process feel confusing, locked behind occult signifiers, much like the 1202 alarm. Understanding this middle layer - how AI systems process, triage, and generate outputs - is essential for building interfaces that balance the abilities of AI with the real human needs of its users.
+
+ 
+Once the input is submitted, the user expects an answer, but before an AI can respond, it has to compute. That might sound obvious, but in practice, this middle layer (sometimes referred to as inference) is the least visible, least understood part of the AI interaction pipeline. Designers may think deeply about inputs (what users say or do) and outputs (what the system shows in return), but we rarely get the opportunity to learn and consider the invisible work that happens between the two. And yet, this is where meaning is made. 
+
+ 
+The computation stage involves transforming an ambiguous prompt into a defined task. Here, individual units of data are decoded, a series of actions is established, and ultimately, the desired output is produced. This chapter is meant to give designers a working understanding of computation—how generative systems process input, make decisions, and turn prompts into outputs, even when the process isn’t fully observable. In short, why did the AI give that answer? Multiple factors are at play in how the output is shaped, including the possibility of a number of errors invisible to the user. By understanding this middle layer, designers can better anticipate these failure modes, support smarter user feedback, and ultimately design interfaces that feel more responsive and intelligible.
+
+ 
+Hopefully by the end of this chapter you will be able to understand in broad terms what’s happening under the hood, so that you can use the right language to communicate with engineers and interrogate the process more thoroughly. To begin with, knowing a few key terms will be helpful:
+
+ 
+ Tokenization
+ 
+ 
+The process of breaking text input into smaller units, called tokens, that the model can understand: words, subwords, or characters. These tokens are mapped to numeric identifiers that the model processes during inference. Figure 1-1 shows some text broken into tokens.
+
+ 
+
+ 
+ 
+Figure 1-1. OpenAI’s Tokenizer tool demonstrates how an input might be tokenized by a language model.
+
+ 
+
+ 
+ Context window
+ 
+ 
+The maximum number of tokens a model can process at once. This affects how much information from the conversation or input can be considered during generation. 
+
+ 
+ Latent space
+ 
+ 
+A compressed, multidimensional representation of data (for example, meaning, structure, or visual form) used internally by models to calculate similarities and generate outputs.
+
+ 
+ Inference 
+ 
+ 
+The act of running a trained model on new input to generate an output. Inference is what happens when a model responds to a prompt or request.
+
+ 
+ Multimodal models
+ 
+ 
+Systems that work with multiple types of data, such as combining images with text, audio with video, or allowing interaction across different media.
+
+ 
+ Routing
+ 
+ 
+The process of determining which models, tools, or steps are used to fulfill a request. Routing logic may involve classification, heuristics, or learned decision trees.
+
+ 
+ RAG (retrieval augmented generation)
+ 
+A technique that enables systems to search external knowledge sources before generating responses, combining retrieved information with the model’s internal knowledge.
+
+ Agentic workflows
+ 
+ 
+Multi-step processes where AI systems plan, execute, and monitor complex tasks autonomously, often involving tool use and decision-making across extended timeframes.
+
+ 
+ Model switching 
+ 
+ 
+The computational process of selecting different specialized models or configurations based on task requirements, user preferences, or performance optimization.
+
+ 
+ 
+ 
+
+ 
+The Computation Pipeline: From Input to Output
+
+ 
+Understanding the computational pipeline matters for designers, because it explains much of what users experience but can’t see: why some requests take longer than others, why similar prompts sometimes yield different results, and why certain combinations of tasks occasionally produce unexpected outputs. When you understand how AI systems actually process information, you can co-create interfaces alongside engineers that work with these realities rather than against them.
+
+ 
+Once a user submits a prompt, uploads a file, or clicks a button, a cascade of processes begins, most of which are invisible to the user and may be opaque even to the designer. This computational work happens in three main steps: 
+
+ 
+ 
+
+ 
+Input processing and preparation: Processing the input into a format the system can understand
+
+ 
+
+ 
+
+ 
+Routing: Routing the request to appropriate models or tools
+
+ 
+
+ 
+
+ 
+Generation and inference: Generating the response through inference
+
+ 
+
+ 
+ 
+Each step involves complex decisions that shape the final output users receive.
+
+ 
+
+ 
+Step 1: Input Processing and Preparation
+
+ 
+The first step begins even before the model sees the user’s request. Every input undergoes preprocessing that can dramatically affect the final output. We often assume that the text we write is passed to the model exactly as-is, but in practice, it’s almost never that simple. For text-based systems like LLMs, the first technical step is tokenization: splitting input into discrete units the model can process. The sentence Summarize the Q2 earnings call might be broken down into tokens like [Summ, arize, the (with a space before it—more on that soon), Q, 2, earnings, call, .]. These subwords are then mapped to numbers, forming a sequence the model understands.
+
+ 
+It’s this process that takes human language and maps it into a machine-readable format the model can take action on. When you type text into an AI system, the model can’t actually read those words the way humans do. LLMs are fundamentally mathematical systems that work with numbers, not text, so every piece of human language must be converted into numerical format before any processing can begin.
+
+ 
+You might wonder why systems don’t simply assign each word a unique number: Summarize equals 1, the equals 2, and so forth. The challenge is vocabulary size and flexibility. English contains hundreds of thousands of words, plus proper nouns, technical terms, slang, typos, and words from other languages. Creating a fixed mapping for every possible word would be impossibly unwieldy and inflexible. More critically, languages change, and word-level tokenization couldn’t handle new or rare terms. If a model was trained before the words ChatGPT or blockchain existed, it would have no way to process those words—they’d be completely outside its vocabulary.
+
+ 
+Instead, modern systems use subword tokenization, breaking words into smaller, more common pieces that can be recombined to form larger concepts. Summarize becomes [Summ, arize]—two components that the model has encountered in many other contexts. This approach is powerful because Summ appears in summary, summation, and summit, while arize appears in summarize, polarize, and familiarize. In a process called vector embedding, AI systems learn that these subword pieces carry semantic meaning, enabling them to understand new combinations they haven’t explicitly seen before.
+
+ 
+Each token gets mapped to a unique numeric identifier called a token ID: Summ might become 15,234, arize becomes 8,567, the becomes 279 (note the space before the, which is significant), Q (with the space) becomes 1,456, and so on. Your original sentence transforms into a sequence like [15234, 8567, 279, 1456, 17, 9834, 2156, 13]. 
+
+ 
+
+ 
+Why Formatting Affects Tokenization
+
+ 
+Modern tokenizers preserve formatting differences as distinct tokens, including spaces, capitalization, and punctuation. Consider that [Design], [design], and [ design] are three completely different token sequences to the model. This is because the model learns patterns from the statistical relationships between tokens during training, which means every formatting difference creates distinct learned associations. The model builds its understanding by recognizing which tokens tend to follow other tokens in its training data, and the resulting outcome means that formatting details directly influence what the model predicts should come next.
+
+ 
+This has profound implications for model behavior. When a model encounters [Design] at the start of a sentence, it has learned different continuation patterns than when it sees [design] mid-sentence or [ design] with a leading space. Each variant was associated with different contexts during training: proper nouns, common nouns, or indented text respectively.
+
+ 
+Without preserving these formatting distinctions as separate tokens, the model would lose crucial contextual information. It couldn’t learn that capitalized words often begin sentences, that specific punctuation marks signal questions versus statements, or that spacing patterns indicate code blocks versus prose. Every formatting element that gets preserved as distinct tokens becomes a signal the model can use to generate more appropriate and contextually accurate responses.
+
+ 
+
+ 
+But these token IDs are just the first step. The real magic happens when each token ID gets transformed into a vector embedding, a list of hundreds or thousands of decimal numbers that capture the token’s meaning as it semantically relates to other tokens. Think of it like this: instead of just being item #5132 in a catalog, the token Summ becomes a coordinate in a vast multidimensional space, something like [0.213, 21.213, 0.0015, … ]. These vectors can be thousands of dimensions - for example, ChatGPT’s largest embedding model turns tokens into a 3,072 dimensional space. 
+
+ 
+To understand how this works, think about RGB color space, something designers work with every day. A color like coral might be represented as [255, 127, 80], placing it in a specific location in 3D space. Colors that look similar, like coral and salmon [250, 128, 114], end up near each other in this space. You can measure the mathematical distance between any two colors to determine how similar they are. Now imagine if instead of just three dimensions (red, green, blue), you had 3,072 dimensions to capture meaning. Just as RGB lets us represent millions of colors through three numbers, these high-dimensional embeddings let AI represent the subtle shades of meaning between words. Summ might be close to brief in some dimensions (they both relate to shortening), but far apart in others (one’s a word fragment, the other’s a complete word). The model learns to navigate this vast space, finding tokens that are semantically nearby when it needs to understand context or generate appropriate responses.
+
+ 
+This transformation is crucial because it lets the AI understand relationships between words. In this vector space, Summ (from summarize) ends up geometrically close to related concepts like brief, condense, or synopsis. The model has learned these positions through training, discovering that words used in similar contexts should occupy nearby regions of this mathematical space. It’s this spatial representation that allows AI to work with language meaningfully - not just as arbitrary ID numbers, but as concepts with rich relationships to each other.
+
+ 
+
+ 
+Images
+
+ 
+A somewhat similar process takes place for non-text inputs. However, to understand how images become vectors, it helps to know how visual neural networks actually “see.” These networks, called convolutional neural networks (CNNs), process images in layers that progressively detect more complex patterns. The first layers act like simple edge detectors: identifying vertical lines, horizontal lines, curves, and color boundaries. It’s similar to how our own visual system starts by detecting basic features before recognizing objects.
+
+ 
+As information flows through deeper layers, these simple patterns combine into more complex ones. Edges become shapes, shapes become textures, textures become parts of objects. A middle layer might recognize fur texture by combining many edge patterns, while a deeper layer might recognize dog ear by combining fur texture with a triangular shape. By the final layers, the network can recognize complete concepts like golden retriever or tabby cat.
+
+ 
+This hierarchical processing is what allows the encoder to compress millions of pixels into a meaningful vector. The final embedding doesn’t just record brown pixels in these locations—it captures semantic concepts like furry, four-legged, and friendly-looking that emerged from the layers of pattern recognition. When the model maps a photo of a golden retriever to a vector like [0.23, -0.15, 0.87, 0.42, ...], those numbers encode all these learned features in a way that preserves both visual and conceptual similarity to other images.
+
+ 
+
+ 
+
+ 
+Audio and video
+
+ 
+Audio encoding follows a different but parallel approach, converting sound into spectral representations that show which frequencies are present at which times. Think of this as creating a visual graph where the x-axis represents time, the y-axis represents pitch or frequency, and brightness indicates volume or intensity. A human voice saying “hello” creates a distinctly different spectral pattern than a guitar chord, even if both sounds last the same duration, because they involve different combinations of frequencies and temporal patterns.
+
+ 
+Video presents even greater complexity because it encompasses both spatial dimensions (what appears in each frame) and temporal dimensions (how things change over time). Each frame gets encoded like a static image, but the system must also track relationships between frames—capturing motion, object persistence, scene transitions, and the ways visual elements evolve throughout the sequence.
+
+ 
+The crucial insight is that these latent vectors capture meaningful conceptual relationships rather than just raw data patterns. A photo of a domesticated dog and a photo of a wolf will have similar latent representations because they share fundamental visual and conceptual features, even though their pixel-level data might be completely different. This representational approach enables AI systems to perform operations like make this photo look like a painting or generate a video of a cat that resembles this specific cat because they’re working with rich, meaningful mathematical representations that preserve semantic relationships rather than simply manipulating surface-level visual data.
+
+ 
+
+ 
+Beyond the prompt: Context assembly
+
+ 
+Modern AI systems don’t process requests in isolation; instead they package the input with additional context, ranging from recent conversation history, user preferences stored from previous sessions, relevant documents from knowledge bases, or environmental factors like time of day or user location. This context assembly process significantly affects both computational load and output quality, but it’s often invisible to users while dramatically shaping results.
+
+ 
+
+ 
+With input processing complete, the system moves to the next critical phase: determining how to handle the request.
+
+ 
+
+ 
+
+ 
+
+ 
+Step 2: Routing
+
+ 
+The latest AI systems rarely rely on a single model. Consider a user who uploads a PDF and enters: Summarize this document and make a draft presentation. The system must make multiple routing decisions: it may use a document parser to extract text from the PDF, pass the extracted text to a summarization model, route the summary to a slide generation system, apply a design model to format the presentation visually, and potentially invoke a different model for charts or graphics.
+
+ 
+Sometimes it’s important for the model to decide whether to generate information from the model’s training data or retrieve it from external sources. A question about the capital of France could rely on training knowledge, while today’s weather in Paris could go beyond what the model already knows, causing the system to trigger external retrieval in order to answer the request. This has the opportunity to affect the user experience significantly: retrieved information from external sources like the web tends to be more current and citable, whereas generated content may be less precise. 
+
+ 
+External queries come with unique additional challenges: the system must transform the prompt into search terms, before executing across multiple databases or search engines. It will then rank and filter results based on relevance and reliability, and add retrieved information from the model’s internal knowledge. This is a very complex mix of computation: each step introduces potential failure modes and computational overhead that affects response timing and quality.
+
+ 
+
+ 
+
+ 
+Step 3: Generation and Inference
+
+ 
+The last step: are you still with me? Once routing decisions have been made, the actual generation process begins. However, the way AI systems actually generate content varies dramatically depending on what they’re creating, and briefly understanding these differences helps explain why.
+
+ 
+When language models generate text, they work more like improvisational speakers than careful planners (though this is evolving, as LLMs embrace chain of thought (CoT) reasoning that forces models to break down tasks). LLMs produce one token at a time, with each new token chosen based on probability distributions calculated from everything that came before. At each step, the model considers all possible next tokens and their likelihoods given the context, then samples from this distribution. It’s like speaking without thinking, where each word choice is influenced by everything you’ve already said, but you haven’t necessarily planned your conclusion. The model can maintain remarkable coherence because each prediction incorporates the full context, yet it genuinely doesn’t “know” where it’s heading: it’s navigating through probability space one token at a time.
+
+ 
+This approach explains some behaviors that users notice but might not understand. For example, AI responses can ramble or repeat themselves because the system gets caught in loops, where certain word patterns make similar words more likely to follow. Responses can reach surprising or contradictory conclusions because there was no predetermined endpoint: the system simply followed the most probable path word by word until it arrived somewhere unexpected. Most importantly, this process can produce content that sounds completely fluent and authoritative while being factually wrong—known as hallucinations—because the system is optimizing for what seems or sounds correct given its training data, rather than what is true.
+
+ 
+Image generation works quite differently, more like a collaborative process between artist and material. In diffusion-based systems, the process starts with pure random noise, like a canvas covered in static. The system then applies learned transformations step by step, gradually refining the noise into recognizable shapes, then details, then final polish. Each step moves the image closer to something that matches the user’s prompt, like a sculptor revealing a figure that was somehow always hidden in the stone.
+
+ 
+When AI systems work across multiple types of content simultaneously, the computational challenge becomes orchestration on the scale of a film production. For users, this means that multimodal requests often take longer and can fail in more complex ways than simple single-format requests. But they can also produce remarkably sophisticated results when everything works together successfully.
+
+ 
+These three stages, processing, routing, and inference, form the core computational pipeline, but additional considerations significantly influence how AI systems operate and what users experience. Beyond the core three-stage pipeline, models have also become capable of overseeing and running tasks autonomously, which significantly affect system behavior and user experience. Understanding the underlying processes of agentic AI in greater detail is vital for designers to appreciate the nuances of self-initiated system capabilities and limitations.
+
+ 
+
+ 
+
+ 
+
+ 
+Agentic Computation and Task Management
+
+ 
+Let’s zoom out for a second. Traditionally, task runners and workflow automation platforms like IFTTT (If this, then that) allow users to define a sequence of steps, and then sit back as the system handles routine execution. It’s procedural, often linear, and bound by clearly defined triggers and outcomes. 
+
+ 
+For example, if a calendar invite is created, then a Slack message gets sent. If a Jira ticket is moved, then notify the assignee. These workflows work well because they reflect structured logic, controlled environments, and predictable inputs. The user still acts as the author of logic. They define each step, determine how tasks relate, and choose when the system acts versus when it pauses for input. Even advanced systems like Salesforce Flow or Notion Automations keep the user in the driver’s seat - the automation is just an assistant following a checklist.
+
+ 
+This paradigm has shaped much of how task management software is designed: clarity of sequence, visibility into progress, and fine-grained control over state. The interface becomes a surface for status tracking, manual adjustment, and occasional nudging.
+
+ 
+Enter agentic AI—systems that can autonomously plan, sequence, and execute multi-step tasks toward a user-defined goal, adapting as they go without needing explicit instructions at every step. If traditional automations are like checklists, agentic computation is more like working with a project manager. A good PM doesn’t need you to tell them exactly what to do at every step. You give them a high-level objective like “Prepare a competitive analysis for next quarter” and they figure out how to get it done. They’ll break it down, coordinate with the right people, adapt as new information arrives, and deliver something you can act on.
+
+ 
+This is the mental model shift that agentic systems introduce. Instead of defining how the work gets done, the user describes what they want, and the system makes decisions about how to accomplish it. Not all at once, and not perfectly, but with a clear orientation toward autonomy and self-directed reasoning. It’s a move from executing to orchestrating.
+
+ 
+What does this mean for user interfaces? Most people meet AI in its simplest form: chat interfaces. You ask a question, the system replies. If the answer is wrong or incomplete, you ask again. This request-response loop works because it’s legible and forgiving. It maps cleanly onto existing mental models: a search engine, a help desk, a smart assistant. But as AI systems evolve into more capable agents, able to handle multi-step objectives, invoke external tools, or manage long-running tasks, they require new interaction models. These aren’t just chatbots with better memory. They’re systems that can plan, adapt, and execute entire workflows, often with minimal oversight.
+
+ 
+Here’s where agentic computation steps in. At its core, it’s the capacity for an AI system to do the following:
+
+ 
+ 
+
+ 
+Interpret a high-level goal from the user. Understand the objective: what does the output need to communicate/achieve? 
+
+ 
+
+ 
+
+ 
+Decompose that goal into a series of interdependent tasks. Gather internal metrics, summarize regulatory updates, find visual inspiration, create draft slides.
+
+ 
+
+ 
+
+ 
+Manage and sequence those tasks across tools and time:
+
+ 
+ 
+
+ 
+Which tasks depend on others? Which tools or models are needed? How long will it take?
+
+ 
+
+ 
+
+ 
+Keep track of which subtasks have been completed, what decisions have been made, what outputs have been generated and what information is still unknown
+
+ 
+
+ 
+ 
+
+ 
+
+ 
+Adjust dynamically as new information is uncovered and make decisions about when to act independently and when to ask for help. Monitor whether a data source is missing or a result contradicts the goal, and generate a fallback plan.
+
+ 
+
+ 
+ 
+This is computation as a process, not just a transaction. The AI doesn’t simply “respond” to a prompt: it navigates a problem space, coordinating internal reasoning with external actions. Each step might be inferred, generated, revised, or delegated to another tool or model. What begins as a single request can unfold into a network of subtasks, each with its own context and requirements.
+
+ 
+To manage that complexity, agentic models rely on a relatively new innovation called the Model Context Protocol, or MCP. MCP was developed by Anthropic (the makers of Claude), and while they continue to iterate on it, the core idea has become a foundational structure for how agentic systems handle coordination. At its most basic level, MCP helps models share context between steps, tools, and even other models, so that the agent can carry out extended tasks without losing track of what it’s doing, or why.
+
+ 
+To draw a comparison: in a traditional, non-AI product, a user action like “create calendar event” triggers a specific API call. That call is discrete and relatively self-contained and hardcoded into an application’s software. The request is structured, the API contract is clear, and the server knows exactly what it needs to fulfill it. It returns a success or failure, and the interaction ends there.
+
+ 
+With agentic tools, though, the request might not be so cleanly scoped. The user could say something open-ended like, “Find time for a meeting next week with Louise and send an invite with agenda options.” That requires understanding intent, checking calendar availability, deciding whether to draft the invite first or confirm attendees, and potentially using multiple APIs along the way. It’s not just one call and response. It’s a tree of possible actions, some of which will depend on earlier outcomes.
+
+ 
+This is where MCP steps in to provide a structured way to pass along relevant metadata such as what tools are available for the model to use and how to use those tools. The server acts as a kind of shared memory, execution log, and chef. Rather than treat each step as an isolated task, MCP enables continuity, making it possible for agents and tools to talk to each other, and for the system as a whole to move fluidly between planning, doing, and adjusting. Each part of the task is being edited and handed off in real time, with context attached, allowing the model to decide what’s next or revisit something it skipped. It makes invisible coordination visible, which in turn makes debugging, evaluation, and user interaction more manageable.
+
+ 
+Although agentic systems don’t follow predefined workflows the way rule-based automators do, they still benefit from some of the same interface design patterns. Planning is happening - it’s just being delegated to the model - so it becomes even more important to make that planning legible. Users need to see what the system intends to do, where it is in the process, and what might come next.
+
+ 
+So, while MCP handles the underlying mechanics of coordination, the interface needs to support visibility and collaboration. Together, they form the backbone of what makes agentic AI usable: not just a system that acts, but one that communicates what it’s doing and allows you to shape it as it goes. Let’s look more closely at how this plays out in interface terms.
+
+ 
+
+ 
+Exposing Planning as Structure
+
+ 
+In traditional workflow runners, structure is one of the core interface affordances. Users typically create workflows step by step, so the plan is visually constructed in parallel with execution. This sequence is represented as a linear or branching diagram, often using nodes, arrows, or labeled stages. These visualizations help users envision the scope, spot dependencies, and debug logic. The interface often preserves this structure as a live “map”’ - perhaps a node, or a structured list of tasks. Users can return to it to modify steps, inspect flow direction, or add parallel paths. In systems like n8n or Make, this is the default interaction model: structure is not an artifact, but the primary way users interact with the system. Figure 1-2 shows task planning in Elicit.
+
+ 
+
+ 
+ 
+Figure 1-2. Elicit’s task planning features a step planner for both agentic and non-agentic models
+
+ 
+
+ 
+In agentic systems, where the AI creates the workflow on the fly, structure is no longer built by the user. But the benefits of structure remain. Users still need to understand what’s happening, where the system is going, and how different parts of the task relate. Interfaces can support this shift by offering adaptive, interpretable views of the plan as it emerges.
+
+ 
+
+Tip
+
+ 
+Surface a draft plan early, even if incomplete. Let users see a scaffolded outline before the system begins full execution. For example: “Step 1: Gather data. Step 2: Summarize findings. Step 3: Generate presentation.” This mirrors the setup phase of traditional workflows and helps users align expectations.
+
+ 
+
+ 
+
+ 
+
+ 
+Allowing Step-Level Review and Intervention
+
+ 
+In non-AI systems, users often want to see intermediate states: what was input, what happened in a given step, and what the output was. Visual workflow tools accommodate this with nodes that can be clicked to inspect live data. If a step fails, it’s highlighted with status indicators and error messages. If a user edits a step, downstream nodes may update automatically or show warnings about unsynced logic. This can be applied to agentic design to improve user comprehension.
+
+ 
+
+Tip
+
+ 
+User preferences for watching the agentic process vary. Conduct user research to discover how much your specific users prefer to watch the agentic tasks unfold, ignore entirely until complete, or find some balance between the two. For example, if users exhibit a strong preference for interacting with a structured list of tasks throughout the process, ensure that it’s well populated with descriptive content about the steps being taken, tools being used, and sources referenced. In general, anticipating that users may expand or collapse this information allows flexibility about the amount of information they receive.
+
+ 
+
+ 
+
+ 
+
+ 
+Visualizing Logic
+
+ 
+In traditional automation systems, workflows often include wait states, branching conditions, or retries: these are usually represented as visible nodes in a flow diagram. Users benefit from these visualizations because they create rhythm and realism. They reflect how real-world processes behave: sometimes we wait, sometimes we backtrack, sometimes one path succeeds while another fails.
+
+ 
+In AI workflows, similar patterns emerge, but the user is rarely shown how the system is managing timing, alternatives, or fallback behavior. Surfacing this logic in simplified form helps create transparency and predictability:
+
+ 
+ 
+
+ 
+Make retries and loops visible: If the agent tries again with a fallback method, show that path. For example: “Tried summarization with Approach A, then retried with alternate phrasing.” This helps users understand the system’s resilience rather than mistake repeated output for confusion.
+
+ 
+
+ 
+
+ 
+Acknowledge processing phases: Instead of blank screens, explain what’s going on. “Waiting for real-time data to arrive” or “Holding to check time zone settings” gives users clarity about why the system is paused.
+
+ 
+
+ 
+ 
+Agentic systems may never have fully predictable workflows, but that does not mean they should be opaque - indeed, it’s vital that they are highly transparent throughout the process. As AI systems take on more responsibility, whether managing a complex task or generating a single response, the nature of interaction changes. Instead of carrying out fixed commands, these systems interpret goals, respond to patterns, and make probabilistic guesses. This flexibility creates new possibilities for productivity, but it also introduces new forms of uncertainty. Errors may not appear as obvious failures. They can take the shape of confident outputs that are subtly wrong or unexpectedly off course.
+
+ 
+To design truly supportive AI interfaces, rethink how to handle these moments. The next section looks closely at how errors show up in AI systems and discusses how interface design can help users recover, interpret, and keep moving forward.
+
+ 
+
+ 
+
+ 
+
+ 
+When the System Doesn’t Deliver: Designing for Errors
+
+ 
+No matter how carefully any product is built, it will eventually break. Interfaces fail not only because of technical flaws but because of ambiguity, human inconsistency, shifting expectations, and unpredictable environments. Regardless of severity, the interface becomes the first and most lasting impression of how the system degrades. Meeting this challenge offers extra complexity for designers working with AI, and makes it all the more important to approach errors with a clear understanding of why they occur.
+
+ 
+
+ 
+Two fundamentally different types of failure: detectable and undetectable.
+
+ 
+Before examining how to design for AI errors, it’s crucial to understand the technical underpinnings that can cause these systems to fail, and also that these failures can occur in two fundamentally different ways. The first type, system errors, are familiar from traditional software: servers crash, connections timeout, APIs return error codes. These failures are detectable, predictable, and mechanical. The system knows something went wrong and can tell you about it.
+
+ 
+The second type is far more insidious: errors in the AI’s reasoning or output that the system cannot detect. When an LLM confidently states that the population of Tokyo is 50 million (it’s actually 14 million), or generates a plausible-sounding but completely fabricated research citation, the model genuinely “believes” it’s providing accurate information. There’s no internal error flag, no uncertainty signal, no warning light. From the model’s perspective, everything is working perfectly.
+
+ 
+This distinction is critical for designers because it means the burden of error detection shifts dramatically onto users. Traditional error handling assumes the system knows when it fails - that’s why designers can show error messages, retry buttons, and recovery paths. But with AI-generated content, the most dangerous errors often arrive wrapped in perfect grammar, formatted beautifully, and delivered with algorithmic confidence. The model doesn’t know it’s wrong, which means it can’t tell users when to be cautious.
+
+ 
+Understanding this split between detectable system failures and undetectable reasoning errors fundamentally changes the required approach to error design in AI interfaces. You’re not just handling errors; you’re helping users become error detectors themselves.
+
+ 
+
+ 
+
+ 
+Revisiting Tenets Of Error Design
+
+ 
+To design better AI interfaces, it helps to revisit some foundational tenets of error design, principles drawn from decades of human-computer interaction research and product design practice:
+
+ 
+ 
+
+ 
+Make the error understandable: This is so users can quickly make sense of what went wrong and what to do next.
+
+ 
+
+ 
+
+ 
+Make the experience recoverable: Users should be able to revise, undo, or try again without starting over.
+
+ 
+
+ 
+
+ 
+Prevent common or foreseeable errors: You can do this through thoughtful defaults, validation, or interaction framing.
+
+ 
+
+ 
+
+ 
+Degrade gracefully: Do this when part of the system is unavailable or under strain.
+
+ 
+
+ 
+
+ 
+Surface system status clearly: Users should know whether a failure is temporary, persistent, or even happening at all.
+
+ 
+
+ 
+ 
+These principles show up in classic usability heuristics - for example, in Alan Cooper’s About Face (Wiley, 2014), he urges designers to consider error messages as a last resort because, ironically, they’re useless. In their stead, he encourages designers to prevent software from rejecting inputs, because the real world “is more relevant and important.” When absolutely inevitable, he recommends error dialogs be “polite, illuminating, and helpful,”” focused on helping the user understand the problem and discover alternatives, and disclosing information loss. While originally developed for deterministic software, these principles still offer value in the age of AI - but they require adaptation. What does it mean to disclose a subjective error? How can you design for recoverability when outcomes vary each time? Can an error still be understandable when even the model does not know it is wrong?
+
+ 
+In order to find better design solutions for AI, let’s look more closely at these core tenets of error design and examine how each one shifts in the context of AI-driven interaction.
+
+ 
+
+ 
+
+ 
+Making the Error Understandable
+
+ 
+When something goes wrong, users often look for cues about who or what is responsible. Was it something they did? Is the system confused? Is there anything to fix, or is this just how things are? A well-framed message can help ease that uncertainty.
+
+ 
+Rather than relying on technical shorthand or overly vague language, many teams have found success using plainspoken, focused copy. It can be more effective to say, “We couldn’t upload your file. Try a PDF or JPG.” than to surface a coded error such as “Error 413: Request Entity Too Large” or “CORS policy: No ‘Access-Control-Allow-Origin’ header is present on the requested resource”. Specificity helps clarify the issue and offers a concrete next step, even if the full technical details remain behind the curtain.
+
+ 
+Context also plays a role. Placing an error message near the place where the issue occurred, like next to a form field or under a disabled button, can help people understand what needs their attention. If it is tucked away or disconnected from the problem area, the message may be easy to miss or misunderstand.
+
+ 
+In AI-driven products, this principle often intersects with some new challenges around ambiguity, causality, and confidence:
+
+ 
+ 
+
+ 
+Errors in AI systems can look like success: An AI-generated response might be grammatically correct and visually polished, even if it is factually wrong or not what the user wanted. These situations can feel especially confusing, since there is no obvious failure.
+
+ 
+
+ 
+
+ 
+The source of the issue is not always clear: Traditional systems often fail in predictable ways. With AI, the cause of a problem might be buried in the training data, prompt phrasing, or generation process. Avoiding messages that imply fault can help. Instead of “We couldn’t understand your input,” something like “Let’s try a different approach” can feel more collaborative.
+
+ 
+
+ 
+ 
+
+ 
+
+ 
+Making It Recoverable
+
+ 
+Even with clear messaging, errors can be frustrating if they bring everything to a halt. A supportive interface gives users a way to move forward, whether that means undoing a recent action, retrying a task, or adjusting what they have done.
+
+ 
+Undo is a reliable way to reduce anxiety, especially for seemingly-irreversible actions like deletions or submissions. Not every interface can support full undo, and that is okay. In cases where reversal is not possible, it may help to offer a lightweight confirmation step, or at least a path to re-enter the flow with minimal rework.
+
+ 
+Retry patterns are also worth considering. If something fails due to a momentary glitch or connectivity issue, offering a retry button right in context can spare the user from wondering what to do next. And in form-based flows, preserving input after failure is essential. It shows respect for the time and thought someone has already invested.
+
+ 
+In AI interfaces, recovery often looks a little different, because the failure tends to involve the quality of the result rather than whether the system executed the task:
+
+ 
+ 
+
+ 
+In AI systems, clicking “Try again” can produce a completely different output, even if nothing about the input has changed. This can be helpful in some cases and disorienting in others. One helpful pattern is to let the user choose: “Regenerate with same input,” “Edit and retry,” or “Start fresh” can all be part of a flexible error-recovery toolkit.
+
+ 
+
+ 
+
+ 
+Sometimes the problem is in the output, not the input. In more traditional products, the fix often involves changing what was entered. With AI, the problem may lie in how the model interpreted that input. Giving users the ability to lightly revise or build on what the system returned, rather than having to start over, can be more satisfying and more efficient.
+
+ 
+
+ 
+
+ 
+Guided suggestions can offer helpful direction. For example, after an unsatisfying result, options like “Make it shorter,” “Add more detail,” or “Focus on tone” can act as gentle nudges. These kinds of structured adjustments can help users explore what is possible without feeling like they have to know the right thing to ask.
+
+ 
+
+ 
+ 
+
+ 
+
+ 
+Designing to Prevent the Error
+
+ 
+Not every error needs to happen. Many teams have found that small design decisions, like giving people clear expectations up front or catching likely issues before they become failures, can prevent frustration entirely.
+
+ 
+Real-time validation is often a useful tool, particularly in forms or structured inputs. When the system can surface a formatting issue or missing field as someone types, it gives them a chance to correct the problem without breaking flow. That said, avoid overwhelming users with too many checks too early. A balance of encouragement and restraint often works best.
+
+ 
+Hints, examples, and smart defaults can also reduce errors before they happen. Even a short placeholder like “e.g. your-work@email.com” can gently steer people toward what the system expects.
+
+ 
+With AI-based tools, error prevention is often less about blocking invalid inputs and more about shaping intent and expectation.
+
+ 
+ 
+
+ 
+Inputs might be valid, but still not effective: A prompt or question can be perfectly well-formed but still lead to an unclear or generic output. Consider supporting users with starter phrases, examples, or even subtle framing like “Try describing what you’re looking for in one or two sentences.”
+
+ 
+
+ 
+
+ 
+Traditional validation tends to focus on rules and constraints: AI interfaces benefit from encouraging structure and good starting points. A gentle hint, such as suggesting a tone or content format, can go a long way in steering toward successful outcomes.
+
+ 
+
+ 
+
+ 
+Setting expectations helps avoid perceived failures: It is not always obvious to users what an AI system can or cannot do. If there are limits, such as not providing real-time information or not supporting certain domains, surfacing that early on can prevent confusion later. Framing this as a way to help the user get better results, rather than as a limitation, tends to land better.
+
+ 
+
+ 
+ 
+
+ 
+
+ 
+Letting the System Degrade Gracefully
+
+ 
+Real systems often fail. Connections drop, services go down, and sometimes only parts of the product are affected. When these things happen, the interface plays an important role in keeping users oriented and minimizing disruption. One approach is to preserve whatever progress is possible. If someone is in the middle of a task, it helps if the system can hold onto their input, even if syncing or submission is not possible. Local saves or drafts can reduce the emotional cost of a system hiccup. Figure 1-3 shows an example in Cline.
+
+ 
+
+ 
+ 
+Figure 1-3. Cline, an LLM-enabled plugin for VS Code offers easy rollback via its checkpointing system
+
+ 
+
+ 
+Partial failure does not have to mean a full stop. If one feature is unavailable, the interface can often still provide value. Maybe a real-time preview cannot load, but the underlying form still works. Showing what is available and noting what is not allows people to decide whether to continue, pause, or come back later.
+
+ 
+For AI systems, degradation may show up subtly. The interface may remain active, but the quality or completeness of the results begins to break down:
+
+ 
+ 
+
+ 
+AI outputs often fail softly: A model might begin generating something useful, then trail off or include unrelated content. Rather than discarding the entire result, preserving the good parts and letting the user continue from there can help. A note like “You can keep editing from this point” makes it easier to stay in flow.
+
+ 
+
+ 
+
+ 
+The system may appear responsive, even if it is not: Unlike traditional failure states, where a button click leads to a clear error, AI issues may be less obvious. The interface might need to help surface that something is not working as expected. For example: “We’re having trouble completing this. Want to try again or revise it?”
+
+ 
+
+ 
+
+ 
+Preserving the full context matters: If an AI result cuts off unexpectedly or seems incomplete, saving the prompt, prior messages, and output so far gives users a foundation to build on. Recovery, in this case, is less about retrying and more about scaffolding a new direction.
+
+ 
+
+ 
+ 
+
+ 
+
+ 
+Surfacing the System’s State Honestly
+
+ 
+A big part of designing for errors is designing for ambiguity. Users often do not know whether a problem is temporary, permanent, or even real. When the interface stays quiet in these moments, people may blame themselves or assume the system is broken.
+
+ 
+Even a small acknowledgment that something is off can help. A message like “Saving is currently delayed” or “This feature is temporarily offline” sets expectations and lets people decide what to do next. It does not take much to make the system feel more transparent.
+
+ 
+Tone can play a role here too. Many teams choose to use language that is calm, clear, and matter-of-fact. Humor can lighten the mood, but when something important goes wrong, users may not feel like laughing, and a direct message usually feels more reassuring.
+
+ 
+In AI systems, surfacing state becomes more complex, since the model itself often lacks self-awareness about its failures:
+
+ 
+ 
+
+ 
+The system doesn’t know about the error: As mentioned earlier, AI systems do not always know when they are wrong. Since a model might confidently return a false or irrelevant result, without any backend signals that something has failed, designers can experiment with small, user-facing cues that acknowledge this uncertainty and empower users to validate results. For instance: highlighting information that should be verified, or providing gentle prompts like “Double-check important details” for factual queries. Even simple patterns like “Generated response - accuracy not guaranteed” or source attribution (“Based on training data from 2023”) help users calibrate their trust appropriately.
+
+ 
+
+ 
+
+ 
+Issues might be isolated, not global: One user might hit a generation cap or receive a strange output while others see normal results. Rather than posting system-wide banners, it can be helpful to localize status updates. For example, letting the user know they have reached a usage limit or that the system is having trouble in this specific instance.
+
+ 
+
+ 
+
+ 
+Clear scope boundaries reduce confusion: Many misunderstandings in AI systems come from mismatched expectations. If a model cannot provide certain types of guidance or up-to-date information, naming those limitations up front helps users understand what the system can realistically deliver.
+
+ 
+
+ 
+ 
+Taken together, these guidelines suggest that designing for errors is just as much about tone, timing, and transparency as it is about catching mistakes. And in systems that incorporate AI, it becomes even more important to treat error not just as a problem to fix, but as a moment to frame, guide, and support.
+
+ 
+Designing for errors is not a sign that something has gone wrong in the product. It is a recognition that real people work in real conditions, and even well-designed systems will sometimes falter. These moments offer a chance to show care, to reinforce trust, and to make failure feel less like a dead end and more like a detour.
+
+ 
+When AI enters the picture, the nature of error changes. It becomes softer, sometimes harder to notice, and occasionally entangled with user expectations rather than technical correctness. These differences call for new patterns and more flexible thinking. But the core goal remains the same: to help people feel confident, supported, and capable, even when the system does not quite deliver.
+
+ 
+
+ 
+
+ 
+
+ 
+Context Windows and Conversational Memory
+
+ 
+We’re already used to the idea of context in our everyday lives. It’s how we know what someone means when they ask us to grab that thing from the kitchen, or to pick up the usual from the store. It’s how we fill in the blanks when a friend says, “You know what I mean,” and we usually do. Context works because of everything leading up to the moment: the prior conversation, the shared history, and the unspoken cues.
+
+ 
+It’s the same for language models. A user might say something vague like make it sound more friendly or continue that idea, and the model needs to figure out what exactly that refers to. Without prior context, whether from earlier messages in a conversation, structured memory, or fine-tuned instructions, the model wouldn’t be able to resolve the ambiguity. Context is what makes AI outputs feel coherent, relevant, and even a little bit personal. Without it, the system’s responses can feel random, stiff, or disconnected.
+
+ 
+Humans do this kind of contextual threading automatically. We’re constantly tracking details across time - topic shifts, emotional tone, changes in intention - and using that to keep conversations on track. For AI models, that capability is managed through something called self-attention. Self-attention is a mechanism that lets the model evaluate every word or token in relation to every other word or token in the input. It doesn’t just look at what was said most recently: it scans the full string of information, applies different weights depending on what seems most relevant, and uses that to shape the output. In practice, that means a model doesn’t treat all words equally. It might assign more importance to specific phrases earlier in the prompt that clarify the user’s intent, or deprioritize filler content.
+
+ 
+To improve relevance, AI systems don’t just process the user’s immediate input - they often bundle it with other pieces of related information. That can include the full conversation thread, metadata about the user’s preferences, or memory-like elements from earlier sessions. This process gives the model a more complete view of what’s going on, ideally allowing it to offer a more contextually appropriate response. However,there’s a cost to this, and not just in system complexity. The more information you give a model, the more work it has to do—and at some point, that starts to degrade performance. Research has shown that beyond a certain length of context, models may lose the thread instead of strengthening it. They may latch on to the wrong parts of the input or ignore important early details. Worse, the outputs may become slower or less predictable.
+
+ 
+Compounding this challenge, AI systems are constrained by what’s called a context window. This is a hard limit on how many tokens can be submitted at once, and each model has its own constraints. Anthropic’s Claude, for example, currently supports up to 200,000 tokens in one go. If you go over that limit, you’ll get an error. Other models are pushing those boundaries even further. Google’s Gemini has shown it can successfully retrieve information across an input of one million tokens, a scale more akin to reading a bookshelf than a paragraph. Figure 1-4 illustrates Anthropic’s view of a context window.
+
+ 
+
+ 
+ 
+Figure 1-4. From Anthropic’s blog, visualizing how a context window is filled during a conversation
+
+ 
+
+ 
+There’s a tradeoff here: long inputs are computationally expensive and less performant, and increase the likelihood of a model getting lost in the weeds. At the same time, users often assume that more context is better - that the more background they provide, the smarter the response will be. And while that’s sometimes true, it’s not guaranteed. In fact, giving the model too much to sift through can dilute relevance and make the model less effective.
+
+ 
+For designers, this presents a balancing act. Users need context to feel understood, but they also need clarity about what the system can reasonably handle. Interfaces can help by gently shaping how people think about and manage context. Here are a couple of options:
+
+ 
+ 
+
+ 
+Show token usage transparently: Displaying a visual token counter, either during prompt creation or as part of a message warning, can help users self-regulate. Even a soft indicator like “Input too long, try shortening your request” can nudge behavior in the right direction without overwhelming the user with technical jargon.
+
+ 
+
+ 
+
+ 
+Warn before input gets too long: If the system is approaching its context window limit, a simple banner or inline notification can alert the user and offer options—like pruning earlier messages or shifting to a new thread—to preserve reliability.
+
+ 
+
+ 
+ 
+Ultimately, the goal isn’t to force users to think in tokens. It’s to design interactions that make room for meaningful context while helping users avoid overload. That might mean educating users gently over time, offering smarter defaults, or adjusting the framing of what it means to give a model enough to go on. As with any good conversation, it’s not just about what’s said—it’s about how it all fits together.
+
+ 
+
+ 
+
+ 
+Don’t Make Me Wait: Managing Latency and Delays
+
+ 
+Humans hate to wait. A 2015 study on grocery checkout lines found that for every additional 30 seconds someone spent standing still, their frustration increased more than if they’d waited twice as long while moving. Many organizations have simply stopped trying to reduce wait time and instead focus on managing how it’s perceived: for example, in the 1990s, Houston Airport received a wave of complaints about slow baggage delivery. The solution? They moved the baggage claim further away, so passengers spent more time walking and less time standing around. Complaints dropped to zero. 
+
+ 
+You might assume from this that people simply want to be distracted while they wait - but it’s more nuanced. Research in human-computer interaction suggests that when people understand why they’re waiting and feel confident that progress is being made, their tolerance increases - even without distraction. This shows that people don’t measure wait time in milliseconds; they assess it emotionally, contextually, and socially. Waiting is less about the passage of time and more about how we feel while it passes.
+
+ 
+In software design, delays like this are called latency, and it’s been a core consideration for decades. Back in the early ’90s, before the invention of broadband, web designers were warned that a page should take no more than 15 seconds to load. To optimize user experience, researcher Jakob Nielsen established a set of widely accepted thresholds for how users perceive delays that persists to this day:
+
+ 
+ 
+
+ 
+0.1 seconds: Feels instantaneous. There’s no need for special feedback—just surface the result immediately.
+
+ 
+
+ 
+
+ 
+1 second: The threshold for keeping a user’s flow of thought uninterrupted. They’ll notice the delay, but it doesn’t break their focus. Feedback isn’t strictly necessary, but users no longer feel like they’re directly manipulating the data.
+
+ 
+
+ 
+
+ 
+10 seconds: About the limit for maintaining attention. Beyond that, users start shifting focus to other tasks. At that point, progress indicators or time estimates become critical, especially when response times vary.
+
+ 
+
+ 
+ 
+With faster internet speeds (from an average of 28.8 kbps in 1996 to over 135 Mbps in the U.S. today), you’d think these thresholds would be easy to hit. However, web experiences have grown in complexity. A 1996 site could have been 60 KB; now, a modern site’s source code often exceeds 2 MB - and that’s before adding images, video, streaming, or live collaboration. In many ways, we’re still waiting - just a little less (around 4 seconds on average, today).
+
+ 
+AI introduces a whole new layer of complexity to the latency puzzle. Unlike simple HTTP requests, as mentioned earlier in this chapter, AI workloads involve everything from model interfacing, to tokenization bottlenecks, GPU scheduling, memory constraints, and server load balancing. Optimizing performance means solving for a broader, more tangled set of constraints. Plus, latency in AI isn’t just about speed: often it’s about uncertainty. Unlike traditional interfaces where users anticipate the outcome, AI products often involve invisible, variable computations that take longer and feel less predictable. Users aren’t just waiting for data to load: they’re waiting for a machine to “think.” This shifts the design challenge: instead of just minimizing wait time, we also need to manage expectations, build trust, and signal progress in ways that feel aligned with the user’s intent.
+
+ 
+Research does show that users are generally patient with AI’s computational delays - but only if they’re kept in the loop. They’ll wait, but they want to understand what’s happening and why. By aligning interface design with the user’s task and showing the right signals along the way, it’s possible to design in a way that makes AI feel fast, even when it isn’t. This leads to the three core priorities when designing for AI latency:
+
+ 
+ 
+
+ 
+Make it fast where it must be (real-time control, transactions).
+
+ 
+
+ 
+
+ 
+Engaging where it can be (AI art, chatbots, entertainment).
+
+ 
+
+ 
+
+ 
+Clear where it needs to be (search, payments, learning tools).
+
+ 
+
+ 
+ 
+This framework helps prioritize where to spend design effort based on what the user is trying to do. If a task requires precision or timing, such as controlling something remotely or confirming a payment, it must feel fast and responsive. If it’s more open-ended or creative, like generating AI art or chatting with a bot, it can afford to be a little slower, as long as it stays engaging. And for tasks where accuracy and understanding are critical, such as learning something new or completing a financial transaction, clarity matters most, even more than speed or flair.
+
+ 
+
+ 
+Visual Methods for Mitigating Latency
+
+ 
+There are many ways of visualizing and communicating a delay. Just as all UI elements send a subliminal message to a user about the product (intentionally or not), latency is no different. Users gain insight about the product’s function (or lack thereof) in the moments where its processing, and there are many ways to indicate these delays and background processes elegantly through UI:
+
+ 
+ 
+
+ 
+Immediate acknowledgement: Promptly acknowledging user actions reassures them that the system is processing their request. For instance, displaying a “Thinking…” message or a typing indicator in a chat interface provides immediate feedback, preventing uncertainty.​ However, if the system acknowledges the user’s action but then delays in delivering an actual result, this can lead to increased frustration. The initial feedback should seamlessly transition into meaningful progress updates or the final output.​
+
+ 
+
+ 
+
+ 
+Loading indicators: These inform users that a process is underway, but choosing the right type is essential:
+
+ 
+ 
+
+ 
+Spinners (indeterminate indicators): Best for short, uncertain durations where the exact time to completion is unknown. They signal activity but don’t provide specific progress information.​
+
+ 
+
+ 
+
+ 
+Progress bars (determinate indicators): Ideal when the system can estimate the task duration. They offer users a sense of control and reduce anxiety by showing how much of the task is complete.​
+
+ 
+
+ 
+
+ 
+We know that users prefer progress bars over spinners, especially for longer tasks, as they provide clear feedback on progression. However, inaccurate or stalled progress bars can lead to increased dissatisfaction. They can also be technically infeasible to implement given the complexity of AI systems and the number of components working under the hood.
+
+ 
+
+ 
+ 
+
+ 
+
+ 
+Skeleton screens: Displaying placeholder content that mimics the final layout (for example, grey boxes in place of images or text) can reduce perceived wait times compared to spinners alone, particularly when accompanied by an animation. Users feel progress is being made, since parts of the UI are already present, and can anticipate the breadth of content they might see, though for this reason skeleton screens are most effective for predictable, structured content. 
+
+ 
+
+ 
+
+ 
+Asynchronous (non-blocking) interactions: Allowing users to continue other tasks while waiting for the AI to complete processing ensures they remain productive, minimizing the impact of latency. For example, enabling navigation to different sections of the application or queuing additional requests maintains engagement, though this may require a robust notification system that alerts the user when the task is completed.
+
+ 
+
+ 
+
+ 
+Progressive disclosure of results: Delivering output in increments allows users to access partial results sooner. For instance, an AI system might first display a quick summary, followed by more detailed information as it becomes available. This method keeps users engaged and provides immediate value, even before the complete data is ready.​ 
+
+ 
+
+ 
+
+ 
+Real-time streaming of partial results: Implementing token streaming enables the system to display content as it’s generated, similar to watching text appear word by word. This continuous feedback loop significantly reduces perceived latency, as users can begin consuming information almost immediately.
+
+ 
+
+ 
+
+ 
+Articulating wait reasons: Users are forgiving of longer processes when a greater computational output is anticipated, but generally they want to know why. Explaining what the task will involve, or using generated text to narrate the process keeps the user informed.
+
+ 
+
+ 
+ 
+Applying these techniques with intention is essential—after all, not every AI needs to show its homework. Features like streaming results, adjustable timing, or progress indicators should be used selectively, based on the user’s goals and the context of use. When applied thoughtfully, they enhance clarity and trust; when overused, they risk cluttering the experience and diluting the AI’s perceived competence. Sometimes, the smartest move is knowing when to say less.
+
+ 
+
+ 
+
+ 
+The Value of Segmenting by User Need
+
+ 
+To put the aforementioned latency mitigation techniques into practice, it’s vital to emphasize the importance of refining a latency experience by user need. For example, imagine you’re in the middle of learning something new, and trying to get a clear answer from a chatbot. You’re likely holding several concepts in your mind at once, right at the edge of your working memory. According to Miller’s Law, most people can only keep about 7 (plus or minus 2) items in mind at once, so even small delays or vague responses can be highly disruptive. Velocity is key in this scenario, plus high information about the amount of anticipated wait time. 
+
+ 
+Now picture a different scenario: you’re iterating on a project, perhaps asking an AI to enhance a piece of writing or generate a visual. The cognitive load is lighter—you’re reacting, evaluating, maybe exploring. In this case, a slower, more open-ended experience can still feel satisfying, even rewarding, because you’re not depending on it to hold your thoughts together. The following two sections offer are some suggestions for categorizing user tasks by substantive latency solutions that improve user experience without overcomplicating the process:
+
+ 
+
+ 
+Information retrieval (medium/slow)
+
+ 
+Information retrieval includes searching, filtering, and query-based interfaces—everything from browsing a shopping site to using a semantic search engine. These tasks are often exploratory, and users are mentally juggling what they’ve seen, what they’re seeking, and how to refine their search. When latency exceeds just a few seconds, that mental context begins to fade, making the task feel fragmented.
+
+ 
+ 
+
+ 
+To preserve a feeling of rapid flow, designers can employ progressive disclosure to show early results while more are loading. Immediate acknowledgement is key, plus avoiding blank states: users should never wonder if the system is doing anything.
+
+ 
+
+ 
+
+ 
+Predictive search and autosuggest features can also help users act before they finish typing, giving the perception of speed
+
+ 
+
+ 
+ 
+
+ 
+
+ 
+Real-time control systems (instant)
+
+ 
+Some tasks involve actions where users expect immediate feedback because they are actively manipulating or observing a system in motion. For example: using live transcription or translation tools and needing to see the result instantly, adjusting a smart thermostat and seeing the temperature update in real time, or using real-time collaboration tools like Figma or Google Docs where changes need to appear rapidly for multiple users. 
+
+ 
+ 
+
+ 
+The user’s priority in these examples is responsiveness, with close-to-zero delay. To achieve this, the interface should prioritize immediate visual feedback for user inputs (for example, sliders that update UI as you drag)
+
+ 
+
+ 
+
+ 
+Use skeleton loaders to suggest likely outcomes before processing finishes. 
+
+ 
+
+ 
+
+ 
+If multiple processes are happening at the same time, prioritize parts of the experience that emphasize connectivity. For instance, in collaborative tools, show avatars or cursors moving in real time, even if content syncing is slightly delayed. This helps preserve a sense of control, even when computation is happening behind the scenes, and preserves functionality.
+
+ 
+
+ 
+ 
+
+ 
+
+ 
+Transactional processes
+
+ 
+Transactional tasks - like submitting a payment, authenticating, or confirming a booking - are short, high-stakes interactions that can arise through either user or agent-initiated queries. Users are usually in a focused, goal-driven state, and they expect a quick confirmation to signal that their action was successful.
+
+ 
+ 
+
+ 
+Whether user or agent-initiated, immediate confirmations are needed. If no message is shown, doubt can set in quickly, causing users to refresh or re-initiate the task, potentially duplicating actions or abandoning the task altogether. 
+
+ 
+
+ 
+
+ 
+Optimistic UI (for example, showing confirmation before server response is finalized), and loading indicators (like spinners with copy such as “Securing payment…”) help maintain user confidence. If longer processing is needed, include estimated wait times or staged feedback (for example, step 1 of 3: verifying card, processing, confirmed) to reduce abandonment.
+
+ 
+
+ 
+ 
+
+ 
+
+ 
+Conversational agents
+
+ 
+In chatbot and virtual assistant interactions, users expect a conversational rhythm - not just speed. A response that comes too fast can feel robotic, while one that takes too long breaks the illusion of dialogue. Around 2–3 seconds feels natural for most users, especially if the system signals that it’s working.
+
+ 
+ 
+
+ 
+Typing indicators are essential because they anchor the user in the interaction and communicate progress. 
+
+ 
+
+ 
+
+ 
+For more complex tasks, consider streaming partial responses (like one sentence at a time) to make the experience feel more fluid. You can also include confirmation echoes (such as “Okay, let me look that up”) to buy time and keep the user cognitively engaged.
+
+ 
+
+ 
+ 
+
+ 
+
+ 
+Creative content generation
+
+ 
+When users ask AI to generate creative outputs - stories, images, music, or code - they’re usually in an exploratory mindset and more tolerant of delays, as long as expectations are well managed. These tasks don’t demand instant results, but they do demand a sense of meaningful progress. Sometimes, the type of query or product affects how well the model can anticipate timing, which opens the door for more tailored feedback. For instance, diffusion models work a bit differently from LLMs: they run a calculation, instead of searching through data, so they usually have a clearer sense of how long generation will take.
+
+ 
+ 
+
+ 
+Because static spinners are negatively associated with long wait times, designers should avoid them in preference of progress bars, and strive to provide a fixed amount of time, if speculative, as long as it is reasonably accurate. This type of feedback maintains momentum and enhances the sense of collaborative creativity.
+
+ 
+
+ 
+
+ 
+Sequential messages about the process could provide delight; similar to in gaming waiting screens. Though not appropriate for every context, the lower-stakes nature of creative exploration means that this could be a suitable way to mitigate delay.
+
+ 
+
+ 
+ 
+
+ 
+
+ 
+Latency for autonomous tasks
+
+ 
+Agentic AI marks a shift from reactive tools to proactive systems - autonomous assistants that initiate actions, make decisions, and operate independently of constant user input. This transformation challenges conventional notions of latency, requiring new strategies to support user trust, control, and understanding. Critically, agentic AI requires transparency to succeed. Because it acts without always being prompted, users need ongoing cues that it’s working with them. Clear acknowledgments, well-paced updates, and visible intent make the system feel intelligent, respectful, and aligned with user goals.
+
+ 
+Setting up a successful autonomous experience requires some intentional UI design:
+
+ 
+ 
+
+ 
+Showing anticipated wait times is a key part of the setup for working with an autonomous tool, or at least articulating in some way that this is a task with far greater complexity.
+
+ 
+
+ 
+
+ 
+Designers must ask themselves what are tolerable windows of time that the user can go without new information. Implementing intentional pacing might mean that every x seconds, the agent checks in to update the user on their work, or get permission for a next task. This keeps the model robustly in touch with the user.
+
+ 
+
+ 
+
+ 
+Ongoing task feedback and streaming results allow users to have insight into background operations, like scanning documents, summarizing inboxes, or preparing reports. Multi-step or research-intensive tasks benefit from incremental delivery. For example, a travel assistant might first suggest flight options, then progressively add hotel and itinerary details, allowing the user to respond or intervene mid-flow.
+
+ 
+
+ 
+
+ 
+Users may develop enough trust in the model’s behavior that they’re comfortable skipping oversight and simply waiting for the outcome. Providing an option to let the model operate independently, without requiring constant approvals, is also a form of latency design. It allows users to shift their attention elsewhere and receive a notification when the task is complete, rather than staying engaged throughout the process.
+
+ 
+
+ 
+ 
+When working with autonomous system latency, designers must consider not just when and how fast these systems respond, but why and how clearly their timing reflects competence and care. A recent study found that AI processing delays can have a counterintuitive benefit: they afford users time to reflect on multiple research questions simultaneously, leading to a higher quantity of generated questions and an enhanced sense of control. The finding underscores the importance of thoughtful latency design: setting good expectations and anticipating delays sets up autonomous AI as a good working partner, enhancing the perception of the AI’s competence and contributing to a more satisfying and productive user experience.
+
+ 
+Ultimately, designing for latency in AI isn’t about eliminating wait time: it’s about designing the right kind of waiting. When users understand what’s happening, feel confident that progress is being made, and believe the system respects their intent, delays can shift from annoying to acceptable, even valuable. As we’ve seen, designing for latency doesn’t just keep users occupied; it makes them feel seen, informed, and in control. The goal isn’t to mask delays with an elaborate spinner or skeleton screen: it’s to build a rhythm between user and system that feels collaborative, coherent, and clear. When wondering how to build user satisfaction in the face of unavoidable delays, remember, it’s not just about the time it takes: it’s about how well you use it.
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+Summary
+
+ 
+In the opening story about the 1202 error code, the term error was something of a misnomer: The Apollo 11 computer never malfunctioned during that tense descent to the Moon. It performed exactly as designed - but to the astronauts watching that cryptic “error,” the message was indistinguishable from failure. The gap between what the computer was doing and what the humans could understand nearly derailed one of humanity’s greatest achievements.
+
+ 
+Today’s AI systems present us with a similar challenge. Every time a user submits a prompt, uploads a document, or asks for creative output, they’re triggering computational processes that dwarf the computing power of lunar guidance systems. Behind the clean interface of a chat box or generation tool lies a three-stage cascade of invisible decisions. Understanding this computational pipeline reveals why AI errors are so fundamentally different from traditional software failures. When a database crashes, users get clear error messages or at least a determinate state. When an AI hallucinates, it produces confident, well-formatted, professionally written content that happens to be completely wrong. These systems don’t fail obviously: they fail insidiously, generating plausible but fabricated statistics, citing non-existent sources, or gradually drifting away from user intent as context windows fill up and early instructions get forgotten.
+
+ 
+The solutions to this problem lie in designing interfaces that work with computational reality rather than against it. When we understand that inference happens token by token with no master plan, we can design streaming interfaces that let users course-correct mid-generation. When we know that multimodal systems coordinate between specialized models in real-time, we can set appropriate expectations about timing and provide meaningful progress indicators. When we recognize that autonomous agents work through complex multi-step workflows over extended timeframes, we can create checkpoint systems that preserve progress and enable human intervention when needed.
+
+ 
+Perhaps most crucially, understanding computation helps us design for latency in ways that strengthen rather than undermine the human-AI relationship. Users will wait for AI responses - research shows they’re remarkably patient with computational delays - but only if they understand what’s happening and why. A progress bar that accurately reflects diffusion model iterations feels completely different from a generic spinner. Streaming text that appears word by word creates engagement rather than frustration. Status updates that explain agentic workflows (“researching current trends,” “analyzing competitive landscape,” “generating recommendations”) transform wait time into anticipation.
+
+ 
+Understanding computation reveals that AI errors aren’t bugs to be eliminated: they’re natural byproducts of working with probabilistic systems that are constantly making educated guesses based on their training data. When you design interfaces that treat errors as collaborative opportunities rather than system failures, you enable users to work with AI uncertainty rather than despite it. A hallucination, though never ideal, becomes a chance to clarify requirements. A context limitation becomes an opportunity to refocus on what matters most. A routing failure becomes feedback about how to structure future requests.
+
+ 
+Unlike the Apollo astronauts, who had to trust their computer’s decisions without understanding its logic, today’s AI users can have the benefit of well-designed interfaces that endorse existing design heuristics while also recognizing and appreciating the requirements AI adds. The challenge for designers is knowing which aspects of that process to surface, when to surface them, and how to communicate computational complexity without overwhelming people trying to get work done.
+
+ 
+The 1202 alarm ultimately didn’t prevent the Moon landing, but imagine how much more confident the astronauts might have felt if they’d understood what their computer was really doing. In the age of AI, your job as a designer is to build that understanding into every interaction, turning mysterious computational power into trustworthy collaborative intelligence. When we succeed, users stop seeing AI as an inscrutable black box and start experiencing it as a sophisticated partner with specific strengths, limitations, and quirks.
+
+ 
+But understanding what happens during computation is only half the equation. Once the AI system completes its complex cascade of processing, routing, and generation, it must present its results to the user, and this moment of delivery is where success or failure is ultimately determined. A perfectly computed response can still mislead if it’s presented without proper context. A creative output can lose its impact if it arrives without clear next steps. Even accurate information can erode trust if users can’t verify its sources or understand its limitations.
+
+ 
+The transition from computation to communication represents one of the most critical design challenges in AI interfaces. In the next chapter, we’ll explore how to design outputs that don’t just deliver results, but invite the right kind of interpretation, action, and ongoing collaboration between human and machine intelligence.
+
+===== FILE: OEBPS/ch02.html =====
+
+Chapter 2. Output: Designing the Delivery and Presentation of LLM Responses
+
+ 
+ 
+
+A Note for Early Release Readers
+
+With Early Release ebooks, you get books in their earliest form—the author’s raw and unedited content as they write—so you can take advantage of these technologies long before the official release of these titles.
+
+This will be the 5th chapter of the final book. Please note that the GitHub repo will be made active later on.
+
+If you’d like to be actively involved in reviewing and commenting on this draft, please reach out to the editor at ccollins@oreilly.com.
+
+ 
+In the 1970s, as hospitals began digitizing patient records, a new concept emerged at the intersection of computing and clinical reasoning: the clinical decision support system, or CDSS. These early systems (MYCIN, INTERNIST-1, and later DXplain) did not attempt to replace doctors, but were meant to assist them by surfacing probable diagnoses. 
+
+ 
+In principle, these systems were intelligent aids, but in practice, they often struggled. One of the reasons was technical: early models couldn’t reason across complex or incomplete patient histories, or evolving treatment protocols. But a deeper issue ran beneath the surface. Even when the logic was sound, the output could be misunderstood. A flagged diagnosis might be taken too seriously - or too lightly. A suggestion might be seen as definitive, when it was only probabilistic. Some doctors ignored the systems entirely. Others over-relied on them, treating suggestions as answers. In either case, the interface became the risk surface: the way output was presented and interpreted determined whether it supported care or disrupted it. Figure 2-1 shows a standard output from MYCIN, indicating that a bacterial infection may be present if the five conditions in the function are true.
+
+ 
+
+ 
+ 
+Figure 2-1. A standard output from MYCIN
+
+ 
+
+ 
+This interpretive problem has become the defining challenge of modern AI interaction. Today’s systems face the same dilemma CDSS researchers encountered fifty years ago: how do you design outputs that build trust? How can you design an output to be transparent, or guide without misleading? How do you surface uncertainty without overwhelming the user? And how do you build interfaces that support judgment, not just consumption?
+
+ 
+The history of CDSS offers a foundational lens for understanding output design today. Those systems were among the first to produce fluent, recommendation-like content that mimicked human reasoning. But their very fluency became a liability when not paired with sufficient transparency or guardrails. MYCIN, for instance, could diagnose blood infections with near-human accuracy, but it also required users to understand its rule base and its confidence thresholds. As noted in the paper ‘Clinical Decision Support Systems’ (Musen, M.A., Shahar, Y., Shortliffe, E.H., 2006), doctors exhibited skepticism with these early programs. In many cases, because the system lacked transparency, doctors either ignored the system or misinterpreted it. As CDSS evolved, interface designers learned to add explanation layers, highlight contraindications, and allow clinicians to inspect the why behind a recommendation. These changes were essential to making the output usable, trustable, and, in some cases, safe.
+
+ 
+AI systems today face a vastly expanded output space. A single model might summarize a policy, rewrite a job description, identify trends in sales data, generate an image, and suggest a next-best action for a user. In each case, the output initially looks complete. But as with a diagnostic suggestion, the output is only part of the truth. What is missing is often invisible: original sources, omitted alternatives, unstated assumptions, or training data biases. These aren’t bugs in the system. They are byproducts of the way modern AI generates outputs: through pattern completion, not verification.
+
+ 
+
+ 
+Designing Outputs: The Output Is Not the answer
+
+ 
+Designers working on AI systems must understand that the output is never just an answer. It is a designed artifact, interpreted through an interface and shaped by defaults, context cues, and user expectations. And just as in CDSS, the way an output is designed can dramatically affect how users act on it.
+
+ 
+AI outputs are more than just the endpoint of generation. They are events in a wider process, with psychological, structural, and ethical implications. This chapter looks at how outputs are structured, evaluated, personalized, edited, and sometimes misunderstood. And we’ll return to the lesson CDSS offered half a century ago: generation is only the beginning. Without care in how outputs are communicated and interpreted, even the most well-trained model can produce results that mislead more than they assist.
+
+ 
+Before diving into the design principles of outputs in detail, let’s look at what’s happening when you get to the output on a technical level. By the time you reach the output step, you have seen the user’s input being translated into tokens, routed to the correct model, put through generation, and made ready to be transformed into a usable result. For this to happen, there are three sub-phases:
+
+ 
+ 
+
+ 
+Internal generation: The model internally finishes the computation and decides what the output should be.
+
+ 
+
+ 
+
+ 
+Post-processing: The system cleans up, formats, or enhances the output into a deliverable form.
+
+ 
+
+ 
+
+ 
+Delivery/presentation: The system transmits or renders the output to the user, system, or environment.
+
+ 
+
+ 
+ 
+How this happens varies depending on the model type, including LLMs, image generators, video generators, classic ML classifiers, and reinforcement learning agents - we’ll briefly cover these.
+
+ 
+For example, in language models, output generation must first be detokenized: the model’s internal units converted back into human language. During post-processing, this text is lightly cleaned: extraneous spaces are trimmed, subwords are rejoined, and the content may be lightly reformatted into markdown, bulleted lists, or structured code blocks. Systems often apply guardrails at this point, scanning for sensitive material, policy violations, or problematic phrasing. Only after these guardrail steps is the output delivered to the user, usually as a chat bubble, streamed text, or document element, ready for interaction.
+
+ 
+For image generators, the process follows a similar high-level arc, but with some distinct differences. Once a latent image has been fully formed, it must be decoded into real pixels to create a coherent output. A specialized network translates the compressed internal idea into a full-resolution image. After processing for safety filters and rendering corrections, the final image is then compressed into a standard format, such as JPEG or PNG, and either embedded directly into the user interface or made available for download. Video generation introduces the added challenge of maintaining coherence across time, meaning a similar process is applied but to a sequence of frames. 
+
+ 
+Once the AI finalizes its output, no matter the format, the responsibility shifts to the interface. It’s no longer about what the AI produced; it’s about how that output is delivered to the user. The interface must present the information clearly, manageably, and in a way that matches the user’s cognitive needs and task goals. A well-designed presentation can make even complex or uncertain outputs feel approachable and useful; a poorly designed one can erode trust or overwhelm the user. To unpack the layers involved, we’ll cover the high-level principles that govern output success.
+
+ 
+
+ 
+
+ 
+Design Principles of Outputs
+
+ 
+The output is the product in most AI interfaces. Whether it’s a sentence, summary, plan, image, or code snippet, the content is the thing the user came for. While the output often answers a question, so to speak, it’s not speaking in a vacuum. The core questions users ask - Is this useful? Can I trust this? Is this what I meant? - are answered in part through the appearance of the output itself. For that reason, effective outputs must adhere - with a degree of flexibility - to certain principles. They should be:
+
+ 
+ 
+
+ 
+Clear: Instantly understandable
+
+ 
+
+ 
+
+ 
+Verifiable: Evidence-backed results
+
+ 
+
+ 
+
+ 
+Grounded: Context-aware
+
+ 
+
+ 
+
+ 
+Actionable: Onward-task oriented
+
+ 
+
+ 
+
+ 
+Adjustable: User-editable 
+
+ 
+
+ 
+ 
+Even as the specifics of AI outputs differ, the core design goals remain consistent, and achieving these goals consistently requires both guiding principles and repeatable interface strategies that can be adapted to different output modalities.
+
+ 
+
+ 
+Designing for Clarity
+
+ 
+Content design shapes information so people can actually use it. It’s about making things clear, scannable, and structured in ways that match how we naturally read and process information. Beyond just words, content design creates meaning through how things are presented to the user, with simple elements like hierarchy and prominence conferring meaning. In the same way, in AI outputs, content design governs how generated outputs are presented: whether that’s a paragraph of text, a table of options, a visual caption, or a multi-step plan. Good content design helps guide the user and answer implicit questions through thoughtful structure and clarity. 
+
+ 
+Understanding and trusting an output becomes easier when it feels tailored to the user’s intent. Clarity, tone, structure, relevance, and readability aren’t decorative choices, but instead represent the difference between an output that feels actionable and one that feels alien. As the Nielsen Norman Group have observed, users won’t engage with text unless it’s clear, simple, and easy to scan, regardless of whether it’s written by a human or an LLM. In this case, designers must particularly advocate for the user’s best interests, because AI won’t naturally write or organize content in a user-centric way unless it is told to do so.
+
+ 
+
+ 
+Structuring for clarity: From raw to refined
+
+ 
+As mentioned earlier, AI models, at their core, predict the most probable token based on the prompt and prior context. They do not inherently “know” what good, readable writing looks like. Without deliberate prompting, outputs can default to undifferentiated text, or otherwise obscure a valuable output with bad or alienating structure. 
+
+ 
+For outputs to integrate cleanly into products and services, designers must step in. Good AI output design layers structure, tone, pacing, and cognitive rhythm on top of raw model capabilities. Basic prompting, like asking a model to Use headings and bullet points might help a little, but can fall short. 
+
+ 
+Formatting rules are a way of gearing a text output towards readability. Instead of broadly asking for headings and bullets, you can spell out the entire hierarchy and its purpose. A good prompt might ask the model to start with a clear title, break major ideas into H2-level section headings, subdivide complex areas with H3s, and use bulleted or numbered lists for digestible steps or key points. Here’s an example of such a prompt:
+
+ 
+Organize content with a clear title, followed by section headings (H2 style), subsections (H3 style if needed), and bulleted or numbered lists for procedural information. Use concise paragraphs (max 3 sentences each). Bold key actions or terms. Add a 'Notes' or 'Tips' section where appropriate.
+
+ 
+Defining templates within the prompt or system instruction is another powerful lever. An effective output template might open with a title, followed by a short introduction that sets context. Key concepts could come next, in a compact bulleted list, before stepping through numbered instructions for complex processes. A short conclusion or set of next steps can close the loop, and sources should always be listed at the end, formatted cleanly with hyperlinks. When outputs consistently follow an internal logic, users learn how to navigate them faster and trust them more instinctively. Here is an example of an effective output template:
+
+ 
+Format all instructional content as:
+Title: [Concise, clear]
+Introduction: [Brief, 1-2 sentences summarizing purpose]
+Key Concepts: [Bulleted list of important points]
+Steps: [Numbered list of actions]
+Conclusion/Next Steps (Optional)
+Sources: [Bulleted list with hyperlinks]
+
+ 
+Tone and voice matter just as much as structure. Without oversight, models might vary their tone significantly. A clear tone specification, like the one in this example, gives the model a target personality to aim for:
+
+ 
+Use a clear, friendly, moderately formal tone suitable for a general but technical audience. Avoid jargon unless specifically appropriate. Prioritize clarity over creativity. Where multiple methods exist, present the primary method first, alternatives afterward, clearly flagged.
+
+ 
+Beyond tone and structure, designers must think about how models should handle trade-offs. Should outputs be exhaustive, or favor brevity? Should every edge case be addressed, or should the core path stay streamlined? Giving models a simple heuristic, such as prioritize readability and logical flow over exhaustive completeness, helps them resolve these tensions in favor of user experience. Instructing models to segment longer outputs, use short paragraphs, and create strong transitions between sections ensures that users can skim when they want to and dig deeper when they need to. For example:
+
+ 
+Prioritize readability and logical flow over exhaustive detail. Emphasize information architecture that makes outputs scannable: short sections, clear transitions, and segmented content.
+
+ 
+Finally, it’s important to plan for failure. Models have a strong tendency to improvise, and unless told otherwise, they may invent plausible-sounding content to fill gaps. Explicitly telling the model to output a clear statement like No data provided when information is unavailable sets a safer, more transparent default. It also signals clearly to users that something is missing, rather than silently risking misinformation. Try something like this:
+
+ 
+If required content is missing or unavailable, output 'this isn’t available' instead of inventing or speculating.
+
+ 
+
+ 
+
+ 
+Before and after: A practical example
+
+ 
+To see the difference between naive and designed output, consider a simple prompt: 
+
+ 
+How do I set up an MCP server?
+
+ 
+When left to its own devices, the model might produce something like this:
+
+ 
+To set up an MCP server, first install the Java Development Kit (JDK) and download the necessary server software. After extracting the files, create a script file to start the server. Setup varies slightly based on your operating system. If you run into issues, check the documentation.
+
+ 
+Technically correct—but flat, hard to skim, and not very actionable. By contrast, a carefully styled output could look more like this:
+
+Setting Up an MCP Server
+Introduction: Setting up a Minecraft Coder Pack (MCP) server can differ depending on your operating system and technical background. This guide provides step-by-step instructions with tailored tips for Windows, macOS, and Linux users.
+Key Concepts:
+ - MCP servers require Java Development Kit (JDK) and server files.
+ - Command-line familiarity improves setup efficiency.
+ - Different OS environments require different script configurations.
+Steps:
+ 1. Install Java:
+ - Download and install the latest Adoptium JDK.
+ - Windows users should use the Windows Installer; macOS users should prefer the .pkg installer.
+ 2. Download MCP:
+ - Clone or download MCP Reborn or a maintained fork.
+ 3. Extract Files:
+ - Place the extracted MCP folder in a directory without spaces (e.g., C:\MCP or /Users/username/MCP).
+ 4. Configure Environment:
+ - Windows: Edit the setup.bat script as needed.
+ - macOS/Linux: Use setup.sh and grant execution permissions with chmod +x setup.sh.
+ 5. Run Setup Scripts:
+ - On Windows, double-click setup.bat.
+ - On macOS/Linux, execute ./setup.sh from the terminal.
+ 6. Handling Errors:
+ - Missing environment variables? Consult Oracle JDK Path Setup.
+ - Linux users should verify that JAVA_HOME is set correctly.
+ 7. Test the Server:
+ - Launch the server using the provided scripts (start.bat or start.sh).
+Notes:
+ - Beginner Tip: If command-line tools feel intimidating, consider using Git Bash on Windows.
+ - Advanced Tip: For experienced users, automating setup with Docker or CI pipelines can improve development workflows.
+Sources:
+ - Official Java Downloads
+ - MCP Reborn Repository
+ - Minecraft Modding Wiki
+
+ 
+Notice how much easier it is to skim, act on, and trust the structured version: the layout sets expectations; important concepts pop out visually; steps are easy to follow. Even if the user isn’t familiar with all the tools involved, the guide offers helpful branches for deeper learning. 
+
+ 
+To achieve the preceding output, you might use an enhanced system instruction like the following: 
+
+ 
+Always produce structured output following this order: Title → Introduction → Sections → Subsections → Lists → Notes/Tips → Conclusion → Sources. Use H2 for major sections, H3 for subsections. Limit paragraphs to 2–3 sentences. Bullet lists for unordered information, numbered lists for ordered steps. Bold critical actions or terms. Maintain a clear, neutral-friendly tone. If any section lacks information, insert 'No data provided.' Prioritize scannability and clarity over completeness. Hyperlink any cited sources.
+
+ 
+
+ 
+
+ 
+Extending clarity across formats
+
+ 
+While this section focuses on text-based outputs, the same principles apply across other forms of AI generation, including images and video. Left to their own devices, image models like DALL-E may produce technically accurate illustrations that lack visual hierarchy or emotional pull. Similarly, video models like Sora or Runway can generate scenes that are coherent at the frame level but feel disjointed, awkwardly paced, or narratively empty when viewed as a whole.
+
+ 
+
+Tip
+
+ 
+Across all formats, model outputs serve as raw starting points. Good outputs, whether textual, visual, or cinematic, require the same layering of design elements: guiding composition, tone, rhythm, and structure. Just as AI-written text must be styled for scannability and clarity, AI-generated images must be shaped for focus and storytelling, and AI-generated videos must be molded around pacing, transitions, and emotional arc. Across all media, usability is not a default; it is an outcome of thoughtful design.
+
+ 
+
+ 
+
+ 
+
+ 
+Balancing structure and flexibility
+
+ 
+As mentioned earlier, more information is sent to the model than what the user might input. This is also true of the styling information that controls the output. All are sent in a packaged format to the model, and must be parsed, meaning leaner, clearer output styling will result in less computational effort being expended.
+
+ 
+Keep in mind that over-styling AI outputs can run the risk of diminishing returns. A 2024 study found that excessively rigid output templates can suppress useful model flexibility, increase hallucination rates when inputs are messy, and erode trust by making content feel mechanical or unnaturally scripted. When outputs sound too perfect, users start wondering if they’re reading something made for humans, or something made for compliance checklists. It turns out LLMs, like designers, like some room for creativity.
+
+ 
+
+ 
+
+ 
+
+ 
+Designing for Verifiability
+
+ 
+In 2023, Attorney Steven Schwartz sought to lighten his workload, unknowingly in the process upending a routine personal injury lawsuit and damaging his own career. In searching for relevant case law, the lawyer asked ChatGPT to assist in drafting a legal brief. The tool rapidly produced citations to six court cases that included plausible legal reasoning and structure, but had just one downside: they were completely fictitious. As you learned in Chapter 1, models have a tendency to hallucinate; Schwartz, none the wiser, incorporated these hallucinated citations into the brief without checking their authenticity.
+
+ 
+The issue came to light during discovery, when the opposing legal team reported their inability to locate the cited cases. Upon investigation, presiding U.S. District Judge P. Kevin Castel found that the submissions contained “bogus judicial decisions with bogus quotes and bogus internal citations.” He described parts of the content as “gibberish” and “nonsensical”, eventually fining Schwartz $5,000.
+
+ 
+This incident emphasizes that, unlike traditional software, AI systems don’t provide deterministic outputs. That means the same input can yield different results, and the logic behind a given response isn’t always visible or stable. As a result, users may not know whether to trust what they’re seeing, since errors or hallucinations might be very convincing. To help users navigate this uncertainty, AI interfaces should be optimized to give users the opportunity to verify possibly hallucinated content. 
+
+ 
+
+ 
+AI overreliance
+
+ 
+AI overreliance occurs when users depend too heavily on AI systems, accepting incorrect recommendations and diminishing their own critical thinking abilities. As AI tools become more sophisticated and widespread, this phenomenon creates interesting challenges for interface design.
+
+ 
+The problem manifests in several ways. Skill atrophy develops when consistent AI dependence weakens underlying human abilities; like GPS reducing spatial awareness or writing assistants diminishing composition skills. Automation bias leads users to favor AI suggestions over their own expertise, even when recommendations seem questionable or contextually inappropriate. Meanwhile, AI systems often miss nuanced cultural, ethical, or situational factors that humans naturally consider, yet users frequently trust outputs without adequate verification.
+
+ 
+Microsoft’s AETHER research (“Overreliance on AI,” Microsoft Research), analyzing 60+ studies, reveals that overreliance stems from psychological mechanisms including confirmation bias (users trust AI that agrees with them) and ordering effects (early positive AI interactions create lasting over-trust). Surprisingly, detailed explanations can paradoxically increase overreliance rather than improve judgment.
+
+ 
+The research suggests that human-AI teams often perform worse than either humans or AI working alone when overreliance occurs. Interface design approaches that seem to help include cognitive forcing functions that interrupt automatic acceptance, transparent communication about AI capabilities, progressive disclosure that builds realistic mental models, and real-time feedback on decision quality. The challenge lies in fostering appropriate reliance rather than blind trust, helping users become effective AI collaborators rather than passive consumers. 
+
+ 
+
+ 
+Many have asked - how can we solve these pesky hallucinations? One often-mentioned solution proposes a design pattern that asks a model to evaluate how correct an answer may be, often termed a confidence indicator. This, however, is also problematic: models don’t just hallucinate - they’re also bad estimators of their own confidence. This isn’t totally their own fault: think of the difference between asking Are you confident this volcano will erupt next year? versus Are you confident this is a good essay? versus Is the sky blue? Each question requires a different kind of reasoning: probabilistic modeling, subjective judgment, or factual recall. Shoehorning these different queries into the same datapoint seems likely to lead to misunderstandings.
+
+ 
+At a technical level, most LLMs don’t produce a direct confidence score in the way people assume. Their confidence is often estimated by the probability of the next token in a sequence, which is an artifact of training on massive amounts of text data. But high token probability doesn’t mean the model is correct, it just means it’s likely to output that token next given everything it’s seen before. That means relying on confidence indicators alone may be a flawed interface strategy. As noted in the controversial paper “On the Dangers of Stochastic Parrots” (Emily M. Bender et al, 2021), models are trained to imitate linguistic patterns, not to reason or verify. 
+
+ 
+This lack of verification is partially an issue because we’re used to validating and interrogating data with percentages - however, it’s important to remember that not all percentages are created equal. Consider a simple spellchecker: it flags 7 of 100 words as potentially incorrect, and tells you it’s 93% confident the rest are fine. That’s a percentage you can understand and verify. The algorithm is legible: it checks each word against a dictionary and tallies the results. If you wanted to, you could replicate the process yourself.
+
+ 
+Now contrast that with a percentage spat out by a language model in response to a query. In this case a 93% confidence isn’t based on a count of errors or an understandable rule. It’s the output of billions of parameters operating in latent space, shaped by a training corpus that no one user - or engineer - has ever seen in full. Rather than tallying known words or frequencies, the model estimates which token is most likely to come next: it’s estimating next-token likelihoods across a multidimensional probability distribution. In other words, it feels precise while being fundamentally uninspectable.
+
+ 
+The confidence percentages look similar on the surface, which can be misleading. But the underlying logic behind each is fundamentally different. Rather than surfacing abstract confidence scores, interfaces should ask: Can the user independently validate this information? If not, then the system needs to either route the user toward verification (through citations, evidence, or a human handoff) or avoid presenting the output as authoritative in the first place (using hedging language like this seems to be true or it’s difficult to verify). The best use case for AI today is for decisions you can quickly verify, not ones that require in-depth research or expertise to validate. AI is better for subjective tasks - copyediting, rewriting, brainstorming - where usefulness, not factual correctness, is the benchmark. These are the domains where confidence is irrelevant, or at least not primary.
+
+ 
+But when outputs contain actionable or objective components, such as summarizing legal policy, recommending medical treatments, or guiding financial decisions, the stakes are higher. These use cases need interface mechanisms that support accountability. If the system is nudging a user toward real-world action, it should surface secondary signals such as traceable sources, side-by-side comparisons, or explicit opportunities for human review. Confidence becomes a collective performance - something that must be earned, not assumed. 
+
+ 
+
+Warning
+
+ 
+If the output contains objective information and the user will take action on or with it, then it needs a secondary (human) verification layer. 
+
+ 
+
+ 
+In Figure 2-2, Perplexity AI attaches sources directly to individual claims. Each superscript link opens the underlying article, giving the user immediate access to origin material. 
+
+ 
+
+ 
+ 
+Figure 2-2. Perplexity’s source-based UI
+
+ 
+
+ 
+As you’ll see later in the chapter, opening sources can help a user validate, but it can also help them in their wider user journey. The user may want to verify, yes, but also to branch out from the answer, to read more deeply, cite in their own work, or explore related materials. The action isn’t just check the source,. it’s jump off from here.
+
+ 
+
+ 
+Human-in-the-loop
+
+ 
+Human-in-the-loop (HITL) represents a design approach where people remain actively involved in AI decision-making processes rather than being replaced by automation. It can work in multiple ways: in some cases, humans provide initial training data and ongoing feedback to improve AI performance; in others, AI handles routine decisions while escalating edge cases to human reviewers.
+
+ 
+For example, a HITL service might begin with thousands of customer support tickets and seek to route them to appropriate specialists. To do that, AI categorizes tickets by topic and urgency while human agents review edge cases and train the system on new issue types. The benefit of this approach is that it handles volume efficiently while maintaining quality, despite the fact that it requires ongoing human training time.
+
+ 
+A more sophisticated version might begin with mental health conversations and seek to provide supportive responses to users in distress. To do that, AI selects from a curated library of therapeutic phrases that licensed therapists have pre-approved. This high risk area requires a high quality of human oversight, and the benefit in this case is that the model is capable of offering immediate support using clinically sound language without generating it itself, lowering the chances of a damaging or hallucinated output.
+
+ 
+It’s becoming clear that this works well: research from Lai et al. (2023) examining human-AI collaboration across multiple domains found that well-designed HITL systems often outperform fully automated approaches, particularly in domains requiring creativity, ethical reasoning, or handling of edge cases. As this area expands, the key will be designing for effective, low-risk collaboration that balances efficiency with a clear-eyed awareness of potential harms.
+
+ 
+
+ 
+
+ 
+
+ 
+Designing Grounding
+
+ 
+In the summer of 2024, my partner and I attended the wedding of two friends in Las Vegas, Nevada. The night before the wedding, we were invited to gather at a casino bar - ostensibly to toast to the couples’ good health the night before the celebrations were to take place. A few hours into the evening, much to our surprise, an Elvis impersonator appeared, performing a series of classic hits, dressed (as you might expect) in a full-body bedazzled suit. But then things took a turn: he invited the couple to exchange rings, and went on to invite them to sign their legal papers. He addressed the increasingly confused crowd: “This really is real, folks.” He declared the couple legally married, and the festivities continued into the night, as we and our nonplussed friends celebrated this unexpected turn of events.
+
+ 
+As we later came to understand, this had not been planned in advance. In the run-up to the big day we’d heard rumblings of an issue with the wedding planner; in the end, we learned that as the wedding planner hailed from New York, she was not natively familiar with the matrimonial laws in the state of Nevada. When the couple asked her if they could be married by a friend instead of an ordained minister, the planner consulted ChatGPT, which told her that they could. Unfortunately, it appears ChatGPT misled her by mistakenly checking the laws of the state of California, not Nevada: an error that was only discovered a few days before the wedding - hence, getting married by Elvis. 
+
+ 
+While this sweet example has a happy ending, it underlines the importance of grounding: the information being cited was correct for California, but not for Nevada. Grounding is concerned with how output declares its context, and though it’s similar to verifiability, the latter focuses more on whether the claim is checkable, rather than why the system made it. Grounding can include which entities were referenced, but also what location, timeframe, or version the model had in mind. In short, grounding reveals the lens through which the model generated its response. In the case of our friends, grounding the output of the query would have let the wedding planner know their information was relevant to CA, not NV, thus saving our friend an embarrassing mistake. Figure 2-3 shows how Lexus Nexus +AI solves the problem of legal jurisdiction by allowing users to nominate their preference clearly (and persistently).
+
+ 
+
+ 
+
+ 
+ 
+
+ 
+ 
+Figure 2-3. Lexis Nexus +AI stipulates clearly what jurisdiction the user is working in
+
+ 
+
+ 
+In many AI systems, that lens is hidden. A user might ask for hiring guidelines and receive a confident-sounding summary without knowing whether it was pulled from federal law, internal HR policy, or a generic web source. Grounding solves this by designing contextual signals to accompany the output. These signals help the user understand how to read the answer, and whether it meets their expectations:
+
+ 
+ 
+
+ 
+Model name and version: The specific model used (for example, ChatGPT-4o vs o3) can shape tone, scope, and reliability. 
+
+ 
+
+ 
+
+ 
+Agent or tool responsible: In multi-agent systems, it’s useful to know which component generated the response. This helps users make sense of the logic behind the answer, and know where to direct questions or edits.
+
+ 
+
+ 
+
+ 
+Geographic or locale grounding: AI models may tailor phrasing, tone, or examples based on regional settings. Misaligned locale assumptions can lead to errors - like citing California law when the user is in Nevada. 
+
+ 
+
+ 
+
+ 
+Task or mode grounding: If an input was applied in a specific mode (for example, creative vs. analytical, draft vs. polish), grounding the output in the mode helps align user expectations and avoids mismatched tone.
+
+ 
+
+ 
+
+ 
+Interaction history or session context: Did the AI reference something the user said earlier? When responses are tailored to assumed intent, making that assumption visible (Because you’re working on Q2 planning…) helps prevent confusion and allows for correction.
+
+ 
+
+ 
+ 
+One proven design pattern for gathering and surfacing this metadata is the Why we suggested this affordance. Typically shown inline, on hover, or behind an info icon, this lightweight explainer gives users a peek behind the curtain without disrupting the main experience. It might include what data or files the model consulted, whether the output was influenced by user preferences, history, or prior queries, which model or agent generated the response, and so on.
+
+ 
+This type of optional explanation provides users with a starting point for understanding why a response was generated and the additional option to reconfigure. I discuss adjustability a little later, but displaying grounding sources (eg. wikipedia.com) provides a user with a great starting point when seeking to tune or refine an output.
+
+ 
+
+ 
+This Summary is AI-Generated
+
+ 
+As AI systems become more capable of producing humanlike responses, the need to disclose their non-human nature becomes a foundational design consideration. Some jurisdictions have already enshrined disclosure requirements in law: California’s Bot Disclosure Law (SB-1001), enacted in 2019, requires that bots be clearly identified as such when interacting with users in commercial or political contexts (specifically, when the interaction is intended to influence a purchase or a vote). It’s vital that users know they are not speaking with a human before they engage meaningfully. Figure 2-4 shows the Alltrails app disclosing that a summary was created by AI.
+
+ 
+
+ 
+ 
+Figure 2-4. Alltrails AI Disclosure, 2025
+
+ 
+
+ 
+Similarly, the EU AI Act (passed in 2024) introduces mandatory transparency for any system that interacts with users or generates synthetic content. The law requires AI systems to reveal that users are communicating with a machine except when it is obvious from the context. This clause places additional weight on design: if your interface mimics human interaction too well, disclosure cannot be skipped.
+
+ 
+The U.S. Federal Trade Commission has issued guidance suggesting that deceptive failure to disclose AI use in consumer-facing tools may violate truth-in-advertising laws, especially when it affects decision-making. In light of this, many companies have written internal policies around AI disclosure and compliance that encourage best practices: Google’s People & AI Research Group (PAIR) emphasize the importance of considering all groups when designing disclosures, suggesting products “institute the necessary safeguards and explanations so user groups who are particularly vulnerable to misunderstanding AI responses as humans can discern outputs that are generated by AI.” Designers can advocate for ethical, transparent interfaces by integrating disclosure early in the interaction, framing it as a tool for user understanding rather than a warning, and ensuring that users always know when AI is shaping their experience.
+
+ 
+
+ 
+
+ 
+
+ 
+Designing for Actionability
+
+ 
+If the output is the product, the action taken on it represents the real user value. While the primary output might be a block of text, a chart, a code snippet, or a recommendation, its real utility often lies in what users can do with it next. Forward actions are the verbs that surround the noun: save, buy, book, export, send, cite, navigate, representing the bridge between comprehension and application. They also reflect the model’s assumptions about the user’s goals, giving them concrete ways to act on the output.
+
+ 
+These forward actions enable the user to pursue deeper inquiry, act on recommendations, or evaluate their choices. These interactions can take many forms, but their purpose is to support the user in their onward journey, intrinsic or extrinsic to the product itself. Consider a user asking an AI What’s a good gift for my dad’s birthday? A compelling output might list a few curated ideas, but the usefulness hinges on what the user can do next. Can they click to buy it? Save it to a shortlist? Compare prices or delivery times? 
+
+ 
+Similarly, you can imagine a query that revolved around a location hinging on accurately predicting the user intent and providing that affordance. If the user asks Where can I find a quiet café near the Met Museum? the result might contain embedded maps or lists. But the real power lies in layered interactions: Can the user get walking directions? Add the café to an itinerary? Call and make a reservation? Designing these secondary actions well requires understanding not just the user’s immediate question, but the downstream actions they might reasonably want to take, making the output a staging area for what comes next. Figure 2-5 shows an interface in Chat GPT that allows a user to view output responses (here, recommended hotels) charted on a map, with options to review as a list, scroll through more options, view more detailed information like images, rating and descriptions, and continue with forward actions like getting directions or visiting the hotel website.
+
+ 
+
+ 
+ 
+Figure 2-5. Map options in ChatGPT
+
+ 
+
+ 
+Users expect forward actions to follow the same principles as any interaction pattern they’re familiar with, like a web search or adding an event to their calendar: I can act from here; I can modify it before I act; I can pick and revert between several paths; I know what will happen if I click this, I know how to get back. Fulfilling the user need means staying as close to these principles as possible, while also acknowledging the differences that AI layers on top of experiences. Giving multiple options communicates choice to the user, as shown in the Gmail example in Figure 2-6. 
+
+ 
+
+ 
+ 
+Figure 2-6. A panel of suggested email responses in Gmail 
+
+ 
+
+ 
+When providing onward options, it’s important to make clear when an action will have final impact, like a purchase or sending an email, versus when the user will have an opportunity to review beforehand. This mirrors best practices from computer programming - using version control to checkpoint stable code in case there’s a need to revert experimental changes later. Since precision can be an issue for LLMs in general, users may lean heavily on the ability to review before executing on a task, requiring additional clarity from the UI (drafting vs sending). Additionally, users should be notified when they are clicking a link or using a product that will take them to a different domain, along with implied returnability (Saved to drafts) and potential acknowledgement in the UI, such as a visual indication that a link has been clicked before (much like a used hyperlink changing color). 
+
+ 
+
+ 
+Using a canvas
+
+ 
+In AI interface design, a canvas is an interactive, often editable, workspace where users can view, manipulate, and build upon AI-generated content. It’s distinct from a chat interface or static output pane because it provides spatial freedom, persistent context, and often multi-modal interaction (text, code, visuals, and so on). Key traits of a canvas include the following:
+
+ 
+ 
+
+ 
+Editable and composable: Users can revise AI output directly, like rewriting a paragraph, tweaking a chart, or dragging in new components.
+
+ 
+
+ 
+
+ 
+Spatial layout: Unlike chat (which is linear), a canvas supports spatial organization, allowing users to group, rearrange, or layer content.
+
+ 
+
+ 
+
+ 
+Persistent state: Content stays visible and editable. It’s not buried in conversation history or lost after a response.
+
+ 
+
+ 
+
+ 
+Multi-modal Integration: Often supports a mix of text, images, code, data, or UI blocks, sometimes with tool integrations or plugins.
+
+ 
+
+ 
+ 
+
+ 
+
+ 
+Moving an output to the canvas
+
+ 
+A canvas provides a few things that move beyond a regular output: shareability, storability, interactivity, discoverability. Though it doesn’t necessarily mark the move from exploration to execution, it does differentiate the output from machine-generated content to human-guided, with the user having a higher level of ongoing agency. A canvas can house multiple types of interaction: editing, organizing, tagging, branching, comparing, and shifts the tempo of work, promoting return visits, rethinking, or reuse. This is also the phase at which an AI-generated output can become a shared artifact that can be collaborated on with other users.
+
+ 
+Context can affect the canvas in many cases: since the entity arose from an output, it’s possible for the user to go back to the conversation and iterate, even after publishing or sharing with other users, or rename or recontextualize. This requires the interface to handle state clearly, helping the user understand which iteration they’re working with. This is handled neatly by Claude, as seen in Figure 2-7, which displays versions and allows users to select which one they’re working on - and to publish, and to save specific versions as favorites or to a specific project or workspace.
+
+ 
+
+ 
+ 
+Figure 2-7. Claude allows users to choose between different versions of the canvas artifact
+
+ 
+
+ 
+For generative outputs, the input-computation-output model can be much quicker. For instance, a user asks the model to automatically recognize a figure in a video or photo to remove it. In this case, as with an LLM, the canvas is a recurrent space of co-creation with the model, where the user and model work together to refine the entity. Here state management is even more crucial, necessitating the ability to undo and redo step-by-step. Preservability in this case means that the user feels that they can follow the breadcrumbs all the way back to where they started, iterating at each step as they go, something that is presently explored in node-based AI interfaces like Runway, as shown in Figure 2-8.
+
+ 
+
+ 
+ 
+Figure 2-8. , Runway’s node-based experimental interface 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+Designing for Adjustability
+
+ 
+Imagine a user asks an AI assistant to Draft a follow-up email thanking the client, and summarizing next steps, and an LLM generates a response that’s too formal. The user could easily delete the response and retype the prompt with more specifics. But more often than not, they’ll choose to refine what they have. Why? Because iteration preserves what’s already working, reduces effort, and helps maintain continuity. Restarting, on the other hand, often feels like throwing away progress.
+
+ 
+This instinct to adjust rather than start over is supported by the structure of many AI interfaces. They’re designed to let users steer or revise outputs without needing to re-prompt from scratch. And in session-based tools, that preference is reinforced by the context window: the ever-growing conversation log or document history that the model ingests when generating its next response. Context helps the AI stay on track with tone, intent, and prior instructions, but it also means that a restart may lose useful signals established earlier in the exchange. As seen in Figure 2-8, Notion handles adjustability elegantly with an inline AI adjustable UI that appears on text select.
+
+ 
+
+ 
+ 
+Figure 2-9. Notion inline refinements
+
+ 
+
+ 
+To support this iterative approach, some AI products offer versions: alternative outputs based on the same input. Others expose controls like temperature settings, a high-level parameter controlling the LLM’s output that determines how conservative or creative the response should be when it comes to predicting the next token. A lower setting will yield more predictable outputs, while a higher one invites more variety. Although temperature merely affects the way the model picks from its candidates of next-in-sequence tokens, it gives the impression of affecting its creativity. These tools give users a way to explore multiple takes on the same request before committing to an edit.
+
+ 
+For example, when a user selects a specific portion of text and clicks Elaborate, the system re-engages the underlying language model using a modified version of the original instruction, a technique called prompt augmentation. The system alters the user’s original prompt by appending a directive such as elaborate, add more detail, or expand this section. The updated prompt is then used to regenerate the content, producing a version that is hopefully more detailed than the original. The AI then regenerates just that section, rather than the entire document, ensuring the expansion remains aligned with the surrounding context.
+
+ 
+Many of these systems also support iterative refinement, allowing users to click Elaborate multiple times. With each click, the system reprocesses the content, building on the prior output to gradually increase its length and depth. This stepwise expansion gives users a sense of control over pacing and tone, especially in collaborative or assistive writing contexts.
+
+ 
+To achieve this, users must first be aware of the tools available to them and that they are allowed to make a selection. The tuning available to them is most useful when it’s a style of refinement, letting the user enhance their existing output. 
+
+ 
+
+ 
+
+ 
+
+ 
+Designing for Multi-turn Outputs
+
+ 
+Increasingly, users engage in multi-turn workflows: editing a document over time, solving a complex problem in steps, or running a semi-autonomous process that unfolds over minutes or even hours. In these cases, the AI interaction is not a one-shot process. The agent becomes a collaborator, producing recurrent outputs, streams of content shaped by evolving context, memory, and user direction.
+
+ 
+Designing interfaces for these outputs requires a shift in mental model. As discussed in Chapter 3, the output participates in an ongoing state, contributing to continuity over time. Instead of thinking in terms of inputs and outputs, designers must consider sessions, threads, or even workflows, extended arcs of activity that may be paused, resumed, branched, or redirected.
+
+ 
+This change introduces new design tensions. Users want flexibility without chaos, progress without fragility. They want to test an idea without committing to it. In turn, designers must support continuity across multiple interactions, explicit and implicit memory cues, and ways to fork, revise, or abandon without penalty. In agentic systems it’s not just about generating content. It’s about staying on task. The interface must scaffold not just the current output but the entire process around it. Outputs become milestones in a long-form dialogue that needs to be auditable, interruptible, and steerable.
+
+ 
+When outputs are iterative, the rhythm of interaction matters as much as the content itself. Instead of a single static reply, the user sees a sequence: a plan, a suggestion, a revision, a refinement. Sometimes these outputs are explicitly chained (Let’s continue where we left off), and sometimes they are nested inside a larger context (Build the homepage layout now that we’ve defined the brand voice).
+
+ 
+Good design for multi-turn outputs requires continuity and clarity, making it easy to identify what has changed, what remains pending, and what action can be taken next. This can be achieved through the following methods:
+
+ 
+ 
+
+ 
+Turn markers or visual separators that distinguish new steps or phases
+
+ 
+
+ 
+
+ 
+Inline edits with change annotations, to show how one step builds on or modifies the last
+
+ 
+
+ 
+
+ 
+Rolling side panels or timelines that show the structure of an ongoing task
+
+ 
+
+ 
+
+ 
+Named threads or tasks that can be returned to later
+
+ 
+
+ 
+ 
+Importantly, users must always understand the relationship between the current output and what came before. If they ask to revise the second paragraph, it should be clear what the second paragraph was, how it’s being changed, and what else may be impacted. If something will be changed, the user must be given an opportunity to give permission, whether for one turn or many. This is especially vital in interfaces where generative AI is used to co-author or co-edit a long-form document, or to iteratively build a plan or design.
+
+ 
+The goal is to let the user trace the thread of their interaction, without making the interface feel like an IDE or project-management tool.
+
+ 
+
+ 
+
+ 
+Watermarking and Detection
+
+ 
+Validating the value or provenance of an item is an age-old issue. Centuries ago, manufacturers would embed identifying marks directly into paper stamps called watermarks, to make sure potential buyers knew they could trust the origin of their product. Later, the technique expanded beyond paper to prove the authenticity of wines, artwork, and luxury goods. In the digital era, watermarking evolved to protect intellectual property. For example, film studios routinely embed invisible markers in screener copies sent to critics and industry professionals. When a movie leaks online before release, these watermarks allow studios to trace the leak back to the specific recipient.
+
+ 
+Digital watermarking serves a dual purpose: it identifies the source of content and can deter misuse by making unauthorized distribution traceable. Digital watermarks often function as visible deterrents (like the Getty Images logo overlaid on stock photos) or as invisible forensic tools (like the unique identifiers embedded in digital camera files). The challenge with AI-generated content is that we’re trying to mark content at the moment of creation, often in conversational or creative contexts where the watermark itself could interfere with the user experience.
+
+ 
+
+ 
+Understanding AI Misuse
+
+ 
+Before diving into watermarking solutions, it’s worth considering what I mean by misuse in the context of AI-generated content. Misuse doesn’t necessarily imply malicious intent. A student who uses AI to help brainstorm essay ideas isn’t necessarily trying to cheat, but submitting that AI-generated content as original work without disclosure crosses ethical boundaries. Similarly, a journalist who uses AI to help research a story operates differently from one who publishes AI-generated articles without fact-checking or disclosure.
+
+ 
+The spectrum of potential misuse ranges from innocent lack of awareness about disclosure norms to deliberate deception for financial or political gain. Some misuse scenarios involve people who don’t realize the ethical implications of their AI usage, while others involve bad actors deliberately exploiting AI’s capabilities to deceive, manipulate, or defraud others. Watermarking systems need to account for this full spectrum, providing tools that help establish norms around transparency while also offering forensic capabilities for investigating more serious violations.
+
+ 
+The challenge is that the same AI capabilities that make these tools useful for legitimate purposes—generating convincing text, creating realistic images, synthesizing natural-sounding speech—also make them effective for deceptive purposes. This dual-use nature means that watermarking serves not just as a technical safeguard but as a way to maintain social trust in digital communication.
+
+ 
+
+ 
+
+ 
+Risks of GenAI Content
+
+ 
+AI-generated content presents unique risks that traditional watermarking wasn’t designed to address. Unlike a leaked movie or copied photograph, AI content is created on-demand and can be generated at massive scale with minimal human oversight. Risks include the following:
+
+ 
+ 
+
+ 
+Scale is a huge issue. AI can generate thousands of convincing news articles, blog posts, or social media updates in minutes. These aren’t just random spam but contextually relevant content that can be tailored to specific audiences or current events. Without some way to identify AI involvement, fact-checkers and readers face an increasingly difficult task distinguishing synthetic content from authentic journalism or commentary.
+
+ 
+
+ 
+
+ 
+Academic settings are particularly affected, since students can now generate entire essays, lab reports, or research proposals that match the expected style and complexity of their coursework. Researchers might use AI to generate literature reviews or data interpretations without acknowledging this assistance. The concern isn’t just about cheating but about whether academic institutions can maintain standards of original thinking and proper attribution when AI involvement is invisible.
+
+ 
+
+ 
+
+ 
+AI-generated contracts, financial reports, legal briefs, or regulatory filings could be used to deceive clients, investors, or courts about the level of human expertise and review involved. The stakes are particularly high in contexts where professional liability or fiduciary responsibility matters.
+
+ 
+
+ 
+
+ 
+Creative rights could (and have) be eroded as AI creates increasingly sophisticated music, writing, visual art, and other creative works, raising questions of authorship and compensation. Human creators may find their work competing with AI-generated content that doesn’t clearly identify its synthetic origins, potentially affecting their livelihood and the broader creative economy.
+
+ 
+
+ 
+
+ 
+AI-generated personas on social media, in customer service interactions, or in online relationships can manipulate people who assume they’re interacting with humans. The emotional and psychological impact can be significant when people discover they’ve been deceived about the nature of their interactions.
+
+ 
+
+ 
+ 
+These risks present multiple ethical and legal issues that cannot all be solved by interface design alone, but it’s interesting to consider how visual and encoded signifiers could help solve these problems. Text watermarking is one method for clearly stating that a text is synthetic, however it also represents one of the most technically challenging aspects of AI content identification. This is because language has limited redundancy. Unlike images, where you can subtly alter pixel values without changing visual appearance, text modifications often change meaning or become noticeable to readers.
+
+ 
+
+ 
+
+ 
+How Watermarking Works
+
+ 
+Modern text watermarking typically works through statistical bias during generation. When an AI model decides between possible next words or phrases, a watermarking system can subtly influence these choices to create a detectable pattern. For example, when the model faces decisions between synonyms like quick versus fast, the watermarking system might consistently favor words that contribute to a cryptographic signature. Over the course of a longer text, these biased choices create a statistical fingerprint that detection systems can identify.
+
+ 
+The sophistication lies in making these biases subtle enough to preserve natural language flow while creating signatures robust enough to survive editing and paraphrasing. Some systems work at the syntactic level, introducing slight preferences for particular sentence structures or punctuation patterns. Others operate semantically, embedding patterns in how ideas are organized or expressed that remain detectable even if individual words change.
+
+ 
+One example of successful text watermarking involves a case between Genius.com and Google, where the lyrics website suspected their content was being scraped and their song transcriptions displayed in search results without permission. To prove this, Genius embedded a hidden message by alternating between straight apostrophes (') and curly apostrophes (’) in specific patterns that spelled RED HANDED in Morse code, as shown in Figure 2-9. When Google’s search results displayed the same apostrophe pattern, it provided clear evidence of unauthorized use. This approach worked because the watermark was invisible to casual readers but created an undeniable forensic signature, proving Google had indeed used their lyrics without permission - however, in federal court a judge found Genius lacked standing due to the fact that they didn’t own the copyright to the lyrics themselves, and the case was dismissed.
+
+ 
+
+ 
+ 
+Figure 2-10. Genius.com used Unicode to subtly encode a watermark into their lyrics [link]
+
+ 
+
+ 
+
+ 
+
+ 
+Image and Video Watermarking
+
+ 
+Image watermarking offers more flexibility than text because visual data contains natural redundancy. Explicit watermarks, like the semi-transparent Getty Images logo overlaid on stock photos, serve as visible deterrents that make unauthorized use obvious. These watermarks protect intellectual property by making it clear when someone uses copyrighted images without permission or proper licensing.
+
+ 
+Invisible watermarking uses more sophisticated techniques that embed information without affecting visual appearance. One common approach involves modifying specific pixel values according to a predetermined pattern. For example, a system might slightly adjust the blue channel of every seventh pixel, or embed data in the least significant bits of pixel values. These changes are imperceptible to human vision but create a mathematical signature that specialized software can detect. Another method is stored metadata, like the C2PA standard created by Adobe in 2019, which embeds multiple manifests with associated metadata and is employed by ChatGPT for its DALL-E model.
+
+ 
+Video watermarking extends these concepts to moving images but faces additional complexity from compression and temporal changes. Interestingly, Chinese law now requires AI-generated video content to “prominently mark” synthetic content, specifically to combat deepfakes and other misleading generative media. This legal requirement reflects growing recognition that generated video content poses particular and in some cases extreme risks for misinformation and fraud, especially as the technology becomes more accessible and convincing.
+
+ 
+
+ 
+
+ 
+Detection Systems and the Future of Watermarking
+
+ 
+Due to the manifold risks and widespread public concern, AI detection systems have become a popular solution, in an attempt to identify synthetic content by analyzing statistical patterns that distinguish AI-generated text from human writing. These systems look for telltale signs like unusual word frequency distributions, predictable sentence structures, or specific stylistic patterns that current AI models tend to produce.
+
+ 
+However, detection accuracy remains a complex issue. In 2023, OpenAI released a classifier designed to identify AI-written text, positioning it as a helpful tool for educators and content moderators. However a few months later they were forced to shut down the tool due to its low rate of accuracy - the tool correctly identified AI-generated text only 26% of the time while incorrectly flagging human-written content as AI-generated 9% of the time, with additional caveats like being unable to run on short text or on languages other than English. 
+
+ 
+The failures weren’t random but showed concerning bias patterns. The tool performed particularly poorly on text written by non-native English speakers, whose writing patterns sometimes resembled AI-generated content more closely than native speaker text. This highlighted how detection systems can inadvertently discriminate against certain populations. OpenAI also noted that the tool could be easily circumvented with minor editing, making it unreliable for any adversarial context where someone actively wanted to avoid detection.
+
+ 
+Perhaps most tellingly, detection tools have been caught flagging clearly human-authored historical texts as AI-generated. The US Declaration of Independence, written in 1776, has been identified as potentially AI-generated by multiple detection systems. This false positive occurs because the document’s formal language and parallel structure happen to match patterns that some AI models favor. Similar false positives have been reported for Shakespeare, the Bible, and other historical texts, demonstrating how statistical approaches can mistake stylistic consistency for artificial generation.
+
+ 
+The current state of AI watermarking and detection resembles the early days of email spam filtering: the technology works reasonably well in controlled environments but struggles with the complexity and adversarial nature of real-world deployment. Just as spam filtering evolved into a multi-layered approach combining technical filters, user education, and social norms, AI content identification will likely require similar complexity.
+
+ 
+Rather than seeking perfect technical solutions, the path forward probably involves building transparency and accountability into AI systems themselves, developing social norms around disclosure, and creating educational resources that help people understand AI capabilities and limitations. Watermarking represents one tool in this broader toolkit, but success will ultimately depend on how well these technical capabilities can be integrated with human judgment and social systems that promote responsible AI use.
+
+ 
+
+ 
+
+ 
+
+ 
+Managing Problematic Outputs
+
+ 
+No matter how carefully a generative model is trained, it will occasionally say something biased, misleading, or harmful. In practice, it’s not a question of whether this will happen, but how frequently, and in what ways. This makes the task of managing problematic outputs a foundational challenge for anyone working on AI interfaces. The design implications range from handling individual outputs (like a refusal or a correction) to shaping the entire system’s behavior across different levels of risk.
+
+ 
+Most AI development teams now rely on a layered approach to reduce harmful outputs. This typically begins during data collection and continues through model training, evaluation, and product integration. At the training stage, models are often tuned with feedback from human annotators. One common method is reinforcement learning from human feedback (RLHF), which ranks possible responses and teaches the model to prefer the safer or more appropriate one. Anthropic’s alternative, Constitutional AI, instead teaches the model to follow a set of guiding principles. These might include commitments to human rights, avoidance of harm, or domain-specific ethical rules. Both techniques aim to shift model behavior away from harmful responses, while still allowing for useful and flexible output.
+
+ 
+To identify risky behaviors before they reach users, most labs now rely on something called red teaming, a cybersecurity practice in which teams simulate worst-case users, trying to provoke the model into breaking, bypassing safeguards, or revealing sensitive information. Red teaming prompts are crafted to find edge cases: examples that test the limits of the model’s behavior or the gaps in its filters. It’s often repeated in multiple rounds, with updated models and new hypotheses, after which findings are used to retrain or fine-tune the model, update content filters, or revise the intended use cases. In high-risk domains, the outcome of a red team exercise might be to withhold a feature from launch entirely. Some teams now automate red teaming by using one model to generate attack prompts for another, broadening the search space and revealing failures that might be too subtle or creative for humans to think of on their own.
+
+ 
+Alongside technical work, there has been a shift toward more formal documentation of model risks. These are often published as safety or system cards, and they describe how a model was trained, what known issues exist, and what mitigations have been put in place. They also help set expectations for developers and users. These cards provide context for when and how failures are likely to occur, what to watch for, and what types of use the model is not intended to support. A card might explicitly note that the model is not suitable for medical advice or legal decision-making, even if it seems capable of producing fluent answers in those domains. For example, Anthropic’s Claude 2 system card explicitly describes the potential for the model to generate biased or offensive language, to produce inaccurate or fabricated information, and to respond inconsistently to harmful prompts.
+
+ 
+Problematic and offensive outputs are a predictable part of working with generative systems. While much of the effort around harmful or misleading outputs happens at the model or policy level, interface design plays a crucial role in how users perceive, interpret, and recover from them. Designers can implement refusals that feel conversational, not punitive. When a model declines to answer, the refusal should be embedded naturally in the system’s voice and tone. A short explanation I can’t help with that) followed by a gentle rationale (That could be harmful) avoids sounding scolding or cryptic. This kind of refusal works best when it feels like part of the interaction, not a system-level rejection. The goal is not just to block unsafe content, but to maintain the rhythm of the exchange, explain the issue clearly, and signal that the conversation can continue, as shown in Figure 2-11.
+
+ 
+
+ 
+ 
+Figure 2-11. Deepmind’s Sparrow, a model trained to reduce the risk of unsafe and inappropriate answers
+
+ 
+
+ 
+Because of the infinite number of possible outcomes, designing for large data outputs can be incredibly challenging. When creating any feature, designers are looking to build on the content visible to the user, but in most cases the content is the one thing we don’t have certainty about. Imagine trying to create designs to optimize for Google search results, for example (see Figure 2-12) by assembling search types into broad themes. Visualizing the output is necessary to understand what issues the user is encountering: to understand where this tool features in their journey to accomplish a task, and what issues they may be forced to navigate. In a situation like this, it’s more important than ever to gain a clear knowledge of who your user is, what problems they are likely to be trying to solve, and especially with AI, their common mitigation routes - it’s not helpful to expect users to design totally new ways of solving a problem with AI by default when their current method, if inefficient, presently works as intended. 
+
+ 
+
+ 
+ 
+Figure 2-12. Google’s top search categories, broken down into user journeys
+
+ 
+
+ 
+Many product designers will already be familiar with the idea of personas: fake users, formed into generalized buckets, hopefully informed by data and research. Enhancing personas into fully fleshed-out user journeys is another common UX pattern. Designers working with AI outputs may find an additional step even more helpful: crafting staple scripts that correlate to these personas and user journeys, and that map closely to the user’s real-life experiences. For example, if your product specializes in a certain type of solution, by looking closely at user data and extrapolating common tasks, it’s possible to create a number of scripts that capture the user’s theoretical journey. Here are some tips:
+
+ 
+ 
+
+ 
+Start with grounded examples: Even when you’re working with fakes. It’s easy to invent polished or idealized outputs, but you’ll get more useful design insights if your examples reflect real model behavior. Use logs, transcripts, or personal experiments with current tools as a starting point. It’s also helpful to anchor outputs in user goals—writing from the perspective of a specific persona or use case can surface more thoughtful prompts and help shape what the response should feel like. If the system is likely to get something wrong, or hedge, or ask a question instead of answering, include that too. The goal isn’t to mimic the model perfectly, but to stay close enough that your designs hold up when real outputs are eventually wired in.
+
+ 
+
+ 
+
+ 
+Mix different tones, formats, and levels of certainty: One of the defining characteristics of AI outputs is that they vary—sometimes dramatically. A response might be confident and declarative, or it might be cautious and indirect. Some answers come as structured lists or bullet points; others are loose paragraphs or conversational suggestions. When you’re scripting responses, include a few variations. Try writing the same output at different confidence levels, or in alternate tones, or with a different structural layout. This helps test whether your UI can support that variability, and whether users can still make sense of it when it shifts.
+
+ 
+
+ 
+
+ 
+Don’t forget to show when things go a little sideways: Real AI outputs aren’t always helpful, and some of the most important design work happens in those edge cases. It’s worth scripting at least one example where the AI misinterprets a prompt, produces something subtly wrong, or refuses to respond. These moments help you test fallback states, repair mechanisms, and trust cues. They’re also a good reminder that you’re designing a conversation, not a search result—the interface needs to support exploration, correction, and even moments of confusion.
+
+ 
+
+ 
+ 
+In an ideal world, designers could flow AI model responses into their designs rapidly - however, this is frequently extremely challenging. The rise of vibe coding, designer engineers and enhanced prototyping tools all bring us closer to this reality, but in the meantime it’s effective to approximate model outputs with this type of script approach - though designers should seek to collaborate with engineers to ensure the script output is relatively realistic depending on the model they’re working with.
+
+ 
+
+ 
+Summary
+
+ 
+At the start of this chapter, we looked at clinical decision support systems as early examples of how computing sought to augment human judgment. These tools didn’t replace doctors; they surfaced possibilities, flagged risks, narrowed differentials. And yet, these systems often failed when their outputs were misunderstood - even if the logic behind them was sound. Some clinicians dismissed them entirely. Others deferred to them too much. The real failure was not in computation, but in communication.
+
+ 
+Today’s AI systems operate at a vastly more sophisticated scale, but the underlying design challenge remains the same. An AI output offers a proposal: an opening for interpretation shared between system and user. It carries assumptions, probabilities, constraints, and opportunities, but it must always be contextualized, qualified, and, when needed, reshaped.
+
+ 
+Whether the output is a sentence, a chart, a draft, a route, or a summary, the question remains: how will the user interpret it? Will they know where it came from? Will they feel invited to change it? Will they understand what part of it reflects AI reasoning, and what part reflects their own? When outputs become indistinguishable from authored content, or when systems remove friction so completely that users no longer ask how or why something appeared, the risk isn’t just overreliance: it’s misplaced confidence. As with CDSS tools, the interface becomes the risk surface: not in the sense that the results of the model are inherently problematized, but the way its output is presented offers a surface to validate - or question - the outcome.
+
+ 
+To design AI outputs well is to design for interpretation. It means signaling what’s fixed and what’s flexible. It means giving users tools to inspect, edit, discard, or deepen what they see. It means showing enough of the system’s reasoning to support trust, but not so much as to overwhelm. Above all, it means remembering that The output isn’t the final product. What matters is what happens next: how the user interacts, decides, or applies the result. 
+
+ 
+This raises a deeper question: how do users make sense of AI outputs over time? A single response may be clear and interpretable, but in multi-turn conversations, that clarity must extend across turns and different journeys, adapting to context, user intent, and remembered information. In the next chapter, we’ll explore how memory shapes the AI-user relationship: how it can support trust, enable personalization, and introduce new risks.
+
+===== FILE: OEBPS/copyright-page01.html =====
+
+Designing AI Interfaces
+
+by Louise Macfadyen
+
+Copyright © 2026 Louise Macfadyen. All rights reserved.
+
+Published by O’Reilly Media, Inc., 1005 Gravenstein Highway North, Sebastopol, CA 9547.
+
+O’Reilly books may be purchased for educational, business, or sales promotional use. Online editions are also available for most titles (https://oreilly.com). For more information, contact our corporate/institutional sales department: 800-998-9938 or corporate@oreilly.com.
+
+ 
+Acquisitions Editor: Nicole Butterfield
+
+ 
+Development Editor: Corbin Collins
+
+ 
+Production Editor: Aleeya Rahman
+
+ 
+ 
+Cover Designer: Karen Montgomery
+
+ 
+ 
+Interior Designer: David Futato
+
+ 
+Interior Illustrator: Kate Dullea
+
+ 
+May 2026: First Edition
+
+Revision History for the Early Release
+
+ 
+2025-07-09: First Release
+
+See https://oreilly.com/catalog/errata.csp?isbn=9798341639829 for release details.
+
+The O’Reilly logo is a registered trademark of O’Reilly Media, Inc. Designing AI Interfaces, the cover image, and related trade dress are trademarks of O’Reilly Media, Inc.
+
+The views expressed in this work are those of the author and do not represent the publisher’s views. While the publisher and the author have used good faith efforts to ensure that the information and instructions contained in this work are accurate, the publisher and the author disclaim all responsibility for errors or omissions, including without limitation responsibility for damages resulting from the use of or reliance on this work. Use of the information and instructions contained in this work is at your own risk. If any code samples or other technology this work contains or describes is subject to open source licenses or the intellectual property rights of others, it is your responsibility to ensure that your use thereof complies with such licenses and/or rights. 
+
+979-8-341-63977-5
+
+===== FILE: OEBPS/preface01.html =====
+
+Brief Table of Contents (Not Yet Final)
+
+Chapter 1: Overview: Understanding Large Language Models (LLMs) and AI
+Systems for Designers (unavailable)
+
+Chapter 2: Onboarding and Training (unavailable)
+
+Chapter 3: Input: Designing for User Input in LLM Systems (unavailable)
+
+Chapter 4: Computation: Designing for the Processing and Generation
+Phase (available)
+
+Chapter 5: Output: Designing the Delivery and Presentation of LLM
+Responses (available)
+
+Chapter 6: Recall: Leveraging Memory and Context in LLM Interactions (unavailable)
+
+Chapter 7: Feedback: Designing for Feedback and Continuous Learning (unavailable)
+
+===== FILE: OEBPS/titlepage01.html =====
+
+Designing AI Interfaces
+
+Design Principles for Creative and Autonomous AI
+
+With Early Release ebooks, you get books in their earliest form—the author’s raw and unedited content as they write—so you can take advantage of these technologies long before the official release of these titles.
+
+ Louise Macfadyen
+
+===== FILE: OEBPS/toc01.html =====
+
+Brief Table of Contents (Not Yet Final)
+
+1. Computation: Designing for the Processing and Generation Phase
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+The Computation Pipeline: From Input to Output
+ 
+ 
+ 
+ 
+ 
+ 
+Step 1: Input Processing and Preparation
+
+ 
+Step 2: Routing
+
+ 
+Step 3: Generation and Inference
+
+ 
+
+ 
+Agentic Computation and Task Management
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Exposing Planning as Structure
+
+ 
+Allowing Step-Level Review and Intervention
+
+ 
+Visualizing Logic
+
+ 
+
+ 
+When the System Doesn’t Deliver: Designing for Errors
+ 
+ 
+ 
+Two fundamentally different types of failure: detectable and undetectable.
+
+ 
+Revisiting Tenets Of Error Design
+
+ 
+Making the Error Understandable
+
+ 
+Making It Recoverable
+
+ 
+Designing to Prevent the Error
+
+ 
+Letting the System Degrade Gracefully
+
+ 
+Surfacing the System’s State Honestly
+
+ 
+
+ 
+Context Windows and Conversational Memory
+
+ 
+Don’t Make Me Wait: Managing Latency and Delays
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Visual Methods for Mitigating Latency
+
+ 
+The Value of Segmenting by User Need
+
+ 
+
+ 
+Summary
+
+ 
+
+2. Output: Designing the Delivery and Presentation of LLM Responses
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Designing Outputs: The Output Is Not the answer
+
+ 
+Design Principles of Outputs
+ 
+ 
+ 
+ 
+ 
+Designing for Clarity
+
+ 
+Designing for Verifiability
+
+ 
+Designing Grounding
+
+ 
+Designing for Actionability
+
+ 
+Designing for Adjustability
+
+ 
+
+ 
+Designing for Multi-turn Outputs
+
+ 
+Watermarking and Detection
+ 
+ 
+ 
+ 
+Understanding AI Misuse
+
+ 
+Risks of GenAI Content
+
+ 
+How Watermarking Works
+
+ 
+Image and Video Watermarking
+
+ 
+Detection Systems and the Future of Watermarking
+
+ 
+
+ 
+Managing Problematic Outputs
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Summary

@@ -35,7 +35,7 @@ from typing import Any
 from scene.config.profiles import PROFILE_SPECS, DescriptionProfile
 from scene.domain.description import DescriptionAdapterKind
 
-from .manifest import GoldenManifest, ManifestError, load_manifest
+from .manifest import GoldenManifest, ManifestError, _resolve_image, load_manifest
 from .remote_client import RemoteClientError, RemoteSceneClient
 from .report import ReportError, build_reports, score_run_record
 from .schema import SCHEMA, DocKind
@@ -50,6 +50,18 @@ _RUN_STAMP_RE = re.compile(r"^run-(\d{8}-\d{6})")
 
 def _keep_arg(raw: str) -> int:
     """argparse type for ``--keep``: at least 1 so a run never prunes its own record (S3-07)."""
+    value = int(raw)
+    if value < 1:
+        raise argparse.ArgumentTypeError("must be >= 1")
+    return value
+
+
+def _limit_arg(raw: str) -> int:
+    """argparse type for ``--limit``: positive int; reject 0/negative (S8-03 / S6-02).
+
+    ``limit=0`` is falsy and previously silently ran the full corpus; negative
+    values silently sliced the tail off. Fail at parse time instead.
+    """
     value = int(raw)
     if value < 1:
         raise argparse.ArgumentTypeError("must be >= 1")
@@ -136,7 +148,9 @@ def fetch_run_record(
     ``latency_s`` times the describe call only, not the recognition job polling.
     """
     images_root = Path(images_dir)
-    entries = manifest.entries[:limit] if limit else manifest.entries
+    if limit is not None and limit < 1:
+        raise ValueError(f"limit must be >= 1, got {limit}")
+    entries = manifest.entries[:limit] if limit is not None else manifest.entries
     items: list[dict[str, Any]] = []
     consecutive_failures = 0
     paid_calls = 0
@@ -181,7 +195,10 @@ def fetch_run_record(
                     f"(> --max-cost ${max_cost_usd:.4f}); aborting before {entry.path}",
                     partial_record=_record(aborted=True),
                 )
-        image_path = images_root / entry.path
+        # NFC/NFD-tolerant resolve (same as hash verify / seed_scenes) so a
+        # Linux host whose fixture copy flipped normalization still reads bytes
+        # after load_manifest(images_dir=...) passed (S6-03 / S7-01).
+        image_path = _resolve_image(images_root, entry.path)
         item: dict[str, Any] = {
             "media_id": entry.media_id,
             "path": entry.path,
@@ -193,6 +210,8 @@ def fetch_run_record(
         }
         describe_started: float | None = None
         try:
+            if image_path is None:
+                raise FileNotFoundError(f"image file missing after NFC/NFD resolve: {entry.path}")
             image_bytes = image_path.read_bytes()
             describe_started = time.monotonic()
             # Billed on attempt (a failed call may still charge); refunded on cache hit.
@@ -251,7 +270,13 @@ def fetch_run_record(
 
 
 def _extract_identities(payload: Any, media_id: int) -> tuple[list[str], int]:
-    """Normalize /media/identities rows for one media_id -> (names, face_count)."""
+    """Normalize /media/identities rows for one media_id -> (names, face_count).
+
+    Wire shape (MediaIdentityService.list_by_media_ids): each row carries
+    ``cluster_label`` and ``is_auto_label`` (inverted ``user_confirmed``). There
+    is no ``user_confirmed`` key on this route — filter confirmed labels via
+    ``is_auto_label is not True`` (S8-01 / rg-005).
+    """
     if not isinstance(payload, list):
         raise RemoteClientError(
             f"media_identities returned {type(payload).__name__}, expected a list of "
@@ -264,8 +289,10 @@ def _extract_identities(payload: Any, media_id: int) -> tuple[list[str], int]:
         if not isinstance(row, dict) or int(row.get("media_id", -1)) != media_id:
             continue
         face_count += 1
-        label = row.get("label") or row.get("cluster_label") or row.get("name")
-        if label and bool(row.get("user_confirmed", True)):
+        label = row.get("cluster_label") or row.get("label") or row.get("name")
+        # Confirmed labels only: is_auto_label True => auto-propagated, skip.
+        # Missing key treated as confirmed (legacy/test fixtures without the field).
+        if label and row.get("is_auto_label") is not True:
             names.append(str(label))
     return sorted(set(names)), face_count
 
@@ -449,6 +476,14 @@ def _cmd_score(args: argparse.Namespace) -> None:
         f"insertion_rate={scored['caption']['insertion_rate']} "
         f"wrong_names={len(scored['faces']['identification']['wrong_names'])}"
     )
+    # Fail loud when any item was skipped from scoring (S7-01): a "passing" run
+    # that dropped NFC-miss / remote errors must not look like full-corpus evidence.
+    failed = int(scored["counts"]["failed"])
+    if failed > 0:
+        sys.exit(
+            f"score gate failed: {failed} item(s) not scored (see failures[] in {json_path}); "
+            "refusing to treat a partial corpus as full eval evidence"
+        )
 
 
 def _cmd_run(args: argparse.Namespace) -> None:
@@ -490,7 +525,7 @@ def main(argv: list[str] | None = None) -> None:
 
     def _common(p: argparse.ArgumentParser) -> None:
         p.add_argument("--manifest", default="scene/tests/seed/golden.json")
-        p.add_argument("--limit", type=int, default=None)
+        p.add_argument("--limit", type=_limit_arg, default=None, help="cap images (must be >= 1)")
         p.add_argument("--stall-limit", type=int, default=DEFAULT_STALL_LIMIT)
         p.add_argument("--keep", type=_keep_arg, default=DEFAULT_KEEP)
         p.add_argument("--llm-judge", action="store_true", help="stub — not implemented (§6c)")

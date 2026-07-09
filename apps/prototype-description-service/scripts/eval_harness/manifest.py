@@ -143,6 +143,21 @@ def load_manifest(path: str, images_dir: str | None = None) -> GoldenManifest:
     except (OSError, json.JSONDecodeError) as exc:
         raise ManifestError(f"golden manifest unreadable or malformed JSON: {exc}") from exc
 
+    # v2 corpus contract (S6-01 / rg-008): base_caption is a first-class field, not
+    # an optional golden-only convention. Require the key on every entry so
+    # consumers can index entry["base_caption"] without KeyError; use "" when the
+    # corpus does not author a reference caption (e.g. bake-off subset).
+    if isinstance(raw, dict) and raw.get("manifest_version") == SUPPORTED_MANIFEST_VERSION:
+        for raw_entry in raw.get("entries") or []:
+            if not isinstance(raw_entry, dict):
+                continue
+            if "base_caption" not in raw_entry:
+                raise ManifestError(
+                    f"manifest_version {SUPPORTED_MANIFEST_VERSION} requires 'base_caption' on "
+                    f"every entry (missing on media_id={raw_entry.get('media_id')!r} path="
+                    f"{raw_entry.get('path')!r}); use empty string when not applicable"
+                )
+
     try:
         manifest = GoldenManifest.model_validate(raw)
     except ValidationError as exc:

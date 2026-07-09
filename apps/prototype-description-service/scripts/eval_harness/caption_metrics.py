@@ -70,9 +70,17 @@ class CaptionScores:
 
     @property
     def gated_score(self) -> float:
-        """Hard gate: any Must-Right miss or policy violation zeroes the image."""
+        """Hard gate: any Must-Right miss or policy violation zeroes the image.
+
+        Recognition-disabled images (``insertion_eligible=False``) correctly name
+        nobody, so insertion recall is not scored — return 1.0 when the policy
+        gate is clean (S8-02). Otherwise insertion_rate would exclude them while
+        mean_gated_score silently deflated them to 0.0 via missing identities.
+        """
         if self.must_right_failures or self.policy_violation:
             return 0.0
+        if not self.insertion_eligible:
+            return 1.0
         total = len(self.inserted_identities) + len(self.missing_identities)
         if total == 0:
             return 1.0

@@ -66,6 +66,10 @@ def test_policy_disabled_without_name_is_clean():
         **_entry(recognition_enabled=False, must_right=[]),
     )
     assert scores.policy_violation is False
+    # S8-02: correctly naming nobody on a recognition-disabled image must not
+    # score 0.0 via missing identities (insertion_rate already excludes these).
+    assert scores.insertion_eligible is False
+    assert scores.gated_score == 1.0
 
 
 def test_repetition_ratio():

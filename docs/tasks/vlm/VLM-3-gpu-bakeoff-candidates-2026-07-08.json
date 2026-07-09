@@ -7,7 +7,10 @@
     "shape": "VM.GPU.A10.1",
     "vram_gb": 24,
     "usable_vram_budget_gb": 20,
-    "headroom_shapes": ["VM.GPU.A100.1", "VM.GPU.A10.2"]
+    "headroom_shapes": [
+      "VM.GPU.A100.1",
+      "VM.GPU.A10.2"
+    ]
   },
   "harness": {
     "script": "apps/prototype-description-service/scripts/eval_harness/bakeoff.py",
@@ -17,7 +20,9 @@
       "ACX_EVAL_LIVE": "1",
       "GOLDEN_IMAGES_DIR": "<golden-image-directory>"
     },
-    "report_builder": "apps/prototype-description-service/scripts/eval_harness/report.py"
+    "report_builder": "apps/prototype-description-service/scripts/eval_harness/report.py",
+    "cwd": "apps/prototype-description-service",
+    "command_notes": "Run each candidate.command from harness.cwd with ACX_EVAL_LIVE=1 and GOLDEN_IMAGES_DIR set. --out paths are relative to that cwd and resolve to repo-root docs/tasks/vlm/ via ../../../docs/tasks/vlm/."
   },
   "candidates": [
     {
@@ -28,7 +33,7 @@
       "estimated_model_gb": 18,
       "license": "Apache-2.0-family-check-at-download",
       "reasoning_tuned": true,
-      "command": "ACX_EVAL_LIVE=1 GOLDEN_IMAGES_DIR=<golden> uv run python -m scripts.eval_harness.bakeoff --endpoint http://acx-gpu-burst:8000 --model-id Qwen3-VL-30B-A3B-Instruct --model-version Q4_GGUF --no-think --out docs/tasks/vlm/VLM-3-bakeoff-Qwen3-VL-30B-A3B-Instruct-run-record.json",
+      "command": "ACX_EVAL_LIVE=1 GOLDEN_IMAGES_DIR=<golden> uv run python -m scripts.eval_harness.bakeoff --endpoint http://acx-gpu-burst:8000 --model-id Qwen3-VL-30B-A3B-Instruct --model-version Q4_GGUF --no-think --out ../../../docs/tasks/vlm/VLM-3-bakeoff-Qwen3-VL-30B-A3B-Instruct-run-record.json",
       "report_artifact": "VLM-3-bakeoff-Qwen3-VL-30B-A3B-Instruct-report.json"
     },
     {
@@ -39,7 +44,7 @@
       "estimated_model_gb": 10,
       "license": "MIT",
       "reasoning_tuned": false,
-      "command": "ACX_EVAL_LIVE=1 GOLDEN_IMAGES_DIR=<golden> uv run python -m scripts.eval_harness.bakeoff --endpoint http://acx-gpu-burst:8000 --model-id Kimi-VL-A3B-2506 --model-version Q4_GGUF --out docs/tasks/vlm/VLM-3-bakeoff-Kimi-VL-A3B-2506-run-record.json",
+      "command": "ACX_EVAL_LIVE=1 GOLDEN_IMAGES_DIR=<golden> uv run python -m scripts.eval_harness.bakeoff --endpoint http://acx-gpu-burst:8000 --model-id Kimi-VL-A3B-2506 --model-version Q4_GGUF --out ../../../docs/tasks/vlm/VLM-3-bakeoff-Kimi-VL-A3B-2506-run-record.json",
       "report_artifact": "VLM-3-bakeoff-Kimi-VL-A3B-2506-report.json"
     },
     {
@@ -50,7 +55,7 @@
       "estimated_model_gb": 16,
       "license": "Apache-2.0-family-check-at-download",
       "reasoning_tuned": false,
-      "command": "ACX_EVAL_LIVE=1 GOLDEN_IMAGES_DIR=<golden> uv run python -m scripts.eval_harness.bakeoff --endpoint http://acx-gpu-burst:8000 --model-id Qwen3-VL-8B-Instruct --model-version bf16 --out docs/tasks/vlm/VLM-3-bakeoff-Qwen3-VL-8B-Instruct-run-record.json",
+      "command": "ACX_EVAL_LIVE=1 GOLDEN_IMAGES_DIR=<golden> uv run python -m scripts.eval_harness.bakeoff --endpoint http://acx-gpu-burst:8000 --model-id Qwen3-VL-8B-Instruct --model-version bf16 --out ../../../docs/tasks/vlm/VLM-3-bakeoff-Qwen3-VL-8B-Instruct-run-record.json",
       "report_artifact": "VLM-3-bakeoff-Qwen3-VL-8B-Instruct-report.json"
     },
     {
@@ -61,7 +66,7 @@
       "estimated_model_gb": 16,
       "license": "check-at-download",
       "reasoning_tuned": false,
-      "command": "ACX_EVAL_LIVE=1 GOLDEN_IMAGES_DIR=<golden> uv run python -m scripts.eval_harness.bakeoff --endpoint http://acx-gpu-burst:8000 --model-id InternVL3.5-8B --model-version bf16 --out docs/tasks/vlm/VLM-3-bakeoff-InternVL3.5-8B-run-record.json",
+      "command": "ACX_EVAL_LIVE=1 GOLDEN_IMAGES_DIR=<golden> uv run python -m scripts.eval_harness.bakeoff --endpoint http://acx-gpu-burst:8000 --model-id InternVL3.5-8B --model-version bf16 --out ../../../docs/tasks/vlm/VLM-3-bakeoff-InternVL3.5-8B-run-record.json",
       "report_artifact": "VLM-3-bakeoff-InternVL3.5-8B-report.json"
     },
     {
@@ -72,7 +77,7 @@
       "estimated_model_gb": 15,
       "license": "AllenAI-check-at-download",
       "reasoning_tuned": false,
-      "command": "ACX_EVAL_LIVE=1 GOLDEN_IMAGES_DIR=<golden> uv run python -m scripts.eval_harness.bakeoff --endpoint http://acx-gpu-burst:8000 --model-id Molmo-7B-D --model-version bf16 --out docs/tasks/vlm/VLM-3-bakeoff-Molmo-7B-D-run-record.json",
+      "command": "ACX_EVAL_LIVE=1 GOLDEN_IMAGES_DIR=<golden> uv run python -m scripts.eval_harness.bakeoff --endpoint http://acx-gpu-burst:8000 --model-id Molmo-7B-D --model-version bf16 --out ../../../docs/tasks/vlm/VLM-3-bakeoff-Molmo-7B-D-run-record.json",
       "report_artifact": "VLM-3-bakeoff-Molmo-7B-D-report.json"
     },
     {
@@ -83,7 +88,7 @@
       "estimated_model_gb": 5,
       "license": "MIT",
       "reasoning_tuned": true,
-      "command": "ACX_EVAL_LIVE=1 GOLDEN_IMAGES_DIR=<golden> uv run python -m scripts.eval_harness.bakeoff --endpoint http://acx-gpu-burst:8000 --model-id MiMo-VL-7B-RL --model-version AWQ_INT4 --no-think --out docs/tasks/vlm/VLM-3-bakeoff-MiMo-VL-7B-RL-run-record.json",
+      "command": "ACX_EVAL_LIVE=1 GOLDEN_IMAGES_DIR=<golden> uv run python -m scripts.eval_harness.bakeoff --endpoint http://acx-gpu-burst:8000 --model-id MiMo-VL-7B-RL --model-version AWQ_INT4 --no-think --out ../../../docs/tasks/vlm/VLM-3-bakeoff-MiMo-VL-7B-RL-run-record.json",
       "report_artifact": "VLM-3-bakeoff-MiMo-VL-7B-RL-report.json"
     },
     {
@@ -94,7 +99,7 @@
       "estimated_model_gb": 11,
       "license": "Microsoft-check-at-download",
       "reasoning_tuned": false,
-      "command": "ACX_EVAL_LIVE=1 GOLDEN_IMAGES_DIR=<golden> uv run python -m scripts.eval_harness.bakeoff --endpoint http://acx-gpu-burst:8000 --model-id Phi-4-multimodal --model-version bf16 --out docs/tasks/vlm/VLM-3-bakeoff-Phi-4-multimodal-run-record.json",
+      "command": "ACX_EVAL_LIVE=1 GOLDEN_IMAGES_DIR=<golden> uv run python -m scripts.eval_harness.bakeoff --endpoint http://acx-gpu-burst:8000 --model-id Phi-4-multimodal --model-version bf16 --out ../../../docs/tasks/vlm/VLM-3-bakeoff-Phi-4-multimodal-run-record.json",
       "report_artifact": "VLM-3-bakeoff-Phi-4-multimodal-report.json"
     }
   ]

@@ -189,7 +189,11 @@ def create_app() -> FastAPI:
     app.add_middleware(
         UploadSizeLimitMiddleware,
         max_bytes=recognition_settings.max_upload_bytes,
-        paths={"/recognition/analyze/multipart", "/scene/describe/multipart"},
+        paths={
+            "/recognition/analyze/multipart",
+            "/scene/describe/multipart",
+            "/scene/describe/async",
+        },
     )
 
     initialize_session_dependency_circuit_breaker(app)

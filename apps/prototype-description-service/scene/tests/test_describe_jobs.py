@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import uuid
 
+import pytest
+
 from scene.application.describe_jobs import DescribeJobStatus, InMemoryDescribeJobStore
 from scene.domain.description import DescriptionResultTier
 
@@ -41,12 +43,32 @@ def test_job_store_supersedes_provisional_with_monotonic_final() -> None:
     assert final.image_bytes == b""
 
 
-def test_job_store_eviction_removes_terminal_jobs() -> None:
+def test_job_store_eviction_removes_fetched_terminal_jobs() -> None:
     store = InMemoryDescribeJobStore(max_jobs=1)
     old = store.enqueue(tenant_id=uuid.uuid4(), media_id=1, image_bytes=b"old", context=None)
     store.set_final(old.job_id, visual_facts={"alt_text_draft": "done"})
+    store.mark_result_fetched(old.job_id)
 
     new = store.enqueue(tenant_id=uuid.uuid4(), media_id=2, image_bytes=b"new", context=None)
 
     assert store.get(old.job_id) is None
     assert store.get(new.job_id) is not None
+
+
+def test_job_store_retains_unfetched_terminal_jobs() -> None:
+    store = InMemoryDescribeJobStore(max_jobs=1)
+    old = store.enqueue(tenant_id=uuid.uuid4(), media_id=1, image_bytes=b"old", context=None)
+    store.set_final(old.job_id, visual_facts={"alt_text_draft": "done"})
+
+    with pytest.raises(RuntimeError, match="describe job queue is full"):
+        store.enqueue(tenant_id=uuid.uuid4(), media_id=2, image_bytes=b"new", context=None)
+
+    assert store.get(old.job_id) is not None
+
+
+def test_job_store_byte_budget_rejects_oversized_enqueue() -> None:
+    store = InMemoryDescribeJobStore(max_jobs=10, max_retained_image_bytes=10)
+    store.enqueue(tenant_id=uuid.uuid4(), media_id=1, image_bytes=b"12345", context=None)
+
+    with pytest.raises(RuntimeError, match="byte budget exceeded"):
+        store.enqueue(tenant_id=uuid.uuid4(), media_id=2, image_bytes=b"123456", context=None)

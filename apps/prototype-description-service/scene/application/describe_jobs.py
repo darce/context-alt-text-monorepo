@@ -84,6 +84,31 @@ class InMemoryDescribeJobStore:
         with self._lock:
             return self._jobs.get(job_id)
 
+    def queue_depth(self) -> int:
+        """Jobs waiting for a worker (feeds GPU idle-reaper)."""
+        with self._lock:
+            return sum(1 for job in self._jobs.values() if job.status is DescribeJobStatus.QUEUED)
+
+    def in_flight(self) -> int:
+        """Jobs actively processing (RUNNING or PROVISIONAL; feeds idle-reaper)."""
+        with self._lock:
+            return sum(
+                1
+                for job in self._jobs.values()
+                if job.status in {DescribeJobStatus.RUNNING, DescribeJobStatus.PROVISIONAL}
+            )
+
+    def load_snapshot(self) -> dict[str, int]:
+        """JSON-shaped load for the out-of-band GPU idle reaper."""
+        with self._lock:
+            queue_depth = sum(1 for job in self._jobs.values() if job.status is DescribeJobStatus.QUEUED)
+            in_flight = sum(
+                1
+                for job in self._jobs.values()
+                if job.status in {DescribeJobStatus.RUNNING, DescribeJobStatus.PROVISIONAL}
+            )
+            return {"queue_depth": queue_depth, "in_flight": in_flight}
+
     def mark_result_fetched(self, job_id: str) -> DescribeJob:
         with self._lock:
             job = self._jobs[job_id]

@@ -24,3 +24,14 @@ def test_decision_memo_records_must_right_and_easy_wrong() -> None:
     assert "Easy-Wrong" in text
     assert "CPU to GPU speedup" in text
     assert "Do not promote the provisional decision to final" in text
+
+
+def test_decision_memo_documents_activation_preconditions_and_endpoint_wiring() -> None:
+    text = MEMO.read_text()
+
+    assert "## Activation preconditions" in text
+    assert "ACX_GPU_ENDPOINT_URL" in text
+    assert "gpu_endpoint_url" in text
+    assert "ACX_DESCRIPTION_ADAPTER=gpu_qwen30b" in text
+    assert "python -m infra.oci.gpu_lifecycle" in text
+    assert "load_snapshot" in text or "queue_depth" in text

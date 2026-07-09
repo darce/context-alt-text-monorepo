@@ -32,6 +32,14 @@ resource "oci_core_internet_gateway" "acx_ig" {
   display_name   = "acx-internet-gateway"
 }
 
+# NAT gateway: private GPU hosts need outbound egress (model/image pulls,
+# OS updates, NTP, Instance Principal) without a public IP.
+resource "oci_core_nat_gateway" "acx_nat" {
+  compartment_id = var.compartment_ocid
+  vcn_id         = oci_core_vcn.acx_vcn.id
+  display_name   = "acx-nat-gateway"
+}
+
 resource "oci_core_route_table" "acx_rt" {
   compartment_id = var.compartment_ocid
   vcn_id         = oci_core_vcn.acx_vcn.id
@@ -41,6 +49,19 @@ resource "oci_core_route_table" "acx_rt" {
     destination       = "0.0.0.0/0"
     destination_type  = "CIDR_BLOCK"
     network_entity_id = oci_core_internet_gateway.acx_ig.id
+  }
+}
+
+# Private subnet route table: default route via NAT (not IGW).
+resource "oci_core_route_table" "acx_private_rt" {
+  compartment_id = var.compartment_ocid
+  vcn_id         = oci_core_vcn.acx_vcn.id
+  display_name   = "acx-private-route-table"
+
+  route_rules {
+    destination       = "0.0.0.0/0"
+    destination_type  = "CIDR_BLOCK"
+    network_entity_id = oci_core_nat_gateway.acx_nat.id
   }
 }
 
@@ -61,6 +82,20 @@ resource "oci_core_security_list" "acx_security_list" {
         min = 22
         max = 22
       }
+    }
+  }
+
+  # SSH from inside the VCN (jump-host path: acx-backend → acx-gpu-burst).
+  # OCI security lists apply to intra-subnet traffic; without this rule the
+  # private GPU host is unreachable for measurement/debug over SSH.
+  ingress_security_rules {
+    description = "SSH from ACX VCN (jump host)"
+    protocol    = "6"
+    source      = "10.0.0.0/16"
+    stateless   = false
+    tcp_options {
+      min = 22
+      max = 22
     }
   }
 
@@ -120,6 +155,18 @@ resource "oci_core_subnet" "acx_public_subnet" {
   security_list_ids = [oci_core_security_list.acx_security_list.id]
 }
 
+# Private subnet for the GPU burst host: no public IP, egress via NAT.
+resource "oci_core_subnet" "acx_private_subnet" {
+  compartment_id             = var.compartment_ocid
+  vcn_id                     = oci_core_vcn.acx_vcn.id
+  cidr_block                 = "10.0.2.0/24"
+  display_name               = "acx-private-subnet"
+  dns_label                  = "acxpriv"
+  route_table_id             = oci_core_route_table.acx_private_rt.id
+  security_list_ids          = [oci_core_security_list.acx_security_list.id]
+  prohibit_public_ip_on_vnic = true
+}
+
 # --- Compute ---
 
 resource "oci_core_instance" "acx_backend" {
@@ -163,6 +210,11 @@ resource "oci_core_instance" "acx_gpu_burst" {
   display_name        = "acx-gpu-burst"
   shape               = var.gpu_shape
 
+  # Cost control: provision STOPPED so `terraform apply` does not start
+  # unbounded A10 billing. Operator (or idle-reaper inverse) starts on demand;
+  # preserve_boot_volume is implicit for STOP (not TERMINATE).
+  state = "STOPPED"
+
   source_details {
     source_type             = "image"
     source_id               = var.gpu_image_ocid
@@ -170,7 +222,7 @@ resource "oci_core_instance" "acx_gpu_burst" {
   }
 
   create_vnic_details {
-    subnet_id        = oci_core_subnet.acx_public_subnet.id
+    subnet_id        = oci_core_subnet.acx_private_subnet.id
     assign_public_ip = false
     display_name     = "acx-gpu-burst-vnic"
     hostname_label   = "acx-gpu-burst"

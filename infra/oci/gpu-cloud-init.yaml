@@ -38,6 +38,12 @@ write_files:
       Description=ACX GPU VLM endpoint
       Requires=docker.service
       After=docker.service
+      # Fail terminally instead of restart-looping on a billed GPU when the
+      # golden-image runtime-check exits non-zero (missing weights/mmproj/image).
+      # RestartSec=10 exceeds systemd's default 10s StartLimit window, so the
+      # default never trips without an explicit longer interval.
+      StartLimitIntervalSec=120
+      StartLimitBurst=3
 
       [Service]
       Type=exec

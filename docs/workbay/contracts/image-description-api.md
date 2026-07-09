@@ -104,7 +104,7 @@ unsuppressable), and a minimum face-detection confidence (0.8).
 | 413 | body exceeds the upload cap |
 | 415 | unsupported image MIME |
 | 502 | hosted-provider fault (opted-in hosted profile only: provider 5xx/timeout, missing key, malformed body; fail-closed, no partial result) |
-| 503 | description adapter unavailable (deferred/stub profile, hosted profile without `ACX_HOSTED_PROVIDER_OPTIN=1`, or missing `[vlm]` extra) |
+| 503 | description adapter unavailable (deferred/stub profile, hosted profile without `ACX_HOSTED_PROVIDER_OPTIN=1`, missing `[vlm]` extra, `tier=gpu` with unset/non-private `ACX_GPU_ENDPOINT_URL`, or explicit `tier=cpu` when no CPU adapter can be resolved) |
 | 504 | description generation exceeded the configured timeout |
 
 Error shapes match the recognition routes: 5xx/503 use the `{error, trace_id, path}` envelope (via the shared exception handlers); 4xx validation errors use FastAPI's default `{detail}` shape.

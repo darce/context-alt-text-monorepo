@@ -13,7 +13,7 @@ write_files:
     permissions: "0644"
     content: |
       ACX GPU burst host
-      Measurement candidate: Qwen3-VL-30B-A3B-Instruct @ Q4 GGUF
+      Measurement candidate: Qwen3-VL-30B-A3B-Instruct @ Q4_K_M
       Model path: /opt/acx-gpu/models/qwen3-vl-30b-a3b-instruct-q4.gguf
       Projector path: /opt/acx-gpu/models/qwen3-vl-30b-a3b-instruct-mmproj.gguf
       Required baked runtime: Docker + nvidia-container-toolkit + ghcr.io/ggerganov/llama.cpp:server-cuda.

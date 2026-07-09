@@ -1,4 +1,4 @@
-.PHONY: help test lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready logs-tail logs-rotate logs-clean logs-archive worker-daemon db-reset reset admin-dev admin-test admin-open admin-token admin-status admin-down FORCE
+.PHONY: help test lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready logs-tail logs-rotate logs-clean logs-archive worker-daemon db-reset reset admin-dev admin-test admin-open admin-token admin-status admin-down admin-oci-serve admin-oci FORCE
 
 UV := VIRTUAL_ENV= uv
 UV_RUN := $(UV) run --locked --extra dev
@@ -129,6 +129,26 @@ admin-status:
 
 admin-down:
 	@./scripts/admin_dev.sh down
+
+# --- OCI /admin over the tailnet (no SSH tunnel) ------------------------------
+# The /admin console is 404'd on the public api.altcontext.com vhost by design;
+# it is reachable only over the tailnet. `admin-oci-serve` publishes the VM
+# loopback admin port over the tailnet (one-time; requires the admin compose
+# overlay layered on the VM and MagicDNS+HTTPS enabled in the tailnet console).
+# `admin-oci` opens the tailnet console in a local browser. Both honour OCI_HOST
+# and OCI_USER (same env contract as scripts/deploy/*).
+OCI_HOST ?= acx-backend.tail1a44b8.ts.net
+OCI_USER ?= ubuntu
+
+admin-oci-serve:
+	@echo "Publishing 127.0.0.1:8000 over the tailnet on $(OCI_HOST) ..."
+	@ssh $(OCI_USER)@$(OCI_HOST) 'sudo tailscale serve --bg --https=443 http://127.0.0.1:8000 && sudo tailscale serve status'
+
+admin-oci:
+	@echo "Opening https://$(OCI_HOST)/admin/ (tailnet; auth with RECOGNITION_ADMIN_TOKEN) ..."
+	@open "https://$(OCI_HOST)/admin/" 2>/dev/null \
+		|| xdg-open "https://$(OCI_HOST)/admin/" 2>/dev/null \
+		|| echo "Browse to https://$(OCI_HOST)/admin/"
 
 # Reset local database (db-reset is an alias)
 reset db-reset:

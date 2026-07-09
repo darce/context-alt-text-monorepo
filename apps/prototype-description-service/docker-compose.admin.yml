@@ -1,6 +1,15 @@
 # Prod-only overlay that publishes the api to the VM loopback so the tailnet
 # path (tailscale serve / ssh -L) can reach /admin. Layer it ONLY on prod:
 #   docker compose -f docker-compose.env.yml -f docker-compose.admin.yml up -d
+#
+# Then publish the loopback port over the tailnet so a laptop can reach /admin
+# without an SSH tunnel (one-time; --bg survives reboots). Needs MagicDNS +
+# HTTPS enabled in the tailnet admin console:
+#   sudo tailscale serve --bg --https=443 http://127.0.0.1:8000
+# Browse https://acx-backend.<tailnet>.ts.net/admin/ from any tailnet device.
+# From the repo: `make admin-oci-serve` runs this over SSH, `make admin-oci`
+# opens the console. See infra/oci/README.md "Expose /admin over the tailnet".
+#
 # /admin stays denied on the public Caddy vhost; the admin token still gates it.
 services:
   api:

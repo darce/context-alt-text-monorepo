@@ -37,9 +37,9 @@ Do not promote the provisional decision to final until the live OCI bake-off rep
 
 Measured GPU latency/RSS: pending live OCI bake-off.
 
-CPU baseline: VLM-2B recorded Qwen3-VL-4B-Instruct at roughly 207 s/img on A1 CPU.
+CPU baseline: VLM-2B recorded Qwen3-VL-4B-Instruct at **206 s/img** on A1 CPU (table mean latency in `VLM-2B-detailed-tier-decision-memo.md`; CapRL column is 208 s). That figure is log-derived from A1 serve logs / `VLM-2B-a1-serving-notes.md` — **not** recomputable from the committed run-records (VLM-2B footnote 2). Treat it as a fixed comparison anchor, not as harness-scored evidence.
 
-CPU to GPU speedup: provisional target is 207 s/img divided by measured GPU s/img; the denominator remains pending in `VLM-3-gpu-spike-2026-07-08.json`.
+CPU to GPU speedup: provisional target is 206 s/img divided by measured GPU s/img; the denominator remains pending in `VLM-3-gpu-spike-2026-07-08.json`.
 
 ## License verdict
 
@@ -50,12 +50,18 @@ Provisional pass for private in-tenancy evaluation. Final license verdict is blo
 Do not treat `terraform apply` alone as tier activation. Before setting the service to the GPU detailed tier, all of the following must hold:
 
 1. **Infra-produced endpoint URL.** After apply, read:
-   - `terraform -chdir=infra/oci output -raw gpu_endpoint_url` → set as `ACX_GPU_ENDPOINT_URL` on the description service (shape `http://<private-ip>:8000`).
+   - `terraform -chdir=infra/oci output -raw gpu_endpoint_url` → set as `ACX_GPU_ENDPOINT_URL` on the description service (shape `http://<private-ip>:8000`). Prefer the private-IP form from this output.
    - `terraform -chdir=infra/oci output -raw gpu_private_ip` is the VCN-private address; `gpu_instance_id` feeds the idle reaper.
-   - The service allowlist (`deps._is_private_gpu_endpoint`) accepts private IP literals and the `acx-gpu-burst` hostname alias — not public endpoints and not bare `*.oraclevcn.com` FQDNs unless they resolve to a private IP already allowlisted as a literal.
-2. **Adapter env contract.** `ACX_DESCRIPTION_ADAPTER=gpu_qwen30b` plus a valid private `ACX_GPU_ENDPOINT_URL`. Missing or public endpoint fails closed (503) before image bytes leave the service.
-3. **GPU instance start.** Terraform provisions `acx_gpu_burst` in `state = "STOPPED"` (no A10 compute bill at apply). Start on demand (`oci compute instance action --action START` or console) before serving; the idle reaper STOPs when the describe job store reports `queue_depth=0` and `in_flight=0` for the configured idle window.
-4. **Idle reaper wired.** Run the out-of-band actuator periodically (cron/systemd timer on the backend host or operator workstation with OCI CLI):
+2. **Adapter env contract (serving-side gate).** Both must be set before the GPU detailed tier serves traffic:
+   - `ACX_DESCRIPTION_ADAPTER=gpu_qwen30b`
+   - `ACX_GPU_ENDPOINT_URL` pointing at a private/in-tenancy llama.cpp base URL (port 8000 on the burst host).
+   Missing endpoint or a non-private URL fails closed (503 / unavailable adapter) **before** image bytes leave the service.
+3. **Endpoint allowlist behavior** (`deps._is_private_gpu_endpoint` + `ACX_GPU_ENDPOINT_ALLOWLIST`, default `localhost`, `acx-gpu-burst`, `*.oraclevcn.com`):
+   - **Private/loopback IP literals** (e.g. `http://10.0.x.x:8000`) are accepted without hostname allowlisting.
+   - **Allowlisted hostnames** (`acx-gpu-burst`, `localhost`, or `*.oraclevcn.com` FQDNs) are accepted only when DNS resolves **entirely** to private or loopback addresses — public resolution fails closed.
+   - Prefer the terraform private-IP URL or the `acx-gpu-burst` alias (with VCN DNS/`/etc/hosts`) over hand-typed FQDNs. OCI VCN FQDNs ending in `.oraclevcn.com` work when they resolve privately inside the tenancy; they are not a substitute for verifying the resolved addresses stay in-boundary.
+4. **GPU instance start.** Terraform provisions `acx_gpu_burst` in `state = "STOPPED"` (no A10 compute bill at apply). Start on demand (`oci compute instance action --action START` or console) before serving; the idle reaper STOPs when the describe job store reports `queue_depth=0` and `in_flight=0` for the configured idle window.
+5. **Idle reaper wired.** Run the out-of-band actuator periodically (cron/systemd timer on the backend host or operator workstation with OCI CLI):
 
    ```bash
    python -m infra.oci.gpu_lifecycle \
@@ -66,4 +72,4 @@ Do not treat `terraform apply` alone as tier activation. Before setting the serv
    ```
 
    Load JSON must mirror `InMemoryDescribeJobStore.load_snapshot()`: `{"queue_depth": N, "in_flight": M}`. The reaper re-samples after a fence delay and cancels STOP if work appeared (decision→STOP fencing).
-5. **Bake-off evidence.** Live OCI bake-off replaces pending REPORT stubs and updates the spike artifact before promoting this memo from provisional to final (see Decision above).
+6. **Bake-off evidence.** Live OCI bake-off replaces pending REPORT stubs (`kind=pending_report`) with measured `kind=report` artifacts and updates the spike artifact before promoting this memo from provisional to final (see Decision above).

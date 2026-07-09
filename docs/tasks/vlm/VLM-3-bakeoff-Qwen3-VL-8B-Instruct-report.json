@@ -1,1 +1,8 @@
-{"schema":"acx-eval/v1","task_ref":"VLM-3","model_id":"Qwen3-VL-8B-Instruct","status":"pending_live_gpu_bakeoff","reason":"Requires OCI GPU endpoint and golden images."}
+{
+  "schema": "acx-eval/v1",
+  "kind": "pending_report",
+  "task_ref": "VLM-3",
+  "model_id": "Qwen3-VL-8B-Instruct",
+  "status": "pending_live_gpu_bakeoff",
+  "reason": "Requires OCI GPU endpoint and golden images."
+}

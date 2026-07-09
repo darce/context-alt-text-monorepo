@@ -35,3 +35,9 @@ def test_decision_memo_documents_activation_preconditions_and_endpoint_wiring() 
     assert "ACX_DESCRIPTION_ADAPTER=gpu_qwen30b" in text
     assert "python -m infra.oci.gpu_lifecycle" in text
     assert "load_snapshot" in text or "queue_depth" in text
+    # S2-04: honest CPU baseline from VLM-2B table (log-derived, not 207).
+    assert "206 s/img" in text
+    assert "log-derived" in text or "not recomputable from the committed run-records" in text
+    # S2-05: allowlist + hostname/FQDN guidance aligned with deps.py.
+    assert "oraclevcn.com" in text
+    assert "acx-gpu-burst" in text

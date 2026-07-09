@@ -487,6 +487,119 @@ class DescribeRunControllerTest extends TestCase
         $this->assertSame('florence', $prov['adapter']);
     }
 
+    public function testApplyAllowsCompletedWithErrorsRun(): void
+    {
+        // D1-01: a partial run (completed_with_errors) is terminal-with-drafts and
+        // MUST be applyable — it is not rejected like a still-running run. Proves
+        // the 409 gate's ALLOW branch covers partial completions, not just
+        // 'completed'.
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $this->plantPostType(70);
+        $this->plantPostType(71);
+        $this->plantPostType(72);
+        $this->setPostMeta(70, '_wp_attachment_image_alt', 'human-authored alt');
+        $this->queueRunStatusResponse($runId, 'completed_with_errors');
+        $this->queueRunItemsResponse($runId);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $this->assertSame(200, $response->get_status());
+
+        $data = $response->get_data();
+        // Drafts are written despite the partial-failure run status.
+        $this->assertSame([71], $data['applied']);
+        $this->assertSame([70], $data['skipped_existing']);
+        $this->assertSame([72], $data['skipped_no_draft']);
+        $this->assertSame('a dog in a park', get_post_meta(71, '_wp_attachment_image_alt', true));
+    }
+
+    public function testApplyRunDraftsBucketsFailedAltWrite(): void
+    {
+        // D1-02 / S3-02: when the alt-text write returns false AND the stored value
+        // does not match the draft (a genuine failure, not a byte-identical no-op),
+        // the item lands in `failed`, never `applied`.
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $this->plantPostType(70);
+        $this->plantPostType(71);
+        $this->plantPostType(72);
+        $this->setPostMeta(70, '_wp_attachment_image_alt', 'human-authored alt');
+        // 71 has a draft and no existing alt → it would normally be applied, but
+        // force its alt write to fail (returns false, nothing persisted).
+        $GLOBALS['__ac_update_post_meta_fail'][71]['_wp_attachment_image_alt'] = true;
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->queueRunItemsResponse($runId);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+
+        $data = $response->get_data();
+        $this->assertSame([71], $data['failed']);
+        $this->assertSame([], $data['applied']);
+        $this->assertSame([70], $data['skipped_existing']);
+        $this->assertSame([72], $data['skipped_no_draft']);
+        // No provenance stamped on a failed item.
+        $this->assertSame('', get_post_meta(71, '_acx_description_provenance', true));
+    }
+
+    public function testApplyRunDraftsCountsNoOpWriteAsApplied(): void
+    {
+        // D1-02 / S3-02: update_post_meta() also returns false for a byte-identical
+        // no-op overwrite. The read-back proves the stored value already equals the
+        // draft, so the item counts as `applied`, not `failed`.
+        $runId = '11111111-1111-1111-1111-111111111111';
+        $this->plantPostType(70);
+        $this->plantPostType(71);
+        $this->plantPostType(72);
+        // 70's existing alt already equals its draft; opt into overwrite so it
+        // reaches the write path, then force the write to return false (no-op).
+        $this->setPostMeta(70, '_wp_attachment_image_alt', 'a cat on a sofa');
+        $GLOBALS['__ac_update_post_meta_fail'][70]['_wp_attachment_image_alt'] = true;
+        $this->queueRunStatusResponse($runId, 'completed');
+        $this->queueRunItemsResponse($runId);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+        $request->set_param('overwrite_media_ids', [70]);
+
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+
+        $data = $response->get_data();
+        $this->assertContains(70, $data['applied']);
+        $this->assertSame([], $data['failed']);
+        // Provenance is still stamped for a no-op-but-applied item.
+        $prov = get_post_meta(70, '_acx_description_provenance', true);
+        $this->assertIsArray($prov);
+        $this->assertSame('bulk_describe_run', $prov['source']);
+    }
+
+    public function testApplyReturns404WhenRunNotFound(): void
+    {
+        // D1-03: a status-endpoint 404 (run id does not exist) is surfaced as an
+        // honest 404, not the generic 409 "current status: unknown".
+        $runId = '99999999-9999-9999-9999-999999999999';
+        $this->queueHttpResponse([
+            'response' => ['code' => 404, 'message' => 'Not Found'],
+            'body' => json_encode(['detail' => 'run not found']),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs/' . $runId . '/apply');
+        $request->set_param('run_id', $runId);
+
+        $response = $this->controller->apply_describe_run_drafts($request);
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('describe_run_not_found', $response->get_error_code());
+        $this->assertSame(404, $response->get_error_data()['status'] ?? null);
+        // Rejected after the status read, before fetching items.
+        $this->assertCount(1, $this->getHttpCalls());
+    }
+
     public function testGetRunItemsPassesThroughProxyWpErrorUnchanged(): void
     {
         // S2-02: a transport-level WP_Error from the proxy is returned untouched.

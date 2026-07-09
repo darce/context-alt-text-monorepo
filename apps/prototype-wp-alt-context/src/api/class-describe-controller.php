@@ -463,8 +463,9 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 	 * `applied`, `skipped_existing` (operator alt guarded), `skipped_no_draft`
 	 * (failed describe / empty draft), `skipped_invalid` (media_id is not an
 	 * attachment post, S3-01), and `failed` (the alt-text write returned false,
-	 * S3-02). `skipped_invalid` and `failed` are additions to the prior three-bucket
-	 * shape — the TS contract needs a follow-up to surface them.
+	 * S3-02). `skipped_invalid` and `failed` extend the prior three-bucket shape;
+	 * the TS contract (describeApi.ts `ApplyDescribeRunResponse`) and the apply UI
+	 * (DescribeRunApplyView.tsx) both surface them.
 	 */
 	public function apply_describe_run_drafts( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		// S3-03: gate on the authoritative run status. The /items endpoint carries
@@ -473,6 +474,18 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 		$status_response = $this->get_describe_run_status( $request );
 		if ( is_wp_error( $status_response ) || $this->is_proxy_unavailable( $status_response ) ) {
 			return $status_response;
+		}
+		// D1-03: is_proxy_unavailable only trips on >=500, so a status-endpoint 404
+		// (run id does not exist) would otherwise collapse into the generic 409
+		// "current status: unknown" below. Label it honestly as a 404 instead — a
+		// missing run is not a non-terminal run. Other 4xx stay fail-closed via the
+		// 409 gate.
+		if ( 404 === (int) $status_response->get_status() ) {
+			return new WP_Error(
+				'describe_run_not_found',
+				sprintf( 'Describe run %s was not found.', $this->normalize_run_id( $request ) ),
+				array( 'status' => 404 )
+			);
 		}
 		$status_data = $status_response->get_data();
 		$run_status  = is_array( $status_data ) ? (string) ( $status_data['status'] ?? '' ) : '';

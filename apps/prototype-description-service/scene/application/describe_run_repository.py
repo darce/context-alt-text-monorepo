@@ -240,12 +240,23 @@ class DescribeRunRepository:
             run.completed_items = completed
             run.failed_items = failed
             run.skipped_items = skipped
-            status = terminal_run_status(
-                completed=completed,
-                failed=failed,
-                skipped=skipped,
-                cancel_requested=run.cancel_requested,
-            )
+            # D2-01: gate terminal-status derivation on all items being terminal,
+            # matching _recompute_run_totals. Under the atomic item-creation
+            # invariant (persisted items == total_items) every item is terminal
+            # here — this always holds and behavior is unchanged. Kept as a
+            # defensive alignment: a genuinely-incomplete run (fewer persisted
+            # items than total_items) falls back to FAILED rather than deriving
+            # a falsely-successful terminal status from a partial item set.
+            terminal = completed + failed + skipped
+            if terminal >= run.total_items:
+                status = terminal_run_status(
+                    completed=completed,
+                    failed=failed,
+                    skipped=skipped,
+                    cancel_requested=run.cancel_requested,
+                )
+            else:
+                status = DescribeRunStatus.FAILED
             run.status = status
             run.phase = phase_for_status(status)
             run.completed_at = now

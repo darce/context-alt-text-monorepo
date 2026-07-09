@@ -82,6 +82,89 @@ def test_reclaim_derives_terminal_status_and_preserves_completed_items():
     asyncio.run(body())
 
 
+def test_reclaim_derives_completed_when_all_items_completed_before_crash():
+    """D2-02: all items COMPLETED before the crash, no failures -> the run
+    derives to COMPLETED (not a blanket FAILED). This is the headline new
+    outcome of the parity gate: a fully-successful run whose row was left
+    non-terminal by the restart reclaims honestly to COMPLETED."""
+
+    async def body():
+        engine, sf = await _sessionmaker()
+        tenant = uuid.uuid4()
+        async with sf() as s:
+            repo = DescribeRunRepository(s, max_items=2)
+            run_id = await repo.create_run(tenant_id=tenant, media_ids=[401, 402])
+            for media_id in (401, 402):
+                await repo.record_item_result(
+                    tenant_id=tenant,
+                    run_id=run_id,
+                    media_id=media_id,
+                    alt_text_draft="done",
+                    caption="c",
+                    provenance={"adapter": "florence"},
+                )
+                await repo.mark_item(
+                    tenant_id=tenant, run_id=run_id, media_id=media_id, status=DescribeItemStatus.COMPLETED
+                )
+            # Simulate a crash that left the run row non-terminal despite every
+            # item already being COMPLETED.
+            run = await repo.get_run(tenant_id=tenant, run_id=run_id)
+            run.status = DescribeRunStatus.RUNNING
+            await s.commit()
+
+        reclaimed = await run_startup_reclaim(sf)
+        assert reclaimed == 1
+
+        async with sf() as s:
+            repo = DescribeRunRepository(s, max_items=2)
+            run = await repo.get_run(tenant_id=tenant, run_id=run_id)
+            items = {i.media_id: i for i in await repo.list_run_items(tenant_id=tenant, run_id=run_id)}
+
+        assert run.status == DescribeRunStatus.COMPLETED
+        assert run.completed_at is not None
+        assert run.completed_items == 2
+        assert run.failed_items == 0
+        assert all(i.status == DescribeItemStatus.COMPLETED for i in items.values())
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_reclaim_derives_cancelled_when_all_items_skipped_before_crash():
+    """D2-02: all items SKIPPED, nothing completed or failed -> per
+    terminal_run_status this maps to CANCELLED (cancel-before-run), a distinct
+    terminal status from FAILED/COMPLETED."""
+
+    async def body():
+        engine, sf = await _sessionmaker()
+        tenant = uuid.uuid4()
+        async with sf() as s:
+            repo = DescribeRunRepository(s, max_items=2)
+            run_id = await repo.create_run(tenant_id=tenant, media_ids=[501, 502])
+            for media_id in (501, 502):
+                await repo.mark_item(
+                    tenant_id=tenant, run_id=run_id, media_id=media_id, status=DescribeItemStatus.SKIPPED
+                )
+            run = await repo.get_run(tenant_id=tenant, run_id=run_id)
+            run.status = DescribeRunStatus.RUNNING
+            await s.commit()
+
+        reclaimed = await run_startup_reclaim(sf)
+        assert reclaimed == 1
+
+        async with sf() as s:
+            repo = DescribeRunRepository(s, max_items=2)
+            run = await repo.get_run(tenant_id=tenant, run_id=run_id)
+            items = {i.media_id: i for i in await repo.list_run_items(tenant_id=tenant, run_id=run_id)}
+
+        assert run.status == DescribeRunStatus.CANCELLED
+        assert run.skipped_items == 2
+        assert all(i.status == DescribeItemStatus.SKIPPED for i in items.values())
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
 def test_reclaim_honors_cancel_requested_as_cancelled():
     """S5-04: a run with cancel_requested reclaims to CANCELLED, not FAILED."""
 

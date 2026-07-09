@@ -7,6 +7,8 @@ stub profiles (florence_large, gpu_phi4) are fail-closed: selecting them yields
 an UnavailableDescriptionAdapter whose ``describe`` raises a clear error.
 """
 
+import socket
+
 import pytest
 
 from scene.application.description_adapter import AdapterResult, DescriptionAdapter
@@ -89,7 +91,7 @@ def test_gpu_qwen30b_profile_is_available_endpoint_profile():
     assert spec.available is True
     assert spec.adapter_kind is DescriptionAdapterKind.GPU
     assert spec.model_id == "Qwen3-VL-30B-A3B-Instruct"
-    assert spec.model_version == "Q4_GGUF"
+    assert spec.model_version == "Q4_K_M"
 
 
 # ------------------------------------------------------------- settings wiring
@@ -178,6 +180,49 @@ def test_resolve_gpu_qwen30b_rejects_public_endpoint(monkeypatch):
 
     adapter = get_description_adapter()
     assert isinstance(adapter, UnavailableDescriptionAdapter)
+
+
+def test_resolve_gpu_qwen30b_accepts_oraclevcn_host_when_dns_is_private(monkeypatch):
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "gpu_qwen30b")
+    monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://acx-gpu-burst.compute.oraclevcn.com:8000")
+
+    def _private_dns(host, port, family=0, type=0, proto=0, flags=0):
+        assert host == "acx-gpu-burst.compute.oraclevcn.com"
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.42", 0))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", _private_dns)
+    from scene.infrastructure.vlm.gpu_remote_adapter import GpuRemoteDescriptionAdapter
+    from scene.interface_adapters.http.deps import get_description_adapter
+
+    adapter = get_description_adapter()
+    assert isinstance(adapter, GpuRemoteDescriptionAdapter)
+    assert adapter.prompt_or_task_version == "2"
+
+
+def test_resolve_gpu_qwen30b_rejects_allowlisted_host_resolving_public_ip(monkeypatch):
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "gpu_qwen30b")
+    monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://acx-gpu-burst:8000")
+
+    def _public_dns(host, port, family=0, type=0, proto=0, flags=0):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", _public_dns)
+    from scene.interface_adapters.http.deps import get_description_adapter
+
+    adapter = get_description_adapter()
+    assert isinstance(adapter, UnavailableDescriptionAdapter)
+
+
+def test_resolve_gpu_qwen30b_passes_api_key_to_adapter(monkeypatch):
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "gpu_qwen30b")
+    monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://10.0.1.42:8000")
+    monkeypatch.setenv("ACX_GPU_ENDPOINT_API_KEY", "secret-key")
+    from scene.infrastructure.vlm.gpu_remote_adapter import GpuRemoteDescriptionAdapter
+    from scene.interface_adapters.http.deps import get_description_adapter
+
+    adapter = get_description_adapter()
+    assert isinstance(adapter, GpuRemoteDescriptionAdapter)
+    assert adapter._api_key == "secret-key"
 
 
 # --------------------------------------------------- hosted provider (E20-11)

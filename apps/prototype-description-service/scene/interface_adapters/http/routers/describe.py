@@ -43,7 +43,11 @@ from scene.config.settings import DescriptionSettings
 from scene.domain.description import DescriptionAdapterKind
 from scene.infrastructure.provider.hosted_provider_adapter import HostedProviderError
 from scene.infrastructure.vlm.unavailable_adapter import DescriptionAdapterUnavailableError
-from scene.interface_adapters.http.deps import get_description_adapter, get_gpu_description_adapter
+from scene.interface_adapters.http.deps import (
+    get_cpu_description_adapter,
+    get_description_adapter,
+    get_gpu_description_adapter,
+)
 from scene.interface_adapters.http.schemas.requests import DescribeImageEnvelope
 from scene.interface_adapters.http.schemas.responses import DescribeJobResult, VisualFactsResponse
 from scene.interface_adapters.http.schemas.responses import (
@@ -247,9 +251,7 @@ async def _validated_describe_multipart_submission(
 
     image_bytes = await _read_validated_image_upload(value=value, key=key, settings=settings)
     context = (
-        envelope.context_pack.model_dump(exclude_none=True)
-        if envelope.context_pack is not None
-        else envelope.context
+        envelope.context_pack.model_dump(exclude_none=True) if envelope.context_pack is not None else envelope.context
     )
     return ValidatedDescribeMultipart(
         envelope=envelope,
@@ -316,7 +318,12 @@ async def describe_image_multipart(
         tenant_record = await require_tenant_record(session, tenant_uuid)
         repository = ImageDescriptionRepository(session)
         audit_sink = _DescriptionAuditSink(AuditRepository(session))
-    effective_adapter = get_gpu_description_adapter() if envelope.tier == "gpu" else adapter
+    if envelope.tier == "gpu":
+        effective_adapter = get_gpu_description_adapter()
+    elif envelope.tier == "cpu":
+        effective_adapter = get_cpu_description_adapter()
+    else:
+        effective_adapter = adapter
     effective_timeout = _generation_timeout_seconds(settings, effective_adapter)
     service = VisualFactsService(
         adapter=effective_adapter,

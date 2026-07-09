@@ -109,10 +109,11 @@ Four slices: (1) adopt the key's tenant on save and remove the derive/pairing de
 
 Changes:
 - On key save, call `/recognition/tenant/whoami`; persist returned `tenant_id` via `TenantIdentity::adopt_paired_tenant()`; make the adopted option the authority in `TenantIdentity::resolve()`.
-- Stop sending a stale derived `X-Tenant-ID` on the probe (send adopted tenant or omit); remove the `CONNECTED`-gated pairing branch so adoption runs on save, not after a probe.
+- Stop sending a stale derived `X-Tenant-ID` at **every** emission site, not just the probe: the same header is attached to recognition/analyze calls (`recognition/interface_adapters/http/routers/analyze.py:396`) and is enforced on every authenticated call (`auth.py:198-208`). Audit the PHP recognition client for all `X-Tenant-ID` sends and route them through the adopted tenant (or omit for tenant-scoped keys). Remove the `CONNECTED`-gated pairing branch so adoption runs on save, not after a probe.
 
 Proof:
 - PHP test: saving a key whose tenant ≠ derived tenant results in adoption + `connected`, not `tenant_mismatch`.
+- PHP test: an analyze/recognition call after adoption sends the adopted tenant and does not 403.
 
 ### Slice 2: Remote-only settings UI + identity display + honest outcome
 
@@ -141,10 +142,11 @@ Proof:
 **Goal**: Prove display never depends on remote.
 
 Changes:
+- First confirm the caption/alt-text display path reads local WP storage (expected `wp_postmeta` alt text), not a remote fetch; roster/clusters are already `$wpdb`-local (`class-roster-entry-projection-repository.php`). If any display surface fetches from remote, de-couple it in this slice.
 - Add a test that renders roster/clusters/captions with the recognition endpoint stubbed unreachable and asserts full display.
 
 Proof:
-- New PHP/TS test passes with remote stubbed to fail.
+- New PHP/TS test passes with remote stubbed to fail; caption render path confirmed local.
 
 ---
 

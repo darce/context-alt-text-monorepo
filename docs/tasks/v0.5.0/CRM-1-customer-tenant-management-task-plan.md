@@ -117,8 +117,8 @@ Proof:
 **Goal**: Capture, edit, and display customer/credential metadata; emit lifecycle events.
 
 Changes:
-- Admin create/mint/revoke accept `label`, `created_by`, contact fields, `revoked_reason`/`revoked_by`; console renders them.
-- CRM-shaped read (account + contacts + keys); roster export endpoint; lifecycle events (`tenant_created`, `key_minted`, `tenant_suspended`, `key_revoked`, `contact_updated`) to `audit_events` on the same session. Mirror in `manage_api_keys.py`.
+- Admin create/mint/revoke accept `label`, contact fields, `revoked_reason`; console renders them. **`created_by`/`revoked_by` source:** `/admin` auth is a single shared admin token (`deps/admin_auth.py` `require_admin`) with no per-operator identity — so these are populated from an **operator label supplied in the request body** (free-text, e.g. "daniel"), NOT an inferred human identity. True per-operator attribution is deferred until per-operator admin auth exists; note this in the field docs so the value is not mistaken for authenticated identity.
+- CRM-shaped read (account + contacts + keys); roster export endpoint — **must be `require_admin_header`-gated, tailnet-only (E15-31), and write an `export` `audit_events` row** since it emits contact PII (no weaker gate than mutations). Lifecycle events (`tenant_created`, `key_minted`, `tenant_suspended`, `key_revoked`, `contact_updated`) to `audit_events` on the same session. Mirror in `manage_api_keys.py`.
 
 Proof:
 - Admin/service tests assert fields persisted, read shape, and one audit row per mutation.

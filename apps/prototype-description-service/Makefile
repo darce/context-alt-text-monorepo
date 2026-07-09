@@ -132,23 +132,38 @@ admin-down:
 
 # --- OCI /admin over the tailnet (no SSH tunnel) ------------------------------
 # The /admin console is 404'd on the public api.altcontext.com vhost by design;
-# it is reachable only over the tailnet. `admin-oci-serve` publishes the VM
-# loopback admin port over the tailnet (one-time; requires the admin compose
-# overlay layered on the VM and MagicDNS+HTTPS enabled in the tailnet console).
-# `admin-oci` opens the tailnet console in a local browser. Both honour OCI_HOST
-# and OCI_USER (same env contract as scripts/deploy/*).
+# it is reachable only over the tailnet. `admin-oci-serve` verifies the VM
+# loopback backend is up, then publishes it over the tailnet (one-time; requires
+# the admin compose overlay layered on the VM and Serve/HTTPS enabled in the
+# tailnet console). `admin-oci` preflights the tailnet URL and only opens the
+# browser when it is reachable, else prints an actionable diagnostic instead of
+# a blank tab. Both honour OCI_HOST and OCI_USER (same env contract as
+# scripts/deploy/*).
 OCI_HOST ?= acx-backend.tail1a44b8.ts.net
 OCI_USER ?= ubuntu
 
 admin-oci-serve:
-	@echo "Publishing 127.0.0.1:8000 over the tailnet on $(OCI_HOST) ..."
-	@ssh $(OCI_USER)@$(OCI_HOST) 'sudo tailscale serve --bg --https=443 http://127.0.0.1:8000 && sudo tailscale serve status'
+	@ssh $(OCI_USER)@$(OCI_HOST) '\
+		code=$$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:8000/admin/ 2>/dev/null); \
+		[ -n "$$code" ] || code=000; \
+		case "$$code" in \
+			000|502|503|504) echo "✗ admin backend on 127.0.0.1:8000 not ready (got $$code). Layer the overlay first: docker compose -f docker-compose.env.yml -f docker-compose.admin.yml up -d" >&2; exit 1 ;; \
+			*) echo "✓ admin backend up on 127.0.0.1:8000 (HTTP $$code); publishing over the tailnet ..." ;; \
+		esac; \
+		sudo tailscale serve --bg --https=443 http://127.0.0.1:8000 && sudo tailscale serve status'
 
 admin-oci:
-	@echo "Opening https://$(OCI_HOST)/admin/ (tailnet; auth with RECOGNITION_ADMIN_TOKEN) ..."
-	@open "https://$(OCI_HOST)/admin/" 2>/dev/null \
-		|| xdg-open "https://$(OCI_HOST)/admin/" 2>/dev/null \
-		|| echo "Browse to https://$(OCI_HOST)/admin/"
+	@url="https://$(OCI_HOST)/admin/"; \
+	code=$$(curl -sS -o /dev/null -w "%{http_code}" --max-time 8 "$$url" 2>/dev/null); \
+	[ -n "$$code" ] || code=000; \
+	case "$$code" in \
+		200|401) echo "Opening $$url (HTTP $$code; auth with RECOGNITION_ADMIN_TOKEN) ..."; \
+			open "$$url" 2>/dev/null || xdg-open "$$url" 2>/dev/null || echo "Browse to $$url" ;; \
+		502|503|504) echo "✗ $$url -> $$code: tailnet reached but the admin backend is down. Is the admin overlay layered on the VM (docker-compose.admin.yml)?" >&2; exit 1 ;; \
+		404) echo "✗ $$url -> 404: reached a vhost that denies /admin. Is 'tailscale serve' pointed at 127.0.0.1:8000? Run 'make admin-oci-serve'." >&2; exit 1 ;; \
+		000) echo "✗ $$url unreachable: not on the tailnet, MagicDNS/HTTPS off, or serve not published. Check 'tailscale status' and run 'make admin-oci-serve'." >&2; exit 1 ;; \
+		*) echo "✗ $$url -> $$code (unexpected); not opening." >&2; exit 1 ;; \
+	esac
 
 # Reset local database (db-reset is an alias)
 reset db-reset:

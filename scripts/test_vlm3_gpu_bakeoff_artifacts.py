@@ -20,6 +20,8 @@ def test_gpu_bakeoff_candidate_artifact_uses_existing_harness_endpoint_commands(
     assert "Qwen3-VL-30B-A3B-Instruct" in model_ids
     assert "Phi-4-multimodal" in model_ids
 
+    # S2-01 / rg-006: commands run from the service cwd; --out lands under repo docs/tasks/vlm.
+    assert artifact["harness"]["cwd"] == "apps/prototype-description-service"
     budget = artifact["hardware_target"]["usable_vram_budget_gb"]
     for candidate in artifact["candidates"]:
         expected_fit = _expected_fit(candidate["estimated_model_gb"], budget)
@@ -27,6 +29,8 @@ def test_gpu_bakeoff_candidate_artifact_uses_existing_harness_endpoint_commands(
         command = candidate["command"]
         assert "-m scripts.eval_harness.bakeoff --endpoint" in command
         assert f"--model-id {candidate['model_id']}" in command
+        assert f"--out ../../../docs/tasks/vlm/VLM-3-bakeoff-{candidate['model_id']}-run-record.json" in command
+        assert "ACX_EVAL_LIVE=1" in command and "GOLDEN_IMAGES_DIR=" in command
         if candidate["reasoning_tuned"]:
             assert "--no-think" in command
 

@@ -12,10 +12,12 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from dataclasses import dataclass
+from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from pydantic import ValidationError
-from starlette.datastructures import UploadFile
+from starlette.datastructures import FormData, UploadFile
 
 from db.tenant_context import require_tenant_record, set_tenant_context
 from recognition.infrastructure.repositories.audit_repository import AuditRepository
@@ -24,7 +26,7 @@ from recognition.interface_adapters.http.deps import (
     require_write_access,
 )
 from recognition.interface_adapters.http.middleware.metrics import get_default_metrics
-from scene.application.describe_jobs import DescribeJob, InMemoryDescribeJobStore
+from scene.application.describe_jobs import DescribeJob, DescribeJobStatus, InMemoryDescribeJobStore
 from scene.application.description_repository import ImageDescriptionRepository
 from scene.application.description_worker import run_describe_job
 from scene.application.identity_merge import (
@@ -35,7 +37,6 @@ from scene.application.identity_merge import (
     load_suppressed_roster_ids,
     merge_identities,
 )
-from scene.application.seeded_adapter import SeededDescriptionAdapter
 from scene.application.settings.vlm import VlmSettings
 from scene.application.visual_facts_service import VisualFactsService
 from scene.config.settings import DescriptionSettings
@@ -57,7 +58,26 @@ router = APIRouter(tags=["describe"])
 _logger = logging.getLogger(__name__)
 
 _IMAGE_KEY_PREFIX = "image_"
-_ASYNC_JOBS = InMemoryDescribeJobStore()
+_DEFAULT_MAX_JOBS = 1000
+
+
+def _async_job_store() -> InMemoryDescribeJobStore:
+    settings = DescriptionSettings()
+    return InMemoryDescribeJobStore(
+        max_jobs=_DEFAULT_MAX_JOBS,
+        max_retained_image_bytes=_DEFAULT_MAX_JOBS * settings.max_description_image_bytes,
+    )
+
+
+_ASYNC_JOBS = _async_job_store()
+
+
+@dataclass(frozen=True)
+class ValidatedDescribeMultipart:
+    envelope: DescribeImageEnvelope
+    tenant_uuid: uuid.UUID
+    image_bytes: bytes
+    context: dict[str, Any] | None
 
 
 class _DescriptionAuditSink:
@@ -193,6 +213,52 @@ def _generation_timeout_seconds(settings: DescriptionSettings, adapter) -> float
     return settings.generation_timeout_seconds
 
 
+async def _validated_describe_multipart_submission(
+    *,
+    form: FormData,
+    auth,
+    settings: DescriptionSettings,
+) -> ValidatedDescribeMultipart:
+    try:
+        envelope = DescribeImageEnvelope.model_validate(_read_request_part(form.get("request")))
+    except ValidationError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, f"invalid 'request' envelope: {exc.errors()}"
+        ) from exc
+
+    auth_tenant = (getattr(auth, "tenant_claim", None) or "").strip()
+    if auth_tenant and auth_tenant != envelope.tenant_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "tenant mismatch between auth and request envelope")
+
+    image_parts = [(k, v) for k, v in form.multi_items() if k.startswith(_IMAGE_KEY_PREFIX)]
+    if len(image_parts) != 1:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"exactly one image_<media_id> part is required; got {len(image_parts)}",
+        )
+    key, value = image_parts[0]
+    if not isinstance(value, UploadFile):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"form key '{key}' must be a file upload")
+    if key[len(_IMAGE_KEY_PREFIX) :] != str(envelope.media_id):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"image part key '{key}' must be the canonical 'image_{envelope.media_id}'",
+        )
+
+    image_bytes = await _read_validated_image_upload(value=value, key=key, settings=settings)
+    context = (
+        envelope.context_pack.model_dump(exclude_none=True)
+        if envelope.context_pack is not None
+        else envelope.context
+    )
+    return ValidatedDescribeMultipart(
+        envelope=envelope,
+        tenant_uuid=uuid.UUID(envelope.tenant_id),
+        image_bytes=image_bytes,
+        context=context,
+    )
+
+
 async def _read_validated_image_upload(
     *,
     value: UploadFile,
@@ -232,37 +298,11 @@ async def describe_image_multipart(
     adapter=Depends(get_description_adapter),
 ) -> VisualFactsResponse:
     form = await request.form()
-
-    try:
-        envelope = DescribeImageEnvelope.model_validate(_read_request_part(form.get("request")))
-    except ValidationError as exc:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT, f"invalid 'request' envelope: {exc.errors()}"
-        ) from exc
-
-    auth_tenant = (getattr(auth, "tenant_claim", None) or "").strip()
-    if auth_tenant and auth_tenant != envelope.tenant_id:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "tenant mismatch between auth and request envelope")
-
-    image_parts = [(k, v) for k, v in form.multi_items() if k.startswith(_IMAGE_KEY_PREFIX)]
-    if len(image_parts) != 1:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            f"exactly one image_<media_id> part is required; got {len(image_parts)}",
-        )
-    key, value = image_parts[0]
-    if not isinstance(value, UploadFile):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"form key '{key}' must be a file upload")
-    if key[len(_IMAGE_KEY_PREFIX) :] != str(envelope.media_id):
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            f"image part key '{key}' must be the canonical 'image_{envelope.media_id}'",
-        )
-
     settings = DescriptionSettings()
-    image_bytes = await _read_validated_image_upload(value=value, key=key, settings=settings)
-
-    tenant_uuid = uuid.UUID(envelope.tenant_id)
+    submission = await _validated_describe_multipart_submission(form=form, auth=auth, settings=settings)
+    envelope = submission.envelope
+    image_bytes = submission.image_bytes
+    tenant_uuid = submission.tenant_uuid
     repository = None
     audit_sink = None
     tenant_record = None
@@ -290,9 +330,7 @@ async def describe_image_multipart(
             tenant_id=tenant_uuid,
             media_id=envelope.media_id,
             image_bytes=image_bytes,
-            context=envelope.context_pack.model_dump(exclude_none=True)
-            if envelope.context_pack is not None
-            else envelope.context,
+            context=submission.context,
         )
     except TimeoutError as exc:
         raise HTTPException(
@@ -335,42 +373,26 @@ async def enqueue_describe_image(
     background_tasks: BackgroundTasks,
     request: Request,
     auth=Depends(require_write_access),
+    session=Depends(get_optional_session),
+    cpu_adapter=Depends(get_description_adapter),
     gpu_adapter=Depends(get_gpu_description_adapter),
 ) -> DescribeJobResult:
     form = await request.form()
-    try:
-        envelope = DescribeImageEnvelope.model_validate(_read_request_part(form.get("request")))
-    except ValidationError as exc:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT, f"invalid 'request' envelope: {exc.errors()}"
-        ) from exc
-    auth_tenant = (getattr(auth, "tenant_claim", None) or "").strip()
-    if auth_tenant and auth_tenant != envelope.tenant_id:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "tenant mismatch between auth and request envelope")
-    image_parts = [(k, v) for k, v in form.multi_items() if k.startswith(_IMAGE_KEY_PREFIX)]
-    if len(image_parts) != 1:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            f"exactly one image_<media_id> part is required; got {len(image_parts)}",
-        )
-    key, value = image_parts[0]
-    if not isinstance(value, UploadFile):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"form key '{key}' must be a file upload")
-    if key[len(_IMAGE_KEY_PREFIX) :] != str(envelope.media_id):
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            f"image part key '{key}' must be the canonical 'image_{envelope.media_id}'",
-        )
     settings = DescriptionSettings()
-    image_bytes = await _read_validated_image_upload(value=value, key=key, settings=settings)
+    submission = await _validated_describe_multipart_submission(form=form, auth=auth, settings=settings)
+    if session is not None:
+        await set_tenant_context(session, submission.tenant_uuid)
+        await require_tenant_record(session, submission.tenant_uuid)
+    audit_sink = None
+    if session is not None:
+        audit_sink = _DescriptionAuditSink(AuditRepository(session))
+    metrics = _DescriptionMetricsSink()
     try:
         job = _ASYNC_JOBS.enqueue(
-            tenant_id=uuid.UUID(envelope.tenant_id),
-            media_id=envelope.media_id,
-            image_bytes=image_bytes,
-            context=envelope.context_pack.model_dump(exclude_none=True)
-            if envelope.context_pack is not None
-            else envelope.context,
+            tenant_id=submission.tenant_uuid,
+            media_id=submission.envelope.media_id,
+            image_bytes=submission.image_bytes,
+            context=submission.context,
         )
     except RuntimeError as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
@@ -378,9 +400,14 @@ async def enqueue_describe_image(
         run_describe_job,
         store=_ASYNC_JOBS,
         job_id=job.job_id,
-        cpu_adapter=SeededDescriptionAdapter(),
+        cpu_adapter=cpu_adapter,
         gpu_adapter=gpu_adapter,
+        job_timeout_seconds=settings.generation_timeout_seconds * 2,
+        audit_sink=audit_sink,
+        metrics=metrics,
     )
+    if session is not None:
+        await session.commit()
     return _job_result(job)
 
 
@@ -390,6 +417,10 @@ async def get_describe_job(job_id: str, auth=Depends(require_write_access)) -> D
     if job is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "describe job not found")
     auth_tenant = (getattr(auth, "tenant_claim", None) or "").strip()
-    if auth_tenant and auth_tenant != str(job.tenant_id):
+    if not auth_tenant:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "tenant claim required")
+    if auth_tenant != str(job.tenant_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "describe job not found")
+    if job.status in {DescribeJobStatus.FINAL, DescribeJobStatus.DEGRADED, DescribeJobStatus.FAILED}:
+        job = _ASYNC_JOBS.mark_result_fetched(job_id)
     return _job_result(job)

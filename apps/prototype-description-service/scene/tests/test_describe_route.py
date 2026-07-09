@@ -29,9 +29,10 @@ from recognition.interface_adapters.http.deps import (
     require_write_access,
 )
 from recognition.interface_adapters.http.middleware.metrics import get_default_metrics
+from scene.application.describe_jobs import InMemoryDescribeJobStore
 from scene.application.description_adapter import AdapterResult
 from scene.domain.description import DescriptionAdapterKind
-from scene.interface_adapters.http.deps import get_description_adapter
+from scene.interface_adapters.http.deps import get_description_adapter, get_gpu_description_adapter
 from scene.interface_adapters.http.router import router as scene_router
 
 TENANT_ID = "00000000-0000-0000-0000-0000000000bb"
@@ -252,7 +253,9 @@ def test_create_app_registers_route_and_upload_cap():
         if getattr(getattr(m, "cls", None), "__name__", "") == "UploadSizeLimitMiddleware"
     ]
     assert mws, "UploadSizeLimitMiddleware not registered"
-    assert "/scene/describe/multipart" in getattr(mws[0], "kwargs", {}).get("paths", set())
+    middleware_paths = getattr(mws[0], "kwargs", {}).get("paths", set())
+    assert "/scene/describe/multipart" in middleware_paths
+    assert "/scene/describe/async" in middleware_paths
 
 
 def test_local_cpu_route_uses_vlm_timeout(monkeypatch):
@@ -473,6 +476,87 @@ def test_stub_profile_returns_503_with_reason():
         r = _post(client, TENANT_ID)
         assert r.status_code == 503, r.text
         assert "async describe worker" in r.json()["detail"]
+
+
+class _ImmediateGpuAdapter:
+    kind = DescriptionAdapterKind.GPU
+    model_id = "gpu-test"
+    model_version = "1"
+    prompt_or_task_version = "1"
+
+    def describe(self, *, image_bytes, context):
+        return AdapterResult(
+            caption="GPU caption.",
+            objects=(),
+            ocr_text=None,
+            alt_text_draft="GPU caption.",
+            context_sources=(),
+            context_applied=False,
+        )
+
+
+def test_async_full_queue_returns_503(monkeypatch):
+    from scene.interface_adapters.http.routers import describe as describe_module
+
+    store = InMemoryDescribeJobStore(max_jobs=1)
+    store.enqueue(tenant_id=uuid.UUID(TENANT_ID), media_id=1, image_bytes=b"filled", context=None)
+    monkeypatch.setattr(describe_module, "_ASYNC_JOBS", store)
+    with _client() as client:
+        r = _post_async(client, TENANT_ID)
+        assert r.status_code == 503, r.text
+        assert "describe job queue is full" in r.json()["detail"]
+
+
+def test_get_describe_job_cross_tenant_returns_404(monkeypatch):
+    from scene.interface_adapters.http.routers import describe as describe_module
+
+    store = InMemoryDescribeJobStore()
+    job = store.enqueue(
+        tenant_id=uuid.UUID(TENANT_ID),
+        media_id=42,
+        image_bytes=b"image-bytes-payload",
+        context=None,
+    )
+    store.set_final(job.job_id, visual_facts={"alt_text_draft": "done"})
+    monkeypatch.setattr(describe_module, "_ASYNC_JOBS", store)
+    other_tenant = str(uuid.uuid4())
+    with _client(auth_tenant=other_tenant) as client:
+        r = client.get(f"/scene/describe/jobs/{job.job_id}")
+        assert r.status_code == 404, r.text
+
+
+def test_get_describe_job_requires_tenant_claim(monkeypatch):
+    from scene.interface_adapters.http.routers import describe as describe_module
+
+    store = InMemoryDescribeJobStore()
+    job = store.enqueue(
+        tenant_id=uuid.UUID(TENANT_ID),
+        media_id=42,
+        image_bytes=b"image-bytes-payload",
+        context=None,
+    )
+    monkeypatch.setattr(describe_module, "_ASYNC_JOBS", store)
+    with _client(auth_tenant=None) as client:
+        r = client.get(f"/scene/describe/jobs/{job.job_id}")
+        assert r.status_code == 400, r.text
+        assert "tenant claim required" in r.json()["detail"]
+
+
+def test_async_enqueue_and_poll_returns_tenant_scoped_job(monkeypatch):
+    from scene.interface_adapters.http.routers import describe as describe_module
+
+    store = InMemoryDescribeJobStore()
+    monkeypatch.setattr(describe_module, "_ASYNC_JOBS", store)
+    with _client(auth_tenant=TENANT_ID) as client:
+        client.app.dependency_overrides[get_gpu_description_adapter] = lambda: _ImmediateGpuAdapter()
+        submitted = _post_async(client, TENANT_ID)
+        assert submitted.status_code == 200, submitted.text
+        job_id = submitted.json()["job_id"]
+        polled = client.get(f"/scene/describe/jobs/{job_id}")
+        assert polled.status_code == 200, polled.text
+        body = polled.json()
+        assert body["job_id"] == job_id
+        assert body["status"] in {"final", "provisional", "running", "queued"}
 
 
 def test_hosted_provider_fault_returns_502_with_reason():

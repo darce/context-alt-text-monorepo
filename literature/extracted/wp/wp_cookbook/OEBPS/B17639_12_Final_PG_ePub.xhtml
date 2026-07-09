@@ -1,0 +1,277 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+	<head>
+		<title>B17639_12_Final_PG_ePub</title>
+		<link href="css/style-JRserifv5.css" rel="stylesheet" type="text/css" />
+	</head>
+	<body id="B17639_12_Final_PG_ePub" lang="en-GB" xml:lang="en-GB">
+		<div id="_idContainer105">
+			<h1 id="_idParaDest-411"><em class="italic"><a id="_idTextAnchor421"></a>Chapter 12</em>: Enabling Plugin Internationalization</h1>
+			<p>WordPress is a worldwide phenomenon, with users embracing the platform all around the globe. To create a more immersive experience for users in different locales, WordPress offers the ability to translate all of its administrator- and visitor-facing content. Like most other functionalities on the platform, internationalization is also available to plugin developers. By calling a set of easy-to-use functions, developers can include translation files with their creations.</p>
+			<p>To prepare a plugin to be localized, developers must use special internationalization functions when dealing with any textual element. Once this structure is in place, any site administrator can create localizations by themselves for languages that they are familiar with. They can submit these translations back to the plugin author for inclusion in a future update to the extension. WordPress.org also offers an online interface for users to be able to contribute translations without requiring the use of offline tools (<a href="https://translate.wordpress.org/">https://translate.wordpress.org/</a>).</p>
+			<p>This chapter explains how to prepare a plugin to be translated. It also shows how to use the Poedit tool to create a new language file for a simple plugin through the following topics:</p>
+			<ul>
+				<li>Changing the WordPress site language configuration</li>
+				<li>Adapting default user settings for translation</li>
+				<li>Making admin page code ready for translation</li>
+				<li>Modifying shortcode output for translation</li>
+				<li>Translating text strings using Poedit</li>
+				<li>Loading a language file in the plugin initialization</li>
+			</ul>
+			<h1 id="_idParaDest-412"><a id="_idTextAnchor422"></a>Technical requirements </h1>
+			<p>You can find complete code examples on GitHub in the following repository: <a href="https://github.com/PacktPublishing/WordPress-Plugin-Development-Cookbook-Third-Edition">https://github.com/PacktPublishing/WordPress-Plugin-Development-Cookbook-Third-Edition</a>.</p>
+			<h1 id="_idParaDest-413"><a id="_idTextAnchor423"></a>Changing the WordPress site language configuration</h1>
+			<p>The first<a id="_idIndexMarker862"></a> step to translate a plugin is to configure WordPress to a language setting other than English. This will automatically trigger mechanisms in the platform to look for alternate language content for any internationalized string.</p>
+			<h2 id="_idParaDest-414"><a id="_idTextAnchor424"></a>Getting ready</h2>
+			<p>You should have access to a WordPress development environment.</p>
+			<h2 id="_idParaDest-415"><a id="_idTextAnchor425"></a>How to do it...</h2>
+			<p>Follow these steps to configure the site to display in French:</p>
+			<ol>
+				<li>Open your development site&apos;s <strong class="bold">Dashboard</strong> and navigate to the <strong class="bold">General</strong> section of the <strong class="bold">Settings</strong> menu.</li>
+				<li>Set <strong class="bold">Site Language</strong> to <strong class="bold">Français du Canada</strong> and click on <strong class="bold">Save Changes</strong>.</li>
+			</ol>
+			<h2 id="_idParaDest-416"><a id="_idTextAnchor426"></a>How it works...</h2>
+			<p>The WordPress <strong class="bold">Site Language</strong> configuration option allows administrators to select the language that will be seen by visitors when they go to your website. It also determines the language that will be assigned to administrators by default when they visit the management section of the site.</p>
+			<p>As can be seen in the drop-down list of languages, WordPress has a single language installed by default, shown at the top of the list. The remainder of the list indicates languages that can be added to your website. When you set a new language, translation files are automatically downloaded for the selected language and the new selection becomes the default for visitors. If you look inside the <strong class="source-inline">wp-content/languages</strong> directory of your WordPress installation, you will see that a number of files with <strong class="source-inline">.po</strong>, <strong class="source-inline">.mo</strong>, and <strong class="source-inline">.json</strong> extensions were downloaded for the selected language. <strong class="bold">Portable object</strong> (<strong class="source-inline">.po</strong>) files are <a id="_idIndexMarker863"></a>ASCII text files that contain a list of translations between the original English text from the WordPress source code and a target language. <strong class="bold">Machine object</strong> (<strong class="source-inline">.mo</strong>) files are binary <a id="_idIndexMarker864"></a>versions of portable object files that can be efficiently loaded by PHP as a website is rendered. Finally, <strong class="bold">JavaScript Object Notation</strong> files (<strong class="source-inline">.json</strong>) contain<a id="_idIndexMarker865"></a> translation text for some of the newer components<a id="_idIndexMarker866"></a> of the WordPress administration interface.</p>
+			<p class="callout-heading">Note</p>
+			<p class="callout">If you are not presented with a list of languages to install automatically in the <strong class="bold">General</strong> section of your development site&apos;s <strong class="bold">Dashboard</strong>, visit <a href="https://wordpress.org/support/article/installing-wordpress-in-your-language/">https://wordpress.org/support/article/installing-wordpress-in-your-language/</a> to learn<a id="_idIndexMarker867"></a> how to manually download and install translation files for WordPress.</p>
+			<h1 id="_idParaDest-417"><a id="_idTextAnchor427"></a>Adapting default user settings for translation</h1>
+			<p>Before <a id="_idIndexMarker868"></a>we can create translation files for our own plugins, their code needs to be specifically written to allow text items to be translated. This <a id="_idIndexMarker869"></a>work starts in the plugin&apos;s activation routine, where default plugin option values are set. By using translation functions, our code can search for alternate values when a language other than English is specified in the website&apos;s configuration file.</p>
+			<h2 id="_idParaDest-418"><a id="_idTextAnchor428"></a>Getting ready</h2>
+			<p>You should have already followed the <em class="italic">Changing the WordPress site language configuration</em> recipe to have configured a language other than English for your development site.</p>
+			<h2 id="_idParaDest-419"><a id="_idTextAnchor429"></a>How to do it...</h2>
+			<p>Follow these steps to assign a translated string to a plugin&apos;s default options array on initialization:</p>
+			<ol>
+				<li value="1">Navigate<a id="_idIndexMarker870"></a> to the WordPress <strong class="source-inline">plugins</strong> directory of your development installation.</li>
+				<li>Create a new directory called <strong class="source-inline">ch12-hello-world</strong>.</li>
+				<li>Navigate to the directory and create a text file called <strong class="source-inline">ch12-hello-world.php</strong>.</li>
+				<li>Open the<a id="_idIndexMarker871"></a> new file in a code editor and add an appropriate header at the top of the plugin file, naming the plugin <strong class="source-inline">Chapter 12 - Hello World</strong>.</li>
+				<li>Add the following line of code to register a function to be called when the plugin is activated:<p class="source-code">register_activation_hook( __FILE__,</p><p class="source-code">&#160;&#160;&#160;&#160;&apos;ch12hw_set_default_options_array&apos; ); </p></li>
+				<li>Insert the following block of code to provide an implementation for the <strong class="source-inline">ch12hw_set_default_options_array</strong> function:<p class="source-code">function ch12hw_set_default_options_array() {</p><p class="source-code">&#160;&#160;&#160;&#160;if ( false === get_option( &apos;ch12hw_options&apos; ) ) {</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;$new_options = array();</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;$new_options[&apos;message&apos;] =</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;__( &apos;Hello World&apos;,</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&apos;ch12hw_hello_world&apos; );</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;add_option( &apos;ch12hw_options&apos;, $new_options );</p><p class="source-code">&#160;&#160;&#160;&#160;}</p><p class="source-code">} </p></li>
+				<li>Save and close the plugin file.</li>
+				<li>Navigate to the <strong class="bold">Plugins</strong> management page (<strong class="bold">Extensions</strong> in French) and click on the <strong class="bold">Activate</strong> link (<strong class="bold">Activer</strong> in French) for the <strong class="bold">Chapter 12 - Hello World</strong> plugin.</li>
+				<li>Use your<a id="_idIndexMarker872"></a> development server&apos;s database administration tool (<strong class="bold">phpMyAdmin</strong>, <strong class="bold">Adminer</strong>, or another) to run the <a id="_idIndexMarker873"></a>following query against your site database:<p class="source-code">SELECT * FROM wp_options where option_name =</p><p class="source-code">&apos;ch12hw_options&apos;</p></li>
+			</ol>
+			<div>
+				<div id="_idContainer097" class="IMG---Figure">
+					<img src="image/B17639_12_01.jpg" alt="Figure 12.1 – Hello World plugin options shown in Adminer&#xd;&#xa;" />
+				</div>
+			</div>
+			<p class="figure-caption">Figure 12.1 – Hello World plugin options shown in Adminer</p>
+			<p>As seen in <em class="italic">Figure 12.1</em>, a new options array was created in the database, containing a default value for a message.</p>
+			<h2 id="_idParaDest-420"><a id="_idTextAnchor430"></a>How it works...</h2>
+			<p>The <strong class="source-inline">__</strong> function (that&apos;s two underscores) is a WordPress internationalization utility function. When called, it tries to locate a translation for the text that it receives in its first argument within the text domain specified in the second argument. A text domain is essentially a subsection of the global translation table that is managed by WordPress. In this example, the text to be translated is the string <strong class="source-inline">Hello World</strong>, for which the system tries to find a translation in the <strong class="source-inline">ch12hw_hello_world</strong> domain. Since this domain is not available at this time, the function returns the original string that it received as its first parameter. The plugin code assigns the value it receives to the default configuration array.</p>
+			<p>It should be noted that the <strong class="source-inline">__</strong> function is an alias for the <strong class="source-inline">translate</strong> function. While both <a id="_idIndexMarker874"></a>functions <a id="_idIndexMarker875"></a>have the same functionality, using <strong class="source-inline">__</strong> makes our code shorter when it contains a lot of text elements to be translated.</p>
+			<p class="callout-heading">Note</p>
+			<p class="callout">Developers should not use a variable or constant in the second parameter of the <strong class="source-inline">__</strong> function. Doing so will cause problems with third-party plugins for site translation.</p>
+			<h2 id="_idParaDest-421"><a id="_idTextAnchor431"></a>See also</h2>
+			<ul>
+				<li>The <em class="italic">Changing the WordPress site language configuration</em> recipe</li>
+			</ul>
+			<h1 id="_idParaDest-422"><a id="_idTextAnchor432"></a>Making admin page code ready for translation</h1>
+			<p>The <a id="_idIndexMarker876"></a>previous recipe showed how to look up the translation of a text item and return its value for further processing in the plugin code. There <a id="_idIndexMarker877"></a>are many instances where it is more practical to display the translated content immediately, as we&apos;ll see in this recipe.</p>
+			<h2 id="_idParaDest-423"><a id="_idTextAnchor433"></a>Getting ready</h2>
+			<p>You should have already followed the <em class="italic">Adapting default user settings for translation</em> recipe to have a starting point for this recipe. Alternatively, you can get the resulting code (<strong class="source-inline">ch12/ch12-hello-world/ch12-hello-world-v1.php</strong>) for that recipe from the book&apos;s GitHub page and rename the file to <strong class="source-inline">ch12-hello-world.php</strong>.</p>
+			<h2 id="_idParaDest-424"><a id="_idTextAnchor434"></a>How to do it...</h2>
+			<p>Follow these steps to translate the contents of a simple administration page for immediate display:</p>
+			<ol>
+				<li value="1">Navigate to the <strong class="source-inline">ch12-hello-world</strong> folder of the WordPress <strong class="source-inline">plugins</strong> directory of your development installation.</li>
+				<li>Open the <strong class="source-inline">ch12-hello-world.php</strong> file in a text editor.</li>
+				<li>Add the following line of code at the end of the file to register a function to be called when WordPress is building the administration page&apos;s menu:<p class="source-code">add_action( &apos;admin_menu&apos;, &apos;ch12hw_settings_menu&apos; ); </p></li>
+				<li>Add the<a id="_idIndexMarker878"></a> following code section to provide an implementation for the <strong class="source-inline">ch12hw_settings_menu</strong> function:<p class="source-code">function ch12hw_settings_menu() {</p><p class="source-code">&#160;&#160;&#160;&#160;add_options_page(</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;__( &apos;Hello World&apos;, &apos;ch12hw_hello_world&apos; ),</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;__( &apos;Hello World&apos;, &apos;ch12hw_hello_world&apos; ),</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&apos;manage_options&apos;,</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&apos;ch12hw-hello-world&apos;, &apos;ch12hw_config_page&apos; );</p><p class="source-code">} </p></li>
+				<li>Insert <a id="_idIndexMarker879"></a>the following block of code to create the <strong class="source-inline">ch12hw_config_page</strong> function declared in the call to <strong class="source-inline">add_options_page</strong>:<p class="source-code">function ch12hw_config_page() {</p><p class="source-code">&#160;&#160;&#160;&#160;$options = get_option( &apos;ch12hw_options&apos; ); ?&gt;</p><p class="source-code">&#160;&#160;&#160;&#160;&lt;div id=&quot;ch12hw-general&quot; class=&quot;wrap&quot;&gt;</p><p class="source-code">&#160;&#160;&#160;&#160;&lt;h2&gt;&lt;?php </p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;_e( &apos;Hello World Configuration&apos;, </p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&apos;ch12hw_hello_world&apos; ); ?&gt;&lt;/h2&gt;</p><p class="source-code">&#160;&#160;&#160;&#160;&lt;form method=&quot;post&quot; action=&quot;admin-post.php&quot;&gt;</p><p class="source-code">&#160;&#160;&#160;&#160;&lt;input type=&quot;hidden&quot; name=&quot;action&quot;</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;value=&quot;save_ch12hw_options&quot; /&gt;</p><p class="source-code">&#160;&#160;&#160;&#160;&lt;?php wp_nonce_field( &apos;ch12hw&apos; ); ?&gt;</p><p class="source-code">&#160;&#160;&#160;&#160;&lt;?php _e( &apos;Shortcode message&apos;,</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&apos;ch12hw_hello_world&apos; ); ?&gt;:</p><p class="source-code">&#160;&#160;&#160;&#160;&lt;input type=&quot;text&quot; name=&quot;message&quot;</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;value=&quot;&lt;?php echo</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;esc_html( $options[&apos;message&apos;] ); ?&gt;&quot;/&gt;</p><p class="source-code">&#160;&#160;&#160;&#160;&lt;br /&gt;</p><p class="source-code">&#160;&#160;&#160;&#160;&lt;input type=&quot;submit&quot; value=&quot;&lt;?php _e( &apos;Submit&apos;,</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&apos;ch12hw_hello_world&apos; ); ?&gt;&quot;</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;class=&quot;button-primary&quot;/&gt;</p><p class="source-code">&#160;&#160;&#160;&#160;&lt;/form&gt;</p><p class="source-code">&#160;&#160;&#160;&#160;&lt;/div&gt;</p><p class="source-code">&lt;?php } </p></li>
+				<li>Add the <a id="_idIndexMarker880"></a>following line of code to <a id="_idIndexMarker881"></a>register a function to be executed when the administration panel is being prepared to be displayed:<p class="source-code">add_action( &apos;admin_init&apos;, &apos;ch12hw_admin_init&apos; ); </p></li>
+				<li>Append the following code segment to provide an implementation for the <strong class="source-inline">ch12hw_admin_init</strong> function:<p class="source-code">function ch12hw_admin_init() {</p><p class="source-code">&#160;&#160;&#160;&#160;add_action( &apos;admin_post_save_ch12hw_options&apos;,</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&apos;process_ch12hw_options&apos; );</p><p class="source-code">} </p></li>
+				<li>Provide code for the <strong class="source-inline">process_ch12hw_options</strong> function, declared in the previous <a id="_idIndexMarker882"></a>step, by inserting the following code:<p class="source-code">function process_ch12hw_options() {</p><p class="source-code">&#160;&#160;&#160;&#160;if ( !current_user_can( &apos;manage_options&apos; ) ) {</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;wp_die( &apos;Not allowed&apos; );</p><p class="source-code">&#160;&#160;&#160;&#160;}</p><p class="source-code">&#160;&#160;&#160;&#160;check_admin_referer( &apos;ch12hw&apos; );</p><p class="source-code">&#160;&#160;&#160;&#160;$options = get_option( &apos;ch12hw_options&apos; );</p><p class="source-code">&#160;&#160;&#160;&#160;$options[&apos;message&apos;] = sanitize_text_field(</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;$_POST[&apos;message&apos;] );</p><p class="source-code">&#160;&#160;&#160;&#160;update_option( &apos;ch12hw_options&apos;, $options );</p><p class="source-code">&#160;&#160;&#160;&#160;wp_redirect( add_query_arg( &apos;page&apos;,</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&apos;ch12hw-hello-world&apos;,</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;admin_url( &apos;options-general.php&apos; ) ) );</p><p class="source-code">&#160;&#160;&#160;&#160;exit;</p><p class="source-code">} </p></li>
+				<li>Save and close the plugin file.</li>
+				<li>Navigate to<a id="_idIndexMarker883"></a> the administration page of your development WordPress installation.</li>
+				<li>Click on the <strong class="bold">Settings</strong> (<strong class="bold">Réglages</strong> in French) section on the left-hand navigation menu to expand it. Click on the new menu item labeled <strong class="bold">Hello World</strong>.</li>
+			</ol>
+			<div>
+				<div id="_idContainer098" class="IMG---Figure">
+					<img src="image/B17639_12_02.jpg" alt="Figure 12.2 – Simple plugin administration page ready for translation&#xd;&#xa;" />
+				</div>
+			</div>
+			<p class="figure-caption">Figure 12.2 – Simple plugin administration page ready for translation</p>
+			<p>As seen in <em class="italic">Figure 12.2</em>, selecting the new entry displays the plugin&apos;s simple configuration form.</p>
+			<h2 id="_idParaDest-425"><a id="_idTextAnchor435"></a>How it works...</h2>
+			<p>This recipe <a id="_idIndexMarker884"></a>makes use of the <strong class="source-inline">__</strong> function, covered in the previous recipe, along with the <strong class="source-inline">_e</strong> function. This <a id="_idIndexMarker885"></a>second function&apos;s purpose is similar to <strong class="source-inline">__</strong>, except that it immediately echoes the outcome of the translation lookup to the browser. It should be used for any text elements that would previously have just been simple text in HTML code or can be used to replace calls to the <strong class="source-inline">echo</strong> function. Of course, making a call to this function requires the presence of standard opening and closing PHP tags (<strong class="source-inline">&lt;?</strong> and <strong class="source-inline">?&gt;</strong>) to be executed when placed among HTML code.</p>
+			<p>The rest of this plugin&apos;s code takes care of storing user updates in the website database, as covered previously in <a href="B17639_03_Final_PG_ePub.xhtml#_idTextAnchor096"><em class="italic">Chapter 3</em></a>, <em class="italic">User Settings and Administration Pages</em>.</p>
+			<h2 id="_idParaDest-426"><a id="_idTextAnchor436"></a>See also</h2>
+			<ul>
+				<li>The <em class="italic">Adapting default user settings for translation</em> recipe</li>
+			</ul>
+			<h1 id="_idParaDest-427"><a id="_idTextAnchor437"></a>Modifying shortcode output for translation</h1>
+			<p>As we <a id="_idIndexMarker886"></a>have seen in numerous recipes, shortcodes <a id="_idIndexMarker887"></a>are powerful tools that provide an easy way for users to add content to their website posts and pages. Since this content is presented to users, it can benefit from a translation just as much as the website&apos;s administration pages.</p>
+			<h2 id="_idParaDest-428"><a id="_idTextAnchor438"></a>Getting ready</h2>
+			<p>You should have already followed the <em class="italic">Making admin page code ready for translation</em> recipe to have a starting point for this recipe. Alternatively, you can get the resulting code (<strong class="source-inline">ch12/ch12-hello-world/ch12-hello-world-v2.php</strong>) for that recipe from the book&apos;s GitHub page and rename the file to <strong class="source-inline">ch12-hello-world.php</strong>.</p>
+			<h2 id="_idParaDest-429"><a id="_idTextAnchor439"></a>How to do it...</h2>
+			<p>Follow these steps<a id="_idIndexMarker888"></a> to translate shortcode output before it is displayed and learn how to deal with<a id="_idIndexMarker889"></a> variable data elements that can be positioned differently between languages:</p>
+			<ol>
+				<li value="1">Navigate to the <strong class="source-inline">ch12-hello-world</strong> folder of the WordPress plugin directory of your development installation.</li>
+				<li>Open the <strong class="source-inline">ch12-hello-world.php</strong> file in a text editor.</li>
+				<li>Add the following line of code at the end of the file to declare a new shortcode that will be available to content authors:<p class="source-code">add_shortcode( &apos;hello-world&apos;,</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&apos;ch12hw_hello_world_shortcode&apos; ); </p></li>
+				<li>Add the following code section to provide an implementation for the <strong class="source-inline">ch12hw_hello_world_shortcode</strong> function:<p class="source-code">function ch12hw_hello_world_shortcode() {</p><p class="source-code">&#160;&#160;&#160;&#160;$options = get_option( &apos;ch12hw_options&apos; );</p><p class="source-code">&#160;&#160;&#160;&#160;$output = &apos;&lt;p&gt;&apos;;</p><p class="source-code">&#160;&#160;&#160;&#160;$output .=</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;sprintf( __( &apos;The current message is: %s.&apos;,</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&apos;ch12hw_hello_world&apos; ), </p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;$options[&apos;message&apos;] );</p><p class="source-code">&#160;&#160;&#160;&#160;$output .= &apos;&lt;/p&gt;&apos;;</p><p class="source-code">&#160;&#160;&#160;&#160;return $output;</p><p class="source-code">} </p></li>
+				<li>Save and close the plugin file.</li>
+				<li>Create a new page (using the <strong class="bold">Ajouter</strong> item of the <strong class="bold">Pages</strong> menu), insert the new shortcode <strong class="source-inline">[hello-world]</strong> in the content, and then publish the page (<strong class="bold">Publier</strong>).</li>
+				<li>View<a id="_idIndexMarker890"></a> the page (<strong class="bold">Voir la page</strong>) to see<a id="_idIndexMarker891"></a> the output of the shortcode:</li>
+			</ol>
+			<p class="figure-caption"> </p>
+			<div>
+				<div id="_idContainer099" class="IMG---Figure">
+					<img src="image/B17639_12_03.jpg" alt="Figure 12.3 – Simple shortcode output ready for translation" />
+				</div>
+			</div>
+			<p class="figure-caption">Figure 12.3 – Simple shortcode output ready for translation</p>
+			<h2 id="_idParaDest-430"><a id="_idTextAnchor440"></a>How it works...</h2>
+			<p>This recipe shows something that&apos;s a bit more complex than the <em class="italic">Adapting default user settings for translation</em> and <em class="italic">Making admin page code ready for translation</em> recipes. In this case, we want the shortcode output to be a combination of static text and a dynamic element. We also want that dynamic element to appear in different places based on the grammatical structure of the target language. The way to achieve this functionality is to combine the <strong class="source-inline">__</strong> internationalization function with the <strong class="source-inline">sprintf</strong> standard PHP function.</p>
+			<p>The<a id="_idIndexMarker892"></a> purpose of the <strong class="source-inline">sprintf</strong> function<a id="_idIndexMarker893"></a> is to insert a variable in a string. It performs this task by looking for a placeholder in the target string sent in the first argument and replaces it with the variable that it receives as its second argument. Some examples of placeholders are <strong class="source-inline">%s</strong> for a string and <strong class="source-inline">%d</strong> for an integer. With this functionality in mind, we use a placeholder as part of the string to be translated so that users who create localization files can choose where the value will be placed as part of the sentence structure. Once the translation has been obtained by the <strong class="source-inline">__</strong> function, we can send the alternate language string to <strong class="source-inline">sprintf</strong> along with the variable data to be inserted in the final string.</p>
+			<h2 id="_idParaDest-431"><a id="_idTextAnchor441"></a>See also</h2>
+			<ul>
+				<li>The <em class="italic">Adapting default user settings for translation</em> recipe</li>
+			</ul>
+			<h1 id="_idParaDest-432"><a id="_idTextAnchor442"></a>Translating text strings using Poedit</h1>
+			<p>After <a id="_idIndexMarker894"></a>inserting all the necessary code to look up translations for text elements in our plugin code, the next step is to create the actual translation files. While<a id="_idIndexMarker895"></a> there are multiple tools available to perform this task, we will focus our efforts on the most popular one, the free multi-platform Poedit.</p>
+			<h2 id="_idParaDest-433"><a id="_idTextAnchor443"></a>Getting ready</h2>
+			<p>You should have already followed the <em class="italic">Modifying shortcode output for translation</em> recipe to have a starting point for this recipe. Alternatively, you can get the resulting code (<strong class="source-inline">ch12/ch12-hello-world/ch12-hello-world-v3.php</strong>) for that recipe from the book&apos;s GitHub page and rename the file to <strong class="source-inline">ch12-hello-world.php</strong>.</p>
+			<h2 id="_idParaDest-434"><a id="_idTextAnchor444"></a>How to do it...</h2>
+			<p>Follow these steps to extract all the strings to be translated from the plugin&apos;s code using Poedit, translate <a id="_idIndexMarker896"></a>them, and save the resulting language files <a id="_idIndexMarker897"></a>under the plugin directory:</p>
+			<ol>
+				<li value="1">Navigate to the <strong class="source-inline">ch12-hello-world</strong> folder of the WordPress plugin directory of your development installation.</li>
+				<li>Create a new subdirectory named <strong class="source-inline">languages</strong>.</li>
+				<li>Navigate to the Poedit download page and download the appropriate version of the tool for <a id="_idIndexMarker898"></a>your computer (<a href="https://www.poedit.net/download">https://www.poedit.net/download</a>).</li>
+				<li>Install and start the Poedit application.</li>
+				<li>Click on the <strong class="bold">New</strong> item under the application&apos;s <strong class="bold">File</strong> menu.<p class="callout-heading">Note</p><p class="callout">It may be tempting to click on the <strong class="bold">Create new…</strong> item on the application&apos;s home page. However, this option can only be used when a translation template file (<strong class="source-inline">.POT</strong>) already exists, which is not our case here.</p><p class="callout">It should also be noted that Poedit offers an automated way to create translations for WordPress themes or plugins as a paid service. We will focus on the free version of Poedit and highlight all steps required to create a translation in this mode.</p></li>
+				<li>Select <strong class="bold">French (Canada)</strong> for <strong class="bold">Language of the translation</strong>.</li>
+				<li>Click on the <strong class="bold">Save</strong> button from the toolbar and navigate to the <strong class="source-inline">languages</strong> subfolder created earlier in this recipe. Set the filename to <strong class="source-inline">ch12hw_hello_world-fr_CA.po</strong> and click on <strong class="bold">Save</strong> to save the new translation file.</li>
+				<li>Click on the <strong class="bold">Translation</strong> | <strong class="bold">Properties…</strong> menu item to open the <strong class="bold">Translation Properties</strong> dialog and select the <strong class="bold">Sources paths</strong> tab.</li>
+				<li>Create a new entry in the <strong class="bold">Paths</strong> list by clicking the <strong class="bold">+</strong> button under that section of the interface and selecting the <strong class="bold">Add folders…</strong> menu item.</li>
+				<li>Navigate one directory up from the <strong class="source-inline">languages</strong> directory and click on <strong class="bold">Select Folder</strong> to <a id="_idIndexMarker899"></a>select the <strong class="source-inline">ch12-hello-world</strong> directory. This<a id="_idIndexMarker900"></a> will change the <strong class="bold">Base path</strong> field in the <strong class="bold">Sources paths</strong> tab to the selected directory and create an entry in the <strong class="bold">Paths</strong> list that simply contains the period character (<strong class="source-inline">.</strong>).</li>
+				<li>Switch to the <strong class="bold">Sources keywords</strong> tab and add two new items to the <strong class="bold">Additional keywords</strong> list and set their values to <strong class="source-inline">__</strong> and <strong class="source-inline">_e</strong>.</li>
+				<li>Switch to the <strong class="bold">Translation properties</strong> tab and set the <strong class="bold">Project name and version</strong> field to <strong class="source-inline">Hello World</strong>.</li>
+				<li>Click on the <strong class="bold">OK</strong> button to close the <strong class="bold">Translation properties</strong> dialog, then click on <strong class="bold">Save</strong>.</li>
+				<li>Click on the <strong class="bold">Update from code</strong> toolbar button to extract all translatable items from our plugin&apos;s source code.</li>
+				<li>Select the items one by one in order to display them in the lower section of the window.</li>
+				<li>Enter a translation for each text element in the lower dialog box. The following screenshot shows the translations of each item to French:</li>
+			</ol>
+			<div>
+				<div id="_idContainer100" class="IMG---Figure">
+					<img src="image/B17639_12_04.jpg" alt="Figure 12.4 – French translation of all plugin strings using Poedit&#xd;&#xa;" />
+				</div>
+			</div>
+			<p class="figure-caption">Figure 12.4 – French translation of all plugin strings using Poedit</p>
+			<ol>
+				<li value="17"><strong class="bold">Save</strong> the<a id="_idIndexMarker901"></a> translation file once all strings have<a id="_idIndexMarker902"></a> been translated.</li>
+			</ol>
+			<h2 id="_idParaDest-435"><a id="_idTextAnchor445"></a>How it works...</h2>
+			<p>The <a id="_idIndexMarker903"></a>Poedit tool searches through PHP files, looking for functions that have specific names, as specified in the <strong class="bold">Sources keywords</strong> configuration section. Based on the configuration that we specified, Poedit is able to find all the instances of the <strong class="source-inline">__</strong> and <strong class="source-inline">_e</strong> functions in the plugin code and retrieve the text strings that are set as the first argument to these functions. Once all the strings have been found, Poedit provides a simple interface to provide translations for each string and saves the resulting translation file. Upon saving a translation project, Poedit actually creates two files, the portable object file (<strong class="source-inline">.po</strong>) and the machine object file (<strong class="source-inline">.mo</strong>). The <strong class="source-inline">.po</strong> file is the one we open and modify in Poedit and the <strong class="source-inline">.mo</strong> file is the file that WordPress uses when executing our plugin code.</p>
+			<p>The <a id="_idIndexMarker904"></a>name of the language files is made up of two parts: the name of the text domain, <strong class="source-inline">ch12hw_hello_world</strong>, and the target language code, <strong class="source-inline">fr_CA</strong>. The text domain was used in all of our calls to the <strong class="source-inline">__</strong> and <strong class="source-inline">_e</strong> functions, while <strong class="source-inline">fr_CA</strong> matches the language configuration that we set for our test site earlier<a id="_idIndexMarker905"></a> in this chapter. To support the <a id="_idIndexMarker906"></a>two other variants of the French language that WordPress supports (France French and Belgian French), we can make copies of the translation files. We can then set the proper language code in the new filenames (<strong class="source-inline">ch12hw_hello_world-fr_FR.po</strong> and <strong class="source-inline">ch12hw_hello_world-fr_BE.po</strong>) and edit them with Poedit to update each translation file&apos;s configuration. </p>
+			<h2 id="_idParaDest-436"><a id="_idTextAnchor446"></a>There&apos;s more...</h2>
+			<p>If you are only comfortable with English or don&apos;t want to distribute translation files with your plugins, you can, at a minimum, create a template file that users will be able to import to start their translation.</p>
+			<h3>Translation template file</h3>
+			<p>When you <a id="_idIndexMarker907"></a>are only familiar with English, you can create a translation template that only contains the text to be translated by saving the catalog as a <strong class="source-inline">.pot</strong> file instead of a <strong class="source-inline">.po</strong>/<strong class="source-inline">.mo</strong> combination. In addition to the special extension, the filename should not contain a language tag (for example, <strong class="source-inline">ch12hw_hello_world.pot</strong>).</p>
+			<h2 id="_idParaDest-437"><a id="_idTextAnchor447"></a>See also</h2>
+			<ul>
+				<li>The <em class="italic">Adapting default user settings for translation</em> recipe</li>
+			</ul>
+			<h1 id="_idParaDest-438"><a id="_idTextAnchor448"></a>Loading a language file in the plugin initialization</h1>
+			<p>The<a id="_idIndexMarker908"></a> final step to plugin translation is to put the code<a id="_idIndexMarker909"></a> in place to load a translation file. This is done by registering an action hook callback and calling a single function when it gets executed.</p>
+			<h2 id="_idParaDest-439"><a id="_idTextAnchor449"></a>Getting ready</h2>
+			<p>You should<a id="_idIndexMarker910"></a> have already followed the <em class="italic">Making admin page code ready for translation</em> and <em class="italic">Translating text strings using Poedit</em> recipes to have the proper files required for this recipe. Alternatively, you can get the resulting code (the <strong class="source-inline">ch12/ch12-hello-world/ch12-hello-world-v3.php</strong> file and the <strong class="source-inline">ch12/ch12-hello-world/languages</strong> folder) for these recipes from the book&apos;s GitHub page. You should rename the file <strong class="source-inline">ch12-hello-world-v3.php</strong> to <strong class="source-inline">ch12-hello-world.php</strong> and copy the <strong class="source-inline">languages</strong> folder next to the renamed file before starting the recipe.</p>
+			<h2 id="_idParaDest-440"><a id="_idTextAnchor450"></a>How to do it...</h2>
+			<p>Follow these <a id="_idIndexMarker911"></a>steps to load the translation file created in the previous recipe:</p>
+			<ol>
+				<li value="1">Navigate to the <strong class="source-inline">ch12-hello-world</strong> folder of the WordPress plugin directory of your development installation.</li>
+				<li>Open the <strong class="source-inline">ch12-hello-world.php</strong> file in a text editor.</li>
+				<li>Add the following line of code at the end of the file to register a function to be called when the plugin is initialized:<p class="source-code">add_action( &apos;init&apos;, &apos;ch12hw_plugin_init&apos; ); </p></li>
+				<li>Add the following code section to provide an implementation for the <strong class="source-inline">ch12hw_plugin_init</strong> function:<p class="source-code">function ch12hw_plugin_init() {</p><p class="source-code">&#160;&#160;&#160;&#160;load_plugin_textdomain( &apos;ch12hw_hello_world&apos;,</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;false,</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;dirname( plugin_basename( __FILE__ ) )</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;. &apos;/languages&apos; );</p><p class="source-code">} </p></li>
+				<li>Locate the <strong class="source-inline">ch12hw_set_default_options_array</strong> function in the plugin&apos;s code. Add the same call to <strong class="source-inline">load_plugin_textdomain</strong> at the top of the function, before the existing <strong class="source-inline">if</strong> statement:<p class="source-code">load_plugin_textdomain( &apos;ch12hw_hello_world&apos;, false,</p><p class="source-code">&#160;&#160;&#160;&#160;dirname( plugin_basename( __FILE__ ) )</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;. &apos;/languages&apos; ); </p></li>
+				<li>Save and close the plugin file.</li>
+				<li>Navigate<a id="_idIndexMarker912"></a> to the <strong class="bold">Réglages</strong> menu to see that the plugin&apos;s menu item has changed to show its translated name (<strong class="bold">Bonjour Monde</strong>).</li>
+				<li>Select <a id="_idIndexMarker913"></a>the <strong class="bold">Bonjour Monde</strong> submenu item to see the translated configuration page.</li>
+			</ol>
+			<div>
+				<div id="_idContainer101" class="IMG---Figure">
+					<img src="image/B17639_12_05.jpg" alt="Figure 12.5 – Translated plugin configuration page&#xd;&#xa;" />
+				</div>
+			</div>
+			<p class="figure-caption">Figure 12.5 – Translated plugin configuration page</p>
+			<ol>
+				<li value="9">Use your development server&apos;s database management tool to run the following query and then <strong class="bold">Delete</strong> the resulting item:<p class="source-code">SELECT * FROM wp_options where option_name =</p><p class="source-code">&apos;ch12hw_options&apos;</p></li>
+				<li>Go to the <strong class="bold">Extensions</strong> menu and click on the <strong class="bold">Désactiver</strong> link under the <strong class="bold">Chapter 12 – Hello World</strong> plugin to deactivate it and reactivate it by clicking on <strong class="bold">Activer</strong>.</li>
+				<li>Use your development server&apos;s database management tool to run the following query. See that the message option was recreated containing a French string:<p class="source-code">SELECT * FROM wp_options where option_name =</p><p class="source-code">&apos;ch12hw_options&apos;</p></li>
+			</ol>
+			<div>
+				<div id="_idContainer102" class="IMG---Figure">
+					<img src="image/B17639_12_06.jpg" alt="Figure 12.6 – Translated default plugin option&#xd;&#xa;" />
+				</div>
+			</div>
+			<p class="figure-caption">Figure 12.6 – Translated default plugin option</p>
+			<ol>
+				<li value="12">Visit the <a id="_idIndexMarker914"></a>page containing the <strong class="source-inline">[hello-world]</strong> shortcode to see that the message appears in French and that the sentence is<a id="_idIndexMarker915"></a> structured differently than in English.</li>
+			</ol>
+			<div>
+				<div id="_idContainer103" class="IMG---Figure">
+					<img src="image/B17639_12_07.jpg" alt="Figure 12.7 – Output of shortcode on French site&#xd;&#xa;" />
+				</div>
+			</div>
+			<p class="figure-caption">Figure 12.7 – Output of shortcode on French site</p>
+			<ol>
+				<li value="13">Open your development site&apos;s <strong class="bold">Tableau de bord</strong> and navigate to the <strong class="bold">Général</strong> section of the <strong class="bold">Réglages</strong> menu.</li>
+				<li>Set <strong class="bold">Langue du site</strong> to <strong class="bold">English (United States)</strong> and click on <strong class="bold">Enregistrer les modifications</strong> to bring your site configuration back to English.</li>
+			</ol>
+			<h2 id="_idParaDest-441"><a id="_idTextAnchor451"></a>How it works...</h2>
+			<p>The <strong class="source-inline">load_plugin_textdomain</strong> function <a id="_idIndexMarker916"></a>has three arguments. When called, it looks in the folder specified in the last parameter for a <strong class="source-inline">.mo</strong> file with a name starting with the text domain specified in the first parameter, followed by the language currently set in the WordPress configuration file. If found, the translation file is loaded in memory and is used to search for translations every time the <strong class="source-inline">__</strong> or <strong class="source-inline">_e</strong> functions are encountered during execution. The middle argument, set to a <strong class="source-inline">false</strong> value, is obsolete but is still needed for backward compatibility.</p>
+			<p>Once all hooks are in place in the plugin code and a first translation file (or template) is published with the plugin, users can easily modify text elements to other languages. They <a id="_idIndexMarker917"></a>can immediately start using their new translations and can also provide these new translations back to the plugin author for inclusion in future updates. We added a second call to <strong class="source-inline">load_plugin_textdomain</strong> in the activation hook, since the <strong class="source-inline">init</strong> action hook is executed later than the plugin initialization function.</p>
+			<h2 id="_idParaDest-442"><a id="_idTextAnchor452"></a>There&apos;s more...</h2>
+			<p>As a plugin evolves over time, new text items may need to be translated. There may also be a need to use more advanced translation functions as well as to translate JavaScript code and custom block code.</p>
+			<h3>Updating a translation file</h3>
+			<p>When new <a id="_idIndexMarker918"></a>calls to the <strong class="source-inline">__</strong> or <strong class="source-inline">_e</strong> functions are made in a plugin, the translation file needs to be updated to take new text elements into account. To do this, start the Poedit tool and open the existing catalog, then click on <strong class="bold">Update from code</strong> from the toolbar. This will extract all the text items and identify new entries. Once this is done, new items can be translated and saved back to the catalog file.</p>
+			<h3>Advanced translation functions</h3>
+			<p>While we<a id="_idIndexMarker919"></a> used the most common internationalization functions in this chapter, there are a few more advanced functions that may be useful in your efforts:</p>
+			<ul>
+				<li><strong class="source-inline">_n( $singular, $plural, $number, $domain )</strong>: This function will look up one of the first two strings received depending on whether the <strong class="source-inline">$number</strong> argument is one or more.</li>
+				<li><strong class="source-inline">_x( $text, $context, $domain )</strong>: Adds a parameter to the localization lookup to add a context parameter. This is useful when dealing with words that have the same spelling but different meanings.</li>
+				<li><strong class="source-inline">_ex( $text, $context, $domain )</strong>: The same as <strong class="source-inline">_x</strong> but echoes the result of the lookup.</li>
+				<li><strong class="source-inline">_nx( $singular, $plural, $number, $context, $domain)</strong>: The same as <strong class="source-inline">_n</strong> with the additional context parameter from <strong class="source-inline">_x</strong>.</li>
+			</ul>
+			<p>There <a id="_idIndexMarker920"></a>are also a number of functions that will perform a localization lookup immediately, followed by the escaping of the resulting string. These functions include <strong class="source-inline">esc_attr__()</strong>, <strong class="source-inline">esc_attr_e()</strong>, <strong class="source-inline">esc_html__()</strong>, <strong class="source-inline">esc_html_x()</strong>, and many more. For a full list <a id="_idIndexMarker921"></a>of internationalization functions, visit <a href="https://codex.wordpress.org/L10n">https://codex.wordpress.org/L10n</a>.</p>
+			<h3>Localizing JavaScript files</h3>
+			<p>JavaScript files<a id="_idIndexMarker922"></a> are a bit trickier to translate as they<a id="_idIndexMarker923"></a> are often read from an external file that cannot contain any PHP code. The solution to this is the <strong class="source-inline">wp_localize_script</strong> function. When <a id="_idIndexMarker924"></a>called, this function inserts a new variable that is populated with one or more localized strings in scripts that have been queued up. Upon execution, the JavaScript code will be able to access these translations and display the proper text onscreen. The following code snippet is an example showing how to use the function:</p>
+			<p class="source-code">wp_enqueue_script( &apos;script_handle&apos; );</p>
+			<p class="source-code">$translation_vars = array( &apos;string_val&apos; =&gt;</p>
+			<p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;__( &apos;Text to be translated&apos; ) );</p>
+			<p class="source-code">wp_localize_script( &apos;script_handle&apos;, &apos;javascript_object&apos;,</p>
+			<p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;$translation_vars );&#160;&#160;</p>
+			<p>After this code runs, a new variable array called <strong class="source-inline">javascript_object</strong> will be created inside the <strong class="source-inline">script_handle</strong> script. This object has a data member called <strong class="source-inline">string_val</strong> that contains a translation of the target text in the current WordPress language, if available.</p>
+			<h3>Localizing custom blocks</h3>
+			<p>Block editor<a id="_idIndexMarker925"></a> extensions, such as the ones we created in <a href="B17639_06_Final_PG_ePub.xhtml#_idTextAnchor265"><em class="italic">Chapter 6</em></a>, <em class="italic">Extending the Block Editor</em>, also<a id="_idIndexMarker926"></a> need to be translated. The process to perform these translations shares some similarities with PHP-based plugin translation, but also differs in several ways that add complexity to the process.</p>
+			<p>A first step to translating blocks is to import the <strong class="source-inline">__</strong> function at the top of our block source code files:</p>
+			<p class="source-code">import { __ } from &apos;@wordpress/i18n&apos;;</p>
+			<p>Once this is done, we can use this function around all text elements in our block code, similar to what we did earlier in this chapter. The following examples of the <strong class="source-inline">__</strong> function come from the <em class="italic">Creating a server-side rendering block that leverages an existing shortcode</em> recipe in <a href="B17639_06_Final_PG_ePub.xhtml#_idTextAnchor265"><em class="italic">Chapter 6</em></a>, <em class="italic">Extending the Block Editor</em>:</p>
+			<p class="source-code">title: <strong class="bold">__( &apos;Twitter Embed&apos;, &apos;twitter-embed&apos; )</strong>,</p>
+			<p class="source-code">&lt;TextControl label =</p>
+			<p class="source-code">&#160;&#160;&#160;&#160;<strong class="bold">{ __( &quot;Twitter Account User Name&quot;, &apos;twitter-embed&apos; ) }</strong></p>
+			<p>Once they have been wrapped with the <strong class="source-inline">__</strong> function, all translatable strings can be extracted from the block source code and translated using Poedit, just like we did in the <em class="italic">Translating text strings using Poedit</em> recipe. The resulting portable object file cannot be used directly by our block and needs to be converted to a JavaScript Object Notation (<strong class="source-inline">.json</strong>) file. This conversion can be performed using a<a id="_idIndexMarker927"></a> tool called <strong class="bold">WP-CLI</strong>, which stands for <strong class="bold">WordPress Command-Line Interface</strong> (<a href="https://wp-cli.org/">https://wp-cli.org/</a>), with the following command:</p>
+			<p class="source-code">wp i18n make-json twitterembed-fr_CA.po --no-purge</p>
+			<p>Once the JSON version of our translations has been created, the resulting file can be renamed to <strong class="source-inline">twitterembed-fr_CA-ch2twe-twitter-embed.json</strong>. In this filename, the first part is the script translation domain, the second is the target translation language, and the third is the identifier of the script used when we called the <strong class="source-inline">wp_register_script</strong> function.</p>
+			<p>Last, but not least, you need to load the script translation and attach it to the block script code using the <strong class="source-inline">wp_set_script_translations</strong> function in a callback associated with the <strong class="source-inline">init</strong> action within your block plugin&apos;s main PHP file. The three arguments of this function are the script handle, the translation domain, and the path to the translation files:</p>
+			<p class="source-code">wp_set_script_translations( &apos;ch2twe-twitter-embed&apos;,</p>
+			<p class="source-code">&#160;&#160;&#160;&#160;&apos;twitterembed&apos;,</p>
+			<p class="source-code">&#160;&#160;&#160;&#160;plugin_dir_path( __FILE__ ) . &apos;languages&apos; );</p>
+			<p>Once everything<a id="_idIndexMarker928"></a> is in place, your custom block will appear translated when used in a page or post, as can be seen in the following figure:</p>
+			<div>
+				<div id="_idContainer104" class="IMG---Figure">
+					<img src="image/B17639_12_08.jpg" alt="Figure 12.8 – Translated custom block on the French WordPress site&#xd;&#xa;" />
+				</div>
+			</div>
+			<p class="figure-caption">Figure 12.8 – Translated custom block on the French WordPress site</p>
+			<p>For more information on<a id="_idIndexMarker929"></a> block translation, you can visit the Block Editor Handbook: <a href="https://developer.wordpress.org/block-editor/how-to-guides/internationalization/">https://developer.wordpress.org/block-editor/how-to-guides/internationalization/</a>.</p>
+			<h2 id="_idParaDest-443"><a id="_idTextAnchor453"></a>See also</h2>
+			<ul>
+				<li>The <em class="italic">Translating text strings using Poedit</em> recipe</li>
+			</ul>
+		</div>
+	</body>
+</html>

@@ -1,0 +1,41 @@
+/* Namespace declarations */
+
+@namespace epub "http://www.idpf.org/2007/ops";
+
+section ul {
+    list-style-type: none;
+    margin-top: 4px;
+    margin-bottom: 4px;
+    margin-left: 0;
+    padding-left: 0;
+    page-break-before: avoid;
+}
+
+ul ul {
+    list-style-type: none;
+    margin-left: 1em;
+    padding-left: 0;
+    page-break-before: avoid;
+}
+
+ul ul ul {
+    list-style-type: none;
+    margin-left: 2em;
+    padding-left: 0;
+    page-break-before: avoid;
+}
+li {
+   list-style-type: none;
+   page-break-inside: avoid;
+}
+
+dt {
+    display: inline;
+    font-weight: bold;
+}
+
+dd {
+   display: inline-block;
+   margin-bottom: 5px;
+   margin-left: 1em;
+}

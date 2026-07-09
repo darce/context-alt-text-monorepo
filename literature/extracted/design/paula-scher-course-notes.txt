@@ -1,0 +1,3599 @@
+                   Paula Scher
+                   Graphic Design
+
+
+
+
+                   I think the thing to do is find
+                   what you like doing and what
+                   you’re good at and push that
+                   as far as you can go.
+
+
+
+
+                   COURSE NOTES 1.0
+
+
+BACK TO CONTENTS    BBC MAESTRO   1   AN INTRODUCTION TO GRAPHIC DESIGN
+The Lessons
+
+                                                             PAGE
+
+              About This Course                                03   13.    From Sketch to Finish: Windows 8          94
+
+              How To Use These Course Notes                    04   14.    From Sketch to Finish: Berkeley Rep &
+
+              01.   Introduction                               06          Landmark Theatres                         96
+
+              02.   Graphic Design 101                         07   15.    From Sketch to Finish: The New School &
+
+              03.   Origins of Type                            08          Quad Cinema                               99
+
+              04.   Crests, Flags, Symbols and Logos           09   16.    Environmental Design                      106
+
+              05.   TYPE!                                      12   17.    Case Studies in Environmental Design       111
+
+              06.   Editorial Design                           17   18.    Film Titles and Animation                 116
+
+              07.   Word and Image: 1800s–1940s                19   19.    Film Titles and Animation Inspirations    120
+
+              08.   Word and Image: 1950s–Present              43   20.    Film Titles and Animation in Practice     122
+
+              09.   Logos From Everywhere                      75   21.    Conclusion                                126
+
+              10.   From Sketch to Finish: Introduction        87   Reading List and Watch List                      129
+
+              11.   From Sketch to Finish: Citibank            88   Glossary                                         130
+
+              12.   From Sketch to Finish: The Met Opera &
+
+                    New York City Ballet                       92
+
+
+
+
+                                                                               BBC MAESTRO    2   AN INTRODUCTION TO GRAPHIC DESIGN
+About This Course
+
+Hello, I'm Paula Scher.
+I’m a graphic designer, teacher, and artist. I’ve
+worked as a designer for over 50 years, and
+for the past 32 years, I’ve been a partner at
+Pentagram Design in New York City.
+Throughout this course, I hope to show you
+several of the many forms of graphic design,
+and share some of my philosophies for how to
+be a good designer. These lessons will inspire
+you, and give you a better understanding
+of the use of typography, scale, and colour
+in relation to all forms of graphic design.
+Through studying design examples from
+history, you’ll improve your work. And if you’re
+curious about design, these lessons will help
+you to see, and recognise design.
+
+
+
+
+  BACK TO CONTENTS                                  BBC MAESTRO   3   AN INTRODUCTION TO GRAPHIC DESIGN
+                   How To Use These Course Notes
+
+
+                   I’ve put together a summary of each lesson           graphics expert, spoke with me for this BBC
+                   here, making note of important references or         Maestro course. They both put together
+                   points I want to stress. Graphic design can be       presentations, walking me through the basics
+                   very referential and as I mention many times,        of their specialities and a few examples of their
+                   learning how to see and appreciate design is         work. The conversations were informative and
+                   the first step to learning how to be a designer.     interesting, and I summarised my learnings in
+                   So, I’ll be showing you lots of imagery and          these notes, as best as I could. But Michael and
+                   design work from history as well as some of          Emily are much more involved in their
+                   my own work.                                         respective fields than I am, so be sure to watch
+                   While watching the lessons, you may want to          and listen to them, and refer back to these
+                   go back to a specific design, revisit its details,   notes for references or important moments.
+                   or refresh your memory on something                  A major point I try to get across is to stay
+                   significant I mentioned – these course notes         literate – keep up with design in order to keep
+                   will help you do that. I’ve included many            your designs fresh, and stay inspired by
+                   photos and links and my thoughts on the              engaging with the world and other work. I have
+                   subjects. It’s not comprehensive but it is a         a list of resources at the end of these notes
+                   definite start to learning history which will help   which should help you and your work to never
+                   inform your designs.                                 get stale.
+                   We’ll also be going over several facets of           These notes are a reflection of each lesson
+                   graphic design, like typography, identity            featured in the course, and I hope you find
+                   design, poster design, logos and more. We’ll         reading through them helpful in your journey
+                   cover lots of terminology, which will be             with graphic design.
+                   included in the glossary at the end of these
+                   course notes. These terms and definitions
+                   should help as a reference while reading
+                   through the course notes or while watching
+                   the lessons.
+                   My friends and partners at Pentagram, Michael
+                   Gericke, an expert on environmental graphics,
+                   and Emily Oberman, an animation and motion
+
+
+
+
+BACK TO CONTENTS                                         BBC MAESTRO     4   AN INTRODUCTION TO GRAPHIC DESIGN
+What You Will Need To Think
+
+      A pencil
+
+      A notebook
+
+      Your creativity
+
+      An open mind
+
+
+
+
+What You Will Need To Design
+
+      A computer
+
+      Software (may include Adobe
+      Creative Suite, Glyphs, Figma,
+      C4D, and 3D rendering tools)
+
+
+
+
+BACK TO CONTENTS                       BBC MAESTRO   5   AN INTRODUCTION TO GRAPHIC DESIGN
+01. Introduction
+
+I have loved design for a long time, and I still do.
+When I was a teenager, I stared at the Revolver
+album art for hours. It was a mess of lines and
+drawings, and I thought it was beautiful and
+inspiring. I looked at the illustration and wanted
+to do it myself. When Sergeant Pepper’s came
+out, I looked at it for hours too. It was fantastic. It
+had famous people inserted into a photographic
+design. The Beatles were dressed in Victorian
+band uniforms. The art was loaded with
+contemporary cultural references. You could
+study it for hours and find something new each
+time. Then, The White Album comes out, and
+there’s nothing on it, except for a little raised
+‘The Beatles’, and it was outrageous. There it
+all was – complication, cultural connection, and
+cheekiness in 3 covers. I knew I wanted to be in
+that profession.
+I’ve worked on many types of graphic design jobs.
+                                                          “Revolver” - The Beatles (1966)
+I started out making ads for record covers, and
+                                                          Klaus Voormann
+then I became a record cover art director, and I
+made almost a mile worth of record covers. I ran
+my own business and created brand identities
+and various promotional pieces. With Pentagram,
+I design major corporate identities, environmental
+graphics, poster design, logos, and every form of
+design we’ll talk about in this course.
+I love this profession, I love designing, and I want
+to share my love with you, by teaching you what
+I’ve learned over the course of my career.
+
+                                                          “Sgt. Pepper’s Lonely Hearts Club Band” -   “The Beatles” (1968)
+                                                          The Beatles (1967)                          Richard Hamilton
+                                                          Peter Blake and Jann Haworth
+
+
+
+   BACK TO CONTENTS                                                    BBC MAESTRO          6   AN INTRODUCTION TO GRAPHIC DESIGN
+02. Graphic Design 101
+
+
+                                                                                                                     TA K E A W AY S
+
+                                                  discoveries. They make choices and decisions
+Graphic design is a term that’s                   for problems with many, many possible                                    Graphic design is the organisation
+used to describe organising                       solutions. Using the same elements we’ve had                             and presentation of information.
+information in ways that people                   to communicate with one another for years,
+read and understand it.                           designers work to create visuals that are new                            Much of the information we see today
+                                                  and eye catching.                                                        has been designed by someone
+Graphic design is a large part of many people’s   What you’ll need to be a designer                                        who made many design decisions.
+lives. We see and understand information
+                                                  In order to be a designer, you’ll need some                              Design is not a science. There are
+through designs all day. It could be an ad, a
+                                                  sense of creativity, affinity for culture, graphic                       many ways to design something.
+stop sign, a shop front, or a website. All of
+                                                  sensibility, and curiosity – the rest you’ll be                          There isn't one right answer, or
+these designs were created by someone who
+                                                  able to learn on the way. You don’t necessarily                          solution to a problem.
+made considerations for how we experience
+                                                  have to ‘know’ how to draw, (although
+and understand messaging. As a designer,
+                                                  everyone can draw) but you will need to be                               Designers must experiment and
+you’ll have to know how to look at these
+                                                  able to express your ideas and describe those                            make discoveries so that they can
+designs through a designer’s lens.
+                                                  ideas to others so they can see what you’re                              make informed and interesting
+Discoveries lead to decisions                     seeing. This is a huge part of graphic design                            design decisions.
+                                                  – showing people what you’re seeing and
+Design is closer to an art than a science,
+                                                  thinking. After you’ve done that, you’ll need to                         All designs are informed by the past
+meaning there isn’t one perfect way to
+                                                  figure out how to execute those ideas.                                   and seek to invent the future.
+describe an idea to a large group of people.
+It’s up to the designer to decide how to          Though there are many tools available to
+tell the story. Designers are constantly          create graphic designs, start with a notebook
+making discoveries and learning from those        and a pencil, and begin to think.
+
+
+
+
+  BACK TO CONTENTS                                                                                     BBC MAESTRO   7   AN INTRODUCTION TO GRAPHIC DESIGN
+03. Origins of Type
+
+Graphic design is one of the oldest
+professions in the world. People needed
+to communicate ideas to one another, and
+they used symbols and images to do it, and
+eventually typography.
+The term was coined in the 1920s by designer
+W.A. Dwiggins. Even so, the term didn’t gain
+popularity until around the ‘60s and ‘70s.
+Before then, graphic designers were called
+commercial artists. But the job to create
+messages through design existed long before.
+Pictographs and hieroglyphics, used to tell
+stories and messages, evolved into alphabets.
+This chart shows the evolution from Cretan
+pictographs to the modern English alphabet.
+We can also see this evolution with the Trajan
+column, which was built in 118 AD and featured
+inscriptions of Roman letters. Similar hand
+                                                                                           The Trajan Inscription, James Mosley
+drawn lettering was used in books, features of
+which directly inspired the Trajan font which
+was created in 1989 by typeface designer
+Carol Twombly.                                                                              TA K E A W AY S
+
+Although the characteristics of early writing
+systems and alphabets around the world                                                               People all over the world have been
+differed from region to region, their origin                                                         using graphic design as a tool for
+story is the same – the need to communicate                                                          communication with one another for
+with one another. This is the beginning of                                                           thousands of years.
+graphic design.
+                                                                                                     A universal need to have writing
+                                                 Symbol Chart
+                                                                                                     systems evolved into modern day
+                                                 James Craig, Bruce Barton                           alphabets.
+
+
+
+
+  BACK TO CONTENTS                                                           BBC MAESTRO    8    AN INTRODUCTION TO GRAPHIC DESIGN
+04. Crests, Flags, Symbols and Logos
+
+In the Middle Ages and beyond, populations
+used crests, flags, and symbols to convey
+wealth, power, and social position. Flags
+were used in war, in monarchy, and other
+social positions. Their form and colour were
+sometimes intricate, and sometimes quite
+simple. In some instances, they told stories
+about who they were representing. For
+example, the image of a lion was a commonly
+used symbol representing royalty, strength
+and resilience. Flags were meant to be
+distinct and easily recognisable.
+
+
+
+
+                                                                                                          Kevin Lamarque/Reuters
+
+
+
+
+                                               Banners of Knights of the Thistle, Philip Allfrey (2006)
+
+
+
+
+  BACK TO CONTENTS                                                                                              BBC MAESTRO        9   AN INTRODUCTION TO GRAPHIC DESIGN
+                                                          Beyond distinctions of wealth and power, we also
+                                                          use symbols to communicate rules, directions,
+                                                          and order for how to move around and be in
+                                                          society. An early example is naval flags, which are
+                                                          legible and uncomplicated designs that quickly
+                                                          and clearly relay messages.
+
+
+
+
+“International Code of Signals” (1902 CE)
+Dodd, Mead and Company
+
+
+
+
+   BACK TO CONTENTS                         BBC MAESTRO    10   AN INTRODUCTION TO GRAPHIC DESIGN
+Code signage, which includes directional
+signs (arrows that tell us to go left,
+right, or stop), bathroom signs, or other
+environmental graphics, serve a similar
+purpose. Graphics designed to show people
+the way (wayfinding) or the code of conduct
+of a place were designed legible and clear
+symbols. They signal an instruction to people,
+quickly, and without confusion. Wayfinding
+can be designed in relationship to building
+architecture or location, reflecting the
+visual identity of the associated business. A
+designer can be very creative with wayfinding
+signage, while still communicating clearly.
+
+
+
+ TA K E A W AY S
+
+
+        Throughout time, we’ve used symbols
+        and flags to represent different
+        groups of people, and we still do.
+        Logos serve a similar function today.
+
+        Throughout time, we’ve used symbols
+        and flags to relay clear messages,
+        and we still do. Code signage,           Pentagram
+        wayfinding instructions, and other
+        environmental graphics serve a                       EXERCISE
+        similar function today.
+
+                                                                Sketch your own design for a flag which is dedicated to a cause
+                                                                you care about. Use the flag to express your creativity and
+                                                                emotions towards the subject. Please share your work with us on
+                                                                social media by tagging @bbcmaestro and using the hashtag
+                                                                #PaulaScherBBCMaestro.
+
+
+
+
+  BACK TO CONTENTS                                                BBC MAESTRO     11   AN INTRODUCTION TO GRAPHIC DESIGN
+05. TYPE!
+
+
+
+What you see in typography
+is nuance and form and spirit:
+words have meaning, type has
+spirit. And when you put them
+together, the combination is
+spectacular.
+Typography expresses emotions. Type can
+look heavy or light, eccentric or neutral,
+classical or modern, romantic or powerful.
+There are millions of typefaces available that
+designers can use to express any emotion
+they choose. They can also experiment with
+creating their own fonts or even program them.
+Illustrate with type
+During art school, I had difficulties mastering
+press type, the technology we used to
+demonstrate type design. I remember
+being frustrated by the process. Something
+clicked when my teacher, Stanislaw Zagorski,
+instructed me to illustrate with type. I realised
+that type can have a specific character. A
+designer could use typography to create
+sensibility and messaging, the same way they
+do with illustration or graphics.
+
+
+
+
+  BACK TO CONTENTS                                  BBC MAESTRO   12   AN INTRODUCTION TO GRAPHIC DESIGN
+                                                  you’ll start to realise that every little glyph or
+Type has texture and colour.                      form was designed individually, and you’ll pick
+And I don’t mean colour just                      up on their nuance and distinctions. You’ll
+by changing the colour. I mean                    see that in some typefaces, the decoration
+colour in relationship to how                     stays the same but the weight changes, and
+                                                  in others the decoration changes but the
+black it is on the page.                          weight doesn’t. Some of these differences
+                                                  don’t matter as much, but studying what
+                                                  they signify or signal (classic, old world,
+As technology for lettering evolved, so did
+                                                  contemporary, etc.) will affect how you use
+the look and styles of type. The technology
+                                                  them in your designs.
+dictated the look. Understanding this context
+helps us to understand the time and feeling       The form of letters can tell you when the type
+lettering calls back to, and knowing this will    was designed and what mood it’s meant to
+help you make design decisions.                   depict. Shifting the bar in the middle of an E
+                                                  can shift a style and mood tremendously. If
+The Visual History of Type by Paul McNeil
+                                                  the bar is high, it was probably designed in the
+walks us through the history of typography
+                                                  late 1800s or early 1900s. If the bar is low, it’s
+and how it was used and how it evolved.
+                                                  probably from the 1930s or ‘40s. Take care to
+There are several kinds of type and they all      know what these styles signify, and feel free to
+have different characteristics. Serif looks       adapt them and make radical design decisions
+like it has tiny feet and is more classical.      with this knowledge.
+Sans Serif doesn’t have feet and feels more
+modern. The word ‘serif’ refers to those tiny
+feet, and ‘sans serif’ means without those
+little feet.
+Type that stands up straight is called Roman
+type*, while italic type* leans.
+At first glance, a book like Fraktur mon Amour,
+which includes 300 variations of Blackletter,
+can feel overwhelming. The differences in
+certain typefaces may be imperceptible at
+first, making design choices seem impossible.
+But by immersing yourself in the options,
+
+
+
+
+  BACK TO CONTENTS                                                                                     BBC MAESTRO   13   AN INTRODUCTION TO GRAPHIC DESIGN
+Helvetica                                         Futurism
+American modernism, a style from the 1940s        The design work of Italian artist Fortunato
+and ‘50s, was the result of Swiss modernists      Depero, teaches us a lot about scale and
+and Europeans moving to the US. Corporate         complication. His book, Depero Futurista from
+design of that era was clean and modern.          1927, is beautiful in construction, but you can
+Helvetica was a big part of this corporate        notice a truly dynamic use of typography in
+look. Now, it’s fun to play with Helvetica,       the graphic design. It feels very contemporary
+and form, generally. We just designed a font      and exciting. His use of big, bold type and
+that’s both a serif and sans serif. Breaking      interesting spacing is inspiring.
+rules and finding new ways to use type is
+highly encouraged in design, but you need to
+understand history and form.
+
+
+Colour
+Using colour in design can add or subtract
+weight and emphasis to a specific piece of
+work. You create focal points or draw attention
+to certain areas. You can enhance a design’s
+readability with use of colour.
+The understanding of use of colour can
+happen by looking at the work of other people
+and from trial and error – try experimenting
+with colours and failing and making
+discoveries.
+My husband, Seymour Chwast, is a graphic
+designer and illustrator. His advice for
+understanding colour is to look out for
+something with colours you like and borrow
+those colours and use them together in a
+different composition that you created. You
+will understand that colour relationships
+change based on the composition.
+
+
+
+                                                                        “Depero-Futurista” (1913-1927)
+                                                                        Fortunato Depero
+
+
+
+
+  BACK TO CONTENTS                                                                                       BBC MAESTRO   14   AN INTRODUCTION TO GRAPHIC DESIGN
+                                    Working with Type
+                                    Wood type was a tool developed for
+                                    typography. And it was primarily used in the
+                                    US in designs for selling things. In Rob Roy
+                                    Kelly’s American Wood Type: 1828-1900, you
+                                    can see how this technology was used to
+                                    create posters, and how different styles were
+                                    combined. The book describes how alphabets
+                                    were created for newspapers. I was inspired by
+                                    the flexibility of these alphabets – the letters
+                                    were sometimes thin or very wide, but they
+                                    looked like the same style and retained the
+                                    same character of the font. You recognised
+                                    them as a family of type even with very
+                                    different widths.
+                                    When I worked with New York City’s Public
+                                    Theater to create a new identity for them,
+                                    they wanted to stress the 'public' part –
+                                    that all citizens of New York could come
+                                    together at the Theater and feel like a part
+                                    of the community. I thought, if we combined
+                                    different widths of type, that weren’t usually
+                                    seen together, it would make the words
+                                    represent a broad variety of people in the
+                                    community. This identity, of differing widths
+                                    together, became a graphical style.
+
+
+
+
+The Public Theater
+Paula Scher
+
+
+
+
+   BACK TO CONTENTS   BBC MAESTRO    15   AN INTRODUCTION TO GRAPHIC DESIGN
+The Type Directors Club
+                                                    TA K E A W AY S
+Styles are constantly changing in the world of
+type. Some styles become stale very quickly.
+The best way to stay up to date and inspired              Learning and knowing typefaces will give any designer an advantage.
+is by keeping up with new work. The Type                  You’ll be able to rebel against prevailing styles, and have a broad
+Directors Club puts out the best annuals                  vocabulary that will broaden your ability to communicate.
+in the business, filled with original work and
+original typefaces from all over the world.               Learning the history of type will help you understand how to work with it.
+Their collections are broad and extensive. And
+you can see how varied work influences each               Type can be seen as form and can relay emotions and messaging the
+other and how styles merge and connect. It’s a            same way imagery does. Type has spirit.
+great resource, no matter what your skill level.
+                                                          Shifts in typeface styles move fast – try to stay up to date with fonts
+                                                          and styles so your work isn’t stale. But don't purely rely on that. Type is
+Exercises in Type                                         a broad universe.
+
+Your relationship with type will evolve and
+grow throughout your career. I’m not really
+sure why certain type decisions I’ve made are
+                                                    EXERCISES
+successful, but I do know when the design is
+working. It takes a lot of trial and error. A lot
+of it has to do with tension, scale, form, and            Download a serif, sans serif, and script font of your choice, from a
+balance. And just knowing when something                  free online resource. And play with them.
+looks right.
+                                                          Expose yourself to new typefaces by looking at Typeface
+                                                          Directors Club Annual or other contemporary references.
+
+                                                          Identify a public building in your area. Examine the typography
+                                                          or sign on the building and think about how you might be able to
+                                                          improve it with a different typeface.
+
+                                                          Sketch your own typeface, perfect it, and then write your name in
+                                                          your custom typeface.
+
+
+
+
+  BACK TO CONTENTS                                                    BBC MAESTRO       16   AN INTRODUCTION TO GRAPHIC DESIGN
+06. Editorial Design
+
+Designers have made considerations and              His powerful designs inspired much of my
+decisions to help make the reading experience       work at CBS Records, because it taught me to
+clear and easy to navigate. A lot of these          play with angles, scale, and photos. His work
+design choices are commonplace now and we           featured bold use of typography (sometimes
+take them for granted.                              with wood type), alignment of text, and
+                                                    cropping of photos. His approach to spacing,
+Type is justified or ragged, paragraphs are
+                                                    especially when it came to breaking up large,
+distinguished from one another with white
+                                                    complicated pieces of text, is powerful.
+space, the capitalisation of the first initial at
+the top of the paragraph, etc. are all elements     Willy Fleckhaus was a master at pacing
+of editorial design.                                and organising images. He was an expert
+                                                    at creating narratives with use of scale
+                                                    and cropping photos. He created beautiful
+Editorial Design in Practice                        visuals, while keeping the text readable. He
+Editorial design is largely about flow, and how     is regarded by many as the best editorial
+to help a reader discover content in the order      designer of all time.
+and manner you want them to. It’s a little bit      Unfortunately, I don’t think the work great
+like planning a movie. What journey do you          editorial designers have created in print
+want the reader to go on? What is the pacing        is easily translatable to the digital reading
+of the information and visuals?                     experience yet. We need to make viewing
+Derek Birdsall’s Notes on Book Design teaches       information on a phone as exciting as Willy
+us about grid systems, pacing, how to crop          Fleckhaus’s designs, but I’m afraid without
+pictures, when to make something bold, and          the technology to break out of strict columns,
+how to make books easier to read. It’s a great      we’re left with very standard scrolling
+resource.                                           experiences.
+
+David King, whose work was influenced
+by Constructivism (a period of design in
+Russia, from 1917 to the 1930s), is one of my
+favourite magazine and editorial designers.
+
+                                                                                                     Screenshot from the lesson
+
+
+
+
+  BACK TO CONTENTS                                                                                            BBC MAESTRO    17   AN INTRODUCTION TO GRAPHIC DESIGN
+                             TA K E A W AY
+
+
+                                  Editorial design is the formatting and organisation of information,
+                                  sometimes with images. With considerations to pacing, scale, format,
+                                  whitespace, etc. a designer can curate an exciting, appropriate and
+                                  individualist experience for readers.
+
+
+                             EXERCISE
+
+
+                                  Study the works of greats, like Willy Fleckhaus, David King, Derek
+                                  Birdsall and others, in order to grasp an understanding of editorial
+                                  designs’ rules and how to break them.
+
+
+
+
+Screenshot from the lesson
+
+
+
+  BACK TO CONTENTS                             BBC MAESTRO     18   AN INTRODUCTION TO GRAPHIC DESIGN
+07. Word and Image 1800s to 1940s
+
+                                                  Studying these examples will help you
+                                                  discover how these styles invented new ways
+                                                  to play with colour, use of scale, form and
+The point is not to imitate.                      composition, typography and illustration and
+The point is to integrate the                     photography to relay feelings and tell stories.
+learning into your work. And the                  The designs could be advertising, political
+more informed you are by the                      persuasion, artistic enjoyment, humour,
+                                                  or political causes. Styles are specific to
+influences you see, the more                      individual periods, and many designers have
+exciting your designs can be.                     their own personal styles. Designs of a period
+                                                  speak to each other and influence each other.
+The combination of word and image                 Design styles are invented by designers who
+comprises much of graphic design. From            experiment and take chances.
+posters to ads to book covers and album
+covers. What are some ways designers              Seeing the work of others helps you
+combine words and images? What are the            understand why designers made certain
+many aspects designers can play with?             choices – especially in the context of time
+                                                  periods and styles – and why other design
+I’d like to stress how much designers learn       decisions would have been less successful.
+from history and from each other. Learning        You’ll understand what options you have when
+from successful design examples is a              you start designing, and you’ll have a better
+necessity for all graphic designers, not an       grounding for the design decisions you’ll be
+option. And this is just a start.                 making. As you go on to design things yourself,
+In this lesson, I’ll show you a wealth of         the lessons you’ve learned from studying
+examples of posters, ads and magazine             other designs will influence your work and the
+covers, from a variety of different periods       decisions you make, integrating design styles
+and areas of the world. I’ll fill you in on how   into your work, and figuring out how to make
+different movements influenced each other,        them your own.
+show you examples from some prolific artists      Pre-1900s
+and explain the ways in which movements                                                              “Drink Delicious Refreshing Coca Cola” (1895)
+shifted design thinking.                          This Coca-Cola ad from America, is very well       Gianfranco Weiss
+                                                  balanced and pretty. The use of a woman
+                                                  seems to continue in this period, especially for
+                                                  selling things in the USA.
+
+
+
+  BACK TO CONTENTS                                                                                     BBC MAESTRO          19    AN INTRODUCTION TO GRAPHIC DESIGN
+                                                                                                   In Scotland, Charles Rennie Mackintosh
+                                                                                                   develops a unique and specific style that
+                                                                                                   becomes a huge influence on Glasgow. And
+                                                                                                   in Paris, an illustration style unique from
+                                                                                                   MacIntosh’s starts to emerge – they use
+                                                                                                   curved typography, almost like the dancers
+                                                                                                   featured in the design. This is the beginning of
+                                                                                                   Art Nouveau.
+
+
+
+
+                                                           “La Loïe Fuller” (1897)
+                                                           Jules Chéret
+
+
+
+
+“The Glasgow Institute of Fine Arts” (1895)
+Margaret Macdonald, Frances Macdonald, J. Herbert McNair
+
+
+
+BACK TO CONTENTS                                                                     BBC MAESTRO    20   AN INTRODUCTION TO GRAPHIC DESIGN
+Harper’s Magazines, back in the US,
+are again featuring women.
+
+
+
+
+                                      “Harpers for October” (1893)
+                                      Edward Penfield
+
+
+  BACK TO CONTENTS                                                   BBC MAESTRO   21   AN INTRODUCTION TO GRAPHIC DESIGN
+In Germany, the Jugend style emerged.
+Somewhat reminiscent to what was happening
+in Paris, it had very romantic illustrations with
+hand-drawn type. The way the typography
+connected to the illustration, created
+wonderful forms.
+
+
+
+
+                                                    Jugend (1896)          Jugend (1896)
+                                                    Hans Christiansen      Otto Eckmann
+
+
+
+
+  BACK TO CONTENTS                                                      BBC MAESTRO        22   AN INTRODUCTION TO GRAPHIC DESIGN
+The Secession movement* started in the
+late 1800s but continued into the 20th
+century. It featured long, elongated shapes.
+Connected to this movement was the William
+Morris style which was elegant and long, and
+featured in fabric and home decor, as well as
+book covers and posters. Josef Hoffmann, of
+the Wiener Werkstätte collective in Germany,
+used pattern in a much simpler way than the
+artists of the Secession or Morris periods.
+Curved form evolves to more complicated
+forms and patterns, but with straighter lines.
+
+
+
+
+                                                 “Secession” (1902)   “Die Wiener Werstätte” (1905)
+                                                 Alfred Roller        Josef Hoffmann
+
+
+
+  BACK TO CONTENTS                                                                    BBC MAESTRO     23   AN INTRODUCTION TO GRAPHIC DESIGN
+Early 1900s
+Word and image for use in advertising was big
+in this time. Ads featured big, bold typography
+and were simplistic. Many of the designs in
+this period feel contemporary, like the work of
+Lucian Bernhard or the work he inspired in Italy.
+Design became more illustrative and flatter in
+the US during this period. And the concept of
+a series emerged – people expected multiple
+designs. The Harper’s Bazaar posters in the
+States are an example of this.
+
+
+
+
+                                                    “Adler” (1909)
+                                                    Lucian Bernhard
+
+
+
+
+  BACK TO CONTENTS                                                    BBC MAESTRO   24   AN INTRODUCTION TO GRAPHIC DESIGN
+                                  1920s
+                                  De Stijl, or ‘the style’, surfaced in Holland.
+                                  Balance was key to this work – parts might be
+                                  complicated or eccentric, but there was always
+                                  balance in the composition.
+
+
+
+
+De Stijl (1928)
+Theo Van Doesburg
+
+
+
+
+BACK TO CONTENTS    BBC MAESTRO    25   AN INTRODUCTION TO GRAPHIC DESIGN
+Russian Constructivism was influenced
+by the work emerging in Europe. In this
+period, designers created interesting and
+dynamic combinations of forms and shapes.
+Rodchenko took it even further with his use of
+negative space and colour.
+
+
+
+
+                                                 “Knigi!” (1924)
+                                                 Alexander Rodchenko
+
+
+
+
+  BACK TO CONTENTS                                                     BBC MAESTRO   26   AN INTRODUCTION TO GRAPHIC DESIGN
+                                                               As modern as it feels, the illustration in this
+                                                               poster design by Fritz Kahn is from 1926.
+                                                               I’m not sure where it came from, but it’s way
+                                                               ahead of its time.
+
+
+
+
+“Dada Matinée” (1923)
+Kurt Schwitters, Theo van Doesburg
+
+
+
+
+Kurt Schwitters’ designs are almost
+Germany’s version of Dada. His work is a good
+example of how designers are influenced by
+and borrow styles from others. This is how
+great design is made.
+                                                       “Der Mensch als Industriepalast” (1926)
+                                                       Fritz Kahn
+
+
+
+
+  BACK TO CONTENTS                              BBC MAESTRO     27    AN INTRODUCTION TO GRAPHIC DESIGN
+Film posters were made during the rise of the
+film industry during this time. The Stenberg
+brothers were highly influential designers
+from Russia. Their use of colour and scale is
+astounding.
+Between the 20s and 30s, many modern
+masters made incredible graphic design work.
+Cassandre, in France, is one example.
+
+
+
+
+                                                “Fragment of an Empire” (1929)              “The Continent Via Harwich” (1928)
+                                                Vladimir Stenberg, Georgii Stenberg         A.M. Cassandre
+
+
+
+
+  BACK TO CONTENTS                                                                    BBC MAESTRO    28    AN INTRODUCTION TO GRAPHIC DESIGN
+The simple and powerful work that came out   An example of work about social injustice at this
+of Germany led to the Bauhaus movement.      time, includes the work of John Heartfield.
+
+
+
+
+“Bauhaus” (1928)
+Herbert Bayer
+
+
+
+
+                                             “5 Finger hat die Hand” (1928)
+                                             John Heartfield
+
+
+
+   BACK TO CONTENTS                                       BBC MAESTRO         29   AN INTRODUCTION TO GRAPHIC DESIGN
+And Piet Zwart’s work was
+fundamental to typography.
+
+
+
+
+                             Various (1928)
+                             Piet Zwart
+
+
+
+
+  BACK TO CONTENTS                            BBC MAESTRO   30   AN INTRODUCTION TO GRAPHIC DESIGN
+Toward the end of the 20s we get to
+Reduction. There’s a roundness to the
+typography. And the illustration style leads to
+what’s known as Art Deco.
+
+
+
+
+                                                  “Modiano” (1929)
+                                                  Róbert Berény
+
+
+
+  BACK TO CONTENTS                                                   BBC MAESTRO   31   AN INTRODUCTION TO GRAPHIC DESIGN
+                                 1930s
+                                 Japanese poster design at this time is
+                                 interesting because the design is simple, and
+                                 beautiful, and the scale of their illustrations is
+                                 different from what we’ve seen so far. Objects
+                                 seem to be floating.
+
+
+
+
+Poster (1930s)
+Takashi Kono
+
+
+
+BACK TO CONTENTS   BBC MAESTRO    32   AN INTRODUCTION TO GRAPHIC DESIGN
+At this time, the work in Japan and in Italy
+feature militaristic themes. In Germany,
+we’re in Bauhaus, and in America, we’re still
+featuring happy, consumerist women in order
+to sell things.
+
+
+
+
+                                                                               “Wrigley’s Double Mint Gum” (1939)
+                                                                               Dorothy and Otis Shepard
+
+
+
+
+  Poster (1933)                                 “Duce Ritorna Presto” (1934)
+  Munetsugu Satomi                              Domenico Chiaudrero
+
+
+
+
+  BACK TO CONTENTS                                                                       BBC MAESTRO         33     AN INTRODUCTION TO GRAPHIC DESIGN
+                                         Edward McKnight Kauffer, an American
+                                         designer, clearly influenced by the design of
+                                         Europe, pushes past the happy women selling
+                                         products trope, with a civic poster.
+                                         Lester Beall’s work is similar and both are very
+                                         modernistic.
+
+
+
+
+“Air Mail Routes” (1935)         Poster (1937)
+Edward McKnight Kauffer          Lester Beall
+
+
+
+
+BACK TO CONTENTS           BBC MAESTRO    34     AN INTRODUCTION TO GRAPHIC DESIGN
+Herbert Matter’s work for Swiss Air Company
+is famous and I was extremely influenced by
+it. You can sometimes date a poster by its
+type style, but designs that play with scale
+never go out of style.
+
+
+
+
+                                               “Winterferien - Doppelte Ferien, Schweiz” (1932)
+                                               Herbert Matter
+
+
+
+
+  BACK TO CONTENTS                                                                                BBC MAESTRO   35   AN INTRODUCTION TO GRAPHIC DESIGN
+The design of the London tube map is
+iconic, as are the ‘Keep Calm and Carry
+On’ posters which were designed at the
+beginning of World War II, but repopularised
+more recently. Designs that last a long time
+and make their way back into popularity are
+usually good designs.
+J. Howard Miller’s poster ‘We Can Do It’
+became a symbol for the war, and is also
+iconic. It was close to European modernism in
+design practice.
+
+
+
+
+                                                “Keep Calm and Carry on” (1939)   “We Can Do It” (1942)
+                                                Ministry of Information           J. Howard Miller
+
+
+
+
+  BACK TO CONTENTS                                                                BBC MAESTRO        36   AN INTRODUCTION TO GRAPHIC DESIGN
+                                                          Horst P. Horst’s designs combined
+                                                          photography and graphics in a new and
+                                                          interesting way.
+
+
+
+
+“Vogue” (1940)        “Vogue” (1940)
+Horst P. Horst        Horst P. Horst
+
+
+
+
+   BACK TO CONTENTS                    BBC MAESTRO   37   AN INTRODUCTION TO GRAPHIC DESIGN
+1940s
+European war posters from this time are great
+examples of the power of combining word and
+image. The horror and fear of the war comes
+through in F. K. Henrion’s poster.
+
+
+
+
+                                                “Four Hands” (1943)
+                                                Frederic H.K. Henrion
+
+
+
+
+  BACK TO CONTENTS                                                      BBC MAESTRO   38   AN INTRODUCTION TO GRAPHIC DESIGN
+                                              Alexey Brodovitch’s designs for Harper’s
+                                              Bazaar combined extraordinary photography
+                                              into layouts that are rhythmic and dynamic.
+
+
+
+
+“Harper’s Bazaar” (1946-1954)
+Alexey Brodovitch
+
+
+
+
+   BACK TO CONTENTS             BBC MAESTRO    39   AN INTRODUCTION TO GRAPHIC DESIGN
+The first very successful woman art director,
+Cipe Pineles, was art director at Seventeen
+magazine. She worked with photography to
+create simple, elegant magazine covers.
+
+
+
+
+“Seventeen” (1948-1949)
+Cipe Pineles
+
+
+
+
+   BACK TO CONTENTS                             BBC MAESTRO   40   AN INTRODUCTION TO GRAPHIC DESIGN
+                                      Max Huber brought a European modernistic
+                                      mentality to American subject matter.
+
+
+
+
+Brochure cover (1952)
+Max Huber
+
+
+
+   BACK TO CONTENTS     BBC MAESTRO    41   AN INTRODUCTION TO GRAPHIC DESIGN
+Unlike advertising in the US, advertising
+in Europe allowed the image to take over
+the page. There weren’t a lot of lines
+of copy selling the product. Savignac
+brought humour to his advertising
+designs, creating work that is simple.
+At this time, in the US, advertising was
+big and designs needed to include many
+lines of copy.
+
+
+
+
+Word and image had to live
+together in new ways.
+
+
+
+
+                                            “Cinzano” (1951)
+                                            Raymond Savignac
+
+
+
+
+  BACK TO CONTENTS                                             BBC MAESTRO   42   AN INTRODUCTION TO GRAPHIC DESIGN
+08. Word and Image 1950s to Present Day
+
+1950s
+Poster design in Europe, at this time, has a
+great sense of scale.
+
+
+
+
+Scale is important in every
+aspect of design. If something
+is big, something has to be little.
+If two things are big, there has
+to be more white space around
+it, or something has to crop in a
+dramatic way.’
+This Josef Müller-Brockmann poster is a
+wonderful example.
+
+
+
+
+                                               “Das Freundliche Handzeichen, Schützt vor Unfällen” (1954)
+                                               Josef Müller-Brockmann
+
+
+
+
+  BACK TO CONTENTS                                          BBC MAESTRO         43     AN INTRODUCTION TO GRAPHIC DESIGN
+Even though the message of this ad for
+Woman’s Day magazine is kind of silly,
+the layout and use of typography – the
+use of the ‘O’s as the wheels of the
+bicycle is so smart and engaging.
+
+
+
+
+“Go Out” (1958)
+Gene Federico
+
+
+
+
+   BACK TO CONTENTS                      BBC MAESTRO   44   AN INTRODUCTION TO GRAPHIC DESIGN
+Ladislav Sutnar, a designer from the
+Czech Republic, emerged and he
+developed a visual language which used
+lots of geometric forms. His designs were
+mostly used editorially.
+
+
+
+
+Identity system (1958)
+Ladislav Sutnar
+
+
+
+   BACK TO CONTENTS                         BBC MAESTRO   45   AN INTRODUCTION TO GRAPHIC DESIGN
+                                    Lots of Armin Hofmann’s poster work is
+                                    famous. His work shows a mastery of scale,
+                                    and simplicity. He used mostly black and white,
+                                    or black and white and one other colour. Much
+                                    of his work is relevant today and still so strong.
+
+
+
+
+Posters (1958-1966)
+Armin Hofmann
+
+
+
+
+   BACK TO CONTENTS   BBC MAESTRO    46   AN INTRODUCTION TO GRAPHIC DESIGN
+Henryk Tomaszewski had a great sense of
+humour. His work was funny and ironic, using
+illustration and scale to tell pithy messages.
+His work was highly influential.
+
+
+
+
+Posters (1959-1983)
+Henryk Tomaszewski
+
+
+
+
+   BACK TO CONTENTS                              BBC MAESTRO   47   AN INTRODUCTION TO GRAPHIC DESIGN
+                                             Probably the most famous poster designer
+                                             and movie title designer, Saul Bass, also
+                                             had a knack for telling stories using scale,
+                                             form, and stripped-down colours. His
+                                             poster for Anatomy of a Murder features a
+                                             deconstructed murder victim.
+
+
+
+
+“Anatomy of a Murder” (1959)
+Saul Bass
+
+
+
+
+ BACK TO CONTENTS              BBC MAESTRO    48   AN INTRODUCTION TO GRAPHIC DESIGN
+Lou Dorfsman’s use of typography in an ad
+campaign for CBS is gorgeous. It’s simple and
+again, uses scale to tell a story.
+
+
+
+
+                                                “Ha ha ha - He Laughs Best Who Laughs Last” (1961)
+                                                Lou Dorfsman
+
+
+
+
+  BACK TO CONTENTS                                                                                   BBC MAESTRO   49   AN INTRODUCTION TO GRAPHIC DESIGN
+The Polish illustrator and designer, Roman
+Cieślewicz created grotesque, powerful
+images. His use of typography in this
+Hitchcock poster, tells a complete story –
+with the contrast between the complicated,
+little messaging, and the big, strong
+‘Hitchcocka’.
+
+
+
+
+                                             Poster (1963)
+                                             Roman Cieślewicz
+
+
+
+
+  BACK TO CONTENTS                                              BBC MAESTRO   50   AN INTRODUCTION TO GRAPHIC DESIGN
+                                                                                                                              Rudolph de Harak’s book cover design for
+                                                                                                                              Conflict and Creativity, in 1963, tells the
+                                                                                                                              title’s story with a very uncomplicated, but
+                                                                                                                              abstract image.
+                                                                                                                              Meanwhile, Heinz Edelmann went the
+                                                                                                                              opposite route, overloading the image
+                                                                                                                              with typography, making a humorous
+                                                                                                                              poster which plays with form and shape.
+
+
+
+
+“Conflict and Creativity - Control of the Mind, Part 2” (1963)   “Peccato Che Sia Una Canaglia” poster (1964)
+Rudolph de Harak                                                 Heinz Edelmann
+
+
+
+
+   BACK TO CONTENTS                                                                                             BBC MAESTRO    51   AN INTRODUCTION TO GRAPHIC DESIGN
+These two posters designed by Seymour
+Chwast at the beginning and during the
+Vietnam War are interesting because they
+both look like protest posters, but one was
+an ad for Gordon’s gin. Both are strong
+posters, with different intentions.
+
+
+
+
+                                                                “End Bad Breath” (1967)
+                                                                Seymour Chwast
+
+
+
+
+                                              Poster (1964)
+                                              Seymour Chwast
+
+
+
+
+  BACK TO CONTENTS                                             BBC MAESTRO       52       AN INTRODUCTION TO GRAPHIC DESIGN
+                                    Bruno Munari’s Campari poster proves
+                                    that ads can be art too. It’s gorgeous.
+
+
+
+
+“Campari” (1965)
+Bruno Munari
+
+
+
+
+   BACK TO CONTENTS   BBC MAESTRO    53   AN INTRODUCTION TO GRAPHIC DESIGN
+The poster design for M, which shows
+Peter Lorre’s terrifying face overlapping, is
+wonderful. It’s horrifying and is proof of how
+groundbreaking film posters were from the
+‘30s to the ‘60s.
+
+
+
+
+                                                 “M” poster (1966)
+                                                 Wolfgang Schmidt
+
+
+
+
+  BACK TO CONTENTS                                                   BBC MAESTRO   54   AN INTRODUCTION TO GRAPHIC DESIGN
+                                                                                                 In the late ‘60s, there was a rise of
+                                                                                                 psychedelia poster design. Victor Moscoso
+                                                                                                 was a pioneer, putting colours together that
+                                                                                                 went against the ‘rules’ of colour theory that
+                                                                                                 were taught at that time. Lee Conklin did
+                                                                                                 similar work at the time.
+                                                                                                 Andy Warhol had a hand in graphic design,
+                                                                                                 creating album art and silkscreens that
+                                                                                                 combined word and image.
+                                                                                                 Milton Glaser’s famous poster for Bob
+                                                                                                 Dylan’s Greatest Hits album was influenced
+                                                                                                 by Marcel Duchamp, but updated to '60s
+                                                                                                 rock and roll.
+
+
+
+
+“The Chamber Brothers” poster (1967)   “Bob Dylan’s Greatest Hits” poster (1967)
+Victor Moscoso                         Milton Glaser
+
+
+
+
+ BACK TO CONTENTS                                                                  BBC MAESTRO    55   AN INTRODUCTION TO GRAPHIC DESIGN
+The work of Tadanori Yokoo during this
+time feels psychedelic to some, but also
+very Japanese. He plays with colour, form,
+complication and simplicity and his work
+is magical. I’ve learned so much from his
+work, specifically colour and how to make
+something exciting.
+
+
+
+
+Various posters (1966-1968)
+Tadanori Yokoo
+
+
+
+
+   BACK TO CONTENTS                          BBC MAESTRO   56   AN INTRODUCTION TO GRAPHIC DESIGN
+                                    Another designer whose fun work
+                                    bordered on the grotesque is Tomi
+                                    Ungerer. He used illustration and humour
+                                    to create this political poster in response
+                                    to the Vietnam War.
+
+
+
+
+                                    The '60s was called the Golden
+                                    Age of Illustration. And record
+                                    covers and book jackets and
+                                    posters were full of illustration.
+                                    This style of design and ‘Golden Age’
+                                    continued into the design work of the 1970s.
+
+
+
+
+“Eat” (1967)
+Tomi Ungerer
+
+
+
+
+   BACK TO CONTENTS   BBC MAESTRO    57   AN INTRODUCTION TO GRAPHIC DESIGN
+1980s
+Work from the ‘80s largely featured
+complicated typography. Europe had the best
+examples. Niklaus Troxler’s poster for McCoy
+Tyner is a great example of this.
+
+
+
+
+                                               “McCoy Tyner Sextet” (1980)
+                                               Niklaus Troxler
+
+
+
+
+  BACK TO CONTENTS                                                           BBC MAESTRO   58   AN INTRODUCTION TO GRAPHIC DESIGN
+                                    Ikko Tanaka’s poster for UCLA shows that
+                                    Japanese artists were using simple shapes
+                                    but he adopted the contemporary style of
+                                    using large scale, blowing up the shapes to
+                                    take up the entire poster.
+
+
+
+
+“Nihon Buyo” (1981)
+Ikko Tanaka
+
+
+
+
+   BACK TO CONTENTS   BBC MAESTRO    59   AN INTRODUCTION TO GRAPHIC DESIGN
+Wolfgang Weingart, based in Switzerland, used
+typography in conjunction with collage and
+colour to create dynamic posters.
+
+
+
+
+                                                “Didacta Eurodidac” (1981)    “Das Schweizer Plakat 1900 - 1984” (1983)
+                                                Wolfgang Weingart             Wolfgang Weingart
+
+
+
+
+  BACK TO CONTENTS                                                           BBC MAESTRO        60     AN INTRODUCTION TO GRAPHIC DESIGN
+                                                                                                        April Greiman, a student of Woflgang
+                                                                                                        Weingart, also used collage and colour, but
+                                                                                                        in very bright shades, overlapping form
+                                                                                                        and images.
+
+
+
+
+“Your Turn My Turn” (1983)   “Sci-arc - Changing Concepts of Space in Architecture and Art” (1986)
+April Greiman                April Greiman
+
+
+
+
+   BACK TO CONTENTS                                                                       BBC MAESTRO    61   AN INTRODUCTION TO GRAPHIC DESIGN
+Grapus, a collective of French designers,
+came together in 1968. Their work was
+political and social. This poster by Pierre
+Bernard is really artistic, which is typical of
+Grapus’s body of work.
+
+
+
+
+                                                                      “Power, Corruption and Lies” (1982)
+                                                                      Peter Saville
+
+
+
+
+                                                  “Grapus” (1982)
+                                                  Grapus
+
+
+                                                                                      Almost the opposite of this work is a very
+                                                                                      clean, straightforward design of Peter
+                                                                                      Saville’s, which features a beautiful image
+                                                                                      of flowers, and a colour bar next to it,
+                                                                                      inexplicably. Peter was a leading designer in
+                                                                                      the ‘80s, and he could always tell when styles
+                                                                                      were about to change. He still does today!
+
+
+
+
+   BACK TO CONTENTS                                                 BBC MAESTRO        62     AN INTRODUCTION TO GRAPHIC DESIGN
+                                                                          Rosmarie Tissi makes beautiful work that
+                                                                          is very typically Swiss. She worked almost
+                                                                          exclusively in typography or montage. Her
+                                                                          pieces are structured and play with form and
+                                                                          composition.
+
+
+                                                                          Takenobu Igarashi married a few styles
+                                                                          together (European modernism and
+                                                                          postmodernism), that weren’t typically seen
+                                                                          in Japanese design of the time, but his work
+                                                                          maintains a Japanese feel in the way that
+                                                                          objects seem to be floating.
+
+
+
+
+“Ausstellung Odermat & Tissi” (1984)   “Expo, ‘85” (1985)
+Rosmarie Tissi                         Takenobu Igarashi
+
+
+
+
+   BACK TO CONTENTS                                         BBC MAESTRO    63   AN INTRODUCTION TO GRAPHIC DESIGN
+Pierre Mendel had a much simpler approach.
+Design in the United States starts to take on
+this minimalistic style. In his poster, ‘Design
+Process’, he designed the type to be almost
+invisible, making sure the four wheels would
+stand out in a sea of red.
+The poster for the ‘Silence = Death’ project
+is incredibly powerful. The symbol of the
+pink triangle was very memorable, as an icon
+for ‘Silence = Death’, and this poster was a
+simple and effective political tool during the
+AIDS crisis.
+
+
+
+
+                                                  “Design Process Auto” (1986)    “Silence = Death” (1987)
+                                                  Pierre Mendel                   Silence = Death Project, ACT UP
+
+
+
+
+  BACK TO CONTENTS                                                               BBC MAESTRO        64    AN INTRODUCTION TO GRAPHIC DESIGN
+                                               In 1989, Neville Brody’s poster for Nike
+                                               featured a tiny Nike logo and large
+                                               typography, but was very successful in
+                                               capturing the essence of Nike and sport.
+
+
+
+
+“Just Bounce it - Nike” (1989)
+Neville Brody
+
+
+
+
+   BACK TO CONTENTS              BBC MAESTRO    65   AN INTRODUCTION TO GRAPHIC DESIGN
+1990s
+Philippe Apeloig, who still works today, created
+a body of work which relied on typography,
+sometimes broken up with montages and other
+information. And the work doesn’t feel dated.
+
+
+
+
+Various posters (1987-2000)
+Philippe Apeloig
+
+
+
+
+   BACK TO CONTENTS                                BBC MAESTRO   66   AN INTRODUCTION TO GRAPHIC DESIGN
+                                           In the 1990s, I created posters for the Public
+                                           Theater that utilized a lot of complicated
+                                           typography to create an energetic spirit. I also
+                                           worked with simple type against a
+                                           powerful image.
+
+
+
+
+Various poster (1994-1999)
+Paula Scher
+
+
+
+
+ BACK TO CONTENTS            BBC MAESTRO    67   AN INTRODUCTION TO GRAPHIC DESIGN
+This poster by Koichi Sato is abstract, but you
+can tell the image is of a hand immediately.
+The little dove at the bottom of the poster is a
+symbol for peace.
+Stefan Sagmeister’s 1996 poster of Lou Reed,
+with handwritten text all over his face, is
+memorable.
+
+
+
+
+                                                   “International Design Center, Nagoya” (1996)     “Set the Twilight Reeling” (1996)
+                                                   Koichi Sato                                      Stefan Sagmeister
+
+
+
+
+  BACK TO CONTENTS                                                                                BBC MAESTRO         68    AN INTRODUCTION TO GRAPHIC DESIGN
+                                                                                                       Michael Bierut is a comtemporary modernist.
+                                                                                                       His posters and designs utilize simple forms
+                                                                                                       against black or white backgrounds.
+
+
+
+
+                                       “Light/Years - Architectural League’s Beaux Arts Ball” (2000)
+                                       Michael Bierut
+
+
+
+
+“Yale School of Architecture” (1999)
+Michael Bierut
+
+
+
+
+   BACK TO CONTENTS                                                              BBC MAESTRO            69   AN INTRODUCTION TO GRAPHIC DESIGN
+2000s
+Shepard Fairey’s iconic Hope poster was Barack
+Obama’s campaign poster. It captured the
+spirit of the time, was heavily reproduced and
+probably helped Obama win the election.
+
+
+
+
+                                                 “Hope” (2008)
+                                                 Shepard Fairey
+
+
+
+
+  BACK TO CONTENTS                                                BBC MAESTRO   70   AN INTRODUCTION TO GRAPHIC DESIGN
+                                    Studio Feixen, based in Switzerland, is one of
+                                    the greatest innovators at the moment. They
+                                    work with typography, scale and colour in
+                                    extraordinary ways, creating unexpected imagery
+                                    that still has the bones of European design.
+
+
+
+
+                                    If you look at the power of
+                                    the positioning of the
+                                    typography and relationship
+                                    to the scale and colour in
+                                    relationship to European
+                                    posters, you understand the
+                                    heritage is still there.
+
+
+
+
+“Wired” 2012
+Studio Feixen
+
+
+
+
+   BACK TO CONTENTS   BBC MAESTRO    71   AN INTRODUCTION TO GRAPHIC DESIGN
+                                    The work of Jaemin Lee, out of Korea, is
+                                    remarkable. He’s combined many styles to create
+                                    his own.
+
+
+
+
+Various (2016)
+Jaemin Lee Studio
+
+
+
+
+   BACK TO CONTENTS   BBC MAESTRO    72   AN INTRODUCTION TO GRAPHIC DESIGN
+The artist responsible for incredible drawings
+of Donald Trump, Edel Rodriguez, has an
+absurd sense of humour. We can learn a lot
+from his sense of scale, by understanding that
+if he positioned things differently or used more
+forms, the image would be less successful. I’m
+glad for artists like him, who make our times
+better.
+We are influenced by what we see, and it’s
+important to understand where what you see
+came from. It’ll help you to make decisions on
+how to use elements of design to make your
+designs successful, and unique to you.
+
+
+
+
+These are things you see by
+looking. It’s important to have
+the books at your hand or the
+images online to be able to look
+at them for reference, but not
+to copy. Look at them, then
+go to sleep, then get up and
+start working.
+
+
+
+
+                                                   Various (2019)
+                                                   Edel Rodriguez
+
+
+
+
+  BACK TO CONTENTS                                                  BBC MAESTRO   73   AN INTRODUCTION TO GRAPHIC DESIGN
+TA K E A W AY S
+
+
+      Designers have been building upon design by influencing each
+      other’s work.
+
+      Prolific artists contribute to movements and periods by
+      developing new styles.
+
+      Being inventive takes understanding what’s been done before.
+
+      Nothing in design has been built without standing on the
+      shoulders of other designers.
+
+      Some elements of design, like scale, are timeless and never go
+      out of style.
+
+
+ EXERCISE
+
+
+      Study examples shown in this lesson in order to understand the
+      aspects of good design.
+
+      Create your own poster, for a play, making sure it’s poster size.
+
+
+
+
+                                                                          “Hate in America” (2019)
+                                                                          Edel Rodriguez
+
+
+
+
+ BACK TO CONTENTS                                                                      BBC MAESTRO   74   AN INTRODUCTION TO GRAPHIC DESIGN
+09. Logos from Everywhere
+
+The goal of a logo is to represent something,      successful and able to stand the test of time,
+usually a company, their offerings and spirit,     and how to describe and depict emotions
+and to be recognisable for a long period           through form and letters in clever, elegant,
+of time. A logo can feature lettering – the        or interesting ways so that the brand’s logo
+name of the brand or its initials – or just be     becomes iconic.
+a symbol. Some logos are successful in their
+                                                   General Electrics, or GE, for example, has
+form; they’re satisfying to look at and elicit
+                                                   had the same logo since the company’s
+emotions. Others have good form and explain
+                                                   invention in 1899. Logos like these don’t need
+a company’s product or ethos cleverly or
+                                                   refinement or modernisation – in fact, I hope
+artistically. A company should be able to
+                                                   no one tries to change the GE logo ever.
+stand up on its logo, as times change or as the
+company evolves.
+The role of a logo has changed a lot over time
+– it’s now acceptable to wear logos on your
+clothes, to represent a company or a logo you
+like. As a society, we make decisions about
+each other based on what we buy, where we
+shop, or the logos on our clothing.
+There are plenty of logos that have been
+unchanged for decades and decades. I think
+that’s an indicator of a great logo. I see young
+designers with the belief that changing logos                                                       General Electric Company, (1899)
+every three years or so is a good idea, but in
+order to convince a consumer to come along
+with a rebrand, the brand needs to earn their
+consumers’ loyalty. A good, recognisable logo
+can last a long time.
+Great logos are worth studying so you can
+learn what elements of logo design are
+
+
+
+
+  BACK TO CONTENTS                                                                                  BBC MAESTRO        75    AN INTRODUCTION TO GRAPHIC DESIGN
+                                              Some logos feel quite contemporary despite
+                                              being older, but others do need updating
+                                              and there’s nothing wrong with that. As time
+                                              progresses and periods and styles change, a
+                                              logo’s job is to make sense wherever it lives
+                                              and that might mean a redesign is necessary.
+                                              Fiat’s logo had evolved over the course of
+                                              many years, and it wasn’t always great. At
+                                              one point it was hard to read and the form of
+                                              the letters weren’t balanced well, but you can
+                                              study how it evolved and how the design was
+                                              refined. This examination of what’s successful
+                                              and what’s not so successful will help you
+                                              learn how to design better. I think their current
+                                              logo works beautifully.
+                                              Logo design relies on balance, scale, form,
+                                              typography, legibility, and symbolism in order
+                                              for them to function, be memorable, and work
+                                              well in a variety of applications.
+                                              Sometimes a company’s name, product or
+                                              service, or history will give you an on how to
+                                              design the logo. For example, Cinzano has
+                                              seven letters, allowing the designer to use
+                                              the ‘Z’ to break the word up into equal parts –
+                                              ‘Cin’ and ‘ano’. Without the large, iconic Z, the
+                                              Cinzano logo would be boring and forgettable
+                                              – just a word typed out.
+
+
+
+Cinzano (1929) Gruppo Campari
+
+
+
+
+   BACK TO CONTENTS             BBC MAESTRO    76   AN INTRODUCTION TO GRAPHIC DESIGN
+Olivetti is a typewriter company, so it makes
+sense that the designer used a typewriter
+font. They made the great choice, however,
+to keep the funky, organic spacing between
+the letters, in the same way an actual
+typewriter would. It’s unique and strange,
+and represents a typewriter in a perfect,
+smart way. Without that spacing, the logo
+would look like a mistake.
+Other examples of logos that play with form
+include the CCA logo, a packaging company
+whose logo features a three-dimensional
+box that could be read in two different ways
+thanks to the clever shifting perspective of
+the box. The Westinghouse logo’s letters
+feature electrical components. There are
+plenty more examples. It takes practise and
+sketching, studying other logos, and a good
+                                                Olivetti (1934), Olivetti S.p.A, Xanti Schawinsky                 CCA (1957) Ralph E. Eckerstrom Container
+eye to pick up on the gifts the name of the                                                                       Corporation of America (CCA)
+company is giving you.
+
+
+
+
+                                                Westinghouse (1959), Paul Rand,
+                                                Westinghouse Electric Corporate
+
+
+
+
+  BACK TO CONTENTS                                                                                  BBC MAESTRO    77    AN INTRODUCTION TO GRAPHIC DESIGN
+                                                          The Campbell’s logo uses type to evoke
+                                                          the company’s product – soup! The curvy
+                                                          lettering is warm and comforting and
+                                                          represents the company’s product so well
+                                                          that it hasn’t changed since 1946.
+
+
+
+
+Campbell's (1953) Campbell Soup Company
+
+
+
+
+                                                          Another great use of type – Bloomingdale’s.
+                                                          The design takes advantage of the amount
+                                                          of curvy circles and really plays up the light,
+                                                          chicness of the brand by keeping the type
+                                                          very round and very thin. It works in many
+                                                          applications and hasn’t changed since 1972.
+
+Bloomingdale’s (1972) , Massimo Vignelli,
+Bloomingdale’s
+
+
+
+
+BACK TO CONTENTS                            BBC MAESTRO    78   AN INTRODUCTION TO GRAPHIC DESIGN
+The Penguin Random House penguin
+illustration is an example of a symbol that is
+timeless. He’s changed quite a bit through
+the years, but he is very much the same
+character. He represents the brand, like a
+wordmark does, staying true to his form since
+1935 despite going through some changes
+and growth. I think he’s a fun and successful
+example of how a designer describes a
+company without the use of type.
+
+
+
+
+                                                 Penguin (1935) Edward Young,   Penguin (1938) Edward Young,                Penguin (2003) Angus Hyland,
+                                                 Penguin Random House           Penguin Random House                        Penguin Random House
+
+
+
+
+  BACK TO CONTENTS                                                                              BBC MAESTRO    79   AN INTRODUCTION TO GRAPHIC DESIGN
+                                                                 Nike famously doesn’t need to describe itself
+                                                                 with a wordmark, the swoosh logo is iconic
+                                                                 enough for many people to know what it’s
+                                                                 referring to, sport! It's a testament to the
+                                                                 power of a symbol, and form.
+
+
+
+
+Nike ‘Swoosh’ (1971), Carolyn Davidson, Nike Inc
+
+
+
+
+    BACK TO CONTENTS                               BBC MAESTRO    80   AN INTRODUCTION TO GRAPHIC DESIGN
+A successful logo helps people connect
+to whatever it’s representing. Sometimes
+that connection, and what it represents, is
+so emotional that people can’t appreciate
+change. The ‘I Heart NY’ logo is known
+globally as the logo for New York City, even
+though it was originally created to represent
+New York State. No one recognises it as the
+logo for New York State. People from New
+York City are proud of this logo, it’s been
+around for years, but recently our Mayor
+decided he would redesign a logo specifically
+for NYC – a ‘We Heart NYC’ logo.
+It was released and New Yorkers were furious,
+rejecting it completely. The original logo
+belongs to New York City and will be around
+for a very, very long time.
+People can get prickly about what’s familiar,       “I Love New York” logo (1977)            “We Love NYC” logo (2022)
+what they deem the perfect representation           Milton Glaser                            Graham Clifford
+
+for the thing they love. It’s understandable
+why consumers would be hesitant to
+have something they love changed. But
+idiosyncrasies in design can also grow on
+you. I remember initially hating the new
+Metropolitan Museum of Art logo. I thought it
+was ugly, but I actually love it now because it’s
+become familiar. At a certain point, it stopped
+being ugly and was just the Met logo.
+
+
+
+
+                                                    “Divina proportione” (1509)              “THE MET” (2016)
+                                                    Fra Luca Pacioli                         Wolff Olins
+
+
+
+
+  BACK TO CONTENTS                                                                  BBC MAESTRO   81   AN INTRODUCTION TO GRAPHIC DESIGN
+                                                    Some logo design easily leads to a whole
+                                                    identity system, which we’ll talk about more
+                                                    later in the course. CBS created an ad
+                                                    campaign based on its logo, a logo which has
+                                                    only changed very slightly once since 1951.
+
+
+
+
+                   “CBS Eye” (1951)
+                   William Golden
+
+
+
+
+BACK TO CONTENTS                      BBC MAESTRO    82   AN INTRODUCTION TO GRAPHIC DESIGN
+Perhaps the best example of an identity
+system is the Mexico Olympics. Lance
+Wyman created a custom typeface for the
+Mexico Olympics, something many designers
+do now for branding clients, especially those
+with sub brands, corporate subdivisions or in
+this case, special events that fall under one
+umbrella. Systems tie together the whole
+company with a single look, no matter how
+many subdivisions they may need logos for.
+
+
+
+
+“Mexico ‘68’” (1968)
+Pedro Ramirez Vazquez, Lance Wyman, Eduardo Terrazas
+
+   BACK TO CONTENTS                                    BBC MAESTRO   83   AN INTRODUCTION TO GRAPHIC DESIGN
+                                                    The EDL Museum in Amsterdam also has a
+                                                    great system with custom typography. It’s
+                                                    flexible and iconic, and can be used in many
+                                                    applications. The Pinakothek der Moderne
+                                                    Museum in Munich created an interesting rule
+                                                    for their posters – they’d include their logo in
+                                                    red and whatever feature or show they were
+                                                    having on, in green, and in a unique font. It’s
+                                                    kind of hideous and strange, but it’s also loud
+                                                    and bold, I love it.
+
+
+
+
+“Die Neue Sammlung” identity (2016)
+Bureau Mirko Borsche
+
+
+
+
+   BACK TO CONTENTS                   BBC MAESTRO    84   AN INTRODUCTION TO GRAPHIC DESIGN
+Tony Brook used the two L’s of the brand
+‘Collect’ to create a whole system that
+extends to bathroom signage. A brand name
+can be a gift, you can play off letters or form,
+and create a whole system based on that
+clever device.
+
+
+
+
+“Collect” identity
+Tony Brook, Crafts Council
+
+
+
+
+   BACK TO CONTENTS                                BBC MAESTRO   85   AN INTRODUCTION TO GRAPHIC DESIGN
+                                                 TA K E A W AY S
+
+A logo that doesn’t associate
+                                                       Logos represent a business or organisation using symbols and/
+with the business or                                   or text.
+organisation it represents
+is a failure. A logo that has                          Successful logos can last a long time, becoming iconic.
+form that is so complex it can
+                                                       Some logos are clever and use the brand’s name or field to
+never be recognised is also a                          create a memorable form.
+failure. A logo that is strong,
+compelling and simple and                              Logos can lend themselves to visual systems.
+witty is always a success.
+                                                       Creating a logo is fun but requires lots of research and
+                                                       understanding about the business and their industry.
+A good logo will strike some sort of emotional
+chord in a large population. Logo design is
+fun, but a lot of research and understanding
+about the organisation and their world goes       EXERCISE
+into it.
+The thing about a logo is when you’ve made             Practise creating your own logo, for yourself, or for a business.
+a good one, you know it, everybody knows it
+and it’s a wonderful thing.
+
+
+
+
+  BACK TO CONTENTS                                                                BBC MAESTRO      86   AN INTRODUCTION TO GRAPHIC DESIGN
+10. From Sketch to Finish Introduction
+
+We’ve talked about history and some elements
+of design, but in this lesson we’ll talk about
+designing for clients from start to finish.
+There are many, many reasons a client will hire
+a graphic designer – could be for a poster,
+a logo, a new identity system, a website, or
+an ad, etc. The first thing a designer needs
+to do is understand the client’s needs and
+requirements, and problems. This could involve
+understanding the client’s business structure
+and history, their goals for the future, their
+organisation and who they employ. Then, get
+to work figuring out how to best solve for their
+needs.
+
+
+
+
+  BACK TO CONTENTS                                 BBC MAESTRO   87   AN INTRODUCTION TO GRAPHIC DESIGN
+11. From Sketch to Finish Citibank
+
+We’ve talked about history and some
+elements of design, but in this lesson we’ll
+talk about designing for clients from start to
+finish.
+There are many, many reasons a client will hire
+a graphic designer – could be for a poster,
+a logo, a new identity system, a website, or
+an ad, etc. The first thing a designer needs
+to do is understand the client’s needs and
+requirements, and problems. This could
+involve understanding the client’s business
+structure and history, their goals for the
+future, their organisation and who they
+employ. Then, get to work figuring out how to
+best solve for their needs.
+
+
+
+
+                                                  Pentagram
+
+
+
+
+  BACK TO CONTENTS                                            BBC MAESTRO   88   AN INTRODUCTION TO GRAPHIC DESIGN
+Both companies had lots of subdivisions that
+the new logo would need to lock up next to.
+They had an idea for how they wanted the new
+logo to look, how it would combine their type,
+and the blue wave, and an umbrella. But it
+would not work with their multiple sub brands,
+it was way too complicated. Our job was to
+persuade them to take a simpler approach,
+one that people could really understand.
+
+
+
+
+Pentagram
+
+
+
+
+  BACK TO CONTENTS                               BBC MAESTRO   89   AN INTRODUCTION TO GRAPHIC DESIGN
+I recognised that the bottom of the ‘t’ in
+Citibank could curve and look like the handle
+of an umbrella, and we could create an arch on
+top of the ‘i’s that would represent the canopy
+of the umbrella. It did the job of representing
+Traveler’s and Citgroup, was simple and
+uncomplicated, and locked up well with all of
+their corporate subdivisions.
+
+
+
+
+Pentagram
+
+
+
+
+  BACK TO CONTENTS                                BBC MAESTRO   90   AN INTRODUCTION TO GRAPHIC DESIGN
+                                   Our plan was to slowly release the evolution
+                                   of the logo within Citbank’s sub brands, over
+                                   the course of maybe 13 years, but in reality, it
+                                   took about three. When people saw the logo on
+                                   top of their cash machines, they immediately
+                                   recognised it as Citibank and it just worked.
+                                   We didn’t need to draw the launch out because
+                                   the logo was so successful and iconic.
+
+
+
+                                    TA K E A W AY S
+
+
+                                           The Citibank logo had to merge a few
+                                           design motifs together, and it took
+                                           sketching to come up with a concept.
+
+                                           The new system for Citibank had to
+                                           work with many sub brands.
+
+                                           Our job was to convince the client to
+                                           take a simplistic approach, and it
+                                           worked.
+
+
+                                     EXERCISE
+
+
+                                           Choose two brands from the same
+                                           industry, and spend some time
+                                           sketching ideas for merging their
+                                           logos, retaining their iconic colours/
+                                           motifs while combining the two to
+                                           form a new, distinct brand.
+
+
+
+
+Pentagram
+
+
+
+  BACK TO CONTENTS   BBC MAESTRO    91   AN INTRODUCTION TO GRAPHIC DESIGN
+12. From Sketch to Finish The Met Opera & New York City Ballet
+
+The Met Opera
+The Met Opera had an interesting design
+issue to solve for. It’s a widely famous opera
+that was known as ‘The Met’ for years, but
+The Metropolitan Museum of Art, co-opted
+‘The Met’ when they made bags with ‘The
+Met’, in extra large type. Everyone in NYC had
+these bags, especially around the area where
+the Met Opera is, and soon the Metropolitan
+Museum of Art was known as ‘The Met’. That
+created confusion for the Opera. The Opera
+didn’t want to change their name entirely, so
+decided they’d release a new logo with the
+hopes it would get people to understand who
+they were. So we decided on ‘The Met Opera’.
+Our solution was based on typography and the
+breaking up of the letters in ‘The Metropolitan
+Opera’, so people would read it as ‘The Met
+Opera’. It was simple and elegant, and the          Pentagram                  Pentagram
+final product is very close to my initial sketch.
+Sometimes the first sketch is the strongest
+idea. We redesigned everything with the new
+logo, put it all over town, and pretty soon
+people associated the Met Opera with its new
+typography.
+
+
+
+
+  BACK TO CONTENTS                                               BBC MAESTRO   92   AN INTRODUCTION TO GRAPHIC DESIGN
+The New York City Ballet
+The New York City Ballet has a similar story
+to the Met Opera. Another well-known arts
+institution, also based in Lincoln Center. And
+people would also confuse the New York City
+Ballet for other similarly named ballets. They
+also needed a new logo that would help them
+be easily recognised.
+We decided that they needed to be bolder.
+And they needed a system that gave space
+for more information – they had many
+programmes, and they needed a system of
+hierarchies.
+I sketched a lot, going over areas to make
+them bolder, and came up with this stacked
+idea – where the words are stacked on top of
+each other, and they start out transparent
+and get bolder. The configuration of the logo
+allows for flexibility, and gives enough room
+for more copy underneath.
+
+
+
+ TA K E A W AY S
+
+
+        Sketching helps you notice things
+        in lettering – like the breaking up of
+        ‘The Metropolitan Opera’ or gradient
+        in ‘New York City Ballet’.
+
+        Understanding the client’s needs and
+        how to communicate to the public is key.
+
+        Creating a system for the clients to use,
+        rather than a one-off, makes a
+        successful identity.
+                                                    Pentagram
+
+
+
+
+  BACK TO CONTENTS                                              BBC MAESTRO   93   AN INTRODUCTION TO GRAPHIC DESIGN
+13. From Sketch to Finish Windows 8
+
+The Windows 8 logo was about refinement.
+It seemed as if their logos were getting more
+and more complicated as time went on. They
+started out with a blue, flat logo. Then they
+added some elements of motion, digitisation
+and pixelation. They continued to stick with
+the motion theme for a few more iterations,
+but dropped the pixelated look. The logo that
+I redesigned looked like a three dimensional
+flag, because at that time multidimensional
+logos signalled to the public that the product
+was technology based. But they didn’t need
+that signifier anymore. It was too complicated,
+they needed to simplify and flatten their logo.
+Windows offered several software products,
+but their logos didn’t have a cohesive style
+and they couldn’t figure out how to represent
+them. I said, 'Your name is ‘Windows’. Why are      Microsoft Corporation
+
+you a flag?' I made sure to understand all of
+the sub-brands and products they needed a
+system for before sketching ideas. Through
+the process, I realised that their original logo
+was not truly 3D in perspective, the lines were
+off, and I thought that utilising perspective as
+a design concept could help make a strong
+evolution from 3D to flat – still in perspective,
+but flat. I thought that perspective concept
+could lend itself to a system of many logos.
+
+
+                                                                            Pentagram
+
+
+
+
+  BACK TO CONTENTS                                                                      BBC MAESTRO   94   AN INTRODUCTION TO GRAPHIC DESIGN
+                                 We made animations to demonstrate to the
+                                 various executives how perspective could be
+                                 used to signify motion, and how flattening
+                                 the system would allow for cohesion and
+                                 simplification. It worked and they launched the
+                                 new design, and pretty much everyone else
+                                 in the tech field started flattening their logos
+                                 too. It basically went from a dimensionalised
+                                 3D look, what the industry called ‘chrome’, to
+                                 flat. And Microsoft went ahead and designed
+                                 their logo off of that Windows flat look we
+                                 gave them in 2012.
+
+
+
+
+                                  TA K E A W AY S
+
+  Pentagram
+                                         Coming up with a concept, like
+                                         ‘perspective’, in order to simplify a
+                                         system and create cohesion between
+                                         sub-brands goes a long way.
+
+                                         Create animations or sketches and
+                                         guides to show your client what
+                                         you’re seeing.
+
+                                         Let your clients in on some of your
+                                         thought processes – it may help to
+                                         convince them.
+
+
+  Pentagram
+
+
+
+
+BACK TO CONTENTS   BBC MAESTRO    95   AN INTRODUCTION TO GRAPHIC DESIGN
+14. From Sketch to Finish Berkeley Rep & Landmark Theatres
+
+Berkeley Rep
+Good graphic design should be flexible and
+support the needs of the brand it serves.
+The Berkeley Repertory Theatre, or Berkeley
+Rep, creates a lot of promotional material
+for the many different plays they put on, and
+the imagery and artwork featured in their
+materials differ in size and proportion.
+I didn’t sketch the original logo. I found a
+ticket and saw that the middle notch in the
+horizontal ticket made it read as a capital
+“B”. I think the B we made for them is clever,
+and plays with form. It’s flexible and can be
+extended and used as a container for imagery
+or copy, allowing for the assets to dictate
+its shape. And it ties many different plays
+together under one look.
+Whenever we finish a project, we give the
+client a manual on how to use the material
+we designed. The manual we provide tells
+them how to use the brand, and doesn’t leave
+anything up to chance, but it gives them the
+tools to use it and understand its flexibility.
+The designers at Berkeley Rep have used
+our designs in great ways. It’s a testament to
+understanding what they needed and how well
+the system was made.
+
+
+
+
+                                                  Pentagram
+
+
+  BACK TO CONTENTS                                            BBC MAESTRO   96   AN INTRODUCTION TO GRAPHIC DESIGN
+Landmark Theatres
+We came up with a number of ideas for the
+logo and environmental graphics of Landmark
+Theatres. The art cinema chain includes about
+37 theatres around the United States. We had a
+lot of freedom and I’ve included many sketches
+here, so you can see my typical workflow.
+
+
+
+
+Pentagram
+
+
+
+  BACK TO CONTENTS                               BBC MAESTRO   97   AN INTRODUCTION TO GRAPHIC DESIGN
+                                   We developed some of these sketches and
+                                   showed the client three ideas, settling on
+                                   one that would form a logo system that
+                                   highlighted the personality of each individual
+                                   theatre. The system allows for an individual
+                                   mark, colour, and font for each theatre.
+                                   The system we made for Landmark is fairly
+                                   easy to implement. There is definitely nuance
+                                   in how much freedom and control to build
+                                   into your systems when designing for a client.
+                                   A system that’s too rigid won’t allow for
+                                   flexibility.
+
+
+
+
+                                    TA K E A W AY S
+
+
+                                           Understanding how the client is
+                                           going to use their identity system
+                                           helps with designing a system that is
+                                           flexible and meets their needs.
+
+                                           Give your client tools to expand the
+                                           system you've created.
+
+Pentagram
+
+
+
+
+  BACK TO CONTENTS   BBC MAESTRO    98   AN INTRODUCTION TO GRAPHIC DESIGN
+15. From Sketch to Finish The New School & Quad Cinema
+
+Designing one identity in two and three
+dimensions.
+The New School
+The redesign of The New School identity
+was a fairly complicated and long project.
+They needed a new identity system, one that
+worked to clarify a name and hierarchy issue.
+The New School, a progressive university in
+NYC had many colleges under it. They had
+purchased Parsons School of Design (an art
+school in NYC that’s very well known) in 1970.
+Both had existing logos that were recognised
+as separate identities, but when combined,
+the hierarchy was confusing, and no one
+knew what their relationship was. For years
+Parsons was actually a part of New School,
+but they hadn’t found a way to say it in a clear
+way. They had many other schools besides
+Parsons, but Parsons is probably the one that
+complicated it.
+Peter Bil’ak had previously designed a
+bespoke font for the New School, a font I
+wanted to work with. But his concept was
+that each school under The New School
+should have its own font. When ‘The New            Pentagram
+
+School’ and ‘Parsons’ were put together, in
+their different fonts, it was difficult to read.
+Despite the complicated sub-brand
+relationships we needed to solve for, there
+were forty people who had to approve or give
+feedback on our designs.
+
+
+
+
+  BACK TO CONTENTS                                             BBC MAESTRO   99   AN INTRODUCTION TO GRAPHIC DESIGN
+                                   I really liked the exterior architecture of
+                                   the New School building, and it had a ‘20s
+                                   constructivist logo that said ‘The New School’
+                                   on the facade. I thought of using two bars, like
+                                   the bars from the building, to help with the
+                                   hierarchy problem. ‘The New School’ would
+                                   sit on top of the bars and the bars could
+                                   extend and could contain other information,
+                                   describing the hierarchy of their schools.
+
+
+
+
+Pentagram
+
+
+
+
+  BACK TO CONTENTS   BBC MAESTRO    100   AN INTRODUCTION TO GRAPHIC DESIGN
+We updated the logo and made it cleaner
+and showed the logo and hierarchy system to
+the client, but the 40 people with approvals
+thought the logo was too boring, so we pushed
+the type, extending the ‘P’ and we went back
+to the client. They said the ‘O’s looked too
+round. So we went back and forth, pushing and
+pulling, finally arriving at three different widths
+for the typeface, which felt wild. Peter Bil’ak
+who designed the original font, redesigned
+the font in two different weights and three
+widths. We programmed the type to make
+considerations on when to use the different
+widths of letter forms. This felt very, very new
+and radical at the time, and fit the progressive
+school perfectly.
+
+
+
+
+                                                      Pentagram
+
+
+
+
+  BACK TO CONTENTS                                                BBC MAESTRO   101   AN INTRODUCTION TO GRAPHIC DESIGN
+                                   Soon, we had a successful system to describe
+                                   the school’s many entities, and we had a great
+                                   logo, and typeface that all 40 stakeholders
+                                   were happy with. And we were lucky because
+                                   the art department at the New School was
+                                   very talented, and they loved the work too.
+                                   We, collectively, created all the materials
+                                   to launch the brand – the website, posters,
+                                   literature, etc. But when we launched the new
+                                   identity, the students completely hated it.
+                                   They thought it looked like ‘Nev’ School, they
+                                   thought it looked strange, and they thought I
+                                   ruined their school. But all 40 approval holders
+                                   who worked on it with me knew the design
+                                   was good, and they stood by me. And those
+                                   students who hated it graduated, and the
+                                   next generation came and embraced the new
+                                   design. So has everyone else.
+
+
+
+
+Pentagram
+
+
+
+
+  BACK TO CONTENTS   BBC MAESTRO    102   AN INTRODUCTION TO GRAPHIC DESIGN
+Quad Cinema
+Quad Cinema is a Greenwich Village institution
+– it was once well known for showing art films
+and was a cool place for intellectuals to meet.
+But it started to lose popularity since people
+weren’t going to art houses as much. Charles
+S. Cohen, my client on Landmark Theatres,
+wanted to redesign Quad Cinema as a place to
+go see art films again.
+We visited the theatre and took stock of its
+architecture and what elements they would
+need. They had a very skinny front door, but
+they still needed a marquee. The front of the
+building also had these panels or ducts that
+ran through the building. And we worked with
+these quirks and features when designing
+the 3D elements for the space. When we
+built the Quad logo in three dimensions, the
+pieces were able to sit at the front of the air
+conditioning and heating ducts perfectly,
+creating an enormous sense of depth. This
+was so successful because we had designed
+their alphabet based on squares. The ideas
+you have in 2D take new forms in 3D space,
+and you have to make considerations about
+how these ideas will look in the space.
+
+
+
+
+                                                  Pentagram
+
+
+
+
+  BACK TO CONTENTS                                            BBC MAESTRO   103   AN INTRODUCTION TO GRAPHIC DESIGN
+                                   The cinema has four theatres, which was such
+                                   a gift since Quad is four letters long. We built
+                                   an extra-large light fixture for the ceiling of
+                                   each theatre, a ‘Q’, a ‘U’, an ‘A’, and a ‘D’.
+                                   Each letter takes up pretty much the whole
+                                   ceiling of the theatre. It’s so simple and
+                                   effective. In the lobby, we repeated the motif
+                                   of squares, with a grid of square screens.
+                                   Movies and animations run there all day, and
+                                   it really gives the sense of an art house. The
+                                   movie theatre bar, which I love, has tiles from
+                                   the original building, and ‘Quad Bar’, in their
+                                   typography, inlaid in the floor tiles. Even the
+                                   bathroom signage uses the type and has
+                                   square-ish icons which helps carry the square
+                                   branding through. We worked on every detail
+                                   and it was lots of fun.
+                                   When you design for a brand, it’s important
+                                   to teach the client how to use the systems
+                                   you’re designing for them – how the logo
+                                   can look in different configurations, or how
+                                   it can lock up with various sub brands. These
+                                   systems are great for brands so they don’t
+                                   have to make decisions when they make
+                                   things for themselves in the future.
+
+
+
+
+Pentagram
+
+
+
+
+  BACK TO CONTENTS   BBC MAESTRO    104   AN INTRODUCTION TO GRAPHIC DESIGN
+TA K E A W AY S
+
+
+      Inspiration for identities can come from the space the
+      organisations are in.
+
+      Work with experts and push the boundaries.
+
+      Sometimes you have to get approvals from many people and
+      sometimes that can help the project’s success.
+
+      Your work may not resonate with everyone, people don’t always
+      like change.
+
+      Teach your clients how to use the systems you’ve created.
+
+      Carrying motifs throughout a space will give the space more
+      character and establish a visual language.
+
+      Play with the space.
+
+
+
+
+                                                                      Pentagram
+
+
+
+
+ BACK TO CONTENTS                                                                 BBC MAESTRO   105   AN INTRODUCTION TO GRAPHIC DESIGN
+16. Environmental Design
+
+My friend and partner at Pentagram, Michael        together to create the space and a specific
+Gericke, is an incredibly knowledgeable and        experience. That can be really fun, and very
+experienced environmental graphic designer.        different from other design making.
+We talked about what environmental graphics
+are composed of, and looked at a few of his
+projects in order to learn more about the field.
+What is it?                                        What I find so interesting
+Environmental graphic design can also be
+                                                   about this type of work too is
+called experiential design. It’s communication     it’s really rooted deep, deep
+within a space, or an environment. It often        in history. It’s been going on
+interacts with its environment and it often        for literally like centuries if not
+tells a story. Unlike some of the other
+examples of design we’ve seen so far,
+                                                   much, much longer. –Michael Gericke
+environmental graphics become part of a            The Lascaux paintings we looked at in the         Milestone XXIX from the Via Romana XVII (2004)
+place, help define locations, and sometimes        Origin of Type lesson is an example of            Júlio Reis
+these designs stay in place for a year or two or   environmental design. These designs lived in a
+even longer.                                       space, and served the function of storytelling.
+Any kind of graphics, digital work, sound, or      Early Roman roads had stone markers or
+three-dimensional design in a space falls          milestones which showed the public what was
+into the environmental graphics category.          ahead, and even how far you were from it.
+The skills we’ve learned about – typography,       It was like an early wayfinding system. We see
+colour, image, form, composition, content and      similar milestone markers in many areas of the
+storytelling all come into play when creating      US – mainly on the side of streets, near farms,
+graphics for a space.                              ‘Eggs for Sale – 20 miles away’.
+We’ve mostly looked at work a team or an           Wayfinding systems are a big part of
+artist does on their own. They’re kind of siloed   environmental graphics today.
+off, then they share with the client and go
+back and forth, but in this sort of design the     Stained glass in medieval churches are early
+team expands to include architects, urban          examples of how immersive lighting can
+planners, and lighting designers. Everyone,        change the experience of a visitor. We still
+and all of the elements they create, come          create experiences for visitors by playing with
+                                                   light and using different materials.
+                                                                                                     Fresh Eggs sign
+                                                                                                     Sofi, Benni, Lloyd, lloydstreasures
+
+
+  BACK TO CONTENTS                                                                                                BBC MAESTRO              106   AN INTRODUCTION TO GRAPHIC DESIGN
+Placemaking (on a civic scale)
+Signs for businesses can become a part of a
+place and give a location or neighbourhood a
+signature look. The many, different marquees
+at Times Square define a place. There’s a sign
+at a roadside lobster shack that says ‘Lunch’
+that’s iconic and has become part of the place.
+Signs in the NYC subway have come to define
+our city. Vignelli’s map system is iconic, but
+in the subway, it co-exists with other designs
+like tile work and sculpture and ads and
+posters. It ends up being part of a very layered
+placemaking, rather than a simple tool. Those
+layers give a richness and texture that’s iconic
+to NYC, just like the signs in Times Square.
+Form follows Function
+In most instances of environmental design,
+you’d want the design to fit into the place
+and not be the primary event of the space.
+However, a good concept is memorable and
+helps define the space.
+                                                   Sainte-Chappel (2017)
+While making the work, you’ll encounter            Hannah Wilson
+design constraints. Michael suggests starting
+with the project’s limitations– this could be
+the materials you need to use, the scale you
+can work in, and any other logistics of the
+space. It can’t all be utilitarian though— you
+need a strong design idea. The concept is
+what makes the experience memorable and
+experts like engineers and technical designers
+will help you realise your concepts.
+
+
+
+                                                   Michael Gericke                       MTA New York City Transit
+
+
+
+
+  BACK TO CONTENTS                                                         BBC MAESTRO     107    AN INTRODUCTION TO GRAPHIC DESIGN
+                                        A great deal of every design project is
+                                        understanding the needs of your client and how
+                                        to communicate to the public. In the case of
+                                        environmental graphics, no matter the client,
+                                        the design is serving the community, and you
+                                        must understand who they are and what their
+                                        needs are in order to design for them.
+                                        When designing for a space like an airport,
+                                        you have to understand the flow of the space,
+                                        and the information people need to navigate
+                                        the space. Making sure that you’re delivering
+                                        this information in a way that is unique to the
+                                        place comes next, but is as important.
+                                        When Michael designed the Toronto Pearson
+                                        Airport graphics, he had to consider that both
+                                        English and French languages needed to be
+                                        included on all signage, and both languages
+                                        needed to have the same amount of emphasis
+                                        – it wasn’t like the signs were in English but
+                                        with French translations, or vice versa. Along
+                                        with all of the arrows and pictograms he had
+                                        to include, it was a lot of information to fit onto
+                                        the signs. But they figured out a clever device
+                                        to help – a modular system based on the wings
+                                        of an airplane, with one section designated
+                                        for English and another for French. It’s colour-
+                                        coded and can be updated easily, and it’s a
+                                        clear, functional system that’s also artful.
+                                        Michael’s work with the Toronto Pearson
+                                        Airport had the added challenge of it being a
+                                        new build – he did not have the opportunity to
+Toronto Pearson Airport
+                                        base his designs on an existing place’s feeling,
+Pentagram                               because it didn’t exist yet. There were plenty
+                                        of digital renderings and models that helped
+                                        put him in the place, but he wasn’t able to
+                                        actually go to the place and experience it.
+
+
+
+
+   BACK TO CONTENTS       BBC MAESTRO    108   AN INTRODUCTION TO GRAPHIC DESIGN
+Michael was tasked with making the West End
+Concourse in New York City’s Penn Station
+more inviting. With colour and scale, he and his
+team were able to work with the characteristics
+of the place – its low ceilings, its busyness
+and its palette to create signage that is eye-
+catching and legible.
+Every location and project has different
+needs and considerations, from a conceptual
+standpoint, the participants’ needs, the
+architecture, lighting, etc. Michael had
+to consider the merging of history and
+technology for the exhibition room at the New
+York Public Library, a monumental building
+that has been open to the public since 1911.
+
+
+                                                   Penn Station
+                                                   Pentagram
+
+
+
+
+New York Public Library                            Penn Station
+Pentagram                                          Pentagram
+
+
+
+
+   BACK TO CONTENTS                                               BBC MAESTRO   109   AN INTRODUCTION TO GRAPHIC DESIGN
+Where’s the bathroom?                            exhibition, are about storytelling – leading the
+                                                                                                                  TA K E A W AY S
+                                                 audience through a space in a considered and
+It’s the first question everyone asks when
+                                                 curated fashion. And this is very different from
+getting to a new place. A bathroom sign has to
+                                                 designing a sign that shouts at passersby.                              Many kinds of environmental graphics
+be functional, but it can also be beautiful.
+                                                 This niche of graphic design can seem difficult                         serve a function.
+Maps, signs, arrows, typefaces, colours and
+                                                 to get into, but it’s very much achievable. Many
+lines come together to create a wayfinding                                                                               Environmental graphics need to be
+                                                 schools have courses specialising in exhibit
+system that a building, park, or space can                                                                               clear and instructive in a place like
+                                                 or environmental design. Taking some time
+use in an expressive and creative way. These                                                                             an airport, so that people can
+                                                 to recognise and think about experiences
+elements come together to form the identity                                                                              confidently navigate the space.
+                                                 in spaces that have been designed for you,
+of a space.
+                                                 and how someone might have gone about
+The way in which some spaces flow, like an       designing them, is eye opening and inspiring.                           Visitors can have a memorable
+                                                                                                                         experience if the graphics are
+                                                                                                                         designed for them to experience. A
+                                                                                                                         strong, good concept is necessary.
+
+                                                                                                                         Environmental design is like
+                                                                                                                         storytelling and helps reveal spaces
+                                                                                                                         to people.
+
+                                                                                                                         Elements of environmental design
+                                                                                                                         come together to create the identity
+                                                                                                                         of a space.
+
+                                                                                                                         Environmental design contributes to
+                                                                                                                         placemaking and helps to define a
+                                                                                                                         place, like a neighbourhood or city.
+
+
+
+
+Bathroom pictograms
+Pentagram
+
+
+
+
+   BACK TO CONTENTS                                                                                 BBC MAESTRO   110   AN INTRODUCTION TO GRAPHIC DESIGN
+17. Case Studies in Environmental Design
+
+Mumbai Airport
+This airport serves millions of passengers
+every day. The client knew they wanted the
+experience of those millions of passengers to
+be a strong sense of arrival to India – that this
+couldn’t be any other airport in any other part
+of the world.
+So Michael Gericke worked with consultants,
+took trips to India, researched, and learned.
+In his research, he studied the Jali pattern
+which was traditionally used to filter light into
+buildings. He also noticed the motif of a dome,
+a graphical shape that’s very specific to India.
+Michael and his team did a deep exploration of
+these forms, using laser and water machines
+to cut and create different patterns.
+As with the Toronto Pearson airport or
+any wayfinding system, they needed to
+plan for clear communication. Through
+experimentation with colour and many
+different materials, as well as collaboration
+with the architectural and interiors team,
+they finalised on a design that clearly
+communicated the expression of Mumbai.
+
+
+
+
+  BACK TO CONTENTS                                  BBC MAESTRO   111   AN INTRODUCTION TO GRAPHIC DESIGN
+The terminal has large columns, and a huge
+roof featuring the modernised jali pattern.
+The structure feels fresh, and the graphical
+expression is true to India, it couldn’t be
+anywhere else.
+
+
+
+
+Chhatrapati Shivaji International Airport ticketing identifier detail (2008)
+Pentagram
+
+
+   BACK TO CONTENTS                                                            BBC MAESTRO   112   AN INTRODUCTION TO GRAPHIC DESIGN
+                                                                 Throughout the rest of the airport, are
+                                                                 instances of the identity contributing to this
+                                                                 sense of place. By being consistent throughout
+                                                                 and carrying the motif through the design of
+                                                                 elements like the letters on monitor, patterns
+                                                                 on light fixtures, or display monitors, you form a
+                                                                 greater sense of place.
+                                                                 A project like this could take years, and though
+                                                                 Michael finds joy in committing to big projects,
+                                                                 and all of their details, he has to balance them
+                                                                 out with projects with quicker timelines.
+
+
+
+
+Chhatrapati Shivaji International Airport (2008)
+Pentagram
+
+
+
+
+   BACK TO CONTENTS                                BBC MAESTRO    113   AN INTRODUCTION TO GRAPHIC DESIGN
+City Point BKLYN
+A lot of discussion around Brooklyn, or even
+New York, is on authenticity. Michael says
+a real Brooklynite can sniff an imposter
+Brooklynite out with ease. So when designing
+the graphics for City Point, a space with
+shops, a food court and a movie theatre, in
+Downtown Brooklyn, he and his team came up
+with the slogan: BKLYN BORN.
+And it was meant to tell the people of
+Downtown Brooklyn that City Point is
+authentically Brooklyn.
+They used large type, in bold colours, and
+put up huge posters and signs around the
+building, even taking advantage of empty
+storefronts.
+Stackable shipping containers, a common
+sight along the Brooklyn waterfront, helped
+inspire the visual identity. Containers of
+information were designed to move or slide
+around, like this number two which indicates
+which floor you’re on. People might not
+read into the design while trying to find
+information, but it’s all about painting that
+picture and sense of space. They don’t need
+to notice the design right away.
+
+
+
+
+                                                “City Point” identity, advertising and wayfinding
+                                                Pentagram
+
+
+
+
+  BACK TO CONTENTS                                                         BBC MAESTRO              114   AN INTRODUCTION TO GRAPHIC DESIGN
+                                                    TA K E A W AY S
+
+
+                                                          Lean on experts in other fields to help realise your designs
+                                                          – you don’t need to know everything about lighting, materials
+                                                          or architecture in order to be an environmental designer.
+
+                                                          Leaning on a motif or concept will help create a strong
+                                                          visual language.
+
+                                                          Research the community and their needs. Immerse yourself
+                                                          so you can learn about symbols and visuals that may resonate
+                                                          with the community you’re serving.
+
+                                                          Don’t be afraid of trial and error.
+
+
+
+                                                     EXERCISE
+
+
+“City Point” identity, advertising and wayfinding         Imagine walking into a park...
+Pentagram                                                 Give the park a name.
+                                                          What would an identity for the park look like?
+                                                          Where would it go?
+                                                          What is it trying to convey and express about the park?
+
+                                                          Perhaps there’s a sculpture in the corner of the park...
+                                                          What would the sculpture look like with a person standing
+                                                          next to it?
+                                                          Is it shallow, is it deep?
+
+                                                          How would you guide someone through the park to points of
+Think about creating little mini                          interest?
+                                                          With messaging or an arrow or pictogram?
+experiences.                                              Where would that sign be?
+–Michael Gericke
+                                                          What materials would the sign be made of?
+                                                          Would it be on a pole or set in a piece of concrete?
+                                                          How will you make it memorable?
+
+
+
+
+   BACK TO CONTENTS                                         BBC MAESTRO       115   AN INTRODUCTION TO GRAPHIC DESIGN
+18. Film Titles and Animations
+
+Knowing the basics of graphic design is integral
+to working in the field of motion design, though
+it can be entered from other routes.
+My friend and fellow partner at Pentagram,
+Emily Oberman, studied graphic design
+alongside filmmaking, acting and theatre. Her
+university did not offer motion design classes
+at the time, but her combined interests and
+expertise has led her to become one of the
+most talented motion graphic designers I know.
+The most pivotal and important piece of
+animation to her, one that she always returns
+to, is a 10-minute short film by Chuck Jones
+called The Dot and the Line (1965).
+Their form is graphically so simple, but the
+dot and line have emotion and story and
+personality. If your story has a clear idea, you
+can tell it in an uncomplicated way, using simple
+shapes and movement.
+Being able to tell that an animation has a
+human touch behind it, that there’s a person
+behind the work, trying to communicate a story
+and connect with the audience is an important
+facet to a successful animation. Emily thinks
+humour and wit are helpful in recognising that
+human touch. It makes an animated piece
+come alive.
+
+
+
+                                                    “The Dot and the Line: A Romance in Lower Mathematics” (1965)
+                                                    Dir. Chuck Jones
+
+
+
+
+  BACK TO CONTENTS                                                                                                  BBC MAESTRO   116   AN INTRODUCTION TO GRAPHIC DESIGN
+                                                                The Pink Panther opening sequences are like
+                                                                little individual stories that can stand on their
+                                                                own. But their purpose is to give us information
+                                                                on the character and set the tone for the film.
+                                                                They’re funny and animated well, and you know
+                                                                what you’re in for when the movie starts.
+
+
+
+
+“The Pink Panther” (1963)
+Dir. Blake Edwards
+Title Design: DePatie-Freleng Enterprises, Inc.
+
+
+
+   BACK TO CONTENTS                               BBC MAESTRO    117   AN INTRODUCTION TO GRAPHIC DESIGN
+The Catch Me If You Can intro is a reference
+to The Pink Panther openings. Similarly, it uses
+illustration and typography to tell the story of
+the movie in an artful and captivating way. It
+doesn’t just serve the function of listing out
+credits and the movie title, it’s a beautiful piece
+that adds to the feature length film.
+
+
+
+
+                                                      “Catch Me If You Can” (2002)
+                                                      Dir. Stephen Spielberg
+                                                      Title Design: Nexus Productions / Add a Dog
+
+
+
+
+   BACK TO CONTENTS                                                                                 BBC MAESTRO   118   AN INTRODUCTION TO GRAPHIC DESIGN
+The Spider-Man: Into the Spider-Verse and
+Spider-Man: Across the Spider-Verse films
+have captivating title sequences as well as
+credit sequences at the end of the film. They
+bring the movies to life before they even start
+and they continue the films after they end.
+Even the production company logos, at the
+beginning, are stylised to suit the films, and
+they set the audience up with the world of the
+movies from the get-go.
+These three film openings were made
+decades apart, but they’re connected in the
+way they successfully capture the films they
+precede. They’re all unique and separate
+in style and storytelling from the films, but
+they give the audience new perspective and
+appreciation.
+
+
+ TA K E A W AY S
+
+
+        You can enter motion design from a
+        variety of routes, but a knowledge
+                                                   “Spider-Man: Into the Spider-Verse” (2008)
+        of graphic design is integral. Graphic     Dir. Bob Persichetti, Peter Ramsey, Rodney Rothman
+        design rules, like composition, scale,     Title Design: Alma Mater
+                                                                                                        EXERCISE
+        colour, form, typography, etc. are all
+        at play.                                                                                           Watch some of Emily’s inspirations in order to gain insight on
+                                                                                                           what makes a successful animation.
+        If you have a strong story, you can tell
+        it with very simple shapes.                                                                        Think about an opening animation which connects with the
+                                                                                                           business you are thinking of running. How would you use
+        Title sequences help set up a film,                                                                animation and design to explain what your business is to
+        giving the audience context, tone,                                                                 others? In the exercise, think about what you would want to
+        and a flavour of what’s to come.                                                                   show in these animations and why. Brainstorm some ideas.
+                                                                                                           Sketch some ideas for developing this animation and what it
+        Wit helps to communicate a human                                                                   would look like.
+        touch to the audience.
+
+
+
+
+  BACK TO CONTENTS                                                                                          BBC MAESTRO      119   AN INTRODUCTION TO GRAPHIC DESIGN
+19. Film Titles and Animation Inspirations
+
+Like with all design, styles and devices and
+techniques are invented and then borrowed
+from and used and reused. Sometimes they
+become tropes or evolve to take on new
+meaning.
+Pablo Ferro invented many techniques and
+styles that have been borrowed and used since.
+His use of handwriting or the way in which he
+cut together words and clips in Dr. Strangelove
+(1964) was influential and has been borrowed
+and reused to the extent that it’s become
+almost satirical now.
+In order to reduce the length of The Thomas
+Crown Affair (1968), he thought of showing
+multiple scenes at the same time, dividing the
+screen into a grid of ever changing images.
+This work was inventive and revolutionary, and
+it reminds me of editorial design – a clever
+design solution to a problem. His work is highly
+influential.
+Telling stories graphically, with motion, can
+be the best way to illustrate a complex idea.
+The Burlington Mills ad which shows how a
+                                                   “The Thomas Crowne Affair” (1968)
+mass-produced loom works, would not be as          Dir. Norman Jewison
+effective as still illustrations.                  Title Design: Pablo Ferro
+
+
+
+
+  BACK TO CONTENTS                                                                     BBC MAESTRO   120   AN INTRODUCTION TO GRAPHIC DESIGN
+                          Saul Bass is another very influential title
+                                                                                TA K E A W AY S
+                          designer and graphic designer. His titles for
+                          Psycho (1960) are simple. The way the type is
+                          cut feels violent and scary, but the idea is so              There are many influential motion
+                          simple and the shape and form of the letters                 designers whose work we’ve been
+                          are not complicated. It tells a story without                borrowing from and iterating on for
+                          being too flashy or giving away the whole thing.             years. Studying them and their work
+                          It’s referential and nuanced.                                will help you evolve.
+                          Some films incorporate graphic design into
+                          the film – like the scene from Fight Club when               Incorporating graphic design into
+                          the room turns into an Ikea catalogue, or in                 videos helps them feel more thoughtful.
+                          Stranger than Fiction, the film incorporates
+                          graphic design to visualise the character                    Some stories are better told in motion.
+                          counting. The care and thoughtfulness around
+                          incorporating that design, making it be a part               Simple form can be very effective
+                          of the story, and not just laid on top of it goes a          in storytelling.
+                          long way. It makes the world feel richer. This is
+                          how Emily makes her work too, she immerses             EXERCISE
+                          herself into the project in order to better
+                          understand the story her work is telling.
+                                                                                       Research and watch the work of Pablo
+                                                                                       Ferro and Saul Bass, paying attention
+                                                                                       to form and storytelling.
+
+                          It’s in the film, it’s not on top of
+                          the film. It’s part of the film.
+                          And that’s why I love it so much.
+“Psycho” (1960)           –Emily Oberman
+Dir. Alfred Hitchcock
+Title Design: Saul Bass
+
+
+
+
+   BACK TO CONTENTS                                              BBC MAESTRO    121   AN INTRODUCTION TO GRAPHIC DESIGN
+20. Film Titles and Animations in Practice
+
+Title sequences for tv shows serve a similar
+function to movie title sequences – they set
+the viewer up with the tone, and sometimes
+story, before getting into the show. Emily
+noticed that TV title sequences had got shorter
+lately. The hope, by making them shorter, is
+that viewers won’t want to skip the intro. This
+gives the designer less of an opportunity to be
+expressive and is an added challenge. We have
+a shorter amount of time to do our job – clearly
+communicate the show’s title, relay a tone
+or emotion, and tell a story in a beautiful and
+interesting way. It’s a tall order for just a few
+seconds.
+Motion designers have come to rely on witty
+devices to help with this. The title sequence
+for Girls was the word ‘Girls’ in large type, for a
+very short amount of time. But with every new
+episode, the colour of the text changed, and
+this variety became a point of interest.
+The Killing Eve titles also changed with every
+new episode - a single drop of blood that
+dripped down from a different letter, with
+every new episode.
+
+
+
+
+                                                      “Girls”                       “Killing Eve”
+                                                      Creator: Lena Dunham          Title design: Delcan & Co
+                                                      Title design: Grand Jeté
+
+
+   BACK TO CONTENTS                                                              BBC MAESTRO      122     AN INTRODUCTION TO GRAPHIC DESIGN
+                                                                                           When Emily created the titles for Bupkis, she
+                                                                                           had a similar strategy, creating eight different
+                                                                                           four second title sequences – one for each
+                                                                                           episode. Each episode’s storyline informed
+                                                                                           the design, setting the viewer up for what’s
+                                                                                           to come. The challenge of telling a different
+                                                                                           four second story, but all tied to the same
+                                                                                           overarching story, was a delight, she said.
+                                                                                           Emily doesn’t have much time to put together
+                                                                                           the Saturday Night Live opening sequences.
+                                                                                           Besides the quick turnaround, her main
+                                                                                           challenge has been to come up with new and
+                                                                                           fresh ideas using the same prompt. She’s
+                                                                                           been reinventing ‘don’t you want to hang out
+                                                                                           in NYC with these funny people?’ every three
+                                                                                           or four years for the past 28, all while staying
+                                                                                           within the brand of SNL.
+                                                                                           Because there are forms and rules to the
+                                                                                           design, she’s able to find things she hasn’t done
+                                                                                           yet, but still live in the same framework that’s
+                                                                                           been established. The tones change according
+                                                                                           to the time, too. There’s a lot to consider,
+                                                                                           including the way type moves through NYC,
+                                                                                           and the way the footage was shot.
+
+
+
+
+“Bupkis”                                           “Saturday Night Live”
+Creator: Pete Davidson, Judah Miller, Dave Sirus   Creator: Lorne Michaels
+Title design: Pentagram                            Title design: Pentagram
+
+
+
+
+   BACK TO CONTENTS                                                          BBC MAESTRO    123   AN INTRODUCTION TO GRAPHIC DESIGN
+Motion in identity work
+Emily’s favourite things about motion are
+simplicity and cacophony*. This is a lot like
+scale to me – big and simple, or detailed and
+complicated – anything in between is boring.
+Her identity work with the Russo Brothers on
+their film company, AGBO and its sub-brand,
+Gozie Agbo, are perfect examples of these
+polar opposites, and they’re both incredibly
+successful.
+The identity work Emily did for Serif, a social
+networking space for LGBTQIA+, was inspired
+by the community it serves, which, like all of
+humanity, is varied and diverse. They developed
+the brand with this in mind, but also in the
+motion graphics they made. The way fluid
+shapes and dots come together to tell the
+story of the Serif community is reminiscent of
+The Dot and the Line. Simple and effective, the
+shapes feel alive and tell an engaging story.
+The recognisability of a heartbeat in the
+identity work Emily did for Kevin Hart’s
+entertainment company, HartBeat, helps tell
+an engaging story. There’s a reveal and an ‘Aha!’
+moment when the viewer recognises the B-like
+heart shape. The mark is simple and strong, and
+can be used in a wide variety of applications.
+
+
+
+
+                                                    “AGBO”          “HartBeat”
+                                                    Pentagram       Pentagram
+                                                    “GOZIE AGBO”
+                                                    Pentagram
+
+
+
+
+  BACK TO CONTENTS                                                 BBC MAESTRO   124   AN INTRODUCTION TO GRAPHIC DESIGN
+                                              TA K E A W AY S
+
+
+                                                    TV Title sequences have got shorter and shorter, and motion
+                                                    designers have leaned on simple but engaging devices to keep
+                                                    audiences watching.
+
+                                                    Emily returns to a balance between simplicity and cacophony in
+                                                    her work to create engaging pieces.
+
+                                                    Motion can be used to create successful and iconic identities
+                                                    for organisations.
+
+
+                                               EXERCISE
+
+
+                                                    Create a flipbook using the corner of a notebook – draw a
+                                                    simple shape and with every new page, advance the shape.
+
+
+
+
+“Catch Me If You Can” (2002)
+Dir. Stephen Spielberg
+Title Design: Nexus Productions / Add a Dog
+
+
+
+
+   BACK TO CONTENTS                                   BBC MAESTRO     125   AN INTRODUCTION TO GRAPHIC DESIGN
+21. Conclusion
+
+A Career in Graphic Design                           together. I respect my partners immensely and
+                                                     we talk about design all the time.
+There was a time when going into the arts
+seemed impossible and a far stretch, but a           Social skills are important to learn in this field.
+career in graphic design is more than possible.      You will have to learn how to present to and
+If you have talent, and belief in yourself, you’ll   work with clients, how to support your work
+find a good teacher. And students in graphic         and help it develop, and help the project move
+design achieve a lot with guidance.                  along. These are important skills you’ll learn
+                                                     along the way.
+The best student doesn’t always turn out to be
+the most successful graphic designer. People         My career in design is like a surreal staircase.
+grow differently and discover themselves at          Since coming out of school with not much
+different rates. A real passion and a want to do     professional experience, the steps are very
+it will take you the furthest.                       tall, but narrow. You learn a lot within a
+                                                     very short period of time, and you make an
+After school, most design graduates find
+                                                     enormous leap. You started out not knowing
+themselves in an internship position at a
+                                                     much but it’s easier to learn a lot when you
+design firm. An intern is a helper, and maybe
+                                                     don’t know anything.
+does some work in Photoshop or helps
+generate work in systems that have already           Early on, try to learn everything you can
+been designed. Most importantly, an intern           from the place you’re working at. But don’t
+is exposed to and absorbs successful design          get stuck and try moving around. Trying
+work. They’re able to see how designers work         something different will help you grow and
+with clients. And sometimes an intern can            learn more. Don’t move around just for the
+design things themselves. But learning from          sake of moving around, and do try to find
+your surroundings at this time is valuable.          where you’ll be comfortable to stay. But in
+                                                     your early career, you should try new things.
+From interning, you may become a junior
+designer, then a designer, then a senior
+designer, and perhaps as an associate.
+No matter what, being around people who are
+like-minded is key – you learn from one another,
+you trade stories, help each other, and grow
+
+
+
+
+   BACK TO CONTENTS                                                                                        BBC MAESTRO   126   AN INTRODUCTION TO GRAPHIC DESIGN
+Career Advice                                      showing people why something is better                 Experiment, try new things, and be prepared
+When starting a project, always understand         works for me.                                          to fail. It’s okay if your ideas don’t work out.
+what the need is, why your client is doing                                                                You may have to force yourself to step out of
+                                                   Power structures and hierarchies can
+the job, and why they hired you. You should                                                               your comfort zone.
+                                                   complicate the approval process. When
+also understand the power structure of the         working with organisations, make sure you              You’ll encounter all sorts of jobs – some
+organisation, who will have the final approvals,   understand each person’s role and the power            that are energetic and positive and quick
+and all of the people you’ll be working with.      dynamics, as much as you can. Understanding            and everyone’s on the same page. And
+The general workflow for a project starts          who has the power will help you sell your ideas.       then you might work on things that are not
+with an experimental phase. You present                                                                   so interesting, and you’re tired, and bored,
+                                                   Not everything goes well all the time,
+some options and ideas, with the hope that                                                                and you might have to work through those
+                                                   sometimes you’re only partially successful,
+the client goes with one of the ideas. If they                                                            feelings. In those situations, I find that working
+                                                   and you decide it’s okay. Not every client
+do, that’s great, but the job isn’t complete.                                                             on something mundane and mind-numbing,
+                                                   is the same, everyone has an individual
+You then make iterative* changes and keep                                                                 like cleaning out a closet, will help me get
+                                                   personality and you can’t control any of those
+showing the client. You’ll likely get a long                                                              away from the problem I’m trying to solve, and
+                                                   things.
+list of feedback, and you’ll make edits based                                                             solutions start to emerge.
+on the feedback. You tell the client what to       Other challenges you may face when
+                                                                                                          Immerse yourself in other work and the world,
+expect so there are no surprises, and you          working with clients is that your ideas are
+                                                                                                          that’s where inspiration comes from. Be
+present designs in a way that’s going to make      too expensive and they’ll cost your client too
+                                                                                                          informed and broaden your mind by reading,
+them comfortable.                                  much money. Or that your work is too unusual
+                                                                                                          watching, and looking.
+                                                   for the industry they’re in. You may want them
+Usually, I’ll show the best design first, but      to make a change they’re not prepared for.
+I make sure I don’t show anything where I          You may want to use a typeface they don’t
+would regret it if it were selected. You can       like, etc. But clients will work with you if they’re
+understand a lot about the client by the way
+they make their choices.
+                                                   moved by your motivations and believe it’s the         I always think that I haven't done
+                                                   right thing to do.
+                                                                                                          my best work yet and that the
+While walking your client through your thought
+process and work, explain how your decisions
+                                                   It’ll be important for you, as a young designer,       next job is going to be the really
+                                                   to find your own personal style and way of
+are dictated by the information they gave you.     communicating. If the client is nodding and
+                                                                                                          good one.
+You want to relay that the designs are in their    maintaining eye contact, no matter how you
+favour and for their needs. You want them to       get them to do that, you’re doing a good job.
+see themselves in the stories your designs
+are telling. You want them to think ‘I could use   Don’t get complacent, don’t do the same work
+that story’.                                       over and over again because it’s successful.
+                                                   Your career will suffer, and so will your work.
+I’m not a great salesperson but I’m a good         Having a large body of work will start to foster
+teacher. I can explain to someone why              expectations about your style and how you
+something is good. I’ve found teaching and         think, and will lead to more work.
+
+
+
+
+  BACK TO CONTENTS                                                                                                   BBC MAESTRO      127   AN INTRODUCTION TO GRAPHIC DESIGN
+Design means, by definition, planning. And
+                                                  TA K E A W AY S
+I think design truly is the art of planning,
+whether that be for something small like a
+book jacket or huge like an entire city.                Graphic design is a tenable career.
+Design is about intent, but when the work is
+done, there are two things that matter to me –          You do need to have a passion and some talent, but most skills,
+that I feel great about the work that my team           technical as well as presenting to a client, you’ll learn along the way.
+and I did, and that the client feels good, too.
+When we’re all feeling good about the work,             Work with people who are like-minded.
+that’s the best.
+                                                        Try new things.
+
+                                                        Always understand who the client is, what they need, and why
+                                                        they hired you.
+I think the thing to do is find
+what you like doing and what                            Everyone has different communication styles, learn what works
+you’re good at and push that as                         for you.
+far as you can go.
+                                                        Don’t get stuck making the same thing over and over again.
+The goal is to grow, even when working to
+satisfy the needs of our clients – the goal is          Some projects are slow and boring, try not to think about the
+to strive and raise expectations of what the            problems and solutions will start to emerge.
+design can be.
+                                                        Be informed and stay inspired – read the news, watch movies,
+                                                        read books, look around.
+
+                                                        Keep growing.
+
+
+
+
+  BACK TO CONTENTS                                        BBC MAESTRO       128    AN INTRODUCTION TO GRAPHIC DESIGN
+Reading List
+
+Andel, J.                                             McNeil, P.                                         Supernew Supergraphic (Unit Editions)
+Avant-Garde Page Design 1900-1950                     The Visual History of Type: A Visual Survey of
+                                                                                                         Type Directors Club annuals
+                                                      320 Typefaces
+Bass, J., Kirkham, P.
+Saul Bass: A Life in Film and Design                  Meggs, P. B., Purvis, A, W.
+                                                      Meggs' History of Graphic Design
+Birdsall, D.
+Notes on Book Design                                  Müller, J.
+                                                      Logo Modernism (Taschen)
+                                                                                                         Watch List
+Broos, K., Hefting, P.
+Dutch Graphic Design (MIT Press)                      Müller, J.
+                                                      The History of Design Vol. 1. 1890-1959
+Depero, F.
+                                                      (Taschen)
+Depero Futurista                                                                                         The Dot and The Line
+                                                      Müller, J.
+Eisele, P. (Illustrator), Ludwig, A. (Illustrator),                                                      Pink Panther title sequence
+                                                      The History of Design Vol. 2. 1960-Today
+Naegele, I. (Illustrator),
+                                                      (Taschen)                                          Catch Me if You Can title sequence
+Futura: The Typeface (Laurence King)
+                                                      Poynor, R.                                         Into the Spiderverse opening and end credits
+Evamy, M.
+                                                      David King: Designer, Activist, Visual Historian
+Logotype (Laurence King)                                                                                 Girls title sequence
+                                                      Rendgen, S.
+Hulten, P.                                                                                               Killing Eve title sequence
+                                                      History of Information Graphics (Taschen)
+Futurism & Futurisms (Abbeville Press)
+                                                                                                         Dr. Strangelove title sequence (and the whole
+                                                      Ryan, D.
+Kelly, R. R.                                                                                             movie in general)
+                                                      Letter Perfect: The Art of Modernist
+American Wood Type 1828-1900, Notes on the
+                                                      Typography, 1896-1953                              Dr. Strangelove trailer
+Evolution of Decorated and Large Types
+                                                      (Minneapolis Institute of Arts Print & Drawing     The Thomas Crown Affair title sequence
+Koetzle, H., Wolff, C.                                Collections)
+Fleckhaus Design, Revolt, Rainbow                                                                        Burlington Mills ad
+                                                      Schalansky, J.
+(Hartmann Books)                                                                                         Fight Club (IKEA scene and whole movie in
+                                                      Fraktur mon Amour
+Lupton, E.                                                                                               general)
+                                                      Weingart, W.
+Bauhaus Typography at 100                                                                                Stranger than Fiction (whole movie)
+                                                      Typography (Lars Müller)
+Massin                                                                                                   SNL title sequence
+                                                      The Russian Avant- Garde Book 1910–1934
+Letter and Image
+                                                                                                         Bupkis title sequence
+
+
+
+
+   BACK TO CONTENTS                                                                                                BBC MAESTRO        129   AN INTRODUCTION TO GRAPHIC DESIGN
+Glossary
+
+Some styles/               Bauhaus                 Terms:                      columns and rows and        one concept               Iterative - repeating
+movements:                 1919-1933                                           margins that helps                                    a process, making
+                                                                                                           Brand system - or
+                           Minimalist, geometric                               designers with layout,                                tweaks and changes
+                                                                                                           identity system, a set
+                           shapes, negative        Justified - type            especially in editorial                               to improve it (in this
+                                                                                                           of designs and rules
+Arts & Crafts              space                   that has word and           or UI design                                          case, a design)
+                                                                                                           a company uses in
+1850 - 1914                                        letter adjustment
+                           Art Deco                                            White space - the           business, marketing, or   Experiential design
+Illustrative, decoration                           so it’s aligned to the
+                           1920 - 1940s                                        empty space between         advertising to express    - three dimensional
+                                                   left margin and right
+Art Nouveau                Geometric forms, flat                               text, images, or            themselves; this can      design that
+                                                   margin
+1890 - 1920                colour                                              symbols, like a margin      include colours, fonts,   contributes to a user’s
+Organic linework and                               Ragged - type                                           logos, and guidelines     experience of a space
+                           Swiss                                               Initial caps - An
+illustration, natural                              is aligned to the
+                           1920s -                                             oversized, sometimes        Manual - or brand         Wayfinding - the
+forms                                              left margin, and
+                           Functional, minimal,                                ornate letter at the        guidelines, a set of      ways in which people
+                                                   inconsistent on the
+Vienna Secession           clean grid systems                                  start of a paragraph        rules or guidance on      or animals orient
+                                                   right
+1897 - 1905                                                                                                how to use materials      themselves and
+                           Psychedelic                                         Pacing - the order,
+Curved, ornamental,                                Serif - a small line or                                 like designs, colours,    navigate within and
+                           1960s -                                             timing, and tempo of a
+abstract elements,                                 stroke attached to                                      fonts, logos, etc. in     between spaces
+                           Posters, mainly,                                    design, how it’s meant
+geometry                                           the end of the larger                                   future applications;
+                           intense colour                                      to be read                                            Strategy - a plan
+                                                   stroke of a letter or                                   provided to a client by
+Futurism                   combinations, curvy                                                                                       for how a business
+                                                   a symbol; letterform        Wood type - a               the designer
+1900 - 1930s               forms                                                                                                     or organisation
+                                                   that includes serifs        technology used to
+Offset text, interesting                                                                                   Sub brand - a             defines and presents
+                           Postmodernism                                       print letters; letters or
+scale and composition                              Sans serif -                                            secondary brand           themselves
+                           Colourful, collage,                                 forms are carved into
+                                                   letterform that does                                    within a company
+Dada                       abstract, playful                                   pieces of wood                                        Graphitecture
+                                                   not include serifs
+1916 - 1923                                                                                                Weight - variation in     - graphic design
+                                                                               Type foundry - a
+                                                   Roman- when a font                                      size, density or colour   incorporated into
+Constructivism                                                                 company that
+                                                   stands upright and is                                                             architecture
+1917 - 1935                                                                    designs or distributes      Scale - variation in
+                                                   not italicised
+De Stijl                                                                       typefaces                   size                      Glyph - the symbol or
+                                                   Italics - when a font is                                                          form that represents a
+1917-1931                                                                      Visual language -           Cacophony - a
+                                                   slanted slightly to the                                                           character; a letter, for
+                                                                               motifs or repeating         mixture of many
+                                                   right                                                                             example
+                                                                               designs that are            incongruous things;
+                                                   Grid spacing - or           cohesive and tied           loud and dissonant
+                                                   grid layout, is a grid of   together under
+
+
+
+   BACK TO CONTENTS                                                                        BBC MAESTRO      130    AN INTRODUCTION TO GRAPHIC DESIGN
+Glossary
+
+Important Artists    Alfred Roller          Fortunato Depero       Edward McKnight      Lou Dorfsman            Pierre Mendell        William Golden
+to know/research                                                   Kauffer
+                     Talwin Morris          Jan Tschichold                              Roman Cieślewicz        Silence = Death       Thomas Miller
+                                                                   Lester Beall                                 Project
+                     William Morris         Herbert Bayer                               Rudolph de Harak                              Gio Fuga
+Rob Roy Kelly                                                      Dario Bernazzoli                             Philippe Apeloig
+                     Josef Hoffmann         Heinz Shulz                                 Heinz Edelman                                 Ralph E. Eckerstrom
+Paul McNeil                                                        Horst P. Horst                               Neville Brody
+                     Ludwig Hohlwein        John Heartfield                             Seymour Chwast                                Tom Geismar
+Stanislaw Zagorski                                                 Raymond Loewy                                Koichi Sato
+                     Lucian Bernhard        Piet Zwart                                  Bruno Munari                                  Pedro Ramirez
+David King                                                         J. Howard Miller                             Stefan Sagmeister     Vazquez
+                     Leonetto Cappiello     Jean Carlu                                  Wolfgang Schmidt
+Willy Fleckhaus                                                    Peter Birkhäuser                             Michael Bierut        Lance Wyman
+                     Alfred Leete           Max Ponty                                   Victor Moscoso
+Derek Birdsall                                                     F.H.K. Henrion                               Shepard Fairey        Eduardo Terrazas
+                     James Montgomery       Róbert Berény                               Lee Conklin
+Tony Brook           Flagg                                         Alexey Brodovitch                            Studio Feixen         Tom Shortlidge
+                                            Istvan Irsai                                Andy Warhol
+Massimo Vignelli     Frank Walts                                   Cipe Pineles                                 Jaemin Lee Studio     Carolyn Davidson
+                                            Takashi Kono                                Milton Glaser
+Charles Rennie       Theo Van Doesburg                             Paul Rand                                    Edel Rodriguez        Alan Fletcher
+                                            Max Bill                                    Tadanori Yokoo
+Mackintosh
+                     El Lissitzky                                  Max Huber                                    Hector Guimard        Wolff Olins
+                                            Dorothy and Otis                            Tomi Ungerer
+Jules Chéret
+                     Alexander              Shepard                Raymond Savignac                             Thorvald Bindesboll   Kashiwa Sato
+                                                                                        Niklaus Troxler
+Fritz Rehm           Rodchenko
+                                            Harry Beck             Robert Gage                                  Peter Behrens         Bruce Mau Design
+                                                                                        Ikko Tanaka
+Edward Penfield      Kurt Schwitters
+                                            Munetsugu Satomi       Josef Müller-                                Pierre de Coubertin   Mevis and Van
+                                                                                        Wolfgang Weingart
+Henri de Toulouse-   Werner Graul                                  Brockmann                                                          Deursen
+                                            Domenico                                                            Edward Johnston
+Lautrec                                                                                 April Greiman
+                     Fritz Kahn             Chiaudrero             Gene Federico                                                      DesignStudio
+                                                                                                                AR Saunders
+Hans Heinrich                                                                           Grapus
+                     Vladimir and Georgii   Xanti Schawinsky       Ladislav Sutnar                                                    Pentagram
+Christiansen                                                                                                    Edward Young
+                     Stenberg                                                           Peter Saville
+                                            Herbert Matter         Armin Hofmann
+Fidus                                                                                                           Angus Hyland
+                     Paul Schuitema                                                     Rosmarie Tissi
+                                            Peter Birkhäuser       Henryk Tomaszewski
+Otto Eckmann                                                                                                    Will Münch
+                     Cassandre                                                          Takenobu Igarashi
+                                            Benjamin Jorj Harris   Saul Bass
+Henry van de Velde
+
+
+
+
+  BACK TO CONTENTS                                                                                BBC MAESTRO    131   AN INTRODUCTION TO GRAPHIC DESIGN
+

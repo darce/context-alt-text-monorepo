@@ -8,7 +8,7 @@ Each section is a table: `ID | Trigger | Rule | Answers | T·P | Src`. **IDs are
 
 **Row contract**: trigger observable in a roadmap, metric, conversation, or market signal; rule falsifiable; question answerable before the decision is made. New rules from lived outcomes enter at tier J with the outcome as provenance.
 
-§8 is explicitly **opinion, not distillation** — Claude Fable 5's product judgment for Alt Context, dated, cited against the rules above and the July 2026 roadmaps. Treat it as a strong-form input to argue with, not as source material.
+§9 is explicitly **opinion, not distillation** — Claude Fable 5's product judgment for Alt Context, dated, cited against the rules above and the July 2026 roadmaps. Treat it as a strong-form input to argue with, not as source material.
 
 ## 1. Strategy & Bets
 
@@ -117,13 +117,32 @@ Each section is a table: `ID | Trigger | Rule | Answers | T·P | Src`. **IDs are
 | OPS-12 | hiring/partnering on charisma | **Record over presence** — underweight the interview, overweight the track record | What would the dossier say with the charm muted? | S·o | poor-charlies-almanack ch-10 |
 | OPS-13 | order/plan omits rationale | **Braun why-rule** — who/what/when/where/why or rewrite | Why would a smart skeptic comply? | S·o | poor-charlies-almanack ch-6 |
 
-## 7. Cross-source tensions worth keeping
+## 7. Bootstrap Brand Economics
+
+> Added 2026-07-09 from the design-lane batch. Source: Berg, *Porn Work* (scholarly labor study of the adult-content economy) — distilled for its transferable zero-capital creator mechanics: how workers build income under stigma, platform hostility, and no funding. The rules generalize to any bootstrap product; provenance in `literature/extracted/design/distilled/porn-work.md`.
+
+| ID | Trigger | Rule | Answers | T·P | Src |
+| --- | --- | --- | --- | --- | --- |
+| BOOT-01 | zero-capital brand building | **Own before polish** — the first assets are rights, name, and a direct contact path; polish comes after ownership | If the platform dies tomorrow, what residual remains? | B·s | porn-work ch-3 |
+| BOOT-02 | work sold once with no rights retained | **Scene-as-ad** — treat each visible unit as promotional labor for owned recurring streams | What owned product does this unit sell? | S·g | porn-work ch-4 |
+| BOOT-03 | partner/platform pushes costs onto the creator | **Turn forced cost into product** — recapture imposed costs as fan-facing offerings under your own name | Does this cost build their equity or ours? | S·o | porn-work ch-4 |
+| BOOT-04 | pricing your own labor/service | **Eyes-closed rate floor** — below the feel-good price the asset burns out; resentment compounds | Would I resent this rate after the platform's cut? | B·o | porn-work ch-7 |
+| BOOT-05 | intimacy/access/attention as the product | **Bounded authenticity** — real connection, metered and calendared; the boundary is what makes it sustainable | Where does the performance end on the calendar? | S·o | porn-work ch-8 |
+| BOOT-06 | free samples/tiers offered | **Freemium kill switch** — free exists only with a stated conversion hypothesis | What paid action does this free unit force? | S·g | porn-work ch-10 |
+| BOOT-07 | one platform carries the revenue | **Hostile-landlord assumption** — multi-home the masters and the rails before you need to | Can a ToS change kill >50% of revenue in a week? | B·s | porn-work ch-9 |
+| BOOT-08 | follower counts as KPIs | **Payers per 1k followers** — optimize paid conversion, not reach | How many payers per thousand? | S·g | porn-work ch-9 |
+| BOOT-09 | collab/trade arrangements | **Symmetric residual trade** — refuse partners who keep the files and the larger paid audience | Who owns the files, and whose list grows? | S·g | porn-work ch-6 |
+| BOOT-10 | always-on hustle as the plan | **Rest as COGS** — recovery is a cost of goods; price and schedule it | Is recovery costed into the rate card? | S·o | porn-work ch-10 |
+| BOOT-11 | scope changes mid-delivery | **Renegotiate on change** — new deliverable, new deal; silence re-prices you at zero | Did terms change without a new price? | B·o | porn-work ch-11 |
+| BOOT-12 | "just refuse bad clients" advice | **Stratified refusal power** — build the alternate stream before moralizing about walking away | Who in this market can actually walk? | J·s | porn-work ch-5 |
+
+## 8. Cross-source tensions worth keeping
 
 - **Conviction vs falsification**: [STRAT-07] (Karp: don't let the crowd veto) ↔ [PROD-04] (Lean UX: evidence kills darlings). Resolution by object: *values and positioning* run on conviction; *features and funnels* run on falsification. Alt Context's privacy positioning is conviction territory; any given workbench feature is not.
 - **Novelty vs precision**: [GTM-08] (KLF: novelty wins first exposure) ↔ [AIPX-07] (Ameisen: precision-first for advice products). First exposure can be novel; the *output* can never be sloppy in a trust product.
 - **Niche membership vs consequential problems**: [GTM-03] (Ferriss: sell to a tribe you belong to) ↔ [STRAT-06] (Karp: work on what matters). Accessibility is the rare wedge that satisfies both.
 
-## 8. Opinions — Alt Context roadmap (Claude Fable 5, 2026-07-09)
+## 9. Opinions — Alt Context roadmap (Claude Fable 5, 2026-07-09)
 
 > My judgment, not distillation. Grounded in: `docs/roadmaps/context-aware-image-description-roadmap-2026-06-13.md`, `docs/roadmaps/public-mvp-ux-polish-roadmap-2026-07-04.md` (E21), `roadmap-saas-operations.md`, and the state of `apps/prototype-wp-alt-context` + `apps/prototype-description-service`. Argue with these; they are positions, not findings.
 
@@ -138,4 +157,4 @@ Each section is a table: `ID | Trigger | Rule | Answers | T·P | Src`. **IDs are
 
 ## Consumption
 
-Inline `[ID]` citations in roadmaps, scopes, epic docs, and pricing/GTM discussions the way engineering docs cite `[RES-01]`. When a §8 opinion is validated or falsified by real outcomes, record the outcome next to it and promote/demote it — opinions age; the rules above mostly don't.
+Inline `[ID]` citations in roadmaps, scopes, epic docs, and pricing/GTM discussions the way engineering docs cite `[RES-01]`. When a §9 opinion is validated or falsified by real outcomes, record the outcome next to it and promote/demote it — opinions age; the rules above mostly don't.

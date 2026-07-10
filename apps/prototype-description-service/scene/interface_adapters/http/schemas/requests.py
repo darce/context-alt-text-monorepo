@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -119,9 +119,15 @@ class DescribeImageEnvelope(BaseModel):
         default=False,
         description="When true, skip description inference (WP 7.1 mark-as-decorative).",
     )
+    tier: Literal["cpu", "gpu"] | None = Field(default=None, description="Optional detailed-tier routing hint.")
 
     @field_validator("tenant_id")
     @classmethod
     def _canonical_uuid(cls, value: str) -> str:
         # uuid.UUID() raises ValueError on malformed input -> pydantic ValidationError.
         return str(uuid.UUID(value))
+
+
+# NOTE (WBUX-3): the async bulk describe submit is now multipart/form-data
+# (tenant_id + media_ids form fields + one image_<media_id> file part each), so
+# there is no JSON body model here — parsing lives in the describe_run router.

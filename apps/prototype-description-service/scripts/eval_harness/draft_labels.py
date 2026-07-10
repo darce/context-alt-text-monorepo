@@ -11,10 +11,20 @@ from __future__ import annotations
 
 import hashlib
 import re
+import unicodedata
 from pathlib import Path
 
 from .manifest import ManifestError
 from .naming import IMAGE_EXTS, display_name, entity_slug
+
+
+def normalize_rel_path(rel_path: str) -> str:
+    """NFC-normalize a relative path for stable string comparison (S7-03).
+
+    Fixture filenames can flip NFC/NFD across rsync hosts; compare and key on
+    a single normalization form so draft-vs-golden reconcile is host-stable.
+    """
+    return unicodedata.normalize("NFC", rel_path)
 
 
 def generate_draft_manifest(fixtures_dir: str) -> tuple[dict, list[str]]:
@@ -67,7 +77,7 @@ def generate_draft_manifest(fixtures_dir: str) -> tuple[dict, list[str]]:
             )
         entries.append(
             {
-                "path": f"mock_images/{image.name}",
+                "path": normalize_rel_path(f"mock_images/{image.name}"),
                 "sha256": hashlib.sha256(image.read_bytes()).hexdigest(),
                 "media_id": media_id,
                 # Draft floor: at least the matched identities. The operator sets
@@ -75,6 +85,8 @@ def generate_draft_manifest(fixtures_dir: str) -> tuple[dict, list[str]]:
                 "face_count": len(matched),
                 "present_identities": matched,
                 "context_pack": {},
+                # v2 requires the key; operator fills a real caption during review (S6-01).
+                "base_caption": "",
                 "must_right": [],
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},

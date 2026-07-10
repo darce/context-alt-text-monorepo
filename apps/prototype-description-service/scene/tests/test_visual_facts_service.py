@@ -165,8 +165,8 @@ def test_response_is_full_15_field_contract():
         svc = VisualFactsService(adapter=SeededDescriptionAdapter())
         r = await svc.describe(tenant_id=uuid.uuid4(), media_id=1, image_bytes=b"x", context={"a": 1})
         dumped = r.model_dump()
-        # 15 core + 3 E19-4a preview + 1 E20-FUSION attachment_provenance
-        assert len(dumped) == 19
+        # 17 core + 3 E19-4a preview + 1 E20-FUSION attachment_provenance
+        assert len(dumped) == 21
         assert dumped["generic_draft"] is None and dumped["named_draft"] is None
         assert dumped["provider_disclosure"]["provider"] == "none"
         assert dumped["context_used"] == {"sources": [], "applied": False}

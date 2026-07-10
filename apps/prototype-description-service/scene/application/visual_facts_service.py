@@ -30,7 +30,7 @@ from scene.application.visual_facts_pass import (
     VisualFactsPriorSource,
 )
 from scene.config.profiles import DescriptionProfile
-from scene.domain.description import DescriptionAdapterKind, ProviderMode, RetentionClass
+from scene.domain.description import DescriptionAdapterKind, DescriptionResultTier, ProviderMode, RetentionClass
 from scene.interface_adapters.http.schemas.requests import ContextPack
 from scene.interface_adapters.http.schemas.responses import (
     AttachmentFactProvenance,
@@ -66,6 +66,52 @@ class DescriptionMetrics(Protocol):
 
 def _elapsed_ms(start: float) -> int:
     return max(0, int((time.perf_counter() - start) * 1000))
+
+
+def build_visual_facts_envelope(
+    *,
+    result: AdapterResult,
+    adapter: DescriptionAdapter,
+    tenant_id: uuid.UUID,
+    media_id: int,
+    image_bytes: bytes,
+    context: Mapping[str, Any] | None,
+    tier: DescriptionResultTier,
+    result_generation: int,
+    duration_ms: int,
+    retention_class: RetentionClass = RetentionClass.RETAIN_ALL,
+) -> dict[str, Any]:
+    """Build the 17-field VisualFactsResponse envelope from an adapter result."""
+    image_hash = compute_image_hash(image_bytes)
+    context_hash = compute_context_hash(context)
+    provider = _PROVIDER_FOR_ADAPTER[adapter.kind]
+    response = VisualFactsResponse(
+        tenant_id=str(tenant_id),
+        media_id=media_id,
+        image_hash=image_hash,
+        context_hash=context_hash,
+        adapter=adapter.kind,
+        model_id=adapter.model_id,
+        model_version=adapter.model_version,
+        prompt_or_task_version=adapter.prompt_or_task_version,
+        visual_facts=VisualFacts(
+            caption=result.caption,
+            objects=list(result.objects),
+            ocr_text=result.ocr_text,
+        ),
+        alt_text_draft=result.alt_text_draft,
+        context_used=ContextUsed(sources=list(result.context_sources), applied=result.context_applied),
+        provider_disclosure=ProviderDisclosure(
+            provider=provider,
+            left_service_boundary=provider is ProviderMode.HOSTED,
+        ),
+        cached=False,
+        duration_ms=duration_ms,
+        retention_class=retention_class,
+        tier=tier,
+        result_generation=result_generation,
+    )
+    return response.model_dump(mode="json")
 
 
 def _phrase_boxes_to_json(phrase_boxes) -> list[dict[str, Any]] | None:
@@ -399,6 +445,10 @@ class VisualFactsService:
             duration_ms=duration_ms,
             retention_class=self._retention,
             attachment_provenance=attachment_provenance,
+            tier=DescriptionResultTier.FINAL_GPU
+            if self._adapter.kind is DescriptionAdapterKind.GPU
+            else DescriptionResultTier.PROVISIONAL_CPU,
+            result_generation=1,
         )
 
     def _row_to_response(
@@ -425,6 +475,10 @@ class VisualFactsService:
             cached=cached,
             duration_ms=duration_ms,
             retention_class=row.retention_class,  # type: ignore[arg-type]  # FIXME(MAINT-descsvc-mypy-greenup-20260621): row.retention_class is a DB str; VisualFactsResponse expects RetentionClass enum — flagged to VLM/E19 owner (see handoff finding)
+            tier=DescriptionResultTier.FINAL_GPU
+            if row.adapter == DescriptionAdapterKind.GPU.value
+            else DescriptionResultTier.PROVISIONAL_CPU,
+            result_generation=1,
         )
 
     def _response_to_row(self, response: VisualFactsResponse) -> ImageDescription:

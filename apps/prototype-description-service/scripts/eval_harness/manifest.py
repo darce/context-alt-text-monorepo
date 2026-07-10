@@ -94,18 +94,31 @@ class GoldenEntry(BaseModel):
     face_count: int = Field(ge=0)
     present_identities: list[str]
     context_pack: ContextPack = Field(default_factory=ContextPack)
-    base_caption: str | None = None
+    # VLMFIX-S3-03: str only (not Optional) so null fails validation; use "" when N/A.
+    base_caption: str = ""
     must_right: list[str]
     easy_wrong: list[str]
     policy: EntryPolicy
     # E20-FUSION Slice 4: optional mis-attachment labels (absent on non-fusion corpora).
     expected_attachments: list[ExpectedAttachment] = Field(default_factory=list)
+    # Per-entry opt-out for corpora that intentionally omit a reference caption
+    # without using empty string (reserved; loader also rejects JSON null).
+    base_caption_optional: bool = False
 
     @field_validator("sha256")
     @classmethod
     def _sha256_is_hex(cls, value: str) -> str:
         if not _SHA256_RE.fullmatch(value):
             raise ValueError("sha256 must be 64 lowercase hex chars")
+        return value
+
+    @field_validator("base_caption", mode="before")
+    @classmethod
+    def _base_caption_not_null(cls, value: object) -> object:
+        if value is None:
+            raise ValueError(
+                "base_caption must be a string (use empty string when not applicable; JSON null is rejected)"
+            )
         return value
 
     @model_validator(mode="after")
@@ -162,6 +175,27 @@ def load_manifest(path: str, images_dir: str | None = None) -> GoldenManifest:
         raw = json.loads(manifest_path.read_text())
     except (OSError, json.JSONDecodeError) as exc:
         raise ManifestError(f"golden manifest unreadable or malformed JSON: {exc}") from exc
+
+    # v2 corpus contract (S6-01 / rg-008): base_caption is a first-class field, not
+    # an optional golden-only convention. Require the key on every entry so
+    # consumers can index entry["base_caption"] without KeyError; use "" when the
+    # corpus does not author a reference caption (e.g. bake-off subset).
+    if isinstance(raw, dict) and raw.get("manifest_version") == SUPPORTED_MANIFEST_VERSION:
+        for raw_entry in raw.get("entries") or []:
+            if not isinstance(raw_entry, dict):
+                continue
+            if "base_caption" not in raw_entry:
+                raise ManifestError(
+                    f"manifest_version {SUPPORTED_MANIFEST_VERSION} requires 'base_caption' on "
+                    f"every entry (missing on media_id={raw_entry.get('media_id')!r} path="
+                    f"{raw_entry.get('path')!r}); use empty string when not applicable"
+                )
+            if raw_entry.get("base_caption") is None and not raw_entry.get("base_caption_optional"):
+                raise ManifestError(
+                    f"manifest_version {SUPPORTED_MANIFEST_VERSION} rejects null base_caption "
+                    f"(media_id={raw_entry.get('media_id')!r} path={raw_entry.get('path')!r}); "
+                    f"use empty string when not applicable, or set base_caption_optional=true"
+                )
 
     try:
         manifest = GoldenManifest.model_validate(raw)

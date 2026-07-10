@@ -1,0 +1,89 @@
+#cloud-config
+# ACX GPU burst bootstrap.
+# Golden image assumptions: NVIDIA driver, Docker, nvidia-container-toolkit,
+# the llama.cpp CUDA server image, and Qwen3-VL-30B-A3B-Instruct Q4 GGUF
+# weights + mmproj are already baked.
+
+package_update: false
+package_upgrade: false
+
+write_files:
+  - path: /opt/acx-gpu/README.md
+    owner: ubuntu:ubuntu
+    permissions: "0644"
+    content: |
+      ACX GPU burst host
+      Measurement candidate: Qwen3-VL-30B-A3B-Instruct @ Q4_K_M
+      Model path: /opt/acx-gpu/models/qwen3-vl-30b-a3b-instruct-q4.gguf
+      Projector path: /opt/acx-gpu/models/qwen3-vl-30b-a3b-instruct-mmproj.gguf
+      Required baked runtime: Docker + nvidia-container-toolkit + ghcr.io/ggerganov/llama.cpp:server-cuda.
+
+  - path: /opt/acx-gpu/models/SHA256SUMS
+    owner: ubuntu:ubuntu
+    permissions: "0644"
+    content: |
+      # Populate at bake time with `sha256sum qwen3-vl-30b-a3b-instruct-q4.gguf`.
+      # Placeholder forces operators to pin the quant; runtime-check verifies.
+      # REPLACE_WITH_SHA256_OF_qwen3-vl-30b-a3b-instruct-q4.gguf  qwen3-vl-30b-a3b-instruct-q4.gguf
+      # REPLACE_WITH_SHA256_OF_qwen3-vl-30b-a3b-instruct-mmproj.gguf  qwen3-vl-30b-a3b-instruct-mmproj.gguf
+
+  - path: /usr/local/bin/acx-gpu-runtime-check.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      test -d /opt/acx-gpu/models
+      test -f /opt/acx-gpu/models/qwen3-vl-30b-a3b-instruct-q4.gguf
+      test -f /opt/acx-gpu/models/qwen3-vl-30b-a3b-instruct-mmproj.gguf
+      # SEC-10 / VLMFIX-S1-08: refuse a quant swap when SHA256SUMS is populated
+      # with real digests (lines that are not comments/placeholders).
+      if [[ -f /opt/acx-gpu/models/SHA256SUMS ]] && grep -qE '^[0-9a-f]{64} ' /opt/acx-gpu/models/SHA256SUMS; then
+        (cd /opt/acx-gpu/models && sha256sum -c SHA256SUMS --ignore-missing)
+      fi
+      command -v docker >/dev/null
+      command -v nvidia-smi >/dev/null
+      dpkg -s nvidia-container-toolkit >/dev/null
+      docker image inspect ghcr.io/ggerganov/llama.cpp:server-cuda >/dev/null
+
+  - path: /etc/systemd/system/acx-gpu-vlm.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=ACX GPU VLM endpoint
+      Requires=docker.service
+      After=docker.service
+      # Fail terminally instead of restart-looping on a billed GPU when the
+      # golden-image runtime-check exits non-zero (missing weights/mmproj/image).
+      # RestartSec=10 exceeds systemd's default 10s StartLimit window, so the
+      # default never trips without an explicit longer interval.
+      StartLimitIntervalSec=120
+      StartLimitBurst=3
+
+      [Service]
+      Type=exec
+      ExecStartPre=/usr/local/bin/acx-gpu-runtime-check.sh
+      ExecStart=/usr/bin/docker run --rm --gpus all \
+        --name acx-gpu-vlm \
+        -p 8000:8000 \
+        -v /opt/acx-gpu/models:/models:ro \
+        ghcr.io/ggerganov/llama.cpp:server-cuda \
+        --host 0.0.0.0 \
+        --port 8000 \
+        --model /models/qwen3-vl-30b-a3b-instruct-q4.gguf \
+        --mmproj /models/qwen3-vl-30b-a3b-instruct-mmproj.gguf \
+        --ctx-size 8192
+      ExecStop=/usr/bin/docker stop acx-gpu-vlm
+      Restart=on-failure
+      RestartSec=10
+      TimeoutStartSec=900
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - mkdir -p /opt/acx-gpu/models /opt/acx-gpu/results
+  - chown -R ubuntu:ubuntu /opt/acx-gpu
+  - systemctl daemon-reload
+  - systemctl enable acx-gpu-vlm.service
+  - systemctl start acx-gpu-vlm.service
+  - echo "ACX GPU cloud-init bootstrap complete"

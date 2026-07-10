@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://context-alt-text.dev/schemas/image-description-response.schema.json",
   "title": "VisualFactsResponse",
-  "description": "Response of POST /scene/describe/multipart. All 15 fields are required so model/provider provenance and retention state are unavoidable on the wire. The 15 core fields are required; generic_draft/named_draft/naming_provenance are E19-4a additive optional preview fields (draft-only, never written to alt text); attachment_provenance is the E20-FUSION additive optional Stage-2 per-fact attachment provenance.",
+  "description": "Response of POST /scene/describe/multipart. All 17 core fields are required so model/provider provenance, tier state, and retention state are unavoidable on the wire. generic_draft/named_draft/naming_provenance are E19-4a additive optional preview fields (draft-only, never written to alt text); attachment_provenance is the E20-FUSION additive optional Stage-2 per-fact attachment provenance.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -20,7 +20,9 @@
     "provider_disclosure",
     "cached",
     "duration_ms",
-    "retention_class"
+    "retention_class",
+    "tier",
+    "result_generation"
   ],
   "properties": {
     "tenant_id": {
@@ -43,6 +45,7 @@
       "enum": [
         "seeded",
         "local_cpu",
+        "gpu",
         "hosted_provider"
       ]
     },
@@ -136,6 +139,17 @@
         "dispose_after_ack",
         "purge_on_demand"
       ]
+    },
+    "tier": {
+      "type": "string",
+      "enum": [
+        "provisional_cpu",
+        "final_gpu"
+      ]
+    },
+    "result_generation": {
+      "type": "integer",
+      "minimum": 1
     },
     "generic_draft": {
       "type": [

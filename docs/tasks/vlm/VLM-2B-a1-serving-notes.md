@@ -51,8 +51,24 @@ Serving for the Slice 4 live runs uses the bench flags **plus `--image-max-token
 ```bash
 llama-server --threads 3 --parallel 1 --ctx-size 8192 --image-max-tokens 1536 \
   -m <model>.gguf --mmproj <mmproj>.gguf --host 127.0.0.1 --port 8099
-# driver: python -m scripts.eval_harness.bakeoff --endpoint http://127.0.0.1:8099 \
-#   --model-id <id> --model-version Q4_K_M --timeout 900 [--no-think]
 ```
+
+### Driver (live bake-off)
+
+Run from `apps/prototype-description-service` (the module path `scripts.eval_harness` only resolves there). Both env vars are required safety/corpus gates — `bakeoff` exits immediately without them:
+
+```bash
+cd apps/prototype-description-service
+export ACX_EVAL_LIVE=1
+export GOLDEN_IMAGES_DIR=/path/to/golden-fixtures   # rsync-bootstrapped copy; see scene/tests/seed/README.md
+uv run python -m scripts.eval_harness.bakeoff \
+  --endpoint http://127.0.0.1:8099 \
+  --model-id <id> \
+  --model-version Q4_K_M \
+  --timeout 900 \
+  --manifest scene/tests/seed/bakeoff_golden.json
+```
+
+For reasoning-tuned checkpoints, add the optional `--no-think` flag so the model does not burn the token budget on chain-of-thought before emitting a caption.
 
 The laptop drives the endpoint through an SSH tunnel (`ssh -L 8099:127.0.0.1:8099 …`), so no candidate port is ever exposed off-box.

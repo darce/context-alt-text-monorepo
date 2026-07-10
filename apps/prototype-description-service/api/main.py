@@ -1,6 +1,7 @@
 import logging
 import os
 import subprocess
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -132,6 +133,28 @@ def _check_dev_key_guard() -> None:
     )
 
 
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    # WBUX-4 INT-02: the bulk describe worker runs in-process, so a prior restart
+    # can strand a run non-terminal (the frontend would then poll it forever).
+    # Reclaim orphaned runs to a terminal state before serving. Best-effort:
+    # never block boot on a reclaim failure.
+    try:
+        from db.session import async_session_factory
+        from scene.application.describe_run_repository import run_startup_reclaim
+
+        reclaimed = await run_startup_reclaim(async_session_factory)
+        if reclaimed:
+            logging.getLogger("db.startup").info(
+                "Reclaimed %d interrupted describe run(s) at startup", reclaimed
+            )
+    except Exception:  # noqa: BLE001 - startup reclaim is best-effort
+        logging.getLogger("db.startup").warning(
+            "describe-run startup reclaim failed", exc_info=True
+        )
+    yield
+
+
 def create_app() -> FastAPI:
     # Log version info at startup
     _log_startup_info()
@@ -144,6 +167,7 @@ def create_app() -> FastAPI:
         title="Prototype Description Service",
         version="0.1.0",
         description="Experimental rewrite scaffolding for the description service.",
+        lifespan=_lifespan,
     )
 
     security_settings = get_security_settings()
@@ -165,7 +189,11 @@ def create_app() -> FastAPI:
     app.add_middleware(
         UploadSizeLimitMiddleware,
         max_bytes=recognition_settings.max_upload_bytes,
-        paths={"/recognition/analyze/multipart", "/scene/describe/multipart"},
+        paths={
+            "/recognition/analyze/multipart",
+            "/scene/describe/multipart",
+            "/scene/describe/async",
+        },
     )
 
     initialize_session_dependency_circuit_breaker(app)

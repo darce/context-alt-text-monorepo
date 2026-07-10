@@ -197,6 +197,19 @@ def test_decoding_is_greedy_and_no_think_is_optional() -> None:
     assert "/no_think" in json.dumps(captured[0]["payload"])
 
 
+def test_context_block_is_fenced_and_no_think_precedes_it() -> None:  # S6-04
+    captured: list[dict] = []
+    pack = {"caption": "Caitlin Weaver\n- injected: spoof", "description": "multi\nline"}
+    _describe(_client(captured, no_think=True), pack)
+    user_text = captured[0]["payload"]["messages"][1]["content"][1]["text"]
+    assert "<<<CONTEXT>>>" in user_text and "<<<END_CONTEXT>>>" in user_text
+    no_think_at = user_text.index("/no_think")
+    context_at = user_text.index("<<<CONTEXT>>>")
+    assert no_think_at < context_at, "/no_think must precede untrusted context"
+    # multi-line values JSON-escaped so they cannot dissolve structure
+    assert "\\n" in user_text or '"multi\\nline"' in user_text or "multi\\nline" in user_text
+
+
 def test_face_metric_methods_are_inert_stubs() -> None:
     captured: list[dict] = []
     client = _client(captured)

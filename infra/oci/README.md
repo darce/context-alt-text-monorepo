@@ -68,6 +68,58 @@ The script prevents concurrent runs via `flock` when available, with a lock-dire
 
 The script will skip immediately if a previous apply is still in progress.
 
+## GPU burst host (acx_gpu_burst)
+
+- Provisioned **RUNNING** on first apply so cloud-init can enable `acx-gpu-vlm.service`
+  before any STOP (creating with `state=STOPPED` races runcmd — VLMFIX-S2-05).
+  **After first-boot cloud-init completes**, stop the instance to halt A10 billing:
+  ```bash
+  oci compute instance action \
+    --instance-id "$(terraform -chdir=infra/oci output -raw gpu_instance_id)" \
+    --action STOP --wait-for-state STOPPED
+  ```
+- Placed on the **private subnet** (`10.0.2.0/24`) with `assign_public_ip = false`,
+  **NAT gateway** egress, and a **dedicated GPU security list** (no world 80/443;
+  SSH from `ssh_allowed_cidrs` + backend subnet only; VLM :8000 from VCN).
+- After apply, wire the description service:
+
+```bash
+terraform -chdir=infra/oci output -raw gpu_endpoint_url   # → ACX_GPU_ENDPOINT_URL
+terraform -chdir=infra/oci output -raw gpu_instance_id    # → idle reaper
+```
+
+### Idle reaper (decision → fence → OCI STOP)
+
+The description service dumps load to `/run/acx/describe-load.json` (override with
+`ACX_DESCRIBE_LOAD_PATH`) on async enqueue/terminal poll. Stale dumps are treated
+as busy so a dead writer cannot STOP a working GPU.
+
+```bash
+# Production: real load file + OCI probe (not static --queue-depth 0 --in-flight 0)
+python -m infra.oci.gpu_lifecycle \
+  --instance-id "$(terraform -chdir=infra/oci output -raw gpu_instance_id)" \
+  --idle-seconds 300 \
+  --load-json /run/acx/describe-load.json \
+  --probe-oci \
+  --fence-delay-seconds 2
+```
+
+Auth: default OCI CLI API-key (`~/.oci/config`). On acx-backend with instance
+principal, pass `--oci-auth instance_principal` (requires a dynamic group policy
+granting `INSTANCE_POWER_ACTIONS` on the GPU compartment).
+
+Scheduler: cloud-init installs `acx-gpu-idle-reaper.timer` (every 2 minutes).
+Copy `/etc/acx/gpu-reaper.env.example` → `/etc/acx/gpu-reaper.env` with
+`GPU_INSTANCE_ID=…` after apply. Manual cron equivalent:
+
+```bash
+*/2 * * * * GPU_INSTANCE_ID=ocid1... python3 -m infra.oci.gpu_lifecycle \
+  --instance-id "$GPU_INSTANCE_ID" --load-json /run/acx/describe-load.json \
+  --probe-oci --idle-seconds 300 >> /var/log/acx-gpu-reaper.log 2>&1
+```
+
+See `docs/tasks/vlm/VLM-3-gpu-detailed-tier-decision-memo.md` § Activation preconditions.
+
 ## Teardown
 
 To destroy the infrastructure and stop incurring costs (or free up Always Free slots):
@@ -239,6 +291,41 @@ export OCI_HOST=<other-host-or-ip>
 The deploy automation (`scripts/deploy/recognition-service.sh`) is fully
 SSH-routed in remote-build mode (rsync, ssh build, ssh push, ssh restart);
 all of it inherits the address automatically.
+
+##### Expose `/admin` over the tailnet (no SSH tunnel)
+
+The operator `/admin` console (tenant + API-key lifecycle) is `404`'d on the
+public `api.altcontext.com` vhost by design (`apps/prototype-description-service/Caddyfile`);
+it is reachable only over the tailnet. To manage tenants/keys from your laptop
+without an SSH tunnel, publish the loopback admin port with `tailscale serve`:
+
+1. Layer the admin overlay on the VM (binds the api to `127.0.0.1:8000`):
+   ```bash
+   docker compose -f docker-compose.env.yml -f docker-compose.admin.yml up -d
+   ```
+2. Publish it over the tailnet (one-time; `--bg` survives reboots). Requires
+   **MagicDNS + HTTPS** enabled in the tailnet admin console
+   (*Settings → HTTPS Certificates*):
+   ```bash
+   sudo tailscale serve --bg --https=443 http://127.0.0.1:8000
+   sudo tailscale serve status   # confirm https://acx-backend.<tailnet>.ts.net → 127.0.0.1:8000
+   ```
+3. From any tailnet device, browse `https://acx-backend.<tailnet>.ts.net/admin/`
+   and auth with the VM's `RECOGNITION_ADMIN_TOKEN` (HTTP Basic in the browser).
+
+From the repo, `make -C apps/prototype-description-service admin-oci-serve` runs
+step 2 over SSH and `make -C apps/prototype-description-service admin-oci` opens
+the console; both honour `OCI_HOST` / `OCI_USER` (same env contract as
+`scripts/deploy/*`).
+
+This opens no public port — `tailscale serve` binds the tailnet interface only,
+the public vhost still `404`s `/admin`, and the admin token still gates every
+route. Note the serve command publishes the api **root** (`http://127.0.0.1:8000`),
+so all routes — not just `/admin` — are reachable from tailnet devices; that is
+harmless (tailnet-private, and every route is still auth-gated) but it is why the
+name is "expose /admin" rather than a path-scoped mount. It is also why a key
+minted in the *local* `make admin-dev` console never authenticates against the
+OCI deployment: they are separate tenant databases.
 
 ##### 4. (Optional) Drop public port 22
 

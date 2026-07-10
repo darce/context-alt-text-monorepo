@@ -66,6 +66,10 @@ def test_policy_disabled_without_name_is_clean():
         **_entry(recognition_enabled=False, must_right=[]),
     )
     assert scores.policy_violation is False
+    # VLMFIX-S3-04: clean recognition-disabled images are excluded from
+    # mean_gated_score (None), not injected as 1.0.
+    assert scores.insertion_eligible is False
+    assert scores.gated_score is None
 
 
 def test_repetition_ratio():

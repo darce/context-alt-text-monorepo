@@ -10,5 +10,9 @@ availability_domain = "saEG:US-ASHBURN-AD-1"
 # Find the latest ARM image OCID: https://docs.oracle.com/en-us/iaas/images/
 # or run: oci compute image list --compartment-id <tenancy> --shape VM.Standard.A1.Flex --operating-system Ubuntu --query data[0].id
 ubuntu_image_ocid  = "ocid1.image.oc1.iad.aaaaaaaa5hgxi6voge43kultiindj3cbcnsimyatvlmq7wt5sbm6voo2ln3a"
+# GPU golden image must be x86_64 and pre-bake NVIDIA drivers, Docker,
+# nvidia-container-toolkit, and /opt/acx-gpu/models/qwen3-vl-30b-a3b-instruct-q4.gguf.
+gpu_image_ocid = "ocid1.image.oc1.iad.aaaaaaaa-gpu-golden-image"
+gpu_shape      = "VM.GPU.A10.1"
 
 ssh_allowed_cidrs = ["YOUR_IP/32"]

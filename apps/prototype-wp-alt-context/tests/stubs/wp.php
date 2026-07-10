@@ -728,6 +728,14 @@ if (!function_exists('get_post_meta')) {
 if (!function_exists('update_post_meta')) {
     function update_post_meta($postId, $metaKey, $metaValue)
     {
+        // Opt-in test hook: simulate a failed (false) meta write WITHOUT
+        // persisting, so the controller's `false === $alt_written` failure and
+        // no-op read-back branches are exercisable. Unset by default, so every
+        // other test keeps the always-true behaviour.
+        if (isset($GLOBALS['__ac_update_post_meta_fail'][$postId][$metaKey])) {
+            return false;
+        }
+
         if (!isset($GLOBALS['__ac_post_meta'])) {
             $GLOBALS['__ac_post_meta'] = [];
         }

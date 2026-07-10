@@ -1,0 +1,52 @@
+{
+  "schema": "acx-gpu-spike/v1",
+  "task_ref": "VLM-3",
+  "recorded_at": "2026-07-08T00:00:00-04:00",
+  "status": "local_infra_scaffold_pending_live_oci_measurement",
+  "shape": "VM.GPU.A10.1",
+  "boot_volume_size_in_gbs": 400,
+  "measurement_candidate": {
+    "model_id": "Qwen3-VL-30B-A3B-Instruct",
+    "quantization": "Q4 GGUF",
+    "estimated_model_bytes_gb": 18,
+    "model_path": "/opt/acx-gpu/models/qwen3-vl-30b-a3b-instruct-q4.gguf"
+  },
+  "measurements": {
+    "cold_boot_seconds": {
+      "value": null,
+      "source": "pending_live_oci_spike"
+    },
+    "stopped_to_warm_start_seconds": {
+      "value": null,
+      "source": "pending_live_oci_spike"
+    },
+    "warm_start_p95_seconds": {
+      "value": null,
+      "target_seconds": 90,
+      "source": "pending_live_oci_spike"
+    },
+    "model_load_seconds": {
+      "value": null,
+      "source": "pending_live_oci_spike"
+    },
+    "seconds_per_image": {
+      "value": null,
+      "source": "pending_live_oci_spike"
+    }
+  },
+  "oci_capacity": {
+    "a10_quota_confirmed": false,
+    "a100_or_l40s_headroom_confirmed": false,
+    "serverless_gpu_available": false,
+    "source": "pending_operator_oci_console_or_cli_check"
+  },
+  "terraform": {
+    "gpu_resource": "oci_core_instance.acx_gpu_burst",
+    "gpu_shape_variable": "gpu_shape",
+    "validate_command": "cd infra/oci && terraform validate"
+  },
+  "notes": [
+    "This artifact anchors the E19-1-style measurement fields for Slice 1.",
+    "Live warm-start and throughput values require an OCI tenancy with A10 quota and a baked GPU image OCID."
+  ]
+}

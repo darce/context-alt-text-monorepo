@@ -16,9 +16,12 @@ from db.models.base_imports import (
     TIMESTAMP,
     UUID,
     Base,
+    Boolean,
+    CheckConstraint,
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Mapped,
     String,
     Text,
@@ -26,6 +29,8 @@ from db.models.base_imports import (
     datetime,
     func,
     mapped_column,
+    relationship,
+    text,
     uuid,
 )
 
@@ -71,4 +76,101 @@ class ImageDescription(Base):
             name="uq_image_descriptions_cache_key",
         ),
         Index("idx_image_descriptions_tenant", "tenant_id"),
+    )
+
+
+class DescribeRun(Base):
+    __tablename__ = "image_description_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'pending'"))
+    phase: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'queued'"))
+    media_ids: Mapped[list[int]] = mapped_column(_json_col(), nullable=False)
+    total_items: Mapped[int] = mapped_column(Integer, nullable=False)
+    completed_items: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    failed_items: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    skipped_items: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    created_by_user_id: Mapped[int | None] = mapped_column(Integer)
+
+    items: Mapped[list[DescribeRunItem]] = relationship(
+        back_populates="run",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'running', 'completed', 'completed_with_errors', 'failed', 'cancelled')",
+            name="valid_describe_run_status",
+        ),
+        CheckConstraint(
+            "phase IN ('queued', 'describing', 'complete', 'failed', 'cancelled')",
+            name="valid_describe_run_phase",
+        ),
+        Index("idx_image_description_runs_tenant", "tenant_id"),
+        Index(
+            "idx_image_description_runs_active",
+            "tenant_id",
+            "status",
+            postgresql_where=text("status IN ('pending', 'running')"),
+        ),
+    )
+
+
+class DescribeRunItem(Base):
+    __tablename__ = "image_description_run_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("image_description_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    media_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'queued'"))
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    last_error: Mapped[str | None] = mapped_column(Text)
+    # WBUX-3: raw submitted image bytes, held only until the worker describes the
+    # item, then cleared (set NULL) to reclaim storage.
+    image_bytes: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    image_content_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # WBUX-3: persisted describe output per item.
+    alt_text_draft: Mapped[str | None] = mapped_column(Text, nullable=True)
+    caption: Mapped[str | None] = mapped_column(Text, nullable=True)
+    provenance: Mapped[dict | None] = mapped_column(_json_col(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+    run: Mapped[DescribeRun] = relationship(back_populates="items")
+
+    __table_args__ = (
+        UniqueConstraint("run_id", "media_id", name="uq_image_description_run_item_media"),
+        CheckConstraint(
+            "status IN ('queued', 'running', 'completed', 'failed', 'skipped')",
+            name="valid_describe_item_status",
+        ),
+        Index("idx_image_description_run_items_run", "run_id"),
+        Index(
+            "idx_image_description_run_items_queued",
+            "run_id",
+            "status",
+            postgresql_where=text("status = 'queued'"),
+        ),
+        Index(
+            "idx_image_description_run_items_stale",
+            "status",
+            "started_at",
+            postgresql_where=text("status = 'running'"),
+        ),
+        Index("idx_image_description_run_items_tenant", "tenant_id", "id"),
     )

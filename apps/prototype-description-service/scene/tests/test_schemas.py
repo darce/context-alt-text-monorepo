@@ -33,6 +33,8 @@ EXPECTED_FIELDS = {
     "cached",
     "duration_ms",
     "retention_class",
+    "tier",
+    "result_generation",
 }
 
 
@@ -53,12 +55,14 @@ def _sample_response() -> dict:
         "cached": False,
         "duration_ms": 12,
         "retention_class": "retain_all",
+        "tier": "final_gpu",
+        "result_generation": 1,
     }
 
 
 def test_response_has_exactly_15_contract_fields():
     assert set(VisualFactsResponse.model_fields) == EXPECTED_FIELDS | PREVIEW_FIELDS
-    assert len(EXPECTED_FIELDS) == 15
+    assert len(EXPECTED_FIELDS) == 17
 
 
 def test_response_round_trip_typed_provenance():
@@ -96,6 +100,17 @@ def test_request_rejects_extra_field_and_nonpositive_media_id():
         DescribeImageEnvelope.model_validate({"tenant_id": good_tid, "media_id": 1, "nope": 1})
     with pytest.raises(ValidationError):
         DescribeImageEnvelope.model_validate({"tenant_id": good_tid, "media_id": 0})
+
+
+def test_describe_envelope_accepts_gpu_tier_hint():
+    envelope = DescribeImageEnvelope.model_validate(
+        {
+            "tenant_id": str(uuid.uuid4()),
+            "media_id": 123,
+            "tier": "gpu",
+        }
+    )
+    assert envelope.tier == "gpu"
 
 
 def test_enums_have_canonical_values():

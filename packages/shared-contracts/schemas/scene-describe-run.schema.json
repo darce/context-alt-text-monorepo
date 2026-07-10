@@ -1,0 +1,67 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://context-alt-text.dev/schemas/scene-describe-run.schema.json",
+  "title": "Scene Describe Run",
+  "description": "Async scene describe-run status payload. Submitted via POST /scene/describe/run as multipart/form-data: form fields 'tenant_id' (uuid) and 'media_ids' (JSON int array), plus one file part 'image_<media_id>' (raw bytes) per media id.",
+  "type": "object",
+  "required": [
+    "tenant_id",
+    "run_id",
+    "status",
+    "phase",
+    "completed",
+    "failed",
+    "skipped",
+    "total",
+    "cancel_requested",
+    "eta_seconds",
+    "gpu_state"
+  ],
+  "properties": {
+    "tenant_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "run_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "running", "completed", "completed_with_errors", "failed", "cancelled"]
+    },
+    "phase": {
+      "type": "string",
+      "enum": ["queued", "describing", "complete", "failed", "cancelled"]
+    },
+    "completed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "failed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "skipped": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "total": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "cancel_requested": {
+      "type": "boolean"
+    },
+    "eta_seconds": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Estimated seconds remaining; null unless the run is in-flight with measured progress."
+    },
+    "gpu_state": {
+      "type": "null",
+      "description": "Reserved for future self-hosted GPU execution state."
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,4 +1,4 @@
-.PHONY: help test lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready logs-tail logs-rotate logs-clean logs-archive worker-daemon db-reset reset FORCE
+.PHONY: help test lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready logs-tail logs-rotate logs-clean logs-archive worker-daemon db-reset reset admin-dev admin-test admin-open admin-token admin-status admin-down admin-oci-serve admin-oci FORCE
 
 UV := VIRTUAL_ENV= uv
 UV_RUN := $(UV) run --locked --extra dev
@@ -21,6 +21,14 @@ help:
 	@echo "  make clean      - Remove cache and build files"
 	@echo "  make reset      - Drop and recreate the local database (alias: db-reset)"
 	@echo "  make mcp        - Start the MCP server for AI agents (monorepo-wide)"
+	@echo ""
+	@echo "Admin console (local /admin tenant management):"
+	@echo "  make admin-dev    - Enable admin env, start service, open /admin, print token"
+	@echo "  make admin-test   - Run the /admin JSON smoke harness (tenant/key lifecycle)"
+	@echo "  make admin-token  - Print the current admin token"
+	@echo "  make admin-open   - Open the /admin console in a browser"
+	@echo "  make admin-status - Show service/admin reachability state"
+	@echo "  make admin-down   - Stop the local service"
 	@echo "  make lane-*     - Worktree lane commands (forwarded to root Makefile; run 'make help' from repo root for full list)"
 	@echo "  make worker-daemon* - Worker daemon controls (run/status/stop/resume/tail) forwarded to root Makefile"
 	@echo ""
@@ -95,6 +103,67 @@ serve: dev-ready
 # Stop development server
 stop:
 	@./scripts/start_prototype_local.sh stop
+
+# =============================================================================
+# Admin console (local /admin tenant management)
+# =============================================================================
+# Wraps scripts/admin_dev.sh. `admin-dev` enables the env-gated /admin router in
+# .env (RECOGNITION_ADMIN_ENABLED + a generated RECOGNITION_ADMIN_TOKEN), starts
+# the service, opens the console, and prints the token. `admin-test` exercises
+# the JSON admin API end to end.
+
+admin-dev:
+	@./scripts/admin_dev.sh up
+
+admin-test:
+	@./scripts/admin_dev.sh test
+
+admin-open:
+	@./scripts/admin_dev.sh open
+
+admin-token:
+	@./scripts/admin_dev.sh token
+
+admin-status:
+	@./scripts/admin_dev.sh status
+
+admin-down:
+	@./scripts/admin_dev.sh down
+
+# --- OCI /admin over the tailnet (no SSH tunnel) ------------------------------
+# The /admin console is 404'd on the public api.altcontext.com vhost by design;
+# it is reachable only over the tailnet. `admin-oci-serve` verifies the VM
+# loopback backend is up, then publishes it over the tailnet (one-time; requires
+# the admin compose overlay layered on the VM and Serve/HTTPS enabled in the
+# tailnet console). `admin-oci` preflights the tailnet URL and only opens the
+# browser when it is reachable, else prints an actionable diagnostic instead of
+# a blank tab. Both honour OCI_HOST and OCI_USER (same env contract as
+# scripts/deploy/*).
+OCI_HOST ?= acx-backend.tail1a44b8.ts.net
+OCI_USER ?= ubuntu
+
+admin-oci-serve:
+	@ssh $(OCI_USER)@$(OCI_HOST) '\
+		code=$$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:8000/admin/ 2>/dev/null); \
+		[ -n "$$code" ] || code=000; \
+		case "$$code" in \
+			000|502|503|504) echo "✗ admin backend on 127.0.0.1:8000 not ready (got $$code). Layer the overlay first: docker compose -f docker-compose.env.yml -f docker-compose.admin.yml up -d" >&2; exit 1 ;; \
+			*) echo "✓ admin backend up on 127.0.0.1:8000 (HTTP $$code); publishing over the tailnet ..." ;; \
+		esac; \
+		sudo tailscale serve --bg --https=443 http://127.0.0.1:8000 && sudo tailscale serve status'
+
+admin-oci:
+	@url="https://$(OCI_HOST)/admin/"; \
+	code=$$(curl -sS -o /dev/null -w "%{http_code}" --max-time 8 "$$url" 2>/dev/null); \
+	[ -n "$$code" ] || code=000; \
+	case "$$code" in \
+		200|401) echo "Opening $$url (HTTP $$code; auth with RECOGNITION_ADMIN_TOKEN) ..."; \
+			open "$$url" 2>/dev/null || xdg-open "$$url" 2>/dev/null || echo "Browse to $$url" ;; \
+		502|503|504) echo "✗ $$url -> $$code: tailnet reached but the admin backend is down. Is the admin overlay layered on the VM (docker-compose.admin.yml)?" >&2; exit 1 ;; \
+		404) echo "✗ $$url -> 404: reached a vhost that denies /admin. Is 'tailscale serve' pointed at 127.0.0.1:8000? Run 'make admin-oci-serve'." >&2; exit 1 ;; \
+		000) echo "✗ $$url unreachable: not on the tailnet, MagicDNS/HTTPS off, or serve not published. Check 'tailscale status' and run 'make admin-oci-serve'." >&2; exit 1 ;; \
+		*) echo "✗ $$url -> $$code (unexpected); not opening." >&2; exit 1 ;; \
+	esac
 
 # Reset local database (db-reset is an alias)
 reset db-reset:

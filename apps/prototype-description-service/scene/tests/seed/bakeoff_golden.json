@@ -45,7 +45,8 @@
           "visible": true,
           "review_reason": null
         }
-      ]
+      ],
+      "base_caption": ""
     },
     {
       "path": "mock_images/bea-nye.jpg",
@@ -78,7 +79,8 @@
           "visible": true,
           "review_reason": null
         }
-      ]
+      ],
+      "base_caption": ""
     },
     {
       "path": "mock_images/ccqw-erika.jpg",
@@ -122,7 +124,8 @@
           "visible": true,
           "review_reason": null
         }
-      ]
+      ],
+      "base_caption": ""
     },
     {
       "path": "mock_images/kirstie-daniel-sunglasses.jpg",
@@ -164,7 +167,8 @@
           "visible": true,
           "review_reason": null
         }
-      ]
+      ],
+      "base_caption": ""
     },
     {
       "path": "mock_images/ryann-group-party.jpg",
@@ -197,7 +201,8 @@
           "visible": true,
           "review_reason": null
         }
-      ]
+      ],
+      "base_caption": ""
     },
     {
       "path": "mock_images/maria-pool.jpg",
@@ -216,7 +221,8 @@
       "policy": {
         "recognition_enabled": false
       },
-      "expected_attachments": []
+      "expected_attachments": [],
+      "base_caption": ""
     },
     {
       "path": "mock_images/liam-maloney-painting.jpg",
@@ -246,7 +252,8 @@
           "visible": false,
           "review_reason": "unconfirmed_identity"
         }
-      ]
+      ],
+      "base_caption": ""
     },
     {
       "path": "mock_images/ryann-bar.jpg",
@@ -277,7 +284,8 @@
           "visible": true,
           "review_reason": null
         }
-      ]
+      ],
+      "base_caption": ""
     },
     {
       "path": "mock_images/mcm-planecrash.jpg",
@@ -343,7 +351,8 @@
           "visible": false,
           "review_reason": null
         }
-      ]
+      ],
+      "base_caption": ""
     },
     {
       "path": "mock_images/nina-machiavelli.jpeg",
@@ -357,7 +366,8 @@
       "policy": {
         "recognition_enabled": true
       },
-      "expected_attachments": []
+      "expected_attachments": [],
+      "base_caption": ""
     }
   ]
 }

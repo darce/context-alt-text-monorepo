@@ -244,3 +244,86 @@
     resize: vertical;
   }
 }
+
+// WBUX-4 INT-01d: run-scoped apply surface. Buckets a completed run's drafts
+// into safe-to-apply (no existing alt), needs-overwrite, and no-draft groups.
+.acx-run-apply {
+  display: grid;
+  gap: var(--acx-space-16);
+}
+
+.acx-run-apply__back {
+  display: inline-block;
+  margin-top: var(--acx-space-8);
+  color: var(--acx-color-text-secondary);
+  font-size: var(--acx-text-sm);
+}
+
+.acx-run-apply__result {
+  color: var(--acx-color-text);
+  font-size: var(--acx-text-sm);
+}
+
+.acx-run-apply__safe,
+.acx-run-apply__existing,
+.acx-run-apply__no-draft {
+  display: grid;
+  gap: var(--acx-space-12);
+
+  h2 {
+    margin: 0;
+    color: var(--acx-color-text);
+    font-size: var(--acx-text-lg);
+  }
+
+  p {
+    margin: 0;
+    color: var(--acx-color-text-muted);
+    font-size: var(--acx-text-sm);
+  }
+}
+
+.acx-run-apply__list {
+  display: grid;
+  gap: var(--acx-space-8);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.acx-run-apply__item {
+  display: grid;
+  gap: var(--acx-space-4);
+  padding: var(--acx-space-12);
+  border: 1px solid var(--acx-color-border);
+  border-radius: var(--acx-radius-md);
+  background: var(--acx-color-surface-alt);
+}
+
+.acx-run-apply__item--existing {
+  border-color: var(--acx-color-panel-border);
+}
+
+.acx-run-apply__overwrite {
+  display: flex;
+  align-items: center;
+  gap: var(--acx-space-8);
+  color: var(--acx-color-text);
+  font-weight: var(--acx-font-weight-semibold);
+}
+
+.acx-run-apply__item-heading {
+  color: var(--acx-color-text);
+  font-size: var(--acx-text-base);
+  font-weight: var(--acx-font-weight-semibold);
+}
+
+.acx-run-apply__draft {
+  color: var(--acx-color-text);
+  font-size: var(--acx-text-sm);
+}
+
+.acx-run-apply__media-id {
+  color: var(--acx-color-text-muted);
+  font-size: var(--acx-text-xs);
+}

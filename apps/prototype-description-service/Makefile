@@ -1,4 +1,6 @@
-.PHONY: help test lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready logs-tail logs-rotate logs-clean logs-archive worker-daemon db-reset reset admin-dev admin-test admin-open admin-token admin-status admin-down admin-oci-serve admin-oci FORCE
+.PHONY: help test test-integration lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready logs-tail logs-rotate logs-clean logs-archive worker-daemon db-reset reset admin-dev admin-test admin-open admin-token admin-status admin-down admin-oci-serve admin-oci FORCE
+
+PYTEST_WORKERS ?= 4
 
 UV := VIRTUAL_ENV= uv
 UV_RUN := $(UV) run --locked --extra dev
@@ -191,10 +193,15 @@ format:
 	@$(UV_RUN) ruff check --fix --unsafe-fixes .
 	@$(UV_RUN) ruff format .
 
-# Test only
+# Fast unit tests (excludes integration/pg markers; parallel when PYTEST_WORKERS>0)
 test:
 	@echo "Running tests..."
-	@$(UV_RUN) pytest
+	@$(UV_RUN) pytest $(if $(filter-out 0,$(PYTEST_WORKERS)),-n $(PYTEST_WORKERS),) -m "not integration and not pg" --durations=25
+
+# Integration/pg tests (serial — shared DB fixtures)
+test-integration:
+	@echo "Running integration tests..."
+	@$(UV_RUN) pytest -m "integration or pg" --durations=25
 
 # Auto-fix and test (for CI)
 ci: format typecheck test

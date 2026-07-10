@@ -315,3 +315,139 @@ def test_extract_identities_rejects_non_list_payload():  # VLM-2C-R2-S5-BR-02
 
     with pytest.raises(RemoteClientError, match="media_identities"):
         _extract_identities({"error": "boom"}, media_id=1)
+
+
+def test_extract_identities_uses_is_auto_label_wire_shape():  # S8-01
+    """Mirror MediaIdentityService.list_by_media_ids row shape (stores.py)."""
+    from scripts.eval_harness.cli import _extract_identities
+
+    payload = [
+        {
+            "identity_id": "id-1",
+            "media_id": 7,
+            "cluster_id": "c1",
+            "cluster_label": "Alice Example",
+            "is_auto_label": False,
+            "clustering_pending": False,
+            "bbox": {"x": 0.1, "y": 0.1, "width": 0.2, "height": 0.2},
+            "confidence": 0.9,
+            "media_url": None,
+        },
+        {
+            "identity_id": "id-2",
+            "media_id": 7,
+            "cluster_id": "c2",
+            "cluster_label": "Bob Auto",
+            "is_auto_label": True,  # unconfirmed auto-propagated — must not count
+            "clustering_pending": False,
+            "bbox": {"x": 0.5, "y": 0.1, "width": 0.2, "height": 0.2},
+            "confidence": 0.8,
+            "media_url": None,
+        },
+        {
+            "identity_id": "id-3",
+            "media_id": 99,
+            "cluster_id": "c3",
+            "cluster_label": "Other Media",
+            "is_auto_label": False,
+            "clustering_pending": False,
+            "bbox": {"x": 0.0, "y": 0.0, "width": 0.1, "height": 0.1},
+            "confidence": 0.7,
+            "media_url": None,
+        },
+    ]
+    names, face_count = _extract_identities(payload, media_id=7)
+    assert face_count == 2
+    assert names == ["Alice Example"]
+
+
+def test_fetch_resolves_nfd_image_path(tmp_path):  # S6-03 / S7-01
+    """Fetch walk must use the same NFC/NFD resolve as hash verify."""
+    import unicodedata
+
+    from scripts.eval_harness.cli import fetch_run_record
+    from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest
+
+    nfd_name = unicodedata.normalize("NFD", "Breiðamerkurjökull.jpg")
+    nfc_name = unicodedata.normalize("NFC", "Breiðamerkurjökull.jpg")
+    assert nfd_name != nfc_name  # otherwise the test is vacuous on this platform
+    images = tmp_path / "mock_images"
+    images.mkdir()
+    # On-disk form is NFD; manifest path is NFC (the rsync flip S1-07 documents).
+    (images / nfd_name).write_bytes(b"fake-bytes")
+    manifest = GoldenManifest(
+        manifest_version=2,
+        roster=["Alice Example"],
+        entries=[
+            GoldenEntry(
+                path=f"mock_images/{nfc_name}",
+                sha256="a" * 64,
+                media_id=1,
+                face_count=0,
+                present_identities=[],
+                context_pack={"title": "t"},
+                must_right=[],
+                easy_wrong=[],
+                policy={"recognition_enabled": True},
+            )
+        ],
+    )
+    record = fetch_run_record(manifest, str(tmp_path), HappyClient(), head_sha="f" * 40)
+    assert record["items"][0]["error"] is None
+
+
+def test_cli_limit_and_keep_reject_non_positive():  # S8-03 / S6-02
+    for flag, bad in (("--limit", "0"), ("--limit", "-3"), ("--keep", "0"), ("--keep", "-1")):
+        with pytest.raises(SystemExit) as excinfo:
+            main(["fetch", flag, bad])
+        assert excinfo.value.code == 2
+
+
+def test_cmd_score_exits_nonzero_when_items_failed(tmp_path, monkeypatch):  # S7-01
+    from scripts.eval_harness import cli as cli_mod
+    from scripts.eval_harness.schema import SCHEMA, DocKind
+
+    manifest_path = tmp_path / "golden.json"
+    entries = [
+        {
+            "path": "mock_images/img-1.jpg",
+            "sha256": "a" * 64,
+            "media_id": 1,
+            "face_count": 0,
+            "present_identities": [],
+            "context_pack": {},
+            "base_caption": "",
+            "must_right": [],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+        }
+    ]
+    manifest_path.write_text(
+        json.dumps({"manifest_version": 2, "roster": ["Alice Example"], "entries": entries})
+    )
+    record_path = tmp_path / "run-x.json"
+    record_path.write_text(
+        json.dumps(
+            {
+                "schema": SCHEMA,
+                "kind": DocKind.RUN_RECORD.value,
+                "provenance": {"manifest_sha256": "0" * 64, "base_url": "x", "head_sha": "f" * 40, "started_at": "t"},
+                "items": [
+                    {
+                        "media_id": 1,
+                        "path": "mock_images/img-1.jpg",
+                        "describe": None,
+                        "identities": [],
+                        "face_count": 0,
+                        "error": "FileNotFoundError: missing",
+                        "latency_s": None,
+                    }
+                ],
+            }
+        )
+    )
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)])
+    assert excinfo.value.code != 0
+    assert "not scored" in str(excinfo.value)

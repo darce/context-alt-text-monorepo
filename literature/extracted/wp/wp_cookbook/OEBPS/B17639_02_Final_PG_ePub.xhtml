@@ -1,0 +1,544 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+	<head>
+		<title>B17639_02_Final_PG_ePub</title>
+		<link href="css/style-JRserifv5.css" rel="stylesheet" type="text/css" />
+	</head>
+	<body id="B17639_02_Final_PG_ePub" lang="en-GB" xml:lang="en-GB">
+		<div id="_idContainer027">
+			<h1 id="_idParaDest-36"><em class="italic"><a id="_idTextAnchor036"></a>Chapter 2</em>: Plugin Framework Basics</h1>
+			<p>From its very first beginnings, WordPress has always been designed as a very open platform. This openness has been exemplified not only through its open source licensing and distribution model but also its open plugin architecture, providing developers with the ability to deliver an even richer experience to its users.</p>
+			<p>While a basic WordPress installation provides a great amount of functionality that continues to expand from one release to the next, users often need to add one or more features to make it the perfect website management system to bring their project to life. This is where plugins come into play. They can fill this gap by augmenting or manipulating virtually any aspect of a WordPress website&apos;s display and administrative tasks.</p>
+			<p>Just like WordPress, plugins are written in the PHP programming language, which is structurally similar to more traditional languages such as C and C++. This code is stored in plain ASCII text files that are read and executed on a web server when pages are requested to be displayed. The secret ingredient that enables plugins to have such great power in WordPress is the inclusion of callback<a id="_idIndexMarker072"></a> mechanisms, called <strong class="bold">hooks</strong>, throughout the platform&apos;s source code. These hooks come in two flavors, called <strong class="bold">action</strong> and <strong class="bold">filter</strong> hooks, which<a id="_idIndexMarker073"></a> allow plugins to add content to a site and modify data before it is <a id="_idIndexMarker074"></a>displayed, respectively. Whether it&apos;s rendering a site&apos;s front page, a single article, or its administration pages, WordPress has thousands of entry points where custom functions can be executed.</p>
+			<p>Beyond their ability to augment WordPress functionality, a side benefit of plugins is that most functionalities they add to a site are independent of the active theme. Therefore, users who like to change their theme frequently don&apos;t have to worry about manually adding back custom elements to their new themes when they make a switch.</p>
+			<p>This chapter explains the difference between action and filter hooks and shows how to use them to write a first set of plugins that will range in functionality, from adding information to a page header to defining new custom <strong class="bold">shortcodes</strong>.</p>
+			<p>In this chapter, we will cover the following topics:</p>
+			<ul>
+				<li>Creating a plugin file and header</li>
+				<li>Adding output content to page headers using plugin actions</li>
+				<li>Using WordPress path utility functions to load external files and images</li>
+				<li>Modifying the site generator meta tag using plugin filters</li>
+				<li>Adding text after each item&apos;s content using plugin filters</li>
+				<li>Inserting link tracking code in the page body using plugin filters</li>
+				<li>Troubleshooting coding errors and printing variable content</li>
+				<li>Creating a new simple shortcode</li>
+				<li>Creating a new shortcode with parameters</li>
+				<li>Creating a new enclosing shortcode</li>
+				<li>Loading a style sheet to format plugin output</li>
+				<li>Writing plugins using object-oriented PHP</li>
+			</ul>
+			<h1 id="_idParaDest-37"><a id="_idTextAnchor037"></a>Technical requirements&#160;&#160;</h1>
+			<p>You can find&#160;complete code examples on GitHub in the following repository: <a href="https://github.com/PacktPublishing/WordPress-Plugin-Development-Cookbook-Third-Edition">https://github.com/PacktPublishing/WordPress-Plugin-Development-Cookbook-Third-Edition</a>.&#160;</p>
+			<h1 id="_idParaDest-38"><a id="_idTextAnchor038"></a>Creating a plugin file and header</h1>
+			<p>The first step of creating a plugin is to create a directory and a PHP file in the WordPress plugins directory and add <a id="_idIndexMarker075"></a>the necessary information to have it recognized by the system. This first recipe shows you how to create a basic plugin file for WordPress and how to activate this new extension from the administration interface.</p>
+			<h2 id="_idParaDest-39"><a id="_idTextAnchor039"></a>Getting ready</h2>
+			<p>You should have access to a WordPress development environment, either on your local computer or a remote server, where you will be able to load your new plugin files (see <a href="B17639_01_Final_PG_ePub.xhtml#_idTextAnchor021"><em class="italic">Chapter 1</em></a>, <em class="italic">Preparing a Local Development Environment</em>).</p>
+			<h2 id="_idParaDest-40"><a id="_idTextAnchor040"></a>How to do it...</h2>
+			<p>Follow these steps to<a id="_idIndexMarker076"></a> create your<a id="_idIndexMarker077"></a> first plugin header and activate the plugin in WordPress:</p>
+			<ol>
+				<li>Navigate to the WordPress <strong class="source-inline">plugins</strong> directory (<strong class="source-inline">wp-content/plugins</strong>) of your development installation.</li>
+				<li>Create a new subdirectory called <strong class="source-inline">ch2-plugin-header</strong> within the plugin directory.</li>
+				<li>Navigate to this directory and create a new text file called <strong class="source-inline">ch2-plugin-header.php</strong>.</li>
+				<li>Open the new file in a code editor and add the following code:<p class="source-code">&lt;?php</p><p class="source-code">/*</p><p class="source-code">Plugin Name: Chapter 2 - Plugin Header</p><p class="source-code">Plugin URI:</p><p class="source-code">Description: Declares a plugin that will be visible in</p><p class="source-code">the WordPress admin interface</p><p class="source-code">Version: 1.0</p><p class="source-code">Author: Yannick Lefebvre</p><p class="source-code">Author URI: http://ylefebvre.ca</p><p class="source-code">License: GPLv2</p><p class="source-code">*/</p><p class="callout-heading">Note</p><p class="callout">While the <strong class="source-inline">Description</strong> text is shown on two separate lines in the code example, it should be entered as a single line in your code file to be completely displayed in the WordPress <strong class="bold">Plugins</strong> list.</p></li>
+				<li>Save and close the new file.</li>
+				<li>Log in to the administration page of your development WordPress installation.</li>
+				<li>Click on <strong class="bold">Plugins</strong> in the<a id="_idIndexMarker078"></a> left-hand navigation menu to show a list of all <a id="_idIndexMarker079"></a>installed plugins. You should see your new plugin listed next to the two default ones that come pre-packaged with WordPress:</li>
+			</ol>
+			<div>
+				<div id="_idContainer015" class="IMG---Figure">
+					<img src="image/Figure_2.01_B17639.jpg" alt="Figure 2.1 – The WordPress Plugins page showing the newly created plugin&#xd;&#xa;" />
+				</div>
+			</div>
+			<p class="figure-caption">Figure 2.1 – The WordPress Plugins page showing the newly created plugin</p>
+			<p class="callout-heading">Note</p>
+			<p class="callout">The list of default plugins may vary depending on how you built your development environment. You will see <strong class="bold">Akismet</strong> and <strong class="bold">Hello Dolly</strong> if you installed WordPress manually but might not see them if you are running a local development tool such as <strong class="bold">Local</strong>.</p>
+			<ol>
+				<li value="8">Enable the <a id="_idIndexMarker080"></a>plugin by clicking on the <strong class="bold">Activate</strong> link under its name. You will see that the background color of your new plugin changes to indicate that it has been activated, along with a message specifying that the activation was successful.</li>
+			</ol>
+			<h2 id="_idParaDest-41"><a id="_idTextAnchor041"></a>How it works...</h2>
+			<p>Plugin files <a id="_idIndexMarker081"></a>can either be located directly in the <strong class="source-inline">wp-content/plugins</strong> directory or in a subdirectory under this location, with most following this second approach. When you access the installed plugins list in the administration interface, WordPress scans the entire <strong class="source-inline">plugins</strong> directory, looking for PHP files that contain comments following the format specified in this recipe. In some cases, there can be more than one PHP file containing plugin header data in any of these directories, and each of them will show up as a separate entry in the <strong class="bold">Plugins</strong> list.</p>
+			<p>Taking a closer look at the code that we entered in the file, the first line of the plugin file (<strong class="source-inline">&lt;?php</strong>) is a tag that identifies the beginning of the PHP code that will be analyzed and executed by the PHP interpreter. Optionally, we could include a closing PHP tag (<strong class="source-inline">?&gt;</strong>) at the end of the file. However, most PHP developers omit the closing tag, since having any spaces after that tag will cause warnings to be displayed by the interpreter.</p>
+			<p class="callout-heading">Tip</p>
+			<p class="callout">To ensure compatibility with most WordPress installations, it is important to use the complete <strong class="source-inline">&lt;?php</strong> open tag syntax in your plugin code instead of the <strong class="source-inline">&lt;?</strong> shorthand version. Not all PHP installations are configured to support the shorthand version, and many users don&apos;t have access to change this type of configuration on their server.</p>
+			<p>The second and last lines (<strong class="source-inline">/*</strong> and <strong class="source-inline">*/</strong>) indicate that the text between these special delimiters should be considered as comments. Finally, each line within the comment contains a specific label, indicating the type of information that follows it. When this information is found, WordPress retrieves data about the plugin and adds it to the list.</p>
+			<p>When a plugin<a id="_idIndexMarker082"></a> is activated, WordPress validates the file&apos;s content to be sure that it is valid PHP code. It will then execute this content every time any page is rendered on the site, whether that page is front-facing or a backend administration section. For this reason, it is preferable to activate plugins only when they are in use, to avoid site slowdowns.</p>
+			<p>Of course, at this point, our new plugin does not add or modify any functionality in our WordPress installation, since it does not contain any code, but this is still an important first step.</p>
+			<h2 id="_idParaDest-42"><a id="_idTextAnchor042"></a>See also</h2>
+			<ul>
+				<li>The <em class="italic">Installing a local web server on your computer</em> recipe in <a href="B17639_01_Final_PG_ePub.xhtml#_idTextAnchor021"><em class="italic">Chapter 1</em></a>, <em class="italic">Preparing a Local Development Environment</em></li>
+			</ul>
+			<h1 id="_idParaDest-43"><a id="_idTextAnchor043"></a>Adding output content to page headers using plugin actions</h1>
+			<p>A common <a id="_idIndexMarker083"></a>action performed <a id="_idIndexMarker084"></a>by plugins is to add extra content to <a id="_idIndexMarker085"></a>the header of visitor-facing pages generated by WordPress. This recipe shows you how to register an action hook function to add such additional content. To make this example more concrete, we will use the Google Analytics page header JavaScript code that so many people use to get good page view analytics for their site.</p>
+			<h2 id="_idParaDest-44"><a id="_idTextAnchor044"></a>How to do it...</h2>
+			<p>Follow these steps to learn how to register custom code to add content to a site&apos;s page headers:</p>
+			<ol>
+				<li value="1">Navigate to the WordPress <strong class="source-inline">plugins</strong> directory of your development installation.</li>
+				<li>Create a new directory called <strong class="source-inline">ch2-page-header-output</strong>.</li>
+				<li>Navigate to this directory and create a new text file called <strong class="source-inline">ch2-page-header-output.php</strong>.</li>
+				<li>Open the new file in a code editor and add an appropriate header at the top of the plugin file, naming the plugin <strong class="source-inline">Chapter 2 - Page Header Output</strong>.</li>
+				<li>Add the following line of code at the end of the file to register a function that will be called when WordPress renders the page header:<p class="source-code">add_action( &apos;wp_head&apos;, &apos;ch2pho_page_header_output&apos; );</p></li>
+				<li>Add the <a id="_idIndexMarker086"></a>following code section<a id="_idIndexMarker087"></a> to provide an implementation<a id="_idIndexMarker088"></a> for the <strong class="source-inline">ch2pho_page_header_output</strong> function:<p class="source-code">function ch2pho_page_header_output() { ?&gt;</p><p class="source-code">&#160;&#160;&#160;&#160;&lt;script&gt;</p><p class="source-code">&#160;&#160;&#160;&#160;(function(i,s,o,g,r,a,m){i[&apos;GoogleAnalyticsObject&apos;]=r;</p><p class="source-code">&#160;&#160;&#160;&#160;i[r]=i[r]||function(){</p><p class="source-code">&#160;&#160;&#160;&#160;(i[r].q=i[r].q||[]).push(arguments)},</p><p class="source-code">&#160;&#160;&#160;&#160;i[r].l=1*new Date();</p><p class="source-code">&#160;&#160;&#160;&#160;a=s.createElement(o),</p><p class="source-code">&#160;&#160;&#160;&#160;m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;</p><p class="source-code">&#160;&#160;&#160;&#160;m.parentNode.insertBefore(a,m)})</p><p class="source-code">&#160;&#160;&#160;&#160;(window,document,&apos;script&apos;,</p><p class="source-code">&#160;&#160;&#160;&#160;&apos;https://www.google-analytics.com/analytics.js&apos;,</p><p class="source-code">&#160;&#160;&#160;&#160;&apos;ga&apos;);</p><p class="source-code">&#160;&#160;&#160;&#160;ga(&apos;create&apos;, &apos;UA-0000000-0&apos;, &apos;auto&apos;);</p><p class="source-code">&#160;&#160;&#160;&#160;ga(&apos;send&apos;, &apos;pageview&apos;);</p><p class="source-code">&#160;&#160;&#160;&#160;&lt;/script&gt;</p><p class="source-code">&lt;?php }</p></li>
+				<li>Save and close the plugin file.</li>
+				<li>Log in to the administration page of your development WordPress installation.</li>
+				<li>Click on <strong class="bold">Plugins</strong> in the left-hand navigation menu.</li>
+				<li><strong class="bold">Activate</strong> your new plugin.</li>
+				<li>Navigate to <a id="_idIndexMarker089"></a>your website&apos;s front<a id="_idIndexMarker090"></a> page and use your browser&apos;s <strong class="bold">View Page Source</strong> function to see the HTML source code for the site. Note<a id="_idIndexMarker091"></a> that the exact name of this browser function will be slightly different based on which browser you are using. Search for <strong class="source-inline">UA-0000000-0</strong> to see that all of the code contained between the two curled brackets of your new function is in your website&apos;s header:</li>
+			</ol>
+			<p class="figure-caption"> </p>
+			<div>
+				<div id="_idContainer016" class="IMG---Figure">
+					<img src="image/Figure_2.02_B17639.jpg" alt="Figure 2.2 – Google Analytics code in the page source view" />
+				</div>
+			</div>
+			<p class="figure-caption">Figure 2.2 – Google Analytics code in the page source view</p>
+			<p class="callout-heading">Note</p>
+			<p class="callout">If you are copying and pasting code from a digital version of this book, you will lose the original code indentation and should correct it in your code editor.</p>
+			<h2 id="_idParaDest-45"><a id="_idTextAnchor045"></a>How it works...</h2>
+			<p>The <strong class="source-inline">add_action</strong> function is used <a id="_idIndexMarker092"></a>to associate custom plugin code to one of the two types of WordPress hooks, the action hook. As mentioned briefly in this chapter&apos;s<a id="_idIndexMarker093"></a> introduction, hooks<a id="_idIndexMarker094"></a> are the enabling <a id="_idIndexMarker095"></a>functionality that make plugins possible in <a id="_idIndexMarker096"></a>WordPress. Action hook<a id="_idIndexMarker097"></a>s enable the execution of additional code at specific points when either public-facing or administration pages are prepared to be displayed. This code usually adds content to a site or changes the way a given action is performed.</p>
+			<p>In this recipe, the first line of code that we wrote registers a function named <strong class="source-inline">ch2pho_page_header_output</strong> with an <a id="_idIndexMarker098"></a>action hook called <strong class="source-inline">wp_head</strong>. This action is one among more than 2,500 action hooks that are available in current versions of WordPress, and it allows any registered function to output additional content to the page header. Since all echoed content will be displayed, we can write our callback function very simply by placing <strong class="source-inline">?&gt;</strong> and <strong class="source-inline">&lt;?php</strong> tags around the Google Analytics code. This will tell PHP to display all the content that is within that function&apos;s body, as opposed to interpreting it.</p>
+			<p>As you may have noticed, the current code is not very flexible, since you would need to hardcode your Google Analytics account number in the plugin code for it to function properly. The creation of a configuration panel and user settings in <a href="B17639_03_Final_PG_ePub.xhtml#_idTextAnchor096"><em class="italic">Chapter 3</em></a>, <em class="italic">User Settings and Administration Pages</em>, will provide a way to configure such information to make our plugins more flexible.</p>
+			<p>Now, to fully understand its syntax, let&apos;s take a closer look at the complete <strong class="source-inline">add_action</strong> function:</p>
+			<p class="source-code">add_action( &apos;hook_name&apos;, &apos;your_function_name&apos;, [priority],</p>
+			<p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;[accepted_args] );</p>
+			<p>The first parameter, the hook name, indicates the name of the WordPress hook with which we want our custom function to be associated. This name must be accurately spelled; otherwise, our function will not be called and no error message will be displayed.</p>
+			<p>The second parameter is the name of the plugin function that will be called to perform an action. This function can have any name, with the only condition being that this name must be unique to avoid conflicts with function names from other plugins or from the core WordPress code. In this recipe, the function name starts with an acronym representing the name of the plugin, making it much more unique.</p>
+			<p>The <strong class="source-inline">priority</strong> parameter is optional, as indicated by the square brackets, and has a default value of <strong class="source-inline">10</strong>. It indicates the execution priority of this plugin relative to other plugin functions that hook into the same action, with a lower number indicating a higher priority. Any plugin can register one or more functions with an action hook using the <strong class="source-inline">add_action</strong> function. As it is rendering web pages, WordPress keeps a queue of all entries and calls them at the appropriate moment. It is interesting to note that the hook mechanism is also used by WordPress itself, as it regularly calls the <strong class="source-inline">add_action</strong> function in its own code to register functions to be called at the right time. If you realize that you need your function to be called before or after other plugins that are registering with the same hook, change the value of the <strong class="source-inline">priority</strong> parameter.</p>
+			<p>The last <a id="_idIndexMarker099"></a>parameter of the <strong class="source-inline">add_action</strong> function, <strong class="source-inline">accepted_args</strong>, is also optional, has a default value of <strong class="source-inline">1</strong>, and should be <a id="_idIndexMarker100"></a>assigned a number when set. It should only<a id="_idIndexMarker101"></a> be set to a different value for some particular hooks where more than one parameter will be passed to the registered function. Some of these hooks will be covered in later recipes.</p>
+			<h2 id="_idParaDest-46"><a id="_idTextAnchor046"></a>There&apos;s more...</h2>
+			<p>Finding the right hooks to register plugin functions is a large part of WordPress plugin development. Fortunately, there are a number of ways to get information on existing hooks and to learn when they get called during the WordPress page generation process.</p>
+			<h3>Action hooks online listings</h3>
+			<p>The <a id="_idIndexMarker102"></a>WordPress Codex (<a href="https://codex.wordpress.org/">https://codex.wordpress.org/</a>) and <a id="_idIndexMarker103"></a>WordPress <a id="_idIndexMarker104"></a>Code Reference (<a href="https://developer.wordpress.org/reference/">https://developer.wordpress.org/reference/</a>) are documentation sites that contain a multitude of information that is useful to users and developers alike. When it comes to action hooks, the Codex contains information on the most commonly used hooks, with basic descriptions indicating how they can be used; it can be found here: <a href="https://codex.wordpress.org/Plugin_API/Action_Reference">https://codex.wordpress.org/Plugin_API/Action_Reference</a>. However, this is not a complete listing.</p>
+			<p>There are <a id="_idIndexMarker105"></a>many third-party sites that parse the WordPress source code and provide their own hook listings<a id="_idIndexMarker106"></a> (for example, <a href="http://hookr.io">http://hookr.io</a>). While hooks are not as eloquently documented in these types of raw listings, they do provide basic information on their names and where they are called, as WordPress generates pages for visitors and administrators. These details can often be enough to find a hook based on the functionality that you are trying to implement.</p>
+			<h3>Searching for hooks in the WordPress source code</h3>
+			<p>Since<a id="_idIndexMarker107"></a> WordPress is open source, another way to find <a id="_idIndexMarker108"></a>information about hooks is to search directly within its code. For every action hook that accepts user functions, you will see a call to the <strong class="source-inline">do_action</strong> function to execute all the registered items. As you can see, the function takes two or more arguments, with the second one(s) being optional:</p>
+			<p class="source-code">do_action( &apos;tag&apos;, [$arg] );</p>
+			<p>For the example shown in this recipe, a search for <strong class="source-inline">do_action( &apos;wp_head&apos; )</strong> reveals that it is the only function that is called when a WordPress theme makes a call to the <strong class="source-inline">wp_head()</strong> function in its header file:</p>
+			<p class="source-code">do_action( &apos;wp_head&apos; );</p>
+			<h2 id="_idParaDest-47"><a id="_idTextAnchor047"></a>See also</h2>
+			<ul>
+				<li>The <em class="italic">Creating a plugin file and header</em> recipe</li>
+			</ul>
+			<h1 id="_idParaDest-48"><a id="_idTextAnchor048"></a>Using WordPress path utility functions to load external files and images</h1>
+			<p>On occasion, plugins <a id="_idIndexMarker109"></a>need to refer to external files (for example, images, JavaScript, or jQuery script files) that are stored in the plugin<a id="_idIndexMarker110"></a> directory. Since users<a id="_idIndexMarker111"></a> are free to rename a<a id="_idIndexMarker112"></a> plugin&apos;s folder or even install plugin files straight into the WordPress <strong class="source-inline">plugins</strong> directory, paths to any external files must be built dynamically based on the actual plugin location. Thankfully, a number of utility functions are present to simplify this task.</p>
+			<h2 id="_idParaDest-49"><a id="_idTextAnchor049"></a>How to do it...</h2>
+			<p>Follow these steps to create a simple plugin that will add a favicon meta tag to a website&apos;s header, pointing to an image file located in the plugin&apos;s directory:</p>
+			<ol>
+				<li value="1">Navigate to the WordPress <strong class="source-inline">plugins</strong> directory of your development installation.</li>
+				<li>Create a new directory called <strong class="source-inline">ch2-favicon</strong>.</li>
+				<li>Use a web <a id="_idIndexMarker113"></a>service, such as <a href="https://favicongrabber.com/">https://favicongrabber.com/</a>, to retrieve a website&apos;s favicon (for example, <a href="https://www.packtpub.com">https://www.packtpub.com</a>) and store it in the <strong class="source-inline">ch2-favicon</strong> directory with its default name (<strong class="source-inline">favicon.ico</strong>).</li>
+				<li>Navigate to the <strong class="source-inline">ch2-favicon</strong> directory and create a new text file called <strong class="source-inline">ch2-favicon.php</strong>.</li>
+				<li>Open the new file in a code editor and add an appropriate header at the top of the plugin file, naming the plugin <strong class="source-inline">Chapter 2 - Favicon</strong>.</li>
+				<li>Add the following line of code to register a function that will be called when WordPress renders the page header:<p class="source-code">add_action( &apos;wp_head&apos;, &apos;ch2fi_page_header_output&apos; );</p></li>
+				<li>Add the following code section to provide an implementation for the <strong class="source-inline">ch2fi_page_header_output</strong> function:<p class="source-code">function ch2fi_page_header_output() {</p><p class="source-code">&#160;&#160;&#160;&#160;$site_icon_url = get_site_icon_url();</p><p class="source-code">&#160;&#160;&#160;&#160;if ( !empty( $site_icon_url ) ) {</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;wp_site_icon();</p><p class="source-code">&#160;&#160;&#160;&#160;} else {</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;$icon = plugins_url( &apos;favicon.ico&apos;, </p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;__FILE__ );</p><p class="source-code">&#160;&#160;&#160;&#160;?&gt;</p><p class="source-code">&#160;&#160;&#160;&#160;&lt;link rel=&quot;shortcut icon&quot;</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;href=&quot;&lt;?php echo esc_url( $icon ); ?&gt;&quot; /&gt;</p><p class="source-code">&#160;&#160;&#160;&#160;&lt;?php }</p><p class="source-code">}</p></li>
+				<li>Save <a id="_idIndexMarker114"></a>and close the plugin<a id="_idIndexMarker115"></a> file.</li>
+				<li>Log in to <a id="_idIndexMarker116"></a>the administration<a id="_idIndexMarker117"></a> page of your development WordPress installation.</li>
+				<li>Click on <strong class="bold">Plugins</strong> in the left-hand navigation menu.</li>
+				<li><strong class="bold">Activate</strong> your new plugin.</li>
+				<li>Navigate to your website&apos;s front page and refresh it to see that the icon file that you assigned through your plugin code now appears in your browser&apos;s address bar, title bar, or navigation tab, depending on your preferred browser. The following screenshot shows how the favicon file is rendered in Microsoft Edge, Google Chrome, and Mozilla Firefox, from top to bottom:</li>
+			</ol>
+			<div>
+				<div id="_idContainer017" class="IMG---Figure">
+					<img src="image/Figure_2.03_B17639.jpg" alt="Figure 2.3 – The website favicon appearing in Microsoft Edge, Google Chrome, and Mozilla Firefox&#xd;&#xa;" />
+				</div>
+			</div>
+			<p class="figure-caption">Figure 2.3 – The website favicon appearing in Microsoft Edge, Google Chrome, and Mozilla Firefox</p>
+			<ol>
+				<li value="13">Go to the <strong class="bold">Appearance</strong> section of your development site&apos;s <strong class="bold">Dashboard</strong> and <strong class="bold">Activate</strong> a theme other than <strong class="bold">Twenty Twenty-Two</strong> (for example, <strong class="bold">Twenty Twenty-One</strong> or <strong class="bold">Twenty Twenty</strong>). You may need to install one of these themes if they are not present in your development environment.</li>
+				<li>Select <a id="_idIndexMarker118"></a>the <strong class="bold">Customize</strong> submenu <a id="_idIndexMarker119"></a>under the <strong class="bold">Appearance</strong> menu.</li>
+				<li>Under <strong class="bold">Site Identity</strong>, assign a square image that is at least 512 x 512 pixels in dimension <a id="_idIndexMarker120"></a>as the <strong class="bold">Site Icon</strong>; then, click <a id="_idIndexMarker121"></a>the <strong class="bold">Publish</strong> button at the top of the customizer.</li>
+				<li>Refresh your website to see that the newly assigned site icon image is now displayed instead of the <strong class="source-inline">favicon.ico</strong> file.</li>
+				<li>Go back to the <strong class="bold">Appearance</strong> section and <strong class="bold">Activate</strong> the <strong class="bold">Twenty Twenty-Two</strong> theme.</li>
+			</ol>
+			<h2 id="_idParaDest-50"><a id="_idTextAnchor050"></a>How it works...</h2>
+			<p>The <strong class="source-inline">plugins_url</strong> utility function, used in <a id="_idIndexMarker122"></a>conjunction with the <strong class="source-inline">__FILE__</strong> PHP constant and the name of our favicon file, allows us to quickly get the URL of this file located in our plugin directory. Once we have it, we can print out the appropriate HTML command to notify browsers of the location of this file.</p>
+			<p>The <strong class="source-inline">plugins_url</strong> function can be called with or without parameters. In the first case, it builds a URL by appending the path or filename found in the first parameter to the location of the file specified in the second argument. In the second situation, it simply returns the location of the plugin directory:</p>
+			<p class="source-code">plugins_url( $path, $plugin );</p>
+			<p>Before we<a id="_idIndexMarker123"></a> display our plugin&apos;s favicon file, we <a id="_idIndexMarker124"></a>also call the <strong class="source-inline">get_site_icon_url</strong> function<a id="_idIndexMarker125"></a> to see whether <a id="_idIndexMarker126"></a>the user has already assigned a site icon using the WordPress customizer. If that is the case, we give priority to that icon and display it using the <strong class="source-inline">wp_site_icon()</strong> function.</p>
+			<p class="callout-heading">Note</p>
+			<p class="callout">The <strong class="bold">Twenty Twenty-Two</strong> theme<a id="_idIndexMarker127"></a> found in WordPress 5.9 is built using a new theme creation technique and does not have a customizer section. This is why we change our site theme to demonstrate how our code takes into consideration site icons assigned in the customizer. The majority of themes available today have customizer sections, but this may change as WordPress evolves. The <strong class="bold">Twenty Twenty-Two</strong> theme may also add a customizer section in future releases.</p>
+			<h2 id="_idParaDest-51"><a id="_idTextAnchor051"></a>There&apos;s more...</h2>
+			<p>The <strong class="source-inline">plugins_url</strong> function<a id="_idIndexMarker128"></a> is one of the many functions that can be used in plugins to help find the location of files in a WordPress installation. Other useful functions include the following:</p>
+			<ul>
+				<li><strong class="source-inline">get_theme_root()</strong>: Returns<a id="_idIndexMarker129"></a> the address of the theme installation directory</li>
+				<li><strong class="source-inline">get_template_directory_uri()</strong>: Retrieves <a id="_idIndexMarker130"></a>the URL to the current theme&apos;s files</li>
+				<li><strong class="source-inline">admin_url()</strong>: Provides<a id="_idIndexMarker131"></a> the address of the WordPress administrative pages</li>
+				<li><strong class="source-inline">content_url()</strong>: Indicates<a id="_idIndexMarker132"></a> where the <strong class="source-inline">wp-content</strong> directory can be found</li>
+				<li><strong class="source-inline">site_url()</strong> and <strong class="source-inline">home_url()</strong>: Returns<a id="_idIndexMarker133"></a> the <a id="_idIndexMarker134"></a>site address</li>
+				<li><strong class="source-inline">includes_url()</strong>: Provides<a id="_idIndexMarker135"></a> the location of WordPress include files</li>
+				<li><strong class="source-inline">wp_upload_dir()</strong>: Indicates<a id="_idIndexMarker136"></a> the directory where user-uploaded files are stored</li>
+			</ul>
+			<h2 id="_idParaDest-52"><a id="_idTextAnchor052"></a>See also</h2>
+			<ul>
+				<li>The <em class="italic">Creating a plugin file and header</em> recipe</li>
+				<li>The <em class="italic">Adding output content to page headers using plugin actions</em> recipe</li>
+			</ul>
+			<h1 id="_idParaDest-53"><a id="_idTextAnchor053"></a>Modifying the site generator meta tag using plugin filters</h1>
+			<p>Beyond adding <a id="_idIndexMarker137"></a>functionality or <a id="_idIndexMarker138"></a>content to a site, the other major task commonly performed by plugins is to augment, modify, or reduce information before it is displayed on the screen. This is done by using WordPress filter hooks, which allow plugins to register a custom function through the WordPress API to be executed when content is prepared before it is sent to the browser.</p>
+			<h2 id="_idParaDest-54"><a id="_idTextAnchor054"></a>How to do it...</h2>
+			<p>Follow these steps to implement your first filter callback function that modifies the contents of <a id="_idIndexMarker139"></a>the generator meta tag found <a id="_idIndexMarker140"></a>in a site&apos;s HTML source code:</p>
+			<ol>
+				<li value="1">Navigate to the WordPress <strong class="source-inline">plugins</strong> directory of your development installation.</li>
+				<li>Create a new directory called <strong class="source-inline">ch2-generator-filter</strong>.</li>
+				<li>Navigate to this directory and create a new text file called <strong class="source-inline">ch2-generator-filter.php</strong>.</li>
+				<li>Open the new file in a code editor and add an appropriate header at the top of the plugin file, naming the plugin <strong class="source-inline">Chapter 2 - Generator Filter</strong>.</li>
+				<li>Add the following line of code to register a function that will be called when WordPress is preparing data to output the generator meta tag as part of the page header:<p class="source-code">add_filter( &apos;the_generator&apos;, &apos;ch2gf_generator_filter&apos;, </p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;10, 2 );</p></li>
+				<li>Add the following code section at the end of the file to provide an implementation for the <strong class="source-inline">ch2gf_generator_filter</strong> function:<p class="source-code">function ch2gf_generator_filter ( $html, $type ) {</p><p class="source-code">&#160;&#160;&#160;&#160;if ( $type == &apos;xhtml&apos; ) {</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;$html = preg_replace( &apos;(&quot;WordPress.*?&quot;)&apos;,</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&apos;&quot;Yannick Lefebvre&quot;&apos;, $html );</p><p class="source-code">&#160;&#160;&#160;&#160;}</p><p class="source-code">&#160;&#160;&#160;&#160;return $html;</p><p class="source-code">}</p></li>
+				<li>Save and close the plugin file.</li>
+				<li>Log in to the administration page of your development WordPress installation.</li>
+				<li>Click on <strong class="bold">Plugins</strong> in the left-hand navigation menu.</li>
+				<li><strong class="bold">Activate</strong> your new plugin.</li>
+				<li>Use a web browser to visit your website and display the page source. Searching for the <strong class="source-inline">generator</strong> keyword will reveal that the content generator meta tag has been modified and now reads as follows:<p class="source-code">&lt;meta name=&quot;generator&quot; content=&quot;Yannick Lefebvre&quot; /&gt;</p></li>
+			</ol>
+			<h2 id="_idParaDest-55"><a id="_idTextAnchor055"></a>How it works...</h2>
+			<p>The <strong class="source-inline">add_filter</strong> function is used to associate a custom plugin function to the second type of <a id="_idIndexMarker141"></a>WordPress hook, the filter hook. Filter hooks <a id="_idIndexMarker142"></a>give plugins the chance to augment, modify, delete, or<a id="_idIndexMarker143"></a> completely replace information while WordPress is executed. To enable this, filter functions are sent data that can be modified as a function parameter. They must <strong class="bold">return</strong> the resulting set of data to WordPress once they have finished making the changes.</p>
+			<p>Unlike action hooks, filter functions must not output any text or HTML code, since they are executed while output is being prepared, and that would likely result in output showing up in unexpected places in the site layout. Instead, they should return the filtered data.</p>
+			<p>Taking a closer look at the parameters of the <strong class="source-inline">add_filter</strong> function, we can see that it is very similar to the <strong class="source-inline">add_action</strong> function that we saw in the last few recipes:</p>
+			<p class="source-code">add_filter( &apos;hook_name&apos;, &apos;your_function_name&apos;, [priority],</p>
+			<p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;[accepted_args] );</p>
+			<p>The first parameter, the hook name, indicates the name of the WordPress hook that we want our custom function to be associated with. This name must be accurately spelled; otherwise, our function will not be called, and no error message will be displayed.</p>
+			<p>The second parameter is the name of the plugin function that will be called to filter data. This function can have any name, with the only condition being that this name must be unique to avoid conflicting with functions from other plugins or from the WordPress code.</p>
+			<p>The <strong class="source-inline">priority</strong> parameter is optional, as indicated by the square brackets, and has a default value of <strong class="source-inline">10</strong>. It indicates the execution priority of this callback relative to other callbacks that are registered by WordPress itself and by other plugins, with a lower number indicating a higher priority.</p>
+			<p>The last <a id="_idIndexMarker144"></a>parameter of the function, <strong class="source-inline">accepted_args</strong>, has a default value of <strong class="source-inline">1</strong> and indicates how many parameters <a id="_idIndexMarker145"></a>will be sent to your custom filter function. It should only be set to higher values when you are using filters that will send multiple parameters, as shown in this recipe with the <strong class="source-inline">$html</strong> and <strong class="source-inline">$type</strong> arguments.</p>
+			<h2 id="_idParaDest-56"><a id="_idTextAnchor056"></a>There&apos;s more...</h2>
+			<p>Beyond demonstrating how to change the site generator name, this plugin also showed how to use an advanced PHP function to perform the actual text replacement. We will take a closer look at this function and also explore resources to learn more about filter hooks.</p>
+			<h3>The preg_replace function</h3>
+			<p>The <strong class="source-inline">preg_replace</strong> function<a id="_idIndexMarker146"></a> is a PHP function that can be used to perform a search and replace operation within a string based on a search pattern. We use this function rather than the simpler <strong class="source-inline">str_replace</strong> function, since we want to find and replace both the WordPress keyword and its associated version number, which changes with every version.</p>
+			<h3>Filter hooks online listings and the apply_filters function</h3>
+			<p>Similar to action <a id="_idIndexMarker147"></a>hooks, information about commonly used filter hooks can be found at the WordPress Codex (<a href="https://codex.wordpress.org/Plugin_API/Filter_Reference">https://codex.wordpress.org/Plugin_API/Filter_Reference</a>) or on sites that provide raw function lists (for example, <a href="http://hookr.io">http://hookr.io</a>).</p>
+			<p>It is also possible to learn about filter hooks by searching for occurrences of the <strong class="source-inline">apply_filters</strong> function <a id="_idIndexMarker148"></a>in the WordPress code. As can be seen in the following code, this function has a variable number of arguments, with the first one being the name of the filter hook, the second representing the value that the registered function will be able to modify, and the remaining optional parameters containing additional data that may be useful in the implementation of the filter function:</p>
+			<p class="source-code">apply_filters( $tag, $value, [$var] ... );</p>
+			<p>For the example shown in this recipe, a search for <strong class="source-inline">apply_filters( &apos;the_generator&apos;</strong> in the WordPress code reveals that it is called within the <strong class="source-inline">the_generator</strong> template function:</p>
+			<p class="source-code">echo apply_filters( &apos;the_generator&apos;, </p>
+			<p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;get_the_generator( $type ), $type );</p>
+			<h2 id="_idParaDest-57"><a id="_idTextAnchor057"></a>See also</h2>
+			<ul>
+				<li>The <em class="italic">Creating a plugin file and header</em> recipe</li>
+			</ul>
+			<h1 id="_idParaDest-58"><a id="_idTextAnchor058"></a>Adding text after each item&apos;s content using plugin filters</h1>
+			<p>After making a<a id="_idIndexMarker149"></a> number of changes to the page header, the generator meta tag, and the site favicon, this recipe takes a more active role by adding a link to each post or page, allowing visitors to email a link to the article that they are currently viewing. This functionality is implemented using a filter hook attached to the page and post content. This allows our custom function to append custom output code to all entries that get displayed on the screen.</p>
+			<h2 id="_idParaDest-59"><a id="_idTextAnchor059"></a>How to do it...</h2>
+			<p>Follow these steps to create a plugin that adds an email link at the end of all posts and pages:</p>
+			<ol>
+				<li value="1">Navigate to the WordPress <strong class="source-inline">plugins</strong> directory of your development installation.</li>
+				<li>Create a new directory called <strong class="source-inline">ch2-email-page-link</strong>.</li>
+				<li>Navigate to this directory and create a new text file called <strong class="source-inline">ch2-email-page-link.php</strong>.</li>
+				<li>Open the new file in a code editor and add an appropriate header at the top of the plugin file, naming the plugin <strong class="source-inline">Chapter 2 - Email Page Link</strong>.</li>
+				<li>Visit an icon <a id="_idIndexMarker150"></a>download website, such as <a href="https://iconarchive.com">https://iconarchive.com</a>, and download an email icon with a small resolution (32 x 32 pixels) in PNG format to the <strong class="source-inline">ch2-email-page-link</strong> directory, giving it the name <strong class="source-inline">mailicon.png</strong>.</li>
+				<li>Add the following line of code at the end of the file to register a function that will be called when WordPress is preparing data to display the content of a post or page:<p class="source-code">add_filter( &apos;the_content&apos;, </p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&apos;ch2epl_email_page_filter&apos; );</p></li>
+				<li>Add the following code section to provide an implementation for the <strong class="source-inline">ch2epl_email_page_filter</strong> function:<p class="source-code">function ch2epl_email_page_filter ( $the_content ) {</p><p class="source-code">&#160;&#160;&#160;&#160;// build url to mail message icon</p><p class="source-code">&#160;&#160;&#160;&#160;$mail_icon_url = plugins_url( &apos;mailicon.png&apos;,</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;__FILE__ );</p><p class="source-code">&#160;&#160;&#160;&#160;// Set value of $new_content to previous content</p><p class="source-code">&#160;&#160;&#160;&#160;$new_content = $the_content;</p><p class="source-code">&#160;&#160;&#160;&#160;// Append image with mailto link after content, </p><p class="source-code">&#160;&#160;&#160;&#160;// including the item title and permanent URL</p><p class="source-code">&#160;&#160;&#160;&#160;$new_content .= &apos;&lt;div class=&quot;email_link&quot;&gt;&apos;;</p><p class="source-code">&#160;&#160;&#160;&#160;$new_content .= &apos;&lt;a title=&quot;Email article link&quot;&apos;;</p><p class="source-code">&#160;&#160;&#160;&#160;$new_content .=</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&apos;href=&quot;mailto:someone@somewhere.com?&apos;;</p><p class="source-code">&#160;&#160;&#160;&#160;$new_content .= </p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&apos;subject=Check out this interesting &apos;;</p><p class="source-code">&#160;&#160;&#160;&#160;$new_content .= &apos;article entitled &apos;;</p><p class="source-code">&#160;&#160;&#160;&#160;$new_content .= get_the_title();</p><p class="source-code">&#160;&#160;&#160;&#160;$new_content .= &apos;&amp;body=Hi!%0A%0AYou might &apos;;</p><p class="source-code">&#160;&#160;&#160;&#160;$new_content .= &apos;enjoy this article entitled &apos;;</p><p class="source-code">&#160;&#160;&#160;&#160;$new_content .= get_the_title() . &apos;.%0A%0A&apos;;</p><p class="source-code">&#160;&#160;&#160;&#160;$new_content .= get_permalink();</p><p class="source-code">&#160;&#160;&#160;&#160;$new_content .= &apos;%0A%0AEnjoy!&quot;&gt;&apos;;</p><p class="source-code">&#160;&#160;&#160;&#160;$new_content .= &apos;&lt;img alt=&quot;Email icon&quot; src=&quot;&apos;;</p><p class="source-code">&#160;&#160;&#160;&#160;$new_content .= esc_url( $mail_icon_url );</p><p class="source-code">&#160;&#160;&#160;&#160;$new_content .= &apos;&quot; /&gt;&lt;/a&gt;&lt;/div&gt;&apos;;</p><p class="source-code">&#160;&#160;&#160;&#160;// Return filtered content for display on the site</p><p class="source-code">&#160;&#160;&#160;&#160;return $new_content;</p><p class="source-code">}</p></li>
+				<li>Save and<a id="_idIndexMarker151"></a> close the plugin file.</li>
+				<li>Log in to the administration page of your development WordPress installation.</li>
+				<li>Click on <strong class="bold">Plugins</strong> in the left-hand navigation menu.</li>
+				<li><strong class="bold">Activate</strong> your new plugin.</li>
+				<li>Visit your <a id="_idIndexMarker152"></a>website to see the new mail icon at the end of each post and page. You may need to click on an article or page to see the icon:</li>
+			</ol>
+			<div>
+				<div id="_idContainer018" class="IMG---Figure">
+					<img src="image/Figure_2.04_B17639.jpg" alt="Figure 2.4 – The newly added Email article link icon" />
+				</div>
+			</div>
+			<p class="figure-caption">Figure 2.4 – The newly added Email article link icon</p>
+			<ol>
+				<li value="13">Click on one of the mail links: <div id="_idContainer019" class="IMG---Figure"><img src="image/Figure_2.05_B17639.jpg" alt="Figure 2.5 – The email generated after clicking on the link" /></div></li>
+			</ol>
+			<p class="figure-caption"> </p>
+			<p class="figure-caption">Figure 2.5 – The email generated after clicking on the link</p>
+			<p>As seen in <em class="italic">Figure 2.5</em>, your default mail client will come up with information about the item you were reading. The<a id="_idIndexMarker153"></a> only information that needs to be updated is the recipient address before visitors can quickly send an email.</p>
+			<h2 id="_idParaDest-60"><a id="_idTextAnchor060"></a>How it works...</h2>
+			<p>Similar to the previous recipe, this plugin uses the <strong class="source-inline">add_filter</strong> function to register a custom function to be called by WordPress as it prepares an item&apos;s content to be displayed on a page. When the filter function is called, the first action that it performs is to create a URL to the email icon that was downloaded in the recipe. It then goes on to modify the original content by appending the HTML code to display a <strong class="source-inline">mailto</strong> link. The same technique can be used to create links to popular social media and link sharing sites, with simple changes to the syntax of the link. Once the new content is ready, it is returned to WordPress to be sent to any other registered filters and subsequently displayed on the site.</p>
+			<h2 id="_idParaDest-61"><a id="_idTextAnchor061"></a>There&apos;s more...</h2>
+			<p>This recipe also introduces a pair of useful WordPress utility functions to get access to the current item&apos;s content.</p>
+			<h3>The get_the_title and get_permalink functions</h3>
+			<p>While these two functions are mainly seen within theme template files, they can also be used by plugins to get easy access to the content of items that are currently being processed. More specifically, the two utility functions that are used in this recipe are as follows:</p>
+			<ul>
+				<li><strong class="source-inline">get_the_title()</strong>: This <a id="_idIndexMarker154"></a>function gives us quick access to the item&apos;s title.</li>
+				<li><strong class="source-inline">get_permalink()</strong>: This is a<a id="_idIndexMarker155"></a> function that returns the item&apos;s permalink (a URL that is always associated with this post or page, even after it is no longer featured on a website&apos;s front page or blog page).</li>
+			</ul>
+			<h2 id="_idParaDest-62"><a id="_idTextAnchor062"></a>See also</h2>
+			<ul>
+				<li>The <em class="italic">Creating a plugin file and header</em> recipe</li>
+				<li>The <em class="italic">Using WordPress path utility functions to load external files and images</em> recipe</li>
+				<li>The <em class="italic">Modifying the site generator meta tag using plugin filters</em> recipe</li>
+			</ul>
+			<h1 id="_idParaDest-63"><a id="_idTextAnchor063"></a>Inserting link tracking code in the page body using plugin filters</h1>
+			<p>After seeing<a id="_idIndexMarker156"></a> how to append text to <a id="_idIndexMarker157"></a>existing content, this recipe shows <a id="_idIndexMarker158"></a>you how to modify page content before it is displayed onscreen. More specifically, the following plugin expands on the Google Analytics header plugin created earlier and adds a JavaScript function to all links that are included in posts and pages to track when they are clicked by visitors.</p>
+			<h2 id="_idParaDest-64"><a id="_idTextAnchor064"></a>Getting ready</h2>
+			<p>You should have already followed the <em class="italic">Adding output content to page headers using plugin actions</em> recipe to have a starting point for this recipe, and the resulting plugin should be active in your development site. Alternatively, you can download the resulting code (<strong class="source-inline">ch2/ch2-page-header-output/ch2-page-header-output.php</strong>) for the book&apos;s GitHub page.</p>
+			<h2 id="_idParaDest-65"><a id="_idTextAnchor065"></a>How to do it...</h2>
+			<p>Follow these<a id="_idIndexMarker159"></a> steps to add outbound link <a id="_idIndexMarker160"></a>tracking code to your simple Google <a id="_idIndexMarker161"></a>Analytics plugin:</p>
+			<ol>
+				<li value="1">Navigate to the <strong class="source-inline">ch2-page-header-output</strong> folder in the WordPress <strong class="source-inline">plugins</strong> directory of your development installation.</li>
+				<li>Open the <strong class="source-inline">ch2-page-header-output.php</strong> file in a code editor.</li>
+				<li>Add the following line after the existing code to register a function that will be called when WordPress is preparing data to display a page or post&apos;s content:<p class="source-code">add_filter( &apos;the_content&apos;,</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&apos;ch2lfa_link_filter_analytics&apos; );</p></li>
+				<li>Add the following code section to provide an implementation for the <strong class="source-inline">ch2lfa_link_filter_analytics</strong> function:<p class="source-code">function ch2lfa_link_filter_analytics ($the_content) {</p><p class="source-code">&#160;&#160;&#160;&#160;$new_content = str_replace( &apos;href&apos;,</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&apos;onClick=&quot;recordOutboundLink( this );return &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;false;&quot; href&apos;,</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;$the_content );</p><p class="source-code">&#160;&#160;&#160;&#160;return $new_content;</p><p class="source-code">}</p></li>
+				<li>Add the following line of code to register a function that will be called when WordPress renders the page footer:<p class="source-code">add_action( &apos;wp_footer&apos;,</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&apos;ch2lfa_footer_analytics_code&apos; );</p></li>
+				<li>Add the<a id="_idIndexMarker162"></a> following code section<a id="_idIndexMarker163"></a> to provide an implementation<a id="_idIndexMarker164"></a> for the <strong class="source-inline">ch2lfa_footer_analytics_code</strong> function:<p class="source-code">function ch2lfa_footer_analytics_code() { ?&gt;</p><p class="source-code">&#160;&#160;&#160;&#160;&lt;script type=&quot;text/javascript&quot;&gt;</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;function recordOutboundLink( link ) {</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;ga( &apos;send&apos;, &apos;event&apos;, &apos;Outbound Links&apos;,</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&apos;Click&apos;,</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;link.href, {</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&apos;transport&apos;: &apos;beacon&apos;,</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&apos;hitCallback&apos;: function() {</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;document.location = link.href;</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;}</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;} );</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;}</p><p class="source-code">&lt;/script&gt;</p><p class="source-code">&lt;?php }</p></li>
+				<li>Save and close the plugin file.</li>
+				<li>Go to the <strong class="bold">Posts</strong> section of the <strong class="bold">Dashboard</strong> and edit one of the items to add a link within the content, pointing to a location of your choice.</li>
+				<li>Click <strong class="bold">Update</strong> to save the changes to the modified post.</li>
+				<li>In your web browser, refresh your website to see the modified post.</li>
+				<li>Right-click <a id="_idIndexMarker165"></a>on the new link <a id="_idIndexMarker166"></a>and <strong class="bold">Inspect</strong> it using your browser&apos;s <a id="_idIndexMarker167"></a>developer tools:</li>
+			</ol>
+			<div>
+				<div id="_idContainer020" class="IMG---Figure">
+					<img src="image/Figure_2.06_B17639.jpg" alt="Figure 2.6 – Custom JavaScript code added to web links in the page output" />
+				</div>
+			</div>
+			<p class="figure-caption">Figure 2.6 – Custom JavaScript code added to web links in the page output</p>
+			<p>As seen in <em class="italic">Figure 2.6</em>, the link tag now has an additional <strong class="source-inline">onClick</strong> JavaScript property with code that will be called when visitors follow it, along with the definition of the <strong class="source-inline">recordOutboundLink</strong> function in the page footer.</p>
+			<h2 id="_idParaDest-66"><a id="_idTextAnchor066"></a>How it works...</h2>
+			<p>The content <a id="_idIndexMarker168"></a>filter function that is put in <a id="_idIndexMarker169"></a>place by calling <strong class="source-inline">add_filter</strong> receives <a id="_idIndexMarker170"></a>the entire content of all the posts and pages before they are rendered to the browser and is allowed to make any number of changes to this information. In this case, we are using the PHP <strong class="source-inline">str_replace</strong> function to search for any occurrence of the <strong class="source-inline">href</strong> string, which indicates a link. When the string is found, it is replaced with a call to a JavaScript function while preserving the original <strong class="source-inline">href</strong> tag.</p>
+			<p>To make this plugin complete, it also needs to provide an implementation for the JavaScript <strong class="source-inline">recordOutboundLink</strong> function. This is done by registering a custom function with the <strong class="source-inline">wp_footer</strong> action hook, which will output extra content once in the website&apos;s footer.</p>
+			<p>The resulting plugin automates many of the tasks related to tracking usage data on a website using Google Analytics.</p>
+			<h2 id="_idParaDest-67"><a id="_idTextAnchor067"></a>See also</h2>
+			<ul>
+				<li>The <em class="italic">Adding output content to page headers using plugin actions</em> recipe</li>
+				<li>The <em class="italic">Adding text after each item&apos;s content using plugin filters</em> recipe</li>
+			</ul>
+			<h1 id="_idParaDest-68"><a id="_idTextAnchor068"></a>Troubleshooting coding errors and printing variable content</h1>
+			<p>As you transcribe code<a id="_idIndexMarker171"></a> segments from the pages of this book or start writing your own plugins, there is a strong chance that you will have to troubleshoot problems with your code. You might also run into trouble working with data that your plugin is meant to manipulate. This recipe shows basic techniques to identify and quickly resolve these errors while creating a plugin that will hide an item from the navigation menu for users who are not logged in to your site.</p>
+			<h2 id="_idParaDest-69"><a id="_idTextAnchor069"></a>How to do it...</h2>
+			<p>Follow these steps to<a id="_idIndexMarker172"></a> learn how to troubleshoot problematic plugin code:</p>
+			<ol>
+				<li value="1">Navigate to the WordPress <strong class="source-inline">plugins</strong> directory of your development installation.</li>
+				<li>Create a new directory called <strong class="source-inline">ch2-nav-menu-filter</strong>.</li>
+				<li>Navigate to this<a id="_idIndexMarker173"></a> directory and create a new text file called <strong class="source-inline">ch2-nav-menu-filter.php</strong>.</li>
+				<li>Open the new file in a code editor and add an appropriate header at the top of the plugin file, naming the plugin <strong class="source-inline">Chapter 2 - Nav Menu Filter</strong>.</li>
+				<li>Add the following line of code to register a function that will be called when WordPress is preparing data to display the site&apos;s navigation menu:<p class="source-code">add_filter( &apos;wp_nav_menu_objects&apos;,</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&apos;ch2nmf_new_nav_menu_items&apos;, 10, 2 );</p></li>
+				<li>Add the following code section to provide an implementation for the <strong class="source-inline">ch2nmf_new_nav_menu_items</strong> function. Note that the word <strong class="source-inline">functio</strong> is mistyped on purpose at the beginning of the first line:<p class="source-code">functio ch2nmf_new_nav_menu_items ( </p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;$sorted_menu_items, $args ) {</p><p class="source-code">&#160;&#160;&#160;&#160;print_r( $sorted_menu_items );</p><p class="source-code">&#160;&#160;&#160;&#160;return $sorted_menu_items;</p><p class="source-code">}</p><p class="callout-heading">Tip</p><p class="callout">If you are using a dedicated code editor, you should be able to tell that the <strong class="source-inline">functio</strong> text is not a recognized keyword, since it will not be colored as a PHP keyword and might also be underlined to indicate an error.</p></li>
+				<li>Save the plugin file and leave your code editor open.</li>
+				<li>Log in to the administration page of your development WordPress installation.</li>
+				<li>Click on <strong class="bold">Plugins</strong> in the left-hand navigation menu.</li>
+				<li><strong class="bold">Activate</strong> your <a id="_idIndexMarker174"></a>new plugin.</li>
+				<li>WordPress will display a fatal error message, indicating that the plugin could not be activated, since a parsing error was found. It also indicates the exact filename and line where the error occurred, helping to narrow down where the problem occurred. The<a id="_idIndexMarker175"></a> actual format of the error message may be different based on the local development tool that you&apos;re using:</li>
+			</ol>
+			<div>
+				<div id="_idContainer021" class="IMG---Figure">
+					<img src="image/Figure_2.07_B17639.jpg" alt="Figure 2.7 – A fatal error upon plugin activation due to a syntax error" />
+				</div>
+			</div>
+			<p class="figure-caption">Figure 2.7 – A fatal error upon plugin activation due to a syntax error</p>
+			<ol>
+				<li value="12">Go back to your code editor, correct the spelling of the word <strong class="source-inline">function</strong>, and save the file.</li>
+				<li><strong class="bold">Activate</strong> the plugin a second time. It should now activate correctly.</li>
+				<li>Back in the code editor, remove the last letter of the word <strong class="source-inline">function</strong> to re-introduce a syntax error, and save the file.</li>
+				<li>Visit the development site in your browser. You will now see that the entire site has been replaced with a <strong class="bold">Parse error</strong> message similar to the one we just saw. You may also only get a blank page or a critical error, depending on your web server configuration.</li>
+				<li>Go to the <strong class="bold">Appearance</strong> section of your development site&apos;s <strong class="bold">Dashboard</strong> and <strong class="bold">Activate</strong> a theme other than <strong class="bold">Twenty Twenty-Two</strong> (for example, <strong class="bold">Twenty Twenty-One</strong> or <strong class="bold">Twenty Twenty</strong>). You may need to install one of these themes if they are not present in your development environment.</li>
+				<li>In the WordPress <strong class="bold">Dashboard</strong>, navigate to the <strong class="bold">Appearance</strong> | <strong class="bold">Menus</strong> item.</li>
+				<li>If you don&apos;t have any <a id="_idIndexMarker176"></a>menu defined, type <strong class="source-inline">Main Menu</strong> in the <strong class="bold">Menu Name</strong> field. Check the appropriate <strong class="bold">Display location</strong> checkboxes to assign your new menu to the theme&apos;s main navigation area. The exact <a id="_idIndexMarker177"></a>name of this location will change based on the theme you&apos;re using. Click on <strong class="bold">Create menu</strong> to save your menu.</li>
+				<li>Create an additional item in your menu as a <strong class="bold">Custom Link</strong>, setting the <strong class="bold">URL</strong> to <strong class="source-inline">/privatearea</strong> and the <strong class="bold">Link Text</strong> to <strong class="source-inline">Private Area</strong>; then, click on <strong class="bold">Add to Menu</strong>:</li>
+			</ol>
+			<div>
+				<div id="_idContainer022" class="IMG---Figure">
+					<img src="image/Figure_2.08_B17639.jpg" alt="Figure 2.8 – Creating a new menu item&#xd;&#xa;" />
+				</div>
+			</div>
+			<p class="figure-caption">Figure 2.8 – Creating a new menu item</p>
+			<ol>
+				<li value="20">Click on the <strong class="bold">Save Menu</strong> button to save your changes.</li>
+				<li>Back in your code editor, correct the spelling error once again and refresh the page to see the website return to normal. You will also see that a lot of information is now being printed before the navigation menu. This output is generated by the <strong class="source-inline">print_r</strong> function and is meant to help us understand how the data received by our filter function is organized. Once we have a good understanding of that data, we will be able to properly make changes to this information in the next<a id="_idIndexMarker178"></a> step. To view the <strong class="source-inline">print_r</strong> data in a more organized way, bring up the <strong class="bold">View Page Source</strong> function of your browser and search for the keyword <strong class="source-inline">Array</strong> to quickly find the menu data.</li>
+				<li>Back in the code editor, replace the<a id="_idIndexMarker179"></a> line containing the <strong class="source-inline">print_r</strong> function call with the following code:<p class="source-code">// Check if used is logged in, continue if not logged</p><p class="source-code">if ( is_user_logged_in() == FALSE ) {</p><p class="source-code">&#160;&#160;&#160;&#160;// Loop through all menu items received</p><p class="source-code">&#160;&#160;&#160;&#160;// Place each item&apos;s key in $key variable</p><p class="source-code">&#160;&#160;&#160;&#160;foreach ( $sorted_menu_items as</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;$key =&gt; $sorted_menu_item ) {</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;// Check if menu item matches search string</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;if ( &apos;Private Area&apos; == </p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;$sorted_menu_item-&gt;title ) {</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;// Remove item from menu array if found </p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;// using item key</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;unset( $sorted_menu_items[ $key ] );</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;}</p><p class="source-code">&#160;&#160;&#160;&#160;}</p><p class="source-code">}</p></li>
+				<li>Refresh your website, and you will see that the large array printout has disappeared. If you are logged in as the administrator, you will also notice the <strong class="bold">Private Area</strong> link in your menu. Log out of your site or open an incognito session in your browser to<a id="_idIndexMarker180"></a> see the page without the new menu item.</li>
+				<li>Go back <a id="_idIndexMarker181"></a>to the <strong class="bold">Appearance</strong> section and <strong class="bold">Activate</strong> the <strong class="bold">Twenty Twenty-Two</strong> theme.</li>
+			</ol>
+			<h2 id="_idParaDest-70"><a id="_idTextAnchor070"></a>How it works...</h2>
+			<p>As WordPress assembles a list of all available plugins to display them in the administration interface, it does not check to see whether each plugin&apos;s PHP code is valid. This check is only done when a plugin is activated. At that time, any syntax error will be caught immediately and the newly activated plugin will remain inactive, preventing a failure of the entire website.</p>
+			<p>That being said, once a plugin is activated, its code is evaluated every time WordPress renders a web page, and any subsequent code error that gets saved to the plugin file will cause the site to stop working correctly. For this reason, it is highly recommended to set up a local development environment, as discussed in <a href="B17639_01_Final_PG_ePub.xhtml#_idTextAnchor021"><em class="italic">Chapter 1</em></a>, <em class="italic">Preparing a Local Development Environment</em>, to avoid affecting a live site when an inevitable error creeps up in your plugin code. To avoid potential outages on a live website, it is safer to deactivate plugins before making changes to them and then reactivate them once changes are completed. This way, all changes are validated before the plugin code is reactivated. It should be noted that, with this method, the plugin&apos;s functionality won&apos;t be available on your site while you make changes, so it is not an optimal way to modify deployed code.</p>
+			<p>Once the code is working correctly, the second part of this recipe shows us how to visualize the information received by a registered filter function. While the WordPress Codex website provides great documentation of the purpose of most available filters, it does not go into detail about the structure of the information that is sent to each filter function.</p>
+			<p>Thankfully, the PHP <strong class="source-inline">print_r</strong> function comes in very handy, since it can display the content of any variable on the screen, no matter what information is stored in the variable that it receives as an argument.</p>
+			<p>Last, but not least, the implementation of the custom filter function uses the WordPress API <strong class="source-inline">is_user_logged_in()</strong> function to see whether the person viewing the site has provided login credentials. If the return value of the function is <strong class="source-inline">true</strong>, our code goes on to parse all the menu items and <a id="_idIndexMarker182"></a>remove the <strong class="bold">Private Area</strong> menu item.</p>
+			<p class="callout-heading">Note</p>
+			<p class="callout">This is the second time in this chapter that we ask you to activate a theme other than the default <a id="_idIndexMarker183"></a>WordPress 5.9 <strong class="bold">Twenty Twenty-Two</strong> theme. With WordPress 5.9, WordPress is introducing a new theme-building paradigm where users will be able to modify their site layout using a graphical tool. Some action and filter hooks don&apos;t work with this new theme structure in this first version. That being said, all code samples in this book work with the large majority of themes that are available today and are running on most WordPress sites.</p>
+			<h2 id="_idParaDest-71"><a id="_idTextAnchor071"></a>There&apos;s more...</h2>
+			<p>In addition to the debugging techniques used in this recipe, WordPress offers a number of built-in tools to facilitate plugin troubleshooting.</p>
+			<h3>Built-in WordPress debugging features</h3>
+			<p>While the <strong class="source-inline">wp-config.php</strong> file, located at the top of the WordPress file structure, is primarily used to store basic site configuration data, it can also be used to trigger a number of debugging<a id="_idIndexMarker184"></a> features. The first of these is debug mode, which<a id="_idIndexMarker185"></a> will display all PHP errors, warnings, and notices at the top of site pages. For example, having this option active will show any undefined variables that you try to access in your code along with any deprecated WordPress function. To activate this tool, change the second parameter of the line defining the <strong class="source-inline">WP_DEBUG</strong> constant from <strong class="source-inline">false</strong> to <strong class="source-inline">true</strong> in <strong class="source-inline">wp_config.php</strong>:</p>
+			<p class="source-code">define( &apos;WP_DEBUG&apos;, true );</p>
+			<p>If the <strong class="source-inline">WP_DEBUG</strong> line does not appear in your development site&apos;s <strong class="source-inline">wp-config.php</strong> file, you can add it before the line that reads the following:</p>
+			<p class="source-code">/* That&apos;s all, stop editing! Happy publishing. */</p>
+			<p>To prevent<a id="_idIndexMarker186"></a> debug messages from affecting the site&apos;s layout, you can download a useful plugin called <strong class="bold">Debug Bar</strong> (<a href="https://wordpress.org/plugins/debug-bar/">https://wordpress.org/plugins/debug-bar/</a>) to collect messages and display them in the admin bar, as shown here:</p>
+			<div>
+				<div id="_idContainer023" class="IMG---Figure">
+					<img src="image/Figure_2.09_B17639.jpg" alt="Figure 2.9 – The Debug Bar plugin&#xd;&#xa;" />
+				</div>
+			</div>
+			<p class="figure-caption">Figure 2.9 – The Debug Bar plugin</p>
+			<p>Other debugging features<a id="_idIndexMarker187"></a> that can be activated from the <strong class="source-inline">wp-config.php</strong> file are as<a id="_idIndexMarker188"></a> follows:</p>
+			<ul>
+				<li><strong class="source-inline">WP_DEBUG_LOG</strong>: Stores all debug messages in a file named <strong class="source-inline">debug.log</strong> in the site&apos;s <strong class="source-inline">wp-content</strong> directory for later analysis</li>
+				<li><strong class="source-inline">WP_DEBUG_DISPLAY</strong>: Indicates whether error messages should be displayed on the site</li>
+				<li><strong class="source-inline">SAVEQUERIES</strong>: Stores database queries in a variable that can be displayed in the page footer (see <a href="https://wordpress.org/support/article/editing-wp-config-php/#save-queries-for-analysis">https://wordpress.org/support/article/editing-wp-config-php/#save-queries-for-analysis</a> for more information)</li>
+			</ul>
+			<h3>Better debugging with Xdebug</h3>
+			<p>While all of the debugging<a id="_idIndexMarker189"></a> techniques mentioned in this chapter are valid, they do require manual intervention to insert and remove code, especially in the case of the <strong class="source-inline">print_r</strong> function called to view data received by the filter function. If you forget to remove a manual debugging statement, your users will end up with debug data on their site if you distribute your work.</p>
+			<p>As you become more invested in plugin development, you should consider setting up a development server that supports Xdebug. One of the benefits of this debugging tool is that coding errors will be displayed with more details about where they were found and the code that was executed leading up to the error. More importantly, Xdebug allows developers to connect a code editor such as Visual Studio Code to the web server to be able to step through each individual line of code as they are executed. It is also possible to set breakpoints to stop execution in specific places and see data in all variables every step of the way.</p>
+			<h2 id="_idParaDest-72"><a id="_idTextAnchor072"></a>See also</h2>
+			<ul>
+				<li>The <em class="italic">Modifying the site generator meta tag using plugin filters</em> recipe</li>
+			</ul>
+			<h1 id="_idParaDest-73"><a id="_idTextAnchor073"></a>Creating a new simple shortcode</h1>
+			<p>Shortcodes are a very<a id="_idIndexMarker190"></a> popular tool in WordPress that allow users to easily add content generated by plugins or themes to any page or post without needing to be familiar with PHP code and editing theme template files. As they are very simple to create, shortcodes can also be used to easily automate the display of content that repeatedly needs to be inserted on your site.</p>
+			<h2 id="_idParaDest-74"><a id="_idTextAnchor074"></a>How to do it...</h2>
+			<p>Follow these steps to create a new <a id="_idIndexMarker191"></a>custom shortcode that will accelerate the task of linking to a specific Twitter page in any post or page:</p>
+			<ol>
+				<li value="1">Navigate to the WordPress <strong class="source-inline">plugins</strong> directory of your development installation.</li>
+				<li>Create a new directory called <strong class="source-inline">ch2-twitter-shortcode</strong>.</li>
+				<li>Navigate to this directory and create a new text file called <strong class="source-inline">ch2-twitter-shortcode.php</strong>.</li>
+				<li>Open the new file in a code editor and add an appropriate header at the top of the plugin file, naming the plugin <strong class="source-inline">Chapter 2 - Twitter Shortcode</strong>.</li>
+				<li>Add the following line of code to declare a new shortcode, simply using the two <strong class="source-inline">tl</strong> characters, and specify the name of the function that should be called when the code is encountered in posts or pages:<p class="source-code">add_shortcode( &apos;tl&apos;, &apos;ch2ts_twitter_link_shortcode&apos; );</p></li>
+				<li>Add the following code section to provide an implementation for the <strong class="source-inline">ch2ts_twitter_link_shortcode</strong> function:<p class="source-code">function ch2ts_twitter_link_shortcode( $atts ) {</p><p class="source-code">&#160;&#160;&#160;&#160;$output =</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&apos;&lt;a href=&quot;https://twitter.com/ylefebvre&quot;&gt;&apos;;</p><p class="source-code">&#160;&#160;&#160;&#160;$output .= &apos;Twitter Feed&lt;/a&gt;&apos;;</p><p class="source-code">&#160;&#160;&#160;&#160;return $output;</p><p class="source-code">}</p></li>
+				<li>Save and close the<a id="_idIndexMarker192"></a> plugin file.</li>
+				<li>Log in to the administration page of your development WordPress installation.</li>
+				<li>Click on <strong class="bold">Plugins</strong> in the left-hand navigation menu.</li>
+				<li><strong class="bold">Activate</strong> your new plugin.</li>
+				<li>Edit an existing post on your site and use the <strong class="source-inline">[tl]</strong> shortcode in the code editor:</li>
+			</ol>
+			<p class="figure-caption"> </p>
+			<div>
+				<div id="_idContainer024" class="IMG---Figure">
+					<img src="image/Figure_2.10_B17639.jpg" alt="Figure 2.10 – Inserting the [tl] shortcode in the new page contents" />
+				</div>
+			</div>
+			<p class="figure-caption">Figure 2.10 – Inserting the [tl] shortcode in the new page contents</p>
+			<ol>
+				<li value="12">Save and view the post to see that the shortcode was replaced by a link to a Twitter page attached to the words <strong class="source-inline">Twitter Feed</strong>.</li>
+			</ol>
+			<h2 id="_idParaDest-75"><a id="_idTextAnchor075"></a>How it works...</h2>
+			<p>Shortcodes <a id="_idIndexMarker193"></a>have similarities with both action hooks and filter hooks, since their associated custom function is called when it is time to perform a task, just like an action hook, but they must return their output through a return value, just like a filter hook. In terms of external data, the function associated with a shortcode will receive data in the case of some types of shortcodes, while it will only produce output in other cases.</p>
+			<p>When used in the content of a post or page, any shortcode surrounded by a pair of square brackets is identified by the WordPress engine, which then searches for functions registered for that specific code. If found, the associated function is called, and the expected result is used to replace the original shortcode text in the item&apos;s content. Just like filter functions, shortcode functions must not output any text directly, since it will likely appear in an unexpected place in the page layout, as WordPress calls all shortcode-processing functions before displaying the body of an item.</p>
+			<p>For simple shortcodes, such as the one found in this recipe, the plugin functions associated with them must return information, but they do not receive any additional data through function parameters. That being said, they can rely on utility functions, such as <strong class="source-inline">get_the_ID</strong>, <strong class="source-inline">get_the_title</strong>, and other WordPress utility functions, to get more information on the item that contains them and be able to produce tailored output. Other types of shortcodes seen in later recipes will have more context and configuration options. It is also possible for shortcodes to access stored options data, which will be covered in <a href="B17639_03_Final_PG_ePub.xhtml#_idTextAnchor096"><em class="italic">Chapter 3</em></a>, <em class="italic">User Settings and Administration Pages</em>.</p>
+			<h2 id="_idParaDest-76"><a id="_idTextAnchor076"></a>See also</h2>
+			<ul>
+				<li>The <em class="italic">Creating a plugin file and header</em> recipe</li>
+			</ul>
+			<h1 id="_idParaDest-77"><a id="_idTextAnchor077"></a>Creating a new shortcode with parameters</h1>
+			<p>Simple shortcodes <a id="_idIndexMarker194"></a>already provide a lot of potential to output<a id="_idIndexMarker195"></a> complex content to a page by entering a few characters in the post or page editors. That being said, they become even more useful when they are coupled with parameters that will be passed to their associated processing function. Using this technique, it becomes very easy to create a shortcode that accelerates the insertion of external content in WordPress posts or pages by only needing to specify the shortcode and the unique identifier of the source element to be displayed.</p>
+			<h2 id="_idParaDest-78"><a id="_idTextAnchor078"></a>How to do it...</h2>
+			<p>Follow these steps to create a shortcode that will be used to quickly add Twitter feeds to posts or pages:</p>
+			<ol>
+				<li value="1">Navigate to the WordPress <strong class="source-inline">plugins</strong> directory of your development installation.</li>
+				<li>Create a new<a id="_idIndexMarker196"></a> directory called <strong class="source-inline">ch2-twitter-embed</strong>.</li>
+				<li>Navigate to this directory and create a new text file called <strong class="source-inline">ch2-twitter-embed.php</strong>.</li>
+				<li>Open the new file in a code editor and add an appropriate header at the top of the plugin file, naming the plugin <strong class="source-inline">Chapter 2 - Twitter Embed</strong>.</li>
+				<li>Add the following line of code to declare a new shortcode and specify the name of the function that should be called when the shortcode is found in posts or pages:<p class="source-code">add_shortcode( &apos;twitterfeed&apos;, </p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&apos;ch2te_twitter_embed_shortcode&apos; );</p></li>
+				<li>Add the<a id="_idIndexMarker197"></a> following code section to provide an implementation for the <strong class="source-inline">ch2te_twitter_embed_shortcode</strong> function:<p class="source-code">function ch2te_twitter_embed_shortcode( $atts ) {</p><p class="source-code">&#160;&#160;&#160;&#160;extract( shortcode_atts( array(</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&apos;user_name&apos; =&gt; &apos;ylefebvre&apos;</p><p class="source-code">&#160;&#160;&#160;&#160;), $atts ) );</p><p class="source-code">&#160;&#160;&#160;&#160;if ( empty( $user_name ) ) {</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;$user_name = &apos;ylefebvre&apos;;</p><p class="source-code">&#160;&#160;&#160;&#160;} else {</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;$user_name = </p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;sanitize_text_field( $user_name );</p><p class="source-code">&#160;&#160;&#160;&#160;}</p><p class="source-code">&#160;&#160;&#160;&#160;$output = &apos;&lt;p&gt;&lt;a class=&quot;twitter-timeline&quot; href=&quot;&apos;;</p><p class="source-code">&#160;&#160;&#160;&#160;$output .= </p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;esc_url( &apos;https://twitter.com/&apos;.$user_name );</p><p class="source-code">&#160;&#160;&#160;&#160;$output .=</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&apos;&quot;&gt;Tweets by &apos; . esc_html( $user_name );</p><p class="source-code">&#160;&#160;&#160;&#160;$output .= &apos;&lt;/a&gt;&lt;/p&gt;&lt;script async &apos;;</p><p class="source-code">&#160;&#160;&#160;&#160;$output .=</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&apos;src=&quot;//platform.twitter.com/widgets.js&quot;&apos;;</p><p class="source-code">&#160;&#160;&#160;&#160;$output .= &apos;charset=&quot;utf-8&quot;&gt;&lt;/script&gt;&apos;;</p><p class="source-code">&#160;&#160;&#160;&#160;return $output;</p><p class="source-code">}</p></li>
+				<li>Save and <a id="_idIndexMarker198"></a>close the plugin file.</li>
+				<li>Log in to the <a id="_idIndexMarker199"></a>administration page of your development WordPress installation.</li>
+				<li>Click on <strong class="bold">Plugins</strong> in the left-hand navigation menu.</li>
+				<li><strong class="bold">Activate</strong> your new plugin.</li>
+				<li>Create a new page and use the <strong class="source-inline">[twitterfeed user_name=&apos;WordPress&apos;]</strong> shortcode in the page editor, where <strong class="source-inline">WordPress</strong> is the Twitter username of the feed to display:<div id="_idContainer025" class="IMG---Figure"><img src="image/Figure_2.11_B17639.jpg" alt="Figure 2.11 – Inserting the Twitter feed shortcode with its user_name parameter&#xd;&#xa;" /></div></li>
+			</ol>
+			<p class="figure-caption"> </p>
+			<p class="figure-caption">Figure 2.11 – Inserting the Twitter feed shortcode with its user_name parameter</p>
+			<ol>
+				<li value="12"><strong class="bold">Publish</strong> and <a id="_idIndexMarker200"></a>view the page to see that the<a id="_idIndexMarker201"></a> shortcode has been replaced by an embedded Twitter feed on your site. The Twitter feed may be quite large, based on the theme you are using on your development site.</li>
+				<li><strong class="bold">Edit</strong> the page and remove the <strong class="source-inline">user_name</strong> parameter and its associated value, only leaving the core <strong class="source-inline">[twitterfeed]</strong> shortcode in the post; then <strong class="bold">Update</strong> to save changes.</li>
+				<li>Refresh the page to see that the feed is still being displayed but now shows tweets from a default account specified by the code.</li>
+			</ol>
+			<h2 id="_idParaDest-79"><a id="_idTextAnchor079"></a>How it works...</h2>
+			<p>When shortcodes are used with parameters, these extra pieces of data are sent to the associated processing function in the <strong class="source-inline">$atts</strong> parameter variable. By using a combination of the standard PHP <strong class="source-inline">extract</strong> and WordPress-specific <strong class="source-inline">shortcode_atts</strong> functions, our plugin is able to parse the data it receives and create an array of identifiers and values that are subsequently transformed into PHP variables. These variables are used in the rest of our shortcode implementation function. In this specific example, we expect a single variable to be used, called <strong class="source-inline">user_name</strong>, which will be stored in a PHP variable called <strong class="source-inline">$user_name</strong>. If the user enters the shortcode without any parameter, a default value of <strong class="source-inline">ylefebvre</strong> will be assigned to the <strong class="source-inline">$user_name</strong> variable to ensure that the plugin still works. Since we are going to accept user input in this code, we also verify that the user did not provide an empty string. We also use the <strong class="source-inline">sanitize_text_field</strong> function to make sure that there is no hazardous code in what the user entered, along with the <strong class="source-inline">esc_html</strong> and <strong class="source-inline">esc_url</strong> functions to be absolutely sure to remove any potentially harmful HTML characters before we output the destination link and its accompanying text to the browser.</p>
+			<p>Once we have<a id="_idIndexMarker202"></a> access to the Twitter username, we <a id="_idIndexMarker203"></a>can put together the required HTML code that will embed a Twitter feed in our page and display the selected user&apos;s tweets.</p>
+			<p>While this example only has one argument, it is possible to define multiple parameters for a shortcode. In such a situation, parameters can be provided in any order by the user.</p>
+			<h2 id="_idParaDest-80"><a id="_idTextAnchor080"></a>See also</h2>
+			<ul>
+				<li>The <em class="italic">Creating a new simple shortcode</em> recipe</li>
+			</ul>
+			<h1 id="_idParaDest-81"><a id="_idTextAnchor081"></a>Creating a new enclosing shortcode</h1>
+			<p>A different type of <a id="_idIndexMarker204"></a>shortcode that exists in WordPress is one that encloses content in posts and pages. Using a syntax similar to HTML tags, enclosing shortcodes can be used to identify parts of an item&apos;s content that need to be treated in a special way. For example, it is possible to use this type of shortcode to style a part of the post.</p>
+			<p>As an example of how to create enclosing shortcodes, this recipe shows you how to create a set of tags that will identify part of a post or page that should only be shown to visitors that are logged in to a site. In this way, the shortcode acts similarly to a filter hook, with the added bonus that you do not need to parse for instances of these tags in your code, as would normally be done in a filter callback.</p>
+			<h2 id="_idParaDest-82"><a id="_idTextAnchor082"></a>How to do it...</h2>
+			<p>Follow these steps to create a new enclosing shortcode to identify private parts of website content:</p>
+			<ol>
+				<li value="1">Navigate to the WordPress <strong class="source-inline">plugins</strong> directory of your development installation.</li>
+				<li>Create a new directory called <strong class="source-inline">ch2-private-item-text</strong>.</li>
+				<li>Navigate to this directory and create a new text file called <strong class="source-inline">ch2-private-item-text.php</strong>.</li>
+				<li>Open the new file in a code editor and add an appropriate header at the top of the plugin file, naming the plugin <strong class="source-inline">Chapter 2 - Private Item Text</strong>.</li>
+				<li>Add the following line of code to declare a new shortcode and specify the name of the function that should be called when the shortcode is found in posts or pages:<p class="source-code">add_shortcode( &apos;private&apos;, </p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&apos;ch2pit_private_shortcode&apos; );</p></li>
+				<li>Add the<a id="_idIndexMarker205"></a> following code section to provide an implementation for the <strong class="source-inline">ch2pit_private_shortcode</strong> function:<p class="source-code">function ch2pit_private_shortcode( $atts, </p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;$content = null ) {</p><p class="source-code">&#160;&#160;&#160;&#160;if ( is_user_logged_in() ) {</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;return &apos;&lt;div class=&quot;private&quot;&gt;&apos; . $content .</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&apos;&lt;/div&gt;&apos;;</p><p class="source-code">&#160;&#160;&#160;&#160;} else {</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;$output = &apos;&lt;div class=&quot;register&quot;&gt;&apos;;</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;$output .= &apos;You need to become a member to &apos;;</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;$output .= &apos;access this content.&lt;/div&gt;&apos;;</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;return $output;</p><p class="source-code">&#160;&#160;&#160;&#160;}</p><p class="source-code">}</p></li>
+				<li>Save and close the plugin file.</li>
+				<li>Log in to the administration page of your development WordPress installation.</li>
+				<li>Click on <strong class="bold">Plugins</strong> in the left-hand navigation menu.</li>
+				<li><strong class="bold">Activate</strong> your new plugin.</li>
+				<li>Create a new post and wrap some of the content with the <strong class="source-inline">[private]</strong> and <strong class="source-inline">[/private]</strong> tags:</li>
+			</ol>
+			<div>
+				<div id="_idContainer026" class="IMG---Figure">
+					<img src="image/Figure_2.12_B17639.jpg" alt="Figure 2.12 – Using the private enclosing shortcode&#xd;&#xa;" />
+				</div>
+			</div>
+			<p class="figure-caption">Figure 2.12 – Using the private enclosing shortcode</p>
+			<ol>
+				<li value="12">Save and view the post to see that the text is visible while you are logged in to your site.</li>
+				<li>Open an <a id="_idIndexMarker206"></a>incognito browser view and visit the page to see that the enclosed text has been replaced by a general message.</li>
+			</ol>
+			<h2 id="_idParaDest-83"><a id="_idTextAnchor083"></a>How it works...</h2>
+			<p>Similar to a filter function, enclosing shortcodes receive a copy of the text that has been wrapped with new tags through the <strong class="source-inline">$content</strong> parameter. It is then possible to return this text with additional HTML code, or completely replace it with new content. In this specific case, we used the <strong class="source-inline">is_user_logged_in</strong> WordPress function to determine whether the current visitor is logged in to the site. Based on the result of that query, the code determines <a id="_idIndexMarker207"></a>whether the original content should be displayed with some additional <strong class="source-inline">div</strong> tags, or whether the visitor should see a message encouraging them to join the website to see this content.</p>
+			<h2 id="_idParaDest-84"><a id="_idTextAnchor084"></a>See also</h2>
+			<ul>
+				<li>The <em class="italic">Creating a new simple shortcode</em> recipe</li>
+			</ul>
+			<h1 id="_idParaDest-85"><a id="_idTextAnchor085"></a>Loading a style sheet to format plugin output</h1>
+			<p>When a plugin<a id="_idIndexMarker208"></a> adds custom content or inserts styling <a id="_idIndexMarker209"></a>tags to a post or page&apos;s existing content, as was done in the previous recipe that showed how to create an enclosing shortcode, it often needs to load a custom style sheet to style these new elements. This recipe shows how to add a style sheet in the WordPress style queue to format the private output created in the previous recipe. This queue is processed when the page header is rendered, listing all the style sheets that need to be loaded to display the site correctly.</p>
+			<h2 id="_idParaDest-86"><a id="_idTextAnchor086"></a>Getting ready</h2>
+			<p>You should have already followed the <em class="italic">Creating a new enclosing shortcode</em> recipe to have a starting point for this recipe, and the resulting plugin should still be active in your development site. Alternatively, you can download the resulting code (<strong class="source-inline">ch2/ch2-private-item-text/ch2-private-item-text.php</strong>) of that recipe from the book&apos;s GitHub page.</p>
+			<h2 id="_idParaDest-87"><a id="_idTextAnchor087"></a>How to do it...</h2>
+			<p>Follow these<a id="_idIndexMarker210"></a> steps to add insert custom <strong class="bold">Cascading Style Sheet</strong> (<strong class="bold">CSS</strong>) code in your page output:</p>
+			<ol>
+				<li value="1">Navigate <a id="_idIndexMarker211"></a>to the <strong class="source-inline">ch2-private-item-text</strong> folder of <a id="_idIndexMarker212"></a>the WordPress <strong class="source-inline">plugins</strong> directory of your development installation.</li>
+				<li>Open the <strong class="source-inline">ch2-private-item-text.php</strong> file in a code editor.</li>
+				<li>Add the following line after the existing code to register a function that will be called at the beginning of the WordPress page display process:<p class="source-code">add_action( &apos;wp_enqueue_scripts&apos;,</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&apos;ch2pit_queue_stylesheet&apos; );</p></li>
+				<li>Add the following code section to provide an implementation for the <strong class="source-inline">ch2pit_queue_stylesheet</strong> function:<p class="source-code">function ch2pit_queue_stylesheet() {</p><p class="source-code">&#160;&#160;&#160;&#160;wp_enqueue_style( &apos;privateshortcodestyle&apos;,</p><p class="source-code">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;plugins_url( &apos;stylesheet.css&apos;, __FILE__ ) );</p><p class="source-code">}</p></li>
+				<li>Save and close the plugin file.</li>
+				<li>Create a new text file in the <strong class="source-inline">ch2-private-item-text</strong> directory called <strong class="source-inline">stylesheet.css</strong> and open it in a code editor.</li>
+				<li>Add the following content to the file:<p class="source-code">.private {</p><p class="source-code">&#160;&#160;&#160;&#160;color: #6E6A6B;</p><p class="source-code">}</p><p class="source-code">.register {</p><p class="source-code">&#160;&#160;&#160;&#160;background-color: #ff4d4d;</p><p class="source-code">&#160;&#160;&#160;&#160;color: #fff;</p><p class="source-code">&#160;&#160;&#160;&#160;padding-left: 10px;</p><p class="source-code">}</p></li>
+				<li>Save and close the text file.</li>
+				<li>Navigate to your website, making sure you are logged in, and refresh the page containing the private text content. You should notice that the private text is now displayed in gray.</li>
+				<li>Open the site in an <a id="_idIndexMarker213"></a>incognito browser view to see that the registration message styling has changed to be displayed in white with a red background.</li>
+			</ol>
+			<h2 id="_idParaDest-88"><a id="_idTextAnchor088"></a>How it works...</h2>
+			<p>While it would<a id="_idIndexMarker214"></a> have been possible to write straight HTML<a id="_idIndexMarker215"></a> code to load the CSS file by registering a function with the <strong class="source-inline">wp_head</strong> action hook, as we have done previously, WordPress has utility functions designed to help avoid loading duplicate style sheets or scripts on a site. In this specific example, <strong class="source-inline">wp_enqueue_script</strong> is used to place the plugin&apos;s style sheet file in a queue that will be processed when the plugin header is rendered, with the associated name <strong class="source-inline">privateshortcodestyle</strong>. Once WordPress has processed all the plugins and boiled down all the style sheet requests to single instances, it will output the necessary HTML code to load all of them.</p>
+			<p>The content of the <strong class="source-inline">stylesheet.css</strong> file is standard CSS code that specifies that any text that is assigned the <strong class="source-inline">private</strong> class should be displayed in gray, while the text displayed to non-registered users should be displayed in white on a red background.</p>
+			<h2 id="_idParaDest-89"><a id="_idTextAnchor089"></a>See also</h2>
+			<ul>
+				<li>The <em class="italic">Creating a new enclosing shortcode</em> recipe</li>
+			</ul>
+			<h1 id="_idParaDest-90"><a id="_idTextAnchor090"></a>Writing plugins using object-oriented PHP</h1>
+			<p>So far, all the plugin<a id="_idIndexMarker216"></a> examples that have been covered in <a id="_idIndexMarker217"></a>this chapter have been written using the procedural PHP programming style. In this style, all functions are declared directly in the main body of the plugin and the hook registration functions have direct access to these functions.</p>
+			<p>WordPress plugins can also be written using an object-oriented PHP approach. This recipe shows how the code from the previous recipe can be restructured to be written in object-oriented PHP.</p>
+			<h2 id="_idParaDest-91"><a id="_idTextAnchor091"></a>Getting ready</h2>
+			<p>You should have already followed the <em class="italic">Loading a style sheet to format plugin output</em> recipe to have a starting point for this recipe. Alternatively, you can download the resulting code (<strong class="source-inline">ch2/ch2-private-item-text/ch2-private-item-text-v2.php</strong>) for that recipe from the book&apos;s GitHub page.</p>
+			<h2 id="_idParaDest-92"><a id="_idTextAnchor092"></a>How to do it...</h2>
+			<p>Follow these<a id="_idIndexMarker218"></a> steps to transform an existing plugin&apos;s<a id="_idIndexMarker219"></a> code into object-oriented PHP:</p>
+			<ol>
+				<li value="1">Log in to the administration page of your WordPress installation.</li>
+				<li>Click on <strong class="bold">Plugins</strong> in the left-hand navigation menu.</li>
+				<li>Check whether the <strong class="bold">Chapter 2 - Private Item Text</strong> plugin is currently active and <strong class="bold">Deactivate</strong> it if it is.</li>
+				<li>Copy the entire contents of the <strong class="source-inline">ch2-private-item-text</strong> directory and rename the copy <strong class="source-inline">ch2-oo-private-item-text</strong>.</li>
+				<li>Navigate to the newly renamed folder and rename the main PHP code file <strong class="source-inline">ch2-oo-private-item-text.php</strong>.</li>
+				<li>Open the newly renamed plugin file in a code editor.</li>
+				<li>Update the plugin header to change the name of the plugin to <strong class="source-inline">Chapter 2 - Object-Oriented - Private Item Text</strong>.</li>
+				<li>Right after the plugin header, add the following text to declare a new class for the plugin and specify a constructor method for this class:<p class="source-code">class CH2_OO_Private_Item_Text {</p><p class="source-code">&#160;&#160;&#160;&#160;function __construct() {</p><p class="source-code">&#160;&#160;&#160;&#160;}</p><p class="source-code">}</p><p class="source-code">$my_ch2_oo_private_item_text = </p><p class="source-code">&#160;&#160;&#160;&#160;new CH2_OO_Private_Item_Text();</p></li>
+				<li>Move the calls to the <strong class="source-inline">add_shortcode</strong> and <strong class="source-inline">add_action</strong> functions to be placed inside of the class constructor method (<strong class="source-inline">__construct</strong>).</li>
+				<li>Modify the second argument of the <strong class="source-inline">add_shortcode</strong> and <strong class="source-inline">add_action</strong> functions as follows:<p class="source-code">add_shortcode( &apos;private&apos;, <strong class="bold">array( $this,</strong></p><p class="source-code"><strong class="bold">&#160;&#160;&#160;&#160;&apos;ch2pit_private_shortcode&apos; )</strong> );</p><p class="source-code">add_action( &apos;wp_enqueue_scripts&apos;, <strong class="bold">array( $this,</strong></p><p class="source-code"><strong class="bold">&#160;&#160;&#160;&#160;&apos;ch2pit_queue_stylesheet&apos; )</strong> );</p></li>
+				<li>Move the complete <strong class="source-inline">ch2pit_private_shortcode</strong> and <strong class="source-inline">ch2pit_queue_stylesheet</strong> functions inside of the class body (after the <strong class="source-inline">__construct</strong> method and before the class closing bracket).</li>
+				<li>Save and close the modified file.</li>
+				<li>Log in <a id="_idIndexMarker220"></a>to the administration page of <a id="_idIndexMarker221"></a>your development WordPress installation.</li>
+				<li>Click on <strong class="bold">Plugins</strong> in the left-hand navigation menu.</li>
+				<li><strong class="bold">Activate</strong> the new plugin.</li>
+				<li>Visit your site to see that the private item content functionality is still in place and works as it did before.</li>
+			</ol>
+			<h2 id="_idParaDest-93"><a id="_idTextAnchor093"></a>How it works...</h2>
+			<p>The code changes that we applied to the plugin first declare a class for all of our plugin&apos;s functionality and also contain a constructor method for that class. The <strong class="source-inline">__construct</strong> method is called once, as soon as the class is instantiated by the last line in the plugin&apos;s code, and can be used to associate custom functions with all action hooks, filter hooks, and shortcodes.</p>
+			<p>The main<a id="_idIndexMarker222"></a> benefit of using an object-oriented approach<a id="_idIndexMarker223"></a> is that you don&apos;t have to be as careful when naming your hook callbacks and all other functions, since these names are local to the class and can be the same as function names declared in any other classes or in procedural PHP code.</p>
+			<h2 id="_idParaDest-94"><a id="_idTextAnchor094"></a>There&apos;s more…</h2>
+			<p>If you enjoy object-oriented plugin development and create a lot of plugins, you might benefit from using a boilerplate generator.</p>
+			<h3>WordPress plugin boilerplate generator</h3>
+			<p>By visiting the <a id="_idIndexMarker224"></a>WordPress plugin boilerplate generator (<a href="https://wppb.me/">https://wppb.me/</a>), you can easily create code that needs to be written each time you create a plugin. After entering basic data about your plugin, you will receive a download with the core structure for your new plugin. This template contains a number of object-oriented concepts that are best suited to developers who are well versed in object-oriented programming.</p>
+			<h2 id="_idParaDest-95"><a id="_idTextAnchor095"></a>See also</h2>
+			<ul>
+				<li>The <em class="italic">Creating a new enclosing shortcode</em> recipe</li>
+			</ul>
+		</div>
+	</body>
+</html>

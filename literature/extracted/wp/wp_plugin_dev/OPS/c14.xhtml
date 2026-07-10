@@ -1,0 +1,1759 @@
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xmlns:svg="http://www.w3.org/2000/svg" epub:prefix="index: http://www.index.com/" lang="en" xml:lang="en">
+<head>
+<title>14 The Kitchen Sink</title>
+<link href="WileyTemplate_v5.5.css" rel="stylesheet" type="text/css"/>
+<meta content="urn:uuid:e0000000-0000-0000-0000-000006210893" name="Adept.expected.resource"/>
+</head>
+<body epub:type="bodymatter">
+<section epub:type="chapter" role="doc-chapter">
+<header>
+<h1><span epub:type="pagebreak" id="Page_353" role="doc-pagebreak" title="353"/><a id="c14"/><span class="chapterNumber">14</span><br/><span class="chapterTitle">The Kitchen Sink</span></h1>
+</header>
+<section><span id="c14-sec-0001"/>
+<aside>
+<div class="top hr"><hr/></div>
+<section>
+<h3>WHAT'S IN THIS CHAPTER?</h3>
+<ul class="check1" id="c14-list-0001">
+<li id="c14-li-0001">Understanding the WP_Query class and the loop</li>
+<li id="c14-li-0002">Creating shortcodes for users to output dynamic content</li>
+<li id="c14-li-0003">Building widgets for users to add to sidebars</li>
+<li id="c14-li-0004">Registering custom dashboard widgets</li>
+<li id="c14-li-0005">Adding custom rewrite rules</li>
+<li id="c14-li-0006">Sending, receiving, and processing data via the Heartbeat API</li>
+</ul>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+<aside>
+<div class="top hr"><hr/></div>
+<section><span id="c14-fea-0001"/>
+<h3 id="head-2-108">CODE DOWNLOADS FOR THIS CHAPTER</h3>
+<section><span id="c14-sec-0003"/>
+<p id="c14-para-0003">The code downloads for this chapter are at <code><a href="http://www.wiley.com/go/prowordpressdev2e">www.wiley.com/go/prowordpressdev2e</a></code> on the Downloads tab.</p>
+</section>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+<p id="c14-para-0004">WordPress has changed a lot over the years. In the first edition of this book, many of the sections in this chapter had their own chapters. However, some of these topics are not as important to WordPress plugin development today as they once were. Other sections of this chapter cover smaller things that did not have a home anywhere else in this book.</p>
+<p id="c14-para-0005">In this chapter, you will be getting the “kitchen sink”; everything and anything not covered elsewhere is here. Much of this chapter will be high‐level overviews of topics you may find yourself exploring further on your own.</p>
+</section>
+<section><span id="c14-sec-0004"/>
+<h2 id="head-2-109">QUERYING AND DISPLAYING POSTS</h2>
+<p id="c14-para-0006">Generally speaking, WordPress will automatically query posts from the database on a given page view. Then, the user's theme will display the posts in the layout the theme designer has <span epub:type="pagebreak" id="Page_354" role="doc-pagebreak" title="354"/>chosen. Theme development is outside the scope of what you are learning from this book on developing plugins. However, there is some crossover, and you will need to query and display posts from time to time.</p>
+<p id="c14-para-0007">In this section of the chapter, you will learn some use cases for displaying posts in the context of the plugin, get an overview of how to query posts from the database, and learn about the all‐important loop for outputting posts. At the end of the day, posts are just data. This means you could do anything you need with the data and not be limited to the examples presented here.</p>
+<section><span id="c14-sec-0005"/>
+<h3 id="head-3-224">Use Case for Displaying Posts</h3>
+<p id="c14-para-0008">As you learned in <a href="c08.xhtml">Chapter 8</a>, “Content,” you can create any post type. Therefore, your plugins are not limited to simply displaying blog posts. In that chapter, you built a “book” post type for your plugin user to store their book collection. Imagine the many ways you could potentially output such a collection.</p>
+<p>The following are examples of how you might want to output book posts:</p>
+<ul class="check" id="c14-list-0002">
+<li id="c14-li-0007">Display recently added book titles in a standard list</li>
+<li id="c14-li-0008">Create a gallery of thumbnails for books, a bookshelf of sorts</li>
+<li id="c14-li-0009">Generate a list of books based on their genre</li>
+<li id="c14-li-0010">Output a random selection of books from the collection to visitors</li>
+</ul>
+<p>There are also various ways that you can provide the user access for outputting these things:</p>
+<ul class="check" id="c14-list-0003">
+<li id="c14-li-0011">Use a PHP function to manually put in a theme template (not user‐friendly)</li>
+<li id="c14-li-0012">Build a widget (see the “Widgets” section of this chapter)</li>
+<li id="c14-li-0013">Create a shortcode (see the “Shortcodes” section of this chapter)</li>
+<li id="c14-li-0014">Add a block for the block editor (see <a href="c07.xhtml">Chapter 7</a>, “Blocks and Gutenberg”)</li>
+</ul>
+<p id="c14-para-0011">Because WordPress is transitioning toward everything being block‐based in the coming years, building a custom block is the ideal method to present such options to the user. However, having a backup option, such as a widget or shortcode, makes sense too. Not all users are currently using the block editor. If building a public plugin, it can be nice to offer a range of options for your plugin's users.</p>
+</section>
+<section><span id="c14-sec-0006"/>
+<h3 id="head-3-225">WP_Query Overview</h3>
+<p id="c14-para-0012">To display posts, you must first query them from the database. WordPress has several functions for querying posts. However, they all eventually run through the <code>WP_Query</code> class. Most of the time, you will want to directly interact with this class instead of using one of the wrapper functions. It will keep things simple.</p>
+<p>Take a look at the constructor method for the class:</p>
+<pre id="c14-code-0001"><code>&lt;?php</code>
+<code>WP_Query::__construct( string|array $query = '' );</code></pre>
+<p id="c14-para-0014"><span epub:type="pagebreak" id="Page_355" role="doc-pagebreak" title="355"/>The method takes a single parameter of <code>$query</code>, which can be a query string or array of parameters for querying posts. There are dozens of possible parameters, which can be found in the developer documentation: <code><a href="https://developer.wordpress.org/reference/classes/wp_query/#parameters">https://developer.wordpress.org/reference/classes/wp_query/#parameters</a></code>.</p>
+<p>The simplest way to query a set of blog posts is the following:</p>
+<pre id="c14-code-0002"><code>&lt;?php</code>
+<code>$query = new WP_Query();</code></pre>
+<p id="c14-para-0016">That code will return an object that includes the number of posts set in the user's post‐per‐page setting via the Reading Settings admin screen. By default, this is 10 posts.</p>
+<p>Suppose you wanted to query five “book” posts in alphabetical order. You would need to set the <code>post_type</code>, <code>posts_per_page</code>, <code>order</code>, and <code>orderby</code> parameters.</p>
+<pre id="c14-code-0003"><code>&lt;?php</code>
+<code>$query = new WP_Query( [</code>
+<code>      'post_type'      =&gt; 'book',</code>
+<code>      'posts_per_page' =&gt; 5,</code>
+<code>      'order'          =&gt; 'ASC',</code>
+<code>      'orderby'        =&gt; 'title'</code>
+<code>] );</code></pre>
+<p id="c14-para-0018">While there are dozens of possible parameters, these four are some of the most commonly used.</p>
+<p id="c14-para-0019">Querying posts from the database does not actually display posts. What it does is set up the posts so that you can then use the returned object how you want.</p>
+</section>
+<section><span id="c14-sec-0007"/>
+<h3 id="head-3-226">The Loop</h3>
+<p id="c14-para-0020">The <i>loop</i> in WordPress is just a fancy of way of saying to check whether any posts are available from a post query and to loop through them. Technically, the actual loop is a PHP <code>while</code> loop that loops through the found posts. However, the terminology usually colloquially refers to the <code>if</code> statement surrounding the loop too.</p>
+<p>A typical loop looks like the following within a theme template:</p>
+<pre id="c14-code-0004"><code>&lt;?php if ( have_posts() ) : ?&gt;</code>
+<code> </code>
+<code>      &lt;?php while ( have_posts() ) : the_post(); ?&gt;</code>
+<code> </code>
+<code>             &lt;!-- Post is output here. --&gt;</code>
+<code> </code>
+<code>      &lt;?php endwhile; ?&gt;</code>
+<code> </code>
+<code>&lt;?php endif; ?&gt;</code></pre>
+<p id="c14-para-0022">It is not the most elegant code for displaying posts, but this method has been a part of the platform for well over a decade. In the preceding code, there are two primary functions in use: <code>have_posts()</code> and <code>the_post()</code>. The former serves as a conditional for the <code>if</code> statement and iterator for the <code>while</code> loop. The latter sets up the current post's data via the global <code>$post</code> variable, which is an instance of a <code>WP_Post</code> object.</p>
+<p id="c14-para-0023"><span epub:type="pagebreak" id="Page_356" role="doc-pagebreak" title="356"/>Developers familiar with other templating systems will likely find this method of displaying posts a little old‐school. However, WordPress tends to favor backward compatibility above all else.</p>
+<p>Both <code>have_posts()</code> and <code>the_post()</code> are wrapper functions for <code>WP_Query</code> methods and should be used only in the main query and loop for a page. In the context of a plugin, you will reference the methods as <code>$query‐&gt;have_posts()</code> and <code>$query‐&gt;the_post()</code>, respectively. Take a look at the following example to see what the loop might look like in a plugin:</p>
+<pre id="c14-code-0005"><code>&lt;?php</code>
+<code>if ( $query-&gt;have_posts() ) {</code>
+<code> </code>
+<code>      while ( $query-&gt;have_posts() ) {</code>
+<code>              $query-&gt;the_post();</code>
+<code>      }</code>
+<code>}</code>
+<code> </code>
+<code>// Reset post data.</code>
+<code>wp_reset_postdata();</code></pre>
+<p id="c14-para-0025">You probably noticed that an extra function call to <code>wp_reset_postdata()</code> was appended to the previous code example. This is also another peculiarity about displaying posts in WordPress. Any time you create a custom query and loop through the posts, you need to reset the global post data. Remember that <code>$query‐&gt;the_post()</code> sets up a global <code>$post</code> variable? That must be reset to the original page's post data, and the <code>wp_reset_postdata()</code> function does that. Failing to run this reset could mean that your plugin stomps on data, which may result in breaking the current global posts query or causing other plugins to not work.</p>
+<p id="c14-para-0026">If you remember some of these basic rules and gotchas, you will be OK. It's not the prettiest system ever invented, but it does get the job done.</p>
+<p>In the previous section on querying posts, you built a query for grabbing the five most recent books added to the site in alphabetical order. Take that query and combine it with a loop for outputting the book titles as a list.</p>
+<pre id="c14-code-0006"><code>&lt;?php</code>
+<code>// Query 5 books in alphabetical order.</code>
+<code>$query = new WP_Query( [</code>
+<code>      'post_type'      =&gt; 'book',</code>
+<code>      'posts_per_page' =&gt; 5,</code>
+<code>      'order'          =&gt; 'ASC',</code>
+<code>      'orderby'        =&gt; 'title'</code>
+<code>] );</code>
+<code> </code>
+<code>// Check if there are any posts before output.</code>
+<code>if ( $query-&gt;have_posts() ) {</code>
+<code> </code>
+<code>      // Open list tag if posts are found.</code>
+<code>      echo '&lt;ul&gt;';</code>
+<code> </code>
+<code>      // Loop through the found posts.</code>
+<code>      while ( $query-&gt;have_posts() ) {</code>
+<code>              $query-&gt;the_post();</code>
+<code> <span epub:type="pagebreak" id="Page_357" role="doc-pagebreak" title="357"/></code>
+<code>              // Display the book title as list items.</code>
+<code>              the_title( '&lt;li&gt;', '&lt;/li&gt;' );</code>
+<code>      }</code>
+<code> </code>
+<code>      // Close list tag.</code>
+<code>      echo '&lt;/ul&gt;';</code>
+<code>}</code>
+<code> </code>
+<code>// Reset post data.</code>
+<code>wp_reset_postdata();</code></pre>
+<p id="c14-para-0028">The preceding code does everything you learned. You first query the posts you want. Then, you check whether any posts were found. If so, you loop through the found posts and display them. The only new concept the code presented was the function <code>the_title()</code>, which is a basic template tag that outputs the current post's title (global <code>$post‐&gt;post_title</code>).</p>
+<p>Now you will build a blog post query and loop that displays posts in a more common <code>&lt;article&gt;</code> wrapper element. This query will list the five most recent posts by date.</p>
+<pre id="c14-code-0007"><code>&lt;?php</code>
+<code>$query = new WP_Query( [</code>
+<code>    'post_type'      =&gt; 'post',</code>
+<code>    'posts_per_page' =&gt; 5,</code>
+<code>    'order'          =&gt; 'DESC',</code>
+<code>    'orderby'        =&gt; 'date'</code>
+<code>] );</code>
+<code> </code>
+<code>// Check if there are any posts before output.</code>
+<code>if ( $query-&gt;have_posts() ) {</code>
+<code> </code>
+<code>    // Loop through the found posts.</code>
+<code>    while ( $query-&gt;have_posts() ) {</code>
+<code>        $query-&gt;the_post(); ?&gt;</code>
+<code> </code>
+<code>        &lt;article class="post"&gt;</code>
+<code>            &lt;h2 class="post-title"&gt;</code>
+<code>                &lt;a href="&lt;?php the_permalink(); ?&gt;"&gt;&lt;?php the_title(); ?&gt;&lt;/a&gt;</code>
+<code>            &lt;/h2&gt;</code>
+<code> </code>
+<code>            &lt;div class="post-content"&gt;</code>
+<code>                &lt;?php the_content(); ?&gt;</code>
+<code>            &lt;/div&gt;</code>
+<code>        &lt;/article&gt;</code>
+<code> </code>
+<code>    &lt;?php }</code>
+<code>}</code>
+<code> </code>
+<code>// Reset post data.</code>
+<code>wp_reset_postdata();</code></pre>
+<p id="c14-para-0030">As you can see, nothing is different about the basic query and loop code other than the parameters passed to <code>WP_Query</code>. The real difference is with the HTML output, which uses template tags for outputting post data. Template tags are basic PHP functions generally reserved for themes, but you can <span epub:type="pagebreak" id="Page_358" role="doc-pagebreak" title="358"/>use them when needed in plugins. The full list of template tags is available at <code><a href="https://developer.wordpress.org/themes/references/list-of-template-tags">https://developer.wordpress.org/themes/references/list-of-template-tags</a></code>.</p>
+<p id="c14-para-0031">In the next section, you will learn how to turn custom queries and post loops into a practical example via the Shortcode API.</p>
+</section>
+</section>
+<section><span id="c14-sec-0008"/>
+<h2 id="head-2-110">SHORTCODES</h2>
+<p><i>Shortcodes</i> are WordPress‐specific code that enables you to do nifty things with little effort, such as embed content or create objects that would normally require code that is too complicated for the average end user to piece together. In this section, you'll learn how to create simple shortcodes to allow your plugin users to enhance their posts.</p>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="c14-para-0033"><b>WARNING</b> <i>Shortcodes are on their way out. While they are simple to build and will likely be in WordPress forever for backward compatibility, they are essentially outdated now. You should consider building a block instead, as shown in <a href="c07.xhtml">Chapter 7</a>. Shortcodes should be available only as a fallback for users who are still using the classic editor.</i></p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+<section><span id="c14-sec-0010"/>
+<h3 id="head-3-227">What Shortcodes Are</h3>
+<p id="c14-para-0034">The Shortcode API enables creating simple macro codes, sometimes also referred to as <i>bbcodes</i> for their similarity with a popular syntax in various forums and bulletin boards.</p>
+<p id="c14-para-0035">Essentially, a shortcode is a simple tag syntax between square brackets, such as <code>[example]</code>, used in post content. When rendered on the front end, the shortcode is dynamically replaced with a more complex and user‐defined content.</p>
+<p id="c14-para-0036">Out of the box, WordPress registers several shortcodes that you can use. For example, when you upload multiple images to a post, you can drop the <code>[gallery]</code> shortcode in the post editor. This shortcode will be replaced with a nicely formatted gallery of your images when viewing the post on the front end.</p>
+<p id="c14-para-0037">WordPress out of the box registers shortcodes you can use. When you upload multiple images attached to a given post, you can simply insert <code>[gallery]</code> in your post, and this shortcode will be replaced with a nicely formatted gallery of your images.</p>
+<p>The following are the default shortcodes registered by WordPress. You should consider these shortcode tag names as off‐limits and not register a tag with the same name.</p>
+<ul class="check" id="c14-list-0004">
+<li id="c14-li-0015">
+<code>wp_caption</code></li>
+<li id="c14-li-0016">
+<code>caption</code></li>
+<li id="c14-li-0017">
+<code>gallery</code></li>
+<li id="c14-li-0018">
+<code>playlist</code></li>
+<li id="c14-li-0019"><span epub:type="pagebreak" id="Page_359" role="doc-pagebreak" title="359"/>
+<code>audio</code></li>
+<li id="c14-li-0020">
+<code>video</code></li>
+<li id="c14-li-0021">
+<code>embed</code></li>
+</ul>
+<p id="c14-para-0039">When registering a shortcode, you should follow a few rules. First, it is good practice to always prefix the shortcode tag with a prefix unique to your plugin. For the purposes of the shortcodes in this chapter, you will use <code>pdev_</code>. Therefore, a custom gallery shortcode might be [
+<code>pdev_gallery]</code>.</p>
+<p id="c14-para-0040">You must also avoid square braces, angle braces, ampersands, forward slashes, whitespace, nonprintable characters, and quotation marks. Even hyphens can cause issues if the pre‐hyphen characters match between two different shortcodes, which causes a conflict between the two. In general, it is best to stick with alphanumeric characters and underscores in shortcode tags.</p>
+<p>Here are some examples of shortcodes that follow best practices:</p>
+<ul class="check" id="c14-list-0005">
+<li id="c14-li-0022">
+<code>[pdev_post_list]</code></li>
+<li id="c14-li-0023">
+<code>[pdev_featured_image]</code></li>
+<li id="c14-li-0024">
+<code>[pdev_lightbox_gallery]</code></li>
+</ul>
+<p id="c14-para-0042">Basically, don't go out of your way to make difficult names. The idea is that shortcodes should be “short” and easy‐to‐remember tags that users can drop into their post content. Don't make it hard for them or yourself.</p>
+</section>
+<section><span id="c14-sec-0011"/>
+<h3 id="head-3-228">Register Custom Shortcodes</h3>
+<p>In this section, you will learn how to register shortcodes. WordPress provides a simple function named <code>add_shortcode()</code> that allows plugin authors to register custom shortcodes.</p>
+<pre id="c14-code-0008"><code>&lt;?php</code>
+<code>add_shortcode( string $tag, callable $callback );</code></pre>
+<p>The function accepts two parameters.</p>
+<ul class="check" id="c14-list-0006">
+<li id="c14-li-0025">
+<code>$tag</code>: The shortcode tag name covered in the previous section</li>
+<li id="c14-li-0026">
+<code>$callback</code>: A callback function or class method that renders the shortcode output on the front end</li>
+</ul>
+<p>In most cases, shortcodes should be registered on WordPress’ <code>init</code> action hook. The following is a quick example of registering an example shortcode that outputs a simple “Hello, world.” message:</p>
+<pre id="c14-code-0009"><code>&lt;?php</code>
+<code>add_action( 'init', function() {</code>
+<code> </code>
+<code>      add_shortcode( 'pdev_hello_world', function() {</code>
+<code>             return 'Hello, world.';</code>
+<code>      } );</code>
+<code>      </code>
+<code>} );</code></pre>
+<span epub:type="pagebreak" id="Page_360" role="doc-pagebreak" title="360"/>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="c14-para-0047"><b>NOTE</b> <i>Shortcode callback functions should always return a string. They should never echo, print, or otherwise directly output content. This is because shortcodes are parsed before their content is output. Therefore, always return a string and let WordPress output the content at the appropriate time.</i></p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+<section><span id="c14-sec-0013"/>
+<h4 id="head-4-114">Building a Simple Shortcode</h4>
+<p id="c14-para-0048">Now, start thinking about a more practical example. Remember how you output a post list in the “Querying and Displaying Posts” section of this chapter? That would make for a perfect example of a simple shortcode.</p>
+<p id="c14-para-0049">Start by defining what posts you want to query and display. Keeping this simple, grab the last 10 posts published to the site. Then, you create an unordered HTML list of the posts.</p>
+<p>Now create a new plugin file named <code>plugin‐post‐list‐shortcode.php</code> with the following code:</p>
+<pre id="c14-code-0010"><code>&lt;?php</code>
+<code>/**</code>
+<code> * Plugin Name: Post List Shortcode</code>
+<code> * Plugin URI:  http://example.com/</code>
+<code> * Description: Output the last 10 posts via the [pdev_post_list] shortcode.</code>
+<code> * Author:      WROX</code>
+<code> * Author URI:  http://wrox.com</code>
+<code> */</code>
+<code> </code>
+<code>add_action( 'init', 'pdev_register_post_list_shortcodes' );</code>
+<code> </code>
+<code>// Register shortcodes.</code>
+<code>function pdev_register_post_list_shortcodes() {</code>
+<code>      add_shortcode( 'pdev_post_list', 'pdev_post_list_shortcode' );</code>
+<code>}</code>
+<code> </code>
+<code>// Shortcode callback function.</code>
+<code>function pdev_post_list_shortcode() {</code>
+<code> </code>
+<code>      // Create empty string for content.</code>
+<code>      $html = '';</code>
+<code> </code>
+<code>      // Query last 10 posts.</code>
+<code>      $query = new WP_Query( [</code>
+<code>              'post_type'      =&gt; 'post',</code>
+<code>              'posts_per_page' =&gt; 10,</code>
+<code>              'order'          =&gt; 'DESC',</code>
+<code>              'orderby'        =&gt; 'date'</code>
+<code>      ] );</code>
+<code> </code>
+<code>      // Check if there are any posts before output.</code>
+<code>      if ( $query-&gt;have_posts() ) {</code>
+<code> <span epub:type="pagebreak" id="Page_361" role="doc-pagebreak" title="361"/></code>
+<code>              // Open list tag if posts are found.</code>
+<code>              $html .= '&lt;ul&gt;';</code>
+<code> </code>
+<code>              // Loop through the found posts.</code>
+<code>              while ( $query-&gt;have_posts() ) {</code>
+<code>                    $query-&gt;the_post();</code>
+<code> </code>
+<code>                    // Add list item with linked post title.</code>
+<code>                    $html .= sprintf(</code>
+<code>                          '&lt;li&gt;&lt;a href="%s"&gt;%s&lt;/a&gt;&lt;/li&gt;',</code>
+<code>                          esc_url( get_permalink() ),</code>
+<code>                          the_title( '', '', false )</code>
+<code>                    );</code>
+<code>              }</code>
+<code> </code>
+<code>              // Close list tag.</code>
+<code>              $html .= '&lt;/ul&gt;';</code>
+<code>      }</code>
+<code> </code>
+<code>      // Reset post data.</code>
+<code>      wp_reset_postdata();</code>
+<code> </code>
+<code>      // Return shortcode HTML.</code>
+<code>      return $html;</code>
+<code>}</code></pre>
+<p id="c14-para-0051">The big difference with outputting a post list and creating a shortcode for handling a post list is that the shortcode callback must return a string instead of output. As you can see in the preceding plugin code, everything to be output was assigned to the <code>$html</code> variable and returned in the shortcode callback.</p>
+<p>After activating the plugin, add the following code to any post via the post‐editing screen in the admin:</p>
+<pre id="c14-code-0011"><code>[pdev_post_list /]</code></pre>
+<p id="c14-para-0053">That will output a simple post list, as shown in <a href="#c14-fig-0001" id="R_c14-fig-0001">Figure 14‐1</a>.</p>
+<figure> <img alt="Screenshot displaying the output of a simple post list after activating the plugin." class="center" src="images/c14f001.png"/>
+<figcaption>
+<p><span class="figureLabel"><a href="#R_c14-fig-0001" id="c14-fig-0001" role="doc-backlink"><b>FIGURE 14‐1</b></a>:</span> Simple post list</p>
+</figcaption>
+</figure>
+</section> <span epub:type="pagebreak" id="Page_362" role="doc-pagebreak" title="362"/>
+<section><span id="c14-sec-0014"/>
+<h4 id="head-4-115">Building a Shortcode with Parameters</h4>
+<p id="c14-para-0054">The shortcode in the previous section did not provide the user with much control. It can only ever output a simple post list. However, the shortcode system allows you to create custom parameters so that users can modify what the shortcode outputs.</p>
+<p>When accepting parameters, they will be passed as an array of arguments as the first parameter of the shortcode callback, which would look like the following:</p>
+<pre id="c14-code-0012"><code>&lt;?php</code>
+<code>function pdev_shortcode_callback( $attr ) {</code>
+<code>      return '';</code>
+<code>}</code></pre>
+<p>When accepting attributes, you should always parse them against an array of defaults because users will not always pass along data for each. WordPress provides the <code>shortcode_atts()</code> function for parsing the attributes.</p>
+<pre id="c14-code-0013"><code>&lt;?php</code>
+<code>shortcode_atts( array $pairs, array $attr, string $shortcode = '' );</code></pre>
+<p>The function returns the parsed attributes. It accepts three parameters.</p>
+<ul class="check" id="c14-list-0007">
+<li id="c14-li-0027">
+<code>$pairs</code>: The list of supported attributes and their default values.</li>
+<li id="c14-li-0028">
+<code>$attr</code>: The attributes passed into the shortcode callback to merge with the defaults.</li>
+<li id="c14-li-0029">
+<code>$shortcode</code>: The name of the shortcode. If provided, it creates a filter hook named <code>shortcode_atts_{$shortcode}</code> that other plugin developers may filter.</li>
+</ul>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="c14-para-0058"><b>WARNING</b> <i>All user‐defined parameters must be sanitized. Like any other unknown data, you must consider that it is malicious. See <a href="c04.xhtml">Chapter 4</a>, “Security and Performance,” for more information on securing input data.</i></p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+<p id="c14-para-0059">Now you will build a <code>[pdev_custom_posts]</code> shortcode that outputs a list of posts just like the <code>[pdev_post_list]</code> shortcode from the previous section. However, the new shortcode will allow the user to define the <code>post_type</code>, <code>posts_per_page</code>, <code>order</code>, and <code>orderby</code> parameters.</p>
+<p>Create a new <code>plugin‐custom‐posts‐shortcode.php</code> file with the following code:</p>
+<pre id="c14-code-0014"><code>&lt;?php</code>
+<code>/**</code>
+<code> * Plugin Name: Custom Posts Shortcode</code>
+<code> * Plugin URI:  http://example.com/</code>
+<code> * Description: Output posts via the [pdev_custom_posts] shortcode.</code>
+<code> * Author:      WROX</code>
+<code> * Author URI:  http://wrox.com</code>
+<code> */</code>
+<code> </code>
+<code>add_action( 'init', 'pdev_register_custom_posts_shortcodes' );</code>
+<code> <span epub:type="pagebreak" id="Page_363" role="doc-pagebreak" title="363"/></code>
+<code>// Register shortcodes.</code>
+<code>function pdev_register_custom_posts_shortcodes() {</code>
+<code>      add_shortcode( 'pdev_custom_posts', 'pdev_custom_posts_shortcode' );</code>
+<code>}</code>
+<code> </code>
+<code>// Shortcode callback function.</code>
+<code>function pdev_custom_posts_shortcode( $attr ) {</code>
+<code> </code>
+<code>      // Create empty string for content.</code>
+<code>      $html = '';</code>
+<code> </code>
+<code>      // Parse attributes.</code>
+<code>      $attr = shortcode_atts(</code>
+<code>              [</code>
+<code>                    'post_type'      =&gt; 'post',</code>
+<code>                    'posts_per_page' =&gt; 10,</code>
+<code>                    'order'          =&gt; 'DESC',</code>
+<code>                    'orderby'        =&gt; 'date'</code>
+<code>              ],</code>
+<code>              $attr,</code>
+<code>              'pdev_custom_posts'</code>
+<code>      );</code>
+<code> </code>
+<code>      // Sanitize attributes before proceeding.</code>
+<code> </code>
+<code>      // Make sure post type exists.</code>
+<code>      $attr['post_type'] = post_type_exists( $attr['post_type'] )</code>
+<code>                           ? $attr['post_type']</code>
+<code>                         : 'post';</code>
+<code> </code>
+<code>      // Posts per page should be an integer.</code>
+<code>      $attr['posts_per_page'] = intval( $attr['posts_per_page'] );</code>
+<code> </code>
+<code>      // Only allow ascending or descending.</code>
+<code>      $attr['order'] = in_array( $attr['order'], [ 'ASC', 'DESC' ] )</code>
+<code>                        ? $attr['order']</code>
+<code>                        : 'DESC';</code>
+<code> </code>
+<code>      // Strip tags from orderby.</code>
+<code>      $attr['orderby'] = wp_strip_all_tags( $attr['orderby'] );</code>
+<code> </code>
+<code>      // Query last 10 posts.</code>
+<code>      $query = new WP_Query( [</code>
+<code>              'post_type'      =&gt; $attr['post_type'],</code>
+<code>              'posts_per_page' =&gt; $attr['posts_per_page'],</code>
+<code>              'order'          =&gt; $attr['order'],</code>
+<code>              'orderby'        =&gt; $attr['orderby']</code>
+<code>      ] );</code>
+<code> </code>
+<code>      // Check if there are any posts before output.</code>
+<code>      if ( $query-&gt;have_posts() ) {</code>
+<code> </code>
+<code>              // Open list tag if posts are found.</code>
+<code>              $html .= '&lt;ul&gt;';</code>
+<code> <span epub:type="pagebreak" id="Page_364" role="doc-pagebreak" title="364"/></code>
+<code>              // Loop through the found posts.</code>
+<code>              while ( $query-&gt;have_posts() ) {</code>
+<code>                    $query-&gt;the_post();</code>
+<code> </code>
+<code>                    // Add list item with linked post title.</code>
+<code>                    $html .= sprintf(</code>
+<code>                           '&lt;li&gt;&lt;a href="%s"&gt;%s&lt;/a&gt;&lt;/li&gt;',</code>
+<code>                           esc_url( get_permalink() ),</code>
+<code>                           the_title( '', '', false )</code>
+<code>                    );</code>
+<code>              }</code>
+<code> </code>
+<code>              // Close list tag.</code>
+<code>              $html .= '&lt;/ul&gt;';</code>
+<code>      }</code>
+<code> </code>
+<code>      // Reset post data.</code>
+<code>      wp_reset_postdata();</code>
+<code> </code>
+<code>      // Return shortcode HTML.</code>
+<code>      return $html;</code>
+<code>}</code></pre>
+<p id="c14-para-0061">As you can see, the code is similar to the earlier post list shortcode you built. The major difference is that it accepts several parameters and parses them with a set of defaults via the <code>shortcode_atts()</code> function. Then, each parameter is sanitized to make sure it is safe and/or valid.</p>
+<p>When you enter the following into the post editor, it will list five pages in alphabetical order:</p>
+<pre id="c14-code-0015"><code>[pdev_custom_posts post_type="page" posts_per_page="5" order="ASC" </code>
+<code>    orderby="title" /]</code></pre>
+<p id="c14-para-0063">End users can mix and match which parameters they use or even choose not to use any of the parameters. You could take this example of a simple post list shortcode even further and allow users to set more parameters if you want. However, keep in mind that shortcodes should be simple to use.</p>
+</section>
+<section><span id="c14-sec-0016"/>
+<h4 id="head-4-116">Building a Shortcode with Content</h4>
+<p>In the two previous shortcode examples, you built what are generally called <i>self‐closing shortcodes</i>, meaning that the shortcode closes itself with a <code>/</code> character before the closing <code>]</code> bracket. Some shortcodes can accept content within. Take a look at the following examples to see the difference:</p>
+<pre id="c14-code-0016"><code>// Self-closing shortcode:</code>
+<code>[pdev_example_1 /]</code>
+<code> </code>
+<code>// Shortcode with content:</code>
+<code>[pdev_example_2]Example content.[/pdev_example_2]</code></pre>
+<p id="c14-para-0065">Not all shortcodes must accept content, but it is an option if you need the functionality for your plugin. If allowing content for your plugin's shortcode, the content is passed as the second parameter for the shortcode callback function.</p>
+<p id="c14-para-0066"><span epub:type="pagebreak" id="Page_365" role="doc-pagebreak" title="365"/>Suppose you wanted to create a pullquote function for allowing users to define a quote in their post. You decide to build a <code>[pdev_pullquote]</code> shortcode to handle formatting the HTML for your plugin users.</p>
+<p>Create a new file named <code>plugin‐pullquote‐shortcode.php</code> with the following code:</p>
+<pre id="c14-code-0017"><code>&lt;?php</code>
+<code>/**</code>
+<code> * Plugin Name: Pullquote Shortcode</code>
+<code> * Plugin URI:  http://example.com/</code>
+<code> * Description: Outputs a quote via the [pdev_pullquote] shortcode.</code>
+<code> * Author:      WROX</code>
+<code> * Author URI:  http://wrox.com</code>
+<code> */</code>
+<code> </code>
+<code>add_action( 'init', 'pdev_register_pullquote_shortcodes' );</code>
+<code> </code>
+<code>// Register shortcodes.</code>
+<code>function pdev_register_pullquote_shortcodes() {</code>
+<code>      add_shortcode( 'pdev_pullquote', 'pdev_pullquote_shortcode' );</code>
+<code>}</code>
+<code> </code>
+<code>// Shortcode callback function.</code>
+<code>function pdev_pullquote_shortcode( $attr, $content = '' ) {</code>
+<code> </code>
+<code>      // Bail if there is no content.</code>
+<code>      if ( ! $content ) {</code>
+<code>             return '';</code>
+<code>      }</code>
+<code> </code>
+<code>      // Return formatted content.</code>
+<code>      return sprintf(</code>
+<code>             '&lt;blockquote class="pdev-pullquote"&gt;%s&lt;/blockquote&gt;',</code>
+<code>             wpautop( wp_kses_post( $content ) )</code>
+<code>      );</code>
+<code>}</code></pre>
+<p id="c14-para-0068">The shortcode callback function from the preceding code does two things. First, it checks whether there is any content because this particular shortcode requires the user to enter some content. If no content is passed in, it returns an empty string.</p>
+<p id="c14-para-0069">If the user does define custom content, that content is sanitized and wrapped in custom HTML. You could take this concept further and add custom styles or allow for custom attributes as you learned in the previous section.</p>
+<p>Now try adding the following to the post editor:</p>
+<pre id="c14-code-0018"><code>[pdev_pullquote]</code>
+<code>"Professional WordPress Plugin Development" is the greatest book ever!</code>
+<code>[/pdev_pullquote]</code></pre>
+<p><span epub:type="pagebreak" id="Page_366" role="doc-pagebreak" title="366"/>On the front end of the site, WordPress will properly output the shortcode as the following HTML:</p>
+<pre id="c14-code-0019"><code>&lt;blockquote class="pdev-pullquote"&gt;</code>
+<code>      &lt;p&gt;"Professional WordPress Plugin Development" is the greatest book ever!&lt;/p&gt;</code>
+<code>&lt;/blockquote&gt;</code></pre>
+</section>
+</section>
+<section><span id="c14-sec-0017"/>
+<h3 id="head-3-229">Shortcode Tips</h3>
+<p>Shortcodes are a great way to put a lot of power in the hands of average users and allow them to output complex and dynamic content. To guarantee the best end‐user experience, you must keep in mind two important principles as a plugin author.</p>
+<ul class="check" id="c14-list-0008">
+<li id="c14-li-0030">Make things simple and foolproof.</li>
+<li id="c14-li-0031">Remember that shortcodes are dynamic.</li>
+</ul>
+<section><span id="c14-sec-0018"/>
+<h4 id="head-4-117">Think Simplicity for the User</h4>
+<p id="c14-para-0073">As a plugin user, it is awesome to add new features to one's blog and to be able to write a simple shortcode that outputs more complex content. However, it can be cumbersome to remember the shortcode parameter syntax. Often, users end up with the impression that they are learning a new markup language.</p>
+<p id="c14-para-0074">Remember the <code>[pdev_custom_posts]</code> shortcode earlier in this chapter? It allows users to input between one and four parameters. You will have to decide whether all of the options are too much for your users.</p>
+<p id="c14-para-0075">This may also be different depending on what your goal is. Do you really want to simply offer a post or page list option? You may consider splitting the shortcode into separate <code>[pdev_post_list]</code> and <code>[pdev_page_list]</code> shortcodes. You may also cut back on parameters. For example, are the <code>order</code> and <code>orderby</code> parameters necessary?</p>
+<p id="c14-para-0076">Allowing lots of options is neat, but you don't want your users constantly checking the plugin documentation. This can make for a bad experience. Instead, make things simple and foolproof so that users can use your plugin instinctively.</p>
+</section>
+<section><span id="c14-sec-0019"/>
+<h4 id="head-4-118">Remember That Shortcodes Are Dynamic</h4>
+<p id="c14-para-0077">Shortcode output is dynamically generated. This means that every time WordPress displays a post, the post content is parsed, and the shortcodes are replaced with the returned result of their callback function.</p>
+<p id="c14-para-0078">Replacements like those you coded in this chapter are lightning fast. You don't have to worry about WordPress’ performance when you register new shortcodes.</p>
+<p>Performance should be a consideration if your shortcodes pull information either from the database or from remote websites.</p>
+<ul class="check" id="c14-list-0009">
+<li id="c14-li-0032">In the first case, your code will issue extra SQL queries, which can hinder performance on slow web hosts.</li>
+<li id="c14-li-0033">In the second case, your shortcode will perform external HTTP requests that could slow down the whole page rendering, while WordPress is awaiting the remote server response to parse.</li>
+</ul>
+<p id="c14-para-0080"><span epub:type="pagebreak" id="Page_367" role="doc-pagebreak" title="367"/>In such cases, you should consider caching the result of your shortcode. See <a href="c04.xhtml">Chapter 4</a> for more information on caching data.</p>
+</section>
+</section>
+<section><span id="c14-sec-0020"/>
+<h3 id="head-3-230">Look under the Hood</h3>
+<p id="c14-para-0081">Besides using <code>add_shortcode()</code> to register new shortcodes, the Shortcode API has other interesting functions and capabilities. In this section, you will learn how to make use of these extra features.</p>
+<section><span id="c14-sec-0021"/>
+<h4 id="head-4-119">remove_shortcode()</h4>
+<p>You can dynamically unregister a shortcode using the <code>remove_shortcode()</code> function. It is important to note that this function must be called after the shortcode has been registered for it to work.</p>
+<pre id="c14-code-0020"><code>remove_shortcode( 'shortcode_tag_name' );</code></pre>
+</section>
+<section><span id="c14-sec-0022"/>
+<h4 id="head-4-120">remove_all_shortcodes()</h4>
+<p id="c14-para-0083">Similarly, you can dynamically unregister all registered shortcodes using the <code>remove_all_shortcodes()</code> function. Technically, this function simply resets the global <code>$shortcode_tags</code> to an empty array.</p>
+</section>
+<section><span id="c14-sec-0023"/>
+<h4 id="head-4-121">strip_shortcodes()</h4>
+<p>The function <code>strip_shortcodes()</code> strips registered shortcodes from string content. Imagine the following content with the <code>[pdev_example]</code> shortcode. It will be stripped from output.</p>
+<pre id="c14-code-0021"><code>&lt;?php</code>
+<code>$content = 'Hello, world! [pdev_example]';</code>
+<code> </code>
+<code>echo strip_shortcodes( $content );</code></pre>
+</section>
+<section><span id="c14-sec-0024"/>
+<h4 id="head-4-122">do_shortcode()</h4>
+<p id="c14-para-0085">The <code>do_shortcode()</code> function searches string content passed into it for shortcodes and processes them. By default, WordPress uses <code>do_shortcode()</code> as a filter on the post content (
+<code>the_content</code> filter hook), which is why shortcodes in post content are automatically processed.</p>
+<p id="c14-para-0086">However, you are not limited to just the post content. Plugins and even themes can create “shortcode‐aware” areas via custom settings if they want.</p>
+<p>Imagine your plugin had a custom database option named <code>pdev_custom_content</code> (see <a href="c03.xhtml">Chapter 3</a>, “Dashboard and Settings,” for information on how to create plugin settings). You want to allow the user to enter some basic text and also allow for shortcodes. On output of the option, you merely need to wrap the database value in the <code>do_shortcode()</code> function.</p>
+<pre id="c14-code-0022"><code>&lt;?php</code>
+<code>$content = get_option( 'pdev_custom_content', 'Some default text.' );</code>
+<code> </code>
+<code>echo do_shortcode( $content );</code></pre>
+<p id="c14-para-0088">You can take this even further if you want and have shortcodes that are able to process other shortcodes. Earlier in this chapter, you learned how to build a shortcode with content. It is possible for that shortcode's content to also have shortcodes.</p>
+<p><span epub:type="pagebreak" id="Page_368" role="doc-pagebreak" title="368"/>Consider the following post content with nested shortcodes:</p>
+<pre id="c14-code-0023"><code>[pdev_example]This shortcode has [another_shortcode /] within it.[/pdev_example]</code></pre>
+<p>For the <code>[another_shortcode]</code> tag to be processed, the <code>[pdev_example]</code> shortcode must allow for it by running its content through <code>do_shortcode()</code>. The following code snippet shows how this is possible:</p>
+<pre id="c14-code-0024"><code>&lt;?php</code>
+<code>add_shortcode( 'pdev_example', function( $attr, $content = '' ) {</code>
+<code>      return do_shortcode( $content );</code>
+<code>} );</code></pre>
+<p id="c14-para-0091">By default, WordPress will not process nested shortcodes. The preceding code is the only way to allow for it. At some point in the shortcode callback function, the returned content must be run through <code>do_shortcode()</code>.</p>
+</section>
+</section>
+</section>
+<section><span id="c14-sec-0025"/>
+<h2 id="head-2-111">WIDGETS</h2>
+<p>Widgets are a great way to give the users of your plugin an easy method to display your plugin information or data. WordPress features a Widgets API for creating and interacting with widgets. In this section, you explore how to create widgets, add and save widget options, and display plugin information in the widget output.</p>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="c14-para-0093"><b>NOTE</b> <i>The future for widgets is unknown. Like shortcodes, it's possible that they will eventually be replaced entirely by the block system described in <a href="c07.xhtml">Chapter 7</a>. At the time this book is published, WordPress is in a transitional phase where the block system is moving toward handling full‐site editing. For now, widgets are a still a useful feature of the platform.</i></p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+<section><span id="c14-sec-0027"/>
+<h3 id="head-3-231">Creating a Widget</h3>
+<p>You create all widgets in WordPress by extending the <code>WP_Widget</code> class. To understand how the widget class works, it's helpful to look at an overview of what the typical widget class looks like.</p>
+<pre id="c14-code-0025"><code>&lt;?php</code>
+<code>namespace PDEV;</code>
+<code> </code>
+<code>use WP_Widget;</code>
+<code> </code>
+<code>class MyWidget extends WP_Widget {</code>
+<code> </code>
+<code>      // Sets up the widget.</code>
+<code>      public function __construct() {}</code>
+<code> </code>
+<code>      // Displays the widget.</code>
+<code>      public function widget() {}</code>
+<code> <span epub:type="pagebreak" id="Page_369" role="doc-pagebreak" title="369"/></code>
+<code>      // Outputs widget options form.</code>
+<code>      public function form() {}</code>
+<code> </code>
+<code>      // Callback on widgets update to save options.</code>
+<code>      public function update() {}</code>
+<code>}</code></pre>
+<p id="c14-para-0095">As you can see, the custom widget subclass features multiple methods for your widget, each with a specific purpose.</p>
+<p id="c14-para-0096">Now it's time to create a widget for your plugin. For this first widget, you create a simple text‐based widget to save and display your favorite movie and song. It is a simple example that demonstrates how to save text data in a WordPress widget.</p>
+<p>First, create a new folder for your plugin named <code>plugin‐favorites‐widget</code> and put a new file within it named <code>plugin.php</code>. Then, set up your plugin header.</p>
+<pre id="c14-code-0026"><code>&lt;?php</code>
+<code>/**</code>
+<code> * Plugin Name: Favorites Widget</code>
+<code> * Plugin URI:  http://example.com/</code>
+<code> * Description: Allows the user to enter their favorite movie and song.</code>
+<code> * Author:      WROX</code>
+<code> * Author URI:  http://wrox.com</code>
+<code> */</code></pre>
+<p>To register custom widgets, you use the <code>widgets_init</code> action hook. This hook is triggered after the default widgets have been registered in WordPress.</p>
+<pre id="c14-code-0027"><code>namespace PDEV\Favorites;</code>
+<code> </code>
+<code>add_action( 'widgets_init', function() {</code>
+<code> </code>
+<code>      require_once plugin_dir_path( __FILE__ ) . 'Widget.php';</code>
+<code> </code>
+<code>      register_widget( __NAMESPACE__ . '\Widget' );</code>
+<code>} );</code></pre>
+<p>This code attaches a simple anonymous function to the <code>widgets_init</code> hook. When the hook is fired by WordPress, your code loads a <code>Widget.php</code> class file, which will hold our custom widget. It then registers the widget with WordPress via the <code>register_widget()</code> function, which accepts a single parameter of the widget's class name.</p>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="c14-para-0100"><b>NOTE</b> <i>When registering a widget class that is namespaced, as shown in the preceding code, you must use the fully qualified class name when calling</i> <code>register_widget()</code>. <i>WordPress will not automatically know the namespace.</i></p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+<p id="c14-para-0101">Now that you have the plugin set up and are attempting to load a <code>Widget.php</code> file, go ahead and create that file within your plugin folder. You will now create the actual code to make your widget work.</p>
+<p><span epub:type="pagebreak" id="Page_370" role="doc-pagebreak" title="370"/>You need to extend the <code>WP_Widget</code> class by creating a new class with the unique name you defined when you registered your widget. Start by using the basic template from earlier.</p>
+<pre id="c14-code-0028"><code>&lt;?php</code>
+<code>namespace PDEV\Favorites;</code>
+<code> </code>
+<code>use WP_Widget;</code>
+<code> </code>
+<code>class Widget extends WP_Widget {</code>
+<code> </code>
+<code>      // Sets up the widget.</code>
+<code>      public function __construct() {}</code>
+<code> </code>
+<code>      // Displays the widget.</code>
+<code>      public function widget() {}</code>
+<code> </code>
+<code>      // Outputs widget options form.</code>
+<code>      public function form() {}</code>
+<code> </code>
+<code>      // Callback on widgets update to save options.</code>
+<code>      public function update() {}</code>
+<code>}</code></pre>
+<p>From this point, you need to set up the widget via the constructor method. Here, you will define some widget options with WordPress.</p>
+<pre id="c14-code-0029"><code>// Sets up the widget.</code>
+<code>public function __construct() {</code>
+<code> </code>
+<code>    // Set up the widget options.</code>
+<code>    $widget_options = array(</code>
+<code>        'classname'                   =&gt; 'pdev-favorites',</code>
+<code>        'description'                 =&gt; 'Displays your favorite movie and song.',</code>
+<code>        'customize_selective_refresh' =&gt; true</code>
+<code>    );</code>
+<code> </code>
+<code>    // Create the widget.</code>
+<code>    parent::__construct( </code>
+<code>        'pdev-favorites',</code>
+<code>        'Favorites: Movie and Song',</code>
+<code>        $widget_options</code>
+<code>    );</code>
+<code>}</code></pre>
+<p id="c14-para-0104">There are two primary things you need to do when setting up your widget. The first is to set the <code>$widget_options</code> array. For this, you can pass a custom <code>classname</code>, add a textual description of the widget, and set the <code>customize_selective_refresh</code> option, which tells WordPress whether to provide a live preview of changes to the widget without refreshing the entire page in the customizer. Unless you are doing some advanced JavaScript stuff that interferes with selective refresh in the customizer, you should set this to <code>true</code>.</p>
+<p id="c14-para-0105">For the final step of setting up the widget, you must call the parent class’ <code>__construct()</code> method. The first parameter should be a unique ID for your widget. The second parameter is the widget title. And, the third parameter is the <code>$widget_options</code> array that you set up earlier.</p>
+<p id="c14-para-0106"><span epub:type="pagebreak" id="Page_371" role="doc-pagebreak" title="371"/>Now, you can get down to the business of handling the front‐end widget output. Besides the constructor method, the <code>widget()</code> method is the only method required for creating a widget. The <code>form()</code> and <code>update()</code> methods that you will add later are required only for widgets that have custom options.</p>
+<p>Update your widget class’ <code>widget()</code> method with the following code:</p>
+<pre id="c14-code-0030"><code>// Displays the widget.</code>
+<code>public function widget( $sidebar, $instance ) {</code>
+<code> </code>
+<code>    // Open the sidebar widget wrapper.</code>
+<code>    echo $sidebar['before_widget'];</code>
+<code> </code>
+<code>    // Output the widget title if set.</code>
+<code>    if ( ! empty( $instance['title'] ) ) {</code>
+<code> </code>
+<code>        // Open the sidebar widget title wrapper.</code>
+<code>        echo $sidebar['before_title'];</code>
+<code> </code>
+<code>        // Apply filters and output widget title.</code>
+<code>        echo apply_filters( 'widget_title', $instance['title'], $instance,</code>
+<code>        $this-&gt;id_base );</code>
+<code> </code>
+<code>        // Close the sidebar widget title wrapper.</code>
+<code>        echo $sidebar['after_title'];</code>
+<code>    }</code>
+<code> </code>
+<code>    // Output favorite movie and song in a list.</code>
+<code>    echo '&lt;ul&gt;';</code>
+<code> </code>
+<code>    printf(</code>
+<code>        '&lt;li&gt;Favorite Movie: %s&lt;/li&gt;',</code>
+<code>        ! empty( $instance['movie'] ) ? esc_html( $instance['movie'] ) : 'None'</code>
+<code>    );</code>
+<code> </code>
+<code>    printf(</code>
+<code>        '&lt;li&gt;Favorite Song: %s&lt;/li&gt;',</code>
+<code>        ! empty( $instance['song'] ) ? esc_html( $instance['song'] ) : 'None'</code>
+<code>    );</code>
+<code> </code>
+<code>    echo '&lt;/ul&gt;';</code>
+<code> </code>
+<code>    // Close the sidebar widget wrapper.</code>
+<code>    echo $sidebar['after_widget'];</code>
+<code>}</code></pre>
+<p>The first thing you should notice is the two parameters passed into the method.</p>
+<ul class="check" id="c14-list-0010">
+<li id="c14-li-0034">
+<code>$sidebar</code>: This parameter includes necessary data about the sidebar, which has generally been registered by the theme. You will need it to output the appropriate HTML tags so that it doesn't break the theme on the front end.</li>
+<li id="c14-li-0035">
+<code>$instance</code>: This parameter houses the data about the specific instance of the widget that is being output (widgets can be used multiple times, which creates separate instances). Primarily, you need this data for any widget options set by the user.</li>
+</ul>
+<p id="c14-para-0109"><span epub:type="pagebreak" id="Page_372" role="doc-pagebreak" title="372"/>The first and last things all widgets should do is print the <code>$sidebar['before_widget']</code> and <code>$sidebar['after_widget']</code> variables, respectively. These variables are the opening and closing HTML tags for the sidebar the widget is being displayed in.</p>
+<p>The next important thing is the widget title. Not all widgets have titles, but it is generally good practice to allow the user to decide whether they want to add a title and provide an option for this. When displaying the title, it is important to apply the core WordPress <code>widget_title</code> filter hook so that other plugins can manipulate this. Take special note of the format of this hook and make sure to pass all data as shown in the following snippet so that it is available to filters:</p>
+<pre id="c14-code-0031"><code>echo apply_filters( 'widget_title', $instance['title'], $instance, $this-&gt;id_base );</code></pre>
+<p id="c14-para-0111">Use the <code>$sidebar['before_title']</code> and <code>$sidebar['after_title']</code> variables before and after outputting the title, respectively. Like the widget wrapper, this will wrap the title in the registered sidebar's widget title HTML.</p>
+<p id="c14-para-0112">After outputting the title, you simply need to add in your widget's custom output. In the preceding code, you made a simple list to output the user's favorite movie and song. Remember that the <code>$instance</code> array contains all of the widget options data. So, <code>$instance['movie']</code> and <code>$instance['song'</code>] are both available for use.</p>
+<p>Now you will add a settings form for your widget. It will include fields for a title, favorite movie, and favorite song. Replace the <code>form()</code> method in your widget class with the following code:</p>
+<pre id="c14-code-0032"><code>// Outputs widget options form.</code>
+<code>public function form( $instance ) {</code>
+<code> </code>
+<code>      $instance = wp_parse_args(</code>
+<code>             (array) $instance,</code>
+<code>             [</code>
+<code>                    'title' =&gt; 'Favorites',</code>
+<code>                    'movie' =&gt; '',</code>
+<code>                    'song'  =&gt; ''</code>
+<code>             ]</code>
+<code>      ); ?&gt;</code>
+<code> </code>
+<code>      &lt;p&gt;</code>
+<code>             &lt;label&gt;</code>
+<code>                    Title:</code>
+<code>                    &lt;input</code>
+<code>                          type="text"</code>
+<code>                          class="widefat"</code>
+<code>                          name="&lt;?php echo $this-&gt;get_field_name( 'title' ); ?&gt;"</code>
+<code>                          value="&lt;?php echo esc_attr( $instance['title'] ); ?&gt;"</code>
+<code>                 /&gt;</code>
+<code>             &lt;/label&gt;</code>
+<code>      &lt;/p&gt;</code>
+<code> </code>
+<code>      &lt;p&gt;</code>
+<code>             &lt;label&gt;</code>
+<code>                    Movie:</code>
+<code>                    &lt;input</code>
+<code>                          type="text"</code>
+<code>                          class="widefat"<span epub:type="pagebreak" id="Page_373" role="doc-pagebreak" title="373"/></code>
+<code>                          name="&lt;?php echo $this-&gt;get_field_name( 'movie' ); ?&gt;"</code>
+<code>                          value="&lt;?php echo esc_attr( $instance['movie'] ); ?&gt;"</code>
+<code>                 /&gt;</code>
+<code>             &lt;/label&gt;</code>
+<code>      &lt;/p&gt;</code>
+<code> </code>
+<code>      &lt;p&gt;</code>
+<code>             &lt;label&gt;</code>
+<code>                    Song:</code>
+<code>                    &lt;input</code>
+<code>                          type="text"</code>
+<code>                          class="widefat"</code>
+<code>                          name="&lt;?php echo $this-&gt;get_field_name( 'song' ); ?&gt;"</code>
+<code>                          value="&lt;?php echo esc_attr( $instance['song'] ); ?&gt;"</code>
+<code>                 /&gt;</code>
+<code>             &lt;/label&gt;</code>
+<code>      &lt;/p&gt;</code>
+<code>&lt;?php }</code></pre>
+<p id="c14-para-0114">The <code>form()</code> method accepts a single parameter of <code>$instance</code>. Just like the <code>widget()</code> method from earlier, this is an array of settings for this specific instance of the widget.</p>
+<p id="c14-para-0115">The first thing you should do with the <code>$instance</code> variable is to parse it against an array of defaults. This will make sure that each key/value pair is set for the <code>$instance</code> array and not result in an undefined index error in the case that a key doesn't exist.</p>
+<p id="c14-para-0116">From that point, it is simply a matter of outputting a basic HTML form. There are two major things you must do to ensure that your form is correct. The first is to add an appropriate <code>name</code> attribute to form fields for this particular instance of the widget. WordPress provides the <code>WP_Widget::get_field_name()</code> method (use as <code>$this‐&gt;get_field_name()</code>) for returning the correct value for this attribute. You merely need to reference it and pass in the widget setting name as the first parameter.</p>
+<p id="c14-para-0117">The second requirement is that the <code>value</code> attribute for form fields must use the <code>$instance</code> variable. For example, if you wanted to output the correct <code>title</code> setting value, you would need to reference <code>$instance[‘title’]</code>.</p>
+<p id="c14-para-0118">The final step of creating your widget is handling the <code>update()</code> method, which is executed when widget settings are saved. This method is important because it is the point where you sanitize settings before they are stored in the database.</p>
+<p>Replace the <code>update()</code> method in your widget class with the following code:</p>
+<pre id="c14-code-0033"><code>// Callback on widgets update to save options.</code>
+<code>public function update( $new_instance, $old_instance ) {</code>
+<code> </code>
+<code>      // Create empty array to store sanitized data.</code>
+<code>      $instance = [];</code>
+<code> </code>
+<code>      // Sanitize data from widget form.</code>
+<code>      $instance['title'] = sanitize_text_field( $new_instance['title'] );</code>
+<code>      $instance['movie'] = sanitize_text_field( $new_instance['movie'] );</code>
+<code>      $instance['song']  = sanitize_text_field( $new_instance['song']  );</code>
+<code> </code>
+<code>      // Return sanitized data.</code>
+<code>      return $instance;</code>
+<code>}</code></pre>
+<p><span epub:type="pagebreak" id="Page_374" role="doc-pagebreak" title="374"/>The <code>update()</code> method accepts two parameters.</p>
+<ul class="check" id="c14-list-0011">
+<li id="c14-li-0036">
+<code>$new_instance</code>: The new widget settings array set by the user before being saved to the database.</li>
+<li id="c14-li-0037">
+<code>$old_instance</code>: The previously saved widgets settings. You will not need this array most of the time, but it is available if you need to work with the old data.</li>
+</ul>
+<p id="c14-para-0121">The first thing you should do is create a clean, empty <code>$instance</code> array that will house all of your sanitized options. You will return this array after sanitizing.</p>
+<p id="c14-para-0122">In the preceding code, the widget title, favorite movie, and favorite song settings are all sanitized via the <code>sanitize_text_field()</code> function. Because all of these options are basic text fields, this function keeps things simple. Keep in mind that you should always sanitize or validate based on the specific type of data that you are expecting. For more information on properly sanitizing data, see <a href="c04.xhtml">Chapter 4</a>.</p>
+<p id="c14-para-0123">Congratulations! You have now successfully built your first widget. Take a look at what it should look like from the Widgets admin screen in <a href="#c14-fig-0002" id="R_c14-fig-0002">Figure 14‐2</a>.</p>
+<figure> <img alt="Screenshot displaying the Widgets admin screen for two fields: Footer #1 and Footer #2." class="center" src="images/c14f002.png"/>
+<figcaption>
+<p><span class="figureLabel"><a href="#R_c14-fig-0002" id="c14-fig-0002" role="doc-backlink"><b>FIGURE 14‐2</b></a>:</span> Widgets admin screen</p>
+</figcaption>
+</figure>
+<p id="c14-para-0124">After placing it in a sidebar, it should look similar to <a href="#c14-fig-0003" id="R_c14-fig-0003">Figure 14‐3</a> on the front end.</p>
+<figure> <img alt="Screenshot of the Favorites page displaying the favorite movie and favorite song, after placing the widgets in a side bar." class="center" src="images/c14f003.png"/>
+<figcaption>
+<p><span class="figureLabel"><a href="#R_c14-fig-0003" id="c14-fig-0003" role="doc-backlink"><b>FIGURE 14‐3</b></a>:</span> Favorites list</p>
+</figcaption>
+</figure>
+<p>Now review the full widget plugin code that you have put together. Your <code>plugin‐favorites‐widget/plugin.php</code> file should look like the following:</p>
+<pre id="c14-code-0034"><code>&lt;?php</code>
+<code>/**</code>
+<code> * Plugin Name: Favorites Widget</code>
+<code> * Plugin URI:  http://example.com/<span epub:type="pagebreak" id="Page_375" role="doc-pagebreak" title="375"/></code>
+<code> * Description: Allows the user to enter their favorite movie and song.</code>
+<code> * Author:      WROX</code>
+<code> * Author URI:  http://wrox.com</code>
+<code> */</code>
+<code> </code>
+<code>namespace PDEV\Favorites;</code>
+<code> </code>
+<code>add_action( 'widgets_init', function() {</code>
+<code> </code>
+<code>      require_once plugin_dir_path( __FILE__ ) . 'Widget.php';</code>
+<code> </code>
+<code>      register_widget( __NAMESPACE__ . '\Widget' );</code>
+<code>} );</code></pre>
+<p>The <code>plugin‐favorites‐widget/Widget.php</code> file should look like this final snippet:</p>
+<pre id="c14-code-0035"><code>&lt;?php</code>
+<code>namespace PDEV\Favorites;</code>
+<code> </code>
+<code>use WP_Widget;</code>
+<code> </code>
+<code>class Widget extends WP_Widget {</code>
+<code> </code>
+<code>    // Sets up the widget.</code>
+<code>    public function __construct() {</code>
+<code> </code>
+<code>        // Set up the widget options.</code>
+<code>        $widget_options = array(</code>
+<code>            'classname' =&gt; 'pdev-favorites',</code>
+<code>            'description' =&gt; 'Displays your favorite movie and song.',</code>
+<code>            'customize_selective_refresh' =&gt; true</code>
+<code>        );</code>
+<code> </code>
+<code>        // Create the widget.</code>
+<code>        parent::__construct(</code>
+<code>            'pdev-favorites',</code>
+<code>            'Favorites: Movie and Song',</code>
+<code>            $widget_options</code>
+<code>        );</code>
+<code>    }</code>
+<code> </code>
+<code>    // Displays the widget.</code>
+<code>    public function widget( $sidebar, $instance ) {</code>
+<code> </code>
+<code>        // Open the sidebar widget wrapper.</code>
+<code>        echo $sidebar['before_widget'];</code>
+<code> </code>
+<code>        // Output the widget title if set.</code>
+<code>        if ( ! empty( $instance['title'] ) ) {</code>
+<code> </code>
+<code>            // Open the sidebar widget title wrapper.</code>
+<code>            echo $sidebar['before_title'];</code>
+<code> <span epub:type="pagebreak" id="Page_376" role="doc-pagebreak" title="376"/></code>
+<code>            // Apply filters and output widget title.</code>
+<code>            echo apply_filters(</code>
+<code>                 'widget_title',</code>
+<code>                 $instance['title'],</code>
+<code>                 $instance,</code>
+<code>                 $this-&gt;id_base</code>
+<code>           );</code>
+<code> </code>
+<code>            // Close the sidebar widget title wrapper.</code>
+<code>            echo $sidebar['after_title'];</code>
+<code>        }</code>
+<code> </code>
+<code>        // Output favorite movie and song in a list.</code>
+<code>        echo '&lt;ul&gt;';</code>
+<code> </code>
+<code>        printf(</code>
+<code>            '&lt;li&gt;Favorite Movie: %s&lt;/li&gt;',</code>
+<code>            ! empty( $instance['movie'] ) ? esc_html( $instance['movie'] ) : 'None'</code>
+<code>        );</code>
+<code> </code>
+<code>        printf(</code>
+<code>            '&lt;li&gt;Favorite Song: %s&lt;/li&gt;',</code>
+<code>            ! empty( $instance['song'] ) ? esc_html( $instance['song'] ) : 'None'</code>
+<code>        );</code>
+<code> </code>
+<code>        echo '&lt;/ul&gt;';</code>
+<code> </code>
+<code>        // Close the sidebar widget wrapper.</code>
+<code>        echo $sidebar['after_widget'];</code>
+<code>    }</code>
+<code> </code>
+<code>    // Outputs widget options form.</code>
+<code>    public function form( $instance ) {</code>
+<code> </code>
+<code>        $instance = wp_parse_args(</code>
+<code>            (array) $instance,</code>
+<code>            [</code>
+<code>                'title' =&gt; 'Favorites',</code>
+<code>                'movie' =&gt; '',</code>
+<code>                'song'  =&gt; ''</code>
+<code>            ]</code>
+<code>        ); ?&gt;</code>
+<code> </code>
+<code>        &lt;p&gt;</code>
+<code>            &lt;label&gt;</code>
+<code>                Title:</code>
+<code>                &lt;input</code>
+<code>                    type="text"</code>
+<code>                    class="widefat"</code>
+<code>                    name="&lt;?php echo $this-&gt;get_field_name( 'title' ); ?&gt;"</code>
+<code>                    value="&lt;?php echo esc_attr( $instance['title'] ); ?&gt;"</code>
+<code>             /&gt;</code>
+<code>            &lt;/label&gt;</code>
+<code>        &lt;/p&gt;</code>
+<code> <span epub:type="pagebreak" id="Page_377" role="doc-pagebreak" title="377"/></code>
+<code>        &lt;p&gt;</code>
+<code>            &lt;label&gt;</code>
+<code>                Movie:</code>
+<code>                &lt;input</code>
+<code>                    type="text"</code>
+<code>                    class="widefat"</code>
+<code>                    name="&lt;?php echo $this-&gt;get_field_name( 'movie' ); ?&gt;"</code>
+<code>                    value="&lt;?php echo esc_attr( $instance['movie'] ); ?&gt;"</code>
+<code>             /&gt;</code>
+<code>            &lt;/label&gt;</code>
+<code>        &lt;/p&gt;</code>
+<code> </code>
+<code>        &lt;p&gt;</code>
+<code>            &lt;label&gt;</code>
+<code>                Song:</code>
+<code>                &lt;input</code>
+<code>                    type="text"</code>
+<code>                    class="widefat"</code>
+<code>                    name="&lt;?php echo $this-&gt;get_field_name( 'song' ); ?&gt;"</code>
+<code>                    value="&lt;?php echo esc_attr( $instance['song'] ); ?&gt;"</code>
+<code>             /&gt;</code>
+<code>            &lt;/label&gt;</code>
+<code>        &lt;/p&gt;</code>
+<code>    &lt;?php }</code>
+<code> </code>
+<code>    // Callback on widgets update to save options.</code>
+<code>    public function update( $new_instance, $old_instance ) {</code>
+<code> </code>
+<code>        // Create empty array to store sanitized data.</code>
+<code>        $instance = [];</code>
+<code> </code>
+<code>        // Sanitize data from widget form.</code>
+<code>        $instance['title'] = sanitize_text_field( $new_instance['title'] );</code>
+<code>        $instance['movie'] = sanitize_text_field( $new_instance['movie'] );</code>
+<code>        $instance['song']  = sanitize_text_field( $new_instance['song']  );</code>
+<code> </code>
+<code>        // Return sanitized data.</code>
+<code>        return $instance;</code>
+<code>    }</code>
+<code>}</code></pre>
+</section>
+</section>
+<section><span id="c14-sec-0029"/>
+<h2 id="head-2-112">DASHBOARD WIDGETS</h2>
+<p id="c14-para-0127">WordPress also features a Dashboard Widgets API. You can use this API to create custom widgets on the Dashboard screen in the WordPress admin. Dashboard widgets can be anything, but their purpose is generally informational to help the user in some capacity. This can be data about your plugin or perhaps an RSS feed that points to tutorials on your website.</p>
+<p id="c14-para-0128">Some plugin authors use dashboard widgets to advertise products and services. For many users, this is seen as spammy. Going overboard here can lead to a poor reputation in the community. It is best to leave any ads to your plugin's own admin screens and not place them on a screen unrelated to your plugin.</p>
+<p id="c14-para-0129"><span epub:type="pagebreak" id="Page_378" role="doc-pagebreak" title="378"/>Dashboard widgets should not be confused with the Widgets API discussed earlier in this chapter. While the two share a similar name, they are nothing alike.</p>
+<section><span id="c14-sec-0030"/>
+<h3 id="head-3-232">Creating Dashboard Widgets</h3>
+<p>To create your dashboard widget, you use the <code>wp_add_dashboard_widget()</code> function.</p>
+<pre id="c14-code-0036"><code>&lt;?php</code>
+<code>wp_add_dashboard_widget( </code>
+<code>      string $widget_id, </code>
+<code>      string $widget_name, </code>
+<code>      callable $callback, </code>
+<code>      callable $control_callback = null, </code>
+<code>      array $callback_args = null</code>
+<code>);</code></pre>
+<p>The function accepts the following parameters:</p>
+<ul class="check" id="c14-list-0012">
+<li id="c14-li-0038">
+<code>$widget_id</code>: The CSS ID added to the widget's HTML wrapper.</li>
+<li id="c14-li-0039">
+<code>$widget_name</code>: The title displayed for the widget header.</li>
+<li id="c14-li-0040">
+<code>$callback</code>: Function, method, or other callable for displaying your widget's content.</li>
+<li id="c14-li-0041">
+<code>$control_callback</code>: Function, method, or other callable for outputting the form controls for the widget. This is necessary only for widgets with settings.</li>
+<li id="c14-li-0042">
+<code>$callback_args</code>: Optional array of arguments to pass to the widget callback function.</li>
+</ul>
+<p id="c14-para-0132">To create a dashboard widget, use the <code>wp_dashboard_setup</code> action hook. This hook is executed directly after the default dashboard widgets have been initialized, but prior to them being displayed.</p>
+<p>Now register a new dashboard widget as shown in the following snippet:</p>
+<pre id="c14-code-0037"><code>add_action( 'wp_dashboard_setup', 'pdev_simple_dashboard_register' );</code>
+<code> </code>
+<code>// Registers dashboard widgets.</code>
+<code>function pdev_simple_dashboard_register() {</code>
+<code> </code>
+<code>      wp_add_dashboard_widget(</code>
+<code>             'pdev-simple-dashboard',</code>
+<code>             'Plugin: Report Bugs',</code>
+<code>             'pdev_simple_dashboard_display'</code>
+<code>      );</code>
+<code>}</code></pre>
+<p id="c14-para-0134">The preceding code adds the <code>pdev_simple_dashboard_register()</code> action to the <code>wp_dashboard_setup</code> hook. It then registers a new dashboard widget via the <code>wp_add_dashboard_widget()</code> function. The first parameter is a unique ID for the widget and set to <code>pdev‐simple‐dashboard</code>. It is then given a title of “Plugin: Report Bugs.” The third parameter sets the <code>pdev_simple_dashboard_display()</code> function as the callback for displaying the actual widget.</p>
+<p><span epub:type="pagebreak" id="Page_379" role="doc-pagebreak" title="379"/>Now that your dashboard widget is registered, you need to set up the custom function to display a message to your users.</p>
+<pre id="c14-code-0038"><code>// Dashboard widget callback.</code>
+<code>function pdev_simple_dashboard_display() {</code>
+<code>      echo '&lt;p&gt;Please contact support@example.com to report bugs.&lt;/p&gt;';</code>
+<code>}</code></pre>
+<p id="c14-para-0136">You now have a custom dashboard widget with a simple message displayed to your users, as shown in <a href="#c14-fig-0004" id="R_c14-fig-0004">Figure 14‐4</a>. The Dashboard Widget API automatically makes your widget draggable and collapsible and even adds your widget to the Screen Options tab so that users can easily hide it if they choose.</p>
+<figure> <img alt="Screenshot of a custom dashboard widget with a simple message displayed to the users." class="center" src="images/c14f004.png"/>
+<figcaption>
+<p><span class="figureLabel"><a href="#R_c14-fig-0004" id="c14-fig-0004" role="doc-backlink"><b>FIGURE 14‐4</b></a>:</span> Custom dashboard widget</p>
+</figcaption>
+</figure>
+<p>Now review the plugin code in its entirety.</p>
+<pre id="c14-code-0039"><code>&lt;?php</code>
+<code>/**</code>
+<code> * Plugin Name: Simple Dashboard Widget</code>
+<code> * Plugin URI:  http://example.com/</code>
+<code> * Description: Example plugin of a simple dashboard widget.</code>
+<code> * Author:      WROX</code>
+<code> * Author URI:  http://wrox.com</code>
+<code> */</code>
+<code> </code>
+<code>add_action( 'wp_dashboard_setup', 'pdev_simple_dashboard_register' );</code>
+<code> </code>
+<code>// Registers dashboard widgets.</code>
+<code>function pdev_simple_dashboard_register() {</code>
+<code> </code>
+<code>      wp_add_dashboard_widget(</code>
+<code>             'pdev-simple-dashboard',</code>
+<code>             'Plugin: Report Bugs',</code>
+<code>             'pdev_simple_dashboard_display'</code>
+<code>      </code>
+<code>}</code>
+<code> <span epub:type="pagebreak" id="Page_380" role="doc-pagebreak" title="380"/></code>
+<code>// Dashboard widget callback.</code>
+<code>function pdev_simple_dashboard_display() {</code>
+<code>      echo '&lt;p&gt;Please contact support@example.com to report bugs.&lt;/p&gt;';</code>
+<code>}</code></pre>
+</section>
+<section><span id="c14-sec-0031"/>
+<h3 id="head-3-233">Creating a Dashboard Widget with Options</h3>
+<p id="c14-para-0138">Now that you understand dashboard widgets, you can create a more advanced widget that stores an option value. Dashboard widgets can store options, making them easily customizable by the user. If a dashboard widget has any options, a Configure link is displayed when you hover over the widget title.</p>
+<p>The dashboard widget in this example enables you to set a custom RSS feed URL and display the contents of that feed.</p>
+<pre id="c14-code-0040"><code>&lt;?php</code>
+<code>add_action( 'wp_dashboard_setup', 'pdev_advanced_dashboard_register' );</code>
+<code> </code>
+<code>// Registers dashboard widgets.</code>
+<code>function pdev_advanced_dashboard_register() {</code>
+<code> </code>
+<code>      wp_add_dashboard_widget(</code>
+<code>              'pdev-advanced-dashboard',</code>
+<code>              'Custom Feed',</code>
+<code>              'pdev_advanced_dashboard_display',</code>
+<code>              'pdev_advanced_dashboard_control'</code>
+<code>      );</code>
+<code>}</code></pre>
+<p id="c14-para-0140">Notice that the <code>wp_add_dashboard_widget()</code> function has the fourth parameter set, in this example <code>pdev_advanced_dashboard_control()</code>, which is the control callback. This is the function that displays your widget setting field and saves the data entered as an option for your widget.</p>
+<p>Next you need to create the <code>pdev_advanced_dashboard_display()</code> function to display the custom RSS feed in your widget.</p>
+<pre id="c14-code-0041"><code>// Dashboard widget callback.</code>
+<code>function pdev_advanced_dashboard_display() {</code>
+<code> </code>
+<code>      // Get widget option.</code>
+<code>      $feed_url = get_option( 'pdev_dashboard_feed_url' );</code>
+<code> </code>
+<code>      // If no feed, set to the WordPress.org news feed.</code>
+<code>      if ( ! $feed_url ) {</code>
+<code>              $feed_url = 'https://wordpress.org/news/feed';</code>
+<code>      }</code>
+<code> </code>
+<code>      // Open HTML wrapper.</code>
+<code>      echo '&lt;div class="rss-widget"&gt;';</code>
+<code> </code>
+<code>      // Output RSS feed list.</code>
+<code>      wp_widget_rss_output(</code>
+<code>              esc_url_raw( $feed_url ),</code>
+<code>              [<span epub:type="pagebreak" id="Page_381" role="doc-pagebreak" title="381"/></code>
+<code>                    'title'        =&gt; 'RSS Feed News',</code>
+<code>                    'items'        =&gt; 5,</code>
+<code>                    'show_summary' =&gt; true,</code>
+<code>                    'show_author'  =&gt; false,</code>
+<code>                    'show_date'    =&gt; true</code>
+<code>              ]</code>
+<code>      );</code>
+<code> </code>
+<code>      // Close HTML wrapper.</code>
+<code>      echo '&lt;/div&gt;';</code>
+<code>}</code></pre>
+<p id="c14-para-0142">The first two lines retrieve the RSS feed URL, which is stored as an option in the database. <a href="c03.xhtml">Chapter 3</a> covers plugin settings and options in more detail.</p>
+<p id="c14-para-0143">Next, the widget uses the <code>wp_widget_rss_output()</code> function to retrieve the RSS feed and display it. This handy little function is great for retrieving and displaying RSS feeds in WordPress. The widget defines the RSS URL, sets the title to RSS Feed News, sets the number of posts to show to 5, and includes a few other options.</p>
+<p>Now that you have the widget display, you need to create the control callback function, <code>pdev_advanced_dashboard_control()</code>. This function adds the form field to your widget and can also save the value entered by the user.</p>
+<pre id="c14-code-0042"><code>// Dashboard widget control callback.</code>
+<code>function pdev_advanced_dashboard_control() {</code>
+<code> </code>
+<code>      // Check if option is set before saving.</code>
+<code>      if ( isset( $_POST['pdev_dashboard_feed_url'] ) ) {</code>
+<code> </code>
+<code>             // Update database option.</code>
+<code>             update_option(</code>
+<code>                   'pdev_dashboard_feed_url',</code>
+<code>                   esc_url_raw( $_POST['pdev_dashboard_feed_url'] )</code>
+<code>             );</code>
+<code>      }</code>
+<code> </code>
+<code>      // Get widget option.</code>
+<code>      $feed_url = get_option( 'pdev_dashboard_feed_url' ); ?&gt;</code>
+<code> </code>
+<code>      &lt;p&gt;</code>
+<code>             &lt;label&gt;</code>
+<code>                    RSS Feed URL:</code>
+<code>                    &lt;input</code>
+<code>                          type="text"</code>
+<code>                          name="pdev_dashboard_feed_url"</code>
+<code>                          class="widefat"</code>
+<code>                          value="&lt;?php echo esc_url( $feed_url ); ?&gt;"</code>
+<code>                   /&gt;</code>
+<code>             &lt;/label&gt;</code>
+<code>      &lt;/p&gt;</code>
+<code>&lt;?php }</code></pre>
+<p id="c14-para-0145"><span epub:type="pagebreak" id="Page_382" role="doc-pagebreak" title="382"/>The first task the function handles is saving the widget option. You should always check to verify that the <code>POST</code> value exists prior to saving it using the <code>isset()</code> PHP function. Next you sanitize the value of <code>$_POST['pdev_dashboard_feed_url']</code> using the <code>esc_url_raw()</code> function before saving the option to the database via <code>update_option()</code>. The <code>esc_url_raw()</code> function will properly format the URL and make sure it does not have any illegal characters.</p>
+<p id="c14-para-0146">Once the widget option is saved, you need to display the widget form field so that your users can enter the RSS feed URL they want displayed. First, retrieve the widget option from the database if it exists so you can display it in the form field. Next create a simple text input named <code>pdev_dashboard_feed_url</code>. Notice that the value is set to <code>$feed_url</code>, which is storing the RSS feed URL value entered by the user.</p>
+<p id="c14-para-0147">You now have a custom dashboard widget that stores a custom RSS feed URL and displays the latest two posts to the user, as shown in <a href="#c14-fig-0005" id="R_c14-fig-0005">Figure 14‐5</a>.</p>
+<figure> <img alt="Screenshot of a custom dashboard widget that stores a custom RSS feed URL displaying the latest two posts to the user." class="center" src="images/c14f005.png"/>
+<figcaption>
+<p><span class="figureLabel"><a href="#R_c14-fig-0005" id="c14-fig-0005" role="doc-backlink"><b>FIGURE 14‐5</b></a>:</span> Custom dashboard widget</p>
+</figcaption>
+</figure>
+<p>Now look at the full source for the custom RSS feed dashboard widget.</p>
+<pre id="c14-code-0043"><code>&lt;?php</code>
+<code>/**</code>
+<code> * Plugin Name: Advanced Dashboard Widget</code>
+<code> * Plugin URI:  http://example.com/</code>
+<code> * Description: Example plugin of a advanced dashboard widget with options.</code>
+<code> * Author:      WROX</code>
+<code> * Author URI:  http://wrox.com</code>
+<code> */</code>
+<code> </code>
+<code>add_action( 'wp_dashboard_setup', 'pdev_advanced_dashboard_register' );</code>
+<code> <span epub:type="pagebreak" id="Page_383" role="doc-pagebreak" title="383"/></code>
+<code>// Registers dashboard widgets.</code>
+<code>function pdev_advanced_dashboard_register() {</code>
+<code> </code>
+<code>      wp_add_dashboard_widget(</code>
+<code>             'pdev-advanced-dashboard',</code>
+<code>             'Custom Feed',</code>
+<code>             'pdev_advanced_dashboard_display',</code>
+<code>             'pdev_advanced_dashboard_control'</code>
+<code>      );</code>
+<code>}</code>
+<code> </code>
+<code>// Dashboard widget callback.</code>
+<code>function pdev_advanced_dashboard_display() {</code>
+<code> </code>
+<code>      // Get widget option.</code>
+<code>      $feed_url = get_option( 'pdev_dashboard_feed_url' );</code>
+<code> </code>
+<code>      // If no feed, set to the WordPress.org news feed.</code>
+<code>      if ( ! $feed_url ) {</code>
+<code>             $feed_url = 'https://wordpress.org/news/feed';</code>
+<code>      }</code>
+<code> </code>
+<code>      // Open HTML wrapper.</code>
+<code>      echo '&lt;div class="rss-widget"&gt;';</code>
+<code> </code>
+<code>      // Output RSS feed list.</code>
+<code>      wp_widget_rss_output(</code>
+<code>             esc_url_raw( $feed_url ),</code>
+<code>             [</code>
+<code>                    'title'        =&gt; 'RSS Feed News',</code>
+<code>                    'items'        =&gt; 5,</code>
+<code>                    'show_summary' =&gt; true,</code>
+<code>                    'show_author'  =&gt; false,</code>
+<code>                    'show_date'    =&gt; true</code>
+<code>             ]</code>
+<code>      );</code>
+<code> </code>
+<code>      // Close HTML wrapper.</code>
+<code>      echo '&lt;/div&gt;';</code>
+<code>}</code>
+<code> </code>
+<code>// Dashboard widget control callback.</code>
+<code>function pdev_advanced_dashboard_control() {</code>
+<code> </code>
+<code>      // Check if option is set before saving.</code>
+<code>      if ( isset( $_POST['pdev_dashboard_feed_url'] ) ) {</code>
+<code> </code>
+<code>             // Update database option.</code>
+<code>             update_option(</code>
+<code>                    'pdev_dashboard_feed_url',</code>
+<code>                    esc_url_raw( $_POST['pdev_dashboard_feed_url'] )</code>
+<code>             );</code>
+<code>      }</code>
+<code> <span epub:type="pagebreak" id="Page_384" role="doc-pagebreak" title="384"/></code>
+<code>      // Get widget option.</code>
+<code>      $feed_url = get_option( 'pdev_dashboard_feed_url' ); ?&gt;</code>
+<code> </code>
+<code>      &lt;p&gt;</code>
+<code>             &lt;label&gt;</code>
+<code>                    RSS Feed URL:</code>
+<code>                    &lt;input</code>
+<code>                          type="text"</code>
+<code>                          name="pdev_dashboard_feed_url"</code>
+<code>                          class="widefat"</code>
+<code>                          value="&lt;?php echo esc_url( $feed_url ); ?&gt;"</code>
+<code>                 /&gt;</code>
+<code>             &lt;/label&gt;</code>
+<code>      &lt;/p&gt;</code>
+<code>&lt;?php }</code></pre>
+</section>
+</section>
+<section><span id="c14-sec-0032"/>
+<h2 id="head-2-113">REWRITE RULES</h2>
+<p id="c14-para-0149">The Rewrite API is often considered one of the trickiest areas in WordPress and is certainly one of the least documented on the web. This section first gives you some background information on why URLs are rewritten, then explains how to do this in WordPress, and finally shows you a couple real‐world scenarios in which you can leverage the Rewrite API.</p>
+<p id="c14-para-0150">Unfortunately, given the restraints of publishing, it is impossible to provide a full deep‐dive into all of the possibilities with the Rewrite API. Instead, consider this section more of a high‐level overview to start you down the path of custom rewrite rules.</p>
+<section><span id="c14-sec-0033"/>
+<h3 id="head-3-234">Why Rewrite URLs</h3>
+<p id="c14-para-0151">Dynamic sites use URLs that generate content from query string parameters. These URLs are often rewritten to resemble URLs for static pages on a site with a subdirectory hierarchy. For example, the URL to a wiki page might be <code><a href="http://example.com/index.php?title=rewrite-url">http://example.com/index.php?title=rewrite-url</a></code> and be actually rewritten to <code><a href="http://example.com/rewrite-url">http://example.com/rewrite-url</a></code>. A request to this latter, prettier URL will be transparently rewritten by the web server to the former URL.</p>
+<p id="c14-para-0152">This introductory section familiarizes you with the concept of “pretty permalinks” (sometimes called “fancy URLs” in web applications) and URL rewriting in general and specifically in WordPress.</p>
+</section>
+<section><span id="c14-sec-0034"/>
+<h3 id="head-3-235">Permalink Principles</h3>
+<p id="c14-para-0153">Web applications and sites can have two completely different audiences: human readers and search engines. Online resources should be friendly to both.</p>
+<section><span id="c14-sec-0035"/>
+<h4 id="head-4-123">Search Engine Friendly</h4>
+<p id="c14-para-0154">Suppose you have coded a complete online store for a client, with various products and categories. From a programmer's perspective, each URL of the site would be similar to <code><a href="http://example.com/shop.php?action=display&amp;category=12&amp;subcat=4">http://example.com/shop.php?action=display&amp;category=12&amp;subcat=4</a></code>. This URL easily maps to variables that can then typically fetch information from a database or perform actions.</p>
+<p id="c14-para-0155"><span epub:type="pagebreak" id="Page_385" role="doc-pagebreak" title="385"/>The problem with that URL is that search engines may index it or just index <code><a href="http://example.com/shop.php">http://example.com/shop.php</a></code>, which may not even return something intelligible.</p>
+</section>
+<section><span id="c14-sec-0036"/>
+<h4 id="head-4-124">User Friendly</h4>
+<p>As a human user, you want a URL to be easy to understand and, if possible, memorable. For instance, consider these two URLs that would actually display the same product page:</p>
+<ul class="check" id="c14-list-0013">
+<li id="c14-li-0043"><code><a href="http://example.com/shop.php?action=display&amp;category=123&amp;product_id=42">example.com/shop.php?action=display&amp;category=123&amp;product_id=42</a></code></li>
+<li id="c14-li-0044"><code><a href="http://example.com/shop/shirts/wordpress-blue">example.com/shop/shirts/wordpress-blue</a></code><?span Start cssStyle="text-decoration:underline"?>
+<code>/</code></li>
+</ul>
+<p id="c14-para-0157">The first URL is long and cryptic, whereas the second one is shorter and self‐explanatory.</p>
+<p>Even when URLs are not obscure like the first one, having a directory‐like structure makes it much more understandable. The following two URLs would, for instance, point to the same page on a WordPress‐powered site.</p>
+<ul class="check" id="c14-list-0014">
+<li id="c14-li-0045"><code><a href="http://example.com/index.php?year=2020&amp;paged=3">http://example.com/index.php?year=2020&amp;paged=3</a></code></li>
+<li id="c14-li-0046"><code><a href="http://example.com/2020/page/3/">http://example.com/2020/page/3/</a></code></li>
+</ul>
+</section>
+</section>
+<section><span id="c14-sec-0037"/>
+<h3 id="head-3-236">Apache's mod_rewrite</h3>
+<p id="c14-para-0159">Web server developers have imagined ways to rewrite URLs, from something programmatically convenient (
+<code>shop.php?product=100</code>) to something user and search engine friendly (
+<code>/buy/wordpress‐shirt/</code>). This section highlights how this is done with the Apache web server, but other web server software (Lighttpd, Nginx, IIS, and so on) all have similar techniques.</p>
+<p>The key module for permalinks in Apache is <code>mod_rewrite</code>, a module that enables defining rewrite rules typically found in the <code>.htaccess</code> file. A classic rewrite rule consists of the following code block:</p>
+<pre id="c14-code-0044"><code>&lt;IfModule mod_rewrite.c&gt;</code>
+<code>RewriteEngine on</code>
+<code>RewriteRule [ pattern] [ substitution ] [ optional flag(s) ]</code>
+<code>&lt;/IfModule&gt;</code></pre>
+<p>The pattern and substitution parameters can use regular expressions. Consider the following rewrite rule:</p>
+<pre id="c14-code-0045"><code>RewriteRule /buy/([^/]+)/ /shop.php?product=$1 [L]</code></pre>
+<p id="c14-para-0162">Now, when a client requests a URL that starts with <code>/buy/</code> followed several times by a character that is not a slash (
+<code>[^/]+</code>) and then a slash, the web server internally redirects the request to <code>/shop.php</code> and passes the parameter <code>product</code> with the value caught inside the parentheses of the pattern.</p>
+<p id="c14-para-0163">If you want to learn more about <code>mod_rewrite</code> and URL rewriting in a non‐WordPress environment, you can read a thorough guide at <code><a href="https://www.sitepoint.com/guide-url-rewriting/">https://www.sitepoint.com/guide-url-rewriting/</a></code>.</p>
+</section>
+<section><span id="c14-sec-0038"/>
+<h3 id="head-3-237">URL Rewriting in WordPress</h3>
+<p>A typical WordPress URL such as <code>/2020/03/hello‐world/</code> doesn't match an actual physical path on the web server. (No “hello‐world” directory is in a “03” directory, which is in a “2020” folder.) At some point, the URL was rewritten.<span epub:type="pagebreak" id="Page_386" role="doc-pagebreak" title="386"/></p>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="c14-para-0165"><b>NOTE</b> <i>If your WordPress setup runs on a capable server (usually Apache with</i> <code>mod_rewrite</code><i>), you can enable “pretty permalinks” to benefit from the user and search engine–friendly URLs, such as</i> <code><a href="http://example.com/2020/03/hello-world/">example.com/2020/03/hello-world/</a></code> <i>instead of</i> <code><a href="http://example.com/index.php?p=1">example.com/index.php?p=1</a></code>. <i>Read more about this beginner feature at</i> <code><a href="https://wordpress.org/support/article/using-permalinks/">https://wordpress.org/support/article/using-permalinks/</a></code>.</p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+<p>When installed, WordPress creates an <code>.htaccess</code> file in its root directory that contains the following block:</p>
+<pre id="c14-code-0046"><code>&lt;IfModule mod_rewrite.c&gt;</code>
+<code>RewriteEngine On</code>
+<code>RewriteBase /</code>
+<code>RewriteRule ^index\.php$ - [L]</code>
+<code>RewriteCond %{REQUEST_FILENAME} !-f</code>
+<code>RewriteCond %{REQUEST_FILENAME} !-d</code>
+<code>RewriteRule . /index.php [L]</code>
+<code>&lt;/IfModule&gt;</code></pre>
+<p>This <code>mod_rewrite</code> directive contains a conditional rewrite rule, which tells the web server the following:</p>
+<ul class="check" id="c14-list-0015">
+<li id="c14-li-0047">If the request is <code>index.php</code>, redirect to this file and don't try to match any other rewrite rule. (The <code>[L]</code> flag stands for Last.)</li>
+<li id="c14-li-0048">Check whether the request is not a file ( <code>%{REQUEST_FILENAME} !‐f</code> ) and not a directory ( <code>%{REQUEST_FILENAME} !‐d</code> ).</li>
+<li id="c14-li-0049">Then rewrite the URL to <code>index.php</code> and don't try to apply another rewrite rule.</li>
+</ul>
+<p id="c14-para-0168">This <code>.htaccess</code> directive redirects requests such as <code>/2020/page/6/</code> to <code>/index.php</code>. This means that practically all requests in the front‐end area of a WordPress site are internally redirected to <code>index.php</code>, which then has to guess how to interpret the request. Enter the Rewrite API.</p>
+</section>
+<section><span id="c14-sec-0040"/>
+<h3 id="head-3-238">How WordPress Handles Queries</h3>
+<p id="c14-para-0169">You now know that when a visitor loads a WordPress‐powered page, the file actually loaded is <code>index.php.</code> For example, if you request <code><a href="http://example.com/2020/01/hello-world/">http://example.com/2020/01/hello-world/</a></code>, WordPress internally redirects this URL into <code><a href="http://example.com/index.php?p=1">http://example.com/index.php?p=1</a></code> and eventually fetches from the database data for the post with ID 1. How is the translation from a URL to a MySQL query done?</p>
+<p id="c14-para-0170">The following section explains what magic happens when the web server displays a WordPress‐powered page and how plugins can interfere with this process.</p>
+</section>
+<section><span id="c14-sec-0041"/>
+<h3 id="head-3-239">Overview of the Query Process</h3>
+<p>You need to understand how and when events occur within WordPress because this can highlight the parts where your plugin can interfere with the process. You can now dissect the flow of events when a page is requested and determine which files are included and which functions are called.<span epub:type="pagebreak" id="Page_387" role="doc-pagebreak" title="387"/></p>
+<ol class="decimal" id="c14-list-0016">
+<li id="c14-li-0050">The root <code>index.php</code> file is loaded, as per the <code>.htaccess</code> rewrite rule, and loads the file <code>wp‐blog‐header.php</code>.</li>
+<li id="c14-li-0051">This file loads <code>wp‐load.php</code>, which searches and includes <code>wp‐config.php</code>, which will in turn load <code>wp‐settings.php</code>, which includes the function files, active plugins, and then pluggable functions.</li>
+<li id="c14-li-0052">Two new objects are instantiated: <code>$wp_query</code> and <code>$wp_rewrite</code>. You learn about these later.</li>
+<li id="c14-li-0053">A few other files are loaded, such as translation files and the theme's functions file.
+<p class="listPara1" id="c14-para-0173">WordPress is now fully loaded and plugins can start interacting, but it doesn't yet know what to display and what page has been requested. Let's get back to <code>wp‐blog‐header.php</code>. After everything is loaded, this file calls the function <code>wp()</code>, which starts the magic—the method <code>WP::parse_request()</code>.</p>
+<p class="listPara1" id="c14-para-0174">The <code>parse_request()</code> method from the <code>WP</code> class prepares everything WordPress needs to know to understand the page request.</p></li>
+<li id="c14-li-0054">This function fetches the list of all the registered rewrite rules. Just as previously explained with <code>mod_rewrite</code>, it consists of a list of pattern/replacement pairs, to tell WordPress that <code>/category/tutorials/page/2/</code> actually means <code>/index.php?category_name=tutorials&amp;paged=2</code>.</li>
+<li id="c14-li-0055">The function goes through each rewrite rule, compares it to the requested URL, and tries to find a match. If no match is eventually found, this is a 404 error.
+<p class="listPara1" id="c14-para-0176">At this point, if the page is not a 404 error, WordPress now has a permalink translation pattern with query variable placeholders, such as <code>index.php?category_name=&lt;string&gt;&amp;paged=&lt;number&gt;</code>. It now needs to get the values of these query variables.</p></li>
+<li id="c14-li-0056">The function <code>parse_request()</code> now obtains the list of the registered query variables. For each variable, it checks whether a value has been set by the permalink pattern, by <code>POST</code>, or by <code>GET</code> submission.</li>
+<li id="c14-li-0057">Now, WordPress knows everything it needs to convert the initial URL request into a proper MySQL database query, get post data, load the required theme template, and display the requested page.</li>
+</ol>
+<p id="c14-para-0177">Two expressions may have caught your attention in the preceding flow: “registered rewrite rules” and “registered query variables.” If at some point these are registered, then there must be a way for plugins to change things.</p>
+<section><span id="c14-sec-0042"/>
+<h4 id="head-4-125">The Rewrite Object</h4>
+<p>The <code>$wp_rewrite</code> object is the first object you mess with when playing with the Rewrite API. Let's take a look at its content. Using a simple <code>print_r( $GLOBALS['wp_rewrite'] )</code> displays the following information:</p>
+<pre id="c14-code-0047"><code>WP_Rewrite Object (</code>
+<code>    ...</code>
+<code>    [permalink_structure]  =&gt; /%year%/%postname%/</code>
+<code>    [use_trailing_slashes] =&gt; 1</code>
+<code>    ...</code>
+<code>    [rules] =&gt; Array (<span epub:type="pagebreak" id="Page_388" role="doc-pagebreak" title="388"/></code>
+<code>        [category/(.+?)/?$]</code>
+<code>           =&gt; index.php?category_name=$matches[1]</code>
+<code>        [tag/([^/]+)/page/?([0-9]{1,})/?$]</code>
+<code>           =&gt; index.php?tag=$matches[1]&amp;paged=$matches[2]</code>
+<code>        [tag/([^/]+)/?$]</code>
+<code>           =&gt; index.php?tag=$matches[1]</code>
+<code>        [(.+?)/trackback/?$]</code>
+<code>           =&gt; index.php?pagename=$matches[1]&amp;tb=1</code>
+<code>        ...</code>
+<code>    )</code>
+<code>    [endpoints] =&gt; Array ()</code>
+<code>    ...</code>
+<code>)</code></pre>
+<p id="c14-para-0179">Some of the preceding properties should already be familiar to you. The rules array contains the list of all registered rewrite rules. The <code>$rewrite</code> object contains all the information related to the permalink structure of your site, such as the complete set of rewrite rules that were fetched at the previous flow or the list of registered feeds and their URL structure.</p>
+</section>
+<section><span id="c14-sec-0043"/>
+<h4 id="head-4-126">The Query Object</h4>
+<p>Similarly and before you learn how to alter it, take an inside look at the global <code>$wp_query</code> object, with a <code>print_r()</code> call when requesting the page <code>/2020/01/hello‐world/</code> on a WordPress‐powered site.</p>
+<pre id="c14-code-0048"><code>WP_Query Object (</code>
+<code>      [query_vars] =&gt; Array (</code>
+<code>             [page]  =&gt; 0</code>
+<code>             [year]  =&gt; 2020</code>
+<code>             [month] =&gt; 01</code>
+<code>             [name]  =&gt; hello-world</code>
+<code>             ...</code>
+<code>      )</code>
+<code>      ...</code>
+<code>      [is_single] =&gt; 1</code>
+<code>      [is_preview] =&gt;</code>
+<code>      [is_page] =&gt;</code>
+<code>      ...</code>
+<code>      [query] =&gt; Array (</code>
+<code>             [year] =&gt; 2020</code>
+<code>             [name] =&gt; hello-world</code>
+<code>      )</code>
+<code>      ...</code>
+<code>)</code></pre>
+<p id="c14-para-0181">The <code>$wp_query</code> object defines the list of authorized query variables that can be matched by the rewrite rules and collects all the information needed to translate the initial page request into a MySQL query.</p>
+</section> <span epub:type="pagebreak" id="Page_389" role="doc-pagebreak" title="389"/>
+<section><span id="c14-sec-0044"/>
+<h4 id="head-4-127">What Plugins Can Do</h4>
+<p>Using functions of the Rewrite API, plugins can interfere with the <code>$wp_rewrite</code> and <code>$wp_query</code> objects, for instance to perform the following actions as you will learn in the next section, “Practical Uses”:</p>
+<ul class="check" id="c14-list-0017">
+<li id="c14-li-0058">Create your own rewrite rules and define how WordPress will interpret them</li>
+<li id="c14-li-0059">Integrate a WordPress site with non‐WordPress pages and keep a consistent URL pattern and site layout</li>
+<li id="c14-li-0060">Create a custom feed with a custom feed permalink</li>
+</ul>
+<p id="c14-para-0183">Now that you know the underlying concepts of the Rewrite API, it's time for you to write actual code.</p>
+</section>
+</section>
+<section><span id="c14-sec-0045"/>
+<h3 id="head-3-240">Practical Uses</h3>
+<p>You will now dive into some practical examples and code for real‐world scenarios. In this section, you will learn to do the following:</p>
+<ul class="check" id="c14-list-0018">
+<li id="c14-li-0061">Leverage the Rewrite API to easily generate an arbitrary number of subpages under the hierarchy of one parent page</li>
+<li id="c14-li-0062">Define a custom permalink structure to easily integrate non‐WordPress content into a WordPress‐powered site</li>
+</ul>
+<section><span id="c14-sec-0046"/>
+<h4 id="head-4-128">Rewriting a URL to Create a List of Shops</h4>
+<p id="c14-para-0185">You've just redesigned the site of your latest client, a big retail company with dozens of stores across the country. You now have to list these stores within the website. You could manually create a separate page for each store, which could take untold hours. Or, you can create one page at <code><a href="http://example.com/shops/">http://example.com/shops/</a></code> and automatically make WordPress understand that <code><a href="http://example.com/shops/city-name">http://example.com/shops/city-name</a></code> needs to display the information page for the store located in that city. The latter option is much cleaner.</p>
+<p>The function that creates a new rewrite rule is <code>add_rewrite_rule()</code>, which needs three arguments: a string defining the URL pattern to be matched, another string for the URL replacement, and where to place the rule relative to other rules (top or bottom). In your Rewrite Rules Shop plugin, write the following:</p>
+<pre id="c14-code-0049"><code>&lt;?php</code>
+<code>// Add rewrite rules.</code>
+<code>add_action( 'init', 'pdev_list_stores_add_rules' );</code>
+<code> </code>
+<code>function pdev_list_stores_add_rules() {</code>
+<code> </code>
+<code>      add_rewrite_rule(</code>
+<code>             'stores/?([^/]*)',</code>
+<code>             'index.php?pagename=stores&amp;store_id=$matches[1]',</code>
+<code>             'top'</code>
+<code>      );</code>
+<code>}</code></pre>
+<p id="c14-para-0187"><span epub:type="pagebreak" id="Page_390" role="doc-pagebreak" title="390"/>This internally redirects all requests to the URL <code>stores/something/</code> to the page Stores with an additional parameter, that is, <code>index.php?pagename=stores&amp;store_id=something</code>.</p>
+<p>Now you need to add the new <code>store_id</code> parameter to the list of registered query variables.</p>
+<pre id="c14-code-0050"><code>&lt;?php</code>
+<code>// Add the store_id query var so that WP recognizes it.</code>
+<code>add_filter( 'query_vars', 'pdev_list_stores_query_var' );</code>
+<code> </code>
+<code>function pdev_list_stores_query_var( $vars ) {</code>
+<code>      $vars[] = 'store_id';</code>
+<code>      return $vars;</code>
+<code>}</code></pre>
+<p id="c14-para-0189">So far, you have modified the list of defined rewrite rules held in the <code>$wp_rewrite</code> object and the list of authorized query variables, kept in the <code>$wp_query</code> object. You're almost there!</p>
+<p>The trick with rewrite rules is that when they are modified, you need to tell WordPress to refresh and rebuild the list. To do this, you can either visit the Permalink Settings screen in the admin area or use the function <code>flush_rewrite_rules()</code>. You can do this on plugin activation and plugin deactivation.</p>
+<pre id="c14-code-0051"><code>// Add the rewrite rule and flush on activation.</code>
+<code>add_action( __FILE__, 'pdev_list_stores_activate' );</code>
+<code> </code>
+<code>function pdev_list_stores_activate() {</code>
+<code>      pdev_list_stores_add_rules();</code>
+<code>      flush_rewrite_rules();</code>
+<code>}</code>
+<code> </code>
+<code>// Flush rewrite rules on deactivation.</code>
+<code>register_deactivation_hook( __FILE__, 'pdev_list_stores_deactivate' );</code>
+<code> </code>
+<code>function pdev_list_stores_deactivate() {</code>
+<code>      flush_rewrite_rules();</code>
+<code>}</code></pre>
+<p>Note these best practices when adding new rewrite rules:</p>
+<ul class="check" id="c14-list-0019">
+<li id="c14-li-0063">On plugin activation, add the rule and flush.</li>
+<li id="c14-li-0064">On <code>init</code>, also add the rule, in case another plugin flushes the rules.</li>
+<li id="c14-li-0065">Don't flush rules on every page request (for example, hooking in <code>init</code>); that would cause unnecessary overhead.</li>
+<li id="c14-li-0066">On plugin deactivation, flush the rules again to clear the list.</li>
+</ul>
+<p>Now review the fully functional plugin code, shown here:</p>
+<pre id="c14-code-0052"><code>&lt;?php</code>
+<code>/**</code>
+<code> * Plugin Name: Rewrite Rules Shop</code>
+<code> * Plugin URI:  http://example.com/</code>
+<code> * Description: Adds a rewrite rule to list stores as children of the Stores page.</code>
+<code> * Author:      WROX</code>
+<code> * Author URI:  http://wrox.com</code>
+<code> */</code>
+<code> <span epub:type="pagebreak" id="Page_391" role="doc-pagebreak" title="391"/></code>
+<code>// Add the rewrite rule and flush on activation.</code>
+<code>add_action( __FILE__, 'pdev_list_stores_activate' );</code>
+<code> </code>
+<code>function pdev_list_stores_activate() {</code>
+<code>      pdev_list_stores_add_rules();</code>
+<code>      flush_rewrite_rules();</code>
+<code>}</code>
+<code> </code>
+<code>// Flush rewrite rules on deactivation.</code>
+<code>register_deactivation_hook( __FILE__, 'pdev_list_stores_deactivate' );</code>
+<code> </code>
+<code>function pdev_list_stores_deactivate() {</code>
+<code>      flush_rewrite_rules();</code>
+<code>}</code>
+<code> </code>
+<code>// Add rewrite rules.</code>
+<code>add_action( 'init', 'pdev_list_stores_add_rules' );</code>
+<code> </code>
+<code>function pdev_list_stores_add_rules() {</code>
+<code> </code>
+<code>      add_rewrite_rule(</code>
+<code>             'stores/?([^/]*)',</code>
+<code>             'index.php?pagename=stores&amp;store_id=$matches[1]',</code>
+<code>             'top'</code>
+<code>      );</code>
+<code>}</code>
+<code> </code>
+<code>// Add the store_id query var so that WP recognizes it.</code>
+<code>add_filter( 'query_vars', 'pdev_list_stores_query_var' );</code>
+<code> </code>
+<code>function pdev_list_stores_query_var( $vars ) {</code>
+<code>      $vars[] = 'store_id';</code>
+<code>      return $vars;</code>
+<code>}</code></pre>
+<p id="c14-para-0193">That's it for the plugin part. Now <code><a href="http://example.com/stores/greenville/">http://example.com/stores/greenville/</a></code> redirects to the Stores WordPress parent page with the additional internal parameter <code>store_id</code>.</p>
+<p id="c14-para-0194">How this is displayed on the front end will be determined by the active WordPress theme's templates. Theme development is outside the scope of this book. You can learn more about theme template development at <code><a href="https://developer.wordpress.org/themes/basics/template-files/">https://developer.wordpress.org/themes/basics/template-files/</a></code>.</p>
+</section>
+<section><span id="c14-sec-0047"/>
+<h4 id="head-4-129">Creating a New Permalink Structure and Integrating Non‐WordPress Pages</h4>
+<p id="c14-para-0195">In the previous plugin, you created a WordPress page to handle URLs rewritten to it. You can now create other rewrite rules using a different approach.</p>
+<p id="c14-para-0196">The client you're working with already has a product listing script and wants you to integrate it in its new website you created for them. You can make WordPress handle all requests to <code><a href="http://example.com/shop/something/">http://example.com/shop/something/</a></code> and use the existing listing script.</p>
+<p><span epub:type="pagebreak" id="Page_392" role="doc-pagebreak" title="392"/>On the Permalink Settings screen in the WordPress admin, you can define custom permalinks using tags such as <code>%year%</code> or <code>%monthnum%</code>. You will now define a new <code>%product%</code> tag and use it in the permalink structure of the site.</p>
+<pre id="c14-code-0053"><code>// Add rewrite rules.</code>
+<code>add_action( 'init', 'pdev_product_permalinks_add_rules' );</code>
+<code> </code>
+<code>function pdev_product_permalinks_add_rules() {</code>
+<code> </code>
+<code>      // Add rewrite tag.</code>
+<code>      add_rewrite_tag( '%product%', '([^/]+)' );</code>
+<code> </code>
+<code>      // Add permastruct.</code>
+<code>      add_permastruct( 'product', 'shop/%product%' );</code>
+<code>}</code></pre>
+<p id="c14-para-0198">The first function call, <code>add_rewrite_tag()</code>, defines the tag and what can match it. Here, the tag <code>%product%</code> matches one or more characters that are not a forward slash, using the regular expression <code>([^/]+)</code>. This function call also registers a new query variable with the same name <code>product</code>.</p>
+<p id="c14-para-0199">The <code>add_permastruct()</code> function describes a new permalink structure. It accepts two parameters: an arbitrary name for the structure and how URLs and tags should be formed.</p>
+<p>Now look at the rewrite rules that have been added to the <code>$wp_rewrite</code> object and its <code>rules</code> property:</p>
+<pre id="c14-code-0054"><code>[shop/([^/]+)/feed/(feed|rdf|rss|rss2|atom)/?$]</code>
+<code>    =&gt; index.php?product=$matches[1]&amp;feed=$matches[2]</code>
+<code>[shop/([^/]+)/(feed|rdf|rss|rss2|atom)/?$]</code>
+<code>    =&gt; index.php?product=$matches[1]&amp;feed=$matches[2]</code>
+<code>[shop/([^/]+)/page/?([0-9]{1,})/?$]</code>
+<code>    =&gt; index.php?product=$matches[1]&amp;paged=$matches[2]</code>
+<code>[shop/([^/]+)/?$]</code>
+<code>    =&gt; index.php?product=$matches[1]</code></pre>
+<p>Example URLs matching these rewrite rules could be the following.</p>
+<ul class="check" id="c14-list-0020">
+<li id="c14-li-0067"><code><a href="http://example.com/shop/something/feed/rss2/">http://example.com/shop/something/feed/rss2/</a></code></li>
+<li id="c14-li-0068"><code><a href="http://example.com/shop/stuff/atom/">http://example.com/shop/stuff/atom/</a></code></li>
+<li id="c14-li-0069"><code><a href="http://example.com/shop/thing/page/3/">http://example.com/shop/thing/page/3/</a></code></li>
+<li id="c14-li-0070"><code><a href="http://example.com/shop/item/">http://example.com/shop/item/</a></code></li>
+</ul>
+<p>These URLs can internally redirect to the following:</p>
+<ul class="check" id="c14-list-0021">
+<li id="c14-li-0071"><code><a href="http://example.com/index.php?product=something&amp;feed=rss2">http://example.com/index.php?product=something&amp;feed=rss2</a></code></li>
+<li id="c14-li-0072"><code><a href="http://example.com/index.php?product=stuff&amp;feed=atom">http://example.com/index.php?product=stuff&amp;feed=atom</a></code></li>
+<li id="c14-li-0073"><code><a href="http://example.com/index.php?product=thing&amp;paged=3">http://example.com/index.php?product=thing&amp;paged=3</a></code></li>
+<li id="c14-li-0074"><code><a href="http://example.com/index.php?product=item">http://example.com/index.php?product=item</a></code></li>
+</ul>
+<p id="c14-para-0203"><span epub:type="pagebreak" id="Page_393" role="doc-pagebreak" title="393"/>Using just two function calls, you created a completely new permalink structure that can handle pagination and feed generation!</p>
+<p>Now that requests to <code>/shop/something/</code> successfully redirect to <code>/index.php?product=something</code>, you can integrate the existing product listing script. In the following code, the actual script integration is commented out and replaced with simple output on the front end.</p>
+<pre id="c14-code-0055"><code>// Output product script on front end.</code>
+<code>add_action( 'template_redirect', 'pdev_products_display' );</code>
+<code> </code>
+<code>function pdev_products_display() {</code>
+<code> </code>
+<code>      if ( $product = get_query_var( 'product' ) ) {</code>
+<code> </code>
+<code>             // Includes the client's product script.</code>
+<code>             // include display-product.php;</code>
+<code>             </code>
+<code>             printf(</code>
+<code>                   'Searching for product: %s?',</code>
+<code>                   esc_html( $product )</code>
+<code>             );</code>
+<code>             exit();</code>
+<code>      }</code>
+<code>}</code></pre>
+<p id="c14-para-0205">By hooking into the early action <code>'template_redirect'</code>, you can hijack the normal page display and, if the <code>product</code> query variable is set, include the shop listing script. Don't forget to use <code>exit()</code> so that WordPress does not try to further handle the page display and output a 404 error.</p>
+<p id="c14-para-0206">To test for pagination or feed generation, you can also check the values of <code>get_query_var( 'paged' )</code> and <code>get_query_var( 'feed' )</code>.</p>
+<p>You must also flush the rewrite rules on activation and deactivation. Then, you will be done with the plugin.</p>
+<pre id="c14-code-0056"><code>// Add the rewrite rule and flush on activation.</code>
+<code>add_action( __FILE__, 'pdev_product_permalinks_activate' );</code>
+<code> </code>
+<code>function pdev_product_permalinks_activate() {</code>
+<code>      pdev_product_permalinks_rules();</code>
+<code>      flush_rewrite_rules();</code>
+<code>}</code>
+<code> </code>
+<code>// Flush rewrite rules on deactivation.</code>
+<code>register_deactivation_hook( __FILE__, 'pdev_product_permalinks_deactivate' );</code>
+<code> </code>
+<code>function pdev_product_permalinks_deactivate() {</code>
+<code>      flush_rewrite_rules();</code>
+<code>}</code></pre>
+<p><span epub:type="pagebreak" id="Page_394" role="doc-pagebreak" title="394"/>Now review the full plugin code.</p>
+<pre id="c14-code-0057"><code>&lt;?php</code>
+<code>/**</code>
+<code> * Plugin Name: Product Permalinks</code>
+<code> * Plugin URI:  http://example.com/</code>
+<code> * Description: Adds custom product rewrite tag and permastruct.</code>
+<code> * Author:      WROX</code>
+<code> * Author URI:  http://wrox.com</code>
+<code> */</code>
+<code> </code>
+<code>// Add the rewrite rule and flush on activation.</code>
+<code>add_action( __FILE__, 'pdev_product_permalinks_activate' );</code>
+<code> </code>
+<code>function pdev_product_permalinks_activate() {</code>
+<code>      pdev_product_permalinks_rules();</code>
+<code>      flush_rewrite_rules();</code>
+<code>}</code>
+<code> </code>
+<code>// Flush rewrite rules on deactivation.</code>
+<code>register_deactivation_hook( __FILE__, 'pdev_product_permalinks_deactivate' );</code>
+<code> </code>
+<code>function pdev_product_permalinks_deactivate() {</code>
+<code>      flush_rewrite_rules();</code>
+<code>}</code>
+<code> </code>
+<code>// Add rewrite rules.</code>
+<code>add_action( 'init', 'pdev_product_permalinks_add_rules' );</code>
+<code> </code>
+<code>function pdev_product_permalinks_add_rules() {</code>
+<code> </code>
+<code>      // Add rewrite tag.</code>
+<code>      add_rewrite_tag( '%product%', '([^/]+)' );</code>
+<code> </code>
+<code>      // Add permastruct.</code>
+<code>      add_permastruct( 'product', ''shop/%product%' );</code>
+<code>}</code>
+<code> </code>
+<code>// Output product script on front end.</code>
+<code>add_action( 'template_redirect', 'pdev_products_display' );</code>
+<code> </code>
+<code>function pdev_products_display() {</code>
+<code> </code>
+<code>      if ( $product = get_query_var( 'product' ) ) {</code>
+<code> </code>
+<code>             // Includes the client's product script.</code>
+<code>             // include display-product.php;</code>
+<code>             </code>
+<code>             printf(</code>
+<code>                   'Searching for product: %s?',</code>
+<code>                   esc_html( $product )</code>
+<code>             );</code>
+<code>             exit();</code>
+<code>      }</code>
+<code>}</code></pre>
+</section>
+</section>
+</section> <span epub:type="pagebreak" id="Page_395" role="doc-pagebreak" title="395"/>
+<section><span id="c14-sec-0048"/>
+<h2 id="head-2-114">THE HEARTBEAT API</h2>
+<p id="c14-para-0209">The Heartbeat API is a little‐used, basic server polling API included in WordPress. It allows plugins to send, receive, and process data in almost real time.</p>
+<section><span id="c14-sec-0049"/>
+<h3 id="head-3-241">What Is the Heartbeat API?</h3>
+<p id="c14-para-0210">When a page is loaded, the Heartbeat API creates an interval (also called a <i>pulse</i> or <i>tick</i>). By default, this interval runs every 15 seconds. Like a human heartbeat, the Heartbeat API ticks every so often, albeit a little slower.</p>
+<p id="c14-para-0211">The tick provides an opportunity for plugins to latch onto the API and run custom code. Because the heartbeat is running practically in real time, it is almost entirely served via client‐side JavaScript.</p>
+</section>
+<section><span id="c14-sec-0050"/>
+<h3 id="head-3-242">Using the Heartbeat API</h3>
+<p id="c14-para-0212">When using the Heartbeat API, plugins can attach events on the client side (JavaScript) for sending data and processing the response from the server. On the server side, plugins can receive data and send a response to the client side.</p>
+<section><span id="c14-sec-0051"/>
+<h4 id="head-4-130">Sending Data</h4>
+<p>On the <code>heartbeat‐send</code> event, you can use JavaScript to send any data back to the server that you want. This can come from user input or anywhere. Take a look at the following code snippet that generates a random number and sends it:</p>
+<pre id="c14-code-0058"><code>jQuery( document ).on( 'heartbeat-send', function ( event, data ) {</code>
+<code> </code>
+<code>       // Send a random number to the server.</code>
+<code>       data.pdev_random_number = Math.random();</code>
+<code>} );</code></pre>
+<p id="c14-para-0214">To pass custom data to the server, you simply need to add a new item to the <code>data</code> object, which is the second parameter for your callback function. In the preceding code, you generated a random number and added it via <code>data.pdev_random_number</code>.</p>
+</section>
+<section><span id="c14-sec-0052"/>
+<h4 id="head-4-131">Receiving and Responding to Data</h4>
+<p id="c14-para-0215">On the server side, you have the option of handling the data. You can skip this step if you do not need to run any server‐side code to work with the data. However, this can be useful for sanitizing, validating, or even saving data to the database.</p>
+<p>For your random number generated via JavaScript, you now add a filter on the <code>heartbeat_received</code> hook. The filter will sanitize the data and store it in the database.</p>
+<pre id="c14-code-0059"><code>add_filter( 'heartbeat_received', 'pdev_random_number_received', 10, 2 );</code>
+<code> </code>
+<code>function pdev_random_number_received( $response, $data ) {</code>
+<code> </code>
+<code>       // Bail if no plugin data sent.</code>
+<code>       if ( empty( $data['pdev_random_number'] ) ) {<span epub:type="pagebreak" id="Page_396" role="doc-pagebreak" title="396"/></code>
+<code>             return $response;</code>
+<code>       }</code>
+<code> </code>
+<code>       // Sanitize the data.</code>
+<code>       $response['pdev_random_number'] = floatval( $data['pdev_random_number'] );</code>
+<code> </code>
+<code>       // Update database option:</code>
+<code>       update_option(</code>
+<code>             'pdev_heartbeat_random_number',</code>
+<code>             $response['pdev_random_number']</code>
+<code>       );</code>
+<code> </code>
+<code>       // Return the response.</code>
+<code>       return $response;</code>
+<code>}</code></pre>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="c14-para-0218"><b>WARNING</b> <i>Complex calculations or other heavy scripts can slow down a server. Be sure to use as few resources as possible because the Heartbeat API can pulse many times while someone is on the website. Just be mindful of the resources you use.</i></p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+</section>
+<section><span id="c14-sec-0054"/>
+<h4 id="head-4-132">Processing the Response</h4>
+<p id="c14-para-0219">Once the data is sent back to the server, it gets sent back to the client side. From this point, you can do anything you want via JavaScript. This could be something as simple as updating onscreen data, logging the response, or creating an alert popup.</p>
+<p>Now create a simple alert popup, attached to the <code>heartbeat‐tick</code> event.</p>
+<pre id="c14-code-0060"><code>jQuery( document ).on( 'heartbeat-tick', function ( event, data ) {</code>
+<code> </code>
+<code>       // If no data, bail.</code>
+<code>       if ( ! data.pdev_random_number ) {</code>
+<code>             return;</code>
+<code>       }</code>
+<code> </code>
+<code>       alert( 'The random number is ' + data.pdev_random_number );</code>
+<code>} );</code></pre>
+<p id="c14-para-0221">The previous code first checks whether your plugin's data was sent. If so, it uses JavaScript's built‐in <code>alert()</code> to display a message.</p>
+</section>
+<section><span id="c14-sec-0055"/>
+<h4 id="head-4-133">Full Heartbeat API Plugin</h4>
+<p id="c14-para-0222">Now, you will put all of the preceding code into a complete plugin. Create a new <code>plugin‐heartbeat‐random‐number</code> folder to house your PHP and JavaScript files.</p>
+<p>Then, create a new file named <code>plugin.php</code> with the following code. Note that it loads the <code>heartbeat.js</code> file on the <code>wp_enqueue_scripts</code> hook, which is the front‐end hook for loading JavaScript files.</p>
+<pre id="c14-code-0061"><span epub:type="pagebreak" id="Page_397" role="doc-pagebreak" title="397"/>
+<code>&lt;?php</code>
+<code>/**</code>
+<code> * Plugin Name: Heartbeat Random Number</code>
+<code> * Plugin URI:  http://example.com/</code>
+<code> * Description: Generates and saves a random number using the Heartbeat API.</code>
+<code> * Author:      WROX</code>
+<code> * Author URI:  http://wrox.com</code>
+<code> */</code>
+<code> </code>
+<code>// Load heartbeat.js file.</code>
+<code>add_action( 'wp_enqueue_scripts', 'pdev_random_number_scripts' );</code>
+<code> </code>
+<code>function pdev_random_number_scripts() {</code>
+<code> </code>
+<code>       wp_enqueue_script(</code>
+<code>             'pdev-heartbeat-random-number',</code>
+<code>             plugin_dir_url( __FILE__ ) . 'heartbeat.js',</code>
+<code>             [ 'heartbeat', 'jquery' ],</code>
+<code>             null,</code>
+<code>             true</code>
+<code>       );</code>
+<code>}</code>
+<code> </code>
+<code>// Receive data from heartbeat.</code>
+<code>add_filter( 'heartbeat_received', 'pdev_random_number_received', 10, 2 );</code>
+<code> </code>
+<code>function pdev_random_number_received( $response, $data ) {</code>
+<code> </code>
+<code>       // Bail if no plugin data sent.</code>
+<code>       if ( empty( $data['pdev_random_number'] ) ) {</code>
+<code>             return $response;</code>
+<code>       }</code>
+<code> </code>
+<code>       // Sanitize the data.</code>
+<code>       $response['pdev_random_number'] = floatval( $data['pdev_random_number'] );</code>
+<code> </code>
+<code>       // Update database option.</code>
+<code>       update_option(</code>
+<code>             'pdev_heartbeat_random_number',</code>
+<code>             $response['pdev_random_number']</code>
+<code>       );</code>
+<code> </code>
+<code>       // Return the response.</code>
+<code>       return $response;</code>
+<code>}</code></pre>
+<p>Finally, create a <code>heartbeat.js</code> file within the plugin folder with the following code:</p>
+<pre id="c14-code-0062"><code>jQuery( document ).on( 'heartbeat-send', function ( event, data ) {</code>
+<code> </code>
+<code>       // Send a random number to the server.</code>
+<code>       data.pdev_random_number = Math.random();</code>
+<code>} );</code>
+<code> <span epub:type="pagebreak" id="Page_398" role="doc-pagebreak" title="398"/></code>
+<code>jQuery( document ).on( 'heartbeat-tick', function ( event, data ) {</code>
+<code> </code>
+<code>       // If no data, bail.</code>
+<code>       if ( ! data.pdev_random_number ) {</code>
+<code>             return;</code>
+<code>       }</code>
+<code> </code>
+<code>       alert( 'The random number is ' + data.pdev_random_number );</code>
+<code>} );</code></pre>
+</section>
+</section>
+</section>
+<section><span id="c14-sec-0056"/>
+<h2 id="head-2-115">SUMMARY</h2>
+<p id="c14-para-0225">We named this chapter “The Kitchen Sink” for a reason. It contains a lot of information on several different subjects that didn't have a more appropriate home in another chapter or were not important enough for their own chapter with how WordPress plugins are built today. Some of the items like widgets and shortcodes, especially shortcodes, could be obsolete in a year or two. Other topics like the Rewrite API and the Heartbeat API are useful but not used by many plugins. And, subjects like querying posts and building dashboard widgets are still useful today but didn't warrant full chapters.</p>
+<p id="c14-para-0226">Regardless of the topic, you should now have a good high‐level overview of each item to carry you forward in your plugin development journey.</p>
+</section>
+</section>
+</body>
+</html>

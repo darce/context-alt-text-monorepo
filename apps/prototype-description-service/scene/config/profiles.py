@@ -103,7 +103,7 @@ PROFILE_SPECS: dict[DescriptionProfile, ProfileSpec] = {
         available=True,
         model_id="Qwen3-VL-30B-A3B-Instruct",
         model_revision=None,
-        model_version="Q4_GGUF",
+        model_version="Q4_K_M",
     ),
     DescriptionProfile.HOSTED_GPT4O: ProfileSpec(
         profile=DescriptionProfile.HOSTED_GPT4O,

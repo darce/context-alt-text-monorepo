@@ -44,7 +44,11 @@ def test_worker_records_cpu_provisional_then_gpu_final() -> None:
         assert final.status is DescribeJobStatus.FINAL
         assert final.tier == "final_gpu"
         assert final.result_generation == 2
+        assert final.visual_facts is not None
         assert final.visual_facts["alt_text_draft"] == "GPU final."
+        assert final.visual_facts["tier"] == "final_gpu"
+        assert "image_hash" in final.visual_facts
+        assert "provider_disclosure" in final.visual_facts
 
     asyncio.run(body())
 
@@ -67,7 +71,9 @@ def test_worker_keeps_cpu_provisional_when_gpu_fails() -> None:
 
         assert degraded.status is DescribeJobStatus.DEGRADED
         assert degraded.tier is DescriptionResultTier.PROVISIONAL_CPU
+        assert degraded.visual_facts is not None
         assert degraded.visual_facts["alt_text_draft"] == "CPU provisional."
+        assert degraded.visual_facts["tier"] == "provisional_cpu"
         assert degraded.image_bytes == b""
 
     asyncio.run(body())

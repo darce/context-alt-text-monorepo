@@ -22,6 +22,8 @@ _BREAKER_THRESHOLD = 3
 _DEFAULT_MAX_POLL_ATTEMPTS = 60
 _CLUSTERS_PAGE_SIZE = 200
 _MAX_CLUSTER_PAGES = 100  # rg-007 stall bound: refuse to page forever if the route ignores offset
+# Cap server-driven Retry-After so a misconfigured CDN cannot hang a run for hours (S8-04).
+_MAX_RETRY_AFTER_S = 120.0
 # Mirror the live JobStatus contract (recognition/domain/job.py) exactly — no
 # invented statuses (rg-005/rg-015). completed_with_errors is a terminal partial
 # success (return the payload; per-item failures are isolated downstream);
@@ -133,15 +135,18 @@ class RemoteSceneClient:
         from a CDN/nginx fronting the box); a date or any malformed value must not
         escape as an uncaught ValueError outside the typed-error contract (S2-03) —
         fall back to the configured floor instead.
+
+        Upper-bounded by ``_MAX_RETRY_AFTER_S`` so a server/CDN advertising a huge
+        delay (e.g. 86400) cannot hang the run for hours (S8-04 / rg-007 spirit).
         """
         floor = self._rate_limit_wait
         if header_value is None:
-            return floor
+            return min(floor, _MAX_RETRY_AFTER_S)
         try:
             seconds = float(header_value)
         except ValueError:
-            return floor
-        return max(seconds, floor)
+            return min(floor, _MAX_RETRY_AFTER_S)
+        return min(max(seconds, floor), _MAX_RETRY_AFTER_S)
 
     def describe(
         self,

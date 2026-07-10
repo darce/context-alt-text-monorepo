@@ -55,6 +55,11 @@ unavoidable so future adapters never change the wire:
   `provisional_cpu`; GPU profile results use `final_gpu`. The async path may
   supersede provisional rows later with monotonically increasing
   `result_generation`.
+- **Term collision (DOM-03):** response field `tier` is the **compute** tier
+  (`provisional_cpu` | `final_gpu`). It is unrelated to the WordPress plugin
+  billing option `acx_tier` (`free` | `pro` | … in `trait-batch-limits.php`).
+  WP proxy consumers must not conflate the two; the describe proxy passes
+  response `tier` through as wire provenance only.
 - **Hosted providers are opt-in and fail-closed (E20-11).** A hosted profile
   (e.g. `ACX_DESCRIPTION_ADAPTER=hosted_gpt4o`) resolves to a fail-closed
   unavailable adapter (503) unless the server sets
@@ -104,7 +109,7 @@ unsuppressable), and a minimum face-detection confidence (0.8).
 | 413 | body exceeds the upload cap |
 | 415 | unsupported image MIME |
 | 502 | hosted-provider fault (opted-in hosted profile only: provider 5xx/timeout, missing key, malformed body; fail-closed, no partial result) |
-| 503 | description adapter unavailable (deferred/stub profile, hosted profile without `ACX_HOSTED_PROVIDER_OPTIN=1`, or missing `[vlm]` extra) |
+| 503 | description adapter unavailable (deferred/stub profile, hosted profile without `ACX_HOSTED_PROVIDER_OPTIN=1`, missing `[vlm]` extra, `tier=gpu` with unset/non-private `ACX_GPU_ENDPOINT_URL`, or explicit `tier=cpu` when no CPU adapter can be resolved) |
 | 504 | description generation exceeded the configured timeout |
 
 Error shapes match the recognition routes: 5xx/503 use the `{error, trace_id, path}` envelope (via the shared exception handlers); 4xx validation errors use FastAPI's default `{detail}` shape.

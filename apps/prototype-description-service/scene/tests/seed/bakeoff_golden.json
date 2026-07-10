@@ -34,7 +34,8 @@
       ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": ""
     },
     {
       "path": "mock_images/bea-nye.jpg",
@@ -56,7 +57,8 @@
       ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": ""
     },
     {
       "path": "mock_images/ccqw-erika.jpg",
@@ -80,7 +82,8 @@
       ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": ""
     },
     {
       "path": "mock_images/kirstie-daniel-sunglasses.jpg",
@@ -102,7 +105,8 @@
       "easy_wrong": [],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": ""
     },
     {
       "path": "mock_images/ryann-group-party.jpg",
@@ -124,7 +128,8 @@
       ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": ""
     },
     {
       "path": "mock_images/maria-pool.jpg",
@@ -142,7 +147,8 @@
       "easy_wrong": [],
       "policy": {
         "recognition_enabled": false
-      }
+      },
+      "base_caption": ""
     },
     {
       "path": "mock_images/liam-maloney-painting.jpg",
@@ -161,7 +167,8 @@
       "easy_wrong": [],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": ""
     },
     {
       "path": "mock_images/ryann-bar.jpg",
@@ -181,7 +188,8 @@
       "easy_wrong": [],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": ""
     },
     {
       "path": "mock_images/mcm-planecrash.jpg",
@@ -201,7 +209,8 @@
       "easy_wrong": [],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": ""
     },
     {
       "path": "mock_images/nina-machiavelli.jpeg",
@@ -214,7 +223,8 @@
       "easy_wrong": [],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "base_caption": ""
     }
   ]
 }

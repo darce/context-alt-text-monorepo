@@ -80,3 +80,25 @@ test -f .claude/hooks/ensure-agent-surfaces.sh   # exit 0 (delivered)
 # open a Claude Code session → no SessionStart hook error
 workbay doctor --target .        # fails if any registered hook path is missing OR any materialized surface leaks
 ```
+
+---
+
+## Additional asks (orchestrator observability — separate from the overlay-reconciliation defects above)
+
+### Ask 5 — grok offload per-turn token metrics tallied, presented, and logged
+
+**Confirmed gap** (traced in `agentic-protocol-monorepo`, `workbay-v0.1.41`):
+
+- grok-cli emits no recognized usage — `orchestration/backend_registry.py:102-107` declares `supports_token_telemetry=False` (`total_tokens=0`); `normalize_cli_usage` (`orchestration/adapters/_result_text.py:217-228`) accepts only claude snake_case keys and returns `None` for grok's `promptTokens`/`completionTokens` (`adapters/grok_cli.py:323-324`).
+- No **main-agent / orchestrator** token capture exists anywhere — accounting is subagent/worker-only (`worker_daemon.py:593-610`).
+- Turn/pass end surfaces only a single cumulative **subagent** total (`offload_pass.py:664-674`), not a main-vs-subagent breakdown. `turn_metrics(summary)` / `get_metrics_summary` are on-demand queries, not a turn-end presentation.
+- Persistence into the handoff `turn_metrics` table (`workbay_handoff_mcp/shared_schema.py:451-473`) is gated on `total_tokens>0` (`worker_daemon.py:742`), so grok 0-token turns **and** any main-agent usage are never logged.
+
+**Ask:** at the end of each orchestration turn, present the user token usage broken down by **main agent** and each **subagent**, and log per-turn usage to the handoff DB for future tabulation. Requires: (a) main-agent token capture; (b) a grok usage parser (`promptTokens`/`completionTokens`) or explicit estimated/zero accounting so grok turns are not silently dropped; (c) a turn-end summary renderer; (d) relaxing the `total_tokens>0` persistence gate so zero/absent turns still tabulate.
+
+### Ask 6 — codemap MCP wired into automated flows (NOT coupled to embeddings)
+
+Two parts, one corrected:
+
+- **Valid:** the codemap / codebase-graph MCP (`get_architecture`, `trace_path`, `detect_changes`, `index_repository`) is **purely advisory/manual** today — referenced only in skill-body cue text and `CLAUDE.local.md`, launched opt-in (`config/agent-workflows/mcp_servers.yaml:60-69`), and **never auto-invoked** by any hook or the orchestrator (0 grep hits across hooks/orchestrator/handoff). Codemap is cheap to run. **Ask:** wire `detect_changes` / `index_repository` into the automated review/plan flows so agents use it as much as possible, and keep the index fresh (`auto_index` / an index_status precheck) rather than relying on manual refresh.
+- **Corrected — dropped:** the original framing "update codemap **before** semantic embeddings are computed" rests on a false premise. The semantic-reinjection embeddings embed **handoff concepts** (decision rationales, findings, blockers, objectives, compaction residuals — `workbay_handoff_mcp/embeddings/store.py:31-40`), **not source code**. Codemap indexes code structure. They are disjoint pipelines over disjoint data; refreshing codemap first would **not** make embeddings "reflect current code" (they never index code). So there is no ordering dependency to add — the two systems should stay decoupled.

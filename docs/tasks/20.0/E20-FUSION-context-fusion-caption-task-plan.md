@@ -6,6 +6,7 @@
 > - **Author**: claude-opus-4-8
 > - **Project**: `apps/prototype-description-service`
 > - **Task ID**: `E20-FUSION`
+> - **Task Plan Status**: `proposed`
 > - **Target Branch**: `feature/e20-fusion`
 > - **Review Coverage Target**: 2
 
@@ -15,7 +16,7 @@
 
 ## Objective
 
-Formalize a **staged fusion contract** — anchor-visual → reconcile-context → synthesize — that decides *which* supplied `ContextPack` fact attaches to *which* visual evidence, and at what altitude (object vs caption), so injected facts weave in faithfully and **pixels win** on conflict. Emit **per-fact attachment provenance**, and skip images marked decorative.
+Formalize a **staged fusion contract** — anchor-visual → reconcile-context → synthesize — that decides *which* supplied `ContextPack` fact attaches to *which* visual evidence, and at what altitude (object vs caption), so injected facts weave in faithfully and **pixels win for detector-backed conflicts**. Emit **per-fact attachment provenance**, and skip images marked decorative.
 
 ## Intake (new feature)
 
@@ -30,7 +31,7 @@ Facts come from two sources — the VLM visual pass and the tenant's `ContextPac
 ## Constraints
 
 - **Fusion is a service-layer composition stage in `VisualFactsService`, NOT a new adapter** — it slots between the adapter call (`visual_facts_service.py` `describe()` @ line 113, adapter invoked ~line 148) and `_result_to_response()` (line 201). Ports & adapters; no bespoke route.
-- **Deterministic reconciliation first** (heuristic: *measure, don't guess*) — pixels-win + altitude rules are code; the LLM-judge reconciler is a later, separately-gated upgrade.
+- **Deterministic reconciliation first** (heuristic: *measure, don't guess*) — detector-backed pixels-win + altitude rules are code; the LLM-judge reconciler is a later, separately-gated upgrade.
 - **Object-attachment is detector-backed only** (FUSION-PA-02) — identities via `merge_identities` (face↔phrase_box `containment_match`, `merge.py:116`), brands via E20-BRAND-A; **no new grounding model**. Events/places → caption-level.
 - **Stage-1 cost is tier-shaped** (FUSION-PA-01) — a *separate* visual-in-isolation pass runs only on the async GPU/Qwen tiers; on the fast Florence tier derive visual facts from the single caption (or skip staged fusion). Never double the interactive path.
 - **Shared Stage-1 with VLM-4** — the `visual_facts_pass.py` component; whoever of VLM-4/E20-FUSION lands first owns it (FUSION-PA-03).
@@ -57,7 +58,7 @@ Facts come from two sources — the VLM visual pass and the tenant's `ContextPac
 
 ## Target Outcome
 
-A describe request runs: Stage 1 visual prior (separate pass on async tiers; caption-derived on fast tier) → Stage 2 reconciles each `ContextPack` fact to object/caption/dropped (pixels win, detector-backed attach, policy veto first) → Stage 3 composes via `merge_identities`, emitting a `VisualFactsResponse` with **per-fact attachment provenance**. A decorative image is skipped before any inference.
+A describe request runs: Stage 1 visual prior (separate pass on async tiers; caption-derived on fast tier) → Stage 2 reconciles each `ContextPack` fact to object/caption/dropped (policy veto first, detector-backed attach, detector-backed conflicts dropped, unsupported event/place facts kept caption-level and non-visible) → Stage 3 composes via `merge_identities`, emitting a `VisualFactsResponse` with **per-fact attachment provenance**. A decorative image is skipped before any inference.
 
 ## Context Loading
 
@@ -77,19 +78,20 @@ A describe request runs: Stage 1 visual prior (separate pass on async tiers; cap
 
 ## Proposed Solution
 
-Four slices: (1) the **shared Stage-1 visual-facts component** (consume VLM-4's `visual_facts_pass.py`, or build it if this lands first); (2) the **Stage-2 reconciliation rule** (pixels-win + altitude + detector-backed attach + provenance); (3) **Stage-3 synthesis** — slot the fusion stage into `VisualFactsService.describe`, compose via the existing `merge_identities` path, add the describe-eligibility "mark as decorative" gate; (4) **mis-attachment labels + bake-off + memo**. Sequenced after E20-9 + E20-BRAND-A.
+Four slices: (1) the **shared Stage-1 visual-facts component** (consume VLM-4's `visual_facts_pass.py`, or build it if this lands first); (2) the **Stage-2 reconciliation rule** (detector-backed pixels-win + altitude + detector-backed attach + provenance); (3) **Stage-3 synthesis** — slot the fusion stage into `VisualFactsService.describe`, compose via the existing `merge_identities` path, add the describe-eligibility "mark as decorative" gate; (4) **mis-attachment labels + bake-off + memo**. Sequenced after E20-9 + E20-BRAND-A.
 
 ## Files and Surfaces to Change
 
-| Surface | File | Change |
-| --- | --- | --- |
-| backend | `scene/application/visual_facts_pass.py` (new, shared w/ VLM-4) | Stage-1 visual facts in isolation (no `ContextPack`) |
-| backend | `scene/application/fusion/reconcile.py` (new) | Stage-2 rule → per-fact `Attachment{fact, decision: object\|caption\|dropped, altitude, review_reason}`; pixels-win; detector-backed object attach |
-| backend | `scene/application/visual_facts_service.py` | Insert fusion stage in `describe()` (between adapter call ~148 and `_result_to_response` 201); thread attachment provenance into `_result_to_response` (201) |
-| backend | `scene/interface_adapters/http/schemas/responses.py` | Additive-optional attachment-provenance field on `VisualFactsResponse` (~line 105) |
-| backend | `scene/interface_adapters/http/routers/describe.py` | Decorative/eligibility gate at top of `describe_image_multipart` (~line 200, before `service.describe`) |
-| tests | `scene/tests/test_fusion_reconcile.py`, `test_describe_eligibility.py`, `test_fusion_response_provenance.py` (new) | Reconciliation cases, decorative skip, response provenance |
-| docs | `docs/tasks/20.0/E20-FUSION-decision-memo.md` (new) | Staged-fusion vs ad-hoc, mis-attachment deltas |
+| Surface | File | Symbol / Function | Change |
+| --- | --- | --- | --- |
+| backend | `scene/application/visual_facts_pass.py` (new, shared w/ VLM-4) | `VisualFactsPrior`, `VisualFactsPass.describe` (new) | Stage-1 visual facts in isolation (no `ContextPack`) |
+| backend | `scene/application/fusion/reconcile.py` (new) | `Attachment`, `AttachmentDecision`, `reconcile_context_facts` (new) | Stage-2 rule → per-fact `Attachment{fact, decision: object\|caption\|dropped, altitude, review_reason}`; detector-backed pixels-win/object attach |
+| backend | `scene/application/visual_facts_service.py` | `VisualFactsService.describe`, `VisualFactsService._result_to_response` | Insert fusion stage in `describe()` (between adapter call ~148 and `_result_to_response` 201); thread attachment provenance into `_result_to_response` (201) |
+| backend | `scene/interface_adapters/http/schemas/responses.py` | `VisualFactsResponse`, `NamingProvenance` | Additive-optional attachment-provenance field on `VisualFactsResponse` (~line 105), mirroring the existing provenance pattern |
+| backend | `scene/interface_adapters/http/schemas/requests.py` | `DescribeImageEnvelope` | Add optional `decorative: bool = False` envelope signal as server backstop |
+| backend | `scene/interface_adapters/http/routers/describe.py` | `describe_image_multipart` | Decorative/eligibility gate at top of `describe_image_multipart` (~line 200, before `service.describe`) |
+| tests | `scene/tests/test_fusion_reconcile.py`, `scene/tests/test_describe_eligibility.py`, `scene/tests/test_fusion_response_provenance.py` (new) | `test_*` cases (new) | Reconciliation cases, decorative skip, response provenance |
+| docs | `docs/tasks/20.0/E20-FUSION-decision-memo.md` (new) | decision memo (new) | Staged-fusion vs ad-hoc, mis-attachment deltas |
 
 ## Related Files
 
@@ -102,16 +104,22 @@ Four slices: (1) the **shared Stage-1 visual-facts component** (consume VLM-4's 
 
 ## Verification Strategy
 
-- Deterministic tests: `.venv/bin/python -m pytest scene/tests/test_fusion_reconcile.py scene/tests/test_describe_eligibility.py scene/tests/test_fusion_response_provenance.py -q` (attach/caption/dropped decisions; pixels-win drop with `review_reason`; decorative skip; `extra="forbid"` preserved).
+- Deterministic tests: `.venv/bin/python -m pytest scene/tests/test_fusion_reconcile.py scene/tests/test_describe_eligibility.py scene/tests/test_fusion_response_provenance.py -q` (attach/caption/dropped decisions; detector-backed pixels-win drop with `review_reason`; unsupported event/place facts stay caption-level/non-visible; decorative skip; `extra="forbid"` preserved).
 - Contract/fixture: `VisualFactsResponse` fixture asserts the provenance field present + optional.
 - Bake-off: `report.build_reports` over `bakeoff_golden.json` for staged-fusion vs ad-hoc; deterministic re-score; new mis-attachment count.
-- Manual: the `mcm-planecrash` entry (context says garden-picnic, image shows wreck) → the picnic fact is dropped with a `review_reason` (pixels win); a decorative image returns no description.
+- Manual: the `mcm-planecrash` entry keeps the garden-picnic event/place fact caption-level and non-visible in MVP; detector-backed conflicts such as an unconfirmed face/name are not object-attached and carry `review_reason`; a decorative image returns no description.
 
 ## Slice Delivery
 
 ### Slice 1: Shared Stage-1 visual-facts component
 
 **Goal**: Structured visual prior in isolation (shared with VLM-4).
+
+Files/functions:
+
+- `scene/application/visual_facts_pass.py:VisualFactsPrior` (new) — typed structured facts for objects/attributes/spatial/text.
+- `scene/application/visual_facts_pass.py:VisualFactsPass.describe` (new) — call a `DescriptionAdapter` without `ContextPack`; support caption-derived fast-tier facts.
+- `scene/tests/test_visual_facts_pass.py:test_*` (new) — stub-adapter and caption-derived variant coverage.
 
 Changes: consume `visual_facts_pass.py` if VLM-4 landed it; else build it here (owner = first to land). On the fast tier, provide the caption-derived variant.
 
@@ -121,13 +129,31 @@ Proof: `pytest test_visual_facts_pass.py`; structured facts from a stubbed adapt
 
 **Goal**: Decide attachment + altitude per `ContextPack` fact.
 
-Changes: `fusion/reconcile.py` — for each fact: policy veto → detector-backed object attach (identities/brands) → else caption-level → conflict-with-prior → dropped + `review_reason`. Emit `Attachment` records.
+Files/functions:
 
-Proof: `pytest test_fusion_reconcile.py` (object/caption/dropped cases; conflict drop; unconfirmed veto).
+- `scene/application/fusion/reconcile.py:Attachment` (new) — carries fact id/source, decision, altitude, target evidence, and `review_reason`.
+- `scene/application/fusion/reconcile.py:AttachmentDecision` (new) — typed `object` / `caption` / `dropped` decisions.
+- `scene/application/fusion/reconcile.py:reconcile_context_facts` (new) — policy veto → detector-backed object attach (identities/brands) → detector-backed conflict drop → otherwise caption-level/non-visible.
+- `scene/application/identity_merge/merge.py:merge_identities` — reused by Slice 3, not reimplemented here.
+- `scene/tests/test_fusion_reconcile.py:test_*` (new) — object/caption/dropped, detector-backed conflict, unsupported event/place, and policy-veto cases.
+
+Changes: emit `Attachment` records without introducing a new grounding model; only detector-backed conflicts are dropped in MVP, while unsupported event/place facts remain caption-level/non-visible.
+
+Proof: `pytest test_fusion_reconcile.py` (object/caption/dropped cases; detector-backed conflict drop; unsupported event/place stays caption-level; unconfirmed veto).
 
 ### Slice 3: Stage-3 synthesis + eligibility gate
 
 **Goal**: Compose the final response with provenance; skip decorative.
+
+Files/functions:
+
+- `scene/application/visual_facts_service.py:VisualFactsService.describe` — insert fusion after adapter generation and before response mapping/persist.
+- `scene/application/visual_facts_service.py:VisualFactsService._result_to_response` — include optional attachment provenance on generated responses.
+- `scene/interface_adapters/http/schemas/responses.py:VisualFactsResponse` — add optional attachment provenance field while preserving `extra="forbid"`.
+- `scene/interface_adapters/http/schemas/requests.py:DescribeImageEnvelope` — add optional `decorative` envelope flag.
+- `scene/interface_adapters/http/routers/describe.py:describe_image_multipart` — skip decorative requests before `service.describe`.
+- `scene/interface_adapters/http/routers/describe.py:_naming_preview` and `scene/application/identity_merge/merge.py:merge_identities` — reuse existing identity synthesis path.
+- `scene/tests/test_fusion_response_provenance.py:test_*`, `scene/tests/test_describe_eligibility.py:test_*` (new) — response provenance and decorative skip coverage.
 
 Changes: insert the fusion stage in `visual_facts_service.py:describe` (between adapter call and `_result_to_response`); compose via the existing `merge_identities` path; add the additive-optional provenance field to `VisualFactsResponse`; add the decorative/eligibility gate at `describe.py:~200`.
 
@@ -136,6 +162,13 @@ Proof: `pytest test_fusion_response_provenance.py test_describe_eligibility.py` 
 ### Slice 4: Mis-attachment labels + bake-off + memo
 
 **Goal**: Measure staged fusion vs ad-hoc.
+
+Files/functions:
+
+- `scripts/eval_harness/fusion_runner.py` (new) — drive `VisualFactsService`/fusion stage over `bakeoff_golden.json` and emit acx-eval/v1 run records.
+- `scripts/eval_harness/report.py:build_reports` — unchanged scorer for report generation.
+- `scene/tests/seed/bakeoff_golden.json` — extend labels with expected attachment altitude/mis-attachment fields.
+- `docs/tasks/20.0/E20-FUSION-decision-memo.md` (new) — verdict and measured deltas.
 
 Changes: author mis-attachment labels (which fact should attach where; extend VLM-2B `present_identities`/`must_right` with event/place altitude); a **fusion eval runner** (new — drives `VisualFactsService`/the fusion stage over `bakeoff_golden.json` to emit acx-eval/v1 run-records; **distinct from `bakeoff.py`**, which produces a raw single-VLM caption, not the fusion output — FUSION-PR-01), then score via `build_reports`; `E20-FUSION-decision-memo.md`.
 
@@ -156,8 +189,8 @@ Proof: committed REPORTs + memo with `Must-Right`/insertion/`Easy-Wrong`/mis-att
 
 ### Checklist for Slice 2: Reconciliation rule
 
-- [ ] `reconcile.py` emits per-fact `Attachment` (object/caption/dropped + altitude + review_reason); pixels-win; detector-backed object attach; policy veto first.
-- [ ] Reconciliation tests (object/caption/dropped/conflict/unconfirmed) green.
+- [ ] `reconcile.py` emits per-fact `Attachment` (object/caption/dropped + altitude + review_reason); detector-backed pixels-win; detector-backed object attach; policy veto first.
+- [ ] Reconciliation tests (object/caption/dropped/detector-backed conflict/unsupported event-place/unconfirmed) green.
 
 ### Checklist for Slice 3: Synthesis + eligibility
 

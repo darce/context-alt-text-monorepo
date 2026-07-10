@@ -1,0 +1,399 @@
+"""E20-FUSION S2: Stage-2 reconciliation — object / caption / dropped decisions.
+
+Uses real producer shapes: ContextPack (requests.py), VisualFactsPrior
+(visual_facts_pass.py), ConfirmedFace/PhraseBox/MergeResult (merge.py).
+"""
+
+from __future__ import annotations
+
+from scene.application.fusion import (
+    AttachmentAltitude,
+    AttachmentDecision,
+    BrandDetection,
+    BrandFact,
+    FactSource,
+    ReviewReason,
+    reconcile_context_facts,
+)
+from scene.application.identity_merge import NamingPolicy, NormalizedBox
+from scene.application.visual_facts_pass import VisualFactsPrior, VisualFactsPriorSource
+from scene.interface_adapters.http.schemas.requests import (
+    AttachmentContext,
+    ContextPack,
+    IdentityContext,
+    IdentityContextItem,
+    IdentityPolicyContext,
+    PostContext,
+    ProductContext,
+    TaxonomyTermContext,
+)
+from scene.tests.identity_merge_helpers import make_face, make_phrase_box
+
+CAPTION = "A person standing outdoors near greenery."
+PERSON_BOX = NormalizedBox(x=0.3, y=0.1, width=0.3, height=0.7)
+FACE_BOX = NormalizedBox(x=0.4, y=0.2, width=0.05, height=0.08)
+
+
+def _prior(caption: str = CAPTION, *, objects: list[str] | None = None) -> VisualFactsPrior:
+    return VisualFactsPrior(
+        caption=caption,
+        objects=objects if objects is not None else ["person", "plant"],
+        attributes=[],
+        spatial=[],
+        text=None,
+        source=VisualFactsPriorSource.ISOLATION_PASS,
+    )
+
+
+def _identity_item(
+    name: str = "Maria Correonero",
+    *,
+    cluster_id: str | None = "cluster-maria",
+    identity_id: str | None = "identity-maria",
+) -> IdentityContextItem:
+    return IdentityContextItem(
+        name=name,
+        identity_id=identity_id,
+        cluster_id=cluster_id,
+        source="roster",
+    )
+
+
+def _pack_with_identity(
+    *items: IdentityContextItem,
+    person_naming: str = "allowed",
+    review_reasons: list[str] | None = None,
+    **kwargs,
+) -> ContextPack:
+    return ContextPack(
+        identity=IdentityContext(
+            policy=IdentityPolicyContext(person_naming=person_naming),
+            identities=list(items),
+            review_reasons=review_reasons or [],
+        ),
+        **kwargs,
+    )
+
+
+def test_object_attach_identity_via_merge_containment():
+    """Identity with face center inside person phrase box → object attach."""
+    item = _identity_item()
+    pack = _pack_with_identity(item)
+    face = make_face(
+        item.name,
+        box=FACE_BOX,
+        cluster_id=item.cluster_id,
+        identity_id=item.identity_id,
+        roster_id="roster-maria",
+    )
+    phrase = make_phrase_box("person", CAPTION, box=PERSON_BOX)
+
+    results = reconcile_context_facts(
+        context_pack=pack,
+        visual_prior=_prior(),
+        confirmed_faces=[face],
+        phrase_boxes=[phrase],
+        naming_policy=NamingPolicy(agreement_enabled=True),
+    )
+
+    identity_atts = [a for a in results if a.fact_source is FactSource.IDENTITY]
+    assert len(identity_atts) == 1
+    att = identity_atts[0]
+    assert att.decision is AttachmentDecision.OBJECT
+    assert att.altitude is AttachmentAltitude.OBJECT
+    assert att.visible is True
+    assert att.fact_label == "Maria Correonero"
+    assert att.target_evidence == "person"
+    assert att.review_reason is None
+    assert att.fact_id == "identity:cluster:cluster-maria"
+
+
+def test_caption_fallback_for_product_and_attachment():
+    """Non-detector facts (product, attachment) stay caption-level / non-visible."""
+    pack = ContextPack(
+        product=ProductContext(name="Trail Jacket"),
+        attachment=AttachmentContext(title="Summer sale hero", caption="Red jacket on trail."),
+        post=PostContext(title="Trail jackets for spring", post_type="product", status="publish"),
+    )
+
+    results = reconcile_context_facts(context_pack=pack, visual_prior=_prior())
+
+    assert results
+    assert all(a.decision is AttachmentDecision.CAPTION for a in results)
+    assert all(a.altitude is AttachmentAltitude.CAPTION for a in results)
+    assert all(a.visible is False for a in results)
+    sources = {a.fact_source for a in results}
+    assert FactSource.PRODUCT in sources
+    assert FactSource.ATTACHMENT in sources
+    assert FactSource.POST in sources
+    labels = {a.fact_label for a in results}
+    assert "Trail Jacket" in labels
+    assert "Summer sale hero" in labels
+
+
+def test_dropped_brand_without_detector_match():
+    """Brand in pack but no logo detection → dropped with review_reason."""
+    pack = ContextPack()
+    results = reconcile_context_facts(
+        context_pack=pack,
+        visual_prior=_prior(),
+        brands=[BrandFact(name="Acme", template_id="tmpl-acme")],
+        brand_detections=[],
+    )
+
+    assert len(results) == 1
+    att = results[0]
+    assert att.decision is AttachmentDecision.DROPPED
+    assert att.altitude is AttachmentAltitude.NONE
+    assert att.visible is False
+    assert att.fact_source is FactSource.BRAND
+    assert att.review_reason == ReviewReason.BRAND_NOT_DETECTED
+
+
+def test_object_attach_brand_when_detected():
+    """Brand with matched logo detection → object attach."""
+    pack = ContextPack()
+    results = reconcile_context_facts(
+        context_pack=pack,
+        visual_prior=_prior(),
+        brands=[BrandFact(name="Acme", template_id="tmpl-acme")],
+        brand_detections=[
+            BrandDetection(name="Acme", template_id="tmpl-acme", confidence=0.91, matched=True)
+        ],
+    )
+
+    att = results[0]
+    assert att.decision is AttachmentDecision.OBJECT
+    assert att.altitude is AttachmentAltitude.OBJECT
+    assert att.visible is True
+    assert att.target_evidence == "tmpl-acme"
+    assert att.review_reason is None
+
+
+def test_detector_backed_conflict_drop_face_not_detected():
+    """Name in pack whose face is not among confirmed detections → dropped + reason."""
+    item = _identity_item("Maria Correonero")
+    pack = _pack_with_identity(item)
+    # Different person detected — Maria's face is not present.
+    other = make_face(
+        "Bea Burke",
+        box=FACE_BOX,
+        cluster_id="cluster-bea",
+        identity_id="identity-bea",
+    )
+    phrase = make_phrase_box("person", CAPTION, box=PERSON_BOX)
+
+    results = reconcile_context_facts(
+        context_pack=pack,
+        visual_prior=_prior(),
+        confirmed_faces=[other],
+        phrase_boxes=[phrase],
+        naming_policy=NamingPolicy(agreement_enabled=True),
+    )
+
+    att = next(a for a in results if a.fact_source is FactSource.IDENTITY)
+    assert att.decision is AttachmentDecision.DROPPED
+    assert att.altitude is AttachmentAltitude.NONE
+    assert att.visible is False
+    assert att.review_reason == ReviewReason.FACE_NOT_DETECTED
+    assert att.target_evidence is None
+
+
+def test_detector_backed_conflict_ambiguous_grounding():
+    """Face present but containment fails (outside phrase box) → ambiguous drop."""
+    item = _identity_item()
+    pack = _pack_with_identity(item)
+    face = make_face(
+        item.name,
+        box=NormalizedBox(x=0.85, y=0.85, width=0.05, height=0.05),
+        cluster_id=item.cluster_id,
+        identity_id=item.identity_id,
+        roster_id="roster-maria",
+    )
+    phrase = make_phrase_box("person", CAPTION, box=PERSON_BOX)
+
+    results = reconcile_context_facts(
+        context_pack=pack,
+        visual_prior=_prior(),
+        confirmed_faces=[face],
+        phrase_boxes=[phrase],
+        naming_policy=NamingPolicy(agreement_enabled=True),
+    )
+
+    att = next(a for a in results if a.fact_source is FactSource.IDENTITY)
+    assert att.decision is AttachmentDecision.DROPPED
+    assert att.review_reason == ReviewReason.AMBIGUOUS_GROUNDING
+
+
+def test_unsupported_event_place_stays_caption_level_non_visible():
+    """Event/place facts are caption-level, not auto-dropped (no semantic judge)."""
+    pack = ContextPack(
+        taxonomy_terms=[
+            TaxonomyTermContext(taxonomy="event", name="Garden picnic", slug="garden-picnic"),
+            TaxonomyTermContext(taxonomy="place", name="City park", slug="city-park"),
+            TaxonomyTermContext(taxonomy="product_cat", name="Jackets", slug="jackets"),
+        ],
+    )
+    # Visual prior contradicts the picnic story — still not dropped in MVP.
+    prior = _prior("A wrecked aircraft on a rocky hillside.", objects=["aircraft", "rock"])
+
+    results = reconcile_context_facts(context_pack=pack, visual_prior=prior)
+
+    event = next(a for a in results if a.fact_source is FactSource.EVENT)
+    place = next(a for a in results if a.fact_source is FactSource.PLACE)
+    tax = next(a for a in results if a.fact_source is FactSource.TAXONOMY)
+
+    for att in (event, place, tax):
+        assert att.decision is AttachmentDecision.CAPTION
+        assert att.altitude is AttachmentAltitude.CAPTION
+        assert att.visible is False
+        assert att.review_reason is None
+
+    assert event.fact_label == "Garden picnic"
+    assert place.fact_label == "City park"
+    assert tax.fact_label == "Jackets"
+
+
+def test_policy_veto_first_even_when_face_would_match():
+    """person_naming=disabled vetoes before detector attach (policy first)."""
+    item = _identity_item()
+    pack = _pack_with_identity(
+        item,
+        person_naming="disabled",
+        review_reasons=["person_naming_policy_disabled"],
+    )
+    face = make_face(
+        item.name,
+        box=FACE_BOX,
+        cluster_id=item.cluster_id,
+        identity_id=item.identity_id,
+        roster_id="roster-maria",
+    )
+    phrase = make_phrase_box("person", CAPTION, box=PERSON_BOX)
+
+    results = reconcile_context_facts(
+        context_pack=pack,
+        visual_prior=_prior(),
+        confirmed_faces=[face],
+        phrase_boxes=[phrase],
+        naming_policy=NamingPolicy(agreement_enabled=True),
+    )
+
+    att = next(a for a in results if a.fact_source is FactSource.IDENTITY)
+    assert att.decision is AttachmentDecision.DROPPED
+    assert att.review_reason == ReviewReason.PERSON_NAMING_POLICY_DISABLED
+    assert att.visible is False
+    assert att.target_evidence is None
+
+
+def test_agreement_disabled_policy_veto():
+    """NamingPolicy.agreement_enabled=False vetoes all identity facts."""
+    item = _identity_item()
+    pack = _pack_with_identity(item)
+    face = make_face(
+        item.name,
+        box=FACE_BOX,
+        cluster_id=item.cluster_id,
+        identity_id=item.identity_id,
+        roster_id="roster-maria",
+    )
+    phrase = make_phrase_box("person", CAPTION, box=PERSON_BOX)
+
+    results = reconcile_context_facts(
+        context_pack=pack,
+        visual_prior=_prior(),
+        confirmed_faces=[face],
+        phrase_boxes=[phrase],
+        naming_policy=NamingPolicy(agreement_enabled=False),
+    )
+
+    att = next(a for a in results if a.fact_source is FactSource.IDENTITY)
+    assert att.decision is AttachmentDecision.DROPPED
+    assert att.review_reason == ReviewReason.AGREEMENT_DISABLED
+
+
+def test_unconfirmed_identity_dropped():
+    """Identity without cluster_id and identity_id → unconfirmed drop."""
+    item = _identity_item(cluster_id=None, identity_id=None)
+    pack = _pack_with_identity(item)
+
+    results = reconcile_context_facts(
+        context_pack=pack,
+        visual_prior=_prior(),
+        confirmed_faces=[],
+        phrase_boxes=[],
+        naming_policy=NamingPolicy(agreement_enabled=True),
+    )
+
+    att = results[0]
+    assert att.decision is AttachmentDecision.DROPPED
+    assert att.review_reason == ReviewReason.UNCONFIRMED_IDENTITY
+
+
+def test_empty_context_pack_returns_empty():
+    assert reconcile_context_facts(context_pack=None, visual_prior=_prior()) == []
+    assert reconcile_context_facts(context_pack=ContextPack(), visual_prior=_prior()) == []
+
+
+def test_suppressed_roster_identity_not_eligible():
+    """NamingPolicy suppress set → no_eligible_identity degrade path."""
+    item = _identity_item()
+    pack = _pack_with_identity(item)
+    face = make_face(
+        item.name,
+        box=FACE_BOX,
+        cluster_id=item.cluster_id,
+        identity_id=item.identity_id,
+        roster_id="roster-maria",
+    )
+    phrase = make_phrase_box("person", CAPTION, box=PERSON_BOX)
+    policy = NamingPolicy(
+        agreement_enabled=True,
+        suppressed_roster_ids=frozenset({"roster-maria"}),
+    )
+
+    results = reconcile_context_facts(
+        context_pack=pack,
+        visual_prior=_prior(),
+        confirmed_faces=[face],
+        phrase_boxes=[phrase],
+        naming_policy=policy,
+    )
+
+    att = next(a for a in results if a.fact_source is FactSource.IDENTITY)
+    assert att.decision is AttachmentDecision.DROPPED
+    assert att.review_reason == ReviewReason.NO_ELIGIBLE_IDENTITY
+
+
+def test_mixed_pack_identity_object_and_event_caption():
+    """End-to-end mixed pack: object-attach identity + caption event coexist."""
+    item = _identity_item()
+    pack = _pack_with_identity(
+        item,
+        taxonomy_terms=[
+            TaxonomyTermContext(taxonomy="event", name="Garden picnic", slug="garden-picnic"),
+        ],
+        product=ProductContext(name="Trail Jacket"),
+    )
+    face = make_face(
+        item.name,
+        box=FACE_BOX,
+        cluster_id=item.cluster_id,
+        identity_id=item.identity_id,
+        roster_id="roster-maria",
+    )
+    phrase = make_phrase_box("person", CAPTION, box=PERSON_BOX)
+
+    results = reconcile_context_facts(
+        context_pack=pack,
+        visual_prior=_prior(),
+        confirmed_faces=[face],
+        phrase_boxes=[phrase],
+        naming_policy=NamingPolicy(agreement_enabled=True),
+    )
+
+    by_source = {a.fact_source: a for a in results}
+    assert by_source[FactSource.IDENTITY].decision is AttachmentDecision.OBJECT
+    assert by_source[FactSource.EVENT].decision is AttachmentDecision.CAPTION
+    assert by_source[FactSource.EVENT].visible is False
+    assert by_source[FactSource.PRODUCT].decision is AttachmentDecision.CAPTION

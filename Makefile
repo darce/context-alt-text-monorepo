@@ -287,7 +287,7 @@ check-all:
 			$(MAKE) check-codex-command-router; \
 			$(MAKE) worktree-audit; \
 			$(MAKE) task-plan-audit; \
-			$(MAKE) test-hooks; \
+			$(MAKE) test-scripts; \
 			$(MAKE) test-all; \
 			echo ""; \
 			echo "✅ All monorepo checks passed!"; \

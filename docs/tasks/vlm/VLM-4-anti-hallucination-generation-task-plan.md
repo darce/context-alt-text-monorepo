@@ -6,6 +6,7 @@
 > - **Author**: claude-opus-4-8
 > - **Project**: `apps/prototype-description-service`
 > - **Task ID**: `VLM-4`
+> - **Task Plan Status**: `proposed`
 > - **Target Branch**: `feature/vlm-4`
 > - **Review Coverage Target**: 2
 
@@ -82,14 +83,14 @@ Five slices: (1) the **shared visual-facts (Stage-1) component** (reused by E20-
 
 ## Files and Surfaces to Change
 
-| Surface | File | Change |
-| --- | --- | --- |
-| backend | `scene/application/visual_facts_pass.py` (new) | Shared Stage-1: one VLM pass → structured visual facts (objects/attributes/spatial/text), no `ContextPack`; reused by E20-FUSION |
-| backend | `scene/infrastructure/vlm/ensemble_decode.py` (new) | N-view decode: build views, per-view passes, attention-weighted logit ensemble + logit-only fallback, adaptive plausibility, bounded N |
-| backend | `scene/infrastructure/vlm/gpu_remote_adapter.py` (VLM-3) | Extend to expose per-token logprobs/attention (or the logit-only path) for the ensemble |
-| backend | `scene/config/profiles.py` / `deps.py` | Opt-in flag/profile routing a request through the ensemble/visual-prior decode |
-| docs | `docs/tasks/vlm/VLM-4-decision-memo.md` (new) | Bake-off winner + measured hallucination/latency deltas |
-| tests | `scene/tests/test_ensemble_decode.py`, `test_visual_facts_pass.py` (new) | Vote logic (attention + logit-only), view construction, caption-only scope, AdapterResult intact |
+| Surface | File | Symbol / Function | Change |
+| --- | --- | --- | --- |
+| backend | `scene/application/visual_facts_pass.py` (new) | `VisualFactsPrior`, `VisualFactsPass.describe` (new) | Shared Stage-1: one VLM pass → structured visual facts (objects/attributes/spatial/text), no `ContextPack`; reused by E20-FUSION |
+| backend | `scene/infrastructure/vlm/ensemble_decode.py` (new) | `EnsembleDecodeConfig`, `EnsembleDescriptionAdapter.describe`, `combine_token_distributions` (new) | N-view decode: build views, per-view passes, attention-weighted logit ensemble + logit-only fallback, adaptive plausibility, bounded N |
+| backend | `scene/infrastructure/vlm/gpu_remote_adapter.py` (VLM-3) | `GpuRemoteDescriptionAdapter.describe`, `GpuRemoteTokenTrace` (new in VLM-3) | Extend to expose per-token logprobs/attention (or the logit-only path) for the ensemble |
+| backend | `scene/config/profiles.py` / `scene/interface_adapters/http/deps.py` | `DescriptionProfile`, `ProfileSpec`, `get_description_adapter` | Opt-in flag/profile routing a request through the ensemble/visual-prior decode |
+| docs | `docs/tasks/vlm/VLM-4-decision-memo.md` (new) | decision memo (new) | Bake-off winner + measured hallucination/latency deltas |
+| tests | `scene/tests/test_ensemble_decode.py`, `scene/tests/test_visual_facts_pass.py` (new) | `test_*` cases (new) | Vote logic (attention + logit-only), view construction, caption-only scope, AdapterResult intact |
 
 ## Related Files
 
@@ -112,7 +113,13 @@ Five slices: (1) the **shared visual-facts (Stage-1) component** (reused by E20-
 
 **Goal**: One VLM pass → structured visual facts in isolation, reusable by E20-FUSION.
 
-Changes: `visual_facts_pass.py` — call the adapter with a facts-extraction prompt (no `ContextPack`), return a typed structured-facts object.
+Files/functions:
+
+- `scene/application/visual_facts_pass.py:VisualFactsPrior` (new) — typed structured facts object for objects/attributes/spatial/text.
+- `scene/application/visual_facts_pass.py:VisualFactsPass.describe` (new) — call a `DescriptionAdapter` with a facts-extraction prompt and `context=None`.
+- `scene/tests/test_visual_facts_pass.py:test_*` (new) — stub-adapter coverage for structured facts and E20-FUSION importability.
+
+Changes: call the adapter with a facts-extraction prompt (no `ContextPack`), return a typed structured-facts object.
 
 Proof: `pytest test_visual_facts_pass.py` (structured output from a stubbed adapter); E20-FUSION can import it.
 
@@ -120,7 +127,16 @@ Proof: `pytest test_visual_facts_pass.py` (structured output from a stubbed adap
 
 **Goal**: N-view attention-weighted (or logit-only) caption synthesis behind the GPU adapter.
 
-Changes: `ensemble_decode.py` — view construction (grid/attention-seeded, **pinned here**), per-view passes, logit ensemble, adaptive plausibility, bounded N; caption-only vote, objects/phrase_boxes from the full-image pass; opt-in flag in `profiles.py`/`deps.py`.
+Files/functions:
+
+- `scene/infrastructure/vlm/ensemble_decode.py:EnsembleDecodeConfig` (new) — bounded N, view strategy, and adaptive-plausibility settings.
+- `scene/infrastructure/vlm/ensemble_decode.py:EnsembleDescriptionAdapter.describe` (new) — wraps a GPU `DescriptionAdapter` and returns `AdapterResult`.
+- `scene/infrastructure/vlm/ensemble_decode.py:combine_token_distributions` (new) — attention-weighted and logit-only vote math.
+- `scene/infrastructure/vlm/gpu_remote_adapter.py:GpuRemoteDescriptionAdapter.describe` (VLM-3) — expose per-token logprobs/attention when available.
+- `scene/config/profiles.py:DescriptionProfile` / `ProfileSpec` and `scene/interface_adapters/http/deps.py:get_description_adapter` — add the opt-in profile/flag routing.
+- `scene/tests/test_ensemble_decode.py:test_*` (new) — vote/fallback math, N bound, caption-only scope, and `AdapterResult` preservation.
+
+Changes: view construction (grid/attention-seeded, **pinned here**), per-view passes, logit ensemble, adaptive plausibility, bounded N; caption-only vote, objects/phrase_boxes from the full-image pass; opt-in flag in `profiles.py`/`deps.py`.
 
 **Attention-weighting mechanism (VLM4-PR-01), per arXiv 2505.17529:** at each decode step, for each view take the generated token's **cross-attention to that view's image patches**, reduce it to a per-view scalar (mean attention mass on image tokens = "is the model looking at the image, not just prior text"), softmax-normalize across views → weights `w_v`; the ensembled next-token distribution is `softmax(Σ_v w_v · logits_v)`, then the adaptive-plausibility constraint masks low-probability tokens. **Logit-only fallback (no attention):** unweighted mean of per-view `logprobs` (or confidence-weighted by each view's top-token probability) — a strictly weaker vote, quantified in the bake-off.
 
@@ -130,6 +146,12 @@ Proof: `pytest test_ensemble_decode.py` (attention + logit-only vote math on stu
 
 **Goal**: Measure the techniques on the VLM-2B corpus.
 
+Files/functions:
+
+- `scripts/eval_harness/report.py:build_reports` — unchanged scorer for captured run records.
+- `scene/tests/seed/bakeoff_golden.json` — VLM-2B corpus input.
+- `docs/tasks/vlm/VLM-4-*-report.{json,md}` (new) — curated acx-eval/v1 REPORT artifacts.
+
 Changes: run baseline vs ensemble vs visual-prior vs composed via `report.build_reports`; emit REPORTs + a latency-multiplier table.
 
 Proof: committed acx-eval/v1 REPORTs; deterministic re-score bit-identical.
@@ -138,13 +160,22 @@ Proof: committed acx-eval/v1 REPORTs; deterministic re-score bit-identical.
 
 **Goal**: Adopt / reject with evidence.
 
-Changes: `VLM-4-decision-memo.md` — which technique(s) to adopt, `Easy-Wrong`/`Must-Right`/insertion deltas + the cost each buys.
+Files/functions:
+
+- `docs/tasks/vlm/VLM-4-decision-memo.md` (new) — evidence-backed adopt/reject memo.
+
+Changes: record which technique(s) to adopt, `Easy-Wrong`/`Must-Right`/insertion deltas + the cost each buys.
 
 Proof: memo names the verdict, cites the Slice-3 REPORTs.
 
 ### Slice 5 (stretch): region proposals + Whitened-CLIP re-ranker
 
 **Goal**: Better views + a cheap filter.
+
+Files/functions:
+
+- `scene/infrastructure/vlm/ensemble_decode.py:build_region_proposal_views` (new/stretch) — SAM-class mask views when the spike justifies the dependency.
+- `scene/infrastructure/vlm/clip_rerank.py:WhitenedClipReranker` (new/stretch) — optional candidate re-ranker.
 
 Changes: SAM-class masks as views (re-run bake-off); Whitened-CLIP candidate re-ranker. **(VLM4-PR-03) Whitened-CLIP adds a net-new CLIP model dependency** — the service has no CLIP today (recognition uses InsightFace buffalo_l, not CLIP), same new-embedder class as E20-BRAND-A's OpenCLIP question → optional/stretch, spike-gated, not a free guardrail.
 

@@ -18,6 +18,15 @@ write_files:
       Projector path: /opt/acx-gpu/models/qwen3-vl-30b-a3b-instruct-mmproj.gguf
       Required baked runtime: Docker + nvidia-container-toolkit + ghcr.io/ggerganov/llama.cpp:server-cuda.
 
+  - path: /opt/acx-gpu/models/SHA256SUMS
+    owner: ubuntu:ubuntu
+    permissions: "0644"
+    content: |
+      # Populate at bake time with `sha256sum qwen3-vl-30b-a3b-instruct-q4.gguf`.
+      # Placeholder forces operators to pin the quant; runtime-check verifies.
+      # REPLACE_WITH_SHA256_OF_qwen3-vl-30b-a3b-instruct-q4.gguf  qwen3-vl-30b-a3b-instruct-q4.gguf
+      # REPLACE_WITH_SHA256_OF_qwen3-vl-30b-a3b-instruct-mmproj.gguf  qwen3-vl-30b-a3b-instruct-mmproj.gguf
+
   - path: /usr/local/bin/acx-gpu-runtime-check.sh
     permissions: "0755"
     content: |
@@ -26,6 +35,11 @@ write_files:
       test -d /opt/acx-gpu/models
       test -f /opt/acx-gpu/models/qwen3-vl-30b-a3b-instruct-q4.gguf
       test -f /opt/acx-gpu/models/qwen3-vl-30b-a3b-instruct-mmproj.gguf
+      # SEC-10 / VLMFIX-S1-08: refuse a quant swap when SHA256SUMS is populated
+      # with real digests (lines that are not comments/placeholders).
+      if [[ -f /opt/acx-gpu/models/SHA256SUMS ]] && grep -qE '^[0-9a-f]{64} ' /opt/acx-gpu/models/SHA256SUMS; then
+        (cd /opt/acx-gpu/models && sha256sum -c SHA256SUMS --ignore-missing)
+      fi
       command -v docker >/dev/null
       command -v nvidia-smi >/dev/null
       dpkg -s nvidia-container-toolkit >/dev/null

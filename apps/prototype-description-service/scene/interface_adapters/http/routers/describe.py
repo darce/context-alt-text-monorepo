@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
 from dataclasses import dataclass
 from typing import Any
@@ -100,6 +101,30 @@ class _DescriptionAuditSink:
             scope="media",
             payload=payload,
         )
+
+
+class _BackgroundDescriptionAuditSink:
+    """Audit sink that opens its own AsyncSession per write (VLMFIX-S1-01).
+
+    FastAPI closes yield-dependency sessions after the response and before
+    BackgroundTasks run, so the request-scoped session cannot be reused here.
+    """
+
+    def __init__(self, session_factory) -> None:
+        self._session_factory = session_factory
+
+    async def record(self, *, tenant_id: uuid.UUID, event_type: str, payload: dict) -> None:
+        async with self._session_factory() as session:
+            await set_tenant_context(session, tenant_id)
+            repository = AuditRepository(session)
+            await repository.create_event(
+                tenant_id=str(tenant_id),
+                event_type=event_type,
+                actor="scene.describe",
+                scope="media",
+                payload=payload,
+            )
+            await session.commit()
 
 
 class _DescriptionMetricsSink:
@@ -379,6 +404,18 @@ async def describe_image_multipart(
     return response
 
 
+def _maybe_dump_describe_load() -> None:
+    """Best-effort write of job-store load for the GPU idle reaper (VLMFIX-S2-01)."""
+    import os
+    from pathlib import Path as _Path
+
+    path = os.environ.get("ACX_DESCRIBE_LOAD_PATH", "/run/acx/describe-load.json")
+    try:
+        _ASYNC_JOBS.write_load_snapshot(_Path(path))
+    except OSError:
+        _logger.debug("describe load snapshot write failed path=%s", path, exc_info=True)
+
+
 @router.post("/describe/async", response_model=DescribeJobResult)
 async def enqueue_describe_image(
     background_tasks: BackgroundTasks,
@@ -391,12 +428,20 @@ async def enqueue_describe_image(
     form = await request.form()
     settings = DescriptionSettings()
     submission = await _validated_describe_multipart_submission(form=form, auth=auth, settings=settings)
+    # VLMFIX-S1-06: async jobs are poll-fetched by tenant claim; empty claim
+    # would enqueue unfetchable work. Require claim unless admin opt-in.
+    auth_tenant = (getattr(auth, "tenant_claim", None) or "").strip()
+    if not auth_tenant and os.environ.get("ACX_ASYNC_ALLOW_EMPTY_TENANT_CLAIM") != "1":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "tenant claim required")
     if session is not None:
         await set_tenant_context(session, submission.tenant_uuid)
         await require_tenant_record(session, submission.tenant_uuid)
     audit_sink = None
     if session is not None:
-        audit_sink = _DescriptionAuditSink(AuditRepository(session))
+        # Own session factory — request-scoped session is closed before BackgroundTasks (S1-01).
+        from db.session import async_session_factory
+
+        audit_sink = _BackgroundDescriptionAuditSink(async_session_factory)
     metrics = _DescriptionMetricsSink()
     try:
         job = _ASYNC_JOBS.enqueue(
@@ -407,8 +452,9 @@ async def enqueue_describe_image(
         )
     except RuntimeError as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    _maybe_dump_describe_load()
     background_tasks.add_task(
-        run_describe_job,
+        _run_describe_job_and_dump_load,
         store=_ASYNC_JOBS,
         job_id=job.job_id,
         cpu_adapter=cpu_adapter,
@@ -422,6 +468,13 @@ async def enqueue_describe_image(
     return _job_result(job)
 
 
+async def _run_describe_job_and_dump_load(**kwargs) -> None:
+    try:
+        await run_describe_job(**kwargs)
+    finally:
+        _maybe_dump_describe_load()
+
+
 @router.get("/describe/jobs/{job_id}", response_model=DescribeJobResult)
 async def get_describe_job(job_id: str, auth=Depends(require_write_access)) -> DescribeJobResult:
     job = _ASYNC_JOBS.get(job_id)
@@ -433,5 +486,10 @@ async def get_describe_job(job_id: str, auth=Depends(require_write_access)) -> D
     if auth_tenant != str(job.tenant_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "describe job not found")
     if job.status in {DescribeJobStatus.FINAL, DescribeJobStatus.DEGRADED, DescribeJobStatus.FAILED}:
-        job = _ASYNC_JOBS.mark_result_fetched(job_id)
+        fetched = _ASYNC_JOBS.mark_result_fetched(job_id)
+        if fetched is None:
+            # Evicted between get() and mark (S1-05) — surface 404 not 500.
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "describe job not found")
+        job = fetched
+        _maybe_dump_describe_load()
     return _job_result(job)

@@ -66,8 +66,9 @@ uv run python -m scripts.eval_harness.bakeoff \
   --model-id <id> \
   --model-version Q4_K_M \
   --timeout 900 \
-  [--no-think] \
   --manifest scene/tests/seed/bakeoff_golden.json
 ```
+
+For reasoning-tuned checkpoints, add the optional `--no-think` flag so the model does not burn the token budget on chain-of-thought before emitting a caption.
 
 The laptop drives the endpoint through an SSH tunnel (`ssh -L 8099:127.0.0.1:8099 …`), so no candidate port is ever exposed off-box.

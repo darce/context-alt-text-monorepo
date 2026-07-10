@@ -34,18 +34,29 @@ _SYSTEM_PROMPT = (
 )
 
 _gpu_call_semaphore: threading.Semaphore | None = None
+_gpu_call_semaphore_size: int | None = None
 _shared_client: httpx.Client | None = None
-_shared_client_lock = threading.Lock()
+_shared_client_timeout: httpx.Timeout | None = None
+# One lock covers semaphore + shared client init (CON-16 / VLMFIX-S1-03).
+_gpu_pool_lock = threading.Lock()
+
+# Post-504 abandoned-call cost bound (VLMFIX-S1-03): when the route's wait_for
+# 504s, the thread holding or waiting on the semaphore still runs. Bound is
+# roughly max_concurrent_calls queue slots × read_timeout_s of GPU work after
+# the client is gone. Prefer cancel-by-closing the shared httpx client on
+# process shutdown; per-request cancel of to_thread work is not implemented.
 
 
 def reset_gpu_remote_adapter_state_for_tests() -> None:
     """Drop module-level pooling state so tests stay isolated."""
-    global _gpu_call_semaphore, _shared_client
-    with _shared_client_lock:
+    global _gpu_call_semaphore, _gpu_call_semaphore_size, _shared_client, _shared_client_timeout
+    with _gpu_pool_lock:
         if _shared_client is not None:
             _shared_client.close()
         _shared_client = None
-    _gpu_call_semaphore = None
+        _shared_client_timeout = None
+        _gpu_call_semaphore = None
+        _gpu_call_semaphore_size = None
 
 
 def _media_type(image_bytes: bytes) -> str:
@@ -180,17 +191,28 @@ class GpuRemoteDescriptionAdapter:
 
 
 def _get_gpu_call_semaphore(max_concurrent_calls: int) -> threading.Semaphore:
-    global _gpu_call_semaphore
-    if _gpu_call_semaphore is None:
-        _gpu_call_semaphore = threading.Semaphore(max_concurrent_calls)
-    return _gpu_call_semaphore
+    """Build the process-wide semaphore once under lock.
+
+    First caller pins ``max_concurrent_calls`` for the process lifetime; later
+    differently-sized adapters reuse the same bound (documented intentional
+    pin — env/config changes require process restart).
+    """
+    global _gpu_call_semaphore, _gpu_call_semaphore_size
+    with _gpu_pool_lock:
+        if _gpu_call_semaphore is None:
+            size = max(1, max_concurrent_calls)
+            _gpu_call_semaphore = threading.Semaphore(size)
+            _gpu_call_semaphore_size = size
+        return _gpu_call_semaphore
 
 
 def _get_shared_client(timeout: httpx.Timeout) -> httpx.Client:
-    global _shared_client
-    with _shared_client_lock:
+    """Shared httpx client; first caller pins connect/read timeouts for the process."""
+    global _shared_client, _shared_client_timeout
+    with _gpu_pool_lock:
         if _shared_client is None:
             _shared_client = httpx.Client(timeout=timeout)
+            _shared_client_timeout = timeout
         return _shared_client
 
 

@@ -124,3 +124,35 @@ def test_json_file_job_load_source_mirrors_store_shape(tmp_path: Path) -> None:
     path.write_text(json.dumps({"queue_depth": 2, "in_flight": 1}))
     snap = JsonFileJobLoadSource(path=path).snapshot()
     assert snap == JobLoadSnapshot(queue_depth=2, in_flight=1)
+
+
+def test_json_file_stale_is_busy(tmp_path: Path, monkeypatch) -> None:
+    path = tmp_path / "load.json"
+    path.write_text(json.dumps({"queue_depth": 0, "in_flight": 0, "written_at": 0}))
+    # Force mtime ancient
+    import os
+
+    os.utime(path, (1, 1))
+    snap = JsonFileJobLoadSource(path=path, max_age_seconds=60).snapshot()
+    assert snap.queue_depth == 1 and snap.in_flight == 1  # busy fail-safe
+
+
+def test_run_reap_cycle_isolates_actuator_errors() -> None:
+    class BoomActuator:
+        def stop_instance(self, instance_id: str) -> None:
+            raise RuntimeError(f"stop failed {instance_id}")
+
+    controller = GpuLifecycleController(idle_seconds=60)
+    instances = [
+        GpuInstance(instance_id="ocid1.a", state="RUNNING", idle_for_seconds=90),
+        GpuInstance(instance_id="ocid1.b", state="RUNNING", idle_for_seconds=90),
+    ]
+    result = run_reap_cycle(
+        controller=controller,
+        instances=instances,
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=BoomActuator(),
+        fence_delay_seconds=0.0,
+    )
+    assert len(result.errors) == 2
+    assert result.actuated == []

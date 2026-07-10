@@ -70,9 +70,17 @@ The script will skip immediately if a previous apply is still in progress.
 
 ## GPU burst host (acx_gpu_burst)
 
-- Provisioned **STOPPED** (`state = "STOPPED"`) so apply does not start A10 billing.
-- Placed on the **private subnet** (`10.0.2.0/24`) with `assign_public_ip = false` and **NAT gateway** egress for pulls/updates.
-- VLM port **8000** and **SSH 22** ingress are VCN-scoped (`10.0.0.0/16`); jump via `acx-backend`.
+- Provisioned **RUNNING** on first apply so cloud-init can enable `acx-gpu-vlm.service`
+  before any STOP (creating with `state=STOPPED` races runcmd — VLMFIX-S2-05).
+  **After first-boot cloud-init completes**, stop the instance to halt A10 billing:
+  ```bash
+  oci compute instance action \
+    --instance-id "$(terraform -chdir=infra/oci output -raw gpu_instance_id)" \
+    --action STOP --wait-for-state STOPPED
+  ```
+- Placed on the **private subnet** (`10.0.2.0/24`) with `assign_public_ip = false`,
+  **NAT gateway** egress, and a **dedicated GPU security list** (no world 80/443;
+  SSH from `ssh_allowed_cidrs` + backend subnet only; VLM :8000 from VCN).
 - After apply, wire the description service:
 
 ```bash
@@ -80,13 +88,34 @@ terraform -chdir=infra/oci output -raw gpu_endpoint_url   # → ACX_GPU_ENDPOINT
 terraform -chdir=infra/oci output -raw gpu_instance_id    # → idle reaper
 ```
 
-Idle reaper (decision → fence → OCI STOP):
+### Idle reaper (decision → fence → OCI STOP)
+
+The description service dumps load to `/run/acx/describe-load.json` (override with
+`ACX_DESCRIBE_LOAD_PATH`) on async enqueue/terminal poll. Stale dumps are treated
+as busy so a dead writer cannot STOP a working GPU.
 
 ```bash
+# Production: real load file + OCI probe (not static --queue-depth 0 --in-flight 0)
 python -m infra.oci.gpu_lifecycle \
   --instance-id "$(terraform -chdir=infra/oci output -raw gpu_instance_id)" \
   --idle-seconds 300 \
-  --load-json /run/acx/describe-load.json
+  --load-json /run/acx/describe-load.json \
+  --probe-oci \
+  --fence-delay-seconds 2
+```
+
+Auth: default OCI CLI API-key (`~/.oci/config`). On acx-backend with instance
+principal, pass `--oci-auth instance_principal` (requires a dynamic group policy
+granting `INSTANCE_POWER_ACTIONS` on the GPU compartment).
+
+Scheduler: cloud-init installs `acx-gpu-idle-reaper.timer` (every 2 minutes).
+Copy `/etc/acx/gpu-reaper.env.example` → `/etc/acx/gpu-reaper.env` with
+`GPU_INSTANCE_ID=…` after apply. Manual cron equivalent:
+
+```bash
+*/2 * * * * GPU_INSTANCE_ID=ocid1... python3 -m infra.oci.gpu_lifecycle \
+  --instance-id "$GPU_INSTANCE_ID" --load-json /run/acx/describe-load.json \
+  --probe-oci --idle-seconds 300 >> /var/log/acx-gpu-reaper.log 2>&1
 ```
 
 See `docs/tasks/vlm/VLM-3-gpu-detailed-tier-decision-memo.md` § Activation preconditions.

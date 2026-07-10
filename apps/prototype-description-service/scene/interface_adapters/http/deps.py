@@ -56,6 +56,13 @@ def _resolved_addresses_are_private(host: str) -> bool:
 
 
 def _is_private_gpu_endpoint(endpoint_url: str, *, allowlist: tuple[str, ...]) -> bool:
+    """Accept only private/loopback GPU endpoints under an authoritative allowlist.
+
+    VLMFIX-S1-02: non-allowlisted hostnames are rejected with no DNS fallback
+    (a private A record for evil-c2.example.com must not pass). Literal IPs
+    still require is_private/is_loopback. Allowlisted hostnames still require
+    every resolved address to be private/loopback.
+    """
     parsed = urlparse(endpoint_url)
     if parsed.scheme not in {"http", "https"}:
         return False
@@ -64,12 +71,12 @@ def _is_private_gpu_endpoint(endpoint_url: str, *, allowlist: tuple[str, ...]) -
         return False
 
     effective_allowlist = allowlist or _DEFAULT_GPU_ENDPOINT_ALLOWLIST
-    if _hostname_matches_allowlist(host, effective_allowlist):
-        return _resolved_addresses_are_private(host)
-
     try:
         addr = ip_address(host)
     except ValueError:
+        # Hostname path: allowlist is authoritative — no DNS for non-matches.
+        if not _hostname_matches_allowlist(host, effective_allowlist):
+            return False
         return _resolved_addresses_are_private(host)
     return addr.is_private or addr.is_loopback
 
@@ -119,17 +126,26 @@ def _build_florence_small_adapter(settings: DescriptionSettings) -> DescriptionA
 
 
 def get_cpu_description_adapter() -> DescriptionAdapter:
-    """Resolve a CPU-tier adapter for explicit tier=cpu routing."""
+    """Resolve a LOCAL CPU-tier adapter for explicit tier=cpu routing.
+
+    VLMFIX-S1-07: never silently return a hosted adapter. When the default
+    profile is local CPU (seeded / florence_*), reuse it; otherwise attempt
+    Florence local CPU and fail closed if no local adapter can be resolved.
+    """
     settings = DescriptionSettings()
     spec = get_profile_spec(settings.profile)
-    if spec.adapter_kind is not DescriptionAdapterKind.GPU:
+    if spec.adapter_kind is DescriptionAdapterKind.LOCAL_CPU:
         return get_description_adapter()
     florence_spec = get_profile_spec(DescriptionProfile.FLORENCE_SMALL)
     try:
         return _build_florence_small_adapter(settings)
     except Exception as exc:  # noqa: BLE001 - degrade uniformly on import/setup failure
         return UnavailableDescriptionAdapter(
-            str(exc),
+            (
+                f"explicit tier=cpu requires a local CPU adapter; default profile "
+                f"'{spec.profile.value}' is {spec.adapter_kind.value} and Florence "
+                f"fallback failed: {exc}"
+            ),
             kind=DescriptionAdapterKind.LOCAL_CPU,
             model_id=florence_spec.model_id or "unavailable",
             model_version=florence_spec.model_version,

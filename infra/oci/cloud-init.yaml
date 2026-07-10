@@ -26,6 +26,45 @@ write_files:
         "storage-driver": "overlay2"
       }
 
+  - path: /etc/systemd/system/acx-gpu-idle-reaper.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=ACX GPU idle reaper (STOP when describe load is empty)
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      # Prefer instance_principal on acx-backend when a dynamic group is granted
+      # INSTANCE_POWER_ACTIONS; otherwise API-key ~/.oci/config for the reaper user.
+      Environment=OCI_CLI_AUTH=api_key
+      # GPU instance OCID is set post-apply (terraform output gpu_instance_id).
+      EnvironmentFile=-/etc/acx/gpu-reaper.env
+      ExecStart=/usr/bin/python3 -m infra.oci.gpu_lifecycle --load-json /run/acx/describe-load.json --probe-oci --idle-seconds 300 --fence-delay-seconds 2 --instance-id ${GPU_INSTANCE_ID}
+
+  - path: /etc/systemd/system/acx-gpu-idle-reaper.timer
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Run ACX GPU idle reaper every 2 minutes
+
+      [Timer]
+      OnBootSec=5min
+      OnUnitActiveSec=2min
+      Persistent=true
+      Unit=acx-gpu-idle-reaper.service
+
+      [Install]
+      WantedBy=timers.target
+
+  - path: /etc/acx/gpu-reaper.env.example
+    permissions: "0644"
+    content: |
+      # Copy to /etc/acx/gpu-reaper.env and set the GPU OCID from terraform:
+      #   terraform -chdir=infra/oci output -raw gpu_instance_id
+      GPU_INSTANCE_ID=ocid1.instance.oc1..example
+
   - path: /etc/systemd/system/acx-backend.service
     permissions: "0644"
     content: |
@@ -95,6 +134,9 @@ runcmd:
   - chmod 750 /opt/acx-backend/secrets
   - systemctl daemon-reload
   - systemctl enable acx-backend.service
+  # GPU idle reaper timer (requires /etc/acx/gpu-reaper.env with GPU_INSTANCE_ID).
+  - mkdir -p /run/acx /etc/acx
+  - systemctl enable --now acx-gpu-idle-reaper.timer
   # Optional Free Tier-only keepalive pattern (disabled by default for PAYG):
   # - (crontab -l 2>/dev/null; echo "0 */6 * * * /usr/local/bin/acx-keepalive.sh") | crontab -
   - echo "ACX cloud-init bootstrap complete"

@@ -501,7 +501,7 @@ def test_async_full_queue_returns_503(monkeypatch):
     store = InMemoryDescribeJobStore(max_jobs=1)
     store.enqueue(tenant_id=uuid.UUID(TENANT_ID), media_id=1, image_bytes=b"filled", context=None)
     monkeypatch.setattr(describe_module, "_ASYNC_JOBS", store)
-    with _client() as client:
+    with _client(auth_tenant=TENANT_ID) as client:
         r = _post_async(client, TENANT_ID)
         assert r.status_code == 503, r.text
         assert "describe job queue is full" in r.json()["detail"]
@@ -556,7 +556,7 @@ def test_async_enqueue_and_poll_returns_tenant_scoped_job(monkeypatch):
         assert polled.status_code == 200, polled.text
         body = polled.json()
         assert body["job_id"] == job_id
-        assert body["status"] in {"final", "provisional", "running", "queued"}
+        assert body["status"] in {"final", "provisional", "running", "queued", "degraded"}
 
 
 def test_hosted_provider_fault_returns_502_with_reason():
@@ -574,3 +574,24 @@ def test_hosted_provider_fault_returns_502_with_reason():
         r = _post(client, TENANT_ID)
         assert r.status_code == 502, r.text
         assert "upstream exploded" in r.json()["detail"]
+
+
+def test_async_enqueue_requires_tenant_claim(monkeypatch):
+    """VLMFIX-S1-06: empty claim cannot enqueue unfetchable async jobs."""
+    monkeypatch.delenv("ACX_ASYNC_ALLOW_EMPTY_TENANT_CLAIM", raising=False)
+    with _client(auth_tenant=None) as client:
+        r = _post_async(client, TENANT_ID)
+        assert r.status_code == 400, r.text
+        assert "tenant claim required" in r.json()["detail"]
+
+
+def test_async_enqueue_allows_empty_claim_when_configured(monkeypatch):
+    monkeypatch.setenv("ACX_ASYNC_ALLOW_EMPTY_TENANT_CLAIM", "1")
+    from scene.interface_adapters.http.routers import describe as describe_module
+
+    store = InMemoryDescribeJobStore()
+    monkeypatch.setattr(describe_module, "_ASYNC_JOBS", store)
+    with _client(auth_tenant=None) as client:
+        client.app.dependency_overrides[get_gpu_description_adapter] = lambda: _ImmediateGpuAdapter()
+        r = _post_async(client, TENANT_ID)
+        assert r.status_code == 200, r.text

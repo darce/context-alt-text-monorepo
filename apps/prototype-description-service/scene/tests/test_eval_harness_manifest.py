@@ -57,6 +57,13 @@ def test_v2_requires_base_caption_key(tmp_path):  # S6-01
         load_manifest(_write_manifest(tmp_path, data))
 
 
+def test_v2_rejects_null_base_caption(tmp_path):  # VLMFIX-S3-03
+    data = _valid_manifest_dict()
+    data["entries"][0]["base_caption"] = None
+    with pytest.raises(ManifestError, match="null base_caption|base_caption"):
+        load_manifest(_write_manifest(tmp_path, data))
+
+
 def _write_manifest(tmp_path, data) -> str:
     path = tmp_path / "golden.json"
     path.write_text(json.dumps(data))

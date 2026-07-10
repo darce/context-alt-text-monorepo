@@ -34,7 +34,18 @@
       ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "expected_attachments": [
+        {
+          "fact_source": "identity",
+          "fact_label": "Caitlin Weaver",
+          "fact_id": "identity:cluster:cluster-caitlin-weaver",
+          "decision": "object",
+          "altitude": "object",
+          "visible": true,
+          "review_reason": null
+        }
+      ]
     },
     {
       "path": "mock_images/bea-nye.jpg",
@@ -56,7 +67,18 @@
       ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "expected_attachments": [
+        {
+          "fact_source": "identity",
+          "fact_label": "Bea Burke",
+          "fact_id": "identity:cluster:cluster-bea-burke",
+          "decision": "object",
+          "altitude": "object",
+          "visible": true,
+          "review_reason": null
+        }
+      ]
     },
     {
       "path": "mock_images/ccqw-erika.jpg",
@@ -80,7 +102,27 @@
       ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "expected_attachments": [
+        {
+          "fact_source": "identity",
+          "fact_label": "Caitlin Weaver",
+          "fact_id": "identity:cluster:cluster-caitlin-weaver",
+          "decision": "object",
+          "altitude": "object",
+          "visible": true,
+          "review_reason": null
+        },
+        {
+          "fact_source": "identity",
+          "fact_label": "Erika Hansen Miller",
+          "fact_id": "identity:cluster:cluster-erika-hansen-miller",
+          "decision": "object",
+          "altitude": "object",
+          "visible": true,
+          "review_reason": null
+        }
+      ]
     },
     {
       "path": "mock_images/kirstie-daniel-sunglasses.jpg",
@@ -102,7 +144,27 @@
       "easy_wrong": [],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "expected_attachments": [
+        {
+          "fact_source": "identity",
+          "fact_label": "Daniel Arce",
+          "fact_id": "identity:cluster:cluster-daniel-arce",
+          "decision": "object",
+          "altitude": "object",
+          "visible": true,
+          "review_reason": null
+        },
+        {
+          "fact_source": "identity",
+          "fact_label": "Kirstie Mccarrel",
+          "fact_id": "identity:cluster:cluster-kirstie-mccarrel",
+          "decision": "object",
+          "altitude": "object",
+          "visible": true,
+          "review_reason": null
+        }
+      ]
     },
     {
       "path": "mock_images/ryann-group-party.jpg",
@@ -124,7 +186,18 @@
       ],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "expected_attachments": [
+        {
+          "fact_source": "identity",
+          "fact_label": "Ryann Wiseman",
+          "fact_id": "identity:cluster:cluster-ryann-wiseman",
+          "decision": "object",
+          "altitude": "object",
+          "visible": true,
+          "review_reason": null
+        }
+      ]
     },
     {
       "path": "mock_images/maria-pool.jpg",
@@ -142,7 +215,8 @@
       "easy_wrong": [],
       "policy": {
         "recognition_enabled": false
-      }
+      },
+      "expected_attachments": []
     },
     {
       "path": "mock_images/liam-maloney-painting.jpg",
@@ -161,7 +235,18 @@
       "easy_wrong": [],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "expected_attachments": [
+        {
+          "fact_source": "identity",
+          "fact_label": "Liam Maloney",
+          "fact_id": "identity:0:Liam Maloney",
+          "decision": "dropped",
+          "altitude": "none",
+          "visible": false,
+          "review_reason": "unconfirmed_identity"
+        }
+      ]
     },
     {
       "path": "mock_images/ryann-bar.jpg",
@@ -181,7 +266,18 @@
       "easy_wrong": [],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "expected_attachments": [
+        {
+          "fact_source": "identity",
+          "fact_label": "Ryann Wiseman",
+          "fact_id": "identity:cluster:cluster-ryann-wiseman",
+          "decision": "object",
+          "altitude": "object",
+          "visible": true,
+          "review_reason": null
+        }
+      ]
     },
     {
       "path": "mock_images/mcm-planecrash.jpg",
@@ -201,7 +297,36 @@
       "easy_wrong": [],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "expected_attachments": [
+        {
+          "fact_source": "identity",
+          "fact_label": "Maria Correonero",
+          "fact_id": "identity:cluster:cluster-maria-correonero",
+          "decision": "dropped",
+          "altitude": "none",
+          "visible": false,
+          "review_reason": "face_not_detected"
+        },
+        {
+          "fact_source": "event",
+          "fact_label": "Garden picnic",
+          "fact_id": "event:garden-picnic",
+          "decision": "caption",
+          "altitude": "caption",
+          "visible": false,
+          "review_reason": null
+        },
+        {
+          "fact_source": "place",
+          "fact_label": "Summer garden",
+          "fact_id": "place:summer-garden",
+          "decision": "caption",
+          "altitude": "caption",
+          "visible": false,
+          "review_reason": null
+        }
+      ]
     },
     {
       "path": "mock_images/nina-machiavelli.jpeg",
@@ -214,7 +339,8 @@
       "easy_wrong": [],
       "policy": {
         "recognition_enabled": true
-      }
+      },
+      "expected_attachments": []
     }
   ]
 }

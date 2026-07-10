@@ -15,7 +15,6 @@ task plan:
     name.
 """
 
-import json
 from pathlib import Path
 
 import pytest
@@ -29,17 +28,18 @@ from scene.application.identity_merge import (
 )
 from scripts.eval_harness.caption_metrics import score_caption
 from scripts.eval_harness.face_metrics import ImageIdentities, identification_pr
+from scripts.eval_harness.manifest import load_manifest
+from scripts.eval_harness.phrase_boxes import load_phrase_boxes
 
 SEED_DIR = Path(__file__).parent / "seed"
 FACE_W, FACE_H = 0.06, 0.08  # synthetic face-box extent around each authored center
 
 
 def _load_scenes():
-    golden = json.loads((SEED_DIR / "golden.json").read_text())
-    boxes = json.loads((SEED_DIR / "phrase_boxes.json").read_text())
-    assert boxes["schema"] == "phrase_boxes/v1"
-    assert boxes["axis"]["origin"] == "top-left"
-    by_media = {e["media_id"]: e for e in golden["entries"]}
+    # S7-02: same v2 pin + schema as the live harness (not raw json.loads).
+    golden = load_manifest(str(SEED_DIR / "golden.json"))
+    boxes = load_phrase_boxes(SEED_DIR / "phrase_boxes.json")
+    by_media = {e.media_id: e.model_dump() for e in golden.entries}
     return [(scene, by_media[scene["media_id"]]) for scene in boxes["scenes"].values()]
 
 

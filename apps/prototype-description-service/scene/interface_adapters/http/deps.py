@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import socket
+from fnmatch import fnmatch
 from ipaddress import ip_address
 from urllib.parse import urlparse
 
@@ -13,18 +15,69 @@ from scene.config.settings import DescriptionSettings
 from scene.domain.description import DescriptionAdapterKind
 from scene.infrastructure.vlm.unavailable_adapter import UnavailableDescriptionAdapter
 
+_DEFAULT_GPU_ENDPOINT_ALLOWLIST = (
+    "localhost",
+    "acx-gpu-burst",
+    "*.oraclevcn.com",
+)
 
-def _is_private_gpu_endpoint(endpoint_url: str) -> bool:
+
+def _hostname_matches_allowlist(host: str, allowlist: tuple[str, ...]) -> bool:
+    host_lower = host.lower()
+    for entry in allowlist:
+        pattern = entry.lower()
+        if pattern.startswith("*.") and host_lower.endswith(pattern[1:]):
+            return True
+        if fnmatch(host_lower, pattern):
+            return True
+        if host_lower == pattern:
+            return True
+    return False
+
+
+def _resolved_addresses_are_private(host: str) -> bool:
+    try:
+        infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+    except socket.gaierror:
+        return False
+    if not infos:
+        return False
+    for info in infos:
+        sockaddr = info[4]
+        if not sockaddr:
+            return False
+        try:
+            addr = ip_address(sockaddr[0])
+        except ValueError:
+            return False
+        if not (addr.is_private or addr.is_loopback):
+            return False
+    return True
+
+
+def _is_private_gpu_endpoint(endpoint_url: str, *, allowlist: tuple[str, ...]) -> bool:
+    """Accept only private/loopback GPU endpoints under an authoritative allowlist.
+
+    VLMFIX-S1-02: non-allowlisted hostnames are rejected with no DNS fallback
+    (a private A record for evil-c2.example.com must not pass). Literal IPs
+    still require is_private/is_loopback. Allowlisted hostnames still require
+    every resolved address to be private/loopback.
+    """
     parsed = urlparse(endpoint_url)
+    if parsed.scheme not in {"http", "https"}:
+        return False
     host = parsed.hostname
     if host is None:
         return False
-    if host in {"localhost", "acx-gpu-burst"} or host.endswith(".local") or host.endswith(".internal"):
-        return True
+
+    effective_allowlist = allowlist or _DEFAULT_GPU_ENDPOINT_ALLOWLIST
     try:
         addr = ip_address(host)
     except ValueError:
-        return False
+        # Hostname path: allowlist is authoritative — no DNS for non-matches.
+        if not _hostname_matches_allowlist(host, effective_allowlist):
+            return False
+        return _resolved_addresses_are_private(host)
     return addr.is_private or addr.is_loopback
 
 
@@ -32,15 +85,21 @@ def get_gpu_description_adapter() -> DescriptionAdapter:
     """Resolve the provisional Qwen GPU profile, independent of the default profile."""
     settings = DescriptionSettings()
     spec = get_profile_spec(DescriptionProfile.GPU_QWEN30B)
-    if settings.gpu_endpoint_url and _is_private_gpu_endpoint(settings.gpu_endpoint_url):
+    if settings.gpu_endpoint_url and _is_private_gpu_endpoint(
+        settings.gpu_endpoint_url,
+        allowlist=settings.gpu_endpoint_allowlist,
+    ):
         from scene.infrastructure.vlm.gpu_remote_adapter import GpuRemoteDescriptionAdapter
 
         return GpuRemoteDescriptionAdapter(
             endpoint_url=settings.gpu_endpoint_url,
             model_id=spec.model_id or "unavailable",
             model_version=spec.model_version,
-            prompt_or_task_version=settings.prompt_or_task_version,
-            timeout_s=settings.generation_timeout_seconds,
+            prompt_or_task_version=settings.gpu_prompt_or_task_version,
+            connect_timeout_s=settings.gpu_connect_timeout_seconds,
+            read_timeout_s=settings.gpu_read_timeout_seconds,
+            api_key=settings.gpu_endpoint_api_key,
+            max_concurrent_calls=settings.gpu_max_concurrent_calls,
         )
     return UnavailableDescriptionAdapter(
         "ACX_GPU_ENDPOINT_URL must be set to a private/loopback in-tenancy endpoint for the GPU profile",
@@ -48,6 +107,49 @@ def get_gpu_description_adapter() -> DescriptionAdapter:
         model_id=spec.model_id or "unavailable",
         model_version=spec.model_version,
     )
+
+
+def _build_florence_small_adapter(settings: DescriptionSettings) -> DescriptionAdapter:
+    from scene.application.settings.vlm import VlmSettings
+    from scene.infrastructure.vlm import get_shared_local_cpu_adapter
+
+    spec = get_profile_spec(DescriptionProfile.FLORENCE_SMALL)
+    vlm = VlmSettings()
+    return get_shared_local_cpu_adapter(
+        model_id=spec.model_id,
+        model_revision=spec.model_revision,
+        model_version=spec.model_version,
+        max_image_edge_px=vlm.max_image_edge_px,
+        num_beams=spec.num_beams or 3,
+        max_new_tokens=spec.max_new_tokens or 512,
+    )
+
+
+def get_cpu_description_adapter() -> DescriptionAdapter:
+    """Resolve a LOCAL CPU-tier adapter for explicit tier=cpu routing.
+
+    VLMFIX-S1-07: never silently return a hosted adapter. When the default
+    profile is local CPU (seeded / florence_*), reuse it; otherwise attempt
+    Florence local CPU and fail closed if no local adapter can be resolved.
+    """
+    settings = DescriptionSettings()
+    spec = get_profile_spec(settings.profile)
+    if spec.adapter_kind is DescriptionAdapterKind.LOCAL_CPU:
+        return get_description_adapter()
+    florence_spec = get_profile_spec(DescriptionProfile.FLORENCE_SMALL)
+    try:
+        return _build_florence_small_adapter(settings)
+    except Exception as exc:  # noqa: BLE001 - degrade uniformly on import/setup failure
+        return UnavailableDescriptionAdapter(
+            (
+                f"explicit tier=cpu requires a local CPU adapter; default profile "
+                f"'{spec.profile.value}' is {spec.adapter_kind.value} and Florence "
+                f"fallback failed: {exc}"
+            ),
+            kind=DescriptionAdapterKind.LOCAL_CPU,
+            model_id=florence_spec.model_id or "unavailable",
+            model_version=florence_spec.model_version,
+        )
 
 
 def get_description_adapter() -> DescriptionAdapter:
@@ -105,18 +207,7 @@ def get_description_adapter() -> DescriptionAdapter:
 
     # Available local-CPU Florence profile (florence_small).
     try:
-        from scene.application.settings.vlm import VlmSettings
-        from scene.infrastructure.vlm import get_shared_local_cpu_adapter
-
-        vlm = VlmSettings()
-        return get_shared_local_cpu_adapter(
-            model_id=spec.model_id,
-            model_revision=spec.model_revision,
-            model_version=spec.model_version,
-            max_image_edge_px=vlm.max_image_edge_px,
-            num_beams=spec.num_beams or 3,
-            max_new_tokens=spec.max_new_tokens or 512,
-        )
+        return _build_florence_small_adapter(settings)
     except Exception as exc:  # noqa: BLE001 - degrade uniformly on any import/setup failure
         return UnavailableDescriptionAdapter(
             str(exc),

@@ -1,0 +1,84 @@
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xmlns:svg="http://www.w3.org/2000/svg" epub:prefix="index: http://www.index.com/" lang="en" xml:lang="en">
+<head>
+<title>INTRODUCTION</title>
+<link href="WileyTemplate_v5.5.css" rel="stylesheet" type="text/css"/>
+<meta content="urn:uuid:e0000000-0000-0000-0000-000006210893" name="Adept.expected.resource"/>
+</head>
+<body epub:type="frontmatter">
+<section>
+<header>
+<h1><span epub:type="pagebreak" id="Page_xxxi" role="doc-pagebreak" title="xxxi"/><a id="fm7"/>INTRODUCTION</h1>
+</header>
+<section><span id="flast02-sec-0001"/>
+<p id="flast02-para-0001">Dear reader, thank you for picking up this book! You have probably heard about WordPress already, the most popular self‐hosted content management system (CMS) and blogging software in use today. WordPress powers literally millions of websites on the Internet, including high‐profile sites such as TechCrunch and multiple Microsoft websites. What makes WordPress so popular is that it's free, open source, and extendable beyond limits. Thanks to a powerful, architecturally sound, and easy‐to‐use plugin system, you can customize how WordPress works and extend its functionalities. There are already more than 55,000 plugins freely available in the official plugin repository, but they won't suit all your needs or client requests. That's where this book comes in handy!</p>
+<p id="flast02-para-0002">As of this writing, we (Brad, Justin, and John) have publicly released more than 100 plugins, which have been downloaded millions of times, and that's not counting private client work. This is a precious combined experience that we are going to leverage to teach you how to code your own plugins for WordPress by taking a hands‐on approach with practical examples and real‐life situations you will encounter with your clients.</p>
+<p id="flast02-para-0003">The primary reason we wanted to write this book is to create a preeminent resource for WordPress plugin developers. When creating plugins for WordPress, it can be a challenge to find the resources needed in a single place. Many of the online tutorials and guides are outdated and recommend incorrect methods for plugin development. This book is one of the most extensive collections of plugin development information to date and should be considered required reading for anyone wanting to explore WordPress plugin development from the ground up.</p>
+</section>
+<section><span id="flast02-sec-0002"/>
+<h2 id="head-2-129">WHO THIS BOOK IS FOR</h2>
+<p id="flast02-para-0004">This book is for professional web developers who want to make WordPress work exactly how they and their clients want. WordPress has already proven an exceptional platform for building any type of site from simple static pages to networks of full‐featured communities. Learning how to code plugins will help you get the most out of WordPress and have a cost‐effective approach to developing per‐client features.</p>
+<p id="flast02-para-0005">This book is also for the code freelancers who want to broaden their skill portfolio, understand the inner workings of WordPress functionality, and take on WordPress gigs. Since WordPress is the most popular software to code and power websites, it is crucial that you understand how things run under the hood and how you can make the engine work your way. Learning how to code plugins will be a priceless asset to add to your résumé and business card.</p>
+<p id="flast02-para-0006">Finally, this book is for hobbyist PHP programmers who want to tinker with how their WordPress blog works, discover the infinite potential of lean and flexible source code, and learn how they can interact with the flow of events. The beauty of open source is that it's easy to learn from and easy to give back in turn. This book will help you take your first step into a community that will welcome your creativity and contribution.</p>
+<p id="flast02-para-0007"><span epub:type="pagebreak" id="Page_xxxii" role="doc-pagebreak" title="xxxii"/>Simply put, this book is for anyone who wants to extend the way WordPress works, whether it is for fun or profit.</p>
+</section>
+<section><span id="flast02-sec-0003"/>
+<h2 id="head-2-130">WHAT YOU NEED TO USE THIS BOOK</h2>
+<p id="flast02-para-0008">This book assumes you already have a web server and WordPress running. For your convenience, it is preferred that your web server runs on your localhost, as it will be easier to modify plugin files as you read through the book, but an online server is also fine.</p>
+<p id="flast02-para-0009">Code snippets written in PHP are the backbone of this book. You should be comfortable with reading and writing basic PHP code or referring to PHP's documentation to fill any gaps in knowledge about fundamental functions. Advanced PHP code tricks are explained, so you don't need to be a PHP expert.</p>
+<p id="flast02-para-0010">You will need to have rudimentary HTML knowledge to fully understand all the code. A basic acquaintance with database and MySQL syntax will help with grasping advanced subjects. To make the most of the chapter dedicated to JavaScript and Ajax, comprehension of JavaScript code will be a plus.</p>
+</section>
+<section><span id="flast02-sec-0004"/>
+<h2 id="head-2-131">WHAT THIS BOOK COVERS</h2>
+<p id="flast02-para-0011">As of this writing, WordPress 5.5 is around the corner, and this book has been developed alongside this version. Following the best coding practices outlined in this book and using built‐in APIs are keys to future‐proof code that will not be deprecated when a newer version of WordPress is released. We believe that every code snippet in this book will still be accurate and up‐to‐date for several years, just as several plugins we coded many years ago are still completely functional today.</p>
+</section>
+<section><span id="flast02-sec-0005"/>
+<h2 id="head-2-132">HOW THIS BOOK IS STRUCTURED</h2>
+<p id="flast02-para-0012">This book is, to date, one of the most powerful and comprehensive resources you can find about WordPress plugins. Advanced areas of the many WordPress APIs are covered, such as the REST API, cron jobs, and custom post types. This book is divided into three major parts. Reading the first five chapters is required if you are taking your first steps in the wonders of WordPress plugins. <a href="c06.xhtml">Chapters 6</a> through <a href="c09.xhtml">9</a> will cover most common topics in coding plugins, and understanding them will be useful when reading subsequent chapters. The remaining chapters cover advanced APIs and functions, can be read in any order, and will sometimes refer to other chapters for details on a particular function.</p>
+</section>
+<section><span id="flast02-sec-0006"/>
+<h2 id="head-2-133">CONVENTIONS</h2>
+<p>To help you get the most from the text and keep track of what's happening, we've used a number of conventions throughout the book.<span epub:type="pagebreak" id="Page_xxxiii" role="doc-pagebreak" title="xxxiii"/></p>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="flast02-para-0014"><b>WARNING</b> <i><i>Boxes with a warning label like this one hold important, not‐to‐be‐forgotten information that is directly relevant to the surrounding text.</i></i></p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="flast02-para-0015"><b>NOTE</b> <i>The note label indicates notes, tips, hints, tricks, and asides to the current discussion.</i></p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+<p>As for styles in the text:</p>
+<ul class="check" id="flast02-list-0001">
+<li id="flast02-li-0001">We <i>italicize</i> new terms and important words when we introduce them.</li>
+<li id="flast02-li-0002">We show keyboard strokes like this: Ctrl+A.</li>
+<li id="flast02-li-0003">We show filenames, URLs, and code within the text like so: persistence.properties.</li>
+</ul>
+<p>We present code in two different ways:</p>
+<pre id="flast02-code-0001">
+<code>We use a monofont type with no highlighting for most code examples.</code>
+<code><b>We use bold to emphasize code that is particularly important in the present context or to show changes from a previous code snippet.</b></code></pre>
+</section>
+<section><span id="flast02-sec-0009"/>
+<h2 id="head-2-134">SOURCE CODE</h2>
+<p>As you work through the examples in this book, you may choose either to type in all the code manually or to use the source code files that accompany the book. All the source code used in this book is available for download at <code><a href="http://www.wiley.com/go/prowordpressdev2e">www.wiley.com/go/prowordpressdev2e</a></code> on the Downloads tab.</p>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="flast02-para-0019"><b>NOTE</b> Because many books have similar titles, you may find it easiest to search by ISBN; this book's ISBN is 978‐1‐119‐66694‐3.</p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+</section>
+<section><span id="flast02-sec-0011"/>
+<h2 id="head-2-135">ERRATA</h2>
+<p id="flast02-para-0020">We make every effort to ensure that there are no errors in the text or in the code. However, no one is perfect, and mistakes do occur. If you find an error in one of our books, such as a spelling mistake or faulty piece of code, we would be grateful for your feedback. By sending in errata, you may save another reader hours of frustration, and at the same time, you will be helping us provide even higher‐quality information.</p>
+<p id="flast02-para-0021"><span epub:type="pagebreak" id="Page_xxxiv" role="doc-pagebreak" title="xxxiv"/>To find the errata page for this book, go to <code><a href="http://www.wiley.com">www.wiley.com</a></code> and locate the title using the Search box. Then, on the book details page, click the Errata link. On this page, you can view all errata that have been submitted for this book and posted by editors. If you don't spot “your” error on the Errata page, go to <code><a href="http://support.wiley.com/">support.wiley.com</a></code> and follow the directions to contact technical support and open a ticket to submit the error. We'll check the information and, if appropriate, post a message to the book's errata page and fix the problem in subsequent printings of the book.</p>
+</section>
+</section>
+</body>
+</html>

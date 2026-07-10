@@ -86,6 +86,8 @@ class DescribeMediaServiceTest extends TestCase
             'cached'                 => false,
             'duration_ms'            => 3,
             'retention_class'        => 'retain_all',
+            'tier'                   => 'provisional_cpu',
+            'result_generation'      => 0,
         );
     }
 
@@ -629,6 +631,27 @@ class DescribeMediaServiceTest extends TestCase
         $this->queueHttpResponse(array(
             'response' => array('code' => 200, 'message' => 'OK'),
             'body'     => '{"caption":"oops","cached":false}',
+        ));
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $result = $this->controller->describe_media($req);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('invalid_description_envelope', $result->get_error_code());
+        $this->assertSame(502, $result->get_error_data()['status'] ?? null);
+    }
+
+    public function testMissingTierFieldsInUpstreamEnvelopeReturns502(): void
+    {
+        // HARM-02: backend regression dropping VLM-3 wire fields must 502, not pass through.
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+
+        $body = $this->validBackendBody(42);
+        unset($body['tier'], $body['result_generation']);
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($body),
         ));
 
         $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');

@@ -51,6 +51,52 @@ def _elapsed_ms(start: float) -> int:
     return max(0, int((time.perf_counter() - start) * 1000))
 
 
+def build_visual_facts_envelope(
+    *,
+    result: AdapterResult,
+    adapter: DescriptionAdapter,
+    tenant_id: uuid.UUID,
+    media_id: int,
+    image_bytes: bytes,
+    context: Mapping[str, Any] | None,
+    tier: DescriptionResultTier,
+    result_generation: int,
+    duration_ms: int,
+    retention_class: RetentionClass = RetentionClass.RETAIN_ALL,
+) -> dict[str, Any]:
+    """Build the 17-field VisualFactsResponse envelope from an adapter result."""
+    image_hash = compute_image_hash(image_bytes)
+    context_hash = compute_context_hash(context)
+    provider = _PROVIDER_FOR_ADAPTER[adapter.kind]
+    response = VisualFactsResponse(
+        tenant_id=str(tenant_id),
+        media_id=media_id,
+        image_hash=image_hash,
+        context_hash=context_hash,
+        adapter=adapter.kind,
+        model_id=adapter.model_id,
+        model_version=adapter.model_version,
+        prompt_or_task_version=adapter.prompt_or_task_version,
+        visual_facts=VisualFacts(
+            caption=result.caption,
+            objects=list(result.objects),
+            ocr_text=result.ocr_text,
+        ),
+        alt_text_draft=result.alt_text_draft,
+        context_used=ContextUsed(sources=list(result.context_sources), applied=result.context_applied),
+        provider_disclosure=ProviderDisclosure(
+            provider=provider,
+            left_service_boundary=provider is ProviderMode.HOSTED,
+        ),
+        cached=False,
+        duration_ms=duration_ms,
+        retention_class=retention_class,
+        tier=tier,
+        result_generation=result_generation,
+    )
+    return response.model_dump(mode="json")
+
+
 def _phrase_boxes_to_json(phrase_boxes) -> list[dict[str, Any]] | None:
     if not phrase_boxes:
         return None

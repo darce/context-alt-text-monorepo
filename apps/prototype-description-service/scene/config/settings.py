@@ -16,6 +16,12 @@ from scene.config.profiles import DescriptionProfile
 _DEFAULT_MAX_IMAGE_BYTES = 25 * 1024 * 1024  # 25 MiB, matches recognition multipart cap.
 
 
+def _parse_allowlist(raw: str | None) -> tuple[str, ...]:
+    if not raw:
+        return ()
+    return tuple(part.strip() for part in raw.split(",") if part.strip())
+
+
 class DescriptionSettings(BaseModel):
     """Adapter selection and request caps for the describe route."""
 
@@ -30,10 +36,24 @@ class DescriptionSettings(BaseModel):
     )
     allowed_description_mime_types: tuple[str, ...] = ("image/jpeg", "image/png", "image/webp")
     prompt_or_task_version: str = Field(default_factory=lambda: os.environ.get("ACX_DESCRIPTION_PROMPT_VERSION", "1"))
+    gpu_prompt_or_task_version: str = Field(default_factory=lambda: os.environ.get("ACX_GPU_PROMPT_VERSION", "3"))
     model_version: str = Field(default_factory=lambda: os.environ.get("ACX_DESCRIPTION_MODEL_VERSION", "1"))
     # Generous default so the slow local_cpu (Florence) inline POC is not prematurely
     # 504'd (~30-95s incl. cold load); seeded never approaches it. Tune via env for prod.
     generation_timeout_seconds: float = Field(
         default_factory=lambda: float(os.environ.get("ACX_DESCRIPTION_TIMEOUT_SECONDS", "180"))
     )
+    gpu_connect_timeout_seconds: float = Field(
+        default_factory=lambda: float(os.environ.get("ACX_GPU_CONNECT_TIMEOUT_SECONDS", "5"))
+    )
+    gpu_read_timeout_seconds: float = Field(
+        default_factory=lambda: float(os.environ.get("ACX_GPU_READ_TIMEOUT_SECONDS", "175"))
+    )
+    gpu_max_concurrent_calls: int = Field(
+        default_factory=lambda: int(os.environ.get("ACX_GPU_MAX_CONCURRENT_CALLS", "4"))
+    )
     gpu_endpoint_url: str | None = Field(default_factory=lambda: os.environ.get("ACX_GPU_ENDPOINT_URL") or None)
+    gpu_endpoint_api_key: str | None = Field(default_factory=lambda: os.environ.get("ACX_GPU_ENDPOINT_API_KEY") or None)
+    gpu_endpoint_allowlist: tuple[str, ...] = Field(
+        default_factory=lambda: _parse_allowlist(os.environ.get("ACX_GPU_ENDPOINT_ALLOWLIST"))
+    )

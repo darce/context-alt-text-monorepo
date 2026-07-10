@@ -1,0 +1,2066 @@
+                                      Jan Tschichold :
+
+
+
+
+                                Asymmetric Typography
+
+                                    K I N G S T O N P O LY T E C H N I C L I B R A RY
+
+
+
+
+                                      Published by Faber & Faber Limited
+                                      24 Russell Square, London in co-operation with
+                                      Cooper & Beatty, Limited, Toronto
+
+
+Portrait of the Author, 1962,
+
+
+
+
+           by Frank Bollinger
+                                                                              Contents
+                                                                                          9 Translator’s foreword
+                                                                                         11 Introduction by W.E.Trevett
+                                                                                         12 Author’s note
+                                                                                         15 Historical survey
+                                                                                         20 Decorative typography
+                                                                                         24 The meaning and aim
+                                                                                            of new or functional typography
+                                                                                         28 Types
+                                                                                         36 Hand composition and machine composition
+                                                                                         37 The word
+                                                                                         40 The line
+                                                                                         43 Emphasis in the line
+                                                                                         44 Leading, lengths of lines and grouping
+                                                                                         48 Indentation and line endings
+Translated by Ruari McLean from Typographisce Gestaltung, Basle, 1935.                   50 Type Sizes, headings and type mixtures
+Design by Jan Tschichold
+                                                                                         54 Jobbing work
+Typography by Cooper & Beatty, Limited
+                                                                                         58 The use of space
+First published in England in mcmlxvii                                                   62 Tables
+by Faber & Faber Limited, 24 Russell Square, London                                      66 Rules
+in co-operation with Cooper & Beatty, Limited, Toronto, Canada                           67 Colours
+Printed and bound in Toronto, Canada, by T.H. Best Printing Company Limited
+                                                                                         68 Paper
+All Rights reserved
+Copyright, Cooper & Beatty, Limited, Toronto, 1967                                       72 Posters
+                                                                                         72 Richness of form
+                                                                                         78 Abstract art
+                                                                                         84 Typography, photography and drawings
+                                                                                         87 The book today
+                                                                                         94 Other books by the author in print
+    Translator’s foreword
+
+This book, written in German, was first published in Basle, Switzerland,
+in 1935 under the title Typographische Gestaltung. It is extremely surpris-
+ing that it has had to wait until now for publication in English - particu-
+larly since there are so few works in English expressing any philosophy
+of typography and no satisfactory typographer’s manual. (Numerous
+books have appeared on a ‘how to do it’ level, mostly showing, by their
+own design, that the author did not know how to do it. The late Oliver
+Simon, who did know, wrote only an Introduction to Typography.)
+   Jan Tschichold’s work (as that of several other distinguished Conti-
+nental designers) was first introduced to England by a firm of Bradford
+printers and publishers, Messrs Lund, Humphries, under the direction
+of Eric Humphries and the late Eric Craven Gregory. They invited Tschi-
+chold to come to England to do various assignments for them (including
+the design of the Penrose Annual, Vol.4o, in 1938) and held an exhibi-
+tion of Tschichold’s work at 12 Bedford Square, the London office of
+Lund, Humphries, in November 1935. He was then thirty-three. Tschi-
+chold’s teachings are still, it is interesting to note, followed by this print-
+ing firm and in the work of their consultant designer, Herbert Spencer,
+fsia.
+   In 1938 at the age of twenty-one, I joined the press of Lund, Hum-
+phries at Bradford and found various examples of his work and writings
+among an accumulation of papers on the desk allotted to me in the com-
+posing-room. These so impressed me that on my vacation in 1939 I
+went to Basle just to meet Tschichold - about a fortnight before the
+outbreak of the second world war. Tschichold was more conscious of
+the approaching shadows than I, as we sat in a Bale garden restaurant
+beside the Rhine.
+
+
+                                                             9
+   It was not until 1947 that I came to know him more intimately, for I                  To translate German writing on art is never easy: words like Form,
+was at Penguin Books when Allen Lane brought him over (against near-                    Gestalt and Ordnung are hydra-headed and defy capture. I hope I have
+ly everyone’s advice except Oliver Simon’s) to undertake the vast job of                produced a version which at least typographers will understand. While
+overhauling the entire Penguin typography when war economy stand-                       any faults in the English are certainly mine, I can say that the translation
+ards could be relaxed. I learned more practical typography during the                   has been most carefully read and approved by Jan Tschichold himself
+few months I worked in the room next to Tschichold, than I had learned                  and owes much to his help.
+from any other source since I had first picked up a type gauge. He was a                                                                           Ruari McLean
+brilliant exponent and I wished I had been able to learn from him earlier.
+Among other things I learned, while working on Puffin Picture Books,
+how many expedients a skilful designer can use to save artwork that
+has been drawn, for some reason, in the wrong size. I do not remember
+Tschichold once asking an artist to go away and do it again.
+   It was a fascinating experience to watch at close quarters the progress
+of what was undoubtedly one of the biggest jobs any typographer has                         Introduction by W.E.Trevett
+ever been given. It was a battle, for it meant imposing rules for the sake
+of consistency on many of the oldest and proudest printing firms in
+Great Britain, who did not always see the need for conforming to these                  The publication of this book is a tribute to the never-ending dialogue
+rules. It took three years, but it was won, to the benefit of the entire                between fellow typographers, and a demonstration that all the hot air
+printing trade in this country, as well as to that of the design of Penguins.           engendered can, on rare occasions, raise a balloon.
+   Tschichold has been criticised because he preached a revolutionary                      Wherever typographers gather the subject of Jan Tschichold has to
+gospel, then changed his mind and returned to convention. This is                       come up. He is the Rosetta Stone of our field. Without his experiments
+not quite true. He did preach a new and revolutionary approach, and in                  in both symmetric and asymmetric design we would all be back, fid-
+this book, Asymmetric Typography, in which he expounds it, he said, be-                 dling around with the Private Press Movement or artistic rule-bending.
+cause he was then young and believed it, that it was the only one. He                   Without his positive commitments we would be amateur gentlemen
+later saw that it was not the only way, but one of two, since all typog-                doing pretty little variations on whatever period in the history of typog-
+raphy must be either asymmetrical or symmetrical. But asymmetry re-                     raphy happened to catch our fancy.
+mains a perfectly good way. It has not found much favour in England,                       He fascinates us. His seeming rejection of the ideas put forward in this
+perhaps, because so few English people understood it: asymmetric typog-                 present book, caused a turbulence among designers that has yet to settle.
+raphy is much more difficult to practise than it looks. But when success-               How could he? And how could he then do those classical solutions so
+fully accomplished, it is most satisfying.* The principles of asymmetric                maddeningly well?
+typography as stated by Tschichold in 1935 are still true and sound.                       We probably will never know and that is the magic that has turned
+They have not been, as far as I know, stated elsewhere in English. That                 him into what Mildred Constantine calls “almost a legend”.
+is why this book is still very much worth publishing in English today.                     Around the campfires of typographers Typographische Gestaltung has
+                                                                                        become the great underground book of the century. It has the cachet of
+   * For examples, in book design, cf., History of the Piano by Ernest Closson, 1947,
+                                                                                        the catalogue for the 1913 Armoury Show-everybody talks about the
+designed by Anthony Froshaug, and The Architecture of Sir Christopher Wren, by
+Viktor Furst, 1956, designed by Herbert Spencer.                                        paintings but few have read the original statement.
+
+
+              10                                                                                                                                   11
+    So four years ago it occurred to my colleagues, Allan Fleming and
+Franklyn Smith, that we perhaps publish an English edition. 1962 was a
+very good year for occurrences, since we later discovered, through the
+author, that Ruari McLean had started to work on a translation to be
+titled Asymmetric Typography.
+    If you are asking yourself why it took four years to reach publication
+date, then you are obviously neither a practicing typographer nor an
+expert in trans-oceanic correspondence. I now happen to be both for          Asymmetric Typography
+which I will remain eternally grateful.
+                                              W.E. Trevett, President
+                                               Cooper & Beatty, Limited
+
+
+
+
+    Author’s note
+
+This is a virtually integral translation of my textbook Typographische
+Gestaltung of 1935. Passages of value and interest for Swiss and German
+readers only have, however, been omitted. These deviations and a
+slight but healthy condensation here and there are the only respects in
+which this version differs from the original. For the illustrations which
+are not always the same as in the original edition, I have selected the
+best documentary examples of the period. Precision and brevity in
+formulation are the principal virtues of a writer.
+  It was no easy task. My thanks are due to the translator and the pub-
+lisher, who had to wait so long for the completion of this book.
+                                                        Jan Tschichold
+
+
+
+
+             12
+    Historical survey
+The new typography, which was introduced to the world of printing by
+Elementare Typographie, a special issue of a periodical edited by the pres-
+ent writer (Leipzig 1925), originated about 1920 as a protest against the
+enfeebled printing of the pre-war period. From about 1830, one style of
+typography followed another, each based on different kinds of orna-
+ment or new and often technically unsound principles. For a time, scien-
+tific books alone maintained a sound, if modest, style by following the
+traditional rules of classical French typography as closely as possible. But
+their pages became gradually greyer, and today (1935) scientific books
+are generally poor in visual qualities. The fault for this state of affairs lay
+in the deterioration of type design due to the struggle for novelty, and
+the continual mechanization of composition methods. By the end of the
+nineteenth century, the roman and fraktur types in everyday use had
+lost every graphic quality, as can be seen from the many still in use today.
+Everything, including legibility, was sacrificed for an extreme sharp-
+ness. As a result they became monotonous, grey and spiky. The vitality
+in the work of the great typographers Firmin Didot and Bodoni, who
+had laid down the classic rules of typography (see page 22), was
+gradually lost sight of by those who came after them - they copied their
+style but missed their real meaning.
+    About 1890, William Morris, the leader of the Arts and Crafts move-
+ment, recognized the dearth of good types, and set about ‘modifying
+the old types according to his own imagination. Today we believe it
+would have been better to modify the imagination and adapt it to the
+best of the old types, which had been developed with the utmost skill
+and foresight’ (Karel Teige). He found his inspiration in the work of the
+early printers, whose civilized craftsmanship he held up as a contrast to
+
+
+                                                             15
+the barren materials of his own day. He was looking for a new tradition,
+but forgot that sound traditions are always based on a complete unders-
+tanding and acceptance of reality. His battle against the comparatively
+harmless machines of the nineties was lost from the start, so that his in-
+fluence was restricted to a small circle. His great moral appeal lay in his                            M A N U E L P R AT I Q U E
+striving for honesty in the use of materials and for the humanization of
+                                                                                                                  ET ABRÉGÉ
+work. For that, the world even today owes much to this great English-
+man. He was right, too, to go back to the incunabula but wrong in copy-
+ing their externals instead of their spirit. They were in their own day a
+                                                                                                                          DE          LA
+
+
+
+
+step forward, a bold seizing of new opportunities. Morris’s copying of
+them was a backward step, a kind of aesthetic renaissance, a shirking of
+reality.                                                                                       TYPOGRAPHIE
+   About the same time there occurred the Freie Richtung (‘ Free Typogra-
+phy’) movement in typography, anticipating the slightly later Jugendstil                                       FRANÇAISE.
+(‘Art Nouveau’) which emerged about 1900. These movements, out-
+side our scope to analyze here, arose from the need to improve typogra-
+phy by freeing it from the rules then restricting it. However, they too                                                PA R    M.
+                                                                                                                                      . BRUN
+were soon cluttered up with their own conventions and ornaments. The
+only fresh thing about them was certain experiments in the use of white
+space and the arrangement of lines. But the time was not yet ripe for the
+concept of organic form. The new possibilities, which could not yet be
+clearly formulated, were not properly understood by most of those us-
+ing them. The anxiety for order of some kind led (before 1912) to the
+box and block styles, those lifebelts for non-swimmers. No style or fash-
+ion in the whole history of printing has ever been such a complete denial
+                                                                                                                  A             PA R I S,
+of the true nature of Gutenberg’s invention as the block layout, which
+is discussed more fully elsewhere in this book. It took such a hold on                        CHEZ    FIRMIN   DIDOT          PÈRE             ET         FILS,   LIBRAIRES,
+
+printing that it is still cropping up, often hardly recognizable.                                               RUE       JACOB,N.O                 24.
+   Attempts were also made between 1910 and 1925 to revive German
+typography by means of new and more expressive ‘fancy typefaces’                                                               1825
+
+(Künstlerschriften) but with little success, as can be judged from type-
+founders’ specimens of the period. Then as now, they were not a true
+test of a type-face. Good typography depends only secondarily on types,
+primarily on the way they are used. Even the most skilful compositor is
+rarely able to fit his type perfectly into a given shape without the for-
+bidden recourse of altering copy. Such alterations are possible in prepar-    Title of M. Brun’s textbook. Full size. Didot typography. 1825.
+
+
+
+             16                                                                                                                                                         17
+     ing type specimen sheets, which is why they cannot be taken seriously
+     as solutions to typographic problems.
+         Thanks chiefly to Carl Ernst Poeschel, about 1910, the classical style of
+     typography was recognized as by far the best model. Poeschel followed
+     the style of the late eighteenth and early nineteenth centuries, and at the
+     same time the aufgeloste Satzweise (a composition letter-spaced through-
+     out) came in, which although admittedly historical in inspiration, was
+     the first step made in the right direction for a long time. He revived
+     (with E. R. Weiss, if I am not mistaken) the use of Walbaum roman and
+     Unger fraktur, two very good types dating from about 1800 and long
+     forgotten. Poeschel has never had enough credit for his acuteness in this.
+     His revival of these two types alone ensure him a place of honour in
+     the history of printing. He also re-introduced fat-faced romans and
+     Breitkopf fraktur.
+         The new acceptance of centred or axial typography (challenged only
+     by an occasional experiment in asymmetry) brought a return to the
+     classical ornament which was needed to give symmetrical work indi-
+     viduality. All centred layouts are based on the same plan, and the use
+     of bold type for variety was still forbidden. The use of ornament was
+     limited, at best, to certain combinations of rules as borders. Poeschel’s
+     work of this kind was outstanding and is still to be admired today.
+         After the war, typography became wilder and wilder. The Expres-
+     sionist movement, which had begun before the war, influenced it for a
+     time, but the influence ended with the death of the movement. The
+     period after Didot ended in chaos - complete absence of rules - a mass
+     of types which had outlived their fashion and became valueless -and a
+     generation of compositors who had lost their integrity as craftsmen and
+     degenerated into mere labourers or apes of artists. What was badly
+     needed was a new typography which would not depend on ready-made
+     layouts and would express the spirit, the life and the visual sensibility of
+     its day.
+
+
+
+     Opposite: Example of German typography (1922) before the advent of Jan
+     Tschichold’s New Typography. Reduced. Disgust with such degenerate type faces
+     and arrangements led the author to attempt to eradicate them entirely.
+
+
+
+18                                                              19
+    Decorative typography                                                                  Even today, centred typography cannot do without ornament, espe-
+                                                                                       cially in jobbing work; it is required to give distinction, even in an ad-
+                                                                                       vertisement. Centred typography always lacks individual character, so
+Until the year 1920, all typography was based on the principle of cen-                 that one advertisement tends to look like another. Rules and ornaments
+tring. The only exceptions were some pages before 1500 and a few ex-                   are therefore brought in to make work look different. This is so, even in
+periments made between 1895 and 1905.                                                  the best English printing of the present day, in which, under the influence
+    In centred typography, pure form comes before the meaning of the                   of Stanley Morison, there has been a revival of traditional styles, and
+words.* It is true that centring lines was first made a practical possi-               which affords by far the best examples of modern decorative typog-
+bility by the technique of type composition; it was rarely practised by                raphy. But the success of this revival in book design does not make it
+the scribes. But centring is only one of the possibilities open to the                 truly contemporary or suitable for everything.
+typographer; the lines can be placed in any position. In writing, the posi                 Fairness demands that the advantages of centred typography should
+tion once decided on cannot be altered.                                                be stated. A tolerable composition can be achieved by the use of various
+    Centred typography is an inflexible style, as can be seen in old title-            type sizes used one below the other, all centred, and it does not always
+pages and rubrications. The aim is the purely ornamental and entirely                  matter if the exact length of line differs slightly from the pencil layout.
+unfunctional style of the Renaissance and its offshoots, the Baroque,                  This is very important for the compositor, who does not have every
+Rococo and later styles. The canon of beauty was the human body and                    conceivable size of type at his disposal, but only a few, the size of which
+its proportions were applied to every problem of design. This resulted                 he cannot alter. A line of letters will make a definite length and to drive
+in patterns, but not in organic design. The idea of symmetry stood in                  this out by letter-spacing will spoil the appearance of the words. He
+the way of all true solutions to typographic problems. A close parallel is             must either accept it or choose another size of type. (Only a letterer and,
+afforded by architecture between 1500 and 1900, when windows were                      since recently, the Uhertype photo-composition machine,* can adjust
+really only ornaments on the façade. The rooms behind with their vari-                 letters to any size desired. The discipline of being confined to a few sizes
+ous purposes had to be arranged to fit the façade. The results were high-              is, however, an advantage for typographic design.)
+ly impractical and many people still suffer from them. In typography,                      So the virtue of decorative typography is the easy arrangement of
+the rigid necessity of centring all lines makes a good solution infinitely             lines of fortuitous length, in addition to the rigidity of silhouette aimed
+more difficult to achieve. Because decorative appearance is always the                 at, which often greatly increases the difficulty of design. It is important
+first consideration, axial or centred typography may also be called                    to bear this virtue in mind.
+Decorative Typography. The difficulties caused by having to conform                        In the early days of printing, up to 1750, and especially in title-pages,
+to the Renaissance system cannot always be seen from the finished re-                  lines were broken quite fortuitously, and the rest of a word or a phrase
+sult. The wording, as well as the design, of many a beautiful centred                  would be continued in a smaller size or quite different type - convincing
+title-page has had to be invented by the designer, because the original                proof that it was only the appearance, not the sense, that mattered. In
+wording could not be made to fit the design.                                           the eighteenth century, rationalism brought with it the idea that words
+                                                                                       which belonged together should be set in the same type and that word-
+*The gentle reader is requested to bear in mind these were the author’s opinions       and line-breaks should be made according to sense. This was also the
+in 1935. Today I do not entirely agree with the statements in this chapter, no         time of the great names in the history of typography - Fournier le Jeune,
+matter how effective they have been as a basis for the creation of a new style. The
+harsh rejection of the previous style, however, is a condition for the creation of a      * For which the author designed the type faces, 1933-35. See illustration,
+different one. J.T., 1965.                                                             page 33.
+
+
+
+               20                                                                                                                                 21
+Firmin Didot, Bodoni, Goschen - who demonstrated principles in their            were designed chiefly in Germany, on the principles of ‘Unity of Type’,
+printing which still hold good today. Their kind of work has never been         and could not be mixed with other types, arose from the dissatisfaction
+surpassed and leaves a deep impression on the mind of a careful student.        felt by men of taste with the types of the late nineteenth century. It had
+The present writer owes much to a study of their works and has learned          not yet been realized that it was not so much the part (the type itself but
+a great deal from the manuals of Henri Fournier (Traité de la typographie,      the whole (the arrangement of the types) that needed reorganizing.
+Paris 1825) and M. Brun (Manuel Pratique de la typographie française, Paris        Most, if not all, of these types have the disadvantage of being suitable
+1825)-not about the What, but about the How. Every page of these                only for particular occasions and not for all purposes. Their use is limited
+masters is a work of art. The difference of their aims from our own             beforehand by their design and is laid down by their designers and speci-
+should not blind us to their pure typographic qualities. We therefore           men sheets. To use them without their appropriate ornaments is not
+recommend a careful study of M. Brun’s title (page 17).                         easy. Most of them are out of date now. There are some exceptions
+   Both Bodoni and Didot were concerned not only with the exact                 among those that have appeared since 1912, based on the studies of clas-
+lengths of their lines, but with fitting the exact colour of the type (in       sical typography initiated (in Germany) by Carl Ernst Poeschel and
+shades of darker or lighter black) to the composition of the page. Their        Emil Rudolf Weiss. They have fewer idiosyncrasies and are suitable for
+imitators unintelligently tried to produce this effect by letter-spacing,       many kinds of work.
+and this practice was also eventually misused to alter word- and line-             A greater step forward was the revival, in the years just before and
+length. Widely letter-spaced and closely set lines appeared together on         after the first world war, of classical type faces of all periods between
+the same page. This artistic letter-spacing (rarely used in English-speak-      1470 and 1825. The types of Walbaum, Unger, Garamond, Bodoni,
+ing countries) is an unpleasant legacy of the nineteenth century which          Didot and other famous punch cutters were, in Germany, either recast
+we cannot accept. It destroys the shapes of words, and is disturbing and        from the original matrices or re-cut. A whole armoury of sound and en-
+unfunctional.                                                                   during type faces was made available.
+   An insistence on clarity at all costs in the grouping of words on a title-      With these types, however, came a conception that each one must
+page made it more difficult for the compositor to achieve the traditional       be used only in the style of the period in which it had originated. The
+kind of ‘vase-symmetry’ on title-pages; and a wrongly conceived ration-         result was a new ‘historicalism,’ another version of the imitation of old
+alization of form became the typographer’s aim.                                 styles which William Morris had started in the eighties. There is no ob-
+   The nineteenth century and the invention of lithography brought in           jection to the use of good classical types, but to use them strictly in their
+several good type faces and a large number of bad ones, which marred            original way is feeble and unnecessary.
+the appearance of typography for many years. Eventually printers had               The study of incunabula has been much recommended since 1890.
+at their disposal innumerable types, many of them being cut in one size         The books of this period are closer to the spirit of the new typography
+only, and no possibility of using them properly.                                than books of the Renaissance and post-Renaissance periods. They
+   So, at the beginning of the twentieth century, a remedy was seen in          demonstrate the uncompromising functionalism of book design: for
+using, in a particular job, different sizes of one and the same type face       example, its visual organization by means of different sizes of type and
+only. This was called Einheit der Schrif (‘Unity of Type’). Bold and even       strong contrasts of shape and colour (achieved in those days by initials
+italic faces were no longer recognized as belonging to the same family.         and decorations) and the natural ending of pages, without spacing-out
+This movement was, on the whole, based on sound new principles                  or compressing.
+which the best typography has followed ever since.                                 Gutenberg’s Bible is not however a useful model. It is beautiful, but
+   The new type faces which between William Morris’s day and 1914               for material reasons it cannot help us - lines with only thirty-three let-
+
+
+
+             22                                                                                                                            23
+ters cannot be satisfactorily set now. Also, in Gutenberg’s day, Latin             The technique of modern typography must also adapt itself to the
+words could be freely abbreviated by up to six letters, with a recognized      speed of our times. Today, we cannot spend as much time on a letter-
+symbol of abbreviation placed above the word. By these means Guten-            heading or other piece of jobbing as was possible even in the nineties.
+berg could set very short lines perfectly and without much trouble. If         We need new rules, simpler than the old yet producing good results.
+the admirers of Gutenberg’s pages understood Latin, they could not pos-        The rules must be fewer and simpler, yet more flexible. The new rules
+sibly hold up the two Bibles as models. We are not allowed to abbrevi-         must above all apply to machine composition, which is being used more
+ate words, and for that reason alone Gutenberg’s Bible cannot be imi           and more for jobbing work. The old hand compositor and the modern
+tated today, even if we had his types. However, other books from the           machine must work together and all rules must fit both methods equal-
+same period can still be a useful inspiration.                                 ly. The rules must absolutely permit any given job to be entirely set by
+                                                                               machine. The writer does not concede perfection to machine composi-
+                                                                               tion. He believes that the best hand composition preserves certain graphic
+                                                                               qualities which can never be completely copied by the machine, because
+                                                                               the subtlest refinements of letter-spacing and word-spacing are beyond
+                                                                               it. Admittedly these may not be very important but we must aim at
+    The meaning and aim                                                        perfection. All progress in machine composition is directed to improv-
+       of the new or functional typography                                     ing the final product, and the model will probably always be composi-
+                                                                               tion by hand.
+                                                                                   Machines are now an essential part of printing production and it would
+More matter is being printed and published today than ever before and          be unrealistic to ignore them. We must accept them with their limita-
+every publisher of an advertisement, pamphlet or book, expects his ma-         tions and hope that the quality of their production will gradually become
+terial to be read. Publishers and, even more so, readers want what is im-      nearer to that of handwork.
+portant to be clearly laid out. They will not read anything that is trouble-       Printing processes must also be critically examined. For many kinds
+some to read, but are pleased with what looks clear and well arranged,         of work, letterpress will certainly give the finest and most beautiful re-
+for it will make their task of understanding easier.                           sults although there are many other jobs for which gravure or offset are
+   For this reason, the important part must stand out and the unimpor-         more suitable. But to try to make letterpress look like gravure is wrong
+tant must be subdued. Distinctions of this kind cannot be achieved with-       Even a moderately well printed letterpress halftone is a more faithful
+in the framework of the old typography, which tends to present a uni-          reproduction than the most careful gravure, whose velvety qualities ap-
+form appearance of grey. Bold or extra bold faces, which more than             peal to the public. The real merit of gravure is to make long runs look
+anything else make for clarity and emphasis, are considered ugly. In           good yet be cheap.
+addition, everything must be centred, an arrangement which rarely                  But attempting to give letterpress the appearance of gravure, particu-
+gives the clearest appearance. It tends to make all jobs look alike, al-       larly by using the highly uncertain ‘duotone’ inks, degrades its own in-
+though they have in fact quite different natures and purposes, and re-         herent qualities. On the other hand, gravure and offset are particularly
+quire different solutions. Thus the rules of the old typography contradict     useful to the modern typographer, since they permit him to make big
+the principles of fitness for purpose in design. Unsymmetrical arrange-        enlargements, reverse type, and set on a slant, all difficult and more cost-
+ments are more flexible and better suited to the practical and aesthetic       ly by letterpress. Our objective must always be to produce lucid design
+needs of today                                                                 by the most straight-forward means.
+
+
+
+             24                                                                                                                           25
+    Successful design, a visual or aesthetic creation, is an end-product in   Prospectus for the author’s first book Die neue Typographie (Berlin, 1928).
+printing, not the realization of an external design-concept. Nor does it      Black on yellow paper. Original size 297 by 210 mm.
+consist only in the right disposal of techniques and clarity or organiza-
+tion - i.e., in fitness in the widest sense. Within the limits imposed by
+the sense of the words and the purpose of the job, decisions of a purely
+visual and aesthetic nature have to be made. A work of typography
+                                                                                                                                                                 VORZUGS- ANGEBOT
+must be not only suitable for its purpose and easy to produce, but also
+beautiful. Typography as an art is close to the graphic arts and painting         Im VERLAG DES BILDUNGSVERBANDES der Deutschen Buchdrucker,
+of today. After five centuries of effort in the shaping of typography, its        Berlin SW 61, Dreibundstr. 5, erscheint demnachst:
+
+
+level has been raised, and recent years have made its progress and direc-         JAN TSCHICHOLD
+                                                                                  Lehrer an der Meisterschule fur Deutschlands Buchdrucker in Munchen
+
+tion much clearer. We can, today, develop the methods of the new
+typography, extend its use, and carry its activities into new areas where         DIE NEUE TYPOGRAPHIE
+                                                                                  Handbuch fur die gesamte Fachwelt
+it rarely operated before.                                                        und die drucksachenverbrauchenden Kreise
+
+
+    Typography, a two-dimensional graphic art, can learn much from                Das Problem der neuen gestaltenden Typographie hat eine lebhafte               INHALT DES BUCHES
+modern painting (on which more is said in a later chapter, page 78)               Diskussion bei allen Beteiligten hervorgerufen. Wir glauben dem Bedurf-
+                                                                                  nis, die aufgeworfenen Fragen ausfuhrlich behandelt zu sehen, zu ent-          Werden und Wesen der neuen Typographie
+                                                                                                                                                                 Das neue Weltbild
+                                                                                  sprechen, wenn wir jetzt ein Handbuch der NEUEN TYPOGRAPHIE
+about rhythm and proportion, two qualities which have never been
+                                                                                                                                                                 Die alte Typographie (Ruckblick und Kritik)
+                                                                                  herausbringen.                                                                 Die neue Kunst
+                                                                                                                                                                 Zur Geschichte der neuen Typographie
+                                                                                                                                                                 Die Grundbegriffe der neuen Typographie
+
+more important in our work than they are today.                                   Es kam dem Verfasser, einem ihrer bekanntesten Vertreter, in diesem
+                                                                                  Buche zunachst darauf an, den engen Zusammenhang der neuen
+                                                                                  Typographie mit dem Gesamtkomplex heutigen Lebens aufzuzei-
+                                                                                                                                                                 Photographie und Typographie
+                                                                                                                                                                 Neue Typographie und Normung
+
+
+
+    Since the freeing of typography from ornament, every element in a
+                                                                                                                                                                 Typographische Hauptformen
+                                                                                  gen und zu beweisen, das die neue Typographie ein ebenso notwendi-             Das Typosignet
+                                                                                  ger Ausdruck einer neuen Gesinnung ist wie die neue Baukunst und               Der Geschaftsbrief
+                                                                                                                                                                 Der Halbbrief
+
+job has taken on a new importance; and the interaction of their visual
+                                                                                  alles Neue, das mit unserer Zeit anbricht. Diese geschichtliche Notwen-
+                                                                                                                                                                 Briefhallen ohne Fenster
+                                                                                  digkeit der neuen Typographie belegt weiterhin eine kritische Dar-             Fensterbriefhallen
+                                                                                  stellung der alten Typographie. Die Entwicklung der neuen Male-                Die Postkarte
+
+
+relationships has a greater importance for the general effect than before.        rei, die fur alles Neue unserer Zeit geistig bahnbrechend gewesen ist,         Die Postkarte mit Klappe
+                                                                                                                                                                 Die Geschaftskarte
+                                                                                  wird in einem reich illustrierten Aufsatz des Buches leicht faslich dar-       Die Besuchskarte
+                                                                                  gestellt. Ein kurzer Abschnitt ,,Zur Geschichte der neuen Typogra-             Werbsachen (Karten, Blatter, Prospekte, Kataloge)
+
+The harmonious relation of the parts, being always different, will give           phie" leitet zu dem wichtigsten Teile des Buches, den Grundbegriffen
+                                                                                  der neuen Typographie uber. Diese werden klar herausgeschalt,
+                                                                                                                                                                 Das Typoplakat
+                                                                                                                                                                 Das Bildplakat
+                                                                                                                                                                 Schildformate, Tafeln und Rahmen
+
+
+every job an individual, yet pleasing appearance, and one which is
+                                                                                  richtige und falsche Beispiele einander gegenubergestellt. Zwei wei-           Inserate
+                                                                                  tere    Artikel   behandeln    „Photographie  und   Typographie"    und        Die Zeitschrift
+                                                                                                                                                                 Die Tageszeitung
+                                                                                  „Neue Typographie und Normung".                                                Die illustrierte Zeitung
+
+integrated with its meaning and purpose; instead of the beautifying of                                                                                           Tabellensatz
+                                                                                                                                                                 Das neue Buch
+
+
+
+work by the fortuitous addition of ornament and other alien elements.
+                                                                                  Der Hauptwert des Buches fur den Praktiker besteht in dem zweiten              Bibllographie
+                                                                                                                                                                 Verzeichnis der Abblidungen
+                                                                                  Teil    „Typographische      Hauptformen"    (siehe  das   nebenstehende       Register
+                                                                                  Inhaltsverzeichnis). Esfehlte bisher an einem Werke, das wie dieses Buch
+                                                                                  die schon bei einfachen Satzaufgaben auftauchenden gestalterischen
+                                                                                  Fragen in gebührender Ausfuhrlichkeit behandelte. Jeder Teilabschnitt
+                                                                                  enthält neben allgemeinen typographischen Regeln vor allem die
+                                                                                  Abbildungen aller in Betracht kommenden Normblatter des Deutschen
+                                                                                  Normenausschusses, alle andern (z. B. postalischen) Vorschriften und
+                                                                                  zahlreiche Beispiele, Gegenbeispiele und Schemen.
+
+
+
+
+                                                                                                                                                                                                                         typ. Schichold
+                                                                                  Fur jeden Buchdrucker, insbesondere jeden Akzidenzsetzer, wird „Die
+                                                                                  neue Typographie" ein unentbehrliches Handbuch sein. Von nicht
+                                                                                  geringerer Bedeutung ist es fur Reklamefachleute, Gebrauchsgraphker,
+                                                                                  Kaufleute, Photographen, Architekten, Ingenieure und Schriftsteller,
+                                                                                  also fur alle, die mit dem Buchdruck in Beruhrung kommen.
+
+
+
+
+                                                                                                                                              Das Buch enthalt uber 125 Abbildungen, von
+                                                                                                                                              denen etwa ein Viertel zweifarbig gedruckt Ist,
+                                                                                                                                              und umfast gegen 200 Seiten auf gutem Kunst-
+                                                                                                                                              druckpapier. Es erscheint im Format DIN A 5 (148 X
+                                                                                                                                              210 mm) und ist biegsam in Ganzleinen gebunden.
+                                                                                                                                              Preis bei Vorbestellung bis 1. Juni 1928:                              5.00 RM
+                                                                                                                                              durch den Buchhandel nur zum Preise von                                6.50 RM
+
+
+                                                                                                                                                                                Bestellschein umstehend
+
+
+
+
+             26                                                                                                                                                                                      27
+    Types
+                                                                                                                               JAN TSCHICHOLD
+
+                                                                                                                               DIE NEUE TYPOGRAPHIE
+We aim at simplicity: we therefore require simple and clear type faces.
+                                                                                                                               EIN HANDBUCH FUR ZEITGEMASS SCHAFFENDE
+
+
+
+
+The closest to our modern needs is ‘grotesque’ or ‘sans serif?. Sans serif
+first appeared in the early part of the nineteenth century in English type
+specimen books. A. F. JohnsonI cites a specimen of William Caslon IV,
+which appeared in London in 1816, as being the first in which a line is
+set in large sans serif capitals, which are there called ‘Egyptian’. In 1832
+the London typefounders Thorowgood and Figgins showed sans serifs
+in their new specimen books. Thorowgood called his ‘Grotesque,’ and
+Figgins invented the name ‘Sans Surryphs. The one name suggests that
+the type looked extraordinary, the other means ‘without serifs’. Today,
+sans serif no longer looks ‘grotesque’ but the latter name is still used.                                                      BERLIN
+                                                                                                                               VERLAG
+                                                                                                                                        1928
+                                                                                                                                         DES   BILDUNGSVERBANDES   DER   DEUTSCHEN   BUCHDRUKER
+
+
+    Sans serif, although it is no longer new, is so simple and clear that it
+is by far the best all-purpose type for today and will remain so for a long
+time to come,2 It was so much used between 192s and 1930 that many
+                                                                                 Title of the author’s textbook Die neue Typographie (Berlin, 1928). Much reduced.
+became prejudiced against it and thought it was a passing fashion. But
+the new typography is not a fashion; it is a natural way of expression for
+a period and has already outlasted what could be called fashion. The
+new rules made for it have not been departed from, but only refined and          colour in the black-and-white scale and contributes most easily to the
+extended. Revolutions in other spheres have brought no new styles or             abstract image aimed at by the new typography. Its freedom from tra-
+different tendencies, only local modifications. The excessive and clumsy         dition and historical ties makes it easier to use without inhibition. But to
+use of sans serif, too often in the style of the older typography, has no        use it properly requires a fine visual sense that is not at all common. Re-
+doubt contributed to the prejudice against it, but this prejudice is already     sults are often disappointing when sans serif is used by the unskilled.
+past.                                                                            Too many people also try to bring the severity of modern architecture
+    The idea, spread by the type foundries, that sans serif ’s day is over and   into typography, without noticing modern architecture’s lyric qualities.
+that we must find a new type to take its place (which will, of course, be        Typography and architecture are not closely related and are each gov-
+the latest fashion-product of the foundries) is quite wrong. Sans serif is       erned by their own quite different laws. The new typography is not the
+the type of the present day and its unique range of usefulness is being          child of modern architecture; both are descended from non-representa-
+confirmed daily by all those who have been most critical in the search           tional                                                             painting.
+for the best type.                                                                  The use of bold and extra bold or light in one job (as first practised,
+    Sans serif is more expressive than any other face, because its wide          I think, by the Munich School of Master Printers) avoids the old-fash-
+range of weights (light, medium, bold, extra bold, italic) gives every           ioned clumsiness that results from the ‘Unity of Type theory (in the old
+1. Type Specimens and Their Uses. Paper and Print, London, Winter, 1934.          The following pages show the inner cover and the facing page of a small text
+2. This being the author’s opinion in 1935.                                      book by the author. Original size 297 by 210 mm. Reduced.
+
+
+
+               28                                                                                                                                                    29
+                                                                                                                                     Einleitung                                                                             1
+                                  Akademischer Verlag Dr. Fritz Wedekind & Co., Stuttgart, Kasernenstr. 58,
+                                  Alle Rechte, insbesondere das der Übersetzung in fremde Sprachen, vor-                               Dieses Buch lehrt die Technik des typografischen Skizzierens und gibt
+                                  behalten. Nachdruck, auch einzelner Teile, verboten.                                               eine erorobte Methode eines technisch und formal einwandtreien Satzauf
+                                  Satz und Druck von Chr. Scheufele in Stuttgart. Printed in Germany.                                -baus. Bisher gab es weder das eine noch das andere in zeitgemäßer Fas-
+                                  Copyright 1932 by Akademischer Verlag Dr. Fritz Wedekind & Co., Stuttgart.                         sung. Die Satzskizze wird in den älteren Lehrbüchern recht stiefmütterlich
+                                                                                                                                     behandelt. Die dort beschriebenen Techniken sind entweder überhaupt
+                                                                                                                                     unbrauchbar oder ganz ungenügend. Im Satzaufbau kennen diese Lehr-
+                                                                                                                                     bücher nur die Methode des Mittelachsensatzes, der veraltet ist. Die mei-
+                                  Dies Buch gehört
+                                                                                                                                     sten alten Regeln des Akzidenzsatzes sind heute nur bedingt anwendbar.
+                                                                                                                                     In der Aufstellung allgemein brauchbarer neuer Kunstregeln sah der Ver-
+                                                                                                                                     fasser daher eins seiner Hauptziele. Die vorliegenden Regeln geben eine
+                                                                                                                                     sichere Grundlage, auf der man leicht gut und schnell arbeiten kann.
+                                                                                                                                       Das vorliegende Buch wendet sich in erster Linie an Akzidenzsetzer,
+                                                                                                                                     vor allem an solche, die es werden wollen. Daneben ist es als Hilfsbuch
+                                                                                                                                     für Bildungskurse und als Unterrichtsbuch für Fachverwandte gedacht, die
+
+     Von Jan Tschichold früher:   Elementare Typografie (Typografische Mitteilungen, 1925/10). Vergriffen.
+                                                                                                                                     sich mit dem Entwurf typografischer Arbeiten befassen müssen (Grafiker,
+                                  Die Neue Typografie. Berlin 1928. Vergriffen.                                                      Werbefachleute und Hersteller). Mit voller Absicht beschränkt es sich auf
+                                  Foto-Auge. 76 Fotos der Zeit (mit Franz Roh). Stuttgart 1929,                                      die Darlegung von Grundregeln. Erst wenn man sie wirklich beherrscht,
+                                  Eine Stunde Druckgestaltung. Stuttgart 1930,                                                       kann man versuchen, in der Linie der Gedanken von Seite 18 zum Entwurf
+                                  Schriftschreiben für Setzer. Frankfurt am Main 1931.                                               schwierigerer Aufgaben überzugehen. Unsere Regeln sind das Ergebnis
+                                                                                                                                     langjähriger Bildungsarbeit an der Meisterschule für Deutschlands Buch-
+                                                                                                                                     drucker in München. Es lag nicht im Sinne des Verfassers, lediglich neue
+                                                                                                                                     Regeln aufzustellen. Nicht alle sind neu; manche sind sogar sehr alt und
+                                                                                                                                     fast vergessen. Entscheidend ist ihre Brauchbarkeit. Die Begrenzung der
+                                                                                                                                     Möglichkeiten durch die Ausschaltung des Sperrens und des Versalsatzes
+                                                                                                                                     bedeutet in Wirklichkeit eine Erweiterung: auf dem verkleinerten Gebiet
+                                                                                                                                     kennt man sich besser aus, als in der Unendlichkeit allzuvieler, zum Teil
+                                                                                                                                     sinnloser Moglichkeiten. Vor allem nehmen die neuen Regeln Rucksicht
+                                                                                                                                     auf die Technik und die Möglichkeiten des Maschinensatzes. Guter Ma-
+                                  Die Normformate                                                                                    schinen-Akzidenzsatz läßt sich ohne Skizze kaum herstellen.
+                                                                                                                                       Typografisches   Skizzieren   ist   etwas   anderes   als   Schriftschreiben.
+                                  Normblatt Din 476 (3. Ausgabe April 1930). Das Normblatt erklärt die Grundsätze der Format-        Schriftschreiben weckt lediglich das Verständnis für die besondere Form-
+                                  normung und ihre Anwendungsweise. Die Normformate sind nachfolgend im Auszug aufgeführt,           bildung der verschiedenen Schriftarten. Dazu bedient man sich der Redis-
+                                  Bezeichnungsbeispiel: Der Viertelbogen der Reihe A (Einheitsbogen) heißt Format A 4.               und der Rundschriftfedern. Skizzieren, d. h. den typografischen Satzauf-
+                                                                                                                                     bau vor der technischen Ausführung festlegen, kann man mit diesen Federn
+                                                                                                                                     nicht. Dazu braucht man den Bleistift. Doch ist Schriftschreiben eine
+                                                                                                                                     zweckmäßige Vorübung für das Skizzieren.
+                                                         Kurzname                  Kurzname                  Kurzname
+                                                                      Reihe A                   Reihe B                  Reihe C
+                                      Benennung                     Vorzugsreihe              Vorzugsreihe                             Wer skizzieren will, muß zunächst die Grotesk in ihren verschiedenen
+                                                                        mm                        mm                      mm
+                                                                                                                                     Fetten skizzieren lernen. Daher zeigt dieses Buch an erster Stelle eine
+                                                                                                                                     moderne Grotesk in vier Fetten. Die Gradverzeichnisse werden gegeben,
+                                                                                                                                     damit man, auch wenn keine Schriftprobe zur Verfügung steht, feststellen
+                                     Doppelbogen          A          610 x 860      B          730 x 1030     C         670 x 950
+                                                                                                                                     kann, wie groß das Bild des einen oder andern Grades ist. (Die kleinen
+                                                                                                                                     Grade bis Cicero soll man jedoch mit der Zeit aus dem Gedächtnis skizzieren
+                                   Vierfachbogen         A 0         841 x 1189    B 0        1000 x 1414    C 0        917 x 1297   lernen.) Mit voller Absicht wurden schmale und breite Schnitte der Grotesk
+                                   Doppelbogen           A 1         594 x 841     B 1         707 x 1000    C 1        648 x 917    nicht gezeigt. Das sind Notbehelfe, die als Grundschriften jedenfalls nur
+                                   Bogen                 A 2         420 x 594     B 2         500 x 707     C 2        458 x 648    selten verwendet werden konhen.
+                                   Halbbogen             A 3         297 x 420     B 3         353 x 500     C 3        324 x 458
+                                                                                                                                       Ehe man von den Ubungen der Grotesk zu den älteren Schriften, der
+                                   Vietelbogen           A 4         210 x 297     B 4         250 x 353     C 4        229 x 324
+                                   Blatt (Achtelbog.)    A 5         148 x 210     B 5         176 x 250
+                                                                                                                                     Garamond usw. übergeht, sollte man sich in der Herstellung von Skizzen mit
+                                                                                                             C 5        162 x 229
+                                   Halbblatt             A 6         105 x 148     B 6         125 x 176     C 6        114 x 162    der Grotesk als Grundschrift üben. Dabei wende man die nun folgenden Satz-
+                                   Viertelblatt          A 7          74 x 105     B 7          88 x 125     C 7         81 x 114    regeln an, die eine brauchbare Grundlage für einen ordentlichen, klaren und
+                                   Achtelblatt           A 8          52 x 74      B 8          62 x 88      C 8         57 x 81     vor allem auch zeitsparenden Satz bilden. Ein Abschnitt nennt auch ver-
+                                                         A 9          37 x 52      B 9          44 x 62
+                                                                                                                                     schiedene Herstellungsweisen für Negativschrift, die heute öfter vorkommt.
+                                                         A 10         26 x 37      B 10         31 x 44
+                                                         A 11         18 x 26      B 11         22 x 31
+                                                                                                                                     Erst wer im Skizzieren der Grotesk ganz sicher ist und gute Skizzen in
+                                                         A 12         13 x 18      B 12         15 x 22                              dieser Schriftart machen kann, kann das Skizzieren weiterer Schriften ver-
+                                                         A 13          9 x 13      B 13         11 x 15                              suchen zu erlernen. Die den Satzregeln folgenden Gradübersichten sind
+
+
+
+
+30                                                                                                                                                                                                                     31
+narrow sense: only one kind of decoration). Sans serif italic will also            Jan Tschichold, 1934: Title of a prospectus for the Uhertype photo-composing machine.
+                                                                                   The type used is also by the author. Original size 297 by 210 mm.
+greatly enrich matter set in sans serif, and give it a new and pleasing
+subtlety.
+    It is not easy to say today which is the best sans serif. The old sans
+serifs of the nineteenth century are unobtrusive and well-balanced. But
+to our eyes today they seem a little old-fashioned. They are ‘mediocre’
+and lack charm. The proportions of the letters are better in a new sans                                                    UHERTYPE CO LTD. Glaris (Switzerland) Office: Zurich, 15 Talstrasse
+
+serif such as Gill, the use of which will often give to a job that final de-
+gree of distinction.
+    Because contrast is perhaps the most important element in all modern
+design and because sans serif alone on every occasion would become
+boring, many other types are also used in modern typography. Their
+use enhances the effect of the sans, and the use of the sans gives them new
+life. The need for variety quickly led to their use and they were success-
+fully used in a new way. It is possible to use the best traditional types if,
+in their use, the rules of the new typography are observed. The best
+
+
+                                                                                                   UHERTYPE
+roman types we have are the classical ones; the best new ones are only
+cautious variations of the old, while most that try to be new are un-
+pleasing. The clear drawing and noble simplicity of the classical types
+make them as useful for the new typography as for the old. They are
+not subject to fashion and therefore less expensive than several ‘designed’
+types of recent years. The most important of the classical types are:
+Old-face roman: Bembo (Monotype), Garamond, Caslon, Baskerville;
+Modern roman: Bodoni, Walbaum, Didot, Fat Face;
+                                                                                                   Photo Composing technic
+    Black letter: Old Black, Fleischmann Dutch Black letter, Schwabacher.                          for Job Work in Offset Photogravure and Book Printing
+
+    Egyptian is also one of the historic types; it first appeared in England
+before 1820. New ways of using this type are enriching typography.
+    Egyptian in headlines gives a job set in classical types a less traditional
+look - its bold, angular outline gives a lively contrast to nearly every
+roman.
+    Egyptian can only be used by itself in small quantities. It is tiring to
+read in long passages because of the rather heavy serifs. Here too a
+change of weight is necessary. For instance, if light or medium is used
+for the text, bold or semi-bold should be used for emphasis and headlines.
+    Egyptian, however, is not today’s type par excellence, as sans serif is, and
+it certainly can never replace sans. Egyptian can rarely be used as a text
+
+
+
+              32                                                                                                                                                            33
+face because it is difficult to read. Its best use is as a display type with
+romans, most of which will mix very well with good Egyptians. The
+ideal for modern use would be a classical Egyptian cut in the various
+weights.
+   Under no circumstances can sans serif and Egyptian be used together.
+If Egyptian is used for display, the text must always be a roman. If sans
+serif is used as text, the display will usually be a bolder sans but never
+an Egyptian.
+   Many other types can be used effectively in the new style, if chosen
+with care and contrasted. It would be impossible to mention them all
+here in addition to those already given. One must be guided by the feel-
+ing of the work.
+   I will not leave the subject of type without stressing the importance of
+a planned range of type faces. If a printer is setting up initially, the first
+type to get is a sans serif in at least normal weight and medium bold,
+but preferably with light and bold as well, and better still, with light and                                        ● vom 16, januar bis 14, februar 1937
+ordinary italic. For a roman, classical type faces such as Garamond, Jan-
+son, Baskerville, Scotch Roman or Walbaum should be considered with
+their italics and medium bold versions where available. In addition, a
+Fat Face is required (for use with Bodoni, Bodoni Bold is a good substi-
+tute). After that would come an Egyptian and a script or a modern cur-                kunsthalle basel
+
+sive. Condensed types are seldom needed and far too often used un-
+necessarily.
+   Additions to a basic range must not be made haphazardly or ac-                                          konstrucktivisten
+cording to customers’ whims. The existing type families must be in-
+creased (provided they have not become out of date) with italics and
+bolds in all weights and sizes. Different sans serif types should never be                                          van doesburg
+                                                                                                                    domela
+mixed. Either the old sort should be thrown away and an entirely new                                                eggeling
+
+range introduced, or the old extended with its own italics and bolds.                                               gabo
+
+   It is painful for the trained eye to see Venus mixed with, say, Futura,                                          kandinsky
+                                                                                                                    lissitzky
+ or any other juxtaposition of sans serifs of different design.                                                     moholy-nagy
+
+   For a long time the use of lower case without upper case has been a                                              mondrian
+                                                                                                                    pevsner
+vexed question. The abolition of upper case, however, cannot be recom-                                              taeber
+mended. From time to time printers may have an opportunity to set a                                                 vantongerloo
+
+job entirely in lower case and must be content with that.                                                           vordemberge
+                                                                                                                    u.a.
+
+
+
+
+                                                                                 Poster by author. 1937.
+
+             34
+    Hand composition and machine composition                                 space should normally be set, except before A and J and after full stops
+                                                                             and commas. A specific facility of machine composition is the unlimited
+                                                                             repetition of a word or words to shade an area or give some other
+We said before that the quality of the best hand setting could never         special effect. Occasionally, using the Monotype, background tints can be
+quite be attained by machine composition and that hand work would            made with neutral typographical signs.
+long remain the model. Such a high standard is rarely required or               The rules of the new typography apply equally well to machine and
+achieved by machine composition, which is normally used for straight-        hand composition. Above all, the most complicated jobbing work must
+forward body matter which then has to be worked over by hand. This           be capable of being set easily by machine. This is much simpler for us
+is a serious hazard for the education of hand compositors. Many of them      today, with our new freedoms and obligations. All my rules have been
+never learn good composition, the basis of all good printing, while          designed to this end.
+correct spacing is more and more neglected. Managers and overseers
+should give this particular attention today in order to save hand com-
+positors from becoming mere adjuncts to the composing machine. Both
+hand and machine compositors must work to exactly the same rules. It
+ is painful to see body matter with thick spaces and display lines - which
+                                                                                 The word
+are the more important for the general appearance of a job - with ens.
+    The space after a full point should normally be the regular word space   The correctly set word is the starting-point of all typography. The let
+of the line. Em spaces, last remnant of the degenerate typography of the     ters themselves we have to accept - they are shaped by the type cutter
+second half of the nineteenth century, break up the appearance of the        or the type designer. The relationship of the letters is the job of the dres-
+page and should not be tolerated.                                            ser in the foundry. He has to achieve the right regularity and rhythm
+    ‘Close spacing’ is not so difficult to set by machine as is often made   and his work is as important as the engraver’s. Many good types have
+out. On the other hand care must be taken to avoid excessively close         recently been spoiled by tight dressing. This forces the compositor to
+spacing. Nothing wider than thick spaces should ever be used in jobbing.     make good the larger sizes with letter spaces. Apart from this, letter-
+Machine composition does not always have to copy hand composi-               spacing is always harmful. The letter-spacing of capitals, although tech-
+tion; the hand compositor can now and again learn from the machine.          nically the same, is not considered as letter-spacing in this sense. A
+Limitations of machine composition gave us the reduction or entire           normally set word is always the most legible; letter-spacing only reduces
+omission of rules in tabular matter. Dot leaders can often be omitted        its legibility. The unspaced, evenly flowing word is also the most beau-
+too. Changes of weight, from ordinary to bold or italic in the same line,    tiful. It is a compact shape, an essential requirement in the new typog-
+without change of size, should be practised more often by the hand           raphy. It is also more economical - letter-spacing takes time, is expensive
+compositor. The necessary restrictions of machine composition are often      and weakens the word-shape. For all of these reasons it is unacceptable
+an advantage; the complete freedom of the composing stick is often           in the new typography. It should not be used to artificially alter the
+ harmful.                                                                    length of a word just to fill a specific space, nor for emphasis in ordinary
+    Often ditto marks, like lines of dots, can be avoided. The repeated      text setting.
+word in full looks better than quotation marks, in place of which short          A design must not depend on a line in a chosen type size being a cer-
+dashes, as - , should be used.                                               tain length. A layout which depends on lines being of a predetermined
+    Between quotation marks and the word to which they apply, a hair         length will rarely look natural.
+
+
+             36                                                                                                                         37
+   In ordinary text setting, including sans serif, emphasis is obtained by
+the use of italic and medium bold. This avoids a feebleness which would
+be out of keeping with our times, and returns to the classic use of type
+of the incunabular period and of Didot and Bodoni.
+
+    Until now we have been dealing only with matter set in upper and
+lower case, which is the most legible and should be regarded as the
+norm. Words should rarely be set in capitals. In the new typography
+display lines are set in bold, rather than capitals. Capitals are too preten-
+tious and uncontemporary in general character and also more difficult
+to read than lower case. In addition they are decidedly more difficult to
+set. Faultless letter-spacing to achieve an even rhythm is absolutely nec-
+essary. Too much letter-spacing is better than too little - a fact often
+neglected even by the type foundries. Words in capitals with no letter-
+spacing are even harder to read than with too much. Excessive letter-
+spacing in capitals is nearly as bad as lower case set without word spacing.
+The only correct letter-spacing of capitals is when the letters with holes
+- C, D, O, - and those with space outside - A, J, L, P, T,V, W, Y - merge
+inconspicuously into their words without standing out. Too much
+letter-spacing will also diminish legibility, so that correct spacing of
+any word set in capitals is fixed within rather rigid limits. Excessively
+spaced words in caps-that is words that appear to be letter-spaced - are
+as harmful as letter-spaced lower case. Sometimes it is preferable to set
+short words in caps. Then they are easier to read than a lower case
+setting which may make unpleasing shapes.
+    Figures in body matter must be treated like capitals and letter-spaced
+slightly, not only because of the space on each side of the figure I cast
+on an en body, but because of the too great width of the other figures
+when cast, as they usually are, on en bodies.
+    These rules apply to display setting just as much as they do to body
+matter. Display setting also must not be letter-spaced nor contain many                                                      photo and type
+words in capitals. If capitals are necessary they must be faultlessly letter-
+spaced. Unspaced capitals are ugly and difficult to read.
+
+Opposite: Front page of an invitation
+to participate in a typographical competition.
+Munich, 1932. Wording translated.
+
+
+                                                                                a competition arranged by the munich section of the german compositors’ association
+                38
+    The Line
+
+Impeccable spacing is the touchstone for good setting in book and also
+jobbing work, where it tends to be more and more neglected.
+    Close spacing is the rule for all good setting. Very short lines should
+be spaced with at least middle spaces so that the spacing is not con-
+spicuous.
+                                                                                        GRAPHIC REVIEW
+    In hand setting, word-spacing should always be optically equal, espe-
+cially in headings. There should be no extra space after full points. In
+long lines, widely set, hair spaces may be inserted before commas and
+hyphens. Parentheses also require hair spaces. The em dash should only
+be used in tabular matter - otherwise the en dash, set with word spaces,
+should be used. The best quotation marks for book and jobbing work
+are the single ones “’. They must in the same job, in all sizes of the same
+type, be of the same font. They must be separated from the word to which
+they apply by a hair space, except before A and J and in very short lines,
+when the space may be omitted. A hair space must be used before su-
+perior reference numbers in text matter, where it is almost always left out.
+After single letters like ‘R.S.V. P.’, ‘G. H.Q., ‘G. B. Smith’ and figures
+like ‘Vols. 1, 2, 3, and 4,’ a smaller space than the normal word space
+should be used. On the composing machine these refinements often can-
+not be made. Where the leading is greater than the body size of the type
+and in lines surrounded by much white space, the spacing should be a
+little wider than the examples given above, which apply to normal lead-
+ing; the white space may make thick spacing look a little too tight.
+    All these rules apply to every kind of jobbing, whether set by hand or
+on the machine, and should be carefully observed in all prominent or
+displayed lines. The driving out of lines to fit a predetermined measure,                                                 4
+at the cost of correct spacing, must be avoided; even short ‘widows’
+are preferable.
+    Lines of less than five words cannot be well spaced if justified. Lines
+of longer than twelve words are hard to read, especially without lead-
+ing. These are basic rules which should be remembered in every kind of
+work including jobbing. Lines of eight to ten words should be the gen-
+                                                                               Jan Tschichold: Cover of a review. 1936.
+eral aim.                                                                      Title of the original: Grafisk Forum.
+
+
+
+             40                                                                                                               41
+   It is better to set very short lines unjustified like verse with fixed spac                                               Emphasis in the line
+-ing, instead of with too little and too wide spacing alternately, or even
+with letter-spacing through a whole line.
+   For the separation of word groups in a line in jobbing work, em                                                       The purpose of emphasis in a line is to give additional prominence to
+quads (or wider or narrower spaces) may be used.                                                                         one or more words, a need which occurs in both body matter and job-
+                                                                                                                         bing work. The size of type used in the line should never be changed.
+                                                                                                                            In body matter emphasis is made according to the sense of the words,
+                                                                                                                         by using italic (slight emphasis), semi-bold (for key words and promi-
+                                                                                                                         nent emphasis), or, occasionally, by using both together.
+                                                                                                                            A slightly greater word space is required at the points of change-over
+                                                                                                                         from roman to bold.
+                                                                                                                            In newspaper setting, letter-spacing should be avoided even in short
+                                                                                                                         lines widely set, as it always looks ugly. Slight degrees of emphasis may
+                                                                                                                         have to be avoided. If there is absolutely no alternative, then hair spaces
+                                                                                                                         should be used - but semi-bold and bold types must never be letter-
+                                                                                                                         spaced since this contradicts their purpose.
+An advertisement for an art auction, designed
+                                                                                                                            In English-speaking countries small capitals exist as well as italic, and
+by the author. 1932.                                                                                                     are often very useful. They can be used instead of capitals for headings.
+                                                                                                                         For this reason semi-bold is not yet much used there.
+                                                                                                                            In display lines also, emphasis is often necessary in the line. Italic and
+                                                                                                                         semi-bold can be used for this and very often so is bold. The type size
+          Paul Graupe Berlin W9                           Bellevuestrasse 7
+                                                                                                                         should not be changed. If the n’s of the two kinds of type are not iden-
+                                                                                                                         tical in height (which may happen if the two types are not of the same
+                                                                                                                         origin) a change of size is preferable.
+                                                                                                                            Only in the most important display lines can a word be set in a larger
+                            Am 17. und 18. Oktober 1932:                                    Auktion 105                  type size for extra emphasis. In that case a clear change of size is desira-
+                                                                                                                         ble and the emphatic word may also be set in bold. It is most important
+          Bücher                                        Die grafische Sammlung               Sammlung                    that the words in different sizes should align perfectly. This expedient is
+          des 15. bis 20. Jahrhunderts                                       Rudolf Tewes         Paul Ephraim, Berlin
+                                                                                                                         awkward for the compositor and should be used very sparingly. More
+          Inkunabeln                                    Französische Mesiter                 Gemälde
+          Holzschnittbücher                             des 19. und 20. Jahrhunderts:        Handzeichnungen             than two sizes should never be used in one line.
+          Erstausgaben                                           Daumier, Degas, Manet,      neuerer deutscher Meister      Within the limits laid down in the later chapter on type-mixing, em-
+          Luxus- und Pressendrucke                               Picasso, Renoir
+                                                                                                                         phasis may also be obtained in exceptional circumstances by use of a
+          Kunstliterature                               Eine umfassende
+                                                        Toulouse-Lautrec-Sammlung                                        different type face.
+
+                              Illustrierter   Katalog      auf      Wunsch
+
+
+
+
+                42                                                                                                                                                                  43
+    Leading, length of lines and grouping
+
+Just as the space between words must be recognizably greater than the
+space between letters, so the apparent space between lines must look
+greater than, or at least not less than, the space between the words. Good                 Der Munchen Bund
+
+setting therefore must be leaded. (The only exception is black-letter.)                    veranstaltet eine Ausstellung          Internationale Verkehrswerbung
+Matter set solid tends not to look clear. Sans serif particularly gains by
+strong leading and is difficult to read when solid. Eight point sans, for
+example, looks best when leaded three points. The amount of leading                                                                          Eroffnung: Samstag, 2. Oktober 1931
+                                                                                                                                                        Galeriestraße 4
+depends on the amount of white around the type and the general colour                                                                Ausstellengsraum: (Eingang Hofgartenarkaden)
+
+
+required.                                                                                                                                                Zeit: werktags 10-15 Uhr
+   The length of line for headings, shorter sentences, etc., depends pri-                                                                                      sonntags 10-13 Uhr
+
+
+marily on the sense of the words and reading pauses, so that the second                                                                               Eintritt: frei
+
+line follows the first naturally. The rules of decorative appearance for
+centred typography no longer apply. The first line may be either longer
+or shorter than the second one. Word breaks should be avoided. Lines
+of equal length, which sometimes occur accidentally in a heading, should
+be avoided by slight changes of word spacing. They are unsightly and
+should never be introduced intentionally.
+   When lines of equal importance but different lengths are arranged in                             DER MUNCHNER BUND
+column (as in lists of Contents) there is no free choice in aligning them
+left or right. Such lines must be uniformly aligned on the left; the other                               veranstaltel   in   seinem Ausstellungsraum             Galeriestarße   4   (Eingang
+
+way is wrong. Our writing runs from left to right. Our eyes naturally
+                                                                                                         Hofgartenarkaden) ab Samstag, 2. Oktober 1931, eine Ausstellung
+return at the end of each line to the place they started from, and if the
+next line does not begin underneath, it is disturbing and if repeated, very                              Internationale Verkehrswerbung
+
+unpleasant.
+                                                                                                         Die Ausstellung ist werktags von 10 bis 15 Uhr, sonntags von 10
+   Not all scripts run like ours. Until about 1930, Turkish ran from right
+to left; the Chinese who use pictography read downwards and from                                         bis 13 Uhr geöffnet. Der Eintrit ist frei.
+
+right to left, although on occasion they read their symbols from right                                                                                                      Münchner Bund
+to left horizontally, or even as we do, from left to right.
+   Since we are neither Turks nor Chinese, we cannot choose to set our
+lines this way or that. It is no accident that verse is set to align on the
+left. If lines of verse were set symmetrically centered, they would be
+much harder to read, because the eye would continually search for the
+start of the lines.                                                           Two typographical versions of the same text. 1931.
+
+
+
+             44                                                                                                                                                              45
+    Before the Turks changed to roman letters, their verse began in the
+opposite way to ours, while in Chinese verse the lines run downwards.
+These are not possibilities for us. Poetry is only perfectly set when it is s
+et like a list. Lines having no connection with each other and set in dif-
+ferent sizes may be aligned on the right. Notes and other matter set in
+margins are another exception.
+
+
+
+
+                                                                                V
+    Lines of different importance set in different sizes may not be aligned
+right or left according to whim. The fact that we read from left to right
+is important here too. Generally lines aligning left are more important
+than lines aligning right, although this impression can sometimes be re-
+versed, if the lines aligning right are set in bolder type than those align-
+ing left.
+    Matter set in different sizes of type must, to look well, be grouped.
+Too many units cannot be comprehended easily and are like ungrouped
+matter set in a solid mass. Groups defeat their purpose if they cannot be
+absorbed at a glance but have to be counted. Three groups should be the
+rule; four groups have to be counted. Two groups should be used only
+for very short simple copy; four only for very long copy. Each unit
+should be distinct, its coherence must not be spoiled by another too
+close to it.
+    Grouping in this sense is new. The conventional typography depended
+more on a loose connection between its parts than on sharp distinctions.
+But modern man must read quickly and exactly. Every effort of the
+compositor must be directed to transferring the words smoothly to the
+reader. This can be achieved by correct grouping to express the sense of
+the words.
+                                                                                O   YORK
+
+
+
+                                                                                           JAZZ
+
+
+
+
+Opposite: Karel Teige: Typographical composition, 1927,
+an illustration to poems by Konstantin Biebl (Prague: Odeon, 1928).
+Slightly enlarged.
+
+
+
+               46
+    Indentation and line endings                                                 end, e.g., of an author’s name, just as a full out beginning calls for a full
+                                                                                 out ending in the same case. In setting ordinary lists, em indentation is
+                                                                                 also the best way to distinguish the continuation from the first line. All
+The setting of headings full out to the left in the new typography has led       lines can then retain normal leading. Less leading, instead of indentation,
+to the assumption that all indenting should be avoided. Setting without           mars the appearance.
+indentation of paragraphs can be done, and at first sight looks cleaner and         However when a list is set with some items longer than one line and
+simpler. But paragraphs then become hard to see and technically diffi-           the items are numbered, no indent is needed for turned-over second
+cult to make visible. A new paragraph can only be recognized, indirectly,        lines.
+from the end of the previous one. This does not always make it clear so             In short pieces of advertising copy, if the paragraph opening needs
+it has to be artificially adjusted, which on the machine is time-wasting.        particular emphasis, all lines except the first may be indented one or two
+If the last line of a paragraph happens to end full out, the beginning of        ems instead of indenting only the first lines.
+the next paragraph cannot be distinguished. Only in lines with many                 Indentation is superfluous when there is a blank line between para-
+words is it possible to shorten a line by a slight reduction of word spac-       graphs, or when there is only one paragraph.
+ing, even then it may not be easily noticed. Good writers use paragraphs            It is also unnecessary when the unity of the page does not depend on
+purposely and the reader needs them,                                             articulation by paragraphs, for example in novels when there is much
+    Indentation is technically and aesthetically the best and simplest way
+to distinguish paragraphs and it would be foolish to regard it as out of
+date. Usually the indentation should be one em. An exception would be                                                  Advertisement designed by the author, 1930.
+with very long lines which are heavily leaded; here greater indentation
+is permissible.
+    It is better to distinguish paragraphs certainly by means of indentation
+than uncertainly by line endings. The early printers always marked their
+paragraphs, usually with the paragraph sign ¶ hand-drawn in red. A
+                                                                                                                rdre
+space was left for the sign. Often it was never drawn in and before long                                    er o
+                                                                                                     r  emi
+the space alone was sufficient to mark the paragraph.
+                                                                                            ux   de p
+    At the beginning of a chapter, however, the indentation may be                   tablea
+omitted, since there it is unnecessary.
+    It is impossible to regulate the length of the last line of a paragraph or
+to try making the white space at the end match the width of the inden-
+tation. An effort should be made to avoid ‘widows’ of one word or less.
+To space the last line of a paragraph from the right instead of from the
+left as was done a few years ago, is no substitute for indentation. Such
+lines are hard to read, as the eye naturally travels back to the beginning
+                                                                                                                   bignou          8 rue la boetie . paris
+
+
+and then has to search for the line. The appearance of the page is dis-
+turbed by the uneven gaps of white so formed.
+    Indentation at the beginning of a paragraph calls for indentation at the
+
+
+
+             48                                                                                                                                   49
+conversation on the page, especially if the lines are nearly all short and
+when the depth has been padded out by artificial and unnecessary
+paragraphing.
+   Extra space between paragraphs should never be used instead of inden-
+tation in book and magazine work; it is excusable only in newspapers
+and cheap pamphlets. In good book and magazine work all lines must
+                                                                                                            Galerie Thannhauser
+register. When poetry is quoted on a page, leading equal to half the type                                                                     Munich . Lucerne
+size is inserted at the beginning and ending of the quotation. A break
+may be indicated by one or two blank lines. Asterisks are quite superfluous.
+   In jobbing work, if the beginnings of paragraphs are not indented, the
+distinction between paragraphs must be made perfectly clear - leading
+should be approximately doubled. Two points leading would suffice for                     • Munich address:
+                                                                                             Moderne Galerie Thannhauser Theatinerstrasse 7
+only smallest sizes of type.
+   ‘Widows’ at the head of a page are unsightly and should be avoided                     • Lucerne address:
+                                                                                             Galerie Thannhauser, Haldenstrasse 11
+whenever possible. Incunabula show many examples of pages made one
+or two lines short in order to avoid such ‘widows.’ This is certainly bet-
+ter then just leaving widows, since the head of a page is always more
+noticeable than the foot. The early printers’ attention to this detail is
+worth following today.
+
+                                                                                                                             Antiques from the 18th to the 19th century
+                                                                                                                             Tapestries . Sculptures . Paintings . China
+                                                                                                                             Finest antique arts and crafts
+
+    Type sizes, headings and type mixtures
+
+The choice of type sizes for a job is determined first by its format and
+purpose, secondly by the sense of the contents and thirdly by a feeling
+for the visual relationship of the type sizes.
+   Too many sizes in one job are unpractical and seldom give good results.
+The number used should generally be limited to three. Two will suffice
+for short jobs and four will be used in complicated matter.
+                                                                                            l. malmedé barcelona                          68 paeso de garcia
+
+   Let us assume first that only one type family can be used in one job.
+In the days of the ‘Unity of Type idea, only one weight was used but
+that rarely meets today’s requirements for the over-all appearance. For
+this reason we prefer to set headlines and titles in the semi-bold or bold     Two experimental advertisements designed by the author, 1931.
+
+
+
+             50                                                                                                                                               51
+of the text type. Two different weights may be used, each in three sizes        El Lissitzky : Cover of the avant guard periodical Vyeshch, Berlin 1922.
+giving the typographer six different styles of type in the same work. Six
+however should be the limit and ought not be used often. In jobbing
+work, italic can sometimes provide the second weight.
+    There must be a clear difference between the type sizes used together.
+For example, 9 and 10 point, and 14 and 16 point are too much alike and
+should be used together with caution.
+    Headings used usually to be set in a larger size of the text face. The
+same size can be used if it is a heavier weight - the difference in weight is
+nearly always sufficient to distinguish it. When headings are set in a type
+different from the text face, it should also be heavier.
+    Two different sizes of the same bold face should never be used close
+together, especially when their sizes are close.
+    Words connected by sense, even in large titles, should not be separated
+if it can be avoided; for example, The New Typography is preferable to
+The New / Typography.
+
+   In books where headings are not centred but start from the left, a
+suitable Egyptian is a good type for headings and main titles to accom-
+pany text set in roman and italic. Never use more than one different face
+with the roman-italic partnership. Thus Clarendon or Clarendon Bold
+in one or two sizes would be correct with a text set in Garamond and
+Garamond Italic.
+   These rules apply equally to advertisements and jobbing work, where
+type-contrasts are used much more than in book work. Every use of
+different weights together should be regarded as a type mixture which
+will give the job contrast and individuality. Types may be mixed in
+various ways.
+   Bold types may be used with lighter types - for example, semi-bold
+sans with ordinary sans; bold roman with ordinary roman; bold black-
+letter with ordinary black-letter. The effect can be increased by a con-
+trast in sizes as well - for example, 36 point bold sans with to point
+ordinary sans.
+   Contrast can be increased only by using contrasting type forms to-
+gether - for example, bold roman with typewriter, Egyptian with
+roman, black-letter with a script type, etc.
+
+
+
+             52                                                                                                                    53
+   Further possibilities lie in the use of the various lettering types, or in   be successful. A good-looking page which cannot be read is useless.
+the occasional use of actual hand-drawn lettering. There the effective-         Technically unsound design cannot be called art.
+ness depends on the contrast between the freedom of the lettering and              Only typography whose arrangement is clear, whose appearance is
+the precision of the type face.                                                 pleasing and whose production is technically faultless, can be called art.
+   A large number of good type mixtures are shown in this book. They            Every skill implies an art; only in this sense is the word ‘art’ used. The
+are only a few of the possibilities making use of popular types stocked in      art of typography should be practised not by a few, but by all printers.
+most modern printing houses. If more unusual faces are used, then the
+typographer must take care that their effect does not conflict with the
+character of the job’s contents. At the same time, it would be pedantic
+to try to suit the type too literally to the contents.                          El Lissitzky : advertisement for carbon paper. Composite paste-up. 1924.
+   Shaded and three-dimensional types contradict the essentially two-
+dimensional nature of the new typography. This is the line that should
+not be crossed in choosing display types for modern work.
+                                                                                                        Abdr ucke von g rosster Schar fe und Farbkraf t
+
+
+
+
+    Type sizes, headings and type mixtures
+                                                                                                   Pelikan
+Typography means more than ‘writing with type. Using a typewriter
+is not typography, although a kind of type is used. The printed word
+should not only be more legible than the written word, but be perfectly
+legible.
+   Typography is the arranging of words to be read. Before the words
+can be arranged they must be understood. The typographer must first
+read through the manuscript and understand it. Until he has done so, he
+will not know what it is all about. The intelligent arrangement of the
+words is the first duty of the typographer. Equally important is the
+                                                                                                     KOHLENPAPIER
+job’s appearance - a good typographer must know how to make the text
+easiest for the reader’s eyes. He has not, however, unlimited freedom;
+some limitations are imposed on design by the techniques of printing.
+Technical integrity is just as important in designing for print as an under-
+standing of the contents and skill in making them readable.
+   No single one of these three requirements is more important than the
+others. Printed matter logically laid out but unpleasing to the eye cannot
+
+
+             54
+                                                                                                                                            lund humphries
+
+
+   A good compositor can do very simple jobs without a layout, but for         Percy Lund Humphries & Co Ltd • The Country Press Bradford            Printers
+more complicated jobs he must take his pencil and work out the best                                                                                  Publishers
+                                                                                                                                                     Binders
+solution with a number of sketches.
+                                                                               London Office: 12 Bedford Square, w.c.1
+   Even in symmetrical typography, it is not easy to produce complicated                 Telephone: Museum 7676
+work without layouts, nor should we try to work without them. Yet                        Telegrams: Lund Museum 7676 London
+
+there are still many foremen and others who consider layouts a waste of           Bradford: Telephone 3408 ( two lines )
+time. The truth is that the little time and trouble spent on one or several             Telegrams: Typography Bradford
+
+layouts will save corrections when the job is set and will, incidentally,
+almost certainly produce a better job. Cabinetmakers do not make chairs
+and drawers without drawings. The beginner will not be able to make
+layouts at once but will have to learn the technique carefully. Layouts,
+particularly those of beginners, must be exact: rough sketches are nearly
+always useless and are disappointing.
+   In the compositor’s hand an amorphous manuscript takes on a lucid
+and organized form. The whole cannot be built up from a single precon-
+ceived idea nor from a simple assembling of correctly formed details; a
+combination of both is required. A job cannot be started until every de-
+tail is settled, otherwise unpleasant surprises will occur. In working out
+the details the whole job must be kept in mind so that it will have unity.
+Good typography cannot afford to neglect the smallest detail and the
+designer must work from little to big, from detail to whole, not the
+other way round.
+   The choice of type depends on the purpose of the job. In a specific job
+only one body face and one display face should be used for the sake of
+the over-all appearance. At the same time every effort must be made to
+see that this does not make the job look repetitive and dull. The simpler
+the means employed, the greater the attention we must pay to each of
+them. Co-ordination of white space and type area demands more care
+than it has ever normally had. This is where the compositor’s skill and
+imagination are shown. Suggestions for using space are given in the next
+chapter.
+   Since, in asymmetric typography, the impression of type on paper gives it
+a completely new meaning and is a most important stage in the job, the
+composing room must produce a carefully trimmed proof, preferably on
+the right paper and in the right ink, which must later be followed ex-
+                                                                                 Letterhead designed by Jan Tschichold, 1935.
+actly by the pressroom.                                                          Original in black and red. Reduced.
+
+
+
+             56
+    Technical education is today the concern of the technical schools. They    lines. A line need not be full out to the left but may be moved a little or
+should teach and explain the rules of typographic design. The extensive        a lot to the right. Here begins true design, the shaping of the graphic
+literature on the subject is not very stimulating to jobbing compositors.      form.
+The examples are usually cooked or beautified and snags are avoided by            Every shape exists only in relation to the space around it. The same
+alterations of text. This applies particularly to type founders’ specimen      line has a totally different effect in a large or small area of white space. In
+sheets. With few exceptions the majority give no guidance for normal           either case the line can be so placed to achieve the best effect; but the
+jobs. For this reason it is no loss if type specimens rarely reach the hands   placing and its over-all effect will probably be quite different in each
+of compositors. It is a pity when the few really good ones are filed away      case. It follows that there is a ‘right’ position for every shape on every
+in cabinets where they cannot be used by anyone.                               occasion. If we succeed in finding that position we have done our job.
+    Typefounders today, recognizing that it would be better and in the            The six abstract arrangements on page 6o show that there are always
+long run more profitable if their specimens did reach the compositors,         several possibilities when there are several elements to arrange. The first
+are generally willing to send them on request. The compositors who ask         (a) is a boring, visually meaningless arrangement, with all three ele-
+ for them are usually the brightest, will go to the top and then be able to    ments lined up beneath one another. In the other examples there is some
+influence the choice of types to be ordered.                                   tension between the elements. The second (b) shows a geometric hori-
+    The study of good type specimens is a useful part of typographical         zontal-vertical arrangement. In the third (c) the line and the square fol-
+education and should be pursued by all interested, especially jobbing          low the directions of the page outline but their relationships to each other
+compositors. We hope that type foundries will in future reproduce more         are not so geometrically fixed as in the second example. The line and
+normal work and fewer multi-coloured fancy pieces in their type speci-         circle in the fourth example (d) are more closely connected, the square
+mens. Then they would be really useful to the men in composing rooms           is placed in opposition to the outline. In the fifth (e) square and line
+who have tougher and duller nuts to crack. To get around difficulties by       stand together in opposition to the outline, and in the last (f ) they both
+altering copy is not skill, but deception.                                     strike out on a different line from each other and from the outline. The
+                                                                               circle remains indifferent and peaceful. In none of the examples except
+                                                                               the first is the placing accidental; each one shows a possible and signi-
+                                                                               ficant arrangement. In every case, the placing of the elements, their rela-
+                                                                               tionship to one another and their distances apart are intentional and not
+                                                                               fortuitous.
+    The use of space                                                              In the same way the right placing of the elements of a piece of typog-
+                                                                               raphy must be discovered. There may not be only three elements, but
+All typography is an arrangement of elements in two dimensions. The            as a rule they must be planned first by grouping disconnected lines in
+right placing of words and lines is as important as the creation of signifi-   this way, to allow an orderly arrangement in the space available.
+cant and effective contrasts, and is an integral part of it. As type today        We have already said that three groups should be the rule. In placing
+stands by itself, without the addition of ornament, we have become             them we must not forget how we read. Their sequence below and be-
+more sensitive to it not only as words and lines, but as part of the de-       side one another must follow common sense. The spaces between them
+sign of a page. The sizes and weights of type used depend first and fore-      could be equal but then they lose tension. In asymmetric typography,
+most on the contents, but almost always we have scope to choose a              the intervals between the groups are as important for the over-all effect
+- larger or smaller size or to alter the graphic appearance of some of the     as the groups themselves. The intervals must be unequal, that is to say
+
+
+
+             58                                                                                                                             59
+    distinguishable. At the same time they must be in accord with the coher-
+    ence or non-coherence of the parts of the text. Finally, the leading of the
+    lines in a group must have a certain relationship with the intervals be-
+    tween the groups - that too plays its part in the symphony of the whole.
+      The asymmetry of the typography suggested here also forbids the
+    centring of a layout that is itself asymmetrical on its paper or within the
+    area of an advertisement. Sometimes in very narrow columns this is un-
+    avoidable, but centring is, in principle, uncharacteristic here. Margins to
+    left and right can and should be distinctly different. No more can be laid
+                                                                                        NORMA TALMADGE
+
+                                                                                                                           KiKi
+    down - the exact amount must be decided by trained typographical taste.
+
+                                                                                                                      IN
+
+
+
+
+a                                                                                 b
+
+
+
+
+c                                                                                 d   PHOEBUS
+                                                                                      PALACE
+                                                                                      S H O W I N G AT . . . 4 00 6 15 8 30
+                                                                                      S U N D AY S . . . 1 45 4 00 6 15 8 30
+
+
+
+
+                                                                                                                               Jan Tschichold : Cinema poster. Typography. 1928.
+e                                                                                 f
+
+
+                 60                                                                                                                                          61
+    Lines are usually set horizontally on the page because that is the way
+of reading and of composition. In special cases they may be set obliquely,
+which is more eye-catching but also more difficult for the compositor.
+It can be very effective but only when done sparingly. If it is used, single
+lines are more effective than short words or groups of short lines, be-
+cause then the oblique position is not so easily noticed.
+    The strongest effect of any typographic design is when the contrasts.
+in it are most clearly defined. One secret of design is to avoid repetition
+or similarity of silhouette. If at the top of a layout there is a single-line
+group, the group next to it should preferably be of two or three lines.
+                                                                                          druk funkcjonalny
+Long shapes should be followed by short, heavy by light, etc. In this
+way all parts will be contrasted to each other in order to produce a
+lively whole.
+
+
+
+
+    Tables
+
+The setting of tables, often approached with gloom, may with some care-
+ful thought be turned into work of great pleasure. It is not necessary to
+use long thick-and-thin rules at the top and set tables in the style of 1880.
+                                                                                                     BIBLJOTEKA „A.R.” TOM6
+    Usually we make the work unnecessarily difficult for ourselves. First,
+try to do without rules altogether. They should be used only when they
+are absolutely necessary. Use only a medium rule beneath the headings
+if the space between columns is wide enough. Vertical rules are needed
+only when the space between columns is so narrow that mistakes will
+occur in reading without rules. Tables without vertical rules are easier                                               d r u k a r n i a p u b l . s z k o l y d o k s z t . z a w o d . n r. 1 0 w l o d z i
+
+
+to set and look better. When rules are used, not more than two different
+kinds should be used. Thin rules are better than thick ones.
+    Although not every table needs to be enclosed in vertical rules on each
+side, there are occasions, especially in jobbing work, when this looks better
+than leaving it open. Tables should not be set to look like nets with every
+number enclosed. Such setting is laborious, circuitous and old-fashioned.       Cover by Wladislaw Strzeminski, Lodz, Pologne, about 1934.
+
+
+
+
+             62                                                                                                                                                                63
+The exact opposite, i.e., tabular matter with as few rules as possible,                    Results    of   ‘Librium’   therapy   in   various   general   medical   conditions
+
+should be the style.
+                                                                                                                                                  Total    Improved Unimproved
+   Table headings may be treated in various ways. The finer the work,
+the greater the care needed with them. If the headings are enclosed in
+                                                                                          Tuberculosis                                            152        115        37
+rules they should almost always be centred (see below; otherwise they
+may be aligned on the left.                                                               Other chest diseases                                      45        34        11
+   Ditto marks look all right in a manuscript but in type they are dis-                   Asthma, allergic rhinitis                               207        160        47
+turbing and spoil the appearance of the page. For this reason it is better,               ENT complaints, including
+barring exceptional circumstances, to repeat the whole word each time.                     vertigo, headache                                      289        176       113
+   On invoices both horizontal and vertical rules are generally unneces-                  Autonomic instability, nervous
+sary, because invoices are usually typed. Rules should be used only for                   irritability etc.                                       229        203        26
+old-fashioned invoices which are written by hand. In such cases fine                      Geriatric disturbances                                  141        120        21
+rules are sometimes preferable to dotted rules.                                           Urological disorders                                    219        185        34
+                                                                                          Metabolic disturbances
+                                                                                           (diabetes thyrotoxicosis etc.)                           34        30         4
+                                                                                          Emergencies (trauma,
+                                                                                           hemorrhage etc.)                                         65        59         6
+Fine rules
+are better in                         Refrigerator size in mm      Cooling                Tumours                                                   47        39         8
+                       Manufacturer                                 time,     Price
+tables.                                                             hours                 Various (including insomnia,
+                                      Height     Width    Depth
+                                                                                           rest cures etc.)                                       302        245        57
+                            AEG        790       530      440       11/2       675.-
+                            AEG        920       765      415       2          775.-                                                             1,730     1,366       364
+                            AEG       1095       968      520       2         1750.-
+                       Escher-Wyss     900       850      350       7         1595.-
+                            Fink       820       450      450       11/2       750.-
+
+                                                                                           Results of treatment of various conditions in children
+
+
+                                                                                                                                                  Total    Improved Unimproved
+                                        Refrigerator size in mm     Cooling
+Same table                                                          time,
+without vertical     Manufacturer       Height    Width    Depth    hours         Price
+                                                                                          Cerebral palsy, organic brain
+rules.
+                     AEG                 790      530      440      1 /2
+                                                                     1
+                                                                                675.-      damage etc.                                            311        196       115
+Even the dotted
+rules are not        AEG                 920      765      415      2           775.-     Behaviour disorders                                     383        277       106
+indispensable
+                                                                                          Enuresis                                                  99        69        30
+                     AEG               1095       968      520      2          1750.-
+                                                                                          Strabismus                                                89        33        56
+                     Escher-Wyss         900      850      350      7          1495.-
+
+                     Fink                920      450      450      11/2        850.-                                                             882        575       307
+
+
+
+                64                                                                                                                                            65
+                                                                                 rules may also be used as a means of contrast, particularly with light-
+Galerie Dr. Raeber                                                               faced types whose fineness is then made more noticeable.
+                                                                                    Thick rules should rarely be used for underlining, as this means of
+                                                                                 emphasis is untypographical. Underlining may occasionally be effective,
+                                                                                 but then only light or medium faces should be underlined with a thick
+Gemälde alter und moderner Meister                                               rule. To underline a bold face with a thick rule is clumsy.
+                                                                                    In the asymmetrical composition of the new typography, thick-thin
+Impressionisten                                                                  rules have no place. They belong to centred layouts - their shading con-
+                                                                                 tradicts the one-plane character of today’s work. For the same reason,
+Handzeichnungen Plastik                                                          rule-combinations cannot be used as borders. Rules should be used only
+                                                                                 as simple lines, as simple borders, or in screen effects.
+
+
+
+                                               Bafel, Freie Strafle 59, 4
+                                                                                     Colours
+
+                                                                                 If we print a word in red, we want it to stand out from the surrounding
+                                                                                 black words. Red has a stirring effect. Yellow is also aggressive. Blue is
+                                                                                 cool and retiring, but as a bright colour it is livelier than black. Colours
+                                                                                 are used this way to bring out important words.
+    Rules                                                                           They may also be used to separate or distinguish a particular part of a
+                                                                                 prospectus or a book, or serve other similar purposes.
+Rules serve various purposes in typography. In tables they separate head-           Finally, lines of type and rules in colour can be used to strike a partic-
+ings from contents, in advertisements they serve as borders.                     ular note giving an over-all effect that is harder to define than the pur-
+   Their functions are not always easy to define. All type makes uneven,         poses of emphasis and distinction mentioned above. All colours, including
+broad or narrow, bands. To these, rules provide a contrast and em-               black, should be proofed on the right paper and with each other, and
+phasize the abstract qualities of the letters. For this reason, fine or thick-   be exactly registered. More cannot be said in writing - effective choice
+thin rules were used on the lower halves of old title-pages to increase the      and use of colour requires taste and experience.
+effect of the type and provide a neutral element to enrich the design.              Pure colours may look beautiful in the tin, but dreadful when printed.
+   In the early days of the new typography, heavy rules were much                An area of flat colour will seem a different shade from type printed in
+used for various purposes. Today we prefer the more subtle effects of            exactly the same ink. Also it must not be forgotten that areas of different
+medium and fine rules. They can be used to join or separate the ele-             size, printed in the same ink, will have quite different visual effects.
+ments of a layout. A thin rule is often the key to the whole effect of              Large areas close together or lively contrasts are two main ways to use
+a page. Rules used in moderation often have the greatest effect. Thick           two different bright colours in one job. The new typography works just
+
+
+
+              66                                                                                                                            67
+as well with lively primary colours as with the ‘dull’ colours like grey,
+sepia and black.
+    Lines of type containing two colours should be avoided, since even
+the most careful printer will not always get perfect register and uneven
+ register is most unsightly. In most cases, the desired effect can be achieved
+by using bold type in black.
+    The more sparingly a second colour is used, the more powerful will
+be its effect. If it is used at the top of the page for some type matter, then
+  introduced again below, say for a rule, it will be more effective than
+when sprinkled about everywhere. Here again, restraint will improve the
+whole appearance.
+
+
+
+
+    Paper
+
+The choice of paper plays an important part in successful typography. It
+is seldom right to use coated paper if there are no halftone engravings.
+Smooth stock is lighter, cheaper, strains eyes less and is available in
+many varieties.
+    Halftones require very smooth papers. Coated stock is one of the
+best. Matt finish coated paper, popular among the non-technical, is dif-
+ficult to print on and gives an unpleasantly hard appearance, which is
+often concealed by the use of doubletone inks. This ugly and unreliable
+process, and matt finish coated stock, should be avoided when possible.
+Letterpress has no need to compete with gravure -a good halftone can-
+not be compared with a gravure reproduction. Letterpress should never
+ try to imitate the worst feature of photogravure - its blurred softness-
+by using doubletone inks.
+    The perfect printing of halftones requires coated stock, which is avail-
+able in many bright colours and white. Of these the warm tint ‘chamois’
+is perhaps the least suitable for expressing a contemporary feeling, while
+carmine, grey and light blue are better for modern work.                         A kind of dedication of a book, designed by El Lissitzky in 1922 (in the preliminary
+                                                                                 pages of Mayakovsky’s Dlya golossa), representing a diagram of the eye. The three
+    Hand-made and mould-made papers are beautiful and a genuine deckle           letters, L, Yu and B, when read twice in an anticlockwise direction, starting at L
+can be most pleasing. The deckle belongs to the whole sheet and cannot            and omitting the final B, result in Lyublyu which is Russian for “I love”
+
+
+
+             68                                                                                                                                   69
+              日                                B
+
+              本                                O                                     ЯΠOHKOE
+
+              生                                K                                            KИHO
+
+
+              動                                C
+
+
+
+
+              写
+              真
+This and the illustration opposite show the back and front pages, reduced, of a   catalogue for an exhibition of Japanese films (Moscow, 1929) by El Lissitzky.
+
+
+
+
+be used for visiting cards and other small formats; false deckles are             tones together without using coated stock. To me this does not seem to
+highly mischievous. Imitation mould-made papers are sometimes not                 be any special advantage and you lose the chance of using two papers in
+unpleasant and may be used, except for jobs which need genuine mould-             a book. The contrast between thick cartridge paper and coated stock
+made or hand-made papers. Many a declaration of faith in genuine ma-              plates is a pleasure. Specially etched halftones printed on cartridge paper
+terials has been made on deckle-edge writing paper in deckle-edge en-             are never so good as on coated stock. Contrasts between papers (glossy,
+velopes, without realizing the falseness not only of the deckle but of the        dull, rough, etc.) give effects which should be used more often than they
+paper itself. Genuine hand-made and mould-made paper is also beauti-              are. Plates on coated stock look much better in rough paper covers than in
+ful when trimmed and is easier to print. Let printers beware of the folly         shiny covers. Such contrasts in materials can enrich the most distinguished
+of false deckle edges, whether on genuine or imitation hand-made pa-              work. Unfortunately the choice of really useful and pleasant cover papers
+pers! There are also other papers not hand- or mould-made                         is extremely limited - the majority are produced in dowdy colours with
+but made from materials just as good.                                             hideous embossings. Paper manufacturers should employ artists to
+   For a long time there has been talk of printing specially etched half-         improve their colour ranges to make them more suitable for modern
+tones on ordinary paper and it is now possible to print type and half-            usage.
+
+
+              70                                                                                                                             71
+    Posters
+
+Typographical posters could be better designed than they are. For text
+matter in smaller sizes, use may be made of types of normal weight as well as
+the usual bold types. These give more contrast in black-and- white and
+are easier to read. Large wood letters need letter-spacing more
+than any other types, since they are cut to the full width of their bodies.
+A smaller size is often preferable to a larger without letter-spacing. A
+poster gains in general effect by being clearly comprehensible at a glance.
+Proper leading and the use of white space will achieve this. The older
+Egyptians and romans may be used on occasion to produce the charm
+of surprise, an effect possible in typographical as well as drawn posters.
+Flat tints, coloured paper and inks all help. So can mixing of colours in
+the ink ducts, a device occasionally used to produce richer colour effects.
+   Word spacing should be greater in posters than in normal work, since
+posters are read at a distance. Three-to-em spacing is usually insufficient
+to prevent the words from running together.
+
+
+
+
+    Richness in form
+
+The word ‘functionalism’ is often used as a synonym for the new move-
+ment in design. It sounds as if simple utility were the only purpose but
+it overlooks the important spiritual aims the movement has set itself.
+Plain utilitarianism and modern design have much in common but re-
+main two different things. Fitness for purpose and usefulness are pre-
+requisites for good work but the real value of a work lies in its spiritual
+content. The new movement aims to produce a new beauty which ‘is
+more closely bound up with its materials than earlier methods, but whose
+horizons lie far beyond’. This feeling for materials and proportion can
+transform what is merely functional into a work of art.
+   But these are ideas which not everyone can appreciate right away. A          El Lissitzky: Poster design for Pelikan ink.
+definite training is needed before the intoxicating qualities of simplicity     Photogram. Hanover 1924
+
+
+
+             72                                                                                                                73
+                                                                                                                      1
+
+
+                                                                                                                      2
+
+
+
+
+                                                                                                                      3    4 5 6       7
+
+
+
+
+                                                                                                                                   9
+
+                                                                                                                                           9
+
+
+
+
+                                                                                                                                               8
+
+
+
+
+                                                                                                                          a n
+                                                                                                        l i k
+                                                                                                                                                   9
+
+
+
+
+                                                                                              10     Pe
+                                                                                                      11
+
+
+
+
+El Lissitzky: Model of a three-dimensional window display for Pelikan typewriter    1 Wood, drown stained                   7 Vertical outside wall, yellow
+ribbons, constructed in Hanover, Germany, 1924. It was made of grey and brown       2 Veneer, brownish grey                 8 Board, ultramarine lacquer
+natural wood, with a mirror, and red, blue, yellow and black lacquer. An actual     3 Actual container with string          9 Vermilion lacquer
+container was fixed to the mirror. Production never got past the prototype stage    4 Mirror                               10 Board, black lacquer, below 8
+of the original, which measured 33 by 47 cm. and was lost during the second world   5 Concavity, blue-black lacquer        11 Lettering, chrome yellow lacquer
+war. For the colours see opposite page.                                             6 Edge, vermilion
+
+
+              74                                                                                                                                   75
+                                                                                   Gotthard Jedlicka: Begegnungen
+                                                                                                                    Gotthard Jedlicka
+
+
+
+
+    Typographic elements:
+    Lines, surfaces, frames, stripes, circles,
+    dots, triangles, arrows etc.                                                                                    Begegnungen
+
+can be felt and its value recognized. Then the richness of simplicity will                                          Pascin
+be understood. First an exact knowledge of the materials, processes and                                             Liebermann
+elements of typography must be acquired. The significance of contrast                                               Maillol
+is the basis of all modern designing. An ordinary visiting-card is neutral,                                         Despiau
+expressing nothing; but if the name is placed off-centre, the reader of the                                         Matisse
+card gains an experience of new form. Consciously or unconsciously, he                                              Braque
+tests his feeling for it, he becomes aware that white space plays a part in                                         Derain
+the design and that proportion and contrast are being used.
+                                                                                                                    Picasso
+    Even a job in type only can be completely integrated. Letters in vary-
+                                                                                                                    Ensor
+ing relationships of size can be of sufficient visual significance. Large
+sizes can be contrasted with small, bold with light, sans serif with cur-
+sive, ragged-silhouette paragraphs with square ones, etc.
+    Other means can also be used to increase the effect of type: especially
+rules, at various angles and in various weights, whose straightness is in
+contrast to the unevenness of type; the enclosing of one part in a box,
+in contrast to other groups set with uneven line-endings; the isolating
+of one part in a circular shape, away from the rest of the layout; revers-
+ing black to white, contrasting white type on black background with
+the normal black on white; the kind of transparency obtained by print-
+ing various colours over one another, which can and should blend; the
+use of screens and mechanical tints; contrasts of shapes in the use of dots,
+arrows and so on. All these contrasts can be used doubly: for example,
+heavy rules with light types, large spaces between long and short lines,       Jan Tschichold: Book jacket, with spine title, 1933.
+etc. Rhythm and sparkle can be given to a job by the interplay between         Reduced.
+
+
+
+               76                                                                                                                       77
+closely and loosely knit parts. The absolute weight of the contrasts is not
+important, but the tension they create is.
+    This new world we are exploring is the abstract, and so we insist on
+its beauty and on its usefulness. Success is ours if we so use a familiar
+material that it appears to be completely new. For this new vision we
+are indebted to abstract painting, which has introduced us to a new world
+of form. Examples of such discoveries can be found in other periods and
+cultures, for example, in pre-gothic miniatures and in Japanese wood-
+cuts. Between them and our own work there is much in common. But
+the new vision is most purely embodied in abstract painting, which is
+both the foundation and the summit of modern design.
+
+
+
+
+    Abstract art
+
+Many readers of this book will deny any connection between painting
+and typography and they will be right, if they are thinking of the ‘repre-
+sentative painting of the past. Although various visual arts of any one
+period cannot be entirely unconnected with each other, it would be an
+exaggeration to speak of any close connection between representative
+painting and the old typography. Traditional typography is much more
+closely related to the façade-architecture of the Renaissance, and its heri-
+tage of styles, than to painting. This does not mean that compositors
+tried to produce the effect of a church front on a title-page, but beneath
+the surface there is a definite relationship between Renaissance façades
+and title-pages of the same period.
+   In the same way there is a connection between modern typography
+and modern architecture but the new typography does not derive from
+the new architecture; rather both derive from the new painting, which
+has given to both a new significance of form. The new painting, by
+which we mean non-representative or abstract painting, originated be-
+fore the new architecture and the latter could not have been conceived
+without the former.
+Opposite: Laszlo Moholy-Nagy: Enamel painting. 1922-23. Reduced.
+
+
+
+               78                                                              79
+                                                                                                  FESTIVALS of the Bavarian State Th
+
+                                                                                                  Prince Regent Theatre: Richard Wagner
+
+                                                                                                  Residence Theatre: W.A.Mozart
+
+
+
+                                                                                                                                               f o l l owe d by a R i c h a r d   Strauss a n d H a n s Pfitzner We e k i n t h e P r i n c e R e g e n t T h e a t r e
+
+
+
+
+                                                                                                        Wagner-Mozart
+
+                                                                                                        Monday     July 18 Die Meistersinger                  Monday               July 28 Die Meistersinger                           Monday          Aug 7 Die Meistersinger
+                                                                                                        Wednesday July 20 Das Rheingold                       Wednesday July 29 Das Rheingold                                          Wednesday Aug 8 Das Rheingold
+                                                                                                        Thursday   July 21 Figaros Hochzeit                   Thursday             July 30 Figaros Hochzeit                            Thursday        Aug 9 Figaros Hochzeit
+                                                                                                        Friday     July 22 Die Walküre                        Friday               July 31 Die Walküre                                 Friday          Aug 11 Die Walküre
+                                                                                                        Saturday   July 23 Die Zauberlöte                     Saturday             Aug 3 Die Zauberlöte                                Saturday        Aug 12 Die Zauberlöte
+                                                                                                        Sunday     July 24 Siegfried                          Sunday               Aug 4 Siegfried                                     Sunday          Aug 13 Siegfried
+                                                                                                        Tuesday    July 26 Gölterdämmerung                    Tuesday              Aug 5 Gölterdämmerung                               Tuesday         Aug 14 Gölterdämmerung
+                                                                                                        Wednesday July 27 Don Giovanni                        Wednesday Aug 6 Don Giovanni                                             Wednesday Aug 15 Don Giovanni
+Josef Albers: Wall picture, etched in black-and white double-layer glass. 1928.
+
+
+
+   Subjectless painting is usually called abstract, but to be precise what it
+deals with is not abstract, but real - a line, a circle, an area signify them-
+selves, while in representative painting they stand for something else.
+Therefore it is not wrong to apply the word ‘abstract’ to representative
+painting. The expression ‘absolute painting’ is also objectionable. Theo
+von Doesburg and the AC group were right when they first used the
+term ‘concrete painting’ in 1930. This term however, is not suitable in
+the English language.
+   A painting with a subject consists of two things and most people               Project for a poster by Jan Tschichold, 1932 (not printed). An exercise in balance.
+think only of one, namely the subject. They are pleased if a picture re-          Such a design might still be used to advertise electronic music.
+
+
+
+                80
+El Lissitzky: Proun (abstract composition). About 1923.
+
+
+
+minds them of a sunset or a haystack. But a good picture contains
+some-thing else which half escapes most people and completely escapes
+some- the combination of colour and form created by the painter’s hand.
+These intellectual and spiritual qualities have little to do with the sub-
+ject. The subject is not of great importance to a good painter - it merely
+provides him with the opportunity to paint significant relationships of
+colour and form.
+    The painter is no longer the only person who can represent our world
+‘as we see it.’ The photographer can do that better and more quickly and
+he can do it in colour too.
+
+
+
+                                                          81
+    Hence the representation of things can often be left to the photog-
+rapher. Since the invention of photography the task of painting has been
+to explore colour and form on flat surface. In abstract art, colour and
+form should no longer be used to give illusions of nature but should
+represent only themselves. Since 1910, modern art has come a long and
+important way from naturalistic illusion to ‘reality, which can be fol-
+lowed in the history books of art. We are concerned here with the pres-
+ent state of abstract painting which has only become generally known
+since 1920 and has since exerted an important influence on architecture,
+typography, dress, and indirectly on many other spheres. It is very much
+with us, and not in the least passé as many (who are either still living in
+the nineteenth century, or would like to return to it) would have us be-
+lieve. A picture like our colour plate by Moholy-Nagy shows only pure
+forms - they do not represent a man, or the sun, or anything at all ex-
+cept themselves - nor do they contain any ornament. Ornaments, origi-
+nally symbolic abstractions of real objects, later lost their meaning and
+were reduced to being simple decorations. Even these have lost their
+significant social rank since machines can now mass-produce the richest
+ornamentation on the cheapest materials. The parts of the picture can
+be compared to the notes in a piece of music, which echo nothing, but
+achieve their own meaning through the tonal sequence and rhythm of
+the whole composition.
+    It is the art of the painter to so arrange the elements of an abstract
+painting, setting them in such exciting relationships to one another, that a
+living work results whose meaning is not comprehended all at once and
+whose effect is therefore all the more lasting. The viewer must allow the
+picture to work slowly on his imagination. Such a picture is not just a
+means for pleasure, like a subject painting of the past, but is an instru-
+ment of spiritual power, a conception of harmony. A picture with this
+purpose is like a machine, all parts of which are in particular and neces-
+sary relationship to each other and therefore function in a certain way.
+The painter of abstract pictures must therefore study the spiritual effects
+of colours, forms and materials and use them to create a work whose
+effect is elemental and specific. When such a work is created by a true
+Opposite: An abstract lithograph by El Lissitzky
+from his portfolio Proun. Hanover, 1923. Much reduced.
+
+
+
+                   82
+artist, its influence becomes stronger, the longer it is looked at. A so-
+called abstract painting has no subject, but is itself a subject - a subject
+with a very definite purpose. It is an appeal to order, a means for the im-
+provement of mankind. It is not passive but dynamic.
+   The connection between ‘abstract painting and the new typography
+does not lie in the use of ‘abstract forms but in similarity of working
+methods. In both, the artist must first make a scientific study of his avail-
+able materials and then, using contrast, forge them into an entity. All
+abstract paintings, especially the ‘quite simple ones, contain artistic or
+graphic elements which besides being clearly defined themselves also
+have a clear relationship to each other. From here the step to typog-
+raphy is a short one. The works of ‘abstract art are subtle creations of
+order out of simple, contrasting elements. Because this is exactly what
+typography is trying to do, it can derive stimulus and instruction from
+a study of such paintings, which communicate the visual forms of the
+modern world and are the best teachers of visual order.
+   We must not just make literal copies but work in the same spirit. We
+must remain within the limits of our technique and the purpose of our
+jobs or we will descend into mere formalism.
+   I am extremely glad that at least one of my illustrations is in colour,
+because reproducing a work of colour in black and white is, especially          El Lissitzky: Portrait of the artist himself. 1923.
+in modern painting, a fatal loss. I hope that these pages will help many        Double exposure combined with photogram. Reduced.
+people to a true experience of abstract art, to which, as contemporaries,
+we are certainly committed.
+                                                                                would be lost without them. The quality of the photography is a deci-
+                                                                                sive factor in the success of any job which uses it. Photography has its
+                                                                                own rules which are based on the same principles as those of the new
+                                                                                typography.
+                                                                                   As well as normal photography, there are variations which can play
+    Abstract art                                                                a part in the new typography; for example, photograms (photography
+                                                                                without a camera, a technique developed and made new by Moholy-
+                                                                                Nagy and Man Ray), negative photography, double exposures and other
+The signs and letters in the composing room are not the only means at           combinations (e.g., the outstanding self-portrait of Lissitzky) and photo-
+the disposal of the new typography. Pictures are often better than words;       montage. Any or all could be used in the service of graphic expression
+they convey more and say it quicker. The natural method of pictorial            They can help to make a message clearer, more attractive and visually
+representation today is photography. Its uses are now so varied that we         richer.
+
+
+             84                                                                                                                          85
+    Photomontage should not be allowed to spoil the over-all clearness          Abstract art
+by introducing a mass of detail that is difficult to assimilate. Normal
+photographs can be used as squared-up shapes or as silhouettes. Both
+together may with variations of size give excellent contrast and variety.   A book on typography cannot end without a word on the book as a
+Illustrations ‘bleeding off the page are occasionally very effective but    whole. A well-made book is a signal achievement. A mass of technical
+their use is governed by technical and aesthetic considerations. Two        problems must be solved to produce a natural-looking and unified whole.
+bleeds should rarely be used on a single page; more than two, never.            The printed book was originally an imitation of the written book.
+    Photographic blocks can also be printed in colours and the over-        Only gradually did it free itself from the conventions of the manuscript.
+printing of blocks in various colours can sometimes be very effective.      The elimination of colour and hand-lettering were forward steps which
+    Although photography is the most important means of pictorial ex-       took a long time. The real fathers of the modern book are the classical
+pression in the new typography, that does not exclude the use of free and   printers, Baskerville, Didot, Bodoni and Goeschen. They developed at
+diagrammatic line drawings. Both fit in well and provide contrasts; all     the turn of the eighteenth century a kind of book whose perfection can
+three may be used together to produce new and rich visual effects.          be compared only with the incunabula and which is still a model for
+    The American method of retouching machine illustrations and its re-     most books printed today. For this reason many suppose that books have
+versal to negative are also possibilities which can be exploited when the   reached their final form and that any attempt to improve or alter them
+right opportunity arises.                                                   is a waste of time.
+    “On the other hand the ‘type-picture’ usually set from specially cast       If we compare the first page of a book of the incunabular period with
+geometric sorts, and for a long time much publicized in certain quarters,   the title-page of an ordinary modern novel we find important differences
+is safe only in the hands of a highly-talented and experienced designer.    - yet a sensitive eye will often find the modern title-page weak. I am
+Such settings are almost always worse than even the most ordinary types.    convinced that the modern movement in typography will not leave
+They are also extremely difficult to produce. Few are as perfect as those   books untouched. It is inconceivable, when this age has changed every-
+produced by Walter Cyliax and Maria Krauss who in the late twenties         thing else so completely, that it should not leave its mark on books too.
+were leaders in this field.                                                 Many attempts have already been made, but unsuccessfully. Modern
+    Photography, drawing and type are all parts, to make up a whole. In     books tend to show either a most superficial and inadequate knowledge
+their proper subordination to that whole lies the value of their use.       of the classical rules, or a too specialized and pedantic obedience to them.
+                                                                            The second way is no better than the first and produces a kind of artistic
+                                                                            barrenness seldom seen in other spheres today. We must now learn to
+                                                                            make books of our own time with our own means and stop being de-
+                                                                            pendent on the classical style.
+                                                                                Nevertheless, there is much that is right and will remain. The format
+                                                                            of novels is not arbitrary but is an eminently practical shape. All books
+                                                                            which have to be mainly held in the hand rather than lie on a table, must
+                                                                            use the normal slim format.
+                                                                                The type area of the novel and its placing on the page are also hard
+                                                                            to improve. It may be remarked that many books have too deep a type
+                                                                            area. The foot margin is often too small; it must be clearly wider than
+
+
+
+             86                                                                                                                       87
+the fore edge. I assume it is well known that the back margin is the nar-           The distinguishing points of the new book typography are chiefly the
+rowest and that head, fore edge and foot margins are progressively larger.       off-centre placing of headings and folios and the freely-designed asym-
+A sensitive feeling for proportions can make slight variations within this       metric title-page. These three characteristic parts unite the whole and
+rule, which can turn an ordinary book into a well designed one.                  should nearly always be in the same type, although they may be in two
+   Of very great importance, today as always, is the folio or page num-          weights. This type will probably be the body type or its italic, as in
+ber. It can completely change the appearance of a page. If we place it           this book. It can also be the semi-bold or bold, or even a contrasting
+close to the foot of the page, either aligned or indented, it becomes visu-      type. Generally contrast will be achieved by means of a noticeable dif-
+ally part of the page. We then have a white border round the type area           ference in size, by use of the semi-bold, especially in sans serif, or of a
+- the paper area is hardly noticed. If we place the folio right out away         different kind of type altogether.
+from the type area, as in this book and the illustration on page go, we             The title-page must be in visual harmony with the pages which fol-
+be-come aware of the paper area for the first time. The column of type           low. The foot as a rule must fall on the last line of the normal full page.
+seems to be in suspense and the margins are greatly emphasized. If the           The title-page must not be further from the back nor in any other ab-
+headings are in a bolder type, the folios can also be set in bold. This sort     normal position. It must not be wider than the normal page width. The
+of emphasis is most suitable in books with footnotes but it may also be          depth may vary from the normal page depth. It may be brought into
+used to provide contrast. The appearance of a book page depends first            relation with the first page of text by having title and heading in regis-
+and foremost on the type area and how it is placed; that is to say, the          ter, and so on. In this way a lively rhythm and well-graded intervals
+proportions of the margins.                                                      may be obtained. Publisher’s symbols should be placed on the half-title.
+   In books of larger format the type area may be placed differently. The           For body matter, nearly all the classical romans are suitable. Caslon is
+conventional is not always the best here and may result in lines that are        one of the most beautiful. Sans serif can also be used sometimes, Gill
+too long. Do not hesitate to use double columns: they are often much             Sans for instance, provided the text is not too long. The old sans serifs
+easier to read. Occasionally the type area may be moved out from the             are tiring to read because their letter forms are insufficiently differentiated.
+back, but if the back margin is much enlarged the other margins must                Only sans should be used for headings with text set in sans, either in
+be correspondingly reduced - in this case, the folios should not be moved        the same weight or bolder; mixtures with other types are dangerous. With
+to the back but should be outside the type, above or below.                      roman, either the same type may be used for headings, or the semi-bold
+   The first impression of a book’s interior design is given by the title-       or bold, or a suitably and pleasantly contrasting type, perhaps Egyptian
+page - it must express the style of the book. All too often the title-page       or black-letter.
+has nothing in common with the inside pages. Most title-pages follow,               Sufficient white space must be left between chapters. It should be about
+more or less, the traditional style but rarely with sufficient taste. Clarity,   the same as, or noticeably more than, the head margin. This will avoid
+lucidity and beauty can be achieved at least as easily by the new typog-         the blockish, compact effect we have already avoided by moving out
+raphy whose principal rule is that nothing is centred - neither headings,        the folios.
+nor chapter titles, nor folios, nor the word ‘End,’ nor the printer’s im-           Normal paragraph headings, if set heavier than the body face, do not
+print. The new book requires a new arrangement of these and all other            need to be in a larger size. A blank line is preferable between them and
+parts of the book. It would be senseless to place an asymmetric title-page       the text.
+in front of a conventional book. It is equally senseless to dress up in             Initials are seldom used in the new typography. Inset initials, more
+modern layout a book whose contents are conventional; traditional                than two lines deep, can never be used here for they take us back to the
+typography would be correct. Form and contents should harmonize.                 compact block setting of the incunabular and baroque periods. If a large
+
+
+
+                  88                                                                                                                           89
+                                                                                                                                                                79                                                                                                                                                                                                                                                                                                                      80
+
+
+
+                                                                                                                                                                                                                                                     da
+
+
+90
+
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     H. ARP
+
+
+
+                                                                                                                                                              AR CHIP E NK O
+
+                                                                                                                                                                               Ich denke, schaffen besteht nicht in der Fabrikation von Kunst-
+                                                                                                                                                                               werken, sondern in einem fortwährenden Suchen nach neuen
+                                                                                                                                                                               Ausdrucksmitteln.
+                                                                                                                                                                               Créer ne consiste pas enla fabrication d’oeuvres d’art, mais plutôt
+                                                                                                                                                                               en la recherche continuelle de nouveaux moyens plastiques
+
+
+
+
+                                                                                                                                                                                                                                                                                                                                                                                                                          La nature est organisée dans sa totalité
+                                                                                                                                                                                                                                                                                                                                                                                                                          dans les principes qui règlent les cristaux
+                                                                                                                                                                                                                                                                                                                                                                                                                          les insectes en hiérarchie comme l’arbre.
+                                                                                                                                                                                                                                                                                                                                                                                                                          Toute chose naturelle garde sa clarté
+                                                                                                                                                                                                                                                                                                                                                                                                                          d’organisation, cachée, tirée par des rela-
+                                                                                                                                                                                                                                                                                                                                                                                                                          tions qui se groupent comme la famille
+                                                                                                                                                                                                                                                                                                                                                                                                                          des lumières lunaires, centre de roue qui
+                                                                                                                                                                                                                                                                                                                                                                                                                          tournerait à l’infini, en sohère, elle noue
+                                                                                                                                                                                                                                                                                                                                                                                                                          sa liberlé, son existance derrière. absolue,
+                                                                                                                                                                                                                                                                                                                                                                                                                          à ces lois • innombrables, constructives.
+                                                                                                                                                                                                                                                     Ca Der Kunster ist ein Schooter. er kann Formen gestalten welche organisch sind - L’artiste est un créateur il sait travailler une forme qui devient organique.
+
+
+
+
+                                                                                                                                                                                                                                                     da
+                                                                                                                                                                                                                                                                                                                                                                                                                       Die Natur ist in ihrer Gesamtheit organisiert, in den Grundgesetzen nach welchen die Kristalle, die Insekten bis hinauf zum Baum
+                                                                                                                                                                                                                                                                                                                                                                                                                       aufgebaut werden. Jedes Ding in der Natur ist klar im Aufbau, verborgen oder sichtbar gemacht durch Beziehungen, die zu-
+                                                                                                                                                                                                                                                                                                                                                                                                                       einander stehen wie die Familie der Mondstrahlen, Achse eines Rades, das sich bis ins Unendliche im Kreise dreht und bindet
+                                                                                                                                                                                                                                                                                                                                                                                                                       seine Freiheit seine letzte absolute Existenz an unzählige konstruktive Gesetze
+     Two Spreads from El Lissitzky’s Nasci’, an issue of Kurt Schwitters’ periodical
+
+
+
+
+                                                                                                                                                                81                                                                                                                                                                                                                                                                                                                      82
+
+
+
+
+                                                                                       Das Lebensgefühl einer Zeit, nicht die Formtradition, ist Richt-
+                                                                                       linie für ihre Kunst So weist die Tendenz der architek-
+                                                                                       fonischen Entwicklung nach einer Baukunst, welche im Wesen
+                                                                                       mehr als früher an das Stoffliche gebunden, in der Erschei-
+                                                                                       nung darüber mehr hinaus sein wird, welche sich frei in
+                                                                                       der Fülle des Lichtes entwickelt zu einer Reinheit des Ver-
+                                                                                       hältnisses, einer Blankheit der Farbe und einer organischen
+                                                                                       Klarheit der Form.
+
+
+
+
+                                                                                       L’esprit vivifiant d’une époque et non les formes traditionelles
+                                                                                       forment la direction à son art. C’est ainsi que la tendance du
+                                                                                       développement architectural nous offre une architecture qui
+                                                                                       en réalité est plus attachée à la matière qu’autre fois, mais
+                                                                                       qui en apparence la dépasse de beaucoup. C’est une
+                                                                                       architecture qui se deploie librement n pleine lumière, en une
+                                                                                       pureté de proportions, en un éclat de couleurs et une clarté
+                                                                                       organique de la forme.                              J. J. P. OUD
+     Merz. Hanover, Germany, 1924
+
+
+
+
+                                                                                                                                     NIE S VA N D ER ROHE
+
+
+
+
+91                                                                                                                                                          Wir kennen keine form., sondern nur Bauprobleme. Form ist nicht Ziel, sondern Resultat unserer Arbeit.
+                                                                                                                                                            Nous ne connaissons pas de problèmes de forme, mais des problemes de construction. La forme n’est pas                                                                                                                                                                           le   but,   mais   plutot   le   résultat        de   notre   travail.
+initial is necessary it should be placed in one or more sizes larger than the       On the spine, and on the front if it is being used, it is not necessary
+body face, on the first line, and may be indented the same amount as the        to print more than the name of the book and the author. The publisher’s
+paragraphs. The first line of a paragraph without an initial may also be        name and device need not be there. The lettering should be the same as
+set full out. Bold headings will usually exclude the use of initials.           that on the title-page. Sometimes a brass must be ordered for the binder.
+    Halftones in a book should be the same width as the type measure, or        Fine, light coloured linens can be blocked in coloured inks, but dark
+its half, less the space between two blocks. A third possibility is to make     cloths must be blocked in metal foil. Rough cloths can be blocked only
+their width in the same proportion to the measure as the golden mean.*          in heavy types and then not clearly. Better with such cloths to print the
+All blocks in the normal type area should be made to ems, not inches.           title on a silk label.
+Engravings for bleed should have an eighth of an inch allowed on each               Only the top edges should be coloured. Bright colours are preferable
+side to bleed. Photographs may be cropped - works of art never. But in          to dark. If a headband is being used, it should be either off-white or the
+ordinary work, engravings intended to bleed are not much used since             same colour as the binding material, or the top edge. Two-coloured or
+they raise costs (larger paper, interleaving to prevent offset when being       variegated headbands should be avoided.
+trimmed). They are more suitable for luxury publications where they                 Square backs, instead of the usual slightly rounded spine, look attrac-
+can be used to advantage. On octavo pages more than two illustrations           tive at first sight but make the book unpleasant after reading. A very
+do not look well and if they are being bled off it will be better to use        slightly rounded spine is best.
+only one. Pages with four or more illustrations running off the page                End papers may be white or a bright colour and they must fit in with
+look ugly. Line drawings used on book pages are subject to the same             the other colours of the book even if they contrast.
+rules and should not be trimmed.                                                    The book jacket has in the past ten years seen great developments.
+    Captions should be set smaller than the body face; in certain cases a       This modern discovery is often the best-designed part of a book, per-
+contrasting type may be used. They may be set justified or unjustified.         haps because it has no tradition and its purpose is clear. For many jackets,
+    To set type around engravings is both unsightly and impractical. The        photographs and photomontage are suitable and require a completely
+space should be left empty or used for captions. It is understood that in       contemporary typographic treatment. To design a good jacket without
+asymmetric setting blocks should not be centred.                                a picture is more difficult. With both pictorial and typographic jackets,
+    A book will not have unity if the binding and jacket are designed by        as with the binding, the unity of the book must be observed. It is sad to
+another hand than the inside - but unfortunately just that often happens.       see how often a really modern jacket wraps a conventionally-designed
+The binding should be in harmony with the graphic qualities of the              book.
+typography. The jacket should also be considered as part of the book,               We will have books worthy of our times only when publishers and
+even if it is thrown away later.                                                authors approach the problem with less caution. England is no bad ex-
+    Since the jacket today is the book’s poster, the binding no longer has      ample and when England is following closely the rare examples of out-
+any advertising function. For this reason it is rarely necessary to print       standing modern design on the Continent, should we not have the
+anything on the front of the case; the title on the spine is enough. On         courage to be true to the style and ideals of our own time?
+modern books, lettering along the length of the spine is nearly always
+preferable, except on thick volumes. The spine title should not be omit-
+ted on thin booklets since its omission makes them difficult to find. A
+book without spine lettering is useless.
+* This refers to the Golden Rectangle which has a ratio of 1:1.618.
+
+
+
+               92                                                                                                                          93
+    Other books in print by the author
+
+Treasury of Alphabets and Lettering. 150 complete alphabets with 64 pages
+    of text and explanation. New York: Reinhold Publishing Corpora-
+    tion. 16.50 dollars.
+Geschichte der Schrift in Bildern. Vierte Auflage. 16 Seiten Text und 78
+    Tafeln. Hamburg: Ernst Hauswedell & Co. 24 DM.
+Schatzkammer der Schreibkunst. Meisterwerke der Kalligraphie aus vier
+    Jahrhunderten auf zweihundert Tafeln. Basel: Birkhaeuser Verlag.
+    48 SFr.
+Was jedermann vom Buchdruck wissen sollte. Ein Leitfaden fuer Druck
+    sachenbesteller. 72 Seiten. Basel: Birkhaeuser Verlag. 5.6o SFr.
+Erfreuliche Drucksachen durch gute Typographie. Eine Fibel fuer jeder-
+    mann. 124 Seiten. Ravensburg: Otto Maier Verlag. 9.80 DM.
+Im dienste des buches. Buchherstellung als kunst-satzregeln eines buch
+    herstellers - achtundfuenfzig tafeln nach arbeiten des verfassers. Sankt
+    Gallen: SGM-Buecherei, Gutenbergstrasse 13. 25 SFr.
+Schoenste liebe mich. Deutsche Liebesgedichte aus dem Barock und dem
+    Rokoko. Mit farbigen Wiedergaben acht alter Spitzenbildchen. 96
+    Seiten, 8 Tafeln. Heidelberg: Lambert Schneider, 9.80 DM.
+“Non-arbitrary proportions of page and type area.”- Print in Britain
+    (60-66 Wardour Street, London, W.1), September 1963. 25.
+Ausgewaehlte Aufsaetze weber Fragen der Gestalt des Buches und der Typo-
+    graphie. Basel: Birkhaeuser Verlag, 1967. 22 SFr.
+
+An extended list of the books by the author, mostly out of print, will
+   be found in his book Treasury of Alphabets and Lettering.
+
+
+
+
+             94
+

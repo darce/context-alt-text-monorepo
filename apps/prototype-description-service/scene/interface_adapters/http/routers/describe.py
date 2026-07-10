@@ -26,6 +26,11 @@ from recognition.interface_adapters.http.deps import (
 )
 from recognition.interface_adapters.http.middleware.metrics import get_default_metrics
 from scene.application.description_repository import ImageDescriptionRepository
+from scene.application.fusion.reconcile import (
+    Attachment,
+    AttachmentDecision,
+    FactSource,
+)
 from scene.application.identity_merge import (
     NamingPolicy,
     NamingProvenance,
@@ -230,6 +235,40 @@ async def _naming_preview(
         )
 
 
+def _faces_for_naming_preview(
+    confirmed_faces: list,
+    attachments: tuple[Attachment, ...],
+    phrase_boxes,
+) -> list:
+    """HARM-02: keep Stage-3 positional naming consistent with Stage-2 drops.
+
+    With no phrase boxes, ``merge_identities`` falls back to positional naming
+    of every eligible face — including identities whose ContextPack fact
+    Stage-2 just dropped, which would make ``named_draft`` contradict
+    ``attachment_provenance``. Stage-2 is the single decision point: faces
+    whose identity fact was dropped never reach the positional fallback.
+    Grounded mode (boxes present) already mirrors Stage-2's own merge, so it
+    is left untouched.
+    """
+    if phrase_boxes or not attachments or not confirmed_faces:
+        return confirmed_faces
+    # fact_id formats are canonical in reconcile._identity_fact_id:
+    # "identity:cluster:<id>" / "identity:id:<id>" / "identity:<idx>:<name>".
+    dropped: set[tuple[str, str]] = set()
+    for a in attachments:
+        if a.fact_source is FactSource.IDENTITY and a.decision is AttachmentDecision.DROPPED:
+            parts = a.fact_id.split(":", 2)
+            if len(parts) == 3 and parts[1] in ("cluster", "id"):
+                dropped.add((parts[1], parts[2]))
+    if not dropped:
+        return confirmed_faces
+    return [
+        f
+        for f in confirmed_faces
+        if ("cluster", str(f.cluster_id)) not in dropped and ("id", str(f.identity_id)) not in dropped
+    ]
+
+
 def _generation_timeout_seconds(settings: DescriptionSettings, adapter) -> float:
     if adapter.kind is DescriptionAdapterKind.LOCAL_CPU:
         return VlmSettings().inference_timeout_seconds
@@ -256,15 +295,22 @@ async def describe_image_multipart(
             status.HTTP_422_UNPROCESSABLE_CONTENT, f"invalid 'request' envelope: {exc.errors()}"
         ) from exc
 
-    # E20-FUSION decorative/eligibility gate — server backstop; WP is primary skip.
-    # Runs before any inference (and before image byte validation) so decorative
-    # images never spend GPU/CPU on description.
-    if envelope.decorative:
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-
     auth_tenant = (getattr(auth, "tenant_claim", None) or "").strip()
     if auth_tenant and auth_tenant != envelope.tenant_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "tenant mismatch between auth and request envelope")
+
+    # E20-FUSION decorative/eligibility gate — server backstop; WP is primary skip.
+    # Ordered AFTER auth/tenant validation (S3A-05) but before any inference and
+    # image byte validation, so decorative images never spend GPU/CPU on
+    # description. Logged so a misbehaving WP client that POSTs decorative
+    # images at volume stays observable.
+    if envelope.decorative:
+        _logger.info(
+            "decorative image skipped: tenant_id=%s media_id=%s",
+            envelope.tenant_id,
+            envelope.media_id,
+        )
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     image_parts = [(k, v) for k, v in form.multi_items() if k.startswith(_IMAGE_KEY_PREFIX)]
     if len(image_parts) != 1:
@@ -350,6 +396,9 @@ async def describe_image_multipart(
         # Upstream hosted-provider fault (key missing, provider 5xx/timeout,
         # malformed body): 502 keeps the fail-closed contract actionable.
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    # HARM-02: derive positional naming from the Stage-2 decision — identities
+    # whose fact was dropped must not be named by the fallback.
+    preview_faces = _faces_for_naming_preview(confirmed_faces, service.last_attachments, service.last_phrase_boxes)
     named_draft, naming_provenance = await _naming_preview(
         session=session,
         tenant=tenant_record,
@@ -360,7 +409,7 @@ async def describe_image_multipart(
         # Adapter output on generation; restored from the cached row on cache
         # hits — both paths yield the same named draft (E19-4A-S4-BR-03).
         phrase_boxes=service.last_phrase_boxes,
-        confirmed_faces=confirmed_faces,
+        confirmed_faces=preview_faces,
         naming_policy=naming_policy,
     )
     response = response.model_copy(

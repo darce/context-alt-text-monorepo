@@ -259,7 +259,7 @@ def _post_png(client, tenant, *, media_id=42):
     )
 
 
-def _seed_confirmed_identity(label="Daniel", *, media_id=42, roster_id=None, suppressed=False):
+def _seed_confirmed_identity(label="Daniel", *, media_id=42, roster_id=None, suppressed=False, capture=None):
     async def _seed(s):
         identity = MediaIdentity(
             tenant_id=uuid.UUID(TENANT_ID),
@@ -290,6 +290,8 @@ def _seed_confirmed_identity(label="Daniel", *, media_id=42, roster_id=None, sup
         )
         if suppressed:
             s.add(IdentityNameSuppression(tenant_id=uuid.UUID(TENANT_ID), roster_id=roster_id))
+        if capture is not None:
+            capture["cluster_id"] = cluster.id
 
     return _seed
 
@@ -430,6 +432,72 @@ def test_cache_hit_keeps_grounded_naming_parity():
         assert second["named_draft"] == first["named_draft"] == "Daniel stands by the window."
         assert second["naming_provenance"]["mode"] == first["naming_provenance"]["mode"] == "grounded"
         assert second["naming_provenance"]["injected_names"] == first["naming_provenance"]["injected_names"]
+
+
+class _NoBoxAdapter:
+    """Fixed caption, no phrase boxes — drives the positional-fallback naming path."""
+
+    kind = DescriptionAdapterKind.SEEDED
+    model_id = "noboxes-fake"
+    model_version = "1"
+    prompt_or_task_version = "1"
+
+    def describe(self, *, image_bytes, context):
+        caption = "Two people at a garden party."
+        return AdapterResult(
+            caption=caption,
+            objects=(),
+            ocr_text=None,
+            alt_text_draft=caption,
+            context_sources=("context_pack",) if context else (),
+            context_applied=bool(context),
+            phrase_boxes=(),
+        )
+
+
+def test_positional_fallback_suppressed_when_stage2_drops_identity():
+    """HARM-02: faces confirmed but no phrase boxes — Stage-2 drops the pack
+    identity (ambiguous_grounding), so the Stage-3 positional fallback must NOT
+    name that person in named_draft. One decision point, no self-contradiction."""
+    holder = {}
+    with _client(
+        adapter=_NoBoxAdapter(),
+        seed=_seed_confirmed_identity("Daniel", roster_id=uuid.uuid4(), capture=holder),
+    ) as client:
+        r = client.post(
+            "/scene/describe/multipart",
+            data={
+                "request": json.dumps(
+                    {
+                        "tenant_id": TENANT_ID,
+                        "media_id": 42,
+                        "context_pack": {
+                            "identity": {
+                                "policy": {"person_naming": "allowed"},
+                                "identities": [
+                                    {
+                                        "name": "Daniel",
+                                        "cluster_id": str(holder["cluster_id"]),
+                                        "source": "roster",
+                                    }
+                                ],
+                            }
+                        },
+                    }
+                )
+            },
+            files={"image_42": ("x.png", _png_bytes(), "image/png")},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        facts = {f["fact_id"]: f for f in body["attachment_provenance"]["facts"]}
+        identity = facts[f"identity:cluster:{holder['cluster_id']}"]
+        assert identity["decision"] == "dropped"
+        assert identity["review_reason"] == "ambiguous_grounding"
+        # The dropped identity is not positionally named — draft stays generic.
+        assert body["named_draft"] == body["generic_draft"]
+        assert "Daniel" not in body["named_draft"]
+        assert body["naming_provenance"]["naming_allowed"] is False
 
 
 def test_stub_profile_returns_503_with_reason():

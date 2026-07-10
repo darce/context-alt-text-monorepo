@@ -350,7 +350,7 @@ If a disconfirmer fires, change the falsified assumption and keep shipping; don'
 | D9 | Data ownership map | in-house SoR = tenant/plan/keys/usage/flywheel/consent/email; ref vendors by ID | **settled** (§6.3), write ADR `[ARCH-07]` |
 | D10 | Naming / positioning | category = **"Verified Alt Text"**; method = **"The Curated-Accuracy Method"** (Roster → Recognize & Flag → Curate); method is a supporting asset, **not** the H1 tagline | **settled** — see `positioning-canon-rules-and-naming.md` `[GTM-14..16]` |
 
-> **Companion docs:** `positioning-canon-rules-and-naming.md` (naming + proposed canon rules GTM-14..16) · `decomposition-ap1-ap2.md` (AP-1/AP-2 atomic sub-slices) · `offload-brief-ap7-concierge.md` (first offload lane).
+> **Companion docs:** `positioning-canon-rules-and-naming.md` (naming + proposed canon rules GTM-14..16) · `offload-brief-ap7-concierge.md` (first offload lane) · **decomposition set** (all §14 Epics → atomic sub-slices, each citing engineering-heuristics v2 IDs): `decomposition-ap1-ap2.md`, `decomposition-ap3-ap4-ap5-accounts-billing.md`, `decomposition-mk1-ls3-frontend-plugin.md`. Heuristics live in `docs/strategy/{engineering,business-marketing,design-aesthetics}-heuristics.md`.
 
 **North-star KPI:** weekly **captions accepted** (value delivered) and **paying conversions** — not signups or follower reach `[GTM-06][BOOT-08]`. Activation = % of signups generating ≥1 caption in 24h.
 

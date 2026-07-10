@@ -37,7 +37,7 @@ make provision-customer EMAIL=concierge-test@example.com PLAN=pro LABEL="Test Co
 
 ## Notes for the lane
 
-- Model the target on the existing `provision-demo` shape (§5 of the plan) minus the `demo_instances` slug/expiry/quota; label the key as customer-scoped.
+- Model the target on the `provision-demo` shape described in §5 of the plan (that slice, DS-3, is not built yet — follow the §5 text, not an existing make target) minus the `demo_instances` slug/expiry/quota; label the key as customer-scoped.
 - Polar account creation + payment-link generation are **operator-manual** (external SaaS UI) — the runbook documents them; the lane does not automate Polar.
 - Keep the command output copy-paste-friendly for the operator to drop into an email until AP-6 (Resend) automates it.
 

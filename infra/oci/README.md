@@ -744,6 +744,8 @@ the scale-to-zero detailed-description tier. It is **not provisionable until an 
 service-limit increase is granted** (console request, not API) and a golden image OCID
 is set. See **[GPU-BURST-PROVISIONING.md](GPU-BURST-PROVISIONING.md)** for the quota
 procurement path, SSH/Tailscale admin-plane scope, provisioning sequence, and costs.
+If OCI denies the A10 quota, **[GPU-TIER-FALLBACK-PLAN.md](GPU-TIER-FALLBACK-PLAN.md)**
+covers the backend-agnostic fallbacks (self-host over Tailscale, serverless, hosted API).
 
 ## Security Note
 

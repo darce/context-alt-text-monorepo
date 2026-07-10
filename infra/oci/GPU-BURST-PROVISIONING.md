@@ -133,7 +133,11 @@ review — typically 1–3 business days**, occasionally longer or escalated to 
 or "contact sales"). Typical remedies: confirm PAYG + add/settle a payment method and
 let some billing history accrue; lower the requested limit to 1; pick a different AD or
 region with A10 capacity; or engage OCI sales for the tier. Re-submitting the same
-request against the same conditions will be denied again.
+request against the same conditions will be denied again. **If it stays denied, see
+[GPU-TIER-FALLBACK-PLAN.md](GPU-TIER-FALLBACK-PLAN.md)** — the detailed tier is
+backend-agnostic (VLM-3's `gpu_remote_adapter` + hosted-provider seam), so falling back
+to a self-hosted-over-Tailscale, serverless, or hosted-API GPU is a config decision, not
+a rebuild.
 
 ## Costs
 

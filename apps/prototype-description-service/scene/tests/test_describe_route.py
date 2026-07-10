@@ -145,7 +145,9 @@ def test_happy_path_returns_15_fields_then_cached():
         r1 = _post(client, tenant)
         assert r1.status_code == 200, r1.text
         body = r1.json()
-        assert len(body) == 18  # 15 core-contract fields + 3 additive preview fields (E19-4a)
+        # 15 core + 3 E19-4a preview + 1 E20-FUSION attachment_provenance
+        assert len(body) == 19
+
         assert body["cached"] is False
         assert body["media_id"] == 42
         assert body["adapter"] == "seeded"

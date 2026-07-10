@@ -42,9 +42,15 @@ def _sample() -> dict:
     }
 
 
-# E19-4a additive optional preview fields: never in `required`, always in
-# `properties` — the 15 core-contract fields stay locked.
-PREVIEW_FIELDS = {"generic_draft", "named_draft", "naming_provenance"}
+# Additive optional fields: never in `required`, always in `properties` —
+# the 15 core-contract fields stay locked.
+# E19-4a preview trio + E20-FUSION attachment provenance.
+PREVIEW_FIELDS = {
+    "generic_draft",
+    "named_draft",
+    "naming_provenance",
+    "attachment_provenance",
+}
 
 
 def test_schema_required_matches_model_fields():
@@ -74,6 +80,20 @@ def test_sample_with_preview_fields_validates():
         "naming_allowed": True,
         "reason": None,
         "mode": "grounded",
+    }
+    sample["attachment_provenance"] = {
+        "facts": [
+            {
+                "fact_id": "identity:cluster:00000000-0000-0000-0000-000000000002",
+                "fact_source": "identity",
+                "fact_label": "Daniel",
+                "decision": "object",
+                "altitude": "object",
+                "target_evidence": "person",
+                "review_reason": None,
+                "visible": True,
+            }
+        ]
     }
     jsonschema.validate(sample, _schema())
 

@@ -9,9 +9,15 @@ from scene.domain.description import DescriptionAdapterKind, ProviderMode, Reten
 from scene.interface_adapters.http.schemas.requests import DescribeImageEnvelope
 from scene.interface_adapters.http.schemas.responses import VisualFactsResponse
 
-# 15 contract-locked core fields + the E19-4a additive optional preview trio.
-PREVIEW_FIELDS = {"generic_draft", "named_draft", "naming_provenance"}
+# 15 contract-locked core fields + additive optional preview/fusion fields.
+PREVIEW_FIELDS = {
+    "generic_draft",
+    "named_draft",
+    "naming_provenance",
+    "attachment_provenance",
+}
 EXPECTED_FIELDS = {
+
     "tenant_id",
     "media_id",
     "image_hash",

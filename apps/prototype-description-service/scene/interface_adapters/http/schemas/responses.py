@@ -72,9 +72,37 @@ class NamingProvenance(BaseModel):
     mode: str | None = None
 
 
+class AttachmentFactProvenance(BaseModel):
+    """One ContextPack fact's Stage-2 attachment decision (E20-FUSION)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    fact_id: str
+    fact_source: str
+    fact_label: str
+    decision: str
+    altitude: str
+    target_evidence: str | None = None
+    review_reason: str | None = None
+    visible: bool = False
+
+
+class AttachmentProvenance(BaseModel):
+    """E20-FUSION per-fact attachment provenance from Stage-2 reconciliation.
+
+    Mirrors the ``NamingProvenance`` additive-optional pattern: declared on the
+    response, never required, ``extra="forbid"`` preserved.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    facts: list[AttachmentFactProvenance] = Field(default_factory=list)
+
+
 class VisualFactsResponse(BaseModel):
-    """The 15 contract-locked core fields plus the E19-4a additive optional
-    preview trio (``generic_draft``/``named_draft``/``naming_provenance``).
+    """The 15 contract-locked core fields plus additive optional preview /
+    fusion fields (``generic_draft``/``named_draft``/``naming_provenance``/
+    ``attachment_provenance``).
 
     Preview fields are draft-only: nothing here writes
     ``_wp_attachment_image_alt`` (that write path is E19-2).
@@ -101,3 +129,5 @@ class VisualFactsResponse(BaseModel):
     generic_draft: str | None = None
     named_draft: str | None = None
     naming_provenance: NamingProvenance | None = None
+    # E20-FUSION additive optional Stage-2 attachment provenance.
+    attachment_provenance: AttachmentProvenance | None = None

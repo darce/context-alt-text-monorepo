@@ -1,4 +1,10 @@
-"""E20-FUSION Slice 4: fusion_runner emits acx-eval/v1 records; deterministic re-score."""
+"""E20-FUSION Slice 4: fusion_runner emits acx-eval/v1 records; deterministic re-score.
+
+Input/label separation (S4A-03): harness inputs derive from raw fixture data
+(context text, present_identities, policy, fixture taxonomy/eval_scenario);
+``expected_attachments`` is read only by the scorer. The negative-control test
+proves the scorer genuinely discriminates (flipped labels produce hits).
+"""
 
 from __future__ import annotations
 
@@ -89,6 +95,29 @@ def test_adhoc_has_more_misattachments_than_staged(manifest):
     assert s_mis == 0
 
 
+def test_multi_identity_entries_object_attach_with_distinct_geometry(manifest):
+    """Two site-confirmed identities in one image both object-attach.
+
+    Each identity gets a distinct, non-overlapping face box matched 1:1 to its
+    own person phrase box (real merge.py containment). Identical geometry
+    would drop both as ambiguous_grounding, so this genuinely exercises
+    discrimination.
+    """
+    record = run_fusion_eval(
+        manifest, mode="staged", head_sha="a" * 40, started_at="2026-07-09T00:00:00Z"
+    )
+    for suffix, names in (
+        ("ccqw-erika.jpg", ("Caitlin Weaver", "Erika Hansen Miller")),
+        ("kirstie-daniel-sunglasses.jpg", ("Daniel Arce", "Kirstie Mccarrel")),
+    ):
+        item = next(i for i in record["items"] if i["path"].endswith(suffix))
+        facts = {f["fact_label"]: f for f in item["describe"]["attachment_provenance"]["facts"]}
+        for name in names:
+            assert facts[name]["decision"] == "object", facts[name]
+            assert facts[name]["visible"] is True
+            assert facts[name]["review_reason"] is None
+
+
 def test_mcm_planecrash_success_criterion(manifest):
     """Unconfirmed face not object-attached + garden picnic caption-level non-visible."""
     record = run_fusion_eval(
@@ -113,11 +142,84 @@ def test_mcm_planecrash_success_criterion(manifest):
     assert place["visible"] is False
 
 
+def test_context_pack_derives_from_fixture_not_labels(manifest):
+    """Pack identities come from context text + present_identities, not labels."""
+    roster = manifest.roster
+    painting = next(e for e in manifest.entries if e.path.endswith("liam-maloney-painting.jpg"))
+    pack = build_typed_context_pack(painting, roster)
+    assert pack is not None and pack.identity is not None
+    (liam,) = pack.identity.identities
+    # Mentioned in context text but not site-confirmed → name-only (unconfirmed).
+    assert liam.name == "Liam Maloney"
+    assert liam.cluster_id is None and liam.identity_id is None
+
+    plane = next(e for e in manifest.entries if e.path.endswith("mcm-planecrash.jpg"))
+    pack = build_typed_context_pack(plane, roster)
+    assert pack is not None and pack.identity is not None
+    (maria,) = pack.identity.identities
+    # Site-confirmed (present_identities) → recognition ids attached.
+    assert maria.cluster_id == "cluster-maria-correonero"
+    # Taxonomy terms come from the fixture's context_pack.taxonomy_terms.
+    assert {(t.taxonomy, t.slug) for t in pack.taxonomy_terms} == {
+        ("event", "garden-picnic"),
+        ("place", "summer-garden"),
+    }
+
+
+def test_scorer_negative_control_flipped_label_is_flagged(manifest):
+    """The scorer discriminates: flipping an expected label must produce a hit."""
+    record = run_fusion_eval(
+        manifest, mode="staged", head_sha="a" * 40, started_at="2026-07-09T00:00:00Z"
+    )
+    flipped = manifest.model_copy(deep=True)
+    caitlin = next(
+        a
+        for e in flipped.entries
+        if e.path.endswith("ccqw-antartica.jpg")
+        for a in e.expected_attachments
+        if a.fact_label == "Caitlin Weaver"
+    )
+    caitlin.decision = "dropped"
+    caitlin.visible = False
+    mis = score_misattachments(record, flipped)
+    assert mis["misattachments"] == 1
+    assert mis["hits"][0]["fact_label"] == "Caitlin Weaver"
+    assert mis["hits"][0]["reason"] == "decision_or_visible_mismatch"
+
+
+def test_adhoc_claims_derive_from_generated_caption(manifest):
+    """Ad-hoc arm: fusion disabled, claims parsed from the caption text."""
+    record = run_fusion_eval(
+        manifest, mode="adhoc", head_sha="a" * 40, started_at="2026-07-09T00:00:00Z"
+    )
+    item = next(i for i in record["items"] if i["path"].endswith("liam-maloney-painting.jpg"))
+    describe = item["describe"]
+    # Same service path, model-free stub adapter (report banner keys off this).
+    assert describe["adapter"] == "seeded"
+    assert describe["attachment_provenance"]["derivation"] == "adhoc-caption-assertion"
+    caption = describe["visual_facts"]["caption"]
+    (liam,) = describe["attachment_provenance"]["facts"]
+    # The parroted context caption asserts the name; the claim mirrors that.
+    assert "Liam Maloney" in caption
+    assert liam["decision"] == "object" and liam["visible"] is True
+    assert liam["target_evidence"] == "adhoc-caption-assertion"
+
+
+def test_adhoc_report_carries_stub_adapter_banner(manifest):
+    record = run_fusion_eval(
+        manifest, mode="adhoc", head_sha="a" * 40, started_at="2026-07-09T00:00:00Z"
+    )
+    entries = manifest_entries_as_dicts(manifest)
+    _, md = build_reports(record, entries)
+    assert "seeded" in md
+    assert "NOT a caption-model baseline" in md
+
+
 def test_degrade_missing_labels_and_empty_context(manifest):
     """Degrade paths: empty ContextPack / no expected labels → empty provenance."""
     empty = next(e for e in manifest.entries if e.path.endswith("nina-machiavelli.jpeg"))
     assert empty.expected_attachments == []
-    assert build_typed_context_pack(empty) is None
+    assert build_typed_context_pack(empty, manifest.roster) is None
 
     record = run_fusion_eval(
         manifest, mode="staged", head_sha="f" * 40, started_at="2026-07-09T00:00:00Z", limit=None
@@ -130,7 +232,7 @@ def test_degrade_missing_labels_and_empty_context(manifest):
 def test_policy_disabled_pool_yields_no_typed_pack(manifest):
     pool = next(e for e in manifest.entries if e.path.endswith("maria-pool.jpg"))
     assert pool.policy.recognition_enabled is False
-    assert build_typed_context_pack(pool) is None
+    assert build_typed_context_pack(pool, manifest.roster) is None
 
 
 def test_cli_writes_reports(tmp_path, manifest):

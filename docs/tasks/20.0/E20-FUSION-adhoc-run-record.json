@@ -2,9 +2,10 @@
   "items": [
     {
       "describe": {
-        "adapter": "adhoc-injection",
-        "alt_text_draft": "Caitlin Weaver. Caitlin Weaver on the Antarctic peninsula during her 2023 research residency.. A person is present.",
+        "adapter": "seeded",
+        "alt_text_draft": "Caitlin Weaver. Antarctica expedition. Caitlin Weaver on the Antarctic peninsula during her 2023 research residency.. Caitlin Weaver reached the peninsula by icebreaker after a two-day crossing of the Drake Passage.. A person is present.",
         "attachment_provenance": {
+          "derivation": "adhoc-caption-assertion",
           "facts": [
             {
               "altitude": "object",
@@ -13,18 +14,19 @@
               "fact_label": "Caitlin Weaver",
               "fact_source": "identity",
               "review_reason": null,
-              "target_evidence": "adhoc-injection",
+              "target_evidence": "adhoc-caption-assertion",
               "visible": true
             }
           ]
         },
         "cached": false,
-        "model_id": "adhoc-baseline",
+        "model_id": "fusion-eval-adhoc-stub",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Caitlin Weaver. Caitlin Weaver on the Antarctic peninsula during her 2023 research residency.. A person is present.",
+          "caption": "Caitlin Weaver. Antarctica expedition. Caitlin Weaver on the Antarctic peninsula during her 2023 research residency.. Caitlin Weaver reached the peninsula by icebreaker after a two-day crossing of the Drake Passage.. A person is present.",
           "objects": [
-            "person"
+            "person",
+            "scene"
           ]
         }
       },
@@ -38,9 +40,10 @@
     },
     {
       "describe": {
-        "adapter": "adhoc-injection",
-        "alt_text_draft": "Bea Burke. Bea Burke at the science fair.. A person is present.",
+        "adapter": "seeded",
+        "alt_text_draft": "Bea Burke. Bea Burke at the science fair.. Bea Burke volunteered as a judge at the regional science fair; she has judged the fair three years running.. A person is present.",
         "attachment_provenance": {
+          "derivation": "adhoc-caption-assertion",
           "facts": [
             {
               "altitude": "object",
@@ -49,18 +52,19 @@
               "fact_label": "Bea Burke",
               "fact_source": "identity",
               "review_reason": null,
-              "target_evidence": "adhoc-injection",
+              "target_evidence": "adhoc-caption-assertion",
               "visible": true
             }
           ]
         },
         "cached": false,
-        "model_id": "adhoc-baseline",
+        "model_id": "fusion-eval-adhoc-stub",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Bea Burke. Bea Burke at the science fair.. A person is present.",
+          "caption": "Bea Burke. Bea Burke at the science fair.. Bea Burke volunteered as a judge at the regional science fair; she has judged the fair three years running.. A person is present.",
           "objects": [
-            "person"
+            "person",
+            "scene"
           ]
         }
       },
@@ -74,9 +78,10 @@
     },
     {
       "describe": {
-        "adapter": "adhoc-injection",
-        "alt_text_draft": "Caitlin Weaver and Erika Hansen Miller. Caitlin Weaver and Erika Hansen Miller with friends.. A person is present.",
+        "adapter": "seeded",
+        "alt_text_draft": "Caitlin Weaver and Erika Hansen Miller. Caitlin Weaver and Erika Hansen Miller with friends.. Caitlin Weaver and Erika Hansen Miller met up downtown; the other two people in the photo asked not to be named.. A person is present.",
         "attachment_provenance": {
+          "derivation": "adhoc-caption-assertion",
           "facts": [
             {
               "altitude": "object",
@@ -85,7 +90,7 @@
               "fact_label": "Caitlin Weaver",
               "fact_source": "identity",
               "review_reason": null,
-              "target_evidence": "adhoc-injection",
+              "target_evidence": "adhoc-caption-assertion",
               "visible": true
             },
             {
@@ -95,18 +100,19 @@
               "fact_label": "Erika Hansen Miller",
               "fact_source": "identity",
               "review_reason": null,
-              "target_evidence": "adhoc-injection",
+              "target_evidence": "adhoc-caption-assertion",
               "visible": true
             }
           ]
         },
         "cached": false,
-        "model_id": "adhoc-baseline",
+        "model_id": "fusion-eval-adhoc-stub",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Caitlin Weaver and Erika Hansen Miller. Caitlin Weaver and Erika Hansen Miller with friends.. A person is present.",
+          "caption": "Caitlin Weaver and Erika Hansen Miller. Caitlin Weaver and Erika Hansen Miller with friends.. Caitlin Weaver and Erika Hansen Miller met up downtown; the other two people in the photo asked not to be named.. A person is present.",
           "objects": [
-            "person"
+            "person",
+            "scene"
           ]
         }
       },
@@ -121,20 +127,11 @@
     },
     {
       "describe": {
-        "adapter": "adhoc-injection",
-        "alt_text_draft": "Daniel Arce and Kirstie Mccarrel. Kirstie Mccarrel and Daniel Arce on vacation.. A person is present.",
+        "adapter": "seeded",
+        "alt_text_draft": "Daniel Arce and Kirstie Mccarrel. Kirstie Mccarrel and Daniel Arce on vacation.. Kirstie Mccarrel and Daniel Arce spent the afternoon at the coast; both wore sunglasses the whole day.. A person is present.",
         "attachment_provenance": {
+          "derivation": "adhoc-caption-assertion",
           "facts": [
-            {
-              "altitude": "object",
-              "decision": "object",
-              "fact_id": "identity:cluster:cluster-daniel-arce",
-              "fact_label": "Daniel Arce",
-              "fact_source": "identity",
-              "review_reason": null,
-              "target_evidence": "adhoc-injection",
-              "visible": true
-            },
             {
               "altitude": "object",
               "decision": "object",
@@ -142,18 +139,29 @@
               "fact_label": "Kirstie Mccarrel",
               "fact_source": "identity",
               "review_reason": null,
-              "target_evidence": "adhoc-injection",
+              "target_evidence": "adhoc-caption-assertion",
+              "visible": true
+            },
+            {
+              "altitude": "object",
+              "decision": "object",
+              "fact_id": "identity:cluster:cluster-daniel-arce",
+              "fact_label": "Daniel Arce",
+              "fact_source": "identity",
+              "review_reason": null,
+              "target_evidence": "adhoc-caption-assertion",
               "visible": true
             }
           ]
         },
         "cached": false,
-        "model_id": "adhoc-baseline",
+        "model_id": "fusion-eval-adhoc-stub",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Daniel Arce and Kirstie Mccarrel. Kirstie Mccarrel and Daniel Arce on vacation.. A person is present.",
+          "caption": "Daniel Arce and Kirstie Mccarrel. Kirstie Mccarrel and Daniel Arce on vacation.. Kirstie Mccarrel and Daniel Arce spent the afternoon at the coast; both wore sunglasses the whole day.. A person is present.",
           "objects": [
-            "person"
+            "person",
+            "scene"
           ]
         }
       },
@@ -168,9 +176,10 @@
     },
     {
       "describe": {
-        "adapter": "adhoc-injection",
-        "alt_text_draft": "Ryann Wiseman. Ryann Wiseman celebrating with friends.. A person is present.",
+        "adapter": "seeded",
+        "alt_text_draft": "Ryann Wiseman. Ryann Wiseman celebrating with friends.. Ryann Wiseman hosted the birthday party; the guests around her are coworkers who are not on the site roster.. A person is present.",
         "attachment_provenance": {
+          "derivation": "adhoc-caption-assertion",
           "facts": [
             {
               "altitude": "object",
@@ -179,18 +188,19 @@
               "fact_label": "Ryann Wiseman",
               "fact_source": "identity",
               "review_reason": null,
-              "target_evidence": "adhoc-injection",
+              "target_evidence": "adhoc-caption-assertion",
               "visible": true
             }
           ]
         },
         "cached": false,
-        "model_id": "adhoc-baseline",
+        "model_id": "fusion-eval-adhoc-stub",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Ryann Wiseman. Ryann Wiseman celebrating with friends.. A person is present.",
+          "caption": "Ryann Wiseman. Ryann Wiseman celebrating with friends.. Ryann Wiseman hosted the birthday party; the guests around her are coworkers who are not on the site roster.. A person is present.",
           "objects": [
-            "person"
+            "person",
+            "scene"
           ]
         }
       },
@@ -204,18 +214,20 @@
     },
     {
       "describe": {
-        "adapter": "adhoc-injection",
-        "alt_text_draft": "An afternoon at the hotel pool.. A person is present.",
+        "adapter": "seeded",
+        "alt_text_draft": "An afternoon at the hotel pool.. A quiet afternoon at the hotel pool during the summer trip.. A person is present.",
         "attachment_provenance": {
+          "derivation": "adhoc-caption-assertion",
           "facts": []
         },
         "cached": false,
-        "model_id": "adhoc-baseline",
+        "model_id": "fusion-eval-adhoc-stub",
         "model_version": "1",
         "visual_facts": {
-          "caption": "An afternoon at the hotel pool.. A person is present.",
+          "caption": "An afternoon at the hotel pool.. A quiet afternoon at the hotel pool during the summer trip.. A person is present.",
           "objects": [
-            "person"
+            "person",
+            "scene"
           ]
         }
       },
@@ -227,9 +239,10 @@
     },
     {
       "describe": {
-        "adapter": "adhoc-injection",
-        "alt_text_draft": "Liam Maloney. Abstract painting by Liam Maloney.. Liam Maloney is prominently visible in the frame. A person is present.",
+        "adapter": "seeded",
+        "alt_text_draft": "Untitled No. 7. Abstract painting by Liam Maloney.. Liam Maloney painted this piece in 2024 for the group show at the riverside gallery; it is oil on linen.. A person is present.",
         "attachment_provenance": {
+          "derivation": "adhoc-caption-assertion",
           "facts": [
             {
               "altitude": "object",
@@ -238,18 +251,19 @@
               "fact_label": "Liam Maloney",
               "fact_source": "identity",
               "review_reason": null,
-              "target_evidence": "adhoc-injection",
+              "target_evidence": "adhoc-caption-assertion",
               "visible": true
             }
           ]
         },
         "cached": false,
-        "model_id": "adhoc-baseline",
+        "model_id": "fusion-eval-adhoc-stub",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Liam Maloney. Abstract painting by Liam Maloney.. Liam Maloney is prominently visible in the frame. A person is present.",
+          "caption": "Untitled No. 7. Abstract painting by Liam Maloney.. Liam Maloney painted this piece in 2024 for the group show at the riverside gallery; it is oil on linen.. A person is present.",
           "objects": [
-            "person"
+            "person",
+            "scene"
           ]
         }
       },
@@ -261,9 +275,10 @@
     },
     {
       "describe": {
-        "adapter": "adhoc-injection",
-        "alt_text_draft": "Ryann Wiseman. Ryann Wiseman at the neighborhood bar.. A person is present.",
+        "adapter": "seeded",
+        "alt_text_draft": "Ryann Wiseman. Ryann Wiseman at the neighborhood bar.. Ryann Wiseman stopped by the neighborhood bar after work on a Friday evening.. A person is present.",
         "attachment_provenance": {
+          "derivation": "adhoc-caption-assertion",
           "facts": [
             {
               "altitude": "object",
@@ -272,18 +287,19 @@
               "fact_label": "Ryann Wiseman",
               "fact_source": "identity",
               "review_reason": null,
-              "target_evidence": "adhoc-injection",
+              "target_evidence": "adhoc-caption-assertion",
               "visible": true
             }
           ]
         },
         "cached": false,
-        "model_id": "adhoc-baseline",
+        "model_id": "fusion-eval-adhoc-stub",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Ryann Wiseman. Ryann Wiseman at the neighborhood bar.. A person is present.",
+          "caption": "Ryann Wiseman. Ryann Wiseman at the neighborhood bar.. Ryann Wiseman stopped by the neighborhood bar after work on a Friday evening.. A person is present.",
           "objects": [
-            "person"
+            "person",
+            "scene"
           ]
         }
       },
@@ -297,9 +313,10 @@
     },
     {
       "describe": {
-        "adapter": "adhoc-injection",
-        "alt_text_draft": "Maria Correonero. Maria Correonero at a summer garden picnic.. Maria Correonero is prominently visible in the frame. clearly shows a Garden picnic. clearly shows a Summer garden. A person is present.",
+        "adapter": "seeded",
+        "alt_text_draft": "Maria Correonero at a summer garden picnic.. Maria Correonero at what the album labels a summer garden picnic; the photo itself shows the black-sand plane wreck site.. A person is present.",
         "attachment_provenance": {
+          "derivation": "adhoc-caption-assertion",
           "facts": [
             {
               "altitude": "object",
@@ -308,7 +325,7 @@
               "fact_label": "Maria Correonero",
               "fact_source": "identity",
               "review_reason": null,
-              "target_evidence": "adhoc-injection",
+              "target_evidence": "adhoc-caption-assertion",
               "visible": true
             },
             {
@@ -318,7 +335,7 @@
               "fact_label": "Garden picnic",
               "fact_source": "event",
               "review_reason": null,
-              "target_evidence": "adhoc-injection",
+              "target_evidence": "adhoc-caption-assertion",
               "visible": true
             },
             {
@@ -328,43 +345,44 @@
               "fact_label": "Summer garden",
               "fact_source": "place",
               "review_reason": null,
-              "target_evidence": "adhoc-injection",
+              "target_evidence": "adhoc-caption-assertion",
               "visible": true
             }
           ]
         },
         "cached": false,
-        "model_id": "adhoc-baseline",
+        "model_id": "fusion-eval-adhoc-stub",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Maria Correonero. Maria Correonero at a summer garden picnic.. Maria Correonero is prominently visible in the frame. clearly shows a Garden picnic. clearly shows a Summer garden. A person is present.",
+          "caption": "Maria Correonero at a summer garden picnic.. Maria Correonero at what the album labels a summer garden picnic; the photo itself shows the black-sand plane wreck site.. A person is present.",
           "objects": [
-            "person"
+            "person",
+            "scene"
           ]
         }
       },
       "error": null,
-      "face_count": 1,
-      "identities": [
-        "Maria Correonero"
-      ],
+      "face_count": 0,
+      "identities": [],
       "media_id": 33,
       "path": "mock_images/mcm-planecrash.jpg"
     },
     {
       "describe": {
-        "adapter": "adhoc-injection",
+        "adapter": "seeded",
         "alt_text_draft": "A person standing outdoors near greenery.",
         "attachment_provenance": {
+          "derivation": "adhoc-caption-assertion",
           "facts": []
         },
         "cached": false,
-        "model_id": "adhoc-baseline",
+        "model_id": "fusion-eval-adhoc-stub",
         "model_version": "1",
         "visual_facts": {
           "caption": "A person standing outdoors near greenery.",
           "objects": [
-            "person"
+            "person",
+            "scene"
           ]
         }
       },
@@ -379,9 +397,9 @@
   "provenance": {
     "base_url": "fusion-runner://adhoc",
     "fusion_mode": "adhoc",
-    "head_sha": "c646fe723acb0d6132294c8343b46ed004732458",
-    "manifest_sha256": "e234340721c7cf8c12376dbe566e0a28c1d88562371d19b10eb4f6e996635117",
-    "started_at": "2026-07-10T03:28:20Z"
+    "head_sha": "db56a00a2ff3571e20ef1927bb817322384b0da3",
+    "manifest_sha256": "2182b97628d855e7d7a7b2e8afbc73582dde59198d3030a66e6a1ea35fe9dbd9",
+    "started_at": "2026-07-10T05:03:07Z"
   },
   "schema": "acx-eval/v1"
 }

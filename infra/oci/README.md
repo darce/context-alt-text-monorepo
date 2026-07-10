@@ -737,6 +737,14 @@ focused on the destructive contract.
 - Image tags: `:latest` (prod), `:staging`, `:dev`
 - Auth: OCI auth token, username `idu2kqqe2jxy/<email>`
 
+## GPU Burst Tier (detailed description)
+
+The `oci_core_instance.acx_gpu_burst` resource (`VM.GPU.A10.1`, private subnet) serves
+the scale-to-zero detailed-description tier. It is **not provisionable until an A10
+service-limit increase is granted** (console request, not API) and a golden image OCID
+is set. See **[GPU-BURST-PROVISIONING.md](GPU-BURST-PROVISIONING.md)** for the quota
+procurement path, SSH/Tailscale admin-plane scope, provisioning sequence, and costs.
+
 ## Security Note
 
 - The default security list restricts SSH to the CIDRs defined in `ssh_allowed_cidrs`.

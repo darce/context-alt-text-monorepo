@@ -47,6 +47,7 @@
   },
   "notes": [
     "This artifact anchors the E19-1-style measurement fields for Slice 1.",
-    "Live warm-start and throughput values require an OCI tenancy with A10 quota and a baked GPU image OCID."
+    "Live warm-start and throughput values require an OCI tenancy with A10 quota and a baked GPU image OCID.",
+    "A10 quota is NOT API-grantable: it is a console Service Limit Increase request Oracle reviews (~days). Procurement path, SSH/Tailscale admin-plane scope, and costs: infra/oci/GPU-BURST-PROVISIONING.md."
   ]
 }

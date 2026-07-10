@@ -1,0 +1,397 @@
+{
+  "items": [
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Caitlin Weaver. Caitlin Weaver on the Antarctic peninsula during her 2023 research residency.. A person is present.",
+        "attachment_provenance": {
+          "facts": [
+            {
+              "altitude": "object",
+              "decision": "object",
+              "fact_id": "identity:cluster:cluster-caitlin-weaver",
+              "fact_label": "Caitlin Weaver",
+              "fact_source": "identity",
+              "review_reason": null,
+              "target_evidence": "person",
+              "visible": true
+            }
+          ]
+        },
+        "cached": false,
+        "model_id": "fusion-eval-stub",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "Caitlin Weaver. Caitlin Weaver on the Antarctic peninsula during her 2023 research residency.. A person is present.",
+          "objects": [
+            "person",
+            "scene"
+          ]
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        "Caitlin Weaver"
+      ],
+      "media_id": 3,
+      "path": "mock_images/ccqw-antartica.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Bea Burke. Bea Burke at the science fair.. A person is present.",
+        "attachment_provenance": {
+          "facts": [
+            {
+              "altitude": "object",
+              "decision": "object",
+              "fact_id": "identity:cluster:cluster-bea-burke",
+              "fact_label": "Bea Burke",
+              "fact_source": "identity",
+              "review_reason": null,
+              "target_evidence": "person",
+              "visible": true
+            }
+          ]
+        },
+        "cached": false,
+        "model_id": "fusion-eval-stub",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "Bea Burke. Bea Burke at the science fair.. A person is present.",
+          "objects": [
+            "person",
+            "scene"
+          ]
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        "Bea Burke"
+      ],
+      "media_id": 2,
+      "path": "mock_images/bea-nye.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Caitlin Weaver and Erika Hansen Miller. Caitlin Weaver and Erika Hansen Miller with friends.. A person is present.",
+        "attachment_provenance": {
+          "facts": [
+            {
+              "altitude": "object",
+              "decision": "object",
+              "fact_id": "identity:cluster:cluster-caitlin-weaver",
+              "fact_label": "Caitlin Weaver",
+              "fact_source": "identity",
+              "review_reason": null,
+              "target_evidence": "person",
+              "visible": true
+            },
+            {
+              "altitude": "object",
+              "decision": "object",
+              "fact_id": "identity:cluster:cluster-erika-hansen-miller",
+              "fact_label": "Erika Hansen Miller",
+              "fact_source": "identity",
+              "review_reason": null,
+              "target_evidence": "person",
+              "visible": true
+            }
+          ]
+        },
+        "cached": false,
+        "model_id": "fusion-eval-stub",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "Caitlin Weaver and Erika Hansen Miller. Caitlin Weaver and Erika Hansen Miller with friends.. A person is present.",
+          "objects": [
+            "person",
+            "scene"
+          ]
+        }
+      },
+      "error": null,
+      "face_count": 4,
+      "identities": [
+        "Caitlin Weaver",
+        "Erika Hansen Miller"
+      ],
+      "media_id": 5,
+      "path": "mock_images/ccqw-erika.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Daniel Arce and Kirstie Mccarrel. Kirstie Mccarrel and Daniel Arce on vacation.. A person is present.",
+        "attachment_provenance": {
+          "facts": [
+            {
+              "altitude": "object",
+              "decision": "object",
+              "fact_id": "identity:cluster:cluster-daniel-arce",
+              "fact_label": "Daniel Arce",
+              "fact_source": "identity",
+              "review_reason": null,
+              "target_evidence": "person",
+              "visible": true
+            },
+            {
+              "altitude": "object",
+              "decision": "object",
+              "fact_id": "identity:cluster:cluster-kirstie-mccarrel",
+              "fact_label": "Kirstie Mccarrel",
+              "fact_source": "identity",
+              "review_reason": null,
+              "target_evidence": "person",
+              "visible": true
+            }
+          ]
+        },
+        "cached": false,
+        "model_id": "fusion-eval-stub",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "Daniel Arce and Kirstie Mccarrel. Kirstie Mccarrel and Daniel Arce on vacation.. A person is present.",
+          "objects": [
+            "person",
+            "scene"
+          ]
+        }
+      },
+      "error": null,
+      "face_count": 2,
+      "identities": [
+        "Daniel Arce",
+        "Kirstie Mccarrel"
+      ],
+      "media_id": 23,
+      "path": "mock_images/kirstie-daniel-sunglasses.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Ryann Wiseman. Ryann Wiseman celebrating with friends.. A person is present.",
+        "attachment_provenance": {
+          "facts": [
+            {
+              "altitude": "object",
+              "decision": "object",
+              "fact_id": "identity:cluster:cluster-ryann-wiseman",
+              "fact_label": "Ryann Wiseman",
+              "fact_source": "identity",
+              "review_reason": null,
+              "target_evidence": "person",
+              "visible": true
+            }
+          ]
+        },
+        "cached": false,
+        "model_id": "fusion-eval-stub",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "Ryann Wiseman. Ryann Wiseman celebrating with friends.. A person is present.",
+          "objects": [
+            "person",
+            "scene"
+          ]
+        }
+      },
+      "error": null,
+      "face_count": 6,
+      "identities": [
+        "Ryann Wiseman"
+      ],
+      "media_id": 37,
+      "path": "mock_images/ryann-group-party.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "An afternoon at the hotel pool.. A person is present.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "model_id": "fusion-eval-stub",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "An afternoon at the hotel pool.. A person is present.",
+          "objects": [
+            "person",
+            "scene"
+          ]
+        }
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "media_id": 30,
+      "path": "mock_images/maria-pool.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Liam Maloney. Abstract painting by Liam Maloney.. A person is present.",
+        "attachment_provenance": {
+          "facts": [
+            {
+              "altitude": "none",
+              "decision": "dropped",
+              "fact_id": "identity:0:Liam Maloney",
+              "fact_label": "Liam Maloney",
+              "fact_source": "identity",
+              "review_reason": "unconfirmed_identity",
+              "target_evidence": null,
+              "visible": false
+            }
+          ]
+        },
+        "cached": false,
+        "model_id": "fusion-eval-stub",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "Liam Maloney. Abstract painting by Liam Maloney.. A person is present.",
+          "objects": [
+            "person",
+            "scene"
+          ]
+        }
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "media_id": 27,
+      "path": "mock_images/liam-maloney-painting.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Ryann Wiseman. Ryann Wiseman at the neighborhood bar.. A person is present.",
+        "attachment_provenance": {
+          "facts": [
+            {
+              "altitude": "object",
+              "decision": "object",
+              "fact_id": "identity:cluster:cluster-ryann-wiseman",
+              "fact_label": "Ryann Wiseman",
+              "fact_source": "identity",
+              "review_reason": null,
+              "target_evidence": "person",
+              "visible": true
+            }
+          ]
+        },
+        "cached": false,
+        "model_id": "fusion-eval-stub",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "Ryann Wiseman. Ryann Wiseman at the neighborhood bar.. A person is present.",
+          "objects": [
+            "person",
+            "scene"
+          ]
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        "Ryann Wiseman"
+      ],
+      "media_id": 36,
+      "path": "mock_images/ryann-bar.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Maria Correonero. Maria Correonero at a summer garden picnic.. A person is present.",
+        "attachment_provenance": {
+          "facts": [
+            {
+              "altitude": "none",
+              "decision": "dropped",
+              "fact_id": "identity:cluster:cluster-maria-correonero",
+              "fact_label": "Maria Correonero",
+              "fact_source": "identity",
+              "review_reason": "face_not_detected",
+              "target_evidence": null,
+              "visible": false
+            },
+            {
+              "altitude": "caption",
+              "decision": "caption",
+              "fact_id": "event:garden-picnic",
+              "fact_label": "Garden picnic",
+              "fact_source": "event",
+              "review_reason": null,
+              "target_evidence": null,
+              "visible": false
+            },
+            {
+              "altitude": "caption",
+              "decision": "caption",
+              "fact_id": "place:summer-garden",
+              "fact_label": "Summer garden",
+              "fact_source": "place",
+              "review_reason": null,
+              "target_evidence": null,
+              "visible": false
+            }
+          ]
+        },
+        "cached": false,
+        "model_id": "fusion-eval-stub",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "Maria Correonero. Maria Correonero at a summer garden picnic.. A person is present.",
+          "objects": [
+            "person",
+            "scene"
+          ]
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        "Maria Correonero"
+      ],
+      "media_id": 33,
+      "path": "mock_images/mcm-planecrash.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A person standing outdoors near greenery.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "model_id": "fusion-eval-stub",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A person standing outdoors near greenery.",
+          "objects": [
+            "person",
+            "scene"
+          ]
+        }
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "media_id": 34,
+      "path": "mock_images/nina-machiavelli.jpeg"
+    }
+  ],
+  "kind": "run_record",
+  "provenance": {
+    "base_url": "fusion-runner://staged",
+    "fusion_mode": "staged",
+    "head_sha": "4ffc1a0af916b452f20eb207136e0d5ab4163b55",
+    "manifest_sha256": "e234340721c7cf8c12376dbe566e0a28c1d88562371d19b10eb4f6e996635117",
+    "started_at": "2026-07-10T03:27:23Z"
+  },
+  "schema": "acx-eval/v1"
+}

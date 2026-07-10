@@ -67,6 +67,24 @@ class EntryPolicy(BaseModel):
     recognition_enabled: bool
 
 
+class ExpectedAttachment(BaseModel):
+    """Ground-truth attachment altitude for a supplied ContextPack fact (E20-FUSION).
+
+    Mirrors Stage-2 ``Attachment`` decision fields so mis-attachment scoring
+    compares runner provenance against real producer shapes (not invented enums).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    fact_source: str
+    fact_label: str
+    decision: str  # object | caption | dropped
+    altitude: str  # object | caption | none
+    visible: bool = False
+    review_reason: str | None = None
+    fact_id: str | None = None
+
+
 class GoldenEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -80,6 +98,8 @@ class GoldenEntry(BaseModel):
     must_right: list[str]
     easy_wrong: list[str]
     policy: EntryPolicy
+    # E20-FUSION Slice 4: optional mis-attachment labels (absent on non-fusion corpora).
+    expected_attachments: list[ExpectedAttachment] = Field(default_factory=list)
 
     @field_validator("sha256")
     @classmethod

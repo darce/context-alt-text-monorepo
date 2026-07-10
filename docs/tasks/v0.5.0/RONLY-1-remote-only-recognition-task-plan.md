@@ -27,6 +27,8 @@ The plugin is local-first: it selects a `local` or `service` recognition endpoin
 - **Single shared backend** (`altcontext.com`), RLS-isolated; no customer-run servers; internal endpoint override stays only as `ACX_RECOGNITION_URL` constant / `acx_recognition_base_url` filter (`class-recognition-endpoint-resolver.php:25,30`).
 - **Plugin Boundary Rule**: only modify `apps/prototype-wp-alt-context/**` and `apps/prototype-description-service/**`.
 - Branch isolation; TypeScript uses `as const`/StrEnum for status values (sr-007); no `console.assert` on API data (sr-005).
+- **Mirror consistency model** (ADR-011 rule 4 / V2-01): the sovereign mirror is eventually-consistent, refreshed via the existing sync/outbox (ADR-003/004); display tolerates stale reads; only new inference is remote-synchronous.
+- **Slow-failure resilience** (ADR-011 rule 4 / V2-02): every remote call (whoami/health/analyze) has a bounded timeout and fast-fails via the recognition circuit breaker (`class-recognition-circuit-keys.php`); a slow backend degrades to "existing data shown", never hangs the admin.
 
 ## Workflow Principles
 
@@ -108,7 +110,7 @@ Four slices: (1) adopt the key's tenant on save and remove the derive/pairing de
 **Goal**: Saving a valid key adopts the key's tenant and clears the mismatch class.
 
 Changes:
-- On key save, call `/recognition/tenant/whoami`; persist returned `tenant_id` via `TenantIdentity::adopt_paired_tenant()`; make the adopted option the authority in `TenantIdentity::resolve()`.
+- On key save, call `/recognition/tenant/whoami` (bounded timeout, fast-fail — a slow backend must not hang the save); persist returned `tenant_id` via `TenantIdentity::adopt_paired_tenant()`; make the adopted option the authority in `TenantIdentity::resolve()`.
 - Stop sending a stale derived `X-Tenant-ID` at **every** emission site, not just the probe: the same header is attached to recognition/analyze calls (`recognition/interface_adapters/http/routers/analyze.py:396`) and is enforced on every authenticated call (`auth.py:198-208`). Audit the PHP recognition client for all `X-Tenant-ID` sends and route them through the adopted tenant (or omit for tenant-scoped keys). Remove the `CONNECTED`-gated pairing branch so adoption runs on save, not after a probe.
 
 Proof:
@@ -143,10 +145,10 @@ Proof:
 
 Changes:
 - First confirm the caption/alt-text display path reads local WP storage (expected `wp_postmeta` alt text), not a remote fetch; roster/clusters are already `$wpdb`-local (`class-roster-entry-projection-repository.php`). If any display surface fetches from remote, de-couple it in this slice.
-- Add a test that renders roster/clusters/captions with the recognition endpoint stubbed unreachable and asserts full display.
+- Add a test that renders roster/clusters/captions with the recognition endpoint stubbed (a) **unreachable** and (b) **slow/timing-out** — both must render full display without hanging (validates the slow-failure constraint, not only down).
 
 Proof:
-- New PHP/TS test passes with remote stubbed to fail; caption render path confirmed local.
+- New PHP/TS test passes with remote stubbed to fail AND to time out; caption render path confirmed local; the admin does not block on the slow stub.
 
 ---
 

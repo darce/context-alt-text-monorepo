@@ -317,15 +317,17 @@ def _faces_for_identity(
     item: IdentityContextItem,
     faces: Sequence[ConfirmedFace],
 ) -> list[ConfirmedFace]:
+    """Match faces by recognition ids only — never by display label.
+
+    ``merge.py`` keys provenance by ``cluster_id``; a shared display name is not
+    a detector link and must not object-attach a differently-id'd face.
+    """
     out: list[ConfirmedFace] = []
     for face in faces:
         if item.cluster_id is not None and str(face.cluster_id) == str(item.cluster_id):
             out.append(face)
             continue
         if item.identity_id is not None and str(face.identity_id) == str(item.identity_id):
-            out.append(face)
-            continue
-        if face.label == item.name:
             out.append(face)
     return out
 

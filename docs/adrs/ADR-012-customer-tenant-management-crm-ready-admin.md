@@ -32,7 +32,7 @@ This ADR is a companion to [ADR-011](./ADR-011-retire-on-device-recognition-remo
 
 ### Constraints from prior review
 
-- **Greenfield.** No production data to preserve; schema changes go directly in `001_identity_schema.py`; delete-over-flag (no back-compat shims).
+- **Greenfield, but the backend is live.** No production data to preserve; schema changes go directly in `001_identity_schema.py`; delete-over-flag. **However**, `altcontext.com` is a running DB with existing `tenants`/`api_keys` rows, and `_ensure_table` only `create_table`s **missing tables** (`001_identity_schema.py:136-139`) — it does **not** add columns to existing tables, so a 001 edit alone will never reach the live tables. New columns must therefore be **nullable/defaulted (expand-first)** and reach the live DB via an explicit ALTER-add in the migration `heal()`/sync path (extend `sync_identity_schema.py` to add missing columns) **or** a documented reset of the live DB. A bare `NOT NULL` add against a populated table is prohibited.
 - **Single shared, RLS-isolated backend** (ADR-011). Customer isolation is per-tenant Postgres RLS; there are no per-customer servers.
 - **PII discipline.** Contact information is associated with the account/tenant, never with a credential (`api_keys`) and never written to logs.
 - **Operator-only, audited surface** (E15-31). `/admin` is tailnet-gated; every mutation writes an `audit_events` row on the same request session.
@@ -57,18 +57,18 @@ This ADR is a companion to [ADR-011](./ADR-011-retire-on-device-recognition-remo
 
 ## Decision
 
-Add a **CRM-ready customer-metadata layer** to `tenants` and `api_keys`: typed columns for the fields we know we need now, a JSONB `metadata` escape hatch for the un-formalized tail, and a stable external reference plus an account-rollup seam — then shape the admin read/export surface as **account + contacts + subscriptions** so a future CRM can sync without schema surgery.
+Add a **CRM-ready customer-metadata layer** to `tenants` and `api_keys`: typed columns for the fields we know we need now, a JSONB `metadata` escape hatch for the un-formalized tail, and a stable unique external reference (`crm_account_id`) — then shape the admin read/export surface as **account + contacts + subscriptions** so a future CRM can sync without schema surgery. (The account-rollup seam is deferred — see rule 5.)
 
 ### Chosen design rules
 
 1. **Enrich `tenants` with account/customer fields.** `display_name`, `primary_contact_name`, `primary_contact_email`, `account_status` (StrEnum: `trial` | `active` | `suspended` | `churned`, default `active`), `notes` (operator free text), `onboarded_at`. `site_url` stays. These describe the customer/organization behind the tenant.
 2. **Enrich `api_keys` with credential provenance + labeling.** `label` (human name, e.g. "prod WP", "staging"), `description`, `created_by` (operator identity that minted it), `environment` (optional: `prod` | `staging` | `dev` | `demo` | `eval`), `revoked_reason`, `revoked_by`. Never PII.
 3. **JSONB `metadata` escape hatch on both tables.** Add experimental/soft fields (acquisition source, company size, plan add-ons) with no migration; promote hot fields to typed columns later. Typed columns for known needs, JSONB for the tail only — never duplicate a typed field into JSONB.
-4. **Stable external CRM reference.** `crm_account_id` (nullable, indexed) on the tenant/account — the bidirectional link to an external CRM. Never overload the UUID primary key for external identity.
-5. **Account-rollup seam.** `account_ref` (UUID) grouping on `tenants` so multiple tenants (prod/staging, multiple sites) can later roll up to one CRM account. Column semantics are pinned to avoid a broken migration: **nullable, indexed, NO foreign-key constraint** (there is no `accounts` table yet — do not add a FK to a non-existent table), backfilled to the tenant's own `id` on creation (1:1 today). The column's existence makes N:1 a config change, not a data migration; a real FK is added only if/when an `accounts` table is introduced.
-6. **CRM-shaped admin read + export + events.** Admin API returns account + contacts + keys (subscriptions) in one read; add a roster **export** endpoint (JSON/CSV). Emit lifecycle events (`tenant_created`, `key_minted`, `tenant_suspended`, `key_revoked`, `contact_updated`) to `audit_events` so a CRM can be fed by webhook/CDC, not only polling.
+4. **Stable external CRM reference.** `crm_account_id` (nullable, **`UNIQUE`**, indexed) on the tenant/account — the bidirectional link to an external CRM, and the idempotency key for provisioning (rule 8). Never overload the UUID primary key for external identity.
+5. **Account-rollup seam — DEFERRED (YAGNI).** An `account_ref` grouping (multiple tenants → one account) is **not** shipped now: there is no multi-tenant-account feature or consumer yet, so it would be an unused column. Adding it later is additive (nullable column, exactly the promotion the "full accounts model" alternative describes), so it is deferred until a real multi-tenant-account need exists. `crm_account_id` (external link) + `metadata` JSONB already cover the CRM-linkage requirement without it.
+6. **CRM-shaped admin read + export + events.** Admin API returns account + contacts + keys (subscriptions) in one read, **paginated** (limit/offset or cursor; bound keys-per-account) — never an unbounded fetch-all. Add a **paginated** roster **export** endpoint (JSON/CSV). Emit lifecycle events (`tenant_created`, `key_minted`, `tenant_suspended`, `key_revoked`, `contact_updated`) to `audit_events` so a CRM can be fed by webhook/CDC, not only polling. `audit_events` is append-only and already RLS/indexed; the derived task plan must state its **retention/purge** policy (partition-and-drop or a periodic reclaimer) since this ADR increases its write rate — or explicitly defer that with rationale.
 7. **PII discipline.** Contact fields live on `tenants` only — never on `api_keys`, never logged. Retention/export coverage extends to the new contact PII. Admin mutations keep writing `audit_events` on the same session (existing atomic invariant).
-8. **Idempotent provisioning.** A "provision customer" admin flow creates tenant + contact + first labeled key in one atomic step; upsert-by-`crm_account_id` so a future CRM-driven provisioning integration is idempotent.
+8. **Idempotent provisioning.** A "provision customer" admin flow creates tenant + contact + first labeled key in one atomic step. Idempotency is enforced at the **DB level** — the `UNIQUE(crm_account_id)` constraint plus an atomic `INSERT ... ON CONFLICT (crm_account_id) DO UPDATE` — **not** an application-level exists-check, so two operators provisioning the same `crm_account_id` concurrently cannot double-create (avoids the check-then-act race).
 
 ### Target outcome
 
@@ -84,7 +84,7 @@ Operators can answer "who is this, how do I reach them, what did they buy, why w
 
 ### Migration-free evolution + clean CRM handoff
 
-`metadata` JSONB (soft fields), `crm_account_id` (external link), and `account_ref` (rollup seam) are three additive seams that let the model grow and hand off to a real CRM without schema surgery or data migration — the explicit "future-proof" requirement.
+`metadata` JSONB (soft fields) and `crm_account_id` (unique external link) are additive seams that let the model grow and hand off to a real CRM without schema surgery — the explicit "future-proof" requirement. The account-rollup seam is deferred until a real consumer exists (rule 5); adding it then is itself additive.
 
 ### Local-first metadata, optional CRM sync
 
@@ -94,7 +94,7 @@ The recognition service needs tenant/account metadata locally for RLS, support, 
 
 ### 1. Build a full accounts / contacts / subscriptions relational model now
 
-Rejected. Over-engineered for pre-launch volume. The `crm_account_id` + `account_ref` + `metadata` seams deliver the same future (multi-tenant accounts, CRM linkage) without the upfront normalization cost. Promote to a normalized model when customer volume and reporting needs justify it — the seams make that promotion additive.
+Rejected. Over-engineered for pre-launch volume. The `crm_account_id` + `metadata` seams deliver CRM linkage without the upfront normalization cost, and the multi-tenant-account grouping is deferred (rule 5) until a consumer exists. Promote to a normalized model — including the deferred `account_ref` — when customer volume and reporting needs justify it; the additive-column path makes that promotion cheap.
 
 ### 2. Integrate a real CRM (HubSpot/Salesforce) directly, no local metadata
 
@@ -113,7 +113,7 @@ Rejected. PII belongs to the account, not the credential. Keys are rotated and r
 ### Positive
 
 - Managed, contactable customer accounts; support-ready; procurement captures provenance (who/what/why).
-- CRM-migratable without a rewrite: export + events + external ref + rollup seam.
+- CRM-migratable without a rewrite: export + events + unique external ref (rollup seam deferred until needed).
 - Key labels let operators map credentials to customers/environments at a glance.
 
 ### Negative
@@ -125,7 +125,7 @@ Rejected. PII belongs to the account, not the credential. Keys are rotated and r
 ### Guardrails for the follow-on implementation task
 
 - Contact PII lives on `tenants` only — never on `api_keys`, never in logs; retention/export must cover it.
-- `metadata` JSONB, `crm_account_id`, and `account_ref` are the future-proofing seams — do not hardcode any specific CRM's fields into core tables.
+- `metadata` JSONB and `crm_account_id` (UNIQUE) are the future-proofing seams — do not hardcode any specific CRM's fields into core tables; `account_ref` is deferred (rule 5), not shipped.
 - Typed columns for known fields; JSONB for the experimental tail only; promote-not-duplicate.
 - Every new admin mutation writes an `audit_events` row on the same request session (existing atomic invariant).
 - Emit lifecycle events for CRM consumption; do **not** build a bespoke CRM in-repo.
@@ -133,9 +133,9 @@ Rejected. PII belongs to the account, not the credential. Keys are rotated and r
 
 ## Implementation Plan (follow-on task, derived from this ADR)
 
-1. **Schema.** Extend `tenants` (display_name, contact fields, account_status, notes, onboarded_at, crm_account_id, account_ref, metadata JSONB) and `api_keys` (label, description, created_by, environment, revoked_reason, revoked_by, metadata JSONB) in `001_identity_schema.py`.
+1. **Schema.** Extend `tenants` (display_name, contact fields, account_status, notes, onboarded_at, `crm_account_id` UNIQUE, metadata JSONB) and `api_keys` (label, description, created_by, environment, revoked_reason, revoked_by, metadata JSONB) in `001_identity_schema.py`. All new columns **nullable/defaulted** and added to the **live** DB via an ALTER-add in the sync/heal path (or a documented reset) — `_ensure_table` will not add them to existing tables. `account_ref` is deferred (rule 5).
 2. **Admin API + console.** Capture/edit customer fields at tenant-create and key `label` at mint; CRM-shaped read (account + contacts + keys); roster export endpoint; lifecycle events. Mirror in `manage_api_keys.py`.
-3. **Provision-customer flow.** Atomic tenant + contact + first labeled key; idempotent upsert-by-`crm_account_id`.
+3. **Provision-customer flow.** Atomic tenant + contact + first labeled key; DB-level idempotency via `UNIQUE(crm_account_id)` + `INSERT ... ON CONFLICT DO UPDATE` (no application-level exists-check).
 4. **Retention/export coverage** for the new PII.
 5. **ADR-011 tie-in.** Plugin surfaces Key ID + Tenant ID; key `label` helps operators map keys to customers during support.
 

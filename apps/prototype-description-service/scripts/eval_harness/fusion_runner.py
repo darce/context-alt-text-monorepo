@@ -5,6 +5,27 @@ this module drives ``VisualFactsService`` / Stage-2 reconcile with stub/seeded
 adapters and emits acx-eval/v1 run records that ``report.build_reports`` can
 score. No live VLM calls, no network.
 
+Input/label separation (S4A-03): harness INPUTS (context pack, confirmed
+faces, phrase-box geometry) derive only from raw fixture data — the entry's
+``context_pack`` text, ``present_identities``, ``policy``, the roster, and the
+optional ``context_pack.eval_scenario`` / ``context_pack.taxonomy_terms``
+fixture fields. ``expected_attachments`` labels are consumed ONLY by
+``score_misattachments`` as expectations, never fed back as inputs.
+
+Face geometry mirrors real ``merge.py`` containment semantics: each detected
+identity gets a distinct, non-overlapping face box whose center falls inside
+exactly one person phrase box, so multi-identity entries genuinely exercise
+1:1 discrimination (identical geometry would drop as ``ambiguous_grounding``).
+
+Ad-hoc arm (S4A-02): drives the SAME ``VisualFactsService.describe`` path with
+the fusion stage effectively disabled — legacy free-form context (title/
+caption/description) is not a typed ContextPack, so Stage-2 emits no per-fact
+provenance, exactly like today's ad-hoc WP flow. Attachment claims are then
+DERIVED from what the generated ad-hoc caption actually asserts (a context
+fact woven into the caption is presented as visual content — the
+mis-attachment failure mode), not hardcoded. Construction limits are
+documented in the decision memo.
+
 Mis-attachment is scored here (report.py is unchanged): expected_attachments
 labels vs emitted attachment_provenance. Caption Must-Right / insertion /
 Easy-Wrong (stub tier) come from ``build_reports``.
@@ -20,6 +41,7 @@ import re
 import subprocess
 import sys
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -45,10 +67,15 @@ Mode = Literal["staged", "adhoc"]
 
 _TENANT = uuid.UUID("00000000-0000-0000-0000-00000000f051")
 _PERSON_PHRASE = "person"
+_PERSON_WORD_RE = re.compile(r"\bperson\b", re.IGNORECASE)
 _DEFAULT_CAPTION = f"A {_PERSON_PHRASE} standing outdoors near greenery."
 _CLUSTER_SLUG_RE = re.compile(r"[^a-z0-9]+")
-_PERSON_BOX = NormalizedBox(x=0.3, y=0.1, width=0.3, height=0.7)
-_FACE_BOX = NormalizedBox(x=0.4, y=0.2, width=0.05, height=0.08)
+_ADHOC_EVIDENCE = "adhoc-caption-assertion"
+
+# Taxonomy keys the fixture may carry that map to event/place fact sources
+# (mirrors reconcile.py's `_EVENT_TAXONOMIES` / `_PLACE_TAXONOMIES` MVP subset).
+_EVENT_TAXONOMY = "event"
+_PLACE_TAXONOMY = "place"
 
 
 @dataclass(frozen=True)
@@ -80,42 +107,86 @@ def _slug(label: str) -> str:
     return _CLUSTER_SLUG_RE.sub("-", label.lower()).strip("-") or "term"
 
 
-def build_typed_context_pack(entry: GoldenEntry) -> ContextPack | None:
-    """Build a real HTTP ContextPack from expected_attachments labels.
+# ---------------------------------------------------------------------------
+# Raw-fixture input derivation (S4A-03: no expected_attachments reads here).
+# ---------------------------------------------------------------------------
 
-    Legacy title/caption/description alone is not a typed pack
-    (``_coerce_context_pack`` returns None). Empty pack when no labels.
+
+def _context_text(entry: GoldenEntry) -> str:
+    pack = entry.context_pack
+    return " ".join(str(part) for part in (pack.title, pack.caption, pack.description) if part)
+
+
+def _pack_extra(entry: GoldenEntry) -> dict[str, Any]:
+    return dict(entry.context_pack.model_extra or {})
+
+
+def _fixture_taxonomy_terms(entry: GoldenEntry) -> list[dict[str, Any]]:
+    """WP-shaped taxonomy terms vendored on the fixture context pack."""
+    raw = _pack_extra(entry).get("taxonomy_terms")
+    if not isinstance(raw, list):
+        return []
+    return [t for t in raw if isinstance(t, dict) and t.get("taxonomy") and t.get("name")]
+
+
+def _undetected_identities(entry: GoldenEntry) -> frozenset[str]:
+    """Fixture scenario: roster identities the face detector missed at runtime."""
+    scenario = _pack_extra(entry).get("eval_scenario")
+    if not isinstance(scenario, dict):
+        return frozenset()
+    raw = scenario.get("undetected_identities")
+    if not isinstance(raw, list):
+        return frozenset()
+    return frozenset(str(name) for name in raw)
+
+
+def _mentioned_roster_names(entry: GoldenEntry, roster: Sequence[str]) -> list[str]:
+    """Roster names the WP context text actually mentions, in first-mention order."""
+    text = _context_text(entry).lower()
+    hits = [(text.index(name.lower()), name) for name in roster if name.lower() in text]
+    return [name for _, name in sorted(hits)]
+
+
+def _detected_identities(entry: GoldenEntry) -> list[str]:
+    """Roster faces the (simulated) detector confirmed on this image."""
+    if not entry.policy.recognition_enabled:
+        return []
+    undetected = _undetected_identities(entry)
+    return [name for name in entry.present_identities if name not in undetected]
+
+
+def build_typed_context_pack(entry: GoldenEntry, roster: Sequence[str]) -> ContextPack | None:
+    """Build a real HTTP ContextPack from raw fixture data (never from labels).
+
+    Identity items are the roster names mentioned in the entry's WP context
+    text: site-confirmed persons (``present_identities``) carry recognition
+    ids; mentioned-but-not-present names ship name-only (unconfirmed).
+    Taxonomy terms come from the fixture's ``context_pack.taxonomy_terms``.
+    Legacy title/caption/description alone is not a typed pack; empty pack
+    when nothing structurable is present.
     """
-    expected = list(entry.expected_attachments)
-    if not expected:
-        return None
-
     identities: list[IdentityContextItem] = []
-    taxonomy: list[TaxonomyTermContext] = []
-
-    for exp in expected:
-        src = exp.fact_source
-        if src == "identity":
-            # Unconfirmed: no cluster/identity ids (liam-maloney painting).
-            if exp.review_reason == "unconfirmed_identity":
-                identities.append(IdentityContextItem(name=exp.fact_label))
-            else:
-                identities.append(
-                    IdentityContextItem(
-                        name=exp.fact_label,
-                        identity_id=_identity_id(exp.fact_label),
-                        cluster_id=_cluster_id(exp.fact_label),
-                        source="roster",
-                    )
+    for name in _mentioned_roster_names(entry, roster):
+        if name in entry.present_identities:
+            identities.append(
+                IdentityContextItem(
+                    name=name,
+                    identity_id=_identity_id(name),
+                    cluster_id=_cluster_id(name),
+                    source="roster",
                 )
-        elif src == "event":
-            taxonomy.append(
-                TaxonomyTermContext(taxonomy="event", name=exp.fact_label, slug=_slug(exp.fact_label))
             )
-        elif src == "place":
-            taxonomy.append(
-                TaxonomyTermContext(taxonomy="place", name=exp.fact_label, slug=_slug(exp.fact_label))
-            )
+        else:
+            identities.append(IdentityContextItem(name=name))
+
+    taxonomy = [
+        TaxonomyTermContext(
+            taxonomy=str(term["taxonomy"]),
+            name=str(term["name"]),
+            slug=(str(term["slug"]) if term.get("slug") else _slug(str(term["name"]))),
+        )
+        for term in _fixture_taxonomy_terms(entry)
+    ]
 
     if not identities and not taxonomy:
         return None
@@ -135,47 +206,96 @@ def build_typed_context_pack(entry: GoldenEntry) -> ContextPack | None:
     )
 
 
-def _make_face(label: str) -> ConfirmedFace:
-    """Real ConfirmedFace shape (merge.py) for detector-backed object attach."""
+def _derived_facts(entry: GoldenEntry, roster: Sequence[str]) -> list[tuple[str, str, str]]:
+    """(fact_id, fact_source, fact_label) triples the derived pack yields.
+
+    Fact-id scheme mirrors reconcile.py (`_identity_fact_id` / taxonomy ids)
+    so ad-hoc claims and staged provenance stay comparable.
+    """
+    out: list[tuple[str, str, str]] = []
+    for index, name in enumerate(_mentioned_roster_names(entry, roster)):
+        if name in entry.present_identities:
+            out.append((f"identity:cluster:{_cluster_id(name)}", "identity", name))
+        else:
+            out.append((f"identity:{index}:{name}", "identity", name))
+    for term in _fixture_taxonomy_terms(entry):
+        taxonomy = str(term["taxonomy"]).casefold()
+        name = str(term["name"])
+        slug = str(term["slug"]) if term.get("slug") else _slug(name)
+        if taxonomy == _EVENT_TAXONOMY:
+            out.append((f"event:{slug}", "event", name))
+        elif taxonomy == _PLACE_TAXONOMY:
+            out.append((f"place:{slug}", "place", name))
+        else:
+            out.append((f"taxonomy:{taxonomy}:{slug}", "taxonomy", name))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Distinct face/phrase geometry (mirrors merge.py containment semantics).
+# ---------------------------------------------------------------------------
+
+
+def _person_box(index: int) -> NormalizedBox:
+    """Non-overlapping person phrase boxes laid out left-to-right."""
+    return NormalizedBox(x=0.02 + 0.24 * index, y=0.08, width=0.20, height=0.72)
+
+
+def _face_box(index: int) -> NormalizedBox:
+    """Small face box whose center falls inside person box ``index`` only."""
+    return NormalizedBox(x=0.095 + 0.24 * index, y=0.30, width=0.05, height=0.08)
+
+
+def _make_face(label: str, index: int) -> ConfirmedFace:
+    """Real ConfirmedFace shape (merge.py) with per-identity distinct geometry."""
     return ConfirmedFace(
         identity_id=_identity_id(label),
         cluster_id=_cluster_id(label),
         roster_id=f"roster-{_slug(label)}",
         label=label,
         detection_confidence=0.95,
-        box=_FACE_BOX,
+        box=_face_box(index),
     )
 
 
-def _make_person_phrase_box(caption: str) -> PhraseBox:
-    start = caption.lower().index(_PERSON_PHRASE)
-    return PhraseBox(
-        phrase=caption[start : start + len(_PERSON_PHRASE)],
-        span_start=start,
-        span_end=start + len(_PERSON_PHRASE),
-        box=_PERSON_BOX,
+def _person_phrase_boxes(caption: str, count: int) -> tuple[PhraseBox, ...]:
+    """One grounded ``person`` span per detected face, each with its own box."""
+    if count <= 0:
+        return ()
+    matches = list(_PERSON_WORD_RE.finditer(caption))[:count]
+    return tuple(
+        PhraseBox(
+            phrase=caption[m.start() : m.end()],
+            span_start=m.start(),
+            span_end=m.end(),
+            box=_person_box(i),
+        )
+        for i, m in enumerate(matches)
     )
 
 
-def _caption_for_entry(entry: GoldenEntry, *, mode: Mode) -> str:
-    """Deterministic caption: weave must_right / present names for insertion scoring."""
+def _caption_for_entry(entry: GoldenEntry, *, mode: Mode, detected: Sequence[str]) -> str:
+    """Deterministic caption stub.
+
+    staged: detected names + WP caption cue + one groundable ``person``
+    sentence per detected face (containment targets).
+    adhoc: parrots the full injected WP context verbatim — title, caption and
+    description woven into the caption body, indistinguishable from visual
+    content (today's ad-hoc prompt-injection behavior).
+    """
     pack = entry.context_pack
     bits: list[str] = []
-    if entry.policy.recognition_enabled:
-        names = list(entry.must_right) or list(entry.present_identities)
-        if names:
-            bits.append(" and ".join(names))
-    # Free-form scene cue (not asserted as visible attachment).
-    if pack.caption:
-        bits.append(str(pack.caption))
-    if mode == "adhoc":
-        # Ad-hoc: assert event/place labels as if visible (mis-attachment class).
-        for exp in entry.expected_attachments:
-            if exp.fact_source in {"event", "place"} and exp.visible is False:
-                bits.append(f"clearly shows a {exp.fact_label}")
-            if exp.decision == "dropped" and exp.fact_source == "identity":
-                # Object-assert the dropped name anyway (wrong altitude).
-                bits.append(f"{exp.fact_label} is prominently visible in the frame")
+    if entry.policy.recognition_enabled and detected:
+        bits.append(" and ".join(detected))
+    if mode == "staged":
+        if pack.caption:
+            bits.append(str(pack.caption))
+        for i in range(len(detected)):
+            bits.append(f"A {_PERSON_PHRASE} stands at position {i + 1} from the left")
+    else:
+        for part in (pack.title, pack.caption, pack.description):
+            if part:
+                bits.append(str(part))
     body = ". ".join(bits) if bits else _DEFAULT_CAPTION
     if _PERSON_PHRASE not in body.lower():
         body = f"{body}. A {_PERSON_PHRASE} is present."
@@ -183,21 +303,24 @@ def _caption_for_entry(entry: GoldenEntry, *, mode: Mode) -> str:
 
 
 class _FusionStubAdapter:
-    """Deterministic DescriptionAdapter: fixed caption + optional person phrase box."""
+    """Deterministic DescriptionAdapter: fixed caption + pre-built phrase boxes."""
 
     kind = SeededDescriptionAdapter.kind
-    model_id = "fusion-eval-stub"
     model_version = "1"
     prompt_or_task_version = "e20-fusion-slice4"
 
-    def __init__(self, *, caption: str, with_person_box: bool) -> None:
+    def __init__(
+        self,
+        *,
+        caption: str,
+        phrase_boxes: tuple[PhraseBox, ...] = (),
+        model_id: str = "fusion-eval-stub",
+    ) -> None:
         self._caption = caption
-        self._with_person_box = with_person_box
+        self._phrase_boxes = phrase_boxes
+        self.model_id = model_id
 
     def describe(self, *, image_bytes: bytes, context: Any) -> AdapterResult:
-        phrase_boxes: tuple[PhraseBox, ...] = ()
-        if self._with_person_box and _PERSON_PHRASE in self._caption.lower():
-            phrase_boxes = (_make_person_phrase_box(self._caption),)
         return AdapterResult(
             caption=self._caption,
             objects=(_PERSON_PHRASE, "scene"),
@@ -205,48 +328,58 @@ class _FusionStubAdapter:
             alt_text_draft=self._caption,
             context_sources=("context_pack",) if context else (),
             context_applied=bool(context),
-            phrase_boxes=phrase_boxes,
+            phrase_boxes=self._phrase_boxes,
         )
 
 
 def _faces_for_entry(entry: GoldenEntry) -> list[ConfirmedFace]:
-    """Detector-backed faces only for identities expected to object-attach."""
-    faces: list[ConfirmedFace] = []
-    for exp in entry.expected_attachments:
-        if exp.fact_source != "identity":
-            continue
-        if exp.decision != "object":
-            continue
-        faces.append(_make_face(exp.fact_label))
-    return faces
+    """Detector-simulated confirmed faces: one distinct box per detected identity."""
+    return [_make_face(name, index) for index, name in enumerate(_detected_identities(entry))]
 
 
-def _adhoc_provenance(entry: GoldenEntry) -> list[dict[str, Any]]:
-    """Naive ad-hoc: every expected fact asserted object-visible (mis-attachment baseline)."""
+def _reported_face_count(entry: GoldenEntry) -> int:
+    if not entry.policy.recognition_enabled:
+        return 0
+    missed = len(_undetected_identities(entry) & set(entry.present_identities))
+    return max(entry.face_count - missed, 0)
+
+
+def _adhoc_claims(entry: GoldenEntry, roster: Sequence[str], caption: str) -> list[dict[str, Any]]:
+    """Derive ad-hoc attachment claims from what the caption actually asserts.
+
+    Ad-hoc injection has no altitude separation: any context fact woven into
+    the caption is presented as visual content, so an asserted label scores as
+    object-attached/visible; a label absent from the caption was effectively
+    dropped. Nothing here reads expected_attachments.
+    """
+    lowered = caption.lower()
     out: list[dict[str, Any]] = []
-    for exp in entry.expected_attachments:
-        fid = exp.fact_id or f"{exp.fact_source}:{_slug(exp.fact_label)}"
+    for fact_id, fact_source, fact_label in _derived_facts(entry, roster):
+        asserted = fact_label.lower() in lowered
         out.append(
             {
-                "fact_id": fid,
-                "fact_source": exp.fact_source,
-                "fact_label": exp.fact_label,
-                "decision": "object",
-                "altitude": "object",
-                "target_evidence": "adhoc-injection",
+                "fact_id": fact_id,
+                "fact_source": fact_source,
+                "fact_label": fact_label,
+                "decision": "object" if asserted else "dropped",
+                "altitude": "object" if asserted else "none",
+                "target_evidence": _ADHOC_EVIDENCE if asserted else None,
                 "review_reason": None,
-                "visible": True,
+                "visible": asserted,
             }
         )
     return out
 
 
-async def _run_staged_item(entry: GoldenEntry, image_bytes: bytes) -> dict[str, Any]:
-    caption = _caption_for_entry(entry, mode="staged")
-    pack = build_typed_context_pack(entry)
+async def _run_staged_item(entry: GoldenEntry, image_bytes: bytes, roster: Sequence[str]) -> dict[str, Any]:
+    detected = _detected_identities(entry)
+    caption = _caption_for_entry(entry, mode="staged", detected=detected)
+    pack = build_typed_context_pack(entry, roster)
     faces = _faces_for_entry(entry)
-    with_box = any(e.decision == "object" and e.fact_source == "identity" for e in entry.expected_attachments)
-    adapter = _FusionStubAdapter(caption=caption, with_person_box=with_box)
+    adapter = _FusionStubAdapter(
+        caption=caption,
+        phrase_boxes=_person_phrase_boxes(caption, len(faces)),
+    )
     svc = VisualFactsService(adapter=adapter, repository=None)
     context = pack.model_dump(exclude_none=True) if pack is not None else None
     response = await svc.describe(
@@ -287,28 +420,64 @@ async def _run_staged_item(entry: GoldenEntry, image_bytes: bytes) -> dict[str, 
             "cached": bool(response.cached),
             "attachment_provenance": {"facts": facts},
         },
-        "identities": list(entry.present_identities) if entry.policy.recognition_enabled else [],
-        "face_count": entry.face_count if entry.policy.recognition_enabled else 0,
+        "identities": detected,
+        "face_count": _reported_face_count(entry),
         "error": None,
     }
 
 
-def _run_adhoc_item(entry: GoldenEntry) -> dict[str, Any]:
-    caption = _caption_for_entry(entry, mode="adhoc")
+async def _run_adhoc_item(entry: GoldenEntry, image_bytes: bytes, roster: Sequence[str]) -> dict[str, Any]:
+    """Ad-hoc arm through the SAME service path, fusion stage disabled.
+
+    Legacy free-form context (title/caption/description) is not a typed
+    ContextPack, so ``VisualFactsService`` runs no Stage-2 reconcile — exactly
+    today's ad-hoc WP behavior. Claims are then parsed from the generated
+    caption (see ``_adhoc_claims``), never hardcoded.
+    """
+    detected = _detected_identities(entry)
+    caption = _caption_for_entry(entry, mode="adhoc", detected=detected)
+    adapter = _FusionStubAdapter(caption=caption, model_id="fusion-eval-adhoc-stub")
+    svc = VisualFactsService(adapter=adapter, repository=None)
+    pack = entry.context_pack
+    legacy_context = {
+        key: str(value)
+        for key, value in (("title", pack.title), ("caption", pack.caption), ("description", pack.description))
+        if value
+    }
+    response = await svc.describe(
+        tenant_id=_TENANT,
+        media_id=entry.media_id,
+        image_bytes=image_bytes,
+        context=legacy_context or None,
+        confirmed_faces=(),
+        naming_policy=None,
+    )
+    service_facts = list(response.attachment_provenance.facts) if response.attachment_provenance else []
+    if service_facts:  # legacy context must never reach Stage-2 (honest-baseline invariant)
+        raise RuntimeError(
+            f"ad-hoc arm unexpectedly produced {len(service_facts)} Stage-2 facts for {entry.path}; "
+            "legacy context should not coerce to a typed ContextPack"
+        )
     return {
         "media_id": entry.media_id,
         "path": entry.path,
         "describe": {
-            "alt_text_draft": caption,
-            "visual_facts": {"caption": caption, "objects": [_PERSON_PHRASE]},
-            "adapter": "adhoc-injection",
-            "model_id": "adhoc-baseline",
-            "model_version": "1",
-            "cached": False,
-            "attachment_provenance": {"facts": _adhoc_provenance(entry)},
+            "alt_text_draft": response.alt_text_draft,
+            "visual_facts": {
+                "caption": response.visual_facts.caption,
+                "objects": list(response.visual_facts.objects),
+            },
+            "adapter": response.adapter.value if hasattr(response.adapter, "value") else str(response.adapter),
+            "model_id": response.model_id,
+            "model_version": response.model_version,
+            "cached": bool(response.cached),
+            "attachment_provenance": {
+                "facts": _adhoc_claims(entry, roster, response.visual_facts.caption),
+                "derivation": _ADHOC_EVIDENCE,
+            },
         },
-        "identities": list(entry.present_identities) if entry.policy.recognition_enabled else [],
-        "face_count": entry.face_count if entry.policy.recognition_enabled else 0,
+        "identities": detected,
+        "face_count": _reported_face_count(entry),
         "error": None,
     }
 
@@ -329,13 +498,12 @@ def run_fusion_eval(
 ) -> dict[str, Any]:
     """Walk bakeoff entries; emit acx-eval/v1 run_record for ``mode``."""
     entries = list(manifest.entries[:limit] if limit else manifest.entries)
+    roster = list(manifest.roster)
     items: list[dict[str, Any]] = []
     for entry in entries:
-        if mode == "adhoc":
-            items.append(_run_adhoc_item(entry))
-            continue
+        runner = _run_adhoc_item if mode == "adhoc" else _run_staged_item
         try:
-            item = asyncio.run(_run_staged_item(entry, _synthetic_image_bytes(entry)))
+            item = asyncio.run(runner(entry, _synthetic_image_bytes(entry), roster))
         except Exception as exc:  # noqa: BLE001 — per-item isolation (rg-007)
             items.append(
                 {

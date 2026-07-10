@@ -289,7 +289,24 @@
       ],
       "context_pack": {
         "caption": "Maria Correonero at a summer garden picnic.",
-        "description": "Maria Correonero at what the album labels a summer garden picnic; the photo itself shows the black-sand plane wreck site."
+        "description": "Maria Correonero at what the album labels a summer garden picnic; the photo itself shows the black-sand plane wreck site.",
+        "taxonomy_terms": [
+          {
+            "taxonomy": "event",
+            "name": "Garden picnic",
+            "slug": "garden-picnic"
+          },
+          {
+            "taxonomy": "place",
+            "name": "Summer garden",
+            "slug": "summer-garden"
+          }
+        ],
+        "eval_scenario": {
+          "undetected_identities": [
+            "Maria Correonero"
+          ]
+        }
       },
       "must_right": [
         "Maria Correonero"

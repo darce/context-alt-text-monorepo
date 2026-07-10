@@ -3,7 +3,7 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Caitlin Weaver. Caitlin Weaver on the Antarctic peninsula during her 2023 research residency.. A person is present.",
+        "alt_text_draft": "Caitlin Weaver. Caitlin Weaver on the Antarctic peninsula during her 2023 research residency.. A person stands at position 1 from the left",
         "attachment_provenance": {
           "facts": [
             {
@@ -22,7 +22,7 @@
         "model_id": "fusion-eval-stub",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Caitlin Weaver. Caitlin Weaver on the Antarctic peninsula during her 2023 research residency.. A person is present.",
+          "caption": "Caitlin Weaver. Caitlin Weaver on the Antarctic peninsula during her 2023 research residency.. A person stands at position 1 from the left",
           "objects": [
             "person",
             "scene"
@@ -40,7 +40,7 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Bea Burke. Bea Burke at the science fair.. A person is present.",
+        "alt_text_draft": "Bea Burke. Bea Burke at the science fair.. A person stands at position 1 from the left",
         "attachment_provenance": {
           "facts": [
             {
@@ -59,7 +59,7 @@
         "model_id": "fusion-eval-stub",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Bea Burke. Bea Burke at the science fair.. A person is present.",
+          "caption": "Bea Burke. Bea Burke at the science fair.. A person stands at position 1 from the left",
           "objects": [
             "person",
             "scene"
@@ -77,7 +77,7 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Caitlin Weaver and Erika Hansen Miller. Caitlin Weaver and Erika Hansen Miller with friends.. A person is present.",
+        "alt_text_draft": "Caitlin Weaver and Erika Hansen Miller. Caitlin Weaver and Erika Hansen Miller with friends.. A person stands at position 1 from the left. A person stands at position 2 from the left",
         "attachment_provenance": {
           "facts": [
             {
@@ -106,7 +106,7 @@
         "model_id": "fusion-eval-stub",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Caitlin Weaver and Erika Hansen Miller. Caitlin Weaver and Erika Hansen Miller with friends.. A person is present.",
+          "caption": "Caitlin Weaver and Erika Hansen Miller. Caitlin Weaver and Erika Hansen Miller with friends.. A person stands at position 1 from the left. A person stands at position 2 from the left",
           "objects": [
             "person",
             "scene"
@@ -125,14 +125,14 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Daniel Arce and Kirstie Mccarrel. Kirstie Mccarrel and Daniel Arce on vacation.. A person is present.",
+        "alt_text_draft": "Daniel Arce and Kirstie Mccarrel. Kirstie Mccarrel and Daniel Arce on vacation.. A person stands at position 1 from the left. A person stands at position 2 from the left",
         "attachment_provenance": {
           "facts": [
             {
               "altitude": "object",
               "decision": "object",
-              "fact_id": "identity:cluster:cluster-daniel-arce",
-              "fact_label": "Daniel Arce",
+              "fact_id": "identity:cluster:cluster-kirstie-mccarrel",
+              "fact_label": "Kirstie Mccarrel",
               "fact_source": "identity",
               "review_reason": null,
               "target_evidence": "person",
@@ -141,8 +141,8 @@
             {
               "altitude": "object",
               "decision": "object",
-              "fact_id": "identity:cluster:cluster-kirstie-mccarrel",
-              "fact_label": "Kirstie Mccarrel",
+              "fact_id": "identity:cluster:cluster-daniel-arce",
+              "fact_label": "Daniel Arce",
               "fact_source": "identity",
               "review_reason": null,
               "target_evidence": "person",
@@ -154,7 +154,7 @@
         "model_id": "fusion-eval-stub",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Daniel Arce and Kirstie Mccarrel. Kirstie Mccarrel and Daniel Arce on vacation.. A person is present.",
+          "caption": "Daniel Arce and Kirstie Mccarrel. Kirstie Mccarrel and Daniel Arce on vacation.. A person stands at position 1 from the left. A person stands at position 2 from the left",
           "objects": [
             "person",
             "scene"
@@ -173,7 +173,7 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Ryann Wiseman. Ryann Wiseman celebrating with friends.. A person is present.",
+        "alt_text_draft": "Ryann Wiseman. Ryann Wiseman celebrating with friends.. A person stands at position 1 from the left",
         "attachment_provenance": {
           "facts": [
             {
@@ -192,7 +192,7 @@
         "model_id": "fusion-eval-stub",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Ryann Wiseman. Ryann Wiseman celebrating with friends.. A person is present.",
+          "caption": "Ryann Wiseman. Ryann Wiseman celebrating with friends.. A person stands at position 1 from the left",
           "objects": [
             "person",
             "scene"
@@ -234,7 +234,7 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Liam Maloney. Abstract painting by Liam Maloney.. A person is present.",
+        "alt_text_draft": "Abstract painting by Liam Maloney.. A person is present.",
         "attachment_provenance": {
           "facts": [
             {
@@ -253,7 +253,7 @@
         "model_id": "fusion-eval-stub",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Liam Maloney. Abstract painting by Liam Maloney.. A person is present.",
+          "caption": "Abstract painting by Liam Maloney.. A person is present.",
           "objects": [
             "person",
             "scene"
@@ -269,7 +269,7 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Ryann Wiseman. Ryann Wiseman at the neighborhood bar.. A person is present.",
+        "alt_text_draft": "Ryann Wiseman. Ryann Wiseman at the neighborhood bar.. A person stands at position 1 from the left",
         "attachment_provenance": {
           "facts": [
             {
@@ -288,7 +288,7 @@
         "model_id": "fusion-eval-stub",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Ryann Wiseman. Ryann Wiseman at the neighborhood bar.. A person is present.",
+          "caption": "Ryann Wiseman. Ryann Wiseman at the neighborhood bar.. A person stands at position 1 from the left",
           "objects": [
             "person",
             "scene"
@@ -306,7 +306,7 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Maria Correonero. Maria Correonero at a summer garden picnic.. A person is present.",
+        "alt_text_draft": "Maria Correonero at a summer garden picnic.. A person is present.",
         "attachment_provenance": {
           "facts": [
             {
@@ -345,7 +345,7 @@
         "model_id": "fusion-eval-stub",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Maria Correonero. Maria Correonero at a summer garden picnic.. A person is present.",
+          "caption": "Maria Correonero at a summer garden picnic.. A person is present.",
           "objects": [
             "person",
             "scene"
@@ -353,10 +353,8 @@
         }
       },
       "error": null,
-      "face_count": 1,
-      "identities": [
-        "Maria Correonero"
-      ],
+      "face_count": 0,
+      "identities": [],
       "media_id": 33,
       "path": "mock_images/mcm-planecrash.jpg"
     },
@@ -389,9 +387,9 @@
   "provenance": {
     "base_url": "fusion-runner://staged",
     "fusion_mode": "staged",
-    "head_sha": "c646fe723acb0d6132294c8343b46ed004732458",
-    "manifest_sha256": "e234340721c7cf8c12376dbe566e0a28c1d88562371d19b10eb4f6e996635117",
-    "started_at": "2026-07-10T03:28:20Z"
+    "head_sha": "db56a00a2ff3571e20ef1927bb817322384b0da3",
+    "manifest_sha256": "2182b97628d855e7d7a7b2e8afbc73582dde59198d3030a66e6a1ea35fe9dbd9",
+    "started_at": "2026-07-10T05:03:07Z"
   },
   "schema": "acx-eval/v1"
 }

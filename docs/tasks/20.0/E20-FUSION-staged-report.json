@@ -13,11 +13,11 @@
   },
   "faces": {
     "detection": {
-      "fn": 1,
+      "fn": 2,
       "fp": 0,
       "precision": 1.0,
-      "recall": 0.9411764705882353,
-      "tp": 16
+      "recall": 0.8823529411764706,
+      "tp": 15
     },
     "identification": {
       "excluded_images": [
@@ -25,7 +25,7 @@
       ],
       "ignored_wrong_names": [],
       "macro_precision": 1.0,
-      "macro_recall": 1.0,
+      "macro_recall": 0.8571428571428571,
       "per_identity": {
         "Bea Burke": {
           "fn": 0,
@@ -63,11 +63,11 @@
           "tp": 1
         },
         "Maria Correonero": {
-          "fn": 0,
+          "fn": 1,
           "fp": 0,
-          "precision": 1.0,
-          "recall": 1.0,
-          "tp": 1
+          "precision": null,
+          "recall": 0.0,
+          "tp": 0
         },
         "Ryann Wiseman": {
           "fn": 0,
@@ -78,7 +78,7 @@
         }
       },
       "precision": 1.0,
-      "recall": 1.0,
+      "recall": 0.8888888888888888,
       "true_rejections": 2,
       "wrong_names": []
     }
@@ -89,7 +89,7 @@
     {
       "cache_hit": false,
       "first_sentence_gist_ok": true,
-      "fkre": 32.22,
+      "fkre": 40.18,
       "gated_score": 1.0,
       "inserted_identities": [
         "Caitlin Weaver"
@@ -99,13 +99,13 @@
       "must_right_failures": [],
       "path": "mock_images/ccqw-antartica.jpg",
       "policy_violation": false,
-      "repetition_ratio": 0.125,
+      "repetition_ratio": 0.15,
       "tag_coverage": 0.5
     },
     {
       "cache_hit": false,
       "first_sentence_gist_ok": true,
-      "fkre": 104.08,
+      "fkre": 98.25,
       "gated_score": 1.0,
       "inserted_identities": [
         "Bea Burke"
@@ -115,13 +115,13 @@
       "must_right_failures": [],
       "path": "mock_images/bea-nye.jpg",
       "policy_violation": false,
-      "repetition_ratio": 0.1667,
+      "repetition_ratio": 0.25,
       "tag_coverage": 0.5
     },
     {
       "cache_hit": false,
       "first_sentence_gist_ok": true,
-      "fkre": 50.35,
+      "fkre": 61.33,
       "gated_score": 1.0,
       "inserted_identities": [
         "Caitlin Weaver",
@@ -132,13 +132,13 @@
       "must_right_failures": [],
       "path": "mock_images/ccqw-erika.jpg",
       "policy_violation": false,
-      "repetition_ratio": 0.3333,
+      "repetition_ratio": 0.4667,
       "tag_coverage": 0.5
     },
     {
       "cache_hit": false,
       "first_sentence_gist_ok": true,
-      "fkre": 74.52,
+      "fkre": 76.5,
       "gated_score": 1.0,
       "inserted_identities": [
         "Daniel Arce",
@@ -149,13 +149,13 @@
       "must_right_failures": [],
       "path": "mock_images/kirstie-daniel-sunglasses.jpg",
       "policy_violation": false,
-      "repetition_ratio": 0.3125,
+      "repetition_ratio": 0.4643,
       "tag_coverage": 0.5
     },
     {
       "cache_hit": false,
       "first_sentence_gist_ok": true,
-      "fkre": 49.3,
+      "fkre": 58.22,
       "gated_score": 1.0,
       "inserted_identities": [
         "Ryann Wiseman"
@@ -165,7 +165,7 @@
       "must_right_failures": [],
       "path": "mock_images/ryann-group-party.jpg",
       "policy_violation": false,
-      "repetition_ratio": 0.1818,
+      "repetition_ratio": 0.1333,
       "tag_coverage": 0.5
     },
     {
@@ -187,7 +187,7 @@
     {
       "cache_hit": false,
       "first_sentence_gist_ok": true,
-      "fkre": 56.99,
+      "fkre": 61.27,
       "gated_score": 1.0,
       "inserted_identities": [],
       "media_id": 27,
@@ -195,13 +195,13 @@
       "must_right_failures": [],
       "path": "mock_images/liam-maloney-painting.jpg",
       "policy_violation": false,
-      "repetition_ratio": 0.1818,
+      "repetition_ratio": 0.0,
       "tag_coverage": 0.5
     },
     {
       "cache_hit": false,
       "first_sentence_gist_ok": true,
-      "fkre": 61.78,
+      "fkre": 66.53,
       "gated_score": 1.0,
       "inserted_identities": [
         "Ryann Wiseman"
@@ -211,13 +211,13 @@
       "must_right_failures": [],
       "path": "mock_images/ryann-bar.jpg",
       "policy_violation": false,
-      "repetition_ratio": 0.1667,
+      "repetition_ratio": 0.25,
       "tag_coverage": 0.5
     },
     {
       "cache_hit": false,
       "first_sentence_gist_ok": true,
-      "fkre": 33.24,
+      "fkre": 47.43,
       "gated_score": 1.0,
       "inserted_identities": [
         "Maria Correonero"
@@ -227,7 +227,7 @@
       "must_right_failures": [],
       "path": "mock_images/mcm-planecrash.jpg",
       "policy_violation": false,
-      "repetition_ratio": 0.2308,
+      "repetition_ratio": 0.0909,
       "tag_coverage": 0.5
     },
     {
@@ -248,9 +248,9 @@
   "provenance": {
     "base_url": "fusion-runner://staged",
     "fusion_mode": "staged",
-    "head_sha": "c646fe723acb0d6132294c8343b46ed004732458",
+    "head_sha": "db56a00a2ff3571e20ef1927bb817322384b0da3",
     "manifest_matches_fetch": true,
-    "manifest_sha256": "e234340721c7cf8c12376dbe566e0a28c1d88562371d19b10eb4f6e996635117",
+    "manifest_sha256": "2182b97628d855e7d7a7b2e8afbc73582dde59198d3030a66e6a1ea35fe9dbd9",
     "model": {
       "adapters": [
         "seeded"
@@ -262,8 +262,8 @@
         "1"
       ]
     },
-    "score_manifest_sha256": "e234340721c7cf8c12376dbe566e0a28c1d88562371d19b10eb4f6e996635117",
-    "started_at": "2026-07-10T03:28:20Z"
+    "score_manifest_sha256": "2182b97628d855e7d7a7b2e8afbc73582dde59198d3030a66e6a1ea35fe9dbd9",
+    "started_at": "2026-07-10T05:03:07Z"
   },
   "schema": "acx-eval/v1"
 }

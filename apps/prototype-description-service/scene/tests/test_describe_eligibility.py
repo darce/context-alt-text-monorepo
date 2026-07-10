@@ -95,7 +95,7 @@ def _make_db():
 
 
 @contextmanager
-def _client(adapter=None):
+def _client(adapter=None, auth_tenant=None):
     path, url = _make_db()
     sf = async_sessionmaker(create_async_engine(url), expire_on_commit=False)
 
@@ -105,7 +105,7 @@ def _client(adapter=None):
 
     app = FastAPI()
     app.include_router(scene_router, prefix="/scene")
-    app.dependency_overrides[require_write_access] = lambda: _Auth()
+    app.dependency_overrides[require_write_access] = lambda: _Auth(tenant_claim=auth_tenant)
     app.dependency_overrides[get_optional_session] = _session
     if adapter is not None:
         app.dependency_overrides[get_description_adapter] = lambda: adapter
@@ -123,9 +123,7 @@ def test_envelope_decorative_defaults_false():
 
 
 def test_envelope_accepts_decorative_true():
-    env = DescribeImageEnvelope.model_validate(
-        {"tenant_id": TENANT_ID, "media_id": 7, "decorative": True}
-    )
+    env = DescribeImageEnvelope.model_validate({"tenant_id": TENANT_ID, "media_id": 7, "decorative": True})
     assert env.decorative is True
 
 
@@ -170,6 +168,53 @@ def test_decorative_skips_without_image_part():
         )
         assert r.status_code == 204
         assert adapter.calls == 0
+
+
+def test_decorative_does_not_bypass_tenant_mismatch_403():
+    """S3A-05: the decorative gate is ordered AFTER auth/tenant validation — a
+    tenant-B envelope under a tenant-A credential gets 403, not a silent 204."""
+    adapter = CountingAdapter()
+    with _client(adapter=adapter, auth_tenant=str(uuid.uuid4())) as client:
+        r = client.post(
+            "/scene/describe/multipart",
+            data={
+                "request": json.dumps(
+                    {
+                        "tenant_id": TENANT_ID,
+                        "media_id": 42,
+                        "decorative": True,
+                    }
+                )
+            },
+        )
+        assert r.status_code == 403
+        assert adapter.calls == 0
+
+
+def test_decorative_skip_is_logged(caplog):
+    """S3A-05: the server backstop is observable — decorative skips log tenant/media."""
+    import logging
+
+    adapter = CountingAdapter()
+    with _client(adapter=adapter) as client:
+        with caplog.at_level(logging.INFO, logger="scene.interface_adapters.http.routers.describe"):
+            r = client.post(
+                "/scene/describe/multipart",
+                data={
+                    "request": json.dumps(
+                        {
+                            "tenant_id": TENANT_ID,
+                            "media_id": 42,
+                            "decorative": True,
+                        }
+                    )
+                },
+            )
+        assert r.status_code == 204
+        skip_logs = [rec for rec in caplog.records if "decorative image skipped" in rec.getMessage()]
+        assert skip_logs, "decorative skip must emit an observability log line"
+        assert TENANT_ID in skip_logs[0].getMessage()
+        assert "42" in skip_logs[0].getMessage()
 
 
 def test_non_decorative_unaffected():

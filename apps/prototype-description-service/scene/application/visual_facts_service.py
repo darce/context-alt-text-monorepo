@@ -9,6 +9,7 @@ optional-session degradation.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 import uuid
 from collections.abc import Mapping, Sequence
@@ -23,7 +24,12 @@ from scene.application.fusion.reconcile import Attachment, reconcile_context_fac
 from scene.application.hashing import compute_context_hash, compute_image_hash
 from scene.application.identity_merge.merge import ConfirmedFace, NormalizedBox, PhraseBox
 from scene.application.identity_merge.policy import NamingPolicy
-from scene.application.visual_facts_pass import VisualFactsPass
+from scene.application.visual_facts_pass import (
+    VisualFactsPass,
+    VisualFactsPrior,
+    VisualFactsPriorSource,
+    is_fast_tier_profile,
+)
 from scene.config.profiles import DescriptionProfile
 from scene.domain.description import DescriptionAdapterKind, ProviderMode, RetentionClass
 from scene.interface_adapters.http.schemas.requests import ContextPack
@@ -36,6 +42,8 @@ from scene.interface_adapters.http.schemas.responses import (
     VisualFactsResponse,
 )
 
+_logger = logging.getLogger(__name__)
+
 _PROVIDER_FOR_ADAPTER = {
     DescriptionAdapterKind.SEEDED: ProviderMode.NONE,
     DescriptionAdapterKind.LOCAL_CPU: ProviderMode.LOCAL,
@@ -43,15 +51,6 @@ _PROVIDER_FOR_ADAPTER = {
     DescriptionAdapterKind.GPU: ProviderMode.LOCAL,
     DescriptionAdapterKind.HOSTED_PROVIDER: ProviderMode.HOSTED,
 }
-
-# Stage-1 isolation (second adapter pass) only on async tiers — never double the
-# interactive Florence/seeded path (FUSION-PA-01).
-_ASYNC_ISOLATION_PROFILES = frozenset(
-    {
-        DescriptionProfile.FLORENCE_LARGE,
-        DescriptionProfile.GPU_PHI4,
-    }
-)
 
 
 class AuditSink(Protocol):
@@ -157,9 +156,14 @@ class VisualFactsService:
                 context_hash=context_hash,
             )
             if row is not None:
-                response = self._row_to_response(row, cached=True, duration_ms=_elapsed_ms(start), media_id=media_id)
-                self.last_phrase_boxes = _phrase_boxes_from_json(row.phrase_boxes)
-                self.last_attachments = ()
+                response = self._cache_hit_response(
+                    row,
+                    start=start,
+                    media_id=media_id,
+                    context=context,
+                    confirmed_faces=confirmed_faces,
+                    naming_policy=naming_policy,
+                )
                 await self._record_cache_hit(tenant_id=tenant_id, media_id=media_id, image_hash=image_hash)
                 return response
 
@@ -175,12 +179,19 @@ class VisualFactsService:
         self._observe_adapter_duration(time.perf_counter() - adapter_start)
 
         # E20-FUSION Stage-1 + Stage-2 between adapter and response mapping.
+        # Shared remaining-time budget (S3A-02): the isolation pass may only
+        # spend what the adapter pass left of the generation timeout, so total
+        # latency never reaches 2x generation_timeout_seconds.
+        fusion_budget = (
+            None if self._timeout is None else max(0.0, self._timeout - (time.perf_counter() - adapter_start))
+        )
         attachment_provenance = await self._run_fusion_stage(
             image_bytes=image_bytes,
             context=context,
             adapter_result=result,
             confirmed_faces=confirmed_faces,
             naming_policy=naming_policy,
+            timeout_budget=fusion_budget,
         )
 
         response = self._result_to_response(
@@ -203,9 +214,14 @@ class VisualFactsService:
             new_row.phrase_boxes = _phrase_boxes_to_json(result.phrase_boxes)
             row, inserted = await self._repo.insert_or_get_existing(new_row)
             if not inserted:
-                response = self._row_to_response(row, cached=True, duration_ms=_elapsed_ms(start), media_id=media_id)
-                self.last_phrase_boxes = _phrase_boxes_from_json(row.phrase_boxes)
-                self.last_attachments = ()
+                response = self._cache_hit_response(
+                    row,
+                    start=start,
+                    media_id=media_id,
+                    context=context,
+                    confirmed_faces=confirmed_faces,
+                    naming_policy=naming_policy,
+                )
                 await self._record_cache_hit(tenant_id=tenant_id, media_id=media_id, image_hash=image_hash)
                 return response
             if self._audit is not None:
@@ -225,35 +241,136 @@ class VisualFactsService:
         adapter_result: AdapterResult,
         confirmed_faces: Sequence[ConfirmedFace],
         naming_policy: NamingPolicy | None,
-    ) -> AttachmentProvenance:
+        timeout_budget: float | None,
+    ) -> AttachmentProvenance | None:
         """Stage-1 visual prior + Stage-2 reconcile → wire attachment provenance.
+
+        Fail-open (S3A-02): provenance is an additive-optional enrichment, so
+        any fusion failure (including a Stage-1 isolation timeout) logs and
+        returns ``None`` instead of discarding a successful generation.
 
         Stage-3 identity prose composition reuses the route-level
         ``merge_identities`` path (``_naming_preview``); Stage-2 already calls
         ``merge_identities`` for detector-backed identity attach decisions.
         """
-        prior = await self._stage1_prior(image_bytes=image_bytes, adapter_result=adapter_result)
-        context_pack = _coerce_context_pack(context)
-        attachments = reconcile_context_facts(
-            context_pack=context_pack,
-            visual_prior=prior,
-            confirmed_faces=confirmed_faces,
-            phrase_boxes=list(adapter_result.phrase_boxes),
-            naming_policy=naming_policy,
-        )
-        self.last_attachments = tuple(attachments)
-        return _attachments_to_provenance(attachments)
-
-    async def _stage1_prior(self, *, image_bytes: bytes, adapter_result: AdapterResult):
-        """Tier-shaped Stage-1: isolation only on async GPU/Qwen tiers."""
-        if self._profile in _ASYNC_ISOLATION_PROFILES:
-            call = asyncio.to_thread(
-                VisualFactsPass.describe,
-                adapter=self._adapter,
-                image_bytes=image_bytes,
+        try:
+            context_pack = _coerce_context_pack(context)
+            if context_pack is None:
+                self.last_attachments = ()
+                return _attachments_to_provenance(())
+            # Caption-derived prior first: cheap and deterministic, and it tells
+            # us whether the pack yields any facts BEFORE spending an isolation
+            # adapter pass (S3A-04: no second inference for zero facts).
+            attachments = self._reconcile(
+                context_pack=context_pack,
+                visual_prior=VisualFactsPass.from_caption(result=adapter_result),
+                adapter_result=adapter_result,
+                confirmed_faces=confirmed_faces,
+                naming_policy=naming_policy,
             )
-            return await (asyncio.wait_for(call, self._timeout) if self._timeout else call)
-        return VisualFactsPass.from_caption(result=adapter_result)
+            if attachments and not is_fast_tier_profile(self._profile):
+                isolation_prior = await self._isolation_prior(image_bytes=image_bytes, timeout_budget=timeout_budget)
+                attachments = self._reconcile(
+                    context_pack=context_pack,
+                    visual_prior=isolation_prior,
+                    adapter_result=adapter_result,
+                    confirmed_faces=confirmed_faces,
+                    naming_policy=naming_policy,
+                )
+            self.last_attachments = attachments
+            return _attachments_to_provenance(attachments)
+        except Exception:  # noqa: BLE001 - provenance must never fail the describe
+            _logger.exception("fusion stage failed; describe degrades to no attachment provenance")
+            self.last_attachments = ()
+            return None
+
+    def _reconcile(
+        self,
+        *,
+        context_pack: ContextPack,
+        visual_prior: VisualFactsPrior,
+        adapter_result: AdapterResult,
+        confirmed_faces: Sequence[ConfirmedFace],
+        naming_policy: NamingPolicy | None,
+    ) -> tuple[Attachment, ...]:
+        """Stage-2 with merge-coherent inputs (HARM-01).
+
+        ``reconcile_context_facts`` feeds ``visual_prior.caption`` to
+        ``merge_identities`` together with ``phrase_boxes`` whose spans index
+        the MAIN context-applied caption. An isolation prior therefore never
+        supplies the merge text — its caption is swapped for the caption the
+        phrase boxes were grounded against; the prior remains anchor evidence
+        (objects/text/contamination flag) for reconciliation.
+        """
+        if visual_prior.caption != adapter_result.caption:
+            visual_prior = visual_prior.model_copy(update={"caption": adapter_result.caption})
+        return tuple(
+            reconcile_context_facts(
+                context_pack=context_pack,
+                visual_prior=visual_prior,
+                confirmed_faces=confirmed_faces,
+                phrase_boxes=list(adapter_result.phrase_boxes),
+                naming_policy=naming_policy,
+            )
+        )
+
+    async def _isolation_prior(self, *, image_bytes: bytes, timeout_budget: float | None) -> VisualFactsPrior:
+        """Stage-1 isolation pass (async tiers only), bounded by the remaining budget."""
+        call = asyncio.to_thread(
+            VisualFactsPass.describe,
+            adapter=self._adapter,
+            image_bytes=image_bytes,
+        )
+        return await (asyncio.wait_for(call, timeout_budget) if timeout_budget is not None else call)
+
+    def _cache_hit_response(
+        self,
+        row: ImageDescription,
+        *,
+        start: float,
+        media_id: int,
+        context: Mapping[str, Any] | None,
+        confirmed_faces: Sequence[ConfirmedFace],
+        naming_policy: NamingPolicy | None,
+    ) -> VisualFactsResponse:
+        """Cached row → response with Stage-2 provenance recomputed (S3A-03).
+
+        Attachments are not persisted; recomputing from the cached caption +
+        restored phrase boxes is deterministic (no inference), so a cache hit
+        carries the same attachment provenance as the original generation.
+        Fail-open like the fresh path: a recompute failure yields ``None``.
+        """
+        response = self._row_to_response(row, cached=True, duration_ms=_elapsed_ms(start), media_id=media_id)
+        self.last_phrase_boxes = _phrase_boxes_from_json(row.phrase_boxes)
+        provenance: AttachmentProvenance | None
+        try:
+            context_pack = _coerce_context_pack(context)
+            attachments: tuple[Attachment, ...] = ()
+            if context_pack is not None:
+                visual_facts = dict(row.visual_facts or {})
+                context_used = dict(row.context_used or {})
+                prior = VisualFactsPrior(
+                    caption=str(visual_facts.get("caption", "")),
+                    objects=list(visual_facts.get("objects") or []),
+                    text=visual_facts.get("ocr_text"),
+                    source=VisualFactsPriorSource.CAPTION_DERIVED,
+                    derived_from_context_applied_caption=bool(context_used.get("applied")),
+                )
+                attachments = tuple(
+                    reconcile_context_facts(
+                        context_pack=context_pack,
+                        visual_prior=prior,
+                        confirmed_faces=confirmed_faces,
+                        phrase_boxes=list(self.last_phrase_boxes),
+                        naming_policy=naming_policy,
+                    )
+                )
+            provenance = _attachments_to_provenance(attachments)
+        except Exception:  # noqa: BLE001 - provenance must never fail the describe
+            _logger.exception("fusion recompute failed on cache hit; degrading to no attachment provenance")
+            attachments, provenance = (), None
+        self.last_attachments = attachments
+        return response.model_copy(update={"attachment_provenance": provenance})
 
     async def _record_cache_hit(self, *, tenant_id: uuid.UUID, media_id: int, image_hash: str) -> None:
         if self._audit is not None:

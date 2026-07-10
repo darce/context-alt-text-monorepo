@@ -264,6 +264,206 @@ def test_face_not_detected_drops_identity_with_review_reason():
     assert identity.visible is False
 
 
+class _TierAdapter(_CaptionAdapter):
+    """Main pass (context) vs isolation pass (context=None) return DIFFERENT captions.
+
+    Phrase-box spans index the MAIN caption only — the HARM-01 shape: on async
+    tiers the isolation caption must never be fed to merge with main-pass boxes.
+    """
+
+    def __init__(self, *, main_caption: str, isolation_caption: str, phrase_boxes=(), sleep_on_isolation: float = 0.0):
+        super().__init__(caption=main_caption, phrase_boxes=phrase_boxes)
+        self._isolation_caption = isolation_caption
+        self._sleep_on_isolation = sleep_on_isolation
+        self.contexts: list = []
+
+    def describe(self, *, image_bytes, context):
+        self.contexts.append(context)
+        if context is None:
+            self.calls += 1
+            if self._sleep_on_isolation:
+                import time
+
+                time.sleep(self._sleep_on_isolation)
+            from scene.application.description_adapter import AdapterResult
+
+            return AdapterResult(
+                caption=self._isolation_caption,
+                objects=self._objects,
+                ocr_text=None,
+                alt_text_draft=self._isolation_caption,
+                context_sources=(),
+                context_applied=False,
+                phrase_boxes=(),
+            )
+        return super().describe(image_bytes=image_bytes, context=context)
+
+
+class _FakeRepo:
+    """In-memory ImageDescriptionRepository shape (cache-key lookup + insert race)."""
+
+    def __init__(self):
+        self._rows: dict = {}
+
+    async def get_by_cache_key(
+        self, *, tenant_id, image_hash, adapter, model_version, prompt_or_task_version, context_hash
+    ):
+        return self._rows.get((str(tenant_id), image_hash, adapter, context_hash))
+
+    async def insert_or_get_existing(self, record):
+        key = (str(record.tenant_id), record.image_hash, record.adapter, record.context_hash)
+        if key in self._rows:
+            return self._rows[key], False
+        self._rows[key] = record
+        return record, True
+
+
+def _describe(svc, *, context, confirmed_faces=(), naming_policy=None, media_id=7):
+    async def body():
+        return await svc.describe(
+            tenant_id=TENANT,
+            media_id=media_id,
+            image_bytes=b"\x89PNG fusion-prov",
+            context=context,
+            confirmed_faces=list(confirmed_faces),
+            naming_policy=naming_policy,
+        )
+
+    return asyncio.run(body())
+
+
+def _maria_face():
+    return make_face(
+        "Maria Correonero",
+        box=FACE_BOX,
+        cluster_id="cluster-maria",
+        identity_id="identity-maria",
+        roster_id="roster-maria",
+    )
+
+
+def test_isolation_tier_second_pass_still_object_attaches():
+    """S3A-06 + HARM-01: async tier runs the isolation pass (calls==2, context=None)
+    and identity attach survives a mismatched isolation caption — the merge runs
+    against the main-pass caption its phrase-box spans index."""
+    from scene.config.profiles import DescriptionProfile
+
+    phrase = make_phrase_box("person", CAPTION, box=PERSON_BOX)
+    adapter = _TierAdapter(
+        main_caption=CAPTION,
+        isolation_caption="Totally different isolation caption text.",
+        phrase_boxes=[phrase],
+    )
+    svc = VisualFactsService(adapter=adapter, repository=None, profile=DescriptionProfile.FLORENCE_LARGE)
+    response = _describe(
+        svc,
+        context=_identity_pack().model_dump(exclude_none=True),
+        confirmed_faces=[_maria_face()],
+        naming_policy=NamingPolicy(agreement_enabled=True),
+    )
+    assert adapter.calls == 2  # main context pass + Stage-1 isolation pass
+    assert adapter.contexts[-1] is None  # isolation pass carries no ContextPack
+    facts = {f.fact_id: f for f in response.attachment_provenance.facts}
+    identity = facts["identity:cluster:cluster-maria"]
+    assert identity.decision == "object"  # HARM-01 regression: was ambiguous_grounding drop
+    assert identity.review_reason is None
+    assert identity.target_evidence == "person"
+
+
+def test_isolation_tier_skips_second_pass_without_context_facts():
+    """S3A-04: no ContextPack (or a pack yielding zero facts) → no isolation pass."""
+    from scene.config.profiles import DescriptionProfile
+
+    adapter = _TierAdapter(main_caption=CAPTION, isolation_caption="unused")
+    svc = VisualFactsService(adapter=adapter, repository=None, profile=DescriptionProfile.FLORENCE_LARGE)
+    response = _describe(svc, context=None)
+    assert adapter.calls == 1
+    assert response.attachment_provenance.facts == []
+
+    adapter2 = _TierAdapter(main_caption=CAPTION, isolation_caption="unused")
+    svc2 = VisualFactsService(adapter=adapter2, repository=None, profile=DescriptionProfile.FLORENCE_LARGE)
+    response2 = _describe(svc2, context=ContextPack().model_dump(exclude_none=True))
+    assert adapter2.calls == 1  # empty pack yields no facts: isolation pass skipped
+    assert response2.attachment_provenance.facts == []
+
+
+def test_fusion_stage_exception_fails_open(monkeypatch):
+    """S3A-02: a fusion exception degrades to attachment_provenance=None — the
+    successful generation is still returned, never a 500."""
+    from scene.application import visual_facts_service as svc_module
+
+    def boom(**kwargs):
+        raise RuntimeError("reconcile exploded")
+
+    monkeypatch.setattr(svc_module, "reconcile_context_facts", boom)
+    adapter = _CaptionAdapter()
+    svc = VisualFactsService(adapter=adapter, repository=None)
+    response = _describe(
+        svc,
+        context=_identity_pack().model_dump(exclude_none=True),
+        naming_policy=NamingPolicy(agreement_enabled=True),
+    )
+    assert response.attachment_provenance is None
+    assert response.visual_facts.caption == CAPTION
+    assert svc.last_attachments == ()
+
+
+def test_isolation_timeout_fails_open_not_504():
+    """S3A-02: a Stage-1 isolation timeout on async tiers must not discard the
+    successful generation — provenance degrades to None within the shared budget."""
+    from scene.config.profiles import DescriptionProfile
+
+    phrase = make_phrase_box("person", CAPTION, box=PERSON_BOX)
+    adapter = _TierAdapter(
+        main_caption=CAPTION,
+        isolation_caption="never returned in time",
+        phrase_boxes=[phrase],
+        sleep_on_isolation=0.5,
+    )
+    svc = VisualFactsService(
+        adapter=adapter,
+        repository=None,
+        profile=DescriptionProfile.FLORENCE_LARGE,
+        generation_timeout_seconds=0.2,
+    )
+    response = _describe(
+        svc,
+        context=_identity_pack().model_dump(exclude_none=True),
+        confirmed_faces=[_maria_face()],
+        naming_policy=NamingPolicy(agreement_enabled=True),
+    )
+    assert response.attachment_provenance is None
+    assert response.visual_facts.caption == CAPTION
+
+
+def test_cache_hit_carries_same_attachment_provenance():
+    """S3A-03: a second identical request (cache hit) recomputes Stage-2 from the
+    persisted row and returns the same attachment provenance, not null."""
+    pack = _identity_pack()
+    phrase = make_phrase_box("person", CAPTION, box=PERSON_BOX)
+    repo = _FakeRepo()
+    face = _maria_face()
+
+    def run():
+        svc = VisualFactsService(adapter=_CaptionAdapter(phrase_boxes=[phrase]), repository=repo)
+        return svc, _describe(
+            svc,
+            context=pack.model_dump(exclude_none=True),
+            confirmed_faces=[face],
+            naming_policy=NamingPolicy(agreement_enabled=True),
+        )
+
+    _, first = run()
+    svc2, second = run()
+    assert first.cached is False
+    assert second.cached is True
+    assert first.attachment_provenance is not None
+    assert second.attachment_provenance == first.attachment_provenance
+    facts = {f.fact_id: f for f in second.attachment_provenance.facts}
+    assert facts["identity:cluster:cluster-maria"].decision == "object"
+    assert svc2.last_attachments  # cache hits keep Stage-2 decisions for Stage-3 consistency
+
+
 def test_attachment_fact_provenance_model_extra_forbid():
     with pytest.raises(ValidationError):
         AttachmentFactProvenance.model_validate(

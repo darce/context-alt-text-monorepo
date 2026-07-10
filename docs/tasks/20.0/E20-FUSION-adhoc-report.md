@@ -2,11 +2,11 @@
 
 - schema: `acx-eval/v1` kind: `report`
 - adapter(s): `adhoc-injection` model(s): `adhoc-baseline` version(s): `1`
-- head_sha: `4ffc1a0af916b452f20eb207136e0d5ab4163b55`
+- head_sha: `c646fe723acb0d6132294c8343b46ed004732458`
 - base_url: fusion-runner://adhoc
 - fetch manifest_sha256: `e234340721c7cf8c12376dbe566e0a28c1d88562371d19b10eb4f6e996635117`
 - score manifest_sha256: `e234340721c7cf8c12376dbe566e0a28c1d88562371d19b10eb4f6e996635117` (matches fetch: True)
-- started_at: 2026-07-10T03:27:23Z
+- started_at: 2026-07-10T03:28:20Z
 - images: 10/10 scored, 0 failed
 
 ## Caption metrics (deterministic tier)

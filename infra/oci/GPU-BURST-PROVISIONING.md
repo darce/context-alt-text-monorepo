@@ -65,6 +65,76 @@ quota approval**, which is a human console request Oracle grants asynchronously.
 > `us-ashburn-1` ADs with backoff to ride out transient shortages — this is why it
 > exists.
 
+## Console runbook: request the A10 service-limit increase
+
+The one step that is **not** scriptable (see TL;DR). Do it in the OCI Console as a
+tenancy administrator.
+
+1. **Sign in** to the [OCI Console](https://cloud.oracle.com) as an admin in the
+   **home region** (GPU is requested per-region; use the region you will run the
+   burst in — this repo assumes `us-ashburn-1`).
+2. Top-left **hamburger menu → Governance & Administration → Limits, Quotas and
+   Usage** (older tenancies: **Governance → Limits, Quotas and Usage**).
+3. Set the **Region** selector (top of the page) to `US East (Ashburn)`.
+4. In the **Service** filter choose **Compute**. In the **Resource** search box type
+   `A10` and select **"GPUs for GPU.A10 based VM and BM Instances"**. Confirm the
+   current **Limit** column reads **0** (the default) and note the per-AD breakdown.
+5. Click **Request a service limit increase** (top-right, or the link on the row).
+6. Fill the request form:
+   - **Service Category:** Compute
+   - **Resource:** GPUs for GPU.A10 based VM and BM Instances
+   - **Availability Domain:** pick one AD (or "region-wide" if offered); you can name
+     the specific AD with A10 capacity from step 4.
+   - **New limit value:** **1** (one `VM.GPU.A10.1` = 1 A10). Ask for exactly what you
+     need — an oversized ask invites scrutiny (see below).
+   - **Reason:** a concrete business justification, e.g. *"Bursty scale-to-zero
+     inference for an image alt-text service; one A10 warm-started on demand, stopped
+     when idle. Est. <X> GPU-hours/month."* Vague reasons slow manual review.
+7. **Create Support Request.** You get a Support Request (SR) number; track it under
+   **Help → Support / Support Requests**. A confirmation email goes to the primary
+   contact when granted.
+8. **After approval, validate over Tailscale/CLI** (do not trust the email alone):
+   ```bash
+   oci limits value list --compartment-id <tenancy_ocid> \
+     --service-name compute --region us-ashburn-1 \
+     --query "data[?contains(\"name\",'a10')].{name:name,ad:\"availability-domain\",value:value}"
+   ```
+   A non-zero `value` for the A10 name means you can `terraform apply`.
+
+## What the approval hinges on — and why a PAYG GPU request can be denied
+
+**Timing.** Non-GPU limit bumps are often auto-approved in minutes. GPU requests are
+high-cost, capacity-constrained, and abuse-prone, so they usually route to **manual
+review — typically 1–3 business days**, occasionally longer or escalated to sales.
+
+**What the decision hinges on:**
+
+- **Account risk / billing standing.** New tenancies with thin or no payment history,
+  an outstanding balance, or risk/fraud flags are the most common cause of GPU denials
+  — Oracle (like other clouds) limits high-cost GPU to bound unpaid-cost exposure.
+  A tenancy with a clean billing record and some spend history clears faster.
+- **PAYG vs credits/trial.** It must be a genuine **pay-as-you-go** tenancy. Free
+  Tier / trial / credits-only accounts **cannot** get GPU limits — upgrade to PAYG
+  first.
+- **Regional & AD capacity.** The grant is region/AD-specific. If the requested AD has
+  no free A10 capacity, the request can be held or denied even for a good account
+  (quota and capacity are separate — a grant still meets "Out of host capacity" at
+  launch; that is what `retry-apply.sh` handles).
+- **Requested size.** Asking for 1 A10 is routine; large GPU asks (many GPUs, or the
+  bigger A100/H100/B200 tiers) are more likely to be routed to **sales consultation**
+  ("contact sales") rather than auto-approved.
+- **Justification quality.** A specific, plausible workload reason speeds manual
+  review; a blank or generic reason invites back-and-forth.
+- **Region availability of the shape.** If `VM.GPU.A10.1` is not offered in the
+  tenancy's selected region at all, the resource will not appear — switch to a region
+  that lists it before requesting.
+
+**If denied:** read the SR response — it usually names the cause (risk hold, capacity,
+or "contact sales"). Typical remedies: confirm PAYG + add/settle a payment method and
+let some billing history accrue; lower the requested limit to 1; pick a different AD or
+region with A10 capacity; or engage OCI sales for the tier. Re-submitting the same
+request against the same conditions will be denied again.
+
 ## Costs
 
 Figures are **PAYG list** and region/time-dependent — treat the live

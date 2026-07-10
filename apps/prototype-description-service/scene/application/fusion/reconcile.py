@@ -15,6 +15,7 @@ from typing import Any
 
 from scene.application.identity_merge.merge import (
     ConfirmedFace,
+    IdentityAssociation,
     PhraseBox,
     merge_identities,
 )
@@ -56,11 +57,17 @@ class FactSource(StrEnum):
 
 
 class ReviewReason(StrEnum):
-    """Machine-readable drop/veto reasons for attachment provenance."""
+    """Machine-readable drop/veto reasons for attachment provenance.
+
+    Conditions shared with ``NamingSkipReason`` (policy.py) must serialize to
+    the identical wire string so the two provenance surfaces stay correlatable
+    (sr-007 — one canonical vocabulary per condition).
+    """
 
     PERSON_NAMING_POLICY_DISABLED = "person_naming_policy_disabled"
+    NAMING_POLICY_UNSET = "naming_policy_unset"
     UNCONFIRMED_IDENTITY = "unconfirmed_identity"
-    NO_ELIGIBLE_IDENTITY = "no_eligible_identity"
+    NO_ELIGIBLE_IDENTITIES = "no_eligible_identities"
     FACE_NOT_DETECTED = "face_not_detected"
     AMBIGUOUS_GROUNDING = "ambiguous_grounding"
     BRAND_NOT_DETECTED = "brand_not_detected"
@@ -131,14 +138,16 @@ def reconcile_context_facts(
         visual_prior: Stage-1 prior; caption drives merge span verification.
         confirmed_faces: Detector-backed faces for identity attach.
         phrase_boxes: Caption phrase boxes for containment matching.
-        naming_policy: Optional E19-4a consent gate (agreement / suppress / conf).
+        naming_policy: E19-4a consent gate (agreement / suppress / conf).
+            Fail-closed: when None, identity facts never object-attach
+            (dropped with ``naming_policy_unset``).
         brands: Brand facts; defaults to ``context_pack.brands`` when that field
             exists (E20-BRAND-A). Items need a ``name`` attribute or ``name`` key.
         brand_detections: Matched logo instances from the brand detector.
 
     Returns:
         One ``Attachment`` per extracted fact, stable order: identities, brands,
-        product, attachment, post, taxonomy (event/place first among taxonomies).
+        product, attachment, post, taxonomy (taxonomy terms in pack input order).
     """
     if context_pack is None:
         return []
@@ -209,6 +218,21 @@ def _reconcile_identities(
 
     # Policy veto first — applies to every identity fact.
     policy_reason = _identity_policy_veto(identity_ctx.policy.person_naming, naming_policy)
+
+    # Reuse merge containment semantics — never reimplement face↔phrase matching.
+    # ONE global merge over the FULL confirmed-face set so merge.py's 1:1
+    # same-region ambiguity guard sees every face: if two identities' faces
+    # resolve to the same phrase box, neither may object-attach (S2A-01).
+    associations: tuple[IdentityAssociation, ...] = ()
+    if policy_reason is None and naming_policy is not None:
+        merge_result = merge_identities(
+            caption=caption,
+            phrase_boxes=phrase_boxes,
+            confirmed_faces=faces,
+            policy=naming_policy,
+        )
+        associations = merge_result.associations
+
     out: list[Attachment] = []
     for index, item in enumerate(identity_ctx.identities):
         fact_id = _identity_fact_id(item, index)
@@ -222,13 +246,13 @@ def _reconcile_identities(
                 )
             )
             continue
+        assert naming_policy is not None  # veto above guarantees this branch
         out.append(
             _reconcile_one_identity(
                 item=item,
                 fact_id=fact_id,
-                caption=caption,
                 faces=faces,
-                phrase_boxes=phrase_boxes,
+                associations=associations,
                 naming_policy=naming_policy,
             )
         )
@@ -241,7 +265,12 @@ def _identity_policy_veto(
 ) -> str | None:
     if person_naming not in _PERSON_NAMING_ALLOWED:
         return ReviewReason.PERSON_NAMING_POLICY_DISABLED
-    if naming_policy is not None and not naming_policy.agreement_enabled:
+    if naming_policy is None:
+        # Fail-closed consent gate (S2A-02): without an explicit NamingPolicy
+        # the E19-4a eligibility rules (roster binding, suppress list,
+        # min_detection_confidence) cannot be enforced — never attach names.
+        return ReviewReason.NAMING_POLICY_UNSET
+    if not naming_policy.agreement_enabled:
         return ReviewReason.AGREEMENT_DISABLED
     return None
 
@@ -250,10 +279,9 @@ def _reconcile_one_identity(
     *,
     item: IdentityContextItem,
     fact_id: str,
-    caption: str,
     faces: list[ConfirmedFace],
-    phrase_boxes: list[PhraseBox],
-    naming_policy: NamingPolicy | None,
+    associations: tuple[IdentityAssociation, ...],
+    naming_policy: NamingPolicy,
 ) -> Attachment:
     # Unconfirmed / non-roster: pack items without cluster+identity ids are not
     # detector-attachable (E20-10 roster-bound guardrails).
@@ -274,26 +302,16 @@ def _reconcile_one_identity(
             review_reason=ReviewReason.FACE_NOT_DETECTED,
         )
 
-    if naming_policy is not None:
-        eligible = [f for f in matched_faces if resolve_naming_allowed(f, naming_policy)]
-        if not eligible:
-            return _dropped(
-                fact_id=fact_id,
-                fact_source=FactSource.IDENTITY,
-                fact_label=item.name,
-                review_reason=ReviewReason.NO_ELIGIBLE_IDENTITY,
-            )
-        matched_faces = eligible
+    if not any(resolve_naming_allowed(f, naming_policy) for f in matched_faces):
+        return _dropped(
+            fact_id=fact_id,
+            fact_source=FactSource.IDENTITY,
+            fact_label=item.name,
+            review_reason=ReviewReason.NO_ELIGIBLE_IDENTITIES,
+        )
 
-    # Reuse merge containment semantics — never reimplement face↔phrase matching.
-    merge_result = merge_identities(
-        caption=caption,
-        phrase_boxes=phrase_boxes,
-        confirmed_faces=matched_faces,
-        policy=naming_policy,
-    )
-    if merge_result.associations:
-        assoc = merge_result.associations[0]
+    assoc = _association_for_identity(item, associations)
+    if assoc is not None:
         return Attachment(
             fact_id=fact_id,
             fact_source=FactSource.IDENTITY,
@@ -305,12 +323,28 @@ def _reconcile_one_identity(
             visible=True,
         )
 
+    # No surviving 1:1 association for this identity's face — either no
+    # containing box, or the face lost to the cross-face ambiguity guard.
     return _dropped(
         fact_id=fact_id,
         fact_source=FactSource.IDENTITY,
         fact_label=item.name,
         review_reason=ReviewReason.AMBIGUOUS_GROUNDING,
     )
+
+
+def _association_for_identity(
+    item: IdentityContextItem,
+    associations: Sequence[IdentityAssociation],
+) -> IdentityAssociation | None:
+    """Look up the global merge result by recognition ids (never by label)."""
+    for assoc in associations:
+        face = assoc.face
+        if item.cluster_id is not None and str(face.cluster_id) == str(item.cluster_id):
+            return assoc
+        if item.identity_id is not None and str(face.identity_id) == str(item.identity_id):
+            return assoc
+    return None
 
 
 def _faces_for_identity(
@@ -347,9 +381,7 @@ def _reconcile_brands(
 ) -> list[Attachment]:
     if not brand_facts:
         return []
-    detections_by_name = {
-        d.name.casefold(): d for d in brand_detections if d.matched and d.name.strip()
-    }
+    usable = [d for d in brand_detections if d.matched and d.name.strip()]
     out: list[Attachment] = []
     for index, brand in enumerate(brand_facts):
         fact_id = (
@@ -357,7 +389,7 @@ def _reconcile_brands(
             if brand.template_id
             else f"brand:{index}:{brand.name}"
         )
-        detection = detections_by_name.get(brand.name.casefold())
+        detection = _match_brand_detection(brand, usable)
         if detection is not None:
             evidence = detection.template_id or brand.template_id or brand.name
             out.append(
@@ -382,6 +414,30 @@ def _reconcile_brands(
                 )
             )
     return out
+
+
+def _match_brand_detection(
+    brand: BrandFact,
+    detections: Sequence[BrandDetection],
+) -> BrandDetection | None:
+    """Prefer template_id equality; fall back to normalized (strip+casefold) name.
+
+    A detection carrying a DIFFERENT template_id than the fact never matches by
+    name alone — same-named templates are distinct detector evidence (S2A-03).
+    """
+    if brand.template_id:
+        for d in detections:
+            if d.template_id and d.template_id == brand.template_id:
+                return d
+    key = brand.name.strip().casefold()
+    if not key:
+        return None
+    for d in detections:
+        if brand.template_id and d.template_id and d.template_id != brand.template_id:
+            continue
+        if d.name.strip().casefold() == key:
+            return d
+    return None
 
 
 def _reconcile_caption_facts(context_pack: ContextPack) -> list[Attachment]:

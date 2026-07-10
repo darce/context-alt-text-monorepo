@@ -69,9 +69,13 @@ class DescribeMediaService {
 	private const PROVENANCE_META_KEY = '_acx_description_provenance';
 
 	/**
-	 * The 15 provenance-bearing fields the backend contract guarantees. The
-	 * proxy validates the upstream payload carries every one before passing it
-	 * through — a missing field means the boundary contract was violated.
+	 * The 17 provenance-bearing fields the backend contract guarantees
+	 * (packages/shared-contracts/schemas/image-description-response.schema.json).
+	 * The proxy validates the upstream payload carries every one before
+	 * passing it through — a missing field means the boundary contract was
+	 * violated. Includes VLM-3 wire fields `tier` (compute tier:
+	 * provisional_cpu|final_gpu) and `result_generation`. Do not confuse
+	 * response `tier` with the plugin billing option `acx_tier`.
 	 *
 	 * @var string[]
 	 */
@@ -91,6 +95,8 @@ class DescribeMediaService {
 		'cached',
 		'duration_ms',
 		'retention_class',
+		'tier',
+		'result_generation',
 	);
 
 	private DescribeHostInterface $host;

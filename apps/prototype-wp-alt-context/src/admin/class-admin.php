@@ -330,6 +330,7 @@ class Admin {
 					'recognitionDescribe'            => rest_url( 'acx/v1/recognition/describe' ),
 					'recognitionDescribeCandidates'  => rest_url( 'acx/v1/recognition/describe/candidates' ),
 					'recognitionDescribeHistory'     => rest_url( 'acx/v1/recognition/describe/history' ),
+					'recognitionDescribeRuns'        => rest_url( 'acx/v1/recognition/describe/runs' ),
 					'recognitionBatchRuns'           => rest_url( 'acx/v1/recognition/batch-runs' ),
 					'recognitionJobs'                => rest_url( 'acx/v1/recognition/jobs' ),
 					'recognitionCluster'             => rest_url( 'acx/v1/recognition/cluster' ),

@@ -229,6 +229,16 @@ def test_retry_after_http_date_does_not_crash():  # S2-03
     assert calls["n"] == 2
 
 
+def test_retry_after_is_capped():  # S8-04
+    from scripts.eval_harness import remote_client as rc
+
+    client = rc.RemoteSceneClient("http://test", api_key="k", rate_limit_wait=1.0)
+    assert client._retry_after_seconds("86400") == rc._MAX_RETRY_AFTER_S
+    assert client._retry_after_seconds("30") == 30.0
+    assert client._retry_after_seconds(None) == 1.0
+    client.close()
+
+
 def test_clusters_paginates_until_short_page():  # S2-08
     pages = {"seen_offsets": []}
     full = [{"id": f"c{i}", "label": None} for i in range(200)]

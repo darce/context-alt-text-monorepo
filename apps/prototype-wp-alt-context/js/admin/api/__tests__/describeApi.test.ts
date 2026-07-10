@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as httpModule from '../../utils/http';
 import {
+  applyDescribeRunDrafts,
   correctDescriptionHistoryItem,
   describeMedia,
+  fetchDescribeRunItems,
   fetchDescriptionCandidates,
   fetchDescriptionHistory,
   resolveDescribeErrorMessage,
@@ -15,6 +17,7 @@ const mockConfig = {
     recognitionDescribe: 'https://example.com/acx/v1/recognition/describe',
     recognitionDescribeCandidates: 'https://example.com/acx/v1/recognition/describe/candidates',
     recognitionDescribeHistory: 'https://example.com/acx/v1/recognition/describe/history',
+    recognitionDescribeRuns: 'https://example.com/acx/v1/recognition/describe/runs',
   } as Record<string, string>,
 };
 
@@ -144,6 +147,89 @@ describe('describeApi', () => {
         restNonce: 'nonce-xyz',
       },
     );
+  });
+
+  it('fetches a run\'s per-item drafts with existing_alt bucketing and the REST nonce', async () => {
+    const itemsResponse = {
+      run_id: 'run-abc',
+      items: [
+        {
+          media_id: 70,
+          status: 'completed',
+          alt_text_draft: 'A described bridge.',
+          caption: 'A bridge.',
+          provenance: sampleResponse,
+          existing_alt: true,
+        },
+        {
+          media_id: 71,
+          status: 'completed',
+          alt_text_draft: 'A described flower.',
+          caption: 'A flower.',
+          provenance: sampleResponse,
+          existing_alt: false,
+        },
+      ],
+    };
+    fetchApiMock.mockResolvedValue(itemsResponse);
+
+    const result = await fetchDescribeRunItems('run-abc');
+
+    expect(result).toEqual(itemsResponse);
+    expect(fetchApiMock).toHaveBeenCalledTimes(1);
+    const [endpoint, options] = fetchApiMock.mock.calls[0];
+    expect(endpoint).toBe('https://example.com/acx/v1/recognition/describe/runs/run-abc/items');
+    expect(options).toMatchObject({ method: 'GET', restNonce: 'nonce-xyz' });
+    expect(options).not.toHaveProperty('body');
+  });
+
+  it('url-encodes the run id when reading items', async () => {
+    fetchApiMock.mockResolvedValue({ run_id: 'a/b', items: [] });
+
+    await fetchDescribeRunItems('a/b');
+
+    const [endpoint] = fetchApiMock.mock.calls[0];
+    expect(endpoint).toBe('https://example.com/acx/v1/recognition/describe/runs/a%2Fb/items');
+  });
+
+  it('applies run drafts with an explicit overwrite list and the REST nonce', async () => {
+    const applyResponse = {
+      run_id: 'run-abc',
+      applied: [71, 70],
+      skipped_existing: [],
+      skipped_no_draft: [72],
+      skipped_invalid: [],
+      failed: [],
+    };
+    fetchApiMock.mockResolvedValue(applyResponse);
+
+    const result = await applyDescribeRunDrafts('run-abc', [70]);
+
+    expect(result).toEqual(applyResponse);
+    expect(fetchApiMock).toHaveBeenCalledTimes(1);
+    const [endpoint, options] = fetchApiMock.mock.calls[0];
+    expect(endpoint).toBe('https://example.com/acx/v1/recognition/describe/runs/run-abc/apply');
+    expect(options).toMatchObject({
+      method: 'POST',
+      body: { overwrite_media_ids: [70] },
+      restNonce: 'nonce-xyz',
+    });
+  });
+
+  it('applies run drafts with an empty overwrite list by default (never clobbers existing alt)', async () => {
+    fetchApiMock.mockResolvedValue({
+      run_id: 'run-abc',
+      applied: [71],
+      skipped_existing: [70],
+      skipped_no_draft: [],
+      skipped_invalid: [],
+      failed: [],
+    });
+
+    await applyDescribeRunDrafts('run-abc');
+
+    const [, options] = fetchApiMock.mock.calls[0];
+    expect(options).toMatchObject({ body: { overwrite_media_ids: [] } });
   });
 
   it('posts an edited alt text correction for a history item', async () => {

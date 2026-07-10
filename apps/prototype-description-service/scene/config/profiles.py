@@ -34,6 +34,7 @@ class DescriptionProfile(StrEnum):
     FLORENCE_SMALL = "florence_small"
     FLORENCE_LARGE = "florence_large"
     GPU_PHI4 = "gpu_phi4"
+    GPU_QWEN30B = "gpu_qwen30b"
     HOSTED_GPT4O = "hosted_gpt4o"
 
 
@@ -95,6 +96,14 @@ PROFILE_SPECS: dict[DescriptionProfile, ProfileSpec] = {
             "gpu_phi4 (~900s/image on A1 CPU, ~60x Florence) requires a GPU host; "
             f"stub pending GPU deployment. See {_ASYNC_NOTES}."
         ),
+    ),
+    DescriptionProfile.GPU_QWEN30B: ProfileSpec(
+        profile=DescriptionProfile.GPU_QWEN30B,
+        adapter_kind=DescriptionAdapterKind.GPU,
+        available=True,
+        model_id="Qwen3-VL-30B-A3B-Instruct",
+        model_revision=None,
+        model_version="Q4_K_M",
     ),
     DescriptionProfile.HOSTED_GPT4O: ProfileSpec(
         profile=DescriptionProfile.HOSTED_GPT4O,

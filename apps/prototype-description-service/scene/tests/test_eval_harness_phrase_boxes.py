@@ -1,18 +1,17 @@
 """VLM-2C Slice 3: phrase-box fixture — E19-4a containment coordination seam."""
 
-import json
 import os
 import warnings
 
 from scripts.eval_harness.manifest import RubricEmptyWarning, load_manifest
+from scripts.eval_harness.phrase_boxes import PHRASE_BOXES_SCHEMA, PhraseBoxesError, load_phrase_boxes
 
 _SEED_DIR = os.path.join(os.path.dirname(__file__), "seed")
 _FIXTURE = os.path.join(_SEED_DIR, "phrase_boxes.json")
 
 
 def _load():
-    with open(_FIXTURE) as fh:
-        return json.load(fh)
+    return load_phrase_boxes(_FIXTURE)
 
 
 def _seed_manifest():
@@ -37,7 +36,7 @@ def _resolve(center, phrase_boxes):
 
 def test_phrase_boxes_schema_and_geometry():
     data = _load()
-    assert data["schema"] == "phrase_boxes/v1"
+    assert data["schema"] == PHRASE_BOXES_SCHEMA
     assert data["axis"] == {
         "origin": "top-left",
         "x": "right",
@@ -97,3 +96,12 @@ def test_phrase_boxes_include_stranger_null_case():
     assert len(nulls) == 1, "stranger face must resolve to no name (never a guessed name)"
     named = [e for e in stranger["expected_containment"] if e["resolved_identity"]]
     assert [e["resolved_identity"] for e in named] == ["Ryann Wiseman"]
+
+
+def test_phrase_boxes_loader_rejects_bad_schema(tmp_path):
+    bad = tmp_path / "phrase_boxes.json"
+    bad.write_text('{"schema": "phrase_boxes/v0", "axis": {}, "scenes": {}}')
+    import pytest
+
+    with pytest.raises(PhraseBoxesError):
+        load_phrase_boxes(bad)

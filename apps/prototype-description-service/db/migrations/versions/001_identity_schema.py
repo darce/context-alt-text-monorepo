@@ -36,6 +36,8 @@ TENANT_TABLES = [
     "curation_replay_records",
     "export_jobs",
     "image_descriptions",
+    "image_description_runs",
+    "image_description_run_items",
     "clustering_job_reports",
     "assignment_decisions",
 ]
@@ -72,6 +74,8 @@ EXPECTED_SCHEMA_TABLES = [
     "export_jobs",
     "identity_cluster_refresh_queue",
     "image_descriptions",
+    "image_description_runs",
+    "image_description_run_items",
     "clustering_job_reports",
     "assignment_decisions",
 ]
@@ -80,6 +84,8 @@ DOWNGRADE_TABLE_ORDER = [
     "assignment_decisions",
     "clustering_job_reports",
     "worker_capabilities",
+    "image_description_run_items",
+    "image_description_runs",
     "image_descriptions",
     "audit_events",
     "clustering_feedback",
@@ -1290,6 +1296,104 @@ def ensure_tables(op) -> None:
     )
     _ensure_index(op, "idx_image_descriptions_tenant", "image_descriptions", ["tenant_id"])
 
+    _ensure_table(
+        op,
+        "image_description_runs",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("status", sa.String(length=32), nullable=False, server_default=sa.text("'pending'")),
+        sa.Column("phase", sa.String(length=32), nullable=False, server_default=sa.text("'queued'")),
+        sa.Column("media_ids", sa.dialects.postgresql.JSONB(), nullable=False),
+        sa.Column("total_items", sa.Integer(), nullable=False),
+        sa.Column("completed_items", sa.Integer(), nullable=False, server_default=sa.text("0")),
+        sa.Column("failed_items", sa.Integer(), nullable=False, server_default=sa.text("0")),
+        sa.Column("skipped_items", sa.Integer(), nullable=False, server_default=sa.text("0")),
+        sa.Column("cancel_requested", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+        sa.Column("error_message", sa.Text(), nullable=True),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("started_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("completed_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("created_by_user_id", sa.Integer(), nullable=True),
+        sa.CheckConstraint(
+            "status IN ('pending', 'running', 'completed', 'completed_with_errors', 'failed', 'cancelled')",
+            name="valid_describe_run_status",
+        ),
+        sa.CheckConstraint(
+            "phase IN ('queued', 'describing', 'complete', 'failed', 'cancelled')",
+            name="valid_describe_run_phase",
+        ),
+    )
+    _ensure_index(op, "idx_image_description_runs_tenant", "image_description_runs", ["tenant_id"])
+    _ensure_index(
+        op,
+        "idx_image_description_runs_active",
+        "image_description_runs",
+        ["tenant_id", "status"],
+        postgresql_where=sa.text("status IN ('pending', 'running')"),
+    )
+
+    _ensure_table(
+        op,
+        "image_description_run_items",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "run_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("image_description_runs.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("media_id", sa.Integer(), nullable=False),
+        sa.Column("status", sa.String(length=20), nullable=False, server_default=sa.text("'queued'")),
+        sa.Column("attempts", sa.Integer(), nullable=False, server_default=sa.text("0")),
+        sa.Column("last_error", sa.Text(), nullable=True),
+        # WBUX-3: raw submitted image bytes, cleared to NULL after describe.
+        sa.Column("image_bytes", sa.LargeBinary(), nullable=True),
+        sa.Column("image_content_type", sa.String(length=255), nullable=True),
+        sa.Column("alt_text_draft", sa.Text(), nullable=True),
+        sa.Column("caption", sa.Text(), nullable=True),
+        sa.Column("provenance", sa.dialects.postgresql.JSONB(), nullable=True),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("started_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("completed_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.UniqueConstraint("run_id", "media_id", name="uq_image_description_run_item_media"),
+        sa.CheckConstraint(
+            "status IN ('queued', 'running', 'completed', 'failed', 'skipped')",
+            name="valid_describe_item_status",
+        ),
+    )
+    _ensure_index(op, "idx_image_description_run_items_run", "image_description_run_items", ["run_id"])
+    _ensure_index(
+        op,
+        "idx_image_description_run_items_queued",
+        "image_description_run_items",
+        ["run_id", "status"],
+        postgresql_where=sa.text("status = 'queued'"),
+    )
+    _ensure_index(
+        op,
+        "idx_image_description_run_items_stale",
+        "image_description_run_items",
+        ["status", "started_at"],
+        postgresql_where=sa.text("status = 'running'"),
+    )
+    _ensure_index(
+        op,
+        "idx_image_description_run_items_tenant",
+        "image_description_run_items",
+        ["tenant_id", "id"],
+    )
+
     # E15-34 Slice 5: observability tables adopted from db/models/observability.py
     # (previously ORM-only; written live by the recognition runtime).
     _ensure_table(
@@ -1596,6 +1700,12 @@ def downgrade() -> None:
     op.execute("DROP FUNCTION IF EXISTS notify_cluster_centroid_dirty")
 
     op.drop_table("identity_cluster_refresh_queue")
+    op.drop_index("idx_image_description_run_items_tenant", table_name="image_description_run_items")
+    op.drop_index("idx_image_description_run_items_stale", table_name="image_description_run_items")
+    op.drop_index("idx_image_description_run_items_queued", table_name="image_description_run_items")
+    op.drop_index("idx_image_description_run_items_run", table_name="image_description_run_items")
+    op.drop_index("idx_image_description_runs_active", table_name="image_description_runs")
+    op.drop_index("idx_image_description_runs_tenant", table_name="image_description_runs")
     op.drop_index("idx_scan_job_items_tenant_id", table_name="identity_scan_job_items")
     op.drop_index("idx_scan_job_items_stale", table_name="identity_scan_job_items")
     op.drop_index("idx_scan_job_items_pending", table_name="identity_scan_job_items")

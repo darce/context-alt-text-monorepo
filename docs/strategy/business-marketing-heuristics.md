@@ -1,0 +1,170 @@
+# Business & Marketing Heuristics Lexicon
+
+## About this document
+
+> **Referenced, not read end-to-end.** The commercial sibling of the engineering-heuristics lexicon: the concept vocabulary for business, marketing, and product decisions. Cues (trigger + question) get inlined where decisions happen — roadmaps, scopes, pricing pages, outbound sequences; this doc holds the rationale.
+
+Each section is a table: `ID | Trigger | Rule | Answers | T·P | Src`. **IDs are stable citation keys** (`[STRAT-02]`) — immutable once assigned. `T·P` is tier·phase: tier **B**locker (existential/irreversible if violated) / **S**hould (strong default) / **J**udgment (weigh in context); phase **s**trategy / **p**roduct / **g**tm / **o**ps. `Src` points into `literature/extracted/business/distilled/<slug>.md` (chapter anchors) — the depth, scripts, thresholds, and era-exemptions live there. Distilled by grok-4.5 (high reasoning) 2026-07-09 against the spec in that directory; spot-verified source-faithful.
+
+**Row contract**: trigger observable in a roadmap, metric, conversation, or market signal; rule falsifiable; question answerable before the decision is made. New rules from lived outcomes enter at tier J with the outcome as provenance.
+
+§9 is explicitly **opinion, not distillation** — Claude Fable 5's product judgment for Alt Context, dated, cited against the rules above and the July 2026 roadmaps. Treat it as a strong-form input to argue with, not as source material.
+
+## 1. Strategy & Bets
+
+| ID | Trigger | Rule | Answers | T·P | Src |
+| --- | --- | --- | --- | --- | --- |
+| STRAT-01 | strategy uses one framework for a multi-causal bet | **Latticework required** — hang the decision on multiple discipline models or refuse certainty | Which three non-native models change the conclusion? | B·s | poor-charlies-almanack ch-2 |
+| STRAT-02 | plan only shows the path to win, no failure anatomy | **Invert, always invert** — define non-X and disconfirmers before the forward plan | Where do we die, and what evidence would kill this thesis? | B·s | poor-charlies-almanack ch-5 |
+| STRAT-03 | team enters a domain where the edge boundary is unknown | **Circle of competence** — yes / no / too-tough baskets; no fake fluency | If the next hard question comes, are we Planck or the chauffeur? | B·s | poor-charlies-almanack ch-3 |
+| STRAT-04 | rare clear edge appears with favorable odds | **Load the boat** — bet seldom, bet big when mispriced; pair with [OPS-02] sit-on-your-hands | If we only get 20 punches lifetime, is this punch-worthy? | S·s | poor-charlies-almanack ch-8 |
+| STRAT-05 | clone of a competitor because they raised / launched | **Anti-mimetic product** — reject Girardian roadmaps; compete from private knowledge | What do we know that they don't — specifically? | S·p | technological-republic ch-12 |
+| STRAT-06 | roadmap fills with consumer conveniences | **Consequential over trivial** — allocate talent to problems that still matter in a decade | If this wins, what capability exists that didn't? | S·s | technological-republic ch-1 |
+| STRAT-07 | strategy flipped after a pile-on / backlash | **Conviction over crowd veto** — backlash is input, not board | What did we believe last quarter that evidence still supports? | J·s | technological-republic ch-3 |
+| STRAT-08 | planning a debut mass-market win as if it funds five years | **Spike is not a business model** — extract rights and cash from a spike; don't staff for automatic repeat | What survives if the spike never happens again? | B·s | klf-the-manual ch-1 |
+| STRAT-09 | post-hit plan is to rerun the exact exploit | **One-time hole** — systems close visible hacks; change formula or accept nostalgia | What breaks if the platform adapts tomorrow? | S·s | klf-the-manual ch-14 |
+| STRAT-10 | vendor offers free work for equity/rights or "I'll intro the majors" | **Keep the rights; hire the services** — flattery trades are how spikes lose their only real money | Who owns the IP if this works? | B·s | klf-the-manual ch-9 |
+| STRAT-11 | pressure to split the difference on price/terms | **Never split the difference** — the middle is often the worst design; repackage instead | Is there a package that beats 50/50? | S·s | never-split-the-difference ch-6 |
+| STRAT-12 | market price/hype spike used as validation of quality | **Price ≠ value** — intrinsic math over Mr. Market mood | What is the value if the quote were unavailable for a year? | S·s | poor-charlies-almanack ch-2 |
+| STRAT-13 | comparing options by revenue alone | **Relative income** — dollars without time/mobility are a false wealth score | What is the per-founder-hour value, and which levers do we control? | S·s | four-hour-workweek ch-1 |
+| STRAT-14 | big reversible decision frozen by dread | **Fear-setting** — named worst cases become repair plans; vague fear freezes | Worst case, repair path, and the 10-year cost of inaction? | S·s | four-hour-workweek ch-3 |
+| STRAT-15 | leaders/deciders carry no downside | **Ownership society** — stake in success and failure for whoever decides | What do decision-makers lose if this fails? | B·s | technological-republic ch-18 |
+
+## 2. Product & Validation
+
+| ID | Trigger | Rule | Answers | T·P | Src |
+| --- | --- | --- | --- | --- | --- |
+| PROD-01 | feature request without an outcome metric | **Outcome over output** — ship only what changes valuable behavior | What human behavior must change, by how much? | B·p | lean-ux ch-3 |
+| PROD-02 | long PRD / solution brief arrives first | **Problem before solution** — restate as a business problem with measurable adverse effect | What adverse effect and behavior define success? | B·s | lean-ux ch-5 |
+| PROD-03 | expensive feature debate | **Cheapest learning first** — landing page / fake door / Wizard-of-Oz before build | What's the least work to learn the riskiest unknown? | S·p | lean-ux ch-12 |
+| PROD-04 | experiment fails but the team loves the design | **Falsification wins** — kill or pivot; taste isn't evidence | What result would make us wrong — and did we see it? | B·p | lean-ux ch-12 |
+| PROD-05 | low evidence, high-fidelity plan | **Truth Curve** — investment proportional to market evidence | What evidence justifies this fidelity? | S·p | lean-ux ch-12 |
+| PROD-06 | "we know our users" with no recent contact | **Persona three gates** — exist, need, switch value; recruit to prove | Can we recruit them, confirm the pain, and beat the incumbent? | B·p | lean-ux ch-7 |
+| PROD-07 | roadmap is a feature timeline | **Outcome roadmap** — leadership sets metrics; the team chooses features | Why this work, and how will we know we did a good job? | B·s | lean-ux ch-17 |
+| PROD-08 | product designed from taste or golden-age references | **Study the Top, not your era** — current mass winners share more with each other than with their genre roots | What are this month's winners doing that ours refuses to do? | S·p | klf-the-manual ch-3 |
+| PROD-09 | feature ignores hard channel constraints (length, hook, review rules) | **Format-first construction** — write the channel contract before the components | What will the gatekeeper fade, skip, or demote? | B·p | klf-the-manual ch-4 |
+| PROD-10 | team blocked seeking the never-seen | **Magpie assembly** — recombine proven parts; personality rides the collage | Which past winners can we legally recombine this week? | S·p | klf-the-manual ch-5 |
+| PROD-11 | efficiency investment in a commodity-like offer | **Second-step test** — do the savings stick to us or flow to customers? | After competitors copy this tool, who keeps the margin? | S·p | poor-charlies-almanack ch-7 |
+| PROD-12 | builders never meet operational users | **Builder–user proximity** — intimacy with the person on their worst day | Would a field user trust this UI on their worst day? | B·p | technological-republic ch-13 |
+| PROD-13 | "we build because we can" | **What/why before can** — purpose precedes capability demos | Who is harmed if we never ship this — and served if we do? | S·p | technological-republic ch-6 |
+| PROD-14 | UI quality never revisited after v1 | **UX debt is debt** — track and pay down like tech debt | Where does the current journey diverge from the ideal? | J·p | lean-ux ch-17 |
+
+## 3. AI-Product Craft
+
+| ID | Trigger | Rule | Answers | T·P | Src |
+| --- | --- | --- | --- | --- | --- |
+| AIPX-01 | "we need a model for this" before rules tried | **Heuristic before ML** — ship the deterministic baseline first | Can a maintainable rule deliver the value? | B·p | building-ml-powered-applications ch-1 |
+| AIPX-02 | offline metric up, user acceptance flat | **Product-metric sovereignty** — offline scores are proxies; the user behavior is the metric | Which user behavior proves this model helped? | B·p | building-ml-powered-applications ch-2 |
+| AIPX-03 | no accept/edit instrumentation on model output | **Instrument the flywheel** — production use is the label source | Where does the next training label come from? | B·p | building-ml-powered-applications ch-4 |
+| AIPX-04 | only aggregate accuracy at ship review | **Slice before ship** — per-cohort and failure-mode checks | On which user/content slice would we be embarrassed? | B·p | building-ml-powered-applications ch-5 |
+| AIPX-05 | model path with no fallback | **Heuristic fallback required** — fail closed to a safe deterministic path | What do we show when confidence is low or input is garbage? | B·o | building-ml-powered-applications ch-10 |
+| AIPX-06 | new model to 100% of traffic | **Shadow then canary** — prove production parity before cutover | Have we compared on live traffic without burning users? | S·o | building-ml-powered-applications ch-11 |
+| AIPX-07 | advice/description feature tuned for coverage | **Precision-first guidance** — wrong advice costs more than silence | What happens to trust the first time we're wrong? | S·p | building-ml-powered-applications ch-7 |
+| AIPX-08 | generative output presented as complete | **Output is not the answer** — design for interpretation, edit, and next action | Will the user treat this as verified truth? | B·p | designing-ai-interfaces ch-5 |
+| AIPX-09 | objective claim drives real action | **Secondary verification for stakes** — high-stakes outputs need a human or external check layer | Can a wrong accept cause irreversible harm? | B·p | designing-ai-interfaces ch-5 |
+| AIPX-10 | request for a model-confidence badge | **No confidence theater** — sources, hedges, and validation paths over self-reported % | Can the user validate without trusting a score? | S·p | designing-ai-interfaces ch-5 |
+| AIPX-11 | AI fluent but possibly wrong | **User as error detector** — afford double-check, edit, and source paths when the system can't self-flag | Is failure detectable by the system, or only by the user? | B·p | designing-ai-interfaces ch-4 |
+| AIPX-12 | bad generation recovery | **Refine over restart** — regenerate/edit-retry preserving what works | Does retry preserve what already works? | S·p | designing-ai-interfaces ch-4 |
+| AIPX-13 | humanlike AI in a commercial surface | **Disclose AI early** — synthetic nature labeled as an understanding aid | Could a user reasonably think this is a human? | B·g | designing-ai-interfaces ch-5 |
+| AIPX-14 | perfect accuracy assumed in UX copy | **Design for imperfect models** — confidence gates and human override in the flow | What is the worst wrong output a user might see? | B·p | building-ml-powered-applications ch-2 |
+
+## 4. Go-to-Market & Distribution
+
+| ID | Trigger | Rule | Answers | T·P | Src |
+| --- | --- | --- | --- | --- | --- |
+| GTM-01 | "users said they'd buy" without money | **Ask them to buy** — only paid intent validates | What costly action (purchase, preorder, deposit) proves demand? | B·g | four-hour-workweek ch-10 |
+| GTM-02 | building capability/inventory pre-demand | **Micro-test the offer** — measure conversion at target price before committing | Can we measure conversion before we build? | B·g | four-hour-workweek ch-10 |
+| GTM-03 | product idea without a reachable tribe | **Niche-first** — market membership before invention | Which group do we already understand that spends and is reachable affordably? | S·g | four-hour-workweek ch-9 |
+| GTM-04 | plan waits on a major platform/partner for distribution | **Distribution-as-product via service stack** — rent the infrastructure under your own label | Can we rent the muscle without selling the company? | S·g | klf-the-manual ch-10 |
+| GTM-05 | awareness funded before conversion infrastructure | **Plugger-path before vanity press** — reach the ranking/conversion nodes, then press | Who gets us heard *and* who writes the ranking signal? | S·g | klf-the-manual ch-11 |
+| GTM-06 | heat is high but the ranked/instrumented number is flat | **Resource the ranking nodes** — spend where the number is actually typed, scanned, counted | Where is the number actually recorded? | B·g | klf-the-manual ch-12 |
+| GTM-07 | mass-market name/title is witty or needs explanation | **Title = emotional first line** — one basic feeling; clever caps at cult | Can a stranger repeat the meaning after one exposure? | S·g | klf-the-manual ch-6 |
+| GTM-08 | debut leads with craft excellence, no novelty package | **Novelty beats craft on first exposure** — strangers can't judge quality yet | What is newsworthy in one scroll? | S·g | klf-the-manual ch-7 |
+| GTM-09 | drafting any outbound message | **Research × personalization × relevance** — all three or silence | What is uniquely true about *them* in the first line? | B·g | linkedin-messaging-guide ch-5 |
+| GTM-10 | first outbound asks for a meeting | **Soft CTA / foot-in-door** — earn call rights; never cold-Calendly | Have they agreed a conversation exists? | B·g | linkedin-messaging-guide ch-7 |
+| GTM-11 | no reply after a written touch | **Rotate the format** — audio/video/other channel after 5–7 days, not bump #2 | Which untried door remains? | S·g | linkedin-messaging-guide ch-6 |
+| GTM-12 | pipeline counted as quota-matching opportunities | **Inverse close-rate pipeline** — 2–4× closes as live opps; always prospecting | Do we have the multiple? | B·o | linkedin-messaging-guide ch-27 |
+| GTM-13 | packaging/stunts multiply after the product converts | **Brown-bag test** — if it works bare, stop funding lore | Would this still win without the stunt budget? | J·g | klf-the-manual ch-13 |
+
+## 5. Negotiation & Sales Conversations
+
+| ID | Trigger | Rule | Answers | T·P | Src |
+| --- | --- | --- | --- | --- | --- |
+| NEG-01 | unreasonable demand / hard no on terms | **Calibrated How** — force them to solve your constraint under the illusion of control | "How am I supposed to do that?" | S·g | never-split-the-difference ch-7 |
+| NEG-02 | pre-meeting dread / bad-news call | **Accusation audit** — name the worst charges first | What's the nastiest true thing they could say about us? | S·g | never-split-the-difference ch-3 |
+| NEG-03 | counterpart emotion spikes | **Label, then pause** — daylight on fear beats argument | "It seems like you're worried about ___?" | S·g | never-split-the-difference ch-3 |
+| NEG-04 | early smooth yes | **Three-yes test** — counterfeit commitment detector; hunt "that's right", not "yes" | Can they affirm it three different ways, including a How? | B·g | never-split-the-difference ch-8 |
+| NEG-05 | haggle phase opens | **Ackerman ladder** — 65/85/95/100 with an odd final + nonmonetary chip | Target, 65% open, and the last chip? | S·g | never-split-the-difference ch-9 |
+| NEG-06 | only the champion is engaged | **Behind-the-table map** — deal-killers outrank deal-makers | How on board is everyone *not* on this call? | B·g | never-split-the-difference ch-8 |
+| NEG-07 | radio silence | **"Have you given up on this?"** — loss framing + autonomy reopens | Sent the no-oriented reopen? | S·g | never-split-the-difference ch-4 |
+| NEG-08 | "they're irrational" | **Black Swan hunt** — hidden constraints/info/interests make their move rational | What would have to be true for their move to be rational? | J·s | never-split-the-difference ch-10 |
+
+## 6. Operations & Incentives
+
+| ID | Trigger | Rule | Answers | T·P | Src |
+| --- | --- | --- | --- | --- | --- |
+| OPS-01 | KPI/comp/pricing plan can be gamed or pays for the wrong output | **Incentives first** — never think about anything else before incentives are right | What behavior does this pay for at 2 a.m. with no witnesses? | B·o | poor-charlies-almanack ch-10 |
+| OPS-02 | calendar fills with mediocre initiatives to reduce anxiety | **Sit on your hands** — explicit no-swing criteria; swing only at fat pitches | What is the "no swing" criterion this week? | S·o | poor-charlies-almanack ch-4 |
+| OPS-03 | vendor/agency advice coincides with their upsell | **Incentive-caused-bias discount** — especially fear advice that's good for the advisor | Who gets paid if we say yes? | S·o | poor-charlies-almanack ch-10 |
+| OPS-04 | only good news reaches the operator | **Welcome bad news promptly** — kill messenger-shooting structurally | What bad news arrived last, and who brought it safely? | S·o | poor-charlies-almanack ch-10 |
+| OPS-05 | hiring or automating a mess | **Eliminate before automate/delegate** — never scale waste | What can we delete before we build or pay? | B·o | four-hour-workweek ch-8 |
+| OPS-06 | calendar full, outcomes flat | **80/20 elimination** — cut the sources of 80% of pain; clone the 20% of gain | Which 20% creates the profit, and which creates the misery? | B·o | four-hour-workweek ch-5 |
+| OPS-07 | endless inputs while shipping stalls | **Low-information diet** — just-in-time inputs; attention is inventory | Will I use this immediately, or is it just-in-case? | S·o | four-hour-workweek ch-6 |
+| OPS-08 | founder is the bottleneck after sales exist | **Management by absence** — written authority and rules beat heroics | What written rule would let this run without me for 30 days? | S·o | four-hour-workweek ch-11 |
+| OPS-09 | launch team is a committee with >2 equal votes | **Pair, not crew** — one rudder; factions kill timelines | Who can say no without a meeting? | S·o | klf-the-manual ch-2 |
+| OPS-10 | founder deep in specialist execution while the channel goal drifts | **Hold the rudder** — specify and accept/reject; don't become crew | Does this decision still aim at the harbor metric? | S·o | klf-the-manual ch-8 |
+| OPS-11 | postmortem stops at "operator error" | **Five Whys into incentives** — chase the structure that made the miss rational | What org/pricing incentive made this rational? | S·o | technological-republic ch-14 |
+| OPS-12 | hiring/partnering on charisma | **Record over presence** — underweight the interview, overweight the track record | What would the dossier say with the charm muted? | S·o | poor-charlies-almanack ch-10 |
+| OPS-13 | order/plan omits rationale | **Braun why-rule** — who/what/when/where/why or rewrite | Why would a smart skeptic comply? | S·o | poor-charlies-almanack ch-6 |
+
+## 7. Bootstrap Brand Economics
+
+> Added 2026-07-09 from the design-lane batch. Source: Berg, *Porn Work* (scholarly labor study of the adult-content economy) — distilled for its transferable zero-capital creator mechanics: how workers build income under stigma, platform hostility, and no funding. The rules generalize to any bootstrap product; provenance in `literature/extracted/design/distilled/porn-work.md`.
+
+| ID | Trigger | Rule | Answers | T·P | Src |
+| --- | --- | --- | --- | --- | --- |
+| BOOT-01 | zero-capital brand building | **Own before polish** — the first assets are rights, name, and a direct contact path; polish comes after ownership | If the platform dies tomorrow, what residual remains? | B·s | porn-work ch-3 |
+| BOOT-02 | work sold once with no rights retained | **Scene-as-ad** — treat each visible unit as promotional labor for owned recurring streams | What owned product does this unit sell? | S·g | porn-work ch-4 |
+| BOOT-03 | partner/platform pushes costs onto the creator | **Turn forced cost into product** — recapture imposed costs as fan-facing offerings under your own name | Does this cost build their equity or ours? | S·o | porn-work ch-4 |
+| BOOT-04 | pricing your own labor/service | **Eyes-closed rate floor** — below the feel-good price the asset burns out; resentment compounds | Would I resent this rate after the platform's cut? | B·o | porn-work ch-7 |
+| BOOT-05 | intimacy/access/attention as the product | **Bounded authenticity** — real connection, metered and calendared; the boundary is what makes it sustainable | Where does the performance end on the calendar? | S·o | porn-work ch-8 |
+| BOOT-06 | free samples/tiers offered | **Freemium kill switch** — free exists only with a stated conversion hypothesis | What paid action does this free unit force? | S·g | porn-work ch-10 |
+| BOOT-07 | one platform carries the revenue | **Hostile-landlord assumption** — multi-home the masters and the rails before you need to | Can a ToS change kill >50% of revenue in a week? | B·s | porn-work ch-9 |
+| BOOT-08 | follower counts as KPIs | **Payers per 1k followers** — optimize paid conversion, not reach | How many payers per thousand? | S·g | porn-work ch-9 |
+| BOOT-09 | collab/trade arrangements | **Symmetric residual trade** — refuse partners who keep the files and the larger paid audience | Who owns the files, and whose list grows? | S·g | porn-work ch-6 |
+| BOOT-10 | always-on hustle as the plan | **Rest as COGS** — recovery is a cost of goods; price and schedule it | Is recovery costed into the rate card? | S·o | porn-work ch-10 |
+| BOOT-11 | scope changes mid-delivery | **Renegotiate on change** — new deliverable, new deal; silence re-prices you at zero | Did terms change without a new price? | B·o | porn-work ch-11 |
+| BOOT-12 | "just refuse bad clients" advice | **Stratified refusal power** — build the alternate stream before moralizing about walking away | Who in this market can actually walk? | J·s | porn-work ch-5 |
+
+## 8. Cross-source tensions worth keeping
+
+- **Conviction vs falsification**: [STRAT-07] (Karp: don't let the crowd veto) ↔ [PROD-04] (Lean UX: evidence kills darlings). Resolution by object: *values and positioning* run on conviction; *features and funnels* run on falsification. Alt Context's privacy positioning is conviction territory; any given workbench feature is not.
+- **Novelty vs precision**: [GTM-08] (KLF: novelty wins first exposure) ↔ [AIPX-07] (Ameisen: precision-first for advice products). First exposure can be novel; the *output* can never be sloppy in a trust product.
+- **Niche membership vs consequential problems**: [GTM-03] (Ferriss: sell to a tribe you belong to) ↔ [STRAT-06] (Karp: work on what matters). Accessibility is the rare wedge that satisfies both.
+
+## 9. Opinions — Alt Context roadmap (Claude Fable 5, 2026-07-09)
+
+> My judgment, not distillation. Grounded in: `docs/roadmaps/context-aware-image-description-roadmap-2026-06-13.md`, `docs/roadmaps/public-mvp-ux-polish-roadmap-2026-07-04.md` (E21), `roadmap-saas-operations.md`, and the state of `apps/prototype-wp-alt-context` + `apps/prototype-description-service`. Argue with these; they are positions, not findings.
+
+1. **The positioning is already right — now defend it with conviction [STRAT-05], [STRAT-07].** "Inspectable visual facts + site-owned context + auditable privacy" is an anti-mimetic wedge; the generic "AI writes alt text" race (AltText.ai et al.) is a mimetic banana pile where the margin flows to model vendors [PROD-11]. Meet the workflow basics (install → connect → alt text appears) because the channel demands it [PROD-09], and refuse feature-parity chasing beyond that. The thing you know that they don't: identity context (roster) and provenance are *compliance evidence*, not garnish.
+2. **Declare the flywheel metric before E21 polish ships [AIPX-02], [AIPX-03], [PROD-01].** The product metric is **acceptance-without-edit rate** of generated alt text (secondarily: edit distance). Instrument accept/edit/reject in the plugin *now* — it's simultaneously your quality signal, your training-label source, and your sales evidence ("N% of descriptions accepted unedited by real editors"). Polishing the demo before the metric exists inverts the Truth Curve [PROD-05].
+3. **The riskiest assumption is commercial, not technical — test it with money [GTM-01], [GTM-02], [PROD-03].** You don't yet have evidence anyone pays a premium for *auditable* alt text over cheap generic. Put a pricing page with a compliance tier on demo.altcontext.com and ask for a deposit/preorder from agencies before wiring the `scene` package further. A fake-door "Compliance report (PDF) for your audit" button answers more than a quarter of engineering.
+4. **The buyer is an agency with compliance risk, not a blogger with empty alt fields [GTM-03], [STRAT-04], [OPS-01].** EAA enforcement (June 2025) and ADA-suit economics make accessibility a purchased *risk reduction*. Agencies are the fat pitch: one buyer, dozens of sites, recurring audits — and they're reachable via exactly the LinkedIn outbound playbook [GTM-09..12]. Price the compliance tier flat per-site (aligns with "audit evidence" value), not per-image tokens (pays you to be verbose, them to be anxious [OPS-01]).
+5. **The review workbench is the product, not overhead [AIPX-08..11], [PROD-12].** In a trust product, the edit-first flow (facts → human confirms → provenance recorded) *is* the differentiator; "accept all" one-click parity with wrapper plugins would erode the only defensible trait. No confidence-theater percentages — show sources (which context, which roster identity, which image region) and make the human's correction cheap [AIPX-12]. One embarrassing wrong description on a disability-advocacy site costs more than a thousand right ones earn [AIPX-07] — gate low-confidence output to draft-only, never auto-publish.
+6. **The WordPress plugin directory is the chart; resource its ranking nodes [GTM-05], [GTM-06], [PROD-09].** Ranking is written by active installs growth, review velocity, support-thread responsiveness, and update cadence — not by your marketing site. Budget weekly hours to support threads and review solicitation the way KLF budgeted the sales force. The directory listing's first screenshot is your radio edit: it should show the facts-review workbench (the differentiator), not a settings page.
+7. **Launch spikes are for rights extraction, not staffing plans [STRAT-08], [STRAT-09].** A Product Hunt/WP Tavern bump will not sustain; use it to bank reviews, installs, and case-study candidates. The durable "rights" in this business are (a) the customer's own context/roster data — which stays *theirs* by design, making sovereignty the retention moat — and (b) your provenance/audit trail format. Never trade those for a platform partnership's distribution promise [STRAT-10].
+8. **Solo-founder ops: you already have leverage; ration attention, not effort [OPS-05..07], [OPS-02].** The agent infrastructure (workbay) is your automation layer — the elimination question is which *products* deserve it. Two monorepos and a demo is near the ceiling for one operator plus agents; the no-swing criterion this quarter should be "nothing new until the acceptance-rate metric and one paying agency exist." Model churn (the VLM of the week) is the low-information diet's first casualty [OPS-07] — swing on distribution and evidence, not benchmarks.
+
+## 10. Execution conditions & timing (private — never in public artifacts)
+
+> Derived from the operator's private persona synthesis (`~/Documents/__Personas/orion-persona-astrological-synthesis.md` — sacred source, referenced by path only; its contents must never appear in any public-facing artifact, post, or repo). This section translates it into operational guidance the way the KLF Manual earns its place: not a recognized textbook, but a system for creating favorable conditions to execute.
+
+- **Operating formula: contain and publish.** Capture the private pattern, translate it into a system, ship it publicly, repeat before the mood changes. One public artifact per week is the floor cadence. Publish the method before it feels perfect — the failure mode is symbolic refinement in place of shipping.
+- **Timing (H2 2026):** July–August is for stabilizing routines, cleanup, and quiet preparation — not grand launches, especially not while running hot. **September–October is the consolidation window: case studies, demos, the visibility push, network reactivation.** Early November favors network gains (referrals, social proof). Late November–December: no base changes, no rebrands, no identity moves — plan 2027 instead. Slow any large change down until it becomes architecture.
+- **Decision hygiene:** no permanent decisions during emotional heat; 24-hour delay on charged communications; money stays unromantic — written risk rules, runway math, income floor separated from founder upside (reinforces [OPS-01] and the flat-pricing position in §9.4).
+- **Container discipline:** product brand, consulting identity, and personal/esoteric interests stay in separate public containers. The public work presents as disciplined craft — proof over promise, body-of-work over performance. The public surface is an altar of proof, not a mood board.
+- **The tell to watch:** the rebrand impulse under stress. The remedy is always output, not identity work (reinforces §7 [BOOT-01] and the keep-the-name position in the design lexicon).
+
+## Consumption
+
+Inline `[ID]` citations in roadmaps, scopes, epic docs, and pricing/GTM discussions the way engineering docs cite `[RES-01]`. When a §9 opinion is validated or falsified by real outcomes, record the outcome next to it and promote/demote it — opinions age; the rules above mostly don't. §10 is private context: it colors timing and tone and is excluded from every derived public artifact.

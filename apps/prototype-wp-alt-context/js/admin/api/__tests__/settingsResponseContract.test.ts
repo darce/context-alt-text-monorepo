@@ -17,6 +17,7 @@ const SETTINGS_RESPONSE_KEYS = [
   'tenant_id',
   'tenant_id_source',
   'tenant_paired',
+  'description_budget',
 ] as const;
 
 describe('settings response contract', () => {
@@ -35,6 +36,11 @@ describe('settings response contract', () => {
     tenant_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
     tenant_id_source: 'option',
     tenant_paired: true,
+    description_budget: {
+      max_attempts: 3,
+      usage: { attempts: 0, successes: 0, failures: 0, cost_total: 0 },
+      recent_errors: [],
+    },
   };
 
   it('matches the GET /acx/v1/settings envelope consumed by the admin UI', () => {

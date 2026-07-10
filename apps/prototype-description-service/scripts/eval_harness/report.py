@@ -197,7 +197,13 @@ def score_run_record(
             "must_right_defined_images": rubric_images,  # 0 => hard gate vacuous (S1-02)
             "policy_violations": sum(1 for s in caption_scores if s.policy_violation),
             "mean_gated_score": (
-                round(sum(s.gated_score for s in caption_scores) / len(caption_scores), 4) if caption_scores else None
+                round(
+                    sum(s.gated_score for s in caption_scores if s.gated_score is not None)
+                    / len([s for s in caption_scores if s.gated_score is not None]),
+                    4,
+                )
+                if any(s.gated_score is not None for s in caption_scores)
+                else None
             ),
         },
         "faces": {

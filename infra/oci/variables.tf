@@ -43,6 +43,23 @@ variable "ubuntu_image_ocid" {
   type        = string
 }
 
+variable "gpu_image_ocid" {
+  description = "OCID of the x86_64 GPU golden image with NVIDIA drivers, Docker, nvidia-container-toolkit, and measurement weights baked"
+  type        = string
+}
+
+variable "gpu_shape" {
+  description = "OCI GPU shape for the bursty detailed-description tier"
+  type        = string
+  default     = "VM.GPU.A10.1"
+}
+
+variable "gpu_boot_volume_size_in_gbs" {
+  description = "Boot volume size for the GPU burst instance and baked VLM weights"
+  type        = number
+  default     = 400
+}
+
 variable "ssh_allowed_cidrs" {
   description = "CIDR blocks allowed to SSH into the instance"
   type        = list(string)
@@ -53,4 +70,3 @@ variable "ssh_allowed_cidrs" {
     error_message = "Set ssh_allowed_cidrs in terraform.tfvars (e.g. ssh_allowed_cidrs = [\"YOUR_IP/32\"]). Never use 0.0.0.0/0."
   }
 }
-

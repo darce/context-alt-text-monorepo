@@ -29,6 +29,7 @@ def _valid_manifest_dict() -> dict:
                 "face_count": 1,
                 "present_identities": ["Alice Example"],
                 "context_pack": {"title": "A title", "caption": "A caption"},
+                "base_caption": "Alice Example by the water.",
                 "must_right": ["Alice Example"],
                 "easy_wrong": ["Bob Example"],
                 "policy": {"recognition_enabled": True},
@@ -40,12 +41,27 @@ def _valid_manifest_dict() -> dict:
                 "face_count": 0,
                 "present_identities": [],
                 "context_pack": {},
+                "base_caption": "",
                 "must_right": [],
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
             },
         ],
     }
+
+
+def test_v2_requires_base_caption_key(tmp_path):  # S6-01
+    data = _valid_manifest_dict()
+    del data["entries"][0]["base_caption"]
+    with pytest.raises(ManifestError, match="base_caption"):
+        load_manifest(_write_manifest(tmp_path, data))
+
+
+def test_v2_rejects_null_base_caption(tmp_path):  # VLMFIX-S3-03
+    data = _valid_manifest_dict()
+    data["entries"][0]["base_caption"] = None
+    with pytest.raises(ManifestError, match="null base_caption|base_caption"):
+        load_manifest(_write_manifest(tmp_path, data))
 
 
 def _write_manifest(tmp_path, data) -> str:
@@ -255,7 +271,7 @@ def test_seed_corpus_reconciles_with_fixture_scan():  # VLM-2C S1
     images_dir = os.environ.get("GOLDEN_IMAGES_DIR")
     if not images_dir:
         pytest.skip("GOLDEN_IMAGES_DIR not set (fixture bytes not vendored)")
-    from scripts.eval_harness.draft_labels import generate_draft_manifest
+    from scripts.eval_harness.draft_labels import generate_draft_manifest, normalize_rel_path
 
     draft, _notes = generate_draft_manifest(images_dir)
     manifest = _load_seed_manifest()
@@ -267,8 +283,12 @@ def test_seed_corpus_reconciles_with_fixture_scan():  # VLM-2C S1
         "excluded near-duplicate missing from fixture scan — exclusion is vacuous; "
         "re-bootstrap the fixtures or update the exclusion list"
     )
-    draft_by_path = {e["path"]: e for e in draft["entries"] if e["path"] not in excluded}
-    golden_by_path = {e.path: e for e in manifest.entries}
+    # S7-03: NFC-normalize before set equality so an NFD golden path matches an
+    # NFC-materialized fixture scan (same flip _resolve_image covers at read time).
+    draft_by_path = {
+        normalize_rel_path(e["path"]): e for e in draft["entries"] if normalize_rel_path(e["path"]) not in excluded
+    }
+    golden_by_path = {normalize_rel_path(e.path): e for e in manifest.entries}
     assert set(draft_by_path) == set(golden_by_path)
     for path, golden_entry in golden_by_path.items():
         assert draft_by_path[path]["sha256"] == golden_entry.sha256, path

@@ -10,6 +10,8 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from scene.interface_adapters.http.routers.describe import router as describe_router
+from scene.interface_adapters.http.routers.describe_run import router as describe_run_router
 
 router = APIRouter()
 router.include_router(describe_router)
+router.include_router(describe_run_router)

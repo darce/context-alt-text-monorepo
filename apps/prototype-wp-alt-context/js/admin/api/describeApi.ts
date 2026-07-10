@@ -107,6 +107,80 @@ export interface DescriptionHistoryQuery {
   offset?: number;
 }
 
+/**
+ * Canonical describe-run status set. Single source of truth for status
+ * comparisons — do not scatter `=== 'completed'` string literals (sr-007).
+ */
+export const DESCRIBE_RUN_STATUS = {
+  PENDING: 'pending',
+  RUNNING: 'running',
+  COMPLETED: 'completed',
+  COMPLETED_WITH_ERRORS: 'completed_with_errors',
+  FAILED: 'failed',
+  CANCELLED: 'cancelled',
+} as const;
+
+export type DescribeRunStatus = (typeof DESCRIBE_RUN_STATUS)[keyof typeof DESCRIBE_RUN_STATUS];
+export type DescribeRunPhase = 'queued' | 'describing' | 'complete' | 'failed' | 'cancelled';
+
+const TERMINAL_DESCRIBE_RUN_STATUSES: ReadonlySet<DescribeRunStatus> = new Set([
+  DESCRIBE_RUN_STATUS.COMPLETED,
+  DESCRIBE_RUN_STATUS.COMPLETED_WITH_ERRORS,
+  DESCRIBE_RUN_STATUS.FAILED,
+  DESCRIBE_RUN_STATUS.CANCELLED,
+]);
+
+/** A run is terminal once it can no longer make progress (success, partial, failure, or cancel). */
+export const isDescribeRunTerminal = (status: DescribeRunStatus): boolean =>
+  TERMINAL_DESCRIBE_RUN_STATUSES.has(status);
+
+export interface DescribeRunResponse {
+  tenant_id: string;
+  run_id: string;
+  status: DescribeRunStatus;
+  phase: DescribeRunPhase;
+  completed: number;
+  failed: number;
+  skipped: number;
+  total: number;
+  cancel_requested: boolean;
+  // Backend-owned honest ETA for the remaining items; null while it cannot yet be estimated.
+  eta_seconds: number | null;
+  gpu_state: null;
+}
+
+/** One describe-run item as the operator reviews it before write-back (INT-01d).
+ * `existing_alt` is the WP-side post-meta fact (INT-01b) that buckets drafts safe
+ * to auto-apply (false) from those that would clobber operator alt text (true). */
+export interface DescribeRunItem {
+  media_id: number;
+  status: string;
+  alt_text_draft: string | null;
+  caption: string | null;
+  provenance: VisualFactsResponse | Record<string, unknown> | null;
+  existing_alt: boolean;
+}
+
+export interface DescribeRunItemsResponse {
+  run_id: string;
+  items: DescribeRunItem[];
+}
+
+/** Result buckets from a guarded bulk apply (INT-01c): media ids written, ids
+ * skipped because they already had alt (no explicit overwrite), and ids skipped
+ * because the describe produced no draft. */
+export interface ApplyDescribeRunResponse {
+  run_id: string;
+  applied: number[];
+  skipped_existing: number[];
+  skipped_no_draft: number[];
+  // Media ids skipped because they are not attachment posts (untrusted upstream
+  // media_id guard) and ids whose alt-text write failed — both reported so the
+  // History UI never over-reports `applied`.
+  skipped_invalid: number[];
+  failed: number[];
+}
+
 export const describeMedia = async (
   mediaId: number,
   options: DescribeMediaWriteOptions = {},
@@ -168,6 +242,76 @@ export const correctDescriptionHistoryItem = async (
       method: 'POST',
       body: { alt_text: altText },
       restNonce: getConfig().nonce,
+    },
+  );
+
+export const submitBulkDescribeRun = async (mediaIds: number[]): Promise<DescribeRunResponse> =>
+  fetchRequiredApi<DescribeRunResponse>(getEndpoint('recognitionDescribeRuns'), {
+    method: 'POST',
+    body: { media_ids: mediaIds },
+    restNonce: getConfig().nonce,
+    // WP loads attachment bytes and forwards a multipart body under the proxy's
+    // 180s 'description' budget; the browser timeout must exceed it so a slow
+    // bulk upload cannot abort client-side after the run was already created
+    // (which would orphan an untracked run — CLI-01).
+    signal: createRecognitionTimeoutSignal(185_000),
+  });
+
+export const fetchBulkDescribeRun = async (runId: string): Promise<DescribeRunResponse> =>
+  fetchRequiredApi<DescribeRunResponse>(
+    `${getEndpoint('recognitionDescribeRuns')}/${encodeURIComponent(runId)}`,
+    {
+      method: 'GET',
+      restNonce: getConfig().nonce,
+      // Status is a cheap read polled every ~2s; a short timeout keeps a slow
+      // poll from hanging and lets the next interval retry (INT-04).
+      signal: createRecognitionTimeoutSignal(10_000),
+    },
+  );
+
+export const cancelBulkDescribeRun = async (runId: string): Promise<DescribeRunResponse> =>
+  fetchRequiredApi<DescribeRunResponse>(
+    `${getEndpoint('recognitionDescribeRuns')}/${encodeURIComponent(runId)}/cancel`,
+    {
+      method: 'POST',
+      restNonce: getConfig().nonce,
+      signal: createRecognitionTimeoutSignal(30_000),
+    },
+  );
+
+/**
+ * Read a completed run's per-item drafts (INT-01d). The WP proxy annotates each
+ * item with `existing_alt` so the History run view can bucket drafts safe to
+ * auto-apply from those that need an explicit overwrite. A cheap read like the
+ * status poll — short timeout, retried by react-query on failure.
+ */
+export const fetchDescribeRunItems = async (runId: string): Promise<DescribeRunItemsResponse> =>
+  fetchRequiredApi<DescribeRunItemsResponse>(
+    `${getEndpoint('recognitionDescribeRuns')}/${encodeURIComponent(runId)}/items`,
+    {
+      method: 'GET',
+      restNonce: getConfig().nonce,
+      signal: createRecognitionTimeoutSignal(10_000),
+    },
+  );
+
+/**
+ * Apply a completed run's drafts to attachment alt text (INT-01d → INT-01c).
+ * `overwriteMediaIds` is the operator's explicit per-item opt-in to clobber
+ * existing alt; the default empty list never overwrites operator text. Writes
+ * post meta WP-side, so a modest timeout above the read budget.
+ */
+export const applyDescribeRunDrafts = async (
+  runId: string,
+  overwriteMediaIds: number[] = [],
+): Promise<ApplyDescribeRunResponse> =>
+  fetchRequiredApi<ApplyDescribeRunResponse>(
+    `${getEndpoint('recognitionDescribeRuns')}/${encodeURIComponent(runId)}/apply`,
+    {
+      method: 'POST',
+      body: { overwrite_media_ids: overwriteMediaIds },
+      restNonce: getConfig().nonce,
+      signal: createRecognitionTimeoutSignal(30_000),
     },
   );
 

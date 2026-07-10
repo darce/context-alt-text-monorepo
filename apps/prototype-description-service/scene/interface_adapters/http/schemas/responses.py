@@ -11,7 +11,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from scene.domain.description import DescriptionAdapterKind, ProviderMode, RetentionClass
+from scene.domain.describe_run import DescribeItemStatus, DescribeRunPhase, DescribeRunStatus
+from scene.domain.description import DescriptionAdapterKind, DescriptionResultTier, ProviderMode, RetentionClass
 
 
 class VisualFacts(BaseModel):
@@ -125,9 +126,68 @@ class VisualFactsResponse(BaseModel):
     cached: bool
     duration_ms: int = Field(ge=0)
     retention_class: RetentionClass
+    tier: DescriptionResultTier = DescriptionResultTier.PROVISIONAL_CPU
+    result_generation: int = Field(default=1, ge=1)
     # E19-4a additive optional preview fields (never in the schema `required`).
     generic_draft: str | None = None
     named_draft: str | None = None
     naming_provenance: NamingProvenance | None = None
     # E20-FUSION additive optional Stage-2 attachment provenance.
     attachment_provenance: AttachmentProvenance | None = None
+
+
+class DescribeJobResult(BaseModel):
+    """Async describe job poll result."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: str
+    status: str
+    tier: DescriptionResultTier | None = None
+    result_generation: int = Field(default=0, ge=0)
+    visual_facts: dict | None = None
+    error: str | None = None
+
+
+class DescribeRunResponse(BaseModel):
+    """Async describe-run status returned by submit/status endpoints."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tenant_id: str
+    run_id: str
+    status: DescribeRunStatus
+    phase: DescribeRunPhase
+    completed: int
+    failed: int
+    skipped: int
+    total: int
+    cancel_requested: bool = False
+    # WBUX-3 (S7-01): honest remaining-time estimate; null unless the run is
+    # in-flight with measured progress.
+    eta_seconds: float | None = None
+    gpu_state: None = None
+
+
+class DescribeRunItemResponse(BaseModel):
+    """One item's persisted describe output. WBUX-4 INT-01a: the read path that
+    surfaces per-item drafts to the operator. Draft/caption/provenance are null
+    until the worker describes the item; never fabricated."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    media_id: int
+    status: DescribeItemStatus
+    alt_text_draft: str | None = None
+    caption: str | None = None
+    provenance: dict | None = None
+
+
+class DescribeRunItemsResponse(BaseModel):
+    """Per-item drafts for one run, media-id ordered."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tenant_id: str
+    run_id: str
+    items: list[DescribeRunItemResponse]

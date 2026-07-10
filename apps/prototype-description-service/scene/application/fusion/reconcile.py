@@ -220,18 +220,31 @@ def _reconcile_identities(
     policy_reason = _identity_policy_veto(identity_ctx.policy.person_naming, naming_policy)
 
     # Reuse merge containment semantics — never reimplement face↔phrase matching.
-    # ONE global merge over the FULL confirmed-face set so merge.py's 1:1
-    # same-region ambiguity guard sees every face: if two identities' faces
-    # resolve to the same phrase box, neither may object-attach (S2A-01).
+    # merge_identities filters policy-ineligible faces BEFORE its 1:1 same-region
+    # guard (policy.resolve_naming_allowed runs ahead of containment_match), so a
+    # policy-filtered association alone cannot detect an ineligible face sharing
+    # the same phrase box. Re-run containment over the FULL face set (policy=None)
+    # and require the winning face to survive there too; otherwise a policy-
+    # eligible face co-located with an ineligible one object-attaches over a
+    # shared region the same-region guard exists to reject (EH-01, refines S2A-01).
     associations: tuple[IdentityAssociation, ...] = ()
+    geometric_survivors: frozenset[tuple[str, str]] = frozenset()
     if policy_reason is None and naming_policy is not None:
-        merge_result = merge_identities(
+        associations = merge_identities(
             caption=caption,
             phrase_boxes=phrase_boxes,
             confirmed_faces=faces,
             policy=naming_policy,
+        ).associations
+        geometric_survivors = frozenset(
+            _face_key(assoc.face)
+            for assoc in merge_identities(
+                caption=caption,
+                phrase_boxes=phrase_boxes,
+                confirmed_faces=faces,
+                policy=None,
+            ).associations
         )
-        associations = merge_result.associations
 
     out: list[Attachment] = []
     for index, item in enumerate(identity_ctx.identities):
@@ -253,6 +266,7 @@ def _reconcile_identities(
                 fact_id=fact_id,
                 faces=faces,
                 associations=associations,
+                geometric_survivors=geometric_survivors,
                 naming_policy=naming_policy,
             )
         )
@@ -281,6 +295,7 @@ def _reconcile_one_identity(
     fact_id: str,
     faces: list[ConfirmedFace],
     associations: tuple[IdentityAssociation, ...],
+    geometric_survivors: frozenset[tuple[str, str]],
     naming_policy: NamingPolicy,
 ) -> Attachment:
     # Unconfirmed / non-roster: pack items without cluster+identity ids are not
@@ -311,7 +326,7 @@ def _reconcile_one_identity(
         )
 
     assoc = _association_for_identity(item, associations)
-    if assoc is not None:
+    if assoc is not None and _face_key(assoc.face) in geometric_survivors:
         return Attachment(
             fact_id=fact_id,
             fact_source=FactSource.IDENTITY,
@@ -324,13 +339,19 @@ def _reconcile_one_identity(
         )
 
     # No surviving 1:1 association for this identity's face — either no
-    # containing box, or the face lost to the cross-face ambiguity guard.
+    # containing box, the face lost the policy-filtered ambiguity guard, or it
+    # lost the full-set geometry guard to a policy-ineligible co-located face.
     return _dropped(
         fact_id=fact_id,
         fact_source=FactSource.IDENTITY,
         fact_label=item.name,
         review_reason=ReviewReason.AMBIGUOUS_GROUNDING,
     )
+
+
+def _face_key(face: ConfirmedFace) -> tuple[str, str]:
+    """Stable identity key for a confirmed face (recognition ids, never label)."""
+    return (str(face.cluster_id), str(face.identity_id))
 
 
 def _association_for_identity(

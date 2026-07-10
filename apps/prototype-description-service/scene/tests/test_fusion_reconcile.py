@@ -106,6 +106,50 @@ def test_object_attach_identity_via_merge_containment():
     assert att.fact_id == "identity:cluster:cluster-maria"
 
 
+def test_ineligible_colocated_face_blocks_object_attach():
+    """EH-01: a policy-ineligible face sharing the smallest phrase box must
+    still trip the same-region ambiguity guard for an eligible identity.
+
+    merge_identities filters ineligible faces before its 1:1 containment guard,
+    so without the full-set geometry re-check the eligible identity would
+    object-attach over a region actually shared by a second (un-nameable) face.
+    """
+    item = _identity_item(name="Alice", cluster_id="cluster-a", identity_id="id-a")
+    pack = _pack_with_identity(item)
+    eligible = make_face(
+        "Alice",
+        box=NormalizedBox(x=0.40, y=0.20, width=0.05, height=0.08),
+        cluster_id="cluster-a",
+        identity_id="id-a",
+        roster_id="roster-a",
+    )
+    # Different person, no roster_id => policy-ineligible; center inside the
+    # SAME (only) phrase box as the eligible face.
+    ineligible = make_face(
+        "Unknown",
+        box=NormalizedBox(x=0.50, y=0.50, width=0.05, height=0.08),
+        cluster_id="cluster-b",
+        identity_id="id-b",
+        roster_id=None,
+    )
+    phrase = make_phrase_box("person", CAPTION, box=PERSON_BOX)
+
+    results = reconcile_context_facts(
+        context_pack=pack,
+        visual_prior=_prior(),
+        confirmed_faces=[eligible, ineligible],
+        phrase_boxes=[phrase],
+        naming_policy=NamingPolicy(agreement_enabled=True),
+    )
+
+    identity_atts = [a for a in results if a.fact_source is FactSource.IDENTITY]
+    assert len(identity_atts) == 1
+    att = identity_atts[0]
+    assert att.decision is AttachmentDecision.DROPPED
+    assert att.visible is False
+    assert att.review_reason is ReviewReason.AMBIGUOUS_GROUNDING
+
+
 def test_caption_fallback_for_product_and_attachment():
     """Non-detector facts (product, attachment) stay caption-level / non-visible."""
     pack = ContextPack(

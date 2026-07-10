@@ -132,33 +132,21 @@ def _provenance_model(provenance) -> NamingProvenanceModel:
     )
 
 
-async def _naming_preview(
+async def _load_fusion_naming_inputs(
     *,
     session,
     tenant,
     tenant_uuid: uuid.UUID,
     media_id: int,
     image_bytes: bytes,
-    generic_draft: str,
-    phrase_boxes,
-) -> tuple[str, NamingProvenanceModel]:
-    """Compute the named preview draft (E19-4a). Draft-only — never writes alt text.
-
-    ``phrase_boxes`` are the caption-grounding boxes (S4) — adapter output on
-    generation, restored from the persisted cache row on hits. Empty for
-    adapters without grounding, where naming degrades to the positional
-    fallback when eligible.
-    """
+) -> tuple[list, NamingPolicy | None]:
+    """Load detector faces + naming policy once for fusion Stage-2 and naming preview."""
     if session is None or tenant is None:
-        return generic_draft, _provenance_model(
-            NamingProvenance(naming_allowed=False, reason=NamingSkipReason.DB_UNAVAILABLE)
-        )
+        return [], None
+    dims = _image_dimensions(image_bytes)
+    if dims is None:
+        return [], None
     try:
-        dims = _image_dimensions(image_bytes)
-        if dims is None:
-            return generic_draft, _provenance_model(
-                NamingProvenance(naming_allowed=False, reason=NamingSkipReason.IMAGE_UNREADABLE)
-            )
         faces = await load_confirmed_faces(
             session,
             tenant_id=tenant_uuid,
@@ -170,6 +158,64 @@ async def _naming_preview(
             agreement_enabled=tenant.naming_agreement_enabled,
             suppressed_roster_ids=await load_suppressed_roster_ids(session, tenant_id=tenant_uuid),
         )
+        return list(faces), policy
+    except Exception:  # noqa: BLE001 - fusion degrades without faces; naming has its own guard
+        _logger.exception("failed loading faces/policy for media_id=%s; fusion uses empty faces", media_id)
+        return [], None
+
+
+async def _naming_preview(
+    *,
+    session,
+    tenant,
+    tenant_uuid: uuid.UUID,
+    media_id: int,
+    image_bytes: bytes,
+    generic_draft: str,
+    phrase_boxes,
+    confirmed_faces=None,
+    naming_policy: NamingPolicy | None = None,
+) -> tuple[str, NamingProvenanceModel]:
+    """Compute the named preview draft (E19-4a). Draft-only — never writes alt text.
+
+    ``phrase_boxes`` are the caption-grounding boxes (S4) — adapter output on
+    generation, restored from the persisted cache row on hits. Empty for
+    adapters without grounding, where naming degrades to the positional
+    fallback when eligible.
+
+    When ``confirmed_faces`` / ``naming_policy`` are provided (shared with
+    Stage-2 fusion), they are reused so faces are not double-loaded.
+    """
+    if session is None or tenant is None:
+        return generic_draft, _provenance_model(
+            NamingProvenance(naming_allowed=False, reason=NamingSkipReason.DB_UNAVAILABLE)
+        )
+    try:
+        if confirmed_faces is None or naming_policy is None:
+            dims = _image_dimensions(image_bytes)
+            if dims is None:
+                return generic_draft, _provenance_model(
+                    NamingProvenance(naming_allowed=False, reason=NamingSkipReason.IMAGE_UNREADABLE)
+                )
+            faces = await load_confirmed_faces(
+                session,
+                tenant_id=tenant_uuid,
+                media_id=media_id,
+                image_width=dims[0],
+                image_height=dims[1],
+            )
+            policy = NamingPolicy(
+                agreement_enabled=tenant.naming_agreement_enabled,
+                suppressed_roster_ids=await load_suppressed_roster_ids(session, tenant_id=tenant_uuid),
+            )
+        else:
+            # Preloaded path: still require readable image for naming eligibility.
+            if _image_dimensions(image_bytes) is None:
+                return generic_draft, _provenance_model(
+                    NamingProvenance(naming_allowed=False, reason=NamingSkipReason.IMAGE_UNREADABLE)
+                )
+            faces = confirmed_faces
+            policy = naming_policy
         result = merge_identities(
             caption=generic_draft,
             phrase_boxes=list(phrase_boxes),
@@ -190,7 +236,11 @@ def _generation_timeout_seconds(settings: DescriptionSettings, adapter) -> float
     return settings.generation_timeout_seconds
 
 
-@router.post("/describe/multipart", response_model=None)
+@router.post(
+    "/describe/multipart",
+    response_model=VisualFactsResponse,
+    responses={204: {"description": "Decorative image skipped; no description generated."}},
+)
 async def describe_image_multipart(
     request: Request,
     auth=Depends(require_write_access),
@@ -258,6 +308,15 @@ async def describe_image_multipart(
         tenant_record = await require_tenant_record(session, tenant_uuid)
         repository = ImageDescriptionRepository(session)
         audit_sink = _DescriptionAuditSink(AuditRepository(session))
+    # Faces + policy once: Stage-2 fusion needs them for identity attach
+    # provenance; Stage-3 naming preview reuses the same inputs (E20-FUSION-S3-BR-01).
+    confirmed_faces, naming_policy = await _load_fusion_naming_inputs(
+        session=session,
+        tenant=tenant_record,
+        tenant_uuid=tenant_uuid,
+        media_id=envelope.media_id,
+        image_bytes=image_bytes,
+    )
     effective_timeout = _generation_timeout_seconds(settings, adapter)
     service = VisualFactsService(
         adapter=adapter,
@@ -275,6 +334,8 @@ async def describe_image_multipart(
             context=envelope.context_pack.model_dump(exclude_none=True)
             if envelope.context_pack is not None
             else envelope.context,
+            confirmed_faces=confirmed_faces,
+            naming_policy=naming_policy,
         )
     except TimeoutError as exc:
         raise HTTPException(
@@ -299,6 +360,8 @@ async def describe_image_multipart(
         # Adapter output on generation; restored from the cached row on cache
         # hits — both paths yield the same named draft (E19-4A-S4-BR-03).
         phrase_boxes=service.last_phrase_boxes,
+        confirmed_faces=confirmed_faces,
+        naming_policy=naming_policy,
     )
     response = response.model_copy(
         update={

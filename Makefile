@@ -129,7 +129,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/logs.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-hooks test-deploy-contract test-vlm3
+.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-scripts test-hooks test-deploy-contract test-vlm3
 
 # Default target
 help:
@@ -288,8 +288,6 @@ check-all:
 			$(MAKE) worktree-audit; \
 			$(MAKE) task-plan-audit; \
 			$(MAKE) test-hooks; \
-			$(MAKE) test-deploy-contract; \
-			$(MAKE) test-vlm3; \
 			$(MAKE) test-all; \
 			echo ""; \
 			echo "✅ All monorepo checks passed!"; \
@@ -369,8 +367,11 @@ test-all:
 		echo ""; \
 		echo "✅ Lane-scoped verification passed for $(LANE)!"; \
 		else \
-			echo "=== Testing Python (backend) ==="; \
+			echo "=== Testing Python (backend fast) ==="; \
 			( cd apps/prototype-description-service && make test ); \
+			echo ""; \
+			echo "=== Testing Python (backend integration) ==="; \
+			( cd apps/prototype-description-service && make test-integration ); \
 			echo ""; \
 			echo "=== Testing TypeScript (frontend) ==="; \
 			( cd apps/prototype-wp-alt-context && make test ); \
@@ -415,36 +416,41 @@ lint-scripts:
 # this check, digest drift only surfaces on the next manual bootstrap update.
 check-overrides-digest:
 	@python3 scripts/check_overrides_lock_digest.py
-	@$(MAKE) test-overrides-digest
 
-# Unit tests backing check-overrides-digest (incl. the committed-lock
-# consistency regression guard). Top-level scripts/test_*.py are not
-# collected by any repo-wide runner, so wire these into check-all here.
-test-overrides-digest:
-	@python3 -m pytest scripts/test_check_overrides_lock_digest.py scripts/test_consumer_setup_doc.py -q --tb=short
-
-# Run unit tests for scripts/hooks and .github/hooks.
-# Addresses AHMCP-14-BR-02: hook tests were not reachable via package Makefiles.
-test-hooks:
-	@python3 -m pytest scripts/hooks .github/hooks scripts/test_php_characterization_gate.py -q --tb=short
-
-# E15-31B: deploy-contract guard — prod deploys/systemd restarts must install
-# and retain the /admin compose overlay. Top-level scripts/test_*.py are not
-# collected by any repo-wide runner, so wire it into check-all here.
-test-deploy-contract:
-	@python3 -m pytest scripts/test_e15_31_admin_deploy_contract.py scripts/test_e15_33_deploy_convergence.py scripts/test_e15_33_boot_smoke.py -q --tb=short
-
-# VLM-3 / VLMRP: OCI GPU infra posture, idle-reaper lifecycle, decision memo,
-# bake-off artifact guards, and OWLv2 deferral. Top-level scripts/test_*.py
-# are not collected by any repo-wide runner, so wire into check-all here.
-test-vlm3:
+# Single pytest invocation for all top-level scripts/test_*.py suites wired into
+# check-all (hooks, deploy-contract, vlm3, overrides-digest). Legacy target
+# names remain as thin aliases for backward compatibility.
+test-scripts:
 	@python3 -m pytest \
+		scripts/hooks .github/hooks scripts/test_php_characterization_gate.py \
+		scripts/test_e15_31_admin_deploy_contract.py scripts/test_e15_33_deploy_convergence.py scripts/test_e15_33_boot_smoke.py \
 		scripts/test_vlm3_oci_gpu_infra.py \
 		scripts/test_vlm3_gpu_lifecycle.py \
 		scripts/test_vlm3_owlv2_deferral.py \
 		scripts/test_vlm3_gpu_bakeoff_artifacts.py \
 		scripts/test_vlm3_decision_memo.py \
-		-q --tb=short
+		scripts/test_check_overrides_lock_digest.py scripts/test_consumer_setup_doc.py \
+		-q --tb=short --durations=25
+
+test-overrides-digest:
+	@$(MAKE) test-scripts
+
+# Run unit tests for scripts/hooks and .github/hooks.
+# Addresses AHMCP-14-BR-02: hook tests were not reachable via package Makefiles.
+test-hooks:
+	@$(MAKE) test-scripts
+
+# E15-31B: deploy-contract guard — prod deploys/systemd restarts must install
+# and retain the /admin compose overlay. Top-level scripts/test_*.py are not
+# collected by any repo-wide runner, so wire it into check-all here.
+test-deploy-contract:
+	@$(MAKE) test-scripts
+
+# VLM-3 / VLMRP: OCI GPU infra posture, idle-reaper lifecycle, decision memo,
+# bake-off artifact guards, and OWLv2 deferral. Top-level scripts/test_*.py
+# are not collected by any repo-wide runner, so wire into check-all here.
+test-vlm3:
+	@$(MAKE) test-scripts
 
 # E17-8 BR-16 / BR-22: on-demand scan for dirty protected paths on main.
 # Mirrors what post-checkout / post-commit / post-merge / post-rewrite / pre-push run.

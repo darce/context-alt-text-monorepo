@@ -416,10 +416,12 @@ lint-scripts:
 # this check, digest drift only surfaces on the next manual bootstrap update.
 check-overrides-digest:
 	@python3 scripts/check_overrides_lock_digest.py
+	@$(MAKE) test-overrides-digest
 
-# Single pytest invocation for all top-level scripts/test_*.py suites wired into
-# check-all (hooks, deploy-contract, vlm3, overrides-digest). Legacy target
-# names remain as thin aliases for backward compatibility.
+# Single pytest invocation covering the union of the four narrow targets below
+# (hooks, deploy-contract, vlm3, overrides-digest). check-all runs this once
+# instead of four separate pytest processes — one interpreter + collection pass.
+# The narrow targets keep their original scopes for standalone/documented use.
 test-scripts:
 	@python3 -m pytest \
 		scripts/hooks .github/hooks scripts/test_php_characterization_gate.py \
@@ -432,25 +434,32 @@ test-scripts:
 		scripts/test_check_overrides_lock_digest.py scripts/test_consumer_setup_doc.py \
 		-q --tb=short --durations=25
 
+# Unit tests backing check-overrides-digest (incl. the committed-lock
+# consistency regression guard). Also collected by test-scripts in check-all;
+# kept narrow here so standalone check-overrides-digest stays test-backed.
 test-overrides-digest:
-	@$(MAKE) test-scripts
+	@python3 -m pytest scripts/test_check_overrides_lock_digest.py scripts/test_consumer_setup_doc.py -q --tb=short
 
 # Run unit tests for scripts/hooks and .github/hooks.
 # Addresses AHMCP-14-BR-02: hook tests were not reachable via package Makefiles.
 test-hooks:
-	@$(MAKE) test-scripts
+	@python3 -m pytest scripts/hooks .github/hooks scripts/test_php_characterization_gate.py -q --tb=short
 
 # E15-31B: deploy-contract guard — prod deploys/systemd restarts must install
-# and retain the /admin compose overlay. Top-level scripts/test_*.py are not
-# collected by any repo-wide runner, so wire it into check-all here.
+# and retain the /admin compose overlay. Covered by test-scripts in check-all.
 test-deploy-contract:
-	@$(MAKE) test-scripts
+	@python3 -m pytest scripts/test_e15_31_admin_deploy_contract.py scripts/test_e15_33_deploy_convergence.py scripts/test_e15_33_boot_smoke.py -q --tb=short
 
 # VLM-3 / VLMRP: OCI GPU infra posture, idle-reaper lifecycle, decision memo,
-# bake-off artifact guards, and OWLv2 deferral. Top-level scripts/test_*.py
-# are not collected by any repo-wide runner, so wire into check-all here.
+# bake-off artifact guards, and OWLv2 deferral. Covered by test-scripts in check-all.
 test-vlm3:
-	@$(MAKE) test-scripts
+	@python3 -m pytest \
+		scripts/test_vlm3_oci_gpu_infra.py \
+		scripts/test_vlm3_gpu_lifecycle.py \
+		scripts/test_vlm3_owlv2_deferral.py \
+		scripts/test_vlm3_gpu_bakeoff_artifacts.py \
+		scripts/test_vlm3_decision_memo.py \
+		-q --tb=short
 
 # E17-8 BR-16 / BR-22: on-demand scan for dirty protected paths on main.
 # Mirrors what post-checkout / post-commit / post-merge / post-rewrite / pre-push run.

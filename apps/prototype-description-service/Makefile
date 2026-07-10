@@ -172,8 +172,8 @@ reset db-reset:
 	@ALLOW_DEV_DB_RESET="$${ALLOW_DEV_DB_RESET:-1}" ./scripts/reset_dev_db.sh
 	@echo "✓ Local database reset"
 
-# Run all checks and tests
-check: lint typecheck test
+# Run all checks and tests (fast lane + serial integration/timing lane)
+check: lint typecheck test test-integration
 	@echo "✓ All checks passed!"
 
 # Lint only
@@ -193,18 +193,19 @@ format:
 	@$(UV_RUN) ruff check --fix --unsafe-fixes .
 	@$(UV_RUN) ruff format .
 
-# Fast unit tests (excludes integration/pg markers; parallel when PYTEST_WORKERS>0)
+# Fast unit tests (excludes integration/pg/timing markers; parallel when PYTEST_WORKERS>0)
 test:
 	@echo "Running tests..."
-	@$(UV_RUN) pytest $(if $(filter-out 0,$(PYTEST_WORKERS)),-n $(PYTEST_WORKERS),) -m "not integration and not pg" --durations=25
+	@$(UV_RUN) pytest $(if $(filter-out 0,$(PYTEST_WORKERS)),-n $(PYTEST_WORKERS),) -m "not integration and not pg and not timing" --durations=25
 
-# Integration/pg tests (serial — shared DB fixtures)
+# Integration/pg/timing tests (serial — shared DB fixtures; wall-clock-sensitive
+# timing tests stay out of the parallel lane so worker contention cannot flake them)
 test-integration:
 	@echo "Running integration tests..."
-	@$(UV_RUN) pytest -m "integration or pg" --durations=25
+	@$(UV_RUN) pytest -m "integration or pg or timing" --durations=25
 
-# Auto-fix and test (for CI)
-ci: format typecheck test
+# Auto-fix and test (for CI; fast lane + serial integration/timing lane)
+ci: format typecheck test test-integration
 
 # Install core dependencies only (no face detection)
 install:

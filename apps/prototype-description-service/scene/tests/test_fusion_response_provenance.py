@@ -265,26 +265,23 @@ def test_face_not_detected_drops_identity_with_review_reason():
 
 
 class _TierAdapter(_CaptionAdapter):
-    """Main pass (context) vs isolation pass (context=None) return DIFFERENT captions.
+    """Adapter double whose context=None pass returns a DIFFERENT caption.
 
-    Phrase-box spans index the MAIN caption only — the HARM-01 shape: on async
-    tiers the isolation caption must never be fed to merge with main-pass boxes.
+    Retained to prove the fusion stage never issues a context=None inference:
+    if a second (isolation) pass ever regressed back in, ``calls`` would exceed
+    one and the isolation caption would surface. ``isolation_caption`` is the
+    canary text that must never reach reconcile.
     """
 
-    def __init__(self, *, main_caption: str, isolation_caption: str, phrase_boxes=(), sleep_on_isolation: float = 0.0):
+    def __init__(self, *, main_caption: str, isolation_caption: str, phrase_boxes=()):
         super().__init__(caption=main_caption, phrase_boxes=phrase_boxes)
         self._isolation_caption = isolation_caption
-        self._sleep_on_isolation = sleep_on_isolation
         self.contexts: list = []
 
     def describe(self, *, image_bytes, context):
         self.contexts.append(context)
         if context is None:
             self.calls += 1
-            if self._sleep_on_isolation:
-                import time
-
-                time.sleep(self._sleep_on_isolation)
             from scene.application.description_adapter import AdapterResult
 
             return AdapterResult(
@@ -342,10 +339,13 @@ def _maria_face():
     )
 
 
-def test_isolation_tier_second_pass_still_object_attaches():
-    """S3A-06 + HARM-01: async tier runs the isolation pass (calls==2, context=None)
-    and identity attach survives a mismatched isolation caption — the merge runs
-    against the main-pass caption its phrase-box spans index."""
+def test_async_tier_runs_single_inference_no_isolation_pass():
+    """EH-02: async tiers must NOT run a second (discarded) inference.
+
+    reconcile reads only the main-pass caption, so the removed Stage-1 isolation
+    pass could never change the outcome. Assert exactly one adapter call even on
+    an async tier with context facts, and that identity still object-attaches.
+    """
     from scene.config.profiles import DescriptionProfile
 
     phrase = make_phrase_box("person", CAPTION, box=PERSON_BOX)
@@ -361,17 +361,16 @@ def test_isolation_tier_second_pass_still_object_attaches():
         confirmed_faces=[_maria_face()],
         naming_policy=NamingPolicy(agreement_enabled=True),
     )
-    assert adapter.calls == 2  # main context pass + Stage-1 isolation pass
-    assert adapter.contexts[-1] is None  # isolation pass carries no ContextPack
+    assert adapter.calls == 1  # EH-02: single inference; no discarded isolation pass
     facts = {f.fact_id: f for f in response.attachment_provenance.facts}
     identity = facts["identity:cluster:cluster-maria"]
-    assert identity.decision == "object"  # HARM-01 regression: was ambiguous_grounding drop
+    assert identity.decision == "object"
     assert identity.review_reason is None
     assert identity.target_evidence == "person"
 
 
-def test_isolation_tier_skips_second_pass_without_context_facts():
-    """S3A-04: no ContextPack (or a pack yielding zero facts) → no isolation pass."""
+def test_zero_context_facts_yield_no_provenance():
+    """No ContextPack (or a pack yielding zero facts) → empty provenance, one inference."""
     from scene.config.profiles import DescriptionProfile
 
     adapter = _TierAdapter(main_caption=CAPTION, isolation_caption="unused")
@@ -383,7 +382,7 @@ def test_isolation_tier_skips_second_pass_without_context_facts():
     adapter2 = _TierAdapter(main_caption=CAPTION, isolation_caption="unused")
     svc2 = VisualFactsService(adapter=adapter2, repository=None, profile=DescriptionProfile.FLORENCE_LARGE)
     response2 = _describe(svc2, context=ContextPack().model_dump(exclude_none=True))
-    assert adapter2.calls == 1  # empty pack yields no facts: isolation pass skipped
+    assert adapter2.calls == 1
     assert response2.attachment_provenance.facts == []
 
 
@@ -406,34 +405,6 @@ def test_fusion_stage_exception_fails_open(monkeypatch):
     assert response.attachment_provenance is None
     assert response.visual_facts.caption == CAPTION
     assert svc.last_attachments == ()
-
-
-def test_isolation_timeout_fails_open_not_504():
-    """S3A-02: a Stage-1 isolation timeout on async tiers must not discard the
-    successful generation — provenance degrades to None within the shared budget."""
-    from scene.config.profiles import DescriptionProfile
-
-    phrase = make_phrase_box("person", CAPTION, box=PERSON_BOX)
-    adapter = _TierAdapter(
-        main_caption=CAPTION,
-        isolation_caption="never returned in time",
-        phrase_boxes=[phrase],
-        sleep_on_isolation=0.5,
-    )
-    svc = VisualFactsService(
-        adapter=adapter,
-        repository=None,
-        profile=DescriptionProfile.FLORENCE_LARGE,
-        generation_timeout_seconds=0.2,
-    )
-    response = _describe(
-        svc,
-        context=_identity_pack().model_dump(exclude_none=True),
-        confirmed_faces=[_maria_face()],
-        naming_policy=NamingPolicy(agreement_enabled=True),
-    )
-    assert response.attachment_provenance is None
-    assert response.visual_facts.caption == CAPTION
 
 
 def test_cache_hit_carries_same_attachment_provenance():

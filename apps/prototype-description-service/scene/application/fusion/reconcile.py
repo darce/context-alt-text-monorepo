@@ -167,9 +167,7 @@ def reconcile_context_facts(
         )
     )
     brand_facts = _resolve_brands(context_pack, brands)
-    attachments.extend(
-        _reconcile_brands(brand_facts=brand_facts, brand_detections=list(brand_detections))
-    )
+    attachments.extend(_reconcile_brands(brand_facts=brand_facts, brand_detections=list(brand_detections)))
     attachments.extend(_reconcile_caption_facts(context_pack))
     return attachments
 
@@ -405,11 +403,7 @@ def _reconcile_brands(
     usable = [d for d in brand_detections if d.matched and d.name.strip()]
     out: list[Attachment] = []
     for index, brand in enumerate(brand_facts):
-        fact_id = (
-            f"brand:template:{brand.template_id}"
-            if brand.template_id
-            else f"brand:{index}:{brand.name}"
-        )
+        fact_id = f"brand:template:{brand.template_id}" if brand.template_id else f"brand:{index}:{brand.name}"
         detection = _match_brand_detection(brand, usable)
         if detection is not None:
             evidence = detection.template_id or brand.template_id or brand.name

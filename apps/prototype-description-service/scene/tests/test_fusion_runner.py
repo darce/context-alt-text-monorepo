@@ -15,10 +15,12 @@ import pytest
 
 from scripts.eval_harness.fusion_runner import (
     build_typed_context_pack,
-    main as fusion_main,
     manifest_entries_as_dicts,
     run_fusion_eval,
     score_misattachments,
+)
+from scripts.eval_harness.fusion_runner import (
+    main as fusion_main,
 )
 from scripts.eval_harness.manifest import load_manifest
 from scripts.eval_harness.report import build_reports

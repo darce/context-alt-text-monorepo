@@ -28,7 +28,6 @@ from scene.application.visual_facts_pass import (
     VisualFactsPass,
     VisualFactsPrior,
     VisualFactsPriorSource,
-    is_fast_tier_profile,
 )
 from scene.config.profiles import DescriptionProfile
 from scene.domain.description import DescriptionAdapterKind, ProviderMode, RetentionClass
@@ -178,20 +177,12 @@ class VisualFactsService:
         self.last_phrase_boxes = tuple(result.phrase_boxes)
         self._observe_adapter_duration(time.perf_counter() - adapter_start)
 
-        # E20-FUSION Stage-1 + Stage-2 between adapter and response mapping.
-        # Shared remaining-time budget (S3A-02): the isolation pass may only
-        # spend what the adapter pass left of the generation timeout, so total
-        # latency never reaches 2x generation_timeout_seconds.
-        fusion_budget = (
-            None if self._timeout is None else max(0.0, self._timeout - (time.perf_counter() - adapter_start))
-        )
+        # E20-FUSION Stage-2 reconcile between adapter and response mapping.
         attachment_provenance = await self._run_fusion_stage(
-            image_bytes=image_bytes,
             context=context,
             adapter_result=result,
             confirmed_faces=confirmed_faces,
             naming_policy=naming_policy,
-            timeout_budget=fusion_budget,
         )
 
         response = self._result_to_response(
@@ -236,18 +227,24 @@ class VisualFactsService:
     async def _run_fusion_stage(
         self,
         *,
-        image_bytes: bytes,
         context: Mapping[str, Any] | None,
         adapter_result: AdapterResult,
         confirmed_faces: Sequence[ConfirmedFace],
         naming_policy: NamingPolicy | None,
-        timeout_budget: float | None,
     ) -> AttachmentProvenance | None:
-        """Stage-1 visual prior + Stage-2 reconcile → wire attachment provenance.
+        """Stage-2 reconcile → wire attachment provenance.
 
         Fail-open (S3A-02): provenance is an additive-optional enrichment, so
-        any fusion failure (including a Stage-1 isolation timeout) logs and
-        returns ``None`` instead of discarding a successful generation.
+        any fusion failure logs and returns ``None`` instead of discarding a
+        successful generation.
+
+        The prior is derived from the main (context-applied) caption the phrase
+        boxes are grounded against. A separate Stage-1 isolation inference was
+        removed (EH-02): ``reconcile_context_facts`` reads only ``prior.caption``
+        and that caption is always the main-pass caption, so a second pass could
+        not change any decision — it was pure discarded inference on GPU tiers.
+        Re-introduce an anchor pass only when its evidence actually feeds a
+        reconciliation outcome (VLM-3 GPU track), proven by a falsifiable test.
 
         Stage-3 identity prose composition reuses the route-level
         ``merge_identities`` path (``_naming_preview``); Stage-2 already calls
@@ -258,9 +255,6 @@ class VisualFactsService:
             if context_pack is None:
                 self.last_attachments = ()
                 return _attachments_to_provenance(())
-            # Caption-derived prior first: cheap and deterministic, and it tells
-            # us whether the pack yields any facts BEFORE spending an isolation
-            # adapter pass (S3A-04: no second inference for zero facts).
             attachments = self._reconcile(
                 context_pack=context_pack,
                 visual_prior=VisualFactsPass.from_caption(result=adapter_result),
@@ -268,15 +262,6 @@ class VisualFactsService:
                 confirmed_faces=confirmed_faces,
                 naming_policy=naming_policy,
             )
-            if attachments and not is_fast_tier_profile(self._profile):
-                isolation_prior = await self._isolation_prior(image_bytes=image_bytes, timeout_budget=timeout_budget)
-                attachments = self._reconcile(
-                    context_pack=context_pack,
-                    visual_prior=isolation_prior,
-                    adapter_result=adapter_result,
-                    confirmed_faces=confirmed_faces,
-                    naming_policy=naming_policy,
-                )
             self.last_attachments = attachments
             return _attachments_to_provenance(attachments)
         except Exception:  # noqa: BLE001 - provenance must never fail the describe
@@ -293,17 +278,12 @@ class VisualFactsService:
         confirmed_faces: Sequence[ConfirmedFace],
         naming_policy: NamingPolicy | None,
     ) -> tuple[Attachment, ...]:
-        """Stage-2 with merge-coherent inputs (HARM-01).
+        """Stage-2: reconcile ContextPack facts against the main-pass caption.
 
         ``reconcile_context_facts`` feeds ``visual_prior.caption`` to
-        ``merge_identities`` together with ``phrase_boxes`` whose spans index
-        the MAIN context-applied caption. An isolation prior therefore never
-        supplies the merge text — its caption is swapped for the caption the
-        phrase boxes were grounded against; the prior remains anchor evidence
-        (objects/text/contamination flag) for reconciliation.
+        ``merge_identities`` together with ``phrase_boxes`` whose spans index the
+        MAIN context-applied caption, so the prior caption must be that caption.
         """
-        if visual_prior.caption != adapter_result.caption:
-            visual_prior = visual_prior.model_copy(update={"caption": adapter_result.caption})
         return tuple(
             reconcile_context_facts(
                 context_pack=context_pack,
@@ -313,15 +293,6 @@ class VisualFactsService:
                 naming_policy=naming_policy,
             )
         )
-
-    async def _isolation_prior(self, *, image_bytes: bytes, timeout_budget: float | None) -> VisualFactsPrior:
-        """Stage-1 isolation pass (async tiers only), bounded by the remaining budget."""
-        call = asyncio.to_thread(
-            VisualFactsPass.describe,
-            adapter=self._adapter,
-            image_bytes=image_bytes,
-        )
-        return await (asyncio.wait_for(call, timeout_budget) if timeout_budget is not None else call)
 
     def _cache_hit_response(
         self,

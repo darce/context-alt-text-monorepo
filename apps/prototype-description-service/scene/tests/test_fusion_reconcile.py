@@ -373,7 +373,7 @@ def test_empty_context_pack_returns_empty():
 
 
 def test_suppressed_roster_identity_not_eligible():
-    """NamingPolicy suppress set → no_eligible_identity degrade path."""
+    """NamingPolicy suppress set → no_eligible_identities degrade path."""
     item = _identity_item()
     pack = _pack_with_identity(item)
     face = make_face(
@@ -399,7 +399,7 @@ def test_suppressed_roster_identity_not_eligible():
 
     att = next(a for a in results if a.fact_source is FactSource.IDENTITY)
     assert att.decision is AttachmentDecision.DROPPED
-    assert att.review_reason == ReviewReason.NO_ELIGIBLE_IDENTITY
+    assert att.review_reason == ReviewReason.NO_ELIGIBLE_IDENTITIES
 
 
 def test_mixed_pack_identity_object_and_event_caption():
@@ -434,3 +434,133 @@ def test_mixed_pack_identity_object_and_event_caption():
     assert by_source[FactSource.EVENT].decision is AttachmentDecision.CAPTION
     assert by_source[FactSource.EVENT].visible is False
     assert by_source[FactSource.PRODUCT].decision is AttachmentDecision.CAPTION
+
+
+def test_two_identities_one_phrase_box_both_dropped_ambiguous():
+    """Regression S2A-01: two identities' faces inside ONE person phrase box.
+
+    merge.py's 1:1 same-region guard must see the FULL face set — neither
+    identity may object-attach when the region is contested.
+    """
+    maria = _identity_item("Maria Correonero", cluster_id="c-a", identity_id="i-a")
+    bea = _identity_item("Bea Burke", cluster_id="c-b", identity_id="i-b")
+    pack = _pack_with_identity(maria, bea)
+    face_a = make_face(
+        maria.name,
+        box=NormalizedBox(x=0.35, y=0.2, width=0.05, height=0.08),
+        cluster_id="c-a",
+        identity_id="i-a",
+        roster_id="roster-maria",
+    )
+    face_b = make_face(
+        bea.name,
+        box=NormalizedBox(x=0.5, y=0.2, width=0.05, height=0.08),
+        cluster_id="c-b",
+        identity_id="i-b",
+        roster_id="roster-bea",
+    )
+    phrase = make_phrase_box("person", CAPTION, box=PERSON_BOX)
+
+    results = reconcile_context_facts(
+        context_pack=pack,
+        visual_prior=_prior(),
+        confirmed_faces=[face_a, face_b],
+        phrase_boxes=[phrase],
+        naming_policy=NamingPolicy(agreement_enabled=True),
+    )
+
+    identity_atts = [a for a in results if a.fact_source is FactSource.IDENTITY]
+    assert len(identity_atts) == 2
+    for att in identity_atts:
+        assert att.decision is AttachmentDecision.DROPPED
+        assert att.altitude is AttachmentAltitude.NONE
+        assert att.visible is False
+        assert att.review_reason == ReviewReason.AMBIGUOUS_GROUNDING
+
+
+def test_missing_naming_policy_fails_closed():
+    """Regression S2A-02: naming_policy=None must never object-attach a name.
+
+    Roster-less, confidence-0.01 face with no policy supplied → dropped with a
+    review_reason, not silently named.
+    """
+    item = _identity_item()
+    pack = _pack_with_identity(item)
+    face = make_face(
+        item.name,
+        box=FACE_BOX,
+        cluster_id=item.cluster_id,
+        identity_id=item.identity_id,
+        roster_id=None,
+        confidence=0.01,
+    )
+    phrase = make_phrase_box("person", CAPTION, box=PERSON_BOX)
+
+    results = reconcile_context_facts(
+        context_pack=pack,
+        visual_prior=_prior(),
+        confirmed_faces=[face],
+        phrase_boxes=[phrase],
+        naming_policy=None,
+    )
+
+    att = next(a for a in results if a.fact_source is FactSource.IDENTITY)
+    assert att.decision is AttachmentDecision.DROPPED
+    assert att.altitude is AttachmentAltitude.NONE
+    assert att.visible is False
+    assert att.review_reason == ReviewReason.NAMING_POLICY_UNSET
+
+
+def test_brand_match_normalizes_whitespace_and_case():
+    """Regression S2A-03: detector name with padding/case still matches."""
+    results = reconcile_context_facts(
+        context_pack=ContextPack(),
+        visual_prior=_prior(),
+        brands=[BrandFact(name="Acme")],
+        brand_detections=[BrandDetection(name=" ACME ", confidence=0.9, matched=True)],
+    )
+
+    att = results[0]
+    assert att.decision is AttachmentDecision.OBJECT
+    assert att.review_reason is None
+
+
+def test_brand_template_id_mismatch_does_not_attach():
+    """Regression S2A-03: same-named detection of a DIFFERENT template ≠ match."""
+    results = reconcile_context_facts(
+        context_pack=ContextPack(),
+        visual_prior=_prior(),
+        brands=[BrandFact(name="Acme", template_id="tmpl-a")],
+        brand_detections=[
+            BrandDetection(name="Acme", template_id="tmpl-b", confidence=0.9, matched=True)
+        ],
+    )
+
+    att = results[0]
+    assert att.decision is AttachmentDecision.DROPPED
+    assert att.review_reason == ReviewReason.BRAND_NOT_DETECTED
+
+
+def test_brand_template_id_match_preferred_over_name():
+    """S2A-03: template_id equality matches even when detector name drifts."""
+    results = reconcile_context_facts(
+        context_pack=ContextPack(),
+        visual_prior=_prior(),
+        brands=[BrandFact(name="Acme", template_id="tmpl-a")],
+        brand_detections=[
+            BrandDetection(name="Acme Corp.", template_id="tmpl-a", confidence=0.9, matched=True)
+        ],
+    )
+
+    att = results[0]
+    assert att.decision is AttachmentDecision.OBJECT
+    assert att.target_evidence == "tmpl-a"
+
+
+def test_review_reason_parity_with_naming_skip_reason():
+    """Regression HARM-05: shared drop conditions serialize identically."""
+    from scene.application.identity_merge.policy import NamingSkipReason
+
+    assert ReviewReason.NO_ELIGIBLE_IDENTITIES.value == NamingSkipReason.NO_ELIGIBLE_IDENTITIES.value
+    assert ReviewReason.AGREEMENT_DISABLED.value == NamingSkipReason.AGREEMENT_DISABLED.value
+    assert ReviewReason.AMBIGUOUS_GROUNDING.value == NamingSkipReason.AMBIGUOUS_GROUNDING.value

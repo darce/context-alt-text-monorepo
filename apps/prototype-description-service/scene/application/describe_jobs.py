@@ -10,6 +10,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, replace
 from enum import StrEnum
+from pathlib import Path
 from threading import Lock
 from typing import Any
 
@@ -109,8 +110,13 @@ class InMemoryDescribeJobStore:
                 if job.status in {DescribeJobStatus.RUNNING, DescribeJobStatus.PROVISIONAL}
             )
 
-    def load_snapshot(self) -> dict[str, int]:
-        """JSON-shaped load for the out-of-band GPU idle reaper."""
+    def load_snapshot(self) -> dict[str, int | float]:
+        """JSON-shaped load for the out-of-band GPU idle reaper.
+
+        Includes ``written_at`` (unix epoch) so reapers can treat stale dumps as busy.
+        """
+        import time
+
         with self._lock:
             queue_depth = sum(1 for job in self._jobs.values() if job.status is DescribeJobStatus.QUEUED)
             in_flight = sum(
@@ -118,11 +124,30 @@ class InMemoryDescribeJobStore:
                 for job in self._jobs.values()
                 if job.status in {DescribeJobStatus.RUNNING, DescribeJobStatus.PROVISIONAL}
             )
-            return {"queue_depth": queue_depth, "in_flight": in_flight}
+            return {
+                "queue_depth": queue_depth,
+                "in_flight": in_flight,
+                "written_at": time.time(),
+            }
 
-    def mark_result_fetched(self, job_id: str) -> DescribeJob:
+    def write_load_snapshot(self, path: str | Path) -> None:
+        """Atomically dump load_snapshot() for the GPU idle reaper (VLMFIX-S2-01)."""
+        import json
+        import os
+
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        payload = self.load_snapshot()
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        tmp.write_text(json.dumps(payload, separators=(",", ":")))
+        os.replace(tmp, target)
+
+    def mark_result_fetched(self, job_id: str) -> DescribeJob | None:
+        """Mark terminal job as fetched. Returns None if the job was evicted (S1-05)."""
         with self._lock:
-            job = self._jobs[job_id]
+            job = self._jobs.get(job_id)
+            if job is None:
+                return None
             if job.result_fetched:
                 return job
             updated = replace(job, result_fetched=True)

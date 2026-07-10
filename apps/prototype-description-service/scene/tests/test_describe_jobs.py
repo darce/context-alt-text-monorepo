@@ -98,3 +98,21 @@ def test_async_route_store_budget_is_slot_based_not_count_times_max() -> None:
         max_retained_image_bytes=budget,
     )
     assert store._max_retained_image_bytes == budget
+
+
+def test_mark_result_fetched_missing_returns_none() -> None:
+    store = InMemoryDescribeJobStore()
+    assert store.mark_result_fetched("does-not-exist") is None
+
+
+def test_write_load_snapshot_shape(tmp_path) -> None:
+    store = InMemoryDescribeJobStore()
+    store.enqueue(tenant_id=uuid.uuid4(), media_id=1, image_bytes=b"x", context=None)
+    path = tmp_path / "describe-load.json"
+    store.write_load_snapshot(path)
+    import json
+
+    payload = json.loads(path.read_text())
+    assert payload["queue_depth"] == 1
+    assert payload["in_flight"] == 0
+    assert "written_at" in payload

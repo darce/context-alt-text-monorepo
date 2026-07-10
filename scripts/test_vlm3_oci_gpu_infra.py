@@ -24,8 +24,9 @@ def test_gpu_instance_uses_configurable_a10_shape_and_dedicated_cloud_init() -> 
         'user_data           = base64encode(file("${path.module}/gpu-cloud-init.yaml"))'
         in main_tf
     )
-    # Cost control: apply must not leave the A10 RUNNING.
-    assert 'state = "STOPPED"' in main_tf
+    # First-boot RUNNING so cloud-init finishes; operator stops after bootstrap (S2-05).
+    assert 'state = "RUNNING"' in main_tf
+    assert "cloud-init" in main_tf.lower() or "gpu-cloud-init" in main_tf
 
 
 def test_gpu_instance_security_posture_private_only() -> None:
@@ -40,26 +41,25 @@ def test_gpu_instance_security_posture_private_only() -> None:
     assert "assign_public_ip = false" in gpu_block
     assert "oci_core_subnet.acx_private_subnet.id" in gpu_block
     assert "prohibit_public_ip_on_vnic = true" in main_tf
+    assert 'resource "oci_core_security_list" "acx_gpu_security_list"' in main_tf
+    assert "oci_core_security_list.acx_gpu_security_list.id" in main_tf
 
-    # Port 8000 must be VCN-scoped, never 0.0.0.0/0.
-    assert 'description = "GPU VLM endpoint from ACX VCN"' in main_tf
-    assert 'source      = "10.0.0.0/16"' in main_tf
-    # Fail if a public port-8000 rule is introduced.
-    assert "min = 8000" in main_tf
-    public_8000 = 'source      = "0.0.0.0/0"' in main_tf and main_tf.count(
-        "min = 8000"
-    ) != main_tf.count('source      = "10.0.0.0/16"')
-    # Stronger pin: the 8000 rule block uses VCN CIDR.
-    assert (
-        'description = "GPU VLM endpoint from ACX VCN"\n'
-        '    protocol    = "6"\n'
-        '    source      = "10.0.0.0/16"'
-    ) in main_tf or (
-        'description = "GPU VLM endpoint from ACX VCN"' in main_tf
-        and 'source      = "10.0.0.0/16"' in main_tf
-        and "min = 8000" in main_tf
+    # Extract every ingress rule that opens port 8000 and require VCN-only source.
+    import re
+
+    blocks = re.findall(
+        r"ingress_security_rules\s*\{([^}]+(?:\{[^}]*\}[^}]*)*)\}",
+        main_tf,
+        flags=re.MULTILINE,
     )
-    del public_8000  # posture checked via explicit VCN source pin above
+    port_8000_blocks = [b for b in blocks if "min = 8000" in b]
+    assert port_8000_blocks, "expected at least one port-8000 ingress rule"
+    for block in port_8000_blocks:
+        assert 'source      = "0.0.0.0/0"' not in block, (
+            "port 8000 must not be world-open: " + block
+        )
+        assert 'source      = "10.0.0.0/16"' in block
+    assert 'description = "GPU VLM endpoint from ACX VCN"' in main_tf
 
 
 def test_gpu_nat_and_jump_host_ssh_present() -> None:
@@ -67,8 +67,10 @@ def test_gpu_nat_and_jump_host_ssh_present() -> None:
     assert 'resource "oci_core_nat_gateway" "acx_nat"' in main_tf
     assert "oci_core_nat_gateway.acx_nat.id" in main_tf
     assert 'resource "oci_core_route_table" "acx_private_rt"' in main_tf
-    assert 'description = "SSH from ACX VCN (jump host)"' in main_tf
+    assert 'description = "SSH from acx-backend subnet"' in main_tf
     assert "min = 22" in main_tf
+    # Public list must not inherit VCN-wide SSH (S2-06).
+    assert 'description = "SSH from ACX VCN (jump host)"' not in main_tf
 
 
 def test_gpu_endpoint_outputs_for_acx_gpu_endpoint_url() -> None:

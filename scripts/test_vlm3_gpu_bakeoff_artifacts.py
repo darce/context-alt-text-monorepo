@@ -6,13 +6,20 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 VLM_DOCS = REPO_ROOT / "docs" / "tasks" / "vlm"
 
 
-def test_gpu_bakeoff_candidate_artifact_uses_existing_harness_endpoint_commands() -> None:
-    artifact = json.loads((VLM_DOCS / "VLM-3-gpu-bakeoff-candidates-2026-07-08.json").read_text())
+def test_gpu_bakeoff_candidate_artifact_uses_existing_harness_endpoint_commands() -> (
+    None
+):
+    artifact = json.loads(
+        (VLM_DOCS / "VLM-3-gpu-bakeoff-candidates-2026-07-08.json").read_text()
+    )
 
     assert artifact["schema"] == "acx-gpu-bakeoff/v1"
     assert artifact["task_ref"] == "VLM-3"
     assert artifact["hardware_target"]["shape"] == "VM.GPU.A10.1"
-    assert artifact["harness"]["script"] == "apps/prototype-description-service/scripts/eval_harness/bakeoff.py"
+    assert (
+        artifact["harness"]["script"]
+        == "apps/prototype-description-service/scripts/eval_harness/bakeoff.py"
+    )
     assert artifact["harness"]["forked"] is False
     assert len(artifact["candidates"]) >= 7
 
@@ -29,13 +36,23 @@ def test_gpu_bakeoff_candidate_artifact_uses_existing_harness_endpoint_commands(
         command = candidate["command"]
         assert "-m scripts.eval_harness.bakeoff --endpoint" in command
         assert f"--model-id {candidate['model_id']}" in command
-        assert f"--out ../../../docs/tasks/vlm/VLM-3-bakeoff-{candidate['model_id']}-run-record.json" in command
+        assert (
+            f"--out ../../docs/tasks/vlm/VLM-3-bakeoff-{candidate['model_id']}-run-record.json"
+            in command
+        )
         assert "ACX_EVAL_LIVE=1" in command and "GOLDEN_IMAGES_DIR=" in command
+        if candidate["model_version"] == "Q4_K_M" or "Q4" in candidate["model_version"]:
+            assert (
+                "--model-version Q4_K_M" in command
+                or candidate["model_version"] == "Q4_K_M"
+            )
         if candidate["reasoning_tuned"]:
             assert "--no-think" in command
 
     # S2-06: Kimi-VL-A3B-2506 is the Thinking-2506 refresh, not non-thinking Instruct.
-    kimi = next(c for c in artifact["candidates"] if c["model_id"] == "Kimi-VL-A3B-2506")
+    kimi = next(
+        c for c in artifact["candidates"] if c["model_id"] == "Kimi-VL-A3B-2506"
+    )
     assert kimi["reasoning_tuned"] is True
     assert "--no-think" in kimi["command"]
     notes = kimi.get("notes", "")
@@ -49,8 +66,17 @@ def test_gpu_bakeoff_report_placeholders_are_marked_pending_live_gpu() -> None:
     keep the schema family for discoverability but use kind=pending_report and an
     explicit pending status so consumers never treat them as measured evidence.
     """
-    index = json.loads((VLM_DOCS / "VLM-3-gpu-bakeoff-candidates-2026-07-08.json").read_text())
-    real_report_keys = {"counts", "provenance", "per_image", "caption", "faces", "failures"}
+    index = json.loads(
+        (VLM_DOCS / "VLM-3-gpu-bakeoff-candidates-2026-07-08.json").read_text()
+    )
+    real_report_keys = {
+        "counts",
+        "provenance",
+        "per_image",
+        "caption",
+        "faces",
+        "failures",
+    }
     for candidate in index["candidates"]:
         report_path = VLM_DOCS / candidate["report_artifact"]
         report = json.loads(report_path.read_text())

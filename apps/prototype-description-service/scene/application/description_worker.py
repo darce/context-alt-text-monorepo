@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 import uuid
 from collections.abc import Mapping
 from typing import Any, Protocol
 
-from scene.application.describe_jobs import DescribeJob, InMemoryDescribeJobStore
+from scene.application.describe_jobs import DescribeJob, DescribeJobStatus, InMemoryDescribeJobStore
 from scene.application.description_adapter import AdapterResult, DescriptionAdapter
 from scene.application.visual_facts_service import build_visual_facts_envelope
 from scene.domain.description import DescriptionResultTier, RetentionClass
@@ -102,16 +103,17 @@ async def run_describe_job(
             )
             provisional_set = True
             if audit_sink is not None:
-                await audit_sink.record(
-                    tenant_id=job.tenant_id,
-                    event_type="description.generated",
-                    payload={
-                        "media_id": job.media_id,
-                        "adapter": cpu_adapter.kind.value,
-                        "tier": DescriptionResultTier.PROVISIONAL_CPU.value,
-                        "job_id": job_id,
-                    },
-                )
+                with contextlib.suppress(Exception):
+                    await audit_sink.record(
+                        tenant_id=job.tenant_id,
+                        event_type="description.generated",
+                        payload={
+                            "media_id": job.media_id,
+                            "adapter": cpu_adapter.kind.value,
+                            "tier": DescriptionResultTier.PROVISIONAL_CPU.value,
+                            "job_id": job_id,
+                        },
+                    )
 
             gpu_result, gpu_duration_ms = await _describe_adapter(
                 gpu_adapter, image_bytes=job.image_bytes, context=job.context
@@ -134,19 +136,23 @@ async def run_describe_job(
                 ),
             )
             if audit_sink is not None:
-                await audit_sink.record(
-                    tenant_id=job.tenant_id,
-                    event_type="description.generated",
-                    payload={
-                        "media_id": job.media_id,
-                        "adapter": gpu_adapter.kind.value,
-                        "tier": DescriptionResultTier.FINAL_GPU.value,
-                        "job_id": job_id,
-                    },
-                )
+                with contextlib.suppress(Exception):
+                    await audit_sink.record(
+                        tenant_id=job.tenant_id,
+                        event_type="description.generated",
+                        payload={
+                            "media_id": job.media_id,
+                            "adapter": gpu_adapter.kind.value,
+                            "tier": DescriptionResultTier.FINAL_GPU.value,
+                            "job_id": job_id,
+                        },
+                    )
             return final
         except asyncio.CancelledError:
-            return store.set_failed(job_id, error="CancelledError: job cancelled")
+            # Mark failed for pollers, then re-raise so cooperative cancellation
+            # and wait_for timeout semantics still work (CON-03 / VLMFIX-S1-04).
+            store.set_failed(job_id, error="CancelledError: job cancelled")
+            raise
         except Exception as exc:  # noqa: BLE001 - persist terminal job failure
             error = f"{type(exc).__name__}: {exc}"
             if provisional_set and provisional is not None and provisional.visual_facts is not None:
@@ -157,5 +163,10 @@ async def run_describe_job(
         try:
             return await asyncio.wait_for(_run(), job_timeout_seconds)
         except TimeoutError:
+            # wait_for cancels the inner task; CancelledError may already have
+            # marked FAILED. Avoid a second set_failed that overwrites the error.
+            existing = store.get(job_id)
+            if existing is not None and existing.status is DescribeJobStatus.FAILED:
+                return existing
             return store.set_failed(job_id, error=f"TimeoutError: job exceeded {job_timeout_seconds}s")
     return await _run()

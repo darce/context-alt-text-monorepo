@@ -199,6 +199,45 @@ def test_detector_backed_conflict_drop_face_not_detected():
     assert att.target_evidence is None
 
 
+def test_same_label_mismatched_ids_does_not_object_attach():
+    """Display-name match is not detector link — only cluster_id/identity_id attach.
+
+    Regression for E20-FUSION-BR-01: pack identity cluster-a/id-a must not
+    object-attach a face labeled the same name with cluster-b/id-b even when the
+    face center is inside a phrase box.
+    """
+    item = _identity_item(
+        "Maria Correonero",
+        cluster_id="cluster-a",
+        identity_id="id-a",
+    )
+    pack = _pack_with_identity(item)
+    # Same display name, different recognition ids — label fallback would FP.
+    wrong_face = make_face(
+        "Maria Correonero",
+        box=FACE_BOX,
+        cluster_id="cluster-b",
+        identity_id="id-b",
+        roster_id="roster-other",
+    )
+    phrase = make_phrase_box("person", CAPTION, box=PERSON_BOX)
+
+    results = reconcile_context_facts(
+        context_pack=pack,
+        visual_prior=_prior(),
+        confirmed_faces=[wrong_face],
+        phrase_boxes=[phrase],
+        naming_policy=NamingPolicy(agreement_enabled=True),
+    )
+
+    att = next(a for a in results if a.fact_source is FactSource.IDENTITY)
+    assert att.decision is AttachmentDecision.DROPPED
+    assert att.altitude is AttachmentAltitude.NONE
+    assert att.visible is False
+    assert att.review_reason == ReviewReason.FACE_NOT_DETECTED
+    assert att.target_evidence is None
+
+
 def test_detector_backed_conflict_ambiguous_grounding():
     """Face present but containment fails (outside phrase box) → ambiguous drop."""
     item = _identity_item()

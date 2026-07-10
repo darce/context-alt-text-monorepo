@@ -14,6 +14,7 @@ import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import Response
 from pydantic import ValidationError
 from starlette.datastructures import UploadFile
 
@@ -189,13 +190,13 @@ def _generation_timeout_seconds(settings: DescriptionSettings, adapter) -> float
     return settings.generation_timeout_seconds
 
 
-@router.post("/describe/multipart", response_model=VisualFactsResponse)
+@router.post("/describe/multipart", response_model=None)
 async def describe_image_multipart(
     request: Request,
     auth=Depends(require_write_access),
     session=Depends(get_optional_session),
     adapter=Depends(get_description_adapter),
-) -> VisualFactsResponse:
+) -> VisualFactsResponse | Response:
     form = await request.form()
 
     try:
@@ -204,6 +205,12 @@ async def describe_image_multipart(
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT, f"invalid 'request' envelope: {exc.errors()}"
         ) from exc
+
+    # E20-FUSION decorative/eligibility gate — server backstop; WP is primary skip.
+    # Runs before any inference (and before image byte validation) so decorative
+    # images never spend GPU/CPU on description.
+    if envelope.decorative:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     auth_tenant = (getattr(auth, "tenant_claim", None) or "").strip()
     if auth_tenant and auth_tenant != envelope.tenant_id:
@@ -258,6 +265,7 @@ async def describe_image_multipart(
         audit_sink=audit_sink,
         metrics=_DescriptionMetricsSink(),
         generation_timeout_seconds=effective_timeout,
+        profile=settings.profile,
     )
     try:
         response = await service.describe(

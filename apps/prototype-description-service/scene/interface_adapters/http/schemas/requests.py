@@ -114,6 +114,11 @@ class DescribeImageEnvelope(BaseModel):
         description="Legacy WP context: title/caption/description/filename.",
     )
     context_pack: ContextPack | None = Field(default=None, description="Typed bounded WordPress context pack.")
+    # E20-FUSION server backstop: WP is the primary decorative skip (never POSTs).
+    decorative: bool = Field(
+        default=False,
+        description="When true, skip description inference (WP 7.1 mark-as-decorative).",
+    )
 
     @field_validator("tenant_id")
     @classmethod

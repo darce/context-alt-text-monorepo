@@ -109,6 +109,43 @@ def test_schema_reason_enum_matches_naming_skip_reason():
     assert modes == {m.value for m in NamingMode}
 
 
+def test_schema_attachment_enums_match_reconcile_enums():
+    """EH-03: reconcile's decision/altitude StrEnums must equal the frozen
+    contract enums, else a new member would emit on the wire uncaught."""
+    from scene.application.fusion import AttachmentAltitude, AttachmentDecision
+
+    facts_item = _schema()["properties"]["attachment_provenance"]["properties"]["facts"]["items"]
+    assert set(facts_item["properties"]["decision"]["enum"]) == {d.value for d in AttachmentDecision}
+    assert set(facts_item["properties"]["altitude"]["enum"]) == {a.value for a in AttachmentAltitude}
+
+
+def test_populated_attachment_provenance_model_roundtrips():
+    """EH-04: the model's own serialization of a populated attachment_provenance
+    must validate against the contract (structural round-trip, not a hand-built dict)."""
+    from scene.interface_adapters.http.schemas.responses import (
+        AttachmentFactProvenance,
+        AttachmentProvenance,
+    )
+
+    provenance = AttachmentProvenance(
+        facts=[
+            AttachmentFactProvenance(
+                fact_id="identity:cluster:00000000-0000-0000-0000-000000000002",
+                fact_source="identity",
+                fact_label="Daniel",
+                decision="object",
+                altitude="object",
+                target_evidence="person",
+                review_reason=None,
+                visible=True,
+            )
+        ]
+    )
+    sample = _sample()
+    sample["attachment_provenance"] = provenance.model_dump(mode="json")
+    jsonschema.validate(sample, _schema())
+
+
 def test_missing_provenance_field_fails_schema():
     bad = _sample()
     del bad["provider_disclosure"]

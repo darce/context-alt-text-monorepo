@@ -199,9 +199,7 @@ def test_object_attach_brand_when_detected():
         context_pack=pack,
         visual_prior=_prior(),
         brands=[BrandFact(name="Acme", template_id="tmpl-acme")],
-        brand_detections=[
-            BrandDetection(name="Acme", template_id="tmpl-acme", confidence=0.91, matched=True)
-        ],
+        brand_detections=[BrandDetection(name="Acme", template_id="tmpl-acme", confidence=0.91, matched=True)],
     )
 
     att = results[0]
@@ -575,9 +573,7 @@ def test_brand_template_id_mismatch_does_not_attach():
         context_pack=ContextPack(),
         visual_prior=_prior(),
         brands=[BrandFact(name="Acme", template_id="tmpl-a")],
-        brand_detections=[
-            BrandDetection(name="Acme", template_id="tmpl-b", confidence=0.9, matched=True)
-        ],
+        brand_detections=[BrandDetection(name="Acme", template_id="tmpl-b", confidence=0.9, matched=True)],
     )
 
     att = results[0]
@@ -591,9 +587,7 @@ def test_brand_template_id_match_preferred_over_name():
         context_pack=ContextPack(),
         visual_prior=_prior(),
         brands=[BrandFact(name="Acme", template_id="tmpl-a")],
-        brand_detections=[
-            BrandDetection(name="Acme Corp.", template_id="tmpl-a", confidence=0.9, matched=True)
-        ],
+        brand_detections=[BrandDetection(name="Acme Corp.", template_id="tmpl-a", confidence=0.9, matched=True)],
     )
 
     att = results[0]

@@ -176,9 +176,9 @@ def test_async_tier_runs_isolation_pass(profile):
 
 
 def test_tier_classification_covers_every_profile():
-    assert ASYNC_ISOLATION_PROFILES == {
+    assert {
         DescriptionProfile.FLORENCE_LARGE,
         DescriptionProfile.GPU_PHI4,
-    }
+    } == ASYNC_ISOLATION_PROFILES
     for profile in DescriptionProfile:
         assert is_fast_tier_profile(profile) is (profile not in ASYNC_ISOLATION_PROFILES)

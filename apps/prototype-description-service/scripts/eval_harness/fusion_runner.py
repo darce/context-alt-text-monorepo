@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from scene.application.description_adapter import AdapterResult
-from scene.application.identity_merge import NamingPolicy
+from scene.application.identity_merge import ConfirmedFace, NamingPolicy, NormalizedBox, PhraseBox
 from scene.application.seeded_adapter import SeededDescriptionAdapter
 from scene.application.visual_facts_service import VisualFactsService
 from scene.interface_adapters.http.schemas.requests import (
@@ -36,7 +36,6 @@ from scene.interface_adapters.http.schemas.requests import (
     IdentityPolicyContext,
     TaxonomyTermContext,
 )
-from scene.tests.identity_merge_helpers import make_face, make_phrase_box
 
 from .manifest import GoldenEntry, GoldenManifest, ManifestError, load_manifest
 from .report import build_reports
@@ -48,6 +47,8 @@ _TENANT = uuid.UUID("00000000-0000-0000-0000-00000000f051")
 _PERSON_PHRASE = "person"
 _DEFAULT_CAPTION = f"A {_PERSON_PHRASE} standing outdoors near greenery."
 _CLUSTER_SLUG_RE = re.compile(r"[^a-z0-9]+")
+_PERSON_BOX = NormalizedBox(x=0.3, y=0.1, width=0.3, height=0.7)
+_FACE_BOX = NormalizedBox(x=0.4, y=0.2, width=0.05, height=0.08)
 
 
 @dataclass(frozen=True)
@@ -80,13 +81,13 @@ def _slug(label: str) -> str:
 
 
 def build_typed_context_pack(entry: GoldenEntry) -> ContextPack | None:
-    """Build a real HTTP ContextPack from labels + free-form bakeoff context.
+    """Build a real HTTP ContextPack from expected_attachments labels.
 
     Legacy title/caption/description alone is not a typed pack
-    (``_coerce_context_pack`` returns None). Empty pack when no facts.
+    (``_coerce_context_pack`` returns None). Empty pack when no labels.
     """
     expected = list(entry.expected_attachments)
-    if not expected and not entry.present_identities:
+    if not expected:
         return None
 
     identities: list[IdentityContextItem] = []
@@ -116,8 +117,6 @@ def build_typed_context_pack(entry: GoldenEntry) -> ContextPack | None:
                 TaxonomyTermContext(taxonomy="place", name=exp.fact_label, slug=_slug(exp.fact_label))
             )
 
-    # expected_attachments is the fusion label source of truth — do not invent
-    # identity facts from present_identities (policy-disabled traps must stay empty).
     if not identities and not taxonomy:
         return None
 
@@ -133,6 +132,28 @@ def build_typed_context_pack(entry: GoldenEntry) -> ContextPack | None:
             else None
         ),
         taxonomy_terms=taxonomy,
+    )
+
+
+def _make_face(label: str) -> ConfirmedFace:
+    """Real ConfirmedFace shape (merge.py) for detector-backed object attach."""
+    return ConfirmedFace(
+        identity_id=_identity_id(label),
+        cluster_id=_cluster_id(label),
+        roster_id=f"roster-{_slug(label)}",
+        label=label,
+        detection_confidence=0.95,
+        box=_FACE_BOX,
+    )
+
+
+def _make_person_phrase_box(caption: str) -> PhraseBox:
+    start = caption.lower().index(_PERSON_PHRASE)
+    return PhraseBox(
+        phrase=caption[start : start + len(_PERSON_PHRASE)],
+        span_start=start,
+        span_end=start + len(_PERSON_PHRASE),
+        box=_PERSON_BOX,
     )
 
 
@@ -174,9 +195,9 @@ class _FusionStubAdapter:
         self._with_person_box = with_person_box
 
     def describe(self, *, image_bytes: bytes, context: Any) -> AdapterResult:
-        phrase_boxes = ()
+        phrase_boxes: tuple[PhraseBox, ...] = ()
         if self._with_person_box and _PERSON_PHRASE in self._caption.lower():
-            phrase_boxes = (make_phrase_box(_PERSON_PHRASE, self._caption),)
+            phrase_boxes = (_make_person_phrase_box(self._caption),)
         return AdapterResult(
             caption=self._caption,
             objects=(_PERSON_PHRASE, "scene"),
@@ -188,39 +209,16 @@ class _FusionStubAdapter:
         )
 
 
-def _faces_for_entry(entry: GoldenEntry) -> list[Any]:
+def _faces_for_entry(entry: GoldenEntry) -> list[ConfirmedFace]:
     """Detector-backed faces only for identities expected to object-attach."""
-    faces = []
+    faces: list[ConfirmedFace] = []
     for exp in entry.expected_attachments:
         if exp.fact_source != "identity":
             continue
         if exp.decision != "object":
             continue
-        faces.append(
-            make_face(
-                exp.fact_label,
-                cluster_id=_cluster_id(exp.fact_label),
-                identity_id=_identity_id(exp.fact_label),
-                roster_id=f"roster-{_slug(exp.fact_label)}",
-            )
-        )
+        faces.append(_make_face(exp.fact_label))
     return faces
-
-
-def _provenance_from_attachments(attachments: list[Any]) -> list[dict[str, Any]]:
-    return [
-        {
-            "fact_id": a.fact_id,
-            "fact_source": str(a.fact_source),
-            "fact_label": a.fact_label,
-            "decision": str(a.decision),
-            "altitude": str(a.altitude),
-            "target_evidence": a.target_evidence,
-            "review_reason": a.review_reason,
-            "visible": bool(a.visible),
-        }
-        for a in attachments
-    ]
 
 
 def _adhoc_provenance(entry: GoldenEntry) -> list[dict[str, Any]]:

@@ -2,11 +2,11 @@
 
 - schema: `acx-eval/v1` kind: `report`
 - adapter(s): `seeded` model(s): `fusion-eval-adhoc-stub` version(s): `1`
-- head_sha: `db56a00a2ff3571e20ef1927bb817322384b0da3`
+- head_sha: `e4f1730f3c697f6abd6afefb817310de76f3f0c2`
 - base_url: fusion-runner://adhoc
 - fetch manifest_sha256: `2182b97628d855e7d7a7b2e8afbc73582dde59198d3030a66e6a1ea35fe9dbd9`
 - score manifest_sha256: `2182b97628d855e7d7a7b2e8afbc73582dde59198d3030a66e6a1ea35fe9dbd9` (matches fetch: True)
-- started_at: 2026-07-10T05:03:07Z
+- started_at: 2026-07-10T05:05:05Z
 - images: 10/10 scored, 0 failed
 - ⚠ produced by the model-free `seeded` stub adapter — harness-shakedown numbers, NOT a caption-model baseline.
 

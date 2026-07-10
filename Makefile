@@ -129,7 +129,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/logs.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-hooks test-deploy-contract test-vlm3
+.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-scripts test-hooks test-deploy-contract test-vlm3
 
 # Default target
 help:
@@ -287,9 +287,7 @@ check-all:
 			$(MAKE) check-codex-command-router; \
 			$(MAKE) worktree-audit; \
 			$(MAKE) task-plan-audit; \
-			$(MAKE) test-hooks; \
-			$(MAKE) test-deploy-contract; \
-			$(MAKE) test-vlm3; \
+			$(MAKE) test-scripts; \
 			$(MAKE) test-all; \
 			echo ""; \
 			echo "✅ All monorepo checks passed!"; \
@@ -369,8 +367,11 @@ test-all:
 		echo ""; \
 		echo "✅ Lane-scoped verification passed for $(LANE)!"; \
 		else \
-			echo "=== Testing Python (backend) ==="; \
+			echo "=== Testing Python (backend fast) ==="; \
 			( cd apps/prototype-description-service && make test ); \
+			echo ""; \
+			echo "=== Testing Python (backend integration) ==="; \
+			( cd apps/prototype-description-service && make test-integration ); \
 			echo ""; \
 			echo "=== Testing TypeScript (frontend) ==="; \
 			( cd apps/prototype-wp-alt-context && make test ); \
@@ -417,9 +418,25 @@ check-overrides-digest:
 	@python3 scripts/check_overrides_lock_digest.py
 	@$(MAKE) test-overrides-digest
 
+# Single pytest invocation covering the union of the four narrow targets below
+# (hooks, deploy-contract, vlm3, overrides-digest). check-all runs this once
+# instead of four separate pytest processes — one interpreter + collection pass.
+# The narrow targets keep their original scopes for standalone/documented use.
+test-scripts:
+	@python3 -m pytest \
+		scripts/hooks .github/hooks scripts/test_php_characterization_gate.py \
+		scripts/test_e15_31_admin_deploy_contract.py scripts/test_e15_33_deploy_convergence.py scripts/test_e15_33_boot_smoke.py \
+		scripts/test_vlm3_oci_gpu_infra.py \
+		scripts/test_vlm3_gpu_lifecycle.py \
+		scripts/test_vlm3_owlv2_deferral.py \
+		scripts/test_vlm3_gpu_bakeoff_artifacts.py \
+		scripts/test_vlm3_decision_memo.py \
+		scripts/test_check_overrides_lock_digest.py scripts/test_consumer_setup_doc.py \
+		-q --tb=short --durations=25
+
 # Unit tests backing check-overrides-digest (incl. the committed-lock
-# consistency regression guard). Top-level scripts/test_*.py are not
-# collected by any repo-wide runner, so wire these into check-all here.
+# consistency regression guard). Also collected by test-scripts in check-all;
+# kept narrow here so standalone check-overrides-digest stays test-backed.
 test-overrides-digest:
 	@python3 -m pytest scripts/test_check_overrides_lock_digest.py scripts/test_consumer_setup_doc.py -q --tb=short
 
@@ -429,14 +446,12 @@ test-hooks:
 	@python3 -m pytest scripts/hooks .github/hooks scripts/test_php_characterization_gate.py -q --tb=short
 
 # E15-31B: deploy-contract guard — prod deploys/systemd restarts must install
-# and retain the /admin compose overlay. Top-level scripts/test_*.py are not
-# collected by any repo-wide runner, so wire it into check-all here.
+# and retain the /admin compose overlay. Covered by test-scripts in check-all.
 test-deploy-contract:
 	@python3 -m pytest scripts/test_e15_31_admin_deploy_contract.py scripts/test_e15_33_deploy_convergence.py scripts/test_e15_33_boot_smoke.py -q --tb=short
 
 # VLM-3 / VLMRP: OCI GPU infra posture, idle-reaper lifecycle, decision memo,
-# bake-off artifact guards, and OWLv2 deferral. Top-level scripts/test_*.py
-# are not collected by any repo-wide runner, so wire into check-all here.
+# bake-off artifact guards, and OWLv2 deferral. Covered by test-scripts in check-all.
 test-vlm3:
 	@python3 -m pytest \
 		scripts/test_vlm3_oci_gpu_infra.py \

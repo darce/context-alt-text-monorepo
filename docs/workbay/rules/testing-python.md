@@ -100,11 +100,28 @@ recognition/
 
 ```bash
 cd apps/prototype-description-service
-make test           # Run pytest
-make ruff           # Linting with Ruff
-make mypy           # Type checking
-make check          # All checks (ruff + mypy + pytest)
+make test              # Fast lane: pytest -m "not integration and not pg and not timing",
+                       # parallel via pytest-xdist (PYTEST_WORKERS, default 4; 0 = serial)
+make test-integration  # Slow lane: pytest -m "integration or pg or timing", always serial
+make ruff              # Linting with Ruff
+make mypy              # Type checking
+make check             # All checks (ruff + mypy + both test lanes)
 ```
+
+### Test lanes (TESTSPEED-1)
+
+- `make test` is the parallel fast lane. Override worker count with
+  `make test PYTEST_WORKERS=8`; `PYTEST_WORKERS=0` runs serial.
+- `make test-integration` runs the serial slow lane: `integration`/`pg`
+  (shared-DB fixtures) plus `timing` (wall-clock-sensitive latency budgets and
+  expiry races that flake under xdist worker contention).
+- The two lanes partition the full suite exactly; `make test-all` at the repo
+  root runs both, so net coverage is unchanged.
+- Both lanes print `--durations=25` so slow tests stay visible.
+- Root-level `make test-scripts` runs the merged top-level `scripts/` +
+  hook-test pytest invocation used by `check-all` (one process instead of the
+  four legacy targets `test-hooks` / `test-deploy-contract` / `test-vlm3` /
+  `test-overrides-digest`, which remain for narrow standalone use).
 
 ## External MCP Package Verification (E17-13)
 

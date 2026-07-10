@@ -274,6 +274,7 @@ def test_is_query_canceled_handles_missing_orig() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_admission_path_latency_is_sub_second_on_happy_path() -> None:
     session = _PostgresFakeSession()

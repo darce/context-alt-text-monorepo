@@ -161,6 +161,7 @@ async def test_lookup_raises_401_for_revoked_key(monkeypatch) -> None:
     assert exc_info.value.detail == "api key revoked"
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_in_flight_request_completes_even_if_key_expires_mid_flight(
     db_session: AsyncSession, tenant_row: Tenant

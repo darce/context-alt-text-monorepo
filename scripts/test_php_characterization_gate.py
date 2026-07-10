@@ -48,9 +48,14 @@ def test_consumer_hooks_delegate_overlay_lifecycle_hooks() -> None:
 
 def test_repo_wide_check_runs_hook_contract_tests() -> None:
     content = MAKEFILE.read_text(encoding="utf-8")
-    assert "test-hooks" in content.partition("\n\n# Default target")[0]
+    assert "test-scripts" in content.partition("\n\n# Default target")[0]
     check_all = content.split("check-all:", 1)[1].split("\n# Guard:", 1)[0]
-    assert "$(MAKE) test-hooks" in check_all
+    # check-all runs the hook contract tests via the merged test-scripts
+    # invocation; test-scripts must in turn collect the hook test paths.
+    assert "$(MAKE) test-scripts" in check_all
+    test_scripts = content.split("\ntest-scripts:", 1)[1].split("\n\n", 1)[0]
+    assert "scripts/hooks" in test_scripts
+    assert ".github/hooks" in test_scripts
 
 
 def test_git_merge_file_can_retain_stale_current_side(tmp_path: Path) -> None:

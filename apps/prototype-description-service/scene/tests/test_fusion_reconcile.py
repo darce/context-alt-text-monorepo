@@ -38,8 +38,6 @@ def _prior(caption: str = CAPTION, *, objects: list[str] | None = None) -> Visua
     return VisualFactsPrior(
         caption=caption,
         objects=objects if objects is not None else ["person", "plant"],
-        attributes=[],
-        spatial=[],
         text=None,
         source=VisualFactsPriorSource.ISOLATION_PASS,
     )

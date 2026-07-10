@@ -7,6 +7,7 @@ import pytest
 from scene.application.description_adapter import AdapterResult
 from scene.application.seeded_adapter import SeededDescriptionAdapter
 from scene.application.visual_facts_pass import (
+    ASYNC_ISOLATION_PROFILES,
     VisualFactsPass,
     VisualFactsPrior,
     VisualFactsPriorSource,
@@ -56,8 +57,7 @@ def test_isolation_pass_invokes_adapter_without_context():
     assert prior.caption == "A person standing outdoors near greenery."
     assert prior.objects == ["person", "plant", "sky"]
     assert prior.text is None
-    assert prior.attributes == []
-    assert prior.spatial == []
+    assert prior.derived_from_context_applied_caption is False
 
 
 def test_isolation_pass_maps_ocr_text():
@@ -83,25 +83,57 @@ def test_isolation_pass_degrades_when_adapter_raises():
     assert adapter.calls == 1
 
 
-def test_from_caption_derives_prior_without_adapter_call():
-    result = SeededDescriptionAdapter().describe(image_bytes=IMG, context={"title": "Cat"})
-    adapter = StubAdapter()
+def test_from_caption_derives_prior_from_result_fields():
+    result = SeededDescriptionAdapter().describe(image_bytes=IMG, context=None)
     prior = VisualFactsPass.from_caption(result=result)
-    assert adapter.calls == 0
     assert prior.source is VisualFactsPriorSource.CAPTION_DERIVED
     assert prior.caption == result.caption
     assert prior.objects == list(result.objects)
     assert prior.text == result.ocr_text
 
 
-def test_fast_tier_uses_caption_derived_without_second_pass():
+def test_from_caption_flags_context_applied_contamination():
+    result = AdapterResult(
+        caption="A cat sitting on a windowsill.",
+        objects=("cat", "window"),
+        ocr_text=None,
+        alt_text_draft="Cat. A cat sitting on a windowsill.",
+        context_sources=("title",),
+        context_applied=True,
+        phrase_boxes=(),
+    )
+    prior = VisualFactsPass.from_caption(result=result)
+    assert prior.derived_from_context_applied_caption is True
+
+
+def test_from_caption_clean_result_is_not_flagged():
+    result = SeededDescriptionAdapter().describe(image_bytes=IMG, context=None)
+    assert result.context_applied is False
+    prior = VisualFactsPass.from_caption(result=result)
+    assert prior.derived_from_context_applied_caption is False
+
+
+def test_isolation_pass_is_never_flagged_contaminated():
+    prior = VisualFactsPass.describe(adapter=StubAdapter(), image_bytes=IMG)
+    assert prior.derived_from_context_applied_caption is False
+
+
+@pytest.mark.parametrize(
+    "profile",
+    [
+        DescriptionProfile.SEEDED,
+        DescriptionProfile.FLORENCE_SMALL,
+        DescriptionProfile.HOSTED_GPT4O,
+    ],
+)
+def test_fast_tier_uses_caption_derived_without_second_pass(profile):
     seeded = SeededDescriptionAdapter()
     main_result = seeded.describe(image_bytes=IMG, context=None)
     stub = StubAdapter()
     prior = VisualFactsPass.obtain(
         adapter=stub,
         image_bytes=IMG,
-        profile=DescriptionProfile.FLORENCE_SMALL,
+        profile=profile,
         adapter_result=main_result,
     )
     assert stub.calls == 0
@@ -109,30 +141,44 @@ def test_fast_tier_uses_caption_derived_without_second_pass():
     assert prior.caption == main_result.caption
 
 
-def test_fast_tier_requires_adapter_result():
+@pytest.mark.parametrize(
+    "profile",
+    [
+        DescriptionProfile.SEEDED,
+        DescriptionProfile.FLORENCE_SMALL,
+        DescriptionProfile.HOSTED_GPT4O,
+    ],
+)
+def test_fast_tier_requires_adapter_result(profile):
     with pytest.raises(ValueError, match="adapter_result"):
         VisualFactsPass.obtain(
             adapter=StubAdapter(),
             image_bytes=IMG,
-            profile=DescriptionProfile.FLORENCE_SMALL,
+            profile=profile,
             adapter_result=None,
         )
 
 
-def test_async_tier_runs_isolation_pass():
+@pytest.mark.parametrize(
+    "profile",
+    [DescriptionProfile.FLORENCE_LARGE, DescriptionProfile.GPU_PHI4],
+)
+def test_async_tier_runs_isolation_pass(profile):
     adapter = StubAdapter()
     prior = VisualFactsPass.obtain(
         adapter=adapter,
         image_bytes=IMG,
-        profile=DescriptionProfile.FLORENCE_LARGE,
+        profile=profile,
         adapter_result=None,
     )
     assert adapter.calls == 1
     assert prior.source is VisualFactsPriorSource.ISOLATION_PASS
 
 
-def test_is_fast_tier_profile():
-    assert is_fast_tier_profile(DescriptionProfile.FLORENCE_SMALL) is True
-    assert is_fast_tier_profile(DescriptionProfile.FLORENCE_LARGE) is False
-    assert is_fast_tier_profile(DescriptionProfile.GPU_PHI4) is False
-    assert is_fast_tier_profile(DescriptionProfile.SEEDED) is False
+def test_tier_classification_covers_every_profile():
+    assert ASYNC_ISOLATION_PROFILES == {
+        DescriptionProfile.FLORENCE_LARGE,
+        DescriptionProfile.GPU_PHI4,
+    }
+    for profile in DescriptionProfile:
+        assert is_fast_tier_profile(profile) is (profile not in ASYNC_ISOLATION_PROFILES)

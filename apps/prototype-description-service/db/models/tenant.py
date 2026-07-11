@@ -43,6 +43,10 @@ class Tenant(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     site_url: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    # AP-7 concierge customer fields (ADR-012 subset; nullable expand-first).
+    primary_contact_email: Mapped[str | None] = mapped_column(String(255), unique=True)
+    display_name: Mapped[str | None] = mapped_column(String(255))
+    plan: Mapped[str | None] = mapped_column(String(50))
     next_person_number: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
     # E19-4a consent gate: default true reflects the signed operator naming
     # agreement; per-person opt-out is the IdentityNameSuppression list.

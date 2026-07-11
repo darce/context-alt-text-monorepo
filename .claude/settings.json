@@ -142,7 +142,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/ensure-agent-surfaces.sh\"",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/hooks/ensure-agent-surfaces.sh\"",
             "timeout": 60
           }
         ]

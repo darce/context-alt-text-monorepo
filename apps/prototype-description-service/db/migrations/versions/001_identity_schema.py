@@ -166,6 +166,10 @@ def ensure_tables(op) -> None:
         "tenants",
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column("site_url", sa.String(length=255), nullable=False, unique=True),
+        # AP-7 / ADR-012 subset: customer contact + plan (nullable expand-first).
+        sa.Column("primary_contact_email", sa.String(length=255), nullable=True),
+        sa.Column("display_name", sa.String(length=255), nullable=True),
+        sa.Column("plan", sa.String(length=50), nullable=True),
         sa.Column("next_person_number", sa.Integer(), nullable=False, server_default=sa.text("1")),
         sa.Column("naming_agreement_enabled", sa.Boolean(), nullable=False, server_default=sa.text("true")),
         sa.Column("retention_mode", sa.String(length=30), nullable=False, server_default=sa.text("'retain_all'")),
@@ -180,6 +184,13 @@ def ensure_tables(op) -> None:
             onupdate=sa.func.now(),
             nullable=False,
         ),
+    )
+    _ensure_index(
+        op,
+        "uq_tenants_primary_contact_email",
+        "tenants",
+        ["primary_contact_email"],
+        unique=True,
     )
 
     _ensure_table(

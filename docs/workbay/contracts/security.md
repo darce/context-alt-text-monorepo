@@ -46,21 +46,31 @@ API keys are stored in the `api_keys` database table with the following structur
 | Variable                             | Default         | Description                                        |
 | ------------------------------------ | --------------- | -------------------------------------------------- |
 | `RECOGNITION_AUTH_ENABLED`           | `true`          | Enable/disable authentication globally             |
-| `RECOGNITION_ALLOWED_API_KEYS`       | (empty)         | Comma-separated list of dev keys for local testing |
 | `RECOGNITION_API_KEY_HEADER`         | `Authorization` | Header name for API key extraction                 |
 | `RECOGNITION_API_KEY_HASH_ALGORITHM` | `sha256`        | Algorithm for key hashing                          |
 | `RECOGNITION_MAX_PAGE_SIZE`          | `500`           | Maximum allowed page size for list endpoints       |
+| `RECOGNITION_SECRET_BACKEND`         | `env`           | Secret source: `env` (local/CI) or `oci_vault` (prod) |
+
+> **Tenant keys are DB-only.** The former `RECOGNITION_ALLOWED_API_KEYS` env-var
+> dev-key allowlist is **retired** (decision #1882). All tenant API keys are
+> minted/revoked in the service DB via `/admin` (or `scripts/manage_api_keys.py`);
+> there is no plaintext key bypass. Locally, mint a dev key with `make dev-mint-key`.
+> Service secrets are read through the `SecretProvider` seam (`shared/secrets.py`),
+> selectable via `RECOGNITION_SECRET_BACKEND` — see
+> [`docs/secrets-inventory.md`](../../../apps/prototype-description-service/docs/secrets-inventory.md)
+> and [ADR-013](../../adrs/ADR-013-oci-vault-secrets-backend.md).
 
 ### Example Configuration
 
 ```bash
-# Production
+# Production (secrets come from OCI Vault via instance principal)
 export RECOGNITION_AUTH_ENABLED=true
 export RECOGNITION_API_KEY_HEADER=Authorization
+export RECOGNITION_SECRET_BACKEND=oci_vault
 
-# Development/Testing
+# Development/Testing — mint a DB-backed key via /admin
 export RECOGNITION_AUTH_ENABLED=true
-export RECOGNITION_ALLOWED_API_KEYS=dev-key-1,dev-key-2
+make dev-mint-key   # prints a usable tenant API key
 ```
 
 ## Tenant Isolation
@@ -159,14 +169,16 @@ All WordPress plugin REST endpoints require `manage_options` capability via the 
 Write access is granted when:
 
 - Authentication is disabled (`AUTH_ENABLED=false`), OR
-- The API key has a valid tenant claim, OR
-- The API key is an admin/dev key
+- The API key has a valid tenant claim
 
-## Admin Keys
+## Admin access
 
-Development API keys (from `RECOGNITION_ALLOWED_API_KEYS`, surfaced as `settings.dev_api_keys`) are marked as `is_admin=True` and have cross-tenant access for debugging and administrative operations.
-
-**⚠️ Warning**: Never use dev keys in production environments.
+Operator/admin actions are reached through the env-gated `/admin` console,
+authenticated by `RECOGNITION_ADMIN_TOKEN` (or HTTP Basic for the browser
+console) — **not** by any tenant API key. There is no cross-tenant "dev/admin
+key": the former `RECOGNITION_ALLOWED_API_KEYS` / `settings.dev_api_keys`
+allowlist that granted `is_admin=True` cross-tenant access is **retired**
+(decision #1882). Tenant keys are DB-backed and tenant-scoped only.
 
 ## Error Responses
 
@@ -215,14 +227,17 @@ Content-Type: application/json
 {"detail": "rate limit exceeded"}
 ```
 
-**Bypass rules** (both return immediately without counting):
-
-1. `RECOGNITION_AUTH_ENABLED=false` — auth is disabled; no key identity to rate-limit against.
-2. Dev keys from `RECOGNITION_ALLOWED_API_KEYS` — these resolve with `api_key_id=None` and `is_admin=True`; they are local-only debugging keys and must never ship to production.
+**Bypass rule**: `RECOGNITION_AUTH_ENABLED=false` — auth is disabled; no key
+identity to rate-limit against. (The former dev-key allowlist bypass is retired,
+decision #1882.)
 
 **Deployment constraint**: the in-memory counter is correct only under a single worker process. Multi-worker deployment requires a shared counter store (Redis/DB) and is out of scope for E15-1.
 
-**Fail-closed startup guard**: `create_app()` refuses to start with `RuntimeError` when `RECOGNITION_RUNTIME_MODE=production` and `dev_api_keys` is non-empty. In non-production runtime modes, a WARNING log is emitted instead.
+**Fail-closed startup guard**: in production (`RECOGNITION_RUNTIME_MODE=production`)
+`create_app()` refuses to start when a required secret is missing, empty, or set
+to the development default (`validate_required_secrets`), and — under
+`RECOGNITION_SECRET_BACKEND=oci_vault` — when OCI Vault is unreachable or a
+required secret is absent (`validate_oci_vault_boot`, no env fallback).
 
 ## CORS Origin Allowlist
 
@@ -456,8 +471,8 @@ admin authority — neither alone is sufficient by policy:
   the HTTP Basic password; JSON mutations require the dedicated
   `X-Admin-Token` header so browser credential replay cannot authorize a
   cross-site mutation. The gate never reads `AuthContext.is_admin`, the tenant
-  `X-API-Key` header, or the DB — the dev-key admin path stays banned in
-  production.
+  `X-API-Key` header, or the DB — and there is no dev-key admin path at all
+  (the `RECOGNITION_ALLOWED_API_KEYS` allowlist is retired, decision #1882).
 - **Env gate / fail-closed**: the router mounts only when
   `RECOGNITION_ADMIN_ENABLED=true`. `validate_admin_config` refuses to start
   when admin is enabled with an empty or `<32`-char token, or in production

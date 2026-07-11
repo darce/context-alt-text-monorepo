@@ -402,7 +402,11 @@ do_boot_smoke() {
   log "Pre-promote boot smoke: ${image} on ${SSH_TARGET} (env=${env})"
   # Gate 1 — network-free import smoke. Catches the ModuleNotFoundError-class
   # packaging omissions (the scene/ incident) without touching the DB.
-  if ! ssh "${SSH_TARGET}" "docker pull ${image} >/dev/null && docker run --rm --entrypoint python ${image} -c 'import api.main'"; then
+  # RECOGNITION_RUNTIME_MODE=development so the production load-time secret
+  # fail-fast (validate_required_secrets / validate_oci_vault_boot) no-ops — this
+  # gate proves the image IMPORTS, not that prod secrets are configured (that is
+  # Gate 2, which uses the deployed .env).
+  if ! ssh "${SSH_TARGET}" "docker pull ${image} >/dev/null && docker run --rm -e RECOGNITION_RUNTIME_MODE=development --entrypoint python ${image} -c 'import api.main'"; then
     warn "boot smoke: 'import api.main' failed on ${image} (packaging/import error)"
     return 1
   fi

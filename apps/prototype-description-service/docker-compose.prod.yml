@@ -5,6 +5,11 @@
 # Requires a .env file in the project directory (same dir as this file).
 # On the VM: ln -s /opt/acx-backend/secrets/.env /opt/acx-backend/.env
 # Locally:   copy .env.prod.example to .env and fill in values.
+#
+# Secrets: with RECOGNITION_SECRET_BACKEND=oci_vault (prod), api/worker fetch
+# POSTGRES_DSN/PGPASSWORD/RECOGNITION_ADMIN_TOKEN from OCI Vault via the VM
+# instance principal — those stay blank in .env. See
+# infra/oci/vault-instance-principal-runbook.md and ADR-013.
 
 services:
   postgres:

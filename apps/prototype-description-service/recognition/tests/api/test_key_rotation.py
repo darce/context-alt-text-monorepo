@@ -123,7 +123,7 @@ async def test_lookup_raises_401_for_expired_key(monkeypatch) -> None:
     with pytest.raises(HTTPException) as exc_info:
         await auth_mod._lookup_api_key(
             "raw",
-            SecuritySettings(auth_enabled=True, dev_api_keys=[]),
+            SecuritySettings(auth_enabled=True),
             session,
         )
     assert exc_info.value.status_code == 401
@@ -154,7 +154,7 @@ async def test_lookup_raises_401_for_revoked_key(monkeypatch) -> None:
     with pytest.raises(HTTPException) as exc_info:
         await auth_mod._lookup_api_key(
             "raw",
-            SecuritySettings(auth_enabled=True, dev_api_keys=[]),
+            SecuritySettings(auth_enabled=True),
             session,
         )
     assert exc_info.value.status_code == 401

@@ -12,6 +12,7 @@ import os
 from pydantic import BaseModel, ConfigDict, Field
 
 from scene.config.profiles import DescriptionProfile
+from shared.secrets import get_secret_provider
 
 _DEFAULT_MAX_IMAGE_BYTES = 25 * 1024 * 1024  # 25 MiB, matches recognition multipart cap.
 
@@ -53,7 +54,9 @@ class DescriptionSettings(BaseModel):
         default_factory=lambda: int(os.environ.get("ACX_GPU_MAX_CONCURRENT_CALLS", "4"))
     )
     gpu_endpoint_url: str | None = Field(default_factory=lambda: os.environ.get("ACX_GPU_ENDPOINT_URL") or None)
-    gpu_endpoint_api_key: str | None = Field(default_factory=lambda: os.environ.get("ACX_GPU_ENDPOINT_API_KEY") or None)
+    gpu_endpoint_api_key: str | None = Field(
+        default_factory=lambda: get_secret_provider().get_secret_optional("ACX_GPU_ENDPOINT_API_KEY") or None
+    )
     gpu_endpoint_allowlist: tuple[str, ...] = Field(
         default_factory=lambda: _parse_allowlist(os.environ.get("ACX_GPU_ENDPOINT_ALLOWLIST"))
     )

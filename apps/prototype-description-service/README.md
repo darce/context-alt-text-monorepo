@@ -88,6 +88,35 @@ one usable service-mode dev API key.
 Don't cross the streams: `make reset-local` does not touch OCI; `make
 reset-remote` does not touch your local DB.
 
+### Secrets & configuration topology
+
+Every secret has one documented owner and one fetch mechanism. The authoritative
+per-secret ownership matrix (domain / owner / source-of-truth / consumer / prod
+target) is [`docs/secrets-inventory.md`](docs/secrets-inventory.md).
+
+- **Local onboarding — one command:** `make dev-setup` copies `.env.example` →
+  `.env` (never clobbers an existing one), then mints a usable local API key.
+  Mint additional keys with `make dev-mint-key`.
+- **Tenant API keys are DB-only**, minted/revoked via the `/admin` console (or
+  `scripts/manage_api_keys.py`). The static `RECOGNITION_ALLOWED_API_KEYS`
+  env-var bypass is **retired** (decision #1882) — there is no plaintext key
+  allowlist.
+- **All service secrets are read through the `SecretProvider` seam**
+  (`shared/secrets.py`) — never a raw `os.getenv` for a secret (a guard test,
+  `recognition/tests/unit/test_no_raw_secret_reads.py`, enforces this).
+- **Secret backend is selectable** via `RECOGNITION_SECRET_BACKEND`:
+  - `env` (default) — local/CI read secrets from `.env` / the process env.
+  - `oci_vault` (prod) — `api`/`worker` fetch secrets from OCI Vault via the
+    VM's **instance principal**; no app secret ships as host plaintext, and the
+    process **fail-fasts** at boot if Vault is unreachable. The
+    `RECOGNITION_VAULT_SECRET_MAP` maps each secret's logical name (e.g.
+    `PGPASSWORD`) to its Vault OCID. See
+    [`infra/oci/vault-instance-principal-runbook.md`](../../infra/oci/vault-instance-principal-runbook.md)
+    and [ADR-013](../../docs/adrs/ADR-013-oci-vault-secrets-backend.md).
+- **In production a missing/weak required secret aborts boot** with a clear,
+  var-named message (`validate_required_secrets`, `validate_oci_vault_boot`) —
+  no silent dev defaults.
+
 After either reset, prove plugin connectivity end-to-end with
 [`docs/operations/reset-smoke-runbook.md`](../../docs/operations/reset-smoke-runbook.md)
 (post-reset key handoff → plugin selector mode → workbench probe → captured

@@ -5,7 +5,6 @@ Covers:
 - at-limit (N+1) returns 429 with Retry-After + X-RateLimit-* headers
 - per-key counter isolation
 - tier override (PRO = 3x STANDARD)
-- dev-key bypass (RECOGNITION_ALLOWED_API_KEYS)
 - auth-disabled bypass (RECOGNITION_AUTH_ENABLED=false)
 - burst handling (window-based, not per-second)
 """
@@ -14,14 +13,9 @@ from __future__ import annotations
 
 import uuid
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-# Import at collection time so api.main's module-level create_app() runs under
-# clean env; individual tests below call _check_dev_key_guard() directly after
-# monkeypatching env vars.
-import api.main as _api_main  # noqa: F401
 from recognition.interface_adapters.http import deps as dependencies
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.deps import auth as auth_module
@@ -41,14 +35,9 @@ def _build_client(
     *,
     auth_enabled: str = "1",
     rpm: str = "5",
-    dev_keys: str | None = None,
 ) -> TestClient:
     monkeypatch.setenv("RECOGNITION_AUTH_ENABLED", auth_enabled)
     monkeypatch.setenv("RECOGNITION_RATE_LIMIT_RPM", rpm)
-    if dev_keys is not None:
-        monkeypatch.setenv("RECOGNITION_ALLOWED_API_KEYS", dev_keys)
-    else:
-        monkeypatch.delenv("RECOGNITION_ALLOWED_API_KEYS", raising=False)
     _reset_limiter_state()
 
     app = FastAPI()
@@ -143,20 +132,6 @@ def test_pro_tier_gets_triple_budget(monkeypatch) -> None:
     assert response.headers["X-RateLimit-Limit"] == "6"
 
 
-def test_dev_key_bypass(monkeypatch) -> None:
-    client = _build_client(monkeypatch, rpm="2", dev_keys="dev-secret-key")
-    tenant_id = str(uuid.uuid4())
-
-    # Dev keys take the fallback path in _lookup_api_key; we rely on the real
-    # branch (api_key_id=None, is_admin=True). No lookup override.
-    headers = {"X-Tenant-ID": tenant_id, "Authorization": "Bearer dev-secret-key"}
-
-    # Many requests beyond cap — all 200.
-    for _ in range(20):
-        r = client.get("/recognition/clusters", headers=headers)
-        assert r.status_code == 200
-
-
 def test_auth_disabled_bypass(monkeypatch) -> None:
     client = _build_client(monkeypatch, auth_enabled="0", rpm="2")
     tenant_id = str(uuid.uuid4())
@@ -193,35 +168,3 @@ def test_rate_limit_tier_enum_values() -> None:
     assert tier_rpm(RateLimitTier.STANDARD, settings) == 60
     assert tier_rpm(RateLimitTier.PRO, settings) == 180
     assert tier_rpm(RateLimitTier.ENTERPRISE, settings) == 600
-
-
-def test_fail_closed_guard_blocks_production_dev_keys(monkeypatch) -> None:
-    """create_app must raise RuntimeError when runtime_mode=production and dev keys set."""
-    monkeypatch.setenv("RECOGNITION_RUNTIME_MODE", "production")
-    monkeypatch.setenv("RECOGNITION_ALLOWED_API_KEYS", "oops-dev-key")
-
-    from api.main import _check_dev_key_guard
-
-    with pytest.raises(RuntimeError, match="dev_api_keys"):
-        _check_dev_key_guard()
-
-
-def test_fail_closed_guard_allows_production_when_dev_keys_empty(monkeypatch) -> None:
-    monkeypatch.setenv("RECOGNITION_RUNTIME_MODE", "production")
-    monkeypatch.delenv("RECOGNITION_ALLOWED_API_KEYS", raising=False)
-
-    from api.main import _check_dev_key_guard
-
-    # Should not raise.
-    _check_dev_key_guard()
-
-
-def test_fail_closed_guard_warns_in_non_production(monkeypatch, caplog) -> None:
-    monkeypatch.setenv("RECOGNITION_RUNTIME_MODE", "test")
-    monkeypatch.setenv("RECOGNITION_ALLOWED_API_KEYS", "dev-only")
-
-    from api.main import _check_dev_key_guard
-
-    with caplog.at_level("WARNING"):
-        _check_dev_key_guard()
-    assert any("dev_api_keys" in r.message for r in caplog.records)

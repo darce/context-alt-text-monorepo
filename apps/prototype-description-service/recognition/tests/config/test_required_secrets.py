@@ -98,3 +98,36 @@ def test_validate_required_secrets_reads_runtime_mode_from_env(
     monkeypatch.delenv("PGPASSWORD", raising=False)
     with pytest.raises(InsecureProductionConfigError, match="PGPASSWORD"):
         validate_required_secrets()
+
+
+def test_validate_required_secrets_rejects_weak_sync_dsn_even_with_strong_async_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SEC-RP-02: the sync engine resolves POSTGRES_SYNC_DSN independently, so a
+    strong async DSN must not vouch for a weak sync credential."""
+    monkeypatch.delenv("PGPASSWORD", raising=False)
+    monkeypatch.setenv(
+        "POSTGRES_DSN",
+        "postgresql+asyncpg://acx_app:prod-secret-not-context@postgres:5432/alt_context_service",
+    )
+    monkeypatch.setenv(
+        "POSTGRES_SYNC_DSN",
+        f"postgresql+psycopg://acx_app:{DEFAULT_PGPASSWORD}@postgres:5432/alt_context_service",
+    )
+    with pytest.raises(InsecureProductionConfigError, match="POSTGRES_SYNC_DSN"):
+        validate_required_secrets(runtime_mode="production")
+
+
+def test_validate_required_secrets_accepts_strong_async_and_sync_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("PGPASSWORD", raising=False)
+    monkeypatch.setenv(
+        "POSTGRES_DSN",
+        "postgresql+asyncpg://acx_app:prod-secret-not-context@postgres:5432/alt_context_service",
+    )
+    monkeypatch.setenv(
+        "POSTGRES_SYNC_DSN",
+        "postgresql+psycopg://acx_app:prod-secret-not-context@postgres:5432/alt_context_service",
+    )
+    validate_required_secrets(runtime_mode="production")

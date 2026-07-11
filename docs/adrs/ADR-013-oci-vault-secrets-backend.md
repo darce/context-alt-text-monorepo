@@ -34,9 +34,12 @@ Adopt **OCI Vault** as the production secret backend behind the Phase-2
   `RECOGNITION_SECRET_BACKEND=oci_vault|env` (default `env` for local/CI).
 - On the VM, secrets are fetched via the instance's **instance principal**
   ([SEC-04] least privilege) — compose/systemd carry no app-secret plaintext.
-- **Single Vault compartment**, secrets **namespaced by trust domain**
-  (`secret/<domain>/<name>`) mapped to OCIDs by the non-secret
-  `RECOGNITION_VAULT_SECRET_MAP` (decision `#1882`).
+- **Single Vault compartment**, secrets **namespaced by trust domain** on the
+  Vault side (`secret/<domain>/<name>`) — that path is the Vault-side name only.
+  The non-secret `RECOGNITION_VAULT_SECRET_MAP` maps each secret's **logical
+  name** (the env-var name the app requests, e.g. `PGPASSWORD` — the map key) to
+  its Vault **OCID** (the value); `PGPASSWORD` and `RECOGNITION_ADMIN_TOKEN` are
+  eagerly fetched and boot-required (decision `#1882`).
 - **Fail-fast** at boot when Vault is unreachable / auth fails / a required
   secret is missing — the process refuses to serve rather than start degraded
   ([RES-13]); the Vault call is bounded by timeout ([RES-02]) with 5xx/transport

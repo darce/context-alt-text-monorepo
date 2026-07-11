@@ -77,19 +77,21 @@ def _is_os_name(node: ast.AST | None) -> bool:
 
 
 def _is_os_environ(node: ast.AST | None) -> bool:
+    # os.environ (attribute) OR a bare `environ` from `from os import environ`.
     return (
         isinstance(node, ast.Attribute)
         and node.attr == "environ"
         and _is_os_name(node.value)
-    )
+    ) or (isinstance(node, ast.Name) and node.id == "environ")
 
 
 def _is_os_getenv_call(node: ast.Call) -> bool:
+    # os.getenv(...) OR a bare `getenv(...)` from `from os import getenv`.
     return (
         isinstance(node.func, ast.Attribute)
         and node.func.attr == "getenv"
         and _is_os_name(node.func.value)
-    )
+    ) or (isinstance(node.func, ast.Name) and node.func.id == "getenv")
 
 
 def _is_os_environ_get_call(node: ast.Call) -> bool:

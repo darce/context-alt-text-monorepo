@@ -119,26 +119,45 @@ def validate_required_secrets(runtime_mode: str | None = None) -> None:
     from db.settings import DEFAULT_PGPASSWORD
 
     # Secret reads go through SecretProvider (SECRETS-P2); non-secret runtime_mode stays on os.
-    postgres_dsn = get_secret_provider().get_secret_optional("POSTGRES_DSN")
-    if postgres_dsn:
-        # Same precedence as get_database_settings: explicit DSN wins over PG*.
-        password = urlparse(postgres_dsn).password
+    provider = get_secret_provider()
+
+    def _dsn_password_weak(dsn: str) -> bool:
+        password = urlparse(dsn).password
         if password is not None:
             password = unquote(password)
-        if password is None or password == "" or password == DEFAULT_PGPASSWORD:
+        return password is None or password == "" or password == DEFAULT_PGPASSWORD
+
+    # The async and sync engines resolve their DSNs INDEPENDENTLY
+    # (get_database_settings: POSTGRES_SYNC_DSN is used directly when set, not
+    # inferred from POSTGRES_DSN), so a strong async DSN does not vouch for the
+    # sync credential — validate both. Explicit DSN wins over PG*.
+    postgres_dsn = provider.get_secret_optional("POSTGRES_DSN")
+    postgres_sync_dsn = provider.get_secret_optional("POSTGRES_SYNC_DSN")
+
+    # Async engine credential: POSTGRES_DSN if set, else PGPASSWORD.
+    if postgres_dsn:
+        if _dsn_password_weak(postgres_dsn):
             raise InsecureProductionConfigError(
                 "POSTGRES_DSN is set in production with an empty or development-default "
                 "password (RECOGNITION_RUNTIME_MODE=production). Use a non-default password "
                 "in POSTGRES_DSN before serving traffic."
             )
-        return
+    else:
+        password = provider.get_secret_optional("PGPASSWORD")
+        if password is None or password == "" or password == DEFAULT_PGPASSWORD:
+            raise InsecureProductionConfigError(
+                "PGPASSWORD is unset, empty, or set to the development default in production "
+                "(RECOGNITION_RUNTIME_MODE=production). Set a non-default PGPASSWORD before "
+                "serving traffic."
+            )
 
-    password = get_secret_provider().get_secret_optional("PGPASSWORD")
-    if password is None or password == "" or password == DEFAULT_PGPASSWORD:
+    # Sync engine credential: POSTGRES_SYNC_DSN when set. When unset it is
+    # inferred from the async DSN / PG* already validated above.
+    if postgres_sync_dsn and _dsn_password_weak(postgres_sync_dsn):
         raise InsecureProductionConfigError(
-            "PGPASSWORD is unset, empty, or set to the development default in production "
-            "(RECOGNITION_RUNTIME_MODE=production). Set a non-default PGPASSWORD before "
-            "serving traffic."
+            "POSTGRES_SYNC_DSN is set in production with an empty or development-default "
+            "password (RECOGNITION_RUNTIME_MODE=production). Use a non-default password "
+            "in POSTGRES_SYNC_DSN before serving traffic."
         )
 
 

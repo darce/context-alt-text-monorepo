@@ -32,11 +32,18 @@ _KNOWN_SECRET_BACKENDS = frozenset({"env", "oci_vault"})
 _SECRET_BACKEND_ENV = "RECOGNITION_SECRET_BACKEND"
 _VAULT_SECRET_MAP_ENV = "RECOGNITION_VAULT_SECRET_MAP"
 
-# Required Vault logical names (decision #1882). Fetched eagerly at boot under
-# oci_vault so a missing/unreachable secret fails before the process serves.
+# Required Vault secrets, keyed by the LOGICAL env-var name that consumers pass
+# to get_secret(...) — the same keys used in RECOGNITION_VAULT_SECRET_MAP (the
+# namespaced secret/<domain>/<name> is only the Vault-side path, not the map
+# key). Fetched eagerly at boot under oci_vault so a missing/unreachable secret
+# fails before the process serves (RES-13). These two are always needed: the DB
+# password (rendered into the DSN when POSTGRES_DSN is not itself mapped) and the
+# /admin root-of-trust token. POSTGRES_DSN/POSTGRES_SYNC_DSN and the ACX_*_API_KEY
+# secrets are OPTIONAL — read via get_secret_optional with a fallback — so they
+# are not boot-required.
 REQUIRED_OCI_VAULT_SECRET_NAMES: tuple[str, ...] = (
-    "secret/recognition/pg-password",
-    "secret/recognition/admin-token",
+    "PGPASSWORD",
+    "RECOGNITION_ADMIN_TOKEN",
 )
 
 logger = logging.getLogger(__name__)
@@ -211,7 +218,7 @@ class OciVaultSecretProvider(SecretProvider):
         if content_b64 is None or content_b64 == "":
             raise SecretNotFound(f"Secret not found: {name}")
         try:
-            return base64.b64decode(content_b64).decode("utf-8")
+            return base64.b64decode(content_b64, validate=True).decode("utf-8")
         except (ValueError, UnicodeDecodeError) as exc:
             raise SecretNotFound(f"Secret not found: {name}") from exc
 

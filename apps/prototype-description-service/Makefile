@@ -1,4 +1,4 @@
-.PHONY: help test test-integration lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready dev-mint-key logs-tail logs-rotate logs-clean logs-archive worker-daemon db-reset reset admin-dev admin-test admin-open admin-token admin-status admin-down admin-oci-serve admin-oci FORCE
+.PHONY: help test test-integration lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready dev-setup dev-mint-key logs-tail logs-rotate logs-clean logs-archive worker-daemon db-reset reset admin-dev admin-test admin-open admin-token admin-status admin-down admin-oci-serve admin-oci FORCE
 
 PYTEST_WORKERS ?= 4
 
@@ -12,6 +12,7 @@ help:
 	@echo "  make install    - Install core dependencies only"
 	@echo "  make postgres-start - Start local PostgreSQL via Homebrew (if needed)"
 	@echo "  make dev-ready  - Prepare local env for development/testing (no dependency install)"
+	@echo "  make dev-setup  - Onboard local env (.env from example if absent, then mint a DB API key)"
 	@echo "  make dev-mint-key - Bootstrap local tenant + mint a DB API key (prints raw key once)"
 	@echo "  make serve      - Start PostgreSQL + development server + scan worker"
 	@echo "  make stop       - Stop the development server"
@@ -119,6 +120,30 @@ dev-mint-key:
 		--tenant $(DEV_TENANT_ID) --site-url $(DEV_SITE_URL)
 	@echo "Minting API key (raw secret printed once as api_key=...):"
 	@$(UV_RUN) python -m scripts.manage_api_keys --env local create --tenant $(DEV_TENANT_ID)
+
+# One-shot local onboarding: seed .env from the example (never clobber), remind
+# which values matter, then mint a DB API key. Safe to re-run (idempotent .env).
+dev-setup:
+	@if [ -f .env ]; then \
+		echo "✓ .env already present — leaving it unchanged (idempotent)"; \
+	elif [ -f .env.example ]; then \
+		cp .env.example .env; \
+		echo "✓ Created .env from .env.example"; \
+	else \
+		echo "✗ .env.example missing; cannot seed .env" >&2; \
+		exit 1; \
+	fi
+	@echo ""
+	@echo "Values a local dev typically sets (see docs/secrets-inventory.md):"
+	@echo "  PGUSER / PGPASSWORD / PGHOST / PGPORT / DB_NAME  — Postgres (defaults suit local Homebrew)"
+	@echo "  RECOGNITION_RUNTIME_MODE=development             — keep local (not production)"
+	@echo "  RECOGNITION_AUTH_ENABLED=1                       — require bearer keys"
+	@echo "  RECOGNITION_ADMIN_*                              — optional; use make admin-dev to enable /admin"
+	@echo "  Tenant API keys                                  — mint via make dev-mint-key (DB-only; no env allowlist)"
+	@echo ""
+	@echo "Minting a local tenant API key next (requires Postgres; run make postgres-start / make dev-ready first if needed)..."
+	@$(MAKE) dev-mint-key DEV_TENANT_ID="$(DEV_TENANT_ID)" DEV_SITE_URL="$(DEV_SITE_URL)"
+
 
 # =============================================================================
 # Admin console (local /admin tenant management)

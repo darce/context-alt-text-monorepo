@@ -24,7 +24,6 @@ from recognition.application.scan.capability import (
 from recognition.config.security import (
     get_security_settings,
     validate_admin_config,
-    validate_production_security,
     validate_required_secrets,
 )
 from recognition.config.settings import RecognitionSettings
@@ -114,26 +113,6 @@ def _log_startup_info() -> None:
     startup_logger.info("Listening on http://%s:%s", host, port)
 
 
-def _check_dev_key_guard() -> None:
-    """Fail-closed guard: refuse to start production with dev_api_keys configured.
-
-    Reuses the existing RECOGNITION_RUNTIME_MODE signal; no new env var.
-    """
-    recognition_settings = RecognitionSettings()
-    security_settings = get_security_settings()
-    if not security_settings.dev_api_keys:
-        return
-    if recognition_settings.runtime_mode == "production":
-        raise RuntimeError(
-            "Refusing to start: RECOGNITION_RUNTIME_MODE=production and dev_api_keys is non-empty "
-            "(RECOGNITION_ALLOWED_API_KEYS). Dev keys must never ship to production."
-        )
-    logger.warning(
-        "dev_api_keys is configured (RECOGNITION_ALLOWED_API_KEYS); allowed because runtime_mode=%s",
-        recognition_settings.runtime_mode,
-    )
-
-
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     # WBUX-4 INT-02: the bulk describe worker runs in-process, so a prior restart
@@ -159,10 +138,7 @@ async def _lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     # Log version info at startup
     _log_startup_info()
-    _check_dev_key_guard()
 
-    # Refuse to boot if production is configured with dev-only plaintext API keys.
-    validate_production_security()
     # Refuse to boot in production when required secrets are unset/dev-default (rg-008).
     validate_required_secrets()
 

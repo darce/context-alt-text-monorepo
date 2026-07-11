@@ -1,4 +1,4 @@
-.PHONY: help test test-integration lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready logs-tail logs-rotate logs-clean logs-archive worker-daemon db-reset reset admin-dev admin-test admin-open admin-token admin-status admin-down admin-oci-serve admin-oci FORCE
+.PHONY: help test test-integration lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready dev-mint-key logs-tail logs-rotate logs-clean logs-archive worker-daemon db-reset reset admin-dev admin-test admin-open admin-token admin-status admin-down admin-oci-serve admin-oci FORCE
 
 PYTEST_WORKERS ?= 4
 
@@ -12,6 +12,7 @@ help:
 	@echo "  make install    - Install core dependencies only"
 	@echo "  make postgres-start - Start local PostgreSQL via Homebrew (if needed)"
 	@echo "  make dev-ready  - Prepare local env for development/testing (no dependency install)"
+	@echo "  make dev-mint-key - Bootstrap local tenant + mint a DB API key (prints raw key once)"
 	@echo "  make serve      - Start PostgreSQL + development server + scan worker"
 	@echo "  make stop       - Stop the development server"
 	@echo "  make check      - Run linting, type checking, and tests"
@@ -105,6 +106,19 @@ serve: dev-ready
 # Stop development server
 stop:
 	@./scripts/start_prototype_local.sh stop
+
+# Mint a DB-backed local API key (replaces the retired RECOGNITION_ALLOWED_API_KEYS allowlist).
+# Prints the raw key once on stdout (api_key=...). Override tenant/site if needed:
+#   make dev-mint-key DEV_TENANT_ID=<uuid> DEV_SITE_URL=http://localhost:10003
+DEV_TENANT_ID ?= 00000000-0000-4000-8000-000000000001
+DEV_SITE_URL ?= http://localhost:10003
+
+dev-mint-key:
+	@echo "Bootstrapping local tenant $(DEV_TENANT_ID) at $(DEV_SITE_URL)..."
+	@$(UV_RUN) python -m scripts.manage_api_keys --env local tenant create \
+		--tenant $(DEV_TENANT_ID) --site-url $(DEV_SITE_URL)
+	@echo "Minting API key (raw secret printed once as api_key=...):"
+	@$(UV_RUN) python -m scripts.manage_api_keys --env local create --tenant $(DEV_TENANT_ID)
 
 # =============================================================================
 # Admin console (local /admin tenant management)

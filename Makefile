@@ -129,7 +129,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/logs.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-scripts test-hooks test-deploy-contract test-vlm3
+.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-scripts test-hooks test-deploy-contract test-vlm3 provision-customer
 
 # Default target
 help:
@@ -145,6 +145,7 @@ help:
 	@echo "  make fix-php-style    - Auto-fix WordPress plugin PHPCS violations"
 	@echo "  make clean-all        - Clean cache files in all apps"
 	@echo "  make reset-local      - Reset local backend DB + WordPress projection data (destructive)"
+	@echo "  make provision-customer EMAIL=<e> [PLAN=pro] [LABEL=\"Name\"] [ENV=local] - Concierge mint real tenant+key (AP-7)"
 	@echo "  make localwp-mirror-integrity - Run the WordPress mirror integrity check through the plugin app wrapper"
 	@echo "  make localwp-e2e-install - Install Chromium for the LocalWP Playwright harness"
 	@echo "  make localwp-e2e-auth - Bootstrap shared Playwright auth state against LocalWP"
@@ -513,6 +514,24 @@ clean-all:
 # ALLOW_NON_LOCAL=1 is passed explicitly.
 # For LocalWP on this machine, WP_PATH is typically the site's `app/public`
 # directory, e.g. `/Users/daniel/Development/wp-context-alt-text/app/public`.
+# AP-7: concierge sell-and-provision fast-path.
+# Mints a real (non-demo) tenant + API key via the recognition minter.
+# Prints the raw key once + tenant id + WP install snippet. Idempotent on EMAIL.
+# Usage:
+#   make provision-customer EMAIL=customer@example.com PLAN=pro LABEL="Acme Co"
+#   make provision-customer EMAIL=... ENV=prod   # against a remote DSN (container)
+provision-customer:
+	@if [ -z "$(EMAIL)" ]; then \
+		echo "EMAIL is required. Example: make provision-customer EMAIL=customer@example.com PLAN=pro LABEL=\"Acme Co\""; \
+		exit 1; \
+	fi
+	@cd apps/prototype-description-service && \
+		$(MAKE) --no-print-directory provision-customer \
+			EMAIL="$(EMAIL)" \
+			PLAN="$(or $(PLAN),pro)" \
+			LABEL="$(LABEL)" \
+			ENV="$(or $(ENV),local)"
+
 reset-local:
 	@if [ "$(CONFIRM_LOCAL_RESET)" != "RESET" ]; then \
 		echo "Refusing destructive local reset."; \

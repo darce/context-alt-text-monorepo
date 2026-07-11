@@ -38,13 +38,14 @@ from db.models.observability import (
     RecognitionRun,
 )
 from db.models.scene import DescribeRun, DescribeRunItem, ImageDescription
-from db.models.tenant import ApiKey, Tenant
+from db.models.tenant import ApiKey, DemoInstance, Tenant
 from db.models.worker_capability import WorkerCapability
 
 __all__ = [
     # Tenant
     "Tenant",
     "ApiKey",
+    "DemoInstance",
     # Identity
     "MediaIdentity",
     "IdentityCluster",

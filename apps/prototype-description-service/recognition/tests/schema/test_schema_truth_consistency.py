@@ -27,6 +27,7 @@ MIGRATION = importlib.import_module("db.migrations.versions.001_identity_schema"
 # RLS. Keys are table names; values are the rationale shown on failure.
 RLS_EXEMPT_ALLOWLIST = {
     "api_keys": "pre-tenant-context lookup path; RLS would break key resolution (documented in E15-34 scope Not-Doing)",
+    "demo_instances": "slug-lookup registry for demo router; cross-tenant by design (launch-plan §5 / DS-3)",
     "mv_identity_cluster_centroids": "materialized view; Postgres does not support RLS on matviews",
 }
 

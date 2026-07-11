@@ -68,10 +68,22 @@ def test_identity_schema_upgrade_creates_api_keys_table(monkeypatch) -> None:
     assert ("idx_api_keys_hash", "api_keys") in recorder.created_indexes
 
 
+def test_identity_schema_upgrade_creates_demo_instances_table(monkeypatch) -> None:
+    recorder = _RecordingOp()
+    monkeypatch.setattr(identity_schema, "op", recorder)
+
+    identity_schema.upgrade()
+
+    assert "demo_instances" in recorder.created_tables
+    assert ("idx_demo_instances_tenant", "demo_instances") in recorder.created_indexes
+    assert ("idx_demo_instances_expires", "demo_instances") in recorder.created_indexes
+
+
 def test_identity_schema_declares_expected_table_set() -> None:
     assert identity_schema.EXPECTED_SCHEMA_TABLES == [
         "tenants",
         "api_keys",
+        "demo_instances",
         "worker_capabilities",
         "media_identities",
         "curation_replay_records",
@@ -122,7 +134,7 @@ def test_identity_schema_downgrade_drops_children_before_parents(monkeypatch) ->
 
     assert ("idx_api_keys_hash", "api_keys") in recorder.dropped_indexes
     assert ("idx_api_keys_tenant", "api_keys") in recorder.dropped_indexes
-    assert recorder.dropped_tables[-2:] == ["api_keys", "tenants"]
+    assert recorder.dropped_tables[-3:] == ["demo_instances", "api_keys", "tenants"]
     assert recorder.dropped_tables.index("identity_members") < recorder.dropped_tables.index("identity_clusters")
     assert recorder.dropped_tables.index("identity_cluster_representatives") < recorder.dropped_tables.index(
         "identity_clusters"

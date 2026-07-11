@@ -7,6 +7,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field, field_validator
 
+from shared.secrets import get_secret_provider
+
 
 class RateLimitTier(StrEnum):
     """Per-key rate-limit tier. Values are the stored DB strings."""
@@ -69,7 +71,9 @@ class SecuritySettings(BaseModel):
         validate_default=True,
     )
     admin_enabled: bool = Field(default_factory=lambda: _bool_env("RECOGNITION_ADMIN_ENABLED", False))
-    admin_token: str = Field(default_factory=lambda: os.getenv("RECOGNITION_ADMIN_TOKEN", ""))
+    admin_token: str = Field(
+        default_factory=lambda: get_secret_provider().get_secret_optional("RECOGNITION_ADMIN_TOKEN", "") or ""
+    )
     admin_header: str = Field(default_factory=lambda: os.getenv("RECOGNITION_ADMIN_TOKEN_HEADER", "X-Admin-Token"))
 
     @field_validator("allowed_origins")

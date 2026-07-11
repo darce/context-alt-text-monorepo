@@ -25,6 +25,10 @@ on:
         type: choice
         options: [dev, staging, prod]
         default: dev
+      confirm:
+        description: "Type PROMOTE to authorize a prod deploy (required only for prod)"
+        type: string
+        default: ""
 
 # One in-flight deploy per environment; never cancel a deploy mid-flight.
 concurrency:
@@ -60,6 +64,16 @@ jobs:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci
+
+      - name: Require explicit confirmation for prod
+        if: steps.target.outputs.env == 'prod'
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "PROMOTE" ]; then
+            echo "::error::prod deploy requires the 'confirm' input = PROMOTE." \
+              "(Free-plan deliberate-action gate; private repos have no GitHub required-reviewers.)"
+            exit 1
+          fi
+          echo "prod deploy confirmed."
 
       - name: Configure SSH deploy key
         run: |

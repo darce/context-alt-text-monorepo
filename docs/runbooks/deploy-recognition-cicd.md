@@ -18,7 +18,7 @@ free tiers.
 | --- | --- | --- |
 | Push to `main` (touching `apps/prototype-description-service/**`, `scripts/deploy/**`, or this workflow) | `dev` | none (continuous) |
 | Manual **Run workflow** → `staging` | `staging` | GitHub Environment (optional reviewer) |
-| Manual **Run workflow** → `prod` | `prod` | GitHub Environment **required reviewer** + `CONFIRM=PROMOTE` (auto-set by the workflow; enforced by the script) |
+| Manual **Run workflow** → `prod` | `prod` | Must type **`confirm=PROMOTE`** in the dispatch form (workflow gate) + `main`-only deployment branch; script also enforces `CONFIRM=PROMOTE` |
 
 ## One-time setup
 
@@ -69,11 +69,22 @@ ssh ubuntu@acx-backend.tail1a44b8.ts.net \
 | `TS_OAUTH_SECRET` | Tailscale OAuth client secret |
 | `ACX_DEPLOY_SSH_KEY` | Contents of the **private** `acx-ci-deploy` key |
 
-### 4. GitHub Environments (the gates)
+### 4. GitHub Environments
 
-*Settings → Environments →* create `dev`, `staging`, `prod`.
-- `prod`: enable **Required reviewers** (add yourself) and **Deployment branches → Selected → `main`**. This pauses every prod run for approval.
-- `staging`: optional reviewer.
+*Settings → Environments →* create `dev`, `staging`, `prod` (for deploy history +
+the `environment:` key to resolve). Add nothing to `dev`/`staging`.
+
+For **`prod`**, under **Deployment branches and tags** switch the dropdown from
+*No restriction* to **Selected branches and tags** → **Add rule** → `main` (so
+prod can only deploy from `main`).
+
+> **Note (private repo, Free plan):** GitHub *Required reviewers* / *Wait timer*
+> protection rules are unavailable for private repos on the Free plan (they need
+> Pro/Team, or a public repo). Instead, the prod gate is a **deliberate-action
+> confirmation in the workflow**: a `prod` deploy is manual `workflow_dispatch`
+> only AND requires typing `PROMOTE` in the run form's **confirm** field — the
+> job fails fast otherwise. Upgrade to GitHub Pro later if you want native
+> second-person approval.
 
 ### 5. VM prerequisites (already true post-secrets-consolidation)
 

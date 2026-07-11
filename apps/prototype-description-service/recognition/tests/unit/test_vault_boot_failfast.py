@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, create_autospec
 
@@ -26,9 +28,12 @@ from shared.secrets import (
     validate_oci_vault_boot,
 )
 
+# Map keys are the LOGICAL env-var names consumers pass to get_secret(...) — the
+# same keys the deployable RECOGNITION_VAULT_SECRET_MAP uses. The namespaced
+# secret/<domain>/<name> is only the Vault-side path, not the map key.
 _MAP = {
-    "secret/recognition/pg-password": "ocid1.vaultsecret.oc1..pg",
-    "secret/recognition/admin-token": "ocid1.vaultsecret.oc1..admin",
+    "PGPASSWORD": "ocid1.vaultsecret.oc1..pg",
+    "RECOGNITION_ADMIN_TOKEN": "ocid1.vaultsecret.oc1..admin",
 }
 
 
@@ -60,11 +65,26 @@ def _configure_oci_vault(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("RECOGNITION_ADMIN_TOKEN", "must-not-be-used-as-fallback-token-value")
 
 
-def test_required_vault_secret_names_match_decision_1882() -> None:
-    assert REQUIRED_OCI_VAULT_SECRET_NAMES == (
-        "secret/recognition/pg-password",
-        "secret/recognition/admin-token",
-    )
+def test_required_vault_secret_names_are_logical_consumer_names() -> None:
+    # Boot-required names must be the LOGICAL env-var names consumers request
+    # (what OciVaultSecretProvider.get_secret looks up in the map), NOT the
+    # namespaced Vault paths — otherwise the map lookup misses and boot fails on
+    # a correctly-configured prod map (SEC-RP-01).
+    assert REQUIRED_OCI_VAULT_SECRET_NAMES == ("PGPASSWORD", "RECOGNITION_ADMIN_TOKEN")
+
+
+def test_required_names_present_in_shipped_env_prod_example_map() -> None:
+    # Cross-check the constant against the deployable contract: every
+    # boot-required name must be a key of the shipped .env.prod.example
+    # RECOGNITION_VAULT_SECRET_MAP, so a key-vocabulary drift fails here rather
+    # than only in prod (SEC-RP-05).
+    example = Path(__file__).resolve().parents[3] / ".env.prod.example"
+    text = example.read_text(encoding="utf-8")
+    match = re.search(r"^RECOGNITION_VAULT_SECRET_MAP=(\{.*\})\s*$", text, re.MULTILINE)
+    assert match, "RECOGNITION_VAULT_SECRET_MAP not found in .env.prod.example"
+    shipped_map = json.loads(match.group(1))
+    missing = [n for n in REQUIRED_OCI_VAULT_SECRET_NAMES if n not in shipped_map]
+    assert not missing, f"boot-required names missing from shipped vault map: {missing}"
 
 
 def test_validate_oci_vault_boot_noop_for_env_backend(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -85,7 +105,7 @@ def test_boot_unreachable_vault_raises_typed_error_and_logs(
 
     with caplog.at_level(logging.ERROR), pytest.raises(
         VaultBootError,
-        match=r"Vault unreachable.*secret/recognition/pg-password.*refusing to serve",
+        match=r"Vault unreachable.*PGPASSWORD.*refusing to serve",
     ):
         validate_oci_vault_boot()
 
@@ -105,7 +125,7 @@ def test_boot_auth_failure_raises_typed_error(monkeypatch: pytest.MonkeyPatch) -
 
     with pytest.raises(
         VaultBootError,
-        match=r"auth/authorization error.*secret/recognition/pg-password.*refusing to serve",
+        match=r"auth/authorization error.*PGPASSWORD.*refusing to serve",
     ):
         validate_oci_vault_boot()
 
@@ -125,7 +145,7 @@ def test_boot_missing_required_secret_raises_typed_error(
 
     with pytest.raises(
         VaultBootError,
-        match=r"required secret 'secret/recognition/pg-password' not found.*refusing to serve",
+        match=r"required secret 'PGPASSWORD' not found.*refusing to serve",
     ):
         validate_oci_vault_boot()
 
@@ -138,11 +158,11 @@ def test_boot_unmapped_required_secret_raises_without_client_call(
     # Map only admin-token; pg-password is required first and must fail closed.
     monkeypatch.setenv(
         "RECOGNITION_VAULT_SECRET_MAP",
-        json.dumps({"secret/recognition/admin-token": "ocid1.vaultsecret.oc1..admin"}),
+        json.dumps({"RECOGNITION_ADMIN_TOKEN": "ocid1.vaultsecret.oc1..admin"}),
     )
     client = _spec_client()
     provider = OciVaultSecretProvider(
-        {"secret/recognition/admin-token": "ocid1.vaultsecret.oc1..admin"},
+        {"RECOGNITION_ADMIN_TOKEN": "ocid1.vaultsecret.oc1..admin"},
         secrets_client=client,
         max_attempts=1,
         sleeper=lambda _: None,
@@ -151,7 +171,7 @@ def test_boot_unmapped_required_secret_raises_without_client_call(
 
     with pytest.raises(
         VaultBootError,
-        match=r"required secret 'secret/recognition/pg-password' not found.*refusing to serve",
+        match=r"required secret 'PGPASSWORD' not found.*refusing to serve",
     ):
         validate_oci_vault_boot()
     client.get_secret_bundle.assert_not_called()

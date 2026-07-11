@@ -1,4 +1,4 @@
-.PHONY: help test test-integration lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready logs-tail logs-rotate logs-clean logs-archive worker-daemon db-reset reset admin-dev admin-test admin-open admin-token admin-status admin-down admin-oci-serve admin-oci FORCE
+.PHONY: help test test-integration lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready logs-tail logs-rotate logs-clean logs-archive worker-daemon db-reset reset admin-dev admin-test admin-open admin-token admin-status admin-down admin-oci-serve admin-oci provision-customer FORCE
 
 PYTEST_WORKERS ?= 4
 
@@ -31,6 +31,7 @@ help:
 	@echo "  make admin-open   - Open the /admin console in a browser"
 	@echo "  make admin-status - Show service/admin reachability state"
 	@echo "  make admin-down   - Stop the local service"
+	@echo "  make provision-customer EMAIL=<e> [PLAN=pro] [LABEL=\"Name\"] [ENV=local] - Concierge mint real tenant+key (AP-7)"
 	@echo "  make lane-*     - Worktree lane commands (forwarded to root Makefile; run 'make help' from repo root for full list)"
 	@echo "  make worker-daemon* - Worker daemon controls (run/status/stop/resume/tail) forwarded to root Makefile"
 	@echo ""
@@ -119,6 +120,20 @@ admin-dev:
 
 admin-test:
 	@./scripts/admin_dev.sh test
+
+# AP-7: mint a real (non-demo) customer tenant + API key via the shared minter.
+# Idempotent on EMAIL. Prints raw key once + WP install snippet.
+# Usage: make provision-customer EMAIL=c@example.com PLAN=pro LABEL="Acme" [ENV=local]
+provision-customer:
+	@if [ -z "$(EMAIL)" ]; then \
+		echo "EMAIL is required. Example: make provision-customer EMAIL=customer@example.com PLAN=pro LABEL=\"Acme Co\""; \
+		exit 1; \
+	fi
+	@$(UV_RUN) python -m scripts.provision_customer \
+		--env "$(or $(ENV),local)" \
+		--email "$(EMAIL)" \
+		--plan "$(or $(PLAN),pro)" \
+		$(if $(LABEL),--label "$(LABEL)",)
 
 admin-open:
 	@./scripts/admin_dev.sh open

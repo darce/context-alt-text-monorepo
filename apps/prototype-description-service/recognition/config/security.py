@@ -101,12 +101,14 @@ _ADMIN_TOKEN_MIN_LENGTH = 32
 def validate_required_secrets(runtime_mode: str | None = None) -> None:
     """Fail closed when production is missing a non-default DB password.
 
-    Mirrors ``db.settings.get_database_settings`` resolution: when
-    ``POSTGRES_DSN`` is set, the password is taken from that DSN; otherwise the
-    process falls back to ``PGPASSWORD`` (defaulting to the shared local
-    ``context`` value). Production must never boot on that silent default
-    (rg-008). Callers invoke this at app startup so the process refuses to
-    serve traffic rather than connecting with a known-weak credential.
+    Mirrors ``db.settings.get_database_settings`` resolution. The async engine
+    credential comes from ``POSTGRES_DSN`` when set, else ``PGPASSWORD``
+    (defaulting to the shared local ``context`` value). The sync engine resolves
+    ``POSTGRES_SYNC_DSN`` INDEPENDENTLY, so it is validated separately when set
+    (when unset it is inferred from the already-validated async DSN / PG*).
+    Production must never boot on a weak/empty/default credential for either
+    engine (rg-008). Callers invoke this at app startup so the process refuses
+    to serve rather than connecting with a known-weak credential.
     """
     runtime_mode = runtime_mode or os.environ.get("RECOGNITION_RUNTIME_MODE", "production")
     if runtime_mode != "production":

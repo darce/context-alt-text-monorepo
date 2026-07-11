@@ -8,6 +8,8 @@ from functools import lru_cache
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
+from shared.secrets import get_secret_provider
+
 DEFAULT_PGUSER = "context"
 DEFAULT_PGPASSWORD = "context"
 DEFAULT_PGHOST = "localhost"
@@ -124,7 +126,7 @@ def _render_default_async_dsn() -> str:
 
     return DEFAULT_ASYNC_DSN_TEMPLATE.format(
         PGUSER=os.getenv("PGUSER", DEFAULT_PGUSER),
-        PGPASSWORD=os.getenv("PGPASSWORD", DEFAULT_PGPASSWORD),
+        PGPASSWORD=get_secret_provider().get_secret_optional("PGPASSWORD", DEFAULT_PGPASSWORD),
         PGHOST=os.getenv("PGHOST", DEFAULT_PGHOST),
         PGPORT=os.getenv("PGPORT", DEFAULT_PGPORT),
         DB_NAME=_resolved_db_name(),
@@ -136,7 +138,7 @@ def _render_default_sync_dsn() -> str:
 
     return DEFAULT_SYNC_DSN_TEMPLATE.format(
         PGUSER=os.getenv("PGUSER", DEFAULT_PGUSER),
-        PGPASSWORD=os.getenv("PGPASSWORD", DEFAULT_PGPASSWORD),
+        PGPASSWORD=get_secret_provider().get_secret_optional("PGPASSWORD", DEFAULT_PGPASSWORD),
         PGHOST=os.getenv("PGHOST", DEFAULT_PGHOST),
         PGPORT=os.getenv("PGPORT", DEFAULT_PGPORT),
         DB_NAME=_resolved_db_name(),
@@ -213,7 +215,7 @@ def get_database_settings() -> DatabaseSettings:
 
     _load_env_file()
     async_dsn, async_warning = canonicalize_local_postgres_dsn(
-        os.getenv("POSTGRES_DSN"),
+        get_secret_provider().get_secret_optional("POSTGRES_DSN"),
         env_mode=os.getenv("ENV_MODE", "local"),
         setting_name="POSTGRES_DSN",
     )
@@ -225,7 +227,7 @@ def get_database_settings() -> DatabaseSettings:
         async_dsn = _render_default_async_dsn()
 
     sync_dsn, sync_warning = canonicalize_local_postgres_dsn(
-        os.getenv("POSTGRES_SYNC_DSN"),
+        get_secret_provider().get_secret_optional("POSTGRES_SYNC_DSN"),
         env_mode=os.getenv("ENV_MODE", "local"),
         setting_name="POSTGRES_SYNC_DSN",
     )

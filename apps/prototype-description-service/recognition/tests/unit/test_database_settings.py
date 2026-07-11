@@ -2,9 +2,132 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import db.settings as settings_module
+
+
+def test_database_settings_explicit_postgres_dsn_resolves_and_writes_back(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Characterization: explicit POSTGRES_DSN/SYNC_DSN resolve + env write-back.
+
+    Pins async/sync DSN values and asserts os.environ write-backs still occur
+    (Alembic env.py depends on them). SECRETS-P2 Slice 2 baseline.
+    """
+    env_file = tmp_path / ".env"
+    explicit_async = "postgresql+asyncpg://char_user:char_pass@db.example:5433/alt_context_service"
+    explicit_sync = "postgresql+psycopg://char_user:char_pass@db.example:5433/alt_context_service"
+
+    for key in (
+        "PGUSER",
+        "PGPASSWORD",
+        "PGHOST",
+        "PGPORT",
+        "DB_NAME",
+        "POSTGRES_DSN",
+        "POSTGRES_SYNC_DSN",
+        "ENV_MODE",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("ENV_MODE", "local")
+    monkeypatch.setenv("POSTGRES_DSN", explicit_async)
+    monkeypatch.setenv("POSTGRES_SYNC_DSN", explicit_sync)
+    monkeypatch.setattr(settings_module, "ENV_FILE", env_file)
+
+    settings_module.get_database_settings.cache_clear()
+    try:
+        settings = settings_module.get_database_settings()
+    finally:
+        settings_module.get_database_settings.cache_clear()
+
+    assert settings.postgres_dsn == explicit_async
+    assert settings.postgres_sync_dsn == explicit_sync
+    assert os.environ["POSTGRES_DSN"] == explicit_async
+    assert os.environ["POSTGRES_SYNC_DSN"] == explicit_sync
+
+
+def test_database_settings_default_render_with_pgpassword_set(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Characterization: default DSN render when PGPASSWORD is set, no POSTGRES_DSN."""
+    env_file = tmp_path / ".env"
+
+    for key in (
+        "PGUSER",
+        "PGPASSWORD",
+        "PGHOST",
+        "PGPORT",
+        "DB_NAME",
+        "POSTGRES_DSN",
+        "POSTGRES_SYNC_DSN",
+        "ENV_MODE",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("ENV_MODE", "local")
+    monkeypatch.setenv("PGUSER", "render_user")
+    monkeypatch.setenv("PGPASSWORD", "render_secret")
+    monkeypatch.setenv("PGHOST", "render.host")
+    monkeypatch.setenv("PGPORT", "5434")
+    monkeypatch.setenv("DB_NAME", "alt_context_service")
+    monkeypatch.setattr(settings_module, "ENV_FILE", env_file)
+
+    settings_module.get_database_settings.cache_clear()
+    try:
+        settings = settings_module.get_database_settings()
+    finally:
+        settings_module.get_database_settings.cache_clear()
+
+    assert (
+        settings.postgres_dsn
+        == "postgresql+asyncpg://render_user:render_secret@render.host:5434/alt_context_service"
+    )
+    assert (
+        settings.postgres_sync_dsn
+        == "postgresql+psycopg://render_user:render_secret@render.host:5434/alt_context_service"
+    )
+
+
+def test_database_settings_default_render_with_pgpassword_unset(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Characterization: default DSN render when PGPASSWORD unset → DEFAULT_PGPASSWORD."""
+    env_file = tmp_path / ".env"
+
+    for key in (
+        "PGUSER",
+        "PGPASSWORD",
+        "PGHOST",
+        "PGPORT",
+        "DB_NAME",
+        "POSTGRES_DSN",
+        "POSTGRES_SYNC_DSN",
+        "ENV_MODE",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("ENV_MODE", "local")
+    monkeypatch.setenv("PGUSER", "unset_user")
+    monkeypatch.setenv("PGHOST", "unset.host")
+    monkeypatch.setenv("PGPORT", "5435")
+    monkeypatch.setenv("DB_NAME", "alt_context_service")
+    monkeypatch.setattr(settings_module, "ENV_FILE", env_file)
+
+    settings_module.get_database_settings.cache_clear()
+    try:
+        settings = settings_module.get_database_settings()
+    finally:
+        settings_module.get_database_settings.cache_clear()
+
+    default_pw = settings_module.DEFAULT_PGPASSWORD
+    assert (
+        settings.postgres_dsn
+        == f"postgresql+asyncpg://unset_user:{default_pw}@unset.host:5435/alt_context_service"
+    )
+    assert (
+        settings.postgres_sync_dsn
+        == f"postgresql+psycopg://unset_user:{default_pw}@unset.host:5435/alt_context_service"
+    )
 
 
 def test_database_settings_expand_env_file_references(monkeypatch, tmp_path: Path) -> None:

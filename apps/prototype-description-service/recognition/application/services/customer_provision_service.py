@@ -11,6 +11,7 @@ import uuid
 from dataclasses import dataclass
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import Tenant
@@ -94,19 +95,25 @@ async def provision_customer(
     tier = plan_to_tier(resolved_plan)
     site_url = customer_site_url(normalized_email)
 
-    existing = (
-        await session.execute(select(Tenant).where(Tenant.primary_contact_email == normalized_email))
-    ).scalar_one_or_none()
-    if existing is not None:
+    def _existing(tenant: Tenant) -> ProvisionResult:
         return ProvisionResult(
             status="existing",
-            tenant_id=existing.id,
+            tenant_id=tenant.id,
             email=normalized_email,
-            plan=existing.plan or resolved_plan,
-            label=existing.display_name,
+            plan=tenant.plan or resolved_plan,
+            label=tenant.display_name,
             raw_key=None,
             key_id=None,
         )
+
+    async def _reselect() -> Tenant | None:
+        return (
+            await session.execute(select(Tenant).where(Tenant.primary_contact_email == normalized_email))
+        ).scalar_one_or_none()
+
+    existing = await _reselect()
+    if existing is not None:
+        return _existing(existing)
 
     tenant_id = uuid.uuid4()
     tenant = Tenant(
@@ -117,7 +124,16 @@ async def provision_customer(
         plan=resolved_plan,
     )
     session.add(tenant)
-    await session.flush()
+    try:
+        await session.flush()
+    except IntegrityError:
+        # A concurrent run won the unique-email race. The contract is idempotent on
+        # email, so converge to the existing tenant instead of surfacing a crash.
+        await session.rollback()
+        raced = await _reselect()
+        if raced is None:
+            raise
+        return _existing(raced)
 
     # No expires_in_days → permanent customer key (demo path is the one that sets expiry).
     record, raw = await mint_api_key(session, tenant_id=tenant_id, tier=tier, expires_in_days=None)

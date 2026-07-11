@@ -157,24 +157,6 @@ def _ensure_index(op, index_name: str, table_name: str, columns, **kw) -> None:
         )
 
 
-def _column_names(op, table_name: str) -> set[str]:
-    """Return column names for ``table_name``, or empty if the table is absent."""
-    bind = op.get_bind()
-    inspector = sa.inspect(bind)
-    if table_name not in inspector.get_table_names():
-        return set()
-    return {col["name"] for col in inspector.get_columns(table_name)}
-
-
-def _ensure_column(op, table_name: str, column: sa.Column) -> None:
-    """Add a missing column to an existing table (expand-first; ADR-012)."""
-    if column.name in _column_names(op, table_name):
-        return
-    if table_name not in sa.inspect(op.get_bind()).get_table_names():
-        return
-    op.add_column(table_name, column)
-
-
 def ensure_tables(op) -> None:
     """Create every migration-owned regular table (and its indexes) if missing."""
     _ensure_table(
@@ -201,10 +183,6 @@ def ensure_tables(op) -> None:
             nullable=False,
         ),
     )
-    # Live DBs created before AP-7 only get columns via ALTER-add (create_table is a no-op).
-    _ensure_column(op, "tenants", sa.Column("primary_contact_email", sa.String(length=255), nullable=True))
-    _ensure_column(op, "tenants", sa.Column("display_name", sa.String(length=255), nullable=True))
-    _ensure_column(op, "tenants", sa.Column("plan", sa.String(length=50), nullable=True))
     _ensure_index(
         op,
         "uq_tenants_primary_contact_email",

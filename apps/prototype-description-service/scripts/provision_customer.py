@@ -147,9 +147,14 @@ async def run(argv: Sequence[str] | None = None, *, session: AsyncSession | None
     opened_session = False
     if session is None:
         from db.session import async_session_factory
+        from db.tenant_context import enable_rls_bypass
 
         session = async_session_factory()
         opened_session = True
+        # Concierge provisioning is cross-tenant admin work: bypass RLS (SET LOCAL,
+        # transaction-scoped) so writes to RLS-forced tables like audit_events clear
+        # the tenant-isolation policy — same seam as the /admin router's session.
+        await enable_rls_bypass(session)
 
     try:
         try:
@@ -166,6 +171,10 @@ async def run(argv: Sequence[str] | None = None, *, session: AsyncSession | None
 
         _emit_result(result, api_url=_public_api_url())
         return 0
+    except Exception:
+        if opened_session:
+            await session.rollback()
+        raise
     finally:
         if opened_session:
             await session.close()

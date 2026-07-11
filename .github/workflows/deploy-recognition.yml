@@ -64,6 +64,22 @@ jobs:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci
+          args: --accept-dns=true
+
+      - name: Pin VM tailnet address + wait for SSH reachability
+        env:
+          OCI_VM_TS_IP: "100.115.186.109"
+        run: |
+          # Resolve the VM by its stable tailnet IP regardless of MagicDNS state
+          # on the runner (SNI still uses the hostname, so TLS stays valid).
+          echo "${OCI_VM_TS_IP} ${OCI_HOST}" | sudo tee -a /etc/hosts
+          for i in $(seq 1 20); do
+            if nc -z -w3 "${OCI_VM_TS_IP}" 22 2>/dev/null; then
+              echo "VM ${OCI_HOST} (${OCI_VM_TS_IP}) reachable on :22"; exit 0
+            fi
+            echo "waiting for tailnet route to VM... attempt ${i}/20"; sleep 3
+          done
+          echo "::error::VM ${OCI_VM_TS_IP}:22 not reachable over the tailnet after wait"; exit 1
 
       - name: Require explicit confirmation for prod
         if: steps.target.outputs.env == 'prod'

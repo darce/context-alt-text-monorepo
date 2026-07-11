@@ -1,15 +1,15 @@
 {
   "schema_version": 2,
   "source_kind": "package",
-  "package_version": "0.3.8",
+  "package_version": "0.3.10",
   "stack_distribution": "workbay",
-  "stack_version": "0.3.14",
+  "stack_version": "0.3.16",
   "stack_members": {
-    "mcp-workbay-handoff": "0.2.3",
-    "mcp-workbay-orchestrator": "0.2.4",
-    "workbay-bootstrap": "0.3.10",
-    "workbay-protocol": "0.2.1",
-    "workbay-system": "0.3.8"
+    "mcp-workbay-handoff": "0.2.5",
+    "mcp-workbay-orchestrator": "0.2.6",
+    "workbay-bootstrap": "0.3.12",
+    "workbay-protocol": "0.2.2",
+    "workbay-system": "0.3.10"
   },
   "profile": "all",
   "surfaces": [
@@ -36,17 +36,17 @@
     {
       "path": "Makefile.d/ace.mk",
       "source": "shared",
-      "provenance_key": "package:0.3.8"
+      "provenance_key": "package:0.3.10"
     },
     {
       "path": "Makefile.d/compaction.mk",
       "source": "shared",
-      "provenance_key": "package:0.3.8"
+      "provenance_key": "package:0.3.10"
     },
     {
       "path": "Makefile.d/plans.mk",
       "source": "shared",
-      "provenance_key": "package:0.3.8"
+      "provenance_key": "package:0.3.10"
     },
     {
       "path": "Makefile.d/plugins.mk",
@@ -55,12 +55,16 @@
     {
       "path": "Makefile.d/workflows.mk",
       "source": "shared",
-      "provenance_key": "package:0.3.8"
+      "provenance_key": "package:0.3.10"
     },
     {
       "path": "scripts/workbay/git-plan-cat.sh",
       "source": "shared",
-      "provenance_key": "package:0.3.8"
+      "provenance_key": "package:0.3.10"
+    },
+    {
+      "path": "scripts/workbay/wb",
+      "source": "local"
     },
     {
       "path": ".codex/hooks.json",
@@ -122,7 +126,7 @@
     },
     {
       "path": ".claude/settings.json",
-      "action": "updated"
+      "action": "unchanged"
     },
     {
       "path": ".gitignore",
@@ -196,7 +200,6 @@
     }
   ],
   "mcp_servers": [
-    "codebase-graph-mcp",
     "workbay-handoff-mcp",
     "workbay-orchestrator-mcp"
   ],
@@ -239,7 +242,7 @@
       ],
       "cwd": "/Users/daniel/Development/context-alt-text-monorepo",
       "common_dir": "/Users/daniel/Development/context-alt-text-monorepo/.git",
-      "duration_ms": 39.735,
+      "duration_ms": 29.922,
       "status": "ok"
     }
   ]

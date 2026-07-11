@@ -25,6 +25,7 @@ from recognition.config.security import (
     get_security_settings,
     validate_admin_config,
     validate_production_security,
+    validate_required_secrets,
 )
 from recognition.config.settings import RecognitionSettings
 from recognition.interface_adapters.http import deps as http_deps
@@ -162,6 +163,8 @@ def create_app() -> FastAPI:
 
     # Refuse to boot if production is configured with dev-only plaintext API keys.
     validate_production_security()
+    # Refuse to boot in production when required secrets are unset/dev-default (rg-008).
+    validate_required_secrets()
 
     app = FastAPI(
         title="Prototype Description Service",

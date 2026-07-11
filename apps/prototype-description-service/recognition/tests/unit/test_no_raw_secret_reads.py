@@ -151,14 +151,17 @@ def test_no_raw_secret_env_reads_outside_provider() -> None:
 
 
 def test_provider_module_is_only_allowed_env_reader() -> None:
-    """shared/secrets.py must exist and is the only production allowlisted reader."""
+    """shared/secrets.py is the only allowlisted production reader.
+
+    EnvSecretProvider uses a dynamic ``os.environ[name]`` key (not a secret
+    literal), so the literal-name scanner finds zero hits there — the adapter
+    still remains the sole path permitted if a future literal appears.
+    """
     secrets_path = _service_root() / "shared" / "secrets.py"
     assert secrets_path.is_file()
-    assert "shared/secrets.py" in _ALLOWED_SECRET_READ_PATHS
-    # Sanity: EnvSecretProvider still performs the env subscript read.
+    assert _ALLOWED_SECRET_READ_PATHS == frozenset({"shared/secrets.py"})
     source = secrets_path.read_text(encoding="utf-8")
-    hits = _find_raw_secret_reads(source, rel_path="shared/secrets.py")
-    # Provider uses os.environ[name] dynamically (variable key), not a literal
-    # SECRET name — so literal-secret hits should be empty; the adapter is still
-    # the sole module allowed if a future literal appears.
-    assert isinstance(hits, list)
+    assert "class EnvSecretProvider" in source
+    assert "os.environ" in source
+    # No hard-coded secret-name literals should be read inside the provider.
+    assert _find_raw_secret_reads(source, rel_path="shared/secrets.py") == []

@@ -7,6 +7,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field, field_validator
 
+from shared.secrets import get_secret_provider
+
 
 class RateLimitTier(StrEnum):
     """Per-key rate-limit tier. Values are the stored DB strings."""
@@ -57,9 +59,6 @@ class SecuritySettings(BaseModel):
     api_key_hash_algorithm: str = Field(
         default_factory=lambda: os.getenv("RECOGNITION_API_KEY_HASH_ALGORITHM", "sha256")
     )
-    dev_api_keys: list[str] = Field(
-        default_factory=lambda: [t for t in os.getenv("RECOGNITION_ALLOWED_API_KEYS", "").split(",") if t.strip()]
-    )
     rate_limit_requests_per_minute: int = Field(
         default_factory=lambda: int(os.getenv("RECOGNITION_RATE_LIMIT_RPM", "60"))
     )
@@ -72,7 +71,9 @@ class SecuritySettings(BaseModel):
         validate_default=True,
     )
     admin_enabled: bool = Field(default_factory=lambda: _bool_env("RECOGNITION_ADMIN_ENABLED", False))
-    admin_token: str = Field(default_factory=lambda: os.getenv("RECOGNITION_ADMIN_TOKEN", ""))
+    admin_token: str = Field(
+        default_factory=lambda: get_secret_provider().get_secret_optional("RECOGNITION_ADMIN_TOKEN", "") or ""
+    )
     admin_header: str = Field(default_factory=lambda: os.getenv("RECOGNITION_ADMIN_TOKEN_HEADER", "X-Admin-Token"))
 
     @field_validator("allowed_origins")
@@ -91,33 +92,75 @@ def get_security_settings() -> SecuritySettings:
 
 
 class InsecureProductionConfigError(RuntimeError):
-    """Raised at startup when production config contains dev-only credentials."""
-
-
-def validate_production_security(
-    security: SecuritySettings | None = None,
-    runtime_mode: str | None = None,
-) -> None:
-    """Fail closed when production is configured with dev-only plaintext API keys.
-
-    ``RECOGNITION_ALLOWED_API_KEYS`` is a development bypass that lets unhashed
-    bearer tokens authenticate without a database-backed api_keys row. Leaving
-    it populated in a production deployment turns shared-secret strings into a
-    plaintext authentication surface that bypasses tenant isolation. Callers
-    invoke this at app startup so the process refuses to serve traffic rather
-    than silently accepting those credentials.
-    """
-    security = security or get_security_settings()
-    runtime_mode = runtime_mode or os.environ.get("RECOGNITION_RUNTIME_MODE", "production")
-    if runtime_mode == "production" and security.dev_api_keys:
-        raise InsecureProductionConfigError(
-            "RECOGNITION_ALLOWED_API_KEYS is set in production (RECOGNITION_RUNTIME_MODE=production). "
-            "Plaintext dev bypass keys must not be enabled outside development; unset the variable or "
-            "set RECOGNITION_RUNTIME_MODE to a non-production value."
-        )
+    """Raised at startup when production config contains insecure credentials."""
 
 
 _ADMIN_TOKEN_MIN_LENGTH = 32
+
+
+def validate_required_secrets(runtime_mode: str | None = None) -> None:
+    """Fail closed when production is missing a non-default DB password.
+
+    Mirrors ``db.settings.get_database_settings`` resolution. The async engine
+    credential comes from ``POSTGRES_DSN`` when set, else ``PGPASSWORD``
+    (defaulting to the shared local ``context`` value). The sync engine resolves
+    ``POSTGRES_SYNC_DSN`` INDEPENDENTLY, so it is validated separately when set
+    (when unset it is inferred from the already-validated async DSN / PG*).
+    Production must never boot on a weak/empty/default credential for either
+    engine (rg-008). Callers invoke this at app startup so the process refuses
+    to serve rather than connecting with a known-weak credential.
+    """
+    runtime_mode = runtime_mode or os.environ.get("RECOGNITION_RUNTIME_MODE", "production")
+    if runtime_mode != "production":
+        return
+
+    # Import here to keep security.py free of package-level db coupling and to
+    # read the live default from its producer (db/settings.py).
+    from urllib.parse import unquote, urlparse
+
+    from db.settings import DEFAULT_PGPASSWORD
+
+    # Secret reads go through SecretProvider (SECRETS-P2); non-secret runtime_mode stays on os.
+    provider = get_secret_provider()
+
+    def _dsn_password_weak(dsn: str) -> bool:
+        password = urlparse(dsn).password
+        if password is not None:
+            password = unquote(password)
+        return password is None or password == "" or password == DEFAULT_PGPASSWORD
+
+    # The async and sync engines resolve their DSNs INDEPENDENTLY
+    # (get_database_settings: POSTGRES_SYNC_DSN is used directly when set, not
+    # inferred from POSTGRES_DSN), so a strong async DSN does not vouch for the
+    # sync credential — validate both. Explicit DSN wins over PG*.
+    postgres_dsn = provider.get_secret_optional("POSTGRES_DSN")
+    postgres_sync_dsn = provider.get_secret_optional("POSTGRES_SYNC_DSN")
+
+    # Async engine credential: POSTGRES_DSN if set, else PGPASSWORD.
+    if postgres_dsn:
+        if _dsn_password_weak(postgres_dsn):
+            raise InsecureProductionConfigError(
+                "POSTGRES_DSN is set in production with an empty or development-default "
+                "password (RECOGNITION_RUNTIME_MODE=production). Use a non-default password "
+                "in POSTGRES_DSN before serving traffic."
+            )
+    else:
+        password = provider.get_secret_optional("PGPASSWORD")
+        if password is None or password == "" or password == DEFAULT_PGPASSWORD:
+            raise InsecureProductionConfigError(
+                "PGPASSWORD is unset, empty, or set to the development default in production "
+                "(RECOGNITION_RUNTIME_MODE=production). Set a non-default PGPASSWORD before "
+                "serving traffic."
+            )
+
+    # Sync engine credential: POSTGRES_SYNC_DSN when set. When unset it is
+    # inferred from the async DSN / PG* already validated above.
+    if postgres_sync_dsn and _dsn_password_weak(postgres_sync_dsn):
+        raise InsecureProductionConfigError(
+            "POSTGRES_SYNC_DSN is set in production with an empty or development-default "
+            "password (RECOGNITION_RUNTIME_MODE=production). Use a non-default password "
+            "in POSTGRES_SYNC_DSN before serving traffic."
+        )
 
 
 def validate_admin_config(
@@ -162,5 +205,5 @@ __all__ = [
     "get_security_settings",
     "tier_rpm",
     "validate_admin_config",
-    "validate_production_security",
+    "validate_required_secrets",
 ]

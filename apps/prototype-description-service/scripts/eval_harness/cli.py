@@ -34,6 +34,7 @@ from typing import Any
 
 from scene.config.profiles import PROFILE_SPECS, DescriptionProfile
 from scene.domain.description import DescriptionAdapterKind
+from shared.secrets import get_secret_provider
 
 from .manifest import GoldenManifest, ManifestError, _resolve_image, load_manifest
 from .remote_client import RemoteClientError, RemoteSceneClient
@@ -333,7 +334,7 @@ def _require_live_env() -> tuple[str, str, str]:
     if os.environ.get("ACX_EVAL_LIVE") != "1":
         sys.exit("live subcommand requires ACX_EVAL_LIVE=1 (safety gate; see README)")
     base_url = os.environ.get("ACX_EVAL_BASE_URL", "")
-    api_key = os.environ.get("ACX_EVAL_API_KEY", "")
+    api_key = get_secret_provider().get_secret_optional("ACX_EVAL_API_KEY", "") or ""
     tenant_id = os.environ.get("ACX_EVAL_TENANT_ID", "")
     if not base_url or not api_key or not tenant_id:
         sys.exit(

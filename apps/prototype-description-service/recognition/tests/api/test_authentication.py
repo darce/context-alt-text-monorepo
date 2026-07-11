@@ -59,6 +59,28 @@ def test_invalid_bearer_token_returns_403(monkeypatch) -> None:
     assert response.status_code == 403
 
 
+def test_non_db_api_key_rejected_in_production_mode(monkeypatch) -> None:
+    """DB-backed keys are the sole tenant-key authority (allowlist removed).
+
+    Even when the retired RECOGNITION_ALLOWED_API_KEYS env is set, a key with
+    no api_keys row must be 403 in production-mode runtime (SEC-06, decision #1882).
+    """
+    monkeypatch.setenv("RECOGNITION_RUNTIME_MODE", "production")
+    # Former allowlist var — must be ignored after retirement.
+    monkeypatch.setenv("RECOGNITION_ALLOWED_API_KEYS", "former-allowlist-key")
+    client = _auth_client(FakeClusterService(), monkeypatch)
+    tenant_id = str(uuid.uuid4())
+    headers = {
+        "X-Tenant-ID": tenant_id,
+        "Authorization": "Bearer former-allowlist-key",
+    }
+
+    response = client.get("/recognition/clusters", headers=headers)
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "invalid or missing API key"
+
+
 def test_token_tenant_mismatch_returns_403(monkeypatch) -> None:
     """Token tenant claim must align with request tenant to protect isolation."""
     client = _auth_client(FakeClusterService(), monkeypatch)
@@ -147,10 +169,9 @@ def test_valid_x_api_key_header_allows_request_when_configured(monkeypatch) -> N
     assert response.status_code == 200
 
 
-def test_dev_key_returns_503_when_optional_session_is_unavailable(monkeypatch) -> None:
-    """Breaker-open/session-unavailable requests must fail before dev-key fallback."""
+def test_auth_returns_503_when_optional_session_is_unavailable(monkeypatch) -> None:
+    """Breaker-open/session-unavailable requests must fail before DB key lookup."""
     monkeypatch.setenv("RECOGNITION_AUTH_ENABLED", "1")
-    monkeypatch.setenv("RECOGNITION_ALLOWED_API_KEYS", "good-key")
     app = FastAPI()
     app.include_router(recognition_router, prefix="/recognition")
 
@@ -206,7 +227,7 @@ async def test_lookup_api_key_is_pure_query_and_uses_nested_transaction() -> Non
 
     result = await auth._lookup_api_key(
         "good-key",
-        SecuritySettings(auth_enabled=True, dev_api_keys=[]),
+        SecuritySettings(auth_enabled=True),
         session,
     )
 
@@ -225,7 +246,7 @@ async def test_lookup_api_key_translates_missing_table_to_500_and_rolls_back_sav
     with pytest.raises(HTTPException) as exc_info:
         await auth._lookup_api_key(
             "good-key",
-            SecuritySettings(auth_enabled=True, dev_api_keys=[]),
+            SecuritySettings(auth_enabled=True),
             session,
         )
 

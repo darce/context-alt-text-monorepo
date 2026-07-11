@@ -11,7 +11,6 @@ partial result. The service maps ``DescriptionAdapterKind.HOSTED_PROVIDER`` to
 from __future__ import annotations
 
 import base64
-import os
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -19,6 +18,7 @@ import httpx
 
 from scene.application.description_adapter import AdapterResult
 from scene.domain.description import DescriptionAdapterKind
+from shared.secrets import get_secret_provider
 
 _DEFAULT_TIMEOUT_S = 30.0
 _OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
@@ -48,7 +48,7 @@ def openai_chat_invoke(
     ``model_id`` so wire/audit provenance can never diverge from the model
     actually invoked (rg-015).
     """
-    api_key = os.environ.get("ACX_HOSTED_PROVIDER_API_KEY", "")
+    api_key = get_secret_provider().get_secret_optional("ACX_HOSTED_PROVIDER_API_KEY", "") or ""
     if not api_key:
         raise HostedProviderError("ACX_HOSTED_PROVIDER_API_KEY is not set")
     prompt = "Describe this image in one concise, factual sentence suitable as alt text."

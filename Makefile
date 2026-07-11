@@ -596,7 +596,7 @@ eval-captions:
 LABEL ?=
 SEED ?= default
 SLUG ?=
-DEMO_ENV ?= local
+DEMO_ENV ?= $(or $(ENV),local)
 
 .PHONY: provision-demo expire-demo
 provision-demo:

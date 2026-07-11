@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db.models import DemoInstance, Tenant
 from recognition.application.services.api_key_admin_service import mint_api_key
 from recognition.config.security import RateLimitTier
+from recognition.infrastructure.repositories.api_key_repository import SqlAlchemyApiKeyRepository
 
 # Bitcoin-style base58: no 0/O/I/l to avoid visual ambiguity.
 BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
@@ -148,6 +149,13 @@ async def expire_demo(session: AsyncSession, *, slug: str) -> DemoInstance:
     if instance is None:
         raise DemoInstanceNotFoundError(f"demo instance not found: {cleaned}")
     instance.revoked = True
+    # Revoke the underlying credential too. Flipping demo_instances.revoked alone
+    # is inert: auth gates on api_keys.revoked_at, never the demo registry, so the
+    # public demo key would keep authenticating until its natural TTL. Same session
+    # transaction; caller owns the commit.
+    key = await SqlAlchemyApiKeyRepository(session).get_by_hash(instance.api_key_ref)
+    if key is not None and key.revoked_at is None:
+        await SqlAlchemyApiKeyRepository(session).revoke(key.id)
     await session.flush()
     return instance
 

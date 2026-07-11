@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import DemoInstance, Tenant
+from db.models import ApiKey, DemoInstance, Tenant
 from recognition.application.services.demo_provisioning_service import (
     BASE58_ALPHABET,
     DEFAULT_RECOGNITION_QUOTA,
@@ -102,6 +102,17 @@ async def test_expire_demo_sets_revoked(db_session: AsyncSession) -> None:
     reloaded = await db_session.get(DemoInstance, result.instance.slug)
     assert reloaded is not None
     assert reloaded.revoked is True
+
+    # The underlying credential must actually be revoked — flipping the registry
+    # flag alone is inert because auth gates on api_keys.revoked_at, not the demo
+    # registry, so the public demo key would keep authenticating until its TTL.
+    # Query the row directly: get_by_hash filters out revoked keys (auth lookup).
+    key = (
+        await db_session.execute(select(ApiKey).where(ApiKey.api_key_hash == result.instance.api_key_ref))
+    ).scalar_one()
+    assert key.revoked_at is not None
+    # And the auth lookup now rejects it.
+    assert await SqlAlchemyApiKeyRepository(db_session).get_by_hash(result.instance.api_key_ref) is None
 
 
 @pytest.mark.asyncio

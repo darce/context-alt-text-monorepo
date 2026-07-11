@@ -109,7 +109,7 @@ class DemoInstance(Base):
 
     __tablename__ = "demo_instances"
 
-    slug: Mapped[str] = mapped_column(String(16), primary_key=True)
+    slug: Mapped[str] = mapped_column(Text, primary_key=True)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
     )

@@ -73,10 +73,14 @@ class SecretProvider(ABC):
         """
 
     def get_secret_optional(self, name: str, default: str | None = None) -> str | None:
-        """Return the secret for ``name``, or ``default`` when absent.
+        """Return the secret for ``name``, or ``default`` when genuinely ABSENT.
 
         Matches ``os.getenv`` semantics for the env adapter: a set-but-empty
-        value is present (returns ``""``), not treated as missing.
+        value is present (returns ``""``), not treated as missing. Only a
+        missing secret (``SecretNotFound``) yields ``default``; a real backend
+        error (e.g. Vault unreachable under ``oci_vault``) PROPAGATES — a
+        transient failure must fail loud, never silently substitute a default
+        for a configured secret ([RES-13]/[SEC-06]).
         """
         try:
             return self.get_secret(name)
@@ -96,10 +100,13 @@ class EnvSecretProvider(SecretProvider):
 class OciVaultSecretProvider(SecretProvider):
     """OCI Vault adapter: instance-principal signer + secret-bundle fetch.
 
-    Logical secret names (namespaced paths such as
-    ``secret/recognition/pg-password`` per decision #1882) resolve to Vault
-    secret OCIDs via a non-secret config map. All ``oci`` SDK usage stays
-    inside this adapter (REF-15).
+    Logical secret names — the env-var name the app requests (e.g.
+    ``PGPASSWORD``, ``RECOGNITION_ADMIN_TOKEN``) — resolve to Vault secret OCIDs
+    via a non-secret config map (``RECOGNITION_VAULT_SECRET_MAP``; the map KEY is
+    the logical name, NOT the Vault-side ``secret/<domain>/<name>`` path, per
+    decision #1882). Fetched values are cached for the process lifetime (rotation
+    = restart, per ADR-013). All ``oci`` SDK usage stays inside this adapter
+    (REF-15).
     """
 
     def __init__(
@@ -133,10 +140,16 @@ class OciVaultSecretProvider(SecretProvider):
         self._client = secrets_client
         self._client_factory = client_factory
         self._signer_factory = signer_factory
+        # Secrets are immutable for the process lifetime (rotation = restart, per
+        # ADR-013), so cache each fetched value. Without this, get_security_settings()
+        # — which rebuilds SecuritySettings() on every request — would fire a
+        # blocking Vault get_secret_bundle round-trip (with retries) inside the
+        # async request path per authenticated call (CON-01/RES-12/PERF-07).
+        self._cache: dict[str, str] = {}
 
     @classmethod
     def from_env(cls) -> OciVaultSecretProvider:
-        """Build from ``RECOGNITION_VAULT_SECRET_MAP`` JSON path→OCID map."""
+        """Build from ``RECOGNITION_VAULT_SECRET_MAP`` JSON name→OCID map."""
         raw = os.environ.get(_VAULT_SECRET_MAP_ENV, "").strip()
         if not raw:
             raise ValueError(
@@ -155,10 +168,15 @@ class OciVaultSecretProvider(SecretProvider):
         return cls(mapping)
 
     def get_secret(self, name: str) -> str:
+        cached = self._cache.get(name)
+        if cached is not None:
+            return cached
         ocid = self._secret_ocid_map.get(name)
         if ocid is None:
             raise SecretNotFound(f"Secret not found: {name}")
-        return self._fetch_bundle_plaintext(ocid=ocid, name=name)
+        value = self._fetch_bundle_plaintext(ocid=ocid, name=name)
+        self._cache[name] = value
+        return value
 
     def _get_client(self) -> Any:
         if self._client is not None:

@@ -118,7 +118,8 @@ def validate_required_secrets(runtime_mode: str | None = None) -> None:
 
     from db.settings import DEFAULT_PGPASSWORD
 
-    postgres_dsn = os.getenv("POSTGRES_DSN")
+    # Secret reads go through SecretProvider (SECRETS-P2); non-secret runtime_mode stays on os.
+    postgres_dsn = get_secret_provider().get_secret_optional("POSTGRES_DSN")
     if postgres_dsn:
         # Same precedence as get_database_settings: explicit DSN wins over PG*.
         password = urlparse(postgres_dsn).password
@@ -132,7 +133,7 @@ def validate_required_secrets(runtime_mode: str | None = None) -> None:
             )
         return
 
-    password = os.getenv("PGPASSWORD")
+    password = get_secret_provider().get_secret_optional("PGPASSWORD")
     if password is None or password == "" or password == DEFAULT_PGPASSWORD:
         raise InsecureProductionConfigError(
             "PGPASSWORD is unset, empty, or set to the development default in production "

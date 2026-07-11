@@ -105,19 +105,6 @@ jobs:
           EOF
           chmod 600 ~/.ssh/config
 
-      - name: Debug SSH (diagnostic; non-fatal)
-        continue-on-error: true
-        run: |
-          echo "=== runner key fingerprint (expect SHA256:dgrZ1o9pwzdAXzB+loQVr0pMQgKa+/TGHhjOmtQzkW4) ==="
-          ssh-keygen -lf ~/.ssh/id_ed25519 || echo "KEY FILE UNREADABLE / MALFORMED"
-          echo "=== key file head/tail (structure only) ==="
-          head -1 ~/.ssh/id_ed25519; tail -1 ~/.ssh/id_ed25519; echo "lines=$(wc -l < ~/.ssh/id_ed25519)"
-          echo "=== /etc/hosts pin ==="; grep tail1a44b8 /etc/hosts || true
-          echo "=== resolve ==="; getent hosts "${OCI_HOST}" || true
-          echo "=== tailscale ip ==="; tailscale ip -4 2>/dev/null || true
-          echo "=== ssh -vvv ==="
-          ssh -vvv -o BatchMode=yes -o ConnectTimeout=8 "${OCI_USER}@${OCI_HOST}" 'echo REMOTE_OK; whoami' 2>&1 | tail -35 || true
-
       - name: Deploy ${{ steps.target.outputs.env }}
         env:
           GIT_REF: ${{ github.sha }}

@@ -27,6 +27,7 @@ from recognition.config.security import (
     validate_required_secrets,
 )
 from recognition.config.settings import RecognitionSettings
+from shared.secrets import validate_oci_vault_boot
 from recognition.interface_adapters.http import deps as http_deps
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.deps.auth import require_auth
@@ -138,6 +139,11 @@ async def _lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     # Log version info at startup
     _log_startup_info()
+
+    # RES-13: under oci_vault, eagerly fetch required secrets before binding a
+    # port. Unreachable Vault / auth failure / missing secret → VaultBootError
+    # (no env fallback, no partial serve). No-op for the env backend.
+    validate_oci_vault_boot()
 
     # Refuse to boot in production when required secrets are unset/dev-default (rg-008).
     validate_required_secrets()

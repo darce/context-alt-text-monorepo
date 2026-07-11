@@ -13,10 +13,11 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 # Bounded Vault client timeouts (RES-02). Defaults mirror common OCI SDK
@@ -31,9 +32,26 @@ _KNOWN_SECRET_BACKENDS = frozenset({"env", "oci_vault"})
 _SECRET_BACKEND_ENV = "RECOGNITION_SECRET_BACKEND"
 _VAULT_SECRET_MAP_ENV = "RECOGNITION_VAULT_SECRET_MAP"
 
+# Required Vault logical names (decision #1882). Fetched eagerly at boot under
+# oci_vault so a missing/unreachable secret fails before the process serves.
+REQUIRED_OCI_VAULT_SECRET_NAMES: tuple[str, ...] = (
+    "secret/recognition/pg-password",
+    "secret/recognition/admin-token",
+)
+
+logger = logging.getLogger(__name__)
+
 
 class SecretNotFound(Exception):  # noqa: N818 — port name fixed by SECRETS-P2 plan
     """Raised when a required secret name is not available from the provider."""
+
+
+class VaultBootError(RuntimeError):
+    """Raised when the oci_vault backend cannot satisfy required secrets at boot.
+
+    RES-13: unreachable Vault, auth failure, or a missing required secret must
+    refuse to serve — never fall back to process env under oci_vault.
+    """
 
 
 class SecretProvider(ABC):
@@ -251,14 +269,103 @@ def reset_secret_provider() -> None:
     _secret_provider = None
 
 
+def validate_oci_vault_boot(
+    *,
+    provider: SecretProvider | None = None,
+    required_names: Sequence[str] | None = None,
+) -> None:
+    """Eagerly fetch required secrets when ``RECOGNITION_SECRET_BACKEND=oci_vault``.
+
+    No-op for the env backend (local/CI unchanged). Under oci_vault, every
+    required logical name is fetched before the caller may bind a port. On
+    unreachable Vault, auth failure, or missing secret, raises
+    :class:`VaultBootError` and logs a clear error — never falls back to env
+    (RES-13).
+    """
+    backend = resolve_secret_backend()
+    if backend != "oci_vault":
+        return
+
+    names = tuple(required_names) if required_names is not None else REQUIRED_OCI_VAULT_SECRET_NAMES
+    try:
+        active = provider if provider is not None else get_secret_provider()
+    except ValueError as exc:
+        message = f"OCI Vault boot failed: {exc}; refusing to serve"
+        logger.error(message)
+        raise VaultBootError(message) from exc
+
+    if not isinstance(active, OciVaultSecretProvider):
+        message = (
+            "OCI Vault boot failed: RECOGNITION_SECRET_BACKEND=oci_vault but the active "
+            f"provider is {type(active).__name__}, not OciVaultSecretProvider; "
+            "refusing env fallback"
+        )
+        logger.error(message)
+        raise VaultBootError(message)
+
+    # Import oci exception types only on the vault boot path (REF-15).
+    from oci.exceptions import ConnectTimeout, RequestException, ServiceError
+
+    for name in names:
+        try:
+            value = active.get_secret(name)
+        except SecretNotFound as exc:
+            message = (
+                f"OCI Vault boot failed: required secret {name!r} not found in Vault; "
+                "refusing to serve"
+            )
+            logger.error(message)
+            raise VaultBootError(message) from exc
+        except ServiceError as exc:
+            status = exc.status
+            if status is not None and 400 <= int(status) < 500:
+                message = (
+                    f"OCI Vault boot failed: auth/authorization error fetching {name!r} "
+                    f"(status={status}); refusing to serve"
+                )
+            else:
+                message = (
+                    f"OCI Vault boot failed: Vault service error fetching {name!r} "
+                    f"(status={status}); refusing to serve"
+                )
+            logger.error(message)
+            raise VaultBootError(message) from exc
+        except (RequestException, ConnectTimeout, ConnectionError, TimeoutError, OSError) as exc:
+            message = (
+                f"OCI Vault boot failed: Vault unreachable while fetching {name!r} "
+                f"({type(exc).__name__}: {exc}); refusing to serve"
+            )
+            logger.error(message)
+            raise VaultBootError(message) from exc
+        except VaultBootError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — boot must never partially succeed
+            message = (
+                f"OCI Vault boot failed: unexpected error fetching {name!r} "
+                f"({type(exc).__name__}: {exc}); refusing to serve"
+            )
+            logger.error(message)
+            raise VaultBootError(message) from exc
+
+        if not value:
+            message = (
+                f"OCI Vault boot failed: required secret {name!r} is empty; refusing to serve"
+            )
+            logger.error(message)
+            raise VaultBootError(message)
+
+
 __all__ = [
     "EnvSecretProvider",
     "OciVaultSecretProvider",
+    "REQUIRED_OCI_VAULT_SECRET_NAMES",
     "SecretNotFound",
     "SecretProvider",
+    "VaultBootError",
     "build_secret_provider",
     "get_secret_provider",
     "reset_secret_provider",
     "resolve_secret_backend",
     "set_secret_provider",
+    "validate_oci_vault_boot",
 ]

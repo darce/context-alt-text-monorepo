@@ -1,0 +1,88 @@
+name: Deploy recognition service
+
+# Repeatable OCI VM deploy. Reuses the single source of truth for deploy logic —
+# scripts/deploy/recognition-service.sh (build -> OCIR push -> systemd restart ->
+# /health verify) — in REMOTE_BUILD mode so the VM builds/pushes with its own
+# cached OCIR credential; CI needs NO Docker and NO OCIR secrets, only tailnet
+# reachability + an SSH deploy key.
+#
+# Trigger policy: push to main auto-deploys DEV; staging/prod are manual
+# workflow_dispatch and run under a GitHub Environment (configure prod with a
+# required reviewer). prod additionally requires CONFIRM=PROMOTE (enforced by the
+# script). See docs/runbooks/deploy-recognition-cicd.md for one-time setup.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/prototype-description-service/**"
+      - "scripts/deploy/**"
+      - ".github/workflows/deploy-recognition.yml"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        type: choice
+        options: [dev, staging, prod]
+        default: dev
+
+# One in-flight deploy per environment; never cancel a deploy mid-flight.
+concurrency:
+  group: deploy-recognition-${{ github.event.inputs.environment || 'dev' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # push -> 'dev'; dispatch -> chosen env. The GitHub Environment is where prod
+    # gets its required-reviewer gate (Settings -> Environments -> prod).
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+    env:
+      OCI_HOST: acx-backend.tail1a44b8.ts.net
+      OCI_USER: ubuntu
+      REMOTE_BUILD: "1"
+    steps:
+      - name: Checkout (full depth for the origin/main skew check)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve target environment
+        id: target
+        run: echo "env=${{ github.event.inputs.environment || 'dev' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Join tailnet (ephemeral node)
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Configure SSH deploy key
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.ACX_DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          cat > ~/.ssh/config <<EOF
+          Host ${OCI_HOST}
+            User ${OCI_USER}
+            IdentityFile ~/.ssh/id_ed25519
+            StrictHostKeyChecking accept-new
+            IdentitiesOnly yes
+          EOF
+          chmod 600 ~/.ssh/config
+
+      - name: Deploy ${{ steps.target.outputs.env }}
+        env:
+          GIT_REF: ${{ github.sha }}
+          # prod actions require CONFIRM=PROMOTE (script fail-closed gate).
+          CONFIRM: ${{ steps.target.outputs.env == 'prod' && 'PROMOTE' || '' }}
+        run: |
+          bash scripts/deploy/recognition-service.sh deploy "${{ steps.target.outputs.env }}"
+
+      - name: Post-deploy status
+        if: always()
+        run: bash scripts/deploy/recognition-service.sh status || true

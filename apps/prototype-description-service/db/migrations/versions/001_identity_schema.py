@@ -52,6 +52,7 @@ RAW_SQL_TABLES = [
 EXPECTED_SCHEMA_TABLES = [
     "tenants",
     "api_keys",
+    "demo_instances",
     "worker_capabilities",
     "media_identities",
     "curation_replay_records",
@@ -106,6 +107,7 @@ DOWNGRADE_TABLE_ORDER = [
     "identity_constraints",
     "identity_clusters",
     "media_identities",
+    "demo_instances",
     "api_keys",
     "tenants",
 ]
@@ -197,6 +199,31 @@ def ensure_tables(op) -> None:
         sa.Column("expires_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("revoked_at", sa.TIMESTAMP(timezone=True), nullable=True),
     )
+
+    # DS-3 / launch-plan §5: per-prospect demo registry. Looked up by opaque
+    # slug (not tenant_id); raw API key is never stored — only a hash/ref.
+    _ensure_table(
+        op,
+        "demo_instances",
+        sa.Column("slug", sa.Text(), primary_key=True),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("api_key_ref", sa.Text(), nullable=False),
+        sa.Column("label", sa.Text(), nullable=True),
+        sa.Column("seed_bundle", sa.Text(), nullable=False, server_default=sa.text("'default'")),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("expires_at", sa.TIMESTAMP(timezone=True), nullable=False),
+        sa.Column("recognition_quota", sa.Integer(), nullable=False, server_default=sa.text("200")),
+        sa.Column("recognition_used", sa.Integer(), nullable=False, server_default=sa.text("0")),
+        sa.Column("branding_json", sa.dialects.postgresql.JSONB(), nullable=True),
+        sa.Column("revoked", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+    )
+    _ensure_index(op, "idx_demo_instances_tenant", "demo_instances", ["tenant_id"])
+    _ensure_index(op, "idx_demo_instances_expires", "demo_instances", ["expires_at"])
 
     _ensure_table(
         op,
@@ -1764,6 +1791,8 @@ def downgrade() -> None:
     op.drop_index("idx_recognition_runs_tenant", table_name="recognition_runs")
     op.drop_index("idx_api_keys_hash", table_name="api_keys")
     op.drop_index("idx_api_keys_tenant", table_name="api_keys")
+    op.drop_index("idx_demo_instances_expires", table_name="demo_instances")
+    op.drop_index("idx_demo_instances_tenant", table_name="demo_instances")
     for table in TENANT_TABLES:
         op.execute(f"DROP POLICY IF EXISTS tenant_isolation_{table} ON {table}")
         op.execute(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY")

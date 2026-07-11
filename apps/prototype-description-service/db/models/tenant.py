@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from db.models.base_imports import (
+    JSON,
+    JSONB,
     TIMESTAMP,
     UUID,
     Base,
@@ -14,6 +16,7 @@ from db.models.base_imports import (
     Integer,
     Mapped,
     String,
+    Text,
     datetime,
     func,
     mapped_column,
@@ -92,4 +95,39 @@ class ApiKey(Base):
     )
 
 
-__all__ = ["Tenant", "ApiKey"]
+class DemoInstance(Base):
+    """Per-prospect demo registry row (launch-plan §5).
+
+    Slug is a capability-free public lookup key — never a tenant identity and
+    never a credential. ``api_key_ref`` stores the key hash only; the raw key
+    is never persisted here.
+    """
+
+    __tablename__ = "demo_instances"
+
+    slug: Mapped[str] = mapped_column(String(16), primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    api_key_ref: Mapped[str] = mapped_column(Text, nullable=False)
+    label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    seed_bundle: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'default'"))
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    recognition_quota: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("200"))
+    recognition_used: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    branding_json: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB().with_variant(JSON(), "sqlite"),
+        nullable=True,
+    )
+    revoked: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+
+    tenant: Mapped[Tenant] = relationship()
+
+    __table_args__ = (
+        Index("idx_demo_instances_tenant", "tenant_id"),
+        Index("idx_demo_instances_expires", "expires_at"),
+    )
+
+
+__all__ = ["Tenant", "ApiKey", "DemoInstance"]

@@ -87,6 +87,7 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
             Table("recognition_events", Base.metadata),
             Table("audit_events", Base.metadata),
             Table("api_keys", Base.metadata),
+            Table("demo_instances", Base.metadata),
             Table("clustering_job_reports", Base.metadata),
             Table("assignment_decisions", Base.metadata),
             Table("clustering_feedback", Base.metadata),

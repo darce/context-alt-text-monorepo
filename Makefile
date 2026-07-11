@@ -129,7 +129,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/logs.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-scripts test-hooks test-deploy-contract test-vlm3
+.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-scripts test-hooks test-deploy-contract test-vlm3 provision-demo expire-demo
 
 # Default target
 help:
@@ -569,6 +569,26 @@ dev-stop:
 .PHONY: eval-captions
 eval-captions:
 	@cd apps/prototype-description-service && uv run python -m scripts.eval_harness.cli run $(EVAL_ARGS)
+
+# DS-3 per-prospect demo provisioning (backend registry + minter wrap only).
+# Usage: make provision-demo LABEL="Acme Gallery" SEED=default
+#        make expire-demo SLUG=<slug>
+# Optional: ENV=local|dev|prod (default local). Requires DB DSN for the service.
+LABEL ?=
+SEED ?= default
+SLUG ?=
+DEMO_ENV ?= local
+
+.PHONY: provision-demo expire-demo
+provision-demo:
+	@if [ -z "$(LABEL)" ]; then echo "error: LABEL is required (e.g. LABEL=\"Acme Gallery\")" >&2; exit 2; fi
+	@cd apps/prototype-description-service && uv run python -m scripts.provision_demo \
+		--env "$(DEMO_ENV)" provision --label "$(LABEL)" --seed "$(SEED)"
+
+expire-demo:
+	@if [ -z "$(SLUG)" ]; then echo "error: SLUG is required (e.g. SLUG=7fQ2abX)" >&2; exit 2; fi
+	@cd apps/prototype-description-service && uv run python -m scripts.provision_demo \
+		--env "$(DEMO_ENV)" expire --slug "$(SLUG)"
 
 # =============================================================================
 # ACE Observability

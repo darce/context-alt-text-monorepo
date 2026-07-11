@@ -179,3 +179,23 @@ def test_4xx_auth_error_does_not_retry() -> None:
 def test_empty_secret_ocid_map_rejected_at_construction() -> None:
     with pytest.raises(ValueError, match="non-empty secret_ocid_map"):
         OciVaultSecretProvider({})
+
+
+def test_get_secret_caches_value_across_reads() -> None:
+    """SEC-RP round2: secrets are immutable per process (rotation=restart), so
+    repeated reads must NOT re-hit Vault. get_security_settings() rebuilds
+    SecuritySettings() per request; without this cache each authenticated
+    request would fire a blocking Vault round-trip (CON-01/RES-12/PERF-07)."""
+    client = _spec_client()
+    client.get_secret_bundle.return_value = _bundle_response()
+
+    provider = OciVaultSecretProvider(
+        {_NAMESPACED_PATH: _SECRET_OCID},
+        secrets_client=client,
+    )
+
+    first = provider.get_secret(_NAMESPACED_PATH)
+    second = provider.get_secret(_NAMESPACED_PATH)
+
+    assert first == second == _PLAINTEXT
+    client.get_secret_bundle.assert_called_once_with(secret_id=_SECRET_OCID)

@@ -233,9 +233,9 @@ async def _lookup_api_key(
 ) -> tuple[str | None, str | None, str | None, bool]:
     """Validate API key and return (tenant_id, api_key_id, rate_limit_tier, is_admin).
 
-    Returns the raw hash as a trailing tuple entry when available so the caller
-    can pass a non-reversible fingerprint to the audit emitter. Dev-key fallback
-    carries `hashed=None` since the dev path never touches the DB row.
+    Sole authority is a DB-backed ``api_keys`` row (hash lookup). Tenant keys
+    are minted via ``/admin`` or ``scripts/manage_api_keys.py``; there is no
+    plaintext env allowlist bypass.
     """
     hashed = _hash_api_key(api_key, settings.api_key_hash_algorithm)
     if session is None or not hasattr(session, "execute"):
@@ -256,9 +256,6 @@ async def _lookup_api_key(
 
     if record:
         return str(record.tenant_id), str(record.id), record.rate_limit_tier, False
-
-    if api_key in settings.dev_api_keys:
-        return None, None, "enterprise", True
 
     # Distinguish expired/revoked from truly unknown so the 401 detail can tell
     # operators what happened. classify_by_hash is a separate query and is only

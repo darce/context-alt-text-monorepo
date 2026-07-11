@@ -18,6 +18,13 @@ After=docker.service
 [Service]
 Type=exec
 WorkingDirectory=/opt/acx-backend/{{ENV}}
+# Under RECOGNITION_SECRET_BACKEND=oci_vault, uncomment the ExecStartPre below to
+# fetch the postgres-container bootstrap password (POSTGRES_PASSWORD) from OCI
+# Vault via this VM's instance principal into the runtime .env BEFORE compose up.
+# The app services (api/worker) fetch their own secrets from Vault at boot and
+# do NOT need this hook. The fetch script is operator-provided per the runbook:
+# infra/oci/vault-instance-principal-runbook.md.
+# ExecStartPre=/opt/acx-backend/{{ENV}}/fetch-vault-bootstrap.sh
 ExecStart=/usr/bin/docker compose {{COMPOSE_FILES}} up --remove-orphans
 ExecStop=/usr/bin/docker compose {{COMPOSE_FILES}} stop
 TimeoutStartSec=600

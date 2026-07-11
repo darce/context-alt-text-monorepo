@@ -120,6 +120,49 @@ def validate_production_security(
 _ADMIN_TOKEN_MIN_LENGTH = 32
 
 
+def validate_required_secrets(runtime_mode: str | None = None) -> None:
+    """Fail closed when production is missing a non-default DB password.
+
+    Mirrors ``db.settings.get_database_settings`` resolution: when
+    ``POSTGRES_DSN`` is set, the password is taken from that DSN; otherwise the
+    process falls back to ``PGPASSWORD`` (defaulting to the shared local
+    ``context`` value). Production must never boot on that silent default
+    (rg-008). Callers invoke this at app startup so the process refuses to
+    serve traffic rather than connecting with a known-weak credential.
+    """
+    runtime_mode = runtime_mode or os.environ.get("RECOGNITION_RUNTIME_MODE", "production")
+    if runtime_mode != "production":
+        return
+
+    # Import here to keep security.py free of package-level db coupling and to
+    # read the live default from its producer (db/settings.py).
+    from urllib.parse import unquote, urlparse
+
+    from db.settings import DEFAULT_PGPASSWORD
+
+    postgres_dsn = os.getenv("POSTGRES_DSN")
+    if postgres_dsn:
+        # Same precedence as get_database_settings: explicit DSN wins over PG*.
+        password = urlparse(postgres_dsn).password
+        if password is not None:
+            password = unquote(password)
+        if password is None or password == "" or password == DEFAULT_PGPASSWORD:
+            raise InsecureProductionConfigError(
+                "POSTGRES_DSN is set in production with an empty or development-default "
+                "password (RECOGNITION_RUNTIME_MODE=production). Use a non-default password "
+                "in POSTGRES_DSN before serving traffic."
+            )
+        return
+
+    password = os.getenv("PGPASSWORD")
+    if password is None or password == "" or password == DEFAULT_PGPASSWORD:
+        raise InsecureProductionConfigError(
+            "PGPASSWORD is unset, empty, or set to the development default in production "
+            "(RECOGNITION_RUNTIME_MODE=production). Set a non-default PGPASSWORD before "
+            "serving traffic."
+        )
+
+
 def validate_admin_config(
     settings: SecuritySettings | None = None,
     *,
@@ -163,4 +206,5 @@ __all__ = [
     "tier_rpm",
     "validate_admin_config",
     "validate_production_security",
+    "validate_required_secrets",
 ]

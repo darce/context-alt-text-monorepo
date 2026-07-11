@@ -274,9 +274,11 @@ marketing_page_view → cta_click{demo|start_free} → demo_started → signup_c
 
 **Sentry:** backend + frontend SDKs; bind the E15 `correlation_id`; release-tag by plugin version; page the operator only on auth/billing webhook failures, 5xx spikes, new-release regressions `[OPS-04]`.
 
+**Third plane — host/infra observability (OB-8, co-owned with E14):** distinct from product analytics (PostHog) and app-error tracking (Sentry) — different data, consumer, and failure mode, so keep them separate `[OBS-05]`. Covers OCI host metrics, Cloud Guard + Vulnerability Scanning, a **Notifications topic** routing the budget / Cloud Guard / maintenance-event alerts, **symptom-based alarms** (page on `/health` failure, 5xx, cert expiry — never a raw CPU threshold `[OBS-07]`), and a **freshness gate** so a silent telemetry stream breaks loudly instead of reading as healthy `[OBS-08]`. Decomposed in [`decomposition-ob8-infra-observability.md`](decomposition-ob8-infra-observability.md).
+
 **Privacy (brand-critical):** never send image content, face embeddings, or PII to PostHog/Sentry — events carry ids/counts/plan/cohort only `[SEC-06]`. Respect GDPR consent. Session replay on marketing + dashboard only, never media/roster screens. Prefer EU-hosted PostHog for data residency. A face product that leaks analytics data destroys the trust moat in one incident `[STRAT-02][AIPX-09]`.
 
-**Phase 0 minimum (non-negotiable before launch):** PostHog funnel down to `plugin_first_caption` + the two flywheel events; Sentry on backend + plugin with correlation-id linkage.
+**Phase 0 minimum (non-negotiable before launch):** PostHog funnel down to `plugin_first_caption` + the two flywheel events; Sentry on backend + plugin with correlation-id linkage; plus **OB-8a/b** (a Notifications topic + a symptom alarm on the demo host) so the box serving the demo can't fall over unseen mid-pitch.
 
 ---
 
@@ -388,6 +390,7 @@ Each slice has a self-contained objective + a verification. **`Ready?`** column:
 | OB-5 | Sentry frontend SDK, release-tagged | forced JS error → plugin version | Atomic |
 | OB-6 | Retire Fly.io analytics; migrate rollups | no funnel gap | Atomic |
 | OB-7 | Privacy guard test: no media/embedding/PII in any event | test fails if such a field is added | Atomic |
+| OB-8 | Infra/host observability + alerting (Notifications topic, symptom alarms, host agents, stream freshness gate) — co-owned w/ E14 | forced `/health` failure pages via topic; VSS scan runs; a silent stream fires the freshness gate | **Epic** |
 | LS-1 | Concierge target list (10–30) + per-prospect demo links | ≥5 demo links minted | Atomic |
 | LS-2 | Public accuracy changelog + feedback form | wrong-caption report → fix note | Atomic |
 | LS-3 | Plugin WP.org hardening (disclosure/consent, license, security, readme.txt) | clean-WP install passes; readme validates | **Epic** |
@@ -404,7 +407,7 @@ Each slice has a self-contained objective + a verification. **`Ready?`** column:
 **Answering the operator's question directly.** `/offload` dispatches **one self-contained implementation slice** to a junior lane with a scoped `TEST_CMD` and a review gate. So the answer is **it depends on the slice's size**:
 
 - **Atomic slices → straight to implementation.** Anything you can express as *one end-state contract + one scoped test command* fits a single offload pass. In §14 these are marked **Atomic** (e.g. DS-3, AP-7, AP-6, AP-8, OB-1..OB-7, MK-2..MK-5, LS-1/2/4/5/6). Offload each directly.
-- **Epic slices → decompose first (a Claude/operator or `Plan`-agent step), then offload the leaves.** Marked **Epic** in §14 (AP-1, AP-2, AP-3, AP-4, AP-5, MK-1, LS-3). A single offload pass has a token budget and one test command — it can't swallow "build the Business API service." Break each into 3–6 atomic sub-slices with their own contracts + tests, *then* offload those.
+- **Epic slices → decompose first (a Claude/operator or `Plan`-agent step), then offload the leaves.** Marked **Epic** in §14 (AP-1, AP-2, AP-3, AP-4, AP-5, MK-1, LS-3, OB-8). A single offload pass has a token budget and one test command — it can't swallow "build the Business API service." Break each into 3–6 atomic sub-slices with their own contracts + tests, *then* offload those. (OB-8's leaves are themselves Atomic — see its decomposition.)
 - **Litmus test:** *if you cannot write ONE falsifiable end-state + ONE `TEST_CMD` for it, it is an Epic — decompose before offloading.*
 - **Reasoning stays with Claude/operator:** vendor choices, the slug-vs-identity model, the data-ownership map, pricing stance, moat model, launch sequencing, WP freemium call. `/offload` is the *implementation* vehicle for the leaves, not for strategy authoring.
 

@@ -26,6 +26,7 @@
 | Dynamic IP SSH drift (Tailscale)                                                   | **Resolved**                    | [archived tech-debt note](../../tasks/tech-debt/archive-or-transfer-candidates/dynamic-ip-ssh-access.md) |
 | End-to-end WP → backend → recognition smoke test                                   | **Pending**                     | **E15-5**                                                                                        |
 | Hetzner CX22 fallback plan documented                                              | **Pending**                     | **E15-5a**                                                                                       |
+| Host/infra observability + alerting (Notifications topic, symptom alarms, VSS/OS-Mgmt agents, stream freshness gate) | **Planned** | **GTM OB-8** ([`decomposition-ob8-infra-observability.md`](../../gtm/decomposition-ob8-infra-observability.md)) — co-owned; folds in the `E15-5a` budget-alert routing |
 
 Hosting architecture, provider evaluation, and deployment path for the recognition service backend, a future user-account database, and a WordPress demo frontend.
 

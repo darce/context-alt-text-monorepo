@@ -52,5 +52,6 @@ The client plugin is copyable; the moat is the service + flywheel. This slice ma
 | AP-1, AP-2 | [`decomposition-ap1-ap2.md`](decomposition-ap1-ap2.md) |
 | AP-3, AP-4, AP-5 | [`decomposition-ap3-ap4-ap5-accounts-billing.md`](decomposition-ap3-ap4-ap5-accounts-billing.md) |
 | MK-1, LS-3 | this doc |
+| OB-8 | [`decomposition-ob8-infra-observability.md`](decomposition-ob8-infra-observability.md) |
 
 All remaining §14 rows are marked **Atomic** and are offload-ready as written (no further decomposition needed): AP-6, AP-7, AP-8, MK-2..5, OB-1..7, DS-1..6, LS-1/2/4/5/6.

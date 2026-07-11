@@ -22,9 +22,7 @@ def _build_app(monkeypatch, *, origins: str | None) -> FastAPI:
         monkeypatch.delenv("RECOGNITION_ALLOWED_ORIGINS", raising=False)
     else:
         monkeypatch.setenv("RECOGNITION_ALLOWED_ORIGINS", origins)
-    # Prevent create_app from raising dev-key / production issues in tests.
     monkeypatch.setenv("RECOGNITION_RUNTIME_MODE", "test")
-    monkeypatch.delenv("RECOGNITION_ALLOWED_API_KEYS", raising=False)
 
     # Build a minimal app that wires just the CORS middleware against the
     # freshly-evaluated SecuritySettings. Mirrors api.main.create_app wiring.

@@ -236,7 +236,11 @@ class OciVaultSecretProvider(SecretProvider):
         if content_b64 is None or content_b64 == "":
             raise SecretNotFound(f"Secret not found: {name}")
         try:
-            return base64.b64decode(content_b64, validate=True).decode("utf-8")
+            # Strip surrounding whitespace/newlines (an operator may store the
+            # base64 with a trailing newline) before the strict decode, which
+            # still rejects embedded non-alphabet corruption rather than silently
+            # discarding it (fail loud on bad data, not on a benign newline).
+            return base64.b64decode(content_b64.strip(), validate=True).decode("utf-8")
         except (ValueError, UnicodeDecodeError) as exc:
             raise SecretNotFound(f"Secret not found: {name}") from exc
 

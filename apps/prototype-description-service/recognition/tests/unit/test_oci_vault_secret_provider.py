@@ -199,3 +199,20 @@ def test_get_secret_caches_value_across_reads() -> None:
 
     assert first == second == _PLAINTEXT
     client.get_secret_bundle.assert_called_once_with(secret_id=_SECRET_OCID)
+
+
+def test_get_secret_tolerates_trailing_newline_in_base64_content() -> None:
+    """Round2 LOW: an operator-stored base64 value with a trailing newline must
+    still decode (strip before validate=True), not abort boot as SecretNotFound;
+    the strict decode still rejects embedded corruption."""
+    resp = _bundle_response()
+    resp.data.secret_bundle_content.content = resp.data.secret_bundle_content.content + "\n"
+    client = _spec_client()
+    client.get_secret_bundle.return_value = resp
+
+    provider = OciVaultSecretProvider(
+        {_NAMESPACED_PATH: _SECRET_OCID},
+        secrets_client=client,
+    )
+
+    assert provider.get_secret(_NAMESPACED_PATH) == _PLAINTEXT

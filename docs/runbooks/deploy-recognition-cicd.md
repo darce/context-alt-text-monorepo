@@ -24,17 +24,30 @@ free tiers.
 
 ### 1. Tailscale — ephemeral CI identity
 
-- **OAuth client**: Tailscale admin → *Settings → OAuth clients* → generate a
-  client with scope `devices:write` (or `auth_keys`) and tag `tag:ci`. Note the
-  client id + secret.
-- **ACL**: ensure `tag:ci` may reach the VM on SSH. In the tailnet policy:
+The backend VM is tagged **`tag:oci-vm`** (tailnet `tail1a44b8.ts.net`). This
+tailnet uses the **grants** policy model (not the legacy `acls` key).
+
+- **ACL** (*Access controls* tab): the OAuth client can only own a tag that
+  exists, so declare `tag:ci` in `tagOwners`:
   ```jsonc
-  "tagOwners": { "tag:ci": ["autogroup:admin"] },
-  "acls": [
-    { "action": "accept", "src": ["tag:ci"], "dst": ["acx-backend.tail1a44b8.ts.net:22"] }
+  "tagOwners": {
+    "tag:oci-vm": ["autogroup:admin"],
+    "tag:ci":     ["autogroup:admin"]
+  }
+  ```
+  **Connectivity:** if the policy still has the default allow-all grant
+  (`{"src":["*"],"dst":["*"],"ip":["*"]}`), `tag:ci` can already reach the VM on
+  `:22` — no grant edit needed. If/when you tighten that wildcard, add an
+  explicit least-privilege grant instead:
+  ```jsonc
+  "grants": [
+    { "src": ["tag:ci"], "dst": ["tag:oci-vm"], "ip": ["tcp:22"] }
   ]
   ```
-  (Adjust `dst` to the VM's tag/host as your ACL is structured.)
+- **OAuth client** (*Settings → OAuth clients → Generate OAuth client*): scope
+  **Auth Keys / `auth_keys` = Write**, and assign tag **`tag:ci`**. Copy the
+  client **ID** and **secret** (secret shown once). The GitHub Action uses this
+  to mint a short-lived, tagged, ephemeral node per run.
 
 ### 2. Deploy SSH key
 

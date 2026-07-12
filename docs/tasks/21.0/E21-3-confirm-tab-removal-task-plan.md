@@ -125,29 +125,29 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded frontend guidelines, epic row, WBUX-1 grounding; re-verified dashboard producer sites against current main.
-- [ ] Shim ownership comment points at E21-10.
+- [x] Loaded frontend guidelines, epic row, WBUX-1 grounding; re-verified dashboard producer sites against current main.
+- [x] Shim ownership comment points at E21-10.
 
 ### Checklist for Slice 1: Drawer + removal + shim
 
-- [ ] Confirm tab removed; AdvancedDrawer with full focus contract
-- [ ] `?tab=confirm` shim lands drawer-open; failing-first tests
-- [ ] Scoped vitest green
+- [x] Confirm tab removed; AdvancedDrawer with full focus contract
+- [x] `?tab=confirm` shim lands drawer-open; failing-first tests
+- [x] Scoped vitest green
 
 ### Checklist for Slice 2: Producers + specs
 
-- [ ] No non-shim `tab=confirm` producers left in `js/`
-- [ ] keyboard-walk + live-region specs migrated to drawer contract
-- [ ] e2e a11y suite green
+- [x] No non-shim `tab=confirm` producers left in `js/`
+- [x] keyboard-walk + live-region specs migrated to drawer contract
+- [x] e2e a11y suite green
 
 ## Review Readiness
 
-- [ ] Drawer passes keyboard-only open/close/restore; state announced.
-- [ ] Banned-vocabulary sweep green.
-- [ ] Handoff decision records change + verification + shim ownership.
+- [x] Drawer passes keyboard-only open/close/restore; state announced.
+- [x] Banned-vocabulary sweep green.
+- [x] Handoff decision records change + verification + shim ownership.
 
 ## Success Criteria
 
-- [ ] Workbench has one visible flow; advanced surfaces behind the drawer.
-- [ ] Old `tab=confirm` links functional via shim.
-- [ ] `handoff_close_check(enforce=True)` passes.
+- [x] Workbench has one visible flow; advanced surfaces behind the drawer.
+- [x] Old `tab=confirm` links functional via shim.
+- [x] `handoff_close_check(enforce=True)` passes.

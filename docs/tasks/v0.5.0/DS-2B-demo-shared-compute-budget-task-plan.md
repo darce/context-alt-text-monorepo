@@ -65,8 +65,8 @@ Minimum anchors: `demo_quota.py` (dep), `demo_provisioning_service.py` (`try_con
 | `recognition/application/services/demo_provisioning_service.py` | `try_consume_demo_quota` | add `units: int = 1` (validate ≥1); CAS becomes `SET recognition_used = recognition_used + :units WHERE recognition_used + :units <= recognition_quota`; fallback SELECT logic unchanged (row exists + 0 rows updated → insufficient headroom → raise), now populating `DemoQuotaExceededError(remaining=quota - used)` |
 | same | `DemoQuotaExceededError` | add `remaining: int` attribute |
 | `recognition/interface_adapters/http/deps/demo_quota.py` | `enforce_demo_quota` | include `quota_remaining` in 429 detail; export a callable `consume_demo_quota_units(session, api_key_hash, units)` for non-dep call sites |
-| `scene/interface_adapters/http/routers/describe.py` | `describe_image_multipart`, `describe_async` | add `_demo_quota=Depends(enforce_demo_quota)` |
-| `scene/interface_adapters/http/routers/describe_run.py` | `create_describe_run` | after `media_ids` parse + tenant validation, before `repo.create_run`: consume `len(media_ids)` units; 429 same envelope |
+| `scene/interface_adapters/http/routers/describe.py` | `describe_image_multipart` (:423), `enqueue_describe_image` (:542) | add `_demo_quota=Depends(enforce_demo_quota)` |
+| `scene/interface_adapters/http/routers/describe_run.py` | `create_describe_run` | after `media_ids` parse + tenant validation, before `repo.create_run`: reject empty `media_ids` with 422 ("'media_ids' must be non-empty") — `_parse_media_ids` accepts `[]`, and a zero-unit consume is invalid — then consume `len(media_ids)` units; 429 same envelope |
 
 Ordering rule at every site: consume AFTER auth/tenant validation, BEFORE any inference dispatch or run persistence (mirrors the S3A-05 ordering note in `describe.py`).
 
@@ -89,7 +89,7 @@ Extend the CAS with `units`, add `remaining` to `DemoQuotaExceededError`, surfac
 
 ### Slice 2: Scene wiring + test matrix
 
-Wire the two deps and the inline batch consume. Tests: (1) demo key on `/scene/describe/multipart` at cap → 429, below cap → consumes 1 (**this is the red-first bypass regression test**); (2) same for `/describe/async`; (3) `/describe/run` with N media_ids: budget N−1 → 429 whole, `recognition_used` unchanged; budget ≥ N → exactly N consumed, run created; (4) shared-pool proof: interleaved analyze + scene calls drain one counter; (5) non-demo key unaffected on all scene endpoints; (6) read/lifecycle endpoints consume nothing.
+Wire the two deps and the inline batch consume. Tests: (1) demo key on `/scene/describe/multipart` at cap → 429, below cap → consumes 1 (**this is the red-first bypass regression test**); (2) same for `/describe/async`; (3) `/describe/run` with N media_ids: budget N−1 → 429 whole, `recognition_used` unchanged; budget ≥ N → exactly N consumed, run created; (4) `/describe/run` with `media_ids=[]` → 422, zero units consumed; (5) shared-pool proof: interleaved analyze + scene calls drain one counter; (6) non-demo key unaffected on all scene endpoints; (7) read/lifecycle endpoints consume nothing.
 
 ## Consolidated Checklist
 
@@ -109,7 +109,7 @@ Wire the two deps and the inline batch consume. Tests: (1) demo key on `/scene/d
 - [ ] Bypass regression test observed failing red against pre-wiring code
 - [ ] `Depends(enforce_demo_quota)` on `/scene/describe/multipart` + `/describe/async`
 - [ ] Inline `len(media_ids)` consume in `create_describe_run` (post-auth, pre-persist)
-- [ ] Test matrix (6 cases) green; full suite + ruff green
+- [ ] Test matrix (7 cases) green; full suite + ruff green
 
 ## Review Readiness
 

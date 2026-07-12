@@ -19,7 +19,7 @@ Make the Roster's person list and `Add Person` control reachable from every stat
 
 ## Problem Statement
 
-`RosterPage.tsx` auto-selects a default person when the projection is current (`selectDeterministicDefaultWorkspaceEntry`, `js/admin/pages/roster/rosterRoute.ts:58-89`, invoked at `RosterPage.tsx:106`), and in that default-workspace mode the entries section is unmounted: `RosterPage.tsx:269` renders `RosterEntriesSection` only when `!defaultWorkspaceMode`. That hides the "Managed Identities" list and the primary `Add Person` button (`RosterEntriesSection.tsx:186-190`) behind a non-obvious escape from the workspace — a standing rg-003 violation (primary controls must be reachable from zero state, never gated behind selection). The true zero-person state has no designed empty state ([RLSE-04] undesigned state is a bug). Separately, the Retention page is routed (`App.tsx:59-66`, slug mapping `:108-109`) but `class-menu.php` registers no submenu entry for it — the page is unreachable by navigation.
+`RosterPage.tsx` auto-selects a default person when the projection is current (`selectDeterministicDefaultWorkspaceEntry`, `js/admin/pages/roster/rosterRoute.ts:58-89`, invoked at `RosterPage.tsx:106`), and in that default-workspace mode the entries section is unmounted: `RosterPage.tsx:270` renders `RosterEntriesSection` only when `!defaultWorkspaceMode`. That hides the "Managed Identities" list and the primary `Add Person` button (`RosterEntriesSection.tsx:186-190`) behind a non-obvious escape from the workspace — a standing rg-003 violation (primary controls must be reachable from zero state, never gated behind selection). The true zero-person state has no designed empty state ([RLSE-04] undesigned state is a bug). Separately, the Retention page is routed (`App.tsx:59-66`, slug mapping `:108-109`) but `class-menu.php` registers no submenu entry for it — the page is unreachable by navigation.
 
 ## Constraints
 
@@ -45,7 +45,7 @@ Make the Roster's person list and `Add Person` control reachable from every stat
 ## Current State Analysis
 
 - `RosterEntriesSection` already owns the list, the `Add Person` primary button (:186-190), filter badges, and a `role="status"` filter notice — it is hidden, not missing.
-- `RosterPage.tsx:269`: `{!defaultWorkspaceMode && <RosterEntriesSection ... />}` is the rg-003 violation.
+- `RosterPage.tsx:270`: `{!defaultWorkspaceMode && <RosterEntriesSection ... />}` is the rg-003 violation.
 - Zero-person rendering falls through to an undesigned early return in `RosterEntriesSection` (empty branch around :175, no CTA composition).
 - Retention: route + slug mapping live in `App.tsx` (:59-66, :108-117); `class-menu.php::register_menu` (:33-87) registers Dashboard and sibling pages but no Retention submenu.
 
@@ -69,13 +69,13 @@ Roster always renders the person list; selecting a person opens the workspace pa
 
 ## Proposed Solution
 
-Remove the `!defaultWorkspaceMode` unmount at `RosterPage.tsx:269` so `RosterEntriesSection` always renders; adjust layout so `PersonWorkspacePanel` and the list coexist: workspace panel renders above an always **fully visible** Managed Identities list (no collapse — a collapsed list would re-introduce the discoverability gate rg-003 forbids); existing layout tokens only, no new design system. Add a designed empty-state composition to `RosterEntriesSection`'s zero branch (headline + explanation + primary `Add Person` + secondary scan pointer, icon+color+word per sr-004). Register the Retention submenu in `class-menu.php` (decision: **menu item**, not dashboard footer link — it is a durable operator surface, and a routed page with no navigation entry is the actual defect; record as a handoff decision). Extend the a11y harness with a roster keyboard-walk (load → tab to `Add Person` → open form) and empty/default-state assertions.
+Remove the `!defaultWorkspaceMode` unmount at `RosterPage.tsx:270` so `RosterEntriesSection` always renders; adjust layout so `PersonWorkspacePanel` and the list coexist: workspace panel renders above an always **fully visible** Managed Identities list (no collapse — a collapsed list would re-introduce the discoverability gate rg-003 forbids); existing layout tokens only, no new design system. Add a designed empty-state composition to `RosterEntriesSection`'s zero branch (headline + explanation + primary `Add Person` + secondary scan pointer, icon+color+word per sr-004). Register the Retention submenu in `class-menu.php` (decision: **menu item**, not dashboard footer link — it is a durable operator surface, and a routed page with no navigation entry is the actual defect; record as a handoff decision). Extend the a11y harness with a roster keyboard-walk (load → tab to `Add Person` → open form) and empty/default-state assertions.
 
 ## Files and Surfaces to Change
 
 | Surface | File | Change |
 | --- | --- | --- |
-| frontend | `js/admin/pages/RosterPage.tsx` (:269) | always render `RosterEntriesSection`; layout coexistence with `PersonWorkspacePanel` |
+| frontend | `js/admin/pages/RosterPage.tsx` (:270) | always render `RosterEntriesSection`; layout coexistence with `PersonWorkspacePanel` |
 | frontend | `js/admin/pages/roster/RosterEntriesSection.tsx` | designed empty state in zero branch; `Add Person` reachable in all states |
 | frontend | `js/admin/pages/roster/rosterRoute.ts` | only if needed: default-selection guard so auto-open never hides the list (parsing unchanged) |
 | PHP | `src/admin/class-menu.php` | add Retention submenu (`alt-context-retention`) |
@@ -111,7 +111,7 @@ Remove the `!defaultWorkspaceMode` unmount at `RosterPage.tsx:269` so `RosterEnt
 
 Changes:
 
-- Remove `!defaultWorkspaceMode` gate (`RosterPage.tsx:269`); layout coexistence.
+- Remove `!defaultWorkspaceMode` gate (`RosterPage.tsx:270`); layout coexistence.
 - Designed empty-state composition in `RosterEntriesSection` zero branch.
 - Unit state-matrix tests (zero / default-workspace / filtered / offline).
 

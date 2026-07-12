@@ -190,10 +190,12 @@ Proof (RED→GREEN): `test_describe_load.py` RED on `ModuleNotFoundError: scene.
 
 TEST_CMD: `cd apps/prototype-description-service && uv run pytest scene/tests/test_describe_load.py scene/tests/test_describe_run_reclaim.py && make test`
 
+> **Known-red baseline**: the full suite has one pre-existing intermittent flake — `test_in_flight_request_completes_even_if_key_expires_mid_flight` (timing race, green in isolation, predates this task). Record it in the baseline `test_result` before starting; a failure there is not this task's regression.
+
 Changes:
 
 - `api/main.py` lifespan: after `run_startup_reclaim` → `purge_expired_single_runs` (dedicated RLS-bypassed session, design (c) session discipline) → initial snapshot write; all best-effort/never block boot (matches existing reclaim block style). No admission seeding — the counter is process-local, starts at 0, and reservations exist only while an in-process task holds them (design (b) invariant), so reclaim failure cannot wedge admission.
-- `infra/oci/README.md` one-line producer note.
+- `infra/oci/README.md` one-line producer note; also update the VLM-3 decision memo §Activation item 5 (its load-JSON producer wording cites `InMemoryDescribeJobStore.load_snapshot`, which this task deletes — format unchanged, producer becomes `describe_load`). If VLM-3B (Slice 7 activation) lands after this task, it inherits the corrected wording; sequencing coordinated in both plans.
 - Run `make -C apps/prototype-description-service check` (format-all first per repo rule) and record `test_result` evidence in handoff.
 
 Proof: full `make test` passing line captured verbatim [AGT-04]; reclaim test proves a RUNNING single item with provisional facts polls as `degraded` after simulated restart (new session, reclaim, poll projection); startup-order test (or lifespan unit) shows reclaim → purge → snapshot each logged best-effort.

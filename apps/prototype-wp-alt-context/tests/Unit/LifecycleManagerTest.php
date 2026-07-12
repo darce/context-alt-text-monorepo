@@ -512,28 +512,25 @@ class LifecycleManagerTest extends TestCase
         );
     }
 
-    public function testMaybeUpgradeNoopsWithoutErrorWhenAcxVersionUndefined(): void
+    public function testMaybeUpgradeDoesNotStampVersionWhenSchemaUpgradeIsSkipped(): void
     {
-        // Unit bootstrap always defines ACX_VERSION; assert the production guard
-        // is present so test/edge contexts without the constant stay a no-op.
-        $method = new \ReflectionMethod(LifecycleManager::class, 'maybe_upgrade');
-        $filename = $method->getFileName();
-        $this->assertNotFalse($filename);
-        $lines = \file($filename);
-        $this->assertIsArray($lines);
-        $body = \implode('', \array_slice($lines, $method->getStartLine() - 1, $method->getEndLine() - $method->getStartLine() + 1));
+        // When an environment guard skips the dbDelta run (here: no $wpdb),
+        // the version must NOT be stamped, so a later request retries the
+        // upgrade instead of permanently masking it behind the strict no-op.
+        $wpdbBackup = $GLOBALS['wpdb'] ?? null;
+        unset($GLOBALS['wpdb']);
 
-        $this->assertMatchesRegularExpression(
-            '/if\s*\(\s*!\s*defined\s*\(\s*[\'"]ACX_VERSION[\'"]\s*\)\s*\)/',
-            $body,
-            'maybe_upgrade must guard when ACX_VERSION is undefined'
-        );
-        $this->assertStringContainsString('return;', $body);
+        try {
+            $this->manager->maybe_upgrade();
+        } finally {
+            if (null !== $wpdbBackup) {
+                // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- Restore the test's original wpdb stub.
+                $GLOBALS['wpdb'] = $wpdbBackup;
+            }
+        }
 
-        // Exercise the method under the defined-constant harness: must not throw.
-        $this->setOption('acx_version', ACX_VERSION);
-        $this->manager->maybe_upgrade();
-        $this->assertSame([], $GLOBALS['__ac_dbdelta_queries'] ?? []);
+        $this->assertSame([], $GLOBALS['__ac_dbdelta_queries'] ?? [], 'skipped upgrade must not run dbDelta');
+        $this->assertFalse(get_option('acx_version'), 'skipped upgrade must not stamp acx_version');
     }
 
     private function findQueryContaining(array $queries, string $needle): string

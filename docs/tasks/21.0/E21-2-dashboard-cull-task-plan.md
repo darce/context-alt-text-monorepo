@@ -73,7 +73,7 @@ Dashboard = orientation (zero-people only) → coverage numbers with a "Fix miss
 
 ## Proposed Solution
 
-Delete the `batchOperations` entry from the panel registry and its `gridSectionOrder` references in `buildDashboardPriorityModel.ts`; simplify the model to a single `after_grid` orientation (drop the `before_grid` type member and the `:323` branch). Convert `OrientationCard` gating from localStorage-dismissal to `people_count === 0` prop passed from `DashboardPage` (delete the localStorage read/write). Remove the `DescribePanel` hero render (and component if orphaned). Add the Coverage CTA link. Replace `DashboardRecentActivitySection` identifier rendering with a human summary derived from existing item fields; keep an accessible details affordance if an ID is genuinely needed (none expected).
+Delete the `batchOperations` entry from the panel registry and its `gridSectionOrder` references in `buildDashboardPriorityModel.ts`; simplify the model to a single `after_grid` orientation (drop the `before_grid` type member and the `:323` branch). Convert `OrientationCard` gating from localStorage-dismissal to `people_count === 0` prop passed from `DashboardPage` (delete the localStorage read/write). Remove the `DescribePanel` hero render from the dashboard only (the component is shared — `MediaSelection.tsx` imports it). Add the Coverage CTA link. Replace `DashboardRecentActivitySection` identifier rendering with a human summary derived from existing item fields; keep an accessible details affordance if an ID is genuinely needed (none expected).
 
 ## Files and Surfaces to Change
 
@@ -83,7 +83,7 @@ Delete the `batchOperations` entry from the panel registry and its `gridSectionO
 | frontend | `js/admin/pages/dashboard/buildDashboardPriorityModel.ts` | drop `before_grid` from `orientationPosition` type (:30) and `batchOperations` from `gridSectionOrder`; model returns only `after_grid` |
 | frontend | `js/admin/pages/dashboard/OrientationCard.tsx` | remove localStorage (:7,15); render decided by `peopleCount === 0` prop |
 | frontend | `js/admin/pages/dashboard/DashboardRecentActivitySection.tsx` | humanize activity rows (:63); no raw UUIDs |
-| frontend | `js/admin/pages/dashboard/DescribePanel.tsx` | delete if orphaned after hero removal |
+| frontend | `js/admin/pages/dashboard/DescribePanel.tsx` | component STAYS — `MediaSelection.tsx` (workbench) also imports it; remove only the dashboard render at `DashboardPage.tsx:325` |
 | tests | `js/admin/pages/__tests__/DashboardPage.test.tsx` + dashboard component tests | update: batch panel absent, orientation gating matrix (0 vs >0 people), CTA href, no-UUID assertion |
 | tests | `tests/e2e/a11y/keyboard-walk.spec.ts` or new `dashboard-keyboard-walk.spec.ts` | bounded-Tab walk: dashboard load → Coverage CTA reachable |
 

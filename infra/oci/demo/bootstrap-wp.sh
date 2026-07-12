@@ -116,5 +116,13 @@ compose run --rm --no-deps \
   -v "${PLUGIN_ZIP}:/tmp/alt-context.zip:ro" \
   wpcli wp plugin install /tmp/alt-context.zip --activate --force
 
+# Cycle activation: a --force update over an already-active plugin does NOT
+# re-fire the activation hook, so LifeCycleManager's dbDelta schema upgrade
+# never runs and new plugin columns (e.g. claimed_at, 2026-07-12) are missing
+# at runtime. Deactivate/activate forces the upgrade; both are idempotent.
+echo "==> Cycle plugin activation so activation-hook dbDelta applies schema changes"
+compose run --rm --no-deps wpcli wp plugin deactivate alt-context || true
+compose run --rm --no-deps wpcli wp plugin activate alt-context
+
 echo "==> Bootstrap complete — verify ACX constants inside the container:"
 echo "    docker compose -f ${COMPOSE_FILE} exec wordpress php -r \"require '/var/www/html/wp-config.php'; var_export(defined('ACX_RECOGNITION_URL') ? ACX_RECOGNITION_URL : null);\""

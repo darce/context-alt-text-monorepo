@@ -42,5 +42,3 @@ def test_run_response_matches_shared_schema_via_actual_builder():
         await engine.dispose()
 
     asyncio.run(body())
-
-

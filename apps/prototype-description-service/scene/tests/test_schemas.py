@@ -17,7 +17,6 @@ PREVIEW_FIELDS = {
     "attachment_provenance",
 }
 EXPECTED_FIELDS = {
-
     "tenant_id",
     "media_id",
     "image_hash",

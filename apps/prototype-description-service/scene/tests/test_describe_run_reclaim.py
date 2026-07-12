@@ -44,9 +44,7 @@ def test_reclaim_derives_terminal_status_and_preserves_completed_items():
                 caption="c",
                 provenance={"adapter": "florence"},
             )
-            await repo.mark_item(
-                tenant_id=tenant, run_id=run_id, media_id=101, status=DescribeItemStatus.COMPLETED
-            )
+            await repo.mark_item(tenant_id=tenant, run_id=run_id, media_id=101, status=DescribeItemStatus.COMPLETED)
             # Sanity: the stranded bytes are actually present before reclaim.
             queued = {i.media_id: i for i in await repo.list_run_items(tenant_id=tenant, run_id=run_id)}
             assert queued[102].image_bytes == b"strandedbytes"
@@ -218,6 +216,7 @@ def test_startup_reclaim_failure_does_not_block_boot_and_is_wired(monkeypatch):
     from fastapi.testclient import TestClient
 
     from api.main import create_app
+    from scene.application import describe_load as load_mod
 
     called = {"n": 0}
 
@@ -225,7 +224,15 @@ def test_startup_reclaim_failure_does_not_block_boot_and_is_wired(monkeypatch):
         called["n"] += 1
         raise RuntimeError("reclaim boom")
 
+    async def noop_purge(*_args, **_kwargs):
+        return 0
+
+    async def noop_snapshot(*_args, **_kwargs):
+        return None
+
     monkeypatch.setattr(repo_mod, "run_startup_reclaim", boom)
+    monkeypatch.setattr(repo_mod, "run_startup_retention_purge", noop_purge)
+    monkeypatch.setattr(load_mod, "run_startup_load_snapshot", noop_snapshot)
 
     app = create_app()
     with TestClient(app) as client:  # __enter__ runs the lifespan startup
@@ -235,6 +242,69 @@ def test_startup_reclaim_failure_does_not_block_boot_and_is_wired(monkeypatch):
     assert called["n"] == 1
 
 
+def test_startup_boot_order_reclaim_then_purge_then_snapshot(monkeypatch):
+    """VLM-5 Slice 4: lifespan order is reclaim → purge → snapshot, all wired."""
+    from fastapi.testclient import TestClient
+
+    from api.main import create_app
+    from scene.application import describe_load as load_mod
+
+    order: list[str] = []
+
+    async def reclaim_ok(*_args, **_kwargs):
+        order.append("reclaim")
+        return 0
+
+    async def purge_ok(*_args, **_kwargs):
+        order.append("purge")
+        return 0
+
+    async def snapshot_ok(*_args, **_kwargs):
+        order.append("snapshot")
+        return None
+
+    monkeypatch.setattr(repo_mod, "run_startup_reclaim", reclaim_ok)
+    monkeypatch.setattr(repo_mod, "run_startup_retention_purge", purge_ok)
+    monkeypatch.setattr(load_mod, "run_startup_load_snapshot", snapshot_ok)
+
+    app = create_app()
+    with TestClient(app) as client:
+        assert client.get("/health").status_code == 200
+    assert order == ["reclaim", "purge", "snapshot"]
+
+
+def test_startup_purge_or_snapshot_failure_does_not_block_boot(monkeypatch):
+    """VLM-5 Slice 4: purge/snapshot exceptions are best-effort and never block boot."""
+    from fastapi.testclient import TestClient
+
+    from api.main import create_app
+    from scene.application import describe_load as load_mod
+
+    order: list[str] = []
+
+    async def reclaim_ok(*_args, **_kwargs):
+        order.append("reclaim")
+        return 0
+
+    async def purge_boom(*_args, **_kwargs):
+        order.append("purge")
+        raise RuntimeError("purge boom")
+
+    async def snapshot_boom(*_args, **_kwargs):
+        order.append("snapshot")
+        raise RuntimeError("snapshot boom")
+
+    monkeypatch.setattr(repo_mod, "run_startup_reclaim", reclaim_ok)
+    monkeypatch.setattr(repo_mod, "run_startup_retention_purge", purge_boom)
+    monkeypatch.setattr(load_mod, "run_startup_load_snapshot", snapshot_boom)
+
+    app = create_app()
+    with TestClient(app) as client:
+        assert client.get("/health").status_code == 200
+    # Snapshot still runs after purge failure; both failures are swallowed.
+    assert order == ["reclaim", "purge", "snapshot"]
+
+
 def test_reclaim_leaves_terminal_runs_untouched():
     async def body():
         engine, sf = await _sessionmaker()
@@ -242,9 +312,7 @@ def test_reclaim_leaves_terminal_runs_untouched():
         async with sf() as s:
             repo = DescribeRunRepository(s, max_items=1)
             run_id = await repo.create_run(tenant_id=tenant, media_ids=[201])
-            await repo.mark_item(
-                tenant_id=tenant, run_id=run_id, media_id=201, status=DescribeItemStatus.COMPLETED
-            )
+            await repo.mark_item(tenant_id=tenant, run_id=run_id, media_id=201, status=DescribeItemStatus.COMPLETED)
             await s.commit()
 
         reclaimed = await run_startup_reclaim(sf)

@@ -712,7 +712,9 @@ def main(argv: list[str] | None = None) -> int:
     for mode in modes:
         record = run_fusion_eval(manifest, mode=mode, head_sha=head, limit=args.limit)
         mis = score_misattachments(record, manifest)
-        json_report, md_report = build_reports(record, entries, score_manifest_sha256=record["provenance"]["manifest_sha256"])
+        json_report, md_report = build_reports(
+            record, entries, score_manifest_sha256=record["provenance"]["manifest_sha256"]
+        )
         # Append mis-attachment summary to markdown (report.py unchanged).
         md_report = md_report.rstrip() + "\n\n## Mis-attachment (E20-FUSION)\n\n"
         md_report += f"- labeled facts: {mis['labeled_facts']}\n"

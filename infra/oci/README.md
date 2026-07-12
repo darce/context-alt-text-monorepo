@@ -179,15 +179,18 @@ sudo docker compose logs -f
 ### Accessing the VM
 
 ```bash
-# Recommended: Tailscale (works regardless of residential-IP changes).
+# Canonical path: Tailscale SSH (public port 22 is closed).
 # See "Tailscale (recommended for dynamic-IP workstations)" below for one-time setup.
 ssh ubuntu@acx-backend.tail1a44b8.ts.net
-
-# Fallback: public IP (requires your workstation IP to be in the OCI security list).
-ssh ubuntu@129.213.40.111
 ```
 
-If the public-IP path times out, your workstation's IP has likely changed (residential ISP). Update the security list:
+**Public port 22 is closed** (Tailscale-SSH hardening). `ssh ubuntu@129.213.40.111`
+fails with `kex_exchange_identification: Connection reset by peer`. Use the
+tailnet MagicDNS name above (same VM; public IP remains `129.213.40.111` for
+non-SSH traffic). Deploy scripts default `OCI_HOST` to this tailnet host.
+
+If you ever need to re-open temporary public SSH (emergency only), update the
+security list for your workstation IP:
 
 ```bash
 # Check your current IP
@@ -232,10 +235,13 @@ a. **Generate an auth key** (browser, on your workstation):
      don't have one yet).
    - Copy the `tskey-auth-...` string. It is shown once; treat it as a secret.
 
-b. **Install + bring up on the VM** (over the existing public-IP SSH path):
+b. **Install + bring up on the VM** (requires a temporary public SSH path
+   during bootstrap only — port 22 is closed after Tailscale is live):
    ```bash
-   # Connected via the existing public-IP SSH path:
-   ssh ubuntu@129.213.40.111
+   # Historical bootstrap used the public IP; port 22 is now closed.
+   # Prefer the tailnet host if already joined; otherwise open a temporary
+   # security-list allow for setup, then close port 22 again.
+   ssh ubuntu@acx-backend.tail1a44b8.ts.net
 
    # On the VM (interactive shell — heredoc is unreliable here because the
    # apt-daily timer often holds the lock; see "Troubleshooting" below):
@@ -597,6 +603,42 @@ ssh ubuntu@acx-backend.tail1a44b8.ts.net 'cd /opt/acx-backend/staging && docker 
 docker tag iad.ocir.io/idu2kqqe2jxy/acx-backend:staging iad.ocir.io/idu2kqqe2jxy/acx-backend:latest
 docker push iad.ocir.io/idu2kqqe2jxy/acx-backend:latest
 ssh ubuntu@acx-backend.tail1a44b8.ts.net 'cd /opt/acx-backend/prod && docker compose -f docker-compose.env.yml pull && sudo systemctl restart acx-prod'
+```
+
+### Greenfield schema drift (dev/staging)
+
+**Symptom:** after a greenfield edit to
+`db/migrations/versions/001_identity_schema.py`, the OCI `acx-<env>-api-1`
+container crash-loops with `UndefinedColumn: <new_column>` (e.g.
+`primary_contact_email`). Caddy returns 502 for `https://<env>.api.altcontext.com`.
+
+**Cause:** long-lived Postgres volumes on the VM keep the previous schema.
+Alembic has already stamped `001`, so an in-place `001` edit does not re-apply
+and the API boots against columns that do not exist.
+
+**Recovery (schema-only; no prod path):**
+
+```bash
+# Print remote commands only (no SSH):
+make db-reset-remote ENV=dev CONFIRM=RESET DRY_RUN=1
+
+# Drop public schema, recreate, restart api, poll /health:
+make db-reset-remote ENV=dev CONFIRM=RESET
+make db-reset-remote ENV=staging CONFIRM=RESET
+```
+
+This is lighter than `make reset-remote` (which wipes the whole `ACX_PGDATA_PATH`
+volume and re-bootstraps API keys). Prefer `db-reset-remote` for migration
+drift; use `reset-remote` when you also need a clean tenant/key bootstrap.
+
+**Env-var changes are different:** `docker restart` does **not** re-read
+`.env` — container env is fixed at create time. After editing
+`/opt/acx-backend/<env>/.env`, recreate instead (this bit staging on
+2026-07-12 when the retired `RECOGNITION_ALLOWED_API_KEYS` line was removed):
+
+```bash
+cd /opt/acx-backend/<env> && \
+  COMPOSE_PROJECT_NAME=acx-<env> docker compose -f docker-compose.env.yml up -d --force-recreate api
 ```
 
 ### Destructive Remote Reset

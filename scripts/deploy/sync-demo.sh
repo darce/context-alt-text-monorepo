@@ -13,7 +13,8 @@
 
 set -euo pipefail
 
-OCI_HOST="${OCI_HOST:-129.213.40.111}"
+# Public port 22 is closed; host reachable via Tailscale SSH only.
+OCI_HOST="${OCI_HOST:-acx-backend.tail1a44b8.ts.net}"
 OCI_USER="${OCI_USER:-ubuntu}"
 
 DEMO_COMPOSE_SRC="${DEMO_COMPOSE_SRC:-apps/prototype-description-service/docker-compose.demo.yml}"

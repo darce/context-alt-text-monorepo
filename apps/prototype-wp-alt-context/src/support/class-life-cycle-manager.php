@@ -73,6 +73,38 @@ class LifecycleManager {
 	}
 
 	/**
+	 * Apply projection-table schema upgrades when the packaged plugin version
+	 * diverges from the stored acx_version option.
+	 *
+	 * WP-admin plugin updates (and `wp plugin install --force`) skip activation
+	 * hooks, so dbDelta must also run on load. Equal versions are a strict
+	 * no-op so the every-request path stays cheap. Does not run legacy roster
+	 * migration or flush rewrite rules — those remain activation-only.
+	 *
+	 * The version is stamped only when the upgrade actually ran; if the
+	 * environment guards skip dbDelta, the mismatch persists so a later
+	 * request retries instead of permanently masking a missed upgrade.
+	 *
+	 * A mismatch includes downgrades (stored newer than code): dbDelta never
+	 * drops columns, but it may narrow a changed column type on rollback.
+	 */
+	public function maybe_upgrade(): void {
+		if ( ! defined( 'ACX_VERSION' ) ) {
+			return;
+		}
+
+		$stored = get_option( self::OPTION_VERSION );
+		if ( $stored === ACX_VERSION ) {
+			return;
+		}
+
+		if ( ! $this->maybe_create_projection_tables() ) {
+			return;
+		}
+		update_option( self::OPTION_VERSION, ACX_VERSION );
+	}
+
+	/**
 	 * Migrates data from legacy WP options to custom tables.
 	 *
 	 * @H-PCRUD-4: Ensure data persistence during upgrade.
@@ -429,25 +461,28 @@ class LifecycleManager {
 	 * Create sovereign projection tables during activation.
 	 *
 	 * Safe to call multiple times; dbDelta performs idempotent updates.
+	 *
+	 * @return bool True when dbDelta ran; false when an environment guard
+	 *              skipped the upgrade (callers must not mark it complete).
 	 */
-	private function maybe_create_projection_tables(): void {
+	private function maybe_create_projection_tables(): bool {
 		global $wpdb;
 
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! isset( $wpdb->prefix ) || ! method_exists( $wpdb, 'get_charset_collate' ) ) {
-			return;
+			return false;
 		}
 
 		if ( ! function_exists( 'dbDelta' ) ) {
 			$upgrade_path = defined( 'ABSPATH' ) ? ABSPATH . 'wp-admin/includes/upgrade.php' : '';
 			if ( '' === $upgrade_path || ! is_readable( $upgrade_path ) ) {
-				return;
+				return false;
 			}
 
 			require_once $upgrade_path;
 
 			/** @phpstan-ignore booleanNot.alwaysTrue */
 			if ( ! function_exists( 'dbDelta' ) ) {
-				return;
+				return false;
 			}
 		}
 
@@ -708,5 +743,7 @@ class LifecycleManager {
 		dbDelta( $description_runs_sql );
 		dbDelta( $description_run_items_sql );
 		dbDelta( $description_usage_sql );
+
+		return true;
 	}
 }

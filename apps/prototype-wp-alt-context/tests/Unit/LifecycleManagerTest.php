@@ -472,6 +472,67 @@ class LifecycleManagerTest extends TestCase
         $this->assertFalse(get_option('acx_installed'));
     }
 
+    public function testMaybeUpgradeCreatesTablesAndUpdatesVersionWhenStoredDiffers(): void
+    {
+        $this->setOption('acx_version', '0.0.1-stale');
+
+        $this->manager->maybe_upgrade();
+
+        $queries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
+        $this->assertIsArray($queries);
+        $this->assertNotEmpty($queries, 'Projection tables should be created when version differs');
+        $this->assertSame(ACX_VERSION, get_option('acx_version'));
+    }
+
+    public function testMaybeUpgradeCreatesTablesAndSetsVersionWhenStoredMissing(): void
+    {
+        $this->assertFalse(get_option('acx_version'));
+
+        $this->manager->maybe_upgrade();
+
+        $queries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
+        $this->assertIsArray($queries);
+        $this->assertNotEmpty($queries, 'Projection tables should be created when version is missing');
+        $this->assertSame(ACX_VERSION, get_option('acx_version'));
+    }
+
+    public function testMaybeUpgradeIsStrictNoopWhenStoredVersionMatches(): void
+    {
+        $this->setOption('acx_version', ACX_VERSION);
+        $optionsBefore = $GLOBALS['__ac_options'];
+
+        $this->manager->maybe_upgrade();
+
+        $queries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
+        $this->assertSame([], $queries, 'Equal versions must not run dbDelta');
+        $this->assertSame(
+            $optionsBefore,
+            $GLOBALS['__ac_options'],
+            'equal versions must not write options'
+        );
+    }
+
+    public function testMaybeUpgradeDoesNotStampVersionWhenSchemaUpgradeIsSkipped(): void
+    {
+        // When an environment guard skips the dbDelta run (here: no $wpdb),
+        // the version must NOT be stamped, so a later request retries the
+        // upgrade instead of permanently masking it behind the strict no-op.
+        $wpdbBackup = $GLOBALS['wpdb'] ?? null;
+        unset($GLOBALS['wpdb']);
+
+        try {
+            $this->manager->maybe_upgrade();
+        } finally {
+            if (null !== $wpdbBackup) {
+                // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- Restore the test's original wpdb stub.
+                $GLOBALS['wpdb'] = $wpdbBackup;
+            }
+        }
+
+        $this->assertSame([], $GLOBALS['__ac_dbdelta_queries'] ?? [], 'skipped upgrade must not run dbDelta');
+        $this->assertFalse(get_option('acx_version'), 'skipped upgrade must not stamp acx_version');
+    }
+
     private function findQueryContaining(array $queries, string $needle): string
     {
         foreach ($queries as $query) {

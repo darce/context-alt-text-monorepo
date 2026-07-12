@@ -34,10 +34,11 @@ The frontend (`apps/prototype-wp-alt-context/js/`) is 299 TS/TSX files, ~45k LOC
 | Transpile | Vite 7 (esbuild) — never touches `tsc` |
 | Tests | Vitest 4 (own transform), Playwright 1.56 (own transform) |
 | Lint | typescript-eslint 8.x with `recommendedTypeChecked` + `stylisticTypeChecked`, `parserOptions.project: tsconfig.type-check.json` → **hard TS-API dependency** |
-| Codegen | `json-schema-to-typescript` (json2ts) pins its own `typescript@^5.4.5` internally — unaffected by repo TS version |
 | tsconfig | `strict: true`, `target: ES2022`, `module: ESNext`, `moduleResolution: bundler`, `esModuleInterop: true`, explicit `types` array, `baseUrl: "."` + `~/*` paths |
+| `~/*` paths mapping | **Dead config**: 0 `~/`-prefixed imports repo-wide, and `vite.config.ts` defines no matching `resolve.alias`. The mapping resolves nothing today. |
 | tsgo-hostile features | None: zero namespaces, zero `const enum`, zero decorators, zero direct `import 'typescript'` in app/scripts code |
 | Side-effect imports | Exactly 1 (`import './styles/main.scss'` in `js/admin/main.tsx`) — relevant to `noUncheckedSideEffectImports: true` default |
+| Codegen (json2ts) | `json-schema-to-typescript@14.1.0` (installed) has **no** `typescript` dependency — it formats via prettier. Contract codegen is decoupled from the repo TS version entirely. |
 
 ## Benefit Analysis (the juice)
 
@@ -71,15 +72,14 @@ Type-system behavior deltas (Unicode template-literal inference, JSDoc analysis 
 
 Deliverables:
 
-- Remove `baseUrl` from `tsconfig.json`; rewrite `paths` as `{"~/*": ["./js/*"]}` (TS 5.9 already supports baseUrl-less paths).
-- Verify Vite `resolve.alias` for `~/` is independent of tsconfig `baseUrl` (it is — vite.config.ts owns its own alias).
+- Remove `baseUrl` **and** the unused `~/*` `paths` mapping from `tsconfig.json`. Because there are 0 `~/` imports and no matching Vite alias, the whole `paths` block is dead config — delete it rather than rewrite it relative. (If `~/` imports are wanted later, add both a tsconfig `paths` entry AND a `vite.config.ts` `resolve.alias`; today neither exists.)
 - Add ambient declaration for side-effect `*.scss` import if not already covered by `vite/client` types.
 - Recommend `TypeScriptTeam.native-preview` in `.vscode/extensions.json` (opt-in, per-dev).
 
 Exit criteria:
 
-- `npm run check` green with no `baseUrl` in any tsconfig.
-- Editor resolves `~/` imports and scss side-effect import with TS7 LSP enabled.
+- `npm run check` green with no `baseUrl` and no dead `paths` block in any tsconfig.
+- Existing imports (all relative / bare-specifier) still resolve; scss side-effect import type-checks with TS7 LSP enabled.
 
 ### Phase 1: TypeScript 6.0 bridge upgrade
 
@@ -129,8 +129,8 @@ Exit criteria:
   Mitigation: single ambient `declare module '*.scss'` file; one-line fix identified up front.
 - **Risk**: TS 7 checker produces order-dependent diagnostics with `--checkers > 1` (published caveat).
   Mitigation: leave default checkers; CI does not diff diagnostic order.
-- **Risk**: json2ts-generated contract types drift under a new TS version's emit conventions.
-  Mitigation: json2ts pins its own internal TS; regenerate contracts (`npm run generate:contracts`) and diff as part of Phase 1/2 verification.
+- **Risk**: contract codegen (`generate:contracts`) behaves differently under the new toolchain.
+  Mitigation: none needed for the TS version itself — `json-schema-to-typescript@14.1.0` has no `typescript` dependency (prettier-formatted output), so repo TS version cannot affect emitted contract types. Regenerate and diff once as cheap confirmation only.
 - **Risk**: 6.x line goes maintenance-only while Phase 2 gate is blocked, delaying security/lib updates.
   Mitigation: acceptable — 6.x is the officially supported API bridge line precisely for this window.
 
@@ -147,8 +147,8 @@ Exit criteria:
 
 ## Phase 0: Zero-risk adoption
 
-- [ ] Remove `baseUrl`; make `paths` project-root-relative in `tsconfig.json`
-- [ ] Verify Vite alias + typecheck + eslint green after paths change
+- [ ] Remove `baseUrl` and the unused `~/*` `paths` block from `tsconfig.json` (dead config: 0 `~/` imports, no Vite alias)
+- [ ] Verify typecheck + eslint green after tsconfig change
 - [ ] Ambient `*.scss` declaration (or confirm `vite/client` covers it)
 - [ ] Recommend TS7 LSP extension in `.vscode/extensions.json`
 

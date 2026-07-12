@@ -1,5 +1,5 @@
 import React from 'react';
-import { __, sprintf } from '@wordpress/i18n';
+import { __ } from '@wordpress/i18n';
 
 /**
  * Dashboard landing page for the Alt Context admin SPA.
@@ -15,13 +15,11 @@ import { useSyncHealth } from '../hooks/useSyncHealth';
 import { useSyncStatus } from '../hooks/useSyncStatus';
 import { hasSyncHealthWarnings, resolveEffectiveSyncHealth } from './workbench/degradedModeBannerLogic';
 import { useRetentionStatus } from '../hooks/useRetentionStatus';
-import { DescribePanel } from './dashboard/DescribePanel';
 import { GuidanceCard } from './dashboard/GuidanceCard';
 import { DashboardRecentActivitySection } from './dashboard/DashboardRecentActivitySection';
 import { DashboardSyncHealthSection } from './dashboard/DashboardSyncHealthSection';
 import { OrientationCard } from './dashboard/OrientationCard';
 import { buildDashboardPriorityModel, type DashboardSectionId } from './dashboard/buildDashboardPriorityModel';
-import { rosterClustersUrl } from './workbench/Panels';
 
 const normalizeCount = (value: number | null | undefined): number => {
   if (typeof value !== 'number' || Number.isNaN(value) || value <= 0) {
@@ -43,7 +41,6 @@ const formatDiagnosticDate = (value: string | null | undefined): string | null =
 export const DashboardPage = (): React.JSX.Element => {
   const { stats, isLoading: isStatsLoading } = useMediaStats();
   const {
-    jobHistory,
     jobStatuses,
     jobDetails,
     recentActivity = [],
@@ -63,8 +60,6 @@ export const DashboardPage = (): React.JSX.Element => {
   } = useIdentityStats();
 
   const coveragePercent = Math.round(stats.coverage);
-  const latestRecognitionJobId = recentActivity.find((item) => item.jobId)?.jobId ?? jobHistory[0] ?? null;
-  const latestRecognitionJobStatus = latestRecognitionJobId ? jobStatuses[latestRecognitionJobId] : null;
   const pendingReplayCount = normalizeCount(syncStatus?.pending_curation_operations);
   const conflictCount = normalizeCount(syncStatus?.conflict_count);
   const failedReplayCount = normalizeCount(syncStatus?.failed_curation_operations);
@@ -213,6 +208,11 @@ export const DashboardPage = (): React.JSX.Element => {
           max={100}
           aria-label={__('Alt text coverage', 'alt-context')}
         />
+        <div className="acx-dashboard__actions">
+          <a href="#/workbench?status=missing" className="acx-button acx-button--primary">
+            {__('Fix missing descriptions', 'alt-context')}
+          </a>
+        </div>
       </section>
     ),
     recentActivity: (
@@ -264,48 +264,6 @@ export const DashboardPage = (): React.JSX.Element => {
         )}
       </section>
     ),
-    batchOperations: (
-      <section className="acx-dashboard__panel">
-        <h2>{__('Batch Operations', 'alt-context')}</h2>
-        <p>
-          {__(
-            'Start new recognition batches from Dashboard, then jump back into scan, review, or roster cleanup from the same landing page.',
-            'alt-context',
-          )}
-        </p>
-        {latestRecognitionJobId ? (
-          <>
-            <p>
-              {sprintf(__('Most recent batch job: %s', 'alt-context'), latestRecognitionJobId)}{' '}
-              <a href={`#/workbench?advanced=open&jobId=${latestRecognitionJobId}`} className="acx-link-button">
-                {__('View latest results', 'alt-context')}
-              </a>
-            </p>
-            {latestRecognitionJobStatus ? (
-              <p>{sprintf(__('Latest batch status: %s', 'alt-context'), latestRecognitionJobStatus)}</p>
-            ) : null}
-          </>
-        ) : (
-          <p>
-            {__('No recent recognition batches yet. Start from the analysis queue when you are ready.', 'alt-context')}
-          </p>
-        )}
-        <div className="acx-dashboard__actions">
-          <a href="#/workbench?tab=scan" className="acx-dashboard__action-card">
-            <h3>{__('Analysis Queue', 'alt-context')}</h3>
-            <p>{__('Select media and launch a new recognition batch.', 'alt-context')}</p>
-          </a>
-          <a href="#/workbench?advanced=open" className="acx-dashboard__action-card">
-            <h3>{__('Review Hub', 'alt-context')}</h3>
-            <p>{__('Inspect recent jobs and cluster the latest results.', 'alt-context')}</p>
-          </a>
-          <a href={rosterClustersUrl()} className="acx-dashboard__action-card">
-            <h3>{__('Managed Identities', 'alt-context')}</h3>
-            <p>{__('View and merge identity clusters in the roster.', 'alt-context')}</p>
-          </a>
-        </div>
-      </section>
-    ),
   };
 
   return (
@@ -320,17 +278,15 @@ export const DashboardPage = (): React.JSX.Element => {
         </p>
       </header>
 
-      {priorityModel.orientationPosition === 'before_grid' ? <OrientationCard /> : null}
-
-      <DescribePanel />
-
       <div className="acx-dashboard__grid">
         {priorityModel.gridSectionOrder.map((sectionId) => (
           <React.Fragment key={sectionId}>{gridSections[sectionId]}</React.Fragment>
         ))}
       </div>
 
-      {priorityModel.orientationPosition === 'after_grid' ? <OrientationCard /> : null}
+      {priorityModel.orientationPosition === 'after_grid' && identityStats ? (
+        <OrientationCard peopleCount={identityStats.people_count} />
+      ) : null}
     </section>
   );
 };

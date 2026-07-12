@@ -93,4 +93,14 @@ describe('buildDashboardPriorityModel', () => {
 
     expect(model.gridSectionOrder[0]).toBe('syncHealth');
   });
+
+  it('never includes batchOperations and always places orientation after the grid', () => {
+    const model = buildDashboardPriorityModel(buildInputs({ pendingClustersCount: 2 }));
+
+    expect(model.gridSectionOrder).not.toContain('batchOperations');
+    expect(model.orientationPosition).toBe('after_grid');
+    // Runtime + type contract: only after_grid is valid.
+    const position: 'after_grid' = model.orientationPosition;
+    expect(position).toBe('after_grid');
+  });
 });

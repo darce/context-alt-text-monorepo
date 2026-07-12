@@ -2,32 +2,19 @@ import React from 'react';
 import { __ } from '@wordpress/i18n';
 import { Scan, Users, CheckCircle, ArrowRight } from 'lucide-react';
 
-export const OrientationCard = (): React.JSX.Element => {
-  const [isVisible, setIsVisible] = React.useState(() => {
-    return localStorage.getItem('acx_orientation_dismissed') !== 'true';
-  });
+interface OrientationCardProps {
+  peopleCount: number;
+}
 
-  if (!isVisible) {
-    return <></>;
+export const OrientationCard = ({ peopleCount }: OrientationCardProps): React.JSX.Element | null => {
+  if (peopleCount !== 0) {
+    return null;
   }
-
-  const handleDismiss = () => {
-    localStorage.setItem('acx_orientation_dismissed', 'true');
-    setIsVisible(false);
-  };
 
   return (
     <section className="acx-orientation-card" aria-labelledby="acx-orientation-title">
       <div className="acx-orientation-card__header">
         <h2 id="acx-orientation-title">{__('Getting Started with Identity Recognition', 'alt-context')}</h2>
-        <button
-          type="button"
-          className="acx-orientation-card__dismiss"
-          onClick={handleDismiss}
-          aria-label={__('Dismiss orientation', 'alt-context')}
-        >
-          {__('Got it, thanks!', 'alt-context')}
-        </button>
       </div>
 
       <div className="acx-orientation-card__steps">

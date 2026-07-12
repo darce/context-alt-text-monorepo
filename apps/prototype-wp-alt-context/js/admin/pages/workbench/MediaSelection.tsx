@@ -22,6 +22,7 @@ import { useBulkDescribe } from '../../hooks/useBulkDescribe';
 import type { DescribeRunProgress } from '../../hooks/useDescribeRunProgress';
 import { DESCRIBE_RUN_STATUS, type DescribeRunStatus } from '../../api/describeApi';
 import { useWorkbenchContext } from './WorkbenchContext';
+import { SYNC_VOCABULARY } from './syncPresentation';
 
 interface MediaSelectionProps {
   collapsed?: boolean;
@@ -305,7 +306,7 @@ const BulkDescribeCta = ({
           disabled={selectedCount === 0 || isSubmitting || isRunning}
           onClick={onSubmit}
         >
-          {isSubmitting ? __('Starting describe run…', 'alt-context') : __('Describe selected', 'alt-context')}
+          {isSubmitting ? SYNC_VOCABULARY.describeStarting : __('Describe selected', 'alt-context')}
         </button>
         {canCancel ? (
           <button type="button" className="button button-link" disabled={isCancelling} onClick={onCancel}>
@@ -339,17 +340,17 @@ interface DescribeRunStatusMeta {
 const describeRunStatusMeta = (status: DescribeRunStatus): DescribeRunStatusMeta => {
   switch (status) {
     case DESCRIBE_RUN_STATUS.PENDING:
-      return { label: __('Queued', 'alt-context'), Icon: Clock, tone: 'pending' };
+      return { label: SYNC_VOCABULARY.describeQueued, Icon: Clock, tone: 'pending' };
     case DESCRIBE_RUN_STATUS.RUNNING:
-      return { label: __('Describing', 'alt-context'), Icon: Loader2, tone: 'running', spin: true };
+      return { label: SYNC_VOCABULARY.describeRunning, Icon: Loader2, tone: 'running', spin: true };
     case DESCRIBE_RUN_STATUS.COMPLETED:
-      return { label: __('Completed', 'alt-context'), Icon: CheckCircle2, tone: 'success' };
+      return { label: SYNC_VOCABULARY.describeCompleted, Icon: CheckCircle2, tone: 'success' };
     case DESCRIBE_RUN_STATUS.COMPLETED_WITH_ERRORS:
-      return { label: __('Completed with errors', 'alt-context'), Icon: AlertTriangle, tone: 'warning' };
+      return { label: SYNC_VOCABULARY.describeCompletedWithErrors, Icon: AlertTriangle, tone: 'warning' };
     case DESCRIBE_RUN_STATUS.FAILED:
-      return { label: __('Failed', 'alt-context'), Icon: XCircle, tone: 'danger' };
+      return { label: SYNC_VOCABULARY.describeFailed, Icon: XCircle, tone: 'danger' };
     case DESCRIBE_RUN_STATUS.CANCELLED:
-      return { label: __('Cancelled', 'alt-context'), Icon: XCircle, tone: 'muted' };
+      return { label: SYNC_VOCABULARY.describeCancelled, Icon: XCircle, tone: 'muted' };
     default: {
       // Exhaustiveness guard: a new status must be handled above.
       const unreachable: never = status;
@@ -385,7 +386,7 @@ const BulkDescribeProgress = ({
       <div className="acx-media-selection__bulk-describe-progress" role="alert" aria-live="assertive">
         <span className="acx-media-selection__bulk-describe-status acx-media-selection__bulk-describe-status--danger">
           <AlertTriangle aria-hidden="true" size={16} />
-          {__('Lost connection to the describe run.', 'alt-context')}
+          {SYNC_VOCABULARY.describeLost}
         </span>
         <div className="acx-media-selection__bulk-describe-meta">
           <span>{__('Progress updates paused. Retry to resume.', 'alt-context')}</span>
@@ -402,7 +403,7 @@ const BulkDescribeProgress = ({
       <div className="acx-media-selection__bulk-describe-progress" role="status" aria-live="polite">
         <span className="acx-media-selection__bulk-describe-status acx-media-selection__bulk-describe-status--running">
           <Loader2 className="acx-media-selection__bulk-describe-spin" aria-hidden="true" size={16} />
-          {__('Starting describe run…', 'alt-context')}
+          {SYNC_VOCABULARY.describeStarting}
         </span>
       </div>
     );

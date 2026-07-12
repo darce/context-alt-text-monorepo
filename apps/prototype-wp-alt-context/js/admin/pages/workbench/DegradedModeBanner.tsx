@@ -1,5 +1,4 @@
 import React from 'react';
-import { __ } from '@wordpress/i18n';
 
 import type { SyncHealthResponse } from '../../api/recognition/types/sync';
 import { useSyncHealth } from '../../hooks/useSyncHealth';
@@ -11,6 +10,7 @@ import {
   isSyncOffline,
   shouldShowDegradedBanner,
 } from './degradedModeBannerLogic';
+import { SYNC_VOCABULARY } from './syncPresentation';
 
 interface DegradedModeBannerViewProps {
   health: SyncHealthResponse | undefined;
@@ -44,13 +44,13 @@ export const DegradedModeBannerView = ({ health }: DegradedModeBannerViewProps):
           <p className="acx-empty-state-warning__message">
             {debtLinks.failedOutboxHref ? (
               <a href={debtLinks.failedOutboxHref} className="acx-empty-state-warning__link">
-                {__('Review failed sync operations', 'alt-context')}
+                {SYNC_VOCABULARY.reviewFailedOps}
               </a>
             ) : null}
             {debtLinks.failedOutboxHref && debtLinks.conflictsHref ? ' · ' : null}
             {debtLinks.conflictsHref ? (
               <a href={debtLinks.conflictsHref} className="acx-empty-state-warning__link">
-                {__('Resolve sync conflicts', 'alt-context')}
+                {SYNC_VOCABULARY.resolveConflicts}
               </a>
             ) : null}
           </p>

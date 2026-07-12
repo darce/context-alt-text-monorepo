@@ -597,16 +597,16 @@ describe('DashboardPage', () => {
 
     render(<DashboardPage />);
 
-    expect(screen.getByText('Conflict resolution is blocking part of the replay queue.')).toBeInTheDocument();
-    expect(screen.getByText('Pending Replay')).toBeInTheDocument();
+    expect(screen.getByText('Conflict resolution is blocking part of the sync queue.')).toBeInTheDocument();
+    expect(screen.getByText('Pending changes')).toBeInTheDocument();
     expect(screen.getByText('Conflicts')).toBeInTheDocument();
-    expect(screen.getByText('Failed Replay')).toBeInTheDocument();
-    expect(screen.getByText('Topology backlog: pending 4, failed 1, conflicts 2')).toBeInTheDocument();
+    expect(screen.getByText('Failed operations')).toBeInTheDocument();
+    expect(screen.getByText('Sync backlog: pending 4, failed 1, conflicts 2')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Open Conflict Inbox/ })).toHaveAttribute(
       'href',
       '#/workbench?tab=scan&panel=conflicts',
     );
-    expect(screen.getByRole('link', { name: /Open Dead-Letter Queue/ })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /Open Failed Sync Queue/ })).toHaveAttribute(
       'href',
       '#/workbench?tab=scan&panel=dead-letter',
     );
@@ -667,10 +667,10 @@ describe('DashboardPage', () => {
 
     render(<DashboardPage />);
 
-    expect(screen.getByText('Machine sync is healthy and curation replay is caught up.')).toBeInTheDocument();
-    expect(screen.getByText('Pending Replay')).toBeInTheDocument();
+    expect(screen.getByText('Machine sync is healthy and local changes are caught up.')).toBeInTheDocument();
+    expect(screen.getByText('Pending changes')).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Open Conflict Inbox/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: /Open Dead-Letter Queue/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Open Failed Sync Queue/ })).not.toBeInTheDocument();
   });
 
   it('renders sync health before review work and orientation when sync needs attention', () => {
@@ -763,8 +763,8 @@ describe('DashboardPage', () => {
 
     render(<DashboardPage />);
 
-    expect(screen.getByText('Local curation changes are queued for replay.')).toBeInTheDocument();
-    expect(screen.getByText('Pending Replay')).toBeInTheDocument();
+    expect(screen.getByText('Local changes are waiting to sync.')).toBeInTheDocument();
+    expect(screen.getByText('Pending changes')).toBeInTheDocument();
     expect(screen.getByText('5')).toBeInTheDocument();
   });
 
@@ -908,8 +908,8 @@ describe('DashboardPage', () => {
 
     render(<DashboardPage />);
 
-    expect(screen.getByText('Some replay operations failed and need operator attention.')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Open Dead-Letter Queue/ })).toBeInTheDocument();
+    expect(screen.getByText('Some sync operations failed and need operator attention.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Open Failed Sync Queue/ })).toBeInTheDocument();
   });
 
   it('renders offline sync summary copy', () => {

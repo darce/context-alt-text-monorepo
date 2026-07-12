@@ -119,7 +119,7 @@ export const RetentionPage = (): React.JSX.Element => {
               <strong>{__('GDPR mode', 'alt-context')}</strong>
               <p>
                 {__(
-                  'Sets retention mode to \u201cDispose after acknowledgement\u201d, automatically disposing machine-derived data after WordPress acknowledges projection.',
+                  'Sets retention mode to \u201cDispose after confirmation\u201d, automatically disposing machine-derived data after WordPress confirms results.',
                   'alt-context',
                 )}
               </p>

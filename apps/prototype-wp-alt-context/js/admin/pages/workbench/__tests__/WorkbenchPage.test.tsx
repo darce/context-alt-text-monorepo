@@ -711,11 +711,11 @@ describe('WorkbenchPage', () => {
     const user = userEvent.setup();
     renderWorkbench(undefined, ['/workbench?tab=scan&panel=dead-letter']);
 
-    expect(screen.getByRole('heading', { name: 'Dead-Letter Queue' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Failed Sync Queue' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Close' }));
 
     await waitFor(() => {
-      expect(screen.queryByRole('heading', { name: 'Dead-Letter Queue' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: 'Failed Sync Queue' })).not.toBeInTheDocument();
     });
   });
 

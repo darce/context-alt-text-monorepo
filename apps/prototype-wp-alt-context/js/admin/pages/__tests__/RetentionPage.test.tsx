@@ -177,7 +177,7 @@ describe('RetentionPage', () => {
     render(<RetentionPage />);
 
     expect(screen.getByText('Retention & Audit Controls')).toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: /Dispose after acknowledgement/ })).toBeChecked();
+    expect(screen.getByRole('radio', { name: /Dispose after confirmation/ })).toBeChecked();
     expect(screen.getByText('Showing the five most recent audit events.')).toBeInTheDocument();
     expect(screen.getByText('policy_updated')).toBeInTheDocument();
     expect(screen.getByText('retention_mode: dispose_after_ack · previous: retain_all')).toBeInTheDocument();

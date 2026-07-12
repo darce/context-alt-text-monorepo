@@ -5,25 +5,31 @@ from __future__ import annotations
 import uuid
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
-from sqlalchemy import select, text
+from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models.scene import DescribeRun, DescribeRunItem
 from recognition.shared.db.dialect import is_sqlite
 from scene.domain.describe_run import (
     TERMINAL_ITEM_STATUSES,
+    TERMINAL_RUN_STATUSES,
     DescribeItemStatus,
     DescribeRunPhase,
     DescribeRunRequest,
     DescribeRunStatus,
+    RunKind,
+    async_job_retention_hours,
     describe_run_max_items,
     phase_for_status,
     terminal_run_status,
 )
+from scene.domain.description import DescriptionResultTier
 
 _TRUTHY_PG_SETTINGS = {"true", "on", "1", "yes"}
+_RECLAIM_INTERRUPT_ERROR = "interrupted by service restart"
 
 
 class DescribeRunRepository:
@@ -47,6 +53,7 @@ class DescribeRunRepository:
         images = images or {}
         run = DescribeRun(
             tenant_id=tenant_id,
+            run_kind=RunKind.BULK,
             status=DescribeRunStatus.PENDING,
             phase=DescribeRunPhase.QUEUED,
             media_ids=list(media_ids),
@@ -70,6 +77,188 @@ class DescribeRunRepository:
         self._session.add(run)
         await self._session.flush()
         return run.id
+
+    async def create_single_run(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        media_id: int,
+        image_bytes: bytes,
+        image_content_type: str | None = None,
+        created_by_user_id: int | None = None,
+    ) -> uuid.UUID:
+        """Create a one-item ``run_kind=single`` job for the async supersede path (VLM-5)."""
+        run = DescribeRun(
+            tenant_id=tenant_id,
+            run_kind=RunKind.SINGLE,
+            status=DescribeRunStatus.PENDING,
+            phase=DescribeRunPhase.QUEUED,
+            media_ids=[media_id],
+            total_items=1,
+            completed_items=0,
+            failed_items=0,
+            skipped_items=0,
+            created_by_user_id=created_by_user_id,
+        )
+        run.items = [
+            DescribeRunItem(
+                tenant_id=tenant_id,
+                media_id=media_id,
+                status=DescribeItemStatus.QUEUED,
+                attempts=0,
+                image_bytes=image_bytes,
+                image_content_type=image_content_type,
+                result_generation=0,
+            )
+        ]
+        self._session.add(run)
+        await self._session.flush()
+        return run.id
+
+    async def get_single_run_item(
+        self, *, tenant_id: uuid.UUID, run_id: uuid.UUID
+    ) -> DescribeRunItem | None:
+        """Return the sole item for a single-run job (None if missing or empty)."""
+        items = await self.list_run_items(tenant_id=tenant_id, run_id=run_id)
+        if not items:
+            return None
+        return items[0]
+
+    async def set_item_provisional(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        run_id: uuid.UUID,
+        media_id: int,
+        visual_facts: dict[str, Any],
+        now: datetime | None = None,
+    ) -> bool:
+        """Persist CPU provisional envelope; keep image_bytes for GPU supersede."""
+        now = now or datetime.now(tz=UTC)
+        item = await self._get_item(tenant_id=tenant_id, run_id=run_id, media_id=media_id)
+        if item is None:
+            return False
+        if DescribeItemStatus(item.status) in TERMINAL_ITEM_STATUSES:
+            return False
+        if item.status != DescribeItemStatus.RUNNING:
+            item.status = DescribeItemStatus.RUNNING
+            item.started_at = item.started_at or now
+            item.attempts = max(item.attempts, 1)
+        item.visual_facts = visual_facts
+        item.tier = DescriptionResultTier.PROVISIONAL_CPU
+        item.result_generation = 1
+        item.last_error = None
+        await self._recompute_run_totals(tenant_id=tenant_id, run_id=run_id, now=now)
+        await self._session.flush()
+        return True
+
+    async def set_item_final(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        run_id: uuid.UUID,
+        media_id: int,
+        visual_facts: dict[str, Any],
+        now: datetime | None = None,
+    ) -> bool:
+        """Persist GPU-final envelope and mark the item terminal completed."""
+        now = now or datetime.now(tz=UTC)
+        item = await self._get_item(tenant_id=tenant_id, run_id=run_id, media_id=media_id)
+        if item is None:
+            return False
+        if DescribeItemStatus(item.status) in TERMINAL_ITEM_STATUSES:
+            return DescribeItemStatus(item.status) is DescribeItemStatus.COMPLETED
+        item.status = DescribeItemStatus.COMPLETED
+        item.completed_at = now
+        item.visual_facts = visual_facts
+        item.tier = DescriptionResultTier.FINAL_GPU
+        item.result_generation = 2
+        item.last_error = None
+        item.image_bytes = None
+        await self._recompute_run_totals(tenant_id=tenant_id, run_id=run_id, now=now)
+        await self._session.flush()
+        return True
+
+    async def set_item_degraded(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        run_id: uuid.UUID,
+        media_id: int,
+        error: str,
+        now: datetime | None = None,
+    ) -> bool:
+        """Keep provisional visual_facts; mark completed with last_error (projects degraded)."""
+        now = now or datetime.now(tz=UTC)
+        item = await self._get_item(tenant_id=tenant_id, run_id=run_id, media_id=media_id)
+        if item is None:
+            return False
+        if DescribeItemStatus(item.status) in TERMINAL_ITEM_STATUSES:
+            return (
+                DescribeItemStatus(item.status) is DescribeItemStatus.COMPLETED
+                and item.last_error is not None
+            )
+        item.status = DescribeItemStatus.COMPLETED
+        item.completed_at = now
+        item.tier = item.tier or DescriptionResultTier.PROVISIONAL_CPU
+        if not item.result_generation:
+            item.result_generation = 1
+        item.last_error = error
+        item.image_bytes = None
+        await self._recompute_run_totals(tenant_id=tenant_id, run_id=run_id, now=now)
+        await self._session.flush()
+        return True
+
+    async def set_item_failed(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        run_id: uuid.UUID,
+        media_id: int,
+        error: str,
+        now: datetime | None = None,
+    ) -> bool:
+        """Mark the single-run item failed and reclaim image bytes."""
+        return await self.mark_item(
+            tenant_id=tenant_id,
+            run_id=run_id,
+            media_id=media_id,
+            status=DescribeItemStatus.FAILED,
+            error_message=error,
+            now=now,
+        )
+
+    async def purge_expired_single_runs(
+        self,
+        *,
+        now: datetime | None = None,
+        retention_hours: int | None = None,
+    ) -> int:
+        """Delete terminal ``run_kind=single`` runs older than retention (cross-tenant).
+
+        MUST run on an RLS-bypassed system session (design (c)/(d)) — same gate as
+        :meth:`reclaim_interrupted_runs` [SEC-01], [RES-07].
+        """
+        await self._require_rls_bypass()
+        now = now or datetime.now(tz=UTC)
+        hours = retention_hours if retention_hours is not None else async_job_retention_hours()
+        cutoff = now - timedelta(hours=hours)
+        result = await self._session.execute(
+            select(DescribeRun).where(
+                DescribeRun.run_kind == RunKind.SINGLE,
+                DescribeRun.status.in_(list(TERMINAL_RUN_STATUSES)),
+                DescribeRun.completed_at.is_not(None),
+                DescribeRun.completed_at < cutoff,
+            )
+        )
+        runs = list(result.scalars().all())
+        if not runs:
+            return 0
+        run_ids = [run.id for run in runs]
+        await self._session.execute(delete(DescribeRunItem).where(DescribeRunItem.run_id.in_(run_ids)))
+        await self._session.execute(delete(DescribeRun).where(DescribeRun.id.in_(run_ids)))
+        await self._session.flush()
+        return len(runs)
 
     async def record_item_result(
         self,
@@ -179,10 +368,11 @@ class DescribeRunRepository:
     async def _require_rls_bypass(self) -> None:
         """Fail closed unless this session has RLS bypass active (S5-02).
 
-        ``reclaim_interrupted_runs`` sweeps ALL tenants with no tenant filter, so
-        it MUST run on a system-scoped, RLS-bypassed session — otherwise RLS
-        would silently hide most rows and the sweep would be a partial, wrong
-        no-op. On SQLite (tests) there is no RLS, so this is a graceful no-op.
+        Cross-tenant ops (``reclaim_interrupted_runs``, ``purge_expired_single_runs``)
+        take no tenant filter, so they MUST run on a system-scoped, RLS-bypassed
+        session — otherwise RLS would silently hide most rows and the sweep would
+        be a partial, wrong no-op. On SQLite (tests) there is no RLS, so this is
+        a graceful no-op.
         """
         if is_sqlite(self._session):
             return
@@ -190,9 +380,9 @@ class DescribeRunRepository:
         value = result.scalar()
         if value is None or str(value).strip().lower() not in _TRUTHY_PG_SETTINGS:
             raise RuntimeError(
-                "reclaim_interrupted_runs requires an RLS-bypassed system session "
+                "cross-tenant describe-run op requires an RLS-bypassed system session "
                 "(current_setting('app.bypass_rls') is not truthy); call it via "
-                "run_startup_reclaim or enable_rls_bypass(session) first"
+                "run_startup_reclaim / enable_rls_bypass(session) first"
             )
 
     async def reclaim_interrupted_runs(self, *, now: datetime | None = None) -> int:
@@ -205,6 +395,12 @@ class DescribeRunRepository:
         requested wins (CANCELLED), any failure -> COMPLETED_WITH_ERRORS, else
         COMPLETED. The caller MUST provide a system-scoped / RLS-bypassed session:
         this sweeps ALL tenants and takes no tenant filter.
+
+        VLM-5 design (e): for ``run_kind=single`` items that already hold
+        provisional ``visual_facts``, mark ``completed`` with
+        ``last_error='interrupted by service restart'`` so the poll projection
+        yields ``degraded`` and the provisional result stays pollable; without
+        provisional, mark ``failed`` as bulk does.
 
         S5-05 (single-process assumption): this sweep is only safe because the
         bulk worker runs in a single in-process FastAPI task (no ``--workers`` /
@@ -227,11 +423,21 @@ class DescribeRunRepository:
                 select(DescribeRunItem).where(DescribeRunItem.run_id == run.id)
             )
             items = list(items_res.scalars().all())
+            is_single = run.run_kind == RunKind.SINGLE
             for item in items:
                 if item.status not in TERMINAL_ITEM_STATUSES:
-                    item.status = DescribeItemStatus.FAILED
-                    item.completed_at = now
-                    item.last_error = item.last_error or "interrupted by service restart"
+                    if is_single and item.visual_facts is not None:
+                        # Preserve provisional result; projects to degraded (design e).
+                        item.status = DescribeItemStatus.COMPLETED
+                        item.completed_at = now
+                        item.last_error = item.last_error or _RECLAIM_INTERRUPT_ERROR
+                        item.tier = item.tier or DescriptionResultTier.PROVISIONAL_CPU
+                        if not item.result_generation:
+                            item.result_generation = 1
+                    else:
+                        item.status = DescribeItemStatus.FAILED
+                        item.completed_at = now
+                        item.last_error = item.last_error or _RECLAIM_INTERRUPT_ERROR
                 item.image_bytes = None
             statuses = Counter(item.status for item in items)
             completed = statuses[DescribeItemStatus.COMPLETED]
@@ -261,7 +467,7 @@ class DescribeRunRepository:
             run.phase = phase_for_status(status)
             run.completed_at = now
             if status in {DescribeRunStatus.FAILED, DescribeRunStatus.COMPLETED_WITH_ERRORS}:
-                run.error_message = run.error_message or "interrupted by service restart"
+                run.error_message = run.error_message or _RECLAIM_INTERRUPT_ERROR
         await self._session.flush()
         return len(runs)
 

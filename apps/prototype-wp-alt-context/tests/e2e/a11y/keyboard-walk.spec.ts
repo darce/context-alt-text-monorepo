@@ -32,7 +32,19 @@ test('keyboard walk reaches workbench scan and confirm tabs with real focus', as
   const scanTab = page.getByRole('tab', { name: /Scan Media Queue/i });
   const confirmTab = page.getByRole('tab', { name: /Confirm & Publish/i });
 
-  await scanTab.focus();
+  // Real keyboard reachability: Tab from the top of the document until the
+  // tablist receives focus (bounded so a broken tab order fails fast).
+  await page.locator('body').press('Tab');
+  const MAX_TAB_STEPS = 60;
+  let reached = false;
+  for (let step = 0; step < MAX_TAB_STEPS; step += 1) {
+    if (await scanTab.evaluate((el) => el === document.activeElement)) {
+      reached = true;
+      break;
+    }
+    await page.keyboard.press('Tab');
+  }
+  expect(reached, `Scan tab not keyboard-reachable within ${MAX_TAB_STEPS} tab stops`).toBe(true);
   await expect(scanTab).toBeFocused();
   await expect(scanTab).toHaveAttribute('aria-selected', 'true');
 

@@ -143,7 +143,7 @@ export const DeadLetterPanel = (): React.JSX.Element => {
       await retryMutation.mutateAsync(id);
       dispatch({ type: 'setPendingDiscardId', id: null });
       dispatch({ type: 'setMutationError', error: null });
-      dispatch({ type: 'setNotice', notice: __('Operation moved back to pending replay.', 'alt-context') });
+      dispatch({ type: 'setNotice', notice: __('Change queued to retry.', 'alt-context') });
     } catch {
       dispatch({ type: 'setNotice', notice: null });
       dispatch({
@@ -164,7 +164,7 @@ export const DeadLetterPanel = (): React.JSX.Element => {
       await discardMutation.mutateAsync(id);
       dispatch({ type: 'setPendingDiscardId', id: null });
       dispatch({ type: 'setMutationError', error: null });
-      dispatch({ type: 'setNotice', notice: __('Operation discarded from dead-letter queue.', 'alt-context') });
+      dispatch({ type: 'setNotice', notice: __('Failed change discarded.', 'alt-context') });
     } catch {
       dispatch({ type: 'setNotice', notice: null });
       dispatch({
@@ -180,14 +180,14 @@ export const DeadLetterPanel = (): React.JSX.Element => {
   };
 
   if (operationsQuery.isLoading) {
-    return <section aria-label="Dead-letter panel">{__('Loading failed operations…', 'alt-context')}</section>;
+    return <section aria-label="Failed changes panel">{__('Loading failed changes…', 'alt-context')}</section>;
   }
 
   if (operationsQuery.isError || !operationsQuery.data) {
     return (
-      <section aria-label="Dead-letter panel">
+      <section aria-label="Failed changes panel">
         <div className="acx-error-state">
-          <p>{__('Unable to load failed operations.', 'alt-context')}</p>
+          <p>{__('Unable to load failed changes.', 'alt-context')}</p>
         </div>
       </section>
     );
@@ -207,9 +207,9 @@ export const DeadLetterPanel = (): React.JSX.Element => {
       topologyStatus.conflict > 0);
 
   return (
-    <section aria-label="Dead-letter panel">
-      <h3>{__('Failed replay operations', 'alt-context')}</h3>
-      <p>{sprintf(__('Showing %1$d-%2$d of %3$d failed operations.', 'alt-context'), rangeStart, rangeEnd, total)}</p>
+    <section aria-label="Failed changes panel">
+      <h3>{__('Failed changes', 'alt-context')}</h3>
+      <p>{sprintf(__('Showing %1$d-%2$d of %3$d failed changes.', 'alt-context'), rangeStart, rangeEnd, total)}</p>
       {notice ? (
         <div className="acx-notice acx-notice--info">
           <p>{notice}</p>
@@ -224,7 +224,7 @@ export const DeadLetterPanel = (): React.JSX.Element => {
         <div className="acx-notice acx-notice--info">
           <p>
             {sprintf(
-              __('Topology commands: pending %1$d, applied %2$d, failed %3$d, conflicts %4$d.', 'alt-context'),
+              __('Sync backlog: %1$d waiting, %2$d applied, %3$d failed, %4$d conflicts.', 'alt-context'),
               topologyStatus.pending,
               topologyStatus.applied,
               topologyStatus.failed,
@@ -234,7 +234,7 @@ export const DeadLetterPanel = (): React.JSX.Element => {
         </div>
       ) : null}
       <div className="acx-workbench__panel">
-        <h4>{__('Outbox operation timeline', 'alt-context')}</h4>
+        <h4>{__('Pending changes timeline', 'alt-context')}</h4>
         <div className="acx-dashboard__actions">
           {TIMELINE_STATUSES.map((status) => (
             <button
@@ -248,13 +248,13 @@ export const DeadLetterPanel = (): React.JSX.Element => {
             </button>
           ))}
         </div>
-        {timelineQuery.isLoading ? <p>{__('Loading outbox timeline…', 'alt-context')}</p> : null}
-        {timelineQuery.isError ? <p>{__('Unable to load outbox timeline.', 'alt-context')}</p> : null}
+        {timelineQuery.isLoading ? <p>{__('Loading pending changes…', 'alt-context')}</p> : null}
+        {timelineQuery.isError ? <p>{__('Unable to load pending changes.', 'alt-context')}</p> : null}
         {!timelineQuery.isLoading && !timelineQuery.isError && timelineQuery.data ? (
           <>
             <p>
               {sprintf(
-                __('Showing %1$d-%2$d of %3$d operations (%4$s).', 'alt-context'),
+                __('Showing %1$d-%2$d of %3$d changes (%4$s).', 'alt-context'),
                 timelineQuery.data.total === 0 ? 0 : timelineOffset + 1,
                 timelineOffset + timelineQuery.data.items.length,
                 timelineQuery.data.total,
@@ -262,7 +262,7 @@ export const DeadLetterPanel = (): React.JSX.Element => {
               )}
             </p>
             {timelineQuery.data.items.length === 0 ? (
-              <p>{__('No outbox operations found for this filter.', 'alt-context')}</p>
+              <p>{__('No pending changes found for this filter.', 'alt-context')}</p>
             ) : (
               <>
                 <ul className="acx-dashboard__activity-list">
@@ -320,7 +320,7 @@ export const DeadLetterPanel = (): React.JSX.Element => {
         ) : null}
       </div>
       {items.length === 0 ? (
-        <p>{__('No failed replay operations.', 'alt-context')}</p>
+        <p>{__('No failed changes.', 'alt-context')}</p>
       ) : (
         <>
           <ul className="acx-dashboard__activity-list">

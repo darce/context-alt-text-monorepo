@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 import type { RosterEntry } from '../../../api/rosterApi';
-import type { ClusterListResponse, ClusterSummary } from '../../../api/recognition';
+import type { BatchAnalyzeResponse, ClusterListResponse, ClusterSummary } from '../../../api/recognition';
 import { useRecognitionCluster, useRecognitionClusters } from '../../../hooks/useRecognitionHooks';
 import { useCreatePerson, useDeletePerson, useRosterEntries, useUpdatePerson } from '../../../hooks/useRosterHooks';
 import { useClusterSelection } from '../../../hooks/useClusterSelection';
@@ -83,15 +83,29 @@ const dragDropState = {
 };
 
 const clusterActionState = {
-  reassignMutation: createMockMutation({ mutate: vi.fn() }),
-  rescanMutation: createMockMutation({ mutate: vi.fn(), isPending: false }),
-  commitMutation: createMockMutation({ mutate: vi.fn(), isPending: false }),
-  bulkMergeMutation: createMockMutation({
+  reassignMutation: createMockMutation<void, Error, { faceId: string; targetClusterId: string | null }>({
+    mutate: vi.fn(),
+  }),
+  rescanMutation: createMockMutation<
+    BatchAnalyzeResponse,
+    Error,
+    { cluster: { id: string; sample_identities: { media_id: number }[] }; mediaIds: number[] }
+  >({
+    mutate: vi.fn(),
+    isPending: false,
+  }),
+  commitMutation: createMockMutation<void, Error, { clusterId: string; rosterEntryId?: number; newEntryName?: string }>(
+    {
+      mutate: vi.fn(),
+      isPending: false,
+    },
+  ),
+  bulkMergeMutation: createMockMutation<void, Error, { clusterIds: string[] }>({
     mutate: vi.fn(),
     mutateAsync: vi.fn().mockResolvedValue(undefined),
     isPending: false,
   }),
-  bulkDismissMutation: createMockMutation({
+  bulkDismissMutation: createMockMutation<void, Error, { clusterIds: string[] }>({
     mutate: vi.fn(),
     mutateAsync: vi.fn().mockResolvedValue(undefined),
     isPending: false,
@@ -217,7 +231,12 @@ describe('Roster zero-state reachability (rg-003)', () => {
 
   it('shows list shell and Add Person when roster query is offline/error', () => {
     mockedUseRosterEntries.mockReturnValue(
-      createMockQuery({ data: undefined, isLoading: false, isError: true, refetch: vi.fn() }),
+      createMockQuery<RosterEntry[], Error>({
+        data: undefined,
+        isLoading: false,
+        isError: true,
+        refetch: vi.fn(),
+      }),
     );
 
     render(

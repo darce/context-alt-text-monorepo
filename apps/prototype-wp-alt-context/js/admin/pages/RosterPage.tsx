@@ -134,7 +134,6 @@ export const RosterPage = (): React.JSX.Element => {
     personWorkspaceEntry,
   ]);
   const routeGateNotice = resolvedWorkspaceEntry === null ? projectionStateNotice : null;
-  const defaultWorkspaceMode = defaultWorkspaceEntry !== null;
 
   const dragDrop = useClusterDragDrop();
 
@@ -267,7 +266,7 @@ export const RosterPage = (): React.JSX.Element => {
           {resolvedWorkspaceEntry !== null && (
             <PersonWorkspacePanel entry={resolvedWorkspaceEntry} onOpenQueue={handleOpenPersonWorkspace} />
           )}
-          {!defaultWorkspaceMode && <RosterEntriesSection query={entriesQuery} routeNotice={routeGateNotice} />}
+          <RosterEntriesSection query={entriesQuery} routeNotice={routeGateNotice} />
         </TabsContent>
 
         <TabsContent value={ROSTER_TABS.clusters.id} className="acx-roster__panel">

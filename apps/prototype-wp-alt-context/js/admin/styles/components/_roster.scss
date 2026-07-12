@@ -41,6 +41,50 @@
     gap: var(--acx-space-16);
     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
   }
+
+  &__empty {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--acx-space-12);
+    padding: var(--acx-space-24);
+    border: 1px solid var(--acx-color-border);
+    border-radius: var(--acx-radius-md);
+    background: var(--acx-color-surface-alt);
+    color: var(--acx-color-text);
+  }
+
+  &__empty-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2.5rem;
+    min-height: 2.5rem;
+    border-radius: var(--acx-radius-pill);
+    background: var(--acx-color-surface);
+    color: var(--acx-color-accent);
+  }
+
+  &__empty-title {
+    margin: 0;
+    font-size: var(--acx-text-lg);
+    font-weight: var(--acx-font-weight-semibold);
+    color: var(--acx-color-text);
+  }
+
+  &__empty-message {
+    margin: 0;
+    color: var(--acx-color-text-muted);
+    font-size: var(--acx-text-sm);
+  }
+
+  &__empty-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--acx-space-12);
+    margin-top: var(--acx-space-4);
+  }
 }
 
 .acx-roster-entries {

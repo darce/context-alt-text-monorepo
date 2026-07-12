@@ -205,7 +205,8 @@ describe('RosterPage projection-aware workspace shell', () => {
     );
 
     expect(screen.getByRole('region', { name: /Person workspace: Alice/i })).toBeInTheDocument();
-    expect(screen.queryByTestId('roster-entries-section')).not.toBeInTheDocument();
+    expect(screen.getByTestId('roster-entries-section')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Add Person/ })).toBeInTheDocument();
   });
 
   it('[PAG-M3-S2] keeps the default workspace visible after switching to clusters and back to entries', async () => {
@@ -230,7 +231,8 @@ describe('RosterPage projection-aware workspace shell', () => {
     await user.click(screen.getByRole('tab', { name: 'Entries' }));
 
     expect(screen.getByRole('region', { name: /Person workspace: Alice/i })).toBeInTheDocument();
-    expect(screen.queryByTestId('roster-entries-section')).not.toBeInTheDocument();
+    expect(screen.getByTestId('roster-entries-section')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Add Person/ })).toBeInTheDocument();
   });
 
   it('[PAG-M3-S3] chooses a deterministic default workspace entry and shows baseline projection metadata', () => {
@@ -270,13 +272,19 @@ describe('RosterPage projection-aware workspace shell', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole('region', { name: /Person workspace: Alice/i })).toBeInTheDocument();
-    expect(screen.getByText('Projection status: current')).toBeInTheDocument();
-    expect(screen.getByText(`Projection refreshed: ${new Date(refreshedAt).toLocaleString()}`)).toBeInTheDocument();
-    expect(screen.getByText('Source version: 11')).toBeInTheDocument();
-    expect(screen.getByText('Grouped cluster detail')).toBeInTheDocument();
-    expect(screen.getByText('2 curated clusters are currently grouped under this person.')).toBeInTheDocument();
-    expect(screen.getByText('Primary')).toBeInTheDocument();
+    const workspace = screen.getByRole('region', { name: /Person workspace: Alice/i });
+    expect(workspace).toBeInTheDocument();
+    expect(within(workspace).getByText('Projection status: current')).toBeInTheDocument();
+    expect(
+      within(workspace).getByText(`Projection refreshed: ${new Date(refreshedAt).toLocaleString()}`),
+    ).toBeInTheDocument();
+    expect(within(workspace).getByText('Source version: 11')).toBeInTheDocument();
+    expect(within(workspace).getByText('Grouped cluster detail')).toBeInTheDocument();
+    expect(
+      within(workspace).getByText('2 curated clusters are currently grouped under this person.'),
+    ).toBeInTheDocument();
+    expect(within(workspace).getByText('Primary')).toBeInTheDocument();
+    expect(screen.getByTestId('roster-entries-section')).toBeInTheDocument();
   });
 
   it('[PAG-M4-S4] renders populated and empty curriculum queue states in the person workspace', () => {

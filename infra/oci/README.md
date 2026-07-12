@@ -631,6 +631,16 @@ This is lighter than `make reset-remote` (which wipes the whole `ACX_PGDATA_PATH
 volume and re-bootstraps API keys). Prefer `db-reset-remote` for migration
 drift; use `reset-remote` when you also need a clean tenant/key bootstrap.
 
+**Env-var changes are different:** `docker restart` does **not** re-read
+`.env` — container env is fixed at create time. After editing
+`/opt/acx-backend/<env>/.env`, recreate instead (this bit staging on
+2026-07-12 when the retired `RECOGNITION_ALLOWED_API_KEYS` line was removed):
+
+```bash
+cd /opt/acx-backend/<env> && \
+  COMPOSE_PROJECT_NAME=acx-<env> docker compose -f docker-compose.env.yml up -d --force-recreate api
+```
+
 ### Destructive Remote Reset
 
 The reset workflow rebuilds an OCI environment's database from empty. It is

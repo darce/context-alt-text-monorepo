@@ -1,8 +1,7 @@
 """VLM-5 Slice 2: DB-backed supersede worker (run_async_describe_job).
 
-Ports volatile-worker semantics from test_describe_tier_degrade / description_worker
-onto the repository: provisional→final, degraded-on-GPU-failure, timeout once,
-cancellation re-raise, FINAL cache write-through only [TEST-13], [DATA-14], [CON-03].
+Provisional→final, degraded-on-GPU-failure, timeout once, cancellation re-raise,
+FINAL cache write-through only [TEST-13], [DATA-14], [CON-03].
 """
 
 from __future__ import annotations
@@ -106,9 +105,7 @@ async def _load_item(sf, *, tenant_id: uuid.UUID, run_id: uuid.UUID):
 
 async def _count_cache_rows(sf, *, tenant_id: uuid.UUID) -> int:
     async with sf() as s:
-        result = await s.execute(
-            select(ImageDescription).where(ImageDescription.tenant_id == tenant_id)
-        )
+        result = await s.execute(select(ImageDescription).where(ImageDescription.tenant_id == tenant_id))
         return len(list(result.scalars().all()))
 
 
@@ -222,9 +219,7 @@ def test_worker_timeout_marks_failed_exactly_once():
             tenant_id=tenant,
             run_id=run_id,
             session_factory=sf,
-            cpu_adapter=_Adapter(
-                kind=DescriptionAdapterKind.LOCAL_CPU, caption="slow", delay_s=2.0
-            ),
+            cpu_adapter=_Adapter(kind=DescriptionAdapterKind.LOCAL_CPU, caption="slow", delay_s=2.0),
             gpu_adapter=_Adapter(kind=DescriptionAdapterKind.GPU, caption="never"),
             job_timeout_seconds=0.05,
             audit_sink=None,
@@ -261,9 +256,7 @@ def test_worker_cancellation_marks_failed_then_re_raises():
                 tenant_id=tenant,
                 run_id=run_id,
                 session_factory=sf,
-                cpu_adapter=_Adapter(
-                    kind=DescriptionAdapterKind.LOCAL_CPU, caption="slow", delay_s=5.0
-                ),
+                cpu_adapter=_Adapter(kind=DescriptionAdapterKind.LOCAL_CPU, caption="slow", delay_s=5.0),
                 gpu_adapter=_Adapter(kind=DescriptionAdapterKind.GPU, caption="never"),
                 job_timeout_seconds=None,
                 audit_sink=None,

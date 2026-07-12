@@ -9,6 +9,7 @@ class Menu {
 	private WorkbenchPage $workbenchPage;
 	private RosterPage $rosterPage;
 	private DescriptionHistoryPage $descriptionHistoryPage;
+	private RetentionPage $retentionPage;
 	private SettingsPage $settingsPage;
 
 	public function __construct(
@@ -16,13 +17,15 @@ class Menu {
 		WorkbenchPage $workbenchPage,
 		RosterPage $rosterPage,
 		SettingsPage $settingsPage,
-		?DescriptionHistoryPage $descriptionHistoryPage = null
+		?DescriptionHistoryPage $descriptionHistoryPage = null,
+		?RetentionPage $retentionPage = null
 	) {
 		$this->dashboardPage           = $dashboardPage;
 		$this->workbenchPage           = $workbenchPage;
 		$this->rosterPage              = $rosterPage;
 		$this->settingsPage            = $settingsPage;
 		$this->descriptionHistoryPage  = $descriptionHistoryPage ?? new DescriptionHistoryPage();
+		$this->retentionPage           = $retentionPage ?? new RetentionPage();
 	}
 
 	public function init(): void {
@@ -78,6 +81,15 @@ class Menu {
 
 		add_submenu_page(
 			'alt-context-dashboard',
+			__( 'Alt Context Retention', 'alt-context' ),
+			__( 'Retention', 'alt-context' ),
+			'manage_options',
+			'alt-context-retention',
+			array( $this, 'render_retention_page' )
+		);
+
+		add_submenu_page(
+			'alt-context-dashboard',
 			__( 'Alt Context Settings', 'alt-context' ),
 			__( 'Settings', 'alt-context' ),
 			'manage_options',
@@ -100,6 +112,10 @@ class Menu {
 
 	public function render_description_history_page(): void {
 		$this->descriptionHistoryPage->render();
+	}
+
+	public function render_retention_page(): void {
+		$this->retentionPage->render();
 	}
 
 	public function render_settings_page(): void {

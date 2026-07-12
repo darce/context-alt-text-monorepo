@@ -77,7 +77,7 @@ In `test_connection`: when probe outcome is `TENANT_MISMATCH` (not only CONNECTE
 ### D3. Schema parity: boot fail-fast + deploy converge (service/infra)
 
 - **Boot fail-fast**: startup hook in `api/main.py` (beside the Vault fail-fast, ADR-013 precedent) runs a schema-parity probe: for `tenants` and `api_keys`, `SELECT <ORM-declared columns> LIMIT 0`; on `UndefinedColumnError` abort with the missing column name and the converge command ([RES-13]).
-- **Deploy converge**: new `scripts/db/converge_schema.py` — compares SQLAlchemy `Base.metadata` for the two identity tables against `information_schema.columns` and emits/executes additive `ALTER TABLE ... ADD COLUMN` statements (server defaults from the model; additive-only — any non-additive drift aborts with instructions to reset per greenfield policy). Called by `scripts/deploy/recognition-service.sh` before container cutover. This bypasses the stamped-alembic no-op problem (PA-03) by diffing reality, not revision stamps. Rollback ([RLSE-08]): additive columns are backward-readable by the old build; non-additive changes require explicit reset.
+- **Deploy converge**: new `scripts/converge_schema.py` — compares SQLAlchemy `Base.metadata` for the two identity tables against `information_schema.columns` and emits/executes additive `ALTER TABLE ... ADD COLUMN` statements (server defaults from the model; additive-only — any non-additive drift aborts with instructions to reset per greenfield policy). Called by `scripts/deploy/recognition-service.sh` before container cutover. This bypasses the stamped-alembic no-op problem (PA-03) by diffing reality, not revision stamps. Rollback ([RLSE-08]): additive columns are backward-readable by the old build; non-additive changes require explicit reset.
 - **Prod remediation**: run `converge_schema.py` once against prod (operator; documented in the runbook section this task adds to `docs/workbay/rules/development-workflow.md`).
 
 ### Non-goals
@@ -92,7 +92,7 @@ In `test_connection`: when probe outcome is `TENANT_MISMATCH` (not only CONNECTE
 | `apps/prototype-description-service/recognition/interface_adapters/http/routers/tenant.py` | swap both `require_auth` usages to `require_auth_key_only` |
 | `apps/prototype-description-service/recognition/tests/api/test_tenant_whoami.py` | extend: mismatched header → 200 key-canonical; revoked/expired → 401 |
 | `apps/prototype-description-service/api/main.py` | schema-parity boot probe |
-| `apps/prototype-description-service/scripts/db/converge_schema.py` | new: metadata vs information_schema additive converge |
+| `apps/prototype-description-service/scripts/converge_schema.py` | new: metadata vs information_schema additive converge |
 | `scripts/deploy/recognition-service.sh` | invoke converge before cutover |
 | `apps/prototype-wp-alt-context/src/api/class-settings-controller.php` | `test_connection` mismatch branch → pairing + single re-probe |
 | `apps/prototype-wp-alt-context/tests/Unit/SettingsControllerTest.php` | mismatch-pairing flows |
@@ -182,7 +182,7 @@ Proof:
 ### Checklist for Slice 3: Schema parity gates
 
 - [ ] Boot-time parity probe in `api/main.py` with named-column abort + unit test.
-- [ ] `scripts/db/converge_schema.py` (additive-only, abort on non-additive drift) + `recognition-service.sh` hook.
+- [ ] `scripts/converge_schema.py` (additive-only, abort on non-additive drift) + `recognition-service.sh` hook.
 - [ ] Runbook section in `development-workflow.md`; operator runs prod converge; whoami 200 + `tenant list` evidence recorded.
 
 ## Review Readiness

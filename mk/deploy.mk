@@ -15,6 +15,7 @@
 DEPLOY_SCRIPT         := $(ROOT_MAKEFILE_DIR)/scripts/deploy/recognition-service.sh
 DEPLOY_COMPOSE_SCRIPT := $(ROOT_MAKEFILE_DIR)/scripts/deploy/sync-compose.sh
 DEPLOY_DEMO_SCRIPT    := $(ROOT_MAKEFILE_DIR)/scripts/deploy/sync-demo.sh
+DB_RESET_REMOTE_SCRIPT := $(ROOT_MAKEFILE_DIR)/scripts/deploy/db-reset-remote.sh
 DEMO_WALKTHROUGH_APP  := $(ROOT_MAKEFILE_DIR)/apps/prototype-wp-alt-context
 
 .PHONY: deploy-help deploy-build deploy-build-remote \
@@ -23,7 +24,7 @@ DEMO_WALKTHROUGH_APP  := $(ROOT_MAKEFILE_DIR)/apps/prototype-wp-alt-context
         deploy-verify deploy-verify-dev deploy-verify-staging deploy-verify-prod \
         deploy-status \
         deploy-compose-dev deploy-compose-staging deploy-compose-prod \
-        reset-remote demo-walkthrough-proof
+        reset-remote db-reset-remote demo-walkthrough-proof
 
 deploy-help:
 	@echo "Recognition service deploy targets:"
@@ -55,6 +56,11 @@ deploy-help:
 	@echo "    make reset-remote ENV=staging CONFIRM_REMOTE_RESET=RESET ACX_RESET_SITE_URL=https://staging.altcontext.com     Reset OCI staging"
 	@echo "    make reset-remote ENV=prod CONFIRM_REMOTE_RESET=RESET ACX_RESET_SITE_URL=https://altcontext.com CONFIRM=PROMOTE Reset OCI prod"
 	@echo "    make reset-remote ENV=dev CONFIRM_REMOTE_RESET=RESET ACX_RESET_SITE_URL=http://localhost:10010 ACX_RESET_DRY_RUN=1   Print plan only"
+	@echo ""
+	@echo "  Schema-only remote DB reset (greenfield 001 drift; DROP SCHEMA public CASCADE; no prod path):"
+	@echo "    make db-reset-remote ENV=dev CONFIRM=RESET              Drop/recreate public schema on OCI dev, restart api, poll /health"
+	@echo "    make db-reset-remote ENV=staging CONFIRM=RESET          Same for OCI staging"
+	@echo "    make db-reset-remote ENV=dev CONFIRM=RESET DRY_RUN=1    Print remote commands only (no SSH)"
 	@echo ""
 	@echo "  Compose-file sync (run when docker-compose.env.yml itself changes):"
 	@echo "    make deploy-compose-dev                    Sync compose to acx-dev VM and 'docker compose up -d'"
@@ -144,6 +150,17 @@ reset-remote:
 		CONFIRM="$(CONFIRM)" \
 		ACX_RESET_DRY_RUN="$(ACX_RESET_DRY_RUN)" \
 		"$(DEPLOY_SCRIPT)" reset $(ENV)
+
+# Schema-only remote DB reset (dev|staging). Greenfield recovery when 001 is
+# edited in place and long-lived remote volumes fail migration. No prod path.
+# CONFIRM=RESET required; DRY_RUN=1 / --dry-run prints plan without SSH.
+db-reset-remote:
+	@if [ -z "$(ENV)" ]; then \
+		echo "db-reset-remote: ENV is required (dev|staging)" >&2; \
+		exit 2; \
+	fi
+	@ENV="$(ENV)" CONFIRM="$(CONFIRM)" DRY_RUN="$(DRY_RUN)" \
+		"$(DB_RESET_REMOTE_SCRIPT)"
 
 # Compose-file sync (independent of image deploy).
 deploy-compose-dev:

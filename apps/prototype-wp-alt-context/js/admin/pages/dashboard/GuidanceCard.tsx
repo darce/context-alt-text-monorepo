@@ -18,7 +18,7 @@ export const GuidanceCard = ({ stats }: GuidanceCardProps): React.JSX.Element =>
             stats.pending_clusters_count,
           )}
         </p>
-        <a href="#/workbench?tab=confirm" className="acx-link-button">
+        <a href="#/workbench?advanced=open" className="acx-link-button">
           {__('Go to Workbench', 'alt-context')}
         </a>
       </>

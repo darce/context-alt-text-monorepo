@@ -69,7 +69,7 @@ export const DashboardRecentActivitySection = ({
               </span>
               {durationLabel ? <span className="acx-dashboard__activity-duration">{durationLabel}</span> : null}
               {item.jobId ? (
-                <a href={`#/workbench?tab=confirm&jobId=${item.jobId}`} className="acx-link-button">
+                <a href={`#/workbench?advanced=open&jobId=${item.jobId}`} className="acx-link-button">
                   {__('View Results', 'alt-context')}
                 </a>
               ) : null}

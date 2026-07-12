@@ -277,7 +277,7 @@ export const DashboardPage = (): React.JSX.Element => {
           <>
             <p>
               {sprintf(__('Most recent batch job: %s', 'alt-context'), latestRecognitionJobId)}{' '}
-              <a href={`#/workbench?tab=confirm&jobId=${latestRecognitionJobId}`} className="acx-link-button">
+              <a href={`#/workbench?advanced=open&jobId=${latestRecognitionJobId}`} className="acx-link-button">
                 {__('View latest results', 'alt-context')}
               </a>
             </p>
@@ -295,7 +295,7 @@ export const DashboardPage = (): React.JSX.Element => {
             <h3>{__('Analysis Queue', 'alt-context')}</h3>
             <p>{__('Select media and launch a new recognition batch.', 'alt-context')}</p>
           </a>
-          <a href="#/workbench?tab=confirm" className="acx-dashboard__action-card">
+          <a href="#/workbench?advanced=open" className="acx-dashboard__action-card">
             <h3>{__('Review Hub', 'alt-context')}</h3>
             <p>{__('Inspect recent jobs and cluster the latest results.', 'alt-context')}</p>
           </a>

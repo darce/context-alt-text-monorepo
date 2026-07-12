@@ -68,14 +68,16 @@ test('status strip announces after workbench settles (scan surface)', async ({ p
   expect(initialStatus).toBeTruthy();
   expect(initialHeadline.length).toBeGreaterThan(0);
 
-  // Switch to Confirm and back to Scan — strip must remain a live region and keep
-  // a concrete status code (sync health is independent of tab, so equality is OK).
-  await page.getByRole('tab', { name: /Confirm & Publish/i }).click();
-  await expect(page.getByRole('heading', { name: /Confirm & Publish/i })).toBeVisible();
+  // Open Advanced drawer and close it — strip must remain a live region and keep
+  // a concrete status code (sync health is independent of the advanced panel).
+  const advancedTrigger = page.getByRole('button', { name: /Advanced: jobs & recovery/i });
+  await advancedTrigger.click();
+  await expect(page.getByRole('region', { name: /Advanced: jobs & recovery/i })).toBeVisible();
   await expect(strip).toBeVisible();
   await expect(strip).toHaveAttribute('role', 'status');
 
-  await page.getByRole('tab', { name: /Scan Media Queue/i }).click();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('region', { name: /Advanced: jobs & recovery/i })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: /Scan Media Queue/i })).toBeVisible();
   await expect(strip).toBeVisible();
   await expect(strip).toHaveAttribute('data-sync-status', /.+/);

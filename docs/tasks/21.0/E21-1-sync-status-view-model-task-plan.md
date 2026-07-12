@@ -19,7 +19,7 @@ Consolidate the five overlapping job/sync status surfaces into one `SyncPresenta
 
 ## Problem Statement
 
-A first-time visitor sees up to five concurrent, mutually inconsistent status surfaces: `SyncStatusIndicator` (369 lines, 9 return branches at lines 136, 223, 244, 256, 273, 286, 299, 314, 336), `ScanActionPanel` (`Panels.tsx:25`, rendered at `ScanTabContent.tsx:94`), `JobTimeline`, per-page notices, and `BulkDescribeProgress` (`MediaSelection.tsx:327`, added by WBUX-3). They leak internal topology jargon ("topology", `SyncStatusIndicator.tsx:212`; "replay", "projection", "dead-letter", "Source version", "projected instances", "Curriculum", raw UUIDs) into visitor-facing copy. Status truth is duplicated instead of derived from one source ([REF-09] mutable/derived-data drift, [DOM-03] one meaning per term per context). The repo also has **zero** keyboard-navigation and **zero** aria-live e2e tests (verified 2026-07-12), while the epic's WCAG 2.2 AA floor requires both ([A11Y-11], [A11Y-21], [A11Y-23]).
+A first-time visitor sees up to five concurrent, mutually inconsistent status surfaces: `SyncStatusIndicator` (369 lines, 9 return branches at lines 136, 223, 244, 256, 273, 286, 299, 314, 336), `ScanActionPanel` (`Panels.tsx:25`, rendered at `ScanTabContent.tsx:94`), `JobTimeline`, page notices (`DegradedModeBanner.tsx`, mounted app-wide from `App.tsx`; `detailTruncationNotice`, `WorkbenchContext.tsx:274`), and `BulkDescribeProgress` (`MediaSelection.tsx:327`, added by WBUX-3). They leak internal topology jargon ("topology", `SyncStatusIndicator.tsx:212`; "replay", "projection", "dead-letter", "Source version", "projected instances", "Curriculum", raw UUIDs) into visitor-facing copy. Status truth is duplicated instead of derived from one source ([REF-09] mutable/derived-data drift, [DOM-03] one meaning per term per context). The repo also has **zero** keyboard-navigation and **zero** aria-live e2e tests (verified 2026-07-12), while the epic's WCAG 2.2 AA floor requires both ([A11Y-11], [A11Y-21], [A11Y-23]).
 
 ## Constraints
 
@@ -81,6 +81,7 @@ Build `syncPresentation.ts` (pure function: health + job/run inputs → `SyncPre
 | frontend | `js/admin/pages/workbench/SyncStatusIndicator.tsx` | thin renderer of `SyncPresentation`; delete 9-branch logic + jargon (incl. :212 topology) |
 | frontend | `js/admin/pages/workbench/Panels.tsx` (`ScanActionPanel` :25) | status copy from vocabulary; remove duplicated health derivation |
 | frontend | `js/admin/pages/workbench/JobTimeline.tsx` | run-state labels from vocabulary |
+| frontend | `js/admin/pages/workbench/DegradedModeBanner.tsx` | banner copy from vocabulary; remains the app-wide degraded notice, driven by the same `SyncPresentation` |
 | frontend | `js/admin/pages/workbench/MediaSelection.tsx` (`BulkDescribeProgress` :327) | headline/status strings from vocabulary; progress mechanics unchanged |
 | frontend | `js/admin/pages/DashboardPage.tsx` (:54) | consume `SyncPresentation` for its health display |
 | tests | `js/admin/__tests__/banned-vocabulary.test.tsx` (new) | render-level banned-strings sweep over all `js/admin` pages |
@@ -100,8 +101,8 @@ Build `syncPresentation.ts` (pure function: health + job/run inputs → `SyncPre
 ## Verification Strategy
 
 - Deterministic tests:
-  - `cd apps/prototype-wp-alt-context && npm run test:agent -- syncPresentation`
-  - `cd apps/prototype-wp-alt-context && npm run test:agent -- banned-vocabulary`
+  - iteration only (non-gating — `test:agent` is `vitest run || true` and always exits 0): `npm run test:agent -- <pattern>`
+  - evidence-grade (exit codes real; use these for `test_result` writes): `cd apps/prototype-wp-alt-context && npx vitest run js/admin/pages/workbench/__tests__/syncPresentation.test.ts js/admin/__tests__/banned-vocabulary.test.tsx`
   - full gate: `cd apps/prototype-wp-alt-context && npm run check`
 - Runtime-parity / environment checks:
   - `npx playwright test tests/e2e/a11y` (axe + keyboard-walk + live-region)
@@ -117,12 +118,12 @@ Build `syncPresentation.ts` (pure function: health + job/run inputs → `SyncPre
 Changes:
 
 - `syncPresentation.ts` view-model + vocabulary map (sr-007 `as const`; state matrix covers loading/empty/error/offline × scan/cluster/describe).
-- `banned-vocabulary.test.tsx` rendering every `js/admin` page (Dashboard, Workbench, Roster, Description History, Retention) under representative fixtures; asserts no banned string ([RLSE-09]).
+- `banned-vocabulary.test.tsx` rendering every `js/admin` page surface — enumerate from the `js/admin/pages/` directory so new pages are auto-covered: `DashboardPage`, `WorkbenchPage`, `RosterPage`, `DescriptionHistoryPage`, `RetentionPage`, `SettingsPage`, `DescribeRunApplyView` — under representative fixtures; asserts no banned string ([RLSE-09]). Test fails if a page module exists in `pages/` but is missing from the sweep.
 - Unit state-matrix tests for the mapping.
 
 Proof:
 
-- `npm run test:agent -- syncPresentation banned-vocabulary` green; banned test demonstrably fails when a jargon string is injected ([AGT-03] make it fail before making it pass).
+- `npx vitest run` over the two new test files exits 0; banned test demonstrably fails when a jargon string is injected ([AGT-03] make it fail before making it pass).
 
 ### Slice 2: Surface consolidation
 

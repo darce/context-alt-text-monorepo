@@ -1,12 +1,16 @@
 """Per-IP sliding-window rate limit for unauthenticated public surfaces (DS-5).
 
 ``enforce_rate_limit`` keys off ``AuthContext.api_key_id`` and cannot protect
-``GET /x/{slug}`` (no API key). This module keys off ``request.client.host``.
+``GET /x/{slug}`` (no API key). This module keys off the client IP.
 
-Default client identity is ``request.client.host``. TLS termination at Caddy
-may set ``X-Forwarded-For``; only honour it when
-``RECOGNITION_DEMO_TRUST_X_FORWARDED_FOR=1`` so clients cannot spoof the key
-behind a direct connection.
+Behind a reverse proxy (Caddy TLS termination) ``request.client.host`` is the
+proxy socket IP — identical for every external client — so all demo traffic
+would share one bucket (global DoS footgun). Set
+``RECOGNITION_DEMO_TRUSTED_PROXY_HOPS`` to the number of trusted proxies in
+front of the app (Caddy alone → ``1``); the real client is then the entry that
+many hops from the RIGHT of ``X-Forwarded-For`` (each proxy appends the peer it
+saw). The left-most XFF entries are client-supplied and spoofable, so they are
+never trusted. Default ``0`` uses ``request.client.host`` (no-proxy dev/test).
 """
 
 from __future__ import annotations
@@ -35,21 +39,28 @@ def _prune(window: deque[float], now: float) -> None:
         window.popleft()
 
 
-def _bool_env(name: str, default: bool = False) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.lower() in {"1", "true", "yes", "on"}
+def _trusted_proxy_hops() -> int:
+    raw = os.getenv("RECOGNITION_DEMO_TRUSTED_PROXY_HOPS", "0")
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 0
 
 
 def _client_ip(request: Request) -> str:
-    if _bool_env("RECOGNITION_DEMO_TRUST_X_FORWARDED_FOR", False):
+    """Resolve the rate-limit key IP, spoof-resistant behind N trusted proxies.
+
+    With ``hops`` trusted proxies, the real client is ``parts[-hops]`` (right of
+    what each proxy appended). Left-most XFF entries are attacker-controlled and
+    never trusted. ``hops == 0`` → the direct socket peer.
+    """
+    hops = _trusted_proxy_hops()
+    if hops > 0:
         forwarded = request.headers.get("x-forwarded-for")
         if forwarded:
-            # Left-most is the original client when trusted proxy prepends.
-            first = forwarded.split(",", 1)[0].strip()
-            if first:
-                return first
+            parts = [p.strip() for p in forwarded.split(",") if p.strip()]
+            if len(parts) >= hops:
+                return parts[-hops]
     if request.client is not None and request.client.host:
         return request.client.host
     return "unknown"

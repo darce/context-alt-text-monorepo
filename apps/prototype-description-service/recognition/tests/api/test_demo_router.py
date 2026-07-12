@@ -36,9 +36,7 @@ def _build_client(session: AsyncSession, monkeypatch, *, rpm: str = "100") -> Te
 
 
 @pytest.mark.asyncio
-async def test_demo_router_valid_slug_resolves_without_key_material(
-    db_session: AsyncSession, monkeypatch
-) -> None:
+async def test_demo_router_valid_slug_resolves_without_key_material(db_session: AsyncSession, monkeypatch) -> None:
     result = await provision_demo(
         db_session,
         label="Resolve Me",
@@ -65,9 +63,7 @@ async def test_demo_router_valid_slug_resolves_without_key_material(
 
 
 @pytest.mark.asyncio
-async def test_demo_router_unknown_slug_returns_uniform_404(
-    db_session: AsyncSession, monkeypatch
-) -> None:
+async def test_demo_router_unknown_slug_returns_uniform_404(db_session: AsyncSession, monkeypatch) -> None:
     client = _build_client(db_session, monkeypatch)
     resp = client.get("/x/notreal1")
     assert resp.status_code == 404
@@ -75,9 +71,7 @@ async def test_demo_router_unknown_slug_returns_uniform_404(
 
 
 @pytest.mark.asyncio
-async def test_demo_router_expired_returns_410_demo_ended(
-    db_session: AsyncSession, monkeypatch
-) -> None:
+async def test_demo_router_expired_returns_410_demo_ended(db_session: AsyncSession, monkeypatch) -> None:
     result = await provision_demo(db_session, label="Expired", seed="default")
     instance = await db_session.get(DemoInstance, result.instance.slug)
     assert instance is not None
@@ -92,9 +86,7 @@ async def test_demo_router_expired_returns_410_demo_ended(
 
 
 @pytest.mark.asyncio
-async def test_demo_router_revoked_returns_410_demo_ended(
-    db_session: AsyncSession, monkeypatch
-) -> None:
+async def test_demo_router_revoked_returns_410_demo_ended(db_session: AsyncSession, monkeypatch) -> None:
     result = await provision_demo(db_session, label="Revoked", seed="default")
     instance = await db_session.get(DemoInstance, result.instance.slug)
     assert instance is not None
@@ -108,9 +100,7 @@ async def test_demo_router_revoked_returns_410_demo_ended(
 
 
 @pytest.mark.asyncio
-async def test_demo_router_enumeration_burst_returns_429(
-    db_session: AsyncSession, monkeypatch
-) -> None:
+async def test_demo_router_enumeration_burst_returns_429(db_session: AsyncSession, monkeypatch) -> None:
     client = _build_client(db_session, monkeypatch, rpm="3")
     for _ in range(3):
         assert client.get("/x/guess001").status_code in {404, 429}
@@ -124,6 +114,22 @@ async def test_demo_router_enumeration_burst_returns_429(
     assert "Retry-After" in resp.headers
     assert resp.headers["X-RateLimit-Limit"] == "3"
     assert resp.headers["X-RateLimit-Remaining"] == "0"
+
+
+@pytest.mark.asyncio
+async def test_demo_router_xff_spoof_cannot_evade_ip_limit(db_session: AsyncSession, monkeypatch) -> None:
+    """With one trusted proxy hop, varying the left-most (spoofable) XFF token
+    must NOT mint a fresh bucket — the right-most (proxy-appended) client is the
+    key, so an enumerating attacker still hits 429."""
+    monkeypatch.setenv("RECOGNITION_DEMO_TRUSTED_PROXY_HOPS", "1")
+    client = _build_client(db_session, monkeypatch, rpm="3")
+
+    # Real client 1.2.3.4 behind Caddy; attacker rotates the left-most token.
+    for i in range(3):
+        resp = client.get("/x/guessN", headers={"X-Forwarded-For": f"spoof{i}, 1.2.3.4"})
+        assert resp.status_code == 404
+    resp = client.get("/x/guessN", headers={"X-Forwarded-For": "spoofZ, 1.2.3.4"})
+    assert resp.status_code == 429
 
 
 def test_demo_router_mounted_on_create_app() -> None:

@@ -83,7 +83,8 @@ async def run(argv: Sequence[str] | None = None, *, session: AsyncSession | None
 
         session = async_session_factory()
 
-    assert session is not None
+    if session is None:  # explicit guard (sr-006): survives python -O
+        raise RuntimeError("no database session available for sweep")
     try:
         result = await sweep_expired_demos(session, stall_limit=args.stall_limit)
         await session.commit()
@@ -97,9 +98,7 @@ async def run(argv: Sequence[str] | None = None, *, session: AsyncSession | None
         if own_session:
             await session.close()
 
-    sys.stderr.write(
-        f"sweep expired={result.expired} failed={result.failed} stalled={result.stalled}\n"
-    )
+    sys.stderr.write(f"sweep expired={result.expired} failed={result.failed} stalled={result.stalled}\n")
     if result.slugs_expired:
         sys.stderr.write(f"slugs={','.join(result.slugs_expired)}\n")
     sys.stderr.flush()

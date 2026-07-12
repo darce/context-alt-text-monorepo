@@ -206,6 +206,9 @@ class FakeSessionResult:
     def all(self):  # noqa: ANN001
         return self._all_rows
 
+    def first(self):  # noqa: ANN001
+        return self._all_rows[0] if self._all_rows else None
+
 
 class FakeScanService:
     """Fake ScanService that returns completed jobs without persistence."""

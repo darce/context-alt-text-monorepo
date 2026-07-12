@@ -82,3 +82,48 @@ async def test_demo_expiry_sweep_isolates_failures_and_stalls(db_session: AsyncS
     assert result.stalled is True
     assert result.failed == 2
     assert result.expired == 0
+
+
+@pytest.mark.asyncio
+async def test_demo_expiry_sweep_db_error_in_one_unit_isolates_others(db_session: AsyncSession) -> None:
+    """A DB-level failure in one unit must not lose the others (rg-007 savepoint)."""
+    from sqlalchemy.exc import OperationalError
+
+    a = await provision_demo(db_session, label="A", seed="default")
+    b = await provision_demo(db_session, label="B", seed="default")
+    c = await provision_demo(db_session, label="C", seed="default")
+    await db_session.commit()
+
+    for slug in (a.instance.slug, b.instance.slug, c.instance.slug):
+        row = await db_session.get(DemoInstance, slug)
+        assert row is not None
+        row.expires_at = datetime.now(tz=UTC) - timedelta(hours=1)
+    await db_session.commit()
+
+    real_expire = expire_demo
+
+    async def _expire_but_fail_b(session, *, slug: str):  # noqa: ANN001
+        if slug == b.instance.slug:
+            raise OperationalError("boom", None, Exception("db down"))
+        return await real_expire(session, slug=slug)
+
+    with patch(
+        "recognition.application.services.demo_provisioning_service.expire_demo",
+        new=AsyncMock(side_effect=_expire_but_fail_b),
+    ):
+        # High stall limit: the single B failure must not halt A and C.
+        result = await sweep_expired_demos(db_session, stall_limit=5)
+    await db_session.commit()
+
+    assert result.failed == 1
+    assert result.expired == 2
+    assert result.stalled is False
+
+    # A and C committed as revoked; B untouched — the savepoint isolated B's abort.
+    for ok_slug in (a.instance.slug, c.instance.slug):
+        row = await db_session.get(DemoInstance, ok_slug)
+        assert row is not None
+        assert row.revoked is True
+    b_row = await db_session.get(DemoInstance, b.instance.slug)
+    assert b_row is not None
+    assert b_row.revoked is False

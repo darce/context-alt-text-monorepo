@@ -28,6 +28,7 @@ from recognition.interface_adapters.http.deps import (
     get_optional_session,
     require_write_access,
 )
+from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quota
 from recognition.interface_adapters.http.middleware.metrics import get_default_metrics
 from scene.application.describe_jobs import InMemoryDescribeJobStore
 from scene.application.description_adapter import AdapterResult
@@ -121,6 +122,9 @@ def _client(auth_tenant=None, adapter=None, naming_agreement_enabled=True, db_ab
     app = FastAPI()
     app.include_router(scene_router, prefix="/scene")
     app.dependency_overrides[require_write_access] = lambda: _Auth(tenant_claim=auth_tenant)
+    # Existing harness fakes write-access; skip quota dep so require_auth is not
+    # re-resolved (would 401 under default RECOGNITION_AUTH_ENABLED=1).
+    app.dependency_overrides[enforce_demo_quota] = lambda: None
     app.dependency_overrides[get_optional_session] = (lambda: None) if db_absent else _session
     if adapter is not None:
         app.dependency_overrides[get_description_adapter] = lambda: adapter
@@ -156,7 +160,6 @@ def test_happy_path_returns_15_fields_then_cached():
         body = r1.json()
         # 17 core + 3 E19-4a preview + 1 E20-FUSION attachment_provenance
         assert len(body) == 21
-
 
         assert body["cached"] is False
         assert body["media_id"] == 42
@@ -666,3 +669,202 @@ def test_async_enqueue_allows_empty_claim_when_configured(monkeypatch):
         client.app.dependency_overrides[get_gpu_description_adapter] = lambda: _ImmediateGpuAdapter()
         r = _post_async(client, TENANT_ID)
         assert r.status_code == 200, r.text
+
+
+# ---------------------------------------------------------------------------
+# DS-2B: demo shared compute budget on scene describe compute endpoints
+# ---------------------------------------------------------------------------
+
+
+@contextmanager
+def _demo_quota_client(*, recognition_quota: int = 5, non_demo: bool = False):
+    """Client that exercises enforce_demo_quota for real (require_auth override).
+
+    Overrides require_auth (not require_write_access) so dependency caching
+    feeds both require_write_access and enforce_demo_quota a token-bearing
+    AuthContext. Provisions demo_instances so recognition_used is measurable.
+    """
+    from db.models.tenant import ApiKey, DemoInstance
+    from recognition.application.services.demo_provisioning_service import provision_demo
+    from recognition.interface_adapters.http.deps.auth import AuthContext, require_auth
+
+    path = os.path.join(tempfile.gettempdir(), f"ds2b_describe_{uuid.uuid4().hex}.db")
+    url = f"sqlite+aiosqlite:///{path}"
+
+    async def _init():
+        engine = create_async_engine(url)
+        async with engine.begin() as conn:
+            await conn.run_sync(
+                Base.metadata.create_all,
+                tables=cast(
+                    list[Table],
+                    [
+                        Tenant.__table__,
+                        ApiKey.__table__,
+                        DemoInstance.__table__,
+                        ImageDescription.__table__,
+                        AuditEvent.__table__,
+                        MediaIdentity.__table__,
+                        IdentityCluster.__table__,
+                        IdentityMember.__table__,
+                        IdentityNameSuppression.__table__,
+                    ],
+                ),
+            )
+        await engine.dispose()
+
+    asyncio.run(_init())
+    engine = create_async_engine(url)
+    sf = async_sessionmaker(engine, expire_on_commit=False)
+
+    async def _provision():
+        async with sf() as s:
+            result = await provision_demo(s, label="Scene Demo", seed="default", recognition_quota=recognition_quota)
+            await s.commit()
+            return result
+
+    provisioned = asyncio.run(_provision())
+    tenant_id = str(provisioned.instance.tenant_id)
+    slug = provisioned.instance.slug
+
+    if non_demo:
+        auth = AuthContext(
+            token="not-a-demo-key",
+            tenant_claim=tenant_id,
+            api_key_id=None,
+            is_admin=False,
+            enabled=True,
+        )
+    else:
+        auth = AuthContext(
+            token=provisioned.raw_api_key,
+            tenant_claim=tenant_id,
+            api_key_id=None,
+            is_admin=False,
+            enabled=True,
+        )
+
+    async def _session():
+        async with sf() as s:
+            yield s
+
+    app = FastAPI()
+    app.include_router(scene_router, prefix="/scene")
+    app.dependency_overrides[require_auth] = lambda: auth
+    app.dependency_overrides[get_optional_session] = _session
+    try:
+        with TestClient(app) as client:
+            yield client, sf, provisioned, tenant_id, slug
+    finally:
+        asyncio.run(engine.dispose())
+        with suppress(OSError):
+            os.unlink(path)
+
+
+def _recognition_used(sf, slug: str) -> int:
+    from db.models.tenant import DemoInstance
+
+    async def _read():
+        async with sf() as s:
+            row = await s.get(DemoInstance, slug)
+            assert row is not None
+            return int(row.recognition_used)
+
+    return asyncio.run(_read())
+
+
+def test_demo_quota_multipart_below_cap_increments_and_at_cap_429():
+    # red-first: fails (200, used unchanged) before enforce_demo_quota wired — DS-2-BR-05
+    with _demo_quota_client(recognition_quota=1) as (client, sf, _prov, tenant_id, slug):
+        r1 = _post(client, tenant_id, media_id=1, image_key="image_1")
+        assert r1.status_code == 200, r1.text
+        assert _recognition_used(sf, slug) == 1
+
+        r2 = _post(client, tenant_id, media_id=2, image_key="image_2")
+        assert r2.status_code == 429, r2.text
+        detail = r2.json()["detail"]
+        assert detail["code"] == "demo_quota_exceeded"
+        assert detail["quota_remaining"] == 0
+        assert _recognition_used(sf, slug) == 1
+
+
+def test_demo_quota_async_below_cap_increments_and_at_cap_429(monkeypatch):
+    # red-first: fails (200, used unchanged) before enforce_demo_quota wired — DS-2-BR-05
+    from scene.interface_adapters.http.routers import describe as describe_module
+
+    store = InMemoryDescribeJobStore()
+    monkeypatch.setattr(describe_module, "_ASYNC_JOBS", store)
+
+    with _demo_quota_client(recognition_quota=1) as (client, sf, _prov, tenant_id, slug):
+        r1 = _post_async(client, tenant_id, media_id=1, image_key="image_1")
+        assert r1.status_code == 200, r1.text
+        assert _recognition_used(sf, slug) == 1
+
+        r2 = _post_async(client, tenant_id, media_id=2, image_key="image_2")
+        assert r2.status_code == 429, r2.text
+        detail = r2.json()["detail"]
+        assert detail["code"] == "demo_quota_exceeded"
+        assert detail["quota_remaining"] == 0
+        assert _recognition_used(sf, slug) == 1
+
+
+def test_demo_quota_shared_pool_across_surfaces():
+    """One demo instance: direct try_consume + scene multipart share recognition_used."""
+    from recognition.application.services.demo_provisioning_service import try_consume_demo_quota
+
+    with _demo_quota_client(recognition_quota=5) as (client, sf, provisioned, tenant_id, slug):
+
+        async def _consume_one():
+            async with sf() as s:
+                ok = await try_consume_demo_quota(s, api_key_hash=provisioned.instance.api_key_ref, units=1)
+                await s.commit()
+                return ok
+
+        assert asyncio.run(_consume_one()) is True
+        assert _recognition_used(sf, slug) == 1
+
+        r = _post(client, tenant_id, media_id=10, image_key="image_10")
+        assert r.status_code == 200, r.text
+        assert _recognition_used(sf, slug) == 2
+
+        r2 = _post(client, tenant_id, media_id=11, image_key="image_11")
+        assert r2.status_code == 200, r2.text
+        assert _recognition_used(sf, slug) == 3
+
+
+def test_demo_quota_non_demo_key_multipart_and_async_unaffected(monkeypatch):
+    from scene.interface_adapters.http.routers import describe as describe_module
+
+    store = InMemoryDescribeJobStore()
+    monkeypatch.setattr(describe_module, "_ASYNC_JOBS", store)
+
+    with _demo_quota_client(recognition_quota=1, non_demo=True) as (
+        client,
+        sf,
+        _prov,
+        tenant_id,
+        slug,
+    ):
+        r1 = _post(client, tenant_id, media_id=1, image_key="image_1")
+        assert r1.status_code == 200, r1.text
+        r2 = _post_async(client, tenant_id, media_id=2, image_key="image_2")
+        assert r2.status_code == 200, r2.text
+        assert _recognition_used(sf, slug) == 0
+
+
+def test_demo_quota_get_describe_job_consumes_nothing(monkeypatch):
+    from scene.interface_adapters.http.routers import describe as describe_module
+
+    store = InMemoryDescribeJobStore()
+    monkeypatch.setattr(describe_module, "_ASYNC_JOBS", store)
+
+    with _demo_quota_client(recognition_quota=5) as (client, sf, _prov, tenant_id, slug):
+        enq = _post_async(client, tenant_id, media_id=1, image_key="image_1")
+        assert enq.status_code == 200, enq.text
+        job_id = enq.json()["job_id"]
+        used_after_enqueue = _recognition_used(sf, slug)
+        assert used_after_enqueue == 1
+
+        poll = client.get(f"/scene/describe/jobs/{job_id}")
+        assert poll.status_code == 200, poll.text
+        assert _recognition_used(sf, slug) == used_after_enqueue

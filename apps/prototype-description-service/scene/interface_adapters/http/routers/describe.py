@@ -27,6 +27,7 @@ from recognition.interface_adapters.http.deps import (
     get_optional_session,
     require_write_access,
 )
+from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quota
 from recognition.interface_adapters.http.middleware.metrics import get_default_metrics
 from scene.application.describe_jobs import DescribeJob, DescribeJobStatus, InMemoryDescribeJobStore
 from scene.application.description_repository import ImageDescriptionRepository
@@ -430,6 +431,7 @@ async def describe_image_multipart(
     auth=Depends(require_write_access),
     session=Depends(get_optional_session),
     adapter=Depends(get_description_adapter),
+    _demo_quota: object = Depends(enforce_demo_quota),
 ) -> VisualFactsResponse | Response:
     form = await request.form()
     settings = DescriptionSettings()
@@ -547,6 +549,7 @@ async def enqueue_describe_image(
     session=Depends(get_optional_session),
     cpu_adapter=Depends(get_description_adapter),
     gpu_adapter=Depends(get_gpu_description_adapter),
+    _demo_quota: object = Depends(enforce_demo_quota),
 ) -> DescribeJobResult:
     form = await request.form()
     settings = DescriptionSettings()

@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from recognition.interface_adapters.http.deps import get_optional_session, require_write_access
+from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quota
 from scene.application.seeded_adapter import SeededDescriptionAdapter
 from scene.application.visual_facts_service import VisualFactsService
 from scene.interface_adapters.http.deps import get_description_adapter
@@ -123,6 +124,7 @@ def test_route_passes_normalized_context_pack_to_adapter():
     app = FastAPI()
     app.include_router(scene_router, prefix="/scene")
     app.dependency_overrides[require_write_access] = lambda: _Auth()
+    app.dependency_overrides[enforce_demo_quota] = lambda: None
     app.dependency_overrides[get_optional_session] = lambda: None
     app.dependency_overrides[get_description_adapter] = lambda: adapter
 

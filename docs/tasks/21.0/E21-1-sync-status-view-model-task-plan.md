@@ -155,35 +155,35 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded frontend guidelines, testing-typescript, epic re-baseline table, WBUX-1 §5 invariants.
-- [ ] Confirmed no boundary contract touched (presentation-only).
+- [x] Loaded frontend guidelines, testing-typescript, epic re-baseline table, WBUX-1 §5 invariants.
+- [x] Confirmed no boundary contract touched (presentation-only).
 
 ### Checklist for Slice 1: View-model + vocabulary + banned test
 
-- [ ] `syncPresentation.ts` with `as const` status vocabulary and full state matrix
-- [ ] `banned-vocabulary.test.tsx` over all `js/admin` pages; failure demonstrated with injected jargon
-- [ ] Unit state-matrix tests green
+- [x] `syncPresentation.ts` with `as const` status vocabulary and full state matrix
+- [x] `banned-vocabulary.test.tsx` over all `js/admin` pages; failure demonstrated with injected jargon
+- [x] Unit state-matrix tests green
 
 ### Checklist for Slice 2: Surface consolidation
 
-- [ ] Five surfaces consume `SyncPresentation`; dead derivations deleted
-- [ ] sr-004 icon+color+word on every status rendering, tokens only
-- [ ] `npm run check` + e2e smoke green
+- [x] Five surfaces consume `SyncPresentation`; dead derivations deleted
+- [x] sr-004 icon+color+word on every status rendering, tokens only
+- [x] `npm run check` + e2e smoke green
 
 ### Checklist for Slice 3: A11y harness seed
 
-- [ ] `keyboard-walk.spec.ts` + `live-region.spec.ts` green and non-vacuous
-- [ ] Harness pattern reusable by E21-2/3/12 (documented in spec header comments)
+- [x] `keyboard-walk.spec.ts` + `live-region.spec.ts` green and non-vacuous
+- [x] Harness pattern reusable by E21-2/3/12 (documented in spec header comments)
 
 ## Review Readiness
 
-- [ ] No surface left re-deriving status truth outside the view-model.
-- [ ] Runtime-parity: live-region announcements verified in Playwright, not only unit render.
-- [ ] Handoff decision records change, verification, and the "no re-baseline until E21-4" note.
+- [x] No surface left re-deriving status truth outside the view-model.
+- [x] Runtime-parity: live-region announcements verified in Playwright, not only unit render.
+- [x] Handoff decision records change, verification, and the "no re-baseline until E21-4" note.
 
 ## Success Criteria
 
-- [ ] Exactly one status strip per admin page; status truth derived once from `resolveEffectiveSyncHealth`.
-- [ ] Banned-strings test green over all `js/admin` pages and wired into `npm run check`.
-- [ ] Repo's first keyboard-walk + live-region e2e specs green; axe suite still green.
-- [ ] `handoff_close_check(enforce=True)` passes.
+- [x] Exactly one status strip per admin page; status truth derived once from `resolveEffectiveSyncHealth`.
+- [x] Banned-strings test green over all `js/admin` pages and wired into `npm run check`.
+- [x] Repo's first keyboard-walk + live-region e2e specs green; axe suite still green.
+- [x] `handoff_close_check(enforce=True)` passes.

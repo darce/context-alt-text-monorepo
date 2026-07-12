@@ -144,7 +144,7 @@ describe('DashboardPage', () => {
     expect(screen.getByText('22')).toBeInTheDocument();
     expect(screen.getByText('Media with faces')).toBeInTheDocument();
     expect(screen.getByText('3 faces are waiting for names.')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Go to Workbench' })).toHaveAttribute('href', '#/workbench?tab=confirm');
+    expect(screen.getByRole('link', { name: 'Go to Workbench' })).toHaveAttribute('href', '#/workbench?advanced=open');
   });
 
   it('shows first-use guidance when roster is empty and nothing pending', () => {
@@ -238,7 +238,7 @@ describe('DashboardPage', () => {
     expect(screen.queryByText('job-1')).not.toBeInTheDocument();
     expect(screen.queryByText('run-1')).not.toBeInTheDocument();
     const link = screen.getByRole('link', { name: 'View Results' });
-    expect(link).toHaveAttribute('href', '#/workbench?tab=confirm&jobId=job-1');
+    expect(link).toHaveAttribute('href', '#/workbench?advanced=open&jobId=job-1');
   });
 
   it('labels browser-local fallback activity explicitly', () => {
@@ -319,7 +319,7 @@ describe('DashboardPage', () => {
 
     expect(screen.getByText('Status unavailable. Refresh to retry.')).toBeInTheDocument();
     const link = screen.getByRole('link', { name: 'View Results' });
-    expect(link).toHaveAttribute('href', '#/workbench?tab=confirm&jobId=job-unavailable');
+    expect(link).toHaveAttribute('href', '#/workbench?advanced=open&jobId=job-unavailable');
   });
 
   it('shows unassigned-person guidance when there are unassigned persons', () => {

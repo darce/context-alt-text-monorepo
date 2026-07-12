@@ -16,7 +16,8 @@ const openRoster = async (baseURL: string, page: Page) => {
 
 test('roster empty state has no serious or critical axe violations', async ({ page, baseURL }) => {
   await openRoster(requireBaseUrl(baseURL), page);
-  await expect(page.getByText(/No people yet\. Add one manually or assign a cluster\./i)).toBeVisible();
+  await expect(page.getByTestId('roster-zero-state')).toBeVisible();
+  await expect(page.getByRole('status')).toContainText(/No people yet/i);
   await assertNoBlockingViolations(page, ROSTER_SHELL_SELECTOR);
 });
 

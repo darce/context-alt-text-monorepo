@@ -27,7 +27,7 @@ from recognition.interface_adapters.http.deps import (
     get_optional_session,
     require_write_access,
 )
-from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quota
+from recognition.interface_adapters.http.deps.demo_quota import maybe_consume_demo_quota
 from recognition.interface_adapters.http.middleware.metrics import get_default_metrics
 from scene.application.describe_jobs import DescribeJob, DescribeJobStatus, InMemoryDescribeJobStore
 from scene.application.description_repository import ImageDescriptionRepository
@@ -431,12 +431,12 @@ async def describe_image_multipart(
     auth=Depends(require_write_access),
     session=Depends(get_optional_session),
     adapter=Depends(get_description_adapter),
-    _demo_quota: object = Depends(enforce_demo_quota),
 ) -> VisualFactsResponse | Response:
     form = await request.form()
     settings = DescriptionSettings()
     submission = await _validated_describe_multipart_submission(form=form, auth=auth, settings=settings)
     # E20-FUSION decorative gate short-circuits validation with a 204 Response.
+    # Zero-compute: do not charge demo quota (DS2B-PM-S2-01).
     if isinstance(submission, Response):
         return submission
     envelope = submission.envelope
@@ -479,6 +479,14 @@ async def describe_image_multipart(
         generation_timeout_seconds=effective_timeout,
         profile=settings.profile,
     )
+
+    async def _charge_demo_quota() -> None:
+        # Durable consume at real-compute dispatch; cache hits never call this.
+        await maybe_consume_demo_quota(auth, session, units=1)
+        if session is not None:
+            # Commit ends SET LOCAL tenant context; re-scope for cache/persist.
+            await set_tenant_context(session, tenant_uuid)
+
     try:
         response = await service.describe(
             tenant_id=tenant_uuid,
@@ -487,6 +495,7 @@ async def describe_image_multipart(
             context=submission.context,
             confirmed_faces=confirmed_faces,
             naming_policy=naming_policy,
+            before_compute=_charge_demo_quota,
         )
     except TimeoutError as exc:
         raise HTTPException(
@@ -541,7 +550,11 @@ def _maybe_dump_describe_load() -> None:
         _logger.debug("describe load snapshot write failed path=%s", path, exc_info=True)
 
 
-@router.post("/describe/async", response_model=DescribeJobResult)
+@router.post(
+    "/describe/async",
+    response_model=DescribeJobResult,
+    responses={204: {"description": "Decorative image skipped; no description enqueued."}},
+)
 async def enqueue_describe_image(
     background_tasks: BackgroundTasks,
     request: Request,
@@ -549,11 +562,13 @@ async def enqueue_describe_image(
     session=Depends(get_optional_session),
     cpu_adapter=Depends(get_description_adapter),
     gpu_adapter=Depends(get_gpu_description_adapter),
-    _demo_quota: object = Depends(enforce_demo_quota),
-) -> DescribeJobResult:
+) -> DescribeJobResult | Response:
     form = await request.form()
     settings = DescriptionSettings()
     submission = await _validated_describe_multipart_submission(form=form, auth=auth, settings=settings)
+    # Decorative / zero-compute short-circuit: never charge (DS2B-PM-S2-01).
+    if isinstance(submission, Response):
+        return submission
     # VLMFIX-S1-06: async jobs are poll-fetched by tenant claim; empty claim
     # would enqueue unfetchable work. Require claim unless admin opt-in.
     auth_tenant = (getattr(auth, "tenant_claim", None) or "").strip()
@@ -562,6 +577,10 @@ async def enqueue_describe_image(
     if session is not None:
         await set_tenant_context(session, submission.tenant_uuid)
         await require_tenant_record(session, submission.tenant_uuid)
+    # Charge when real async compute is about to be enqueued (durable).
+    await maybe_consume_demo_quota(auth, session, units=1)
+    if session is not None:
+        await set_tenant_context(session, submission.tenant_uuid)
     audit_sink = None
     if session is not None:
         # Own session factory — request-scoped session is closed before BackgroundTasks (S1-01).

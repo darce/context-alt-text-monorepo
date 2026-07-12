@@ -265,6 +265,8 @@ function acx_register_cli_commands(): void
  * ------------------------------------------------------------------------
  */
 add_action('plugins_loaded', static function (): void {
+    // Schema upgrades before init: repositories may query new columns during init.
+    alt_context()->lifecycle()->maybe_upgrade();
     alt_context()->init();
 });
 add_action('init', 'acx_load_textdomain');

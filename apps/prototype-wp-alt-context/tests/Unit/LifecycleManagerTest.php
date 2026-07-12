@@ -472,6 +472,70 @@ class LifecycleManagerTest extends TestCase
         $this->assertFalse(get_option('acx_installed'));
     }
 
+    public function testMaybeUpgradeCreatesTablesAndUpdatesVersionWhenStoredDiffers(): void
+    {
+        $this->setOption('acx_version', '0.0.1-stale');
+
+        $this->manager->maybe_upgrade();
+
+        $queries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
+        $this->assertIsArray($queries);
+        $this->assertNotEmpty($queries, 'Projection tables should be created when version differs');
+        $this->assertSame(ACX_VERSION, get_option('acx_version'));
+    }
+
+    public function testMaybeUpgradeCreatesTablesAndSetsVersionWhenStoredMissing(): void
+    {
+        $this->assertFalse(get_option('acx_version'));
+
+        $this->manager->maybe_upgrade();
+
+        $queries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
+        $this->assertIsArray($queries);
+        $this->assertNotEmpty($queries, 'Projection tables should be created when version is missing');
+        $this->assertSame(ACX_VERSION, get_option('acx_version'));
+    }
+
+    public function testMaybeUpgradeIsStrictNoopWhenStoredVersionMatches(): void
+    {
+        $this->setOption('acx_version', ACX_VERSION);
+        $optionsBefore = $GLOBALS['__ac_options'];
+
+        $this->manager->maybe_upgrade();
+
+        $queries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
+        $this->assertSame([], $queries, 'Equal versions must not run dbDelta');
+        $this->assertSame(
+            $optionsBefore,
+            $GLOBALS['__ac_options'],
+            'equal versions must not write options'
+        );
+    }
+
+    public function testMaybeUpgradeNoopsWithoutErrorWhenAcxVersionUndefined(): void
+    {
+        // Unit bootstrap always defines ACX_VERSION; assert the production guard
+        // is present so test/edge contexts without the constant stay a no-op.
+        $method = new \ReflectionMethod(LifecycleManager::class, 'maybe_upgrade');
+        $filename = $method->getFileName();
+        $this->assertNotFalse($filename);
+        $lines = \file($filename);
+        $this->assertIsArray($lines);
+        $body = \implode('', \array_slice($lines, $method->getStartLine() - 1, $method->getEndLine() - $method->getStartLine() + 1));
+
+        $this->assertMatchesRegularExpression(
+            '/if\s*\(\s*!\s*defined\s*\(\s*[\'"]ACX_VERSION[\'"]\s*\)\s*\)/',
+            $body,
+            'maybe_upgrade must guard when ACX_VERSION is undefined'
+        );
+        $this->assertStringContainsString('return;', $body);
+
+        // Exercise the method under the defined-constant harness: must not throw.
+        $this->setOption('acx_version', ACX_VERSION);
+        $this->manager->maybe_upgrade();
+        $this->assertSame([], $GLOBALS['__ac_dbdelta_queries'] ?? []);
+    }
+
     private function findQueryContaining(array $queries, string $needle): string
     {
         foreach ($queries as $query) {

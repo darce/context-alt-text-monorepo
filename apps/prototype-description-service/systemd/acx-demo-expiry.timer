@@ -1,0 +1,16 @@
+# Daily timer for demo instance expiry sweep (DS-4).
+#
+# Install:
+#   sudo cp acx-demo-expiry.service acx-demo-expiry.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now acx-demo-expiry.timer
+
+[Unit]
+Description=Daily ACX demo expiry sweep
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=15m
+
+[Install]
+WantedBy=timers.target

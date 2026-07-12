@@ -1,0 +1,134 @@
+"""API tests for GET /x/{slug} demo resolve + per-IP rate limit (DS-2 / DS-5)."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from db.models import DemoInstance
+from recognition.application.services.demo_provisioning_service import provision_demo
+from recognition.interface_adapters.http import deps as dependencies
+from recognition.interface_adapters.http.deps import ip_rate_limit
+from recognition.interface_adapters.http.routers.demo import router as demo_router
+
+
+def _reset_ip_limiter() -> None:
+    ip_rate_limit._reset_state_for_tests()
+
+
+def _build_client(session: AsyncSession, monkeypatch, *, rpm: str = "100") -> TestClient:
+    monkeypatch.setenv("RECOGNITION_DEMO_RESOLVE_RPM", rpm)
+    _reset_ip_limiter()
+
+    app = FastAPI()
+    app.include_router(demo_router)
+
+    async def _session_dep():
+        yield session
+
+    app.dependency_overrides[dependencies.get_session] = _session_dep
+    app.dependency_overrides[dependencies.get_optional_session] = _session_dep
+    return TestClient(app)
+
+
+@pytest.mark.asyncio
+async def test_demo_router_valid_slug_resolves_without_key_material(
+    db_session: AsyncSession, monkeypatch
+) -> None:
+    result = await provision_demo(
+        db_session,
+        label="Resolve Me",
+        seed="default",
+        branding={"logo": "acme"},
+    )
+    await db_session.commit()
+
+    client = _build_client(db_session, monkeypatch)
+    resp = client.get(f"/x/{result.instance.slug}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["tenant_id"] == str(result.instance.tenant_id)
+    assert body["seed_bundle"] == "default"
+    assert body["branding_json"] == {"logo": "acme"}
+    assert body["quota_remaining"] == result.instance.recognition_quota
+    assert "expires_at" in body
+
+    blob = resp.text
+    assert result.raw_api_key not in blob
+    assert result.instance.api_key_ref not in blob
+    assert "api_key" not in body
+    assert "api_key_ref" not in body
+
+
+@pytest.mark.asyncio
+async def test_demo_router_unknown_slug_returns_uniform_404(
+    db_session: AsyncSession, monkeypatch
+) -> None:
+    client = _build_client(db_session, monkeypatch)
+    resp = client.get("/x/notreal1")
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "not found"
+
+
+@pytest.mark.asyncio
+async def test_demo_router_expired_returns_410_demo_ended(
+    db_session: AsyncSession, monkeypatch
+) -> None:
+    result = await provision_demo(db_session, label="Expired", seed="default")
+    instance = await db_session.get(DemoInstance, result.instance.slug)
+    assert instance is not None
+    instance.expires_at = datetime.now(tz=UTC) - timedelta(hours=1)
+    await db_session.commit()
+
+    client = _build_client(db_session, monkeypatch)
+    resp = client.get(f"/x/{result.instance.slug}")
+    assert resp.status_code == 410
+    detail = resp.json()["detail"]
+    assert detail["code"] == "demo_ended"
+
+
+@pytest.mark.asyncio
+async def test_demo_router_revoked_returns_410_demo_ended(
+    db_session: AsyncSession, monkeypatch
+) -> None:
+    result = await provision_demo(db_session, label="Revoked", seed="default")
+    instance = await db_session.get(DemoInstance, result.instance.slug)
+    assert instance is not None
+    instance.revoked = True
+    await db_session.commit()
+
+    client = _build_client(db_session, monkeypatch)
+    resp = client.get(f"/x/{result.instance.slug}")
+    assert resp.status_code == 410
+    assert resp.json()["detail"]["code"] == "demo_ended"
+
+
+@pytest.mark.asyncio
+async def test_demo_router_enumeration_burst_returns_429(
+    db_session: AsyncSession, monkeypatch
+) -> None:
+    client = _build_client(db_session, monkeypatch, rpm="3")
+    for _ in range(3):
+        assert client.get("/x/guess001").status_code in {404, 429}
+    # Force a clean under-limit path then breach.
+    _reset_ip_limiter()
+    for _ in range(3):
+        assert client.get("/x/guess002").status_code == 404
+    resp = client.get("/x/guess003")
+    assert resp.status_code == 429
+    assert resp.json()["detail"] == "rate limit exceeded"
+    assert "Retry-After" in resp.headers
+    assert resp.headers["X-RateLimit-Limit"] == "3"
+    assert resp.headers["X-RateLimit-Remaining"] == "0"
+
+
+def test_demo_router_mounted_on_create_app() -> None:
+    from api.main import create_app
+
+    app = create_app()
+    paths = {getattr(route, "path", None) for route in app.routes}
+    assert "/x/{slug}" in paths

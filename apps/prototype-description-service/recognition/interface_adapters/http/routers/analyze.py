@@ -39,6 +39,7 @@ from recognition.interface_adapters.http.deps import (
     require_auth,
     require_write_access,
 )
+from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quota
 from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
 from recognition.interface_adapters.http.job_utils import job_to_response as _job_to_response
 from recognition.interface_adapters.http.middleware.correlation import get_correlation_id
@@ -280,6 +281,7 @@ async def analyze_media(
     auth=Depends(require_write_access),
     session=Depends(get_optional_session),
     scan_queue=Depends(get_scan_queue_service_optional),
+    _demo_quota=Depends(enforce_demo_quota),
 ) -> JobStatusResponse:
     """Scan media for face identities. Returns a job ID for polling."""
     tenant_uuid: uuid.UUID | None = None

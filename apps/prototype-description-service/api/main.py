@@ -188,6 +188,12 @@ def create_app() -> FastAPI:
     app.include_router(roster_curation_router, prefix="/roster")
     app.include_router(scene_router, prefix="/scene")
 
+    # DS-2: public demo slug resolve at root (GET /x/{slug}). Not under
+    # /recognition — that surface carries require_auth on analyze children.
+    from recognition.interface_adapters.http.routers.demo import router as demo_router
+
+    app.include_router(demo_router)
+
     # Env-gated, fail-closed operator admin surface. Mounted only when explicitly
     # enabled; validate_admin_config refuses to start on a missing/short token (or
     # production without the tailnet-bound ack), and the env/DSN guard refuses a

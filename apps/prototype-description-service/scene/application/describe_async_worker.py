@@ -1,6 +1,5 @@
 """DB-backed async supersede worker for single-image describe jobs (VLM-5).
 
-Ports ``description_worker.run_describe_job`` onto ``DescribeRunRepository``:
 CPU provisional → GPU final, degraded-on-GPU-failure, timeout, CancelledError
 re-raise [CON-03], and FINAL-tier cache write-through on the same commit as
 ``set_item_final`` [DATA-14].
@@ -53,7 +52,7 @@ def _result_payload(
     result_generation: int,
     duration_ms: int,
 ) -> dict[str, Any]:
-    """Build the 17-field envelope — byte-compatible with description_worker._result_payload."""
+    """Build the 17-field visual-facts envelope for provisional/final tiers."""
     return build_visual_facts_envelope(
         result=result,
         adapter=adapter,
@@ -162,9 +161,7 @@ async def run_async_describe_job(
                 return
 
             # CPU provisional (no open DB session during adapter work).
-            cpu_result, cpu_duration_ms = await _describe_adapter(
-                cpu_adapter, image_bytes=image_bytes, context=context
-            )
+            cpu_result, cpu_duration_ms = await _describe_adapter(cpu_adapter, image_bytes=image_bytes, context=context)
             if metrics is not None:
                 metrics.record_request(adapter=cpu_adapter.kind.value, result="generated")
                 metrics.observe_adapter_duration(
@@ -206,9 +203,7 @@ async def run_async_describe_job(
                     )
 
             # GPU final (no open DB session during adapter work).
-            gpu_result, gpu_duration_ms = await _describe_adapter(
-                gpu_adapter, image_bytes=image_bytes, context=context
-            )
+            gpu_result, gpu_duration_ms = await _describe_adapter(gpu_adapter, image_bytes=image_bytes, context=context)
             if metrics is not None:
                 metrics.record_request(adapter=gpu_adapter.kind.value, result="generated")
                 metrics.observe_adapter_duration(

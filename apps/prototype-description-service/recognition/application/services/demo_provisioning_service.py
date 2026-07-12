@@ -222,6 +222,10 @@ async def resolve_demo(session: AsyncSession, *, slug: str) -> DemoResolveContex
     )
 
 
+# Hard ceiling for a single consume call (int4-safe; HTTP boundary also caps).
+MAX_DEMO_QUOTA_UNITS = 500
+
+
 async def try_consume_demo_quota(
     session: AsyncSession,
     *,
@@ -233,20 +237,21 @@ async def try_consume_demo_quota(
     Columns still named ``recognition_*`` meter all compute (pre-rename breadcrumb).
     Uses a single guarded UPDATE so concurrent requests cannot lose increments
     (no read-then-write race). All-or-nothing: either ``units`` fit and are
-    consumed, or none are.
+    consumed, or none are. Successful consumes derive remaining from RETURNING
+    (``recognition_quota - recognition_used``) so the post-update state is atomic.
 
     Returns:
         False when ``api_key_hash`` is not a demo registry key (caller proceeds).
         True when ``units`` were consumed.
 
     Raises:
-        ValueError: when ``units < 1`` (internal-invariant guard).
+        ValueError: when ``units`` is outside ``1..MAX_DEMO_QUOTA_UNITS``.
         DemoQuotaExceededError: demo key cannot fit ``units`` (0 rows updated
-            because ``recognition_used + units > recognition_quota``). Includes
-            ``remaining`` budget on the exception.
+            because over quota or revoked). Includes ``remaining`` budget on the
+            exception (0 when the instance is revoked).
     """
-    if units < 1:
-        raise ValueError("units must be >= 1")
+    if units < 1 or units > MAX_DEMO_QUOTA_UNITS:
+        raise ValueError(f"units must be in 1..{MAX_DEMO_QUOTA_UNITS}")
 
     cleaned = (api_key_hash or "").strip()
     if not cleaned:
@@ -260,19 +265,29 @@ async def try_consume_demo_quota(
             DemoInstance.recognition_used + units <= DemoInstance.recognition_quota,
         )
         .values(recognition_used=DemoInstance.recognition_used + units)
-        .returning(DemoInstance.slug, DemoInstance.recognition_used)
+        .returning(
+            DemoInstance.slug,
+            DemoInstance.recognition_used,
+            DemoInstance.recognition_quota,
+        )
     )
     result = await session.execute(stmt)
     row = result.first()
     if row is not None:
+        # RETURNING yields (slug, used, quota) atomically with the consume;
+        # remaining = quota - used is available without a second SELECT.
         await session.flush()
         return True
 
+    # Fallback: classify miss (not-demo vs revoked vs over-quota).
+    # Revoked instances are excluded from "active remaining" and report 0.
     existing = (
         await session.execute(select(DemoInstance).where(DemoInstance.api_key_ref == cleaned))
     ).scalar_one_or_none()
     if existing is None:
         return False
+    if existing.revoked:
+        raise DemoQuotaExceededError(remaining=0)
     remaining = max(0, int(existing.recognition_quota) - int(existing.recognition_used))
     raise DemoQuotaExceededError(remaining=remaining)
 
@@ -358,6 +373,7 @@ __all__ = [
     "DemoEndedError",
     "DemoInstanceNotFoundError",
     "DemoQuotaExceededError",
+    "MAX_DEMO_QUOTA_UNITS",
     "DemoResolveContext",
     "ProvisionResult",
     "SweepResult",

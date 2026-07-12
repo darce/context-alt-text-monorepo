@@ -11,11 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.datastructures import UploadFile
 
 from db.tenant_context import require_tenant_record, set_tenant_context
-from recognition.config.security import get_security_settings
 from recognition.infrastructure.repositories.audit_repository import AuditRepository
 from recognition.interface_adapters.http.deps import get_optional_session, require_write_access
-from recognition.interface_adapters.http.deps.auth import _hash_api_key
-from recognition.interface_adapters.http.deps.demo_quota import consume_demo_quota_units
+from recognition.interface_adapters.http.deps.demo_quota import maybe_consume_demo_quota
 from recognition.shared.db.dialect import is_postgres
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.describe_run_worker import DescribeItemOutcome, run_describe_job
@@ -253,10 +251,10 @@ async def create_describe_run(
 
     await set_tenant_context(session, tenant_id)
     await require_tenant_record(session, tenant_id)
-    # Consume after auth + image/tenant validation, before run persistence (DS-2B).
-    if getattr(auth, "enabled", False) and getattr(auth, "token", None) and session is not None:
-        key_hash = _hash_api_key(auth.token, get_security_settings().api_key_hash_algorithm)
-        await consume_demo_quota_units(session, api_key_hash=key_hash, units=len(media_ids))
+    # Charge unique media ids only (order-preserving dedupe); durable at dispatch.
+    unique_media_ids = list(dict.fromkeys(media_ids))
+    await maybe_consume_demo_quota(auth, session, units=len(unique_media_ids))
+    await set_tenant_context(session, tenant_id)
     repo = DescribeRunRepository(session)
     try:
         run_id = await repo.create_run(

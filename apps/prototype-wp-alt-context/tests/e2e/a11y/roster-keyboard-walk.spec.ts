@@ -19,7 +19,19 @@ test('keyboard path from roster load reaches Add Person and opens the form', asy
   const addPerson = page.getByRole('button', { name: /Add Person/i }).first();
   await expect(addPerson).toBeVisible();
 
-  await addPerson.focus();
+  // Real keyboard reachability: Tab from the top of the document until the
+  // Add Person button receives focus (bounded so a broken tab order fails fast).
+  await page.locator('body').press('Tab');
+  const MAX_TAB_STEPS = 60;
+  let reached = false;
+  for (let step = 0; step < MAX_TAB_STEPS; step += 1) {
+    if (await addPerson.evaluate((el) => el === document.activeElement)) {
+      reached = true;
+      break;
+    }
+    await page.keyboard.press('Tab');
+  }
+  expect(reached, `Add Person not keyboard-reachable within ${MAX_TAB_STEPS} tab stops`).toBe(true);
   await expect(addPerson).toBeFocused();
 
   await page.keyboard.press('Enter');

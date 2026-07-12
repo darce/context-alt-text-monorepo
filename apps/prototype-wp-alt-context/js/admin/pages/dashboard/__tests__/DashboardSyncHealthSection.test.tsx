@@ -39,7 +39,7 @@ describe('DashboardSyncHealthSection', () => {
     );
 
     expect(screen.getByText('The recognition backend is currently unreachable.')).toBeInTheDocument();
-    expect(screen.queryByText('Machine sync is healthy and curation replay is caught up.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Machine sync is healthy and local changes are caught up.')).not.toBeInTheDocument();
   });
 
   it('shows warning copy when the envelope reports warnings on an otherwise healthy effective state', () => {
@@ -66,6 +66,6 @@ describe('DashboardSyncHealthSection', () => {
     );
 
     expect(screen.getByText(/warning threshold/i)).toBeInTheDocument();
-    expect(screen.queryByText('Machine sync is healthy and curation replay is caught up.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Machine sync is healthy and local changes are caught up.')).not.toBeInTheDocument();
   });
 });

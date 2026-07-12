@@ -149,7 +149,7 @@ vi.mock('../hooks/useRetentionStatus', () => ({
   useDownloadExportJobData: () => createMockMutation({}),
   usePurgeTenantData: () => createMockMutation({}),
   useImportTenantData: () => createMockMutation({}),
-  useAuditEvents: () => createMockQuery({ data: { events: [] } }),
+  useAuditEvents: () => createMockQuery({ data: { items: [], total: 0 } }),
   useApplyRetentionPreset: () => createMockMutation({}),
 }));
 
@@ -217,44 +217,100 @@ vi.mock('../api/config', () => ({
   resetConfigCache: vi.fn(),
 }));
 
-// Workbench pulls a large context — stub the provider surface via WorkbenchPage deps.
+// Workbench pulls a large context — stub the provider surface for page shell + status strip.
 vi.mock('../pages/workbench/WorkbenchContext', async () => {
   const React = await import('react');
   const actual = await vi.importActual<typeof import('../pages/workbench/WorkbenchContext')>(
     '../pages/workbench/WorkbenchContext',
   );
   const stub = {
-    activeTab: 'scan',
-    setActiveTab: vi.fn(),
-    pipelinePhase: 'idle',
+    activeSection: 'scan',
+    setActiveSection: vi.fn(),
+    activeOverlay: null,
+    setActiveOverlay: vi.fn(),
+    recognitionSource: 'service',
+    effectiveTargetUrl: 'https://api.example.com',
+    isOnline: true,
+    isPrimary: true,
+    latestJobId: null,
+    currentPhase: 'idle',
     projectionSyncState: 'idle',
     projectionError: null,
-    retryProjection: vi.fn(),
+    retryProjectionSync: vi.fn(),
+    detailTruncationNotice: null,
+    clusterPanel: { mode: 'none', clusterId: null },
+    dispatchClusterPanel: vi.fn(),
+    jobId: null,
+    jobHistory: [],
+    jobStatuses: {},
+    historySource: 'unavailable',
+    rememberJob: vi.fn(),
+    selectJob: vi.fn(),
+    forgetJob: vi.fn(),
+    clearHistory: vi.fn(),
+    selection: {},
+    selectedMedia: [],
+    toggleRow: vi.fn(),
+    toggleAll: vi.fn(),
+    isPageFullySelected: () => false,
+    searchQuery: '',
+    currentPage: 1,
+    perPage: 20,
+    handleSearchChange: vi.fn(),
+    statusFilter: 'all',
+    handleStatusChange: vi.fn(),
+    setCurrentPage: vi.fn(),
+    setPerPage: vi.fn(),
+    mediaQuery: {
+      data: { items: [], total: 0 },
+      itemsWithIdentities: [],
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    },
+    statusMessage: '',
+    isScanRunning: false,
+    isCancellingScan: false,
+    statusText: undefined,
     scanProgress: null,
     clusterProgress: null,
-    isScanning: false,
-    isCancelling: false,
-    statusText: null,
-    jobId: null,
-    errorMessage: null,
-    progress: null,
     batchRunStatus: null,
-    stallSeconds: null,
+    scanStallSeconds: null,
     etaSeconds: null,
-    isSynced: false,
-    onCancelScan: undefined,
-    onRetryStream: undefined,
-    mediaSelection: { selectedIds: [], toggle: vi.fn(), clear: vi.fn() },
-    bulkDescribe: { progress: { run: null, status: null, isTerminal: true, isError: false } },
-    notice: null,
-    detailTruncationNotice: null,
+    scan: vi.fn(),
+    cancelScan: vi.fn(),
+    cluster: vi.fn(),
+    retryScanStream: vi.fn(),
+    activeJobIds: [],
+    handleSelectJobFromHistory: vi.fn(),
+    clusterMessage: null,
+    setClusterMessage: vi.fn(),
+    scanError: null,
+    setScanError: vi.fn(),
+    hasIdentities: false,
   };
   return {
     ...actual,
     WorkbenchProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-    useWorkbench: () => stub,
+    useWorkbenchContext: () => stub,
   };
 });
+
+// Heavy workbench children still pull deeper hooks — keep them as plain shells so the
+// page sweep covers WorkbenchPage chrome + SyncStatusIndicator status copy.
+vi.mock('../pages/workbench/ScanTabContent', () => ({
+  ScanTabContent: () => <div data-testid="acx-scan-tab-shell">Scan tab</div>,
+}));
+vi.mock('../pages/workbench/ConfirmTabContent', () => ({
+  ConfirmTabContent: () => <div data-testid="acx-confirm-tab-shell">Confirm tab</div>,
+}));
+vi.mock('../pages/workbench/ConflictInbox', () => ({
+  ConflictInbox: () => null,
+}));
+vi.mock('../pages/workbench/DeadLetterPanel', () => ({
+  DeadLetterPanel: () => null,
+}));
 
 import { DashboardPage } from '../pages/DashboardPage';
 import { DescribeRunApplyView } from '../pages/DescribeRunApplyView';
@@ -268,13 +324,7 @@ const pageRenderers: Record<PageName, () => React.JSX.Element> = {
   DashboardPage: () => <DashboardPage />,
   WorkbenchPage: () => <WorkbenchPage />,
   RosterPage: () => <RosterPage />,
-  DescriptionHistoryPage: () => (
-    <MemoryRouter initialEntries={['/description-history']}>
-      <Routes>
-        <Route path="/description-history" element={<DescriptionHistoryPage />} />
-      </Routes>
-    </MemoryRouter>
-  ),
+  DescriptionHistoryPage: () => <DescriptionHistoryPage />,
   RetentionPage: () => <RetentionPage />,
   SettingsPage: () => <SettingsPage />,
   DescribeRunApplyView: () => <DescribeRunApplyView runId="run-1" />,
@@ -286,7 +336,11 @@ const wrap = (node: React.JSX.Element) => {
   });
   return (
     <QueryClientProvider client={client}>
-      <MemoryRouter>{node}</MemoryRouter>
+      <MemoryRouter>
+        <Routes>
+          <Route path="*" element={node} />
+        </Routes>
+      </MemoryRouter>
     </QueryClientProvider>
   );
 };

@@ -115,9 +115,7 @@ class DescribeRunRepository:
         await self._session.flush()
         return run.id
 
-    async def get_single_run_item(
-        self, *, tenant_id: uuid.UUID, run_id: uuid.UUID
-    ) -> DescribeRunItem | None:
+    async def get_single_run_item(self, *, tenant_id: uuid.UUID, run_id: uuid.UUID) -> DescribeRunItem | None:
         """Return the sole item for a single-run job (None if missing or empty)."""
         items = await self.list_run_items(tenant_id=tenant_id, run_id=run_id)
         if not items:
@@ -194,10 +192,7 @@ class DescribeRunRepository:
         if item is None:
             return False
         if DescribeItemStatus(item.status) in TERMINAL_ITEM_STATUSES:
-            return (
-                DescribeItemStatus(item.status) is DescribeItemStatus.COMPLETED
-                and item.last_error is not None
-            )
+            return DescribeItemStatus(item.status) is DescribeItemStatus.COMPLETED and item.last_error is not None
         item.status = DescribeItemStatus.COMPLETED
         item.completed_at = now
         item.tier = item.tier or DescriptionResultTier.PROVISIONAL_CPU
@@ -413,15 +408,11 @@ class DescribeRunRepository:
         await self._require_rls_bypass()
         now = now or datetime.now(tz=UTC)
         result = await self._session.execute(
-            select(DescribeRun).where(
-                DescribeRun.status.in_([DescribeRunStatus.PENDING, DescribeRunStatus.RUNNING])
-            )
+            select(DescribeRun).where(DescribeRun.status.in_([DescribeRunStatus.PENDING, DescribeRunStatus.RUNNING]))
         )
         runs = list(result.scalars().all())
         for run in runs:
-            items_res = await self._session.execute(
-                select(DescribeRunItem).where(DescribeRunItem.run_id == run.id)
-            )
+            items_res = await self._session.execute(select(DescribeRunItem).where(DescribeRunItem.run_id == run.id))
             items = list(items_res.scalars().all())
             is_single = run.run_kind == RunKind.SINGLE
             for item in items:
@@ -535,5 +526,20 @@ async def run_startup_reclaim(session_factory) -> int:
     async with session_factory() as session:
         await enable_rls_bypass(session)
         count = await DescribeRunRepository(session).reclaim_interrupted_runs()
+        await session.commit()
+    return count
+
+
+async def run_startup_retention_purge(session_factory) -> int:
+    """VLM-5 design (d): purge expired terminal single runs once at service startup.
+
+    Dedicated short-lived RLS-bypassed session (design (c) session discipline) —
+    never a tenant-scoped session. Best-effort and idempotent. Returns deleted run count.
+    """
+    from db.tenant_context import enable_rls_bypass
+
+    async with session_factory() as session:
+        await enable_rls_bypass(session)
+        count = await DescribeRunRepository(session).purge_expired_single_runs()
         await session.commit()
     return count

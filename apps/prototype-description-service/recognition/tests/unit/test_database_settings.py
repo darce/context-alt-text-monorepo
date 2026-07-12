@@ -8,9 +8,7 @@ from pathlib import Path
 import db.settings as settings_module
 
 
-def test_database_settings_explicit_postgres_dsn_resolves_and_writes_back(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_database_settings_explicit_postgres_dsn_resolves_and_writes_back(monkeypatch, tmp_path: Path) -> None:
     """Characterization: explicit POSTGRES_DSN/SYNC_DSN resolve + env write-back.
 
     Pins async/sync DSN values and asserts os.environ write-backs still occur
@@ -48,9 +46,7 @@ def test_database_settings_explicit_postgres_dsn_resolves_and_writes_back(
     assert os.environ["POSTGRES_SYNC_DSN"] == explicit_sync
 
 
-def test_database_settings_default_render_with_pgpassword_set(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_database_settings_default_render_with_pgpassword_set(monkeypatch, tmp_path: Path) -> None:
     """Characterization: default DSN render when PGPASSWORD is set, no POSTGRES_DSN."""
     env_file = tmp_path / ".env"
 
@@ -80,8 +76,7 @@ def test_database_settings_default_render_with_pgpassword_set(
         settings_module.get_database_settings.cache_clear()
 
     assert (
-        settings.postgres_dsn
-        == "postgresql+asyncpg://render_user:render_secret@render.host:5434/alt_context_service"
+        settings.postgres_dsn == "postgresql+asyncpg://render_user:render_secret@render.host:5434/alt_context_service"
     )
     assert (
         settings.postgres_sync_dsn
@@ -89,9 +84,7 @@ def test_database_settings_default_render_with_pgpassword_set(
     )
 
 
-def test_database_settings_default_render_with_pgpassword_unset(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_database_settings_default_render_with_pgpassword_unset(monkeypatch, tmp_path: Path) -> None:
     """Characterization: default DSN render when PGPASSWORD unset → DEFAULT_PGPASSWORD."""
     env_file = tmp_path / ".env"
 
@@ -120,10 +113,7 @@ def test_database_settings_default_render_with_pgpassword_unset(
         settings_module.get_database_settings.cache_clear()
 
     default_pw = settings_module.DEFAULT_PGPASSWORD
-    assert (
-        settings.postgres_dsn
-        == f"postgresql+asyncpg://unset_user:{default_pw}@unset.host:5435/alt_context_service"
-    )
+    assert settings.postgres_dsn == f"postgresql+asyncpg://unset_user:{default_pw}@unset.host:5435/alt_context_service"
     assert (
         settings.postgres_sync_dsn
         == f"postgresql+psycopg://unset_user:{default_pw}@unset.host:5435/alt_context_service"

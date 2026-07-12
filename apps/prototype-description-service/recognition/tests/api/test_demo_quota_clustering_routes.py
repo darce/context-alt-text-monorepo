@@ -66,9 +66,7 @@ def _clustering_demo_client(*, recognition_quota: int = 5, non_demo: bool = Fals
 
     async def _provision():
         async with sf() as s:
-            result = await provision_demo(
-                s, label="Cluster Demo", seed="default", recognition_quota=recognition_quota
-            )
+            result = await provision_demo(s, label="Cluster Demo", seed="default", recognition_quota=recognition_quota)
             await s.commit()
             return result
 

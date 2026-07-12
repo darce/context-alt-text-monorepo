@@ -130,12 +130,8 @@ def test_set_item_degraded_and_failed_lifecycle():
         # Degraded path: provisional then GPU fails.
         async with sf() as s:
             repo = DescribeRunRepository(s)
-            run_id = await repo.create_single_run(
-                tenant_id=tenant, media_id=7, image_bytes=b"x"
-            )
-            await repo.mark_item(
-                tenant_id=tenant, run_id=run_id, media_id=7, status=DescribeItemStatus.RUNNING
-            )
+            run_id = await repo.create_single_run(tenant_id=tenant, media_id=7, image_bytes=b"x")
+            await repo.mark_item(tenant_id=tenant, run_id=run_id, media_id=7, status=DescribeItemStatus.RUNNING)
             await repo.set_item_provisional(
                 tenant_id=tenant,
                 run_id=run_id,
@@ -166,12 +162,8 @@ def test_set_item_degraded_and_failed_lifecycle():
         # Failed path: no provisional before failure.
         async with sf() as s:
             repo = DescribeRunRepository(s)
-            fail_id = await repo.create_single_run(
-                tenant_id=tenant, media_id=8, image_bytes=b"y"
-            )
-            await repo.mark_item(
-                tenant_id=tenant, run_id=fail_id, media_id=8, status=DescribeItemStatus.RUNNING
-            )
+            fail_id = await repo.create_single_run(tenant_id=tenant, media_id=8, image_bytes=b"y")
+            await repo.mark_item(tenant_id=tenant, run_id=fail_id, media_id=8, status=DescribeItemStatus.RUNNING)
             await repo.set_item_failed(
                 tenant_id=tenant,
                 run_id=fail_id,
@@ -279,24 +271,16 @@ def test_purge_expired_single_runs_cross_tenant_and_requires_bypass(monkeypatch)
             repo = DescribeRunRepository(s)
             # Expired terminal singles — two tenants.
             for tenant, media_id in ((tenant_a, 1), (tenant_b, 2)):
-                run_id = await repo.create_single_run(
-                    tenant_id=tenant, media_id=media_id, image_bytes=b"z"
-                )
-                await repo.set_item_failed(
-                    tenant_id=tenant, run_id=run_id, media_id=media_id, error="done"
-                )
+                run_id = await repo.create_single_run(tenant_id=tenant, media_id=media_id, image_bytes=b"z")
+                await repo.set_item_failed(tenant_id=tenant, run_id=run_id, media_id=media_id, error="done")
                 run = await repo.get_run(tenant_id=tenant, run_id=run_id)
                 assert run is not None
                 run.completed_at = old
                 run.created_at = old
 
             # Fresh terminal single — must survive.
-            keep_id = await repo.create_single_run(
-                tenant_id=tenant_a, media_id=99, image_bytes=b"keep"
-            )
-            await repo.set_item_failed(
-                tenant_id=tenant_a, run_id=keep_id, media_id=99, error="fresh"
-            )
+            keep_id = await repo.create_single_run(tenant_id=tenant_a, media_id=99, image_bytes=b"keep")
+            await repo.set_item_failed(tenant_id=tenant_a, run_id=keep_id, media_id=99, error="fresh")
             keep_run = await repo.get_run(tenant_id=tenant_a, run_id=keep_id)
             assert keep_run is not None
             keep_run.completed_at = fresh
@@ -316,9 +300,7 @@ def test_purge_expired_single_runs_cross_tenant_and_requires_bypass(monkeypatch)
             bulk.created_at = old
 
             # Non-terminal single expired — must not be purged.
-            inflight_id = await repo.create_single_run(
-                tenant_id=tenant_b, media_id=55, image_bytes=b"live"
-            )
+            inflight_id = await repo.create_single_run(tenant_id=tenant_b, media_id=55, image_bytes=b"live")
             inflight = await repo.get_run(tenant_id=tenant_b, run_id=inflight_id)
             assert inflight is not None
             inflight.created_at = old
@@ -346,9 +328,7 @@ def test_purge_expired_single_runs_cross_tenant_and_requires_bypass(monkeypatch)
 
         monkeypatch.setattr(repo_mod, "is_sqlite", lambda _session: False)
         with pytest.raises(RuntimeError, match="RLS-bypassed"):
-            await DescribeRunRepository(_NotBypassedSession()).purge_expired_single_runs(
-                now=now, retention_hours=24
-            )
+            await DescribeRunRepository(_NotBypassedSession()).purge_expired_single_runs(now=now, retention_hours=24)
 
         await engine.dispose()
 
@@ -363,12 +343,8 @@ def test_reclaim_preserves_provisional_visual_facts_as_degraded():
         tenant = uuid.uuid4()
         async with sf() as s:
             repo = DescribeRunRepository(s)
-            run_id = await repo.create_single_run(
-                tenant_id=tenant, media_id=11, image_bytes=b"stranded"
-            )
-            await repo.mark_item(
-                tenant_id=tenant, run_id=run_id, media_id=11, status=DescribeItemStatus.RUNNING
-            )
+            run_id = await repo.create_single_run(tenant_id=tenant, media_id=11, image_bytes=b"stranded")
+            await repo.mark_item(tenant_id=tenant, run_id=run_id, media_id=11, status=DescribeItemStatus.RUNNING)
             await repo.set_item_provisional(
                 tenant_id=tenant,
                 run_id=run_id,
@@ -398,12 +374,8 @@ def test_reclaim_preserves_provisional_visual_facts_as_degraded():
         # Without provisional → failed.
         async with sf() as s:
             repo = DescribeRunRepository(s)
-            bare_id = await repo.create_single_run(
-                tenant_id=tenant, media_id=12, image_bytes=b"no-prov"
-            )
-            await repo.mark_item(
-                tenant_id=tenant, run_id=bare_id, media_id=12, status=DescribeItemStatus.RUNNING
-            )
+            bare_id = await repo.create_single_run(tenant_id=tenant, media_id=12, image_bytes=b"no-prov")
+            await repo.mark_item(tenant_id=tenant, run_id=bare_id, media_id=12, status=DescribeItemStatus.RUNNING)
             run = await repo.get_run(tenant_id=tenant, run_id=bare_id)
             assert run is not None
             run.status = DescribeRunStatus.RUNNING

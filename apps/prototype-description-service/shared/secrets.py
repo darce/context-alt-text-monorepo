@@ -152,19 +152,13 @@ class OciVaultSecretProvider(SecretProvider):
         """Build from ``RECOGNITION_VAULT_SECRET_MAP`` JSON name→OCID map."""
         raw = os.environ.get(_VAULT_SECRET_MAP_ENV, "").strip()
         if not raw:
-            raise ValueError(
-                f"{_VAULT_SECRET_MAP_ENV} is required when {_SECRET_BACKEND_ENV}=oci_vault"
-            )
+            raise ValueError(f"{_VAULT_SECRET_MAP_ENV} is required when {_SECRET_BACKEND_ENV}=oci_vault")
         try:
             mapping = json.loads(raw)
         except json.JSONDecodeError as exc:
-            raise ValueError(
-                f"{_VAULT_SECRET_MAP_ENV} must be a JSON object of path→OCID strings"
-            ) from exc
+            raise ValueError(f"{_VAULT_SECRET_MAP_ENV} must be a JSON object of path→OCID strings") from exc
         if not isinstance(mapping, dict) or not mapping:
-            raise ValueError(
-                f"{_VAULT_SECRET_MAP_ENV} must be a non-empty JSON object of path→OCID strings"
-            )
+            raise ValueError(f"{_VAULT_SECRET_MAP_ENV} must be a non-empty JSON object of path→OCID strings")
         return cls(mapping)
 
     def get_secret(self, name: str) -> str:
@@ -184,9 +178,7 @@ class OciVaultSecretProvider(SecretProvider):
 
         import oci
 
-        signer_factory = self._signer_factory or (
-            lambda: oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
-        )
+        signer_factory = self._signer_factory or (lambda: oci.auth.signers.InstancePrincipalsSecurityTokenSigner())
         signer = signer_factory()
         timeout = (self._connect_timeout_s, self._read_timeout_s)
         if self._client_factory is not None:
@@ -256,9 +248,7 @@ def resolve_secret_backend(raw: str | None = None) -> str:
         value = "env"
     if value not in _KNOWN_SECRET_BACKENDS:
         known = ", ".join(sorted(_KNOWN_SECRET_BACKENDS))
-        raise ValueError(
-            f"Unknown {_SECRET_BACKEND_ENV}={value!r}; expected one of: {known}"
-        )
+        raise ValueError(f"Unknown {_SECRET_BACKEND_ENV}={value!r}; expected one of: {known}")
     return value
 
 
@@ -339,10 +329,7 @@ def validate_oci_vault_boot(
         try:
             value = active.get_secret(name)
         except SecretNotFound as exc:
-            message = (
-                f"OCI Vault boot failed: required secret {name!r} not found in Vault; "
-                "refusing to serve"
-            )
+            message = f"OCI Vault boot failed: required secret {name!r} not found in Vault; refusing to serve"
             logger.error(message)
             raise VaultBootError(message) from exc
         except ServiceError as exc:
@@ -354,8 +341,7 @@ def validate_oci_vault_boot(
                 )
             else:
                 message = (
-                    f"OCI Vault boot failed: Vault service error fetching {name!r} "
-                    f"(status={status}); refusing to serve"
+                    f"OCI Vault boot failed: Vault service error fetching {name!r} (status={status}); refusing to serve"
                 )
             logger.error(message)
             raise VaultBootError(message) from exc
@@ -377,9 +363,7 @@ def validate_oci_vault_boot(
             raise VaultBootError(message) from exc
 
         if not value:
-            message = (
-                f"OCI Vault boot failed: required secret {name!r} is empty; refusing to serve"
-            )
+            message = f"OCI Vault boot failed: required secret {name!r} is empty; refusing to serve"
             logger.error(message)
             raise VaultBootError(message)
 

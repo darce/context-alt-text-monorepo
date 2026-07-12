@@ -69,9 +69,7 @@ async def _demo_registry_key_exists(session: AsyncSession, api_key_hash: str) ->
     cleaned = (api_key_hash or "").strip()
     if not cleaned:
         return False
-    result = await session.execute(
-        select(DemoInstance.api_key_ref).where(DemoInstance.api_key_ref == cleaned).limit(1)
-    )
+    result = await session.execute(select(DemoInstance.api_key_ref).where(DemoInstance.api_key_ref == cleaned).limit(1))
     return result.first() is not None
 
 

@@ -91,8 +91,9 @@ terraform -chdir=infra/oci output -raw gpu_instance_id    # → idle reaper
 ### Idle reaper (decision → fence → OCI STOP)
 
 The description service dumps load to `/run/acx/describe-load.json` (override with
-`ACX_DESCRIBE_LOAD_PATH`) on async enqueue/terminal poll. Stale dumps are treated
-as busy so a dead writer cannot STOP a working GPU.
+`ACX_DESCRIBE_LOAD_PATH`) on async enqueue/terminal poll and at startup; the JSON is
+produced by `scene/application/describe_load.py` (DB-derived, VLM-5). Stale dumps are
+treated as busy so a dead writer cannot STOP a working GPU.
 
 ```bash
 # Production: real load file + OCI probe (not static --queue-depth 0 --in-flight 0)

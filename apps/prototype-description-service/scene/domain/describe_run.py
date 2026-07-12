@@ -124,9 +124,7 @@ def compute_eta_seconds(run, *, now: datetime | None = None) -> float | None:
     return remaining / rate
 
 
-def terminal_run_status(
-    *, completed: int, failed: int, skipped: int, cancel_requested: bool
-) -> DescribeRunStatus:
+def terminal_run_status(*, completed: int, failed: int, skipped: int, cancel_requested: bool) -> DescribeRunStatus:
     """Map terminal item outcomes to a run's terminal status.
 
     Single source of truth shared by the live recompute path and startup

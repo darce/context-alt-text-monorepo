@@ -70,3 +70,19 @@ def write_load_snapshot(snapshot: dict[str, Any], path: str | Path) -> None:
     tmp = target.with_suffix(target.suffix + ".tmp")
     tmp.write_text(json.dumps(snapshot, separators=(",", ":")))
     os.replace(tmp, target)
+
+
+async def run_startup_load_snapshot(session_factory, path: str | Path | None = None) -> None:
+    """VLM-5 design (c): write the initial DB-derived load snapshot at boot.
+
+    Opens a dedicated short-lived RLS-bypassed session (never tenant-scoped).
+    Best-effort from the lifespan caller; raises on failure for that try/except.
+    """
+    from db.tenant_context import enable_rls_bypass
+
+    target = path or os.environ.get("ACX_DESCRIBE_LOAD_PATH", "/run/acx/describe-load.json")
+    async with session_factory() as session:
+        await enable_rls_bypass(session)
+        snap = await load_snapshot(session)
+        await session.commit()
+    write_load_snapshot(snap, target)

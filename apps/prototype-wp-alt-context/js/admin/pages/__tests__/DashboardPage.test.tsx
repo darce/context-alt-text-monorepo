@@ -58,10 +58,6 @@ vi.mock('../../hooks/useRetentionStatus', () => ({
   useRetentionStatus: vi.fn(),
 }));
 
-vi.mock('../dashboard/OrientationCard', () => ({
-  OrientationCard: () => <div>Orientation</div>,
-}));
-
 describe('DashboardPage', () => {
   const mockedUseMediaStats = vi.mocked(useMediaStats);
   const mockedUseRecognitionJobHistory = vi.mocked(useRecognitionJobHistory);
@@ -211,7 +207,7 @@ describe('DashboardPage', () => {
           id: 'job-1',
           type: 'analyze',
           status: 'completed',
-          progress: null,
+          progress: { completed: 24, total: 24, images_processed: 24 },
           started_at: '2026-03-04T10:00:00.000Z',
           finished_at: '2026-03-04T10:02:05.000Z',
           message: null,
@@ -237,7 +233,10 @@ describe('DashboardPage', () => {
     render(<DashboardPage />);
 
     expect(screen.getByText('Duration: 2m 05s')).toBeInTheDocument();
-    expect(screen.getByText('Durable batch run: run-1')).toBeInTheDocument();
+    expect(screen.getByText('Durable batch run')).toBeInTheDocument();
+    expect(screen.getByText(/Scan finished · 24 images ·/)).toBeInTheDocument();
+    expect(screen.queryByText('job-1')).not.toBeInTheDocument();
+    expect(screen.queryByText('run-1')).not.toBeInTheDocument();
     const link = screen.getByRole('link', { name: 'View Results' });
     expect(link).toHaveAttribute('href', '#/workbench?tab=confirm&jobId=job-1');
   });
@@ -390,7 +389,7 @@ describe('DashboardPage', () => {
     expect(screen.getByRole('link', { name: /Open Retention Controls/ })).toHaveAttribute('href', '#/retention');
   });
 
-  it('surfaces batch operations from the dashboard with latest-job follow-up', () => {
+  it('does not render the Batch Operations panel', () => {
     mockedUseRecognitionJobHistory.mockReturnValue({
       jobHistory: ['job-batch-9'],
       jobStatuses: { 'job-batch-9': 'completed' },
@@ -426,20 +425,87 @@ describe('DashboardPage', () => {
 
     render(<DashboardPage />);
 
-    expect(screen.getByText('Batch Operations')).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        'Start new recognition batches from Dashboard, then jump back into scan, review, or roster cleanup from the same landing page.',
-      ),
-    ).toBeInTheDocument();
-    expect(screen.getByText('Most recent batch job: job-batch-9')).toBeInTheDocument();
-    expect(screen.getByText('Latest batch status: completed')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'View latest results' })).toHaveAttribute(
-      'href',
-      '#/workbench?tab=confirm&jobId=job-batch-9',
+    expect(screen.queryByRole('heading', { name: 'Batch Operations' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Most recent batch job:/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Analysis Queue/ })).not.toBeInTheDocument();
+  });
+
+  it('shows orientation card only when people_count is zero', () => {
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 0,
+          assigned_clusters_count: 0,
+          pending_clusters_count: 0,
+          media_with_faces_count: 0,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
     );
-    expect(screen.getByRole('link', { name: /Analysis Queue/ })).toHaveAttribute('href', '#/workbench?tab=scan');
-    expect(screen.getByRole('link', { name: /Review Hub/ })).toHaveAttribute('href', '#/workbench?tab=confirm');
+
+    const { unmount } = render(<DashboardPage />);
+
+    expect(screen.getByRole('heading', { name: 'Getting Started with Identity Recognition' })).toBeInTheDocument();
+    unmount();
+
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 3,
+          assigned_clusters_count: 2,
+          pending_clusters_count: 0,
+          media_with_faces_count: 5,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(<DashboardPage />);
+
+    expect(screen.queryByRole('heading', { name: 'Getting Started with Identity Recognition' })).not.toBeInTheDocument();
+  });
+
+  it('links Library Coverage to workbench missing-status filter', () => {
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 4,
+          assigned_clusters_count: 4,
+          pending_clusters_count: 0,
+          media_with_faces_count: 10,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(<DashboardPage />);
+
+    expect(screen.getByRole('link', { name: 'Fix missing descriptions' })).toHaveAttribute(
+      'href',
+      '#/workbench?status=missing',
+    );
+  });
+
+  it('does not render the DescribePanel hero on the dashboard', () => {
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 4,
+          assigned_clusters_count: 4,
+          pending_clusters_count: 0,
+          media_with_faces_count: 10,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(<DashboardPage />);
+
+    expect(screen.queryByRole('heading', { name: /AI Image Description/i })).not.toBeInTheDocument();
   });
 
   it('shows retention unavailable copy when the retention proxy is degraded', () => {
@@ -673,7 +739,7 @@ describe('DashboardPage', () => {
     expect(screen.queryByRole('link', { name: /Open Failed Sync Queue/ })).not.toBeInTheDocument();
   });
 
-  it('renders sync health before review work and orientation when sync needs attention', () => {
+  it('renders sync health before review work when sync needs attention', () => {
     mockedUseSyncStatus.mockReturnValue(
       createMockQuery({
         data: {
@@ -707,7 +773,7 @@ describe('DashboardPage', () => {
       screen.getByRole('heading', { name: 'Sync Health' }),
       screen.getByRole('heading', { name: 'Identity Recognition' }),
     );
-    expectBefore(screen.getByRole('heading', { name: 'Sync Health' }), screen.getByText('Orientation'));
+    expect(screen.queryByRole('heading', { name: 'Getting Started with Identity Recognition' })).not.toBeInTheDocument();
   });
 
   it('renders review work before sync health when sync is healthy', () => {
@@ -730,7 +796,6 @@ describe('DashboardPage', () => {
       screen.getByRole('heading', { name: 'Identity Recognition' }),
       screen.getByRole('heading', { name: 'Sync Health' }),
     );
-    expectBefore(screen.getByRole('heading', { name: 'Identity Recognition' }), screen.getByText('Orientation'));
   });
 
   it('renders queued sync summary copy with pending replay count', () => {

@@ -3,8 +3,7 @@ export type DashboardSectionId =
   | 'identityRecognition'
   | 'libraryCoverage'
   | 'recentActivity'
-  | 'retentionPosture'
-  | 'batchOperations';
+  | 'retentionPosture';
 
 export interface DashboardPriorityInputs {
   isSyncStatusLoading: boolean;
@@ -27,7 +26,7 @@ export interface DashboardPriorityInputs {
 
 export interface DashboardPriorityModel {
   gridSectionOrder: DashboardSectionId[];
-  orientationPosition: 'before_grid' | 'after_grid';
+  orientationPosition: 'after_grid';
 }
 
 const DEFAULT_SECTION_ORDER: DashboardSectionId[] = [
@@ -36,7 +35,6 @@ const DEFAULT_SECTION_ORDER: DashboardSectionId[] = [
   'libraryCoverage',
   'recentActivity',
   'retentionPosture',
-  'batchOperations',
 ];
 
 const hasSyncAttention = (inputs: DashboardPriorityInputs): boolean => {

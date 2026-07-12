@@ -13,6 +13,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -160,19 +161,187 @@ async def expire_demo(session: AsyncSession, *, slug: str) -> DemoInstance:
     return instance
 
 
+@dataclass(frozen=True)
+class DemoResolveContext:
+    """Public-safe demo context for GET /x/{slug}. No key material."""
+
+    tenant_id: str
+    seed_bundle: str
+    branding_json: dict | None
+    expires_at: datetime
+    quota_remaining: int
+
+
+class DemoEndedError(LookupError):
+    """Slug exists but is expired or revoked (HTTP 410 demo_ended)."""
+
+
+class DemoQuotaExceededError(RuntimeError):
+    """Demo recognition quota exhausted (DS3-BR-02)."""
+
+
+DEFAULT_SWEEP_STALL_LIMIT = 5
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+async def resolve_demo(session: AsyncSession, *, slug: str) -> DemoResolveContext:
+    """Load public demo context for a slug.
+
+    Raises:
+        DemoInstanceNotFoundError: unknown slug (HTTP 404; no existence oracle).
+        DemoEndedError: expired or revoked (HTTP 410 + demo_ended).
+    """
+    cleaned = (slug or "").strip()
+    if not cleaned:
+        raise DemoInstanceNotFoundError("not found")
+    instance = await session.get(DemoInstance, cleaned)
+    if instance is None:
+        raise DemoInstanceNotFoundError("not found")
+
+    now = datetime.now(tz=UTC)
+    expires_at = _as_utc(instance.expires_at)
+    if instance.revoked or expires_at < now:
+        raise DemoEndedError("demo_ended")
+
+    remaining = max(0, int(instance.recognition_quota) - int(instance.recognition_used))
+    return DemoResolveContext(
+        tenant_id=str(instance.tenant_id),
+        seed_bundle=instance.seed_bundle,
+        branding_json=instance.branding_json,
+        expires_at=expires_at,
+        quota_remaining=remaining,
+    )
+
+
+async def try_consume_demo_quota(session: AsyncSession, *, api_key_hash: str) -> bool:
+    """Atomically consume one recognition unit for a demo key if applicable.
+
+    Uses a single guarded UPDATE so concurrent requests cannot lose increments
+    (no read-then-write race).
+
+    Returns:
+        False when ``api_key_hash`` is not a demo registry key (caller proceeds).
+        True when a unit was consumed.
+
+    Raises:
+        DemoQuotaExceededError: demo key is at or over quota (0 rows updated
+            because ``recognition_used >= recognition_quota``).
+    """
+    cleaned = (api_key_hash or "").strip()
+    if not cleaned:
+        return False
+
+    stmt = (
+        update(DemoInstance)
+        .where(
+            DemoInstance.api_key_ref == cleaned,
+            DemoInstance.revoked.is_(False),
+            DemoInstance.recognition_used < DemoInstance.recognition_quota,
+        )
+        .values(recognition_used=DemoInstance.recognition_used + 1)
+        .returning(DemoInstance.slug, DemoInstance.recognition_used)
+    )
+    result = await session.execute(stmt)
+    row = result.first()
+    if row is not None:
+        await session.flush()
+        return True
+
+    existing = (
+        await session.execute(select(DemoInstance).where(DemoInstance.api_key_ref == cleaned))
+    ).scalar_one_or_none()
+    if existing is None:
+        return False
+    raise DemoQuotaExceededError("demo_quota_exceeded")
+
+
+@dataclass(frozen=True)
+class SweepResult:
+    """Outcome of one expiry sweep cycle."""
+
+    expired: int
+    failed: int
+    slugs_expired: tuple[str, ...]
+    stalled: bool = False
+
+
+async def sweep_expired_demos(
+    session: AsyncSession,
+    *,
+    now: datetime | None = None,
+    stall_limit: int = DEFAULT_SWEEP_STALL_LIMIT,
+) -> SweepResult:
+    """Revoke demos past ``expires_at`` via ``expire_demo`` (row + api key).
+
+    Per-instance failures are isolated (rg-007): one failure does not halt the
+    cycle. Consecutive failures past ``stall_limit`` abort with ``stalled=True``
+    so the caller can exit non-zero.
+    """
+    if stall_limit < 1:
+        raise ValueError("stall_limit must be >= 1")
+    cutoff = _as_utc(now) if now is not None else datetime.now(tz=UTC)
+
+    rows = (
+        await session.execute(
+            select(DemoInstance.slug).where(
+                DemoInstance.revoked.is_(False),
+                DemoInstance.expires_at < cutoff,
+            )
+        )
+    ).scalars().all()
+
+    expired_slugs: list[str] = []
+    failed = 0
+    consecutive_failures = 0
+    stalled = False
+
+    for slug in rows:
+        try:
+            await expire_demo(session, slug=slug)
+            expired_slugs.append(slug)
+            consecutive_failures = 0
+        except Exception:  # noqa: BLE001 — per-unit isolation (rg-007)
+            failed += 1
+            consecutive_failures += 1
+            if consecutive_failures >= stall_limit:
+                stalled = True
+                break
+
+    await session.flush()
+    return SweepResult(
+        expired=len(expired_slugs),
+        failed=failed,
+        slugs_expired=tuple(expired_slugs),
+        stalled=stalled,
+    )
+
+
 __all__ = [
     "BASE58_ALPHABET",
     "DEFAULT_RECOGNITION_QUOTA",
     "DEFAULT_SLUG_LENGTH",
+    "DEFAULT_SWEEP_STALL_LIMIT",
     "DEFAULT_TTL_DAYS",
     "DEMO_URL_TEMPLATE",
     "KNOWN_SEED_BUNDLES",
+    "DemoEndedError",
     "DemoInstanceNotFoundError",
+    "DemoQuotaExceededError",
+    "DemoResolveContext",
     "ProvisionResult",
+    "SweepResult",
     "UnknownSeedBundleError",
     "demo_url_for",
     "expire_demo",
     "generate_slug",
     "provision_demo",
+    "resolve_demo",
     "resolve_seed_bundle",
+    "sweep_expired_demos",
+    "try_consume_demo_quota",
 ]

@@ -43,6 +43,7 @@ from recognition.interface_adapters.http.deps import (
     get_scan_queue_service_optional,
     require_write_access,
 )
+from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quota
 from recognition.interface_adapters.http.deps.object_store import (
     ObjectStoreFactory,
     get_object_store_factory_for_request,
@@ -194,6 +195,7 @@ async def analyze_media_multipart(
     session=Depends(get_optional_session),
     scan_queue=Depends(get_scan_queue_service_optional),
     object_store_factory: ObjectStoreFactory = Depends(get_object_store_factory_for_request),
+    _demo_quota=Depends(enforce_demo_quota),
 ) -> JobStatusResponse:
     """Multipart variant of /recognition/analyze for inline image upload.
 

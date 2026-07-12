@@ -148,7 +148,7 @@ describe('DashboardPage', () => {
     expect(screen.getByText('22')).toBeInTheDocument();
     expect(screen.getByText('Media with faces')).toBeInTheDocument();
     expect(screen.getByText('3 faces are waiting for names.')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Go to Workbench' })).toHaveAttribute('href', '#/workbench?tab=confirm');
+    expect(screen.getByRole('link', { name: 'Go to Workbench' })).toHaveAttribute('href', '#/workbench?advanced=open');
   });
 
   it('shows first-use guidance when roster is empty and nothing pending', () => {
@@ -239,7 +239,7 @@ describe('DashboardPage', () => {
     expect(screen.getByText('Duration: 2m 05s')).toBeInTheDocument();
     expect(screen.getByText('Durable batch run: run-1')).toBeInTheDocument();
     const link = screen.getByRole('link', { name: 'View Results' });
-    expect(link).toHaveAttribute('href', '#/workbench?tab=confirm&jobId=job-1');
+    expect(link).toHaveAttribute('href', '#/workbench?advanced=open&jobId=job-1');
   });
 
   it('labels browser-local fallback activity explicitly', () => {
@@ -320,7 +320,7 @@ describe('DashboardPage', () => {
 
     expect(screen.getByText('Status unavailable. Refresh to retry.')).toBeInTheDocument();
     const link = screen.getByRole('link', { name: 'View Results' });
-    expect(link).toHaveAttribute('href', '#/workbench?tab=confirm&jobId=job-unavailable');
+    expect(link).toHaveAttribute('href', '#/workbench?advanced=open&jobId=job-unavailable');
   });
 
   it('shows unassigned-person guidance when there are unassigned persons', () => {
@@ -436,10 +436,10 @@ describe('DashboardPage', () => {
     expect(screen.getByText('Latest batch status: completed')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'View latest results' })).toHaveAttribute(
       'href',
-      '#/workbench?tab=confirm&jobId=job-batch-9',
+      '#/workbench?advanced=open&jobId=job-batch-9',
     );
     expect(screen.getByRole('link', { name: /Analysis Queue/ })).toHaveAttribute('href', '#/workbench?tab=scan');
-    expect(screen.getByRole('link', { name: /Review Hub/ })).toHaveAttribute('href', '#/workbench?tab=confirm');
+    expect(screen.getByRole('link', { name: /Review Hub/ })).toHaveAttribute('href', '#/workbench?advanced=open');
   });
 
   it('shows retention unavailable copy when the retention proxy is degraded', () => {

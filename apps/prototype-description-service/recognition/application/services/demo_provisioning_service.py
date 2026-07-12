@@ -179,6 +179,10 @@ class DemoEndedError(LookupError):
 class DemoQuotaExceededError(RuntimeError):
     """Demo recognition quota exhausted (DS3-BR-02)."""
 
+    def __init__(self, message: str = "demo_quota_exceeded", *, remaining: int = 0) -> None:
+        super().__init__(message)
+        self.remaining = remaining
+
 
 DEFAULT_SWEEP_STALL_LIMIT = 5
 
@@ -218,20 +222,32 @@ async def resolve_demo(session: AsyncSession, *, slug: str) -> DemoResolveContex
     )
 
 
-async def try_consume_demo_quota(session: AsyncSession, *, api_key_hash: str) -> bool:
-    """Atomically consume one recognition unit for a demo key if applicable.
+async def try_consume_demo_quota(
+    session: AsyncSession,
+    *,
+    api_key_hash: str,
+    units: int = 1,
+) -> bool:
+    """Atomically consume ``units`` compute units for a demo key if applicable.
 
+    Columns still named ``recognition_*`` meter all compute (pre-rename breadcrumb).
     Uses a single guarded UPDATE so concurrent requests cannot lose increments
-    (no read-then-write race).
+    (no read-then-write race). All-or-nothing: either ``units`` fit and are
+    consumed, or none are.
 
     Returns:
         False when ``api_key_hash`` is not a demo registry key (caller proceeds).
-        True when a unit was consumed.
+        True when ``units`` were consumed.
 
     Raises:
-        DemoQuotaExceededError: demo key is at or over quota (0 rows updated
-            because ``recognition_used >= recognition_quota``).
+        ValueError: when ``units < 1`` (internal-invariant guard).
+        DemoQuotaExceededError: demo key cannot fit ``units`` (0 rows updated
+            because ``recognition_used + units > recognition_quota``). Includes
+            ``remaining`` budget on the exception.
     """
+    if units < 1:
+        raise ValueError("units must be >= 1")
+
     cleaned = (api_key_hash or "").strip()
     if not cleaned:
         return False
@@ -241,9 +257,9 @@ async def try_consume_demo_quota(session: AsyncSession, *, api_key_hash: str) ->
         .where(
             DemoInstance.api_key_ref == cleaned,
             DemoInstance.revoked.is_(False),
-            DemoInstance.recognition_used < DemoInstance.recognition_quota,
+            DemoInstance.recognition_used + units <= DemoInstance.recognition_quota,
         )
-        .values(recognition_used=DemoInstance.recognition_used + 1)
+        .values(recognition_used=DemoInstance.recognition_used + units)
         .returning(DemoInstance.slug, DemoInstance.recognition_used)
     )
     result = await session.execute(stmt)
@@ -257,7 +273,8 @@ async def try_consume_demo_quota(session: AsyncSession, *, api_key_hash: str) ->
     ).scalar_one_or_none()
     if existing is None:
         return False
-    raise DemoQuotaExceededError("demo_quota_exceeded")
+    remaining = max(0, int(existing.recognition_quota) - int(existing.recognition_used))
+    raise DemoQuotaExceededError(remaining=remaining)
 
 
 @dataclass(frozen=True)

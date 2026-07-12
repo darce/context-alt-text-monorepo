@@ -23,6 +23,26 @@ from recognition.interface_adapters.http.deps.auth import (
 from recognition.interface_adapters.http.deps.session import get_optional_session
 
 
+async def consume_demo_quota_units(
+    session: AsyncSession,
+    *,
+    api_key_hash: str,
+    units: int,
+) -> None:
+    """Consume ``units`` demo compute quota; raise 429 when exceeded."""
+    try:
+        await try_consume_demo_quota(session, api_key_hash=api_key_hash, units=units)
+    except DemoQuotaExceededError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "code": "demo_quota_exceeded",
+                "message": "demo recognition quota exceeded",
+                "quota_remaining": exc.remaining,
+            },
+        ) from exc
+
+
 async def enforce_demo_quota(
     auth: AuthContext = Depends(require_auth),
     session: AsyncSession | None = Depends(get_optional_session),
@@ -41,17 +61,8 @@ async def enforce_demo_quota(
 
     settings = get_security_settings()
     key_hash = _hash_api_key(auth.token, settings.api_key_hash_algorithm)
-    try:
-        await try_consume_demo_quota(session, api_key_hash=key_hash)
-    except DemoQuotaExceededError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail={
-                "code": "demo_quota_exceeded",
-                "message": "demo recognition quota exceeded",
-            },
-        ) from exc
+    await consume_demo_quota_units(session, api_key_hash=key_hash, units=1)
     return auth
 
 
-__all__ = ["enforce_demo_quota"]
+__all__ = ["consume_demo_quota_units", "enforce_demo_quota"]

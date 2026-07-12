@@ -73,6 +73,29 @@ class LifecycleManager {
 	}
 
 	/**
+	 * Apply projection-table schema upgrades when the packaged plugin version
+	 * diverges from the stored acx_version option.
+	 *
+	 * WP-admin plugin updates (and `wp plugin install --force`) skip activation
+	 * hooks, so dbDelta must also run on load. Equal versions are a strict
+	 * no-op so the every-request path stays cheap. Does not run legacy roster
+	 * migration or flush rewrite rules — those remain activation-only.
+	 */
+	public function maybe_upgrade(): void {
+		if ( ! defined( 'ACX_VERSION' ) ) {
+			return;
+		}
+
+		$stored = get_option( self::OPTION_VERSION );
+		if ( $stored === ACX_VERSION ) {
+			return;
+		}
+
+		$this->maybe_create_projection_tables();
+		update_option( self::OPTION_VERSION, ACX_VERSION );
+	}
+
+	/**
 	 * Migrates data from legacy WP options to custom tables.
 	 *
 	 * @H-PCRUD-4: Ensure data persistence during upgrade.

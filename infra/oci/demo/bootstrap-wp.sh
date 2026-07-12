@@ -110,9 +110,11 @@ if [[ ! -f "$PLUGIN_ZIP" ]]; then
 fi
 
 echo "==> Installing and activating alt-context plugin"
+# --force: overwrite an existing plugin dir so redeploys are idempotent
+# (without it, wp exits non-zero on "Destination folder already exists").
 compose run --rm --no-deps \
   -v "${PLUGIN_ZIP}:/tmp/alt-context.zip:ro" \
-  wpcli wp plugin install /tmp/alt-context.zip --activate
+  wpcli wp plugin install /tmp/alt-context.zip --activate --force
 
 echo "==> Bootstrap complete — verify ACX constants inside the container:"
 echo "    docker compose -f ${COMPOSE_FILE} exec wordpress php -r \"require '/var/www/html/wp-config.php'; var_export(defined('ACX_RECOGNITION_URL') ? ACX_RECOGNITION_URL : null);\""

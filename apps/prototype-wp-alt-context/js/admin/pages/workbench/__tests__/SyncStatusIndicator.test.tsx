@@ -441,20 +441,20 @@ describe('SyncStatusIndicator', () => {
       sync_health: 'conflicts',
     });
 
-    render(<SyncStatusIndicator activeSection="confirm" />);
+    render(<SyncStatusIndicator activeSection="scan" />);
 
     expect(screen.getByText('Pending changes: 3')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Conflicts' })).toHaveAttribute(
       'href',
-      '#/workbench?tab=confirm&panel=conflicts',
+      '#/workbench?tab=scan&panel=conflicts',
     );
     expect(screen.getByRole('link', { name: 'Conflicts: 1' })).toHaveAttribute(
       'href',
-      '#/workbench?tab=confirm&panel=conflicts',
+      '#/workbench?tab=scan&panel=conflicts',
     );
     expect(screen.getByRole('link', { name: 'Failed operations: 2' })).toHaveAttribute(
       'href',
-      '#/workbench?tab=confirm&panel=dead-letter',
+      '#/workbench?tab=scan&panel=dead-letter',
     );
     expect(screen.getByText(/Last change confirmed:/)).toBeInTheDocument();
     expect(screen.getByText(/Last conflict:/)).toBeInTheDocument();

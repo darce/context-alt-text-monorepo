@@ -278,22 +278,30 @@ async def sweep_expired_demos(
 ) -> SweepResult:
     """Revoke demos past ``expires_at`` via ``expire_demo`` (row + api key).
 
-    Per-instance failures are isolated (rg-007): one failure does not halt the
-    cycle. Consecutive failures past ``stall_limit`` abort with ``stalled=True``
-    so the caller can exit non-zero.
+    Commits per unit so each expiration is durably persisted the instant it
+    succeeds and can never be lost by a later failure. On any per-unit error the
+    session is rolled back — this both discards that unit's partial work and
+    clears Postgres's aborted-transaction state (25P02) so the next unit still
+    runs (rg-007 isolation: one unit's failure must not halt the others).
+    Consecutive failures past ``stall_limit`` abort with ``stalled=True`` so the
+    caller can exit non-zero. This helper owns its transactions.
     """
     if stall_limit < 1:
         raise ValueError("stall_limit must be >= 1")
     cutoff = _as_utc(now) if now is not None else datetime.now(tz=UTC)
 
     rows = (
-        await session.execute(
-            select(DemoInstance.slug).where(
-                DemoInstance.revoked.is_(False),
-                DemoInstance.expires_at < cutoff,
+        (
+            await session.execute(
+                select(DemoInstance.slug).where(
+                    DemoInstance.revoked.is_(False),
+                    DemoInstance.expires_at < cutoff,
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     expired_slugs: list[str] = []
     failed = 0
@@ -303,16 +311,17 @@ async def sweep_expired_demos(
     for slug in rows:
         try:
             await expire_demo(session, slug=slug)
+            await session.commit()
             expired_slugs.append(slug)
             consecutive_failures = 0
         except Exception:  # noqa: BLE001 — per-unit isolation (rg-007)
+            await session.rollback()
             failed += 1
             consecutive_failures += 1
             if consecutive_failures >= stall_limit:
                 stalled = True
                 break
 
-    await session.flush()
     return SweepResult(
         expired=len(expired_slugs),
         failed=failed,

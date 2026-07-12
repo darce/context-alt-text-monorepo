@@ -235,6 +235,7 @@ def ensure_tables(op) -> None:
     )
     _ensure_index(op, "idx_demo_instances_tenant", "demo_instances", ["tenant_id"])
     _ensure_index(op, "idx_demo_instances_expires", "demo_instances", ["expires_at"])
+    _ensure_index(op, "idx_demo_instances_api_key_ref", "demo_instances", ["api_key_ref"])
 
     _ensure_table(
         op,
@@ -1802,6 +1803,7 @@ def downgrade() -> None:
     op.drop_index("idx_recognition_runs_tenant", table_name="recognition_runs")
     op.drop_index("idx_api_keys_hash", table_name="api_keys")
     op.drop_index("idx_api_keys_tenant", table_name="api_keys")
+    op.drop_index("idx_demo_instances_api_key_ref", table_name="demo_instances")
     op.drop_index("idx_demo_instances_expires", table_name="demo_instances")
     op.drop_index("idx_demo_instances_tenant", table_name="demo_instances")
     for table in TENANT_TABLES:

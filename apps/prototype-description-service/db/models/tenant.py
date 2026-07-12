@@ -131,6 +131,9 @@ class DemoInstance(Base):
     __table_args__ = (
         Index("idx_demo_instances_tenant", "tenant_id"),
         Index("idx_demo_instances_expires", "expires_at"),
+        # Hot-path lookup: quota enforcement filters demo rows by api_key_ref on
+        # every analyze request; without this it seq-scans (DS-2-BR-04).
+        Index("idx_demo_instances_api_key_ref", "api_key_ref"),
     )
 
 

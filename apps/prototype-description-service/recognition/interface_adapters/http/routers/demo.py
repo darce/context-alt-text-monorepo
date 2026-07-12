@@ -51,7 +51,10 @@ async def resolve_demo_slug(
     try:
         ctx = await resolve_demo(session, slug=slug)
     except DemoInstanceNotFoundError as exc:
-        # Uniform not-found body — no existence oracle.
+        # Uniform 404 body for every unknown slug (no per-slug oracle among
+        # unknowns). Expired/revoked deliberately return 410 demo_ended below —
+        # an intentional lifecycle signal for the sign-up CTA (launch-plan §5),
+        # bounded against enumeration by the per-IP limiter.
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="not found",

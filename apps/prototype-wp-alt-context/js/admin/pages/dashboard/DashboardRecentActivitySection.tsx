@@ -62,7 +62,8 @@ const formatRelativeTime = (iso: string | null | undefined, nowMs: number = Date
 };
 
 const verbForStatus = (status: string | null | undefined, fallbackStatusText: string): string => {
-  const normalized = (status ?? fallbackStatusText).toLowerCase();
+  const candidate = (status ?? fallbackStatusText).trim();
+  const normalized = candidate.toLowerCase();
   if (normalized.includes('completed') || normalized === 'complete') {
     return __('Scan finished', 'alt-context');
   }
@@ -75,10 +76,16 @@ const verbForStatus = (status: string | null | undefined, fallbackStatusText: st
   if (normalized.includes('run') || normalized.includes('progress') || normalized.includes('pending')) {
     return __('Scan in progress', 'alt-context');
   }
-  if (fallbackStatusText && !/[0-9a-f]{8}-[0-9a-f]{4}/i.test(fallbackStatusText)) {
-    return fallbackStatusText;
+  // Keep summary verb short/human. Do not echo long status copy, sentences, or IDs.
+  if (
+    !candidate ||
+    candidate.length > 32 ||
+    candidate.includes('.') ||
+    /[0-9a-f]{8}-[0-9a-f]{4}/i.test(candidate)
+  ) {
+    return __('Recognition job', 'alt-context');
   }
-  return __('Recognition job', 'alt-context');
+  return candidate;
 };
 
 const countLabelFromJob = (jobDetail: JobStatusResponse | undefined): string | null => {

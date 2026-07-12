@@ -15,6 +15,7 @@ from recognition.interface_adapters.http.deps import (
     require_auth,
     require_write_access,
 )
+from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quota
 from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
 
 _logger = logging.getLogger(__name__)
@@ -63,6 +64,7 @@ async def get_centroid_mv_health(
 async def trigger_centroid_mv_refresh(
     session=Depends(get_session),
     auth=Depends(require_write_access),
+    _demo_quota: object = Depends(enforce_demo_quota),
 ) -> dict:
     """Trigger an out-of-band refresh of the centroid materialized view.
 

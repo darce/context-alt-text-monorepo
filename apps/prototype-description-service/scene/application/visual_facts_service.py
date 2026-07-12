@@ -12,7 +12,7 @@ import asyncio
 import logging
 import time
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any, Protocol
 
 from pydantic import ValidationError
@@ -186,6 +186,7 @@ class VisualFactsService:
         context: Mapping[str, Any] | None,
         confirmed_faces: Sequence[ConfirmedFace] = (),
         naming_policy: NamingPolicy | None = None,
+        before_compute: Callable[[], Awaitable[None]] | None = None,
     ) -> VisualFactsResponse:
         start = time.perf_counter()
         image_hash = compute_image_hash(image_bytes)
@@ -211,6 +212,11 @@ class VisualFactsService:
                 )
                 await self._record_cache_hit(tenant_id=tenant_id, media_id=media_id, image_hash=image_hash)
                 return response
+
+        # Charge / side-effects only when real adapter compute is about to run
+        # (cache hits and decorative short-circuits never reach here).
+        if before_compute is not None:
+            await before_compute()
 
         # Offload to a thread so a slow adapter (local_cpu Florence ~30-60s) never
         # blocks the event loop — otherwise asyncpg drops the open DB connection

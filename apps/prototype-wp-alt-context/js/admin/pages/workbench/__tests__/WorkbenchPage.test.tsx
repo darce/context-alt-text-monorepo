@@ -1,8 +1,8 @@
-import type { Dispatch, ReactNode, SetStateAction } from 'react';
+import type { Dispatch, JSX, ReactNode, SetStateAction } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import { resetConfigCache } from '../../../api/config';
@@ -771,5 +771,79 @@ describe('WorkbenchPage', () => {
 
     expect(screen.getByText('Processed 75/150 identities')).toBeInTheDocument();
     expect(screen.queryByText(/Processed.*images/i)).not.toBeInTheDocument();
+  });
+
+  // E21-3: confirm tab removed in favor of Advanced drawer (would fail on old two-tab UI).
+  it('does not expose a Confirm & Publish tab in the workbench tablist', () => {
+    renderWorkbench();
+
+    expect(screen.getByRole('tablist', { name: 'Workbench steps' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Scan Media Queue' })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Confirm & Publish' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Confirm' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Advanced: jobs & recovery' })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
+  });
+
+  it('shims legacy ?tab=confirm to scan + advanced drawer open', async () => {
+    const LocationProbe = (): JSX.Element => {
+      const location = useLocation();
+      return <output data-testid="location-search">{location.search}</output>;
+    };
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/workbench?tab=confirm&panel=conflicts']}>
+          <WorkbenchPage />
+          <LocationProbe />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByRole('heading', { name: 'Conflict Inbox' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Advanced: jobs & recovery' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+    expect(screen.getByRole('region', { name: 'Advanced: jobs & recovery' })).toBeInTheDocument();
+    expect(screen.getByText('What is Clustering?')).toBeInTheDocument();
+
+    await waitFor(() => {
+      const search = screen.getByTestId('location-search').textContent ?? '';
+      expect(search).toContain('tab=scan');
+      expect(search).toContain('advanced=open');
+      expect(search).not.toContain('tab=confirm');
+      expect(search).toContain('panel=conflicts');
+    });
+  });
+
+  it('opens the advanced drawer, moves focus inside, and restores focus on Escape', async () => {
+    const user = userEvent.setup();
+    renderWorkbench();
+
+    const trigger = screen.getByRole('button', { name: 'Advanced: jobs & recovery' });
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+
+    await user.click(trigger);
+
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    const panel = screen.getByRole('region', { name: 'Advanced: jobs & recovery' });
+    expect(panel).toBeInTheDocument();
+    expect(screen.getByText('What is Clustering?')).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(panel.contains(document.activeElement)).toBe(true);
+    });
+
+    await user.keyboard('{Escape}');
+
+    await waitFor(() => {
+      expect(screen.queryByRole('region', { name: 'Advanced: jobs & recovery' })).not.toBeInTheDocument();
+    });
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    expect(trigger).toHaveFocus();
   });
 });

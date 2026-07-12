@@ -138,7 +138,7 @@ Files/functions:
 - `scene/config/profiles.py:DescriptionProfile` / `ProfileSpec` and `scene/interface_adapters/http/deps.py:get_description_adapter` — add the opt-in profile/flag routing.
 - `scene/tests/test_ensemble_decode.py:test_*` (new) — vote/fallback math, N bound, caption-only scope, and `AdapterResult` preservation.
 
-Changes: view construction (grid/attention-seeded, **pinned here**), per-view passes, logit ensemble, adaptive plausibility, bounded N; caption-only vote, objects/phrase_boxes from the full-image pass; opt-in flag in `profiles.py`/`deps.py`.
+Changes: view construction (grid/attention-seeded, **pinned here**), per-view passes, logit ensemble, adaptive plausibility, bounded N; caption-only vote, objects/phrase_boxes from the full-image pass; opt-in as one named profile — `DescriptionProfile.GPU_QWEN30B_ENSEMBLE` in `profiles.py` resolved by `get_description_adapter` — not a scattered flag string [sr-007].
 
 **Attention-weighting mechanism (VLM4-PR-01), per arXiv 2505.17529:** at each decode step, for each view take the generated token's **cross-attention to that view's image patches**, reduce it to a per-view scalar (mean attention mass on image tokens = "is the model looking at the image, not just prior text"), softmax-normalize across views → weights `w_v`; the ensembled next-token distribution is `softmax(Σ_v w_v · logits_v)`, then the adaptive-plausibility constraint masks low-probability tokens. **Logit-only fallback (no attention):** unweighted mean of per-view `logprobs` (or confidence-weighted by each view's top-token probability) — a strictly weaker vote, quantified in the bake-off.
 
@@ -154,9 +154,9 @@ Files/functions:
 - `scene/tests/seed/bakeoff_golden.json` — VLM-2B corpus input.
 - `docs/tasks/vlm/VLM-4-*-report.{json,md}` (new) — curated acx-eval/v1 REPORT artifacts.
 
-Changes: run baseline vs ensemble vs visual-prior vs composed via `report.build_reports`; emit REPORTs + a latency-multiplier table.
+Changes: run baseline vs ensemble vs visual-prior vs composed via `report.build_reports`; emit REPORTs + a latency-multiplier table. The latency table must state each technique's measured wall-clock against the async **job timeout** (`asyncio.wait_for` budget in the describe worker, VLMFIX-S1-04) and the **reaper idle/fencing window** — a technique that wins on quality but exceeds the timeout budget fails the gate [RES-02], [PERF-07].
 
-Proof: committed acx-eval/v1 REPORTs; deterministic re-score bit-identical.
+Proof: committed acx-eval/v1 REPORTs; deterministic re-score bit-identical; latency-vs-timeout fit stated per technique.
 
 ### Slice 4: Decision memo
 

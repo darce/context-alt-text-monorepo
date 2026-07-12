@@ -30,6 +30,7 @@ from recognition.interface_adapters.http.deps import (
     require_auth,
     require_write_access,
 )
+from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quota
 from recognition.interface_adapters.http.deps.clustering_circuit_breaker import (
     get_or_create_clustering_circuit_breaker,
 )
@@ -204,6 +205,7 @@ async def create_clustering_job(
     session=Depends(get_clustering_session),
     cluster_service_builder=Depends(get_cluster_service_builder_clustering),
     job_service=Depends(get_persisted_cluster_job_service_clustering),
+    _demo_quota: object = Depends(enforce_demo_quota),
 ) -> ClusteringJobStatusResponse:
     """Trigger clustering for unclustered identities."""
     _logger.info("Clustering request: tenant_id=%s, mode=%s", request.tenant_id, request.mode)
@@ -339,6 +341,7 @@ async def recover_orphan_identities(
     auth=Depends(require_write_access),
     session=Depends(get_session),
     cluster_service_builder=Depends(get_cluster_service_builder),
+    _demo_quota: object = Depends(enforce_demo_quota),
 ) -> OrphanRecoveryResponse:
     """Re-cluster any orphaned identities for a tenant."""
     assert_tenant_match(auth, request.tenant_id)

@@ -137,29 +137,29 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded frontend + PHP guidelines, epic re-baseline row, WBUX-2 grounding.
-- [ ] Menu boundary change recorded (additive, no compat risk).
+- [x] Loaded frontend + PHP guidelines, epic re-baseline row, WBUX-2 grounding.
+- [x] Menu boundary change recorded (additive, no compat risk).
 
 ### Checklist for Slice 1: Always-visible list + empty state
 
-- [ ] Unmount gate removed; workspace + list coexist
-- [ ] Designed empty state (headline, explanation, primary `Add Person`, secondary scan pointer; sr-004 tokens)
-- [ ] State-matrix unit tests green; old-behavior regression test demonstrated failing first
+- [x] Unmount gate removed; workspace + list coexist
+- [x] Designed empty state (headline, explanation, primary `Add Person`, secondary scan pointer; sr-004 tokens)
+- [x] State-matrix unit tests green; old-behavior regression test demonstrated failing first
 
 ### Checklist for Slice 2: Retention menu + a11y
 
-- [ ] Retention submenu registered + PHP test
-- [ ] Roster keyboard-walk spec green and non-vacuous
-- [ ] Decision recorded (menu item over footer link, rationale)
+- [x] Retention submenu registered + PHP test
+- [x] Roster keyboard-walk spec green and non-vacuous
+- [x] Decision recorded (menu item over footer link, rationale)
 
 ## Review Readiness
 
-- [ ] No state leaves `Add Person` unreachable (rg-003 verified per state, not just zero).
-- [ ] Runtime-parity: keyboard walk in Playwright, not only unit render.
-- [ ] Handoff decision records change, verification, and menu decision.
+- [x] No state leaves `Add Person` unreachable (rg-003 verified per state, not just zero).
+- [x] Runtime-parity: keyboard walk in Playwright, not only unit render.
+- [x] Handoff decision records change, verification, and menu decision.
 
 ## Success Criteria
 
-- [ ] `Add Person` + person list visible/operable in zero, default-workspace, filtered, and offline states.
-- [ ] Designed empty state ships; Retention appears in WP admin menu.
-- [ ] Route contract tests unchanged and green; `handoff_close_check(enforce=True)` passes.
+- [x] `Add Person` + person list visible/operable in zero, default-workspace, filtered, and offline states.
+- [x] Designed empty state ships; Retention appears in WP admin menu.
+- [x] Route contract tests unchanged and green; `handoff_close_check(enforce=True)` passes.

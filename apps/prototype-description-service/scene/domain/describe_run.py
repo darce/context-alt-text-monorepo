@@ -7,6 +7,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Any
+
+from scene.domain.description import DescriptionResultTier
 
 
 class DescribeRunStatus(StrEnum):
@@ -34,6 +37,28 @@ class DescribeItemStatus(StrEnum):
     SKIPPED = "skipped"
 
 
+class RunKind(StrEnum):
+    """Bulk multi-item runs vs single-image async supersede jobs (VLM-5)."""
+
+    BULK = "bulk"
+    SINGLE = "single"
+
+
+class DescribeJobStatus(StrEnum):
+    """Wire-facing async poll status projected from a DescribeRunItem (VLM-5).
+
+    Canonical home for the enum formerly defined on the volatile in-memory store
+    (sr-007). Values stay wire-identical to the poll contract.
+    """
+
+    QUEUED = "queued"
+    RUNNING = "running"
+    PROVISIONAL = "provisional"
+    FINAL = "final"
+    DEGRADED = "degraded"
+    FAILED = "failed"
+
+
 TERMINAL_ITEM_STATUSES = {
     DescribeItemStatus.COMPLETED,
     DescribeItemStatus.FAILED,
@@ -45,6 +70,9 @@ TERMINAL_RUN_STATUSES = {
     DescribeRunStatus.FAILED,
     DescribeRunStatus.CANCELLED,
 }
+
+# Default retention for terminal single-run async jobs (design (d)).
+DEFAULT_ASYNC_JOB_RETENTION_HOURS = 24
 
 
 def describe_run_max_items() -> int:
@@ -128,3 +156,53 @@ def phase_for_status(status: DescribeRunStatus) -> DescribeRunPhase:
     if status == DescribeRunStatus.CANCELLED:
         return DescribeRunPhase.CANCELLED
     return DescribeRunPhase.FAILED
+
+
+def _tier_value(item: Any) -> str | None:
+    tier = getattr(item, "tier", None)
+    if tier is None:
+        return None
+    return tier.value if isinstance(tier, DescriptionResultTier) else str(tier)
+
+
+def describe_job_status(item: Any) -> DescribeJobStatus:
+    """Pure, total projection of item row state → async poll status (design (g)).
+
+    Maps every ``DescribeItemStatus`` member, including ``skipped`` → ``failed``
+    (error via :func:`describe_job_error`). Never raises on a well-formed item.
+    """
+    status = DescribeItemStatus(item.status)
+    if status is DescribeItemStatus.QUEUED:
+        return DescribeJobStatus.QUEUED
+    if status is DescribeItemStatus.RUNNING:
+        if getattr(item, "visual_facts", None) is not None:
+            return DescribeJobStatus.PROVISIONAL
+        return DescribeJobStatus.RUNNING
+    if status is DescribeItemStatus.COMPLETED:
+        if _tier_value(item) == DescriptionResultTier.FINAL_GPU:
+            return DescribeJobStatus.FINAL
+        # completed + provisional_cpu (+ last_error on reclaim/degrade) → degraded
+        return DescribeJobStatus.DEGRADED
+    if status is DescribeItemStatus.FAILED:
+        return DescribeJobStatus.FAILED
+    if status is DescribeItemStatus.SKIPPED:
+        # External cancel of a single run is not a bulk surface; map to failed
+        # so poll handlers never see an unmapped status (design (g)).
+        return DescribeJobStatus.FAILED
+    # Exhaustiveness guard — new enum members must extend this projection.
+    raise ValueError(f"unhandled DescribeItemStatus: {status!r}")
+
+
+def describe_job_error(item: Any) -> str | None:
+    """Wire ``error`` field for the poll projection paired with :func:`describe_job_status`."""
+    status = DescribeItemStatus(item.status)
+    if status is DescribeItemStatus.SKIPPED:
+        return "cancelled"
+    job_status = describe_job_status(item)
+    if job_status in {DescribeJobStatus.FAILED, DescribeJobStatus.DEGRADED}:
+        return getattr(item, "last_error", None)
+    return None
+
+
+def async_job_retention_hours() -> int:
+    return int(os.environ.get("ACX_ASYNC_JOB_RETENTION_HOURS", str(DEFAULT_ASYNC_JOB_RETENTION_HOURS)))

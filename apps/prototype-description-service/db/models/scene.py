@@ -86,6 +86,8 @@ class DescribeRun(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
     )
+    # VLM-5: bulk multi-item runs vs single-image async supersede jobs [DATA-14].
+    run_kind: Mapped[str] = mapped_column(String(8), nullable=False, server_default=text("'bulk'"))
     status: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'pending'"))
     phase: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'queued'"))
     media_ids: Mapped[list[int]] = mapped_column(_json_col(), nullable=False)
@@ -115,12 +117,19 @@ class DescribeRun(Base):
             "phase IN ('queued', 'describing', 'complete', 'failed', 'cancelled')",
             name="valid_describe_run_phase",
         ),
+        CheckConstraint("run_kind IN ('bulk', 'single')", name="valid_describe_run_kind"),
         Index("idx_image_description_runs_tenant", "tenant_id"),
         Index(
             "idx_image_description_runs_active",
             "tenant_id",
             "status",
             postgresql_where=text("status IN ('pending', 'running')"),
+        ),
+        # Tenant-less: purge + global load-snapshot consumers use RLS-bypassed sessions.
+        Index(
+            "idx_image_description_runs_single_active",
+            "status",
+            postgresql_where=text("run_kind = 'single' AND status IN ('pending', 'running')"),
         ),
     )
 
@@ -147,6 +156,10 @@ class DescribeRunItem(Base):
     alt_text_draft: Mapped[str | None] = mapped_column(Text, nullable=True)
     caption: Mapped[str | None] = mapped_column(Text, nullable=True)
     provenance: Mapped[dict | None] = mapped_column(_json_col(), nullable=True)
+    # VLM-5: single-run supersede envelope (provisional/final/degraded poll payload).
+    visual_facts: Mapped[dict | None] = mapped_column(_json_col(), nullable=True)
+    tier: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    result_generation: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))

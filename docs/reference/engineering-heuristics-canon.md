@@ -201,18 +201,7 @@ Each domain section is a table: `ID | Trigger | Rule | Answers | T·P | Src`. **
 
 ## Security
 
-| ID | Trigger | Rule | Answers | T·P | Src |
-| --- | --- | --- | --- | --- | --- |
-| SEC-01 | Data crossing any component boundary (user↔app, app↔LLM, LLM↔services) | **Validate at every trust boundary** — trust changes at each crossing; the LLM's output side is a boundary too | Where does trust change, and what validation runs there — in and out? | S·p | llm-security-playbook ch-3 |
-| SEC-02 | LLM output passed to SQL, shell, eval, or rendered as HTML | **Treat LLM output as untrusted input** — generated text can carry injected payloads into any interpreter | Is the output parameterized, escaped, or encoded before the sink? | B·r | llm-security-playbook ch-7 |
-| SEC-03 | User or external content interpolated into an LLM prompt | **Delimit untrusted prompt segments** — the model can't distinguish data from instructions unless the boundary is marked | Is every untrusted segment structurally marked and out of instruction position? | S·w | llm-security-playbook ch-4 |
-| SEC-04 | LLM granted a tool, plugin, API scope, or DB permission | **Least-privilege agency** — a jailbroken model exercises every permission it holds | Is this the minimum scope the feature needs? | B·p | llm-security-playbook ch-7 |
-| SEC-05 | LLM can trigger an irreversible, financial, or destructive action | **Human-in-the-loop gate** — autonomy plus prompt injection equals attacker-driven transactions | Does a human approve before the side effect executes? | B·p | llm-security-playbook ch-7 |
-| SEC-06 | Secrets or PII in a prompt template, fine-tune set, or RAG store | **Don't teach the model what it must never say** — anything the LLM can read can be extracted by any user | What happens if this datum is disclosed verbatim? | B·p | llm-security-playbook ch-5 |
-| SEC-07 | Web pages, files, or DB rows fed into a RAG prompt | **Retrieved content is attacker content** — indirect injection rides in on documents | Is retrieved text screened and confined to a data role? | S·w | llm-security-playbook ch-4 |
-| SEC-08 | Public LLM endpoint or feature without usage limits | **Rate-limit and cap per caller** — unmetered access invites DoS and denial-of-wallet | Are per-caller limits, token caps, and budget alerts configured? | S·w | llm-security-playbook ch-8 |
-| SEC-09 | LLM-suggested package added to a dependency manifest | **Verify hallucinated dependencies** — attackers register malware under names models invent | Does this package exist with the expected owner and real history? | B·r | llm-security-playbook ch-6 |
-| SEC-10 | Model or dataset pulled from a hub at build/run time | **Pin and record provenance** — unpinned weights are an unauditable dependency | Is the exact revision pinned and integrity verified? | S·w | llm-security-playbook ch-9 |
+> **Moved to its own lexicon.** The LLM and agent-security rules `SEC-01..10` now live in [`security.md`](security.md), beside the web, PHP, WordPress, and PostgreSQL security rules. Cite them by ID exactly as before (`[SEC-04]`); the IDs are unchanged, and inline cross-references (`see [SEC-02]`) still resolve. Security became a spanning concern once this canon grew a database and web surface, the same reason accessibility has its own lexicon.
 
 ## API Design
 

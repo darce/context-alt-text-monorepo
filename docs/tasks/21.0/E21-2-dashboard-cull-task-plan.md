@@ -134,29 +134,29 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded frontend guidelines, epic re-baseline row, WBUX-2 §4.
-- [ ] Confirmed `status=missing` consumer-only change on the filter contract.
+- [x] Loaded frontend guidelines, epic re-baseline row, WBUX-2 §4.
+- [x] Confirmed `status=missing` consumer-only change on the filter contract.
 
 ### Checklist for Slice 1: Cull + gating
 
-- [ ] Batch Ops panel + `before_grid` + DescribePanel hero + localStorage dismissal deleted
-- [ ] OrientationCard people-count gating with failing-first test
-- [ ] Priority model type narrowed; vitest scope green
+- [x] Batch Ops panel + `before_grid` + DescribePanel hero + localStorage dismissal deleted
+- [x] OrientationCard people-count gating with failing-first test
+- [x] Priority model type narrowed; vitest scope green
 
 ### Checklist for Slice 2: CTA + activity + a11y
 
-- [ ] Coverage CTA lands on `#/workbench?status=missing`
-- [ ] Recent Activity renders no raw UUIDs
-- [ ] Dashboard keyboard-walk spec green (bounded-Tab pattern)
+- [x] Coverage CTA lands on `#/workbench?status=missing`
+- [x] Recent Activity renders no raw UUIDs
+- [x] Dashboard keyboard-walk spec green (bounded-Tab pattern)
 
 ## Review Readiness
 
-- [ ] No deleted panel leaves orphaned styles/components/tests.
-- [ ] Banned-vocabulary sweep green; sync-health section untouched.
-- [ ] Handoff decision records change + verification.
+- [x] No deleted panel leaves orphaned styles/components/tests.
+- [x] Banned-vocabulary sweep green; sync-health section untouched.
+- [x] Handoff decision records change + verification.
 
 ## Success Criteria
 
-- [ ] One primary action per dashboard state; zero raw UUIDs rendered.
-- [ ] OrientationCard appears iff `people_count === 0`.
-- [ ] `handoff_close_check(enforce=True)` passes.
+- [x] One primary action per dashboard state; zero raw UUIDs rendered.
+- [x] OrientationCard appears iff `people_count === 0`.
+- [x] `handoff_close_check(enforce=True)` passes.

@@ -69,7 +69,7 @@ Roster always renders the person list; selecting a person opens the workspace pa
 
 ## Proposed Solution
 
-Remove the `!defaultWorkspaceMode` unmount at `RosterPage.tsx:269` so `RosterEntriesSection` always renders; adjust layout so `PersonWorkspacePanel` and the list coexist (workspace above list, list collapsed-but-present or fully visible — decided by existing layout tokens, no new design system). Add a designed empty-state composition to `RosterEntriesSection`'s zero branch (headline + explanation + primary `Add Person` + secondary scan pointer, icon+color+word per sr-004). Register the Retention submenu in `class-menu.php` (decision: **menu item**, not dashboard footer link — it is a durable operator surface, and a routed page with no navigation entry is the actual defect; record as a handoff decision). Extend the a11y harness with a roster keyboard-walk (load → tab to `Add Person` → open form) and empty/default-state assertions.
+Remove the `!defaultWorkspaceMode` unmount at `RosterPage.tsx:269` so `RosterEntriesSection` always renders; adjust layout so `PersonWorkspacePanel` and the list coexist: workspace panel renders above an always **fully visible** Managed Identities list (no collapse — a collapsed list would re-introduce the discoverability gate rg-003 forbids); existing layout tokens only, no new design system. Add a designed empty-state composition to `RosterEntriesSection`'s zero branch (headline + explanation + primary `Add Person` + secondary scan pointer, icon+color+word per sr-004). Register the Retention submenu in `class-menu.php` (decision: **menu item**, not dashboard footer link — it is a durable operator surface, and a routed page with no navigation entry is the actual defect; record as a handoff decision). Extend the a11y harness with a roster keyboard-walk (load → tab to `Add Person` → open form) and empty/default-state assertions.
 
 ## Files and Surfaces to Change
 
@@ -80,7 +80,7 @@ Remove the `!defaultWorkspaceMode` unmount at `RosterPage.tsx:269` so `RosterEnt
 | frontend | `js/admin/pages/roster/rosterRoute.ts` | only if needed: default-selection guard so auto-open never hides the list (parsing unchanged) |
 | PHP | `src/admin/class-menu.php` | add Retention submenu (`alt-context-retention`) |
 | tests | `js/admin/pages/roster/__tests__/RosterPage*.test.tsx` | state-matrix: zero / default-workspace / filtered / offline all show list + `Add Person` |
-| tests | PHP menu test (existing suite location) | asserts Retention submenu registered |
+| tests | `tests/Unit/MenuTest.php` | asserts Retention submenu registered |
 | tests | `tests/e2e/a11y/roster-keyboard-walk.spec.ts` (new) | keyboard path to `Add Person` from load ([A11Y-11]) |
 
 ## Related Files
@@ -94,8 +94,9 @@ Remove the `!defaultWorkspaceMode` unmount at `RosterPage.tsx:269` so `RosterEnt
 ## Verification Strategy
 
 - Deterministic tests:
-  - `cd apps/prototype-wp-alt-context && npm run test:agent -- RosterPage RosterEntriesSection rosterRoute`
-  - `cd apps/prototype-wp-alt-context && composer test:unit` (menu registration)
+  - iteration only (non-gating — `test:agent` is `vitest run || true`, always exits 0): `npm run test:agent -- <pattern>`
+  - evidence-grade (real exit codes; use for `test_result` writes): `cd apps/prototype-wp-alt-context && npx vitest run js/admin/pages/roster js/admin/pages/__tests__`
+  - `cd apps/prototype-wp-alt-context && composer test:unit` (menu registration, `tests/Unit/MenuTest.php`)
   - full gate: `npm run check`
 - Runtime-parity / environment checks:
   - `npx playwright test tests/e2e/a11y` (roster keyboard-walk + axe)
@@ -116,7 +117,7 @@ Changes:
 
 Proof:
 
-- `npm run test:agent -- RosterPage RosterEntriesSection` green, including a test that fails on the old unmount behavior ([AGT-03]).
+- `npx vitest run` over the roster page tests exits 0, including a test that fails on the old unmount behavior ([AGT-03]).
 
 ### Slice 2: Retention menu entry + a11y walk
 

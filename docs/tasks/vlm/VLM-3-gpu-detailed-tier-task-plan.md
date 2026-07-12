@@ -4,9 +4,10 @@
 >
 > - **Date**: 2026-07-07 EST
 > - **Author**: claude-opus-4-8
+> - **Realigned**: 2026-07-12 (VLM-REALIGN-01, Claude Fable 5) — slices 1–6 implemented and merged to `main` (`ca3304a4`…`b8847945`, hardening `4739a319`/`00413253`/`7e9dbe31`); all quality evidence is still **pending stubs**. The A10 burst instance is now provisioned by OCI, unblocking Slice 7 (live evidence + activation), which is the only remaining work. Anchor drift vs. current code is cataloged in `VLM-REALIGN-01-anchor-audit-20260712.md`; stale anchors below are corrected in place.
 > - **Project**: `apps/prototype-description-service` (+ `infra/oci`)
 > - **Task ID**: `VLM-3`
-> - **Target Branch**: `feature/vlm-3`
+> - **Target Branch**: `feature/vlm-3` (merged; Slice 7 continues on `feature/vlm-3b-activation`)
 > - **Review Coverage Target**: 2
 
 ---
@@ -25,7 +26,9 @@ Add a **bursty, scale-to-zero GPU serving path** for the detailed-description ti
 
 ## Problem Statement
 
-The detailed tier (VLM-2B winner **Qwen3-VL-4B-Instruct**) runs **~207 s/img on the A1 CPU** — a 100-image batch is ~5.75 h, and quality is capped by a 4B model on 4 ARM cores. Describe today is **synchronous, in-process, CPU-only** (`get_description_adapter` resolves Florence/seeded; the `GPU` adapter kind exists but has no concrete adapter and falls through to `UnavailableDescriptionAdapter`). There is **no async describe path** and **no GPU host** (all OCI infra is `VM.Standard.A1.Flex`). We need a GPU tier that is fast for batch, privacy-preserving (in-tenancy), and cheap when idle.
+The detailed tier (VLM-2B winner **Qwen3-VL-4B-Instruct**) runs **~207 s/img on the A1 CPU** — a 100-image batch is ~5.75 h, and quality is capped by a 4B model on 4 ARM cores. We need a GPU tier that is fast for batch, privacy-preserving (in-tenancy), and cheap when idle.
+
+**Realignment 2026-07-12 — what remains.** The serving path is built: `GpuRemoteDescriptionAdapter`, the async describe routes, the volatile job store/worker, the terraform `acx_gpu_burst` instance (provisioned `STOPPED`), and the `infra/oci/gpu_lifecycle/` controller + reaper are all on `main`. What does NOT exist is **evidence**: every Slice-1 spike measurement is `null` (`VLM-3-gpu-spike-2026-07-08.json`, `status=local_infra_scaffold_pending_live_oci_measurement`), all seven Slice-2 bake-off REPORTs are `kind=pending_report` stubs, and the Slice-3 memo is explicitly **provisional**. Treating those stubs as done would ship an unmeasured tier past a red gate [RLSE-02]. With the A10 now provisioned, Slice 7 turns the stubs into measurements and activates the tier end-to-end.
 
 ## Constraints
 
@@ -49,11 +52,12 @@ The detailed tier (VLM-2B winner **Qwen3-VL-4B-Instruct**) runs **~207 s/img on 
 - **Warm-start**: time from a *stopped* (not terminated) GPU instance to first-token-ready (target p95 ≤ 90 s).
 - **Provisional / final**: describe-result `tier` — `provisional_cpu` (Florence/Qwen fallback) superseded by `final_gpu`.
 
-## Current State Analysis
+## Current State Analysis (realigned 2026-07-12)
 
-- **Works**: describe route (`describe.py:192 /describe/multipart`) → `get_description_adapter` (`deps.py:15`) → `VisualFactsService` → `VisualFactsResponse`; Florence CPU adapter; the full VLM-2A/2B eval harness (`scripts/eval_harness/`).
-- **Missing / stub**: `DescriptionProfile.GPU_PHI4` (`profiles.py:87`, `available=False`); no `adapter_kind is GPU` branch in `deps.py` (GPU → Unavailable); **no async describe worker / job store** (only `recognition/worker/scan_worker.py`, clustering-only); **no GPU host** (`infra/oci/main.tf:114`, A1 only); no `ACX_GPU_ENDPOINT_URL`.
-- **Misleading**: `vlm.py:29-30` `worker_concurrency`/`async_inline` knobs exist with no worker behind them — do not assume an async path exists.
+- **Landed on `main`** (slices 1–6): `GpuRemoteDescriptionAdapter` (`scene/infrastructure/vlm/gpu_remote_adapter.py:105`) with private-endpoint policy (`deps._is_private_gpu_endpoint`, `ACX_GPU_ENDPOINT_ALLOWLIST`); `GPU_QWEN30B` profile (`profiles.py:100`, `available=True`) resolved by `get_description_adapter` (`scene/interface_adapters/http/deps.py:155` — note: `http/deps.py`, not `routers/deps.py`); async routes `POST /describe/async` (`describe.py:553`) + `GET /describe/jobs/{job_id}` (`describe.py:623`) over `InMemoryDescribeJobStore` + `description_worker.run_describe_job`; `tier`/`result_generation` on `VisualFactsResponse` (`responses.py:129-130`) and optional `tier` hint on `DescribeImageEnvelope` (`requests.py:122`); terraform `oci_core_instance.acx_gpu_burst` (`main.tf:235`, shape var default `VM.GPU.A10.1`) with outputs `gpu_endpoint_url`/`gpu_private_ip`/`gpu_instance_id`; `infra/oci/gpu_lifecycle/` controller + idle reaper; llama.cpp `server-cuda` golden-image cloud-init serving port 8000.
+- **Provisioned (new, 2026-07-12)**: the OCI A10 burst instance exists in the tenancy (quota granted after `MAINT-oci-a10-quota-request-20260710` unblocked). It has not yet served a live request from this stack.
+- **Missing (Slice 7 scope)**: every measurement — spike artifact values are `null`, the seven `VLM-3-bakeoff-*-report.json` files are `kind=pending_report` stubs, the decision memo is provisional, the license verdict is open, and the activation preconditions (memo §Activation) have never been executed end-to-end.
+- **Known debt routed elsewhere**: the volatile in-memory job store is consolidated onto the durable `describe_run` tables by **VLM-5** (deferred finding VLMRP-S4-05); do not extend `describe_jobs.py` here.
 
 ## Target Outcome
 
@@ -64,7 +68,9 @@ A tenant opts a media item (or a batch) into detailed description → the reques
 - Rules: `docs/workbay/rules/backend-python-guidelines.md`, `docs/workbay/rules/testing-python.md`; infra: `docs/epics/v0.3.1/self-hosting-epic.md`.
 - Contracts: `docs/workbay/contracts/image-description-api.md`; scope: `docs/scopes/gpu-detailed-tier-oci-bursty-scope.md`.
 - Handoff/MCP: task `VLM-3`; decision `#1568`; VLM-2B decision memo `docs/tasks/vlm/VLM-2B-detailed-tier-decision-memo.md`.
-- Code seams: `scene/application/description_adapter.py`, `scene/config/profiles.py`, `scene/interface_adapters/http/routers/deps.py`, `scene/infrastructure/provider/hosted_provider_adapter.py`, `scripts/eval_harness/bakeoff.py`, `infra/oci/main.tf`.
+- Code seams: `scene/application/description_adapter.py`, `scene/config/profiles.py`, `scene/interface_adapters/http/deps.py`, `scene/infrastructure/provider/hosted_provider_adapter.py`, `scripts/eval_harness/bakeoff.py`, `infra/oci/main.tf`, `infra/oci/gpu_lifecycle/`.
+- Anchor audit: `docs/tasks/vlm/VLM-REALIGN-01-anchor-audit-20260712.md` (current line numbers for every seam above).
+- GTM: `docs/gtm/altcontext-productization-launch-plan.md` — the GPU tier stays **off the demo path** (Phase 0 unaffected); it backs the paid detailed-tier claim and the ~$0-idle cost posture that keeps the OCI free-tier bootstrap honest. Launch-facing quality claims about the detailed tier are blocked on Slice 7 evidence, not on more code.
 
 ## Contract and Boundary Impact
 
@@ -85,12 +91,12 @@ Deliver in six slices: (1) prove the OCI GPU host + golden-image warm-start and 
 | Surface | File | Change |
 | --- | --- | --- |
 | infra | `infra/oci/main.tf` | New `oci_core_instance` GPU resource defaulting to **`VM.GPU.A10.1` (24 GB)**, `variables.tf` shape var (override to `VM.GPU.A100.1`/`VM.GPU.A10.2` for headroom), GPU `cloud-init` (golden-image + weights bake) |
-| infra | `infra/oci/gpu-lifecycle/` (new) | Spin-on-queue → warm-per-burst → stop-on-idle controller + idle-reaper (OCI SDK) |
+| infra | `infra/oci/gpu_lifecycle/` (landed) | Spin-on-queue → warm-per-burst → stop-on-idle controller + idle-reaper (OCI SDK) |
 | tooling | `scripts/eval_harness/bakeoff.py` | Reuse `BakeoffClient`/`main` against the GPU `--endpoint`; add candidate model ids; no fork |
 | docs | `docs/tasks/vlm/VLM-3-gpu-detailed-tier-decision-memo.md` (new) | Bake-off winner + measured GPU latency/RSS + license |
 | backend | `scene/infrastructure/vlm/gpu_remote_adapter.py` (new) | `GpuRemoteDescriptionAdapter(DescriptionAdapter)`; POSTs to `ACX_GPU_ENDPOINT_URL`; returns `AdapterResult`; models on `hosted_provider_adapter.py` |
 | backend | `scene/config/profiles.py` | Flip/add a GPU `ProfileSpec` (`available=True`, endpoint, model id/version) for the winner |
-| backend | `scene/interface_adapters/http/routers/deps.py` | Add `adapter_kind is GPU` branch in `get_description_adapter` (`:15`) + opt-in gate (mirror hosted `:38`) |
+| backend | `scene/interface_adapters/http/deps.py` | Add `adapter_kind is GPU` branch in `get_description_adapter` (`:155`) + opt-in gate (landed) |
 | backend | `scene/config/settings.py` | Add `ACX_GPU_ENDPOINT_URL` (+ opt-in flag) to `DescriptionSettings` (`:19`) |
 | backend | `scene/interface_adapters/http/schemas/responses.py` | Add `tier` + `result_generation` to `VisualFactsResponse` (`:75`) |
 | backend | `scene/interface_adapters/http/schemas/requests.py` | Add optional `tier` hint to `DescribeImageEnvelope` (`:100`) |
@@ -128,6 +134,8 @@ Deliver in six slices: (1) prove the OCI GPU host + golden-image warm-start and 
 
 ### Slice 1: OCI GPU spike + golden image
 
+> **Status (2026-07-12): scaffold landed (`ca3304a4`) — terraform GPU resource, cloud-init, spike artifact schema. All measurement values are `null`; live measurement moved to Slice 7a.**
+
 **Goal**: Prove an OCI GPU instance can warm-start from stopped within budget and measure one candidate's s/img.
 
 Changes:
@@ -138,6 +146,8 @@ Proof:
 - Committed spike artifact `docs/tasks/vlm/VLM-3-gpu-spike-<date>.json`; `terraform validate` passes; warm-start p95 recorded vs the 90 s target.
 
 ### Slice 2: GPU bake-off
+
+> **Status (2026-07-12): seven `kind=pending_report` stubs committed (`a3bcb718`). No candidate has been scored on real hardware; the live bake-off is Slice 7b.**
 
 **Goal**: Score the GPU candidates on the VLM-2B corpus via the existing harness.
 
@@ -167,6 +177,8 @@ Proof:
 
 ### Slice 3: Decision memo
 
+> **Status (2026-07-12): provisional memo landed (`e8cb8a1e`) naming Qwen3-VL-30B-A3B-Instruct Q4 GGUF. Promotion to final + license verdict is gated on Slice 7b measured REPORTs — a provisional memo is a red gate, not a soft yellow [RLSE-02].**
+
 **Goal**: Pick one GPU detailed-tier model with evidence.
 
 Changes:
@@ -176,6 +188,8 @@ Proof:
 - Memo names exactly one winner, cites the Slice-2 REPORTs and Slice-1 latency artifact.
 
 ### Slice 4: GPU adapter + profile/resolver wiring (synchronous)
+
+> **Status (2026-07-12): implemented & merged (`ced38052`; endpoint policy hardened `4739a319`). Adapter, `GPU_QWEN30B` profile, resolver branch, schema fields, and tests are on `main`.**
 
 **Goal**: Serve the winning model through the profile protocol, synchronously, endpoint-backed.
 
@@ -189,6 +203,8 @@ Proof:
 
 ### Slice 5: Bursty async path + lifecycle + degrade
 
+> **Status (2026-07-12): implemented & merged (`7856c302`; reaper/NAT hardened `00413253`). The job store is the volatile in-memory one by design; its consolidation onto the durable `describe_run` tables is VLM-5's whole scope.**
+
 **Goal**: Enqueue describe jobs, warm the GPU per burst, degrade to CPU-provisional, and reap idle instances.
 
 > **May split into reviewable sub-slices (VLM3-PR-04):** (5a) job store + async worker; (5b) OCI lifecycle controller + reaper; (5c) CPU-provisional degrade + supersede. Each has a separable proof.
@@ -196,13 +212,15 @@ Proof:
 Changes:
 - **Async describe API surface (net-new — describe is synchronous today, describe.py:192):** an enqueue route `POST /describe/async` → returns `{job_id}`; a poll route `GET /describe/jobs/{job_id}` → returns a `DescribeJobResult` (`job_id`, `status` ∈ `queued|running|provisional|final|failed`, `tier`, `result_generation`, `visual_facts?`). The synchronous `VisualFactsResponse.tier` (Slice 4) stays for inline calls; the async job-result model is distinct.
 - Net-new describe job store + enqueue + retrieval (`scene/application/describe_jobs.py`) and async worker (`scene/application/description_worker.py`) draining to the GPU adapter.
-- **OCI lifecycle controller (`infra/oci/gpu-lifecycle/`) runs out-of-band (VLM3-PR-02):** a small OCI-SDK process/cron on the **A1 host** (or OCI Functions) — never on the GPU instance it stops, and decoupled from the synchronous request path so it cannot block or starve the A1 service. Spin-on-queue-depth → warm-per-burst → stop-on-idle; bounded **idle-reaper** + orphaned-instance/boot-volume GC.
+- **OCI lifecycle controller (`infra/oci/gpu_lifecycle/`) runs out-of-band (VLM3-PR-02):** a small OCI-SDK process/cron on the **A1 host** (or OCI Functions) — never on the GPU instance it stops, and decoupled from the synchronous request path so it cannot block or starve the A1 service. Spin-on-queue-depth → warm-per-burst → stop-on-idle; bounded **idle-reaper** + orphaned-instance/boot-volume GC.
 - CPU-provisional degrade + supersede contract: `tier` transitions `provisional_cpu`→`final_gpu` by `media_id`, monotonic `result_generation`, delivered via the `GET /describe/jobs/{job_id}` poll channel; GPU pool bulkheaded from the A1 service.
 
 Proof:
 - `pytest test_describe_jobs.py test_describe_tier_degrade.py` green (enqueue, provisional-then-final supersede, reaper stops instance with no in-flight work); manual: cold GPU → provisional then upgrade; queue drains → instance stopped, reaper leaves nothing.
 
 ### Slice 6: OWLv2 Tier B (open-vocab brand detection)
+
+> **Status (2026-07-12): explicitly deferred (`b8847945`) — still gated on Scope A landing `ContextPack.brands`. No change.**
 
 **Goal**: Enrich `ContextPack.brands` from GPU open-vocab detection.
 
@@ -212,47 +230,74 @@ Changes:
 Proof:
 - Detection instances flow to `ContextPack.brands` and name a brand in a caption; **gated on `ContextPack.brands` landing (Scope A)** — deferred until then.
 
+### Slice 7 (added 2026-07-12): Live evidence + tier activation on the provisioned A10
+
+**Goal**: Convert every pending stub into a measured artifact and prove the whole bursty pipeline end-to-end on the real instance — the vertical slice that makes the GPU tier launch-claimable. This slice is evidence + configuration only; it should require no service code changes (any code gap it exposes is a finding, not silent scope growth).
+
+**7a — Live spike bench.** Start `acx_gpu_burst`; run the E19-1-format bench capturing cold-boot, stopped→warm-start (p95 vs the 90 s target — report percentiles, not means [PERF-01]), model-load, and s/img for the baked candidate; fill `VLM-3-gpu-spike-2026-07-08.json` (or a dated successor) with real values and flip its `status`; record A10 quota fields as confirmed.
+
+Proof: spike artifact has zero `null` measurement values; warm-start p95 stated vs target with an explicit pass/fail.
+
+**7b — Live bake-off + final memo.** Serve a pruned candidate slate (the a-priori favorite plus the strongest Tier-2 dense fit and the two Tier-3 baselines is sufficient; name any slate cut explicitly — a silent prune reads as full coverage) through `bakeoff.py --endpoint` against the live instance; replace the `kind=pending_report` stubs with measured `acx-eval/v1` REPORTs; deterministic re-score bit-identical; promote the decision memo provisional→final, including the downloaded-artifact license verdict (public-demo distribution is blocked on it).
+
+Proof: winner named from measured REPORTs; memo cites the 7a latency artifact; license verdict recorded.
+
+**7c — Activation runbook + burst E2E proof.** Execute the memo's activation preconditions in order: terraform outputs → `ACX_GPU_ENDPOINT_URL` (private IP form), `ACX_DESCRIPTION_ADAPTER=gpu_qwen30b`, allowlist behavior verified fail-closed, reaper wired on a timer with `--load-json /run/acx/describe-load.json`. Then the burst proof: enqueue one media item cold → observe `provisional_cpu` → GPU warm-start → `final_gpu` supersede → queue drains → instance `STOPPED` by the reaper with nothing orphaned. Define the stop criteria before activation (warm-start p95 budget, error-rate floor) and the rollback (unset the adapter env → tier reverts to CPU; no data migration involved) [RLSE-07], [RLSE-08]. A GPU burst must leave A1 `/health` green throughout (bulkhead).
+
+Proof: one recorded end-to-end burst transcript (timestamps: enqueue → provisional → final → STOPPED); reaper leaves no running instance or orphaned boot volume (billing-leak check is part of done, not ops folklore); rollback exercised once (unset env, describe still serves CPU tier).
+
 ---
 
 ## Consolidated Checklist
 
 ### Context and Ownership
 
-- [ ] Loaded the scope note, VLM-2B decision memo, adapter protocol, and profile resolver before editing.
-- [ ] Recorded the describe response/request contract change (`tier`/`result_generation`) and its WP-read compatibility.
+- [x] Loaded the scope note, VLM-2B decision memo, adapter protocol, and profile resolver before editing.
+- [x] Recorded the describe response/request contract change (`tier`/`result_generation`) and its WP-read compatibility.
 
-### Checklist for Slice 1: OCI GPU spike + golden image
+### Checklist for Slice 1: OCI GPU spike + golden image (scaffold landed `ca3304a4`)
 
-- [ ] GPU `oci_core_instance` + shape var + GPU cloud-init (golden image, weights baked); `terraform validate` passes.
-- [ ] Spike bench captures cold-boot, stopped→warm-start, model-load, one-candidate s/img; OCI GPU quota + serverless availability confirmed.
-- [ ] Committed E19-1-format spike artifact; warm-start p95 compared to the 90 s target.
+- [x] GPU `oci_core_instance` + shape var + GPU cloud-init (golden image, weights baked); `terraform validate` passes.
+- [x] Committed E19-1-format spike artifact schema.
+- [ ] ~~Spike bench live values~~ → moved to Slice 7a.
 
-### Checklist for Slice 2: GPU bake-off
+### Checklist for Slice 2: GPU bake-off (stubs landed `a3bcb718`)
 
-- [ ] Each candidate served on GPU and run through `bakeoff.py --endpoint` (harness reused, not forked).
-- [ ] Per-candidate `acx-eval/v1` REPORT committed; deterministic re-score bit-identical.
+- [x] Stub REPORT artifacts + candidate slate committed.
+- [ ] ~~Live candidate scoring~~ → moved to Slice 7b.
 
-### Checklist for Slice 3: Decision memo
+### Checklist for Slice 3: Decision memo (provisional landed `e8cb8a1e`)
 
-- [ ] Decision memo names one winner, cites REPORTs + latency artifact, states license verdict.
+- [x] Provisional memo names the implementation target with A10-fit rationale.
+- [ ] ~~Final promotion + license verdict~~ → moved to Slice 7b.
 
-### Checklist for Slice 4: GPU adapter + resolver wiring
+### Checklist for Slice 4: GPU adapter + resolver wiring (merged `ced38052`, `4739a319`)
 
-- [ ] `GpuRemoteDescriptionAdapter` implements `DescriptionAdapter`, returns `AdapterResult`, POSTs to `ACX_GPU_ENDPOINT_URL`.
-- [ ] GPU `ProfileSpec` + `adapter_kind is GPU` branch + opt-in gate in `get_description_adapter`; `ACX_GPU_ENDPOINT_URL` in settings.
-- [ ] `tier`/`result_generation` on `VisualFactsResponse`; optional `tier` hint on `DescribeImageEnvelope`; schema fixtures updated.
-- [ ] Adapter + schema tests green.
+- [x] `GpuRemoteDescriptionAdapter` implements `DescriptionAdapter`, returns `AdapterResult`, POSTs to `ACX_GPU_ENDPOINT_URL`.
+- [x] GPU `ProfileSpec` + `adapter_kind is GPU` branch + opt-in gate in `get_description_adapter`; `ACX_GPU_ENDPOINT_URL` in settings.
+- [x] `tier`/`result_generation` on `VisualFactsResponse`; optional `tier` hint on `DescribeImageEnvelope`; schema fixtures updated.
+- [x] Adapter + schema tests green.
 
-### Checklist for Slice 5: Bursty async path + lifecycle + degrade
+### Checklist for Slice 5: Bursty async path + lifecycle + degrade (merged `7856c302`, `00413253`)
 
-- [ ] Describe job store + enqueue + retrieval + async worker (net-new).
-- [ ] OCI lifecycle controller (spin-on-queue, warm-per-burst, stop-on-idle) + bounded idle-reaper + orphan GC.
-- [ ] CPU-provisional degrade + `provisional_cpu`→`final_gpu` supersede (tier + monotonic generation); GPU pool bulkheaded from A1.
-- [ ] Degrade + job-store + reaper tests green; manual burst verified.
+- [x] Describe job store + enqueue + retrieval + async worker (net-new).
+- [x] OCI lifecycle controller (spin-on-queue, warm-per-burst, stop-on-idle) + bounded idle-reaper + orphan GC.
+- [x] CPU-provisional degrade + `provisional_cpu`→`final_gpu` supersede (tier + monotonic generation); GPU pool bulkheaded from A1.
+- [x] Degrade + job-store + reaper tests green.
+- [ ] ~~Manual burst verified~~ → moved to Slice 7c (never ran on real hardware).
 
-### Checklist for Slice 6: OWLv2 Tier B
+### Checklist for Slice 6: OWLv2 Tier B (deferred `b8847945`)
 
 - [ ] OWLv2 on the burst pool → `ContextPack.brands` (gated on Scope A landing `ContextPack.brands`).
+
+### Checklist for Slice 7: Live evidence + tier activation
+
+- [ ] 7a: spike artifact fully populated on the live A10 (cold-boot, warm-start p95 vs 90 s, model-load, s/img); quota fields confirmed.
+- [ ] 7b: pruned slate served live through `bakeoff.py --endpoint`; stub REPORTs replaced by measured `acx-eval/v1` REPORTs; re-score bit-identical; any slate cut named explicitly.
+- [ ] 7b: decision memo promoted provisional→final; downloaded-artifact license verdict recorded.
+- [ ] 7c: activation preconditions executed (endpoint env from terraform outputs, adapter profile set, allowlist fail-closed verified, reaper on a timer).
+- [ ] 7c: one recorded E2E burst — enqueue → `provisional_cpu` → warm-start → `final_gpu` → drain → reaper `STOPPED`; no orphaned instance/boot volume; A1 `/health` green throughout.
+- [ ] 7c: stop criteria + rollback stated before activation and rollback exercised once (unset adapter env → CPU tier serves) [RLSE-07], [RLSE-08].
 
 ## Review Readiness
 
@@ -267,7 +312,8 @@ Proof:
 
 ## Success Criteria
 
-- [ ] A GPU candidate is picked by a committed bake-off memo backed by deterministic REPORTs + a measured latency/RSS artifact.
-- [ ] A describe request routed to the GPU profile returns `tier=final_gpu` through the unchanged `DescriptionAdapter` protocol.
-- [ ] A burst warm-starts an OCI GPU instance from stopped within the stated budget, then stops it; the idle-reaper leaves no running/orphaned instance or boot volume.
-- [ ] Cold/unavailable GPU yields a `provisional_cpu` answer that is later superseded by `final_gpu` without failing the request; a GPU burst never degrades the A1 service.
+- [ ] A GPU candidate is picked by a committed bake-off memo backed by **measured** (not stub) REPORTs + a measured latency/RSS artifact (Slice 7b) [RLSE-02].
+- [x] A describe request routed to the GPU profile returns `tier=final_gpu` through the unchanged `DescriptionAdapter` protocol (test-proven on `main`; live-proven in Slice 7c).
+- [ ] A burst warm-starts the provisioned OCI GPU instance from stopped within the stated budget, then stops it; the idle-reaper leaves no running/orphaned instance or boot volume (Slice 7c — the billing-safety proof).
+- [ ] Cold/unavailable GPU yields a `provisional_cpu` answer that is later superseded by `final_gpu` without failing the request; a GPU burst never degrades the A1 service (test-proven on `main`; live-proven in Slice 7c).
+- [ ] Rollback is a stated, exercised path (adapter env unset → CPU tier), and activation has named stop criteria [RLSE-07], [RLSE-08].

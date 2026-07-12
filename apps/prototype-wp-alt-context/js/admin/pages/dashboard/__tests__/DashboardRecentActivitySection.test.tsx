@@ -45,6 +45,21 @@ describe('buildActivitySummary', () => {
     expect(summary).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}/i);
     expect(summary).not.toContain(UUID);
   });
+
+  it('uses a short verb when status is unavailable long copy', () => {
+    const item: RecognitionActivityItem = {
+      id: 'job-unavailable',
+      jobId: 'job-unavailable',
+      runId: null,
+      provenance: 'browser_local_fallback',
+      statusText: 'Status unavailable. Refresh to retry.',
+    };
+
+    const summary = buildActivitySummary(item, undefined, 'Status unavailable. Refresh to retry.');
+
+    expect(summary).toBe('Recognition job');
+    expect(summary).not.toContain('Status unavailable');
+  });
 });
 
 describe('DashboardRecentActivitySection', () => {

@@ -101,7 +101,7 @@ describe('DashboardRecentActivitySection', () => {
     // href may still carry jobId for navigation; visible label must not.
     expect(screen.getByRole('link', { name: 'View Results' })).toHaveAttribute(
       'href',
-      `#/workbench?tab=confirm&jobId=${jobId}`,
+      `#/workbench?advanced=open&jobId=${jobId}`,
     );
   });
 });

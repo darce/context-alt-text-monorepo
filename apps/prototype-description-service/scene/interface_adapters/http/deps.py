@@ -195,7 +195,17 @@ def get_description_adapter() -> DescriptionAdapter:
         )
 
     if spec.adapter_kind is DescriptionAdapterKind.GPU and spec.available:
-        return get_gpu_description_adapter()
+        gpu_adapter = get_gpu_description_adapter()
+        if spec.profile is DescriptionProfile.GPU_QWEN30B_ENSEMBLE and not isinstance(
+            gpu_adapter, UnavailableDescriptionAdapter
+        ):
+            # VLM-4 Slice 2b: one named profile opts into the N-view ensemble
+            # wrapper [sr-007]; an unavailable GPU stub is returned unwrapped
+            # so the fail-closed error surfaces once, not once per view.
+            from scene.infrastructure.vlm.ensemble_decode import EnsembleDescriptionAdapter
+
+            return EnsembleDescriptionAdapter(wrapped=gpu_adapter)
+        return gpu_adapter
 
     if not spec.available:
         return UnavailableDescriptionAdapter(

@@ -165,6 +165,7 @@ def test_fast_tier_requires_adapter_result(profile):
         DescriptionProfile.FLORENCE_LARGE,
         DescriptionProfile.GPU_PHI4,
         DescriptionProfile.GPU_QWEN30B,
+        DescriptionProfile.GPU_QWEN30B_ENSEMBLE,
     ],
 )
 def test_async_tier_runs_isolation_pass(profile):
@@ -244,6 +245,7 @@ def test_tier_classification_covers_every_profile():
         DescriptionProfile.FLORENCE_LARGE,
         DescriptionProfile.GPU_PHI4,
         DescriptionProfile.GPU_QWEN30B,
+        DescriptionProfile.GPU_QWEN30B_ENSEMBLE,
     } == ASYNC_ISOLATION_PROFILES
     for profile in DescriptionProfile:
         assert is_fast_tier_profile(profile) is (profile not in ASYNC_ISOLATION_PROFILES)

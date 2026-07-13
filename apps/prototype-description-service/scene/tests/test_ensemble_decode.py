@@ -60,13 +60,22 @@ def test_explicit_weights_shift_the_vote():
     assert next(iter(weighted)) == "b"
 
 
-def test_confidence_weighting_favors_the_more_certain_view():
+def test_confidence_weighting_flips_the_uniform_winner():
+    """VLM4-RB-BR-02: the fixture discriminates — uniform picks b, confidence picks a.
+
+    One very confident view backs 'a'; two lukewarm views back 'b'. The uniform
+    mean lets the lukewarm majority win; confidence weighting hands the vote to
+    the certain view.
+    """
     views = [
-        {"a": _lp(0.99), "b": _lp(0.005)},  # very confident in a
-        {"b": _lp(0.4), "a": _lp(0.35)},  # lukewarm about b
+        {"a": _lp(0.95), "b": _lp(0.01)},
+        {"b": _lp(0.45), "a": _lp(0.02)},
+        {"b": _lp(0.45), "a": _lp(0.02)},
     ]
-    combined = combine_token_distributions(views, weighting_mode=WeightingMode.CONFIDENCE)
-    assert next(iter(combined)) == "a"
+    uniform = combine_token_distributions(views, weighting_mode=WeightingMode.UNIFORM)
+    assert next(iter(uniform)) == "b"
+    confident = combine_token_distributions(views, weighting_mode=WeightingMode.CONFIDENCE)
+    assert next(iter(confident)) == "a"
 
 
 def test_adaptive_plausibility_masks_globally_implausible_token():
@@ -130,32 +139,39 @@ def test_config_enforces_hard_view_cap_and_alpha_range():
     with pytest.raises(ValueError):
         EnsembleDecodeConfig(n_views=0)
     with pytest.raises(ValueError):
+        EnsembleDecodeConfig(n_views=2)  # sole sub-view would duplicate the full image
+    with pytest.raises(ValueError):
         EnsembleDecodeConfig(plausibility_alpha=1.01)
 
 
-def test_build_grid_views_full_image_first_and_within_bounds():
-    views = build_grid_views(400, 300, 4)
-    assert len(views) == 4
+@pytest.mark.parametrize("n_views", [3, 4, 5, HARD_VIEW_CAP])
+def test_build_grid_views_sub_views_tile_exactly_for_any_n(n_views):
+    """VLM4-RA-BR-03: strips tile the image exactly — no uncovered region, any n."""
+    views = build_grid_views(400, 300, n_views)
+    assert len(views) == n_views
     assert views[0] == ViewBox(0, 0, 400, 300)
     for box in views[1:]:
         assert 0 <= box.left < box.right <= 400
         assert 0 <= box.top < box.bottom <= 300
-
-
-def test_build_grid_views_complete_grid_tiles_exactly():
-    # 5 views = full image + a complete 2x2 grid partition.
-    views = build_grid_views(400, 300, 5)
-    assert len(views) == 5
     sub_area = sum((b.right - b.left) * (b.bottom - b.top) for b in views[1:])
     assert sub_area == 400 * 300
+
+
+def test_build_grid_views_strips_follow_the_wider_axis():
+    wide = build_grid_views(400, 300, 3)
+    assert all(box.top == 0 and box.bottom == 300 for box in wide[1:])  # vertical strips
+    tall = build_grid_views(300, 400, 3)
+    assert all(box.left == 0 and box.right == 300 for box in tall[1:])  # horizontal strips
 
 
 def test_build_grid_views_bounds():
     assert len(build_grid_views(100, 100, 1)) == 1
     with pytest.raises(ValueError):
+        build_grid_views(100, 100, 2)  # duplicate-of-full-image no-op rejected
+    with pytest.raises(ValueError):
         build_grid_views(100, 100, HARD_VIEW_CAP + 1)
     with pytest.raises(ValueError):
-        build_grid_views(0, 100, 2)
+        build_grid_views(0, 100, 3)
 
 
 # --------------------------------------- EnsembleDescriptionAdapter (Slice 2b)
@@ -280,36 +296,52 @@ def test_ensemble_adapter_single_view_is_one_wrapped_pass():
     assert result.caption == "only"
 
 
-def test_ensemble_adapter_token_vote_wins_over_full_image_caption():
-    """Cross-view logit agreement on ' cat' beats the full-image view's ' dog'."""
-    trace_dog = (
-        GpuRemoteTokenTrace(token="a", logprob=_lp(0.6), top_logprobs={"a": _lp(0.6), "the": _lp(0.3)}),
-        GpuRemoteTokenTrace(token=" dog", logprob=_lp(0.5), top_logprobs={" dog": _lp(0.5), " cat": _lp(0.45)}),
+def test_ensemble_adapter_consensus_beats_hallucinated_outlier():
+    """VLM4-RA-BR-01: unique captions select by cross-view word overlap.
+
+    Two views agree on the bicycle scene; one crop hallucinates a dining
+    table. The hallucinated caption shares almost no words with the others
+    and must lose.
+    """
+    stub = _StubGpuAdapter(
+        [
+            "a red bicycle against a wall",
+            "a red bicycle near a brick wall",
+            "a dining table with flowers",
+        ]
     )
-    trace_cat = (
-        GpuRemoteTokenTrace(token="a", logprob=_lp(0.7), top_logprobs={"a": _lp(0.7)}),
-        GpuRemoteTokenTrace(token=" cat", logprob=_lp(0.8), top_logprobs={" cat": _lp(0.8), " dog": _lp(0.1)}),
-    )
-    stub = _TracedStubGpuAdapter(["a dog", "a cat"], [trace_dog, trace_cat])
-    adapter = EnsembleDescriptionAdapter(wrapped=stub, config=EnsembleDecodeConfig(n_views=2))
-
-    result = adapter.describe(image_bytes=_png(), context=None)
-
-    assert len(stub.calls) == 2
-    assert result.caption == "a cat"
-    assert result.alt_text_draft == "a cat"
-    assert result.objects == ("bicycle", "brick wall")  # facts still full-image
-
-
-def test_ensemble_adapter_falls_back_to_caption_vote_when_any_trace_missing():
-    """Token-level vote needs traces from EVERY view; one empty trace degrades."""
-    trace = (GpuRemoteTokenTrace(token="x", logprob=_lp(0.9), top_logprobs={"x": _lp(0.9)}),)
-    stub = _TracedStubGpuAdapter(["a", "b", "b"], [trace, (), trace])
     adapter = EnsembleDescriptionAdapter(wrapped=stub, config=EnsembleDecodeConfig(n_views=3))
 
     result = adapter.describe(image_bytes=_png(), context=None)
 
-    assert result.caption == "b"
+    assert result.caption == "a red bicycle against a wall"
+    assert result.alt_text_draft == result.caption
+
+
+def test_ensemble_adapter_never_composes_text_across_views():
+    """VLM4-RA-BR-01/RB-BR-01: output is ALWAYS one per-view caption verbatim.
+
+    The stub exposes describe_with_trace with wildly misaligned, unequal-length
+    traces — exactly the divergent-prefix case where step-zipping manufactures
+    word salad. The adapter must ignore traces for caption assembly.
+    """
+    misaligned_a = (
+        GpuRemoteTokenTrace(token="A", logprob=_lp(0.9), top_logprobs={"A": _lp(0.9)}),
+        GpuRemoteTokenTrace(token=" mural", logprob=_lp(0.8), top_logprobs={" mural": _lp(0.8)}),
+    )
+    misaligned_b = (
+        GpuRemoteTokenTrace(token="Bright", logprob=_lp(0.95), top_logprobs={"Bright": _lp(0.95)}),
+        GpuRemoteTokenTrace(token=" red", logprob=_lp(0.9), top_logprobs={" red": _lp(0.9)}),
+        GpuRemoteTokenTrace(token=" paint", logprob=_lp(0.85), top_logprobs={" paint": _lp(0.85)}),
+    )
+    misaligned_c = (GpuRemoteTokenTrace(token="Wall", logprob=_lp(0.99), top_logprobs={"Wall": _lp(0.99)}),)
+    captions = ["A mural", "Bright red paint", "Wall"]
+    stub = _TracedStubGpuAdapter(captions, [misaligned_a, misaligned_b, misaligned_c])
+    adapter = EnsembleDescriptionAdapter(wrapped=stub, config=EnsembleDecodeConfig(n_views=3))
+
+    result = adapter.describe(image_bytes=_png(), context=None)
+
+    assert result.caption in captions
 
 
 def test_ensemble_adapter_unreadable_image_degrades_to_single_wrapped_pass():

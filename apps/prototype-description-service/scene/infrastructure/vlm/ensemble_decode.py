@@ -8,11 +8,15 @@ cross-attention, so attention weighting enters only through the optional
 attention mass (arXiv 2505.17529).
 
 Slice 2b adds ``EnsembleDescriptionAdapter``: a ``DescriptionAdapter`` wrapper
-that runs the wrapped GPU adapter once per grid view and votes on the caption.
-The token-level vote requires per-view token traces; llama.cpp provides them
-via ``n_probs``, surfaced by ``GpuRemoteDescriptionAdapter.describe_with_trace``.
-When the wrapped adapter exposes no traces, the vote degrades to caption-level
-majority (earliest view breaks ties, so the full-image pass wins by default).
+that runs the wrapped GPU adapter once per view and SELECTS a caption at
+caption granularity (exact majority, then cross-view word-overlap consensus,
+ties to the full-image view). Per-view token traces are deliberately NOT
+zipped into a composed caption: each view's step-``i`` distribution is
+conditioned on that view's own prefix, so merging independently decoded
+traces manufactures word salad (VLM4-RA-BR-01). True step-wise ensemble
+requires step-synchronized decoding, which the one-shot llama.cpp completion
+API cannot provide; ``combine_token_distributions`` stays as the per-step
+primitive for that spike-gated decoder.
 
 Caption-only scope (VLM4-PA-03): this module votes on caption token streams
 only. ``objects``/``ocr_text``/``phrase_boxes`` and the ``context_*`` fields
@@ -23,6 +27,7 @@ always come from the designated full-image (first-view) pass so the
 from __future__ import annotations
 
 import math
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -32,7 +37,6 @@ from scene.application.description_adapter import AdapterResult, DescriptionAdap
 
 if TYPE_CHECKING:
     from scene.domain.description import DescriptionAdapterKind
-    from scene.infrastructure.vlm.gpu_remote_adapter import GpuRemoteTokenTrace
 
 # Hard cap on ensemble width: N views = N GPU passes = N x latency/VRAM
 # (capacity multiplier); the async tier tolerates minutes, not unbounded N.
@@ -66,6 +70,8 @@ class EnsembleDecodeConfig:
     def __post_init__(self) -> None:
         if not 1 <= self.n_views <= HARD_VIEW_CAP:
             raise ValueError(f"n_views must be within [1, {HARD_VIEW_CAP}], got {self.n_views}")
+        if self.n_views == 2:
+            raise ValueError("n_views=2 duplicates the full image as its only sub-view; use 1 or >= 3")
         if not 0.0 <= self.plausibility_alpha <= 1.0:
             raise ValueError(f"plausibility_alpha must be within [0.0, 1.0], got {self.plausibility_alpha}")
 
@@ -81,28 +87,31 @@ class ViewBox:
 
 
 def build_grid_views(width: int, height: int, n_views: int) -> tuple[ViewBox, ...]:
-    """Full image first, then ``n_views - 1`` grid sub-regions (pure geometry).
+    """Full image first, then ``n_views - 1`` strip sub-regions (pure geometry).
 
     The first view is always the whole image — it is the designated pass that
-    supplies objects/ocr/phrase_boxes downstream (VLM4-PA-03). Callers crop.
+    supplies objects/ocr/phrase_boxes downstream (VLM4-PA-03). Sub-views are
+    equal strips along the wider axis, so they tile the image exactly for any
+    ``n_views`` — no quadrant is ever left uncovered (VLM4-RA-BR-03).
+    ``n_views=2`` is rejected: its sole sub-view would duplicate the full
+    image, doubling GPU cost for a guaranteed no-op vote. Callers crop.
     """
     if width <= 0 or height <= 0:
         raise ValueError(f"image dimensions must be positive, got {width}x{height}")
     if not 1 <= n_views <= HARD_VIEW_CAP:
         raise ValueError(f"n_views must be within [1, {HARD_VIEW_CAP}], got {n_views}")
+    if n_views == 2:
+        raise ValueError("n_views=2 duplicates the full image as its only sub-view; use 1 or >= 3")
     views = [ViewBox(0, 0, width, height)]
     n_sub = n_views - 1
     if n_sub == 0:
         return tuple(views)
-    cols = math.ceil(math.sqrt(n_sub))
-    rows = math.ceil(n_sub / cols)
+    horizontal = width >= height
     for idx in range(n_sub):
-        r, c = divmod(idx, cols)
-        left = (c * width) // cols
-        right = ((c + 1) * width) // cols
-        top = (r * height) // rows
-        bottom = ((r + 1) * height) // rows
-        views.append(ViewBox(left, top, right, bottom))
+        if horizontal:
+            views.append(ViewBox((idx * width) // n_sub, 0, ((idx + 1) * width) // n_sub, height))
+        else:
+            views.append(ViewBox(0, (idx * height) // n_sub, width, ((idx + 1) * height) // n_sub))
     return tuple(views)
 
 
@@ -178,19 +187,20 @@ class EnsembleDescriptionAdapter:
 
     Identity fields delegate to the wrapped adapter so cache keys and
     provenance stay tied to the underlying model. ``describe`` runs one pass
-    per grid view (full image first, ``EnsembleDecodeConfig.n_views`` bound)
-    and votes on the caption:
-
-    - token-level logit vote via :func:`combine_token_distributions` when the
-      wrapped adapter exposes per-view token traces (``describe_with_trace``,
-      llama.cpp ``n_probs``);
-    - caption-level majority fallback otherwise (ties break to the earliest
-      view, i.e. the full-image pass).
+    per view (full image first, ``EnsembleDecodeConfig.n_views`` bound) and
+    selects the caption at caption granularity via :func:`_select_caption` —
+    never by zipping per-view token traces (VLM4-RA-BR-01: independently
+    decoded traces are conditioned on divergent prefixes; composing them
+    step-wise manufactures word salad).
 
     ``objects``/``ocr_text``/``phrase_boxes``/``context_*`` always come
     verbatim from the full-image pass (VLM4-PA-03). Unreadable image bytes
     degrade to a single wrapped pass — the wrapped adapter stays the authority
     on whether the bytes are usable.
+
+    N sequential GPU passes are affordable only on the minutes-tolerant async
+    GPU-final tier; routing lives in ``get_async_gpu_description_adapter``
+    (VLM4-RA-BR-02) [RES-02].
     """
 
     def __init__(
@@ -223,19 +233,11 @@ class EnsembleDescriptionAdapter:
         if view_bytes is None:
             return self._wrapped.describe(image_bytes=image_bytes, context=context)
 
-        describe_with_trace = getattr(self._wrapped, "describe_with_trace", None)
-        results: list[AdapterResult] = []
-        traces: list[tuple[GpuRemoteTokenTrace, ...]] = []
-        for single_view_bytes in view_bytes:
-            if callable(describe_with_trace):
-                result, trace = describe_with_trace(image_bytes=single_view_bytes, context=context)
-            else:
-                result, trace = self._wrapped.describe(image_bytes=single_view_bytes, context=context), ()
-            results.append(result)
-            traces.append(tuple(trace))
-
+        results = [
+            self._wrapped.describe(image_bytes=single_view_bytes, context=context) for single_view_bytes in view_bytes
+        ]
         full_image = results[0]
-        caption = self._vote_caption(results, traces)
+        caption = _select_caption(results)
         return AdapterResult(
             caption=caption,
             objects=full_image.objects,
@@ -272,56 +274,42 @@ class EnsembleDescriptionAdapter:
             return None
         return out
 
-    def _vote_caption(
-        self,
-        results: Sequence[AdapterResult],
-        traces: Sequence[tuple[GpuRemoteTokenTrace, ...]],
-    ) -> str:
-        if len(results) == 1:
-            return results[0].caption
-        if all(traces):
-            voted = self._token_level_vote(traces)
-            if voted:
-                return voted
-        return _caption_majority(results)
 
-    def _token_level_vote(self, traces: Sequence[tuple[GpuRemoteTokenTrace, ...]]) -> str:
-        """Step-wise logit vote across per-view token traces.
+def _select_caption(results: Sequence[AdapterResult]) -> str:
+    """Caption-granularity consensus selection (VLM4-RA-BR-01 realignment).
 
-        At step ``i`` each view still decoding contributes its top-k
-        ``token -> logprob`` map; :func:`combine_token_distributions` picks the
-        step winner under the configured weighting + plausibility settings.
-        Views that finished early simply drop out of later steps.
-        """
-        tokens: list[str] = []
-        for step in range(max(len(trace) for trace in traces)):
-            distributions: list[dict[str, float]] = []
-            for trace in traces:
-                if step >= len(trace):
-                    continue
-                entry = trace[step]
-                distribution = dict(entry.top_logprobs)
-                distribution.setdefault(entry.token, entry.logprob)
-                if distribution:
-                    distributions.append(distribution)
-            if not distributions:
-                break
-            combined = combine_token_distributions(
-                distributions,
-                plausibility_alpha=self._config.plausibility_alpha,
-                weighting_mode=self._config.weighting_mode,
-            )
-            tokens.append(next(iter(combined)))
-        return "".join(tokens).strip()
+    Exact-string majority first. When every caption is unique (the normal
+    temp-0 multi-view case), the caption with the highest cross-view
+    word-overlap consensus wins — a hallucinated unit appearing in only one
+    view drags that caption's score down. All ties break to the earliest
+    view, so the full-image pass wins by default.
 
+    The output is ALWAYS one of the per-view captions verbatim — this
+    function must never compose text across views.
+    """
+    captions = [result.caption for result in results]
+    if len(captions) == 1:
+        return captions[0]
+    counts = Counter(captions)
+    best_count = max(counts.values())
+    if best_count > 1:
+        for caption in captions:
+            if counts[caption] == best_count:
+                return caption
 
-def _caption_majority(results: Sequence[AdapterResult]) -> str:
-    """Exact-caption majority; ties break to the earliest (full-image) view."""
-    counts: dict[str, int] = {}
-    for result in results:
-        counts[result.caption] = counts.get(result.caption, 0) + 1
-    best = max(counts.values())
-    for result in results:
-        if counts[result.caption] == best:
-            return result.caption
-    raise RuntimeError("unreachable: results is non-empty")
+    word_sets = [set(caption.lower().split()) for caption in captions]
+    scores: list[float] = []
+    for i, words in enumerate(word_sets):
+        score = 0.0
+        for j, other in enumerate(word_sets):
+            if i == j:
+                continue
+            union = words | other
+            if union:
+                score += len(words & other) / len(union)
+        scores.append(score)
+    best_score = max(scores)
+    for caption, score in zip(captions, scores, strict=True):
+        if score == best_score:
+            return caption
+    raise RuntimeError("unreachable: captions is non-empty")

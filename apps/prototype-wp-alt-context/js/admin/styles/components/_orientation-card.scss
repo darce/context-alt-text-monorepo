@@ -2,8 +2,8 @@
 @use '../tokens/spacing';
 
 .acx-orientation-card {
-  background: var(--acx-color-surface-alt, #f0f7ff);
-  border: 1px solid var(--acx-color-primary-subtle, #ccdfff);
+  background: var(--acx-color-panel);
+  border: 1px solid var(--acx-color-primary-subtle);
   border-radius: 12px;
   padding: 24px;
   margin-bottom: 32px;

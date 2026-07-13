@@ -30,7 +30,7 @@ write_files:
       MMPROJ=mmproj-Qwen3VL-30B-A3B-Instruct-F16.gguf
       mkdir -p "$MODELS" /opt/acx-gpu/results
       say(){ echo "ACX_BAKE_STEP $(date -u +%FT%TZ) $*" | tee -a "$LOG" > /dev/console; }
-      finish(){ echo "$1 $(date -u +%FT%TZ) $2" | tee -a "$LOG" > /dev/console; sync; sleep 5; /sbin/poweroff; exit 0; }
+      finish(){ echo "$1 $(date -u +%FT%TZ) $2" | tee -a "$LOG" > /dev/console; sync; sleep 5; systemctl poweroff --no-block 2>/dev/null; sleep 8; poweroff -f 2>/dev/null; sleep 5; echo o > /proc/sysrq-trigger; exit 0; }
       exec >>"$LOG" 2>&1
       set -x
       export DEBIAN_FRONTEND=noninteractive
@@ -57,7 +57,7 @@ write_files:
         | sed 's#deb https://#deb [signed-by=/etc/apt/keyrings/nvidia-container-toolkit.gpg] https://#g' > /etc/apt/sources.list.d/nvidia-container-toolkit.list
       $APT update && $APT install nvidia-container-toolkit || finish ACX_BAKE_FAILED "phase=nvidia_toolkit"
       nvidia-ctk runtime configure --runtime=docker && systemctl restart docker || finish ACX_BAKE_FAILED "phase=docker_gpu_runtime"
-      docker pull ghcr.io/ggerganov/llama.cpp:server-cuda || finish ACX_BAKE_FAILED "phase=image_pull"
+      docker pull ghcr.io/ggml-org/llama.cpp:server-cuda || finish ACX_BAKE_FAILED "phase=image_pull"
 
       say "5/6 download weights (18.6GB Q4 + F16 mmproj)"
       curl -fL --retry 5 --retry-delay 10 -C - -o "$MODELS/qwen3-vl-30b-a3b-instruct-q4.gguf"     "$REPO/$Q4"     || finish ACX_BAKE_FAILED "phase=dl_q4"
@@ -90,7 +90,7 @@ write_files:
         --name acx-gpu-vlm \
         -p 8000:8000 \
         -v /opt/acx-gpu/models:/models:ro \
-        ghcr.io/ggerganov/llama.cpp:server-cuda \
+        ghcr.io/ggml-org/llama.cpp:server-cuda \
         --host 0.0.0.0 \
         --port 8000 \
         --model /models/qwen3-vl-30b-a3b-instruct-q4.gguf \

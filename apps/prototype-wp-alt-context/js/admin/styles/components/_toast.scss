@@ -17,8 +17,8 @@
   padding: 12px 16px;
   background: var(--acx-color-surface);
   border: 1px solid var(--acx-color-border);
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  border-radius: var(--acx-radius-md);
+  box-shadow: var(--acx-shadow-1);
   animation: acx-toast-in 0.3s ease-out;
   min-width: 280px;
   max-width: 400px;
@@ -46,8 +46,8 @@
 
   &__message {
     flex: 1;
-    font-size: 0.9rem;
-    font-weight: 500;
+    font-size: var(--acx-text-sm);
+    font-weight: var(--acx-font-weight-medium);
     color: var(--acx-color-text);
   }
 
@@ -57,13 +57,13 @@
     border: none;
     cursor: pointer;
     color: var(--acx-color-text-muted);
-    border-radius: 4px;
+    border-radius: var(--acx-radius-sm);
     display: flex;
     align-items: center;
     justify-content: center;
 
     &:hover {
-      background: rgba(0, 0, 0, 0.05);
+      background: var(--acx-gray-100);
       color: var(--acx-color-text);
     }
   }

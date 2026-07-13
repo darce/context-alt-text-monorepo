@@ -4,8 +4,8 @@
 .acx-cluster-labeling-panel,
 .acx-cluster-review-panel {
   background: white;
-  border-radius: 8px;
-  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+  border-radius: var(--acx-radius-md);
+  box-shadow: var(--acx-shadow-1);
   width: 100%;
   max-width: 600px;
   max-height: 85vh;
@@ -22,7 +22,7 @@
 
     h2 {
       margin: 0;
-      font-size: 1.25rem;
+      font-size: var(--acx-text-xl);
     }
   }
 
@@ -49,16 +49,16 @@
     padding: var(--acx-space-8) var(--acx-space-12);
     background-color: var(--acx-color-danger-soft);
     border: 1px solid var(--acx-color-danger-border);
-    border-radius: 4px;
+    border-radius: var(--acx-radius-sm);
     color: var(--acx-color-danger-strong);
-    font-size: 0.875rem;
+    font-size: var(--acx-text-sm);
     line-height: 1.4;
   }
 
   .acx-close-button {
     background: none;
     border: none;
-    font-size: 1.5rem;
+    font-size: var(--acx-text-xl);
     cursor: pointer;
     color: var(--acx-color-text-muted);
 
@@ -83,7 +83,7 @@
       width: 100%;
       height: 100%;
       object-fit: cover;
-      border-radius: 50%;
+      border-radius: var(--acx-radius-circle);
       border: 1px solid var(--acx-color-border);
     }
 
@@ -91,7 +91,7 @@
       width: 100%;
       height: 100%;
       background-color: var(--acx-color-panel);
-      border-radius: 50%;
+      border-radius: var(--acx-radius-circle);
     }
   }
 
@@ -101,7 +101,7 @@
     right: 0;
     width: 20px;
     height: 20px;
-    border-radius: 50%;
+    border-radius: var(--acx-radius-circle);
     background: var(--acx-color-danger);
     color: white;
     border: none;
@@ -109,7 +109,7 @@
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    font-size: 14px;
+    font-size: var(--acx-text-sm);
     line-height: 1;
     opacity: 0.8;
     transition: opacity 0.2s;

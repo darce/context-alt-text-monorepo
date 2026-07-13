@@ -14,8 +14,8 @@
     padding: 0 12px;
     background-color: var(--acx-color-surface-alt);
     border: 1px solid var(--acx-gray-300);
-    border-radius: 6px;
-    font-size: 14px;
+    border-radius: var(--acx-radius-md);
+    font-size: var(--acx-text-sm);
     color: var(--acx-color-text);
     cursor: pointer;
 
@@ -39,8 +39,8 @@
     width: 200px;
     background-color: var(--acx-color-surface-alt);
     border: 1px solid var(--acx-gray-300);
-    border-radius: 6px;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    border-radius: var(--acx-radius-md);
+    box-shadow: var(--acx-shadow-1);
     overflow: hidden;
     z-index: 50;
   }
@@ -57,7 +57,7 @@
     height: 44px;
     border: none;
     background: transparent;
-    font-size: 14px;
+    font-size: var(--acx-text-sm);
     outline: none;
 
     &::placeholder {
@@ -74,7 +74,7 @@
   &__empty {
     padding: 12px;
     text-align: center;
-    font-size: 14px;
+    font-size: var(--acx-text-sm);
     color: var(--acx-color-text-muted);
   }
 
@@ -83,8 +83,8 @@
 
     [cmdk-group-heading] {
       padding: 4px 8px;
-      font-size: 12px;
-      font-weight: 500;
+      font-size: var(--acx-text-xs);
+      font-weight: var(--acx-font-weight-medium);
       color: var(--acx-color-text-muted);
     }
   }
@@ -93,8 +93,8 @@
     display: flex;
     align-items: center;
     padding: 6px 8px;
-    font-size: 14px;
-    border-radius: 4px;
+    font-size: var(--acx-text-sm);
+    border-radius: var(--acx-radius-sm);
     cursor: default;
     user-select: none;
 

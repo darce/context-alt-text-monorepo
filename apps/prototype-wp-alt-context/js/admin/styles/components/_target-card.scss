@@ -49,7 +49,7 @@
     display: inline-flex;
     align-items: center;
     gap: var(--acx-space-8);
-    font-weight: var(--acx-font-weight-semibold, 600);
+    font-weight: var(--acx-font-weight-semibold);
     margin: 0;
   }
 
@@ -58,20 +58,20 @@
     align-items: center;
     gap: var(--acx-space-8);
     margin-left: var(--acx-space-8);
-    font-size: var(--acx-text-sm, 0.85rem);
+    font-size: var(--acx-text-sm);
     color: var(--acx-color-accent);
     font-weight: var(--acx-font-weight-normal);
   }
 
   &__active-icon {
-    font-size: var(--acx-text-sm, 0.85rem);
+    font-size: var(--acx-text-sm);
   }
 
   &__health {
     display: inline-flex;
     align-items: center;
     gap: var(--acx-space-8);
-    font-size: var(--acx-text-sm, 0.85rem);
+    font-size: var(--acx-text-sm);
     white-space: nowrap;
 
     &--not_checked {
@@ -88,7 +88,7 @@
   }
 
   &__health-icon {
-    font-size: var(--acx-text-sm, 0.85rem);
+    font-size: var(--acx-text-sm);
   }
 
   &__body {
@@ -111,9 +111,9 @@
 
 .acx-settings__effective-target {
   margin: var(--acx-space-16) 0;
-  font-size: var(--acx-text-base, 1rem);
+  font-size: var(--acx-text-base);
 
   code {
-    font-size: var(--acx-text-sm, 0.9rem);
+    font-size: var(--acx-text-sm);
   }
 }

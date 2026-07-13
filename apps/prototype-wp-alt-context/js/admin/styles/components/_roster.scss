@@ -7,7 +7,7 @@
 
     h2 {
       margin: 0;
-      font-size: 1.5rem;
+      font-size: var(--acx-text-xl);
     }
   }
 
@@ -22,24 +22,24 @@
     display: inline-flex;
     align-items: center;
     padding: 2px 10px;
-    border-radius: 999px;
+    border-radius: var(--acx-radius-pill);
     background: var(--acx-color-warning-pill-bg);
     color: var(--acx-color-warning-pill-text);
-    font-size: 0.75rem;
-    font-weight: 600;
+    font-size: var(--acx-text-xs);
+    font-weight: var(--acx-font-weight-semibold);
     letter-spacing: 0.01em;
   }
 
   &__add-form {
     background: var(--acx-color-surface-alt);
     border: 1px solid var(--acx-color-border);
-    border-radius: 0.75rem;
+    border-radius: var(--acx-radius-xl);
     padding: var(--acx-space-24);
     margin-bottom: var(--acx-space-24);
     display: flex;
     flex-direction: column;
     gap: var(--acx-space-16);
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    box-shadow: var(--acx-shadow-1);
   }
 
   &__empty {
@@ -94,7 +94,7 @@
     border-spacing: 0;
     background: var(--acx-color-surface-alt);
     border: 1px solid var(--acx-color-border);
-    border-radius: 0.75rem;
+    border-radius: var(--acx-radius-xl);
     overflow: hidden;
 
     th,
@@ -106,8 +106,8 @@
 
     th {
       background: var(--acx-color-surface);
-      font-weight: 600;
-      font-size: 0.875rem;
+      font-weight: var(--acx-font-weight-semibold);
+      font-size: var(--acx-text-sm);
       color: var(--acx-color-text-muted);
       text-transform: uppercase;
       letter-spacing: 0.05em;
@@ -121,13 +121,13 @@
       width: 100%;
       padding: var(--acx-space-8);
       border: 1px solid var(--acx-color-border);
-      border-radius: 0.375rem;
-      font-size: 0.875rem;
+      border-radius: var(--acx-radius-md);
+      font-size: var(--acx-text-sm);
 
       &:focus {
         border-color: var(--acx-color-accent);
         outline: none;
-        box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
+        box-shadow: 0 0 0 2px var(--acx-color-accent-soft); /* E21-4 disposition: focus-ring geometry kept (color tokenized) */
       }
     }
   }
@@ -144,7 +144,7 @@
   justify-content: center;
   width: 32px;
   height: 32px;
-  border-radius: 0.375rem;
+  border-radius: var(--acx-radius-md);
   border: 1px solid var(--acx-color-border);
   background: var(--acx-color-surface-alt);
   color: var(--acx-color-text-muted);
@@ -174,8 +174,8 @@
   align-items: center;
   gap: var(--acx-space-8);
   padding: var(--acx-space-8) var(--acx-space-16);
-  border-radius: 0.375rem;
-  font-weight: 500;
+  border-radius: var(--acx-radius-md);
+  font-weight: var(--acx-font-weight-medium);
   cursor: pointer;
   transition: all 0.2s;
   border: 1px solid transparent;

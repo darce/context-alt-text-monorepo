@@ -56,3 +56,21 @@ describe('REFA-3 slice 5: _workbench.scss spacing disposition', () => {
     expect(source).not.toMatch(/gap:\s*[0-9]+px/);
   });
 });
+
+const hexLiteralRe = /#[0-9a-fA-F]{3,8}/;
+const e21Slice2Files = [
+  join(__dirname, '..', '..', 'components', '_identity-cluster-list.scss'),
+  join(__dirname, '..', '..', 'components', '_combobox.scss'),
+  join(__dirname, '..', '..', 'components', '_orientation-card.scss'),
+] as const;
+
+describe('E21-4 slice 2', () => {
+  it.each(e21Slice2Files)('%s has no raw hex literals except disposition lines', (path) => {
+    const source = readFileSync(path, 'utf8');
+    const offenders = source
+      .split('\n')
+      .filter((line) => hexLiteralRe.test(line) && !line.includes('E21-4 disposition:'));
+
+    expect(offenders).toEqual([]);
+  });
+});

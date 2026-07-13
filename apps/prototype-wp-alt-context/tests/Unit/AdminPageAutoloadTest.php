@@ -9,54 +9,77 @@ use AltContext\Tests\TestCase;
 /**
  * Regression for E21-12B (rg-016).
  *
- * The admin page classes live under src/admin/class-*.php (WordPress filename
- * convention). Per rg-016 they are not PSR-4 autoloadable and reach production
- * only through the Composer classmap, which goes stale on any checkout that
- * adds a class without re-running `composer dump-autoload`. When
- * class-retention-page.php shipped (E21-12) without a fresh dump, alt_context()
- * fatally errored on `new RetentionPage()` for every request — front end and
- * wp-admin alike — because Menu is constructed unconditionally on
- * plugins_loaded. The fix is an explicit require_once block in the entrypoint.
+ * The bootstrap classes below are constructed unconditionally by alt_context()
+ * on plugins_loaded but use the WordPress class-*.php filename convention, so
+ * they reach production only through the Composer classmap — which goes stale on
+ * any checkout that adds a class without re-running `composer dump-autoload`.
+ * When class-retention-page.php shipped (E21-12) without a fresh dump,
+ * alt_context() fatally errored on `new RetentionPage()` (inside the Menu
+ * constructor) for every request, front end and wp-admin alike, because none of
+ * these admin classes self-require their dependencies. The fix is an explicit
+ * require_once block in the entrypoint.
+ *
+ * Scope note: Api and LifecycleManager are intentionally NOT in this set — they
+ * self-require their own dependency chains, and hardening their entry files
+ * would eagerly load the sync/repository subsystem on every request. See the
+ * comment on the require block in alt-context.php.
  *
  * @covers \AltContext\Admin\Menu
  */
 class AdminPageAutoloadTest extends TestCase
 {
-    /** Admin classes instantiated on the plugins_loaded bootstrap path. */
-    private const ADMIN_BOOTSTRAP_CLASSES = [
-        'AbstractSpaPage',
-        'DashboardPage',
-        'WorkbenchPage',
-        'RosterPage',
-        'SettingsPage',
-        'DescriptionHistoryPage',
-        'RetentionPage',
-        'Menu',
+    /**
+     * Bootstrap classes made classmap-independent by the entrypoint block,
+     * as fully-qualified names (the trait is checked separately).
+     */
+    private const BOOTSTRAP_CLASSES = [
+        'AltContext\\Admin\\AbstractSpaPage',
+        'AltContext\\Admin\\DashboardPage',
+        'AltContext\\Admin\\WorkbenchPage',
+        'AltContext\\Admin\\RosterPage',
+        'AltContext\\Admin\\SettingsPage',
+        'AltContext\\Admin\\DescriptionHistoryPage',
+        'AltContext\\Admin\\RetentionPage',
+        'AltContext\\Admin\\Menu',
+        'AltContext\\Admin\\Admin',
+        'AltContext\\Api\\XmpEmbedController',
+        'AltContext\\Media\\XmpPersistenceFactory',
     ];
 
-    /** Require lines the entrypoint must carry, in dependency order. */
-    private const REQUIRED_ENTRYPOINT_LINES = [
-        "require_once ACX_PLUGIN_DIR . 'src/admin/class-abstract-spa-page.php';",
-        "require_once ACX_PLUGIN_DIR . 'src/admin/class-dashboard-page.php';",
-        "require_once ACX_PLUGIN_DIR . 'src/admin/class-workbench-page.php';",
-        "require_once ACX_PLUGIN_DIR . 'src/admin/class-roster-page.php';",
-        "require_once ACX_PLUGIN_DIR . 'src/admin/class-settings-page.php';",
-        "require_once ACX_PLUGIN_DIR . 'src/admin/class-description-history-page.php';",
-        "require_once ACX_PLUGIN_DIR . 'src/admin/class-retention-page.php';",
-        "require_once ACX_PLUGIN_DIR . 'src/admin/class-menu.php';",
+    private const BOOTSTRAP_TRAIT = 'AltContext\\Support\\BatchLimits';
+
+    /**
+     * Require lines the entrypoint must carry, in dependency order
+     * (trait before Admin, AbstractSpaPage before its subclasses). Relative to
+     * ACX_PLUGIN_DIR.
+     */
+    private const REQUIRED_ENTRYPOINT_PATHS = [
+        'src/support/trait-batch-limits.php',
+        'src/media/class-xmp-persistence-factory.php',
+        'src/api/class-xmp-embed-controller.php',
+        'src/admin/class-admin.php',
+        'src/admin/class-abstract-spa-page.php',
+        'src/admin/class-dashboard-page.php',
+        'src/admin/class-workbench-page.php',
+        'src/admin/class-roster-page.php',
+        'src/admin/class-settings-page.php',
+        'src/admin/class-description-history-page.php',
+        'src/admin/class-retention-page.php',
+        'src/admin/class-menu.php',
     ];
 
-    public function testAdminPageClassesAreLoadableViaComposerAutoloader(): void
+    public function testBootstrapClassesAreLoadableViaComposerAutoloader(): void
     {
         $autoload = realpath(__DIR__ . '/../../vendor/autoload.php');
         self::assertIsString($autoload, 'vendor/autoload.php must exist for this test');
 
-        foreach (self::ADMIN_BOOTSTRAP_CLASSES as $class) {
-            $fqcn = 'AltContext\\Admin\\' . $class;
+        $symbols = array_merge(self::BOOTSTRAP_CLASSES, [self::BOOTSTRAP_TRAIT]);
+        foreach ($symbols as $symbol) {
             $script = sprintf(
-                'require %s; var_export(class_exists(%s));',
+                'require %s; var_export(class_exists(%s) || trait_exists(%s));',
                 var_export($autoload, true),
-                var_export($fqcn, true),
+                var_export($symbol, true),
+                var_export($symbol, true),
             );
             $output = trim((string) shell_exec(sprintf('php -r %s 2>&1', escapeshellarg($script))));
             $this->assertSame(
@@ -65,57 +88,64 @@ class AdminPageAutoloadTest extends TestCase
                 sprintf(
                     '%s must be loadable via vendor/autoload.php in a fresh process; got: %s. '
                         . 'If this fails, run `composer dump-autoload` inside apps/prototype-wp-alt-context.',
-                    $fqcn,
+                    $symbol,
                     var_export($output, true),
                 ),
             );
         }
     }
 
-    public function testEntrypointExplicitlyRequiresAdminPageClasses(): void
+    public function testEntrypointExplicitlyRequiresBootstrapClasses(): void
     {
-        // Defense-in-depth: guarantees the durable fix stays. Each admin page
-        // class must be require_once'd in alt-context.php so a stale classmap
-        // cannot fatal a request before dispatch.
+        // Defense-in-depth: guarantees the durable fix stays. Every fragile
+        // bootstrap class must be require_once'd in alt-context.php so a stale
+        // classmap cannot fatal a request before dispatch.
         $entrypoint = realpath(__DIR__ . '/../../alt-context.php');
         self::assertIsString($entrypoint, 'alt-context.php must exist');
 
         $contents = (string) file_get_contents($entrypoint);
 
-        foreach (self::REQUIRED_ENTRYPOINT_LINES as $line) {
+        foreach (self::REQUIRED_ENTRYPOINT_PATHS as $path) {
+            $line = sprintf("require_once ACX_PLUGIN_DIR . '%s';", $path);
             $this->assertStringContainsString(
                 $line,
                 $contents,
-                'alt-context.php must explicitly require every admin page class after vendor/autoload.php: '
-                    . $line,
+                'alt-context.php must explicitly require every fragile bootstrap class: ' . $line,
             );
         }
     }
 
-    public function testAdminBootstrapLoadsWithoutTheClassmap(): void
+    public function testBootstrapLoadsWithoutTheClassmap(): void
     {
         // The strongest guard: prove the require block alone loads the whole
-        // admin bootstrap surface with NO autoloader present (a maximally-stale
-        // classmap), and that Menu — which default-constructs RetentionPage,
-        // the class that fataled — instantiates. class_exists autoload flag is
-        // false so only the explicit require lines can satisfy it.
+        // fragile bootstrap surface with NO autoloader present (a maximally
+        // stale classmap), and that Menu — which default-constructs
+        // RetentionPage, the class that fataled — instantiates. class_exists /
+        // trait_exists use autoload=false so only the explicit require lines can
+        // satisfy them. (This set is self-contained by construction; Api and
+        // LifecycleManager are excluded precisely because their self-require
+        // chains depend on the autoloader — see alt-context.php.)
         $pluginDir = realpath(__DIR__ . '/../..');
         self::assertIsString($pluginDir);
 
         $requires = '';
-        foreach (self::REQUIRED_ENTRYPOINT_LINES as $line) {
-            // Reuse the exact entrypoint lines with ACX_PLUGIN_DIR bound to the plugin root.
-            $requires .= str_replace('ACX_PLUGIN_DIR . ', var_export($pluginDir . '/', true) . ' . ', $line) . "\n";
+        foreach (self::REQUIRED_ENTRYPOINT_PATHS as $path) {
+            $requires .= sprintf('require_once %s;' . "\n", var_export($pluginDir . '/' . $path, true));
         }
 
         $checks = '';
-        foreach (self::ADMIN_BOOTSTRAP_CLASSES as $class) {
+        foreach (self::BOOTSTRAP_CLASSES as $fqcn) {
             $checks .= sprintf(
                 'if (!class_exists(%s, false)) { fwrite(STDERR, %s); exit(1); }' . "\n",
-                var_export('AltContext\\Admin\\' . $class, true),
-                var_export($class . ' not loaded', true),
+                var_export($fqcn, true),
+                var_export($fqcn . ' not loaded', true),
             );
         }
+        $checks .= sprintf(
+            'if (!trait_exists(%s, false)) { fwrite(STDERR, %s); exit(1); }' . "\n",
+            var_export(self::BOOTSTRAP_TRAIT, true),
+            var_export(self::BOOTSTRAP_TRAIT . ' not loaded', true),
+        );
 
         $script = "<?php\n" . $requires . $checks
             . 'new AltContext\\Admin\\Menu('
@@ -132,8 +162,8 @@ class AdminPageAutoloadTest extends TestCase
         $this->assertSame(
             'ok',
             $output,
-            'The alt-context.php admin require block must load every admin bootstrap class and construct '
-                . 'Menu (which default-constructs RetentionPage) with no autoloader present; got: '
+            'The alt-context.php bootstrap require block must load every fragile bootstrap class and '
+                . 'construct Menu (which default-constructs RetentionPage) with no autoloader present; got: '
                 . var_export($output, true),
         );
     }

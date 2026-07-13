@@ -444,6 +444,7 @@ test-scripts:
 		scripts/test_vlm3_gpu_bakeoff_artifacts.py \
 		scripts/test_vlm3_decision_memo.py \
 		scripts/test_check_overrides_lock_digest.py scripts/test_consumer_setup_doc.py \
+		scripts/test_remote_gate_guards.py \
 		-q --tb=short --durations=25
 
 # Unit tests backing check-overrides-digest (incl. the committed-lock

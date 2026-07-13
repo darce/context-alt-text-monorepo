@@ -54,6 +54,7 @@ ASYNC_ISOLATION_PROFILES = frozenset(
     {
         DescriptionProfile.FLORENCE_LARGE,
         DescriptionProfile.GPU_PHI4,
+        DescriptionProfile.GPU_QWEN30B,
     }
 )
 

@@ -1378,13 +1378,26 @@ def ensure_tables(op) -> None:
         ["tenant_id", "status"],
         postgresql_where=sa.text("status IN ('pending', 'running')"),
     )
-    # Status-only: purge + load-snapshot are tenant-less RLS-bypassed queries (VLM-5).
+    # Load-snapshot active counts only — a tenant-less RLS-bypassed query (VLM-5).
+    # The retention purge scans TERMINAL single runs and cannot use this index;
+    # it has its own partial index below (VLM5-S1A-BR-04).
     _ensure_index(
         op,
         "idx_image_description_runs_single_active",
         "image_description_runs",
         ["status"],
         postgresql_where=sa.text("run_kind = 'single' AND status IN ('pending', 'running')"),
+    )
+    # Purge scan: terminal single runs older than retention, matched on completed_at
+    # (purge_expired_single_runs, VLM-5 design (d)).
+    _ensure_index(
+        op,
+        "idx_image_description_runs_single_terminal",
+        "image_description_runs",
+        ["completed_at"],
+        postgresql_where=sa.text(
+            "run_kind = 'single' AND status IN ('completed', 'completed_with_errors', 'failed', 'cancelled')"
+        ),
     )
 
     _ensure_table(

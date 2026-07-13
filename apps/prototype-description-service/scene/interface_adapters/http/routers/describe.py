@@ -33,7 +33,7 @@ from recognition.interface_adapters.http.deps.demo_quota import maybe_consume_de
 from recognition.interface_adapters.http.middleware.metrics import get_default_metrics
 from recognition.shared.db.dialect import is_postgres
 from scene.application.describe_async_worker import run_async_describe_job
-from scene.application.describe_load import load_snapshot, write_load_snapshot
+from scene.application.describe_load import load_snapshot, resolve_load_path, write_load_snapshot
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.description_repository import ImageDescriptionRepository
 from scene.application.fusion.reconcile import (
@@ -625,7 +625,7 @@ async def _maybe_dump_describe_load(session_factory: async_sessionmaker[AsyncSes
     """Best-effort DB-derived load write for the GPU idle reaper (VLMFIX-S2-01)."""
     if session_factory is None:
         return
-    path = os.environ.get("ACX_DESCRIBE_LOAD_PATH", "/run/acx/describe-load.json")
+    path = resolve_load_path()
     try:
 
         async def _write(session) -> None:

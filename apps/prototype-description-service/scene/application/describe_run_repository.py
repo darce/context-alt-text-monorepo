@@ -159,13 +159,24 @@ class DescribeRunRepository:
         visual_facts: dict[str, Any],
         now: datetime | None = None,
     ) -> bool:
-        """Persist GPU-final envelope and mark the item terminal completed."""
+        """Persist GPU-final envelope and mark the item terminal completed.
+
+        Returns True only when the FINAL envelope is persisted on the item —
+        either by this call or by a prior FINAL_GPU write (idempotent re-run).
+        A terminal item in any other state (degraded/failed/cancelled) returns
+        False WITHOUT writing: the envelope is dropped, and callers must gate
+        the image_descriptions cache write on this return (VLM5-S1A-BR-02).
+        """
         now = now or datetime.now(tz=UTC)
         item = await self._get_item(tenant_id=tenant_id, run_id=run_id, media_id=media_id)
         if item is None:
             return False
         if DescribeItemStatus(item.status) in TERMINAL_ITEM_STATUSES:
-            return DescribeItemStatus(item.status) is DescribeItemStatus.COMPLETED
+            return (
+                DescribeItemStatus(item.status) is DescribeItemStatus.COMPLETED
+                and item.tier is not None
+                and DescriptionResultTier(item.tier) is DescriptionResultTier.FINAL_GPU
+            )
         item.status = DescribeItemStatus.COMPLETED
         item.completed_at = now
         item.visual_facts = visual_facts
@@ -186,13 +197,29 @@ class DescribeRunRepository:
         error: str,
         now: datetime | None = None,
     ) -> bool:
-        """Keep provisional visual_facts; mark completed with last_error (projects degraded)."""
+        """Keep provisional visual_facts; mark completed with last_error (projects degraded).
+
+        Degraded requires a persisted provisional envelope (plan Terminology:
+        degraded = GPU failure AFTER a provisional). Without ``visual_facts``
+        this delegates to the FAILED path — mirroring the reclaim branch — so a
+        facts-less item can never project DEGRADED with a null result payload
+        (VLM5-S1A-BR-03).
+        """
         now = now or datetime.now(tz=UTC)
         item = await self._get_item(tenant_id=tenant_id, run_id=run_id, media_id=media_id)
         if item is None:
             return False
         if DescribeItemStatus(item.status) in TERMINAL_ITEM_STATUSES:
             return DescribeItemStatus(item.status) is DescribeItemStatus.COMPLETED and item.last_error is not None
+        if item.visual_facts is None:
+            return await self.mark_item(
+                tenant_id=tenant_id,
+                run_id=run_id,
+                media_id=media_id,
+                status=DescribeItemStatus.FAILED,
+                error_message=error,
+                now=now,
+            )
         item.status = DescribeItemStatus.COMPLETED
         item.completed_at = now
         item.tier = item.tier or DescriptionResultTier.PROVISIONAL_CPU

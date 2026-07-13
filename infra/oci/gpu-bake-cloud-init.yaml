@@ -1,13 +1,19 @@
 #cloud-config
 # ACX GPU golden-image BAKE host (VLM-3B Slice 7a).
-# Unlike gpu-cloud-init.yaml (which assumes a pre-baked image), this bootstraps a
-# stock Ubuntu 24.04 A10 from scratch: NVIDIA driver + Docker + nvidia-container-toolkit,
-# pulls llama.cpp:server-cuda, downloads the pinned Qwen3-VL-30B-A3B-Instruct Q4 GGUF
-# + F16 mmproj, writes SHA256SUMS, and serves :8000. Capture a custom image from this
-# host once /opt/acx-gpu/BAKE_COMPLETE exists and :8000 is healthy, then terminate it.
-# Progress is written to /opt/acx-gpu/bake.log; poll it over the acx-backend jump host.
+# Bootstraps a stock Ubuntu 24.04 A10 from scratch: NVIDIA driver + Docker +
+# nvidia-container-toolkit, pulls llama.cpp:server-cuda, downloads the pinned
+# Qwen3-VL-30B-A3B-Instruct Q4 GGUF + F16 mmproj, writes SHA256SUMS, verifies the
+# endpoint serves on :8000, then POWERS OFF so the boot volume can be captured as a
+# custom image.
+#
+# OBSERVABILITY: the subnet security list only permits SSH from one operator IP, so
+# this host is driven UNATTENDED and self-reports via the SERIAL CONSOLE (readable
+# from the control plane with `oci compute console-history`). Step markers + the final
+# ACX_BAKE_SUCCESS / ACX_BAKE_FAILED line go to /dev/console; full output is in
+# /opt/acx-gpu/bake.log. On completion (success or failure) the host runs `poweroff`,
+# so the OCI lifecycle state goes STOPPED = "bake finished" — poll that from the CLI.
 
-package_update: true
+package_update: false
 package_upgrade: false
 
 write_files:
@@ -15,7 +21,7 @@ write_files:
     permissions: "0755"
     content: |
       #!/usr/bin/env bash
-      # Unattended golden-image bake. Idempotent-ish; safe to re-run.
+      # Unattended golden-image bake with serial-console self-reporting.
       set -uo pipefail
       LOG=/opt/acx-gpu/bake.log
       MODELS=/opt/acx-gpu/models
@@ -23,63 +29,50 @@ write_files:
       Q4=Qwen3VL-30B-A3B-Instruct-Q4_K_M.gguf
       MMPROJ=mmproj-Qwen3VL-30B-A3B-Instruct-F16.gguf
       mkdir -p "$MODELS" /opt/acx-gpu/results
+      say(){ echo "ACX_BAKE_STEP $(date -u +%FT%TZ) $*" | tee -a "$LOG" > /dev/console; }
+      finish(){ echo "$1 $(date -u +%FT%TZ) $2" | tee -a "$LOG" > /dev/console; sync; sleep 5; /sbin/poweroff; exit 0; }
       exec >>"$LOG" 2>&1
       set -x
-      echo "=== BAKE START $(date -u +%FT%TZ) ==="
-
-      # 1. NVIDIA driver (Ampere A10; -server variant tracks the datacenter branch).
       export DEBIAN_FRONTEND=noninteractive
-      apt-get update
-      apt-get install -y build-essential dkms curl ca-certificates gnupg jq
-      apt-get install -y nvidia-driver-550-server || apt-get install -y nvidia-driver-535-server
+      APT="apt-get -o DPkg::Lock::Timeout=600 -y"
+
+      say "1/6 apt base packages"
+      $APT update || finish ACX_BAKE_FAILED "phase=apt_update"
+      $APT install build-essential dkms curl ca-certificates gnupg jq || finish ACX_BAKE_FAILED "phase=apt_base"
+
+      say "2/6 nvidia driver"
+      $APT install nvidia-driver-550-server || $APT install nvidia-driver-535-server || finish ACX_BAKE_FAILED "phase=nvidia_driver"
       modprobe nvidia || true
 
-      # 2. Docker.
+      say "3/6 docker"
       install -m 0755 -d /etc/apt/keyrings
-      curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-      chmod a+r /etc/apt/keyrings/docker.gpg
+      curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg && chmod a+r /etc/apt/keyrings/docker.gpg
       . /etc/os-release
-      echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" \
-        > /etc/apt/sources.list.d/docker.list
-      apt-get update
-      apt-get install -y docker-ce docker-ce-cli containerd.io
+      echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" > /etc/apt/sources.list.d/docker.list
+      $APT update && $APT install docker-ce docker-ce-cli containerd.io || finish ACX_BAKE_FAILED "phase=docker"
 
-      # 3. nvidia-container-toolkit.
+      say "4/6 nvidia-container-toolkit"
       curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor -o /etc/apt/keyrings/nvidia-container-toolkit.gpg
       curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
-        | sed 's#deb https://#deb [signed-by=/etc/apt/keyrings/nvidia-container-toolkit.gpg] https://#g' \
-        > /etc/apt/sources.list.d/nvidia-container-toolkit.list
-      apt-get update
-      apt-get install -y nvidia-container-toolkit
-      nvidia-ctk runtime configure --runtime=docker
-      systemctl restart docker
+        | sed 's#deb https://#deb [signed-by=/etc/apt/keyrings/nvidia-container-toolkit.gpg] https://#g' > /etc/apt/sources.list.d/nvidia-container-toolkit.list
+      $APT update && $APT install nvidia-container-toolkit || finish ACX_BAKE_FAILED "phase=nvidia_toolkit"
+      nvidia-ctk runtime configure --runtime=docker && systemctl restart docker || finish ACX_BAKE_FAILED "phase=docker_gpu_runtime"
+      docker pull ghcr.io/ggerganov/llama.cpp:server-cuda || finish ACX_BAKE_FAILED "phase=image_pull"
 
-      # 4. Pull the serving image.
-      docker pull ghcr.io/ggerganov/llama.cpp:server-cuda
-
-      # 5. Download pinned weights (resumable).
-      curl -fL --retry 5 --retry-delay 10 -C - -o "$MODELS/qwen3-vl-30b-a3b-instruct-q4.gguf"      "$REPO/$Q4"
-      curl -fL --retry 5 --retry-delay 10 -C - -o "$MODELS/qwen3-vl-30b-a3b-instruct-mmproj.gguf"  "$REPO/$MMPROJ"
-
-      # 6. Pin the quant (SEC-10 / VLMFIX-S1-08 verify path).
+      say "5/6 download weights (18.6GB Q4 + F16 mmproj)"
+      curl -fL --retry 5 --retry-delay 10 -C - -o "$MODELS/qwen3-vl-30b-a3b-instruct-q4.gguf"     "$REPO/$Q4"     || finish ACX_BAKE_FAILED "phase=dl_q4"
+      curl -fL --retry 5 --retry-delay 10 -C - -o "$MODELS/qwen3-vl-30b-a3b-instruct-mmproj.gguf" "$REPO/$MMPROJ" || finish ACX_BAKE_FAILED "phase=dl_mmproj"
       ( cd "$MODELS" && sha256sum qwen3-vl-30b-a3b-instruct-q4.gguf qwen3-vl-30b-a3b-instruct-mmproj.gguf > SHA256SUMS )
       chown -R ubuntu:ubuntu /opt/acx-gpu
+      nvidia-smi > /opt/acx-gpu/nvidia-smi.txt 2>&1 || finish ACX_BAKE_FAILED "phase=nvidia_smi"
 
-      # 7. Enable + start the serving unit (same as golden gpu-cloud-init.yaml).
-      systemctl daemon-reload
-      systemctl enable acx-gpu-vlm.service
-      systemctl start acx-gpu-vlm.service
-
-      # 8. Verify GPU + endpoint, then drop the completion marker.
-      nvidia-smi > /opt/acx-gpu/nvidia-smi.txt 2>&1 || echo "WARN nvidia-smi failed" >> /opt/acx-gpu/bake.log
-      for i in $(seq 1 60); do
-        if curl -fsS http://127.0.0.1:8000/v1/models >/dev/null 2>&1; then
-          echo "ENDPOINT_READY $(date -u +%FT%TZ)" > /opt/acx-gpu/BAKE_COMPLETE
-          break
-        fi
+      say "6/6 enable+verify endpoint :8000"
+      systemctl daemon-reload && systemctl enable acx-gpu-vlm.service && systemctl start acx-gpu-vlm.service
+      for i in $(seq 1 90); do
+        curl -fsS http://127.0.0.1:8000/v1/models >/dev/null 2>&1 && { echo "ENDPOINT_READY" > /opt/acx-gpu/BAKE_COMPLETE; finish ACX_BAKE_SUCCESS "endpoint_ready gpu=$(sed -n 's/.*\(NVIDIA A10\).*/\1/p;q' /opt/acx-gpu/nvidia-smi.txt 2>/dev/null)"; }
         sleep 10
       done
-      echo "=== BAKE END $(date -u +%FT%TZ) ==="
+      finish ACX_BAKE_FAILED "phase=endpoint_timeout"
 
   - path: /etc/systemd/system/acx-gpu-vlm.service
     permissions: "0644"
@@ -113,4 +106,5 @@ write_files:
 
 runcmd:
   - mkdir -p /opt/acx-gpu/models /opt/acx-gpu/results
+  - echo "ACX_BAKE_STEP $(date -u +%FT%TZ) 0/6 cloud-init runcmd start" > /dev/console
   - nohup /usr/local/bin/acx-gpu-bake.sh &

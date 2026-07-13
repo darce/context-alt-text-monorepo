@@ -11,6 +11,8 @@
 
 There is no workaround through the CLI; we had to import and call the library function directly.
 
+Worse, wiring the hook is not even sufficient: **Defect 4** shows that in a package-mode (uv-tool) consumer install the reinject hook can never reach the embeddings runtime, because its interpreter self-heal only probes a repo `.venv` / vendored `packages/.../src` that a consumer overlay does not have. So the end-to-end story "enable semantic embeddings" is currently unshippable to a package-mode consumer without manual intervention outside the documented surface.
+
 ---
 
 ## Defect 1 — `main()` reads `args.no_embeddings` for a subcommand that never defines it (`AttributeError`)
@@ -74,7 +76,32 @@ reinjection is dead instrumentation until the hook is installed
 
 The remediation it names is `apply-hooks --install-claude-reinject-hook-local` — which is exactly the crashing command. A user who follows `doctor`'s own advice on a fresh install hits a traceback with no hint that the tool, not their repo, is broken.
 
-## Defect 4 (minor, separate) — misleading `provision-embeddings` diagnostic
+## Defect 4 (major, separate) — reinject hook cannot reach embeddings in package-mode installs
+
+Even once the hook is wired (via the Defect 1–2 workaround) and the `[embeddings]` extra is installed, **the `SessionStart` reinject hook still cannot do semantic reinjection in a package-mode (uv-tool) consumer install.** The wiring is cosmetic; the runtime path is broken.
+
+Root cause — interpreter resolution assumes artifacts a consumer install does not have:
+
+- The hook command is `python3 "$CLAUDE_PROJECT_DIR/scripts/hooks/reinject-context.py"`. Under the harness that resolves to the ambient `python3` (here `~/.pyenv/shims/python3`), which has **no** real `workbay_handoff_mcp` (`import workbay_handoff_mcp.embeddings.reinjection` → `ModuleNotFoundError: No module named 'workbay_handoff_mcp.embeddings'`).
+- `scripts/hooks/_interp.py::ensure_deps_interpreter()` self-heals by re-execing under a project **`.venv`** (`_venv_python()` probes `<toplevel>/.venv/bin/python` and the primary checkout's `.venv`). A package-mode consumer install has **no `.venv`** — the stack lives in `~/.local/share/uv/tools/mcp-workbay-handoff/`, which `_interp` never probes.
+- `reinject-context.py::_ensure_in_repo_sources_on_path()` also prepends `packages/mcp-workbay-handoff/src` / `packages/workbay-protocol/src` — vendored source trees that exist in the **source monorepo**, not in a consumer overlay.
+
+So the only interpreter the hook can find is one without the package, and the one interpreter that *does* have `[embeddings]` (the `mcp-workbay-handoff` uv-tool venv) is invisible to the resolution logic. The hook degrades to the lexical/duck-typed fallback and semantic reinjection silently never fires.
+
+`doctor` sees the symptom but not the cause:
+
+```
+reinject_readiness_unavailable: (no .venv python found) — semantic reinject is wired and
+armed but not ready: cannot import workbay_handoff_mcp.embeddings.reinjection via
+(no .venv python found); remedy: install the runtime extra into that interpreter's venv:
+`uv pip install 'mcp-workbay-handoff[embeddings]'` (or `uv sync --extra embeddings`)
+```
+
+The remedy it prints presupposes a `.venv` and a `pyproject`/`uv.lock`, neither of which a package-mode consumer has. There is **no documented package-mode path** to make the reinject hook reach embeddings.
+
+**Ask:** teach `_interp`/`reinject-context.py` to discover the uv-tool interpreter that owns `mcp-workbay-handoff` (e.g. resolve the `mcp-workbay-handoff` console-script shebang, the same technique `scripts/workbay/update.sh` already uses to find the runtime), or support an explicit `WORKBAY_HANDOFF_PYTHON` / `WORKBAY_HANDOFF_BIN` override the hook honors before falling back to `.venv` probing. Then make `doctor`'s remedy string branch on install mode (`source_kind=package` vs a `.venv`-bearing dev checkout). Verified via console-script path that embeddings themselves work end-to-end (backfill stored 6,638 concept embeddings; `semantic-reinjection-packet` returns `status: selected`, cosine ~0.69) — only the *hook's* interpreter resolution is the gap.
+
+## Defect 5 (minor, separate) — misleading `provision-embeddings` diagnostic
 
 Unrelated to the crash but surfaced in the same session. On the `workbay` front-door venv, `provision-embeddings` prints:
 
@@ -99,11 +126,13 @@ Related install-UX gap: a clean git-mirror install does not include the `[embedd
   ```
 
   This correctly merged the adapter into `.claude/settings.local.json`. Re-verify after each upgrade until the CLI is fixed.
-- **Embeddings extra (Defect 4):** reinstalled the handoff uv tool with the extra:
+- **Embeddings extra (Defect 5):** reinstalled the handoff uv tool with the extra:
   `uv tool install --no-sources --reinstall --from "mcp-workbay-handoff[embeddings] @ git+https://github.com/darce/workbay.git@workbay-v0.3.18#subdirectory=packages/mcp-workbay-handoff" ... mcp-workbay-handoff`
+- **Reinject hook reachability (Defect 4):** unresolved — semantic reinjection works only through the `mcp-workbay-handoff` console; the `SessionStart` hook stays on the lexical fallback until `_interp` can find the uv-tool interpreter (or we stand up a repo `.venv` carrying `mcp-workbay-handoff[embeddings]` for the hook to self-heal into).
 
 ## Ask
 
 1. **Fix the crash (Defects 1–2):** remove `no_embeddings=args.no_embeddings` from the `apply-hooks` dispatch at `cli.py:1234`; audit `cli.py:1294` for the same pattern. Add a smoke test that runs `apply-hooks --target <tmp> --install-claude-reinject-hook-local` end-to-end (the parser→dispatch→function boundary is currently untested, or the `Namespace`/signature mismatch would have failed CI).
 2. **Fix the guidance (Defect 3):** ensure `doctor`'s remediation string names a command that actually runs; ideally have a clean install with the gate armed wire the reinject adapter itself.
-3. **Fix the diagnostic + install UX (Defect 4):** correct the "not importable" message to distinguish a missing package from a missing optional extra, and provision the `[embeddings]` extra (or document it as required) when the embedding gate is enabled.
+3. **Make the reinject hook reach embeddings in package mode (Defect 4):** resolve the uv-tool interpreter that owns `mcp-workbay-handoff` (console-script shebang) or honor a `WORKBAY_HANDOFF_PYTHON`/`WORKBAY_HANDOFF_BIN` override in `_interp`/`reinject-context.py`; branch `doctor`'s remedy on `source_kind`. This is the actual blocker for "turn on embeddings" on a package-mode consumer.
+4. **Fix the diagnostic + install UX (Defect 5):** correct the "not importable" message to distinguish a missing package from a missing optional extra, and provision the `[embeddings]` extra (or document it as required) when the embedding gate is enabled.

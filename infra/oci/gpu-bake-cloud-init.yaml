@@ -1,0 +1,116 @@
+#cloud-config
+# ACX GPU golden-image BAKE host (VLM-3B Slice 7a).
+# Unlike gpu-cloud-init.yaml (which assumes a pre-baked image), this bootstraps a
+# stock Ubuntu 24.04 A10 from scratch: NVIDIA driver + Docker + nvidia-container-toolkit,
+# pulls llama.cpp:server-cuda, downloads the pinned Qwen3-VL-30B-A3B-Instruct Q4 GGUF
+# + F16 mmproj, writes SHA256SUMS, and serves :8000. Capture a custom image from this
+# host once /opt/acx-gpu/BAKE_COMPLETE exists and :8000 is healthy, then terminate it.
+# Progress is written to /opt/acx-gpu/bake.log; poll it over the acx-backend jump host.
+
+package_update: true
+package_upgrade: false
+
+write_files:
+  - path: /usr/local/bin/acx-gpu-bake.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      # Unattended golden-image bake. Idempotent-ish; safe to re-run.
+      set -uo pipefail
+      LOG=/opt/acx-gpu/bake.log
+      MODELS=/opt/acx-gpu/models
+      REPO=https://huggingface.co/Qwen/Qwen3-VL-30B-A3B-Instruct-GGUF/resolve/main
+      Q4=Qwen3VL-30B-A3B-Instruct-Q4_K_M.gguf
+      MMPROJ=mmproj-Qwen3VL-30B-A3B-Instruct-F16.gguf
+      mkdir -p "$MODELS" /opt/acx-gpu/results
+      exec >>"$LOG" 2>&1
+      set -x
+      echo "=== BAKE START $(date -u +%FT%TZ) ==="
+
+      # 1. NVIDIA driver (Ampere A10; -server variant tracks the datacenter branch).
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y build-essential dkms curl ca-certificates gnupg jq
+      apt-get install -y nvidia-driver-550-server || apt-get install -y nvidia-driver-535-server
+      modprobe nvidia || true
+
+      # 2. Docker.
+      install -m 0755 -d /etc/apt/keyrings
+      curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+      chmod a+r /etc/apt/keyrings/docker.gpg
+      . /etc/os-release
+      echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" \
+        > /etc/apt/sources.list.d/docker.list
+      apt-get update
+      apt-get install -y docker-ce docker-ce-cli containerd.io
+
+      # 3. nvidia-container-toolkit.
+      curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor -o /etc/apt/keyrings/nvidia-container-toolkit.gpg
+      curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+        | sed 's#deb https://#deb [signed-by=/etc/apt/keyrings/nvidia-container-toolkit.gpg] https://#g' \
+        > /etc/apt/sources.list.d/nvidia-container-toolkit.list
+      apt-get update
+      apt-get install -y nvidia-container-toolkit
+      nvidia-ctk runtime configure --runtime=docker
+      systemctl restart docker
+
+      # 4. Pull the serving image.
+      docker pull ghcr.io/ggerganov/llama.cpp:server-cuda
+
+      # 5. Download pinned weights (resumable).
+      curl -fL --retry 5 --retry-delay 10 -C - -o "$MODELS/qwen3-vl-30b-a3b-instruct-q4.gguf"      "$REPO/$Q4"
+      curl -fL --retry 5 --retry-delay 10 -C - -o "$MODELS/qwen3-vl-30b-a3b-instruct-mmproj.gguf"  "$REPO/$MMPROJ"
+
+      # 6. Pin the quant (SEC-10 / VLMFIX-S1-08 verify path).
+      ( cd "$MODELS" && sha256sum qwen3-vl-30b-a3b-instruct-q4.gguf qwen3-vl-30b-a3b-instruct-mmproj.gguf > SHA256SUMS )
+      chown -R ubuntu:ubuntu /opt/acx-gpu
+
+      # 7. Enable + start the serving unit (same as golden gpu-cloud-init.yaml).
+      systemctl daemon-reload
+      systemctl enable acx-gpu-vlm.service
+      systemctl start acx-gpu-vlm.service
+
+      # 8. Verify GPU + endpoint, then drop the completion marker.
+      nvidia-smi > /opt/acx-gpu/nvidia-smi.txt 2>&1 || echo "WARN nvidia-smi failed" >> /opt/acx-gpu/bake.log
+      for i in $(seq 1 60); do
+        if curl -fsS http://127.0.0.1:8000/v1/models >/dev/null 2>&1; then
+          echo "ENDPOINT_READY $(date -u +%FT%TZ)" > /opt/acx-gpu/BAKE_COMPLETE
+          break
+        fi
+        sleep 10
+      done
+      echo "=== BAKE END $(date -u +%FT%TZ) ==="
+
+  - path: /etc/systemd/system/acx-gpu-vlm.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=ACX GPU VLM endpoint
+      Requires=docker.service
+      After=docker.service
+      StartLimitIntervalSec=120
+      StartLimitBurst=3
+
+      [Service]
+      Type=exec
+      ExecStart=/usr/bin/docker run --rm --gpus all \
+        --name acx-gpu-vlm \
+        -p 8000:8000 \
+        -v /opt/acx-gpu/models:/models:ro \
+        ghcr.io/ggerganov/llama.cpp:server-cuda \
+        --host 0.0.0.0 \
+        --port 8000 \
+        --model /models/qwen3-vl-30b-a3b-instruct-q4.gguf \
+        --mmproj /models/qwen3-vl-30b-a3b-instruct-mmproj.gguf \
+        --ctx-size 8192
+      ExecStop=/usr/bin/docker stop acx-gpu-vlm
+      Restart=on-failure
+      RestartSec=10
+      TimeoutStartSec=900
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - mkdir -p /opt/acx-gpu/models /opt/acx-gpu/results
+  - nohup /usr/local/bin/acx-gpu-bake.sh &

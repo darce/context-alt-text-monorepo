@@ -268,7 +268,7 @@ run)
         exit \$overall"
     ;;
 *)
-    sed -n '2,28p' "$0" >&2
+    sed -n '2,33p' "$0" >&2
     exit 2
     ;;
 esac

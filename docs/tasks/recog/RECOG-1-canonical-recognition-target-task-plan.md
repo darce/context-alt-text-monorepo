@@ -56,6 +56,7 @@ The codemap-grounded inventory (`RECOG-1-inventory.md`, 58 rows / 10 surprises) 
 
 - Cross-boundary: touches the plugin↔recognition proxy contract (headers, target resolution) and the settings REST shape. Contract table below.
 - Keep `class-recognition-endpoint-resolver.php` precedence (constant → filter → option → default) intact; only the option tier + default value change.
+- **Hatch-validator constraint [RECOG-1-REV-01]**: `is_valid_recognition_source()` (settings-controller ~L587) is shared by the save-path **and** the resolver's constant/filter validation of the dev hatch. It MUST stay dual-valued (`service|local`). The retirement removes the *write* of `acx_recognition_source` in `save_settings`, NOT the validator's `local` acceptance — narrowing the validator to service-only would silently reject `define('ACX_RECOGNITION_SOURCE','local')` and kill the hatch. Same for any `local` handling the resolver depends on.
 - Frontend token discipline (sr-004) for any Settings UI change; the target-card component and its SCSS are already token-clean (WBUX-DEEMPH-A11Y).
 - No secrets in code/config [WEB-16]. Minting keys printed once, never committed.
 
@@ -113,7 +114,8 @@ Proof: `vendor/bin/phpunit --filter RecognitionEndpointResolver` green; default 
 **Goal**: The product presents a single hosted-service configuration everywhere; no local URL field, source toggle, local target card/probe, or local banners.
 
 Changes:
-- `settings-controller.php`: drop the `acx_recognition_local_url` write + `local` from UI-posted `recognition_source`/`probe_target` validation; **remove the unauthenticated local `/health` probe path** [SEC-04]. GET snapshot keeps read-only `effective_target_*` + `recognition_source` diagnostics.
+- `settings-controller.php`: drop the `acx_recognition_source` + `acx_recognition_local_url` **write blocks** in `save_settings` and drop `local` from the UI-posted `probe_target` path; **remove the unauthenticated local `/health` probe path** [SEC-04]. **Keep `is_valid_recognition_source()` dual-valued** (hatch validator, see Constraints [REV-01]).
+- **GET/`get_settings()` snapshot shape [RECOG-1-REV-02]**: STOP emitting `local_url` and `local_url_source`; KEEP `effective_target_url`, `effective_target_mode`, and read-only `recognition_source`/`recognition_source_source` (hatch diagnostics). The TS `SettingsResponse` (`settingsApi.ts`) and the exact-key `settingsResponseContract.test.ts` must be updated to this exact trimmed shape in the same slice — no PHP-emits-vs-TS-drops drift.
 - FE: `SettingsForm.tsx` (remove `TargetCardGroup` radio, local card, local URL input, local probe), `useSettingsPageState.ts` (drop `localUrl`/source actions), `SettingsPage.tsx` (drop `local_url`/source from save + `localUrlReadOnly`), `settingsApi.ts` (drop `local_url*` types + `local` probe mode), `healthStatus.ts` (drop local branch), `config.ts` (**stop defaulting `effectiveTargetUrl` to localhost** → empty/service). Collapse the service card to a non-radio single form; re-design the state matrix (loading/empty/error/unpaired/offline) for one target incl. focus + `role=status` announcements [RLSE-04 ↔ A11Y-24].
 - Notices: `WorkbenchPage.tsx:100-110` local-mode banner + `class-admin.php:render_recognition_config_notice` — remove, or reword to a constant-hatch-only diagnostic.
 - Tests: update the named set in the inventory §4.1 — `SettingsControllerTest`, `AdminTest`, `SettingsPage.test.tsx`, `healthStatus.test.ts`, `settingsResponseContract.test.ts`, `WorkbenchPage.test.tsx`, e2e `wp-rest.ts` + `workbench-evidence`/`scan-runtime-evidence`; keep `settings-axe` green.
@@ -146,6 +148,15 @@ Proof: `dev-mint-key`/`provision-customer` help asserts scope; smokes run agains
 | Smokes | `scripts/localwp/batch-run-smoke.php`, `describe-run-smoke.php` | retarget off hard-required local source | S3 |
 | Env bootstrap (optional) | `alt-context.php` | optionally `acx_define_env_constant` for SOURCE/LOCAL_URL (hatch via `.env`) | S1 |
 | Tests | inventory §4.1 (~35 named methods across PHP unit + TS unit + e2e) | update default/local/probe/contract assertions | S1-S3 |
+
+## Canonical post-flip assertions [RECOG-1-REV-03]
+
+The ~35 test updates (inventory §4.1) all converge on one new baseline. Implementers assert against these exact expectations, not just "update":
+
+- **Fresh/unconfigured install** (no options, no constants): `recognition_source = 'service'`, `recognition_source_source = 'default'`, `effective_target_mode = 'service'`, `effective_target_url = ''` (empty — service URL not configured), and the Settings "service not configured" empty-CTA state renders (no local card, no `local_url` field/keys in the snapshot).
+- **Service configured** (url+key set): effective target = the service URL; proxy sends tenant+key; health probe hits `/health/detailed`.
+- **Dev hatch** (`define('ACX_RECOGNITION_SOURCE','local')` + `ACX_RECOGNITION_LOCAL_URL`): resolver still resolves local (constant tier); `is_valid_recognition_source('local')` still true; NO Settings UI exposure.
+- **Removed**: no test asserts a `local_url` write, a `probe_target=local` dispatch, a keyless local `/health` probe, or the Workbench/admin local banner (those tests are deleted or inverted to assert absence).
 
 ## Verification Strategy
 

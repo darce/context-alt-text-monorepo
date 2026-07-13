@@ -302,6 +302,17 @@ check-all:
 pre-merge:
 	@$(MAKE) check-all
 
+# Offload gate suites to the remote test host (unprivileged, resource-capped
+# gate user over Tailscale SSH). Host/dir/targets come from the operator-local
+# .workbay/remote-gate.env (gitignored) or WORKBAY_REMOTE_GATE_* env vars —
+# there is deliberately no baked-in host (fail-closed, exit 78 when unset).
+# Only committed HEAD is gated. See docs/runbooks/remote-test-gate.md.
+#   make check-remote                          # configured/default targets
+#   make check-remote TARGETS="test lint"      # explicit target list
+.PHONY: check-remote
+check-remote:
+	@bash scripts/remote_gate.sh run $(TARGETS)
+
 # Guard: every editable current-pin reference to the workbay MCP packages must
 # match the Makefile MCP_*_PACKAGE canonical. Frozen records (docs/adrs|specs|tasks)
 # are exempt; overlay manifest + range/git+ssh forms surface as advisories.

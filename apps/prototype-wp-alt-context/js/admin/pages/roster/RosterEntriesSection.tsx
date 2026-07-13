@@ -4,7 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 import type { RosterEntry } from '../../api/rosterApi';
 import { RosterEntriesTable } from './RosterEntriesTable';
 import { useCreatePerson } from '../../hooks/useRosterHooks';
-import { UserPlus, Plus, Users, X } from 'lucide-react';
+import { Filter, UserPlus, Plus, Users, X } from 'lucide-react';
 
 type QueueFilterId = RosterEntry['queue_memberships'][number];
 
@@ -167,7 +167,12 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
       <header className="acx-roster-section__header">
         <div className="acx-roster-section__title-group">
           <h2>{__('Managed Identities', 'alt-context')}</h2>
-          {activeFilterBadge && <span className="acx-roster-section__filter-badge">{activeFilterBadge}</span>}
+          {activeFilterBadge && (
+            <span className="acx-roster-section__filter-badge" data-testid="roster-filter-badge">
+              <Filter size={12} aria-hidden="true" data-testid="roster-filter-badge-icon" />
+              {activeFilterBadge}
+            </span>
+          )}
         </div>
         {!isAdding && (
           <button type="button" className="acx-button acx-button--primary" onClick={() => setIsAdding(true)}>

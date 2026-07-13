@@ -132,7 +132,12 @@ export const ClusterEditForm = ({
                           : 'acx-identity-cluster__match-score--medium'
                       }`}
                     >
-                      {Math.round((option.similarity as number) * 100)}%
+                      {Math.round((option.similarity as number) * 100)}%{' '}
+                      <span className="acx-identity-cluster__match-score-band">
+                        {(option.similarity as number) >= 0.7
+                          ? __('high', 'alt-context')
+                          : __('medium', 'alt-context')}
+                      </span>
                     </span>
                   )}
                 </button>

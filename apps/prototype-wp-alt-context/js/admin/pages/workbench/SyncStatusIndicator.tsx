@@ -93,11 +93,21 @@ const SyncStatusStrip = ({
           <a
             href={presentation.badgeHref}
             className={`acx-sync-status__badge acx-sync-status__link${badgeOk ? ' acx-sync-status__badge--ok' : ''}`}
+            data-badge-state={badgeOk ? 'ok' : 'attention'}
           >
+            <span className="acx-sync-status__badge-mark" aria-hidden="true">
+              {badgeOk ? '\u2713' : '!'}
+            </span>
             {presentation.badge}
           </a>
         ) : (
-          <span className={`acx-sync-status__badge${badgeOk ? ' acx-sync-status__badge--ok' : ''}`}>
+          <span
+            className={`acx-sync-status__badge${badgeOk ? ' acx-sync-status__badge--ok' : ''}`}
+            data-badge-state={badgeOk ? 'ok' : 'attention'}
+          >
+            <span className="acx-sync-status__badge-mark" aria-hidden="true">
+              {badgeOk ? '\u2713' : '!'}
+            </span>
             {presentation.badge}
           </span>
         )

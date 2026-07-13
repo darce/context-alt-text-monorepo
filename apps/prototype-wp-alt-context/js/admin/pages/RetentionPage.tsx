@@ -1,5 +1,6 @@
 import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
+import { AlertTriangle } from 'lucide-react';
 
 import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group';
 import type { RetentionMode } from '../api/recognition';
@@ -167,8 +168,16 @@ export const RetentionPage = (): React.JSX.Element => {
           <p className="acx-retention__detail">
             {sprintf(__('Last purge: %s', 'alt-context'), formatTimestamp(policy.last_purge_at))}
           </p>
-          <p className="acx-retention__note acx-retention__note--danger">
-            {__('This action is irreversible and should be used carefully.', 'alt-context')}
+          <p className="acx-retention__note acx-retention__note--danger" role="status">
+            <AlertTriangle
+              className="acx-retention__note-icon"
+              size={16}
+              aria-hidden="true"
+              data-testid="acx-retention-danger-icon"
+            />
+            <span>
+              {__('This action is irreversible and should be used carefully.', 'alt-context')}
+            </span>
           </p>
           <button
             type="button"

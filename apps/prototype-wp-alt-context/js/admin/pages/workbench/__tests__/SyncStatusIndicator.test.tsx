@@ -161,6 +161,31 @@ describe('SyncStatusIndicator', () => {
     expect(screen.getByText(/Last sync/)).toBeInTheDocument();
   });
 
+  it('pairs badge ok/attention color with a glyph second channel', () => {
+    mockReturn.data = buildSyncStatus({ last_snapshot_version: 5, last_synced_at: '2026-02-14 12:00:00' });
+    const { container, rerender } = render(<SyncStatusIndicator />);
+
+    const okBadge = container.querySelector('.acx-sync-status__badge--ok');
+    expect(okBadge).toBeTruthy();
+    expect(okBadge).toHaveAttribute('data-badge-state', 'ok');
+    expect(okBadge?.querySelector('.acx-sync-status__badge-mark')?.textContent).toBe('✓');
+    expect(screen.getByText('Fresh')).toBeInTheDocument();
+
+    mockReturn.data = buildSyncStatus({
+      last_snapshot_version: 2,
+      last_synced_at: '2026-02-14 00:00:00',
+      is_stale: true,
+      sync_health: 'stale',
+    });
+    rerender(<SyncStatusIndicator />);
+
+    const attentionBadge = container.querySelector('.acx-sync-status__badge:not(.acx-sync-status__badge--ok)');
+    expect(attentionBadge).toBeTruthy();
+    expect(attentionBadge).toHaveAttribute('data-badge-state', 'attention');
+    expect(attentionBadge?.querySelector('.acx-sync-status__badge-mark')?.textContent).toBe('!');
+    expect(screen.getByText('Stale')).toBeInTheDocument();
+  });
+
   it('shows a retention badge link when the mode is not retain_all', () => {
     mockReturn.data = buildSyncStatus({ last_snapshot_version: 5, last_synced_at: '2026-02-14 12:00:00' });
 

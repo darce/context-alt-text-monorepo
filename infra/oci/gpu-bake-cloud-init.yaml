@@ -25,7 +25,7 @@ write_files:
       set -uo pipefail
       LOG=/opt/acx-gpu/bake.log
       MODELS=/opt/acx-gpu/models
-      REPO=https://huggingface.co/Qwen/Qwen3-VL-30B-A3B-Instruct-GGUF/resolve/main
+      REPO_ID=Qwen/Qwen3-VL-30B-A3B-Instruct-GGUF
       Q4=Qwen3VL-30B-A3B-Instruct-Q4_K_M.gguf
       MMPROJ=mmproj-Qwen3VL-30B-A3B-Instruct-F16.gguf
       mkdir -p "$MODELS" /opt/acx-gpu/results
@@ -38,7 +38,7 @@ write_files:
 
       say "1/6 apt base packages"
       $APT update || finish ACX_BAKE_FAILED "phase=apt_update"
-      $APT install build-essential dkms curl ca-certificates gnupg jq || finish ACX_BAKE_FAILED "phase=apt_base"
+      $APT install build-essential dkms curl ca-certificates gnupg jq python3-venv python3-pip || finish ACX_BAKE_FAILED "phase=apt_base"
 
       say "2/6 nvidia driver"
       $APT install nvidia-driver-550-server || $APT install nvidia-driver-535-server || finish ACX_BAKE_FAILED "phase=nvidia_driver"
@@ -59,9 +59,14 @@ write_files:
       nvidia-ctk runtime configure --runtime=docker && systemctl restart docker || finish ACX_BAKE_FAILED "phase=docker_gpu_runtime"
       docker pull ghcr.io/ggml-org/llama.cpp:server-cuda || finish ACX_BAKE_FAILED "phase=image_pull"
 
-      say "5/6 download weights (18.6GB Q4 + F16 mmproj)"
-      curl -fL --retry 5 --retry-delay 10 -C - -o "$MODELS/qwen3-vl-30b-a3b-instruct-q4.gguf"     "$REPO/$Q4"     || finish ACX_BAKE_FAILED "phase=dl_q4"
-      curl -fL --retry 5 --retry-delay 10 -C - -o "$MODELS/qwen3-vl-30b-a3b-instruct-mmproj.gguf" "$REPO/$MMPROJ" || finish ACX_BAKE_FAILED "phase=dl_mmproj"
+      say "5/6 download weights (Xet-aware hf client; 18.6GB Q4 + F16 mmproj)"
+      python3 -m venv /opt/hfvenv || finish ACX_BAKE_FAILED "phase=hf_venv"
+      /opt/hfvenv/bin/pip install -q -U "huggingface_hub[hf_xet]" || finish ACX_BAKE_FAILED "phase=hf_pip"
+      HF=/opt/hfvenv/bin/huggingface-cli
+      $HF download "$REPO_ID" "$Q4"     --local-dir /opt/acx-gpu/dl || finish ACX_BAKE_FAILED "phase=dl_q4"
+      $HF download "$REPO_ID" "$MMPROJ" --local-dir /opt/acx-gpu/dl || finish ACX_BAKE_FAILED "phase=dl_mmproj"
+      mv -f "/opt/acx-gpu/dl/$Q4"     "$MODELS/qwen3-vl-30b-a3b-instruct-q4.gguf"     || finish ACX_BAKE_FAILED "phase=mv_q4"
+      mv -f "/opt/acx-gpu/dl/$MMPROJ" "$MODELS/qwen3-vl-30b-a3b-instruct-mmproj.gguf" || finish ACX_BAKE_FAILED "phase=mv_mmproj"
       ( cd "$MODELS" && sha256sum qwen3-vl-30b-a3b-instruct-q4.gguf qwen3-vl-30b-a3b-instruct-mmproj.gguf > SHA256SUMS )
       chown -R ubuntu:ubuntu /opt/acx-gpu
       nvidia-smi > /opt/acx-gpu/nvidia-smi.txt 2>&1 || finish ACX_BAKE_FAILED "phase=nvidia_smi"

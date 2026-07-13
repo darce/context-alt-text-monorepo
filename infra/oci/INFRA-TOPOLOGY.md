@@ -1,5 +1,10 @@
 # OCI Infra Topology — discovered map (source of truth for OCIDs)
 
+> **Canonical values live in [`acx-oci.env`](acx-oci.env)** — change an OCID THERE
+> (once), not in this doc or in scripts. Shell orchestration sources it via
+> [`oci-lib.sh`](oci-lib.sh), which also provides the bake/monitor/stop/capture
+> helpers. The tables below are the human narrative; if they drift, the env wins.
+
 > **Purpose.** Snapshot of the *actual* provisioned OCI topology so agents don't
 > re-discover it each session. Captured 2026-07-13 during VLM-3B Slice 7a GPU
 > provisioning. Verify OCIDs with `oci ... get` before destructive ops — this is a

@@ -1,10 +1,17 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-const workbenchScssPath = join(__dirname, '..', '..', 'components', '_workbench.scss');
+const componentsDir = join(__dirname, '..', '..', 'components');
+const workbenchScssPath = join(componentsDir, '_workbench.scss');
 
 const readWorkbench = (): string => readFileSync(workbenchScssPath, 'utf8');
+
+const listComponentScssFiles = (): string[] =>
+  readdirSync(componentsDir)
+    .filter((name) => name.endsWith('.scss'))
+    .map((name) => join(componentsDir, name))
+    .sort();
 
 describe('REFA-3 slice 2: _workbench.scss color + shadow', () => {
   it('has no raw hex or rgba color literals', () => {
@@ -70,6 +77,42 @@ describe('E21-4 slice 2', () => {
     const offenders = source
       .split('\n')
       .filter((line) => hexLiteralRe.test(line) && !line.includes('E21-4 disposition:'));
+
+    expect(offenders).toEqual([]);
+  });
+});
+
+const e21Slice3LiteralPatterns: ReadonlyArray<{ name: string; re: RegExp }> = [
+  { name: 'font-size', re: /font-size:\s*[0-9]/ },
+  { name: 'font-weight', re: /font-weight:\s*[0-9]/ },
+  { name: 'border-radius', re: /border-radius:\s*(999px|50%|[0-9])/ },
+  { name: 'box-shadow', re: /box-shadow:\s*[0-9-]/ },
+  { name: 'hex', re: /#[0-9a-fA-F]{3,8}/ },
+  { name: 'rgb/rgba', re: /rgba?\(/ },
+];
+
+const isDispositionLine = (line: string): boolean => /disposition/i.test(line);
+
+describe('E21-4 slice 3', () => {
+  const componentFiles = listComponentScssFiles();
+
+  it('collects every components/*.scss file', () => {
+    expect(componentFiles.length).toBeGreaterThan(0);
+    expect(componentFiles.every((path) => path.endsWith('.scss'))).toBe(true);
+  });
+
+  it.each(componentFiles)('%s has no raw scale literals except disposition lines', (path) => {
+    const source = readFileSync(path, 'utf8');
+    const offenders = source
+      .split('\n')
+      .flatMap((line, index) => {
+        if (isDispositionLine(line)) {
+          return [];
+        }
+        return e21Slice3LiteralPatterns
+          .filter(({ re }) => re.test(line))
+          .map(({ name }) => `${index + 1}:${name}: ${line.trim()}`);
+      });
 
     expect(offenders).toEqual([]);
   });

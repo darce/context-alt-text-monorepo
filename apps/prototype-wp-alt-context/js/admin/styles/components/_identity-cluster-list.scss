@@ -7,7 +7,7 @@
   padding: 8px;
   background-color: var(--acx-color-surface-alt);
   border: 1px solid var(--acx-color-border);
-  border-radius: 8px;
+  border-radius: var(--acx-radius-md);
   margin-bottom: 8px;
 
   &__preview {
@@ -20,7 +20,7 @@
   &__thumb {
     width: 40px;
     height: 40px;
-    border-radius: 50%;
+    border-radius: var(--acx-radius-circle);
     object-fit: cover;
     background-color: var(--acx-gray-100);
 
@@ -48,10 +48,10 @@
     margin-left: -10px;
     background-color: var(--acx-gray-100);
     border: 2px solid var(--acx-color-surface-alt);
-    border-radius: 12px;
+    border-radius: var(--acx-radius-xl);
     padding: 2px 6px;
-    font-size: 10px;
-    font-weight: 600;
+    font-size: var(--acx-text-2xs);
+    font-weight: var(--acx-font-weight-semibold);
     color: var(--acx-color-text-muted);
     z-index: 1;
   }
@@ -65,7 +65,7 @@
   }
 
   &__label {
-    font-weight: 500;
+    font-weight: var(--acx-font-weight-medium);
     color: var(--acx-color-text);
 
     &--action {
@@ -103,10 +103,10 @@
     background: none;
     border: none;
     padding: 4px 8px;
-    font-size: 12px;
+    font-size: var(--acx-text-xs);
     color: var(--acx-color-text-muted);
     cursor: pointer;
-    border-radius: 4px;
+    border-radius: var(--acx-radius-sm);
 
     &:hover {
       background-color: var(--acx-gray-100);
@@ -139,17 +139,15 @@
     top: calc(100% + 6px);
     background: var(--acx-color-surface-alt);
     border: 1px solid var(--acx-color-border);
-    border-radius: 8px;
-    box-shadow:
-      0 8px 12px -6px rgba(15, 23, 42, 0.18),
-      0 4px 6px -4px rgba(15, 23, 42, 0.12);
+    border-radius: var(--acx-radius-md);
+    box-shadow: var(--acx-shadow-2);
     padding: 6px;
     z-index: 15;
   }
 
   &__suggestions-header {
-    font-size: 11px;
-    font-weight: 600;
+    font-size: var(--acx-text-2xs);
+    font-weight: var(--acx-font-weight-semibold);
     text-transform: uppercase;
     letter-spacing: 0.03em;
     color: var(--acx-color-text-muted);
@@ -159,7 +157,7 @@
   &__suggestion-row {
     display: flex;
     align-items: stretch;
-    border-radius: 6px;
+    border-radius: var(--acx-radius-md);
 
     &:hover {
       background-color: var(--acx-gray-50);
@@ -185,7 +183,7 @@
     background: transparent;
     text-align: left;
     cursor: pointer;
-    border-radius: 6px 0 0 6px;
+    border-radius: var(--acx-radius-md) 0 0 var(--acx-radius-md);
   }
 
   &__suggestion-actions {
@@ -200,8 +198,8 @@
     border: 1px solid var(--acx-color-success-bg);
     color: var(--acx-color-success);
     padding: 0 10px;
-    font-size: 11px;
-    border-radius: 4px;
+    font-size: var(--acx-text-2xs);
+    border-radius: var(--acx-radius-sm);
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -212,10 +210,10 @@
     background: none;
     border: none;
     padding: 0 12px;
-    font-size: 10px;
+    font-size: var(--acx-text-2xs);
     color: var(--acx-gray-400);
     cursor: pointer;
-    border-radius: 4px;
+    border-radius: var(--acx-radius-sm);
     opacity: 0;
     transition: all 0.2s;
     display: flex;
@@ -230,7 +228,7 @@
   }
 
   &__suggestion-label {
-    font-size: 13px;
+    font-size: var(--acx-text-sm);
     color: var(--acx-color-text);
   }
 
@@ -239,9 +237,9 @@
     background-color: var(--acx-color-text);
     color: var(--acx-color-surface-alt);
     border: none;
-    border-radius: 6px;
-    font-size: 14px;
-    font-weight: 500;
+    border-radius: var(--acx-radius-md);
+    font-size: var(--acx-text-sm);
+    font-weight: var(--acx-font-weight-medium);
     cursor: pointer;
 
     &:hover {
@@ -259,8 +257,8 @@
     background-color: transparent;
     color: var(--acx-color-text-muted);
     border: 1px solid var(--acx-color-border);
-    border-radius: 6px;
-    font-size: 14px;
+    border-radius: var(--acx-radius-md);
+    font-size: var(--acx-text-sm);
     cursor: pointer;
 
     &:hover {
@@ -271,7 +269,7 @@
 
   &__undo {
     margin-left: auto;
-    font-size: 12px;
+    font-size: var(--acx-text-xs);
     color: var(--acx-color-text-muted);
     display: flex;
     align-items: center;
@@ -294,7 +292,7 @@
   &__error {
     width: 100%;
     margin-top: 4px;
-    font-size: 12px;
+    font-size: var(--acx-text-xs);
     color: var(--acx-color-danger);
   }
 
@@ -303,12 +301,12 @@
     align-items: center;
     gap: 8px;
     margin-left: auto;
-    font-size: 12px;
+    font-size: var(--acx-text-xs);
     color: var(--acx-color-text-muted);
   }
 
   &__match-score {
-    font-weight: 500;
+    font-weight: var(--acx-font-weight-medium);
 
     &--high {
       color: var(--acx-color-success);
@@ -338,7 +336,7 @@
     gap: 6px;
     padding: 10px 8px;
     border: 1px solid var(--acx-color-border);
-    border-radius: 10px;
+    border-radius: var(--acx-radius-lg);
     background: var(--acx-color-surface);
     cursor: pointer;
 
@@ -354,13 +352,13 @@
     &--placeholder {
       width: 64px;
       height: 64px;
-      border-radius: 50%;
+      border-radius: var(--acx-radius-circle);
       background: var(--acx-gray-200);
     }
   }
 
   &__meta {
-    font-size: 11px;
+    font-size: var(--acx-text-2xs);
     color: var(--acx-color-text-muted);
     text-align: center;
   }
@@ -371,7 +369,7 @@
   }
 
   &__empty {
-    font-size: 13px;
+    font-size: var(--acx-text-sm);
     color: var(--acx-color-text-muted);
   }
 }
@@ -397,7 +395,7 @@
 .acx-debug-metrics {
   width: 100%;
   margin-top: 8px;
-  font-size: 11px;
+  font-size: var(--acx-text-2xs);
   border-top: 1px dashed var(--acx-color-border);
   padding-top: 8px;
 
@@ -409,9 +407,9 @@
     padding: 4px 8px;
     background: var(--acx-gray-50);
     border: 1px solid var(--acx-color-border);
-    border-radius: 4px;
+    border-radius: var(--acx-radius-sm);
     cursor: pointer;
-    font-size: 11px;
+    font-size: var(--acx-text-2xs);
     color: var(--acx-color-text-muted);
 
     &:hover {
@@ -421,7 +419,7 @@
   }
 
   &__icon {
-    font-size: 12px;
+    font-size: var(--acx-text-xs);
   }
 
   &__summary {
@@ -431,7 +429,7 @@
   }
 
   &__chevron {
-    font-size: 8px;
+    font-size: var(--acx-text-2xs);
     color: var(--acx-gray-400);
   }
 
@@ -440,7 +438,7 @@
     padding: 8px;
     background: var(--acx-gray-50);
     border: 1px solid var(--acx-color-border);
-    border-radius: 4px;
+    border-radius: var(--acx-radius-sm);
     display: grid;
     grid-template-columns: auto 1fr;
     gap: 4px 12px;
@@ -448,10 +446,10 @@
 
   &__section-header {
     grid-column: 1 / -1;
-    font-weight: 600;
+    font-weight: var(--acx-font-weight-semibold);
     color: var(--acx-color-text-muted);
     text-transform: uppercase;
-    font-size: 9px;
+    font-size: var(--acx-text-2xs);
     letter-spacing: 0.05em;
     margin-top: 8px;
     padding-bottom: 4px;
@@ -467,7 +465,7 @@
 
     dt {
       color: var(--acx-color-text-muted);
-      font-weight: 500;
+      font-weight: var(--acx-font-weight-medium);
     }
 
     dd {
@@ -488,7 +486,7 @@
 
     &--warning {
       color: var(--acx-color-warning-border);
-      font-weight: 600;
+      font-weight: var(--acx-font-weight-semibold);
     }
   }
 }
@@ -501,7 +499,7 @@
   padding: 8px 12px;
   background-color: var(--acx-color-warning-pill-bg);
   border: 1px solid var(--acx-color-warning-border);
-  border-radius: 6px;
+  border-radius: var(--acx-radius-md);
   margin-top: 8px;
   width: 100%;
 
@@ -513,22 +511,22 @@
   }
 
   &__question {
-    font-size: 13px;
+    font-size: var(--acx-text-sm);
     color: var(--acx-color-warning-pill-text);
 
     strong {
       color: var(--acx-color-warning-pill-text);
-      font-weight: 600;
+      font-weight: var(--acx-font-weight-semibold);
     }
   }
 
   &__confidence {
-    font-size: 11px;
-    font-weight: 600;
+    font-size: var(--acx-text-2xs);
+    font-weight: var(--acx-font-weight-semibold);
     color: var(--acx-color-success);
     background-color: var(--acx-color-success-bg);
     padding: 2px 6px;
-    border-radius: 4px;
+    border-radius: var(--acx-radius-sm);
   }
 
   &__actions {
@@ -538,7 +536,7 @@
 
   &__yes,
   &__no {
-    font-size: 12px;
+    font-size: var(--acx-text-xs);
     padding: 4px 10px;
   }
 

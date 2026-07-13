@@ -6,7 +6,7 @@
   height: 20px;
   padding: 0;
   border: 2px solid var(--acx-color-border);
-  border-radius: 4px;
+  border-radius: var(--acx-radius-sm);
   background-color: var(--acx-color-surface-alt);
   cursor: pointer;
   transition:

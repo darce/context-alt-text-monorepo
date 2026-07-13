@@ -721,7 +721,10 @@ async def enqueue_describe_image(
         session_factory=session_factory,
         cpu_adapter=cpu_adapter,
         gpu_adapter=gpu_adapter,
-        job_timeout_seconds=settings.generation_timeout_seconds * 2,
+        # One provisional pass + however many GPU-final passes the adapter
+        # makes (ensemble: n_views; raw: 1 -> preserves the original 2x budget)
+        # so N-view jobs cannot time out by construction (VLM4-RC-BR-01) [RES-02].
+        job_timeout_seconds=settings.generation_timeout_seconds * (1 + getattr(gpu_adapter, "n_passes", 1)),
         audit_sink=audit_sink,
         metrics=metrics,
         context=submission.context,

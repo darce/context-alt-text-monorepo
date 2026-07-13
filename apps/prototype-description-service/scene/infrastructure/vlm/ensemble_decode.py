@@ -228,6 +228,12 @@ class EnsembleDescriptionAdapter:
     def prompt_or_task_version(self) -> str:
         return self._wrapped.prompt_or_task_version
 
+    @property
+    def n_passes(self) -> int:
+        """GPU passes one describe costs — callers size job timeouts with this
+        (VLM4-RC-BR-01): a fixed 2-pass budget times out every N-view job."""
+        return self._config.n_views
+
     def describe(self, *, image_bytes: bytes, context: Mapping[str, Any] | None) -> AdapterResult:
         view_bytes = self._build_view_bytes(image_bytes)
         if view_bytes is None:

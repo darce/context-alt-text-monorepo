@@ -352,3 +352,11 @@ def test_ensemble_adapter_unreadable_image_degrades_to_single_wrapped_pass():
 
     assert len(stub.calls) == 1
     assert result.caption == "only"
+
+
+def test_ensemble_adapter_reports_n_passes_for_timeout_sizing():
+    """VLM4-RC-BR-01: job timeouts scale by 1 + n_passes; raw adapters default to 1."""
+    stub = _StubGpuAdapter(["a"])
+    adapter = EnsembleDescriptionAdapter(wrapped=stub, config=EnsembleDecodeConfig(n_views=4))
+    assert adapter.n_passes == 4
+    assert getattr(stub, "n_passes", 1) == 1

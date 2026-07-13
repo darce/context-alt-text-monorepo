@@ -173,6 +173,14 @@ describe('RetentionPage', () => {
     vi.stubGlobal('Blob', blobMock);
   });
 
+  it('pairs the purge danger note with an icon second channel', () => {
+    render(<RetentionPage />);
+
+    expect(screen.getByText(/This action is irreversible/i)).toBeInTheDocument();
+    expect(screen.getByTestId('acx-retention-danger-icon')).toBeInTheDocument();
+    expect(document.querySelector('.acx-retention__note--danger')).toBeTruthy();
+  });
+
   it('renders policy state and audit history', () => {
     render(<RetentionPage />);
 

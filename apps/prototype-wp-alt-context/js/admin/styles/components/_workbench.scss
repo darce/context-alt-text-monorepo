@@ -97,6 +97,9 @@
   }
 
   &__badge {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--acx-space-4);
     text-transform: uppercase;
     letter-spacing: 0.04em;
     font-size: var(--acx-text-xs);
@@ -104,6 +107,11 @@
     border-radius: var(--acx-radius-pill);
     background-color: var(--acx-color-warning-bg);
     color: var(--acx-color-warning-pill-text);
+  }
+
+  &__badge-mark {
+    font-weight: var(--acx-font-weight-bold);
+    line-height: 1;
   }
 
   &__badge--ok {

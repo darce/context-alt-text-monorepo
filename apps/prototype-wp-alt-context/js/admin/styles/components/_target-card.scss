@@ -1,18 +1,18 @@
 .acx-target-cards {
   display: grid;
-  gap: var(--acx-spacing-md, 16px);
+  gap: var(--acx-space-16);
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  margin-bottom: var(--acx-spacing-md, 16px);
+  margin-bottom: var(--acx-space-16);
 }
 
 .acx-target-card {
   border: 2px solid var(--acx-color-border);
   border-radius: var(--acx-radius-md, 8px);
   background-color: var(--acx-color-surface-alt);
-  padding: var(--acx-spacing-md, 16px);
+  padding: var(--acx-space-16);
   display: flex;
   flex-direction: column;
-  gap: var(--acx-spacing-sm, 12px);
+  gap: var(--acx-space-12);
   transition:
     border-color 0.15s ease,
     box-shadow 0.15s ease;
@@ -34,13 +34,13 @@
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
-    gap: var(--acx-spacing-sm, 12px);
+    gap: var(--acx-space-12);
   }
 
   &__selectable {
     display: flex;
     flex-direction: column;
-    gap: var(--acx-spacing-xs, 8px);
+    gap: var(--acx-space-8);
     cursor: pointer;
     margin: 0;
   }
@@ -48,7 +48,7 @@
   &__title {
     display: inline-flex;
     align-items: center;
-    gap: var(--acx-spacing-xs, 8px);
+    gap: var(--acx-space-8);
     font-weight: var(--acx-font-weight-semibold, 600);
     margin: 0;
   }
@@ -56,8 +56,8 @@
   &__active-badge {
     display: inline-flex;
     align-items: center;
-    gap: var(--acx-spacing-xs, 8px);
-    margin-left: var(--acx-spacing-xs, 8px);
+    gap: var(--acx-space-8);
+    margin-left: var(--acx-space-8);
     font-size: var(--acx-text-sm, 0.85rem);
     color: var(--acx-color-accent);
     font-weight: var(--acx-font-weight-normal);
@@ -70,7 +70,7 @@
   &__health {
     display: inline-flex;
     align-items: center;
-    gap: var(--acx-spacing-xs, 8px);
+    gap: var(--acx-space-8);
     font-size: var(--acx-text-sm, 0.85rem);
     white-space: nowrap;
 
@@ -94,13 +94,13 @@
   &__body {
     display: flex;
     flex-direction: column;
-    gap: var(--acx-spacing-xs, 8px);
+    gap: var(--acx-space-8);
   }
 
   &__empty {
     display: flex;
     flex-direction: column;
-    gap: var(--acx-spacing-xs, 8px);
+    gap: var(--acx-space-8);
     color: var(--acx-color-text-muted);
   }
 
@@ -110,7 +110,7 @@
 }
 
 .acx-settings__effective-target {
-  margin: var(--acx-spacing-md, 16px) 0;
+  margin: var(--acx-space-16) 0;
   font-size: var(--acx-text-base, 1rem);
 
   code {

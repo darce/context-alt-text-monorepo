@@ -3,22 +3,25 @@
   --acx-font-size-base: 16px;
   --acx-line-height-base: 1.5;
 
-  /* Font-size ramp — snap map (raw rem -> token):
-   * 0.68 -> --acx-text-2xs
-   * 0.7, 0.75 -> --acx-text-xs
-   * 0.85, 0.875 -> --acx-text-sm
-   * 0.8, 0.9 -> --acx-text-md
-   * 0.95 -> --acx-text-lg
-   * 1 -> --acx-text-base
-   */
-  --acx-text-2xs: 0.68rem;
-  --acx-text-xs: 0.75rem;
-  --acx-text-sm: 0.875rem;
-  --acx-text-md: 0.9rem;
-  --acx-text-lg: 0.95rem;
+  /* E21-4 modular scale [TYPE-05]: one harmonic ladder, ratio 1.125 (major
+   * second), base 1rem. Migration snap-map (old value -> token):
+   *   0.68           -> --acx-text-2xs
+   *   0.7, 0.75      -> --acx-text-xs
+   *   0.85, 0.875    -> --acx-text-sm
+   *   0.8, 0.9 (md)  -> --acx-text-sm value (md pins to sm)
+   *   0.95 (lg), 1   -> --acx-text-base (lg re-values to 1.125rem ONLY at
+   *                     audited heading call sites; see task plan S3)
+   * Alias pins asserted in tokens/__tests__/design-tokens.test.ts. */
+  --acx-text-2xs: 0.702rem;
+  --acx-text-xs: 0.79rem;
+  --acx-text-sm: 0.889rem;
+  --acx-text-md: var(--acx-text-sm);
   --acx-text-base: 1rem;
+  --acx-text-lg: 1.125rem;
+  --acx-text-xl: 1.266rem;
 
   --acx-font-weight-normal: 400;
+  --acx-font-weight-medium: 500;
   --acx-font-weight-semibold: 600;
   --acx-font-weight-bold: 700;
 }

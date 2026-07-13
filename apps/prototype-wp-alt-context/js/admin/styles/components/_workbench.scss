@@ -933,8 +933,8 @@
   &--cluster {
     grid-template-columns: repeat(2, 1fr);
     gap: var(--acx-space-2);
-    width: var(--acx-thumb-size-md, var(--acx-space-80));
-    height: var(--acx-thumb-size-md, var(--acx-space-80));
+    width: var(--acx-thumb-size-md);
+    height: var(--acx-thumb-size-md);
   }
 
   &--candidates {
@@ -1025,8 +1025,8 @@
     min-height: var(--acx-space-24);
 
     &--placeholder {
-      width: var(--acx-thumb-size-md, var(--acx-space-80));
-      height: var(--acx-thumb-size-md, var(--acx-space-80));
+      width: var(--acx-thumb-size-md);
+      height: var(--acx-thumb-size-md);
       border-radius: var(--acx-radius-sm);
       background-color: var(--acx-color-data-placeholder);
     }
@@ -1191,4 +1191,4 @@
 // - Radius: .acx-combobox__popover snapped 6px -> --acx-radius-md (8px); reviewed +2px ramp-consolidation snap (no exact 6px step; semantic scale is canonical, PR-02), accepted in the radius-correction baseline.
 // - 1px borders and 2px focus/tab strokes: intentionally raw — border-width is out of sr-004 scope.
 // - Component layout widths (68–480px), thumb offsets (-4px), and padding-right: 26px: intentionally raw.
-// - var(--acx-thumb-size-md, var(--acx-space-80)): component thumb layout fallback for 80px squares.
+// - var(--acx-thumb-size-md): token-defined in tokens/_spacing.scss (80px thumb squares).

@@ -12,4 +12,7 @@
   --acx-space-40: 2.5rem;
   --acx-space-48: 3rem;
   --acx-space-80: 5rem;
+
+  /* Component sizing (E21-4: was a dangling var-with-fallback in _workbench.scss) */
+  --acx-thumb-size-md: var(--acx-space-80);
 }

@@ -214,7 +214,12 @@ def test_analyze_router_captures_contextvar_before_background_task(monkeypatch) 
     tenant_uuid = uuid.uuid4()
     token = _correlation_id_var.set("req-captured-123")
     try:
-        asyncio.get_event_loop().run_until_complete(
+        # asyncio.run (not get_event_loop): the deprecated accessor raises
+        # "no current event loop" whenever an earlier test in the session has
+        # set-then-cleared the main-thread loop — order-dependent failure
+        # surfaced by the remote test gate. asyncio.run copies the current
+        # context, so the contextvar set above stays visible to the coroutine.
+        asyncio.run(
             analyze_router._schedule_analysis(
                 background_tasks=_BG(),
                 session=None,

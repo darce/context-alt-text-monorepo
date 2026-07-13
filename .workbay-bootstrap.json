@@ -197,6 +197,16 @@
     {
       "path": ".gitignore",
       "action": "already_present"
+    },
+    {
+      "path": ".claude/settings.local.json",
+      "action": "merged",
+      "kind": "hook_adapter",
+      "opt_in_flag": "--install-claude-reinject-hook-local"
+    },
+    {
+      "path": ".gitignore",
+      "action": "already_present"
     }
   ],
   "mcp_servers": [

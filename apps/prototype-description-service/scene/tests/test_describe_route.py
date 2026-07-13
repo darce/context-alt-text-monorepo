@@ -22,7 +22,7 @@ from db.models.identity import (
     MediaIdentity,
 )
 from db.models.observability import AuditEvent
-from db.models.scene import ImageDescription
+from db.models.scene import DescribeRun, DescribeRunItem, ImageDescription
 from db.models.tenant import Tenant
 from recognition.interface_adapters.http.deps import (
     get_optional_session,
@@ -30,11 +30,12 @@ from recognition.interface_adapters.http.deps import (
 )
 from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quota
 from recognition.interface_adapters.http.middleware.metrics import get_default_metrics
-from scene.application.describe_jobs import InMemoryDescribeJobStore
+from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.description_adapter import AdapterResult
 from scene.domain.description import DescriptionAdapterKind
 from scene.interface_adapters.http.deps import get_description_adapter, get_gpu_description_adapter
 from scene.interface_adapters.http.router import router as scene_router
+from scene.interface_adapters.http.routers.describe import AsyncAdmissionGate
 from scene.tests.demo_quota_harness import demo_quota_client as _demo_quota_client
 from scene.tests.demo_quota_harness import recognition_used as _recognition_used
 
@@ -84,6 +85,8 @@ def _make_db(naming_agreement_enabled=True):
                         IdentityCluster.__table__,
                         IdentityMember.__table__,
                         IdentityNameSuppression.__table__,
+                        DescribeRun.__table__,
+                        DescribeRunItem.__table__,
                     ],
                 ),
             )
@@ -575,65 +578,155 @@ class _ImmediateGpuAdapter:
 def test_async_full_queue_returns_503(monkeypatch):
     from scene.interface_adapters.http.routers import describe as describe_module
 
-    store = InMemoryDescribeJobStore(max_jobs=1)
-    store.enqueue(tenant_id=uuid.UUID(TENANT_ID), media_id=1, image_bytes=b"filled", context=None)
-    monkeypatch.setattr(describe_module, "_ASYNC_JOBS", store)
+    gate = AsyncAdmissionGate(max_jobs=1, max_retained_image_bytes=10 * 1024 * 1024)
+    assert gate.try_acquire(1) is None  # hold the only slot
+    monkeypatch.setattr(describe_module, "_ASYNC_ADMISSION", gate)
     with _client(auth_tenant=TENANT_ID) as client:
         r = _post_async(client, TENANT_ID)
         assert r.status_code == 503, r.text
         assert "describe job queue is full" in r.json()["detail"]
 
 
+def test_async_byte_budget_returns_503_then_release_allows_200(monkeypatch):
+    from scene.interface_adapters.http.routers import describe as describe_module
+
+    body = b"x" * 100
+    gate = AsyncAdmissionGate(max_jobs=1000, max_retained_image_bytes=50)
+    monkeypatch.setattr(describe_module, "_ASYNC_ADMISSION", gate)
+
+    async def _noop_worker(**_kwargs):
+        return None
+
+    monkeypatch.setattr(describe_module, "run_async_describe_job", _noop_worker)
+    with _client(auth_tenant=TENANT_ID) as client:
+        refused = _post_async(client, TENANT_ID, body=body)
+        assert refused.status_code == 503, refused.text
+        assert "describe job store image byte budget exceeded" in refused.json()["detail"]
+        # No reservation held after refusal — smaller body succeeds.
+        ok = _post_async(client, TENANT_ID, body=b"tiny")
+        assert ok.status_code == 200, ok.text
+
+
+def test_async_job_cap_release_allows_subsequent_200(monkeypatch):
+    from scene.interface_adapters.http.routers import describe as describe_module
+
+    gate = AsyncAdmissionGate(max_jobs=1, max_retained_image_bytes=10 * 1024 * 1024)
+    monkeypatch.setattr(describe_module, "_ASYNC_ADMISSION", gate)
+
+    async def _noop_worker(**_kwargs):
+        return None
+
+    monkeypatch.setattr(describe_module, "run_async_describe_job", _noop_worker)
+    with _client(auth_tenant=TENANT_ID) as client:
+        first = _post_async(client, TENANT_ID, media_id=1, image_key="image_1", body=b"one")
+        assert first.status_code == 200, first.text
+        # Worker BackgroundTask has run (TestClient) and released the slot.
+        second = _post_async(client, TENANT_ID, media_id=2, image_key="image_2", body=b"two")
+        assert second.status_code == 200, second.text
+
+
+def test_async_worker_crash_releases_admission_reservation(monkeypatch):
+    from scene.interface_adapters.http.routers import describe as describe_module
+
+    gate = AsyncAdmissionGate(max_jobs=1, max_retained_image_bytes=10 * 1024 * 1024)
+    monkeypatch.setattr(describe_module, "_ASYNC_ADMISSION", gate)
+
+    async def _boom(**_kwargs):
+        raise RuntimeError("worker crashed before terminal")
+
+    monkeypatch.setattr(describe_module, "run_async_describe_job", _boom)
+    with _client(auth_tenant=TENANT_ID) as client:
+        first = _post_async(client, TENANT_ID, media_id=1, image_key="image_1", body=b"crash-1")
+        assert first.status_code == 200, first.text
+        # Reservation released in finally despite worker crash.
+        second = _post_async(client, TENANT_ID, media_id=2, image_key="image_2", body=b"crash-2")
+        assert second.status_code == 200, second.text
+
+
+def test_async_enqueue_commit_failure_releases_reservation_and_surfaces_500(monkeypatch):
+    from scene.interface_adapters.http.routers import describe as describe_module
+
+    gate = AsyncAdmissionGate(max_jobs=1, max_retained_image_bytes=10 * 1024 * 1024)
+    monkeypatch.setattr(describe_module, "_ASYNC_ADMISSION", gate)
+
+    original_create = DescribeRunRepository.create_single_run
+
+    async def _create_then_fail(self, **kwargs):
+        await original_create(self, **kwargs)
+        await self._session.flush()
+        raise RuntimeError("commit simulated failure")
+
+    monkeypatch.setattr(DescribeRunRepository, "create_single_run", _create_then_fail)
+    with _client(auth_tenant=TENANT_ID) as client:
+        r = _post_async(client, TENANT_ID)
+        assert r.status_code == 500, r.text
+        # Slot released so a healthy enqueue can proceed.
+    monkeypatch.setattr(DescribeRunRepository, "create_single_run", original_create)
+    with _client(auth_tenant=TENANT_ID) as client:
+        ok = _post_async(client, TENANT_ID)
+        assert ok.status_code == 200, ok.text
+
+
 def test_get_describe_job_cross_tenant_returns_404(monkeypatch):
     from scene.interface_adapters.http.routers import describe as describe_module
 
-    store = InMemoryDescribeJobStore()
-    job = store.enqueue(
-        tenant_id=uuid.UUID(TENANT_ID),
-        media_id=42,
-        image_bytes=b"image-bytes-payload",
-        context=None,
-    )
-    store.set_final(job.job_id, visual_facts={"alt_text_draft": "done"})
-    monkeypatch.setattr(describe_module, "_ASYNC_JOBS", store)
+    async def _noop_worker(**_kwargs):
+        return None
+
+    monkeypatch.setattr(describe_module, "run_async_describe_job", _noop_worker)
     other_tenant = str(uuid.uuid4())
-    with _client(auth_tenant=other_tenant) as client:
-        r = client.get(f"/scene/describe/jobs/{job.job_id}")
+    with _client(auth_tenant=TENANT_ID) as client:
+        submitted = _post_async(client, TENANT_ID)
+        assert submitted.status_code == 200, submitted.text
+        job_id = submitted.json()["job_id"]
+        client.app.dependency_overrides[require_write_access] = lambda: _Auth(tenant_claim=other_tenant)
+        r = client.get(f"/scene/describe/jobs/{job_id}")
         assert r.status_code == 404, r.text
 
 
 def test_get_describe_job_requires_tenant_claim(monkeypatch):
     from scene.interface_adapters.http.routers import describe as describe_module
 
-    store = InMemoryDescribeJobStore()
-    job = store.enqueue(
-        tenant_id=uuid.UUID(TENANT_ID),
-        media_id=42,
-        image_bytes=b"image-bytes-payload",
-        context=None,
-    )
-    monkeypatch.setattr(describe_module, "_ASYNC_JOBS", store)
-    with _client(auth_tenant=None) as client:
-        r = client.get(f"/scene/describe/jobs/{job.job_id}")
+    async def _noop_worker(**_kwargs):
+        return None
+
+    monkeypatch.setattr(describe_module, "run_async_describe_job", _noop_worker)
+    with _client(auth_tenant=TENANT_ID) as client:
+        submitted = _post_async(client, TENANT_ID)
+        assert submitted.status_code == 200, submitted.text
+        job_id = submitted.json()["job_id"]
+        client.app.dependency_overrides[require_write_access] = lambda: _Auth(tenant_claim=None)
+        r = client.get(f"/scene/describe/jobs/{job_id}")
         assert r.status_code == 400, r.text
         assert "tenant claim required" in r.json()["detail"]
 
 
-def test_async_enqueue_and_poll_returns_tenant_scoped_job(monkeypatch):
-    from scene.interface_adapters.http.routers import describe as describe_module
+def test_get_describe_job_non_uuid_returns_404():
+    with _client(auth_tenant=TENANT_ID) as client:
+        r = client.get("/scene/describe/jobs/not-a-uuid")
+        assert r.status_code == 404, r.text
 
-    store = InMemoryDescribeJobStore()
-    monkeypatch.setattr(describe_module, "_ASYNC_JOBS", store)
+
+def test_async_enqueue_and_poll_returns_tenant_scoped_job(monkeypatch):
     with _client(auth_tenant=TENANT_ID) as client:
         client.app.dependency_overrides[get_gpu_description_adapter] = lambda: _ImmediateGpuAdapter()
         submitted = _post_async(client, TENANT_ID)
         assert submitted.status_code == 200, submitted.text
-        job_id = submitted.json()["job_id"]
+        body = submitted.json()
+        assert set(body) >= {"job_id", "status", "tier", "result_generation", "visual_facts", "error"}
+        job_id = body["job_id"]
         polled = client.get(f"/scene/describe/jobs/{job_id}")
         assert polled.status_code == 200, polled.text
         body = polled.json()
         assert body["job_id"] == job_id
         assert body["status"] in {"final", "provisional", "running", "queued", "degraded"}
+
+
+def test_async_enqueue_requires_database_session():
+    with _client(auth_tenant=TENANT_ID, db_absent=True) as client:
+        r = _post_async(client, TENANT_ID)
+        assert r.status_code == 503, r.text
+        assert "database session unavailable" in r.json()["detail"]
 
 
 def test_hosted_provider_fault_returns_502_with_reason():
@@ -655,23 +748,10 @@ def test_hosted_provider_fault_returns_502_with_reason():
 
 def test_async_enqueue_requires_tenant_claim(monkeypatch):
     """VLMFIX-S1-06: empty claim cannot enqueue unfetchable async jobs."""
-    monkeypatch.delenv("ACX_ASYNC_ALLOW_EMPTY_TENANT_CLAIM", raising=False)
     with _client(auth_tenant=None) as client:
         r = _post_async(client, TENANT_ID)
         assert r.status_code == 400, r.text
         assert "tenant claim required" in r.json()["detail"]
-
-
-def test_async_enqueue_allows_empty_claim_when_configured(monkeypatch):
-    monkeypatch.setenv("ACX_ASYNC_ALLOW_EMPTY_TENANT_CLAIM", "1")
-    from scene.interface_adapters.http.routers import describe as describe_module
-
-    store = InMemoryDescribeJobStore()
-    monkeypatch.setattr(describe_module, "_ASYNC_JOBS", store)
-    with _client(auth_tenant=None) as client:
-        client.app.dependency_overrides[get_gpu_description_adapter] = lambda: _ImmediateGpuAdapter()
-        r = _post_async(client, TENANT_ID)
-        assert r.status_code == 200, r.text
 
 
 # ---------------------------------------------------------------------------
@@ -697,8 +777,10 @@ def test_demo_quota_multipart_below_cap_increments_and_at_cap_429():
 def test_demo_quota_async_below_cap_increments_and_at_cap_429(monkeypatch):
     from scene.interface_adapters.http.routers import describe as describe_module
 
-    store = InMemoryDescribeJobStore()
-    monkeypatch.setattr(describe_module, "_ASYNC_JOBS", store)
+    async def _noop_worker(**_kwargs):
+        return None
+
+    monkeypatch.setattr(describe_module, "run_async_describe_job", _noop_worker)
 
     with _demo_quota_client(recognition_quota=1) as (client, sf, _prov, tenant_id, slug):
         r1 = _post_async(client, tenant_id, media_id=1, image_key="image_1", body=b"async-quota-1")
@@ -740,8 +822,10 @@ def test_demo_quota_shared_pool_across_surfaces():
 def test_demo_quota_non_demo_key_multipart_and_async_unaffected(monkeypatch):
     from scene.interface_adapters.http.routers import describe as describe_module
 
-    store = InMemoryDescribeJobStore()
-    monkeypatch.setattr(describe_module, "_ASYNC_JOBS", store)
+    async def _noop_worker(**_kwargs):
+        return None
+
+    monkeypatch.setattr(describe_module, "run_async_describe_job", _noop_worker)
 
     with _demo_quota_client(recognition_quota=1, non_demo=True) as (
         client,
@@ -760,8 +844,10 @@ def test_demo_quota_non_demo_key_multipart_and_async_unaffected(monkeypatch):
 def test_demo_quota_get_describe_job_consumes_nothing(monkeypatch):
     from scene.interface_adapters.http.routers import describe as describe_module
 
-    store = InMemoryDescribeJobStore()
-    monkeypatch.setattr(describe_module, "_ASYNC_JOBS", store)
+    async def _noop_worker(**_kwargs):
+        return None
+
+    monkeypatch.setattr(describe_module, "run_async_describe_job", _noop_worker)
 
     with _demo_quota_client(recognition_quota=5) as (client, sf, _prov, tenant_id, slug):
         enq = _post_async(client, tenant_id, media_id=1, image_key="image_1", body=b"poll-quota-1")
@@ -780,11 +866,7 @@ def test_demo_quota_decorative_204_does_not_charge():
     with _demo_quota_client(recognition_quota=1) as (client, sf, _prov, tenant_id, slug):
         r = client.post(
             "/scene/describe/multipart",
-            data={
-                "request": json.dumps(
-                    {"tenant_id": str(tenant_id), "media_id": 99, "decorative": True}
-                )
-            },
+            data={"request": json.dumps({"tenant_id": str(tenant_id), "media_id": 99, "decorative": True})},
         )
         assert r.status_code == 204, r.text
         assert _recognition_used(sf, slug) == 0

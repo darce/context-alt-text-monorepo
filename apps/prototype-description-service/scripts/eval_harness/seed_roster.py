@@ -168,9 +168,7 @@ def seed_scenes(manifest_path: str, images_dir: str, client: SceneSeedClient) ->
             "identity rows — refusing to treat a malformed payload as an empty tenant (rg-015)"
         )
     present = {
-        int(row["media_id"])
-        for row in rows
-        if isinstance(row, dict) and int(row.get("media_id", -1)) in set(ids)
+        int(row["media_id"]) for row in rows if isinstance(row, dict) and int(row.get("media_id", -1)) in set(ids)
     }
     root = Path(images_dir)
     to_seed = [entry for entry in seedable if entry.media_id not in present]
@@ -194,11 +192,7 @@ def seed_scenes(manifest_path: str, images_dir: str, client: SceneSeedClient) ->
                 f"media_identities returned {type(after).__name__} during post-seed "
                 "verification, expected a list of identity rows (rg-015)"
             )
-        found = {
-            int(row["media_id"])
-            for row in after
-            if isinstance(row, dict) and "media_id" in row
-        }
+        found = {int(row["media_id"]) for row in after if isinstance(row, dict) and "media_id" in row}
         unverified = [entry.media_id for entry in to_seed if entry.media_id not in found]
     return SceneSeedSummary(
         seeded=[entry.media_id for entry in to_seed],

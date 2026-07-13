@@ -235,6 +235,8 @@ case "$subcommand" in
     status="active"
     notes=""
     dry_run=0
+    secure_clone=0
+    offload_backend=""
 
     while [ "$#" -gt 0 ]; do
       case "$1" in
@@ -248,6 +250,8 @@ case "$subcommand" in
         --status) status="$2"; shift 2 ;;
         --notes) notes="$2"; shift 2 ;;
         --dry-run) dry_run=1; shift ;;
+        --secure-clone) secure_clone=1; shift ;;
+        --offload-backend) offload_backend="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) die "unknown create argument: $1" ;;
       esac
@@ -259,15 +263,33 @@ case "$subcommand" in
     [ -n "$branch" ] || branch="codex/${lane_id}"
     [ -n "$worktree_path" ] || worktree_path="$(default_worktree_path "$orchestrator_root" "$lane_id")"
 
+    # Secure-by-default for untrusted offload backends: the grok Build CLI bundles the
+    # full .git history to gs://grok-code-session-traces regardless of opt-out, and a
+    # shared worktree exposes all history. Use a shallow, secret-scanned clone instead.
+    case "$offload_backend" in grok|grok-cli|grok-*|GROK*) secure_clone=1 ;; esac
+    script_dir="$(cd "$(dirname "$0")" && pwd)"
+
     if [ "$dry_run" -eq 1 ]; then
-      cat <<EOF
+      if [ "$secure_clone" -eq 1 ]; then
+        cat <<EOF
+[dry-run] $script_dir/secure-offload-clone.sh --primary $orchestrator_root --dest $worktree_path --branch $branch   (shallow + secret-scanned; untrusted backend '$offload_backend')
+[dry-run] mcp-workbay-handoff lane-upsert for lane $lane_id using shared state at $orchestrator_root/.task-state
+EOF
+      else
+        cat <<EOF
 [dry-run] git -C $orchestrator_root worktree add $worktree_path -b $branch
 [dry-run] mcp-workbay-handoff lane-upsert for lane $lane_id using shared state at $orchestrator_root/.task-state
 EOF
+      fi
       exit 0
     fi
 
-    if [ ! -d "$worktree_path/.git" ] && [ ! -f "$worktree_path/.git" ]; then
+    if [ "$secure_clone" -eq 1 ]; then
+      if [ ! -e "$worktree_path" ]; then
+        "$script_dir/secure-offload-clone.sh" --primary "$orchestrator_root" --dest "$worktree_path" --branch "$branch" >/dev/null \
+          || die "secure offload sandbox creation failed (secret scan or clone error above)"
+      fi
+    elif [ ! -d "$worktree_path/.git" ] && [ ! -f "$worktree_path/.git" ]; then
       git -C "$orchestrator_root" worktree add "$worktree_path" -b "$branch"
     else
       existing_branch="$(git -C "$worktree_path" branch --show-current 2>/dev/null || true)"

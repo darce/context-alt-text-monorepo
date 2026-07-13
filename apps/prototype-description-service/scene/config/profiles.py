@@ -106,8 +106,9 @@ PROFILE_SPECS: dict[DescriptionProfile, ProfileSpec] = {
         model_revision=None,
         model_version="Q4_K_M",
     ),
-    # VLM-4 Slice 2b: same endpoint/model as GPU_QWEN30B; get_description_adapter
-    # wraps the GPU adapter in EnsembleDescriptionAdapter for this profile.
+    # VLM-4 Slice 2b: same endpoint/model as GPU_QWEN30B. Only the ASYNC
+    # GPU-final resolver (get_async_gpu_description_adapter) wraps this profile
+    # in EnsembleDescriptionAdapter; the sync route stays raw (VLM4-RA-BR-02).
     DescriptionProfile.GPU_QWEN30B_ENSEMBLE: ProfileSpec(
         profile=DescriptionProfile.GPU_QWEN30B_ENSEMBLE,
         adapter_kind=DescriptionAdapterKind.GPU,

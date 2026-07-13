@@ -57,11 +57,13 @@ VM — the package publishes no Linux aarch64 wheels for any CPython — so the
 host needs a compiler once, installed by the operator (never the gate user):
 
 ```bash
-ssh ubuntu@<gate-host> 'sudo apt-get install -y build-essential'
+ssh ubuntu@<gate-host> 'sudo apt-get update && sudo apt-get install -y build-essential libgl1 libglib2.0-0'
 ```
 
-Without it the run fails fast at `remote-gate: uv sync failed` (`command 'cc'
-failed: No such file or directory`).
+Without `build-essential` the run fails fast at `remote-gate: uv sync failed`
+(`command 'cc' failed: No such file or directory`); without `libgl1`/
+`libglib2.0-0` the suite collects with ~45 ImportErrors (`libGL.so.1: cannot
+open shared object file` — opencv on a headless host).
 
 ## Postgres prerequisite for `test-integration` (open)
 

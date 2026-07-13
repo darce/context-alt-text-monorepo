@@ -184,7 +184,7 @@ Proof: tokens vitest scope green; literal counts at 0 modulo disposition comment
 
 Changes:
 
-- Audit roster zero-state, cluster status pills, toast, retention states for color-only signals; add icon/label [A11Y-06][UI-02].
+- Audit the starting inventory for color-only signals; add icon/label second channel [A11Y-06][UI-02]. Verified anchors: `_workbench.scss:99` `&__badge` + `:109` `&__badge--ok` (color-variant badges), `_roster.scss:21` `&__filter-badge` (warning-pill pair), `_roster.scss:45-68` `&__empty`/`__empty-icon`/`__empty-title` (roster zero-state), `_toast.scss` variant styling, `_retention.scss` state styling, `_identity-cluster-list.scss` status/selection styling; plus the TSX components rendering those selectors. Inventory is the starting set, not the ceiling — the audit sweeps all `components/*.scss` for hue-only state signals and enumerates the checked selectors in the slice decision (vacuous-pass guard).
 - Re-baseline `workbench-visual.spec.ts` snapshots.
 
 Proof: axe specs green; visual spec green; every snapshot diff human-reviewed and enumerated in the slice decision.

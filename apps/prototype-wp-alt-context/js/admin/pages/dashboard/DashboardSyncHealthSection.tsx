@@ -1,5 +1,6 @@
 import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
+import { AlertTriangle } from 'lucide-react';
 
 import type { SyncHealth, SyncHealthResponse } from '../../api/recognition/types/sync';
 import { getDashboardSyncHealthSummary } from '../workbench/degradedModeBannerLogic';
@@ -59,6 +60,12 @@ export const DashboardSyncHealthSection = ({
       <>
         {showMirrorDivergenceBanner ? (
           <div className="acx-dashboard__mirror-warning" role="status">
+            <AlertTriangle
+              className="acx-dashboard__mirror-warning-icon"
+              size={16}
+              aria-hidden="true"
+              data-testid="acx-dashboard-mirror-warning-icon"
+            />
             <p>
               {sprintf(
                 __(

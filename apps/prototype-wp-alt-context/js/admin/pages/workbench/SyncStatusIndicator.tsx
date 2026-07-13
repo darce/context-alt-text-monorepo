@@ -10,6 +10,7 @@ import type { ProjectionSyncState } from '../../hooks/useJobStateMachineEffects'
 import type { WorkbenchTab } from './WorkbenchContext';
 import {
   SYNC_PRESENTATION_ICON,
+  SYNC_PRESENTATION_STATUS,
   SYNC_PRESENTATION_TONE,
   SYNC_VOCABULARY,
   buildSyncPresentation,
@@ -20,6 +21,49 @@ import {
   type SyncPresentation,
 } from './syncPresentation';
 import { buildWorkbenchOverlayHref } from './workbenchOverlayLinks';
+
+/** Badge second-channel state derived from tone/status (not binary ok/attention). */
+type SyncBadgeState = 'ok' | 'attention' | 'error' | 'syncing' | 'queued' | 'in-progress';
+
+const resolveBadgeState = (presentation: SyncPresentation): SyncBadgeState => {
+  const { tone, status } = presentation;
+
+  if (tone === SYNC_PRESENTATION_TONE.SUCCESS || presentation.badge === SYNC_VOCABULARY.healthyBadge) {
+    return 'ok';
+  }
+  if (
+    tone === SYNC_PRESENTATION_TONE.SYNCING ||
+    status === SYNC_PRESENTATION_STATUS.SYNCING ||
+    status === SYNC_PRESENTATION_STATUS.RESULTS_SYNCING
+  ) {
+    return 'syncing';
+  }
+  if (status === SYNC_PRESENTATION_STATUS.QUEUED) {
+    return 'queued';
+  }
+  if (
+    status === SYNC_PRESENTATION_STATUS.LOADING ||
+    status === SYNC_PRESENTATION_STATUS.SCANNING ||
+    status === SYNC_PRESENTATION_STATUS.CLUSTERING ||
+    status === SYNC_PRESENTATION_STATUS.DESCRIBING
+  ) {
+    return 'in-progress';
+  }
+  if (tone === SYNC_PRESENTATION_TONE.DANGER || status === SYNC_PRESENTATION_STATUS.ERROR) {
+    return 'error';
+  }
+  return 'attention';
+};
+
+const badgeMarkFor = (state: SyncBadgeState): string => {
+  if (state === 'ok') {
+    return '\u2713';
+  }
+  if (state === 'syncing' || state === 'queued' || state === 'in-progress') {
+    return '\u2026';
+  }
+  return '!';
+};
 
 const formatTimestamp = (value: string | null | undefined): string | null => {
   if (!value) {
@@ -59,7 +103,9 @@ const SyncStatusStrip = ({
 }): React.JSX.Element => {
   const toneClass = syncPresentationToneClass(presentation.tone);
   const glyph = syncPresentationIconGlyph(presentation.icon);
-  const badgeOk = presentation.tone === SYNC_PRESENTATION_TONE.SUCCESS || presentation.badge === SYNC_VOCABULARY.healthyBadge;
+  const badgeState = resolveBadgeState(presentation);
+  const badgeMark = badgeMarkFor(badgeState);
+  const badgeOk = badgeState === 'ok';
   const actionIsButton =
     presentation.action &&
     (presentation.action.kind === 'retry' ||
@@ -93,20 +139,20 @@ const SyncStatusStrip = ({
           <a
             href={presentation.badgeHref}
             className={`acx-sync-status__badge acx-sync-status__link${badgeOk ? ' acx-sync-status__badge--ok' : ''}`}
-            data-badge-state={badgeOk ? 'ok' : 'attention'}
+            data-badge-state={badgeState}
           >
             <span className="acx-sync-status__badge-mark" aria-hidden="true">
-              {badgeOk ? '\u2713' : '!'}
+              {badgeMark}
             </span>
             {presentation.badge}
           </a>
         ) : (
           <span
             className={`acx-sync-status__badge${badgeOk ? ' acx-sync-status__badge--ok' : ''}`}
-            data-badge-state={badgeOk ? 'ok' : 'attention'}
+            data-badge-state={badgeState}
           >
             <span className="acx-sync-status__badge-mark" aria-hidden="true">
-              {badgeOk ? '\u2713' : '!'}
+              {badgeMark}
             </span>
             {presentation.badge}
           </span>

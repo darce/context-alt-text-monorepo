@@ -8,6 +8,7 @@
     h2 {
       margin: 0;
       font-size: var(--acx-text-xl);
+      line-height: var(--acx-leading-tight);
     }
   }
 
@@ -69,6 +70,7 @@
   &__empty-title {
     margin: 0;
     font-size: var(--acx-text-lg);
+    line-height: var(--acx-leading-tight);
     font-weight: var(--acx-font-weight-semibold);
     color: var(--acx-color-text);
   }

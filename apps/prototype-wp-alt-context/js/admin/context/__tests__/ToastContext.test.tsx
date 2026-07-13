@@ -38,9 +38,25 @@ describe('ToastContext second channels', () => {
       screen.getByRole('button', { name: 'info' }).click();
     });
 
-    expect(screen.getByTestId('acx-toast-icon-success')).toHaveAttribute('data-toast-severity', 'success');
-    expect(screen.getByTestId('acx-toast-icon-error')).toHaveAttribute('data-toast-severity', 'error');
-    expect(screen.getByTestId('acx-toast-icon-info')).toHaveAttribute('data-toast-severity', 'info');
+    const successIcon = screen.getByTestId('acx-toast-icon-success');
+    const errorIcon = screen.getByTestId('acx-toast-icon-error');
+    const infoIcon = screen.getByTestId('acx-toast-icon-info');
+
+    expect(successIcon).toHaveAttribute('data-toast-severity', 'success');
+    expect(errorIcon).toHaveAttribute('data-toast-severity', 'error');
+    expect(infoIcon).toHaveAttribute('data-toast-severity', 'info');
+
+    // Each severity must render a distinct visible glyph (svg path/shape), not only the wrapper attr.
+    const successGlyph = successIcon.innerHTML;
+    const errorGlyph = errorIcon.innerHTML;
+    const infoGlyph = infoIcon.innerHTML;
+    expect(successGlyph.length).toBeGreaterThan(0);
+    expect(errorGlyph.length).toBeGreaterThan(0);
+    expect(infoGlyph.length).toBeGreaterThan(0);
+    expect(successGlyph).not.toBe(errorGlyph);
+    expect(successGlyph).not.toBe(infoGlyph);
+    expect(errorGlyph).not.toBe(infoGlyph);
+
     expect(screen.getByText('Success')).toBeInTheDocument();
     expect(screen.getByText('Error')).toBeInTheDocument();
     expect(screen.getByText('Info')).toBeInTheDocument();

@@ -101,7 +101,7 @@ Keep: `danger #b42318` (6.57:1 on white ✓), `danger-strong/hover #991b1b` (7.6
 - `--acx-color-warning-border` `#f59e0b` (2.15:1) → **`#b45309`** (5.02:1 ✓); pill/soft fills unchanged (decorative).
 - `--acx-color-error` `#ef4444` (3.76:1) → text duty snaps to `--acx-color-danger`; retained for ≥3:1 non-text duty only.
 
-**Typography**: `--acx-text-2xs: 0.702rem`, `xs: 0.79rem`, `sm: 0.889rem`, `base: 1rem`, `lg: 1.125rem`, `xl: 1.266rem` (new). Migration: old `md (0.9)` → `sm`; old `lg (0.95)` → `base`. Names `md`/`lg` are kept: `md` pins to `sm`'s value; `lg` re-values to `1.125rem` only at explicitly-audited heading call sites, all other `lg` call sites snap to `base` during S3's audit. Alias values pinned by test. Block-level call sites that move a step get a line-height check in the same slice [TYPE-02].
+**Typography**: `--acx-text-2xs: 0.702rem`, `xs: 0.79rem`, `sm: 0.889rem`, `base: 1rem`, `lg: 1.125rem`, `xl: 1.266rem`, `2xl: 1.424rem`, `3xl: 1.802rem` (1.125 ladder continued for page titles / large stats). Migration: old `md (0.9)` → `sm`; old `lg (0.95)` → `base`; old 24px titles → `2xl`; old 28px titles → `3xl`. Names `md`/`lg` are kept: `md` pins to `sm`'s value; `lg` re-values to `1.125rem` only at explicitly-audited heading call sites, all other `lg` call sites snap to `base` during S3's audit. Alias values pinned by test. Heading/title call sites using `text-lg`/`xl`/`2xl`/`3xl` use `--acx-leading-tight: 1.3` [TYPE-02].
 
 **Elevation [UI-08]**: `--acx-shadow-1` (card; `--acx-shadow-card` aliases it), `--acx-shadow-2` (popover/drawer), `--acx-shadow-3` (dialog; folds dialog-primary/secondary pair). The 13 raw `box-shadow` literals snap to these 3 levels.
 
@@ -132,7 +132,7 @@ Spacing out of scope except literals adjacent to a swap already covered by an ex
 
 | File | Note |
 | --- | --- |
-| `js/admin/styles/tokens/_radius.scss`, `_spacing.scss` | radius alias deprecation; spacing untouched |
+| `js/admin/styles/tokens/_radius.scss`, `_spacing.scss` | radius alias deprecation; spacing file gains component-sizing tokens |
 | `tests/e2e/a11y/*-axe.spec.ts` | must stay green (floor, not gate [A11Y-23]) |
 | `js/admin/styles/main.scss` | token import order if a new partial is added |
 
@@ -236,7 +236,7 @@ Proof: axe specs green; visual spec green; every snapshot diff human-reviewed an
 - [ ] No dangling `var(--acx-*)` in `styles/`.
 - [ ] One 1.125 modular ladder with pinned aliases [TYPE-05].
 - [ ] Status indicators carry a second channel [A11Y-06]; axe specs green.
-- [ ] Exactly one visual re-baseline commit, human-reviewed.
+- [ ] Exactly one visual re-baseline RUN, human-reviewed (snapshots are machine-local/gitignored by design; evidence recorded as MCP test_result, currently blocked on LocalWP env).
 - [ ] `make check-remote` green on final HEAD.
 
 ## Heuristic IDs cited

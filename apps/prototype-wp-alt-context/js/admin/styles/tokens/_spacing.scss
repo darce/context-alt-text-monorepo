@@ -13,6 +13,8 @@
   --acx-space-48: 3rem;
   --acx-space-80: 5rem;
 
-  /* Component sizing (E21-4: was a dangling var-with-fallback in _workbench.scss) */
+  /* Component sizing tokens (--acx-thumb-size-*)
+   * Duty: fixed control/thumbnail dimensions (not spacing scale steps).
+   * Keep named family; do not rename to space-* (distinct duty). */
   --acx-thumb-size-md: var(--acx-space-80);
 }

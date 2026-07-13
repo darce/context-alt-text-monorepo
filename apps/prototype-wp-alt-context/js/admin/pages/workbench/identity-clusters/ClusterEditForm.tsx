@@ -7,6 +7,9 @@ import { __, sprintf } from '@wordpress/i18n';
 
 import type { ComboboxOption } from '../../../../components/ui/combobox';
 
+/** Similarity at-or-above this threshold uses the high match-score band. */
+const MATCH_BAND_HIGH_THRESHOLD = 0.7;
+
 interface ClusterEditFormProps {
   /** Current label input value */
   labelInput: string;
@@ -127,14 +130,14 @@ export const ClusterEditForm = ({
                   {option.similarity !== undefined && (
                     <span
                       className={`acx-identity-cluster__match-score ${
-                        (option.similarity as number) >= 0.7
+                        (option.similarity as number) >= MATCH_BAND_HIGH_THRESHOLD
                           ? 'acx-identity-cluster__match-score--high'
                           : 'acx-identity-cluster__match-score--medium'
                       }`}
                     >
                       {Math.round((option.similarity as number) * 100)}%{' '}
                       <span className="acx-identity-cluster__match-score-band">
-                        {(option.similarity as number) >= 0.7
+                        {(option.similarity as number) >= MATCH_BAND_HIGH_THRESHOLD
                           ? __('high', 'alt-context')
                           : __('medium', 'alt-context')}
                       </span>

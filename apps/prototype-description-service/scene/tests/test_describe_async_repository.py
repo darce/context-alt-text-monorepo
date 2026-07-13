@@ -458,12 +458,23 @@ class _MigrationRecorder:
         return None
 
 
-def _migration_columns_and_checks(table_name: str, monkeypatch: pytest.MonkeyPatch) -> tuple[set[str], set[str]]:
+def _column_signature(col: Column) -> tuple[str, int | None, bool]:
+    """(type-class, length, nullable) — catches type/width/nullability drift, not just names.
+
+    VLM5-F2B-BR-02: name-only parity passed a migration-only String(32)->String(64)
+    widening; the signature comparison fails it.
+    """
+    return (type(col.type).__name__, getattr(col.type, "length", None), col.nullable)
+
+
+def _migration_columns_and_checks(
+    table_name: str, monkeypatch: pytest.MonkeyPatch
+) -> tuple[dict[str, tuple[str, int | None, bool]], set[str]]:
     recorder = _MigrationRecorder()
     monkeypatch.setattr(identity_schema, "op", recorder)
     identity_schema.upgrade()
     args = recorder.created_table_args[table_name]
-    columns = {cast(Column, a).name for a in args if isinstance(a, Column)}
+    columns = {cast(Column, a).name: _column_signature(cast(Column, a)) for a in args if isinstance(a, Column)}
     checks = {cast(CheckConstraint, a).name for a in args if isinstance(a, CheckConstraint) and a.name}
     return columns, checks
 
@@ -477,11 +488,9 @@ def test_describe_run_orm_matches_migration_schema(monkeypatch: pytest.MonkeyPat
     run_mig_cols, run_mig_checks = _migration_columns_and_checks("image_description_runs", monkeypatch)
     item_mig_cols, item_mig_checks = _migration_columns_and_checks("image_description_run_items", monkeypatch)
 
-    run_orm_cols = set(DescribeRun.__table__.columns.keys())
-    item_orm_cols = set(DescribeRunItem.__table__.columns.keys())
-    run_orm_checks = {
-        c.name for c in DescribeRun.__table__.constraints if isinstance(c, CheckConstraint) and c.name
-    }
+    run_orm_cols = {c.name: _column_signature(c) for c in DescribeRun.__table__.columns}
+    item_orm_cols = {c.name: _column_signature(c) for c in DescribeRunItem.__table__.columns}
+    run_orm_checks = {c.name for c in DescribeRun.__table__.constraints if isinstance(c, CheckConstraint) and c.name}
     item_orm_checks = {
         c.name for c in DescribeRunItem.__table__.constraints if isinstance(c, CheckConstraint) and c.name
     }
@@ -491,6 +500,7 @@ def test_describe_run_orm_matches_migration_schema(monkeypatch: pytest.MonkeyPat
     for col in ("visual_facts", "tier", "result_generation"):
         assert col in item_orm_cols and col in item_mig_cols
 
+    # Full signature parity: names AND (type-class, length, nullable) per column.
     assert run_orm_cols == run_mig_cols
     assert item_orm_cols == item_mig_cols
     assert run_orm_checks == run_mig_checks

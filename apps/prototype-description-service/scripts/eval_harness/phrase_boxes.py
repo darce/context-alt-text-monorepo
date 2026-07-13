@@ -87,10 +87,7 @@ class SceneFixture(BaseModel):
         centers = [tuple(fc.center) for fc in self.face_centers]
         expected = [tuple(e.face_center) for e in self.expected_containment]
         if centers != expected:
-            raise ValueError(
-                f"media_id {self.media_id}: expected_containment face centers must "
-                "echo face_centers 1:1"
-            )
+            raise ValueError(f"media_id {self.media_id}: expected_containment face centers must echo face_centers 1:1")
         return self
 
 

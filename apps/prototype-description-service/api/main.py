@@ -27,7 +27,6 @@ from recognition.config.security import (
     validate_required_secrets,
 )
 from recognition.config.settings import RecognitionSettings
-from shared.secrets import validate_oci_vault_boot
 from recognition.interface_adapters.http import deps as http_deps
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.deps.auth import require_auth
@@ -49,6 +48,7 @@ from recognition.observability.curation_refresh_metrics import get_default_curat
 from roster.interface_adapters.http.curation_router import router as roster_curation_router
 from scene.interface_adapters.http.router import router as scene_router
 from shared.health import HealthStatus
+from shared.secrets import validate_oci_vault_boot
 
 # Configure logging to show diagnostic output
 configure_logging("INFO")
@@ -120,19 +120,38 @@ async def _lifespan(app: FastAPI):
     # can strand a run non-terminal (the frontend would then poll it forever).
     # Reclaim orphaned runs to a terminal state before serving. Best-effort:
     # never block boot on a reclaim failure.
+    # VLM-5 Slice 4 order after reclaim: retention purge → initial load snapshot.
+    # No admission-counter seeding — process-local gate starts at 0 (design (b)).
     try:
         from db.session import async_session_factory
         from scene.application.describe_run_repository import run_startup_reclaim
 
         reclaimed = await run_startup_reclaim(async_session_factory)
         if reclaimed:
-            logging.getLogger("db.startup").info(
-                "Reclaimed %d interrupted describe run(s) at startup", reclaimed
-            )
+            logging.getLogger("db.startup").info("Reclaimed %d interrupted describe run(s) at startup", reclaimed)
     except Exception:  # noqa: BLE001 - startup reclaim is best-effort
-        logging.getLogger("db.startup").warning(
-            "describe-run startup reclaim failed", exc_info=True
-        )
+        logging.getLogger("db.startup").warning("describe-run startup reclaim failed", exc_info=True)
+
+    # VLM-5 design (d): purge expired terminal single runs after reclaim.
+    # Dedicated RLS-bypassed session (design (c) session discipline) [DIAG-02].
+    try:
+        from db.session import async_session_factory
+        from scene.application.describe_run_repository import run_startup_retention_purge
+
+        purged = await run_startup_retention_purge(async_session_factory)
+        if purged:
+            logging.getLogger("db.startup").info("Purged %d expired single describe run(s) at startup", purged)
+    except Exception:  # noqa: BLE001 - startup retention purge is best-effort
+        logging.getLogger("db.startup").warning("describe-run retention purge failed", exc_info=True)
+
+    # VLM-5 design (c): initial DB-derived load snapshot for the GPU idle reaper.
+    try:
+        from db.session import async_session_factory
+        from scene.application.describe_load import run_startup_load_snapshot
+
+        await run_startup_load_snapshot(async_session_factory)
+    except Exception:  # noqa: BLE001 - startup load snapshot is best-effort
+        logging.getLogger("db.startup").warning("describe load snapshot write failed at startup", exc_info=True)
     yield
 
 

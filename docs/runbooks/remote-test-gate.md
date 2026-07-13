@@ -50,6 +50,19 @@ make check-remote                       # configured targets (default: desc-serv
 make check-remote TARGETS="test lint"   # explicit targets, run in REMOTE_GATE_WORKDIR
 ```
 
+## Host prerequisite: C toolchain (operator, one-time)
+
+`uv sync` for the description service **builds `hdbscan` from source** on the
+VM — the package publishes no Linux aarch64 wheels for any CPython — so the
+host needs a compiler once, installed by the operator (never the gate user):
+
+```bash
+ssh ubuntu@<gate-host> 'sudo apt-get install -y build-essential'
+```
+
+Without it the run fails fast at `remote-gate: uv sync failed` (`command 'cc'
+failed: No such file or directory`).
+
 ## Postgres prerequisite for `test-integration` (open)
 
 The pg-marked suite **skips (never fails)** when Postgres is unreachable or the
@@ -70,7 +83,10 @@ routing `test-integration` through the gate without a usable DB **greenwashes**
 Runs are wrapped in a systemd-run scope (`MemoryMax=6G`, `CPUQuota=200%`) inside
 the gate user's slice fence. When `workbay-hostgov` is on the host it gates run
 admission (exit 74 defer under pressure); absence is logged, never silent.
-Install/upgrade as the gate user: `uv tool install mcp-workbay-orchestrator`.
+Known gap (2026-07-13): the hostgov CLI ships in `mcp-workbay-orchestrator`
+≥0.2.8, which is git+ssh-only — PyPI stops at 0.2.0 (no hostgov), and the gate
+user deliberately has no GitHub access. Until the package is published,
+admission stays SKIPPED and the systemd caps are the backstop.
 
 ## Guards
 

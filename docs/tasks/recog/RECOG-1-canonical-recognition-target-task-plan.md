@@ -32,6 +32,8 @@ Facial recognition and image captioning are GPU workloads that now run only on t
 
 Greenfield policy applies: delete-over-flag, no back-compat shim for the removed option (no production data to preserve).
 
+**Upgrade transition (explicit) [RLSE-08]**: the resolver **drops the option tier** for `recognition_source` and `local_url` (not merely the UI write). Consequence: an existing dev install that saved `acx_recognition_source='local'` as an *option* resolves to `service` after upgrade (the default flip + tier removal). This is intended (greenfield, no prod installs), but the dev-hatch migration must be documented as the breadcrumb: a dev who wants to keep local sets `define('ACX_RECOGNITION_SOURCE','local')` + `define('ACX_RECOGNITION_LOCAL_URL', …)` in wp-config. No silent switch without a documented recovery.
+
 ## Key decisions from the enumeration (resolves open questions)
 
 The codemap-grounded inventory (`RECOG-1-inventory.md`, 58 rows / 10 surprises) forced these explicit calls:
@@ -56,6 +58,17 @@ The codemap-grounded inventory (`RECOG-1-inventory.md`, 58 rows / 10 surprises) 
 - Keep `class-recognition-endpoint-resolver.php` precedence (constant → filter → option → default) intact; only the option tier + default value change.
 - Frontend token discipline (sr-004) for any Settings UI change; the target-card component and its SCSS are already token-clean (WBUX-DEEMPH-A11Y).
 - No secrets in code/config [WEB-16]. Minting keys printed once, never committed.
+
+## Workflow Principles
+
+- Delete-over-flag (greenfield): remove the local option/UI outright; no back-compat shim, no feature flag.
+- One minter of record: never split `mint_api_key`; consolidation is scope/docs/guardrails only [DATA-14].
+- The dev hatch is code-level only (wp-config `define()` / filter); never a product feature and never an auth bypass [SEC-04, REF-12].
+- Every removed surface must be removed *everywhere* it appears (Settings + Workbench banner + admin notice + `config.ts` default), not just the obvious one — a half-retired target is worse than none [RLSE-04].
+
+## Scope decision (single task, ordered slices) [complexity budget]
+
+RECOG-1 is intentionally one task, not a mini-epic: it is a single coherent product change (one canonical target) whose sub-parts must ship together — a half-retired surface (e.g. Settings retired but the Workbench banner and `config.ts` localhost default remaining) would leave a contradictory UX. The slices are independently reviewable but land as one branch: S1 (resolver default + hatch) is a safe prerequisite; S2 (product-surface removal) is the bulk and may be reviewed as sub-diffs (REST/contract, FE-UI, notices) but should not merge partially; S3 (minting/docs/smokes) depends on S1's default flip. If review judges S2 too large to land atomically, split it into S2a (REST + resolver-facing) and S2b (FE + notices) on the same branch — do not ship a partial retirement to `main`.
 
 ## Terminology
 
@@ -141,6 +154,7 @@ Proof: `dev-mint-key`/`provision-customer` help asserts scope; smokes run agains
 - Gate: `make check-remote` on committed HEAD (backend Python suite; no JS/PHP target on the gate — run scoped PHP/vitest locally, per the standing gap).
 - Contract: settings REST fixture (`wp-rest.ts`) reflects the dropped `local_url`.
 - **Operator-dependent (flagged, not blocking this task)**: the online keyboard-walk/live-region a11y specs still require the plugin paired to a live backend; unaffected by this task's scope.
+- **Runtime axe/visual is post-merge**: LocalWP serves `apps/prototype-wp-alt-context/public/assets/dist` from the **ROOT** worktree, not the feature worktree (same constraint as WBUX-DEEMPH-A11Y). Pre-merge evidence = unit suites + compiled-output checks; the `settings-axe` runtime confirmation runs after merge on a root rebuild.
 
 ## Consolidated Checklist
 
@@ -168,6 +182,10 @@ Proof: `dev-mint-key`/`provision-customer` help asserts scope; smokes run agains
 - [ ] Boundary deltas (settings REST, proxy target) have matching test/fixture evidence.
 - [ ] State-matrix + a11y evidence captured for the new single-target Settings.
 - [ ] Handoff decision records the contract changes and the deliberate escape-hatch design.
+
+## Stretch Goals
+- [ ] Add `acx_define_env_constant` bootstrap for `ACX_RECOGNITION_SOURCE`/`_LOCAL_URL` so the dev hatch works via `.env`, not only wp-config `define()` (nice-to-have; not blocking).
+- [ ] Optional code guard: `manage_api_keys --env local` refuses non-fixture tenant IDs (hard fixtures-only enforcement vs docs-only).
 
 ## Success Criteria
 - [ ] Default recognition source is `service` (resolver + `config.ts`); a fresh plugin targets hosted with no "waiting for service" from a local default.

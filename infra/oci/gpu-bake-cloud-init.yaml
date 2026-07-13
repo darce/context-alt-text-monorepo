@@ -62,11 +62,7 @@ write_files:
       say "5/6 download weights (Xet-aware hf client; 18.6GB Q4 + F16 mmproj)"
       python3 -m venv /opt/hfvenv || finish ACX_BAKE_FAILED "phase=hf_venv"
       /opt/hfvenv/bin/pip install -q -U "huggingface_hub[hf_xet]" || finish ACX_BAKE_FAILED "phase=hf_pip"
-      HF=/opt/hfvenv/bin/huggingface-cli
-      $HF download "$REPO_ID" "$Q4"     --local-dir /opt/acx-gpu/dl || finish ACX_BAKE_FAILED "phase=dl_q4"
-      $HF download "$REPO_ID" "$MMPROJ" --local-dir /opt/acx-gpu/dl || finish ACX_BAKE_FAILED "phase=dl_mmproj"
-      mv -f "/opt/acx-gpu/dl/$Q4"     "$MODELS/qwen3-vl-30b-a3b-instruct-q4.gguf"     || finish ACX_BAKE_FAILED "phase=mv_q4"
-      mv -f "/opt/acx-gpu/dl/$MMPROJ" "$MODELS/qwen3-vl-30b-a3b-instruct-mmproj.gguf" || finish ACX_BAKE_FAILED "phase=mv_mmproj"
+      /opt/hfvenv/bin/python /usr/local/bin/acx-hf-download.py "$REPO_ID" "$MODELS" "$Q4" "$MMPROJ" || finish ACX_BAKE_FAILED "phase=dl_weights"
       ( cd "$MODELS" && sha256sum qwen3-vl-30b-a3b-instruct-q4.gguf qwen3-vl-30b-a3b-instruct-mmproj.gguf > SHA256SUMS )
       chown -R ubuntu:ubuntu /opt/acx-gpu
       nvidia-smi > /opt/acx-gpu/nvidia-smi.txt 2>&1 || finish ACX_BAKE_FAILED "phase=nvidia_smi"
@@ -78,6 +74,21 @@ write_files:
         sleep 10
       done
       finish ACX_BAKE_FAILED "phase=endpoint_timeout"
+
+  - path: /usr/local/bin/acx-hf-download.py
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env python3
+      # Download pinned GGUF weights via the HF Python API (Xet-aware, version-stable).
+      # argv: repo_id models_dir q4_filename mmproj_filename
+      import os, sys, shutil
+      from huggingface_hub import hf_hub_download
+      repo, models_dir, q4, mmproj = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+      for fn, dst in ((q4, "qwen3-vl-30b-a3b-instruct-q4.gguf"),
+                      (mmproj, "qwen3-vl-30b-a3b-instruct-mmproj.gguf")):
+          p = hf_hub_download(repo_id=repo, filename=fn, local_dir="/opt/acx-gpu/dl")
+          shutil.move(p, os.path.join(models_dir, dst))
+          print("downloaded", dst, flush=True)
 
   - path: /etc/systemd/system/acx-gpu-vlm.service
     permissions: "0644"

@@ -76,12 +76,12 @@
 
   &__media-title {
     margin: 0;
-    font-weight: 600;
+    font-weight: var(--acx-font-weight-semibold);
   }
 
   &__media-id {
-    font-weight: 400;
-    font-size: 0.85em;
+    font-weight: var(--acx-font-weight-normal);
+    font-size: var(--acx-text-sm);
     color: var(--acx-color-text-muted);
   }
 
@@ -100,13 +100,13 @@
     li {
       background-color: var(--acx-color-panel);
       padding: 0 var(--acx-space-8);
-      font-size: 0.85rem;
+      font-size: var(--acx-text-sm);
     }
   }
 
   &__tag--empty {
     color: var(--acx-color-text-muted);
-    font-size: 0.85rem;
+    font-size: var(--acx-text-sm);
   }
 
   &__pagination {
@@ -132,7 +132,7 @@
     padding: var(--acx-space-12);
     border: 1px solid var(--acx-color-border);
     background-color: var(--acx-color-surface-alt);
-    border-radius: var(--acx-radius-8);
+    border-radius: var(--acx-radius-md);
   }
 
   &__bulk-describe {
@@ -207,17 +207,17 @@
 
     &::-webkit-progress-bar {
       background-color: var(--acx-color-surface-alt);
-      border-radius: var(--acx-radius-8);
+      border-radius: var(--acx-radius-md);
     }
 
     &::-webkit-progress-value {
       background-color: var(--acx-color-accent);
-      border-radius: var(--acx-radius-8);
+      border-radius: var(--acx-radius-md);
     }
 
     &::-moz-progress-bar {
       background-color: var(--acx-color-accent);
-      border-radius: var(--acx-radius-8);
+      border-radius: var(--acx-radius-md);
     }
   }
 
@@ -242,7 +242,7 @@
     align-items: center;
     gap: var(--acx-space-6);
     padding: var(--acx-space-4) var(--acx-space-8);
-    border-radius: var(--acx-radius-8);
+    border-radius: var(--acx-radius-md);
     background-color: var(--acx-color-warning-bg);
     border: 1px solid var(--acx-color-warning-border);
     color: var(--acx-color-warning-pill-text);
@@ -274,7 +274,7 @@
     padding: var(--acx-space-12);
     border: 1px solid var(--acx-color-border);
     background-color: var(--acx-color-surface-alt);
-    border-radius: var(--acx-radius-8);
+    border-radius: var(--acx-radius-md);
   }
 
   &__summary-main {
@@ -303,7 +303,7 @@
       border: 1px solid var(--acx-color-border);
       background-color: var(--acx-color-surface);
       color: inherit;
-      border-radius: var(--acx-radius-8);
+      border-radius: var(--acx-radius-md);
       min-width: 4.5rem;
     }
 
@@ -316,8 +316,8 @@
     &-content {
       background-color: var(--acx-color-surface);
       border: 1px solid var(--acx-color-border);
-      border-radius: var(--acx-radius-10);
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+      border-radius: var(--acx-radius-lg);
+      box-shadow: var(--acx-shadow-2);
       z-index: 20;
       overflow: hidden;
     }
@@ -332,7 +332,7 @@
       justify-content: space-between;
       gap: var(--acx-space-12);
       padding: var(--acx-space-6) var(--acx-space-10);
-      border-radius: var(--acx-radius-8);
+      border-radius: var(--acx-radius-md);
       cursor: pointer;
       color: var(--acx-color-text);
 
@@ -342,7 +342,7 @@
       }
 
       &[data-state='checked'] {
-        font-weight: 600;
+        font-weight: var(--acx-font-weight-semibold);
       }
     }
 
@@ -369,7 +369,7 @@
       border: 1px solid var(--acx-color-border);
       background-color: var(--acx-color-surface);
       color: inherit;
-      border-radius: var(--acx-radius-8);
+      border-radius: var(--acx-radius-md);
       min-width: 10rem;
     }
 
@@ -382,8 +382,8 @@
     &-content {
       background-color: var(--acx-color-surface);
       border: 1px solid var(--acx-color-border);
-      border-radius: var(--acx-radius-10);
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+      border-radius: var(--acx-radius-lg);
+      box-shadow: var(--acx-shadow-2);
       z-index: 20;
       overflow: hidden;
     }
@@ -398,7 +398,7 @@
       justify-content: space-between;
       gap: var(--acx-space-12);
       padding: var(--acx-space-6) var(--acx-space-10);
-      border-radius: var(--acx-radius-8);
+      border-radius: var(--acx-radius-md);
       cursor: pointer;
       color: var(--acx-color-text);
 
@@ -408,7 +408,7 @@
       }
 
       &[data-state='checked'] {
-        font-weight: 600;
+        font-weight: var(--acx-font-weight-semibold);
       }
     }
 

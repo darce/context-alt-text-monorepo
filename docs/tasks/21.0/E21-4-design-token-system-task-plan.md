@@ -101,7 +101,7 @@ Keep: `danger #b42318` (6.57:1 on white ✓), `danger-strong/hover #991b1b` (7.6
 - `--acx-color-warning-border` `#f59e0b` (2.15:1) → **`#b45309`** (5.02:1 ✓); pill/soft fills unchanged (decorative).
 - `--acx-color-error` `#ef4444` (3.76:1) → text duty snaps to `--acx-color-danger`; retained for ≥3:1 non-text duty only.
 
-**Typography**: `--acx-text-2xs: 0.702rem`, `xs: 0.79rem`, `sm: 0.889rem`, `base: 1rem`, `lg: 1.125rem`, `xl: 1.266rem` (new). Migration: old `md (0.9)` → `sm`; old `lg (0.95)` → `base`. Names `md`/`lg` are kept: `md` pins to `sm`'s value; `lg` re-values to `1.125rem` only at explicitly-audited heading call sites, all other `lg` call sites snap to `base` during S3's audit. Alias values pinned by test. Block-level call sites that move a step get a line-height check in the same slice [TYPE-02].
+**Typography**: `--acx-text-2xs: 0.702rem`, `xs: 0.79rem`, `sm: 0.889rem`, `base: 1rem`, `lg: 1.125rem`, `xl: 1.266rem`, `2xl: 1.424rem`, `3xl: 1.802rem` (1.125 ladder continued for page titles / large stats). Migration: old `md (0.9)` → `sm`; old `lg (0.95)` → `base`; old 24px titles → `2xl`; old 28px titles → `3xl`. Names `md`/`lg` are kept: `md` pins to `sm`'s value; `lg` re-values to `1.125rem` only at explicitly-audited heading call sites, all other `lg` call sites snap to `base` during S3's audit. Alias values pinned by test. Heading/title call sites using `text-lg`/`xl`/`2xl`/`3xl` use `--acx-leading-tight: 1.3` [TYPE-02].
 
 **Elevation [UI-08]**: `--acx-shadow-1` (card; `--acx-shadow-card` aliases it), `--acx-shadow-2` (popover/drawer), `--acx-shadow-3` (dialog; folds dialog-primary/secondary pair). The 13 raw `box-shadow` literals snap to these 3 levels.
 
@@ -132,7 +132,7 @@ Spacing out of scope except literals adjacent to a swap already covered by an ex
 
 | File | Note |
 | --- | --- |
-| `js/admin/styles/tokens/_radius.scss`, `_spacing.scss` | radius alias deprecation; spacing untouched |
+| `js/admin/styles/tokens/_radius.scss`, `_spacing.scss` | radius alias deprecation; spacing file gains component-sizing tokens |
 | `tests/e2e/a11y/*-axe.spec.ts` | must stay green (floor, not gate [A11Y-23]) |
 | `js/admin/styles/main.scss` | token import order if a new partial is added |
 
@@ -193,50 +193,50 @@ Proof: axe specs green; visual spec green; every snapshot diff human-reviewed an
 
 ## Context and Ownership
 
-- [ ] Loaded frontend guidelines, constitution sr-004, REFA-3 finding lineage before editing.
-- [ ] Confirmed no contract boundary touched (frontend-local).
+- [x] Loaded frontend guidelines, constitution sr-004, REFA-3 finding lineage before editing.
+- [x] Confirmed no contract boundary touched (frontend-local).
 
 ### Checklist for Slice 1: Token foundation
 
-- [ ] `_colors.scss` ramp + roles + functional re-values match spec tables.
-- [ ] `_typography.scss` ladder + `md`/`lg` pins.
-- [ ] Elevation tokens + `--acx-shadow-card` alias.
-- [ ] `design-tokens.test.ts`: dangling-var guard, computed contrast acceptance, alias pins.
-- [ ] Tokens vitest scope green; committed.
+- [x] `_colors.scss` ramp + roles + functional re-values match spec tables.
+- [x] `_typography.scss` ladder + `md`/`lg` pins.
+- [x] Elevation tokens + `--acx-shadow-card` alias.
+- [x] `design-tokens.test.ts`: dangling-var guard, computed contrast acceptance, alias pins.
+- [x] Tokens vitest scope green; committed.
 
 ### Checklist for Slice 2: Hex sweep
 
-- [ ] `_identity-cluster-list.scss` 67 hex → tokens.
-- [ ] `_combobox.scss` 13 hex, `_orientation-card.scss` 2 hex → tokens.
-- [ ] Guard extended to the three files; vitest green; committed.
+- [x] `_identity-cluster-list.scss` 67 hex → tokens.
+- [x] `_combobox.scss` 13 hex, `_orientation-card.scss` 2 hex → tokens.
+- [x] Guard extended to the three files; vitest green; committed.
 
 ### Checklist for Slice 3: Literal sweep
 
-- [ ] font-size/weight/radius/shadow/rgba swept across remaining `components/*.scss`.
-- [ ] Numeric-radius aliases migrated; disposition comments placed.
-- [ ] `lg` heading-audit list recorded in slice decision.
-- [ ] Guard covers all `components/`; vitest green; committed.
+- [x] font-size/weight/radius/shadow/rgba swept across remaining `components/*.scss`.
+- [x] Numeric-radius aliases migrated; disposition comments placed.
+- [x] `lg` heading-audit list recorded in slice decision.
+- [x] Guard covers all `components/`; vitest green; committed.
 
 ### Checklist for Slice 4: Second channel + re-baseline
 
-- [ ] Color-only status indicators paired with icon/label.
+- [x] Color-only status indicators paired with icon/label.
 - [ ] Snapshots re-baselined once; diffs human-reviewed and enumerated.
 - [ ] Axe + visual specs green; committed.
 
 ## Review Readiness
 
-- [ ] No boundary-touching implementation (frontend-local) — token/test evidence in each slice.
+- [x] No boundary-touching implementation (frontend-local) — token/test evidence in each slice.
 - [ ] Runtime-parity: visual snapshots + axe specs cover render truth that unit guards can mask.
-- [ ] Handoff decision per slice records change, verification, and re-baseline enumeration.
+- [x] Handoff decision per slice records change, verification, and re-baseline enumeration.
 
 ## Success Criteria
 
-- [ ] Zero unguarded raw hex/rgb(a)/font-size/font-weight/border-radius/box-shadow literals in `components/*.scss` (disposition-commented exemptions only), enforced by test.
-- [ ] All duty pairs pass computed floors (text 4.5:1, non-text 3:1) [A11Y-01].
-- [ ] No dangling `var(--acx-*)` in `styles/`.
-- [ ] One 1.125 modular ladder with pinned aliases [TYPE-05].
+- [x] Zero unguarded raw hex/rgb(a)/font-size/font-weight/border-radius/box-shadow literals in `components/*.scss` (disposition-commented exemptions only), enforced by test.
+- [x] All duty pairs pass computed floors (text 4.5:1, non-text 3:1) [A11Y-01].
+- [x] No dangling `var(--acx-*)` in `styles/`.
+- [x] One 1.125 modular ladder with pinned aliases [TYPE-05].
 - [ ] Status indicators carry a second channel [A11Y-06]; axe specs green.
-- [ ] Exactly one visual re-baseline commit, human-reviewed.
+- [ ] Exactly one visual re-baseline RUN, human-reviewed (snapshots are machine-local/gitignored by design; evidence recorded as MCP test_result, currently blocked on LocalWP env).
 - [ ] `make check-remote` green on final HEAD.
 
 ## Heuristic IDs cited

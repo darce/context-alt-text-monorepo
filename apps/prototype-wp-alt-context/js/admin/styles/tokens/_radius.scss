@@ -2,6 +2,8 @@
   --acx-radius-sm: 0.25rem;
   --acx-radius-md: 0.5rem;
   --acx-radius-lg: 0.625rem;
+  --acx-radius-xl: 0.75rem; /* large cards/drawers (E21-4) */
+  /* Deprecated numeric aliases — migrate call sites to semantic names (E21-4 S3) */
   --acx-radius-8: var(--acx-radius-md);
   --acx-radius-10: var(--acx-radius-lg);
   --acx-radius-pill: 999px;

@@ -57,12 +57,22 @@ export const ToastProvider = ({ children }: { children: ReactNode }) => {
             }}
           >
             <RadixToast.Title asChild>
-              <span className="acx-toast__icon">
+              <span
+                className="acx-toast__icon"
+                data-testid={`acx-toast-icon-${t.type}`}
+                data-toast-severity={t.type}
+                aria-hidden="true"
+              >
                 {t.type === 'success' && <CheckCircle size={18} />}
                 {t.type === 'error' && <AlertCircle size={18} />}
                 {t.type === 'info' && <Info size={18} />}
               </span>
             </RadixToast.Title>
+            <span className="acx-toast__severity-label">
+              {t.type === 'success' && __('Success', 'alt-context')}
+              {t.type === 'error' && __('Error', 'alt-context')}
+              {t.type === 'info' && __('Info', 'alt-context')}
+            </span>
             <RadixToast.Description asChild>
               <span className="acx-toast__message">{t.message}</span>
             </RadixToast.Description>

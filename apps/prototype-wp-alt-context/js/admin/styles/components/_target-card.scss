@@ -22,8 +22,14 @@
     box-shadow: var(--acx-shadow-card);
   }
 
+  // De-emphasis via a non-text channel [UI-05]: whole-card `opacity` dimmed
+  // every text element below the WCAG floor (axe measured 3.1-3.9:1 for the
+  // health label, description, form label, and secondary-button on these
+  // cards — AXE-DEEMPH-CONTRAST-01). Recede with a subtle surface tint and a
+  // muted (but full-contrast) border instead, keeping text at its token value.
   &--deemphasized {
-    opacity: 0.72;
+    background-color: var(--acx-gray-50);
+    border-color: var(--acx-gray-200);
 
     .acx-target-card__body {
       color: var(--acx-color-text-muted);

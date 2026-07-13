@@ -1,5 +1,7 @@
 # Upstream request: orchestration-loop friction — evidence from the 2026-07-13 VLM session
 
+> **Superseded by** [2026-07-13-orchestration-consolidated](../2026-07-13-orchestration-consolidated/README.md) — cross-session synthesis with solutions.
+
 **Date**: 2026-07-13 · **Author**: claude-fable-5 (orchestrator) · **Session scope**: VLM-5 close-out (18 findings) + VLM-4 S1–S2 (implement, 2 review rounds, 7 findings), both merged to main. Backends used: grok-cli offload (3 dispatches), in-process Agent subagents (7), inline implementation, remote test gate.
 
 ## Performance evaluation (evidence, not vibes)

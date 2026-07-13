@@ -1,5 +1,7 @@
 # Upstream request: E21-4 loop retro — offload judge/reports, main-writer collisions, gate coverage
 
+> **Superseded by** [2026-07-13-orchestration-consolidated](../2026-07-13-orchestration-consolidated/README.md) — cross-session synthesis with solutions.
+
 **Date**: 2026-07-13 · **Author**: claude-fable-5 (orchestrator) · **Session scope**: E21-4 design-token system, plan→merge in one session (5 slices, 4 grok offload passes, 5 in-process reviewer subagents, 26 findings closed, merged 562cfe79). Corroborates and extends [2026-07-13-orchestration-loop-retro](../2026-07-13-orchestration-loop-retro/README.md) (VLM session, same day, independent evidence).
 
 ## Performance evaluation

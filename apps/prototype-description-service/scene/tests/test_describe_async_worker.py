@@ -205,15 +205,42 @@ def test_worker_keeps_cpu_provisional_when_gpu_fails():
     asyncio.run(body())
 
 
-def test_worker_timeout_marks_failed_exactly_once():
-    """wait_for cancel may mark FAILED via CancelledError; outer guard must not double-write."""
+def test_worker_timeout_marks_failed_exactly_once(monkeypatch: pytest.MonkeyPatch):
+    """wait_for cancel may mark FAILED via CancelledError; outer guard must not double-write.
+
+    VLM5-F2B-BR-03: a spy on mark_item counts actual non-terminal→FAILED
+    transitions, so a second write that REPLACES the error string (instead of
+    concatenating) is detected directly — not inferred from string shape.
+    """
 
     async def body() -> None:
         from scene.application.describe_async_worker import run_async_describe_job
+        from scene.domain.describe_run import TERMINAL_ITEM_STATUSES
 
         engine, sf = await _sessionmaker()
         tenant = uuid.uuid4()
         run_id = await _create_run(sf, tenant_id=tenant, media_id=7, image_bytes=b"image")
+
+        failed_writes: list[str | None] = []
+        orig_mark_item = DescribeRunRepository.mark_item
+
+        async def spy_mark_item(self, *, tenant_id, run_id, media_id, status, error_message=None, now=None):
+            item = await self._get_item(tenant_id=tenant_id, run_id=run_id, media_id=media_id)
+            was_terminal = item is not None and DescribeItemStatus(item.status) in TERMINAL_ITEM_STATUSES
+            result = await orig_mark_item(
+                self,
+                tenant_id=tenant_id,
+                run_id=run_id,
+                media_id=media_id,
+                status=status,
+                error_message=error_message,
+                now=now,
+            )
+            if status is DescribeItemStatus.FAILED and result and not was_terminal:
+                failed_writes.append(error_message)
+            return result
+
+        monkeypatch.setattr(DescribeRunRepository, "mark_item", spy_mark_item)
 
         await run_async_describe_job(
             tenant_id=tenant,
@@ -230,14 +257,112 @@ def test_worker_timeout_marks_failed_exactly_once():
         assert item is not None
         assert item.status == DescribeItemStatus.FAILED
         assert describe_job_status(item) is DescribeJobStatus.FAILED
+        # Exactly one persisted FAILED transition — a replace-style double write
+        # would append a second entry here regardless of the final string shape.
+        assert len(failed_writes) == 1
+        assert item.last_error == failed_writes[0]
         assert item.last_error is not None
-        # VLM5-S2A-BR-05: exact single-write form — not a newline-count proxy.
-        # wait_for cancel usually lands CancelledError first; outer TimeoutError
-        # only writes when the item is not already FAILED.
         assert item.last_error.startswith("TimeoutError: job exceeded") or item.last_error == (
             "CancelledError: job cancelled"
         )
         assert await _count_cache_rows(sf, tenant_id=tenant) == 0
+
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_worker_timeout_after_provisional_projects_degraded():
+    """VLM5-F1A-BR-02: cancel/timeout AFTER a committed provisional projects degraded.
+
+    Same contract as the GPU-exception and restart-reclaim paths: the provisional
+    envelope stays pollable, status COMPLETED + last_error (degraded), not FAILED.
+    """
+
+    async def body() -> None:
+        from scene.application.describe_async_worker import run_async_describe_job
+
+        engine, sf = await _sessionmaker()
+        tenant = uuid.uuid4()
+        run_id = await _create_run(sf, tenant_id=tenant, media_id=7, image_bytes=b"image")
+
+        await run_async_describe_job(
+            tenant_id=tenant,
+            run_id=run_id,
+            session_factory=sf,
+            cpu_adapter=_Adapter(kind=DescriptionAdapterKind.LOCAL_CPU, caption="CPU provisional."),
+            gpu_adapter=_Adapter(kind=DescriptionAdapterKind.GPU, caption="never", delay_s=2.0),
+            job_timeout_seconds=0.3,
+            audit_sink=None,
+            metrics=None,
+        )
+
+        item = await _load_item(sf, tenant_id=tenant, run_id=run_id)
+        assert item is not None
+        assert item.status == DescribeItemStatus.COMPLETED
+        assert describe_job_status(item) is DescribeJobStatus.DEGRADED
+        assert item.tier == DescriptionResultTier.PROVISIONAL_CPU
+        assert item.visual_facts is not None
+        assert item.visual_facts["alt_text_draft"] == "CPU provisional."
+        assert item.last_error is not None
+        assert item.last_error.startswith(("TimeoutError: job exceeded", "CancelledError:"))
+        assert await _count_cache_rows(sf, tenant_id=tenant) == 0
+
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_final_phase_item_final_and_cache_insert_share_one_session(monkeypatch: pytest.MonkeyPatch):
+    """VLM5-F2B-BR-01 [DATA-14]: structural proof of same-session (same-commit) coupling.
+
+    Session-identity spies fail if the final item write and the cache insert are
+    ever split into separate sessions/commits — the decoupling the fault-injection
+    test alone cannot observe.
+    """
+
+    async def body() -> None:
+        from scene.application.describe_async_worker import run_async_describe_job
+        from scene.application.description_repository import ImageDescriptionRepository
+
+        engine, sf = await _sessionmaker()
+        tenant = uuid.uuid4()
+        run_id = await _create_run(sf, tenant_id=tenant, media_id=7, image_bytes=b"image")
+
+        seen: dict[str, object] = {}
+        orig_final = DescribeRunRepository.set_item_final
+        orig_insert = ImageDescriptionRepository.insert_or_get_existing
+
+        async def spy_final(self, **kwargs):
+            seen["final_session"] = self._session
+            return await orig_final(self, **kwargs)
+
+        async def spy_insert(self, record):
+            seen["cache_session"] = self._session
+            return await orig_insert(self, record)
+
+        monkeypatch.setattr(DescribeRunRepository, "set_item_final", spy_final)
+        monkeypatch.setattr(ImageDescriptionRepository, "insert_or_get_existing", spy_insert)
+
+        await run_async_describe_job(
+            tenant_id=tenant,
+            run_id=run_id,
+            session_factory=sf,
+            cpu_adapter=_Adapter(kind=DescriptionAdapterKind.LOCAL_CPU, caption="CPU provisional."),
+            gpu_adapter=_Adapter(kind=DescriptionAdapterKind.GPU, caption="GPU final."),
+            job_timeout_seconds=None,
+            audit_sink=None,
+            metrics=None,
+        )
+
+        assert "final_session" in seen and "cache_session" in seen
+        assert seen["final_session"] is seen["cache_session"], (
+            "item-final and cache insert must share one session/commit [DATA-14]"
+        )
+        item = await _load_item(sf, tenant_id=tenant, run_id=run_id)
+        assert item is not None
+        assert item.tier == DescriptionResultTier.FINAL_GPU
+        assert await _count_cache_rows(sf, tenant_id=tenant) == 1
 
         await engine.dispose()
 

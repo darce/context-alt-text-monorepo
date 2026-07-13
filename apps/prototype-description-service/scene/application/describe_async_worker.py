@@ -23,10 +23,26 @@ from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.description_adapter import AdapterResult, DescriptionAdapter
 from scene.application.description_repository import ImageDescriptionRepository
 from scene.application.visual_facts_service import build_visual_facts_envelope, phrase_boxes_to_json
-from scene.domain.describe_run import DescribeItemStatus
+from scene.domain.describe_run import TERMINAL_ITEM_STATUSES, DescribeItemStatus
 from scene.domain.description import DescriptionResultTier, RetentionClass
 
 _logger = logging.getLogger(__name__)
+
+# Strong refs for shielded cancellation-cleanup tasks: asyncio holds only weak
+# task refs, so a second cancel abandoning the shield must not let the cleanup
+# be GC'd mid-write (VLM5-F1A-BR-01).
+_cleanup_tasks: set[asyncio.Task] = set()
+
+
+def _log_cleanup_failure(task: asyncio.Task) -> None:
+    """Retrieve the cleanup task result so a DB failure is logged, never silent."""
+    _cleanup_tasks.discard(task)
+    if task.cancelled():
+        _logger.error("cancellation cleanup was cancelled before persisting terminal state")
+        return
+    exc = task.exception()
+    if exc is not None:
+        _logger.error("cancellation cleanup failed to persist terminal job state", exc_info=exc)
 
 
 class AuditSink(Protocol):
@@ -123,24 +139,40 @@ async def run_async_describe_job(
 
     Phase commits use short-lived sessions so long adapter calls do not hold a DB
     connection open. FINAL cache write-through shares the ``set_item_final`` commit
-    [DATA-14]. CancelledError marks failed then re-raises [CON-03].
+    [DATA-14]. CancelledError marks the job terminal (degraded when a provisional
+    exists, else failed) then re-raises [CON-03].
     """
 
-    async def _mark_failed(error: str) -> None:
+    async def _mark_terminal(error: str) -> None:
+        """Drive a non-terminal item to an honest terminal state for pollers.
+
+        Degraded when a provisional envelope was already persisted (contract:
+        degraded = GPU failure after a provisional — same as the GPU-exception
+        and restart-reclaim paths), else failed (VLM5-F1A-BR-02). No-op when
+        the item is already terminal, so cancel + timeout cannot double-write.
+        """
         async with session_factory() as session:
             await set_tenant_context(session, tenant_id)
             repo = DescribeRunRepository(session)
             item = await repo.get_single_run_item(tenant_id=tenant_id, run_id=run_id)
             if item is None:
                 return
-            if DescribeItemStatus(item.status) is DescribeItemStatus.FAILED:
+            if DescribeItemStatus(item.status) in TERMINAL_ITEM_STATUSES:
                 return
-            await repo.set_item_failed(
-                tenant_id=tenant_id,
-                run_id=run_id,
-                media_id=item.media_id,
-                error=error,
-            )
+            if item.visual_facts is not None:
+                await repo.set_item_degraded(
+                    tenant_id=tenant_id,
+                    run_id=run_id,
+                    media_id=item.media_id,
+                    error=error,
+                )
+            else:
+                await repo.set_item_failed(
+                    tenant_id=tenant_id,
+                    run_id=run_id,
+                    media_id=item.media_id,
+                    error=error,
+                )
             await session.commit()
 
     async def _run() -> None:
@@ -273,13 +305,17 @@ async def run_async_describe_job(
                         },
                     )
         except asyncio.CancelledError:
-            # Mark failed for pollers, then re-raise so cooperative cancellation
-            # and wait_for timeout semantics still work [CON-03]. The cleanup
-            # write is shielded so a second cancel cannot abort the FAILED
-            # persist, and suppressed so a DB error during shutdown cannot
-            # replace the CancelledError (VLM5-S2A-BR-04) [RES-04].
+            # Mark terminal for pollers, then re-raise so cooperative cancellation
+            # and wait_for timeout semantics still work [CON-03]. The cleanup write
+            # is shielded so a second cancel cannot abort the persist, suppressed so
+            # a DB error during shutdown cannot replace the CancelledError
+            # (VLM5-S2A-BR-04) [RES-04], strongly referenced + done-callback-logged
+            # so an abandoned or failed cleanup is never silent (VLM5-F1A-BR-01).
+            cleanup = asyncio.ensure_future(_mark_terminal("CancelledError: job cancelled"))
+            _cleanup_tasks.add(cleanup)
+            cleanup.add_done_callback(_log_cleanup_failure)
             with contextlib.suppress(Exception):
-                await asyncio.shield(_mark_failed("CancelledError: job cancelled"))
+                await asyncio.shield(cleanup)
             raise
         except Exception as exc:  # noqa: BLE001 - persist terminal job failure
             error = f"{type(exc).__name__}: {exc}"
@@ -317,23 +353,11 @@ async def run_async_describe_job(
         try:
             await asyncio.wait_for(_run(), job_timeout_seconds)
         except TimeoutError:
-            # wait_for cancels the inner task; CancelledError may already have
-            # marked FAILED. Avoid a second set_failed that overwrites the error.
-            async with session_factory() as session:
-                await set_tenant_context(session, tenant_id)
-                repo = DescribeRunRepository(session)
-                item = await repo.get_single_run_item(tenant_id=tenant_id, run_id=run_id)
-                if item is not None and DescribeItemStatus(item.status) is DescribeItemStatus.FAILED:
-                    return
-                media_id = item.media_id if item is not None else None
-                if media_id is None:
-                    return
-                await repo.set_item_failed(
-                    tenant_id=tenant_id,
-                    run_id=run_id,
-                    media_id=media_id,
-                    error=f"TimeoutError: job exceeded {job_timeout_seconds}s",
-                )
-                await session.commit()
+            # wait_for cancels the inner task; the CancelledError cleanup usually
+            # persisted a terminal state already. _mark_terminal's terminal guard
+            # prevents a second write from overwriting that error, and its
+            # degraded-vs-failed split keeps the timeout path consistent with the
+            # GPU-exception and reclaim contracts (VLM5-F1A-BR-02).
+            await _mark_terminal(f"TimeoutError: job exceeded {job_timeout_seconds}s")
         return
     await _run()

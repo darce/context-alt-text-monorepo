@@ -195,17 +195,11 @@ def get_description_adapter() -> DescriptionAdapter:
         )
 
     if spec.adapter_kind is DescriptionAdapterKind.GPU and spec.available:
-        gpu_adapter = get_gpu_description_adapter()
-        if spec.profile is DescriptionProfile.GPU_QWEN30B_ENSEMBLE and not isinstance(
-            gpu_adapter, UnavailableDescriptionAdapter
-        ):
-            # VLM-4 Slice 2b: one named profile opts into the N-view ensemble
-            # wrapper [sr-007]; an unavailable GPU stub is returned unwrapped
-            # so the fail-closed error surfaces once, not once per view.
-            from scene.infrastructure.vlm.ensemble_decode import EnsembleDescriptionAdapter
-
-            return EnsembleDescriptionAdapter(wrapped=gpu_adapter)
-        return gpu_adapter
+        # The sync inline route always gets the RAW GPU adapter: the N-pass
+        # ensemble multiplies latency N-fold and belongs only on the
+        # minutes-tolerant async GPU-final tier — see
+        # get_async_gpu_description_adapter (VLM4-RA-BR-02) [RES-02].
+        return get_gpu_description_adapter()
 
     if not spec.available:
         return UnavailableDescriptionAdapter(
@@ -225,3 +219,24 @@ def get_description_adapter() -> DescriptionAdapter:
             model_id=spec.model_id or "unavailable",
             model_version=spec.model_version,
         )
+
+
+def get_async_gpu_description_adapter() -> DescriptionAdapter:
+    """GPU adapter for the ASYNC final phase; ensemble-wrapped when opted in.
+
+    The N-view ensemble runs N sequential GPU passes, so it is affordable only
+    here — the minutes-tolerant async GPU-final tier — never the inline sync
+    route or the CPU-provisional phase (VLM4-RA-BR-02) [RES-02]. One named
+    profile opts in [sr-007]; an unavailable GPU stub is returned unwrapped so
+    the fail-closed error surfaces once, not once per view.
+    """
+    gpu_adapter = get_gpu_description_adapter()
+    settings = DescriptionSettings()
+    spec = get_profile_spec(settings.profile)
+    if spec.profile is DescriptionProfile.GPU_QWEN30B_ENSEMBLE and not isinstance(
+        gpu_adapter, UnavailableDescriptionAdapter
+    ):
+        from scene.infrastructure.vlm.ensemble_decode import EnsembleDescriptionAdapter
+
+        return EnsembleDescriptionAdapter(wrapped=gpu_adapter)
+    return gpu_adapter

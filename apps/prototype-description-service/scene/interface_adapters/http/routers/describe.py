@@ -62,6 +62,7 @@ from scene.domain.description import DescriptionAdapterKind
 from scene.infrastructure.provider.hosted_provider_adapter import HostedProviderError
 from scene.infrastructure.vlm.unavailable_adapter import DescriptionAdapterUnavailableError
 from scene.interface_adapters.http.deps import (
+    get_async_gpu_description_adapter,
     get_cpu_description_adapter,
     get_description_adapter,
     get_gpu_description_adapter,
@@ -660,7 +661,8 @@ async def enqueue_describe_image(
     auth=Depends(require_write_access),
     session=Depends(get_optional_session),
     cpu_adapter=Depends(get_description_adapter),
-    gpu_adapter=Depends(get_gpu_description_adapter),
+    # Async GPU-final tier: the only place the N-pass ensemble may run (VLM4-RA-BR-02).
+    gpu_adapter=Depends(get_async_gpu_description_adapter),
 ) -> DescribeJobResult | Response:
     form = await request.form()
     settings = DescriptionSettings()

@@ -21,8 +21,16 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 import scene.application.describe_load as load_mod
 from db.models.base_imports import Base
 from db.models.scene import DescribeRun, DescribeRunItem
-from scene.application.describe_load import load_snapshot, write_load_snapshot
-from scene.application.describe_run_repository import DescribeRunRepository
+from scene.application.describe_load import (
+    load_snapshot,
+    resolve_load_path,
+    run_startup_load_snapshot,
+    write_load_snapshot,
+)
+from scene.application.describe_run_repository import (
+    DescribeRunRepository,
+    run_startup_retention_purge,
+)
 from scene.domain.describe_run import DescribeItemStatus
 
 
@@ -119,3 +127,101 @@ def test_write_load_snapshot_creates_parent_dirs():
         assert not any(p.suffix == ".tmp" or p.name.endswith(".json.tmp") for p in target.parent.iterdir())
         # Clean env leftover if any
         assert "describe-load.json.tmp" not in os.listdir(target.parent)
+
+
+def test_run_startup_load_snapshot_writes_file_with_counts(tmp_path: Path):
+    """VLM5-S4A-BR-01: run_startup_load_snapshot end-to-end against sqlite session factory."""
+
+    async def body():
+        engine, sf = await _sessionmaker()
+        tenant = uuid.uuid4()
+        target = tmp_path / "describe-load.json"
+
+        async with sf() as s:
+            repo = DescribeRunRepository(s)
+            await repo.create_single_run(tenant_id=tenant, media_id=1, image_bytes=b"q")
+            run_r = await repo.create_single_run(tenant_id=tenant, media_id=2, image_bytes=b"r")
+            await repo.mark_item(
+                tenant_id=tenant,
+                run_id=run_r,
+                media_id=2,
+                status=DescribeItemStatus.RUNNING,
+            )
+            await s.commit()
+
+        await run_startup_load_snapshot(sf, path=target)
+
+        assert target.is_file()
+        loaded = json.loads(target.read_text())
+        assert set(loaded) == {"queue_depth", "in_flight", "written_at"}
+        assert loaded["queue_depth"] == 1
+        assert loaded["in_flight"] == 1
+        assert isinstance(loaded["written_at"], (int, float))
+        assert loaded["written_at"] > 0
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_run_startup_load_snapshot_resolves_env_path_when_path_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """VLM5-S4A-BR-01: path=None uses resolve_load_path() / ACX_DESCRIBE_LOAD_PATH."""
+
+    async def body():
+        engine, sf = await _sessionmaker()
+        target = tmp_path / "from-env" / "load.json"
+        monkeypatch.setenv("ACX_DESCRIBE_LOAD_PATH", str(target))
+        assert resolve_load_path() == str(target)
+
+        await run_startup_load_snapshot(sf, path=None)
+
+        assert target.is_file()
+        loaded = json.loads(target.read_text())
+        assert set(loaded) == {"queue_depth", "in_flight", "written_at"}
+        assert loaded["queue_depth"] == 0
+        assert loaded["in_flight"] == 0
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_run_startup_retention_purge_deletes_expired_terminal_singles():
+    """VLM5-S4A-BR-01: run_startup_retention_purge wrapper deletes expired terminal singles."""
+    from datetime import UTC, datetime, timedelta
+
+    async def body():
+        engine, sf = await _sessionmaker()
+        tenant = uuid.uuid4()
+        # Wrapper uses datetime.now() + default retention; age rows relative to wall clock.
+        very_old = datetime.now(tz=UTC) - timedelta(hours=48)
+        recent = datetime.now(tz=UTC) - timedelta(hours=1)
+
+        async with sf() as s:
+            repo = DescribeRunRepository(s)
+            expired_id = await repo.create_single_run(tenant_id=tenant, media_id=1, image_bytes=b"old")
+            await repo.set_item_failed(tenant_id=tenant, run_id=expired_id, media_id=1, error="done")
+            expired = await repo.get_run(tenant_id=tenant, run_id=expired_id)
+            assert expired is not None
+            expired.completed_at = very_old
+            expired.created_at = very_old
+
+            keep_id = await repo.create_single_run(tenant_id=tenant, media_id=2, image_bytes=b"new")
+            await repo.set_item_failed(tenant_id=tenant, run_id=keep_id, media_id=2, error="fresh")
+            keep = await repo.get_run(tenant_id=tenant, run_id=keep_id)
+            assert keep is not None
+            keep.completed_at = recent
+            keep.created_at = recent
+            await s.commit()
+
+        deleted = await run_startup_retention_purge(sf)
+        assert deleted == 1
+
+        async with sf() as s:
+            repo = DescribeRunRepository(s)
+            assert await repo.get_run(tenant_id=tenant, run_id=expired_id) is None
+            assert await repo.get_run(tenant_id=tenant, run_id=keep_id) is not None
+
+        await engine.dispose()
+
+    asyncio.run(body())

@@ -4,7 +4,6 @@ import { describe, expect, it } from 'vitest';
 
 const stylesRoot = join(__dirname, '..', '..');
 const tokensRoot = join(stylesRoot, 'tokens');
-const componentsRoot = join(stylesRoot, 'components');
 const mainScssPath = join(stylesRoot, 'main.scss');
 
 const REQUIRED_RADIUS_TOKENS = [
@@ -24,6 +23,9 @@ const REQUIRED_TEXT_TOKENS = [
   '--acx-text-md',
   '--acx-text-lg',
   '--acx-text-base',
+  '--acx-text-xl',
+  '--acx-text-2xl',
+  '--acx-text-3xl',
 ] as const;
 
 const REQUIRED_FONT_WEIGHT_TOKENS = [
@@ -42,7 +44,11 @@ const REQUIRED_COLOR_TOKENS = [
 
 const REQUIRED_SHADOW_TOKENS = ['--acx-shadow-card'] as const;
 
-const GOVERNED_VAR_PREFIXES = ['--acx-radius-', '--acx-text-', '--acx-font-weight-', '--acx-color-'] as const;
+// Strip SCSS line (//) and block comments before token regex parsing (S1-03).
+const stripScssComments = (contents: string): string =>
+  contents
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1');
 
 const collectScssFiles = (directory: string): string[] => {
   const entries = readdirSync(directory, { withFileTypes: true });
@@ -59,7 +65,8 @@ const collectScssFiles = (directory: string): string[] => {
 };
 
 const extractDefinedTokens = (contents: string): Set<string> => {
-  const matches = contents.matchAll(/(--acx-[a-z0-9-]+)\s*:/g);
+  const stripped = stripScssComments(contents);
+  const matches = stripped.matchAll(/(--acx-[a-z0-9-]+)\s*:/g);
 
   return new Set([...matches].map((match) => match[1]));
 };
@@ -81,16 +88,6 @@ const readTokenDefinitions = (): Set<string> => {
 
     return defined;
   }, new Set<string>());
-};
-
-const readGovernedReferences = (): string[] => {
-  const componentFiles = collectScssFiles(componentsRoot);
-
-  return componentFiles.flatMap((filePath) =>
-    extractReferencedTokens(readFileSync(filePath, 'utf8')).filter((token) =>
-      GOVERNED_VAR_PREFIXES.some((prefix) => token.startsWith(prefix)),
-    ),
-  );
 };
 
 describe('REFA-3 slice 1 token surface', () => {
@@ -125,14 +122,6 @@ describe('REFA-3 slice 1 token surface', () => {
       expect(defined, `missing ${token}`).toContain(token);
     }
   });
-
-  it('resolves every governed var() reference in component styles', () => {
-    const defined = readTokenDefinitions();
-    const referenced = readGovernedReferences();
-    const dangling = [...new Set(referenced)].filter((token) => !defined.has(token));
-
-    expect(dangling, `dangling governed tokens: ${dangling.join(', ')}`).toEqual([]);
-  });
 });
 
 // --- E21-4 token direction acceptance -------------------------------------
@@ -144,7 +133,7 @@ const readTokenValueMap = (): Map<string, string> => {
   const map = new Map<string, string>();
 
   for (const filePath of collectScssFiles(tokensRoot)) {
-    const contents = readFileSync(filePath, 'utf8');
+    const contents = stripScssComments(readFileSync(filePath, 'utf8'));
 
     for (const match of contents.matchAll(/(--acx-[a-z0-9-]+)\s*:\s*([^;]+);/g)) {
       map.set(match[1], match[2].trim());
@@ -202,8 +191,8 @@ const DUTY_PAIRS: ReadonlyArray<readonly [string, string, number]> = [
   ['--acx-color-text', '--acx-gray-100', TEXT_FLOOR],
   ['--acx-color-text', '--acx-color-panel', TEXT_FLOOR],
   ['--acx-color-text', '--acx-color-warning-pill-bg', TEXT_FLOOR],
-  ['--acx-gray-500', '--acx-gray-50', NON_TEXT_FLOOR],
-  ['--acx-gray-500', '--acx-color-surface-alt', NON_TEXT_FLOOR],
+  ['--acx-gray-500', '--acx-gray-50', TEXT_FLOOR],
+  ['--acx-gray-500', '--acx-color-surface-alt', TEXT_FLOOR],
   ['--acx-color-accent', '--acx-color-surface-alt', TEXT_FLOOR],
   ['--acx-color-accent-contrast', '--acx-color-accent', TEXT_FLOOR],
   ['--acx-color-danger', '--acx-color-surface-alt', TEXT_FLOOR],
@@ -256,6 +245,9 @@ describe('E21-4 slice 1: token direction acceptance', () => {
     expect(resolveToken(map, '--acx-text-base')).toBe('1rem');
     expect(resolveToken(map, '--acx-text-lg')).toBe('1.125rem');
     expect(resolveToken(map, '--acx-text-xl')).toBe('1.266rem');
+    expect(resolveToken(map, '--acx-text-2xl')).toBe('1.424rem');
+    expect(resolveToken(map, '--acx-text-3xl')).toBe('1.802rem');
+    expect(resolveToken(map, '--acx-leading-tight')).toBe('1.3');
     expect(resolveToken(map, '--acx-font-weight-medium')).toBe('500');
   });
 

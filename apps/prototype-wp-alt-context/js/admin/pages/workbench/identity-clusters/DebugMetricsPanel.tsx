@@ -172,7 +172,8 @@ export const DebugMetricsPanel = ({ metrics }: DebugMetricsPanelProps): React.JS
             <dd className={`acx-debug-metrics__value--${poseQuality}`}>
               {poseLabel}
               <span className="acx-debug-metrics__quality-label">
-                {poseQuality === 'poor' ? __(' · poor', 'alt-context') : __(' · good', 'alt-context')}
+                {' · '}
+                {poseQuality === 'poor' ? __('poor', 'alt-context') : __('good', 'alt-context')}
               </span>
             </dd>
           </div>

@@ -13,41 +13,40 @@ const listComponentScssFiles = (): string[] =>
     .map((name) => join(componentsDir, name))
     .sort();
 
-describe('REFA-3 slice 2: _workbench.scss color + shadow', () => {
-  it('has no raw hex or rgba color literals', () => {
-    const source = readWorkbench();
+/** Shared exemption: REFA-3 / E21-4 disposition comments allow raw scale literals. */
+const isExempt = (line: string): boolean =>
+  /(?:\/\/|\/\*)\s*(REFA-3|E21-4)\s+disposition:/.test(line);
 
-    expect(source).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
-    expect(source).not.toMatch(/rgba?\(/);
-  });
+const literalPatterns: ReadonlyArray<{ name: string; re: RegExp }> = [
+  { name: 'hex', re: /#[0-9a-fA-F]{3,8}\b/ },
+  { name: 'rgb/rgba', re: /rgba?\(/ },
+  // Named color keywords used as color values (not white-space, etc.)
+  {
+    name: 'named white|black',
+    re: /(?:^|[\s:;(])(?:color|background(?:-color)?|border(?:-color)?|fill|stroke|outline-color)\s*:\s*(?:white|black)\b|(?:^|[\s:;(])(?:white|black)\s*(?:!important)?\s*;/,
+  },
+  // font-size numerics incl. leading-dot (.75rem) and bare integers
+  { name: 'font-size', re: /font-size:\s*(?:\.\d|\d)/ },
+  { name: 'font-weight', re: /font-weight:\s*\d/ },
+  { name: 'border-radius', re: /border-radius:\s*(?:999px|50%|\d)/ },
+  // box-shadow numerics incl. inset
+  { name: 'box-shadow', re: /box-shadow:\s*(?:inset\s+)?-?\d/ },
+];
 
+describe('REFA-3 workbench non-literal assertions', () => {
   it('uses the card shadow token instead of a raw box-shadow literal', () => {
     const source = readWorkbench();
 
     expect(source).toContain('box-shadow: var(--acx-shadow-card)');
     expect(source).not.toMatch(/box-shadow:\s*[0-9]/);
   });
-});
 
-describe('REFA-3 slice 3: _workbench.scss radius', () => {
-  it('has no raw border-radius literals or spacing-token misuse', () => {
+  it('has no raw border-radius spacing-token misuse', () => {
     const source = readWorkbench();
 
-    expect(source).not.toMatch(/border-radius:\s*(?:999px|50%|[0-9]+px)/);
     expect(source).not.toMatch(/border-radius:\s*var\(--acx-space-/);
   });
-});
 
-describe('REFA-3 slice 4: _workbench.scss typography', () => {
-  it('has no raw font-size or font-weight literals', () => {
-    const source = readWorkbench();
-
-    expect(source).not.toMatch(/font-size:\s*[0-9]/);
-    expect(source).not.toMatch(/font-weight:\s*[0-9]/);
-  });
-});
-
-describe('REFA-3 slice 5: _workbench.scss spacing disposition', () => {
   it('records literal disposition for layout widths and hairline borders', () => {
     const source = readWorkbench();
 
@@ -64,36 +63,7 @@ describe('REFA-3 slice 5: _workbench.scss spacing disposition', () => {
   });
 });
 
-const hexLiteralRe = /#[0-9a-fA-F]{3,8}/;
-const e21Slice2Files = [
-  join(__dirname, '..', '..', 'components', '_identity-cluster-list.scss'),
-  join(__dirname, '..', '..', 'components', '_combobox.scss'),
-  join(__dirname, '..', '..', 'components', '_orientation-card.scss'),
-] as const;
-
-describe('E21-4 slice 2', () => {
-  it.each(e21Slice2Files)('%s has no raw hex literals except disposition lines', (path) => {
-    const source = readFileSync(path, 'utf8');
-    const offenders = source
-      .split('\n')
-      .filter((line) => hexLiteralRe.test(line) && !line.includes('E21-4 disposition:'));
-
-    expect(offenders).toEqual([]);
-  });
-});
-
-const e21Slice3LiteralPatterns: ReadonlyArray<{ name: string; re: RegExp }> = [
-  { name: 'font-size', re: /font-size:\s*[0-9]/ },
-  { name: 'font-weight', re: /font-weight:\s*[0-9]/ },
-  { name: 'border-radius', re: /border-radius:\s*(999px|50%|[0-9])/ },
-  { name: 'box-shadow', re: /box-shadow:\s*[0-9-]/ },
-  { name: 'hex', re: /#[0-9a-fA-F]{3,8}/ },
-  { name: 'rgb/rgba', re: /rgba?\(/ },
-];
-
-const isDispositionLine = (line: string): boolean => /disposition/i.test(line);
-
-describe('E21-4 slice 3', () => {
+describe('components/*.scss no unguarded scale literals', () => {
   const componentFiles = listComponentScssFiles();
 
   it('collects every components/*.scss file', () => {
@@ -106,10 +76,10 @@ describe('E21-4 slice 3', () => {
     const offenders = source
       .split('\n')
       .flatMap((line, index) => {
-        if (isDispositionLine(line)) {
+        if (isExempt(line)) {
           return [];
         }
-        return e21Slice3LiteralPatterns
+        return literalPatterns
           .filter(({ re }) => re.test(line))
           .map(({ name }) => `${index + 1}:${name}: ${line.trim()}`);
       });

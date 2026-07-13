@@ -3,7 +3,7 @@
 
 .acx-cluster-labeling-panel,
 .acx-cluster-review-panel {
-  background: white;
+  background: var(--acx-color-surface-alt);
   border-radius: var(--acx-radius-md);
   box-shadow: var(--acx-shadow-1);
   width: 100%;
@@ -23,6 +23,7 @@
     h2 {
       margin: 0;
       font-size: var(--acx-text-xl);
+      line-height: var(--acx-leading-tight);
     }
   }
 
@@ -103,7 +104,7 @@
     height: 20px;
     border-radius: var(--acx-radius-circle);
     background: var(--acx-color-danger);
-    color: white;
+    color: var(--acx-color-surface-alt);
     border: none;
     display: flex;
     align-items: center;

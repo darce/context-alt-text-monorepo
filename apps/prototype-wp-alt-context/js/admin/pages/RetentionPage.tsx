@@ -168,7 +168,7 @@ export const RetentionPage = (): React.JSX.Element => {
           <p className="acx-retention__detail">
             {sprintf(__('Last purge: %s', 'alt-context'), formatTimestamp(policy.last_purge_at))}
           </p>
-          <p className="acx-retention__note acx-retention__note--danger" role="status">
+          <p className="acx-retention__note acx-retention__note--danger">
             <AlertTriangle
               className="acx-retention__note-icon"
               size={16}

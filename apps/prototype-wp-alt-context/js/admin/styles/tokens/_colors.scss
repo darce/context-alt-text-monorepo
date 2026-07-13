@@ -8,9 +8,9 @@
   --acx-gray-50: #f8fafc; /* app surface */
   --acx-gray-100: #eef2f7; /* inset/alt surface */
   --acx-gray-200: #e2e8f0; /* decorative borders */
-  --acx-gray-300: #cbd5e1; /* strong borders / disabled fills (non-text) */
-  --acx-gray-400: #94a3b8; /* placeholder/disabled text (exempt duty) */
-  --acx-gray-500: #64748b; /* secondary UI glyphs (>=3:1 on gray-50/white) */
+  --acx-gray-300: #cbd5e1; /* decorative borders / disabled fills (no 3:1 duty) */
+  --acx-gray-400: #94a3b8; /* disabled-control text ONLY (WCAG 1.4.3 exemption); NOT for placeholder or active labels */
+  --acx-gray-500: #64748b; /* secondary text/glyphs (>=4.5:1 on gray-50/white; also non-text 3:1 borders) */
   --acx-gray-600: #475569; /* muted text (>=4.5:1 on white/gray-50/gray-100) */
   --acx-gray-700: #334155; /* body text on tinted grounds (>=4.5:1) */
   --acx-gray-900: #0f172a; /* primary text */

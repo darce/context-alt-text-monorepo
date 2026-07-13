@@ -8,7 +8,8 @@
 
 .acx-dashboard__title {
   margin: 0 0 var(--acx-space-12) 0;
-  font-size: var(--acx-text-xl);
+  font-size: var(--acx-text-3xl);
+  line-height: var(--acx-leading-tight);
 }
 
 .acx-dashboard__subtitle {
@@ -33,6 +34,7 @@
   h2 {
     margin: 0 0 var(--acx-space-16) 0;
     font-size: var(--acx-text-lg);
+    line-height: var(--acx-leading-tight);
     font-weight: var(--acx-font-weight-semibold);
   }
 }
@@ -63,7 +65,7 @@
 }
 
 .acx-dashboard__stat-value {
-  font-size: var(--acx-text-xl);
+  font-size: var(--acx-text-2xl);
   font-weight: var(--acx-font-weight-bold);
   color: var(--acx-color-text);
   line-height: 1;

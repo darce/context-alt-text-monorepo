@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import time
 import uuid
 from collections.abc import Mapping
@@ -21,9 +22,11 @@ from db.tenant_context import set_tenant_context
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.description_adapter import AdapterResult, DescriptionAdapter
 from scene.application.description_repository import ImageDescriptionRepository
-from scene.application.visual_facts_service import build_visual_facts_envelope
+from scene.application.visual_facts_service import build_visual_facts_envelope, phrase_boxes_to_json
 from scene.domain.describe_run import DescribeItemStatus
 from scene.domain.description import DescriptionResultTier, RetentionClass
+
+_logger = logging.getLogger(__name__)
 
 
 class AuditSink(Protocol):
@@ -67,9 +70,15 @@ def _result_payload(
     )
 
 
-def _envelope_to_cache_row(envelope: dict[str, Any]) -> ImageDescription:
-    """Map a FINAL-tier wire envelope into an ``image_descriptions`` cache row."""
+def _envelope_to_cache_row(envelope: dict[str, Any], *, result: AdapterResult) -> ImageDescription:
+    """Map a FINAL-tier wire envelope into an ``image_descriptions`` cache row.
+
+    ``phrase_boxes`` are not part of the wire envelope, so they come from the
+    adapter result — the sync path persists them the same way so cache hits
+    keep grounded-naming parity (VLM5-S2A-BR-01, E19-4a).
+    """
     return ImageDescription(
+        phrase_boxes=phrase_boxes_to_json(result.phrase_boxes),
         tenant_id=uuid.UUID(str(envelope["tenant_id"])),
         media_id=int(envelope["media_id"]),
         image_hash=str(envelope["image_hash"]),
@@ -148,13 +157,27 @@ async def run_async_describe_job(
                 if item is None:
                     return
                 media_id = item.media_id
-                image_bytes = item.image_bytes or b""
-                await repo.mark_item(
+                marked = await repo.mark_item(
                     tenant_id=tenant_id,
                     run_id=run_id,
                     media_id=media_id,
                     status=DescribeItemStatus.RUNNING,
                 )
+                if not marked:
+                    # Already terminal (duplicate dispatch / retry after cancel):
+                    # bytes were reclaimed — never run adapters or cache-write
+                    # for this invocation (VLM5-S2A-BR-02).
+                    return
+                if item.image_bytes is None:
+                    await repo.set_item_failed(
+                        tenant_id=tenant_id,
+                        run_id=run_id,
+                        media_id=media_id,
+                        error="ValueError: queued item has no image bytes",
+                    )
+                    await session.commit()
+                    return
+                image_bytes = item.image_bytes
                 await session.commit()
 
             if media_id is None:
@@ -225,13 +248,17 @@ async def run_async_describe_job(
                 await set_tenant_context(session, tenant_id)
                 repo = DescribeRunRepository(session)
                 cache_repo = ImageDescriptionRepository(session)
-                await cache_repo.insert_or_get_existing(_envelope_to_cache_row(final_envelope))
-                await repo.set_item_final(
+                final_persisted = await repo.set_item_final(
                     tenant_id=tenant_id,
                     run_id=run_id,
                     media_id=media_id,
                     visual_facts=final_envelope,
                 )
+                if final_persisted:
+                    # Gate the cache row on an actually-persisted item-final so
+                    # the cache and the durable item row cannot diverge
+                    # (VLM5-S2A-BR-02, VLM5-S1A-BR-02) [DATA-14].
+                    await cache_repo.insert_or_get_existing(_envelope_to_cache_row(final_envelope, result=gpu_result))
                 await session.commit()
             if audit_sink is not None:
                 with contextlib.suppress(Exception):
@@ -247,16 +274,29 @@ async def run_async_describe_job(
                     )
         except asyncio.CancelledError:
             # Mark failed for pollers, then re-raise so cooperative cancellation
-            # and wait_for timeout semantics still work [CON-03].
-            await _mark_failed("CancelledError: job cancelled")
+            # and wait_for timeout semantics still work [CON-03]. The cleanup
+            # write is shielded so a second cancel cannot abort the FAILED
+            # persist, and suppressed so a DB error during shutdown cannot
+            # replace the CancelledError (VLM5-S2A-BR-04) [RES-04].
+            with contextlib.suppress(Exception):
+                await asyncio.shield(_mark_failed("CancelledError: job cancelled"))
             raise
         except Exception as exc:  # noqa: BLE001 - persist terminal job failure
             error = f"{type(exc).__name__}: {exc}"
-            if media_id is None:
-                return
+            _logger.exception("async describe job failed run_id=%s media_id=%s", run_id, media_id)
             async with session_factory() as session:
                 await set_tenant_context(session, tenant_id)
                 repo = DescribeRunRepository(session)
+                if media_id is None:
+                    # First session phase failed before media_id was assigned
+                    # (e.g. transient DB error in set_tenant_context or the
+                    # item fetch). Re-fetch so the job still lands terminal
+                    # FAILED instead of sticking QUEUED forever
+                    # (VLM5-S2A-BR-03) [RES-04].
+                    item = await repo.get_single_run_item(tenant_id=tenant_id, run_id=run_id)
+                    if item is None:
+                        return
+                    media_id = item.media_id
                 if provisional_set:
                     await repo.set_item_degraded(
                         tenant_id=tenant_id,

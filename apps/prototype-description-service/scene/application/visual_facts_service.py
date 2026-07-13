@@ -114,7 +114,7 @@ def build_visual_facts_envelope(
     return response.model_dump(mode="json")
 
 
-def _phrase_boxes_to_json(phrase_boxes) -> list[dict[str, Any]] | None:
+def phrase_boxes_to_json(phrase_boxes) -> list[dict[str, Any]] | None:
     if not phrase_boxes:
         return None
     return [
@@ -254,7 +254,7 @@ class VisualFactsService:
 
         if self._repo is not None:
             new_row = self._response_to_row(response)
-            new_row.phrase_boxes = _phrase_boxes_to_json(result.phrase_boxes)
+            new_row.phrase_boxes = phrase_boxes_to_json(result.phrase_boxes)
             row, inserted = await self._repo.insert_or_get_existing(new_row)
             if not inserted:
                 response = self._cache_hit_response(

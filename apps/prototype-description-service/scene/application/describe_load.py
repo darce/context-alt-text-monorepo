@@ -23,6 +23,18 @@ from scene.domain.describe_run import DescribeItemStatus, RunKind
 
 _TRUTHY_PG_SETTINGS = {"true", "on", "1", "yes"}
 
+LOAD_PATH_ENV = "ACX_DESCRIBE_LOAD_PATH"
+DEFAULT_LOAD_PATH = "/run/acx/describe-load.json"
+
+
+def resolve_load_path() -> str:
+    """Single source of truth for the idle-reaper load-file path (VLM5-S4A-BR-03).
+
+    Startup snapshot and runtime enqueue/poll writers must resolve through here
+    so the reaper can never read a stale file from a drifted literal [rg-008].
+    """
+    return os.environ.get(LOAD_PATH_ENV, DEFAULT_LOAD_PATH)
+
 
 async def _require_rls_bypass(session: AsyncSession) -> None:
     """Fail closed unless this session has RLS bypass active (design (c))."""
@@ -80,7 +92,7 @@ async def run_startup_load_snapshot(session_factory, path: str | Path | None = N
     """
     from db.tenant_context import enable_rls_bypass
 
-    target = path or os.environ.get("ACX_DESCRIBE_LOAD_PATH", "/run/acx/describe-load.json")
+    target = path or resolve_load_path()
     async with session_factory() as session:
         await enable_rls_bypass(session)
         snap = await load_snapshot(session)

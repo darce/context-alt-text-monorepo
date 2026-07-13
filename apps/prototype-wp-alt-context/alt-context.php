@@ -108,6 +108,25 @@ require_once $altContextAutoload;
 // Explicit require_once guarantees the class is available on every request
 // regardless of classmap staleness.
 require_once ACX_PLUGIN_DIR . 'src/support/class-telemetry.php';
+
+// E21-12B (rg-016): the admin page classes below are instantiated
+// unconditionally by alt_context() on every plugins_loaded (directly and via
+// Menu), but use the WordPress-style class-*.php filename convention, so they
+// are reachable only through the Composer classmap — which goes stale on any
+// checkout that adds a class without re-running `composer dump-autoload`. That
+// is exactly what took the whole site to a critical error when
+// class-retention-page.php shipped (E21-12) without a fresh dump. Explicit
+// require_once makes the page surface classmap-independent. AbstractSpaPage
+// first: every concrete page extends it.
+require_once ACX_PLUGIN_DIR . 'src/admin/class-abstract-spa-page.php';
+require_once ACX_PLUGIN_DIR . 'src/admin/class-dashboard-page.php';
+require_once ACX_PLUGIN_DIR . 'src/admin/class-workbench-page.php';
+require_once ACX_PLUGIN_DIR . 'src/admin/class-roster-page.php';
+require_once ACX_PLUGIN_DIR . 'src/admin/class-settings-page.php';
+require_once ACX_PLUGIN_DIR . 'src/admin/class-description-history-page.php';
+require_once ACX_PLUGIN_DIR . 'src/admin/class-retention-page.php';
+require_once ACX_PLUGIN_DIR . 'src/admin/class-menu.php';
+
 if (defined('WP_CLI') && WP_CLI) {
     require_once ACX_PLUGIN_DIR . 'src/api/class-describe-controller.php';
     require_once ACX_PLUGIN_DIR . 'src/api/services/class-description-candidate-service.php';

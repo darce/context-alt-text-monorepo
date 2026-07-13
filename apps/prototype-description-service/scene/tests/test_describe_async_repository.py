@@ -8,12 +8,14 @@ preserves provisional visual_facts as degraded [TEST-13], [DATA-14], [RES-07], [
 from __future__ import annotations
 
 import asyncio
+import importlib
 import uuid
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
 import pytest
-from sqlalchemy import Table
+from sqlalchemy import CheckConstraint, Column, Table
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import scene.application.describe_run_repository as repo_mod
@@ -29,6 +31,8 @@ from scene.domain.describe_run import (
     describe_job_status,
 )
 from scene.domain.description import DescriptionResultTier
+
+identity_schema = importlib.import_module("db.migrations.versions.001_identity_schema")
 
 
 async def _sessionmaker():
@@ -406,6 +410,186 @@ def test_bulk_create_run_defaults_to_run_kind_bulk():
             run = await repo.get_run(tenant_id=tenant, run_id=run_id)
             assert run is not None
             assert run.run_kind == RunKind.BULK
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+@dataclass
+class _MigrationRecorder:
+    """Record create_table args so ORM metadata can be compared to migration DDL."""
+
+    created_tables: list[str] = field(default_factory=list)
+    created_table_args: dict[str, tuple[object, ...]] = field(default_factory=dict)
+
+    def execute(self, sql: str) -> None:  # noqa: ARG002
+        return None
+
+    def get_bind(self):
+        class _FakeResult:
+            def __init__(self, row):
+                self._row = row
+
+            def scalar(self):
+                return self._row[0] if self._row else None
+
+            def first(self):
+                return self._row
+
+        class _FakeBind:
+            def execute(self, stmt, params=None):  # noqa: ANN001, ARG002
+                if "relrowsecurity" in str(stmt):
+                    return _FakeResult((False, False))
+                return _FakeResult(None)
+
+        return _FakeBind()
+
+    def create_table(self, name: str, *args, **kwargs) -> None:  # noqa: ANN002, ANN003, ARG002
+        self.created_tables.append(name)
+        self.created_table_args[name] = args
+
+    def create_index(self, name: str, table_name: str, columns, *args, **kwargs) -> None:  # noqa: ANN001, ARG002
+        return None
+
+    def drop_table(self, name: str, *args, **kwargs) -> None:  # noqa: ANN002, ANN003, ARG002
+        return None
+
+    def drop_index(self, name: str, table_name: str | None = None, *args, **kwargs) -> None:  # noqa: ANN002, ARG002
+        return None
+
+
+def _migration_columns_and_checks(table_name: str, monkeypatch: pytest.MonkeyPatch) -> tuple[set[str], set[str]]:
+    recorder = _MigrationRecorder()
+    monkeypatch.setattr(identity_schema, "op", recorder)
+    identity_schema.upgrade()
+    args = recorder.created_table_args[table_name]
+    columns = {cast(Column, a).name for a in args if isinstance(a, Column)}
+    checks = {cast(CheckConstraint, a).name for a in args if isinstance(a, CheckConstraint) and a.name}
+    return columns, checks
+
+
+def test_describe_run_orm_matches_migration_schema(monkeypatch: pytest.MonkeyPatch):
+    """VLM5-S1A-BR-01 [rg-005]: ORM DescribeRun/Item columns + CHECKs match migration.
+
+    Fails if run_kind / visual_facts / tier / result_generation (or a CHECK name)
+    is added or renamed on only one of the two surfaces.
+    """
+    run_mig_cols, run_mig_checks = _migration_columns_and_checks("image_description_runs", monkeypatch)
+    item_mig_cols, item_mig_checks = _migration_columns_and_checks("image_description_run_items", monkeypatch)
+
+    run_orm_cols = set(DescribeRun.__table__.columns.keys())
+    item_orm_cols = set(DescribeRunItem.__table__.columns.keys())
+    run_orm_checks = {
+        c.name for c in DescribeRun.__table__.constraints if isinstance(c, CheckConstraint) and c.name
+    }
+    item_orm_checks = {
+        c.name for c in DescribeRunItem.__table__.constraints if isinstance(c, CheckConstraint) and c.name
+    }
+
+    # Headline VLM-5 columns must exist on both surfaces.
+    assert "run_kind" in run_orm_cols and "run_kind" in run_mig_cols
+    for col in ("visual_facts", "tier", "result_generation"):
+        assert col in item_orm_cols and col in item_mig_cols
+
+    assert run_orm_cols == run_mig_cols
+    assert item_orm_cols == item_mig_cols
+    assert run_orm_checks == run_mig_checks
+    assert item_orm_checks == item_mig_checks
+    assert "valid_describe_run_kind" in run_orm_checks
+    assert "valid_describe_item_status" in item_orm_checks
+
+
+def test_single_run_mutators_reject_mismatched_tenant():
+    """VLM5-S1A-BR-05 [PERF-07], [DIAG-02]: wrong-tenant reads/writes are no-ops.
+
+    get_single_run_item / set_item_provisional / set_item_final / set_item_degraded /
+    set_item_failed with a foreign tenant_id return None/False and leave the owner
+    row untouched.
+    """
+
+    async def body():
+        engine, sf = await _sessionmaker()
+        owner = uuid.uuid4()
+        foreign = uuid.uuid4()
+        media_id = 42
+
+        async with sf() as s:
+            repo = DescribeRunRepository(s)
+            run_id = await repo.create_single_run(
+                tenant_id=owner,
+                media_id=media_id,
+                image_bytes=b"owner-bytes",
+                image_content_type="image/jpeg",
+            )
+            await repo.mark_item(
+                tenant_id=owner,
+                run_id=run_id,
+                media_id=media_id,
+                status=DescribeItemStatus.RUNNING,
+            )
+            await s.commit()
+
+        async with sf() as s:
+            repo = DescribeRunRepository(s)
+            before = await repo.get_single_run_item(tenant_id=owner, run_id=run_id)
+            assert before is not None
+            assert before.status == DescribeItemStatus.RUNNING
+            assert before.image_bytes == b"owner-bytes"
+            assert before.visual_facts is None
+            assert before.tier is None
+            assert before.result_generation == 0
+            assert before.last_error is None
+
+            assert await repo.get_single_run_item(tenant_id=foreign, run_id=run_id) is None
+            assert (
+                await repo.set_item_provisional(
+                    tenant_id=foreign,
+                    run_id=run_id,
+                    media_id=media_id,
+                    visual_facts=_PROVISIONAL_FACTS,
+                )
+                is False
+            )
+            assert (
+                await repo.set_item_final(
+                    tenant_id=foreign,
+                    run_id=run_id,
+                    media_id=media_id,
+                    visual_facts=_FINAL_FACTS,
+                )
+                is False
+            )
+            assert (
+                await repo.set_item_degraded(
+                    tenant_id=foreign,
+                    run_id=run_id,
+                    media_id=media_id,
+                    error="foreign degraded",
+                )
+                is False
+            )
+            assert (
+                await repo.set_item_failed(
+                    tenant_id=foreign,
+                    run_id=run_id,
+                    media_id=media_id,
+                    error="foreign failed",
+                )
+                is False
+            )
+            await s.commit()
+
+        async with sf() as s:
+            repo = DescribeRunRepository(s)
+            after = await repo.get_single_run_item(tenant_id=owner, run_id=run_id)
+            assert after is not None
+            assert after.status == DescribeItemStatus.RUNNING
+            assert after.image_bytes == b"owner-bytes"
+            assert after.visual_facts is None
+            assert after.tier is None
+            assert after.result_generation == 0
+            assert after.last_error is None
+            assert after.media_id == media_id
         await engine.dispose()
 
     asyncio.run(body())

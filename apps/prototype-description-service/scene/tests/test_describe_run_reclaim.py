@@ -211,28 +211,31 @@ def test_reclaim_fails_closed_when_rls_bypass_not_active(monkeypatch):
 
 
 def test_startup_reclaim_failure_does_not_block_boot_and_is_wired(monkeypatch):
-    """S5-03a: a reclaim exception must not block boot, and create_app must wire
-    the reclaim into the app lifespan (proven by the patched call firing)."""
+    """S5-03a / VLM5-S4A-BR-02: reclaim exception must not block boot, and purge
+    + snapshot still run independently afterward (each independently best-effort)."""
     from fastapi.testclient import TestClient
 
     from api.main import create_app
     from scene.application import describe_load as load_mod
 
     called = {"n": 0}
+    order: list[str] = []
 
     async def boom(*_args, **_kwargs):
         called["n"] += 1
         raise RuntimeError("reclaim boom")
 
-    async def noop_purge(*_args, **_kwargs):
+    async def track_purge(*_args, **_kwargs):
+        order.append("purge")
         return 0
 
-    async def noop_snapshot(*_args, **_kwargs):
+    async def track_snapshot(*_args, **_kwargs):
+        order.append("snapshot")
         return None
 
     monkeypatch.setattr(repo_mod, "run_startup_reclaim", boom)
-    monkeypatch.setattr(repo_mod, "run_startup_retention_purge", noop_purge)
-    monkeypatch.setattr(load_mod, "run_startup_load_snapshot", noop_snapshot)
+    monkeypatch.setattr(repo_mod, "run_startup_retention_purge", track_purge)
+    monkeypatch.setattr(load_mod, "run_startup_load_snapshot", track_snapshot)
 
     app = create_app()
     with TestClient(app) as client:  # __enter__ runs the lifespan startup
@@ -240,6 +243,8 @@ def test_startup_reclaim_failure_does_not_block_boot_and_is_wired(monkeypatch):
         assert resp.status_code == 200, resp.text
     # The lifespan invoked reclaim exactly once (wired) and swallowed the error (boot survived).
     assert called["n"] == 1
+    # VLM5-S4A-BR-02: purge and snapshot still execute after reclaim raises.
+    assert order == ["purge", "snapshot"]
 
 
 def test_startup_boot_order_reclaim_then_purge_then_snapshot(monkeypatch):

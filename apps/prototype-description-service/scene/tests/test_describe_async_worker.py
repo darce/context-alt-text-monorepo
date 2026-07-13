@@ -231,9 +231,12 @@ def test_worker_timeout_marks_failed_exactly_once():
         assert item.status == DescribeItemStatus.FAILED
         assert describe_job_status(item) is DescribeJobStatus.FAILED
         assert item.last_error is not None
-        # Either CancelledError (inner) or TimeoutError (outer guard) — not both stacked.
-        assert "CancelledError" in item.last_error or "TimeoutError" in item.last_error
-        assert item.last_error.count("\n") == 0  # single error string, not concatenated
+        # VLM5-S2A-BR-05: exact single-write form — not a newline-count proxy.
+        # wait_for cancel usually lands CancelledError first; outer TimeoutError
+        # only writes when the item is not already FAILED.
+        assert item.last_error.startswith("TimeoutError: job exceeded") or item.last_error == (
+            "CancelledError: job cancelled"
+        )
         assert await _count_cache_rows(sf, tenant_id=tenant) == 0
 
         await engine.dispose()
@@ -310,6 +313,159 @@ def test_cpu_failure_before_provisional_marks_failed_not_cached():
         assert item.status == DescribeItemStatus.FAILED
         assert "cpu boom" in (item.last_error or "")
         assert item.visual_facts is None
+        assert await _count_cache_rows(sf, tenant_id=tenant) == 0
+
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_final_phase_commit_failure_rolls_back_cache_and_item_final():
+    """VLM5-S2A-BR-05 [DATA-14]: commit fail after set_item_final+cache insert rolls both back.
+
+    Same-session coupling must mean a crash pre-commit loses the FINAL item write
+    and the image_descriptions row together — zero cache rows, item not FINAL.
+    """
+
+    async def body() -> None:
+        from scene.application.describe_async_worker import run_async_describe_job
+
+        engine, sf = await _sessionmaker()
+        tenant = uuid.uuid4()
+        run_id = await _create_run(sf, tenant_id=tenant, media_id=7, image_bytes=b"image")
+
+        # Commits: (1) mark RUNNING (2) provisional (3) final+cache — fail only #3.
+        commit_n = {"n": 0}
+        real_factory = sf
+
+        def counting_factory():
+            session_cm = real_factory()
+
+            class _Wrapped:
+                async def __aenter__(self):
+                    self._session = await session_cm.__aenter__()
+                    original_commit = self._session.commit
+
+                    async def counted_commit():
+                        commit_n["n"] += 1
+                        # Fail only the final-phase commit (3rd); allow degraded cleanup after.
+                        if commit_n["n"] == 3:
+                            raise RuntimeError("final commit boom")
+                        return await original_commit()
+
+                    self._session.commit = counted_commit  # type: ignore[method-assign]
+                    return self._session
+
+                async def __aexit__(self, *exc):
+                    return await session_cm.__aexit__(*exc)
+
+            return _Wrapped()
+
+        await run_async_describe_job(
+            tenant_id=tenant,
+            run_id=run_id,
+            session_factory=counting_factory,
+            cpu_adapter=_Adapter(kind=DescriptionAdapterKind.LOCAL_CPU, caption="CPU provisional."),
+            gpu_adapter=_Adapter(kind=DescriptionAdapterKind.GPU, caption="GPU final."),
+            job_timeout_seconds=None,
+            audit_sink=None,
+            metrics=None,
+        )
+
+        item = await _load_item(sf, tenant_id=tenant, run_id=run_id)
+        assert item is not None
+        # Outer exception handler marks degraded (provisional was committed).
+        assert describe_job_status(item) is not DescribeJobStatus.FINAL
+        assert item.tier != DescriptionResultTier.FINAL_GPU
+        assert await _count_cache_rows(sf, tenant_id=tenant) == 0
+        assert commit_n["n"] >= 3
+
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_worker_bails_on_already_terminal_failed_and_completed():
+    """VLM5-S2A-BR-05: re-entry on terminal items never runs adapters or cache writes.
+
+    mark_item(...RUNNING) returns False for FAILED and COMPLETED; worker must bail
+    before adapters (F1 terminal guard) with zero new image_descriptions rows.
+    """
+
+    async def body() -> None:
+        from scene.application.describe_async_worker import run_async_describe_job
+
+        engine, sf = await _sessionmaker()
+        tenant = uuid.uuid4()
+
+        # --- FAILED terminal re-entry ---
+        fail_id = await _create_run(sf, tenant_id=tenant, media_id=8, image_bytes=b"fail-img")
+        async with sf() as s:
+            repo = DescribeRunRepository(s)
+            await repo.set_item_failed(tenant_id=tenant, run_id=fail_id, media_id=8, error="already failed")
+            await s.commit()
+
+        cpu_fail = _Adapter(kind=DescriptionAdapterKind.LOCAL_CPU, caption="should-not-run")
+        gpu_fail = _Adapter(kind=DescriptionAdapterKind.GPU, caption="should-not-run")
+        await run_async_describe_job(
+            tenant_id=tenant,
+            run_id=fail_id,
+            session_factory=sf,
+            cpu_adapter=cpu_fail,
+            gpu_adapter=gpu_fail,
+            job_timeout_seconds=None,
+            audit_sink=None,
+            metrics=None,
+        )
+        item = await _load_item(sf, tenant_id=tenant, run_id=fail_id)
+        assert item is not None
+        assert item.status == DescribeItemStatus.FAILED
+        assert item.last_error == "already failed"
+        assert cpu_fail.calls == 0 and gpu_fail.calls == 0
+        assert await _count_cache_rows(sf, tenant_id=tenant) == 0
+
+        # --- COMPLETED (FINAL) terminal re-entry ---
+        done_id = await _create_run(sf, tenant_id=tenant, media_id=9, image_bytes=b"done-img")
+        async with sf() as s:
+            repo = DescribeRunRepository(s)
+            await repo.mark_item(
+                tenant_id=tenant,
+                run_id=done_id,
+                media_id=9,
+                status=DescribeItemStatus.RUNNING,
+            )
+            await repo.set_item_final(
+                tenant_id=tenant,
+                run_id=done_id,
+                media_id=9,
+                visual_facts={
+                    "tier": "final_gpu",
+                    "alt_text_draft": "already final",
+                    "caption": "c",
+                },
+            )
+            await s.commit()
+
+        cpu_done = _Adapter(kind=DescriptionAdapterKind.LOCAL_CPU, caption="should-not-run")
+        gpu_done = _Adapter(kind=DescriptionAdapterKind.GPU, caption="should-not-run")
+        await run_async_describe_job(
+            tenant_id=tenant,
+            run_id=done_id,
+            session_factory=sf,
+            cpu_adapter=cpu_done,
+            gpu_adapter=gpu_done,
+            job_timeout_seconds=None,
+            audit_sink=None,
+            metrics=None,
+        )
+        item = await _load_item(sf, tenant_id=tenant, run_id=done_id)
+        assert item is not None
+        assert item.status == DescribeItemStatus.COMPLETED
+        assert item.tier == DescriptionResultTier.FINAL_GPU
+        assert item.visual_facts is not None
+        assert item.visual_facts["alt_text_draft"] == "already final"
+        assert cpu_done.calls == 0 and gpu_done.calls == 0
+        # No cache row was present and re-entry must not invent one.
         assert await _count_cache_rows(sf, tenant_id=tenant) == 0
 
         await engine.dispose()

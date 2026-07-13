@@ -28,8 +28,8 @@
   // cards — AXE-DEEMPH-CONTRAST-01). Recede with a subtle surface tint and a
   // muted (but full-contrast) border instead, keeping text at its token value.
   &--deemphasized {
-    background-color: var(--acx-gray-50);
-    border-color: var(--acx-gray-200);
+    background-color: var(--acx-gray-100);
+    border-color: var(--acx-gray-100);
 
     .acx-target-card__body {
       color: var(--acx-color-text-muted);

@@ -1,15 +1,23 @@
-"""N-view ensemble decoding core for the GPU describe tier (VLM-4 Slice 2a).
+"""N-view ensemble decoding for the GPU describe tier (VLM-4 Slice 2a + 2b).
 
-Pure vote math — no I/O, no model calls, no adapter coupling. The logit-only
-vote is the MANDATORY BASELINE: the live serving stack (llama.cpp
-``server-cuda``, VLM-3 golden image) exposes per-token logprobs (``n_probs``)
-but no cross-attention, so attention weighting enters only through the
-optional ``weights`` parameter when a spike-gated alternative stack provides
-per-view attention mass (arXiv 2505.17529).
+Slice 2a is pure vote math — no I/O, no model calls. The logit-only vote is
+the MANDATORY BASELINE: the live serving stack (llama.cpp ``server-cuda``,
+VLM-3 golden image) exposes per-token logprobs (``n_probs``) but no
+cross-attention, so attention weighting enters only through the optional
+``weights`` parameter when a spike-gated alternative stack provides per-view
+attention mass (arXiv 2505.17529).
+
+Slice 2b adds ``EnsembleDescriptionAdapter``: a ``DescriptionAdapter`` wrapper
+that runs the wrapped GPU adapter once per grid view and votes on the caption.
+The token-level vote requires per-view token traces; llama.cpp provides them
+via ``n_probs``, surfaced by ``GpuRemoteDescriptionAdapter.describe_with_trace``.
+When the wrapped adapter exposes no traces, the vote degrades to caption-level
+majority (earliest view breaks ties, so the full-image pass wins by default).
 
 Caption-only scope (VLM4-PA-03): this module votes on caption token streams
-only. ``objects``/``ocr_text``/``phrase_boxes`` always come from the
-designated full-image pass so the ``AdapterResult`` contract stays intact.
+only. ``objects``/``ocr_text``/``phrase_boxes`` and the ``context_*`` fields
+always come from the designated full-image (first-view) pass so the
+``AdapterResult`` contract stays intact.
 """
 
 from __future__ import annotations
@@ -18,6 +26,13 @@ import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import TYPE_CHECKING, Any
+
+from scene.application.description_adapter import AdapterResult, DescriptionAdapter
+
+if TYPE_CHECKING:
+    from scene.domain.description import DescriptionAdapterKind
+    from scene.infrastructure.vlm.gpu_remote_adapter import GpuRemoteTokenTrace
 
 # Hard cap on ensemble width: N views = N GPU passes = N x latency/VRAM
 # (capacity multiplier); the async tier tolerates minutes, not unbounded N.
@@ -156,3 +171,157 @@ def combine_token_distributions(
         combined = {t: lp for t, lp in combined.items() if best_view_prob[t] >= threshold}
 
     return dict(sorted(combined.items(), key=lambda item: (-item[1], item[0])))
+
+
+class EnsembleDescriptionAdapter:
+    """N-view ensemble wrapper over a GPU ``DescriptionAdapter`` (VLM-4 Slice 2b).
+
+    Identity fields delegate to the wrapped adapter so cache keys and
+    provenance stay tied to the underlying model. ``describe`` runs one pass
+    per grid view (full image first, ``EnsembleDecodeConfig.n_views`` bound)
+    and votes on the caption:
+
+    - token-level logit vote via :func:`combine_token_distributions` when the
+      wrapped adapter exposes per-view token traces (``describe_with_trace``,
+      llama.cpp ``n_probs``);
+    - caption-level majority fallback otherwise (ties break to the earliest
+      view, i.e. the full-image pass).
+
+    ``objects``/``ocr_text``/``phrase_boxes``/``context_*`` always come
+    verbatim from the full-image pass (VLM4-PA-03). Unreadable image bytes
+    degrade to a single wrapped pass — the wrapped adapter stays the authority
+    on whether the bytes are usable.
+    """
+
+    def __init__(
+        self,
+        *,
+        wrapped: DescriptionAdapter,
+        config: EnsembleDecodeConfig | None = None,
+    ) -> None:
+        self._wrapped = wrapped
+        self._config = config if config is not None else EnsembleDecodeConfig()
+
+    @property
+    def kind(self) -> DescriptionAdapterKind:
+        return self._wrapped.kind
+
+    @property
+    def model_id(self) -> str:
+        return self._wrapped.model_id
+
+    @property
+    def model_version(self) -> str:
+        return self._wrapped.model_version
+
+    @property
+    def prompt_or_task_version(self) -> str:
+        return self._wrapped.prompt_or_task_version
+
+    def describe(self, *, image_bytes: bytes, context: Mapping[str, Any] | None) -> AdapterResult:
+        view_bytes = self._build_view_bytes(image_bytes)
+        if view_bytes is None:
+            return self._wrapped.describe(image_bytes=image_bytes, context=context)
+
+        describe_with_trace = getattr(self._wrapped, "describe_with_trace", None)
+        results: list[AdapterResult] = []
+        traces: list[tuple[GpuRemoteTokenTrace, ...]] = []
+        for single_view_bytes in view_bytes:
+            if callable(describe_with_trace):
+                result, trace = describe_with_trace(image_bytes=single_view_bytes, context=context)
+            else:
+                result, trace = self._wrapped.describe(image_bytes=single_view_bytes, context=context), ()
+            results.append(result)
+            traces.append(tuple(trace))
+
+        full_image = results[0]
+        caption = self._vote_caption(results, traces)
+        return AdapterResult(
+            caption=caption,
+            objects=full_image.objects,
+            ocr_text=full_image.ocr_text,
+            alt_text_draft=caption,
+            context_sources=full_image.context_sources,
+            context_applied=full_image.context_applied,
+            phrase_boxes=full_image.phrase_boxes,
+        )
+
+    def _build_view_bytes(self, image_bytes: bytes) -> list[bytes] | None:
+        """Full-image bytes first, then lossless PNG crops per grid view.
+
+        Returns None when the image cannot be read/cropped, so the caller
+        degrades to a single wrapped pass instead of failing a describe the
+        wrapped adapter might still serve.
+        """
+        from io import BytesIO
+
+        try:
+            from PIL import Image
+        except ImportError:
+            return None
+        try:
+            with Image.open(BytesIO(image_bytes)) as img:
+                width, height = img.size
+                views = build_grid_views(width, height, self._config.n_views)
+                out = [image_bytes]
+                for box in views[1:]:
+                    buffer = BytesIO()
+                    img.crop((box.left, box.top, box.right, box.bottom)).convert("RGB").save(buffer, format="PNG")
+                    out.append(buffer.getvalue())
+        except Exception:  # noqa: BLE001 - unreadable image degrades to single-pass
+            return None
+        return out
+
+    def _vote_caption(
+        self,
+        results: Sequence[AdapterResult],
+        traces: Sequence[tuple[GpuRemoteTokenTrace, ...]],
+    ) -> str:
+        if len(results) == 1:
+            return results[0].caption
+        if all(traces):
+            voted = self._token_level_vote(traces)
+            if voted:
+                return voted
+        return _caption_majority(results)
+
+    def _token_level_vote(self, traces: Sequence[tuple[GpuRemoteTokenTrace, ...]]) -> str:
+        """Step-wise logit vote across per-view token traces.
+
+        At step ``i`` each view still decoding contributes its top-k
+        ``token -> logprob`` map; :func:`combine_token_distributions` picks the
+        step winner under the configured weighting + plausibility settings.
+        Views that finished early simply drop out of later steps.
+        """
+        tokens: list[str] = []
+        for step in range(max(len(trace) for trace in traces)):
+            distributions: list[dict[str, float]] = []
+            for trace in traces:
+                if step >= len(trace):
+                    continue
+                entry = trace[step]
+                distribution = dict(entry.top_logprobs)
+                distribution.setdefault(entry.token, entry.logprob)
+                if distribution:
+                    distributions.append(distribution)
+            if not distributions:
+                break
+            combined = combine_token_distributions(
+                distributions,
+                plausibility_alpha=self._config.plausibility_alpha,
+                weighting_mode=self._config.weighting_mode,
+            )
+            tokens.append(next(iter(combined)))
+        return "".join(tokens).strip()
+
+
+def _caption_majority(results: Sequence[AdapterResult]) -> str:
+    """Exact-caption majority; ties break to the earliest (full-image) view."""
+    counts: dict[str, int] = {}
+    for result in results:
+        counts[result.caption] = counts.get(result.caption, 0) + 1
+    best = max(counts.values())
+    for result in results:
+        if counts[result.caption] == best:
+            return result.caption
+    raise RuntimeError("unreachable: results is non-empty")

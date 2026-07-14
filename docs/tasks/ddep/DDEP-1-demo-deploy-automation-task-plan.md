@@ -139,33 +139,33 @@ Proof:
 ## Consolidated Checklist
 
 ## Context and Ownership
-- [ ] Loaded `deploy-recognition.yml`, `sync-demo.sh`, `package-plugin.sh`, and the CI-CD runbook before editing.
-- [ ] Confirmed no VM access is widened beyond the existing `tag:ci` identity.
+- [x] Loaded `deploy-recognition.yml`, `sync-demo.sh`, `package-plugin.sh`, and the CI-CD runbook before editing.
+- [x] Confirmed no VM access is widened beyond the existing `tag:ci` identity.
 
 ### Checklist for Slice 1: CI deploy
-- [ ] `deploy-demo.yml` added: dispatch-only, PROMOTE gate (primary control), `demo` Environment (secrets isolation), concurrency (no cancel), ephemeral `tag:ci` join + VM-IP pin, deploy key, runner-side zip build (`npm ci` before `package-plugin.sh` default build mode), `sync-demo.sh` invocation.
-- [ ] One-time setup documented — secrets: `TS_OAUTH_CLIENT_ID`, `TS_OAUTH_SECRET`, `ACX_DEPLOY_SSH_KEY`, `WP_BASE_URL`, `ACX_E2E_WP_ADMIN_USER`, `ACX_E2E_WP_ADMIN_PASS`; `demo` Environment creation.
+- [x] `deploy-demo.yml` added: dispatch-only, PROMOTE gate (primary control), `demo` Environment (secrets isolation), concurrency (no cancel), ephemeral `tag:ci` join + VM-IP pin, deploy key, runner-side zip build (`npm ci` before `package-plugin.sh` default build mode), `sync-demo.sh` invocation.
+- [x] One-time setup documented — secrets: `TS_OAUTH_CLIENT_ID`, `TS_OAUTH_SECRET`, `ACX_DEPLOY_SSH_KEY`, `WP_BASE_URL`, `ACX_E2E_WP_ADMIN_USER`, `ACX_E2E_WP_ADMIN_PASS`; `demo` Environment creation.
 - [ ] Workflow pushed to the remote feature branch; dispatched on the feature ref (or documented fallback used); end-to-end deploy observed; demo serves the built plugin.
 - [ ] Interrupted-then-redeployed run converges (recovery path verified).
 
 ### Checklist for Slice 2: Smoke hardening
-- [ ] `sync-demo.sh` vhost smoke probes `/health` for `api.*`; no false `FAIL`; clear pass/fail.
-- [ ] Walkthrough spec asserts the RECOG-1 single-target contract (deploy-landed signal).
-- [ ] Workflow gates on the spec's deploy-assertion exit code; recognition verdict is informational (does not fail the job).
-- [ ] Spec prerequisites wired in CI: `npm run e2e:install` (chromium) + `npm run e2e:auth` from Environment secrets; storageState stays runner-local (never cached/uploaded).
-- [ ] Both browser steps run under `xvfb-run -a` (xvfb installed); smoke invocation is file-scoped to `evidence/demo-walkthrough.spec.ts` (never bare `e2e:evidence`); admin-cred env present on the smoke invocation (auth-setup dependency).
+- [x] `sync-demo.sh` vhost smoke probes `/health` for `api.*`; no false `FAIL`; clear pass/fail.
+- [x] Walkthrough spec asserts the RECOG-1 single-target contract (deploy-landed signal).
+- [x] Workflow gates on the spec's deploy-assertion exit code; recognition verdict is informational (does not fail the job).
+- [x] Spec prerequisites wired in CI: `npm run e2e:install` (chromium) + `npm run e2e:auth` from Environment secrets; storageState stays runner-local (never cached/uploaded).
+- [x] Both browser steps run under `xvfb-run -a` (xvfb installed); smoke invocation is file-scoped to `evidence/demo-walkthrough.spec.ts` (never bare `e2e:evidence`); admin-cred env present on the smoke invocation (auth-setup dependency).
 
 ## Review Readiness
-- [ ] The new workflow reuses `sync-demo.sh`/`package-plugin.sh` (no forked deploy logic).
-- [ ] Deploy vs recognition-health signals are clearly separated in the smoke.
-- [ ] Handoff decision records the CI addition, the smoke fix, and the deferred observability boundary.
+- [x] The new workflow reuses `sync-demo.sh`/`package-plugin.sh` (no forked deploy logic).
+- [x] Deploy vs recognition-health signals are clearly separated in the smoke.
+- [x] Handoff decision records the CI addition, the smoke fix, and the deferred observability boundary.
 
 ## Stretch Goals
 - [ ] Lighter alternative smoke: an authenticated `GET /acx/v1/settings` contract assertion (no browser) as a fast pre-check before the full walkthrough spec.
-- [ ] Emit the recognition manifest verdict as a GitHub job summary so the backend failure is visible to the observability follow-up.
+- [x] Emit the recognition manifest verdict as a GitHub job summary so the backend failure is visible to the observability follow-up.
 
 ## Success Criteria
 - [ ] A demo deploy runs entirely from CI (`gh workflow run deploy-demo.yml`) with no operator laptop/SSH and no new standing VM access.
-- [ ] The deploy is dispatch-only, serialized (concurrency), and gated by the PROMOTE confirmation (primary control), with the `demo` Environment isolating secrets.
-- [ ] `sync-demo.sh` vhost smoke reports true health for `api.*` (no benign-`404` false failure).
-- [ ] The post-deploy smoke fails a broken deploy but does not fail on the out-of-scope recognition round-trip failure.
+- [x] The deploy is dispatch-only, serialized (concurrency), and gated by the PROMOTE confirmation (primary control), with the `demo` Environment isolating secrets.
+- [x] `sync-demo.sh` vhost smoke reports true health for `api.*` (no benign-`404` false failure).
+- [x] The post-deploy smoke fails a broken deploy but does not fail on the out-of-scope recognition round-trip failure.

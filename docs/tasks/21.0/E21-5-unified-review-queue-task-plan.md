@@ -115,7 +115,7 @@ Every review item resolves a `suggested_cluster_id` (`suggestionReviewItems.ts:1
 
 **4. Bulk accept as a disclosure.** The confidence-threshold bulk-accept block collapses into a single disclosure ("Accept high-confidence…") reusing the existing atomic `POST .../bulk-accept`. The non-atomic **group** fan-out is removed (card-at-a-time handles a cluster as one card with its own atomic action).
 
-**5. Person-commit primary on the card.** Bring the roster-commit creatable combobox (reuse `components/ui/combobox.tsx` with `onCreate` + `commitClusterToRosterEntry`) onto the review card as the **primary** naming action; demote label-only (`updateClusterLabel`) to a tertiary "just label, don't add to roster" affordance. On success emit "View \<name\> →" toward `#/roster?person=<uuid>` (link vocabulary is E21-10's full contract; here we emit the one confirm affordance the roadmap names).
+**5. Person-commit primary on the card.** Bring the roster-commit creatable combobox (reuse `components/ui/combobox.tsx` with `onCreate` + `commitClusterToRosterEntry`) onto the review card as the **primary** naming action; demote label-only (`updateClusterLabel`) to a tertiary "just label, don't add to roster" affordance. On success emit a **generic "View in roster →"** confirm affordance linking to `#/roster` (the roadmap's named confirm) — **not** a `?person=<uuid>` deep link (resolves PR-01: `commitClusterToRosterEntry` returns `Promise<void>` (`rosterApi.ts:49`); the caller has only a numeric `rosterEntryId` or a new-entry name, neither of which yields the person UUID the deep link needs without a follow-up refetch+match). The `?person=<uuid>` deep-link is **E21-10's** contract. *Optional enhancement (not required for slice exit)*: after the invalidated `roster.entries()` settles, resolve the committed entry→UUID client-side and upgrade the link — frontend-only, no backend return-shape change (rg-002).
 
 **6. Projection chips (KIND-derived — resolves PA-01).** Chips filter the queue by the item's `KIND`, displayed with the E15-13 projection vocabulary as human copy: `ASSIGNMENT`→"Singletons", `MERGE`→"Needs confirmation", plus a disabled **"Hard examples (coming soon)"** chip (reuses the existing "unavailable until the review contract lands" precedent, `RosterEntriesSection.tsx:69-72`). The roster-side `queue_memberships` field is **not** read here — pending suggestions have no roster entry until commit, so a `queue_memberships` filter would be a category error over this pre-commit queue. If a future review contract lands hard-examples, its items enter the queue as a new `KIND` (or an assignment sub-type) and the chip activates — no roster-entry join required. Chip copy is human, never a raw enum string (banned-vocabulary).
 
@@ -165,7 +165,7 @@ Promote `selectNextAction` to an ordered/filterable queue; build `ReviewQueue.ts
 Deferred-commit window in `useSuggestionReviewMutations.ts`; `useToast()` announced "Undo"; bulk-accept collapses to one disclosure over the existing atomic endpoint; remove the group fan-out. **Exit**: undo-cancel = 0 backend calls, commit = 1 (unit-proven); toast announced (`role=status` asserted); rg-002 intact.
 
 ### Slice 3: Person-commit on the review card (Claude subagent; orchestrator reviews)
-Roster-commit creatable combobox on the card → `commitClusterToRosterEntry`; label-only demoted to tertiary; "View \<name\> →" confirm affordance; projection chips wired (singleton/needs-confirmation active, hard-examples coming-soon). **Exit**: naming a person creates a roster entry (not just a label); chips filter; coming-soon chip disabled+noticed; banned-vocabulary green.
+Roster-commit creatable combobox on the card → `commitClusterToRosterEntry`; label-only demoted to tertiary; generic "View in roster →" confirm affordance (`#/roster`, no `?person=` deep-link — E21-10 owns that); projection chips wired (singleton/needs-confirmation active, hard-examples coming-soon). **Exit**: naming a person creates a roster entry (not just a label); chips filter; coming-soon chip disabled+noticed; banned-vocabulary green.
 
 ### Slice 4: Media-footer CTA hierarchy + state matrix + DebugMetricsPanel verify (Claude subagent; orchestrator reviews)
 Per-state single-primary gating (Analyze vs Describe); state-matrix a11y cases (loading/empty/error/offline × focus + announcement); DebugMetricsPanel dev-gate regression test. **Exit**: exactly one primary CTA per screen state; state matrix passes; dev-gate regression green; visual re-baseline documented.
@@ -186,7 +186,7 @@ Per-state single-primary gating (Analyze vs Describe); state-matrix a11y cases (
 
 ### Checklist for Slice 3: Person-commit
 - [ ] Creatable roster combobox on the card → `commitClusterToRosterEntry` (real person, not label)
-- [ ] Label-only demoted to tertiary; "View \<name\> →" confirm affordance emitted
+- [ ] Label-only demoted to tertiary; generic "View in roster →" affordance emitted (no `?person=` deep-link — E21-10)
 - [ ] Projection chips: singleton + needs-confirmation active; hard-examples coming-soon (disabled+notice)
 - [ ] banned-vocabulary sweep extended to the queue and green (human chip labels)
 

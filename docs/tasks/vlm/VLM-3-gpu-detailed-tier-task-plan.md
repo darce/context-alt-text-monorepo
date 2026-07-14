@@ -294,9 +294,9 @@ Proof: one recorded end-to-end burst transcript (timestamps: enqueue → provisi
 
 ### Checklist for Slice 7: Live evidence + tier activation
 
-- [ ] 7a: bench script `scripts/gpu_spike_bench.py` committed; spike artifact fully populated on the live A10 (cold-boot, warm-start p95 vs 90 s, model-load, s/img); quota fields confirmed.
-- [ ] 7b: pruned slate served live through `bakeoff.py --endpoint`; stub REPORTs replaced by measured `acx-eval/v1` REPORTs; re-score bit-identical; any slate cut named explicitly; GPU-on wall-clock reported vs the stated budget.
-- [ ] 7b: decision memo promoted provisional→final; downloaded-artifact license verdict recorded.
+- [x] 7a: bench script `scripts/gpu_spike_bench.py` committed; spike artifact fully populated on the live A10 (cold-boot, warm-start p95 vs 90 s, model-load, s/img); quota fields confirmed.
+- [x] 7b: pruned slate served live through `bakeoff.py --endpoint`; stub REPORTs replaced by measured `acx-eval/v1` REPORTs; re-score bit-identical; any slate cut named explicitly; GPU-on wall-clock reported vs the stated budget (51 min vs ≤ 12 h).
+- [x] 7b: decision memo promoted provisional→final; downloaded-artifact license verdict recorded (Apache-2.0/MIT, public-demo pass).
 - [ ] 7c: activation preconditions executed (endpoint env from terraform outputs, adapter profile set, allowlist fail-closed verified, reaper on a timer).
 - [ ] 7c: one recorded E2E burst — enqueue → `provisional_cpu` → warm-start → `final_gpu` → drain → reaper `STOPPED`; no orphaned instance/boot volume; A1 `/health` green throughout.
 - [ ] 7c: stop criteria + rollback stated before activation and rollback exercised once (unset adapter env → CPU tier serves) [RLSE-07], [RLSE-08].
@@ -314,7 +314,7 @@ Proof: one recorded end-to-end burst transcript (timestamps: enqueue → provisi
 
 ## Success Criteria
 
-- [ ] A GPU candidate is picked by a committed bake-off memo backed by **measured** (not stub) REPORTs + a measured latency/RSS artifact (Slice 7b) [RLSE-02].
+- [x] A GPU candidate is picked by a committed bake-off memo backed by **measured** (not stub) REPORTs + a measured latency/RSS artifact (Slice 7b) [RLSE-02].
 - [x] A describe request routed to the GPU profile returns `tier=final_gpu` through the unchanged `DescriptionAdapter` protocol (test-proven on `main`; live-proven in Slice 7c).
 - [ ] A burst warm-starts the provisioned OCI GPU instance from stopped within the stated budget, then stops it; the idle-reaper leaves no running/orphaned instance or boot volume (Slice 7c — the billing-safety proof).
 - [ ] Cold/unavailable GPU yields a `provisional_cpu` answer that is later superseded by `final_gpu` without failing the request; a GPU burst never degrades the A1 service (test-proven on `main`; live-proven in Slice 7c).

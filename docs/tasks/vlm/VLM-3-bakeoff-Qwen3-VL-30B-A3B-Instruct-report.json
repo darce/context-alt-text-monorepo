@@ -1,8 +1,268 @@
 {
-  "schema": "acx-eval/v1",
-  "kind": "pending_report",
-  "task_ref": "VLM-3",
-  "model_id": "Qwen3-VL-30B-A3B-Instruct",
-  "status": "pending_live_gpu_bakeoff",
-  "reason": "Requires OCI GPU endpoint and golden images."
+  "caption": {
+    "insertion_rate": 1.0,
+    "mean_gated_score": 1.0,
+    "must_right_defined_images": 8,
+    "must_right_failed_images": 0,
+    "policy_violations": 0
+  },
+  "counts": {
+    "failed": 0,
+    "scored": 10,
+    "total": 10
+  },
+  "faces": {
+    "detection": {
+      "fn": 17,
+      "fp": 0,
+      "precision": null,
+      "recall": 0.0,
+      "tp": 0
+    },
+    "identification": {
+      "excluded_images": [
+        "mock_images/maria-pool.jpg"
+      ],
+      "ignored_wrong_names": [],
+      "macro_precision": null,
+      "macro_recall": 0.0,
+      "per_identity": {
+        "Bea Burke": {
+          "fn": 1,
+          "fp": 0,
+          "precision": null,
+          "recall": 0.0,
+          "tp": 0
+        },
+        "Caitlin Weaver": {
+          "fn": 2,
+          "fp": 0,
+          "precision": null,
+          "recall": 0.0,
+          "tp": 0
+        },
+        "Daniel Arce": {
+          "fn": 1,
+          "fp": 0,
+          "precision": null,
+          "recall": 0.0,
+          "tp": 0
+        },
+        "Erika Hansen Miller": {
+          "fn": 1,
+          "fp": 0,
+          "precision": null,
+          "recall": 0.0,
+          "tp": 0
+        },
+        "Kirstie Mccarrel": {
+          "fn": 1,
+          "fp": 0,
+          "precision": null,
+          "recall": 0.0,
+          "tp": 0
+        },
+        "Maria Correonero": {
+          "fn": 1,
+          "fp": 0,
+          "precision": null,
+          "recall": 0.0,
+          "tp": 0
+        },
+        "Ryann Wiseman": {
+          "fn": 2,
+          "fp": 0,
+          "precision": null,
+          "recall": 0.0,
+          "tp": 0
+        }
+      },
+      "precision": null,
+      "recall": 0.0,
+      "true_rejections": 2,
+      "wrong_names": []
+    }
+  },
+  "failures": [],
+  "kind": "report",
+  "per_image": [
+    {
+      "cache_hit": false,
+      "first_sentence_gist_ok": true,
+      "fkre": 65.6,
+      "gated_score": 1.0,
+      "inserted_identities": [
+        "Caitlin Weaver"
+      ],
+      "media_id": 3,
+      "missing_identities": [],
+      "must_right_failures": [],
+      "path": "mock_images/ccqw-antartica.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.2308,
+      "tag_coverage": null
+    },
+    {
+      "cache_hit": false,
+      "first_sentence_gist_ok": false,
+      "fkre": 76.83,
+      "gated_score": 1.0,
+      "inserted_identities": [
+        "Bea Burke"
+      ],
+      "media_id": 2,
+      "missing_identities": [],
+      "must_right_failures": [],
+      "path": "mock_images/bea-nye.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.2273,
+      "tag_coverage": null
+    },
+    {
+      "cache_hit": false,
+      "first_sentence_gist_ok": true,
+      "fkre": 51.5,
+      "gated_score": 1.0,
+      "inserted_identities": [
+        "Caitlin Weaver",
+        "Erika Hansen Miller"
+      ],
+      "media_id": 5,
+      "missing_identities": [],
+      "must_right_failures": [],
+      "path": "mock_images/ccqw-erika.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.25,
+      "tag_coverage": null
+    },
+    {
+      "cache_hit": false,
+      "first_sentence_gist_ok": true,
+      "fkre": 68.25,
+      "gated_score": 1.0,
+      "inserted_identities": [
+        "Daniel Arce",
+        "Kirstie Mccarrel"
+      ],
+      "media_id": 23,
+      "missing_identities": [],
+      "must_right_failures": [],
+      "path": "mock_images/kirstie-daniel-sunglasses.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.2727,
+      "tag_coverage": null
+    },
+    {
+      "cache_hit": false,
+      "first_sentence_gist_ok": false,
+      "fkre": 57.82,
+      "gated_score": 1.0,
+      "inserted_identities": [
+        "Ryann Wiseman"
+      ],
+      "media_id": 37,
+      "missing_identities": [],
+      "must_right_failures": [],
+      "path": "mock_images/ryann-group-party.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.2034,
+      "tag_coverage": null
+    },
+    {
+      "cache_hit": false,
+      "first_sentence_gist_ok": false,
+      "fkre": 60.75,
+      "gated_score": null,
+      "inserted_identities": [],
+      "media_id": 30,
+      "missing_identities": [
+        "Maria Correonero"
+      ],
+      "must_right_failures": [],
+      "path": "mock_images/maria-pool.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.2258,
+      "tag_coverage": null
+    },
+    {
+      "cache_hit": false,
+      "first_sentence_gist_ok": true,
+      "fkre": 61.46,
+      "gated_score": 1.0,
+      "inserted_identities": [],
+      "media_id": 27,
+      "missing_identities": [],
+      "must_right_failures": [],
+      "path": "mock_images/liam-maloney-painting.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.2245,
+      "tag_coverage": null
+    },
+    {
+      "cache_hit": false,
+      "first_sentence_gist_ok": true,
+      "fkre": 68.54,
+      "gated_score": 1.0,
+      "inserted_identities": [
+        "Ryann Wiseman"
+      ],
+      "media_id": 36,
+      "missing_identities": [],
+      "must_right_failures": [],
+      "path": "mock_images/ryann-bar.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.2857,
+      "tag_coverage": null
+    },
+    {
+      "cache_hit": false,
+      "first_sentence_gist_ok": true,
+      "fkre": 49.67,
+      "gated_score": 1.0,
+      "inserted_identities": [
+        "Maria Correonero"
+      ],
+      "media_id": 33,
+      "missing_identities": [],
+      "must_right_failures": [],
+      "path": "mock_images/mcm-planecrash.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.1591,
+      "tag_coverage": null
+    },
+    {
+      "cache_hit": false,
+      "first_sentence_gist_ok": false,
+      "fkre": 62.84,
+      "gated_score": 1.0,
+      "inserted_identities": [],
+      "media_id": 34,
+      "missing_identities": [],
+      "must_right_failures": [],
+      "path": "mock_images/nina-machiavelli.jpeg",
+      "policy_violation": false,
+      "repetition_ratio": 0.1471,
+      "tag_coverage": null
+    }
+  ],
+  "provenance": {
+    "base_url": "http://localhost:18000",
+    "head_sha": "2cf7898a449e5ecb3275e89ef868193680f38a7d",
+    "manifest_matches_fetch": true,
+    "manifest_sha256": "670e257aef0c4eabb6480241be8c38521a494ae24d356e1fdcaa1bb49601b6ca",
+    "model": {
+      "adapters": [
+        "bakeoff"
+      ],
+      "model_ids": [
+        "Qwen3-VL-30B-A3B-Instruct"
+      ],
+      "model_versions": [
+        "Q4_K_M"
+      ]
+    },
+    "score_manifest_sha256": "670e257aef0c4eabb6480241be8c38521a494ae24d356e1fdcaa1bb49601b6ca",
+    "started_at": "2026-07-14T07:27:24Z"
+  },
+  "schema": "acx-eval/v1"
 }

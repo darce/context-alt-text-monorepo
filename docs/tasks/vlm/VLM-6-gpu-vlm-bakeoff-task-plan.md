@@ -15,13 +15,13 @@
 
 ## Objective
 
-Benchmark every A10-fittable open-weight VLM candidate (12 models incl. requested DeepSeek/Kimi/GLM/Ovis coverage) against the incumbents over an expanded 100-image difficulty-stratified golden corpus, pick winners hallucination-first per tier (GPU async + CPU inline), and adopt them: new `profiles.py` entries, `gpu_phi4` stub deleted, regression eval gate green before any adapter flip.
+Benchmark every A10-fittable open-weight VLM candidate (13 models incl. Florence-2-large-ft and requested DeepSeek/Kimi/GLM/Ovis coverage) against the incumbents over an expanded 100-image difficulty-stratified golden corpus, pick winners hallucination-first per tier (GPU async + CPU inline), and adopt them: new `profiles.py` entries, `gpu_phi4` stub deleted, regression eval gate green before any adapter flip.
 
 ## Intake
 
 - **Key Q&A decisions**: handoff decision `#2282` (`claude_scope_intake_vlm6_gpu_bakeoff`, 2026-07-14) — candidate breadth, hallucination-first winner rule, both tiers, adoption in-task.
 - **Research basis**: deep-research run `wf_4ab72866-400` (2026-07-14, 21/25 claims adversarially verified) · `docs/tasks/19.0/E19-1-mimo-vl-vs-phi4-and-sub7b-a1-eval-20260616.md` · `docs/tasks/19.0/E19-1-local-cpu-vlm-benchmark-decision-memo.md`.
-- **Not-Doing**: hosted providers (E20-11 disposition `reject` stands); >10B-active dense models; fine-tuning; multi-GPU serving; the `florence_large` async worker (obsoleted by this task); WordPress plugin changes; changes to face-recognition scoring.
+- **Not-Doing**: hosted providers (E20-11 disposition `reject` stands); >10B-active dense models; fine-tuning; multi-GPU serving; the `florence_large` async worker (obsoleted by this task — the model itself IS benchmarked, candidate #13); WordPress plugin changes; OpenCV upgrade (pipeline pins `opencv-python` 4.13 for decode/preprocess only — no OpenCV 5 exists in the repo; animal recognition is a VLM concern covered by the animals/pets stratum, not an OpenCV task).
 
 ## Problem Statement
 
@@ -45,7 +45,7 @@ The scene tier runs Florence-2-base-ft on CPU (picked for CPU viability, quality
 
 ## Terminology
 
-- **Golden-100**: the expanded 100-image evaluation corpus (supersedes the 38-image golden manifest for this task; face-recognition P/R rows keep their original 38-image basis).
+- **Golden-100**: the expanded 100-image evaluation corpus (supersedes the 38-image golden manifest). Face identity ground truth is curated for all 100 images; the original golden-38 subset is additionally scored on its own for historical comparability.
 - **Serving gate**: 60-minute timebox to stand up a candidate's serving stack on the bake host; failure is recorded, not debugged.
 - **Tier gate (latency)**: GPU async tier ≤ 170 s p95/image — derived from the adapter timeout chain (`ACX_GPU_CONNECT_TIMEOUT_SECONDS=5` + `ACX_GPU_READ_TIMEOUT_SECONDS=175` in `scene/config/settings.py`; a model whose p95 approaches the read timeout will fail live traffic). CPU inline tier ≤ 20 s p95/image (established inline bar, E19-1). *Intake assumption*: the 170 s async bar is a ceiling, not a target — operator may tighten it in S5 when ranking.
 - **Anchor**: a model run for reference, not competing for adoption (both incumbents + Phi-4).
@@ -61,7 +61,7 @@ The scene tier runs Florence-2-base-ft on CPU (picked for CPU viability, quality
 
 ## Target Outcome
 
-A decision memo ranks 12 candidates + 3 anchors on identical Golden-100 evidence; the GPU async profile and (if it wins) the CPU inline profile point at the new models; `gpu_phi4` is gone; the eval harness permanently gains the Golden-100 corpus and a hallucination metric, making future model swaps a re-run instead of a research project.
+A decision memo ranks 13 candidates + 2 incumbent anchors on identical Golden-100 evidence; the GPU async profile and (if it wins) the CPU inline profile point at the new models; `gpu_phi4` is gone; the eval harness permanently gains the Golden-100 corpus and a hallucination metric, making future model swaps a re-run instead of a research project.
 
 ## Context Loading
 
@@ -73,7 +73,7 @@ A decision memo ranks 12 candidates + 3 anchors on identical Golden-100 evidence
 
 | Boundary | Owner | Current Contract | Expected Change | Compatibility Needed? | Verification |
 | -------- | ----- | ---------------- | --------------- | --------------------- | ------------ |
-| Golden manifest schema (v2) | eval harness | `scripts/eval_harness/manifest.py` | additive: difficulty/domain tags, reference-facts field, and a frozen `face_eval` membership flag (original 38 ids) so face P/R keeps its basis regardless of people appearing in new images | yes — 38-image face P/R rows must still score identically; a test pins the face-metric input count to 38 | `score --check-determinism` on the pre-expansion run record + face-input-count test |
+| Golden manifest schema (v2) | eval harness | `scripts/eval_harness/manifest.py` | additive: difficulty/domain tags, reference-facts field; **face identity ground truth curated for all 100 images** (present-identity labels + `face_count` incl. strangers, roster-validated — the existing manifest fields, extended to the new 62) | yes — the original golden-38 subset is still scored and reported separately for historical comparability; a test pins the golden-38 subset membership | `score --check-determinism` on the pre-expansion run record + golden-38 subset-pin test |
 | `ACX_DESCRIPTION_ADAPTER` profile enum | scene config | `scene/config/profiles.py` | add winner profile(s); delete `GPU_PHI4` | no (greenfield policy; stub was never servable) | `scene/tests/test_description_profiles.py` updated in same slice |
 | GPU serving endpoint | bake host (llama.cpp / vLLM) | `gpu_remote_adapter.py` request shape | none for GGUF winners; new vLLM-OpenAI variant only if a non-GGUF model wins | yes — adapter contract tests | `scene/tests/test_gpu_remote_adapter.py` |
 
@@ -99,6 +99,7 @@ Anchors (measured, not competing): **Florence-2-base-ft** (Microsoft, US — 0.2
 | 10 | Ovis2-8B | Alibaba Int'l / AIDC (CN) | 8B | bf16 ~17 GB | HF Transformers | leaderboard rows verified (HallusionBench 56.3) |
 | 11 | MiniCPM-V 4.6 | OpenBMB (CN) | 1.3B | ~2–4 GB GGUF | llama.cpp (official GGUF) | verified 3-0; CPU-inline Florence-successor candidate (+1 GPU run) |
 | 12 | Phi-4-multimodal-instruct | Microsoft (US) | 5.6B | bf16 ~11 GB | vLLM | anchor only — research verdict 3-0 obsolete |
+| 13 | Florence-2-large-ft | Microsoft (US) | 0.77B | bf16 ~2 GB | HF Transformers | never production-served (`florence_large` is a 503 stub); quality ceiling of the incumbent family — closes the E19-1 async-worker question |
 
 ## Files and Surfaces to Change
 
@@ -158,9 +159,9 @@ Proof:
 
 Changes:
 
-- Select 62 new images: existing fixture pool + LocalWP uploads (`~/Development/wp-context-alt-text/app/public/wp-content/uploads`, copy-only); stratify across people/faces, dense scenes, text-in-image, charts/screenshots, products, low-light/blur.
+- Select 62 new images: existing fixture pool + LocalWP uploads (`~/Development/wp-context-alt-text/app/public/wp-content/uploads`, copy-only); stratify across people/faces, **crowds, occlusion, mirrors/reflections, animals/pets, art (paintings/illustration), abstract imagery, black-and-white**, dense scenes, text-in-image, charts/screenshots, products, low-light/blur. Every stratum gets ≥5 images; per-domain counts reported in the slice decision.
 - License/PII screen every new image; record provenance per image in the manifest.
-- `manifest.py`: additive `difficulty`/`domain`/`reference_facts` fields + frozen `face_eval` membership (original 38 ids) with a test pinning face-metric input count to 38.
+- `manifest.py`: additive `difficulty`/`domain`/`reference_facts` fields. **Face identity ground truth for all 100 images**: present-identity labels + `face_count` (incl. non-roster strangers) curated per image using the existing manifest v2 fields; roster extended if new recurring people are added; golden-38 subset membership pinned by test so historical face P/R stays comparable.
 - Reference facts: `draft_labels.py` drafts all 100; **operator confirms a 20% stratified sample plus every people/faces and text-in-image entry**; agent drafts are accepted for the remainder. Sample disagreement >10% escalates to a full operator pass (owner: operator; est. 1–2 h at sample scope).
 - `caption_metrics.py`: fabricated-fact hallucination metric.
 
@@ -174,7 +175,7 @@ Proof:
 
 Changes:
 
-- `bakeoff_candidates.yaml` (all 12 + 3 anchors, revision-pinned) and `bakeoff_runner.py` (serve → warm-up → 100 images at concurrency 1, open-loop per-image timing [PERF-03], p50/p95/p99 [PERF-01], cold-load, peak VRAM via `nvidia-smi` sampling, image-edge cap reusing `ACX_VLM_MAX_IMAGE_EDGE_PX` semantics with downscales recorded).
+- `bakeoff_candidates.yaml` (all 13 candidates + 2 incumbent anchors, revision-pinned) and `bakeoff_runner.py` (serve → warm-up → 100 images at concurrency 1, open-loop per-image timing [PERF-03], p50/p95/p99 [PERF-01], cold-load, peak VRAM via `nvidia-smi` sampling, image-edge cap reusing `ACX_VLM_MAX_IMAGE_EDGE_PX` semantics with downscales recorded).
 - **Execution locus**: `bakeoff_runner.py` executes **on the bake host** (invoked over Tailscale SSH from the laptop, same access path as `acx-backend`); Golden-100 images are rsynced to the host once before the window; per-model metrics + raw generations are pulled back to the laptop after each model completes (so a window abort loses at most one model's outputs).
 - Weight pre-pull script; dry-run mode validated locally against a stub server.
 - **Per-stack smoke gate**: one real inference per serving stack before the window — llama.cpp via MiniCPM-V 4.6 GGUF locally (laptop/A1); vLLM and HF Transformers via their smallest candidate on a short throwaway GPU boot (≤1 h) or CPU-mode where the stack supports it. No stack enters S3 unsmoked.
@@ -218,6 +219,8 @@ Proof:
 Changes:
 
 - `VLM-6-bakeoff-decision-memo.md`: hallucination-first ranking; per-candidate scores/latency/VRAM/serving friction/license/lab; explicit downside for each winner [ARCH-06]; disposition for every non-winner; tier gates applied (GPU ≤170 s p95 per the timeout-chain derivation, CPU ≤20 s p95).
+- **Caption gallery (durable artifact)**: `docs/tasks/vlm/bakeoff-results/caption-gallery.md` — one section per image (reference thumbnail + ground-truth facts) with every model's caption side by side and its per-image scores, generated by a `report.py` extension so it regenerates from run records. This is the retrospective surface: any scored result traces back to its image, model, prompt, and raw generation.
+- **Metrics reported**: fabricated-fact rate (hallucination, primary); caption metrics; face detection precision/recall; face identification **precision/recall/accuracy** (micro + per-identity macro, full-100 and golden-38 subset); per-domain accuracy breakdowns.
 
 Proof:
 
@@ -259,7 +262,7 @@ Proof:
 
 ### Checklist for Slice 2: Bench harness + registry
 
-- [ ] Registry complete: 12 candidates + 3 anchors, revision-pinned, recipes + tiers
+- [ ] Registry complete: 13 candidates + 2 incumbent anchors, revision-pinned, recipes + tiers
 - [ ] Runner dry-run green against stub server; VRAM/timing capture verified
 - [ ] Per-stack smoke gate passed (llama.cpp, vLLM, HF Transformers each ran one real inference)
 - [ ] Weight pre-pull script ready; grunt work offloaded via `/offload`

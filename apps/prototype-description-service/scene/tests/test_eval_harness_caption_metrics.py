@@ -283,3 +283,63 @@ def test_wrong_name_image_rate():
         score_caption("Mallory Trap by a lake.", **_entry(easy_wrong=["Mallory Trap"], must_right=[])),
     ]
     assert wrong_name_image_rate(scores) == pytest.approx(0.5)
+
+
+# --- ALTQ-1 review-fix regressions (round r07140ddf) ---
+
+
+def test_first_name_only_mention_trips_trap():  # B-01 (high)
+    scores = score_caption(
+        "Alice Example and Ryann relax by a lake.",
+        **_entry(easy_wrong=["Ryann Wiseman"]),
+    )
+    assert scores.wrong_name_hits == ["Ryann Wiseman"]
+    assert scores.gated_score == 0.0
+
+
+def test_shared_surname_with_present_identity_does_not_trip_trap():  # B-01 guard
+    scores = score_caption(
+        "Caitlin Weaver stands on the shore.",
+        **_entry(present_identities=["Caitlin Weaver"], must_right=["Caitlin Weaver"], easy_wrong=["Ryann Weaver"]),
+    )
+    assert scores.wrong_name_hits == []
+    assert scores.gated_score == 1.0
+
+
+def test_token_trap_applies_to_roster_hallucinations():  # B-01
+    scores = score_caption(
+        "Alice Example waves at Zed across the pool.",
+        **_entry(),
+        roster=["Alice Example", "Zed Zenith"],
+    )
+    assert scores.hallucinated_names == ["Zed Zenith"]
+    assert scores.gated_score == 0.0
+
+
+def test_short_name_tokens_do_not_over_trigger():  # B-01 bound: initials/particles
+    scores = score_caption(
+        "Alice Example sits de facto at the head of the table.",
+        **_entry(easy_wrong=["J. de Vries"]),
+    )
+    assert scores.wrong_name_hits == []
+
+
+def test_name_precision_counts_policy_disabled_assertions():  # A-06/B-02
+    scores = [
+        score_caption(CAPTION, **_entry()),
+        # recognition-disabled row asserting a present name: policy violation,
+        # counted as an incorrect assertion in the shared denominator
+        score_caption(CAPTION, **_entry(recognition_enabled=False, must_right=[])),
+    ]
+    assert name_precision(scores) == pytest.approx(0.5)
+
+
+def test_wrong_name_image_rate_counts_ineligible_rows():  # A-06/B-02
+    scores = [
+        score_caption(CAPTION, **_entry()),
+        score_caption(
+            "Mallory Trap by a lake.",
+            **_entry(recognition_enabled=False, must_right=[], easy_wrong=["Mallory Trap"]),
+        ),
+    ]
+    assert wrong_name_image_rate(scores) == pytest.approx(0.5)

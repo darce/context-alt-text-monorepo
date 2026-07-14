@@ -206,9 +206,9 @@ Proof:
 
 ### Checklist for Slice 3: Phase strategy map + sweep
 
-- [ ] `phasePresentation.ts` with exhaustiveness test; three switch sites converted.
-- [ ] Grep gate for stray phase switches passes; `docs/workbay/maps/frontend.md` updated.
-- [ ] Full suite evidence recorded; slice-complete decision logged.
+- [x] `phasePresentation.ts` with exhaustiveness test; three switch sites converted.
+- [x] Grep gate for stray phase switches passes; `docs/workbay/maps/frontend.md` updated.
+- [x] Full suite evidence recorded; slice-complete decision logged.
 
 ## Review Readiness
 

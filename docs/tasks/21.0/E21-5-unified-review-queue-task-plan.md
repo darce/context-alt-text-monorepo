@@ -2,14 +2,22 @@
 
 **Epic**: [E21 Public-MVP UX polish](../../epics/v0.4.1/public-mvp-ux-polish-epic.md) · Phase 3 (P3-A)
 **Roadmap**: [public-mvp-ux-polish-roadmap-2026-07-04.md](../../roadmaps/public-mvp-ux-polish-roadmap-2026-07-04.md) §P3-A / §8
-**Depends on**: E21-1 (sync status view-model — landed), E21-4 (design tokens — landed)
+**Depends on**: E21-1 (sync status view-model — landed), E21-4 (design tokens — landed), **first-visitor walkthrough gate** (roadmap §Phase-3 Gate — see Preconditions below)
 **Blocks**: E21-9 (person-first roster — needs person-commit on the review card)
 **Branch**: `feature/e21-5` · **Worktree**: `context-alt-text-monorepo-e21-5`
 **Scope**: frontend-only (`apps/prototype-wp-alt-context/js/admin/`). **Zero backend contract changes.**
 
+## Preconditions (Phase-3 gate — resolves REVD-01)
+
+The roadmap (§Phase-3 Gate, added 2026-07-12) and epic Exit Criteria make a **scripted first-visitor walkthrough on the live demo** a hard precondition to Phase-3 construction ([PROD-03] cheapest learning first; [PROD-05] Truth Curve). E21-5 is P3-A — the first and largest Phase-3 build.
+
+- **Phase-1 landed** (gate's own precondition): E21-1, E21-2, E21-3, E21-12 all merged to `main` — verified 2026-07-14.
+- **Walkthrough**: automated via Playwright under task **E21-13** (extends `workbench-evidence.spec.ts` / `make demo-walkthrough-proof`): drives scan → review → first-named-person on the live demo, records **per-step timings (time-to-first-named-person baseline)** and evidence captures. The unaided-first-visitor observation remains a human session using the same script.
+- **Funding rule**: Slice 1 is not funded (`plan-accept` withheld) until the walkthrough has run and its findings are confirmed to not re-rank P3-A — or the re-ranking is applied to this plan. Operator confirmed this gating 2026-07-14.
+
 ## Objective
 
-Replace the 4-queue `SuggestionReviewPanel` stack with a **card-at-a-time review queue** driven by the existing `nextAction` selector, with projection filter chips, per-item optimistic accept/reject with an **announced** undo, and **person-commit** (creatable roster combobox) as the primary naming action on the review card. Finalize one-primary-CTA-per-state in the media footer. This is the demo's central interaction — it converts "a pile of stacked panels" into a legible one-item-at-a-time pipeline.
+Replace the 4-queue `SuggestionReviewPanel` stack with a **card-at-a-time review queue** driven by the existing `nextAction` selector, with projection filter chips, per-item accept/reject with a brief **announced** undo window that gates the queue advance on a durable backend write (no optimistic "saved" state), and **person-commit** (creatable roster combobox) as the primary naming action on the review card. Finalize one-primary-CTA-per-state in the media footer. This is the demo's central interaction — it converts "a pile of stacked panels" into a legible one-item-at-a-time pipeline.
 
 ## Problem Statement
 
@@ -18,7 +26,7 @@ The scan→review→confirm loop is the demo's story, but today it renders as fo
 ## Constraints
 
 - **Frontend-only. Zero backend contract changes** — all needed endpoints already exist (accept/reject/merge/name/bulk-accept, roster `.../commit`, cluster `PATCH label`). No REST, PHP, or schema edits. If a design pressure suggests a new endpoint (e.g. a server-side batch or an "un-accept"), it is **out of scope** — file as an E16/service follow-on (rg-002).
-- **rg-002 (preserve atomic write paths)**: every accept/reject/commit is a **single atomic backend call**. Do not split one backend operation into multiple frontend mutations. Card-at-a-time makes each action single-item, so the existing non-atomic **group** fan-out (`Promise.all(mutateAsync…)` in `SuggestionReviewPanel.tsx:67-112`) is eliminated, not reproduced. Undo is rg-002-safe by construction (see Proposed Solution — deferred-commit window; no inverse endpoint invented).
+- **rg-002 (preserve atomic write paths)**: every accept/reject/commit is a **single atomic backend call**. Do not split one backend operation into multiple frontend mutations. Card-at-a-time makes each action single-item, so the existing non-atomic **group** fan-out (`Promise.all(mutateAsync…)` in `SuggestionReviewPanel.tsx:67-112`) is eliminated, not reproduced. Undo is rg-002-safe by construction (see Proposed Solution — immediate-commit + gated advance; exactly one POST or none; no inverse endpoint invented).
 - **rg-003 (zero-state reachability)**: the queue's primary controls (and the media footer's Analyze CTA) must be reachable and legible from a zero/empty state — disabled-with-reason, never hidden.
 - **sr-004 (design tokens)**: all new styles consume `--acx-*` tokens landed by E21-4 (`--acx-color-*`, `--acx-text-*`, `--acx-shadow-*`, `--acx-radius-*`, `--acx-font-weight-*`, `--acx-space-*`). Zero raw hex/scale literals; the tokenization test (`workbench-tokenization.test.ts`) must stay green over every touched `components/*.scss`.
 - **sr-007 (centralized status enums)**: projection categories and queue-item kinds import from a single canonical definition (extend the existing `NEXT_ACTION_KIND` / `queue_memberships` union) — no scattered magic strings.
@@ -29,7 +37,7 @@ The scan→review→confirm loop is the demo's story, but today it renders as fo
 
 - **Relocate/rebuild-behind-behavior, don't redesign data flow.** The queue is a new presentation over existing queries and mutations. Every backend interaction already exists and stays byte-for-byte.
 - **Risk-first slicing.** Slice 1 lands the structural core (queue driver + single-card shell replacing the stack) under orchestrator ownership; Slices 2–4 layer behavior onto the shell and are parallelizable across **Claude Agent-tool subagents on disjoint file sets** (grok offload is on security hold). Each slice merges independently through the pre-merge gate.
-- **A11y is acceptance, not audit.** Every async surface (card transition, undo toast, commit result) ships a live-region assertion; the core loop passes a keyboard-walk. Axe alone gates nothing (A11Y-23).
+- **A11y is acceptance, not audit.** Every async surface (card transition, pending/undo announce, commit result) ships a live-region assertion; the core loop passes a keyboard-walk. Axe alone gates nothing (A11Y-23).
 - **Read the landed dependency plans before Slice 1** — E21-1 (`E21-1-sync-status-view-model-task-plan.md`) and E21-4 — to consume whatever status view-model and tokens actually landed rather than what this plan assumes.
 
 ## Terminology
@@ -38,7 +46,7 @@ The scan→review→confirm loop is the demo's story, but today it renders as fo
 - **Queue driver**: the `selectNextAction` priority selector (`useWorkbenchFindings.ts:112-144`), promoted from scroll-helper to the thing that chooses which single card is shown.
 - **Person-commit**: creating or assigning a real roster person via `commitClusterToRosterEntry` (`POST .../roster/clusters/{id}/commit`). Distinct from **label-only rename** (`updateClusterLabel` → `PATCH .../clusters/{id}`, a `label` string with no roster person).
 - **Projection chip**: a filter chip over the review queue, **derived from the queue-item `KIND`** (not from roster `queue_memberships` — see below), rendered with the E15-13 projection vocabulary as human copy: assignment→"Singletons", merge→"Needs confirmation", plus a disabled "Hard examples (coming soon)" chip. Pending suggestions have no roster entry yet, so the roster-side `queue_memberships` field does not apply to this pre-commit queue (resolves PA-01).
-- **Deferred-commit undo**: optimistic UI + a single backend call deferred until the undo toast window closes; "Undo" cancels the pending call (no inverse endpoint needed).
+- **Immediate-commit undo (gated advance)**: no optimistic "saved" state — a brief window holds the item as *Saving…*; when it closes the single backend call fires and the queue advances **only on success** (failure re-surfaces via `role=alert`). "Undo" cancels before the call fires — 0 calls if undone, exactly 1 on commit (no inverse endpoint needed).
 
 ## Current State Analysis (ground truth, verified 2026-07-13 on `feature/e21-5` @ `177ea0aa`)
 
@@ -63,7 +71,7 @@ The scan→review→confirm loop is the demo's story, but today it renders as fo
 
 **DebugMetricsPanel** — `DebugMetricsPanel.tsx` (212 lines) is **already dev-gated**: `:65-68` `if (!isDevMode() || !metrics) return null` (`isDevMode()` from `api/config.ts:89-95`, server `devMode` flag). E21-5 verifies + regression-tests the gate; it does not rebuild it.
 
-**A11y harness (E21-1/E21-12 seeds)** — `tests/e2e/a11y/`: `keyboard-walk.spec.ts` (`tabUntilFocused` helper `:31-43`, drive focus via `keyboard.press('Tab')`, never `.focus()`); `live-region.spec.ts` (assert `role=status`, `aria-live=polite`, re-read after transition; inline `BANNED` regex); `workbench-axe.spec.ts` (`assertNoBlockingViolations`). Unit: `js/admin/__tests__/banned-vocabulary.test.tsx` (378 lines, `PAGE_SWEEP` registry). Tokens landed by E21-4: `styles/tokens/_colors.scss` (incl. `--acx-shadow-1/2/-card`), `_typography.scss` (incl. `--acx-font-weight-*`), `_radius.scss`, `_spacing.scss`. Reusable toast: `context/ToastContext.tsx` (Radix Toast, `useToast()`, aria-live internal) — the announced-undo reuse target. `MergeUndoBanner.tsx` is an undo affordance but **not** a live region.
+**A11y harness (E21-1/E21-12 seeds)** — `tests/e2e/a11y/`: `keyboard-walk.spec.ts` (`tabUntilFocused` helper `:31-43`, drive focus via `keyboard.press('Tab')`, never `.focus()`); `live-region.spec.ts` (assert `role=status`, `aria-live=polite`, re-read after transition; inline `BANNED` regex); `workbench-axe.spec.ts` (`assertNoBlockingViolations`). Unit: `js/admin/__tests__/banned-vocabulary.test.tsx` (378 lines, `PAGE_SWEEP` registry). Tokens landed by E21-4: `styles/tokens/_colors.scss` (incl. `--acx-shadow-1/2/-card`), `_typography.scss` (incl. `--acx-font-weight-*`), `_radius.scss`, `_spacing.scss`. `context/ToastContext.tsx` (Radix Toast, `useToast()`): emits `role=status`+`aria-live=off` **foreground** toasts with **no action-button API and no `role=alert` path** — so it is **not** directly reusable for an announced undo; the affordance is an inline in-card live region (or `ToastContext` first gains a polite `type` + action slot + alert variant). `MergeUndoBanner.tsx` is an undo affordance but **not** a live region.
 
 ## Target Outcome
 
@@ -106,12 +114,12 @@ No PHP, REST, or schema edits. Boundary verification (backend guidelines step 5)
 
 Every review item resolves a `suggested_cluster_id` (`suggestionReviewItems.ts:12` groups by it), so the commit endpoint's `clusterId` requirement is satisfied for every kind that offers commit.
 
-**3. Optimistic accept/reject + announced undo (deferred-commit window).** On accept/reject, optimistically advance the queue and show a `useToast()` toast "Accepted — Undo" with a ~5s window; the single atomic POST fires when the window closes, and **Undo cancels the pending POST** and restores the card (rg-002-safe: exactly one backend call, or none). The toast is announced (Radix Toast is a live region; add an explicit `role="status"` assertion). No inverse/"un-accept" endpoint is invented. **Rejected alternative**: fire immediately + call an inverse endpoint on undo — rejected, no such endpoint exists and it would double the backend calls.
+**3. Immediate-commit accept/reject + announced undo (gated advance — no optimistic "saved").** On accept/reject the card enters a brief **pre-commit hold** announced as *Saving… — Undo* (an inline `role="status"` live region, **not** a false "Accepted"); the queue does **not** advance yet. When the ~4–5s window closes without undo — or the user takes the next action, or navigates away — the single atomic POST fires **immediately** and the card advances **only on the backend's success**. **Undo** cancels before the POST fires (rg-002-safe: exactly one backend call, or none). The UI never reports success before the write is durable ([RLSE-05]); failure keeps/re-surfaces the item and announces via `role="alert"` (see policy below). **Announce mechanism**: an inline in-card live region, **not** the Radix Toast action API — `ToastContext` today emits `role=status`+`aria-live=off` foreground toasts with no action-button and no `role=alert` path, so the affordance is inline (or `ToastContext` first gains a polite `type` + action slot + alert variant). **Rejected alternatives**: (a) optimistic advance + deferred commit — shows "saved" before the durable write, and a React unmount cleanup cannot `await` the flushed async POST, re-introducing the silent-data-loss defect ([RLSE-05]); (b) fire immediately + inverse endpoint on undo — no such endpoint exists and it doubles backend calls; (c) durable pending-queue replayed on remount — an at-least-once replay of a non-idempotent POST double-applies without an idempotency key ([API-02]/[RES-01]) and is speculative machinery for a demo ([REF-12]).
 
 **Undo failure + concurrency policy** (resolves PA-03):
-- **Single in-flight window.** At most one deferred commit pends at a time. Taking the next action (accept/reject/commit on the next card) **flushes** the prior pending commit immediately (fires its POST now) before opening the new window — so pending commits never overlap and never reorder.
-- **Post-window failure recovery.** If the flushed/closed-window POST rejects, **re-surface the item** at the queue head, revert the optimistic advance, and announce the failure via `role="alert"` (`aria-live=assertive`) with a retry affordance — the A11Y-24 error state. The failure must never be silent (today's `console.warn`-only path is the defect being removed).
-- **Unmount/navigation.** Leaving the Workbench (route change) or unmounting `ReviewQueue` flushes any pending commit synchronously so no action is silently dropped.
+- **Single in-flight window.** At most one commit is in flight at a time. Taking the next action (accept/reject/commit on the next card) **flushes** the prior held commit immediately (fires its POST now, gating that card's advance on the result) before opening the new window — so commits never overlap and never reorder.
+- **Failure recovery.** If the fired POST rejects, the gated advance never happened, so the item **stays at the queue head**; announce the failure via `role="alert"` (`aria-live=assertive`) with a retry affordance — the A11Y-24 error state. The failure must never be silent (today's `console.warn`-only path is the defect being removed).
+- **Unmount/navigation.** Leaving the Workbench (route change) or unmounting `ReviewQueue` fires any held commit synchronously. Because the advance was gated on success, an unmount-time rejection leaves the item **un-accepted (honest, re-appears next mount)** rather than a shown-saved loss — the [RLSE-05] hole is closed by construction, not by trying to `await` in cleanup.
 
 **4. Bulk accept as a disclosure.** The confidence-threshold bulk-accept block collapses into a single disclosure ("Accept high-confidence…") reusing the existing atomic `POST .../bulk-accept`. The non-atomic **group** fan-out is removed (card-at-a-time handles a cluster as one card with its own atomic action).
 
@@ -130,16 +138,16 @@ Every review item resolves a `suggested_cluster_id` (`suggestionReviewItems.ts:1
 | new | `js/admin/pages/workbench/identity-clusters/ReviewQueue.tsx` | Card-at-a-time queue shell: one card + projection chips + position/prev-next; consumes existing cards + mutations |
 | edit | `js/admin/pages/workbench/identity-clusters/SuggestionReviewPanel.tsx` | Retire the 4-queue stack body; host `ReviewQueue` + bulk-accept disclosure (or delete in favor of `ReviewQueue` at the anchor) |
 | edit | `js/admin/pages/workbench/identity-clusters/useWorkbenchFindings.ts` | Expose ordered/filterable queue (not just `[0]`); add a `KIND`→projection-chip-label map (sr-007) — no `queue_memberships` read |
-| edit | `js/admin/pages/workbench/identity-clusters/useSuggestionReviewMutations.ts` | Deferred-commit window + undo-cancel; remove need for the group fan-out |
+| edit | `js/admin/pages/workbench/identity-clusters/useSuggestionReviewMutations.ts` | Immediate-commit + gated advance; undo-cancel before fire; remove need for the group fan-out |
 | edit | `js/admin/pages/workbench/identity-clusters/WorkbenchFindingsPanel.tsx` | "Review next" drives the card queue, not scroll/label routing |
 | edit | `js/admin/pages/workbench/identity-clusters/SuggestionCards.tsx` | "Name Person" routes to person-commit combobox (primary); label-only tertiary |
 | edit | `js/admin/pages/workbench/MediaSelection.tsx` | Per-state single-primary CTA gating in the footer (Analyze vs Describe) |
 | edit | `js/admin/pages/workbench/MediaAnalyzeCta.tsx` | Honor the per-state primary/secondary signal |
 | edit | `js/admin/styles/components/_workbench.scss` (+ new `_review-queue.scss`) | Card/chip/disclosure styles, `--acx-*` tokens only (sr-004) |
 | test | `js/admin/pages/workbench/identity-clusters/__tests__/ReviewQueue.test.tsx` (new) | Queue navigation, filter chips, one-card invariant, coming-soon chip |
-| test | `js/admin/pages/workbench/identity-clusters/__tests__/useSuggestionReviewMutations.test.tsx` | Deferred-commit + undo-cancel = 0/1 backend calls |
+| test | `js/admin/pages/workbench/identity-clusters/__tests__/useSuggestionReviewMutations.test.tsx` | Immediate-commit gated advance + undo-cancel = 0/1 backend calls; advance only after POST resolves |
 | test | `js/admin/pages/workbench/identity-clusters/__tests__/DebugMetricsPanel.test.tsx` (new) | Dev-gate regression (null in non-dev) |
-| test | `tests/e2e/a11y/review-queue.spec.ts` (new) | Keyboard-walk over the queue; live-region on card transition + undo toast; state matrix |
+| test | `tests/e2e/a11y/review-queue.spec.ts` (new) | Keyboard-walk over the queue; live-region on card transition + pending/undo announce + `role=alert` failure; state matrix |
 | test | `js/admin/__tests__/banned-vocabulary.test.tsx` | Extend `PAGE_SWEEP` to cover the review-queue surface |
 
 ## Related Files (read, likely unchanged)
@@ -148,12 +156,12 @@ Every review item resolves a `suggested_cluster_id` (`suggestionReviewItems.ts:1
 
 ## Verification Strategy
 
-- **Unit** (Vitest): `ReviewQueue` navigation/one-card invariant/chip filtering/coming-soon; deferred-commit undo asserts exactly 0 (undone) or 1 (committed) backend call — the rg-002 guard; person-commit routes to `commitClusterToRosterEntry` not `updateClusterLabel`; DebugMetricsPanel dev-gate; banned-vocabulary sweep green.
-- **E2E a11y** (Playwright, `ACX_E2E_SEEDED`): `review-queue.spec.ts` — `tabUntilFocused` keyboard-walk reaches accept/reject/name; `role=status` announced on card transition + undo toast; state-matrix cases (loading/empty/error/offline) keep focus + announce (A11Y-24). `workbench-axe.spec.ts` stays green.
+- **Unit** (Vitest): `ReviewQueue` navigation/one-card invariant/chip filtering/coming-soon; immediate-commit undo asserts exactly 0 (undone before fire) or 1 (committed) backend call and the card advances only after the POST resolves — the rg-002 guard; person-commit routes to `commitClusterToRosterEntry` not `updateClusterLabel`; DebugMetricsPanel dev-gate; banned-vocabulary sweep green.
+- **E2E a11y** (Playwright, `ACX_E2E_SEEDED`): `review-queue.spec.ts` — `tabUntilFocused` keyboard-walk reaches accept/reject/name; `role=status` announced on card transition + pending/undo hold, `role=alert` on commit failure; state-matrix cases (loading/empty/error/offline) keep focus + announce (A11Y-24). `workbench-axe.spec.ts` stays green.
 - **Tokenization**: `workbench-tokenization.test.ts` green over `_workbench.scss` + new `_review-queue.scss` (sr-004).
 - **Visual**: `workbench-visual.spec.ts` re-diffs (baseline already re-set at E21-4; new queue is an intended diff — re-baseline the review region once, documented).
 - **Seed coverage (resolves PA-05)**: the e2e cases each name the state they need. Chip filtering and the happy-path queue run against `ACX_E2E_SEEDED` rows that must include ≥1 assignment ("Singletons") **and** ≥1 merge ("Needs confirmation") pending suggestion — confirm the seed fixture provides both before asserting chips (extend the fixture if not). The **error** and **offline** state-matrix cases are **not** seed-dependent: run them as `ReviewQueue` **component tests** with mocked mutation-reject / navigator-offline state (deterministic, no live backend), keeping only loading/empty/happy in e2e. Hard-examples is asserted disabled (no seed needed).
-- **Manual (LocalWP)**: scan → review card appears (highest-priority) → accept → toast "Accepted — Undo" → Undo restores card (network shows no commit) → accept again → commits → name via combobox creates a roster person visible on `#/roster` → footer shows one primary CTA per state → airplane-mode reload keeps the queue legible + disabled-with-reason.
+- **Manual (LocalWP)**: scan → review card appears (highest-priority) → accept → card held as "Saving… — Undo" (not advanced) → Undo cancels (network shows no commit) → accept again → POST fires, card advances only on success → name via combobox creates a roster person visible on `#/roster` → footer shows one primary CTA per state → airplane-mode reload keeps the queue legible + disabled-with-reason.
 - Every slice merges through the pre-merge gate (`handoff_close_check(enforce=True)`); findings in handoff by ID only.
 
 ## Slice Delivery
@@ -161,8 +169,8 @@ Every review item resolves a `suggested_cluster_id` (`suggestionReviewItems.ts:1
 ### Slice 1: Queue driver + card-at-a-time shell (orchestrator-owned — highest structural risk)
 Promote `selectNextAction` to an ordered/filterable queue; build `ReviewQueue.tsx` rendering one reused card + projection chips + position/prev-next; retire the 4-queue stack body at the `ScanTabContent.tsx:145` anchor; seed `review-queue.spec.ts` (keyboard-walk + card-transition live region). All existing accept/reject/merge/name actions still fire (unchanged, one card at a time). Bulk-accept temporarily kept as-is (disclosure in Slice 2). **Exit**: one card renders at a time; queue navigates by keyboard; existing mutations green; axe + tokenization green.
 
-### Slice 2: Optimistic accept/reject + announced undo + bulk disclosure (Claude subagent; orchestrator reviews)
-Deferred-commit window in `useSuggestionReviewMutations.ts`; `useToast()` announced "Undo"; bulk-accept collapses to one disclosure over the existing atomic endpoint; remove the group fan-out. **Exit**: undo-cancel = 0 backend calls, commit = 1 (unit-proven); toast announced (`role=status` asserted); rg-002 intact.
+### Slice 2: Immediate-commit accept/reject (gated advance) + announced undo + bulk disclosure (Claude subagent; orchestrator reviews)
+Immediate-commit + gated advance in `useSuggestionReviewMutations.ts`; brief undo-cancel window (0 calls if undone, 1 on commit); card advances only on POST success; inline `role=status` pending/undo announce + `role=alert` failure (not the Radix action API); bulk-accept collapses to one disclosure over the existing atomic endpoint; remove the group fan-out. **Exit**: undo-cancel = 0 backend calls, commit = 1, advance-only-on-success (unit-proven); announce asserted (`role=status` + `role=alert`); rg-002 intact.
 
 ### Slice 3: Person-commit on the review card (Claude subagent; orchestrator reviews)
 Roster-commit creatable combobox on the card → `commitClusterToRosterEntry`; label-only demoted to tertiary; generic "View in roster →" confirm affordance (`#/roster`, no `?person=` deep-link — E21-10 owns that); projection chips wired (singleton/needs-confirmation active, hard-examples coming-soon). **Exit**: naming a person creates a roster entry (not just a label); chips filter; coming-soon chip disabled+noticed; banned-vocabulary green.
@@ -180,8 +188,8 @@ Per-state single-primary gating (Analyze vs Describe); state-matrix a11y cases (
 - [ ] axe + tokenization green; no `WorkbenchContextValue` widening
 
 ### Checklist for Slice 2: Undo + bulk disclosure
-- [ ] Deferred-commit window; undo cancels the pending single POST (0 calls); commit = 1 call — unit-proven
-- [ ] `useToast()` announced undo; `role=status` asserted; group fan-out removed (rg-002)
+- [ ] Immediate-commit + gated advance; undo cancels before fire (0 calls); commit = 1 call; card advances only on POST success — unit-proven
+- [ ] Inline `role=status` pending/undo announce + `role=alert` failure (not the Radix action API); group fan-out removed (rg-002)
 - [ ] Bulk-accept collapsed to one disclosure over the existing atomic `bulk-accept` endpoint
 
 ### Checklist for Slice 3: Person-commit
@@ -215,7 +223,7 @@ Per-slice: review pass with findings recorded in handoff (by ID), zero open find
 
 ## Heuristic IDs cited
 
-- **A11Y-21** — announce async status via live region (undo toast, card transition).
+- **A11Y-21** — announce async status via live region (pending/undo announce, `role=alert` failure, card transition).
 - **A11Y-23** — scanner-pass is the floor; keyboard + AT walkthrough required.
 - **A11Y-24** — every screen state (loading/empty/error/offline) keeps focus + announcement.
 - **A11Y-14 / A11Y-15** — (inherited from E21-9 seam) target size ≥24px and single-pointer alternatives; relevant where the card exposes any drag affordance.

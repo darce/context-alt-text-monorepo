@@ -101,6 +101,12 @@ jobs:
           php-version: "8.3"
           tools: composer
 
+      # engine-strict=true + package.json engines.npm ^11.14.1 make `npm ci`
+      # hard-fail on the npm 10.x that setup-node's Node 22.x bundles. Pin the
+      # packageManager npm the same way architecture-compliance.yml does.
+      - name: Upgrade npm
+        run: npm install --global npm@11.14.1
+
       # package-plugin.sh (default build mode) runs `npm run build` itself and a
       # staging-dir `composer install --no-dev`, and hard-errors if
       # public/assets/dist is missing/empty — so npm ci MUST land first, and no

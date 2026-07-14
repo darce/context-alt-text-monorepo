@@ -109,6 +109,36 @@ ALTER TABLE <table> DISABLE ROW LEVEL SECURITY;
 DROP POLICY tenant_isolation_<table> ON <table>;
 ```
 
+## Column drift (MAINT-TPR-01)
+
+**Symptom**: a table and its alembic revision look healthy, yet every ORM path
+selecting one table 500s — e.g. prod `whoami` and `manage_api_keys tenant list`
+fail because the running image's ORM selects `tenants.naming_agreement_enabled`
+but the live column is absent. Root cause: `_ensure_table` no-ops on an already
+existing table, so an expand-first column added to the model after the table was
+first created never lands (PA-03; the stamped-alembic upgrade is a no-op).
+
+**Fix**: the heal (`sync_identity_schema` → migration `heal()` → `_ensure_columns`)
+now adds any missing ORM-declared column additively (`ADD COLUMN`, server default
+from the model), and the verifier fails closed (exit `1`) naming
+`column_gaps: <table> missing <cols>`. Remediation is identical to §2–3 — run the
+heal, then verify:
+
+```bash
+cd /opt/acx-backend/prod
+docker compose -f docker-compose.env.yml -f docker-compose.admin.yml \
+  run --rm api python -m scripts.sync_identity_schema
+docker compose -f docker-compose.env.yml -f docker-compose.admin.yml \
+  run --rm api python -m scripts.verify_identity_schema; echo "EXIT=$?"
+```
+
+Any restart through the deploy path also converges it (the boot CMD runs the same
+heal before the verifier). Confirm recovery with `curl -s .../recognition/tenant/whoami`
+(HTTP 200, key-canonical `tenant_id`) and `manage_api_keys tenant list`. Additive
+only: a missing NOT NULL column with no server default, or a missing primary key,
+raises for operator remediation instead of guessing a backfill (non-additive drift
+→ reset per greenfield policy, `scripts/reset_dev_db.sh` locally / a fresh prod DB).
+
 ## Known operator-required conditions
 
 - **Matview impostor** (`verify` exit 2 naming `matview_relkind`): a plain

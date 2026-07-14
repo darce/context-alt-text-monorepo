@@ -1,25 +1,10 @@
 import React from 'react';
 import { __ } from '@wordpress/i18n';
 import { ConfirmPanel, RecentJobsPanel, rosterClustersUrl } from './Panels';
-import { useWorkbenchContext } from './WorkbenchContext';
+import { useJobPipeline } from './JobPipelineContext';
 
 export const ConfirmTabContent = (): React.JSX.Element => {
-  const {
-    jobId,
-    statusText,
-    cluster,
-    isScanRunning,
-    clusterMessage,
-    clusterProgress,
-    etaSeconds,
-    isPrimary,
-    latestJobId,
-    jobHistory,
-    jobStatuses,
-    historySource,
-    handleSelectJobFromHistory,
-    clearHistory,
-  } = useWorkbenchContext();
+  const { scanRun, status, history, cluster, handleSelectJobFromHistory, clearHistory } = useJobPipeline();
   return (
     <>
       <div className="acx-workbench-help-card">
@@ -32,21 +17,21 @@ export const ConfirmTabContent = (): React.JSX.Element => {
         </p>
       </div>
       <ConfirmPanel
-        jobId={jobId ?? null}
-        status={statusText}
+        jobId={history.jobId ?? null}
+        status={scanRun.statusText}
         onCluster={cluster}
-        isClustering={isScanRunning}
-        progress={clusterProgress}
-        clusterMessage={clusterMessage}
+        isClustering={scanRun.isScanning}
+        progress={status.clusterProgress}
+        clusterMessage={status.clusterMessage}
         onViewClusters={() => window.location.assign(rosterClustersUrl())}
-        etaSeconds={etaSeconds}
-        isSynced={!isPrimary && !!latestJobId}
+        etaSeconds={scanRun.etaSeconds}
+        isSynced={scanRun.isSynced}
       />
       <RecentJobsPanel
-        jobs={jobHistory}
-        statuses={jobStatuses}
-        activeJobId={jobId ?? null}
-        historySource={historySource}
+        jobs={history.jobHistory}
+        statuses={history.jobStatuses}
+        activeJobId={history.jobId ?? null}
+        historySource={history.historySource}
         onSelect={handleSelectJobFromHistory}
         onClear={clearHistory}
       />

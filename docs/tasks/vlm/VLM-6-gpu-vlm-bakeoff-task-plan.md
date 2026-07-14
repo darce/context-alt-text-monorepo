@@ -144,18 +144,18 @@ Anchors (measured, not competing): **Florence-2-base-ft** (Microsoft, US — 0.2
 
 ## Slice Delivery
 
-### Slice 0: Baseline lock
+### Slice 0: Determinism anchor
 
-**Goal**: Fresh `florence_small` incumbent score on the current 38-image manifest before anything changes. The GPU incumbent (`gpu_qwen30b`) is **not** baselined here — deferred to the S3 anchor-first run so incumbent and candidates are measured in the same window/host/harness, avoiding a cross-condition confound ([TEST-08] determinism, [PERF-03] coordinated omission). No A10 boot in S0.
+**Goal**: Freeze a pre-expansion 38-image run record on the current manifest so S1's additive schema change can be proven not to perturb scoring (`score --check-determinism`, bit-identical). This is a harness/determinism anchor, **not** an incumbent quality baseline. Neither incumbent is quality-baselined here: prod ships the model-free `seeded` adapter (the recognition image is torch-free by design — `.env.prod.example`; florence is not deployed anywhere), and standalone incumbent runs on hastily-provisioned hosts would be cross-condition confounds ([TEST-08] determinism, [PERF-03] coordinated omission). Both incumbent quality baselines are captured in-tier, anchor-first, on the same corpus/harness as their candidates: `florence_small` → S4 CPU pass; `gpu_qwen30b` → S3 GPU window. No florence deploy and no A10 boot in S0.
 
 Changes:
 
-- None (measurement only): `make eval-captions` against the current prod `florence_small` profile — served live on `acx-backend` (= `api.altcontext.com`, the single running backend VM; "prod" and the dev VM are the same host, distinguished only by the `--env` DSN label), CPU, deterministic greedy decode. Eval tenant + key minted via the remote `/admin` console (`RECOGNITION_ADMIN_TOKEN`; `POST /admin/tenants` → `POST /admin/tenants/{id}/keys`).
+- None (measurement only): full 38-image `make eval-captions` against the current prod `seeded` profile — served live on `acx-backend` (= `api.altcontext.com`, the single running backend VM; "prod" and the dev VM are the same host, distinguished only by the `--env` DSN label). Eval tenant + key minted via the remote `/admin` console (`RECOGNITION_ADMIN_TOKEN`; `POST /admin/tenants` → `POST /admin/tenants/{id}/keys` — the JSON path sidesteps the browser form's same-origin CSRF guard that a tunnel trips). The `seeded` record re-scores bit-identical, and its face detection/ID P/R are **real** (the recognition pipeline runs regardless of caption adapter), so the 38-image face baseline is genuine; the caption metrics are model-free stub numbers by construction.
 - Follow-up (tech debt, deferred): `make eval-tenant ENV=…` helper that wraps the two `/admin` calls and emits `ACX_EVAL_*` exports, consolidating the tenant/key path onto the remote console as the canonical surface (the 3 CLI façades already share one minter). Tracked in handoff, not built in this slice.
 
 Proof:
 
-- Run record in `scripts/eval_harness/out/`; `test_result` handoff event.
+- Run record + report promoted to `docs/tasks/vlm/bakeoff-results/` (out/ is gitignored); `score --check-determinism` bit-identical; `test_result` handoff events.
 
 ### Slice 1: Golden-100 corpus
 
@@ -212,7 +212,7 @@ Proof:
 
 ### Slice 4: CPU inline tier run
 
-**Goal**: MiniCPM-V 4.6 (GGUF Q4, llama.cpp) vs Florence-2-base-ft on the A1, same corpus and metrics.
+**Goal**: MiniCPM-V 4.6 (GGUF Q4, llama.cpp) vs Florence-2-base-ft on the A1, same corpus and metrics. `florence_small` (Florence-2-base-ft) is the CPU incumbent anchor — scored **first** in this pass (anchor-first, mirroring `gpu_qwen30b` in S3) to establish the CPU incumbent baseline in-condition; no separate S0 florence baseline exists (prod ships the torch-free `seeded` image, so serving florence requires a torch-enabled deploy done here).
 
 Changes:
 
@@ -258,11 +258,12 @@ Proof:
 - [ ] Loaded eval-harness README contract, GPU-burst runbook, and VLM-3/3B handoff history before editing.
 - [ ] Manifest-schema and profile-enum boundary changes recorded with compatibility notes.
 
-### Checklist for Slice 0: Baseline lock
+### Checklist for Slice 0: Determinism anchor
 
-- [ ] `make eval-captions` run against `florence_small` (prod/`acx-backend`, eval tenant)
-- [ ] Run record + `test_result` event captured
-- [ ] `gpu_qwen30b` baseline confirmed deferred to S3 anchor-first (no S0 GPU boot)
+- [x] Full 38-image `make eval-captions` run on the current manifest (prod `seeded`, eval tenant `7e1bea2f…`)
+- [x] `score --check-determinism` bit-identical on the run record
+- [x] Run record + report promoted to `docs/tasks/vlm/bakeoff-results/`; `test_result` events captured
+- [x] Both incumbent quality baselines confirmed deferred in-tier (florence_small → S4, gpu_qwen30b → S3); no florence deploy / no S0 GPU boot
 
 ### Checklist for Slice 1: Golden-100 corpus
 

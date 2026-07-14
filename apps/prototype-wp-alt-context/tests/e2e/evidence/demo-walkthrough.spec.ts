@@ -109,7 +109,13 @@ test('captures E15-28 public demo walkthrough proof', async ({ page, baseURL }, 
     await expect(page.getByTestId('acx-target-card-service')).toBeVisible();
     await expect(page.locator('.acx-target-card')).toHaveCount(1);
     const settingsSnapshot = (await fetchAcxSettings(page)) as unknown as Record<string, unknown>;
-    expect(settingsSnapshot.recognition_source).toBe('service');
+    // recognition_source may legitimately be 'local' on a LocalWP run with the
+    // RECOG-1 dev hatch active, so scope the 'service' assertion to demo mode
+    // (same escape hatch as constant provenance); the local_url* absence checks
+    // are hatch-independent.
+    if (requireConstantProvenance) {
+      expect(settingsSnapshot.recognition_source).toBe('service');
+    }
     expect(settingsSnapshot).not.toHaveProperty('local_url');
     expect(settingsSnapshot).not.toHaveProperty('local_url_source');
 

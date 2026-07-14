@@ -16,10 +16,16 @@ onto the already-trusted CI identity without widening VM access.
 
 | Event | Gate |
 | --- | --- |
-| Manual **Run workflow** (`workflow_dispatch` only — no push trigger) | Must type **`confirm=PROMOTE`** in the dispatch form. This string input is the **primary** deliberate-action gate: free-plan private repos have no GitHub Environment required-reviewers, so the `demo` Environment exists for **secrets isolation only**. |
+| Manual **Run workflow** (`workflow_dispatch` only — no push trigger) | Must type **`PROMOTE`** in the run form's `confirm` field. This string input is the **primary** deliberate-action gate: free-plan private repos have no GitHub Environment required-reviewers, so the `demo` Environment exists for **secrets isolation only**. |
 
 Deploys are serialized by the `deploy-demo` concurrency group
 (`cancel-in-progress: false`) — one in-flight deploy, never cancelled mid-run.
+
+**Ref guard:** any branch can be dispatched (the workflow emits a loud warning
+for non-`main` refs — DDEP-1's own runtime proof dispatches the feature branch).
+Once that initial proof is done, add an Environment **deployment-branch rule**
+restricting `demo` to `main` (*Settings → Environments → demo → Deployment
+branches*) so unreviewed feature branches cannot be promoted to the public demo.
 
 ## Dispatch
 
@@ -74,7 +80,11 @@ Two independent signals; do not conflate them:
 - **Deploy-landed (gates the job):**
   1. `sync-demo.sh`'s vhost smoke — `/health` for the `api.*` vhosts (they have
      no root route; `/` there is a benign 404), `/` for `demo.altcontext.com`.
-     Any non-200 fails the deploy.
+     The gate covers what the deploy owns: an unreachable vhost (edge/TLS broken
+     by the Caddy promote) or a broken demo front page fails the deploy; a
+     non-200 `/health` on `api.*` is a WARN (backend outage, out of scope), and
+     the demo `/` accepts 2xx/3xx (WordPress canonical redirect while `WP_HOME`
+     points at the interim host).
   2. The demo-walkthrough spec's **test exit code** — Settings/Workbench
      surfaces render and the RECOG-1 single-target contract is live (one
      hosted-service target card; no `local_url*` in `GET /acx/v1/settings`).

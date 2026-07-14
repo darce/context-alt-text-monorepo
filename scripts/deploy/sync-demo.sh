@@ -137,26 +137,41 @@ $SCP "$SYSTEMD_SRC" "${OCI_USER}@${OCI_HOST}:/tmp/acx-demo.service"
 $SSH "sudo cp /tmp/acx-demo.service /etc/systemd/system/acx-demo.service && sudo systemctl daemon-reload"
 
 # api.* vhosts have no root route (/ -> 404), so probe /health there; the demo
-# vhost serves the WP front page at /. A non-200 on any probe fails the deploy
-# (fail-loud; recovery is an idempotent re-run of this script).
+# vhost serves the WP front page at /. Gate semantics: this deploy owns the edge
+# (Caddy promote) and the demo stack, NOT backend health — an unreachable vhost
+# (000: route/TLS broken by the promote) or a broken demo front page fails the
+# deploy; an api.* HTTP error (e.g. 502 backend outage) is a WARN, out of scope.
 echo "==> Smoke four vhosts (api.* via /health, demo via /)"
 $SSH bash -se <<'EOF'
 set -euo pipefail
 smoke_fail=0
-probe() {
-  local host="$1" path="$2" code
-  code=$(curl -fsS -o /dev/null -w '%{http_code}' "https://${host}${path}" || echo 000)
-  if [[ "$code" == "200" ]]; then
-    echo "PASS ${host}${path} (${code})"
-  else
-    echo "FAIL ${host}${path} (${code})"
-    smoke_fail=1
-  fi
+fetch_code() {
+  local url="$1" code
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "$url" || true)
+  [[ -n "$code" && "$code" != "000" ]] || code=000
+  echo "$code"
 }
 for host in api.altcontext.com staging.api.altcontext.com dev.api.altcontext.com; do
-  probe "$host" /health
+  code=$(fetch_code "https://${host}/health")
+  if [[ "$code" == "000" ]]; then
+    echo "FAIL ${host}/health (unreachable — edge/TLS broken)"
+    smoke_fail=1
+  elif [[ "$code" == "200" ]]; then
+    echo "PASS ${host}/health (200)"
+  else
+    echo "WARN ${host}/health (${code} — backend unhealthy; not a deploy failure)"
+  fi
 done
-probe demo.altcontext.com /
+# 3xx allowed: WordPress issues a canonical redirect while WP_HOME points at the
+# interim sslip.io host (see the Caddyfile note); the edge serving it is proof
+# enough that the demo vhost landed.
+code=$(fetch_code "https://demo.altcontext.com/")
+if [[ "$code" =~ ^[23] ]]; then
+  echo "PASS demo.altcontext.com/ (${code})"
+else
+  echo "FAIL demo.altcontext.com/ (${code})"
+  smoke_fail=1
+fi
 exit "$smoke_fail"
 EOF
 

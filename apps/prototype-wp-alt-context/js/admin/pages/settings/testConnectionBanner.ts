@@ -14,6 +14,9 @@ export interface BannerCopy {
   role: 'status' | 'alert';
   primary: string;
   remediation: string;
+  // When true, the banner offers a "confirm/adopt tenant pairing" action. Both the paired-elsewhere
+  // conflict and the first-time mismatch are recoverable by explicitly adopting the key's tenant.
+  confirmPairing?: boolean;
 }
 
 export const TONE_CLASS: Record<BannerTone, string> = {
@@ -37,7 +40,6 @@ export const renderBanner = (result: TestConnectionResponse): BannerCopy => {
     return unknownOutcomeBanner();
   }
   const outcome: TestConnectionOutcomeValue = result.outcome;
-  const isLocalProbe = result.probe_mode === 'local_liveness';
   switch (outcome) {
     case TestConnectionOutcome.CONNECTED: {
       const pairingError =
@@ -55,15 +57,8 @@ export const renderBanner = (result: TestConnectionResponse): BannerCopy => {
       return {
         tone: 'success',
         role: 'status',
-        primary: isLocalProbe
-          ? __('Local recognition service is reachable.', 'alt-context')
-          : __('Connection successful.', 'alt-context'),
-        remediation: isLocalProbe
-          ? __(
-              'Scans route to this endpoint while recognition source is Local. Start the scan worker locally for processing.',
-              'alt-context',
-            )
-          : __('The plugin authenticated against the recognition service and the pool is healthy.', 'alt-context'),
+        primary: __('Connection successful.', 'alt-context'),
+        remediation: __('The plugin authenticated against the recognition service and the pool is healthy.', 'alt-context'),
       };
     }
     case TestConnectionOutcome.NOT_CONFIGURED:
@@ -109,9 +104,10 @@ export const renderBanner = (result: TestConnectionResponse): BannerCopy => {
         role: 'alert',
         primary: __('Tenant mismatch.', 'alt-context'),
         remediation: __(
-          'The API key belongs to a different site. Confirm the key was issued for this WordPress tenant.',
+          'The API key belongs to a different site. Adopt the key’s tenant to pair this site, or confirm the key was issued for this WordPress tenant.',
           'alt-context',
         ),
+        confirmPairing: true,
       };
     case TestConnectionOutcome.TENANT_PAIRING_CONFLICT:
       return {
@@ -122,6 +118,7 @@ export const renderBanner = (result: TestConnectionResponse): BannerCopy => {
           'The API key is bound to a different tenant than this site. Confirm adoption before re-keying local data.',
           'alt-context',
         ),
+        confirmPairing: true,
       };
     case TestConnectionOutcome.RATE_LIMITED: {
       const seconds = result.retry_after_seconds;
@@ -154,15 +151,8 @@ export const renderBanner = (result: TestConnectionResponse): BannerCopy => {
       return {
         tone: 'error',
         role: 'alert',
-        primary: isLocalProbe
-          ? __('Could not reach the local recognition service.', 'alt-context')
-          : __('Could not reach the recognition service.', 'alt-context'),
-        remediation: isLocalProbe
-          ? __(
-              'Start the local description service (make serve), confirm the Local service URL matches its port, then test again.',
-              'alt-context',
-            )
-          : __('Verify the API URL above and confirm the site can reach the recognition host.', 'alt-context'),
+        primary: __('Could not reach the recognition service.', 'alt-context'),
+        remediation: __('Verify the API URL above and confirm the site can reach the recognition host.', 'alt-context'),
       };
     case TestConnectionOutcome.TLS_ERROR:
       return {

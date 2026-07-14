@@ -302,6 +302,17 @@ check-all:
 pre-merge:
 	@$(MAKE) check-all
 
+# Offload gate suites to the remote test host (unprivileged, resource-capped
+# gate user over Tailscale SSH). Host/dir/targets come from the operator-local
+# .workbay/remote-gate.env (gitignored) or WORKBAY_REMOTE_GATE_* env vars —
+# there is deliberately no baked-in host (fail-closed, exit 78 when unset).
+# Only committed HEAD is gated. See docs/runbooks/remote-test-gate.md.
+#   make check-remote                          # configured/default targets
+#   make check-remote TARGETS="test lint"      # explicit target list
+.PHONY: check-remote
+check-remote:
+	@bash scripts/remote_gate.sh run $(TARGETS)
+
 # Guard: every editable current-pin reference to the workbay MCP packages must
 # match the Makefile MCP_*_PACKAGE canonical. Frozen records (docs/adrs|specs|tasks)
 # are exempt; overlay manifest + range/git+ssh forms surface as advisories.
@@ -433,7 +444,9 @@ test-scripts:
 		scripts/test_vlm3_gpu_bakeoff_artifacts.py \
 		scripts/test_vlm3_decision_memo.py \
 		scripts/test_check_overrides_lock_digest.py scripts/test_consumer_setup_doc.py \
+		scripts/test_remote_gate_guards.py \
 		-q --tb=short --durations=25
+	@bash scripts/deploy/tests/test-smoke-gate.sh
 
 # Unit tests backing check-overrides-digest (incl. the committed-lock
 # consistency regression guard). Also collected by test-scripts in check-all;
@@ -450,6 +463,7 @@ test-hooks:
 # and retain the /admin compose overlay. Covered by test-scripts in check-all.
 test-deploy-contract:
 	@python3 -m pytest scripts/test_e15_31_admin_deploy_contract.py scripts/test_e15_33_deploy_convergence.py scripts/test_e15_33_boot_smoke.py -q --tb=short
+	@bash scripts/deploy/tests/test-smoke-gate.sh
 
 # VLM-3 / VLMRP: OCI GPU infra posture, idle-reaper lifecycle, decision memo,
 # bake-off artifact guards, and OWLv2 deferral. Covered by test-scripts in check-all.

@@ -1,18 +1,15 @@
-.acx-target-cards {
-  display: grid;
-  gap: var(--acx-spacing-md, 16px);
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  margin-bottom: var(--acx-spacing-md, 16px);
-}
-
+// RECOG-1: the recognition target is a single hosted-service card (the local
+// card + source radio group were retired). The radio-group grid
+// (`.acx-target-cards`), the de-emphasis treatment, the selectable label, and
+// the active badge are no longer rendered and have been removed.
 .acx-target-card {
   border: 2px solid var(--acx-color-border);
   border-radius: var(--acx-radius-md, 8px);
   background-color: var(--acx-color-surface-alt);
-  padding: var(--acx-spacing-md, 16px);
+  padding: var(--acx-space-16);
   display: flex;
   flex-direction: column;
-  gap: var(--acx-spacing-sm, 12px);
+  gap: var(--acx-space-12);
   transition:
     border-color 0.15s ease,
     box-shadow 0.15s ease;
@@ -22,56 +19,26 @@
     box-shadow: var(--acx-shadow-card);
   }
 
-  &--deemphasized {
-    opacity: 0.72;
-
-    .acx-target-card__body {
-      color: var(--acx-color-text-muted);
-    }
-  }
-
   &__header {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
-    gap: var(--acx-spacing-sm, 12px);
-  }
-
-  &__selectable {
-    display: flex;
-    flex-direction: column;
-    gap: var(--acx-spacing-xs, 8px);
-    cursor: pointer;
-    margin: 0;
+    gap: var(--acx-space-12);
   }
 
   &__title {
     display: inline-flex;
     align-items: center;
-    gap: var(--acx-spacing-xs, 8px);
-    font-weight: var(--acx-font-weight-semibold, 600);
+    gap: var(--acx-space-8);
+    font-weight: var(--acx-font-weight-semibold);
     margin: 0;
-  }
-
-  &__active-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--acx-spacing-xs, 8px);
-    margin-left: var(--acx-spacing-xs, 8px);
-    font-size: var(--acx-text-sm, 0.85rem);
-    color: var(--acx-color-accent);
-    font-weight: var(--acx-font-weight-normal);
-  }
-
-  &__active-icon {
-    font-size: var(--acx-text-sm, 0.85rem);
   }
 
   &__health {
     display: inline-flex;
     align-items: center;
-    gap: var(--acx-spacing-xs, 8px);
-    font-size: var(--acx-text-sm, 0.85rem);
+    gap: var(--acx-space-8);
+    font-size: var(--acx-text-sm);
     white-space: nowrap;
 
     &--not_checked {
@@ -88,19 +55,19 @@
   }
 
   &__health-icon {
-    font-size: var(--acx-text-sm, 0.85rem);
+    font-size: var(--acx-text-sm);
   }
 
   &__body {
     display: flex;
     flex-direction: column;
-    gap: var(--acx-spacing-xs, 8px);
+    gap: var(--acx-space-8);
   }
 
   &__empty {
     display: flex;
     flex-direction: column;
-    gap: var(--acx-spacing-xs, 8px);
+    gap: var(--acx-space-8);
     color: var(--acx-color-text-muted);
   }
 
@@ -110,10 +77,10 @@
 }
 
 .acx-settings__effective-target {
-  margin: var(--acx-spacing-md, 16px) 0;
-  font-size: var(--acx-text-base, 1rem);
+  margin: var(--acx-space-16) 0;
+  font-size: var(--acx-text-base);
 
   code {
-    font-size: var(--acx-text-sm, 0.9rem);
+    font-size: var(--acx-text-sm);
   }
 }

@@ -130,5 +130,5 @@ Do not treat `terraform apply` alone as tier activation. Before setting the serv
      --fence-delay-seconds 1
    ```
 
-   Load JSON must mirror `InMemoryDescribeJobStore.load_snapshot()`: `{"queue_depth": N, "in_flight": M}`. The reaper re-samples after a fence delay and cancels STOP if work appeared (decision→STOP fencing).
+   Load JSON must mirror `scene/application/describe_load.py::load_snapshot`: `{"queue_depth": N, "in_flight": M, "written_at": ...}`. The reaper re-samples after a fence delay and cancels STOP if work appeared (decision→STOP fencing).
 6. **Bake-off evidence.** ✅ Satisfied 2026-07-14: measured `kind=report` artifacts replaced all slate stubs (cuts named), spike artifacts updated in 7a. This memo is final.

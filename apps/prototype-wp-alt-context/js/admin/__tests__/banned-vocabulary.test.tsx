@@ -175,8 +175,6 @@ vi.mock('../api/settingsApi', async () => {
     fetchSettings: vi.fn().mockResolvedValue({
       url: 'https://api.example.com',
       url_source: 'option',
-      local_url: 'http://localhost:8000',
-      local_url_source: 'default',
       effective_target_url: 'https://api.example.com',
       effective_target_mode: 'service',
       recognition_source: 'service',

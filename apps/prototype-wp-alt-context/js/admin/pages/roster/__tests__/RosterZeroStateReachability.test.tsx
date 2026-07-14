@@ -178,7 +178,28 @@ describe('Roster zero-state reachability (rg-003)', () => {
     const zeroState = screen.getByTestId('roster-zero-state');
     expect(zeroState).toBeInTheDocument();
     expect(zeroState).toHaveTextContent(/No people yet/i);
+    expect(zeroState.querySelector('.acx-roster-section__empty-icon')).toBeTruthy();
     expect(screen.getByRole('link', { name: /run a scan/i })).toBeInTheDocument();
+  });
+
+  it('pairs the active filter badge with an icon second channel', () => {
+    const query = createMockQuery({
+      data: [projectionEntry({ queue_memberships: ['singleton-proposals'] })],
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/?queue=singleton-proposals']}>
+        <RosterEntriesSection query={query} />
+      </MemoryRouter>,
+    );
+
+    const badge = screen.getByTestId('roster-filter-badge');
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveTextContent(/Filtered: Singleton proposals/i);
+    expect(screen.getByTestId('roster-filter-badge-icon')).toBeInTheDocument();
   });
 
   it('keeps list and Add Person mounted when default workspace auto-opens (fails on old unmount)', () => {

@@ -154,3 +154,31 @@ def test_demo_quota_run_duplicate_media_ids_charge_unique_only(monkeypatch):
         resp = _submit_run(client, tenant_id, [1, 1, 2])
         assert resp.status_code == 202, resp.text
         assert _used(sf, slug) == 2
+
+
+def test_bulk_endpoints_404_for_single_run_kind(monkeypatch):
+    """Design (g): single-run ids are unreachable via bulk get/items/cancel."""
+    _no_worker(monkeypatch)
+    with _client() as (client, sf):
+        # Create a single-run directly in the shared test DB.
+        async def _seed():
+            from scene.application.describe_run_repository import DescribeRunRepository
+            from scene.tests.test_describe_run_worker import TENANT_ID as _TENANT
+
+            async with sf() as s:
+                repo = DescribeRunRepository(s)
+                run_id = await repo.create_single_run(tenant_id=_TENANT, media_id=9001, image_bytes=b"single")
+                await s.commit()
+                return str(run_id)
+
+        import asyncio
+
+        run_id = asyncio.run(_seed())
+        for path in (
+            f"/scene/describe/run/{run_id}",
+            f"/scene/describe/run/{run_id}/items",
+        ):
+            resp = client.get(path)
+            assert resp.status_code == 404, (path, resp.text)
+        cancel = client.delete(f"/scene/describe/run/{run_id}")
+        assert cancel.status_code == 404, cancel.text

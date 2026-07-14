@@ -1,7 +1,7 @@
 import React from 'react';
 import { __ } from '@wordpress/i18n';
 
-import { TestConnectionOutcome, type TestConnectionResponse } from '../../api/settingsApi';
+import { type TestConnectionResponse } from '../../api/settingsApi';
 import { renderBanner, TONE_CLASS } from './testConnectionBanner';
 
 interface TestConnectionBannerViewProps {
@@ -16,7 +16,7 @@ export const TestConnectionBannerView = ({
   confirmPending = false,
 }: TestConnectionBannerViewProps): React.JSX.Element => {
   const banner = renderBanner(testResult);
-  const showPairingConfirm = testResult.outcome === TestConnectionOutcome.TENANT_PAIRING_CONFLICT;
+  const showPairingConfirm = banner.confirmPairing === true;
 
   return (
     <div

@@ -63,8 +63,13 @@ rate-limit / CORS knobs (`RECOGNITION_RATE_LIMIT_*`, `RECOGNITION_MAX_PAGE_SIZE`
 
 | Secret / var | Domain | Owner | Source-of-truth | Consumer | Prod target |
 |---|---|---|---|---|---|
-| Minted tenant API key (raw shown once) | tenant API keys | tenant / operator via `/admin` | **Service DB** `api_keys` table (hash stored; raw never re-readable) | Recognition HTTP auth (`auth._lookup_api_key` → DB hash lookup); plugin via `ACX_RECOGNITION_API_KEY` / WP option | DB only; mint via `/admin` or `scripts/manage_api_keys.py` |
+| Minted tenant API key (raw shown once) | tenant API keys | tenant / operator via `/admin` | **OCI/prod `--env prod` Service DB** `api_keys` table — canonical issuer of record (hash stored; raw never re-readable) | Recognition HTTP auth (`auth._lookup_api_key` → DB hash lookup); plugin via `ACX_RECOGNITION_API_KEY` / WP option | DB only; mint via prod `/admin` or `scripts/manage_api_keys.py --env prod` / `make provision-customer ENV=prod` |
 | Plugin-held copy (`ACX_RECOGNITION_API_KEY` / `acx_recognition_api_key` option) | tenant API keys | site operator | WordPress option / PHP constant (not monorepo env) | WP plugin → service bearer | per-site; never commit |
+
+**Canonical issuer of record:** the **OCI/prod `--env prod` tenant DB** is the
+source of truth for real customer keys (`make provision-customer ENV=prod`, prod
+`/admin`, or `scripts/manage_api_keys.py --env prod`). `make dev-mint-key` and the
+local `admin-dev` console mint **local test fixtures only** — never real tenants.
 
 **Allowlist removal locked (decision `#1882`):** `RECOGNITION_ALLOWED_API_KEYS` /
 `SecuritySettings.dev_api_keys` is **not** an ownership source-of-truth. Phase 1

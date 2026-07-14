@@ -1,15 +1,15 @@
 {
   "schema_version": 2,
   "source_kind": "package",
-  "package_version": "0.3.11",
+  "package_version": "0.3.12",
   "stack_distribution": "workbay",
-  "stack_version": "0.3.17",
+  "stack_version": "0.3.18",
   "stack_members": {
-    "mcp-workbay-handoff": "0.2.6",
-    "mcp-workbay-orchestrator": "0.2.7",
-    "workbay-bootstrap": "0.3.13",
+    "mcp-workbay-handoff": "0.2.7",
+    "mcp-workbay-orchestrator": "0.2.8",
+    "workbay-bootstrap": "0.3.14",
     "workbay-protocol": "0.2.2",
-    "workbay-system": "0.3.11"
+    "workbay-system": "0.3.12"
   },
   "profile": "all",
   "surfaces": [
@@ -36,17 +36,17 @@
     {
       "path": "Makefile.d/ace.mk",
       "source": "shared",
-      "provenance_key": "package:0.3.11"
+      "provenance_key": "package:0.3.12"
     },
     {
       "path": "Makefile.d/compaction.mk",
       "source": "shared",
-      "provenance_key": "package:0.3.11"
+      "provenance_key": "package:0.3.12"
     },
     {
       "path": "Makefile.d/plans.mk",
       "source": "shared",
-      "provenance_key": "package:0.3.11"
+      "provenance_key": "package:0.3.12"
     },
     {
       "path": "Makefile.d/plugins.mk",
@@ -55,16 +55,17 @@
     {
       "path": "Makefile.d/workflows.mk",
       "source": "shared",
-      "provenance_key": "package:0.3.11"
+      "provenance_key": "package:0.3.12"
     },
     {
       "path": "scripts/workbay/git-plan-cat.sh",
       "source": "shared",
-      "provenance_key": "package:0.3.11"
+      "provenance_key": "package:0.3.12"
     },
     {
       "path": "scripts/workbay/wb",
-      "source": "local"
+      "source": "shared",
+      "provenance_key": "package:0.3.12"
     },
     {
       "path": ".codex/hooks.json",
@@ -197,9 +198,20 @@
     {
       "path": ".gitignore",
       "action": "already_present"
+    },
+    {
+      "path": ".claude/settings.local.json",
+      "action": "noop",
+      "kind": "hook_adapter",
+      "opt_in_flag": "--install-claude-reinject-hook-local"
+    },
+    {
+      "path": ".gitignore",
+      "action": "already_present"
     }
   ],
   "mcp_servers": [
+    "codebase-graph-mcp",
     "workbay-handoff-mcp",
     "workbay-orchestrator-mcp"
   ],
@@ -242,7 +254,7 @@
       ],
       "cwd": "/Users/daniel/Development/context-alt-text-monorepo",
       "common_dir": "/Users/daniel/Development/context-alt-text-monorepo/.git",
-      "duration_ms": 74.778,
+      "duration_ms": 26.627,
       "status": "ok"
     }
   ]

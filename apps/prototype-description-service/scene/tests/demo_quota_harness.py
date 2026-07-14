@@ -44,6 +44,9 @@ _DESCRIBE_TABLES: Sequence[Table] = (
     IdentityCluster.__table__,
     IdentityMember.__table__,
     IdentityNameSuppression.__table__,
+    # VLM-5: async describe path persists single-runs into describe-run tables.
+    DescribeRun.__table__,
+    DescribeRunItem.__table__,
 )
 
 _RUN_TABLES: Sequence[Table] = (
@@ -85,9 +88,7 @@ def demo_quota_client(
 
     async def _provision():
         async with sf() as s:
-            result = await provision_demo(
-                s, label="Scene Demo", seed="default", recognition_quota=recognition_quota
-            )
+            result = await provision_demo(s, label="Scene Demo", seed="default", recognition_quota=recognition_quota)
             await s.commit()
             return result
 

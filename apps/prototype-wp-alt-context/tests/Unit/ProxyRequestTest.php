@@ -34,8 +34,10 @@ class ProxyRequestTest extends TestCase
 
     public function testProxyFallsBackToLocalhostWhenUrlNotConfigured(): void
     {
+        // RECOG-1: local is now a dev hatch via the acx_recognition_source filter
+        // (option tier retired); local URL still defaults to localhost:8000.
         $this->setOption('acx_recognition_url', '');
-        $this->setOption('acx_recognition_source', 'local');
+        add_filter('acx_recognition_source', static fn (): string => 'local');
 
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
@@ -56,8 +58,10 @@ class ProxyRequestTest extends TestCase
 
     public function testProxyUsesLocalhostWhenRecognitionSourceIsLocal(): void
     {
+        // RECOG-1: local source is a dev hatch via filter; a saved service URL is
+        // ignored while local mode is active.
         $this->setOption('acx_recognition_url', 'https://service.example');
-        $this->setOption('acx_recognition_source', 'local');
+        add_filter('acx_recognition_source', static fn (): string => 'local');
 
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
@@ -428,9 +432,9 @@ PHP;
 
     public function testFilteredBaseUrlBeatsSavedLocalSourceOption(): void
     {
-        // E15-25: explicit local source wins; a code-managed service URL filter
-        // must not override an operator-selected local mode.
-        $this->setOption('acx_recognition_source', 'local');
+        // E15-25 / RECOG-1: explicit local source (dev-hatch filter) wins; a
+        // code-managed service base-URL filter must not override active local mode.
+        add_filter('acx_recognition_source', static fn (): string => 'local');
         $this->setOption('acx_recognition_url', '');
 
         add_filter('acx_recognition_base_url', static function (): string {
@@ -499,8 +503,9 @@ PHP;
 
     public function testProxyRequestIgnoresInvalidFilteredBaseUrl(): void
     {
+        // RECOG-1: local source via dev-hatch filter (option tier retired).
         $this->setOption('acx_recognition_url', '');
-        $this->setOption('acx_recognition_source', 'local');
+        add_filter('acx_recognition_source', static fn (): string => 'local');
 
         add_filter('acx_recognition_base_url', static function (): string {
             return 'ftp://invalid-filter.example';
@@ -611,8 +616,11 @@ PHP;
      * @runInSeparateProcess
      * @preserveGlobalState disabled
      */
-    public function testProxyRequestUsesLocalTargetWhenConstantUrlWithoutExplicitSource(): void
+    public function testProxyRequestUsesServiceTargetFromConstantUrlWithoutExplicitSource(): void
     {
+        // RECOG-1: default source flipped to 'service'. With a constant service URL
+        // and no explicit source, the effective target is the constant service URL
+        // (previously this defaulted to the local target).
         define('ACX_RECOGNITION_URL', 'https://constant.example');
         $this->setOption('acx_recognition_source', '');
 
@@ -630,7 +638,7 @@ PHP;
 
         $calls = $this->getHttpCalls();
         $this->assertCount(1, $calls);
-        $this->assertStringContainsString('http://localhost:8000/recognition/jobs/test-123', $calls[0]['url']);
+        $this->assertStringContainsString('https://constant.example/recognition/jobs/test-123', $calls[0]['url']);
     }
 
     /**

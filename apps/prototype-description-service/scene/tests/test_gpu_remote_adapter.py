@@ -11,8 +11,18 @@ from scene.domain.description import DescriptionAdapterKind
 from scene.infrastructure.vlm.gpu_remote_adapter import (
     GpuRemoteAdapterError,
     GpuRemoteDescriptionAdapter,
+    GpuRemoteTokenTrace,
     reset_gpu_remote_adapter_state_for_tests,
 )
+
+
+def _adapter(handler) -> GpuRemoteDescriptionAdapter:
+    return GpuRemoteDescriptionAdapter(
+        endpoint_url="http://gpu.test:8000",
+        model_id="Qwen3-VL-30B-A3B-Instruct",
+        model_version="Q4_K_M",
+        transport=httpx.MockTransport(handler),
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -194,6 +204,134 @@ def test_gpu_remote_adapter_surfaces_reasoning_only_response() -> None:
 
     with pytest.raises(GpuRemoteAdapterError, match="reasoning_content"):
         adapter.describe(image_bytes=b"jpeg", context=None)
+
+
+# ------------------------------------------ per-token logprobs (VLM-4 Slice 2b)
+
+
+def test_describe_with_trace_requests_n_probs_and_parses_openai_logprobs() -> None:
+    captured: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {"content": "A red bicycle."},
+                        "logprobs": {
+                            "content": [
+                                {
+                                    "token": "A",
+                                    "logprob": -0.1,
+                                    "top_logprobs": [
+                                        {"token": "A", "logprob": -0.1},
+                                        {"token": "The", "logprob": -2.4},
+                                    ],
+                                },
+                                {
+                                    "token": " red",
+                                    "logprob": -0.3,
+                                    "top_logprobs": [
+                                        {"token": " red", "logprob": -0.3},
+                                        {"token": " blue", "logprob": -1.9},
+                                    ],
+                                },
+                            ]
+                        },
+                    }
+                ]
+            },
+        )
+
+    result, traces = _adapter(handler).describe_with_trace(image_bytes=b"jpeg", context=None)
+
+    assert result.caption == "A red bicycle."
+    assert captured[0]["n_probs"] == 10
+    assert captured[0]["logprobs"] is True
+    assert captured[0]["top_logprobs"] == 10
+    assert traces == (
+        GpuRemoteTokenTrace(token="A", logprob=-0.1, top_logprobs={"A": -0.1, "The": -2.4}),
+        GpuRemoteTokenTrace(token=" red", logprob=-0.3, top_logprobs={" red": -0.3, " blue": -1.9}),
+    )
+
+
+def test_describe_with_trace_parses_llamacpp_completion_probabilities() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {"content": "A sign."},
+                        "completion_probabilities": [
+                            {
+                                "token": "A",
+                                "logprob": -0.2,
+                                "top_logprobs": [{"token": "A", "logprob": -0.2}],
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+
+    _, traces = _adapter(handler).describe_with_trace(image_bytes=b"jpeg", context=None)
+
+    assert traces == (GpuRemoteTokenTrace(token="A", logprob=-0.2, top_logprobs={"A": -0.2}),)
+
+
+def test_describe_with_trace_missing_logprobs_yields_empty_trace_not_exception() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [{"message": {"content": "Caption."}}]})
+
+    result, traces = _adapter(handler).describe_with_trace(image_bytes=b"jpeg", context=None)
+
+    assert result.caption == "Caption."
+    assert traces == ()
+
+
+def test_describe_with_trace_skips_malformed_entries_defensively() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {"content": "Caption."},
+                        "logprobs": {
+                            "content": [
+                                "not-a-dict",
+                                {"token": 42, "logprob": -0.1},
+                                {"token": "ok", "logprob": "nan-string"},
+                                {"token": "ok", "logprob": -0.5, "top_logprobs": "bogus"},
+                            ]
+                        },
+                    }
+                ]
+            },
+        )
+
+    _, traces = _adapter(handler).describe_with_trace(image_bytes=b"jpeg", context=None)
+
+    # Only the entry with a valid token+logprob survives; its trace still
+    # includes itself in top_logprobs even though top_logprobs was malformed.
+    assert traces == (GpuRemoteTokenTrace(token="ok", logprob=-0.5, top_logprobs={"ok": -0.5}),)
+
+
+def test_plain_describe_does_not_request_logprobs() -> None:
+    captured: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "Caption."}}]})
+
+    _adapter(handler).describe(image_bytes=b"jpeg", context=None)
+
+    assert "n_probs" not in captured[0]
+    assert "logprobs" not in captured[0]
+    assert "top_logprobs" not in captured[0]
 
 
 def test_gpu_remote_adapter_applies_connect_and_read_timeouts(monkeypatch) -> None:

@@ -52,10 +52,12 @@ export const normalizeConfig = (raw: ApiConfig): NormalizedConfig => {
     maxMediaPerBatch,
     devMode,
     recognitionSource: raw.recognitionSource === 'local' ? 'local' : 'service',
+    // RECOG-1: hosted service is the canonical target; do not fall back to a local
+    // default. An unconfigured install reports an empty effective target.
     effectiveTargetUrl:
       typeof raw.effectiveTargetUrl === 'string' && raw.effectiveTargetUrl.trim() !== ''
         ? raw.effectiveTargetUrl
-        : 'http://localhost:8000',
+        : '',
   };
 };
 

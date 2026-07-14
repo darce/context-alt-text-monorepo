@@ -1,46 +1,52 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-const workbenchScssPath = join(__dirname, '..', '..', 'components', '_workbench.scss');
+const componentsDir = join(__dirname, '..', '..', 'components');
+const workbenchScssPath = join(componentsDir, '_workbench.scss');
 
 const readWorkbench = (): string => readFileSync(workbenchScssPath, 'utf8');
 
-describe('REFA-3 slice 2: _workbench.scss color + shadow', () => {
-  it('has no raw hex or rgba color literals', () => {
-    const source = readWorkbench();
+const listComponentScssFiles = (): string[] =>
+  readdirSync(componentsDir)
+    .filter((name) => name.endsWith('.scss'))
+    .map((name) => join(componentsDir, name))
+    .sort();
 
-    expect(source).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
-    expect(source).not.toMatch(/rgba?\(/);
-  });
+/** Shared exemption: REFA-3 / E21-4 disposition comments allow raw scale literals. */
+const isExempt = (line: string): boolean =>
+  /(?:\/\/|\/\*)\s*(REFA-3|E21-4)\s+disposition:/.test(line);
 
+const literalPatterns: ReadonlyArray<{ name: string; re: RegExp }> = [
+  { name: 'hex', re: /#[0-9a-fA-F]{3,8}\b/ },
+  { name: 'rgb/rgba', re: /rgba?\(/ },
+  // Named color keywords used as color values (not white-space, etc.)
+  {
+    name: 'named white|black',
+    re: /(?:^|[\s:;(])(?:color|background(?:-color)?|border(?:-color)?|fill|stroke|outline-color)\s*:\s*(?:white|black)\b|(?:^|[\s:;(])(?:white|black)\s*(?:!important)?\s*;/,
+  },
+  // font-size numerics incl. leading-dot (.75rem) and bare integers
+  { name: 'font-size', re: /font-size:\s*(?:\.\d|\d)/ },
+  { name: 'font-weight', re: /font-weight:\s*\d/ },
+  { name: 'border-radius', re: /border-radius:\s*(?:999px|50%|\d)/ },
+  // box-shadow numerics incl. inset
+  { name: 'box-shadow', re: /box-shadow:\s*(?:inset\s+)?-?\d/ },
+];
+
+describe('REFA-3 workbench non-literal assertions', () => {
   it('uses the card shadow token instead of a raw box-shadow literal', () => {
     const source = readWorkbench();
 
     expect(source).toContain('box-shadow: var(--acx-shadow-card)');
     expect(source).not.toMatch(/box-shadow:\s*[0-9]/);
   });
-});
 
-describe('REFA-3 slice 3: _workbench.scss radius', () => {
-  it('has no raw border-radius literals or spacing-token misuse', () => {
+  it('has no raw border-radius spacing-token misuse', () => {
     const source = readWorkbench();
 
-    expect(source).not.toMatch(/border-radius:\s*(?:999px|50%|[0-9]+px)/);
     expect(source).not.toMatch(/border-radius:\s*var\(--acx-space-/);
   });
-});
 
-describe('REFA-3 slice 4: _workbench.scss typography', () => {
-  it('has no raw font-size or font-weight literals', () => {
-    const source = readWorkbench();
-
-    expect(source).not.toMatch(/font-size:\s*[0-9]/);
-    expect(source).not.toMatch(/font-weight:\s*[0-9]/);
-  });
-});
-
-describe('REFA-3 slice 5: _workbench.scss spacing disposition', () => {
   it('records literal disposition for layout widths and hairline borders', () => {
     const source = readWorkbench();
 
@@ -54,5 +60,30 @@ describe('REFA-3 slice 5: _workbench.scss spacing disposition', () => {
 
     // gap is always pure spacing (no kept-raw exceptions), so any raw px gap is a tokenization regression.
     expect(source).not.toMatch(/gap:\s*[0-9]+px/);
+  });
+});
+
+describe('components/*.scss no unguarded scale literals', () => {
+  const componentFiles = listComponentScssFiles();
+
+  it('collects every components/*.scss file', () => {
+    expect(componentFiles.length).toBeGreaterThan(0);
+    expect(componentFiles.every((path) => path.endsWith('.scss'))).toBe(true);
+  });
+
+  it.each(componentFiles)('%s has no raw scale literals except disposition lines', (path) => {
+    const source = readFileSync(path, 'utf8');
+    const offenders = source
+      .split('\n')
+      .flatMap((line, index) => {
+        if (isExempt(line)) {
+          return [];
+        }
+        return literalPatterns
+          .filter(({ re }) => re.test(line))
+          .map(({ name }) => `${index + 1}:${name}: ${line.trim()}`);
+      });
+
+    expect(offenders).toEqual([]);
   });
 });

@@ -422,9 +422,7 @@ def test_cmd_score_exits_nonzero_when_items_failed(tmp_path, monkeypatch):  # S7
             "policy": {"recognition_enabled": True},
         }
     ]
-    manifest_path.write_text(
-        json.dumps({"manifest_version": 2, "roster": ["Alice Example"], "entries": entries})
-    )
+    manifest_path.write_text(json.dumps({"manifest_version": 2, "roster": ["Alice Example"], "entries": entries}))
     record_path = tmp_path / "run-x.json"
     record_path.write_text(
         json.dumps(

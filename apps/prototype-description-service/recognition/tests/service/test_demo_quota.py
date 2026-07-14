@@ -46,9 +46,7 @@ async def test_demo_quota_consume_returns_false_for_non_demo_key(
     from recognition.interface_adapters.http.deps.demo_quota import consume_demo_quota_units
 
     fake_hash = hashlib.sha256(b"not-demo-return-bool").hexdigest()
-    consumed = await consume_demo_quota_units(
-        db_session, api_key_hash=fake_hash, units=1, durable=True
-    )
+    consumed = await consume_demo_quota_units(db_session, api_key_hash=fake_hash, units=1, durable=True)
     assert consumed is False
 
 
@@ -100,9 +98,7 @@ async def test_consume_demo_quota_units_rejects_over_ceiling_for_demo_key(
     await db_session.commit()
 
     with pytest.raises(HTTPException) as exc_info:
-        await consume_demo_quota_units(
-            db_session, api_key_hash=result.instance.api_key_ref, units=501
-        )
+        await consume_demo_quota_units(db_session, api_key_hash=result.instance.api_key_ref, units=501)
     assert exc_info.value.status_code == 422
     detail = exc_info.value.detail
     assert isinstance(detail, dict)
@@ -117,9 +113,7 @@ async def test_consume_demo_quota_units_over_ceiling_non_demo_is_noop(
     from recognition.interface_adapters.http.deps.demo_quota import consume_demo_quota_units
 
     fake_hash = hashlib.sha256(b"not-demo-501-units").hexdigest()
-    consumed = await consume_demo_quota_units(
-        db_session, api_key_hash=fake_hash, units=501, durable=True
-    )
+    consumed = await consume_demo_quota_units(db_session, api_key_hash=fake_hash, units=501, durable=True)
     assert consumed is False
 
 

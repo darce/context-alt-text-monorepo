@@ -169,7 +169,13 @@ export const DebugMetricsPanel = ({ metrics }: DebugMetricsPanelProps): React.JS
           <div className="acx-debug-metrics__section-header">{__('Face Metrics', 'alt-context')}</div>
           <div className="acx-debug-metrics__row">
             <dt>{__('Pose', 'alt-context')}</dt>
-            <dd className={`acx-debug-metrics__value--${poseQuality}`}>{poseLabel}</dd>
+            <dd className={`acx-debug-metrics__value--${poseQuality}`}>
+              {poseLabel}
+              <span className="acx-debug-metrics__quality-label">
+                {' · '}
+                {poseQuality === 'poor' ? __('poor', 'alt-context') : __('good', 'alt-context')}
+              </span>
+            </dd>
           </div>
           {metrics.pose_buckets?.current_bucket && (
             <div className="acx-debug-metrics__row">

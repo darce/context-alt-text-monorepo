@@ -41,21 +41,29 @@ plugin path so the run log can point to a concrete tested artifact.
 
 ## Recognition Service Configuration
 
-Recognition **source** (`local` | `service`) and endpoint resolution are independent chains. A saved service URL does **not** imply service mode — operators must set `acx_recognition_source` explicitly (or via constant/filter).
+Recognition **source** (`service` | `local`) and endpoint resolution are independent chains. Hosted **service** is the canonical recognition target. `local` is retired from the product surface and survives only as a **dev-only code hatch** via the `ACX_RECOGNITION_SOURCE` constant / `acx_recognition_source` filter (see the local-recognition hatch in [localwp-development-runbook.md](./localwp-development-runbook.md)) — it is never a Settings feature.
 
 Recognition source precedence:
 
 1. `ACX_RECOGNITION_SOURCE` constant
 2. `acx_recognition_source` filter
-3. `acx_recognition_source` option
-4. Default: `local`
+3. Default: `service`
+
+The resolver **no longer reads an `acx_recognition_source` option** — the option tier was retired (RECOG-1); local is constant/filter only.
 
 Service URL precedence:
 
 1. `ACX_RECOGNITION_URL` constant
 2. `acx_recognition_base_url` filter
 3. `acx_recognition_url` option
-4. Empty (local mode uses the local URL chain; default `http://localhost:8000`)
+
+Local URL (dev hatch only, used when the source is forced to `local`):
+
+1. `ACX_RECOGNITION_LOCAL_URL` constant
+2. `acx_recognition_local_url` filter
+3. Default `http://localhost:8000`
+
+There is **no `local_url` option** — the resolver reads the local URL from the constant/filter only.
 
 API key precedence:
 
@@ -65,7 +73,7 @@ API key precedence:
 
 Supported URL schemes are `http` and `https`.
 
-When recognition source is `local`, effective routing uses the local URL chain regardless of any saved service URL.
+When the dev hatch forces recognition source to `local`, effective routing uses the local URL chain regardless of any saved service URL.
 
 ## Uninstall Data Policy
 

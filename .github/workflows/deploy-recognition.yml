@@ -41,6 +41,9 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # One hung step must not hold the serialized per-env lane for GitHub's 6h
+    # default (REMOTE_BUILD deploys take longer than the demo's).
+    timeout-minutes: 45
     # push -> 'dev'; dispatch -> chosen env. The GitHub Environment is where prod
     # gets its required-reviewer gate (Settings -> Environments -> prod).
     environment: ${{ github.event.inputs.environment || 'dev' }}
@@ -68,7 +71,9 @@ jobs:
 
       - name: Pin VM tailnet address + wait for SSH reachability
         env:
-          OCI_VM_TS_IP: "100.115.186.109"
+          # Shared repo-level Actions variable (also consumed by deploy-demo.yml)
+          # so a VM rebuild is a one-place edit.
+          OCI_VM_TS_IP: ${{ vars.OCI_VM_TS_IP || '100.115.186.109' }}
         run: |
           # Resolve the VM by its stable tailnet IP regardless of MagicDNS state
           # on the runner (SNI still uses the hostname, so TLS stays valid).
@@ -81,10 +86,14 @@ jobs:
           done
           echo "::error::VM ${OCI_VM_TS_IP}:22 not reachable over the tailnet after wait"; exit 1
 
+      # Env indirection: never interpolate the dispatch input into the script
+      # (shell-injection class fixed alongside deploy-demo.yml, DDEP-2).
       - name: Require explicit confirmation for prod
         if: steps.target.outputs.env == 'prod'
+        env:
+          CONFIRM_INPUT: ${{ github.event.inputs.confirm }}
         run: |
-          if [ "${{ github.event.inputs.confirm }}" != "PROMOTE" ]; then
+          if [ "$CONFIRM_INPUT" != "PROMOTE" ]; then
             echo "::error::prod deploy requires the 'confirm' input = PROMOTE." \
               "(Free-plan deliberate-action gate; private repos have no GitHub required-reviewers.)"
             exit 1

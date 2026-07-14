@@ -115,9 +115,7 @@ def _emit_result(result: ProvisionResult, *, api_url: str) -> None:
         # Single labeled secret line — same convention as manage_api_keys create.
         lines.append(f"api_key={result.raw_key}")
     elif result.status == "existing":
-        lines.append(
-            "note=tenant already provisioned for this email; raw key was shown only at first mint"
-        )
+        lines.append("note=tenant already provisioned for this email; raw key was shown only at first mint")
 
     sys.stdout.write("\n".join(lines) + "\n\n")
     sys.stdout.write(

@@ -69,53 +69,52 @@ export const SettingsForm = ({
           </span>
         </div>
 
-        {!serviceConfigured ? (
-          <div className="acx-target-card__empty">
-            <p>{__('No service URL configured yet.', 'alt-context')}</p>
-            <button
-              type="button"
-              className="button button-secondary"
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                onFocusServiceUrl?.();
-              }}
-            >
-              {__('Configure service URL', 'alt-context')}
-            </button>
-          </div>
-        ) : (
-          <div className="acx-target-card__body">
-            <label htmlFor="acx-settings-url">{__('Service API URL', 'alt-context')}</label>
-            <input
-              id="acx-settings-url"
-              type="url"
-              className="regular-text"
-              value={url}
-              onChange={(e) => onUrlChange(e.target.value)}
-              readOnly={urlReadOnly}
-              placeholder="https://api.altcontext.com"
-            />
-            <p className="description">
-              {SOURCE_LABELS[data.url_source] ?? data.url_source}
-              {urlReadOnly && <> &mdash; {__('read-only (override active)', 'alt-context')}</>}
-            </p>
-            <label htmlFor="acx-settings-key">{__('API Key', 'alt-context')}</label>
-            <input
-              id="acx-settings-key"
-              type="password"
-              className="regular-text"
-              value={apiKey}
-              onChange={(e) => onApiKeyChange(e.target.value)}
-              readOnly={keyReadOnly}
-              placeholder={data.api_key_set ? `Current: ${data.api_key_last4}` : __('Enter API key', 'alt-context')}
-            />
-            <p className="description">
-              {SOURCE_LABELS[data.key_source] ?? data.key_source}
-              {keyReadOnly && <> &mdash; {__('read-only (override active)', 'alt-context')}</>}
-            </p>
-          </div>
-        )}
+        <div className="acx-target-card__body">
+          {!serviceConfigured ? (
+            <div className="acx-target-card__empty">
+              <p>{__('No service URL configured yet. Enter the hosted recognition service URL to begin.', 'alt-context')}</p>
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onFocusServiceUrl?.();
+                }}
+              >
+                {__('Configure service URL', 'alt-context')}
+              </button>
+            </div>
+          ) : null}
+          <label htmlFor="acx-settings-url">{__('Service API URL', 'alt-context')}</label>
+          <input
+            id="acx-settings-url"
+            type="url"
+            className="regular-text"
+            value={url}
+            onChange={(e) => onUrlChange(e.target.value)}
+            readOnly={urlReadOnly}
+            placeholder="https://api.altcontext.com"
+          />
+          <p className="description">
+            {SOURCE_LABELS[data.url_source] ?? data.url_source}
+            {urlReadOnly && <> &mdash; {__('read-only (override active)', 'alt-context')}</>}
+          </p>
+          <label htmlFor="acx-settings-key">{__('API Key', 'alt-context')}</label>
+          <input
+            id="acx-settings-key"
+            type="password"
+            className="regular-text"
+            value={apiKey}
+            onChange={(e) => onApiKeyChange(e.target.value)}
+            readOnly={keyReadOnly}
+            placeholder={data.api_key_set ? `Current: ${data.api_key_last4}` : __('Enter API key', 'alt-context')}
+          />
+          <p className="description">
+            {SOURCE_LABELS[data.key_source] ?? data.key_source}
+            {keyReadOnly && <> &mdash; {__('read-only (override active)', 'alt-context')}</>}
+          </p>
+        </div>
 
         <div className="acx-target-card__actions">
           <button
@@ -213,7 +212,7 @@ export const SettingsForm = ({
         <button
           type="submit"
           className="button button-primary"
-          disabled={savePending || (urlReadOnly && keyReadOnly)}
+          disabled={savePending}
         >
           {savePending ? __('Saving…', 'alt-context') : __('Save Settings', 'alt-context')}
         </button>

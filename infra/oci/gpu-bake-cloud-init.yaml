@@ -25,7 +25,7 @@ write_files:
       set -uo pipefail
       LOG=/opt/acx-gpu/bake.log
       MODELS=/opt/acx-gpu/models
-      REPO_ID=Qwen/Qwen3-VL-30B-A3B-Instruct-GGUF
+      REPO_URL=https://huggingface.co/Qwen/Qwen3-VL-30B-A3B-Instruct-GGUF/resolve/main
       Q4=Qwen3VL-30B-A3B-Instruct-Q4_K_M.gguf
       MMPROJ=mmproj-Qwen3VL-30B-A3B-Instruct-F16.gguf
       mkdir -p "$MODELS" /opt/acx-gpu/results
@@ -38,7 +38,7 @@ write_files:
 
       say "1/6 apt base packages"
       $APT update || finish ACX_BAKE_FAILED "phase=apt_update"
-      $APT install build-essential dkms curl ca-certificates gnupg jq python3-venv python3-pip || finish ACX_BAKE_FAILED "phase=apt_base"
+      $APT install build-essential dkms curl ca-certificates gnupg jq || finish ACX_BAKE_FAILED "phase=apt_base"
 
       say "2/6 nvidia driver"
       $APT install nvidia-driver-550-server || $APT install nvidia-driver-535-server || finish ACX_BAKE_FAILED "phase=nvidia_driver"
@@ -59,18 +59,21 @@ write_files:
       nvidia-ctk runtime configure --runtime=docker && systemctl restart docker || finish ACX_BAKE_FAILED "phase=docker_gpu_runtime"
       docker pull ghcr.io/ggml-org/llama.cpp:server-cuda || finish ACX_BAKE_FAILED "phase=image_pull"
 
-      say "5/6 download weights (Xet-aware hf client; 18.6GB Q4 + F16 mmproj)"
-      python3 -m venv /opt/hfvenv || finish ACX_BAKE_FAILED "phase=hf_venv"
-      /opt/hfvenv/bin/pip install -q -U "huggingface_hub[hf_xet]" hf_transfer || finish ACX_BAKE_FAILED "phase=hf_pip"
-      # Background the download + heartbeat downloaded bytes to the serial console
-      # every 45s [OBS-01]. The console ring-buffer always shows the LATEST line, so a
-      # control-plane console-history capture always reveals current progress even
-      # though the 18.6GB download emits no phase marker of its own. Stall = bytes flat
-      # across heartbeats [rg-007].
-      /opt/hfvenv/bin/python /usr/local/bin/acx-hf-download.py "$REPO_ID" "$MODELS" "$Q4" "$MMPROJ" &
+      say "5/6 download weights (resilient curl: resume + stall-abort; ~20GB)"
+      # curl over the HF resolve URL (Xet 302 -> signed CDN, curl pulls it at ~8-12MB/s+).
+      # -C - resumes; --retry-all-errors + --speed-limit/--speed-time abort a FROZEN
+      # transfer (<100KB/s for 60s) and retry, resuming from the byte offset — this is
+      # what the hf_xet library backend failed to do (it hung mid-file at ~9.5GB).
+      dl(){ curl -fL -C - --retry 40 --retry-delay 5 --retry-all-errors \
+              --speed-limit 100000 --speed-time 60 -o "$2" "$REPO_URL/$1"; }
+      ( dl "$Q4" "$MODELS/qwen3-vl-30b-a3b-instruct-q4.gguf" \
+        && dl "$MMPROJ" "$MODELS/qwen3-vl-30b-a3b-instruct-mmproj.gguf" ) &
       DLPID=$!
+      # Heartbeat downloaded bytes to the serial console every 45s [OBS-01]: the ring
+      # always shows the LATEST line, so a control-plane capture reveals live progress;
+      # flat bytes across heartbeats = stall [rg-007].
       while kill -0 "$DLPID" 2>/dev/null; do
-        sz=$(du -sb /opt/acx-gpu/dl /opt/acx-gpu/models 2>/dev/null | awk '{s+=$1} END{printf "%d", s+0}')
+        sz=$(du -sb "$MODELS" 2>/dev/null | awk '{printf "%d", $1+0}')
         echo "ACX_BAKE_PROGRESS $(date -u +%FT%TZ) phase=dl bytes=${sz} target=~20GB" > /dev/console
         sleep 45
       done
@@ -86,22 +89,6 @@ write_files:
         sleep 10
       done
       finish ACX_BAKE_FAILED "phase=endpoint_timeout"
-
-  - path: /usr/local/bin/acx-hf-download.py
-    permissions: "0755"
-    content: |
-      #!/usr/bin/env python3
-      # Download pinned GGUF weights via the HF Python API (Xet-aware, version-stable).
-      # argv: repo_id models_dir q4_filename mmproj_filename
-      import os, sys, shutil
-      os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")  # parallel downloader for non-Xet LFS
-      from huggingface_hub import hf_hub_download
-      repo, models_dir, q4, mmproj = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
-      for fn, dst in ((q4, "qwen3-vl-30b-a3b-instruct-q4.gguf"),
-                      (mmproj, "qwen3-vl-30b-a3b-instruct-mmproj.gguf")):
-          p = hf_hub_download(repo_id=repo, filename=fn, local_dir="/opt/acx-gpu/dl")
-          shutil.move(p, os.path.join(models_dir, dst))
-          print("downloaded", dst, flush=True)
 
   - path: /etc/systemd/system/acx-gpu-vlm.service
     permissions: "0644"

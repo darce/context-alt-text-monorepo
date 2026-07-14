@@ -47,6 +47,7 @@ from .cli import (
 )
 from .manifest import ManifestError, load_manifest
 from .remote_client import RemoteClientError, RemoteSceneClient
+from .report import EVAL_MODES
 
 _CAPTION_MAX_TOKENS = 512
 _CONTEXT_BEGIN = "<<<CONTEXT>>>"
@@ -64,16 +65,20 @@ _SYSTEM_PROMPT = (
 )
 
 
-EVAL_MODES = ("standard", "context_distractor", "name_ablation")
-
-
 def _ablate_names(context_pack: dict[str, Any], names: list[str]) -> tuple[dict[str, Any], list[str]]:
     """Replace each name (word-boundary, case-insensitive) with 'someone' in every
-    string field. Returns (transformed pack, names actually found). BreakingNews
+    field. Returns (transformed pack, names actually found). BreakingNews
     anonymization as a fetch-time transform — the score phase asserts the model
-    produced no identity it was never given (never-guess, mechanical)."""
+    produced no identity it was never given (never-guess, mechanical).
+
+    ALTQ-1-REV-A-03/B-03: callers must pass the FULL roster (present +
+    easy_wrong + corpus roster), not just present identities — any roster name
+    left in the prompt gets falsely charged to the model as a "guess" at score
+    time. Non-string values are stringified before substitution because
+    ``_render_context`` renders them via ``str()`` — the ablated view must match
+    what the model would otherwise see."""
     ablated: list[str] = []
-    pack = dict(context_pack)
+    pack = {k: (v if isinstance(v, str) or v is None else str(v)) for k, v in context_pack.items()}
     for name in names:
         rx = re.compile(rf"(?<!\w){re.escape(name)}(?!\w)", re.IGNORECASE)
         hit = False
@@ -120,6 +125,7 @@ class BakeoffClient(RemoteSceneClient):
         transport: httpx.BaseTransport | None = None,
         eval_mode: str = "standard",
         entry_traits: dict[int, dict[str, list[str]]] | None = None,
+        roster: list[str] | None = None,
     ) -> None:
         kwargs: dict[str, Any] = {"transport": transport}
         if timeout_s is not None:
@@ -134,6 +140,7 @@ class BakeoffClient(RemoteSceneClient):
             raise ValueError(f"eval_mode {eval_mode!r} requires entry_traits (per-media_id identities)")
         self.eval_mode = eval_mode
         self.entry_traits = entry_traits or {}
+        self.roster = list(roster or [])
 
     def describe(
         self,
@@ -148,7 +155,12 @@ class BakeoffClient(RemoteSceneClient):
         if self.eval_mode != "standard":
             traits = self.entry_traits.get(media_id, {})
             if self.eval_mode == "name_ablation":
-                context_pack, ablated = _ablate_names(context_pack, list(traits.get("present", [])))
+                # Full-roster ablation (ALTQ-1-REV-A-03/B-03): strip every name
+                # the corpus knows, not just this entry's present identities.
+                all_names = list(
+                    dict.fromkeys([*traits.get("present", []), *traits.get("easy_wrong", []), *self.roster])
+                )
+                context_pack, ablated = _ablate_names(context_pack, all_names)
                 stamps["ablated_names"] = ablated
             elif self.eval_mode == "context_distractor":
                 context_pack, injected = _inject_distractor(context_pack, list(traits.get("easy_wrong", [])))
@@ -324,6 +336,10 @@ def main(argv: list[str] | None = None) -> None:
     entry_traits = {
         e.media_id: {"present": list(e.present_identities), "easy_wrong": list(e.easy_wrong)} for e in manifest.entries
     }
+    roster = sorted(
+        set(getattr(manifest, "roster", []) or [])
+        | {n for e in manifest.entries for n in (*e.present_identities, *e.must_right, *e.easy_wrong)}
+    )
     client = BakeoffClient(
         args.endpoint,
         model_id=args.model_id,
@@ -332,6 +348,7 @@ def main(argv: list[str] | None = None) -> None:
         timeout_s=args.timeout,
         eval_mode=args.eval_mode,
         entry_traits=entry_traits,
+        roster=roster,
     )
     started_at = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     stamp = started_at.replace(":", "").replace("-", "").replace("T", "-").rstrip("Z")

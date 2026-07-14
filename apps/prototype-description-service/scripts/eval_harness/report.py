@@ -91,9 +91,11 @@ def _context_text(entry: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
-def _corpus_roster(manifest_entries: list[dict[str, Any]]) -> list[str]:
-    """Closed roster = every identity the corpus knows (present + rubric names)."""
-    roster: set[str] = set()
+def _corpus_roster(manifest_entries: list[dict[str, Any]], manifest_roster: list[str] | None = None) -> list[str]:
+    """Closed roster = the manifest's declared roster (ALTQ-1-REV-A-01/B-07)
+    unioned with every identity the entries reference — a roster member never
+    named in any rubric must still trip the hallucination gate."""
+    roster: set[str] = set(manifest_roster or [])
     for entry in manifest_entries:
         roster.update(entry.get("present_identities", []))
         roster.update(entry.get("must_right", []))
@@ -105,11 +107,14 @@ def _ablation_gate(scores: CaptionScores) -> float | None:
     """name_ablation gate: names were stripped from context at fetch, so ANY
     asserted name is a leak (the model guessed an identity — BreakingNews
     ablation as a mechanical never-guess test). Insertion fractions are
-    meaningless in this mode; the gate is binary."""
+    meaningless in this mode; the gate is binary. Leaks are checked BEFORE the
+    eligibility exit (ALTQ-1-REV-A-04): a wrong name on a recognition-disabled
+    image zeroes here exactly as it does in standard mode."""
+    if scores.inserted_identities or scores.wrong_name_hits or scores.hallucinated_names:
+        return 0.0
     if not scores.insertion_eligible:
         return None
-    leaked = scores.inserted_identities or scores.wrong_name_hits or scores.hallucinated_names
-    return 0.0 if leaked else 1.0
+    return 1.0
 
 
 def score_run_record(
@@ -118,6 +123,7 @@ def score_run_record(
     ignore_list: dict[str, Any] | None = None,
     *,
     score_manifest_sha256: str | None = None,
+    manifest_roster: list[str] | None = None,
 ) -> dict[str, Any]:
     """Pure scoring: run record + manifest labels -> metrics dict."""
     _validate_record_kind(run_record)
@@ -125,7 +131,7 @@ def score_run_record(
     if eval_mode not in EVAL_MODES:
         raise ReportError(f"unknown eval_mode {eval_mode!r} in run-record provenance; expected one of {EVAL_MODES}")
     entries = _entry_index(manifest_entries)
-    roster = _corpus_roster(manifest_entries)
+    roster = _corpus_roster(manifest_entries, manifest_roster)
     caption_scores: list[CaptionScores] = []
     long_scores: list[CaptionScores] = []
     gated_values: list[float] = []
@@ -161,11 +167,33 @@ def score_run_record(
         objects = list((describe.get("visual_facts") or {}).get("objects", []))
         # name_ablation runs cannot be held to Must-Right: the names were
         # withheld from the model, so requiring them would fail every image.
-        must_right = [] if eval_mode == "name_ablation" else list(entry["must_right"])
+        # The per-item ablation stamp is REQUIRED (ALTQ-1-REV-A-03/B-03,
+        # [GRPH-14]): an item without ``ablated_names`` was never transformed,
+        # so charging its names as "leaks" would fabricate a model failure.
+        must_right = list(entry["must_right"])
+        if eval_mode == "name_ablation":
+            must_right = []
+            if "ablated_names" not in describe:
+                failures.append(
+                    {
+                        "path": path,
+                        "media_id": media_id,
+                        "error": "name_ablation run-record item carries no ablated_names stamp — "
+                        "context was not transformed at fetch time; refusing to score it as a leak check",
+                    }
+                )
+                continue
+        # A taken distractor must gate even when the fetch-time manifest drifted
+        # from the score-time one (ALTQ-1-REV-A-02/B-04): trust the per-item
+        # stamp over list membership.
+        injected = describe.get("injected_distractor") if eval_mode == "context_distractor" else None
+        easy_wrong = list(entry["easy_wrong"])
+        if isinstance(injected, str) and injected and injected not in easy_wrong:
+            easy_wrong.append(injected)
         score_kwargs: dict[str, Any] = {
             "present_identities": list(entry["present_identities"]),
             "must_right": must_right,
-            "easy_wrong": list(entry["easy_wrong"]),
+            "easy_wrong": easy_wrong,
             "recognition_enabled": recognition_enabled,
             "objects": objects or None,
             "roster": roster,
@@ -182,11 +210,10 @@ def score_run_record(
         if long_s is not None:
             long_scores.append(long_s)
 
-        injected = describe.get("injected_distractor")
         taken: bool | None = None
-        if eval_mode == "context_distractor" and isinstance(injected, str) and injected:
+        if isinstance(injected, str) and injected:
             distractor_injected += 1
-            taken = injected in scores.wrong_name_hits or injected in scores.hallucinated_names
+            taken = injected in scores.wrong_name_hits or (long_s is not None and injected in long_s.wrong_name_hits)
             distractor_taken += int(taken)
         # Ground-truth total faces (incl. non-roster strangers), not just named
         # roster identities — otherwise every stranger face is a detection FP and
@@ -364,12 +391,16 @@ def score_run_record(
             "resistance_rate": (round(1 - distractor_taken / distractor_injected, 4) if distractor_injected else None),
         }
     if eval_mode == "name_ablation":
-        eligible = [s for s in caption_scores if s.insertion_eligible]
-        leaks = [s for s in eligible if s.inserted_identities or s.named_wrong_person]
+        # Derive from the gate itself so a leaked-but-recognition-disabled row
+        # counts (ALTQ-1-REV-A-04): _ablation_gate returns 0.0 for any leak,
+        # None only for clean ineligible rows.
+        gates = [_ablation_gate(s) for s in caption_scores]
+        counted = [g for g in gates if g is not None]
+        leaks = sum(1 for g in counted if g == 0.0)
         result["ablation"] = {
-            "eligible_images": len(eligible),
-            "leak_images": len(leaks),
-            "leak_free_rate": (round(1 - len(leaks) / len(eligible), 4) if eligible else None),
+            "eligible_images": len(counted),
+            "leak_images": leaks,
+            "leak_free_rate": (round(1 - leaks / len(counted), 4) if counted else None),
         }
 
     return result
@@ -517,9 +548,14 @@ def build_reports(
     ignore_list: dict[str, Any] | None = None,
     *,
     score_manifest_sha256: str | None = None,
+    manifest_roster: list[str] | None = None,
 ) -> tuple[str, str]:
     """Return (json_report, markdown_report) — deterministic for identical inputs."""
     scored = score_run_record(
-        run_record, manifest_entries, ignore_list=ignore_list, score_manifest_sha256=score_manifest_sha256
+        run_record,
+        manifest_entries,
+        ignore_list=ignore_list,
+        score_manifest_sha256=score_manifest_sha256,
+        manifest_roster=manifest_roster,
     )
     return json.dumps(scored, indent=2, sort_keys=True, ensure_ascii=False) + "\n", _markdown(scored)

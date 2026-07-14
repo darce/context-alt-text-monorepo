@@ -328,6 +328,7 @@ def test_name_ablation_mode_gates_on_leaks_not_must_right():
     record, entries = _run_record(), _manifest_entries()
     record["provenance"]["eval_mode"] = "name_ablation"
     record["items"][0]["describe"]["ablated_names"] = ["Alice Example"]
+    record["items"][1]["describe"]["ablated_names"] = []
     # Caption still names Alice although her name was stripped from context: leak.
     scored = score_run_record(record, entries)
     leak_row = next(r for r in scored["per_image"] if r["media_id"] == 1)
@@ -364,3 +365,65 @@ def test_reports_remain_deterministic_with_new_sections():
     json_b, md_b = build_reports(record, entries)
     assert json_a == json_b
     assert md_a == md_b
+
+
+# --- ALTQ-1 review-fix regressions (round r07140ddf) ---
+
+
+def test_ablation_item_without_stamp_becomes_failure_not_leak():  # A-03/B-03
+    record, entries = _run_record(), _manifest_entries()
+    record["provenance"]["eval_mode"] = "name_ablation"
+    record["items"][0]["describe"]["ablated_names"] = ["Alice Example"]
+    # item 2 carries NO ablated_names stamp -> was never transformed at fetch
+    scored = score_run_record(record, entries)
+    failed = [f for f in scored["failures"] if f["media_id"] == 2]
+    assert failed and "ablated_names stamp" in failed[0]["error"]
+    assert scored["ablation"]["eligible_images"] == 1  # only the stamped item
+
+
+def test_distractor_taken_via_stamp_survives_manifest_drift():  # A-02/B-04
+    record, entries = _run_record(), _manifest_entries()
+    record["provenance"]["eval_mode"] = "context_distractor"
+    # Fetch-time manifest had "Mallory Trap" in easy_wrong; score-time manifest
+    # drifted and no longer lists her. The stamp alone must still gate.
+    entries[0]["easy_wrong"] = []
+    record["items"][0]["describe"]["injected_distractor"] = "Mallory Trap"
+    record["items"][0]["describe"]["alt_text_draft"] = "Alice Example and Mallory Trap relax by a pool."
+    scored = score_run_record(record, entries)
+    assert scored["distractor"]["taken_images"] == 1
+    row = next(r for r in scored["per_image"] if r["media_id"] == 1)
+    assert row["gated_score"] == 0.0
+
+
+def test_distractor_taken_on_long_surface_counts():  # B-08
+    record, entries = _run_record(), _manifest_entries()
+    record["provenance"]["eval_mode"] = "context_distractor"
+    entries[0]["easy_wrong"] = ["Mallory Trap"]
+    record["items"][0]["describe"]["injected_distractor"] = "Mallory Trap"
+    record["items"][0]["describe"]["alt_text_long"] = "Alice Example relaxes by a pool. Mallory Trap reads nearby."
+    scored = score_run_record(record, entries)
+    assert scored["distractor"]["taken_images"] == 1
+
+
+def test_manifest_roster_widens_hallucination_gate():  # A-01/B-07
+    record, entries = _run_record(), _manifest_entries()
+    record["items"][0]["describe"]["alt_text_draft"] = "Alice Example and Zed Zenith relax by a pool."
+    unwidened = score_run_record(record, entries)
+    row = next(r for r in unwidened["per_image"] if r["media_id"] == 1)
+    assert row["hallucinated_names"] == []  # Zed unknown to entry rubrics
+    widened = score_run_record(record, entries, manifest_roster=["Zed Zenith"])
+    row = next(r for r in widened["per_image"] if r["media_id"] == 1)
+    assert row["hallucinated_names"] == ["Zed Zenith"]
+    assert row["gated_score"] == 0.0
+
+
+def test_ablation_gate_zeroes_leak_on_recognition_disabled_row():  # A-04
+    record, entries = _run_record(), _manifest_entries()
+    record["provenance"]["eval_mode"] = "name_ablation"
+    entries[0]["policy"] = {"recognition_enabled": False}
+    record["items"][0]["describe"]["ablated_names"] = ["Alice Example"]
+    record["items"][1]["describe"]["ablated_names"] = []
+    scored = score_run_record(record, entries)
+    row = next(r for r in scored["per_image"] if r["media_id"] == 1)
+    assert row["gated_score"] == 0.0  # leaked name gates even though ineligible
+    assert scored["ablation"]["leak_images"] == 1

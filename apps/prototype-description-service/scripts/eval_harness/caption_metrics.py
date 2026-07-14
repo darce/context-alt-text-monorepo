@@ -135,6 +135,23 @@ class CaptionScores:
         return len(self.inserted_identities) / total
 
 
+_NAME_TOKEN_MIN_CHARS = 3
+
+
+def _name_tokens(name: str) -> list[str]:
+    """Distinctive tokens of a personal name: length >= 3 filters initials and
+    particles ('J.', 'de') that would over-trigger the trap."""
+    return [t for t in _WORD_RE.findall(name) if len(t) >= _NAME_TOKEN_MIN_CHARS]
+
+
+def _trap_hit(caption: str, trap_name: str, present_tokens: set[str]) -> bool:
+    """True when the caption mentions the trap name fully OR by any distinctive
+    token not shared with a present identity (ALTQ-1-REV-B-01)."""
+    if _contains(caption, trap_name):
+        return True
+    return any(t.lower() not in present_tokens and _contains(caption, t) for t in _name_tokens(trap_name))
+
+
 def _sentences(caption: str) -> list[str]:
     return [s for s in re.split(r"(?<=[.!?])\s+", caption.strip()) if s]
 
@@ -180,9 +197,19 @@ def score_caption(
     # is a wrong-name insertion, the top product risk. ``roster`` widens the trap
     # to every known identity beyond present/easy_wrong (closed-roster
     # hallucination check); present identities are never counted against it.
-    wrong_name_hits = [n for n in easy_wrong if _contains(caption, n)]
+    #
+    # Trap matching is TOKEN-level (ALTQ-1-REV-B-01): a caption saying just
+    # "Ryann" must trip the "Ryann Wiseman" trap — full-name-only matching reads
+    # as perfect distractor resistance while the model names the wrong person.
+    # Tokens shared with a present identity (family surname) are excluded so a
+    # correct "Caitlin Weaver" never trips a "Ryann Weaver" trap [GRPH-18].
+    # Insertion credit above stays full-name (strict): credit requires the whole
+    # name; a violation triggers on any distinctive fragment — asymmetric by
+    # design, erring toward the gate.
+    present_tokens = {t.lower() for n in present_identities for t in _name_tokens(n)}
+    wrong_name_hits = [n for n in easy_wrong if _trap_hit(caption, n, present_tokens)]
     trap_names = set(present_identities) | set(easy_wrong)
-    hallucinated = [n for n in (roster or []) if n not in trap_names and _contains(caption, n)]
+    hallucinated = [n for n in (roster or []) if n not in trap_names and _trap_hit(caption, n, present_tokens)]
 
     tokens = [w.lower() for w in _WORD_RE.findall(caption)]
     repetition = 1.0 - (len(set(tokens)) / len(tokens)) if tokens else 0.0
@@ -196,7 +223,9 @@ def score_caption(
     first_sentence = sentences[0] if sentences else ""
     gist_ok = len(first_sentence) <= _GIST_MAX_CHARS
 
-    meta_hits = [phrase for phrase, rx in zip(_META_FRAMING_PHRASES, _META_FRAMING_RES, strict=True) if rx.search(caption)]
+    meta_hits = [
+        phrase for phrase, rx in zip(_META_FRAMING_PHRASES, _META_FRAMING_RES, strict=True) if rx.search(caption)
+    ]
 
     duplication = _context_trigram_overlap(caption, context_text) if context_text else None
 
@@ -239,23 +268,31 @@ def insertion_rate(scores: Sequence[CaptionScores]) -> float | None:
 
 
 def name_precision(scores: Sequence[CaptionScores]) -> float | None:
-    """Corpus name precision: correct names / all names asserted, eligible images.
+    """Corpus name precision: correct names / all names asserted, over ALL rows.
 
     The news-captioning literature's headline metric (GoodNews, EAMA, VACNIC,
-    Rule-driven) adapted to a closed roster: asserted = inserted + wrong +
-    hallucinated. ``None`` when nothing was asserted.
+    Rule-driven) adapted to a closed roster. One denominator for every scored
+    row (ALTQ-1-REV-A-06/B-02): on a recognition-disabled row any asserted name
+    is a policy violation, so its insertions count as incorrect assertions and
+    its wrong/hallucinated names count like everyone else's. ``None`` when
+    nothing was asserted.
     """
-    inserted = sum(len(s.inserted_identities) for s in scores if s.insertion_eligible)
-    wrong = sum(len(s.wrong_name_hits) + len(s.hallucinated_names) for s in scores if s.insertion_eligible)
-    asserted = inserted + wrong
+    correct = sum(len(s.inserted_identities) for s in scores if s.insertion_eligible)
+    asserted = sum(len(s.inserted_identities) + len(s.wrong_name_hits) + len(s.hallucinated_names) for s in scores)
     if asserted == 0:
         return None
-    return inserted / asserted
+    return correct / asserted
 
 
 def wrong_name_image_rate(scores: Sequence[CaptionScores]) -> float | None:
-    """Share of eligible images whose caption names anyone not present."""
-    eligible = [s for s in scores if s.insertion_eligible]
-    if not eligible:
+    """Share of ALL scored images whose caption names anyone not present.
+
+    Same all-rows denominator as ``name_precision`` and the report's
+    ``wrong_name_images`` count (ALTQ-1-REV-A-06/B-02): a wrong name on a
+    recognition-disabled image is still a wrong name. Policy violations
+    (naming a *present* identity while recognition is disabled) stay a separate
+    count — different failure class.
+    """
+    if not scores:
         return None
-    return sum(1 for s in eligible if s.named_wrong_person) / len(eligible)
+    return sum(1 for s in scores if s.named_wrong_person) / len(scores)

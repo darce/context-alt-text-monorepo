@@ -272,7 +272,12 @@ class SettingsController {
 		$payload['probe_mode'] = 'service_auth';
 		$payload['probed_url'] = $health_url;
 
-		if ( ProbeOutcome::CONNECTED !== ( $payload['outcome'] ?? null ) ) {
+		// A mismatched key (403 -> TENANT_MISMATCH) is a first-time / paired-elsewhere pairing signal,
+		// not a terminal error: attempt pairing so a never-paired auto-derived site can auto-adopt and
+		// recover in a single "Check health" click. Every other non-CONNECTED outcome is terminal.
+		$probe_outcome    = $payload['outcome'] ?? null;
+		$pairing_eligible = in_array( $probe_outcome, array( ProbeOutcome::CONNECTED, ProbeOutcome::TENANT_MISMATCH ), true );
+		if ( ! $pairing_eligible ) {
 			return new WP_REST_Response( $payload, 200 );
 		}
 
@@ -286,11 +291,38 @@ class SettingsController {
 		$pairing_errors  = array( ProbeOutcome::NETWORK_ERROR, ProbeOutcome::SERVER_ERROR );
 		if ( in_array( $pairing_outcome, $pairing_errors, true ) ) {
 			$detail = is_string( $pairing['detail'] ?? null ) ? $pairing['detail'] : 'Tenant pairing failed.';
-			unset( $pairing['outcome'], $pairing['status_code'] );
-			$payload                 = array_merge( $payload, $pairing );
+			// Isolate the pairing failure into pairing_error; the probe's own detail (e.g. the mismatch
+			// reason) must survive so the banner still reports the underlying probe outcome as-is.
+			unset( $pairing['outcome'], $pairing['status_code'], $pairing['detail'] );
+			$payload                  = array_merge( $payload, $pairing );
 			$payload['pairing_error'] = $detail;
-		} else {
-			$payload = array_merge( $payload, $pairing );
+
+			return new WP_REST_Response( $payload, 200 );
+		}
+
+		$payload = array_merge( $payload, $pairing );
+
+		// Recovery from a mismatch: adoption just re-pointed this site at the key's canonical tenant,
+		// so re-probe /health/detailed EXACTLY ONCE with the adopted identity to reach green in the same
+		// request. Strictly bounded -- one pairing attempt + one re-probe, never a retry loop. If the
+		// re-probe still fails, its outcome is returned as-is. A conflict (paired elsewhere) does not
+		// adopt, so it skips the re-probe and surfaces TENANT_PAIRING_CONFLICT to the banner.
+		$adopted = true === ( $pairing['tenant_paired'] ?? false );
+		if ( $adopted && ProbeOutcome::TENANT_MISMATCH === $probe_outcome ) {
+			$reprobe_headers                = $headers;
+			$reprobe_headers['X-Tenant-ID'] = TenantIdentity::resolve()['value'];
+			$reprobe_response               = wp_remote_get(
+				$health_url,
+				array(
+					'headers' => $reprobe_headers,
+					'timeout' => 10,
+				)
+			);
+
+			$reprobe_payload               = $this->build_probe_payload( $reprobe_response );
+			$reprobe_payload['probe_mode'] = 'service_auth';
+			$reprobe_payload['probed_url'] = $health_url;
+			$payload                       = array_merge( $reprobe_payload, $pairing );
 		}
 
 		return new WP_REST_Response( $payload, 200 );

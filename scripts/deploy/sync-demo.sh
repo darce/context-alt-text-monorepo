@@ -36,7 +36,11 @@ if [[ -z "${PLUGIN_ZIP:-}" ]]; then
   PLUGIN_ZIP="$(ls -t dist/alt-context-*.zip 2>/dev/null | head -1 || true)"
 fi
 
-for src in "$DEMO_COMPOSE_SRC" "$CADDYFILE_SRC" "$CADDY_COMPOSE_SRC" "$SYSTEMD_SRC" "$ENV_EXAMPLE_SRC" "$BOOTSTRAP_SRC" "$SEED_IMPORT_SRC"; do
+# Resolved early and preflighted with the other sources: discovering it missing
+# at the final smoke step would leave the Caddy promote applied but unsmoked.
+SMOKE_GATE_LIB="$(dirname "${BASH_SOURCE[0]}")/lib/smoke-gate.sh"
+
+for src in "$DEMO_COMPOSE_SRC" "$CADDYFILE_SRC" "$CADDY_COMPOSE_SRC" "$SYSTEMD_SRC" "$ENV_EXAMPLE_SRC" "$BOOTSTRAP_SRC" "$SEED_IMPORT_SRC" "$SMOKE_GATE_LIB"; do
   if [[ ! -f "$src" ]]; then
     echo "ERROR: source file not found: $src" >&2
     exit 2
@@ -164,7 +168,6 @@ $SSH "sudo cp /tmp/acx-demo.service /etc/systemd/system/acx-demo.service && sudo
 # requires a final 2xx that is not the WP installer (a wiped DB 302->install.php
 # answers 200 and is a broken demo, not a healthy one).
 echo "==> Smoke four vhosts (api.* via /health, demo via /)"
-SMOKE_GATE_LIB="$(dirname "${BASH_SOURCE[0]}")/lib/smoke-gate.sh"
 {
   cat "$SMOKE_GATE_LIB"
   printf 'PRE_CODES="%s"\n' "$PRE_CODES"
@@ -200,6 +203,16 @@ for host in api.altcontext.com staging.api.altcontext.com dev.api.altcontext.com
   code=${out%% *}
   pre=$(pre_code_for "$host")
   verdict=$(classify_api_probe "$code" "$pre")
+  # A regression FAIL (reachable but unhealthy after a healthy baseline) gets one
+  # confirming re-sample: the just-recreated edge can serve a single transient
+  # 5xx while proxy routes settle, and a one-sample hard-fail trains operators
+  # to ignore the gate. 000 FAILs already had bounded retries above.
+  if [[ "$verdict" == "FAIL" && "$code" != "000" ]]; then
+    sleep 10
+    out=$(probe_with_retry "https://${host}/health")
+    code=${out%% *}
+    verdict=$(classify_api_probe "$code" "$pre")
+  fi
   case "$verdict" in
     PASS) echo "PASS ${host}/health (200)" ;;
     WARN) echo "WARN ${host}/health (${code}; pre-promote ${pre:-n/a} — pre-existing backend unhealth, not a deploy failure)" ;;

@@ -26,9 +26,12 @@ serialized lane and block later deploys.
 **Ref guard:** the workflow **fails** on non-`main` refs unless the
 `allow_non_main` dispatch input is set (reserved for rollback to a known-good
 ref, or the one-time feature-ref runtime proof). Additionally add an Environment
-**deployment-branch rule** restricting `demo` to `main` (*Settings →
-Environments → demo → Deployment branches*) so a pushed feature-branch workflow
-cannot even access the `demo` secrets.
+**deployment-branch-and-tag rule** for `demo` (*Settings → Environments → demo →
+Deployment branches and tags*) allowing branch `main` **plus tag pattern
+`demo-rollback-*`** — feature branches then cannot even access the `demo`
+secrets, while the tag pattern keeps the rollback path (below) alive. A rule of
+`main` only would dead-end rollback: environment protection rejects the ref
+before any workflow step runs.
 
 ## Dispatch
 
@@ -134,9 +137,18 @@ everything, and `bootstrap-wp.sh`'s `--force` install + activation cycle
 re-applies the plugin and its dbDelta schema on every run, so partial failures
 (aborted scp, half-applied activation) converge on the next run.
 
-**Rollback (successful-but-bad promote):** redeploy a known-good ref —
-`gh workflow run deploy-demo.yml --ref <good-tag-or-sha-ref> -f confirm=PROMOTE
--f allow_non_main=true`. The runner rebuilds that ref's plugin zip and the
+**Rollback (successful-but-bad promote):** redeploy a known-good commit by
+tagging it — `gh workflow run --ref` accepts only a branch or tag, never a bare
+SHA, and the tag must (a) contain the workflow file and (b) match the
+Environment rule's `demo-rollback-*` tag pattern:
+
+```bash
+git tag demo-rollback-$(date +%Y%m%d) <good-sha> && git push origin demo-rollback-$(date +%Y%m%d)
+gh workflow run deploy-demo.yml --ref demo-rollback-$(date +%Y%m%d) \
+  -f confirm=PROMOTE -f allow_non_main=true
+```
+
+The runner rebuilds that ref's plugin zip and the
 deploy converges the VM onto it. Limits to know before relying on it:
 `dbDelta` is additive-only (there are no reverse migrations — an old plugin
 running against a newer schema is the expected greenfield-acceptable state, per

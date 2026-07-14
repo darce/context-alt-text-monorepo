@@ -146,9 +146,10 @@ jobs:
       - name: Configure SSH deploy key
         env:
           VM_HOST_KEY: ${{ secrets.ACX_VM_SSH_HOST_KEY }}
+          DEPLOY_KEY: ${{ secrets.ACX_DEPLOY_SSH_KEY }}
         run: |
           mkdir -p ~/.ssh
-          printf '%s\n' "${{ secrets.ACX_DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           if [ -n "$VM_HOST_KEY" ]; then
             printf '%s\n' "$VM_HOST_KEY" > ~/.ssh/known_hosts

@@ -135,7 +135,7 @@ Anchors (measured, not competing): **Florence-2-base-ft** (Microsoft, US — 0.2
   - `uv run --locked --extra dev pytest scene/tests scripts/eval_harness -q` (from `apps/prototype-description-service`)
   - `uv run python -m scripts.eval_harness.cli score --run-record <pre-expansion record> --check-determinism` (manifest schema change must not perturb old scores)
 - Runtime-parity / environment checks:
-  - S3: incumbent anchor (`gpu_qwen30b`) scored first in-window; its Golden-38 subset scores must match the S0 baseline within tolerance before candidate runs proceed
+  - S3: incumbent anchor (`gpu_qwen30b`) scored first in-window — this run *establishes* the GPU incumbent baseline (no separate S0 GPU baseline exists) and validates the harness end-to-end on live GPU serving; a repeated-image determinism spot-check must be bit-identical before candidate runs proceed
   - S6: full eval-harness run on the adopted profile via the live service path (eval tenant)
 - Contract/fixture verification:
   - `scene/tests/test_gpu_remote_adapter.py` green against the winner's serving recipe
@@ -146,15 +146,16 @@ Anchors (measured, not competing): **Florence-2-base-ft** (Microsoft, US — 0.2
 
 ### Slice 0: Baseline lock
 
-**Goal**: Fresh incumbent scores on the current 38-image manifest before anything changes.
+**Goal**: Fresh `florence_small` incumbent score on the current 38-image manifest before anything changes. The GPU incumbent (`gpu_qwen30b`) is **not** baselined here — deferred to the S3 anchor-first run so incumbent and candidates are measured in the same window/host/harness, avoiding a cross-condition confound ([TEST-08] determinism, [PERF-03] coordinated omission). No A10 boot in S0.
 
 Changes:
 
-- None (measurement only): `make eval-captions` against current prod profiles (`florence_small`, `gpu_qwen30b`).
+- None (measurement only): `make eval-captions` against the current prod `florence_small` profile — served live on `acx-backend` (= `api.altcontext.com`, the single running backend VM; "prod" and the dev VM are the same host, distinguished only by the `--env` DSN label), CPU, deterministic greedy decode. Eval tenant + key minted via the remote `/admin` console (`RECOGNITION_ADMIN_TOKEN`; `POST /admin/tenants` → `POST /admin/tenants/{id}/keys`).
+- Follow-up (tech debt, deferred): `make eval-tenant ENV=…` helper that wraps the two `/admin` calls and emits `ACX_EVAL_*` exports, consolidating the tenant/key path onto the remote console as the canonical surface (the 3 CLI façades already share one minter). Tracked in handoff, not built in this slice.
 
 Proof:
 
-- Run records in `scripts/eval_harness/out/`; `test_result` handoff events.
+- Run record in `scripts/eval_harness/out/`; `test_result` handoff event.
 
 ### Slice 1: Golden-100 corpus
 
@@ -259,8 +260,9 @@ Proof:
 
 ### Checklist for Slice 0: Baseline lock
 
-- [ ] `make eval-captions` run against `florence_small` and `gpu_qwen30b`
-- [ ] Run records + `test_result` events captured
+- [ ] `make eval-captions` run against `florence_small` (prod/`acx-backend`, eval tenant)
+- [ ] Run record + `test_result` event captured
+- [ ] `gpu_qwen30b` baseline confirmed deferred to S3 anchor-first (no S0 GPU boot)
 
 ### Checklist for Slice 1: Golden-100 corpus
 

@@ -14,6 +14,8 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
+from scripts.eval_harness.manifest import FactKind, FactPolarity, ReferenceFact
+
 _GIST_MAX_CHARS = 125
 _WORD_RE = re.compile(r"[A-Za-z']+")
 _VOWEL_GROUP_RE = re.compile(r"[aeiouy]+")
@@ -142,3 +144,133 @@ def insertion_rate(scores: Sequence[CaptionScores]) -> float | None:
     if total == 0:
         return None
     return inserted / total
+
+
+# --- Fabricated-fact hallucination metric (VLM-6 S1) -------------------------
+# HALLUCINATION-FIRST ranking axis. Precision-first + deterministic (LLM-judge is
+# out of MVP scope): the headline fires only on AUTHORED false-polarity reference
+# facts (fabrication traps), decomposed by FactKind for attributability [TEST-10].
+# `true`-polarity facts give a coverage companion. The automatic count-contradiction
+# is ADVISORY only (kept OUT of the headline) because face_count counts faces and
+# faces subset people (a back-turned person has no face), so face_count is a LOWER
+# bound on people and can't meet the precision bar for a ranking axis.
+
+# Plural people-quantifier → minimum asserted people count, paired with a people
+# noun. Conservative on purpose: only high-confidence overcount claims flag.
+_PEOPLE_NOUN = r"(?:people|persons?|men|women|man|woman|figures?|individuals?|faces?)"
+_COUNT_WORD = {
+    "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+    "eight": 8, "nine": 9, "ten": 10, "couple": 2, "pair": 2, "trio": 3,
+    "several": 2, "many": 2, "multiple": 2, "group": 2, "crowd": 2,
+}
+_COUNT_CLAIM_RE = re.compile(
+    rf"(?<!\w)(?P<q>{'|'.join(map(re.escape, _COUNT_WORD))}|\d+)\s+(?:of\s+)?(?:\w+\s+){{0,2}}?{_PEOPLE_NOUN}(?!\w)",
+    re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True)
+class FabricatedFact:
+    kind: FactKind
+    text: str
+    matched_phrase: str
+
+
+@dataclass(frozen=True)
+class HallucinationScores:
+    fabricated_facts: list[FabricatedFact] = field(default_factory=list)
+    covered_facts: list[str] = field(default_factory=list)
+    missing_facts: list[str] = field(default_factory=list)
+    trap_count: int = 0  # number of false-polarity facts evaluated (headline denominator)
+    count_advisory: str | None = None  # lower-confidence overcount signal, NOT in headline
+
+    @property
+    def fabricated(self) -> bool:
+        return bool(self.fabricated_facts)
+
+    @property
+    def coverage(self) -> float | None:
+        """Fraction of true-polarity facts the caption stated (None if none authored)."""
+        total = len(self.covered_facts) + len(self.missing_facts)
+        return len(self.covered_facts) / total if total else None
+
+
+def _claimed_people_min(caption: str) -> int | None:
+    """Highest confidently-asserted people count in the caption, or None."""
+    best: int | None = None
+    for match in _COUNT_CLAIM_RE.finditer(caption):
+        token = match.group("q").lower()
+        value = _COUNT_WORD.get(token)
+        if value is None and token.isdigit():
+            value = int(token)
+        if value is not None and (best is None or value > best):
+            best = value
+    return best
+
+
+def score_hallucination(
+    caption: str,
+    *,
+    reference_facts: Sequence[ReferenceFact],
+    face_count: int | None = None,
+) -> HallucinationScores:
+    """Score fabricated facts (headline) + coverage + advisory overcount.
+
+    Headline fabrication: a caption that asserts any phrase of a ``false``-polarity
+    reference fact has fabricated (recorded with the fact's kind). Coverage: the
+    ``true``-polarity facts the caption stated. Count advisory: set when the caption
+    confidently claims more people than ``face_count`` — reported, never in the
+    headline (faces subset people).
+    """
+    fabricated: list[FabricatedFact] = []
+    covered: list[str] = []
+    missing: list[str] = []
+    trap_count = 0
+    for fact in reference_facts:
+        targets = fact.match_targets()
+        hit = next((t for t in targets if _contains(caption, t)), None)
+        if fact.polarity is FactPolarity.FALSE:
+            trap_count += 1
+            if hit is not None:
+                fabricated.append(FabricatedFact(kind=fact.kind, text=fact.text, matched_phrase=hit))
+        else:
+            (covered if hit is not None else missing).append(fact.text)
+
+    advisory: str | None = None
+    if face_count is not None:
+        claimed = _claimed_people_min(caption)
+        if claimed is not None and claimed > face_count:
+            advisory = f"claims >={claimed} people; face_count={face_count} (advisory: faces subset people)"
+
+    return HallucinationScores(
+        fabricated_facts=fabricated,
+        covered_facts=covered,
+        missing_facts=missing,
+        trap_count=trap_count,
+        count_advisory=advisory,
+    )
+
+
+def fabricated_fact_rate(scores: Sequence[HallucinationScores], *, over: str = "all") -> float | None:
+    """Fraction of images caught fabricating (a lower bound — only authored traps fire).
+
+    ``over='all'`` denominates over every scored image (corpus caught-rate);
+    ``over='trapped'`` denominates only over images that authored >=1 false-fact
+    (per-trap hit rate). Returns None when the denominator is empty.
+    """
+    if over not in ("all", "trapped"):
+        raise ValueError("over must be 'all' or 'trapped'")
+    denom = len(scores) if over == "all" else sum(1 for s in scores if s.trap_count)
+    if denom == 0:
+        return None
+    caught = sum(1 for s in scores if s.fabricated)
+    return caught / denom
+
+
+def fabrication_by_kind(scores: Sequence[HallucinationScores]) -> dict[FactKind, int]:
+    """Attributability breakdown: fabricated-fact hits per FactKind [TEST-10, OBS-01]."""
+    tally: dict[FactKind, int] = {}
+    for score in scores:
+        for fact in score.fabricated_facts:
+            tally[fact.kind] = tally.get(fact.kind, 0) + 1
+    return tally

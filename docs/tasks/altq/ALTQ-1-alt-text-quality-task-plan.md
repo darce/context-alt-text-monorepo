@@ -23,19 +23,19 @@ manifest against the 7b baseline.
 
 ### Checklist for Slice 1: Eval + test harness upgrades
 
-- [ ] `caption_metrics.py`: activate easy_wrong wrong-name trap (hard gate);
+- [x] `caption_metrics.py`: activate easy_wrong wrong-name trap (hard gate);
       meta-framing detector; context-duplication ratio; sentence-count band;
       name-front-loaded check — pure, additive `CaptionScores` fields.
-- [ ] Corpus metrics: name precision, hallucinated-name rate (closed-roster
+- [x] Corpus metrics: name precision, hallucinated-name rate (closed-roster
       string match) alongside existing insertion_rate/recall.
-- [ ] Dual-surface scoring: optional `describe.alt_text_long` scored on the long
+- [x] Dual-surface scoring: optional `describe.alt_text_long` scored on the long
       rubric; `alt_text_draft` scores as the short surface; absent long ⇒ null.
-- [ ] `bakeoff.py` eval modes: `--eval-mode standard|context-distractor|name-ablation`
+- [x] `bakeoff.py` eval modes: `--eval-mode standard|context-distractor|name-ablation`
       (fetch-time context transform + provenance stamp; score-time assertions
       keyed off the stamp).
-- [ ] Report/markdown: new `quality` section + long-surface section + eval-mode
+- [x] Report/markdown: new `quality` section + long-surface section + eval-mode
       banner; determinism check still bit-identical.
-- [ ] Tests for every new check + mode transform + report integration
+- [x] Tests for every new check + mode transform + report integration
       (`scene/tests/test_eval_harness_*`), full harness test suite green.
 
 ### Checklist for Slice 2: Prompt v2 + dual-length + two-pass generation
@@ -64,9 +64,9 @@ manifest against the 7b baseline.
 
 ## Success Criteria
 
-- [ ] New rubric axes catch the known defects (meta-framing, context duplication)
+- [x] New rubric axes catch the known defects (meta-framing, context duplication)
       on the committed 7b winner output — proven by test fixtures derived from it.
-- [ ] Distractor + ablation modes runnable end-to-end and asserted in tests
+- [x] Distractor + ablation modes runnable end-to-end and asserted in tests
       without a live GPU (transport-stubbed).
 - [ ] Winning pipeline config beats v1 baseline on the expanded rubric with zero
       wrong-name/hallucination regressions (Slice 3, measured).

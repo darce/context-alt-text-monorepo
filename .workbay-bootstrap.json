@@ -64,7 +64,8 @@
     },
     {
       "path": "scripts/workbay/wb",
-      "source": "shared"
+      "source": "shared",
+      "provenance_key": "package:0.3.12"
     },
     {
       "path": ".codex/hooks.json",
@@ -200,7 +201,7 @@
     },
     {
       "path": ".claude/settings.local.json",
-      "action": "merged",
+      "action": "noop",
       "kind": "hook_adapter",
       "opt_in_flag": "--install-claude-reinject-hook-local"
     },
@@ -253,7 +254,7 @@
       ],
       "cwd": "/Users/daniel/Development/context-alt-text-monorepo",
       "common_dir": "/Users/daniel/Development/context-alt-text-monorepo/.git",
-      "duration_ms": 25.491,
+      "duration_ms": 26.627,
       "status": "ok"
     }
   ]

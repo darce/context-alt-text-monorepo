@@ -5,9 +5,12 @@ import { RecognitionSource, type SettingsResponse, type TestConnectionResponse }
 import {
   HEALTH_STATUS_ICONS,
   HEALTH_STATUS_LABELS,
+  SOURCE_LABELS,
+  TENANT_PAIRING_ICONS,
+  TENANT_PAIRING_LABELS,
+  TenantPairing,
 } from './settingsConstants';
 import { healthStatusForService } from './healthStatus';
-import { SOURCE_LABELS } from './settingsConstants';
 
 interface SettingsFormProps {
   data: SettingsResponse;
@@ -51,6 +54,7 @@ export const SettingsForm = ({
   // effective target resolves to local. Surface it as a read-only diagnostic.
   const devHatchActive = data.recognition_source === RecognitionSource.LOCAL;
   const healthStatus = healthStatusForService(testResult);
+  const pairingStatus = data.tenant_paired ? TenantPairing.PAIRED : TenantPairing.UNPAIRED;
 
   return (
     <form onSubmit={onSave} className="acx-settings__form">
@@ -172,15 +176,15 @@ export const SettingsForm = ({
         </p>
         <p className="description">{SOURCE_LABELS[data.tenant_id_source] ?? data.tenant_id_source}</p>
         <p
-          className={`acx-settings__tenant-status acx-settings__tenant-status--${data.tenant_paired ? 'paired' : 'unpaired'}`}
+          className={`acx-settings__tenant-status acx-settings__tenant-status--${pairingStatus}`}
           data-testid="acx-tenant-pairing-status"
+          role="status"
+          aria-live="polite"
         >
           <span aria-hidden="true" className="acx-settings__tenant-status-icon">
-            {data.tenant_paired ? '✓' : '○'}
+            {TENANT_PAIRING_ICONS[pairingStatus]}
           </span>
-          {data.tenant_paired
-            ? __('Paired with the recognition service', 'alt-context')
-            : __('Not paired yet — check the connection to pair this tenant', 'alt-context')}
+          {TENANT_PAIRING_LABELS[pairingStatus]}
         </p>
       </div>
 

@@ -402,6 +402,23 @@ describe('SettingsPage', () => {
       expect(banner).toHaveTextContent('different site');
     });
 
+    it('renders a confirm-pairing action on the tenant_mismatch banner', () => {
+      renderWithLoadedSettings();
+      driveOutcome({ outcome: 'tenant_mismatch', status_code: 403, detail: 'tenant mismatch' });
+      const banner = bannerFor('tenant_mismatch');
+      expect(banner).toHaveTextContent('Tenant mismatch.');
+      expect(screen.getByTestId('acx-confirm-tenant-pairing')).toBeInTheDocument();
+    });
+
+    it('sends confirm_tenant_pairing when the mismatch adopt button is clicked', () => {
+      renderWithLoadedSettings();
+      driveOutcome({ outcome: 'tenant_mismatch', status_code: 403, detail: 'tenant mismatch' });
+
+      fireEvent.click(screen.getByTestId('acx-confirm-tenant-pairing'));
+
+      expect(testMutate).toHaveBeenCalledWith({ probe_target: 'service', confirm_tenant_pairing: true });
+    });
+
     it('renders the tenant_pairing_conflict banner with tenant ids and confirm control', () => {
       renderWithLoadedSettings();
       driveOutcome({

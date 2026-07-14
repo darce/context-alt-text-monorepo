@@ -595,6 +595,86 @@ class SettingsControllerTest extends TestCase
         $this->assertArrayNotHasKey('tenant_paired', $data);
     }
 
+    public function testProbeMismatchAutoAdoptsAndReprobesToGreen(): void
+    {
+        $this->configureProbe();
+        // No acx_recognition_tenant_id option: resolve() derives + persists the auto-derived bootstrap id.
+        // A mismatched key 403s the first probe (TENANT_MISMATCH); a never-paired auto-derived site must
+        // auto-adopt the key's tenant and recover to green within the SAME "Check health" request.
+        $keyTenant = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+        $this->queueHttpResponse($this->buildTenantMismatchResponse());
+        $this->queueHttpResponse($this->buildWhoamiResponse($keyTenant));
+        $this->queueHttpResponse($this->buildOkResponse());
+
+        $data = $this->controller
+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
+            ->get_data();
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(3, $calls, 'exactly one pairing whoami + one re-probe -- no retry loop');
+        $this->assertStringEndsWith('/health/detailed', $calls[0]['url']);
+        $this->assertStringEndsWith('/recognition/tenant/whoami', $calls[1]['url']);
+        $this->assertStringEndsWith('/health/detailed', $calls[2]['url']);
+        $this->assertSame(
+            $keyTenant,
+            $calls[2]['args']['headers']['X-Tenant-ID'] ?? null,
+            're-probe must carry the adopted tenant identity'
+        );
+
+        $this->assertSame(ProbeOutcome::CONNECTED, $data['outcome']);
+        $this->assertTrue($data['tenant_paired']);
+        $this->assertTrue(TenantIdentity::is_paired());
+        $this->assertSame($keyTenant, get_option('acx_recognition_tenant_id'));
+    }
+
+    public function testProbeMismatchSurfacesConflictWhenPairedElsewhere(): void
+    {
+        $this->configureProbe();
+        // A pinned (non-auto-derived) tenant whose key now maps elsewhere must NOT auto-adopt: it surfaces
+        // the explicit TENANT_PAIRING_CONFLICT for the operator to confirm, and must not re-probe.
+        $persisted = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+        $keyTenant = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+        $this->setOption('acx_recognition_tenant_id', $persisted);
+        $this->queueHttpResponse($this->buildTenantMismatchResponse());
+        $this->queueHttpResponse($this->buildWhoamiResponse($keyTenant));
+
+        $data = $this->controller
+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
+            ->get_data();
+
+        $this->assertCount(2, $this->getHttpCalls(), 'a conflict must not trigger a re-probe');
+        $this->assertSame(ProbeOutcome::TENANT_PAIRING_CONFLICT, $data['outcome']);
+        $this->assertSame($persisted, $data['persisted_tenant_id']);
+        $this->assertSame($keyTenant, $data['key_tenant_id']);
+        $this->assertFalse(TenantIdentity::is_paired());
+        $this->assertSame($persisted, get_option('acx_recognition_tenant_id'));
+    }
+
+    public function testProbeMismatchPairingErrorReturnsProbeOutcomeAsIs(): void
+    {
+        $this->configureProbe();
+        // Auto-derived + never-paired, so adoption is eligible -- but the whoami lookup fails, so adoption
+        // never happens. The original probe outcome (TENANT_MISMATCH) is returned as-is with a pairing_error,
+        // and no re-probe fires.
+        $this->queueHttpResponse($this->buildTenantMismatchResponse());
+        $this->queueHttpResponse(
+            array(
+                'response' => array('code' => 503, 'message' => 'Service Unavailable'),
+                'body'     => '{"detail":"database unavailable"}',
+            )
+        );
+
+        $data = $this->controller
+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
+            ->get_data();
+
+        $this->assertCount(2, $this->getHttpCalls(), 'a failed pairing must not trigger a re-probe');
+        $this->assertSame(ProbeOutcome::TENANT_MISMATCH, $data['outcome'], 'probe outcome returned as-is on pairing error');
+        $this->assertSame('database unavailable', $data['pairing_error']);
+        $this->assertFalse(TenantIdentity::is_paired());
+        $this->assertArrayNotHasKey('tenant_paired', $data);
+    }
+
     public function testProbeDispatchReturnsNotConfiguredWithoutHttpCall(): void
     {
         $this->setUserCapability('manage_options', true);
@@ -826,6 +906,17 @@ class SettingsControllerTest extends TestCase
         return [
             'response' => ['code' => 200, 'message' => 'OK'],
             'body'     => '{"pool":"healthy"}',
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function buildTenantMismatchResponse(): array
+    {
+        return [
+            'response' => ['code' => 403, 'message' => 'Forbidden'],
+            'body'     => '{"detail":"tenant mismatch"}',
         ];
     }
 

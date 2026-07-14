@@ -16,7 +16,6 @@ from scene.infrastructure.provider.hosted_provider_adapter import (
 )
 from scripts.eval_harness.cli import _require_live_env
 
-
 # --- ACX_GPU_ENDPOINT_API_KEY (DescriptionSettings.gpu_endpoint_api_key) ---
 
 

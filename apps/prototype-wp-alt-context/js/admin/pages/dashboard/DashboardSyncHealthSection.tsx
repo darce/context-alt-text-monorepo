@@ -1,8 +1,10 @@
 import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
+import { AlertTriangle } from 'lucide-react';
 
 import type { SyncHealth, SyncHealthResponse } from '../../api/recognition/types/sync';
 import { getDashboardSyncHealthSummary } from '../workbench/degradedModeBannerLogic';
+import { SYNC_VOCABULARY } from '../workbench/syncPresentation';
 import { SCAN_CONFLICTS_HREF, SCAN_DEAD_LETTER_HREF } from '../workbench/workbenchOverlayLinks';
 
 interface SyncStatusData {
@@ -58,6 +60,12 @@ export const DashboardSyncHealthSection = ({
       <>
         {showMirrorDivergenceBanner ? (
           <div className="acx-dashboard__mirror-warning" role="status">
+            <AlertTriangle
+              className="acx-dashboard__mirror-warning-icon"
+              size={16}
+              aria-hidden="true"
+              data-testid="acx-dashboard-mirror-warning-icon"
+            />
             <p>
               {sprintf(
                 __(
@@ -78,25 +86,27 @@ export const DashboardSyncHealthSection = ({
             </button>
           </div>
         ) : null}
-        <p>{getDashboardSyncHealthSummary(effectiveSyncHealth, syncHealthEnvelope)}</p>
+        <p data-testid="acx-dashboard-sync-summary">
+          {getDashboardSyncHealthSummary(effectiveSyncHealth, syncHealthEnvelope)}
+        </p>
         <div className="acx-dashboard__stats-grid">
           <div className="acx-dashboard__stat">
             <span className="acx-dashboard__stat-value">{pendingReplayCount}</span>
-            <span className="acx-dashboard__stat-label">{__('Pending Replay', 'alt-context')}</span>
+            <span className="acx-dashboard__stat-label">{SYNC_VOCABULARY.pendingChangesLabel}</span>
           </div>
           <div className="acx-dashboard__stat">
             <span className="acx-dashboard__stat-value">{conflictCount}</span>
-            <span className="acx-dashboard__stat-label">{__('Conflicts', 'alt-context')}</span>
+            <span className="acx-dashboard__stat-label">{SYNC_VOCABULARY.conflictsLabel}</span>
           </div>
           <div className="acx-dashboard__stat">
             <span className="acx-dashboard__stat-value">{failedReplayCount}</span>
-            <span className="acx-dashboard__stat-label">{__('Failed Replay', 'alt-context')}</span>
+            <span className="acx-dashboard__stat-label">{SYNC_VOCABULARY.failedOpsLabel}</span>
           </div>
         </div>
         {topologyPending > 0 || topologyFailed > 0 || topologyConflicts > 0 ? (
           <p>
             {sprintf(
-              __('Topology backlog: pending %1$d, failed %2$d, conflicts %3$d', 'alt-context'),
+              SYNC_VOCABULARY.syncBacklogShort,
               topologyPending,
               topologyFailed,
               topologyConflicts,
@@ -104,15 +114,15 @@ export const DashboardSyncHealthSection = ({
           </p>
         ) : null}
         {conflictCount > 0 && lastConflictDate ? (
-          <p>{sprintf(__('Last conflict: %s', 'alt-context'), lastConflictDate)}</p>
+          <p>{sprintf(SYNC_VOCABULARY.lastConflict, lastConflictDate)}</p>
         ) : null}
         {failedReplayCount > 0 && lastFailureDate ? (
-          <p>{sprintf(__('Last failure: %s', 'alt-context'), lastFailureDate)}</p>
+          <p>{sprintf(SYNC_VOCABULARY.lastFailure, lastFailureDate)}</p>
         ) : null}
         <div className="acx-dashboard__actions">
           <a href="#/workbench?tab=scan" className="acx-dashboard__action-card">
             <h3>{__('Open Workbench', 'alt-context')}</h3>
-            <p>{__('Inspect sync status, scans, and queued replay work.', 'alt-context')}</p>
+            <p>{SYNC_VOCABULARY.openWorkbenchDetail}</p>
           </a>
           {conflictCount > 0 ? (
             <a href={SCAN_CONFLICTS_HREF} className="acx-dashboard__action-card">
@@ -122,8 +132,8 @@ export const DashboardSyncHealthSection = ({
           ) : null}
           {failedReplayCount > 0 ? (
             <a href={SCAN_DEAD_LETTER_HREF} className="acx-dashboard__action-card">
-              <h3>{__('Open Dead-Letter Queue', 'alt-context')}</h3>
-              <p>{__('Retry or discard failed replay operations.', 'alt-context')}</p>
+              <h3>{__('Open Failed Sync Queue', 'alt-context')}</h3>
+              <p>{SYNC_VOCABULARY.openFailedOpsDetail}</p>
             </a>
           ) : null}
         </div>

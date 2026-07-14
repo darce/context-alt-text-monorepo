@@ -19,6 +19,7 @@ from db.models.base_imports import Base
 from db.models.scene import DescribeRun, DescribeRunItem
 from db.models.tenant import Tenant
 from recognition.interface_adapters.http.deps import get_optional_session, require_write_access
+from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quota
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.describe_run_worker import DescribeItemOutcome, run_describe_job
 from scene.domain.describe_run import DescribeItemStatus, DescribeRunStatus
@@ -83,6 +84,9 @@ def _client():
     app = FastAPI()
     app.include_router(scene_router, prefix="/scene")
     app.dependency_overrides[require_write_access] = lambda: _Auth()
+    # Scene run routes do not depend on enforce_demo_quota, but the shared
+    # scene_router also mounts multipart/async which do — keep the harness safe.
+    app.dependency_overrides[enforce_demo_quota] = lambda: None
     app.dependency_overrides[get_optional_session] = _session
     try:
         with TestClient(app) as client:

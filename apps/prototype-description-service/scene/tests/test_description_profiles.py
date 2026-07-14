@@ -39,13 +39,14 @@ def _reset_singleton():
 # ----------------------------------------------------------------- the switch
 
 
-def test_profile_enum_has_exactly_the_five_operator_options():
+def test_profile_enum_has_exactly_the_operator_options():
     assert [p.value for p in DescriptionProfile] == [
         "seeded",
         "florence_small",
         "florence_large",
         "gpu_phi4",
         "gpu_qwen30b",
+        "gpu_qwen30b_ensemble",
         "hosted_gpt4o",
     ]
 
@@ -92,6 +93,15 @@ def test_gpu_qwen30b_profile_is_available_endpoint_profile():
     assert spec.adapter_kind is DescriptionAdapterKind.GPU
     assert spec.model_id == "Qwen3-VL-30B-A3B-Instruct"
     assert spec.model_version == "Q4_K_M"
+
+
+def test_gpu_qwen30b_ensemble_spec_mirrors_gpu_qwen30b():
+    spec = get_profile_spec(DescriptionProfile.GPU_QWEN30B_ENSEMBLE)
+    base = get_profile_spec(DescriptionProfile.GPU_QWEN30B)
+    assert spec.available is True
+    assert spec.adapter_kind is DescriptionAdapterKind.GPU
+    assert spec.model_id == base.model_id
+    assert spec.model_version == base.model_version
 
 
 # ------------------------------------------------------------- settings wiring
@@ -171,6 +181,60 @@ def test_resolve_gpu_qwen30b_yields_gpu_adapter(monkeypatch):
     assert isinstance(adapter, DescriptionAdapter)
     assert adapter.kind is DescriptionAdapterKind.GPU
     assert adapter.model_id == "Qwen3-VL-30B-A3B-Instruct"
+
+
+def test_resolve_gpu_qwen30b_ensemble_sync_route_gets_raw_gpu_adapter(monkeypatch):
+    """VLM4-RA-BR-02 [RES-02]: the sync inline route must NEVER see the N-pass wrapper."""
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "gpu_qwen30b_ensemble")
+    monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://10.0.1.42:8000")
+    from scene.infrastructure.vlm.gpu_remote_adapter import GpuRemoteDescriptionAdapter
+    from scene.interface_adapters.http.deps import get_description_adapter
+
+    adapter = get_description_adapter()
+    assert isinstance(adapter, GpuRemoteDescriptionAdapter)
+    assert adapter.kind is DescriptionAdapterKind.GPU
+    assert adapter.model_id == "Qwen3-VL-30B-A3B-Instruct"
+
+
+def test_resolve_gpu_qwen30b_ensemble_async_final_gets_wrapped_adapter(monkeypatch):
+    """VLM4-RA-BR-02: the async GPU-final tier is the ONLY place the ensemble runs."""
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "gpu_qwen30b_ensemble")
+    monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://10.0.1.42:8000")
+    from scene.infrastructure.vlm.ensemble_decode import EnsembleDescriptionAdapter
+    from scene.infrastructure.vlm.gpu_remote_adapter import GpuRemoteDescriptionAdapter
+    from scene.interface_adapters.http.deps import get_async_gpu_description_adapter
+
+    adapter = get_async_gpu_description_adapter()
+    assert isinstance(adapter, EnsembleDescriptionAdapter)
+    assert isinstance(adapter, DescriptionAdapter)
+    assert isinstance(adapter._wrapped, GpuRemoteDescriptionAdapter)
+    assert adapter.kind is DescriptionAdapterKind.GPU
+    assert adapter.model_id == "Qwen3-VL-30B-A3B-Instruct"
+    assert adapter.model_version == "Q4_K_M"
+    assert adapter.prompt_or_task_version == "3"
+
+
+def test_resolve_async_gpu_adapter_without_ensemble_profile_is_raw(monkeypatch):
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "gpu_qwen30b")
+    monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://10.0.1.42:8000")
+    from scene.infrastructure.vlm.gpu_remote_adapter import GpuRemoteDescriptionAdapter
+    from scene.interface_adapters.http.deps import get_async_gpu_description_adapter
+
+    assert isinstance(get_async_gpu_description_adapter(), GpuRemoteDescriptionAdapter)
+
+
+def test_resolve_gpu_qwen30b_ensemble_without_endpoint_is_fail_closed_unwrapped(monkeypatch):
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "gpu_qwen30b_ensemble")
+    monkeypatch.delenv("ACX_GPU_ENDPOINT_URL", raising=False)
+    from scene.interface_adapters.http.deps import (
+        get_async_gpu_description_adapter,
+        get_description_adapter,
+    )
+
+    for resolver in (get_description_adapter, get_async_gpu_description_adapter):
+        adapter = resolver()
+        assert isinstance(adapter, UnavailableDescriptionAdapter)
+        assert adapter.kind is DescriptionAdapterKind.GPU
 
 
 def test_resolve_gpu_qwen30b_rejects_public_endpoint(monkeypatch):

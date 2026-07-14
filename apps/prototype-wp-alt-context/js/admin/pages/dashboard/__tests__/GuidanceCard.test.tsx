@@ -26,7 +26,7 @@ describe('GuidanceCard', () => {
     );
 
     expect(screen.getByText('5 faces are waiting for names.')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Go to Workbench' })).toHaveAttribute('href', '#/workbench?tab=confirm');
+    expect(screen.getByRole('link', { name: 'Go to Workbench' })).toHaveAttribute('href', '#/workbench?advanced=open');
   });
 
   it('renders first-use guidance when there are no people', () => {

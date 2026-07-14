@@ -70,8 +70,16 @@
   }
 
   &__note--danger {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--acx-space-8);
     background: var(--acx-color-danger-soft);
     color: var(--acx-color-danger-strong);
+  }
+
+  &__note-icon {
+    flex-shrink: 0;
+    margin-top: 0.1em;
   }
 
   &__timeline {
@@ -123,6 +131,6 @@
 }
 
 .acx-dashboard__stat-value--compact {
-  font-size: 1rem;
+  font-size: var(--acx-text-base);
   line-height: 1.3;
 }

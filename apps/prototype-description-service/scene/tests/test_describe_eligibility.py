@@ -26,6 +26,7 @@ from recognition.interface_adapters.http.deps import (
     get_optional_session,
     require_write_access,
 )
+from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quota
 from scene.application.description_adapter import AdapterResult
 from scene.domain.description import DescriptionAdapterKind
 from scene.interface_adapters.http.deps import get_description_adapter
@@ -106,6 +107,7 @@ def _client(adapter=None, auth_tenant=None):
     app = FastAPI()
     app.include_router(scene_router, prefix="/scene")
     app.dependency_overrides[require_write_access] = lambda: _Auth(tenant_claim=auth_tenant)
+    app.dependency_overrides[enforce_demo_quota] = lambda: None
     app.dependency_overrides[get_optional_session] = _session
     if adapter is not None:
         app.dependency_overrides[get_description_adapter] = lambda: adapter

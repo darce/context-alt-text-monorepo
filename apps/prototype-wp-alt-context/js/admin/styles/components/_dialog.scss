@@ -16,9 +16,9 @@
   max-height: 85vh;
   overflow: auto;
   background: var(--acx-color-surface-alt);
-  border-radius: 12px;
+  border-radius: var(--acx-radius-xl);
   padding: 20px;
-  box-shadow: var(--acx-shadow-dialog-primary), var(--acx-shadow-dialog-secondary);
+  box-shadow: var(--acx-shadow-3);
   z-index: 9999;
 }
 
@@ -28,14 +28,14 @@
 
 .acx-dialog__title {
   margin: 0 0 6px 0;
-  font-size: 16px;
-  font-weight: 600;
+  font-size: var(--acx-text-base);
+  font-weight: var(--acx-font-weight-semibold);
   color: var(--acx-color-text);
 }
 
 .acx-dialog__description {
   margin: 0 0 16px 0;
-  font-size: 13px;
+  font-size: var(--acx-text-sm);
   color: var(--acx-color-text-muted);
 }
 

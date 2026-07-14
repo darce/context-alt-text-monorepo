@@ -1,5 +1,6 @@
 import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
+import { AlertTriangle } from 'lucide-react';
 
 import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group';
 import type { RetentionMode } from '../api/recognition';
@@ -119,7 +120,7 @@ export const RetentionPage = (): React.JSX.Element => {
               <strong>{__('GDPR mode', 'alt-context')}</strong>
               <p>
                 {__(
-                  'Sets retention mode to \u201cDispose after acknowledgement\u201d, automatically disposing machine-derived data after WordPress acknowledges projection.',
+                  'Sets retention mode to \u201cDispose after confirmation\u201d, automatically disposing machine-derived data after WordPress confirms results.',
                   'alt-context',
                 )}
               </p>
@@ -168,7 +169,15 @@ export const RetentionPage = (): React.JSX.Element => {
             {sprintf(__('Last purge: %s', 'alt-context'), formatTimestamp(policy.last_purge_at))}
           </p>
           <p className="acx-retention__note acx-retention__note--danger">
-            {__('This action is irreversible and should be used carefully.', 'alt-context')}
+            <AlertTriangle
+              className="acx-retention__note-icon"
+              size={16}
+              aria-hidden="true"
+              data-testid="acx-retention-danger-icon"
+            />
+            <span>
+              {__('This action is irreversible and should be used carefully.', 'alt-context')}
+            </span>
           </p>
           <button
             type="button"

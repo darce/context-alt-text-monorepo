@@ -78,28 +78,20 @@ def _is_os_name(node: ast.AST | None) -> bool:
 
 def _is_os_environ(node: ast.AST | None) -> bool:
     # os.environ (attribute) OR a bare `environ` from `from os import environ`.
-    return (
-        isinstance(node, ast.Attribute)
-        and node.attr == "environ"
-        and _is_os_name(node.value)
-    ) or (isinstance(node, ast.Name) and node.id == "environ")
+    return (isinstance(node, ast.Attribute) and node.attr == "environ" and _is_os_name(node.value)) or (
+        isinstance(node, ast.Name) and node.id == "environ"
+    )
 
 
 def _is_os_getenv_call(node: ast.Call) -> bool:
     # os.getenv(...) OR a bare `getenv(...)` from `from os import getenv`.
-    return (
-        isinstance(node.func, ast.Attribute)
-        and node.func.attr == "getenv"
-        and _is_os_name(node.func.value)
-    ) or (isinstance(node.func, ast.Name) and node.func.id == "getenv")
+    return (isinstance(node.func, ast.Attribute) and node.func.attr == "getenv" and _is_os_name(node.func.value)) or (
+        isinstance(node.func, ast.Name) and node.func.id == "getenv"
+    )
 
 
 def _is_os_environ_get_call(node: ast.Call) -> bool:
-    return (
-        isinstance(node.func, ast.Attribute)
-        and node.func.attr == "get"
-        and _is_os_environ(node.func.value)
-    )
+    return isinstance(node.func, ast.Attribute) and node.func.attr == "get" and _is_os_environ(node.func.value)
 
 
 def _find_raw_secret_reads(source: str, *, rel_path: str) -> list[str]:
@@ -161,7 +153,7 @@ def test_provider_module_is_only_allowed_env_reader() -> None:
     """
     secrets_path = _service_root() / "shared" / "secrets.py"
     assert secrets_path.is_file()
-    assert _ALLOWED_SECRET_READ_PATHS == frozenset({"shared/secrets.py"})
+    assert frozenset({"shared/secrets.py"}) == _ALLOWED_SECRET_READ_PATHS
     source = secrets_path.read_text(encoding="utf-8")
     assert "class EnvSecretProvider" in source
     assert "os.environ" in source

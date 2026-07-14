@@ -35,6 +35,7 @@ class DescriptionProfile(StrEnum):
     FLORENCE_LARGE = "florence_large"
     GPU_PHI4 = "gpu_phi4"
     GPU_QWEN30B = "gpu_qwen30b"
+    GPU_QWEN30B_ENSEMBLE = "gpu_qwen30b_ensemble"
     HOSTED_GPT4O = "hosted_gpt4o"
 
 
@@ -99,6 +100,17 @@ PROFILE_SPECS: dict[DescriptionProfile, ProfileSpec] = {
     ),
     DescriptionProfile.GPU_QWEN30B: ProfileSpec(
         profile=DescriptionProfile.GPU_QWEN30B,
+        adapter_kind=DescriptionAdapterKind.GPU,
+        available=True,
+        model_id="Qwen3-VL-30B-A3B-Instruct",
+        model_revision=None,
+        model_version="Q4_K_M",
+    ),
+    # VLM-4 Slice 2b: same endpoint/model as GPU_QWEN30B. Only the ASYNC
+    # GPU-final resolver (get_async_gpu_description_adapter) wraps this profile
+    # in EnsembleDescriptionAdapter; the sync route stays raw (VLM4-RA-BR-02).
+    DescriptionProfile.GPU_QWEN30B_ENSEMBLE: ProfileSpec(
+        profile=DescriptionProfile.GPU_QWEN30B_ENSEMBLE,
         adapter_kind=DescriptionAdapterKind.GPU,
         available=True,
         model_id="Qwen3-VL-30B-A3B-Instruct",

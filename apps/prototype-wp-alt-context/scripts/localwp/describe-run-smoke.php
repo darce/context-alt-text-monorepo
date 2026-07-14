@@ -37,14 +37,21 @@ if ( empty( $admin_ids ) ) {
 
 wp_set_current_user( (int) $admin_ids[0] );
 
-$recognition_source = trim( (string) get_option( 'acx_recognition_source', '' ) );
-if ( '' === $recognition_source && defined( 'ACX_RECOGNITION_SOURCE' ) && is_string( ACX_RECOGNITION_SOURCE ) ) {
+// RECOG-1: hosted `service` is the canonical default; the `acx_recognition_source`
+// option tier is retired. `local` survives only as a dev-only hatch via the
+// ACX_RECOGNITION_SOURCE constant / acx_recognition_source filter. This smoke runs
+// against whatever source is effective (service by default, or local when the dev
+// hatch is active) rather than hard-requiring local. Endpoint routing and auth are
+// resolved by the plugin's recognition resolver during REST dispatch below.
+$recognition_source = '';
+if ( defined( 'ACX_RECOGNITION_SOURCE' ) && is_string( ACX_RECOGNITION_SOURCE ) ) {
 	$recognition_source = trim( ACX_RECOGNITION_SOURCE );
 }
-
-if ( 'local' !== $recognition_source ) {
-	fwrite( STDERR, sprintf( "Recognition source must be local for this smoke; current value: %s\n", '' === $recognition_source ? '<empty>' : $recognition_source ) );
-	exit( 1 );
+if ( '' === $recognition_source ) {
+	$recognition_source = trim( (string) apply_filters( 'acx_recognition_source', '' ) );
+}
+if ( '' === $recognition_source ) {
+	$recognition_source = 'service';
 }
 
 if ( $requested_media_id > 0 ) {

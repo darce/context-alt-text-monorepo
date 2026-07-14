@@ -58,7 +58,6 @@ export const fetchAcxSettings = async (page: Page): Promise<AcxSettingsSnapshot>
 
 export interface SaveAcxSettingsInput {
   url?: string;
-  recognition_source?: 'service' | 'local';
   api_key?: string;
 }
 
@@ -140,16 +139,16 @@ export const ensureServiceRecognitionTarget = async (
     return { changed: false, before, after: before };
   }
 
-  const needsSource = before.recognition_source !== 'service';
+  // RECOG-1: hosted service is the sole product target; only url/api_key are
+  // writable (the source toggle was retired).
   const needsUrl = before.url.trim() !== options.recognitionUrl.trim();
   const needsApiKey = Boolean(options.recognitionApiKey?.trim()) && !before.api_key_set;
 
-  if (!needsSource && !needsUrl && !needsApiKey) {
+  if (!needsUrl && !needsApiKey) {
     return { changed: false, before, after: before };
   }
 
   const payload: SaveAcxSettingsInput = {
-    recognition_source: 'service',
     url: options.recognitionUrl,
   };
 
@@ -163,41 +162,21 @@ export const ensureServiceRecognitionTarget = async (
   return { changed: true, before, after };
 };
 
-export const ensureLocalRecognitionWhenProbeFails = async (
-  page: Page,
-): Promise<{ restored: boolean; before: AcxSettingsSnapshot; after: AcxSettingsSnapshot; probeOutcome: string }> => {
-  const before = await fetchAcxSettings(page);
-  const probeOutcome = await probeAcxConnection(page);
+// RECOG-1: the keyless local fallback is gone — local recognition is now a
+// wp-config `define()` dev hatch, not a REST-settable product option, so an e2e
+// run can no longer flip the site to local. Evidence capture proceeds against the
+// hosted service (or offline) target.
 
-  if (probeOutcome === 'connected' || before.recognition_source !== 'service') {
-    return { restored: false, before, after: before, probeOutcome };
-  }
-
-  if (!isOptionOwnedSource(before.recognition_source_source)) {
-    return { restored: false, before, after: before, probeOutcome };
-  }
-
-  await saveAcxSettings(page, { recognition_source: 'local' });
-  const after = await fetchAcxSettings(page);
-
-  return { restored: true, before, after, probeOutcome };
-};
-
-export const restoreRecognitionSourceIfNeeded = async (page: Page, before: AcxSettingsSnapshot): Promise<boolean> => {
+export const restoreServiceUrlIfNeeded = async (page: Page, before: AcxSettingsSnapshot): Promise<boolean> => {
   if (!isOptionOwnedSource(before.recognition_source_source)) {
     return false;
   }
 
   const current = await fetchAcxSettings(page);
-  if (current.recognition_source === before.recognition_source && current.url.trim() === before.url.trim()) {
+  if (current.url.trim() === before.url.trim()) {
     return false;
   }
 
-  const payload: SaveAcxSettingsInput = {
-    recognition_source: before.recognition_source,
-    url: before.url,
-  };
-
-  await saveAcxSettings(page, payload);
+  await saveAcxSettings(page, { url: before.url });
   return true;
 };

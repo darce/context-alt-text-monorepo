@@ -173,11 +173,19 @@ describe('RetentionPage', () => {
     vi.stubGlobal('Blob', blobMock);
   });
 
+  it('pairs the purge danger note with an icon second channel', () => {
+    render(<RetentionPage />);
+
+    expect(screen.getByText(/This action is irreversible/i)).toBeInTheDocument();
+    expect(screen.getByTestId('acx-retention-danger-icon')).toBeInTheDocument();
+    expect(document.querySelector('.acx-retention__note--danger')).toBeTruthy();
+  });
+
   it('renders policy state and audit history', () => {
     render(<RetentionPage />);
 
     expect(screen.getByText('Retention & Audit Controls')).toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: /Dispose after acknowledgement/ })).toBeChecked();
+    expect(screen.getByRole('radio', { name: /Dispose after confirmation/ })).toBeChecked();
     expect(screen.getByText('Showing the five most recent audit events.')).toBeInTheDocument();
     expect(screen.getByText('policy_updated')).toBeInTheDocument();
     expect(screen.getByText('retention_mode: dispose_after_ack · previous: retain_all')).toBeInTheDocument();

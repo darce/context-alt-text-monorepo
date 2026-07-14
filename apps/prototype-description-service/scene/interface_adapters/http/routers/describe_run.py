@@ -13,13 +13,14 @@ from starlette.datastructures import UploadFile
 from db.tenant_context import require_tenant_record, set_tenant_context
 from recognition.infrastructure.repositories.audit_repository import AuditRepository
 from recognition.interface_adapters.http.deps import get_optional_session, require_write_access
-from recognition.shared.db.dialect import is_postgres
+from recognition.interface_adapters.http.deps.demo_quota import maybe_consume_demo_quota
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.describe_run_worker import DescribeItemOutcome, run_describe_job
 from scene.application.description_repository import ImageDescriptionRepository
 from scene.application.visual_facts_service import VisualFactsService
 from scene.config.settings import DescriptionSettings
 from scene.domain.describe_run import (
+    RunKind,
     compute_eta_seconds,
 )
 from scene.interface_adapters.http.deps import get_description_adapter
@@ -27,6 +28,7 @@ from scene.interface_adapters.http.routers.describe import (
     _DescriptionAuditSink,
     _DescriptionMetricsSink,
     _generation_timeout_seconds,
+    worker_session_factory,
 )
 from scene.interface_adapters.http.schemas.responses import (
     DescribeRunItemResponse,
@@ -94,20 +96,6 @@ async def _prepare_repo(*, session, auth, tenant_id: uuid.UUID) -> DescribeRunRe
     return DescribeRunRepository(session)
 
 
-def _worker_session_factory(session) -> async_sessionmaker[AsyncSession]:
-    """Own an independent session factory for background/stream work.
-
-    Mirrors analyze.py: derive from the request session's bind for the
-    SQLite/test path, else fall back to the process-wide Postgres factory so
-    worker commits use their own connection/transaction.
-    """
-    if session is not None and getattr(session, "bind", None) is not None and not is_postgres(session):
-        return async_sessionmaker(bind=session.bind, expire_on_commit=False)
-    from db.session import async_session_factory
-
-    return async_session_factory
-
-
 def _build_describe_one(*, session_factory: async_sessionmaker[AsyncSession], tenant_id: uuid.UUID):
     """Real per-item describe adapter: load bytes -> VisualFactsService -> outcome.
 
@@ -119,9 +107,7 @@ def _build_describe_one(*, session_factory: async_sessionmaker[AsyncSession], te
     settings = DescriptionSettings()
     timeout = _generation_timeout_seconds(settings, adapter)
 
-    async def describe_one(
-        media_id: int, image_bytes: bytes | None, content_type: str | None
-    ) -> DescribeItemOutcome:
+    async def describe_one(media_id: int, image_bytes: bytes | None, content_type: str | None) -> DescribeItemOutcome:
         if not image_bytes:
             raise ValueError(f"no image bytes stored for media_id={media_id}")
         async with session_factory() as svc_session:
@@ -244,9 +230,18 @@ async def create_describe_run(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             f"missing image_<media_id> part(s) for media_ids: {missing}",
         )
+    if not media_ids:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "'media_ids' must be non-empty",
+        )
 
     await set_tenant_context(session, tenant_id)
     await require_tenant_record(session, tenant_id)
+    # Charge unique media ids only (order-preserving dedupe); durable at dispatch.
+    unique_media_ids = list(dict.fromkeys(media_ids))
+    await maybe_consume_demo_quota(auth, session, units=len(unique_media_ids))
+    await set_tenant_context(session, tenant_id)
     repo = DescribeRunRepository(session)
     try:
         run_id = await repo.create_run(
@@ -259,7 +254,7 @@ async def create_describe_run(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     await session.commit()
 
-    session_factory = _worker_session_factory(session)
+    session_factory = worker_session_factory(session)
     background_tasks.add_task(
         run_describe_job,
         tenant_id=tenant_id,
@@ -274,6 +269,12 @@ async def create_describe_run(
     return _run_response(run)
 
 
+def _reject_single_run(run) -> None:
+    """Bulk wire surface is disjoint from async single-runs (design (g))."""
+    if run is not None and run.run_kind == RunKind.SINGLE:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "describe run not found")
+
+
 @router.get("/describe/run/{run_id}", response_model=DescribeRunResponse)
 async def get_describe_run(
     run_id: uuid.UUID,
@@ -285,6 +286,7 @@ async def get_describe_run(
     run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "describe run not found")
+    _reject_single_run(run)
     return _run_response(run)
 
 
@@ -301,6 +303,7 @@ async def list_describe_run_items(
     run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "describe run not found")
+    _reject_single_run(run)
     items = await repo.list_run_items(tenant_id=tenant_id, run_id=run_id)
     return _run_items_response(run, items)
 
@@ -313,6 +316,10 @@ async def cancel_describe_run(
 ) -> DescribeRunResponse:
     tenant_id = _require_tenant_uuid(auth)
     repo = await _prepare_repo(session=session, auth=auth, tenant_id=tenant_id)
+    run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
+    if run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "describe run not found")
+    _reject_single_run(run)
     if not await repo.request_cancel(tenant_id=tenant_id, run_id=run_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "describe run not found")
     await session.commit()

@@ -142,7 +142,7 @@ describe('DeadLetterPanel', () => {
 
     renderPanel();
 
-    expect(screen.getByText('Loading failed operations…')).toBeInTheDocument();
+    expect(screen.getByText('Loading failed changes…')).toBeInTheDocument();
   });
 
   it('renders error state', () => {
@@ -156,7 +156,7 @@ describe('DeadLetterPanel', () => {
 
     renderPanel();
 
-    expect(screen.getByText('Unable to load failed operations.')).toBeInTheDocument();
+    expect(screen.getByText('Unable to load failed changes.')).toBeInTheDocument();
   });
 
   it('renders empty state', () => {
@@ -168,15 +168,15 @@ describe('DeadLetterPanel', () => {
 
     renderPanel();
 
-    expect(screen.getByText('No failed replay operations.')).toBeInTheDocument();
-    expect(screen.getByText('Showing 0-0 of 0 failed operations.')).toBeInTheDocument();
+    expect(screen.getByText('No failed changes.')).toBeInTheDocument();
+    expect(screen.getByText('Showing 0-0 of 0 failed changes.')).toBeInTheDocument();
   });
 
   it('renders failed operations with metadata and payload summary', () => {
     renderPanel();
 
-    expect(screen.getByText('Failed replay operations')).toBeInTheDocument();
-    expect(screen.getByText('Showing 1-1 of 1 failed operations.')).toBeInTheDocument();
+    expect(screen.getByText('Failed changes')).toBeInTheDocument();
+    expect(screen.getByText('Showing 1-1 of 1 failed changes.')).toBeInTheDocument();
     expect(screen.getAllByText('Cluster label update')).toHaveLength(2);
     expect(screen.getAllByText('Entity: cluster-1 (cluster)')).toHaveLength(2);
     expect(screen.getByText('Attempts: 5')).toBeInTheDocument();
@@ -188,8 +188,8 @@ describe('DeadLetterPanel', () => {
   it('renders outbox timeline entries with status and acknowledgement metadata', () => {
     renderPanel();
 
-    expect(screen.getByText('Outbox operation timeline')).toBeInTheDocument();
-    expect(screen.getByText('Showing 1-1 of 1 operations (all statuses).')).toBeInTheDocument();
+    expect(screen.getByText('Pending changes timeline')).toBeInTheDocument();
+    expect(screen.getByText('Showing 1-1 of 1 changes (all statuses).')).toBeInTheDocument();
     expect(screen.getByText('Status: acknowledged')).toBeInTheDocument();
     expect(screen.getByText(/Acknowledged:/)).toBeInTheDocument();
   });
@@ -258,7 +258,7 @@ describe('DeadLetterPanel', () => {
 
     renderPanel();
 
-    expect(screen.getByText('Topology commands: pending 2, applied 1, failed 1, conflicts 3.')).toBeInTheDocument();
+    expect(screen.getByText('Sync backlog: 2 waiting, 1 applied, 1 failed, 3 conflicts.')).toBeInTheDocument();
   });
 
   it('renders pagination state and advances to the next page', () => {
@@ -284,11 +284,11 @@ describe('DeadLetterPanel', () => {
 
     renderPanel();
 
-    expect(screen.getByText('Showing 1-1 of 21 failed operations.')).toBeInTheDocument();
+    expect(screen.getByText('Showing 1-1 of 21 failed changes.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Previous' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
 
-    expect(screen.getByText('Showing 21-21 of 21 failed operations.')).toBeInTheDocument();
+    expect(screen.getByText('Showing 21-21 of 21 failed changes.')).toBeInTheDocument();
     expect(screen.getByText('Entity: cluster-21 (cluster)')).toBeInTheDocument();
   });
 
@@ -307,7 +307,7 @@ describe('DeadLetterPanel', () => {
       expect(mutateAsync).toHaveBeenCalledWith(11);
     });
 
-    expect(screen.getByText('Operation moved back to pending replay.')).toBeInTheDocument();
+    expect(screen.getByText('Change queued to retry.')).toBeInTheDocument();
   });
 
   it('shows mutation error feedback when retry fails', async () => {
@@ -348,7 +348,7 @@ describe('DeadLetterPanel', () => {
       expect(mutateAsync).toHaveBeenCalledWith(11);
     });
 
-    expect(screen.getByText('Operation discarded from dead-letter queue.')).toBeInTheDocument();
+    expect(screen.getByText('Failed change discarded.')).toBeInTheDocument();
   });
 
   it('shows mutation error feedback when discard fails', async () => {

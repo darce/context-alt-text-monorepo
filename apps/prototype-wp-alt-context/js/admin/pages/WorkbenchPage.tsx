@@ -4,7 +4,7 @@ import { __, sprintf } from '@wordpress/i18n';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { SyncStatusIndicator } from './workbench/SyncStatusIndicator';
 import { ScanTabContent } from './workbench/ScanTabContent';
-import { ConfirmTabContent } from './workbench/ConfirmTabContent';
+import { AdvancedDrawer } from './workbench/AdvancedDrawer';
 import { ConflictInbox } from './workbench/ConflictInbox';
 import { DeadLetterPanel } from './workbench/DeadLetterPanel';
 import { WorkbenchProvider, useWorkbenchContext, TAB_IDS, type WorkbenchTab } from './workbench/WorkbenchContext';
@@ -25,12 +25,6 @@ const WORKBENCH_SECTIONS: WorkbenchSection[] = [
       'Scan your library for images that still need descriptive metadata, filtering by status or search term.',
       'alt-context',
     ),
-  },
-  {
-    id: TAB_IDS.confirm,
-    label: __('Confirm', 'alt-context'),
-    title: __('Confirm & Publish', 'alt-context'),
-    body: __('Compare before/after states, spot-check compliance, and push updates to WordPress media.', 'alt-context'),
   },
 ];
 
@@ -59,7 +53,6 @@ const WorkbenchPageContent = (): React.JSX.Element => {
   } = useWorkbenchContext();
 
   const scanSection = WORKBENCH_SECTIONS[0];
-  const confirmSection = WORKBENCH_SECTIONS[1];
 
   return (
     <section className="acx-workbench" aria-labelledby="acx-workbench-title">
@@ -95,7 +88,7 @@ const WorkbenchPageContent = (): React.JSX.Element => {
                 <h2 className="acx-workbench__overlay-title">
                   {activeOverlay === 'conflicts'
                     ? __('Conflict Inbox', 'alt-context')
-                    : __('Dead-Letter Queue', 'alt-context')}
+                    : __('Failed Sync Queue', 'alt-context')}
                 </h2>
                 <button type="button" className="button button-link" onClick={() => setActiveOverlay(null)}>
                   {__('Close', 'alt-context')}
@@ -109,11 +102,16 @@ const WorkbenchPageContent = (): React.JSX.Element => {
               <p>
                 {sprintf(
                   /* translators: %s is the effective local recognition service URL. */
-                  __('Alt Context is targeting the local recognition service at %s.', 'alt-context'),
+                  __('Alt Context is targeting the local recognition service at %s via the developer hatch.', 'alt-context'),
                   effectiveTargetUrl,
                 )}
               </p>
-              <p>{__('Use Settings to switch back to the hosted recognition service.', 'alt-context')}</p>
+              <p>
+                {__(
+                  'Remove the ACX_RECOGNITION_SOURCE developer constant to use the hosted recognition service.',
+                  'alt-context',
+                )}
+              </p>
             </div>
           )}
           {!isOnline && (
@@ -139,16 +137,7 @@ const WorkbenchPageContent = (): React.JSX.Element => {
             <ScanTabContent />
           </TabsContent>
 
-          <TabsContent
-            value={TAB_IDS.confirm}
-            className="acx-workbench__panel"
-            aria-live="polite"
-            aria-labelledby="acx-workbench-section-confirm"
-          >
-            <h2 id="acx-workbench-section-confirm">{confirmSection.title}</h2>
-            <p>{confirmSection.body}</p>
-            <ConfirmTabContent />
-          </TabsContent>
+          <AdvancedDrawer />
         </div>
       </Tabs>
     </section>

@@ -32,9 +32,7 @@ async def test_provision_writes_audit_under_rls_bypass(pg_migrated_engine) -> No
     try:
         async with session_factory() as session:
             await enable_rls_bypass(session)
-            result = await provision_customer(
-                session, email="pg-guard@example.com", plan="pro", label="PG Guard"
-            )
+            result = await provision_customer(session, email="pg-guard@example.com", plan="pro", label="PG Guard")
         assert result.status == "created"
         assert result.raw_key is not None
 
@@ -43,8 +41,7 @@ async def test_provision_writes_audit_under_rls_bypass(pg_migrated_engine) -> No
             count = (
                 await session.execute(
                     text(
-                        "SELECT count(*) FROM audit_events "
-                        "WHERE tenant_id = :t AND event_type = 'customer.provision'"
+                        "SELECT count(*) FROM audit_events WHERE tenant_id = :t AND event_type = 'customer.provision'"
                     ),
                     {"t": result.tenant_id},
                 )

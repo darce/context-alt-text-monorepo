@@ -37,7 +37,6 @@ export const renderBanner = (result: TestConnectionResponse): BannerCopy => {
     return unknownOutcomeBanner();
   }
   const outcome: TestConnectionOutcomeValue = result.outcome;
-  const isLocalProbe = result.probe_mode === 'local_liveness';
   switch (outcome) {
     case TestConnectionOutcome.CONNECTED: {
       const pairingError =
@@ -55,15 +54,8 @@ export const renderBanner = (result: TestConnectionResponse): BannerCopy => {
       return {
         tone: 'success',
         role: 'status',
-        primary: isLocalProbe
-          ? __('Local recognition service is reachable.', 'alt-context')
-          : __('Connection successful.', 'alt-context'),
-        remediation: isLocalProbe
-          ? __(
-              'Scans route to this endpoint while recognition source is Local. Start the scan worker locally for processing.',
-              'alt-context',
-            )
-          : __('The plugin authenticated against the recognition service and the pool is healthy.', 'alt-context'),
+        primary: __('Connection successful.', 'alt-context'),
+        remediation: __('The plugin authenticated against the recognition service and the pool is healthy.', 'alt-context'),
       };
     }
     case TestConnectionOutcome.NOT_CONFIGURED:
@@ -154,15 +146,8 @@ export const renderBanner = (result: TestConnectionResponse): BannerCopy => {
       return {
         tone: 'error',
         role: 'alert',
-        primary: isLocalProbe
-          ? __('Could not reach the local recognition service.', 'alt-context')
-          : __('Could not reach the recognition service.', 'alt-context'),
-        remediation: isLocalProbe
-          ? __(
-              'Start the local description service (make serve), confirm the Local service URL matches its port, then test again.',
-              'alt-context',
-            )
-          : __('Verify the API URL above and confirm the site can reach the recognition host.', 'alt-context'),
+        primary: __('Could not reach the recognition service.', 'alt-context'),
+        remediation: __('Verify the API URL above and confirm the site can reach the recognition host.', 'alt-context'),
       };
     case TestConnectionOutcome.TLS_ERROR:
       return {

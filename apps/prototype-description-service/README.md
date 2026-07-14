@@ -95,8 +95,14 @@ per-secret ownership matrix (domain / owner / source-of-truth / consumer / prod
 target) is [`docs/secrets-inventory.md`](docs/secrets-inventory.md).
 
 - **Local onboarding — one command:** `make dev-setup` copies `.env.example` →
-  `.env` (never clobbers an existing one), then mints a usable local API key.
-  Mint additional keys with `make dev-mint-key`.
+  `.env` (never clobbers an existing one), then mints a **local test fixture**
+  API key. Mint additional local fixture keys with `make dev-mint-key`. Both
+  are **local fixtures only** — not real/production tenants.
+- **Real/production tenant keys are minted against the OCI/prod `--env prod`
+  database**, the canonical issuer of record — via `make provision-customer
+  EMAIL=<e> ENV=prod` (or the OCI `/admin` console / `scripts/manage_api_keys.py
+  --env prod`). `make dev-mint-key` and the local `/admin` console issue local
+  fixtures only, never real customer keys.
 - **Tenant API keys are DB-only**, minted/revoked via the `/admin` console (or
   `scripts/manage_api_keys.py`). The static `RECOGNITION_ALLOWED_API_KEYS`
   env-var bypass is **retired** (decision #1882) — there is no plaintext key
@@ -217,6 +223,11 @@ The env-gated operator `/admin` console (create tenants, mint/revoke API keys)
 is off by default. These targets wrap `scripts/admin_dev.sh` to bring it up
 locally and exercise it — no Tailscale or compose overlay needed (that path is
 prod-only; see [the runbook](../../docs/runbooks/admin-tenant-keys.md)).
+
+Keys minted via the **local** `admin-dev` console are **local test fixtures
+only**. Real/production tenant keys are minted against the OCI/prod `--env prod`
+database (the canonical issuer of record) — via the prod `/admin` overlay or
+`make provision-customer EMAIL=<e> ENV=prod`.
 
 ```bash
 # Enable admin in .env (sets RECOGNITION_ADMIN_ENABLED=true + generates a

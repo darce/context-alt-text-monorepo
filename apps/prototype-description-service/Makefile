@@ -12,8 +12,8 @@ help:
 	@echo "  make install    - Install core dependencies only"
 	@echo "  make postgres-start - Start local PostgreSQL via Homebrew (if needed)"
 	@echo "  make dev-ready  - Prepare local env for development/testing (no dependency install)"
-	@echo "  make dev-setup  - Onboard local env (.env from example if absent, then mint a DB API key)"
-	@echo "  make dev-mint-key - Bootstrap local tenant + mint a DB API key (prints raw key once)"
+	@echo "  make dev-setup  - Onboard local env (.env from example if absent, then mint a LOCAL TEST FIXTURE key)"
+	@echo "  make dev-mint-key - LOCAL TEST FIXTURES ONLY: bootstrap local tenant + mint a DB API key (not a real tenant)"
 	@echo "  make serve      - Start PostgreSQL + development server + scan worker"
 	@echo "  make stop       - Stop the development server"
 	@echo "  make check      - Run linting, type checking, and tests"
@@ -33,7 +33,7 @@ help:
 	@echo "  make admin-open   - Open the /admin console in a browser"
 	@echo "  make admin-status - Show service/admin reachability state"
 	@echo "  make admin-down   - Stop the local service"
-	@echo "  make provision-customer EMAIL=<e> [PLAN=pro] [LABEL=\"Name\"] [ENV=local] - Concierge mint real tenant+key (AP-7)"
+	@echo "  make provision-customer EMAIL=<e> ENV=prod [PLAN=pro] [LABEL=\"Name\"] - Concierge mint real tenant+key (AP-7; ENV=prod required)"
 	@echo "  make lane-*     - Worktree lane commands (forwarded to root Makefile; run 'make help' from repo root for full list)"
 	@echo "  make worker-daemon* - Worker daemon controls (run/status/stop/resume/tail) forwarded to root Makefile"
 	@echo ""
@@ -109,13 +109,16 @@ serve: dev-ready
 stop:
 	@./scripts/start_prototype_local.sh stop
 
-# Mint a DB-backed local API key (replaces the retired RECOGNITION_ALLOWED_API_KEYS allowlist).
-# Prints the raw key once on stdout (api_key=...). Override tenant/site if needed:
+# LOCAL TEST FIXTURES ONLY — mints a DB-backed key for the fixed local dev tenant.
+# This is NOT a real/production tenant; real tenants are minted against the OCI/prod
+# --env prod DB via `make provision-customer ENV=prod`. Prints the raw key once on
+# stdout (api_key=...). Override tenant/site if needed:
 #   make dev-mint-key DEV_TENANT_ID=<uuid> DEV_SITE_URL=http://localhost:10003
 DEV_TENANT_ID ?= 00000000-0000-4000-8000-000000000001
 DEV_SITE_URL ?= http://localhost:10003
 
 dev-mint-key:
+	@echo "⚠ dev-mint-key: LOCAL TEST FIXTURES ONLY — not a real/production tenant. Real tenants: make provision-customer ENV=prod" >&2
 	@echo "Bootstrapping local tenant $(DEV_TENANT_ID) at $(DEV_SITE_URL)..."
 	@$(UV_RUN) python -m scripts.manage_api_keys --env local tenant create \
 		--tenant $(DEV_TENANT_ID) --site-url $(DEV_SITE_URL)
@@ -123,8 +126,10 @@ dev-mint-key:
 	@$(UV_RUN) python -m scripts.manage_api_keys --env local create --tenant $(DEV_TENANT_ID)
 
 # One-shot local onboarding: seed .env from the example (never clobber), remind
-# which values matter, then mint a DB API key. Safe to re-run (idempotent .env).
+# which values matter, then mint a LOCAL TEST FIXTURE key. Safe to re-run
+# (idempotent .env). LOCAL TEST FIXTURES ONLY — not a real/production tenant.
 dev-setup:
+	@echo "⚠ dev-setup: LOCAL TEST FIXTURES ONLY — mints a local dev fixture key, not a real/production tenant. Real tenants: make provision-customer ENV=prod" >&2
 	@if [ -f .env ]; then \
 		echo "✓ .env already present — leaving it unchanged (idempotent)"; \
 	elif [ -f .env.example ]; then \
@@ -140,7 +145,7 @@ dev-setup:
 	@echo "  RECOGNITION_RUNTIME_MODE=development             — keep local (not production)"
 	@echo "  RECOGNITION_AUTH_ENABLED=1                       — require bearer keys"
 	@echo "  RECOGNITION_ADMIN_*                              — optional; use make admin-dev to enable /admin"
-	@echo "  Tenant API keys                                  — mint via make dev-mint-key (DB-only; no env allowlist)"
+	@echo "  Tenant API keys (LOCAL FIXTURES)                 — mint via make dev-mint-key (DB-only; local fixtures, not real tenants)"
 	@echo ""
 	@echo "Minting a local tenant API key next (requires Postgres; run make postgres-start / make dev-ready first if needed)..."
 	@$(MAKE) dev-mint-key DEV_TENANT_ID="$(DEV_TENANT_ID)" DEV_SITE_URL="$(DEV_SITE_URL)"
@@ -162,14 +167,21 @@ admin-test:
 
 # AP-7: mint a real (non-demo) customer tenant + API key via the shared minter.
 # Idempotent on EMAIL. Prints raw key once + WP install snippet.
-# Usage: make provision-customer EMAIL=c@example.com PLAN=pro LABEL="Acme" [ENV=local]
+# ENV must be set explicitly to `prod` — this target refuses to default to the
+# local DB so real customers are never minted against a dev database by omission.
+# Usage: make provision-customer EMAIL=c@example.com ENV=prod PLAN=pro LABEL="Acme"
 provision-customer:
 	@if [ -z "$(EMAIL)" ]; then \
-		echo "EMAIL is required. Example: make provision-customer EMAIL=customer@example.com PLAN=pro LABEL=\"Acme Co\""; \
+		echo "EMAIL is required. Example: make provision-customer EMAIL=customer@example.com ENV=prod PLAN=pro LABEL=\"Acme Co\""; \
+		exit 1; \
+	fi
+	@if [ "$(ENV)" != "prod" ]; then \
+		echo "✗ provision-customer mints REAL customer tenants and requires ENV=prod (got ENV='$(ENV)'). Refusing to default to the local DB." >&2; \
+		echo "  For local test fixtures use: make dev-mint-key" >&2; \
 		exit 1; \
 	fi
 	@$(UV_RUN) python -m scripts.provision_customer \
-		--env "$(or $(ENV),local)" \
+		--env "$(ENV)" \
 		--email "$(EMAIL)" \
 		--plan "$(or $(PLAN),pro)" \
 		$(if $(LABEL),--label "$(LABEL)",)

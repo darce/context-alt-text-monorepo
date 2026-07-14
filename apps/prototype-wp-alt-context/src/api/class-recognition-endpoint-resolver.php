@@ -54,11 +54,8 @@ final class RecognitionEndpointResolver {
 			return array( 'value' => $filter, 'source' => 'filter' );
 		}
 
-		$option = trim( (string) get_option( 'acx_recognition_local_url', '' ) );
-		if ( '' !== $option && $this->is_valid_base_url( $option ) ) {
-			return array( 'value' => $option, 'source' => 'option' );
-		}
-
+		// Option tier retired (RECOG-1): local is a dev-only code hatch reachable via the
+		// ACX_RECOGNITION_LOCAL_URL constant or the acx_recognition_local_url filter only.
 		return array( 'value' => self::DEFAULT_LOCAL_URL, 'source' => 'default' );
 	}
 
@@ -76,12 +73,9 @@ final class RecognitionEndpointResolver {
 			return array( 'value' => $filter, 'source' => 'filter' );
 		}
 
-		$option = trim( (string) get_option( 'acx_recognition_source', '' ) );
-		if ( $this->is_valid_recognition_source( $option ) ) {
-			return array( 'value' => $option, 'source' => 'option' );
-		}
-
-		return array( 'value' => 'local', 'source' => 'default' );
+		// Option tier retired (RECOG-1): the product no longer writes acx_recognition_source.
+		// Local remains a dev-only hatch via the ACX_RECOGNITION_SOURCE constant / filter above.
+		return array( 'value' => 'service', 'source' => 'default' );
 	}
 
 	public function get_recognition_source(): string {
@@ -97,22 +91,25 @@ final class RecognitionEndpointResolver {
 	}
 
 	/**
+	 * Settings GET snapshot. RECOG-1 retired the product-facing local target, so
+	 * `local_url`/`local_url_source` are no longer emitted; `recognition_source`
+	 * and `recognition_source_source` remain as read-only dev-hatch diagnostics.
+	 * When the dev hatch is active (constant/filter source=local), the effective
+	 * target still resolves to the local URL chain internally.
+	 *
 	 * @return array{
 	 *   effective_target_url: string,
 	 *   effective_target_mode: string,
 	 *   service_url: string,
 	 *   service_url_source: string,
-	 *   local_url: string,
-	 *   local_url_source: string,
 	 *   recognition_source: string,
 	 *   recognition_source_source: string
 	 * }
 	 */
 	public function resolve_settings_snapshot(): array {
 		$service_url  = $this->resolve_service_url_source();
-		$local_url    = $this->resolve_local_url_source();
 		$source       = $this->resolve_recognition_source_source();
-		$effective      = 'local' === $source['value'] ? $local_url['value'] : $service_url['value'];
+		$effective      = 'local' === $source['value'] ? $this->resolve_local_url_source()['value'] : $service_url['value'];
 		$effective_mode = $source['value'];
 
 		return array(
@@ -120,8 +117,6 @@ final class RecognitionEndpointResolver {
 			'effective_target_mode'       => $effective_mode,
 			'service_url'                 => $service_url['value'],
 			'service_url_source'          => $service_url['source'],
-			'local_url'                   => $local_url['value'],
-			'local_url_source'            => $local_url['source'],
 			'recognition_source'          => $source['value'],
 			'recognition_source_source'   => $source['source'],
 		);

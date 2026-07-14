@@ -16,6 +16,14 @@ use WP_REST_Request;
  */
 class SyncStatusControllerTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        // RECOG-1: default source flipped to 'service' with an empty default URL.
+        // The lazy SyncPullJob path proxies to the effective target, so pin a service URL.
+        $this->setOption('acx_recognition_url', 'https://recognition.test');
+    }
+
     public function testGetSyncStatusReturnsSnapshotMetadata(): void
     {
         $syncRepo = new class() extends NullSyncStateRepository {

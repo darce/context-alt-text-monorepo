@@ -1,17 +1,10 @@
 import { useEffect, useReducer } from 'react';
 
-import {
-  RecognitionSource,
-  type RecognitionSourceValue,
-  type SettingsResponse,
-  type TestConnectionResponse,
-} from '../../api/settingsApi';
+import type { SettingsResponse, TestConnectionResponse } from '../../api/settingsApi';
 import type { BannerTone } from './testConnectionBanner';
 
 interface SettingsPageState {
   url: string;
-  localUrl: string;
-  recognitionSource: RecognitionSourceValue;
   apiKey: string;
   descriptionBudgetMaxAttempts: string;
   saveMessage: string;
@@ -22,8 +15,6 @@ interface SettingsPageState {
 type SettingsPageAction =
   | { type: 'syncFromSettings'; settings: SettingsResponse }
   | { type: 'setUrl'; value: string }
-  | { type: 'setLocalUrl'; value: string }
-  | { type: 'setRecognitionSource'; value: RecognitionSourceValue }
   | { type: 'setApiKey'; value: string }
   | { type: 'setDescriptionBudgetMaxAttempts'; value: string }
   | { type: 'clearSaveMessage' }
@@ -33,8 +24,6 @@ type SettingsPageAction =
 
 const INITIAL_STATE: SettingsPageState = {
   url: '',
-  localUrl: '',
-  recognitionSource: RecognitionSource.SERVICE,
   apiKey: '',
   descriptionBudgetMaxAttempts: '-1',
   saveMessage: '',
@@ -48,17 +37,11 @@ const reducer = (state: SettingsPageState, action: SettingsPageAction): Settings
       return {
         ...state,
         url: action.settings.url,
-        localUrl: action.settings.local_url,
-        recognitionSource: action.settings.recognition_source,
         apiKey: '',
         descriptionBudgetMaxAttempts: String(action.settings.description_budget.max_attempts),
       };
     case 'setUrl':
       return { ...state, url: action.value };
-    case 'setLocalUrl':
-      return { ...state, localUrl: action.value };
-    case 'setRecognitionSource':
-      return { ...state, recognitionSource: action.value };
     case 'setApiKey':
       return { ...state, apiKey: action.value };
     case 'setDescriptionBudgetMaxAttempts':

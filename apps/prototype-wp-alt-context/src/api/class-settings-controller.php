@@ -103,8 +103,6 @@ class SettingsController {
 			array(
 				'url'                       => $snapshot['service_url'],
 				'url_source'                => $snapshot['service_url_source'],
-				'local_url'                 => $snapshot['local_url'],
-				'local_url_source'          => $snapshot['local_url_source'],
 				'effective_target_url'      => $snapshot['effective_target_url'],
 				'effective_target_mode'     => $snapshot['effective_target_mode'],
 				'recognition_source'        => $snapshot['recognition_source'],
@@ -138,36 +136,15 @@ class SettingsController {
 			$saved[] = 'url';
 		}
 
-		if ( isset( $body['recognition_source'] ) && is_string( $body['recognition_source'] ) ) {
-			$recognition_source = trim( $body['recognition_source'] );
-			if ( ! $this->is_valid_recognition_source( $recognition_source ) ) {
-				return new WP_Error(
-					'invalid_recognition_source',
-					'Recognition source must be either service or local.',
-					array( 'status' => 400 )
-				);
-			}
-			update_option( 'acx_recognition_source', $recognition_source );
-			$saved[] = 'recognition_source';
-		}
+		// RECOG-1: the product no longer writes acx_recognition_source or
+		// acx_recognition_local_url. Local remains a dev-only code hatch reachable
+		// via the ACX_RECOGNITION_SOURCE / ACX_RECOGNITION_LOCAL_URL constants (or
+		// their filters), never the Settings surface.
 
 		if ( isset( $body['api_key'] ) && is_string( $body['api_key'] ) ) {
 			$key = trim( $body['api_key'] );
 			update_option( 'acx_recognition_api_key', $key );
 			$saved[] = 'api_key';
-		}
-
-		if ( isset( $body['local_url'] ) && is_string( $body['local_url'] ) ) {
-			$local_url = trim( $body['local_url'] );
-			if ( '' !== $local_url && ! $this->is_valid_url( $local_url ) ) {
-				return new WP_Error(
-					'invalid_local_url',
-					'The local recognition URL must be a valid HTTP or HTTPS URL.',
-					array( 'status' => 400 )
-				);
-			}
-			update_option( 'acx_recognition_local_url', $local_url );
-			$saved[] = 'local_url';
 		}
 
 		if ( isset( $body['description_budget'] ) && is_array( $body['description_budget'] ) ) {
@@ -214,17 +191,14 @@ class SettingsController {
 	}
 
 	public function test_connection( WP_REST_Request $request ): WP_REST_Response {
-		$snapshot     = $this->endpoint_resolver->resolve_settings_snapshot();
-		$probe_target = $request->get_param( 'probe_target' );
-		if ( is_string( $probe_target ) && in_array( $probe_target, array( 'local', 'service' ), true ) ) {
-			$mode = $probe_target;
-			$url  = 'local' === $mode ? $snapshot['local_url'] : $snapshot['service_url'];
-		} else {
-			$mode = $snapshot['effective_target_mode'];
-			$url  = $snapshot['effective_target_url'];
-		}
+		// RECOG-1: the keyless local `/health` liveness probe and the
+		// probe_target=local dispatch are retired. Test always exercises the
+		// authenticated service probe against the effective target (the dev hatch,
+		// if active, routes the effective target to local and is probed with a key).
+		$snapshot = $this->endpoint_resolver->resolve_settings_snapshot();
+		$url      = $snapshot['effective_target_url'];
 
-		if ( 'service' === $mode && '' === $snapshot['service_url'] ) {
+		if ( '' === $url ) {
 			return new WP_REST_Response(
 				array(
 					'outcome'     => ProbeOutcome::NOT_CONFIGURED,
@@ -233,22 +207,6 @@ class SettingsController {
 				),
 				200
 			);
-		}
-
-		if ( 'local' === $mode ) {
-			$health_url = rtrim( $url, '/' ) . '/health';
-			$response   = wp_remote_get(
-				$health_url,
-				array(
-					'timeout' => 10,
-				)
-			);
-
-			$payload = $this->build_probe_payload( $response );
-			$payload['probe_mode'] = 'local_liveness';
-			$payload['probed_url'] = $health_url;
-
-			return new WP_REST_Response( $payload, 200 );
 		}
 
 		$key_resolution = $this->resolve_key_source();
@@ -582,9 +540,5 @@ class SettingsController {
 			return false;
 		}
 		return isset( $parts['scheme'], $parts['host'] ) && in_array( $parts['scheme'], array( 'http', 'https' ), true );
-	}
-
-	private function is_valid_recognition_source( string $source ): bool {
-		return in_array( $source, array( 'service', 'local' ), true );
 	}
 }

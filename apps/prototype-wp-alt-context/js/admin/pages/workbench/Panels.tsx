@@ -3,6 +3,7 @@ import { __, _n, sprintf } from '@wordpress/i18n';
 import type { JobProgress } from '../../api/recognition/types/scan';
 import type { RecognitionHistorySource } from '../../hooks/recognitionJobHistoryUtils';
 import type { ScanRunViewModel } from './JobPipelineContext';
+import { JOB_PHASE_PRESENTATION } from './phasePresentation';
 import { formatSyncJobPhase } from './syncPresentation';
 export { mediaEditUrl, rosterClustersUrl } from '../../utils/adminUrls';
 
@@ -27,6 +28,13 @@ export const ScanActionPanel = ({ scanRun, onCancelScan, onRetryStream }: ScanAc
     etaSeconds,
     isSynced,
   } = scanRun;
+
+  // progress.phase is optional; an absent phase falls back to the shared
+  // scan/images presentation (any scan-family entry carries the same
+  // processed builder + aria label references).
+  const progressPresentation = progress?.phase
+    ? JOB_PHASE_PRESENTATION[progress.phase]
+    : JOB_PHASE_PRESENTATION.detecting;
 
   return (
     <div className="acx-apply-panel">
@@ -73,16 +81,12 @@ export const ScanActionPanel = ({ scanRun, onCancelScan, onRetryStream }: ScanAc
             </p>
           )}
           <p className="acx-apply-panel__status">
-            {isClusteringActive(progress.phase)
-              ? sprintf(__('Processed %d/%d identities', 'alt-context'), progress.completed, progress.total)
-              : sprintf(
-                  __('Processed %d/%d images', 'alt-context'),
-                  progress.images_processed ?? progress.completed,
-                  progress.total,
-                ) +
-                (typeof progress.faces_found === 'number'
-                  ? sprintf(__(' · %d faces found', 'alt-context'), progress.faces_found)
-                  : '')}
+            {progressPresentation.processed({
+              completed: progress.completed,
+              total: progress.total,
+              imagesProcessed: progress.images_processed,
+              facesFound: progress.faces_found,
+            })}
           </p>
           {isClusteringActive(progress.phase) &&
             typeof progress.retry_count === 'number' &&
@@ -98,11 +102,7 @@ export const ScanActionPanel = ({ scanRun, onCancelScan, onRetryStream }: ScanAc
             className="acx-apply-panel__progress"
             value={Math.min(progress.completed, progress.total)}
             max={progress.total}
-            aria-label={
-              isClusteringActive(progress.phase)
-                ? __('Clustering progress', 'alt-context')
-                : __('Scan progress', 'alt-context')
-            }
+            aria-label={progressPresentation.progressAriaLabel}
           />
           {typeof etaSeconds === 'number' && (
             <p className="acx-apply-panel__eta">

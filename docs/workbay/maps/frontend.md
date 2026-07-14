@@ -101,7 +101,7 @@ Key limits: max 300 lines/component, max 5 `useState`, max 3 `useEffect`, max 10
 ### Add workbench overlay panel
 
 1. Create panel component in `js/admin/pages/workbench/`
-2. Add overlay variant to `WorkbenchOverlay` type in `WorkbenchNavContext.tsx`
+2. Add overlay variant to the `WorkbenchOverlay` union in `js/admin/api/recognition/types/conflict.ts` (re-exported by `WorkbenchNavContext.tsx`) and to the `useOverlayParam` allowlist in `WorkbenchNavContext.tsx`
 3. Render panel conditionally in `WorkbenchPage.tsx` when `activeOverlay` matches
 4. Link from `SyncStatusIndicator` badge or `DashboardPage` card via `?panel=<name>`
 

@@ -235,7 +235,9 @@ describe('SettingsPage', () => {
     expect(screen.getByLabelText('API Key')).toHaveAttribute('readOnly');
   });
 
-  it('disables Save when the service URL and key are both read-only', () => {
+  it('keeps Save enabled for description-budget edits even when routing fields are read-only', () => {
+    // RECOG-1 B-02: the description budget is always editable, so read-only
+    // routing fields (constant/filter-managed url + key) must not disable Save.
     mockUseQuery.mockReturnValue(
       createMockQuery({
         data: {
@@ -247,10 +249,12 @@ describe('SettingsPage', () => {
     );
     render(<SettingsPage />);
 
-    expect(screen.getByRole('button', { name: 'Save Settings' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save Settings' })).toBeEnabled();
   });
 
-  it('shows configure CTA when the service URL is blank', () => {
+  it('lets a fresh install enter the service URL when unconfigured', () => {
+    // RECOG-1 B-01: with the service default and an empty URL, the Service API
+    // URL input MUST be present and editable — the CTA alone would be a dead end.
     mockUseQuery.mockReturnValue(
       createMockQuery({
         data: {
@@ -265,6 +269,11 @@ describe('SettingsPage', () => {
     render(<SettingsPage />);
 
     expect(screen.getByRole('button', { name: 'Configure service URL' })).toBeInTheDocument();
+    const urlInput = screen.getByLabelText('Service API URL');
+    expect(urlInput).toBeInTheDocument();
+    expect(urlInput).not.toHaveAttribute('readOnly');
+    fireEvent.change(urlInput, { target: { value: 'https://api.altcontext.com' } });
+    expect(urlInput).toHaveValue('https://api.altcontext.com');
   });
 
   it('disables Check health when routing edits are unsaved', () => {

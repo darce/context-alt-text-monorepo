@@ -30,10 +30,10 @@ from recognition.interface_adapters.http.deps import (
     require_auth,
     require_write_access,
 )
-from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quota
 from recognition.interface_adapters.http.deps.clustering_circuit_breaker import (
     get_or_create_clustering_circuit_breaker,
 )
+from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quota
 from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
 from recognition.interface_adapters.http.deps.session import (
     _apply_postgres_session_safety_settings,

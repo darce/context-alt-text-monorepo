@@ -161,7 +161,12 @@ def test_fast_tier_requires_adapter_result(profile):
 
 @pytest.mark.parametrize(
     "profile",
-    [DescriptionProfile.FLORENCE_LARGE, DescriptionProfile.GPU_PHI4],
+    [
+        DescriptionProfile.FLORENCE_LARGE,
+        DescriptionProfile.GPU_PHI4,
+        DescriptionProfile.GPU_QWEN30B,
+        DescriptionProfile.GPU_QWEN30B_ENSEMBLE,
+    ],
 )
 def test_async_tier_runs_isolation_pass(profile):
     adapter = StubAdapter()
@@ -175,10 +180,72 @@ def test_async_tier_runs_isolation_pass(profile):
     assert prior.source is VisualFactsPriorSource.ISOLATION_PASS
 
 
+class GpuKindAdapter:
+    """Spec'd fake DescriptionAdapter with GPU kind (mirrors scene/tests _Adapter style)."""
+
+    kind = DescriptionAdapterKind.GPU
+    model_id = "Qwen3-VL-30B-A3B-Instruct"
+    model_version = "Q4_K_M"
+    prompt_or_task_version = "3"
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self._result = AdapterResult(
+            caption="A red bicycle leans against a brick wall under a blue sign.",
+            objects=("bicycle", "brick wall", "sign"),
+            ocr_text="OPEN 9-5",
+            alt_text_draft="A red bicycle leans against a brick wall under a blue sign.",
+            context_sources=(),
+            context_applied=False,
+            phrase_boxes=(),
+        )
+
+    def describe(self, *, image_bytes: bytes, context) -> AdapterResult:
+        self.calls += 1
+        assert context is None
+        return self._result
+
+
+def test_gpu_profile_adapter_stub_produces_structured_visual_facts():
+    """GPU-tier obtain runs isolation and maps objects + OCR text from a GPU-kind stub."""
+    adapter = GpuKindAdapter()
+    prior = VisualFactsPass.obtain(
+        adapter=adapter,
+        image_bytes=IMG,
+        profile=DescriptionProfile.GPU_PHI4,
+        adapter_result=None,
+    )
+    assert adapter.kind is DescriptionAdapterKind.GPU
+    assert adapter.calls == 1
+    assert prior.source is VisualFactsPriorSource.ISOLATION_PASS
+    assert prior.derived_from_context_applied_caption is False
+    assert prior.caption == "A red bicycle leans against a brick wall under a blue sign."
+    assert prior.objects == ["bicycle", "brick wall", "sign"]
+    assert prior.text == "OPEN 9-5"
+
+
+def test_gpu_qwen30b_runs_isolation_pass_like_other_gpu_tiers():
+    """Named gap fix: production GPU_QWEN30B is isolation, not caption-derived fast-tier."""
+    adapter = GpuKindAdapter()
+    prior = VisualFactsPass.obtain(
+        adapter=adapter,
+        image_bytes=IMG,
+        profile=DescriptionProfile.GPU_QWEN30B,
+        adapter_result=None,
+    )
+    assert is_fast_tier_profile(DescriptionProfile.GPU_QWEN30B) is False
+    assert adapter.calls == 1
+    assert prior.source is VisualFactsPriorSource.ISOLATION_PASS
+    assert prior.objects == ["bicycle", "brick wall", "sign"]
+    assert prior.text == "OPEN 9-5"
+
+
 def test_tier_classification_covers_every_profile():
     assert {
         DescriptionProfile.FLORENCE_LARGE,
         DescriptionProfile.GPU_PHI4,
+        DescriptionProfile.GPU_QWEN30B,
+        DescriptionProfile.GPU_QWEN30B_ENSEMBLE,
     } == ASYNC_ISOLATION_PROFILES
     for profile in DescriptionProfile:
         assert is_fast_tier_profile(profile) is (profile not in ASYNC_ISOLATION_PROFILES)

@@ -135,6 +135,51 @@ def _relkind(op, name: str) -> str | None:
     )
 
 
+def _existing_columns(op, table_name: str) -> set[str]:
+    return {
+        row[0]
+        for row in op.get_bind().execute(
+            sa.text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = current_schema() AND table_name = :t"
+            ),
+            {"t": table_name},
+        )
+    }
+
+
+def _ensure_columns(op, table_name: str, *columns) -> None:
+    """Additively add any declared column missing from an already-existing table.
+
+    ``_ensure_table`` no-ops when the table exists, so an expand-first column
+    added to the model after the table was first created never lands — every
+    ORM path selecting it then 500s while the table and alembic revision still
+    look healthy (MAINT-TPR-01 / PA-03: prod ``tenants.naming_agreement_enabled``).
+    Additive-only: a missing primary key, or a missing NOT NULL column with no
+    server default, is non-additive drift and raises for operator remediation
+    rather than guessing a backfill value.
+    """
+    existing = _existing_columns(op, table_name)
+    for column in columns:
+        # `_ensure_table` is also passed table-level constructs (CheckConstraint,
+        # ForeignKeyConstraint, Index); only real columns are additively healable.
+        if not isinstance(column, sa.Column):
+            continue
+        if column.name in existing:
+            continue
+        if column.primary_key:
+            raise RuntimeError(
+                f"{table_name}.{column.name} (primary key) is missing from an "
+                "existing table; non-additive drift, operator remediation required"
+            )
+        if not column.nullable and column.server_default is None:
+            raise RuntimeError(
+                f"{table_name}.{column.name} is NOT NULL without a server default; "
+                "cannot add it additively to an existing table (operator remediation)"
+            )
+        op.add_column(table_name, column)
+
+
 def _ensure_table(op, table_name: str, *columns, **kw) -> None:
     relkind = _relkind(op, table_name)
     if relkind is None:
@@ -146,6 +191,10 @@ def _ensure_table(op, table_name: str, *columns, **kw) -> None:
             f"{table_name!r} exists with relkind {relkind!r} (expected a table); "
             "drop the impostor relation before healing (operator action)"
         )
+    else:
+        # Table exists: reconcile additive column drift so an expand-first
+        # column added after first creation still lands (MAINT-TPR-01 / PA-03).
+        _ensure_columns(op, table_name, *columns)
 
 
 def _ensure_index(op, index_name: str, table_name: str, columns, **kw) -> None:
@@ -1345,6 +1394,8 @@ def ensure_tables(op) -> None:
             sa.ForeignKey("tenants.id", ondelete="CASCADE"),
             nullable=False,
         ),
+        # VLM-5: bulk multi-item vs single-image async supersede jobs.
+        sa.Column("run_kind", sa.String(length=8), nullable=False, server_default=sa.text("'bulk'")),
         sa.Column("status", sa.String(length=32), nullable=False, server_default=sa.text("'pending'")),
         sa.Column("phase", sa.String(length=32), nullable=False, server_default=sa.text("'queued'")),
         sa.Column("media_ids", sa.dialects.postgresql.JSONB(), nullable=False),
@@ -1366,6 +1417,7 @@ def ensure_tables(op) -> None:
             "phase IN ('queued', 'describing', 'complete', 'failed', 'cancelled')",
             name="valid_describe_run_phase",
         ),
+        sa.CheckConstraint("run_kind IN ('bulk', 'single')", name="valid_describe_run_kind"),
     )
     _ensure_index(op, "idx_image_description_runs_tenant", "image_description_runs", ["tenant_id"])
     _ensure_index(
@@ -1374,6 +1426,27 @@ def ensure_tables(op) -> None:
         "image_description_runs",
         ["tenant_id", "status"],
         postgresql_where=sa.text("status IN ('pending', 'running')"),
+    )
+    # Load-snapshot active counts only — a tenant-less RLS-bypassed query (VLM-5).
+    # The retention purge scans TERMINAL single runs and cannot use this index;
+    # it has its own partial index below (VLM5-S1A-BR-04).
+    _ensure_index(
+        op,
+        "idx_image_description_runs_single_active",
+        "image_description_runs",
+        ["status"],
+        postgresql_where=sa.text("run_kind = 'single' AND status IN ('pending', 'running')"),
+    )
+    # Purge scan: terminal single runs older than retention, matched on completed_at
+    # (purge_expired_single_runs, VLM-5 design (d)).
+    _ensure_index(
+        op,
+        "idx_image_description_runs_single_terminal",
+        "image_description_runs",
+        ["completed_at"],
+        postgresql_where=sa.text(
+            "run_kind = 'single' AND status IN ('completed', 'completed_with_errors', 'failed', 'cancelled')"
+        ),
     )
 
     _ensure_table(
@@ -1402,6 +1475,10 @@ def ensure_tables(op) -> None:
         sa.Column("alt_text_draft", sa.Text(), nullable=True),
         sa.Column("caption", sa.Text(), nullable=True),
         sa.Column("provenance", sa.dialects.postgresql.JSONB(), nullable=True),
+        # VLM-5: single-run supersede envelope fields (bulk items leave these null).
+        sa.Column("visual_facts", sa.dialects.postgresql.JSONB(), nullable=True),
+        sa.Column("tier", sa.String(length=32), nullable=True),
+        sa.Column("result_generation", sa.Integer(), nullable=False, server_default=sa.text("0")),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("started_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("completed_at", sa.TIMESTAMP(timezone=True), nullable=True),

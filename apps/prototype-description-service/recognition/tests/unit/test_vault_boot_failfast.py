@@ -103,9 +103,12 @@ def test_boot_unreachable_vault_raises_typed_error_and_logs(
     client.get_secret_bundle.side_effect = RequestException("connection reset")
     set_secret_provider(_vault_provider(client))
 
-    with caplog.at_level(logging.ERROR), pytest.raises(
-        VaultBootError,
-        match=r"Vault unreachable.*PGPASSWORD.*refusing to serve",
+    with (
+        caplog.at_level(logging.ERROR),
+        pytest.raises(
+            VaultBootError,
+            match=r"Vault unreachable.*PGPASSWORD.*refusing to serve",
+        ),
     ):
         validate_oci_vault_boot()
 

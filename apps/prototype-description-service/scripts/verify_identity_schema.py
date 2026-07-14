@@ -49,6 +49,8 @@ class SchemaStateReport(TypedDict):
     rls_gaps: list[str]
     policy_gaps: list[str]
     table_impostors: list[str]
+    column_gaps: dict[str, list[str]]
+    non_additive_column_gaps: dict[str, list[str]]
     matview_relkind: str | None
 
 
@@ -62,14 +64,21 @@ def _validate_schema_state(
     rls_state: Mapping[str, tuple[bool, bool]] | None = None,
     policy_names: Iterable[tuple[str, str]] | None = None,
     table_relkinds: Mapping[str, str] | None = None,
+    column_gaps: Mapping[str, Iterable[str]] | None = None,
+    non_additive_column_gaps: Mapping[str, Iterable[str]] | None = None,
     matview_relkind: str | None = "m",
 ) -> SchemaStateReport:
     """Pure classification of collected schema facts.
 
     ``rls_state`` maps table -> (rowsecurity, forcerowsecurity); tables absent
     from the mapping count as RLS gaps. ``policy_names`` is the set of
-    (tablename, policyname) pairs present. Passing ``None`` for either skips that check (unit-test /
-    legacy callers); ``main()`` always collects both.
+    (tablename, policyname) pairs present. ``column_gaps`` maps an existing
+    table to the ORM-declared columns absent from it (MAINT-TPR-01 / PA-03).
+    ``non_additive_column_gaps`` is the subset of those columns ``heal()`` would
+    *refuse* to add (a missing primary key, or a NOT NULL column with no server
+    default) — heal RAISES on them, so they are operator-required, not
+    heal-repairable (MAINT-TPR-BR-04). Passing ``None`` for any of these skips
+    that check (unit-test / legacy callers); ``main()`` always collects them.
     """
     actual_table_set = set(actual_tables)
     expected_table_set = set(expected_tables)
@@ -97,12 +106,30 @@ def _validate_schema_state(
             if name in expected_table_set and name != "mv_identity_cluster_centroids" and kind not in ("r", "p")
         )
 
+    # ORM-declared columns absent from an existing table (drift that leaves the
+    # table + revision looking healthy while every SELECT of the column 500s).
+    # Additive gaps are heal-repairable; non-additive gaps (missing PK, or NOT
+    # NULL w/o server default) make heal RAISE, so they are operator-required.
+    col_gaps: dict[str, list[str]] = {}
+    if column_gaps is not None:
+        for table_name, cols in column_gaps.items():
+            missing_cols = sorted(cols)
+            if missing_cols:
+                col_gaps[table_name] = missing_cols
+
+    na_col_gaps: dict[str, list[str]] = {}
+    if non_additive_column_gaps is not None:
+        for table_name, cols in non_additive_column_gaps.items():
+            na_cols = sorted(cols)
+            if na_cols:
+                na_col_gaps[table_name] = na_cols
+
     matview_impostor = matview_relkind not in (None, "m")
     matview_missing = matview_relkind is None
 
-    if not revision_matches or matview_impostor or table_impostors:
+    if not revision_matches or matview_impostor or table_impostors or na_col_gaps:
         exit_code = EXIT_OPERATOR_REQUIRED
-    elif missing_tables or rls_gaps or policy_gaps or matview_missing:
+    elif missing_tables or rls_gaps or policy_gaps or matview_missing or col_gaps:
         exit_code = EXIT_HEAL_REPAIRABLE
     else:
         exit_code = EXIT_OK
@@ -117,8 +144,61 @@ def _validate_schema_state(
         "rls_gaps": rls_gaps,
         "policy_gaps": policy_gaps,
         "table_impostors": table_impostors,
+        "column_gaps": col_gaps,
+        "non_additive_column_gaps": na_col_gaps,
         "matview_relkind": matview_relkind,
     }
+
+
+def _expected_columns():
+    """ORM ``Table`` objects per migration-owned table, from ``Base.metadata``.
+
+    The live SELECTs are issued by the ORM, so the DB must carry every mapped
+    column; importing ``db.models`` populates ``Base.metadata`` with each table.
+    Returns the ``Table`` (not just names) so callers can read per-column
+    nullability/server-default to decide additivity. Tables without an ORM model
+    (raw-SQL refresh queue, matview) have no entry and are covered by the
+    existence/relkind checks instead. A ratchet test asserts heal creates every
+    ORM-declared column, guarding the ORM-vs-migration coupling (MAINT-TPR-BR-05).
+    """
+    import db.models  # noqa: F401 - import for metadata side effect
+    from db.models.base_imports import Base
+
+    expected_table_set = set(EXPECTED_TABLES)
+    return {name: table for name, table in Base.metadata.tables.items() if name in expected_table_set}
+
+
+def _collect_column_gaps(connection, expected) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """(all missing columns, non-additive subset) per existing expected table.
+
+    A wholly-absent table (no actual columns) is left to the ``missing_tables``
+    check so a single drift is not double-reported. A missing column is
+    non-additive — heal RAISES rather than adds it — when it is a primary key or
+    NOT NULL with no server default (mirrors ``_ensure_columns``).
+    """
+    gaps: dict[str, list[str]] = {}
+    non_additive: dict[str, list[str]] = {}
+    for table_name, table in expected.items():
+        actual = {
+            row[0]
+            for row in connection.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema = current_schema() AND table_name = :t"
+                ),
+                {"t": table_name},
+            )
+        }
+        if not actual:
+            continue
+        missing = [col for col in table.columns if col.name not in actual]
+        if not missing:
+            continue
+        gaps[table_name] = sorted(col.name for col in missing)
+        na = sorted(col.name for col in missing if col.primary_key or (not col.nullable and col.server_default is None))
+        if na:
+            non_additive[table_name] = na
+    return gaps, non_additive
 
 
 def collect_and_validate(connection) -> SchemaStateReport:
@@ -164,12 +244,16 @@ def collect_and_validate(connection) -> SchemaStateReport:
         {"name": MATVIEW_NAME},
     ).scalar()
 
+    column_gaps, non_additive_column_gaps = _collect_column_gaps(connection, _expected_columns())
+
     return _validate_schema_state(
         actual_tables=table_names,
         actual_revision=actual_revision,
         rls_state=rls_state,
         policy_names=policy_names,
         table_relkinds=table_relkinds,
+        column_gaps=column_gaps,
+        non_additive_column_gaps=non_additive_column_gaps,
         matview_relkind=matview_relkind,
     )
 
@@ -202,6 +286,10 @@ def main() -> int:
     for key in ("missing_tables", "rls_gaps", "policy_gaps", "table_impostors"):
         if report[key]:
             print(f"{key}={','.join(report[key])}", file=sys.stderr)
+    for table_name, cols in report["column_gaps"].items():
+        na = report["non_additive_column_gaps"].get(table_name, [])
+        suffix = f" (non-additive, operator-required: {','.join(na)})" if na else ""
+        print(f"column_gaps: {table_name} missing {','.join(cols)}{suffix}", file=sys.stderr)
     if report["matview_relkind"] != "m":
         print(f"matview_relkind={report['matview_relkind']}", file=sys.stderr)
     if report["exit_code"] == EXIT_HEAL_REPAIRABLE:

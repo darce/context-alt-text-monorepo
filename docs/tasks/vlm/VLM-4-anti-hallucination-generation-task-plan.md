@@ -127,6 +127,8 @@ Proof: existing `pytest test_visual_facts_pass.py` green; one added test exercis
 
 ### Slice 2: Ensemble-decode core
 
+> **Realignment (2026-07-13, review r0713e704, VLM4-RA-BR-01) [RLSE-02]:** step-wise token-vote synthesis is unreachable on the live one-shot llama.cpp completion API — per-view traces are conditioned on divergent prefixes, so zipping them composes incoherent text. The shipped Slice-2 mechanism is therefore **caption-granularity consensus selection** (exact majority → cross-view word-overlap consensus → full-image tie-break); `combine_token_distributions` remains the per-step primitive for the spike-gated step-synchronized decoder. The ensemble wrapper is reachable **only** via the async GPU-final tier (`get_async_gpu_description_adapter`), never the sync route or provisional phase (VLM4-RA-BR-02) [RES-02]. The Slice-3 bake-off measures this consensus selection against baseline.
+
 **Goal**: N-view attention-weighted (or logit-only) caption synthesis behind the GPU adapter.
 
 Files/functions:

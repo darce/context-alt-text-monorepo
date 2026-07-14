@@ -164,6 +164,32 @@ Why this pattern:
 - the ZIP-installed plugin no longer depends on source-checkout `.env.local`
 - the Settings screen will truthfully report `url_source=constant` and `key_source=constant`
 
+### Dev Recognition Hatch: Opt Back Into The Local Backend
+
+Hosted **service** is the canonical recognition target and the default. `local`
+is retired from the product surface — there is no Settings toggle. A developer
+who needs to point the plugin at a local description-service backend
+(`http://localhost:8000` from `apps/prototype-description-service`) opts in via a
+**dev-only code hatch** in `wp-config.local.php` (next to the LocalWP site's
+`wp-config.php`, untracked):
+
+```php
+<?php
+declare(strict_types=1);
+
+// Dev-only hatch: force the retired local recognition backend. Never a
+// product/Settings feature — remove these defines to return to hosted service.
+define('ACX_RECOGNITION_SOURCE', 'local');
+define('ACX_RECOGNITION_LOCAL_URL', 'http://localhost:8000');
+```
+
+Load it from `wp-config.php` with the same defensive include shown above. The
+plugin resolves the `ACX_RECOGNITION_SOURCE` constant (or the
+`acx_recognition_source` filter) before any option, so this flips the effective
+target to the local URL chain. Remove the defines to fall back to the default
+hosted service. This is strictly a local developer convenience — never ship it
+or expose it as a Settings option.
+
 ### What Not To Use For The Gate
 
 Do not store the production-scoped LocalWP gate key in:

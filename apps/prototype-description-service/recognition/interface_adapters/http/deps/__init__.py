@@ -14,6 +14,7 @@ from recognition.interface_adapters.http.deps.auth import (
     AuthContext,
     get_current_tenant,
     require_auth,
+    require_auth_key_only,
     require_write_access,
 )
 from recognition.interface_adapters.http.deps.services import (
@@ -74,6 +75,7 @@ __all__ = [
     # Auth
     "AuthContext",
     "require_auth",
+    "require_auth_key_only",
     "get_current_tenant",
     "require_write_access",
     # Session

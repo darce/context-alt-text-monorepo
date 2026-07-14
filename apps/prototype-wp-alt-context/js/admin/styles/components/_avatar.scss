@@ -2,7 +2,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 50%;
+  border-radius: var(--acx-radius-circle);
   overflow: hidden;
   flex-shrink: 0;
   vertical-align: middle;
@@ -24,7 +24,7 @@
   }
 
   &--square {
-    border-radius: 0;
+    border-radius: 0; /* E21-4 disposition: zero/square radius kept raw */
   }
 
   &__image {

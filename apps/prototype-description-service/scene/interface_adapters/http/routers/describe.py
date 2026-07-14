@@ -14,14 +14,16 @@ import logging
 import os
 import uuid
 from dataclasses import dataclass
+from threading import Lock
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.responses import Response
 from pydantic import ValidationError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.datastructures import FormData, UploadFile
 
-from db.tenant_context import require_tenant_record, set_tenant_context
+from db.tenant_context import enable_rls_bypass, require_tenant_record, set_tenant_context
 from recognition.infrastructure.repositories.audit_repository import AuditRepository
 from recognition.interface_adapters.http.deps import (
     get_optional_session,
@@ -29,9 +31,11 @@ from recognition.interface_adapters.http.deps import (
 )
 from recognition.interface_adapters.http.deps.demo_quota import maybe_consume_demo_quota
 from recognition.interface_adapters.http.middleware.metrics import get_default_metrics
-from scene.application.describe_jobs import DescribeJob, DescribeJobStatus, InMemoryDescribeJobStore
+from recognition.shared.db.dialect import is_postgres
+from scene.application.describe_async_worker import run_async_describe_job
+from scene.application.describe_load import load_snapshot, resolve_load_path, write_load_snapshot
+from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.description_repository import ImageDescriptionRepository
-from scene.application.description_worker import run_describe_job
 from scene.application.fusion.reconcile import (
     Attachment,
     AttachmentDecision,
@@ -48,10 +52,17 @@ from scene.application.identity_merge import (
 from scene.application.settings.vlm import VlmSettings
 from scene.application.visual_facts_service import VisualFactsService
 from scene.config.settings import DescriptionSettings
+from scene.domain.describe_run import (
+    DescribeJobStatus,
+    RunKind,
+    describe_job_error,
+    describe_job_status,
+)
 from scene.domain.description import DescriptionAdapterKind
 from scene.infrastructure.provider.hosted_provider_adapter import HostedProviderError
 from scene.infrastructure.vlm.unavailable_adapter import DescriptionAdapterUnavailableError
 from scene.interface_adapters.http.deps import (
+    get_async_gpu_description_adapter,
     get_cpu_description_adapter,
     get_description_adapter,
     get_gpu_description_adapter,
@@ -70,22 +81,74 @@ router = APIRouter(tags=["describe"])
 _logger = logging.getLogger(__name__)
 
 _IMAGE_KEY_PREFIX = "image_"
-_DEFAULT_MAX_JOBS = 1000
-# Independent of job-count capacity: bound resident image payload so a burst of
-# max-size uploads hits 503 before process OOM (VLMRP-S4-07). Count-cap alone
-# still allows ~max_jobs * max_image_bytes (~25 GiB at defaults).
-_MAX_RETAINED_IMAGE_SLOTS = 8
+# Defaults match the former volatile store (256 MiB retained / 1000 jobs).
+_DEFAULT_MAX_PENDING_JOBS = 1000
+_DEFAULT_MAX_RETAINED_IMAGE_BYTES = 256 * 1024 * 1024
 
 
-def _async_job_store() -> InMemoryDescribeJobStore:
-    settings = DescriptionSettings()
-    return InMemoryDescribeJobStore(
-        max_jobs=_DEFAULT_MAX_JOBS,
-        max_retained_image_bytes=_MAX_RETAINED_IMAGE_SLOTS * settings.max_description_image_bytes,
-    )
+class AsyncAdmissionGate:
+    """Process-local byte-budget + job-count gate for async single-run jobs.
+
+    Reservations are held only for the lifetime of an in-process enqueue/worker
+    task and are never derived from DB rows — counter starts at 0 on every boot
+    (design (b) / [RES-04], [RES-14], [CON-16]).
+    """
+
+    def __init__(
+        self,
+        *,
+        max_jobs: int = _DEFAULT_MAX_PENDING_JOBS,
+        max_retained_image_bytes: int = _DEFAULT_MAX_RETAINED_IMAGE_BYTES,
+    ) -> None:
+        self._max_jobs = max_jobs
+        self._max_retained_image_bytes = max_retained_image_bytes
+        self._job_count = 0
+        self._retained_image_bytes = 0
+        self._lock = Lock()
+
+    def try_acquire(self, image_len: int) -> str | None:
+        """Reserve a slot. Returns ``None`` on success, else a wire-stable 503 detail.
+
+        Callers treat a non-``None`` return as refusal (equivalent to ``False``) and
+        surface it as HTTP 503. Detail strings match the deleted store's
+        ``RuntimeError`` texts so existing 503 assertions stay textually intact.
+        """
+        with self._lock:
+            if self._job_count >= self._max_jobs:
+                return "describe job queue is full"
+            if self._retained_image_bytes + image_len > self._max_retained_image_bytes:
+                return "describe job store image byte budget exceeded"
+            self._job_count += 1
+            self._retained_image_bytes += image_len
+            return None
+
+    def release(self, image_len: int) -> None:
+        with self._lock:
+            self._job_count = max(0, self._job_count - 1)
+            self._retained_image_bytes = max(0, self._retained_image_bytes - image_len)
 
 
-_ASYNC_JOBS = _async_job_store()
+def _async_admission_gate() -> AsyncAdmissionGate:
+    max_jobs = int(os.environ.get("ACX_ASYNC_MAX_PENDING_JOBS", str(_DEFAULT_MAX_PENDING_JOBS)))
+    max_bytes = int(os.environ.get("ACX_ASYNC_MAX_RETAINED_IMAGE_BYTES", str(_DEFAULT_MAX_RETAINED_IMAGE_BYTES)))
+    return AsyncAdmissionGate(max_jobs=max_jobs, max_retained_image_bytes=max_bytes)
+
+
+_ASYNC_ADMISSION = _async_admission_gate()
+
+
+def worker_session_factory(session) -> async_sessionmaker[AsyncSession]:
+    """Own an independent session factory for background/stream work.
+
+    Mirrors analyze.py: derive from the request session's bind for the
+    SQLite/test path, else fall back to the process-wide Postgres factory so
+    worker commits use their own connection/transaction.
+    """
+    if session is not None and getattr(session, "bind", None) is not None and not is_postgres(session):
+        return async_sessionmaker(bind=session.bind, expire_on_commit=False)
+    from db.session import async_session_factory
+
+    return async_session_factory
 
 
 @dataclass(frozen=True)
@@ -410,15 +473,27 @@ async def _read_validated_image_upload(
     return image_bytes
 
 
-def _job_result(job: DescribeJob) -> DescribeJobResult:
+def _job_result_from_item(*, run_id: uuid.UUID, item) -> DescribeJobResult:
+    """Project a single-run item row into the unchanged ``DescribeJobResult`` wire shape."""
+    status = describe_job_status(item)
+    tier = getattr(item, "tier", None)
     return DescribeJobResult(
-        job_id=job.job_id,
-        status=job.status.value,
-        tier=job.tier,
-        result_generation=job.result_generation,
-        visual_facts=job.visual_facts,
-        error=job.error,
+        job_id=str(run_id),
+        status=status.value,
+        tier=tier,
+        result_generation=int(getattr(item, "result_generation", 0) or 0),
+        visual_facts=getattr(item, "visual_facts", None),
+        error=describe_job_error(item),
     )
+
+
+_TERMINAL_POLL_STATUSES = frozenset(
+    {
+        DescribeJobStatus.FINAL,
+        DescribeJobStatus.DEGRADED,
+        DescribeJobStatus.FAILED,
+    }
+)
 
 
 @router.post(
@@ -538,16 +613,41 @@ async def describe_image_multipart(
     return response
 
 
-def _maybe_dump_describe_load() -> None:
-    """Best-effort write of job-store load for the GPU idle reaper (VLMFIX-S2-01)."""
-    import os
-    from pathlib import Path as _Path
+async def _with_bypass_session(session_factory: async_sessionmaker[AsyncSession], op):
+    """Run ``op(session)`` on a dedicated short-lived RLS-bypassed session."""
+    async with session_factory() as bypass_session:
+        await enable_rls_bypass(bypass_session)
+        result = await op(bypass_session)
+        await bypass_session.commit()
+        return result
 
-    path = os.environ.get("ACX_DESCRIBE_LOAD_PATH", "/run/acx/describe-load.json")
+
+async def _maybe_dump_describe_load(session_factory: async_sessionmaker[AsyncSession] | None) -> None:
+    """Best-effort DB-derived load write for the GPU idle reaper (VLMFIX-S2-01)."""
+    if session_factory is None:
+        return
+    path = resolve_load_path()
     try:
-        _ASYNC_JOBS.write_load_snapshot(_Path(path))
-    except OSError:
+
+        async def _write(session) -> None:
+            snap = await load_snapshot(session)
+            write_load_snapshot(snap, path)
+
+        await _with_bypass_session(session_factory, _write)
+    except Exception:  # noqa: BLE001 - reaper snapshot is best-effort
         _logger.debug("describe load snapshot write failed path=%s", path, exc_info=True)
+
+
+async def _maybe_purge_expired_single_runs(session_factory: async_sessionmaker[AsyncSession]) -> None:
+    """Opportunistic retention sweep on a dedicated bypass session (design (d))."""
+    try:
+
+        async def _purge(session) -> None:
+            await DescribeRunRepository(session).purge_expired_single_runs()
+
+        await _with_bypass_session(session_factory, _purge)
+    except Exception:  # noqa: BLE001 - purge is best-effort at enqueue
+        _logger.debug("purge_expired_single_runs failed", exc_info=True)
 
 
 @router.post(
@@ -561,7 +661,8 @@ async def enqueue_describe_image(
     auth=Depends(require_write_access),
     session=Depends(get_optional_session),
     cpu_adapter=Depends(get_description_adapter),
-    gpu_adapter=Depends(get_gpu_description_adapter),
+    # Async GPU-final tier: the only place the N-pass ensemble may run (VLM4-RA-BR-02).
+    gpu_adapter=Depends(get_async_gpu_description_adapter),
 ) -> DescribeJobResult | Response:
     form = await request.form()
     settings = DescriptionSettings()
@@ -569,72 +670,119 @@ async def enqueue_describe_image(
     # Decorative / zero-compute short-circuit: never charge (DS2B-PM-S2-01).
     if isinstance(submission, Response):
         return submission
-    # VLMFIX-S1-06: async jobs are poll-fetched by tenant claim; empty claim
-    # would enqueue unfetchable work. Require claim unless admin opt-in.
-    auth_tenant = (getattr(auth, "tenant_claim", None) or "").strip()
-    if not auth_tenant and os.environ.get("ACX_ASYNC_ALLOW_EMPTY_TENANT_CLAIM") != "1":
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "tenant claim required")
-    if session is not None:
-        await set_tenant_context(session, submission.tenant_uuid)
-        await require_tenant_record(session, submission.tenant_uuid)
-    # Charge when real async compute is about to be enqueued (durable).
-    await maybe_consume_demo_quota(auth, session, units=1)
-    if session is not None:
-        await set_tenant_context(session, submission.tenant_uuid)
-    audit_sink = None
-    if session is not None:
-        # Own session factory — request-scoped session is closed before BackgroundTasks (S1-01).
-        from db.session import async_session_factory
-
-        audit_sink = _BackgroundDescriptionAuditSink(async_session_factory)
-    metrics = _DescriptionMetricsSink()
-    try:
-        job = _ASYNC_JOBS.enqueue(
-            tenant_id=submission.tenant_uuid,
-            media_id=submission.envelope.media_id,
-            image_bytes=submission.image_bytes,
-            context=submission.context,
-        )
-    except RuntimeError as exc:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
-    _maybe_dump_describe_load()
-    background_tasks.add_task(
-        _run_describe_job_and_dump_load,
-        store=_ASYNC_JOBS,
-        job_id=job.job_id,
-        cpu_adapter=cpu_adapter,
-        gpu_adapter=gpu_adapter,
-        job_timeout_seconds=settings.generation_timeout_seconds * 2,
-        audit_sink=audit_sink,
-        metrics=metrics,
-    )
-    if session is not None:
-        await session.commit()
-    return _job_result(job)
-
-
-async def _run_describe_job_and_dump_load(**kwargs) -> None:
-    try:
-        await run_describe_job(**kwargs)
-    finally:
-        _maybe_dump_describe_load()
-
-
-@router.get("/describe/jobs/{job_id}", response_model=DescribeJobResult)
-async def get_describe_job(job_id: str, auth=Depends(require_write_access)) -> DescribeJobResult:
-    job = _ASYNC_JOBS.get(job_id)
-    if job is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "describe job not found")
+    # VLMFIX-S1-06 / design (f): empty claim always 400 (env bypass deleted).
     auth_tenant = (getattr(auth, "tenant_claim", None) or "").strip()
     if not auth_tenant:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "tenant claim required")
-    if auth_tenant != str(job.tenant_id):
+    if session is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "database session unavailable")
+
+    await set_tenant_context(session, submission.tenant_uuid)
+    await require_tenant_record(session, submission.tenant_uuid)
+    # Charge when real async compute is about to be enqueued (durable).
+    await maybe_consume_demo_quota(auth, session, units=1)
+    await set_tenant_context(session, submission.tenant_uuid)
+
+    image_len = len(submission.image_bytes)
+    refusal = _ASYNC_ADMISSION.try_acquire(image_len)
+    if refusal is not None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, refusal)
+
+    session_factory = worker_session_factory(session)
+    audit_sink = _BackgroundDescriptionAuditSink(session_factory)
+    metrics = _DescriptionMetricsSink()
+    try:
+        repo = DescribeRunRepository(session)
+        run_id = await repo.create_single_run(
+            tenant_id=submission.tenant_uuid,
+            media_id=submission.envelope.media_id,
+            image_bytes=submission.image_bytes,
+            created_by_user_id=getattr(auth, "user_id", None),
+        )
+        await session.commit()
+    except HTTPException:
+        _ASYNC_ADMISSION.release(image_len)
+        raise
+    except Exception as exc:
+        # Paired release on any create/commit failure [RES-04]; surface 500 not 200.
+        _ASYNC_ADMISSION.release(image_len)
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "describe job enqueue failed",
+        ) from exc
+
+    await _maybe_purge_expired_single_runs(session_factory)
+    await _maybe_dump_describe_load(session_factory)
+
+    background_tasks.add_task(
+        _run_async_describe_job_and_release,
+        tenant_id=submission.tenant_uuid,
+        run_id=run_id,
+        session_factory=session_factory,
+        cpu_adapter=cpu_adapter,
+        gpu_adapter=gpu_adapter,
+        # One provisional pass + however many GPU-final passes the adapter
+        # makes (ensemble: n_views; raw: 1 -> preserves the original 2x budget)
+        # so N-view jobs cannot time out by construction (VLM4-RC-BR-01) [RES-02].
+        job_timeout_seconds=settings.generation_timeout_seconds * (1 + getattr(gpu_adapter, "n_passes", 1)),
+        audit_sink=audit_sink,
+        metrics=metrics,
+        context=submission.context,
+        image_len=image_len,
+    )
+
+    item = await repo.get_single_run_item(tenant_id=submission.tenant_uuid, run_id=run_id)
+    if item is None:  # pragma: no cover - defensive only
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "describe job was not persisted")
+    return _job_result_from_item(run_id=run_id, item=item)
+
+
+async def _run_async_describe_job_and_release(
+    *,
+    image_len: int,
+    session_factory: async_sessionmaker[AsyncSession],
+    **kwargs,
+) -> None:
+    try:
+        await run_async_describe_job(session_factory=session_factory, **kwargs)
+    except Exception:  # noqa: BLE001 - never leak reservation; log and finish
+        _logger.exception(
+            "async describe job failed tenant_id=%s run_id=%s",
+            kwargs.get("tenant_id"),
+            kwargs.get("run_id"),
+        )
+    finally:
+        _ASYNC_ADMISSION.release(image_len)
+        await _maybe_dump_describe_load(session_factory)
+
+
+@router.get("/describe/jobs/{job_id}", response_model=DescribeJobResult)
+async def get_describe_job(
+    job_id: str,
+    auth=Depends(require_write_access),
+    session=Depends(get_optional_session),
+) -> DescribeJobResult:
+    auth_tenant = (getattr(auth, "tenant_claim", None) or "").strip()
+    if not auth_tenant:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "tenant claim required")
+    try:
+        run_id = uuid.UUID(job_id)
+        tenant_id = uuid.UUID(auth_tenant)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "describe job not found") from exc
+    if session is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "database session unavailable")
+
+    await set_tenant_context(session, tenant_id)
+    repo = DescribeRunRepository(session)
+    run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
+    if run is None or run.run_kind != RunKind.SINGLE:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "describe job not found")
-    if job.status in {DescribeJobStatus.FINAL, DescribeJobStatus.DEGRADED, DescribeJobStatus.FAILED}:
-        fetched = _ASYNC_JOBS.mark_result_fetched(job_id)
-        if fetched is None:
-            # Evicted between get() and mark (S1-05) — surface 404 not 500.
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "describe job not found")
-        job = fetched
-        _maybe_dump_describe_load()
-    return _job_result(job)
+    item = await repo.get_single_run_item(tenant_id=tenant_id, run_id=run_id)
+    if item is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "describe job not found")
+
+    result = _job_result_from_item(run_id=run_id, item=item)
+    if describe_job_status(item) in _TERMINAL_POLL_STATUSES:
+        await _maybe_dump_describe_load(worker_session_factory(session))
+    return result

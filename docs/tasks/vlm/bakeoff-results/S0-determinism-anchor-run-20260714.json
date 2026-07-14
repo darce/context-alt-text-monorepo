@@ -1,0 +1,1922 @@
+{
+  "items": [
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A pet animal resting on a soft surface.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": true,
+        "context_hash": "62dceb3a9e4002a57437750a3e3604302bd7905acb1256b8ee24c11802022963",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 3,
+        "generic_draft": "A pet animal resting on a soft surface.",
+        "image_hash": "58e508329d4b3d4cf0c5eb8973e68d363d8b1c4eb60faecf327e17adc65143e9",
+        "media_id": 1,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "A pet animal resting on a soft surface.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "A pet animal resting on a soft surface.",
+          "objects": [
+            "animal"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [],
+      "latency_s": 0.513,
+      "media_id": 1,
+      "path": "mock_images/Brei\u00f0amerkurjo\u0308kull.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A person standing outdoors near greenery.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": true,
+        "context_hash": "b6a3f0e587922937fc2db9df74c72dc888849c4e88c8fc8c0ff012b71df14015",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 1,
+        "generic_draft": "A person standing outdoors near greenery.",
+        "image_hash": "3a51b1ce34db0bc33c0aa89b224c284af087cdc2099e1b9e9053335450fc4fda",
+        "media_id": 2,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "A person standing outdoors near greenery.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "A person standing outdoors near greenery.",
+          "objects": [
+            "person",
+            "plant",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [],
+      "latency_s": 0.071,
+      "media_id": 2,
+      "path": "mock_images/bea-nye.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Two people seated indoors in conversation.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": true,
+        "context_hash": "5782a46261b88031737b49c732c06a0c198f05f41526a9586c22ef47605ec3a5",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 1,
+        "generic_draft": "Two people seated indoors in conversation.",
+        "image_hash": "431bcbcf8e6d1f8122e86b4f6aaf1f0dbbdb6072259dcbcfd4a1ac31e5696f90",
+        "media_id": 3,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "Two people seated indoors in conversation.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_eligible_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "Two people seated indoors in conversation.",
+          "objects": [
+            "person",
+            "chair"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        "Caitlin Weaver"
+      ],
+      "latency_s": 0.053,
+      "media_id": 3,
+      "path": "mock_images/ccqw-antartica.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A person standing outdoors near greenery.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "19f99dd778022b2e451d50ac79fb1844fcfcc0bb443ca85db80f51c909ebb440",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 5,
+        "generic_draft": "A person standing outdoors near greenery.",
+        "image_hash": "2ec3f90fff1d32ea8c17d5099958329e3c896671f9c8390eccf457030bc7ffd6",
+        "media_id": 4,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "A person standing outdoors near greenery.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "A person standing outdoors near greenery.",
+          "objects": [
+            "person",
+            "plant",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [],
+      "latency_s": 0.124,
+      "media_id": 4,
+      "path": "mock_images/ccqw-bar.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A printed document with several lines of text.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "7bfdf69a15c9f306555586df10babc47bc0d8bad3c35c107b2eb0990426d30f9",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 5,
+        "generic_draft": "A printed document with several lines of text.",
+        "image_hash": "34271e1e49ba12f01a0494b6b560709d45c4941a95c88faef929092a0a33dd27",
+        "media_id": 5,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "A printed document with several lines of text.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "A printed document with several lines of text.",
+          "objects": [
+            "document"
+          ],
+          "ocr_text": "Sample text"
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [],
+      "latency_s": 0.295,
+      "media_id": 5,
+      "path": "mock_images/ccqw-erika.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A close-up of a small object on a neutral background.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "1bb7a5d35d5a7d4a672a71bd3992300a000c8176b54635b7336a7348537be87c",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 4,
+        "generic_draft": "A close-up of a small object on a neutral background.",
+        "image_hash": "24ee356113a210d502072299ee77ccf84ca9a0aa2d743d91c88ae4d222acd969",
+        "media_id": 6,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "A close-up of a small object on a neutral background.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "A close-up of a small object on a neutral background.",
+          "objects": [
+            "object"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [],
+      "latency_s": 0.056,
+      "media_id": 6,
+      "path": "mock_images/ccqw-flowers.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Two people seated indoors in conversation.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "416042103f52b005ebdd6160fd9289f84ab6267219f6060e0e1ce8bc67767f83",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 4,
+        "generic_draft": "Two people seated indoors in conversation.",
+        "image_hash": "c7f0051132ae985a01364f3ec4fb04e1b62f745a9d99f52e93675b31d4cbf2bd",
+        "media_id": 7,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "Two people seated indoors in conversation.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "Two people seated indoors in conversation.",
+          "objects": [
+            "person",
+            "chair"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [],
+      "latency_s": 0.054,
+      "media_id": 7,
+      "path": "mock_images/ccqw-hair.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Two people seated indoors in conversation.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "721f51dc4a1ceb9fbcff63ad0ea33c36bbd12f5896d6cd8706e9c827cfe45dbf",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 4,
+        "generic_draft": "Two people seated indoors in conversation.",
+        "image_hash": "6babb9bbf95538128235c024ecf1c62db4eb5ce4d832e895698a85babeb55de3",
+        "media_id": 8,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "Two people seated indoors in conversation.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "Two people seated indoors in conversation.",
+          "objects": [
+            "person",
+            "chair"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [],
+      "latency_s": 0.076,
+      "media_id": 8,
+      "path": "mock_images/ccqw-occlusion-2.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Two people seated indoors in conversation.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "5107d0a568548777c7168424a8934d64ed03778e4d256fea52ff4548a6658d94",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 4,
+        "generic_draft": "Two people seated indoors in conversation.",
+        "image_hash": "c34b723d5623195bd06aa8289951f929c57059ddde7957f7ab8a07faf2ed152c",
+        "media_id": 9,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "Two people seated indoors in conversation.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "Two people seated indoors in conversation.",
+          "objects": [
+            "person",
+            "chair"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [],
+      "latency_s": 0.072,
+      "media_id": 9,
+      "path": "mock_images/ccqw-occlusion.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A printed document with several lines of text.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "5d56f4d6aa9911df22e07a9facfb296b42a7e575ebeb35c97058d12e0b2398d7",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 3,
+        "generic_draft": "A printed document with several lines of text.",
+        "image_hash": "54cc9f8738e080771a7fd35e468a9537a5fb1230406a25cb68852f77a88faf70",
+        "media_id": 10,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "A printed document with several lines of text.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "A printed document with several lines of text.",
+          "objects": [
+            "document"
+          ],
+          "ocr_text": "Sample text"
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [],
+      "latency_s": 0.05,
+      "media_id": 10,
+      "path": "mock_images/ccqw-purple.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A pet animal resting on a soft surface.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "a32228f2db276c31d2b092833578fffbe873a799564f25a4f3b2bac3773c6a1e",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 4,
+        "generic_draft": "A pet animal resting on a soft surface.",
+        "image_hash": "df3e4b8407dc8d272ccc5e02e56647bec6d65c5fbbe0377f50da1241da601bb9",
+        "media_id": 11,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "A pet animal resting on a soft surface.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "A pet animal resting on a soft surface.",
+          "objects": [
+            "animal"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 3,
+      "identities": [],
+      "latency_s": 0.059,
+      "media_id": 11,
+      "path": "mock_images/ccqw-running-2.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A printed document with several lines of text.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "b2c58d63f62b83e8b44327c19e52bc3f41d025cf4d7039b0281deead4303f2ff",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 3,
+        "generic_draft": "A printed document with several lines of text.",
+        "image_hash": "013bca0b2b1ebb367445ec1783e76b48fe1c13a2ab56f2f19f4335ceeb21feaa",
+        "media_id": 12,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "A printed document with several lines of text.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "A printed document with several lines of text.",
+          "objects": [
+            "document"
+          ],
+          "ocr_text": "Sample text"
+        }
+      },
+      "error": null,
+      "face_count": 2,
+      "identities": [],
+      "latency_s": 0.05,
+      "media_id": 12,
+      "path": "mock_images/ccqw-running.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A person standing outdoors near greenery.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "bb292b738b9f077dd005938d0147957d6af8a8e5b2a81af72dde94196986099d",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 5,
+        "generic_draft": "A person standing outdoors near greenery.",
+        "image_hash": "da81e95506167c33abdc77962ab68473d596f2a118110d9dcb5804aadc338e19",
+        "media_id": 13,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "A person standing outdoors near greenery.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "A person standing outdoors near greenery.",
+          "objects": [
+            "person",
+            "plant",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [],
+      "latency_s": 0.071,
+      "media_id": 13,
+      "path": "mock_images/ccqw-sunglasses-flowers.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A scenic landscape with mountains under a clear sky.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "98a7d4bc7fb96afe3953d309418166c3c19f29d6bb483fcc7208875df5634d93",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 4,
+        "generic_draft": "A scenic landscape with mountains under a clear sky.",
+        "image_hash": "4163f17f853f80f7e7b38fd80ea53af1c3c93441d5865dbdb382ac5f5b782adf",
+        "media_id": 14,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "A scenic landscape with mountains under a clear sky.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "A scenic landscape with mountains under a clear sky.",
+          "objects": [
+            "mountain",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [],
+      "latency_s": 0.056,
+      "media_id": 14,
+      "path": "mock_images/ccqw-sunglasses.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Two people seated indoors in conversation.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "3c407f2a23fe275bd9e731c3bd0c0e2baba2518cf2298da4879141af46565420",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 4,
+        "generic_draft": "Two people seated indoors in conversation.",
+        "image_hash": "6e341aa64418923f9e2ea18eb20e733d094ccb53ac68d565fb4aa1dc4f6722f4",
+        "media_id": 15,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "Two people seated indoors in conversation.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "Two people seated indoors in conversation.",
+          "objects": [
+            "person",
+            "chair"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [],
+      "latency_s": 0.056,
+      "media_id": 15,
+      "path": "mock_images/ccqw-underexposed.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A person standing outdoors near greenery.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "16cdd45d11f480ce5c227ec8fde734698c2251aaba45c2c506213c530df9a5f8",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 5,
+        "generic_draft": "A person standing outdoors near greenery.",
+        "image_hash": "054a9b14823ef9d7ca0cb8bb4d44c4908b9c5bf7de7080306e65e03523caba5b",
+        "media_id": 16,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "A person standing outdoors near greenery.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "A person standing outdoors near greenery.",
+          "objects": [
+            "person",
+            "plant",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [],
+      "latency_s": 0.055,
+      "media_id": 16,
+      "path": "mock_images/ccqw.blurry.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A plate of food on a wooden table.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "599329536d2c768d9a27a8d6387f2f456f9ed594d5c4d6c75c1510eb79762e70",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 4,
+        "generic_draft": "A plate of food on a wooden table.",
+        "image_hash": "cb5adbad2760babea68a7317800f9f2e3abe9d7e21e327f8d2c5f36e2b799ac6",
+        "media_id": 17,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "A plate of food on a wooden table.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "A plate of food on a wooden table.",
+          "objects": [
+            "food",
+            "plate",
+            "table"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 3,
+      "identities": [],
+      "latency_s": 0.06,
+      "media_id": 17,
+      "path": "mock_images/cristina-1.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A building exterior seen from the street.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "4291f93646d4dfb5523deffe47f05decf74d5600b4e2b89b58467c7533783d00",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 4,
+        "generic_draft": "A building exterior seen from the street.",
+        "image_hash": "6e8002b984909c7545f8c7e87453721772b92376ef00532cb94f6327ea890c04",
+        "media_id": 18,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "A building exterior seen from the street.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "A building exterior seen from the street.",
+          "objects": [
+            "building",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        "Ellyn Heald"
+      ],
+      "latency_s": 0.055,
+      "media_id": 18,
+      "path": "mock_images/example-ellynheald-goldleaf.jpeg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A scenic landscape with mountains under a clear sky.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "1612d246c07e1c10892c64c20dcef2574396a2daa1cb1b6f98252c9c0c648908",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 4,
+        "generic_draft": "A scenic landscape with mountains under a clear sky.",
+        "image_hash": "17778829d56efc06b51a0ede6db7c8db36e48db9348d726aabe665fb281d5d28",
+        "media_id": 19,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "A scenic landscape with mountains under a clear sky.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "A scenic landscape with mountains under a clear sky.",
+          "objects": [
+            "mountain",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 2,
+      "identities": [
+        "Kirstie Mccarrel"
+      ],
+      "latency_s": 0.06,
+      "media_id": 19,
+      "path": "mock_images/k.mcc-1.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A building exterior seen from the street.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "f2c09f29419a44f8b34ca00b4834493cf72223f989c3dbecfbf48b10b550acc9",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 8,
+        "generic_draft": "A building exterior seen from the street.",
+        "image_hash": "ed83b4f5861fe50cd6b0548a6e18d5633846f59bd68a4995a1745861c5b811da",
+        "media_id": 20,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "A building exterior seen from the street.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "A building exterior seen from the street.",
+          "objects": [
+            "building",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        "Kirstie Mccarrel"
+      ],
+      "latency_s": 0.399,
+      "media_id": 20,
+      "path": "mock_images/kirstie-1.jpeg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Two people seated indoors in conversation.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "94d31c1a425f91b40c9125f70898184047b901cb135089b960acb62a6571dd61",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 4,
+        "generic_draft": "Two people seated indoors in conversation.",
+        "image_hash": "241b1974868d7c4cf76f166066fb8c419dddd70e5793a9ebb7c1a7e7fb1cc6ff",
+        "media_id": 21,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "Two people seated indoors in conversation.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "Two people seated indoors in conversation.",
+          "objects": [
+            "person",
+            "chair"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 3,
+      "identities": [
+        "Kirstie Mccarrel"
+      ],
+      "latency_s": 0.055,
+      "media_id": 21,
+      "path": "mock_images/kirstie-boat.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Two people seated indoors in conversation.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "3c3e9f51fda9a3a18bf97339fb60ea73c427b41064ea30d169df26ff10e6754f",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 6,
+        "generic_draft": "Two people seated indoors in conversation.",
+        "image_hash": "88e91c52269a49d7176ddac5e40aa91295cb055565f34129b9e1e4bdfac8f603",
+        "media_id": 23,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "Two people seated indoors in conversation.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "Two people seated indoors in conversation.",
+          "objects": [
+            "person",
+            "chair"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 2,
+      "identities": [],
+      "latency_s": 0.157,
+      "media_id": 23,
+      "path": "mock_images/kirstie-daniel-sunglasses.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A plate of food on a wooden table.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "035004253cb78bcfd765450a167527a8a9a076f103a14479eed4b79b805db732",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 7,
+        "generic_draft": "A plate of food on a wooden table.",
+        "image_hash": "52e20b0e2a5079d25dc2af25c8c4eeff07408252a0b2adb288db91c955d389a8",
+        "media_id": 24,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "A plate of food on a wooden table.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "A plate of food on a wooden table.",
+          "objects": [
+            "food",
+            "plate",
+            "table"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [],
+      "latency_s": 0.167,
+      "media_id": 24,
+      "path": "mock_images/kirstie-pool.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A close-up of a small object on a neutral background.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "1dbf23e3d690f5036ca5624b1e9ab265bff79166507561356aae2c8eefdb346a",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 5,
+        "generic_draft": "A close-up of a small object on a neutral background.",
+        "image_hash": "33c54fbb5d4762dc1497725a748ec9ee4a850a2de49bad34348a9353c34a45dc",
+        "media_id": 25,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "A close-up of a small object on a neutral background.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "A close-up of a small object on a neutral background.",
+          "objects": [
+            "object"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        "Liam Maloney"
+      ],
+      "latency_s": 0.081,
+      "media_id": 25,
+      "path": "mock_images/liam-maloney-2.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A scenic landscape with mountains under a clear sky.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "413eebbe4fccd732cf125bface5a63dd21bf99728a63a02beb9702f10082d71e",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 5,
+        "generic_draft": "A scenic landscape with mountains under a clear sky.",
+        "image_hash": "4e0ce9a2ccc7ace3de4a8968c9badd75d5ae3c83c9ea81082ca44a9658b9bc98",
+        "media_id": 26,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "A scenic landscape with mountains under a clear sky.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "A scenic landscape with mountains under a clear sky.",
+          "objects": [
+            "mountain",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        "Liam Maloney"
+      ],
+      "latency_s": 0.131,
+      "media_id": 26,
+      "path": "mock_images/liam-maloney-home.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A person standing outdoors near greenery.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "b6fd4382e3ff94fd6c5974d926de9ae0278f10605d0e0c245ff63f4bd7e38e4c",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 4,
+        "generic_draft": "A person standing outdoors near greenery.",
+        "image_hash": "4e9ecee469b6a48a55c95e6a32688498d7065b2ba403eb697f06ddb65a541416",
+        "media_id": 27,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "A person standing outdoors near greenery.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "A person standing outdoors near greenery.",
+          "objects": [
+            "person",
+            "plant",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [],
+      "latency_s": 0.054,
+      "media_id": 27,
+      "path": "mock_images/liam-maloney-painting.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A close-up of a small object on a neutral background.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "1264b520deedc67f56aa600ce55ad6a84e3db9a6ea297ece8ea7acfc01750bc3",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 4,
+        "generic_draft": "A close-up of a small object on a neutral background.",
+        "image_hash": "19413ef423beccfff22a0f962ec0262c33a73b3899438f4b8e660296f69d6147",
+        "media_id": 28,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "A close-up of a small object on a neutral background.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "A close-up of a small object on a neutral background.",
+          "objects": [
+            "object"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 5,
+      "identities": [
+        "Maria Correonero"
+      ],
+      "latency_s": 0.055,
+      "media_id": 28,
+      "path": "mock_images/maria-cocktail.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A scenic landscape with mountains under a clear sky.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "d84b9d90cadc3903eb7c4adece1bf8178f54b2305dc921075068c3204b79c6c0",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 3,
+        "generic_draft": "A scenic landscape with mountains under a clear sky.",
+        "image_hash": "5e51ec4730c5e5c1ebb8f0122e26e69e19c38068125ab55801957d9499597e61",
+        "media_id": 29,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "A scenic landscape with mountains under a clear sky.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "A scenic landscape with mountains under a clear sky.",
+          "objects": [
+            "mountain",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 4,
+      "identities": [
+        "Maria Correonero"
+      ],
+      "latency_s": 0.052,
+      "media_id": 29,
+      "path": "mock_images/maria-party.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A printed document with several lines of text.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "b69c8689c40dda3fda41f6fb3bc7a85e32dbf1cca7425c693164f3513de65687",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 4,
+        "generic_draft": "A printed document with several lines of text.",
+        "image_hash": "4b98847d196ea19d6fc1181f0f16533c61ef6dfe8ba0da18bfc13d77afc404c1",
+        "media_id": 30,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "A printed document with several lines of text.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "A printed document with several lines of text.",
+          "objects": [
+            "document"
+          ],
+          "ocr_text": "Sample text"
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        "Maria Correonero"
+      ],
+      "latency_s": 0.06,
+      "media_id": 30,
+      "path": "mock_images/maria-pool.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A printed document with several lines of text.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "a0efec91d7031ae8f7160e0e66587e49b21e4e9126eeabc19dc7e137c977fce4",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 4,
+        "generic_draft": "A printed document with several lines of text.",
+        "image_hash": "d77b26f9e20d222ee8d578e619b91db4af106f8811c106e33d4cfbd3a1f41f1a",
+        "media_id": 31,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "A printed document with several lines of text.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "A printed document with several lines of text.",
+          "objects": [
+            "document"
+          ],
+          "ocr_text": "Sample text"
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [],
+      "latency_s": 0.069,
+      "media_id": 31,
+      "path": "mock_images/mcm-eye-blocked.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A printed document with several lines of text.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "dc42e6f1813a6f7d72974d0e6be576f14f19ed556380688719968602fffd596e",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 13,
+        "generic_draft": "A printed document with several lines of text.",
+        "image_hash": "e949ba1d682e60f24b94cf57d2e11109a912ffbc75ba7b1754e532b1a37fc170",
+        "media_id": 32,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "A printed document with several lines of text.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "A printed document with several lines of text.",
+          "objects": [
+            "document"
+          ],
+          "ocr_text": "Sample text"
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [],
+      "latency_s": 0.416,
+      "media_id": 32,
+      "path": "mock_images/mcm-icecave.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A person standing outdoors near greenery.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "fe75000ac45356d8e15daa1fab770fc72f48a213e945df92e8705c7fbdc0655c",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 11,
+        "generic_draft": "A person standing outdoors near greenery.",
+        "image_hash": "4dd4c1ddb589fce8335891680a18367e4e8e9db449569de889826b692f0ca053",
+        "media_id": 33,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "A person standing outdoors near greenery.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "A person standing outdoors near greenery.",
+          "objects": [
+            "person",
+            "plant",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        "Maria Correonero"
+      ],
+      "latency_s": 0.318,
+      "media_id": 33,
+      "path": "mock_images/mcm-planecrash.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A person standing outdoors near greenery.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "5126d5160b5dc1d695dba7a14c89a8c00c00850a3a4e626eae982edb89f8ad24",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 4,
+        "generic_draft": "A person standing outdoors near greenery.",
+        "image_hash": "a3bba8687c958f4a4c61bee2db4c154fb435fe3d8e2ceee835a3ac46b22a7a4f",
+        "media_id": 34,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "A person standing outdoors near greenery.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "A person standing outdoors near greenery.",
+          "objects": [
+            "person",
+            "plant",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 0.062,
+      "media_id": 34,
+      "path": "mock_images/nina-machiavelli.jpeg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Two people seated indoors in conversation.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "e84b6138e89142abd7410230765e196bae0dc09f0bfadfdb303ac8fe4564252b",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 4,
+        "generic_draft": "Two people seated indoors in conversation.",
+        "image_hash": "2b57b7a7d498cafbad6b5587ddabeb8d4c2fc8d1c4763f120d7374df188644f4",
+        "media_id": 35,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "Two people seated indoors in conversation.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "Two people seated indoors in conversation.",
+          "objects": [
+            "person",
+            "chair"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 2,
+      "identities": [],
+      "latency_s": 0.059,
+      "media_id": 35,
+      "path": "mock_images/rrw-mirror.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Two people seated indoors in conversation.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "656c308007fc8dcfdb69deb0f82586c0264310ce01e739bf0a089cd8fe3c07c7",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 3,
+        "generic_draft": "Two people seated indoors in conversation.",
+        "image_hash": "dbbf96ca265c69610b3974ba2a58920224af83130613ccd13e6a41fd7886e05e",
+        "media_id": 36,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "Two people seated indoors in conversation.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "Two people seated indoors in conversation.",
+          "objects": [
+            "person",
+            "chair"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        "Ryann Wiseman"
+      ],
+      "latency_s": 0.054,
+      "media_id": 36,
+      "path": "mock_images/ryann-bar.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A scenic landscape with mountains under a clear sky.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "dcf5619870621c9b91f43919ce735fe4da244f1a08b9a81c7920026a6bc6bc2e",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 4,
+        "generic_draft": "A scenic landscape with mountains under a clear sky.",
+        "image_hash": "e7081767186f95d469cbd8792a0361d6580e14637688beab9914ec55eb158740",
+        "media_id": 37,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "A scenic landscape with mountains under a clear sky.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "A scenic landscape with mountains under a clear sky.",
+          "objects": [
+            "mountain",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 6,
+      "identities": [],
+      "latency_s": 0.055,
+      "media_id": 37,
+      "path": "mock_images/ryann-group-party.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A person standing outdoors near greenery.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "context_hash": "4cc11ca32e0240c6ebe2cccb0ad78b9f7d602742856c3e81748fbeb95de0e487",
+        "context_used": {
+          "applied": false,
+          "sources": []
+        },
+        "duration_ms": 4,
+        "generic_draft": "A person standing outdoors near greenery.",
+        "image_hash": "7c1a1592345f0fbcb9ee33991665ebab093234800fac1debcc35d6ac31b636db",
+        "media_id": 38,
+        "model_id": "seeded-fixtures",
+        "model_version": "1",
+        "named_draft": "A person standing outdoors near greenery.",
+        "naming_provenance": {
+          "injected_names": [],
+          "mode": null,
+          "naming_allowed": false,
+          "reason": "no_confirmed_identities"
+        },
+        "prompt_or_task_version": "1",
+        "provider_disclosure": {
+          "left_service_boundary": false,
+          "provider": "none"
+        },
+        "result_generation": 1,
+        "retention_class": "retain_all",
+        "tenant_id": "7e1bea2f-bdf5-433b-816d-139a66c8f89f",
+        "tier": "provisional_cpu",
+        "visual_facts": {
+          "caption": "A person standing outdoors near greenery.",
+          "objects": [
+            "person",
+            "plant",
+            "sky"
+          ],
+          "ocr_text": null
+        }
+      },
+      "error": null,
+      "face_count": 6,
+      "identities": [],
+      "latency_s": 0.076,
+      "media_id": 38,
+      "path": "mock_images/ryann-party.jpg"
+    }
+  ],
+  "kind": "run_record",
+  "provenance": {
+    "base_url": "https://api.altcontext.com",
+    "head_sha": "72d59b8ecdfddfe6927e072d01526953a37bd3f2",
+    "manifest_sha256": "67040d4513998674151a48f49f59c7f19c59caf05d0949e7dffcb88199124332",
+    "started_at": "2026-07-14T21:47:35Z"
+  },
+  "schema": "acx-eval/v1"
+}

@@ -388,7 +388,7 @@ describe('SettingsPage', () => {
 
       fireEvent.click(screen.getByTestId('acx-confirm-tenant-pairing'));
 
-      expect(testMutate).toHaveBeenCalledWith({ probe_target: 'service', confirm_tenant_pairing: true });
+      expect(testMutate).toHaveBeenCalledWith({ confirm_tenant_pairing: true });
     });
 
     it('renders the tenant_pairing_conflict banner with tenant ids and confirm control', () => {

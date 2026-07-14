@@ -21,7 +21,7 @@ import { Checkbox } from '../../../components/ui/checkbox';
 import { useBulkDescribe } from '../../hooks/useBulkDescribe';
 import type { DescribeRunProgress } from '../../hooks/useDescribeRunProgress';
 import { DESCRIBE_RUN_STATUS, type DescribeRunStatus } from '../../api/describeApi';
-import { useWorkbenchContext } from './WorkbenchContext';
+import { useWorkbenchMediaContext } from './WorkbenchMediaContext';
 import { SYNC_VOCABULARY } from './syncPresentation';
 
 interface MediaSelectionProps {
@@ -30,21 +30,19 @@ interface MediaSelectionProps {
 }
 
 export const MediaSelection = ({ collapsed = false, onExpand }: MediaSelectionProps): React.JSX.Element => {
+  const { selection: mediaSelection, filters, mediaQueue } = useWorkbenchMediaContext();
+  const { selection, toggleRow, toggleAll } = mediaSelection;
   const {
-    mediaQuery,
-    statusMessage,
     searchQuery,
     handleSearchChange: onSearchChange,
     statusFilter,
     handleStatusChange: onStatusFilterChange,
-    selection,
-    toggleRow,
-    toggleAll,
     currentPage,
     perPage,
     setPerPage: onPerPageChange,
     setCurrentPage: onPageChange,
-  } = useWorkbenchContext();
+  } = filters;
+  const { mediaQuery, statusMessage } = mediaQueue;
 
   const mediaData = mediaQuery.data;
   const items = mediaQuery.itemsWithIdentities ?? mediaData?.items ?? [];

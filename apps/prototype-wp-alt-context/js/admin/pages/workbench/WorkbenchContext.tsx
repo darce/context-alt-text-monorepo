@@ -1,17 +1,14 @@
 import React, { createContext, useContext, useMemo, useReducer, useEffect, useState } from 'react';
-import { __, _n, sprintf } from '@wordpress/i18n';
+import { __, sprintf } from '@wordpress/i18n';
 import { useRecognitionJobHistory } from '../../hooks/useRecognitionJobHistory';
-import { useMediaSelectionState } from '../../hooks/useMediaSelectionState';
-import { useWorkbenchFilters } from '../../hooks/useWorkbenchFilters';
 import { useJobStateMachine } from '../../hooks/useJobStateMachine';
-import { useWorkbenchMedia, type WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
 import { getConfig } from '../../api/config';
 import { useSearchParams } from 'react-router-dom';
 import { useTabParam } from '../../hooks/useTabParam';
 import { useOverlayParam } from '../../hooks/useOverlayParam';
+import { WorkbenchMediaProvider } from './WorkbenchMediaContext';
 import type { BatchRunStatus, JobProgress } from '../../api/recognition/types/scan';
 import type { ClusterResponse, WorkbenchOverlay } from '../../api/recognition';
-import type { WorkbenchMediaStatus } from '../../api/workbenchMediaApi';
 import type { PipelinePhase } from '../../hooks/jobStateMachineUtils';
 import type { ProjectionSyncState } from '../../hooks/useJobStateMachineEffects';
 import type { RecognitionHistorySource } from '../../hooks/recognitionJobHistoryUtils';
@@ -73,26 +70,6 @@ interface WorkbenchContextValue {
   forgetJob: (id: string) => void;
   clearHistory: () => void;
 
-  // Selection
-  selection: Record<string, boolean>;
-  selectedMedia: WorkbenchMediaItem[];
-  toggleRow: (item: WorkbenchMediaItem, checked: boolean) => void;
-  toggleAll: (items: WorkbenchMediaItem[], checked: boolean) => void;
-  isPageFullySelected: (items: WorkbenchMediaItem[]) => boolean;
-
-  // Filters & Media Queue
-  searchQuery: string;
-  currentPage: number;
-  perPage: number;
-  handleSearchChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
-  statusFilter: WorkbenchMediaStatus;
-  handleStatusChange: (status: WorkbenchMediaStatus) => void;
-  setCurrentPage: (page: number) => void;
-  setPerPage: (perPage: number) => void;
-  mediaQuery: ReturnType<typeof useWorkbenchMedia>;
-  statusMessage: string;
-  detailTruncationNotice: string | null;
-
   // State Machine
   isScanRunning: boolean;
   isCancellingScan: boolean;
@@ -123,7 +100,6 @@ interface WorkbenchContextValue {
   setClusterMessage: (msg: string | null) => void;
   scanError: string | null;
   setScanError: (msg: string | null) => void;
-  hasIdentities: boolean;
 
   // Config/Env
   recognitionSource: 'service' | 'local';
@@ -141,7 +117,6 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   ]);
   const [clusterMessage, setClusterMessage] = useState<string | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
-  const [knownTotalPages, setKnownTotalPages] = useState<number | null>(null);
   const { recognitionSource, effectiveTargetUrl } = getConfig();
   const [clusterPanel, dispatchClusterPanel] = useReducer(clusterPanelReducer, {
     mode: 'none',
@@ -194,46 +169,6 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     forgetJob,
     clearHistory,
   } = useRecognitionJobHistory();
-  const { selection, selectedMedia, toggleRow, toggleAll, isPageFullySelected } = useMediaSelectionState();
-  const {
-    searchQuery,
-    currentPage,
-    perPage,
-    setPerPage,
-    setCurrentPage,
-    handleSearchChange,
-    normalizedSearch,
-    statusFilter,
-    handleStatusChange,
-  } = useWorkbenchFilters();
-
-  const clampedPage = Math.min(Math.max(1, currentPage), knownTotalPages ?? currentPage);
-
-  const mediaQuery = useWorkbenchMedia({
-    page: clampedPage,
-    perPage,
-    search: normalizedSearch,
-    status: statusFilter,
-    enabled: true,
-  });
-
-  const mediaData = mediaQuery.data;
-  const mediaItems = mediaQuery.itemsWithIdentities ?? mediaData?.items ?? [];
-  const totalCount = mediaData?.total ?? 0;
-
-  useEffect(() => {
-    if (currentPage === clampedPage) {
-      return;
-    }
-    setCurrentPage(clampedPage);
-  }, [clampedPage, currentPage, setCurrentPage]);
-
-  useEffect(() => {
-    if (!mediaData) {
-      return;
-    }
-    setKnownTotalPages(mediaData.totalPages);
-  }, [mediaData]);
 
   const {
     isScanRunning,
@@ -295,40 +230,6 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     [selectJob, setAdvancedOpen],
   );
 
-  const statusMessage = useMemo(() => {
-    if (mediaQuery.isFetching) {
-      return __('Updating media queue…', 'alt-context');
-    }
-
-    if (mediaQuery.isError) {
-      return __('Unable to load media. Please try again.', 'alt-context');
-    }
-
-    if (totalCount === 0) {
-      return normalizedSearch
-        ? sprintf(__('No media found for “%s”.', 'alt-context'), normalizedSearch)
-        : __('No media items match the current filters.', 'alt-context');
-    }
-
-    return sprintf(_n('Showing %d media item.', 'Showing %d media items.', totalCount, 'alt-context'), totalCount);
-  }, [mediaQuery.isError, mediaQuery.isFetching, normalizedSearch, totalCount]);
-
-  const detailTruncationNotice = useMemo(() => {
-    const detailData = mediaQuery.detailQuery.data;
-    if (!detailData?.truncated) {
-      return null;
-    }
-
-    return sprintf(
-      __(
-        'Showing detail metadata for the first %1$d of %2$d requested media items. Narrow the page size to inspect the rest.',
-        'alt-context',
-      ),
-      detailData.limit,
-      detailData.total,
-    );
-  }, [mediaQuery.detailQuery.data]);
-
   const value = useMemo<WorkbenchContextValue>(
     () => ({
       activeSection,
@@ -345,22 +246,6 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       selectJob,
       forgetJob,
       clearHistory,
-      selection,
-      selectedMedia,
-      toggleRow,
-      toggleAll,
-      isPageFullySelected,
-      searchQuery,
-      currentPage: clampedPage,
-      perPage,
-      handleSearchChange,
-      statusFilter,
-      handleStatusChange,
-      setCurrentPage,
-      setPerPage,
-      mediaQuery,
-      statusMessage,
-      detailTruncationNotice,
       isScanRunning,
       isCancellingScan,
       currentPhase,
@@ -388,7 +273,6 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setClusterMessage,
       scanError,
       setScanError,
-      hasIdentities: mediaItems.length > 0,
       recognitionSource,
       effectiveTargetUrl,
     }),
@@ -407,21 +291,6 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       selectJob,
       forgetJob,
       clearHistory,
-      selection,
-      selectedMedia,
-      toggleRow,
-      toggleAll,
-      isPageFullySelected,
-      searchQuery,
-      clampedPage,
-      perPage,
-      handleSearchChange,
-      statusFilter,
-      handleStatusChange,
-      setCurrentPage,
-      mediaQuery,
-      statusMessage,
-      detailTruncationNotice,
       isScanRunning,
       isCancellingScan,
       currentPhase,
@@ -446,14 +315,16 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       clusterPanel,
       clusterMessage,
       scanError,
-      mediaItems.length,
       recognitionSource,
       effectiveTargetUrl,
-      setPerPage,
     ],
   );
 
-  return <WorkbenchContext.Provider value={value}>{children}</WorkbenchContext.Provider>;
+  return (
+    <WorkbenchContext.Provider value={value}>
+      <WorkbenchMediaProvider>{children}</WorkbenchMediaProvider>
+    </WorkbenchContext.Provider>
+  );
 };
 
 export const useWorkbenchContext = (): WorkbenchContextValue => {

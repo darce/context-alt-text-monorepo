@@ -2,9 +2,11 @@ import { __, _n, sprintf } from '@wordpress/i18n';
 
 import { isClusteringActive } from './Panels';
 import { useWorkbenchContext } from './WorkbenchContext';
+import { useWorkbenchMediaContext } from './WorkbenchMediaContext';
 
 export const MediaAnalyzeCta = (): React.JSX.Element => {
-  const { selectedMedia, isScanRunning, currentPhase, scanProgress, clusterProgress, scan } = useWorkbenchContext();
+  const { isScanRunning, currentPhase, scanProgress, clusterProgress, scan } = useWorkbenchContext();
+  const { selectedMedia } = useWorkbenchMediaContext().selection;
   const selectedCount = selectedMedia.length;
   const activeProgress =
     (currentPhase === 'clustering' || currentPhase === 'projecting') && clusterProgress ? clusterProgress : scanProgress;

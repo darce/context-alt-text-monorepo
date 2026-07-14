@@ -13,6 +13,7 @@ import {
 import { useWorkbenchFindings } from './identity-clusters/useWorkbenchFindings';
 import { MediaSelection } from './MediaSelection';
 import { useWorkbenchContext } from './WorkbenchContext';
+import { useWorkbenchMediaContext } from './WorkbenchMediaContext';
 
 const ScanScrollRestoration = () => {
   useScrollRestoration('workbench-scan');
@@ -47,13 +48,13 @@ export const ScanTabContent = (): React.JSX.Element => {
     etaSeconds,
     isPrimary,
     latestJobId,
-    hasIdentities,
     clusterPanel,
     dispatchClusterPanel,
     cancelScan,
     retryScanStream,
     activeJobIds,
   } = useWorkbenchContext();
+  const { hasIdentities } = useWorkbenchMediaContext().mediaQueue;
 
   const findingsDetailRef = React.useRef<HTMLDivElement>(null);
   const findings = useWorkbenchFindings();

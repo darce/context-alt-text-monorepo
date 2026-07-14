@@ -8,6 +8,7 @@ import { AdvancedDrawer } from './workbench/AdvancedDrawer';
 import { ConflictInbox } from './workbench/ConflictInbox';
 import { DeadLetterPanel } from './workbench/DeadLetterPanel';
 import { WorkbenchProvider, useWorkbenchContext, TAB_IDS, type WorkbenchTab } from './workbench/WorkbenchContext';
+import { useWorkbenchMediaContext } from './workbench/WorkbenchMediaContext';
 
 interface WorkbenchSection {
   id: WorkbenchTab;
@@ -49,8 +50,8 @@ const WorkbenchPageContent = (): React.JSX.Element => {
     projectionSyncState,
     projectionError,
     retryProjectionSync,
-    detailTruncationNotice,
   } = useWorkbenchContext();
+  const { detailTruncationNotice } = useWorkbenchMediaContext().mediaQueue;
 
   const scanSection = WORKBENCH_SECTIONS[0];
 

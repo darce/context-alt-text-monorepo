@@ -1,159 +1,156 @@
 import { __, _n, sprintf } from '@wordpress/i18n';
 
-import type { BatchRunStatus, JobProgress } from '../../api/recognition/types/scan';
+import type { JobProgress } from '../../api/recognition/types/scan';
 import type { RecognitionHistorySource } from '../../hooks/recognitionJobHistoryUtils';
+import type { ScanRunViewModel } from './JobPipelineContext';
 import { formatSyncJobPhase } from './syncPresentation';
 export { mediaEditUrl, rosterClustersUrl } from '../../utils/adminUrls';
 
-export const isClusteringActive = (phase?: string | null): boolean =>
-  phase === 'clustering' || phase === 'retrying';
+export const isClusteringActive = (phase?: string | null): boolean => phase === 'clustering' || phase === 'retrying';
 
 interface ScanActionPanelProps {
+  scanRun: ScanRunViewModel;
   onCancelScan?: () => void;
   onRetryStream?: () => void;
-  isScanning: boolean;
-  isCancelling?: boolean;
-  statusText?: string;
-  jobId?: string | null;
-  errorMessage?: string | null;
-  progress?: JobProgress | null;
-  batchRunStatus?: BatchRunStatus | null;
-  stallSeconds?: number | null;
-  etaSeconds?: number | null;
-  isSynced?: boolean;
 }
 
-export const ScanActionPanel = ({
-  onCancelScan,
-  onRetryStream,
-  isScanning,
-  isCancelling,
-  statusText,
-  jobId,
-  errorMessage,
-  progress,
-  batchRunStatus,
-  stallSeconds,
-  etaSeconds,
-  isSynced,
-}: ScanActionPanelProps): React.JSX.Element => (
-  <div className="acx-apply-panel">
-    {onCancelScan && (
-      <button
-        type="button"
-        className="acx-link-button"
-        onClick={onCancelScan}
-        disabled={Boolean(isCancelling) || !isScanning}
-      >
-        {isCancelling ? __('Cancelling…', 'alt-context') : __('Cancel scan', 'alt-context')}
-      </button>
-    )}
-    {statusText && (
-      <p className="acx-apply-panel__status">
-        {sprintf(__('Job %s: %s', 'alt-context'), jobId ?? __('pending', 'alt-context'), statusText)}
-      </p>
-    )}
-    {typeof stallSeconds === 'number' && (
-      <div className="acx-apply-panel__status acx-apply-panel__status--warning">
-        <p>{sprintf(__('Stuck - last update %s ago', 'alt-context'), formatDuration(stallSeconds))}</p>
-        <div className="acx-apply-panel__actions">
-          <button type="button" className="acx-link-button" onClick={onRetryStream} disabled={!onRetryStream}>
-            {__('Retry', 'alt-context')}
-          </button>
-          {onCancelScan && (
-            <button
-              type="button"
-              className="acx-link-button"
-              onClick={onCancelScan}
-              disabled={Boolean(isCancelling) || !isScanning}
-            >
-              {__('Cancel', 'alt-context')}
+export const ScanActionPanel = ({ scanRun, onCancelScan, onRetryStream }: ScanActionPanelProps): React.JSX.Element => {
+  const {
+    isScanning,
+    isCancelling,
+    statusText,
+    jobId,
+    errorMessage,
+    progress,
+    batchRunStatus,
+    stallSeconds,
+    etaSeconds,
+    isSynced,
+  } = scanRun;
+
+  return (
+    <div className="acx-apply-panel">
+      {onCancelScan && (
+        <button
+          type="button"
+          className="acx-link-button"
+          onClick={onCancelScan}
+          disabled={Boolean(isCancelling) || !isScanning}
+        >
+          {isCancelling ? __('Cancelling…', 'alt-context') : __('Cancel scan', 'alt-context')}
+        </button>
+      )}
+      {statusText && (
+        <p className="acx-apply-panel__status">
+          {sprintf(__('Job %s: %s', 'alt-context'), jobId ?? __('pending', 'alt-context'), statusText)}
+        </p>
+      )}
+      {typeof stallSeconds === 'number' && (
+        <div className="acx-apply-panel__status acx-apply-panel__status--warning">
+          <p>{sprintf(__('Stuck - last update %s ago', 'alt-context'), formatDuration(stallSeconds))}</p>
+          <div className="acx-apply-panel__actions">
+            <button type="button" className="acx-link-button" onClick={onRetryStream} disabled={!onRetryStream}>
+              {__('Retry', 'alt-context')}
             </button>
-          )}
+            {onCancelScan && (
+              <button
+                type="button"
+                className="acx-link-button"
+                onClick={onCancelScan}
+                disabled={Boolean(isCancelling) || !isScanning}
+              >
+                {__('Cancel', 'alt-context')}
+              </button>
+            )}
+          </div>
         </div>
-      </div>
-    )}
-    {progress && progress.total > 0 && (
-      <>
-        {progress.phase && (
+      )}
+      {progress && progress.total > 0 && (
+        <>
+          {progress.phase && (
+            <p className="acx-apply-panel__status">
+              {sprintf(__('Phase: %s', 'alt-context'), formatJobPhase(progress.phase))}
+            </p>
+          )}
           <p className="acx-apply-panel__status">
-            {sprintf(__('Phase: %s', 'alt-context'), formatJobPhase(progress.phase))}
+            {isClusteringActive(progress.phase)
+              ? sprintf(__('Processed %d/%d identities', 'alt-context'), progress.completed, progress.total)
+              : sprintf(
+                  __('Processed %d/%d images', 'alt-context'),
+                  progress.images_processed ?? progress.completed,
+                  progress.total,
+                ) +
+                (typeof progress.faces_found === 'number'
+                  ? sprintf(__(' · %d faces found', 'alt-context'), progress.faces_found)
+                  : '')}
           </p>
-        )}
-        <p className="acx-apply-panel__status">
-          {isClusteringActive(progress.phase)
-            ? sprintf(__('Processed %d/%d identities', 'alt-context'), progress.completed, progress.total)
-            : sprintf(
-                __('Processed %d/%d images', 'alt-context'),
-                progress.images_processed ?? progress.completed,
-                progress.total,
-              ) +
-              (typeof progress.faces_found === 'number'
-                ? sprintf(__(' · %d faces found', 'alt-context'), progress.faces_found)
-                : '')}
-        </p>
-        {isClusteringActive(progress.phase) && typeof progress.retry_count === 'number' && progress.retry_count > 0 && (
+          {isClusteringActive(progress.phase) &&
+            typeof progress.retry_count === 'number' &&
+            progress.retry_count > 0 && (
+              <p className="acx-apply-panel__status">
+                {sprintf(_n('Retry %d', 'Retry %d', progress.retry_count, 'alt-context'), progress.retry_count)}
+                {progress.last_error_code
+                  ? sprintf(__(' (last error: %s)', 'alt-context'), progress.last_error_code)
+                  : ''}
+              </p>
+            )}
+          <progress
+            className="acx-apply-panel__progress"
+            value={Math.min(progress.completed, progress.total)}
+            max={progress.total}
+            aria-label={
+              isClusteringActive(progress.phase)
+                ? __('Clustering progress', 'alt-context')
+                : __('Scan progress', 'alt-context')
+            }
+          />
+          {typeof etaSeconds === 'number' && (
+            <p className="acx-apply-panel__eta">
+              {sprintf(__('Remaining: %s', 'alt-context'), formatDuration(etaSeconds))}
+            </p>
+          )}
+          {isSynced && <p className="acx-apply-panel__synced">{__('Synced', 'alt-context')}</p>}
+        </>
+      )}
+      {batchRunStatus && batchRunStatus.submitted_total > 0 && (
+        <>
           <p className="acx-apply-panel__status">
-            {sprintf(_n('Retry %d', 'Retry %d', progress.retry_count, 'alt-context'), progress.retry_count)}
-            {progress.last_error_code ? sprintf(__(' (last error: %s)', 'alt-context'), progress.last_error_code) : ''}
+            {(() => {
+              const processedTotal =
+                batchRunStatus.completed_total + batchRunStatus.failed_total + batchRunStatus.cancelled_total;
+              return batchRunStatus.failed_total > 0
+                ? sprintf(
+                    __('Processed %1$d/%2$d (%3$d failed)', 'alt-context'),
+                    processedTotal,
+                    batchRunStatus.submitted_total,
+                    batchRunStatus.failed_total,
+                  )
+                : sprintf(__('Processed %1$d/%2$d', 'alt-context'), processedTotal, batchRunStatus.submitted_total);
+            })()}
           </p>
-        )}
-        <progress
-          className="acx-apply-panel__progress"
-          value={Math.min(progress.completed, progress.total)}
-          max={progress.total}
-          aria-label={
-            isClusteringActive(progress.phase)
-              ? __('Clustering progress', 'alt-context')
-              : __('Scan progress', 'alt-context')
-          }
-        />
-        {typeof etaSeconds === 'number' && (
-          <p className="acx-apply-panel__eta">
-            {sprintf(__('Remaining: %s', 'alt-context'), formatDuration(etaSeconds))}
-          </p>
-        )}
-        {isSynced && <p className="acx-apply-panel__synced">{__('Synced', 'alt-context')}</p>}
-      </>
-    )}
-    {batchRunStatus && batchRunStatus.submitted_total > 0 && (
-      <>
-        <p className="acx-apply-panel__status">
-          {(() => {
-            const processedTotal =
-              batchRunStatus.completed_total + batchRunStatus.failed_total + batchRunStatus.cancelled_total;
-            return batchRunStatus.failed_total > 0
-              ? sprintf(
-                  __('Processed %1$d/%2$d (%3$d failed)', 'alt-context'),
-                  processedTotal,
-                  batchRunStatus.submitted_total,
-                  batchRunStatus.failed_total,
-                )
-              : sprintf(__('Processed %1$d/%2$d', 'alt-context'), processedTotal, batchRunStatus.submitted_total);
-          })()}
-        </p>
-        {batchRunStatus.failed_batches.length > 0 && (
-          <details className="acx-apply-panel__status">
-            <summary>{__('Failed batches', 'alt-context')}</summary>
-            <ul className="acx-apply-panel__list">
-              {batchRunStatus.failed_batches.map((batch) => (
-                <li key={`${batch.batch_index}-${batch.error_code}`}>
-                  {sprintf(
-                    __('Batch %1$d (%2$d items): %3$s', 'alt-context'),
-                    batch.batch_index + 1,
-                    batch.media_ids.length,
-                    batch.error_message,
-                  )}
-                </li>
-              ))}
-            </ul>
-          </details>
-        )}
-      </>
-    )}
-    {errorMessage && <p className="acx-apply-panel__status acx-apply-panel__status--error">{errorMessage}</p>}
-  </div>
-);
+          {batchRunStatus.failed_batches.length > 0 && (
+            <details className="acx-apply-panel__status">
+              <summary>{__('Failed batches', 'alt-context')}</summary>
+              <ul className="acx-apply-panel__list">
+                {batchRunStatus.failed_batches.map((batch) => (
+                  <li key={`${batch.batch_index}-${batch.error_code}`}>
+                    {sprintf(
+                      __('Batch %1$d (%2$d items): %3$s', 'alt-context'),
+                      batch.batch_index + 1,
+                      batch.media_ids.length,
+                      batch.error_message,
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </>
+      )}
+      {errorMessage && <p className="acx-apply-panel__status acx-apply-panel__status--error">{errorMessage}</p>}
+    </div>
+  );
+};
 
 interface ConfirmPanelProps {
   jobId: string | null;

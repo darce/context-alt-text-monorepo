@@ -215,59 +215,83 @@ vi.mock('../api/config', () => ({
   resetConfigCache: vi.fn(),
 }));
 
-// Workbench pulls a large context — stub the provider surface for page shell + status strip.
-vi.mock('../pages/workbench/WorkbenchContext', async () => {
+// Workbench state fans out over four provider modules since E21-11 S2 — stub each
+// module (hook + provider passthrough) so the sweep stays decoupled from provider wiring.
+vi.mock('../pages/workbench/WorkbenchNavContext', async () => {
   const React = await import('react');
-  const actual = await vi.importActual<typeof import('../pages/workbench/WorkbenchContext')>(
-    '../pages/workbench/WorkbenchContext',
+  const actual = await vi.importActual<typeof import('../pages/workbench/WorkbenchNavContext')>(
+    '../pages/workbench/WorkbenchNavContext',
   );
   const stub = {
     activeSection: 'scan',
     setActiveSection: vi.fn(),
     activeOverlay: null,
     setActiveOverlay: vi.fn(),
+    isAdvancedOpen: false,
+    setAdvancedOpen: vi.fn(),
     recognitionSource: 'service',
     effectiveTargetUrl: 'https://api.example.com',
-    isOnline: true,
-    isPrimary: true,
-    latestJobId: null,
-    currentPhase: 'idle',
-    projectionSyncState: 'idle',
-    projectionError: null,
-    retryProjectionSync: vi.fn(),
-    clusterPanel: { mode: 'none', clusterId: null },
-    dispatchClusterPanel: vi.fn(),
-    jobId: null,
-    jobHistory: [],
-    jobStatuses: {},
-    historySource: 'unavailable',
-    rememberJob: vi.fn(),
-    selectJob: vi.fn(),
-    forgetJob: vi.fn(),
-    clearHistory: vi.fn(),
-    isScanRunning: false,
-    isCancellingScan: false,
-    statusText: undefined,
-    scanProgress: null,
-    clusterProgress: null,
-    batchRunStatus: null,
-    scanStallSeconds: null,
-    etaSeconds: null,
-    scan: vi.fn(),
-    cancelScan: vi.fn(),
-    cluster: vi.fn(),
-    retryScanStream: vi.fn(),
-    activeJobIds: [],
-    handleSelectJobFromHistory: vi.fn(),
-    clusterMessage: null,
-    setClusterMessage: vi.fn(),
-    scanError: null,
-    setScanError: vi.fn(),
   };
   return {
     ...actual,
-    WorkbenchProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-    useWorkbenchContext: () => stub,
+    WorkbenchNavProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    useWorkbenchNav: () => stub,
+  };
+});
+
+vi.mock('../pages/workbench/JobPipelineContext', () => {
+  const stub = {
+    scanRun: {
+      isScanning: false,
+      isCancelling: false,
+      statusText: undefined,
+      jobId: null,
+      errorMessage: null,
+      progress: null,
+      batchRunStatus: null,
+      stallSeconds: null,
+      etaSeconds: null,
+      isSynced: false,
+    },
+    status: {
+      currentPhase: 'idle',
+      projectionSyncState: 'idle',
+      projectionError: null,
+      isOnline: true,
+      scanProgress: null,
+      clusterProgress: null,
+      clusterMessage: null,
+    },
+    history: {
+      jobId: null,
+      latestJobId: null,
+      activeJobIds: [],
+      jobHistory: [],
+      jobStatuses: {},
+      historySource: 'unavailable',
+    },
+    scan: vi.fn(),
+    cancelScan: vi.fn(),
+    cluster: vi.fn(),
+    retryProjectionSync: vi.fn(),
+    retryScanStream: vi.fn(),
+    handleSelectJobFromHistory: vi.fn(),
+    clearHistory: vi.fn(),
+  };
+  return {
+    JobPipelineProvider: ({ children }: { children: import('react').ReactNode }) => <>{children}</>,
+    useJobPipeline: () => stub,
+  };
+});
+
+vi.mock('../pages/workbench/ClusterPanelContext', () => {
+  const stub = {
+    clusterPanel: { mode: 'none', clusterId: null },
+    dispatchClusterPanel: vi.fn(),
+  };
+  return {
+    ClusterPanelProvider: ({ children }: { children: import('react').ReactNode }) => <>{children}</>,
+    useClusterPanel: () => stub,
   };
 });
 

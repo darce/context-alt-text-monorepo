@@ -5,7 +5,9 @@ import pytest
 from scripts.eval_harness.caption_metrics import (
     CaptionScores,
     insertion_rate,
+    name_precision,
     score_caption,
+    wrong_name_image_rate,
 )
 
 
@@ -154,3 +156,130 @@ def test_insertion_rate_excludes_policy_disabled():
 def test_insertion_rate_none_when_no_eligible_identities():
     scores = [score_caption("A glacier.", **_entry(present_identities=[], must_right=[]))]
     assert insertion_rate(scores) is None
+
+
+# --- ALTQ-1: wrong-name trap + roster hallucination (hard gates) ---
+
+
+def test_easy_wrong_name_in_caption_zeroes_gate():
+    scores = score_caption(
+        "Alice Example and Mallory Trap stand by a lake.",
+        **_entry(easy_wrong=["Mallory Trap"]),
+    )
+    assert scores.wrong_name_hits == ["Mallory Trap"]
+    assert scores.named_wrong_person is True
+    assert scores.gated_score == 0.0
+
+
+def test_roster_hallucination_zeroes_gate():
+    scores = score_caption(
+        "Alice Example and Bob Builder stand by a lake.",
+        **_entry(),
+        roster=["Alice Example", "Bob Builder", "Carol Cruz"],
+    )
+    assert scores.hallucinated_names == ["Bob Builder"]
+    assert scores.gated_score == 0.0
+
+
+def test_present_identity_never_counts_as_hallucination():
+    scores = score_caption(CAPTION, **_entry(), roster=["Alice Example", "Bob Builder"])
+    assert scores.hallucinated_names == []
+    assert scores.wrong_name_hits == []
+    assert scores.gated_score == 1.0
+
+
+def test_wrong_name_gates_even_when_recognition_disabled():
+    scores = score_caption(
+        "Mallory Trap by a lake.",
+        **_entry(recognition_enabled=False, must_right=[], easy_wrong=["Mallory Trap"]),
+    )
+    assert scores.gated_score == 0.0
+
+
+# --- ALTQ-1: style axes (report-only signals) ---
+
+
+def test_meta_framing_detected_on_7b_winner_output():
+    # Verbatim closer from the committed 7b winning caption — the defect the
+    # saturated benchmark could not see.
+    scores = score_caption(
+        "Caitlin Weaver stands on a rocky shore. The scene captures a moment during her 2023 research residency.",
+        **_entry(present_identities=["Caitlin Weaver"], must_right=["Caitlin Weaver"]),
+    )
+    assert "the scene captures" in scores.meta_framing_hits
+    assert "captures a moment" in scores.meta_framing_hits
+    assert scores.gated_score == 1.0  # report-only: style hits do NOT gate
+
+
+def test_meta_framing_clean_caption_has_no_hits():
+    scores = score_caption(CAPTION, **_entry())
+    assert scores.meta_framing_hits == []
+
+
+def test_context_duplication_high_when_caption_restates_context():
+    context = "Caitlin Weaver on the Antarctic peninsula during her 2023 research residency."
+    scores = score_caption(
+        "Caitlin Weaver on the Antarctic peninsula during her 2023 research residency.",
+        **_entry(present_identities=["Caitlin Weaver"], must_right=[]),
+        context_text=context,
+    )
+    assert scores.context_duplication_ratio == pytest.approx(1.0)
+
+
+def test_context_duplication_low_for_visual_description():
+    scores = score_caption(
+        "A woman in a black jacket stands on a rocky shore beside calm water.",
+        **_entry(present_identities=[], must_right=[]),
+        context_text="Antarctica expedition itinerary and travel notes.",
+    )
+    assert scores.context_duplication_ratio == pytest.approx(0.0)
+
+
+def test_context_duplication_none_without_context():
+    scores = score_caption(CAPTION, **_entry())
+    assert scores.context_duplication_ratio is None
+
+
+def test_sentence_count_counted():
+    scores = score_caption("One. Two! Three?", **_entry(must_right=[], present_identities=[]))
+    assert scores.sentence_count == 3
+
+
+def test_name_front_loaded_true_and_false():
+    front = score_caption(CAPTION, **_entry())
+    assert front.name_front_loaded is True
+    late = score_caption(
+        "By a calm blue lake under towering peaks and a wide open sky, after a long morning hike "
+        "through the valley with heavy packs, stands Alice Example.",
+        **_entry(),
+    )
+    assert late.name_front_loaded is False
+
+
+def test_name_front_loaded_none_without_identities():
+    scores = score_caption("A glacier.", **_entry(present_identities=[], must_right=[]))
+    assert scores.name_front_loaded is None
+
+
+# --- ALTQ-1: corpus name precision / wrong-name image rate ---
+
+
+def test_name_precision_counts_wrong_names_against():
+    scores = [
+        score_caption(CAPTION, **_entry()),
+        score_caption("Mallory Trap by a lake.", **_entry(easy_wrong=["Mallory Trap"], must_right=[])),
+    ]
+    assert name_precision(scores) == pytest.approx(0.5)
+
+
+def test_name_precision_none_when_nothing_asserted():
+    scores = [score_caption("A glacier.", **_entry(present_identities=[], must_right=[]))]
+    assert name_precision(scores) is None
+
+
+def test_wrong_name_image_rate():
+    scores = [
+        score_caption(CAPTION, **_entry()),
+        score_caption("Mallory Trap by a lake.", **_entry(easy_wrong=["Mallory Trap"], must_right=[])),
+    ]
+    assert wrong_name_image_rate(scores) == pytest.approx(0.5)

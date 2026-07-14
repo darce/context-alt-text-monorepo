@@ -64,12 +64,49 @@ _SYSTEM_PROMPT = (
 )
 
 
+EVAL_MODES = ("standard", "context_distractor", "name_ablation")
+
+
+def _ablate_names(context_pack: dict[str, Any], names: list[str]) -> tuple[dict[str, Any], list[str]]:
+    """Replace each name (word-boundary, case-insensitive) with 'someone' in every
+    string field. Returns (transformed pack, names actually found). BreakingNews
+    anonymization as a fetch-time transform — the score phase asserts the model
+    produced no identity it was never given (never-guess, mechanical)."""
+    ablated: list[str] = []
+    pack = dict(context_pack)
+    for name in names:
+        rx = re.compile(rf"(?<!\w){re.escape(name)}(?!\w)", re.IGNORECASE)
+        hit = False
+        for key, value in pack.items():
+            if isinstance(value, str) and rx.search(value):
+                pack[key] = rx.sub("someone", value)
+                hit = True
+        if hit:
+            ablated.append(name)
+    return pack, ablated
+
+
+def _inject_distractor(context_pack: dict[str, Any], easy_wrong: list[str]) -> tuple[dict[str, Any], str | None]:
+    """Add the entry's first easy_wrong name (deterministic pick) as a context
+    field claiming presence. The score phase asserts the model did NOT weave it
+    (pixels-win / face-gating test; EAMA hard negatives, ReCap mismatch exemplar)."""
+    if not easy_wrong:
+        return context_pack, None
+    distractor = easy_wrong[0]
+    return {**context_pack, "also_pictured": distractor}, distractor
+
+
 class BakeoffClient(RemoteSceneClient):
     """Candidate llama.cpp transport with ``RemoteSceneClient``'s failure discipline.
 
     Reuses the inherited ``_request`` (timeout, 3-strike breaker, 429 backoff);
     only the route and payload differ. Duck-type compatible with
     ``cli.fetch_run_record``'s client contract.
+
+    ``eval_mode`` + ``entry_traits`` (``{media_id: {"present": [...],
+    "easy_wrong": [...]}}``) enable the ALTQ-1 fetch-time context transforms;
+    each transform is stamped into the returned describe dict so the score
+    phase can assert against what the model actually saw.
     """
 
     def __init__(
@@ -81,6 +118,8 @@ class BakeoffClient(RemoteSceneClient):
         no_think: bool = False,
         timeout_s: float | None = None,
         transport: httpx.BaseTransport | None = None,
+        eval_mode: str = "standard",
+        entry_traits: dict[int, dict[str, list[str]]] | None = None,
     ) -> None:
         kwargs: dict[str, Any] = {"transport": transport}
         if timeout_s is not None:
@@ -89,6 +128,12 @@ class BakeoffClient(RemoteSceneClient):
         self.model_id = model_id
         self.model_version = model_version
         self.no_think = no_think
+        if eval_mode not in EVAL_MODES:
+            raise ValueError(f"unknown eval_mode {eval_mode!r}; expected one of {EVAL_MODES}")
+        if eval_mode != "standard" and entry_traits is None:
+            raise ValueError(f"eval_mode {eval_mode!r} requires entry_traits (per-media_id identities)")
+        self.eval_mode = eval_mode
+        self.entry_traits = entry_traits or {}
 
     def describe(
         self,
@@ -99,6 +144,16 @@ class BakeoffClient(RemoteSceneClient):
         context_pack: dict[str, Any],
     ) -> dict[str, Any]:
         """POST /v1/chat/completions -> describe dict scoreable by ``report``."""
+        stamps: dict[str, Any] = {}
+        if self.eval_mode != "standard":
+            traits = self.entry_traits.get(media_id, {})
+            if self.eval_mode == "name_ablation":
+                context_pack, ablated = _ablate_names(context_pack, list(traits.get("present", [])))
+                stamps["ablated_names"] = ablated
+            elif self.eval_mode == "context_distractor":
+                context_pack, injected = _inject_distractor(context_pack, list(traits.get("easy_wrong", [])))
+                if injected is not None:
+                    stamps["injected_distractor"] = injected
         payload = self._request_dict(
             "POST",
             "/v1/chat/completions",
@@ -127,6 +182,7 @@ class BakeoffClient(RemoteSceneClient):
             "adapter": "bakeoff",
             "model_id": self.model_id,
             "model_version": self.model_version,
+            **stamps,
         }
 
     def _user_text(self, context_pack: dict[str, Any]) -> str:
@@ -246,6 +302,16 @@ def main(argv: list[str] | None = None) -> None:
         help="run-records to retain in out/ (prune older; must be >= 1)",
     )
     parser.add_argument("--out", default=None, help="run-record path (default: out/run-<stamp>-bakeoff-<model>.json)")
+    parser.add_argument(
+        "--eval-mode",
+        choices=EVAL_MODES,
+        default="standard",
+        help=(
+            "ALTQ-1 context transforms: context_distractor injects each entry's first easy_wrong "
+            "name into the context (assert NOT woven); name_ablation strips present-identity names "
+            "from the context (assert none guessed). Stamped into provenance; reports are mode-specific."
+        ),
+    )
     args = parser.parse_args(argv)
 
     if os.environ.get("ACX_EVAL_LIVE") != "1":
@@ -255,12 +321,17 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit("GOLDEN_IMAGES_DIR is not set — see scene/tests/seed/README.md for the rsync bootstrap")
 
     manifest = load_manifest(args.manifest, images_dir=images_dir)
+    entry_traits = {
+        e.media_id: {"present": list(e.present_identities), "easy_wrong": list(e.easy_wrong)} for e in manifest.entries
+    }
     client = BakeoffClient(
         args.endpoint,
         model_id=args.model_id,
         model_version=args.model_version,
         no_think=args.no_think,
         timeout_s=args.timeout,
+        eval_mode=args.eval_mode,
+        entry_traits=entry_traits,
     )
     started_at = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     stamp = started_at.replace(":", "").replace("-", "").replace("T", "-").rstrip("Z")
@@ -291,11 +362,15 @@ def main(argv: list[str] | None = None) -> None:
         )
     except BoundedStallError as exc:
         aborted_path = record_path.with_name(record_path.stem + "-aborted.json")
+        if args.eval_mode != "standard":
+            exc.partial_record.setdefault("provenance", {})["eval_mode"] = args.eval_mode
         aborted_path.write_text(json.dumps(exc.partial_record, indent=2, sort_keys=True) + "\n")
         sys.exit(f"BoundedStallError: {exc} — partial record saved to {aborted_path}")
     finally:
         client.close()
 
+    if args.eval_mode != "standard":
+        record["provenance"]["eval_mode"] = args.eval_mode
     record_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
     prune_out_dir(str(out_dir), keep=args.keep)
     print(record_path)

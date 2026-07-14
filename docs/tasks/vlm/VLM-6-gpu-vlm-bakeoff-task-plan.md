@@ -175,6 +175,7 @@ Proof:
 Changes:
 
 - `bakeoff_candidates.yaml` (all 12 + 3 anchors, revision-pinned) and `bakeoff_runner.py` (serve → warm-up → 100 images at concurrency 1, open-loop per-image timing [PERF-03], p50/p95/p99 [PERF-01], cold-load, peak VRAM via `nvidia-smi` sampling, image-edge cap reusing `ACX_VLM_MAX_IMAGE_EDGE_PX` semantics with downscales recorded).
+- **Execution locus**: `bakeoff_runner.py` executes **on the bake host** (invoked over Tailscale SSH from the laptop, same access path as `acx-backend`); Golden-100 images are rsynced to the host once before the window; per-model metrics + raw generations are pulled back to the laptop after each model completes (so a window abort loses at most one model's outputs).
 - Weight pre-pull script; dry-run mode validated locally against a stub server.
 - **Per-stack smoke gate**: one real inference per serving stack before the window — llama.cpp via MiniCPM-V 4.6 GGUF locally (laptop/A1); vLLM and HF Transformers via their smallest candidate on a short throwaway GPU boot (≤1 h) or CPU-mode where the stack supports it. No stack enters S3 unsmoked.
 
@@ -196,7 +197,7 @@ Changes:
 
 Proof:
 
-- Per-model run records + raw generations committed under `scripts/eval_harness/out/`; per-model `test_result` events [AGT-04]; termination evidence in the slice decision.
+- Bulky raw generations + run records land in `scripts/eval_harness/out/` (gitignored working set); durable evidence — per-model summary JSON + score tables — is committed to `docs/tasks/vlm/bakeoff-results/`; per-model `test_result` events [AGT-04]; termination evidence in the slice decision.
 
 ### Slice 4: CPU inline tier run
 

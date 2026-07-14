@@ -237,6 +237,16 @@ class SpatialFact(BaseModel):
             raise ValueError("between requires both 'reference' and 'reference2'")
         return self
 
+    @property
+    def text(self) -> str:
+        """Human-readable label for reporting, e.g. 'Alice left_of Bob'."""
+        rel = self.relation.value
+        if self.relation is SpatialRelation.BETWEEN:
+            return f"{self.subject} between {self.reference} and {self.reference2}"
+        if self.reference:
+            return f"{self.subject} {rel} {self.reference}"
+        return f"{self.subject} {rel}"
+
 
 class GoldenEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")

@@ -34,6 +34,11 @@ def _contains(haystack: str, needle: str) -> bool:
     return re.search(rf"(?<!\w){re.escape(needle)}(?!\w)", haystack, re.IGNORECASE) is not None
 
 
+def contains_phrase(haystack: str, needle: str) -> bool:
+    """Public word-boundary, case-insensitive phrase match (shared with placement scoring)."""
+    return _contains(haystack, needle)
+
+
 def _syllables(word: str) -> int:
     word = word.lower()
     groups = len(_VOWEL_GROUP_RE.findall(word))
@@ -159,9 +164,23 @@ def insertion_rate(scores: Sequence[CaptionScores]) -> float | None:
 # noun. Conservative on purpose: only high-confidence overcount claims flag.
 _PEOPLE_NOUN = r"(?:people|persons?|men|women|man|woman|figures?|individuals?|faces?)"
 _COUNT_WORD = {
-    "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
-    "eight": 8, "nine": 9, "ten": 10, "couple": 2, "pair": 2, "trio": 3,
-    "several": 2, "many": 2, "multiple": 2, "group": 2, "crowd": 2,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "couple": 2,
+    "pair": 2,
+    "trio": 3,
+    "several": 2,
+    "many": 2,
+    "multiple": 2,
+    "group": 2,
+    "crowd": 2,
 }
 _COUNT_CLAIM_RE = re.compile(
     rf"(?<!\w)(?P<q>{'|'.join(map(re.escape, _COUNT_WORD))}|\d+)\s+(?:of\s+)?(?:\w+\s+){{0,2}}?{_PEOPLE_NOUN}(?!\w)",

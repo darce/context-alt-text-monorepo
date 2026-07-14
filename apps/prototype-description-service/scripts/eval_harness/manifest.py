@@ -24,6 +24,7 @@ import json
 import re
 import unicodedata
 import warnings
+from enum import StrEnum
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -31,6 +32,85 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 SUPPORTED_MANIFEST_VERSION = 2
+
+
+# --- Golden-100 stratification vocabulary (VLM-6 S1) -------------------------
+# Centralized enums (sr-007) so difficulty/domain/fact-kind/relation are never
+# scattered magic strings. All Golden-100 additions are ADDITIVE and optional —
+# the legacy golden-38 entries omit them and still validate under extra='forbid'.
+
+
+class Difficulty(StrEnum):
+    """Coarse per-image difficulty tier used for stratified reporting."""
+
+    EASY = "easy"
+    MEDIUM = "medium"
+    HARD = "hard"
+
+
+class Domain(StrEnum):
+    """Stratum an image belongs to. Every stratum gets >=5 images (plan S1)."""
+
+    PEOPLE = "people"
+    FACES = "faces"
+    CROWDS = "crowds"
+    OCCLUSION = "occlusion"
+    MIRRORS = "mirrors"
+    ANIMALS = "animals"
+    ART = "art"
+    ABSTRACT = "abstract"
+    BLACK_AND_WHITE = "black_and_white"
+    DENSE_SCENE = "dense_scene"
+    TEXT_IN_IMAGE = "text_in_image"
+    CHARTS = "charts"
+    PRODUCTS = "products"
+    LOW_LIGHT = "low_light"
+
+
+class FactKind(StrEnum):
+    """What a reference fact asserts, so the hallucination scorer can bucket."""
+
+    OBJECT = "object"
+    ATTRIBUTE = "attribute"
+    COUNT = "count"
+    RELATION = "relation"
+    SCENE = "scene"
+    TEXT = "text"
+
+
+class FactPolarity(StrEnum):
+    """Whether a reference fact is TRUE of the image or a fabrication trap.
+
+    ``true`` facts are the ground truth a faithful caption may state (coverage);
+    ``false`` facts are things that are NOT true of the image — a caption that
+    asserts one has fabricated (the hallucination signal). Deterministic scoring
+    matches ``phrases`` with word-boundary anchoring (see caption_metrics).
+    """
+
+    TRUE = "true"
+    FALSE = "false"
+
+
+class SpatialRelation(StrEnum):
+    """Relative placement relations derived from curated face/object boxes."""
+
+    LEFT_OF = "left_of"
+    RIGHT_OF = "right_of"
+    BETWEEN = "between"
+    ABOVE = "above"
+    BELOW = "below"
+    FOREGROUND = "foreground"
+    BACKGROUND = "background"
+
+
+class LicenseTag(StrEnum):
+    """Provenance license classes accepted into the corpus (PII/license screen)."""
+
+    CC0 = "cc0"
+    PUBLIC_DOMAIN = "public_domain"
+    MOCK_ENTITY = "mock_entity"  # consented/synthetic roster material
+    CONSENTED = "consented"  # operator's own / explicitly consented
+    FIXTURE = "fixture"  # pre-existing vendored fixture pool
 
 
 class ManifestError(Exception):
@@ -85,6 +165,79 @@ class ExpectedAttachment(BaseModel):
     fact_id: str | None = None
 
 
+class ReferenceFact(BaseModel):
+    """A ground-truth fact about an image (VLM-6 S1).
+
+    ``polarity=true`` facts are things a faithful caption may state; ``false``
+    facts are fabrication traps (untrue of the image). ``phrases`` are the
+    deterministic word-boundary match variants the hallucination scorer checks.
+    ``confirmed_by`` records whether an operator or the agent draft confirmed it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str
+    kind: FactKind
+    polarity: FactPolarity = FactPolarity.TRUE
+    phrases: list[str] = Field(default_factory=list)
+    confirmed_by: str | None = None  # operator | agent
+
+    @model_validator(mode="after")
+    def _has_a_matchable_phrase(self) -> ReferenceFact:
+        # A fact must expose at least one non-empty match target so scoring is
+        # never silently vacuous (rg-008): fall back to text when phrases empty.
+        if not self.phrases and not self.text.strip():
+            raise ValueError("reference_fact needs non-empty text or at least one phrase")
+        return self
+
+    def match_targets(self) -> list[str]:
+        """Non-empty phrases to match, defaulting to the fact text."""
+        targets = [p for p in self.phrases if p.strip()]
+        return targets or [self.text]
+
+
+class Provenance(BaseModel):
+    """Per-image sourcing + license record (PII/license screen, plan S1)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str  # fixture | localwp | wikimedia | openverse | operator | ...
+    license: LicenseTag
+    url: str | None = None
+    note: str | None = None
+
+
+class SpatialFact(BaseModel):
+    """Relative-placement ground truth derived from curated boxes (plan S1).
+
+    ``reference`` is the second subject for binary relations (left_of/right_of/
+    above/below) and is null for foreground/background; ``between`` uses
+    ``reference`` plus ``reference2``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    subject: str
+    relation: SpatialRelation
+    reference: str | None = None
+    reference2: str | None = None
+    phrases: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _binary_relations_need_reference(self) -> SpatialFact:
+        binary = {
+            SpatialRelation.LEFT_OF,
+            SpatialRelation.RIGHT_OF,
+            SpatialRelation.ABOVE,
+            SpatialRelation.BELOW,
+        }
+        if self.relation in binary and not self.reference:
+            raise ValueError(f"{self.relation} requires a 'reference' subject")
+        if self.relation is SpatialRelation.BETWEEN and not (self.reference and self.reference2):
+            raise ValueError("between requires both 'reference' and 'reference2'")
+        return self
+
+
 class GoldenEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -104,6 +257,12 @@ class GoldenEntry(BaseModel):
     # Per-entry opt-out for corpora that intentionally omit a reference caption
     # without using empty string (reserved; loader also rejects JSON null).
     base_caption_optional: bool = False
+    # --- VLM-6 S1 Golden-100 additions (all additive/optional) ---------------
+    difficulty: Difficulty | None = None
+    domain: Domain | None = None
+    reference_facts: list[ReferenceFact] = Field(default_factory=list)
+    spatial_facts: list[SpatialFact] = Field(default_factory=list)
+    provenance: Provenance | None = None
 
     @field_validator("sha256")
     @classmethod

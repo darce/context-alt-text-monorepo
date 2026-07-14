@@ -731,6 +731,11 @@ async def enqueue_describe_image(
         image_len=image_len,
     )
 
+    # commit() ended the transaction and tenant context is SET LOCAL —
+    # transaction-scoped — so it must be re-established before the read-back,
+    # or RLS hides the row just created and every enqueue 500s on Postgres.
+    # SQLite tests cannot see this (no RLS); found by the 7c live E2E proof.
+    await set_tenant_context(session, submission.tenant_uuid)
     item = await repo.get_single_run_item(tenant_id=submission.tenant_uuid, run_id=run_id)
     if item is None:  # pragma: no cover - defensive only
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "describe job was not persisted")

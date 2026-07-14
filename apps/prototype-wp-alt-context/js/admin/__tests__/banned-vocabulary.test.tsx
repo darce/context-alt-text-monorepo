@@ -235,7 +235,6 @@ vi.mock('../pages/workbench/WorkbenchContext', async () => {
     projectionSyncState: 'idle',
     projectionError: null,
     retryProjectionSync: vi.fn(),
-    detailTruncationNotice: null,
     clusterPanel: { mode: 'none', clusterId: null },
     dispatchClusterPanel: vi.fn(),
     jobId: null,
@@ -246,28 +245,6 @@ vi.mock('../pages/workbench/WorkbenchContext', async () => {
     selectJob: vi.fn(),
     forgetJob: vi.fn(),
     clearHistory: vi.fn(),
-    selection: {},
-    selectedMedia: [],
-    toggleRow: vi.fn(),
-    toggleAll: vi.fn(),
-    isPageFullySelected: () => false,
-    searchQuery: '',
-    currentPage: 1,
-    perPage: 20,
-    handleSearchChange: vi.fn(),
-    statusFilter: 'all',
-    handleStatusChange: vi.fn(),
-    setCurrentPage: vi.fn(),
-    setPerPage: vi.fn(),
-    mediaQuery: {
-      data: { items: [], total: 0 },
-      itemsWithIdentities: [],
-      isPending: false,
-      isError: false,
-      error: null,
-      refetch: vi.fn(),
-    },
-    statusMessage: '',
     isScanRunning: false,
     isCancellingScan: false,
     statusText: undefined,
@@ -286,12 +263,51 @@ vi.mock('../pages/workbench/WorkbenchContext', async () => {
     setClusterMessage: vi.fn(),
     scanError: null,
     setScanError: vi.fn(),
-    hasIdentities: false,
   };
   return {
     ...actual,
     WorkbenchProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
     useWorkbenchContext: () => stub,
+  };
+});
+
+// Media concern lives in its own provider since E21-11 S1 — stub it alongside the monolith.
+vi.mock('../pages/workbench/WorkbenchMediaContext', () => {
+  const stub = {
+    selection: {
+      selection: {},
+      selectedMedia: [],
+      toggleRow: vi.fn(),
+      toggleAll: vi.fn(),
+      isPageFullySelected: () => false,
+    },
+    filters: {
+      searchQuery: '',
+      statusFilter: 'all',
+      currentPage: 1,
+      perPage: 20,
+      handleSearchChange: vi.fn(),
+      handleStatusChange: vi.fn(),
+      setCurrentPage: vi.fn(),
+      setPerPage: vi.fn(),
+    },
+    mediaQueue: {
+      mediaQuery: {
+        data: { items: [], total: 0 },
+        itemsWithIdentities: [],
+        isPending: false,
+        isError: false,
+        error: null,
+        refetch: vi.fn(),
+      },
+      statusMessage: '',
+      detailTruncationNotice: null,
+      hasIdentities: false,
+    },
+  };
+  return {
+    WorkbenchMediaProvider: ({ children }: { children: import('react').ReactNode }) => <>{children}</>,
+    useWorkbenchMediaContext: () => stub,
   };
 });
 

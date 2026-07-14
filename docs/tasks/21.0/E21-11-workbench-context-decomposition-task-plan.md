@@ -193,9 +193,9 @@ Proof:
 
 ### Checklist for Slice 1: Media provider extraction
 
-- [ ] `WorkbenchMediaContext.tsx` created with grouped `selection`/`filters`/`mediaQueue` shape; 17 fields moved and deleted from the monolith.
-- [ ] `MediaSelection`/`MediaSummaryBar`/`MediaAnalyzeCta` (media slice) migrated; both test mocks updated.
-- [ ] Partial S1 swaps landed: `ScanTabContent` (`hasIdentities`) and `WorkbenchPage` (`detailTruncationNotice`) read the media hook; monolith compiles with 43 remaining fields.
+- [x] `WorkbenchMediaContext.tsx` created with grouped `selection`/`filters`/`mediaQueue` shape; 17 fields moved and deleted from the monolith.
+- [x] `MediaSelection`/`MediaSummaryBar`/`MediaAnalyzeCta` (media slice) migrated; both test mocks updated.
+- [x] Partial S1 swaps landed: `ScanTabContent` (`hasIdentities`) and `WorkbenchPage` (`detailTruncationNotice`) read the media hook; monolith compiles with 43 remaining fields.
 - [ ] vitest + typecheck + eslint evidence recorded as `test_result` on current HEAD SHA.
 
 ### Checklist for Slice 2: Pipeline, nav, cluster-panel providers + composition

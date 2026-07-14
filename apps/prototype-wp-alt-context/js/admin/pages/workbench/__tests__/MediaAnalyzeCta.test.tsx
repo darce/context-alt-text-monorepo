@@ -16,7 +16,6 @@ vi.mock('@wordpress/i18n', () => ({
 const scan = vi.fn();
 
 let workbenchContext = {
-  selectedMedia: [] as { id: number }[],
   isScanRunning: false,
   scanProgress: null as { phase?: string | null } | null,
   clusterProgress: null as { phase?: string | null } | null,
@@ -24,21 +23,29 @@ let workbenchContext = {
   scan,
 };
 
+let selectedMedia: { id: number }[] = [];
+
 vi.mock('../WorkbenchContext', () => ({
   useWorkbenchContext: () => workbenchContext,
+}));
+
+vi.mock('../WorkbenchMediaContext', () => ({
+  useWorkbenchMediaContext: () => ({
+    selection: { selectedMedia },
+  }),
 }));
 
 describe('MediaAnalyzeCta', () => {
   beforeEach(() => {
     scan.mockClear();
     workbenchContext = {
-      selectedMedia: [],
       isScanRunning: false,
       scanProgress: null,
       clusterProgress: null,
       currentPhase: 'idle',
       scan,
     };
+    selectedMedia = [];
   });
 
   it('renders zero-selection prompt and disabled button', () => {
@@ -49,10 +56,7 @@ describe('MediaAnalyzeCta', () => {
   });
 
   it('renders item count and scans selected media when selection is non-zero', async () => {
-    workbenchContext = {
-      ...workbenchContext,
-      selectedMedia: [{ id: 11 }, { id: 12 }, { id: 13 }],
-    };
+    selectedMedia = [{ id: 11 }, { id: 12 }, { id: 13 }];
 
     render(<MediaAnalyzeCta />);
 
@@ -62,9 +66,9 @@ describe('MediaAnalyzeCta', () => {
   });
 
   it('shows scanning label and disables button while scanning', () => {
+    selectedMedia = [{ id: 11 }];
     workbenchContext = {
       ...workbenchContext,
-      selectedMedia: [{ id: 11 }],
       isScanRunning: true,
     };
 
@@ -74,9 +78,9 @@ describe('MediaAnalyzeCta', () => {
   });
 
   it('shows clustering label when the active progress phase is clustering', () => {
+    selectedMedia = [{ id: 11 }];
     workbenchContext = {
       ...workbenchContext,
-      selectedMedia: [{ id: 11 }],
       isScanRunning: true,
       currentPhase: 'clustering',
       clusterProgress: { phase: 'clustering' },

@@ -1,6 +1,6 @@
 import { __, _n, sprintf } from '@wordpress/i18n';
 
-import { useWorkbenchContext } from './WorkbenchContext';
+import { useWorkbenchMediaContext } from './WorkbenchMediaContext';
 
 interface MediaSummaryBarProps {
   onExpand: () => void;
@@ -12,9 +12,11 @@ const statusLabels = {
 } as const;
 
 export const MediaSummaryBar = ({ onExpand }: MediaSummaryBarProps): React.JSX.Element => {
-  const { mediaQuery, selectedMedia, statusFilter } = useWorkbenchContext();
+  const { selection, filters, mediaQueue } = useWorkbenchMediaContext();
+  const { mediaQuery } = mediaQueue;
+  const { statusFilter } = filters;
   const total = mediaQuery.data?.total ?? mediaQuery.itemsWithIdentities?.length ?? 0;
-  const selectedCount = selectedMedia.length;
+  const selectedCount = selection.selectedMedia.length;
 
   return (
     <div className="acx-media-selection acx-media-selection--collapsed">

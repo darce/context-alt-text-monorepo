@@ -148,6 +148,12 @@ class UrlLibHttpClient:
             return HttpResponse(status_code=exc.code, body=body)
         except urllib.error.URLError as exc:
             raise BenchError(f"HTTP request failed: {exc}") from exc
+        except OSError as exc:
+            # ConnectionResetError/ConnectionRefused (errno 54/61) — the endpoint is
+            # down (booting, or mid STOP->START warm-start), or a tunnel reset the
+            # socket. Treat as a transport failure so endpoint_ready() retries instead
+            # of crashing the phase. [RES-06]
+            raise BenchError(f"HTTP transport error: {exc}") from exc
 
 
 class OciCliInstanceActuator:

@@ -1,8 +1,9 @@
 {
-  "schema": "acx-eval/v1",
-  "kind": "pending_report",
-  "task_ref": "VLM-3",
-  "model_id": "Kimi-VL-A3B-2506",
-  "status": "pending_live_gpu_bakeoff",
-  "reason": "Requires OCI GPU endpoint and golden images."
+ "schema": "acx-eval/v1",
+ "kind": "pending_report",
+ "task_ref": "VLM-3",
+ "model_id": "Kimi-VL-A3B-2506",
+ "status": "cut_from_live_slate",
+ "reason": "Cut from live 7b slate: llama.cpp kimivl projector support unstable (ggml-org GGUF mmproj load failures, llama.cpp #15600/#16254); not servable on the pinned server-cuda stack.",
+ "cut_recorded_at": "2026-07-14"
 }

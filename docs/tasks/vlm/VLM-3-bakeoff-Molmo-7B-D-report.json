@@ -1,8 +1,9 @@
 {
-  "schema": "acx-eval/v1",
-  "kind": "pending_report",
-  "task_ref": "VLM-3",
-  "model_id": "Molmo-7B-D",
-  "status": "pending_live_gpu_bakeoff",
-  "reason": "Requires OCI GPU endpoint and golden images."
+ "schema": "acx-eval/v1",
+ "kind": "pending_report",
+ "task_ref": "VLM-3",
+ "model_id": "Molmo-7B-D",
+ "status": "cut_from_live_slate",
+ "reason": "Cut from live 7b slate: no llama.cpp GGUF/mmproj vision support for the Molmo architecture; not servable on the pinned server-cuda stack.",
+ "cut_recorded_at": "2026-07-14"
 }

@@ -1,8 +1,9 @@
 {
-  "schema": "acx-eval/v1",
-  "kind": "pending_report",
-  "task_ref": "VLM-3",
-  "model_id": "Phi-4-multimodal",
-  "status": "pending_live_gpu_bakeoff",
-  "reason": "Requires OCI GPU endpoint and golden images."
+ "schema": "acx-eval/v1",
+ "kind": "pending_report",
+ "task_ref": "VLM-3",
+ "model_id": "Phi-4-multimodal",
+ "status": "cut_from_live_slate",
+ "reason": "Cut from live 7b slate: no llama.cpp vision support (only an abandoned research PR ggml-org/llama.cpp#12274); not servable on the pinned server-cuda stack. Qwen3-VL-8B-Instruct benched in its place as the second smaller-model baseline.",
+ "cut_recorded_at": "2026-07-14"
 }

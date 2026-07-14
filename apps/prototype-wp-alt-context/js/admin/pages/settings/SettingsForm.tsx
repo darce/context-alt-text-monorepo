@@ -158,6 +158,32 @@ export const SettingsForm = ({
         </p>
       ) : null}
 
+      <h3 className="acx-settings__section-title">{__('Tenant identity', 'alt-context')}</h3>
+      <div className="acx-settings__tenant" data-testid="acx-tenant-identity">
+        <p className="acx-settings__tenant-row">
+          <span className="acx-settings__tenant-label">{__('Tenant ID', 'alt-context')}</span>
+          {data.tenant_id ? (
+            <code className="acx-settings__tenant-id" data-testid="acx-tenant-id">
+              {data.tenant_id}
+            </code>
+          ) : (
+            <span className="acx-settings__tenant-empty">{__('Not assigned yet', 'alt-context')}</span>
+          )}
+        </p>
+        <p className="description">{SOURCE_LABELS[data.tenant_id_source] ?? data.tenant_id_source}</p>
+        <p
+          className={`acx-settings__tenant-status acx-settings__tenant-status--${data.tenant_paired ? 'paired' : 'unpaired'}`}
+          data-testid="acx-tenant-pairing-status"
+        >
+          <span aria-hidden="true" className="acx-settings__tenant-status-icon">
+            {data.tenant_paired ? '✓' : '○'}
+          </span>
+          {data.tenant_paired
+            ? __('Paired with the recognition service', 'alt-context')
+            : __('Not paired yet — check the connection to pair this tenant', 'alt-context')}
+        </p>
+      </div>
+
       <h3 className="acx-settings__section-title">{__('Description budget', 'alt-context')}</h3>
       <label htmlFor="acx-settings-description-budget-max-attempts">
         {__('Maximum description attempts', 'alt-context')}

@@ -14,9 +14,11 @@ interface CapturedMutationOptions {
   onError?: (err: unknown) => void;
 }
 
-const { mockUseQuery, mockUseMutation } = vi.hoisted(() => ({
+const { mockUseQuery, mockUseMutation, mockInvalidateQueries, mockFetchQuery } = vi.hoisted(() => ({
   mockUseQuery: vi.fn<() => QueryHookResult>(),
   mockUseMutation: vi.fn<(options?: CapturedMutationOptions) => MutationHookResult>(),
+  mockInvalidateQueries: vi.fn(),
+  mockFetchQuery: vi.fn(),
 }));
 
 vi.mock('@wordpress/i18n', () => ({
@@ -54,7 +56,7 @@ vi.mock('@tanstack/react-query', async () => {
   const actual = await vi.importActual<typeof import('@tanstack/react-query')>('@tanstack/react-query');
   return {
     ...actual,
-    useQueryClient: () => ({ invalidateQueries: vi.fn() }),
+    useQueryClient: () => ({ invalidateQueries: mockInvalidateQueries, fetchQuery: mockFetchQuery }),
     useQuery: mockUseQuery,
     useMutation: mockUseMutation,
   };
@@ -87,14 +89,17 @@ const defaultSettings: SettingsResponse = {
 
 const saveMutate = vi.fn();
 const testMutate = vi.fn();
+let capturedSaveOptions: CapturedMutationOptions | undefined;
 let capturedTestOptions: CapturedMutationOptions | undefined;
 
 const installMutationMock = (): void => {
   let mutationCallIndex = 0;
+  capturedSaveOptions = undefined;
   capturedTestOptions = undefined;
   mockUseMutation.mockImplementation((options) => {
     mutationCallIndex++;
     if (mutationCallIndex % 2 === 1) {
+      capturedSaveOptions = options;
       return createMockMutation({ mutate: saveMutate });
     }
     capturedTestOptions = options;
@@ -104,6 +109,7 @@ const installMutationMock = (): void => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockFetchQuery.mockResolvedValue(defaultSettings);
   installMutationMock();
 });
 
@@ -216,6 +222,47 @@ describe('SettingsPage', () => {
     });
 
     expect(screen.getByTestId('acx-target-card-service')).toHaveTextContent('Reachable');
+  });
+
+  it('renders the tenant id and unpaired status when the tenant is not paired', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    expect(screen.getByTestId('acx-tenant-id')).toHaveTextContent('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
+    expect(screen.getByTestId('acx-tenant-pairing-status')).toHaveTextContent('Not paired yet');
+  });
+
+  it('renders the paired status when the tenant is paired', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: { ...defaultSettings, tenant_paired: true } }));
+    render(<SettingsPage />);
+
+    expect(screen.getByTestId('acx-tenant-pairing-status')).toHaveTextContent(
+      'Paired with the recognition service',
+    );
+  });
+
+  it('refetches sync health after a successful save so the offline banner clears', async () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    expect(capturedSaveOptions?.onSuccess).toBeDefined();
+    // onSuccess is async at runtime but typed void; wrap so we await the real work.
+    await act(async () => {
+      await Promise.resolve(capturedSaveOptions!.onSuccess!(undefined));
+    });
+
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ['sync', 'health'] });
+  });
+
+  it('refetches sync health after a successful probe so the offline banner clears', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    act(() => {
+      capturedTestOptions?.onSuccess?.({ outcome: 'connected', probe_mode: 'service_auth' });
+    });
+
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ['sync', 'health'] });
   });
 
   it('renders read-only fields when source is constant', () => {

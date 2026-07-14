@@ -5,6 +5,7 @@ export const SOURCE_LABELS: Record<string, string> = {
   option: __('Saved in database', 'alt-context'),
   filter: __('Provided by a code filter', 'alt-context'),
   default: __('Not configured', 'alt-context'),
+  derived: __('Derived from the API key', 'alt-context'),
 };
 
 export const HealthStatus = {

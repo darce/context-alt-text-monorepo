@@ -40,16 +40,28 @@ jobs:
     env:
       OCI_HOST: acx-backend.tail1a44b8.ts.net
       OCI_USER: ubuntu
-      PLUGIN_APP_DIR: apps/prototype-wp-alt-context
     steps:
+      # Env indirection on purpose: interpolating the dispatch input directly
+      # into the script would allow shell injection on a runner that later
+      # holds the deploy key and tailnet access.
       - name: Require explicit confirmation (primary deliberate-action gate)
+        env:
+          CONFIRM_INPUT: ${{ github.event.inputs.confirm }}
         run: |
-          if [ "${{ github.event.inputs.confirm }}" != "PROMOTE" ]; then
+          if [ "$CONFIRM_INPUT" != "PROMOTE" ]; then
             echo "::error::demo deploy requires the 'confirm' input = PROMOTE." \
               "(Free-plan deliberate-action gate; private repos have no GitHub required-reviewers.)"
             exit 1
           fi
           echo "demo deploy confirmed."
+
+      # The demo is public: deploys should normally come from main. Feature-ref
+      # dispatch stays possible (it is DDEP-1's own runtime proof), but loudly —
+      # and the runbook tells the operator to add an Environment
+      # deployment-branch rule (main only) once the initial proof is done.
+      - name: Warn on non-main ref
+        if: github.ref != 'refs/heads/main'
+        run: echo "::warning::Deploying '${{ github.ref_name }}' (not main) to the PUBLIC demo."
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -128,7 +140,9 @@ jobs:
         working-directory: apps/prototype-wp-alt-context
         run: |
           sudo apt-get update && sudo apt-get install -y xvfb
-          npm run e2e:install
+          # --with-deps: the Playwright-pinned chromium's shared libs are not
+          # guaranteed on ubuntu-latest across image updates.
+          bash scripts/playwright-cli.sh install --with-deps chromium
 
       - name: Mint demo admin auth state
         working-directory: apps/prototype-wp-alt-context
@@ -156,16 +170,21 @@ jobs:
       # which is out of scope for the deploy gate (observability follow-up).
       - name: Report recognition verdict (informational)
         if: always()
+        # Informational means it must never fail the job — not even on a
+        # truncated manifest.
+        continue-on-error: true
         working-directory: apps/prototype-wp-alt-context
         run: |
-          manifest=$(find local/playwright/deploy-smoke -name evidence-manifest.json -print -quit 2>/dev/null || true)
+          # Newest manifest wins: CI retries can leave one per attempt dir.
+          manifest=$(find local/playwright/deploy-smoke -name evidence-manifest.json -print0 2>/dev/null \
+            | xargs -0 ls -t 2>/dev/null | head -1 || true)
           {
             echo "## Demo deploy-smoke"
             if [ -n "$manifest" ]; then
-              verdict=$(jq -r '.verdict // "unknown"' "$manifest")
+              verdict=$(jq -r '.verdict // "unknown"' "$manifest" 2>/dev/null || echo unknown)
               echo "- Recognition manifest verdict (informational, does not gate): **${verdict}**"
               echo '```json'
-              jq '{settings, scan, sovereignty}' "$manifest"
+              jq '{settings, scan, sovereignty}' "$manifest" 2>/dev/null || echo '"manifest unreadable"'
               echo '```'
             else
               echo "- No evidence manifest found (smoke may have failed before the spec wrote it)."

@@ -8,7 +8,7 @@ import {
   renderDemoSmokeLogFragment,
   type DemoWalkthroughManifest,
 } from '../fixtures/demo-smoke-log';
-import { probeAcxConnection } from '../fixtures/wp-rest';
+import { fetchAcxSettings, probeAcxConnection } from '../fixtures/wp-rest';
 
 /**
  * E15-28 public-demo walkthrough proof.
@@ -42,6 +42,11 @@ const deployCommitSha = (process.env.ACX_DEPLOY_COMMIT_SHA ?? '').trim() || null
 // gates the verdict by default. LocalWP runs legitimately have no wp-config constants —
 // pass ACX_E2E_REQUIRE_CONSTANT_PROVENANCE=0 there so a missing badge does not force fail.
 const requireConstantProvenance = (process.env.ACX_E2E_REQUIRE_CONSTANT_PROVENANCE ?? '1') !== '0';
+// Independent of the provenance badge: the RECOG-1 single-target contract gate
+// (recognition_source === 'service'). Opt out with ACX_E2E_REQUIRE_SERVICE_TARGET=0
+// only on LocalWP runs with the wp-config dev hatch active — tolerating a
+// provenance-badge flake must not silently disable this unrelated gate.
+const requireServiceTarget = (process.env.ACX_E2E_REQUIRE_SERVICE_TARGET ?? '1') !== '0';
 
 const isMonotonic = (samples: number[]): boolean =>
   samples.length < 2 || samples.every((value, index) => index === 0 || value >= samples[index - 1]);
@@ -101,6 +106,23 @@ test('captures E15-28 public demo walkthrough proof', async ({ page, baseURL }, 
     await page.goto(getAcxAdminRouteUrl(baseURL, 'alt-context-settings'));
     await expect(page).toHaveURL(/page=alt-context-settings/);
     await expect(page.locator(SETTINGS_SHELL)).toBeVisible();
+
+    // RECOG-1 single-target contract (deploy-landed signal for the CI deploy-smoke,
+    // DDEP-1): exactly one target card — the hosted-service card — and the settings
+    // GET payload no longer carries local_url*. These gate the TEST exit code
+    // (deploy landed) independently of the recognition manifest verdict.
+    await expect(page.getByTestId('acx-target-card-service')).toBeVisible();
+    await expect(page.locator('.acx-target-card')).toHaveCount(1);
+    const settingsSnapshot = (await fetchAcxSettings(page)) as unknown as Record<string, unknown>;
+    // recognition_source may legitimately be 'local' on a LocalWP run with the
+    // RECOG-1 dev hatch active, so this gate has its own opt-out flag (NOT the
+    // provenance flag — the two concerns are independent); the local_url*
+    // absence checks are hatch-independent.
+    if (requireServiceTarget) {
+      expect(settingsSnapshot.recognition_source).toBe('service');
+    }
+    expect(settingsSnapshot).not.toHaveProperty('local_url');
+    expect(settingsSnapshot).not.toHaveProperty('local_url_source');
 
     constantProvenanceVisible = await page
       .getByText(CONSTANT_PROVENANCE_TEXT)

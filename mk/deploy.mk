@@ -74,7 +74,7 @@ deploy-help:
 	@echo "  Demo walkthrough proof (Playwright evidence — screenshots + smoke-log fragment):"
 	@echo "    First-time setup: (cd apps/prototype-wp-alt-context && npm ci && npm run e2e:install)"
 	@echo "    make demo-walkthrough-proof                Drive demo.altcontext.com walkthrough; emit evidence"
-	@echo "    WP_BASE_URL=http://localhost:10010 ACX_E2E_REQUIRE_CONSTANT_PROVENANCE=0 make demo-walkthrough-proof   LocalWP (no wp-config constants)"
+	@echo "    WP_BASE_URL=http://localhost:10010 ACX_E2E_REQUIRE_CONSTANT_PROVENANCE=0 ACX_E2E_REQUIRE_SERVICE_TARGET=0 make demo-walkthrough-proof   LocalWP (no wp-config constants / dev hatch)"
 	@echo "    Requires ACX_E2E_WP_ADMIN_USER / ACX_E2E_WP_ADMIN_PASS for non-interactive auth."
 	@echo ""
 	@echo "  Optional overrides: OCI_HOST OCI_USER OCIR_REGISTRY OCIR_NAMESPACE IMAGE_NAME GIT_REF"

@@ -12,7 +12,9 @@ import {
 } from './identity-clusters';
 import { useWorkbenchFindings } from './identity-clusters/useWorkbenchFindings';
 import { MediaSelection } from './MediaSelection';
-import { useWorkbenchContext } from './WorkbenchContext';
+import { useJobPipeline } from './JobPipelineContext';
+import { useClusterPanel } from './ClusterPanelContext';
+import { useWorkbenchMediaContext } from './WorkbenchMediaContext';
 
 const ScanScrollRestoration = () => {
   useScrollRestoration('workbench-scan');
@@ -32,28 +34,9 @@ const NoMediaPanel = () => (
 );
 
 export const ScanTabContent = (): React.JSX.Element => {
-  const {
-    isScanRunning,
-    isCancellingScan,
-    statusText,
-    jobId,
-    scanError,
-    scanProgress,
-    clusterProgress,
-    batchRunStatus,
-    scanStallSeconds,
-    currentPhase,
-    projectionSyncState,
-    etaSeconds,
-    isPrimary,
-    latestJobId,
-    hasIdentities,
-    clusterPanel,
-    dispatchClusterPanel,
-    cancelScan,
-    retryScanStream,
-    activeJobIds,
-  } = useWorkbenchContext();
+  const { scanRun, status, history, cancelScan, retryScanStream } = useJobPipeline();
+  const { clusterPanel, dispatchClusterPanel } = useClusterPanel();
+  const { hasIdentities } = useWorkbenchMediaContext().mediaQueue;
 
   const findingsDetailRef = React.useRef<HTMLDivElement>(null);
   const findings = useWorkbenchFindings();
@@ -68,11 +51,7 @@ export const ScanTabContent = (): React.JSX.Element => {
   }, [findings.hasFindings]);
 
   const isMediaCollapsed =
-    findings.hasFindings &&
-    !userExpandedMedia &&
-    !findings.isLoading &&
-    !findings.isError &&
-    !findings.isUnavailable;
+    findings.hasFindings && !userExpandedMedia && !findings.isLoading && !findings.isError && !findings.isUnavailable;
 
   const handleTargetFindings = (): void => {
     const anchor = findingsDetailRef.current;
@@ -85,7 +64,7 @@ export const ScanTabContent = (): React.JSX.Element => {
   };
 
   const handleCancelScan = (): void => {
-    const targets = activeJobIds.length > 0 ? activeJobIds : jobId ? [jobId] : [];
+    const targets = history.activeJobIds.length > 0 ? history.activeJobIds : history.jobId ? [history.jobId] : [];
     if (targets.length === 0) {
       return;
     }
@@ -94,29 +73,12 @@ export const ScanTabContent = (): React.JSX.Element => {
 
   return (
     <>
-      <ScanActionPanel
-        onCancelScan={handleCancelScan}
-        isScanning={isScanRunning}
-        isCancelling={isCancellingScan}
-        statusText={statusText}
-        jobId={latestJobId ?? jobId}
-        errorMessage={scanError}
-        progress={
-          (currentPhase === 'clustering' || currentPhase === 'projecting') && clusterProgress
-            ? clusterProgress
-            : scanProgress
-        }
-        batchRunStatus={batchRunStatus}
-        stallSeconds={scanStallSeconds}
-        onRetryStream={retryScanStream}
-        etaSeconds={etaSeconds}
-        isSynced={!isPrimary && !!latestJobId}
-      />
+      <ScanActionPanel scanRun={scanRun} onCancelScan={handleCancelScan} onRetryStream={retryScanStream} />
       <JobTimeline
-        scanProgress={scanProgress}
-        clusterProgress={clusterProgress}
-        phase={currentPhase}
-        projectionSyncState={projectionSyncState}
+        scanProgress={status.scanProgress}
+        clusterProgress={status.clusterProgress}
+        phase={status.currentPhase}
+        projectionSyncState={status.projectionSyncState}
       />
       <ErrorBoundary>
         <WorkbenchFindingsPanel
@@ -125,7 +87,7 @@ export const ScanTabContent = (): React.JSX.Element => {
         />
       </ErrorBoundary>
       <ScanScrollRestoration />
-      {!isScanRunning && !hasIdentities && <NoMediaPanel />}
+      {!scanRun.isScanning && !hasIdentities && <NoMediaPanel />}
       <ErrorBoundary>
         <div ref={findingsDetailRef} className="acx-findings-detail-anchor" tabIndex={-1}>
           {clusterPanel.mode === 'label' && clusterPanel.clusterId ? (

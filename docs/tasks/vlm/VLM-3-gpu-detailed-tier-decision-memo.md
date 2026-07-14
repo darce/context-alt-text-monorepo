@@ -71,5 +71,5 @@ Do not treat `terraform apply` alone as tier activation. Before setting the serv
      --fence-delay-seconds 1
    ```
 
-   Load JSON must mirror `InMemoryDescribeJobStore.load_snapshot()`: `{"queue_depth": N, "in_flight": M}`. The reaper re-samples after a fence delay and cancels STOP if work appeared (decision→STOP fencing).
+   Load JSON must mirror `scene/application/describe_load.py::load_snapshot`: `{"queue_depth": N, "in_flight": M, "written_at": ...}`. The reaper re-samples after a fence delay and cancels STOP if work appeared (decision→STOP fencing).
 6. **Bake-off evidence.** Live OCI bake-off replaces pending REPORT stubs (`kind=pending_report`) with measured `kind=report` artifacts and updates the spike artifact before promoting this memo from provisional to final (see Decision above).

@@ -64,9 +64,7 @@ def test_normalize_email_and_plan_helpers() -> None:
 
 
 @pytest.mark.asyncio
-async def test_provision_creates_tenant_key_and_prints_once(
-    db_session: AsyncSession, capsys
-) -> None:
+async def test_provision_creates_tenant_key_and_prints_once(db_session: AsyncSession, capsys) -> None:
     cli = _import_cli()
     email = "concierge-test@example.com"
 
@@ -97,9 +95,7 @@ async def test_provision_creates_tenant_key_and_prints_once(
     # Exactly one api_key= line.
     assert sum(1 for line in out.splitlines() if line.startswith("api_key=")) == 1
 
-    tenant = (
-        await db_session.execute(select(Tenant).where(Tenant.primary_contact_email == email))
-    ).scalar_one()
+    tenant = (await db_session.execute(select(Tenant).where(Tenant.primary_contact_email == email))).scalar_one()
     assert tenant.plan == "pro"
     assert tenant.display_name == "Test Co"
     assert tenant.site_url == "mailto:concierge-test@example.com"
@@ -113,9 +109,7 @@ async def test_provision_creates_tenant_key_and_prints_once(
     assert record.expires_at is None
 
     # Audit must not retain the raw key.
-    events = (
-        await db_session.execute(select(AuditEvent).where(AuditEvent.tenant_id == tenant.id))
-    ).scalars().all()
+    events = (await db_session.execute(select(AuditEvent).where(AuditEvent.tenant_id == tenant.id))).scalars().all()
     assert events
     for event in events:
         payload = event.payload or {}
@@ -124,9 +118,7 @@ async def test_provision_creates_tenant_key_and_prints_once(
 
 
 @pytest.mark.asyncio
-async def test_provision_idempotent_on_email_no_second_key(
-    db_session: AsyncSession, capsys
-) -> None:
+async def test_provision_idempotent_on_email_no_second_key(db_session: AsyncSession, capsys) -> None:
     email = f"idem-{uuid.uuid4().hex[:8]}@example.com"
     first = await provision_customer(db_session, email=email, plan="pro", label="First Co")
     assert first.status == "created"
@@ -137,9 +129,7 @@ async def test_provision_idempotent_on_email_no_second_key(
     assert second.tenant_id == first.tenant_id
     assert second.raw_key is None
 
-    keys = (
-        await db_session.execute(select(ApiKey).where(ApiKey.tenant_id == first.tenant_id))
-    ).scalars().all()
+    keys = (await db_session.execute(select(ApiKey).where(ApiKey.tenant_id == first.tenant_id))).scalars().all()
     assert len(keys) == 1
 
     # CLI re-run path.

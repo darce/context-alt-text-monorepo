@@ -1394,6 +1394,8 @@ def ensure_tables(op) -> None:
             sa.ForeignKey("tenants.id", ondelete="CASCADE"),
             nullable=False,
         ),
+        # VLM-5: bulk multi-item vs single-image async supersede jobs.
+        sa.Column("run_kind", sa.String(length=8), nullable=False, server_default=sa.text("'bulk'")),
         sa.Column("status", sa.String(length=32), nullable=False, server_default=sa.text("'pending'")),
         sa.Column("phase", sa.String(length=32), nullable=False, server_default=sa.text("'queued'")),
         sa.Column("media_ids", sa.dialects.postgresql.JSONB(), nullable=False),
@@ -1415,6 +1417,7 @@ def ensure_tables(op) -> None:
             "phase IN ('queued', 'describing', 'complete', 'failed', 'cancelled')",
             name="valid_describe_run_phase",
         ),
+        sa.CheckConstraint("run_kind IN ('bulk', 'single')", name="valid_describe_run_kind"),
     )
     _ensure_index(op, "idx_image_description_runs_tenant", "image_description_runs", ["tenant_id"])
     _ensure_index(
@@ -1423,6 +1426,27 @@ def ensure_tables(op) -> None:
         "image_description_runs",
         ["tenant_id", "status"],
         postgresql_where=sa.text("status IN ('pending', 'running')"),
+    )
+    # Load-snapshot active counts only — a tenant-less RLS-bypassed query (VLM-5).
+    # The retention purge scans TERMINAL single runs and cannot use this index;
+    # it has its own partial index below (VLM5-S1A-BR-04).
+    _ensure_index(
+        op,
+        "idx_image_description_runs_single_active",
+        "image_description_runs",
+        ["status"],
+        postgresql_where=sa.text("run_kind = 'single' AND status IN ('pending', 'running')"),
+    )
+    # Purge scan: terminal single runs older than retention, matched on completed_at
+    # (purge_expired_single_runs, VLM-5 design (d)).
+    _ensure_index(
+        op,
+        "idx_image_description_runs_single_terminal",
+        "image_description_runs",
+        ["completed_at"],
+        postgresql_where=sa.text(
+            "run_kind = 'single' AND status IN ('completed', 'completed_with_errors', 'failed', 'cancelled')"
+        ),
     )
 
     _ensure_table(
@@ -1451,6 +1475,10 @@ def ensure_tables(op) -> None:
         sa.Column("alt_text_draft", sa.Text(), nullable=True),
         sa.Column("caption", sa.Text(), nullable=True),
         sa.Column("provenance", sa.dialects.postgresql.JSONB(), nullable=True),
+        # VLM-5: single-run supersede envelope fields (bulk items leave these null).
+        sa.Column("visual_facts", sa.dialects.postgresql.JSONB(), nullable=True),
+        sa.Column("tier", sa.String(length=32), nullable=True),
+        sa.Column("result_generation", sa.Integer(), nullable=False, server_default=sa.text("0")),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("started_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("completed_at", sa.TIMESTAMP(timezone=True), nullable=True),

@@ -4,7 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 import type { RosterEntry } from '../../api/rosterApi';
 import { RosterEntriesTable } from './RosterEntriesTable';
 import { useCreatePerson } from '../../hooks/useRosterHooks';
-import { UserPlus, Plus, X } from 'lucide-react';
+import { Filter, UserPlus, Plus, Users, X } from 'lucide-react';
 
 type QueueFilterId = RosterEntry['queue_memberships'][number];
 
@@ -160,35 +160,38 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
     );
   };
 
-  if (query.isLoading) {
-    return <p>{__('Loading roster entries…', 'alt-context')}</p>;
-  }
-
-  if (query.isError) {
-    return (
-      <div className="acx-error-state">
-        <p>{__('Unable to load roster entries.', 'alt-context')}</p>
-        <button type="button" className="acx-button acx-button--secondary" onClick={() => void query.refetch()}>
-          {__('Retry', 'alt-context')}
-        </button>
-      </div>
-    );
-  }
+  const isTrueZeroState = !query.isLoading && !query.isError && entries.length === 0 && emptyFilterMessage === null;
 
   return (
     <div className="acx-roster-section" data-testid="roster-entries-section">
       <header className="acx-roster-section__header">
         <div className="acx-roster-section__title-group">
           <h2>{__('Managed Identities', 'alt-context')}</h2>
-          {activeFilterBadge && <span className="acx-roster-section__filter-badge">{activeFilterBadge}</span>}
+          {activeFilterBadge && (
+            <span className="acx-roster-section__filter-badge" data-testid="roster-filter-badge">
+              <Filter size={12} aria-hidden="true" data-testid="roster-filter-badge-icon" />
+              {activeFilterBadge}
+            </span>
+          )}
         </div>
         {!isAdding && (
           <button type="button" className="acx-button acx-button--primary" onClick={() => setIsAdding(true)}>
-            <UserPlus size={16} />
+            <UserPlus size={16} aria-hidden="true" />
             {__('Add Person', 'alt-context')}
           </button>
         )}
       </header>
+
+      {query.isLoading && <p>{__('Loading roster entries…', 'alt-context')}</p>}
+
+      {query.isError && (
+        <div className="acx-error-state" role="status">
+          <p>{__('Unable to load roster entries.', 'alt-context')}</p>
+          <button type="button" className="acx-button acx-button--secondary" onClick={() => void query.refetch()}>
+            {__('Retry', 'alt-context')}
+          </button>
+        </div>
+      )}
 
       {activeFilterStatus && (
         <div className="acx-roster-section__filter" role="status">
@@ -230,7 +233,7 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
               className="acx-button acx-button--primary"
               disabled={createPerson.isPending || !newName.trim()}
             >
-              <Plus size={16} />
+              <Plus size={16} aria-hidden="true" />
               {__('Create', 'alt-context')}
             </button>
             <button
@@ -239,18 +242,46 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
               onClick={() => setIsAdding(false)}
               disabled={createPerson.isPending}
             >
-              <X size={16} />
+              <X size={16} aria-hidden="true" />
               {__('Cancel', 'alt-context')}
             </button>
           </div>
         </form>
       )}
 
-      {emptyFilterMessage && visibleEntries.length === 0 ? (
-        <p>{emptyFilterMessage}</p>
-      ) : (
-        <RosterEntriesTable entries={visibleEntries} />
-      )}
+      {!query.isLoading &&
+        !query.isError &&
+        (isTrueZeroState ? (
+          <div
+            className="acx-roster-section__empty"
+            data-testid="roster-zero-state"
+            role="status"
+            aria-live="polite"
+          >
+            <span className="acx-roster-section__empty-icon" aria-hidden="true">
+              <Users size={24} />
+            </span>
+            <h3 className="acx-roster-section__empty-title">{__('No people yet', 'alt-context')}</h3>
+            <p className="acx-roster-section__empty-message">
+              {__('Add someone manually or run a scan to discover faces from your media library.', 'alt-context')}
+            </p>
+            <div className="acx-roster-section__empty-actions">
+              {!isAdding && (
+                <button type="button" className="acx-button acx-button--primary" onClick={() => setIsAdding(true)}>
+                  <UserPlus size={16} aria-hidden="true" />
+                  {__('Add Person', 'alt-context')}
+                </button>
+              )}
+              <a href={WORKBENCH_SCAN_ROUTE} className="acx-link-button">
+                {__('Run a scan in Workbench', 'alt-context')}
+              </a>
+            </div>
+          </div>
+        ) : emptyFilterMessage && visibleEntries.length === 0 ? (
+          <p>{emptyFilterMessage}</p>
+        ) : (
+          <RosterEntriesTable entries={visibleEntries} />
+        ))}
     </div>
   );
 };

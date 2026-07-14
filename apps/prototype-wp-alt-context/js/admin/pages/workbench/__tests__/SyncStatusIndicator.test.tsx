@@ -161,12 +161,40 @@ describe('SyncStatusIndicator', () => {
     expect(screen.getByText(/Last sync/)).toBeInTheDocument();
   });
 
+  it('pairs badge ok/attention color with a glyph second channel', () => {
+    mockReturn.data = buildSyncStatus({ last_snapshot_version: 5, last_synced_at: '2026-02-14 12:00:00' });
+    const { container, rerender } = render(<SyncStatusIndicator />);
+
+    const okBadge = container.querySelector('.acx-sync-status__badge--ok');
+    expect(okBadge).toBeTruthy();
+    expect(okBadge).toHaveAttribute('data-badge-state', 'ok');
+    expect(okBadge?.querySelector('.acx-sync-status__badge-mark')?.textContent).toBe('✓');
+    expect(screen.getByText('Fresh')).toBeInTheDocument();
+
+    mockReturn.data = buildSyncStatus({
+      last_snapshot_version: 2,
+      last_synced_at: '2026-02-14 00:00:00',
+      is_stale: true,
+      sync_health: 'stale',
+    });
+    rerender(<SyncStatusIndicator />);
+
+    const attentionBadge = container.querySelector('.acx-sync-status__badge:not(.acx-sync-status__badge--ok)');
+    expect(attentionBadge).toBeTruthy();
+    expect(attentionBadge).toHaveAttribute('data-badge-state', 'attention');
+    expect(attentionBadge?.querySelector('.acx-sync-status__badge-mark')?.textContent).toBe('!');
+    expect(screen.getByText('Stale')).toBeInTheDocument();
+  });
+
   it('shows a retention badge link when the mode is not retain_all', () => {
     mockReturn.data = buildSyncStatus({ last_snapshot_version: 5, last_synced_at: '2026-02-14 12:00:00' });
 
     render(<SyncStatusIndicator />);
 
-    expect(screen.getByRole('link', { name: 'Retention: Dispose after ack' })).toHaveAttribute('href', '#/retention');
+    expect(screen.getByRole('link', { name: 'Retention: Dispose after confirm' })).toHaveAttribute(
+      'href',
+      '#/retention',
+    );
   });
 
   it('renders delta sync mode when provided', () => {
@@ -251,11 +279,11 @@ describe('SyncStatusIndicator', () => {
 
     render(<SyncStatusIndicator />);
 
-    expect(screen.getByText('Local curation changes are queued for replay.')).toBeInTheDocument();
+    expect(screen.getByText('Local changes are waiting to sync.')).toBeInTheDocument();
     expect(screen.getByText('Queued')).toBeInTheDocument();
   });
 
-  it('renders failures state with dead-letter affordance', () => {
+  it('renders failures state with failed-ops affordance', () => {
     mockReturn.data = buildSyncStatus({
       sync_health: 'failures',
       failed_curation_operations: 2,
@@ -263,12 +291,12 @@ describe('SyncStatusIndicator', () => {
 
     render(<SyncStatusIndicator />);
 
-    expect(screen.getByText('Curation replay needs attention.')).toBeInTheDocument();
+    expect(screen.getByText('Some sync operations need attention.')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Failures' })).toHaveAttribute(
       'href',
       '#/workbench?tab=scan&panel=dead-letter',
     );
-    expect(screen.getByRole('link', { name: 'Failed replay: 2' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Failed operations: 2' })).toHaveAttribute(
       'href',
       '#/workbench?tab=scan&panel=dead-letter',
     );
@@ -425,7 +453,7 @@ describe('SyncStatusIndicator', () => {
     expect(screen.queryByText('Waiting for service…')).not.toBeInTheDocument();
   });
 
-  it('renders curation replay counters and timestamps when available', () => {
+  it('renders sync change counters and timestamps when available', () => {
     mockReturn.data = buildSyncStatus({
       last_snapshot_version: 8,
       last_synced_at: '2026-03-07 02:00:00',
@@ -438,27 +466,27 @@ describe('SyncStatusIndicator', () => {
       sync_health: 'conflicts',
     });
 
-    render(<SyncStatusIndicator activeSection="confirm" />);
+    render(<SyncStatusIndicator activeSection="scan" />);
 
-    expect(screen.getByText('Pending curation: 3')).toBeInTheDocument();
+    expect(screen.getByText('Pending changes: 3')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Conflicts' })).toHaveAttribute(
       'href',
-      '#/workbench?tab=confirm&panel=conflicts',
+      '#/workbench?tab=scan&panel=conflicts',
     );
     expect(screen.getByRole('link', { name: 'Conflicts: 1' })).toHaveAttribute(
       'href',
-      '#/workbench?tab=confirm&panel=conflicts',
+      '#/workbench?tab=scan&panel=conflicts',
     );
-    expect(screen.getByRole('link', { name: 'Failed replay: 2' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Failed operations: 2' })).toHaveAttribute(
       'href',
-      '#/workbench?tab=confirm&panel=dead-letter',
+      '#/workbench?tab=scan&panel=dead-letter',
     );
-    expect(screen.getByText(/Last curation acknowledgement:/)).toBeInTheDocument();
-    expect(screen.getByText(/Last curation conflict:/)).toBeInTheDocument();
-    expect(screen.getByText(/Last curation failure:/)).toBeInTheDocument();
+    expect(screen.getByText(/Last change confirmed:/)).toBeInTheDocument();
+    expect(screen.getByText(/Last conflict:/)).toBeInTheDocument();
+    expect(screen.getByText(/Last failure:/)).toBeInTheDocument();
   });
 
-  it('renders topology backlog details when present', () => {
+  it('renders sync backlog details when present', () => {
     mockReturn.data = buildSyncStatus({
       sync_health: 'queued',
       topology_commands: {
@@ -472,7 +500,7 @@ describe('SyncStatusIndicator', () => {
 
     render(<SyncStatusIndicator />);
 
-    expect(screen.getByText('Topology backlog: pending 2, applied 5, failed 1, conflicts 3')).toBeInTheDocument();
+    expect(screen.getByText('Sync backlog: pending 2, applied 5, failed 1, conflicts 3')).toBeInTheDocument();
   });
 
   it('renders projecting sync progress ahead of the generic stale indicator', () => {
@@ -500,7 +528,7 @@ describe('SyncStatusIndicator', () => {
 
     render(<SyncStatusIndicator pipelinePhase="projecting" projectionState="ready" />);
 
-    expect(screen.getByText('Projected results ready for review.')).toBeInTheDocument();
+    expect(screen.getByText('Results ready for review.')).toBeInTheDocument();
     expect(screen.getByText('Ready')).toBeInTheDocument();
   });
 

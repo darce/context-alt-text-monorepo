@@ -515,9 +515,7 @@ def _cmd_seed_scenes(args: argparse.Namespace) -> None:
         client.close()
     print(json.dumps(summary.__dict__, indent=2, sort_keys=True))
     if summary.unverified_media_ids:
-        sys.exit(
-            f"seeding incomplete: no identity rows detected for media_ids {summary.unverified_media_ids}"
-        )
+        sys.exit(f"seeding incomplete: no identity rows detected for media_ids {summary.unverified_media_ids}")
 
 
 def main(argv: list[str] | None = None) -> None:

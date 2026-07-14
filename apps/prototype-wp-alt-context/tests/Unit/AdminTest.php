@@ -157,8 +157,9 @@ class AdminTest extends TestCase
 
     public function testLocalizeSpaConfigIncludesRecognitionSource(): void
     {
+        // RECOG-1: local is a dev hatch via filter (option tier retired).
         $this->setOption('acx_recognition_url', 'https://recognition.example');
-        $this->setOption('acx_recognition_source', 'local');
+        add_filter('acx_recognition_source', static fn (): string => 'local');
 
         $this->invokePrivateMethod($this->admin, 'localize_spa_config', ['test-handle']);
 
@@ -314,15 +315,19 @@ class AdminTest extends TestCase
 
     public function testRenderRecognitionConfigNoticeAppearsWhenLocalModeIsActive(): void
     {
+        // RECOG-1: local mode is now reached only via the ACX_RECOGNITION_SOURCE dev
+        // hatch (filter here); the notice is a developer diagnostic with no Settings link.
         $_GET['page'] = 'alt-context-dashboard';
         $this->setOption('acx_recognition_url', 'https://recognition.example');
-        $this->setOption('acx_recognition_source', 'local');
+        add_filter('acx_recognition_source', static fn (): string => 'local');
 
         ob_start();
         $this->admin->render_recognition_config_notice();
         $output = (string) ob_get_clean();
 
-        $this->assertStringContainsString('Alt Context is in local recognition mode and will send requests to http://localhost:8000', $output);
+        $this->assertStringContainsString('developer local-recognition hatch (ACX_RECOGNITION_SOURCE=local) and will send requests to http://localhost:8000', $output);
+        $this->assertStringContainsString('Remove that constant to use the hosted recognition service.', $output);
+        $this->assertStringNotContainsString('Go to Settings', $output);
     }
 
     public function testRenderRecognitionConfigNoticeDoesNotAppearWhenServiceModeIsConfigured(): void

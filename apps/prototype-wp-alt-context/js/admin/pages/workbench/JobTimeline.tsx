@@ -4,6 +4,7 @@ import { __, sprintf } from '@wordpress/i18n';
 import type { JobProgress } from '../../api/recognition/types/scan';
 import type { PipelinePhase } from '../../hooks/jobStateMachineUtils';
 import type { ProjectionSyncState } from '../../hooks/useJobStateMachineEffects';
+import { SYNC_VOCABULARY } from './syncPresentation';
 
 export interface JobTimelineProps {
   scanProgress: JobProgress | null;
@@ -109,7 +110,7 @@ const buildMilestones = (
   if (phase === 'scanning' || scanProgress) {
     milestones.push({
       id: 'scan',
-      label: scanDone ? __('Scan complete', 'alt-context') : __('Scanning\u2026', 'alt-context'),
+      label: scanDone ? SYNC_VOCABULARY.scanComplete : SYNC_VOCABULARY.scanningHeadline,
       status: scanDone ? 'completed' : 'active',
       detail: scanProgress ? buildScanDetail(scanProgress, scanDone) : undefined,
     });
@@ -138,10 +139,10 @@ const buildMilestones = (
     milestones.push({
       id: 'clustering',
       label: clusterFailed
-        ? __('Clustering failed', 'alt-context')
+        ? SYNC_VOCABULARY.clusteringFailed
         : clusterDone
-          ? __('Clustering complete', 'alt-context')
-          : __('Clustering\u2026', 'alt-context'),
+          ? SYNC_VOCABULARY.clusteringComplete
+          : SYNC_VOCABULARY.clusteringHeadline,
       status: clusterStatus,
       detail: clusterProgress ? buildClusterDetail(clusterProgress, clusterDone, clusterStatus) : undefined,
     });
@@ -150,7 +151,7 @@ const buildMilestones = (
     milestones.push(...buildRetryMilestones(retryCount, clusterPhase, lastErrorCode));
   }
 
-  // --- Projection sync milestone ---
+  // --- Results sync milestone ---
   if (phase === 'projecting' || projectionSyncState !== 'idle') {
     const projFailed = projectionSyncState === 'error';
     const projDone = projectionSyncState === 'idle' && phase !== 'projecting';
@@ -169,16 +170,16 @@ const buildMilestones = (
     }
 
     milestones.push({
-      id: 'projection',
+      id: 'results',
       label: projFailed
-        ? __('Projection sync failed', 'alt-context')
+        ? SYNC_VOCABULARY.resultsSyncFailed
         : projectionReady
-          ? __('Projected results ready for review', 'alt-context')
+          ? SYNC_VOCABULARY.resultsReadyHeadline.replace(/\.$/, '')
           : projDone
-            ? __('Projection synced', 'alt-context')
+            ? SYNC_VOCABULARY.resultsSynced
             : projectionSyncState === 'acknowledging'
-              ? __('Acknowledging results\u2026', 'alt-context')
-              : __('Syncing results\u2026', 'alt-context'),
+              ? SYNC_VOCABULARY.resultsAcknowledgingHeadline
+              : SYNC_VOCABULARY.resultsSyncingHeadline,
       status: projStatus,
     });
   }

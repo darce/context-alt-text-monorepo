@@ -9,8 +9,14 @@ coverage without the removed SSE stream assertions.
 
 from __future__ import annotations
 
+import json
+import uuid
+from contextlib import contextmanager
+
 import scene.interface_adapters.http.routers.describe_run as describe_run_mod
 from scene.domain.describe_run import DescribeRunStatus
+from scene.tests.demo_quota_harness import demo_quota_client
+from scene.tests.demo_quota_harness import recognition_used as _used
 from scene.tests.test_describe_run_worker import _client, _submit
 
 
@@ -40,8 +46,6 @@ def test_status_route_returns_run_snapshot(monkeypatch):
 
 
 def test_status_route_404_for_unknown_run(monkeypatch):
-    import uuid
-
     _no_worker(monkeypatch)
     with _client() as (client, _):
         missing = uuid.uuid4()
@@ -62,10 +66,119 @@ def test_cancel_route_flags_cancel_requested(monkeypatch):
 
 
 def test_cancel_route_404_for_unknown_run(monkeypatch):
-    import uuid
-
     _no_worker(monkeypatch)
     with _client() as (client, _):
         missing = uuid.uuid4()
         resp = client.delete(f"/scene/describe/run/{missing}")
         assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# DS-2B: demo shared compute budget on describe/run (batch all-or-nothing)
+# ---------------------------------------------------------------------------
+
+
+@contextmanager
+def _demo_run_client(*, recognition_quota: int = 5, non_demo: bool = False):
+    """Describe/run client — shared harness with run tables (DS2B-PM-H-02)."""
+    with demo_quota_client(recognition_quota=recognition_quota, non_demo=non_demo, tables="run") as ctx:
+        yield ctx
+
+
+def _submit_run(client, tenant_id: str, media_ids: list[int]):
+    files = [(f"image_{m}", (f"{m}.png", b"\x89PNG\r\n\x1a\n", "image/png")) for m in media_ids]
+    data = {"tenant_id": str(tenant_id), "media_ids": json.dumps(media_ids)}
+    return client.post("/scene/describe/run", data=data, files=files or None)
+
+
+def test_demo_quota_run_all_or_nothing_and_success(monkeypatch):
+    _no_worker(monkeypatch)
+    # budget N-1 → 429, used unchanged; then budget >= N → 202 and used += N
+    with _demo_run_client(recognition_quota=2) as (client, sf, _p, tenant_id, slug):
+        fail = _submit_run(client, tenant_id, [1, 2, 3])
+        assert fail.status_code == 429, fail.text
+        detail = fail.json()["detail"]
+        assert detail["code"] == "demo_quota_exceeded"
+        assert detail["quota_remaining"] == 2
+        assert _used(sf, slug) == 0
+
+        ok = _submit_run(client, tenant_id, [1, 2])
+        assert ok.status_code == 202, ok.text
+        assert _used(sf, slug) == 2
+
+
+def test_demo_quota_run_empty_media_ids_422_no_consume(monkeypatch):
+    _no_worker(monkeypatch)
+    with _demo_run_client(recognition_quota=5) as (client, sf, _p, tenant_id, slug):
+        # Explicit empty JSON array; no image parts.
+        resp = client.post(
+            "/scene/describe/run",
+            data={"tenant_id": str(tenant_id), "media_ids": "[]"},
+        )
+        assert resp.status_code == 422, resp.text
+        assert "'media_ids' must be non-empty" in resp.text
+        assert _used(sf, slug) == 0
+
+
+def test_demo_quota_run_non_demo_key_unaffected(monkeypatch):
+    _no_worker(monkeypatch)
+    with _demo_run_client(recognition_quota=1, non_demo=True) as (client, sf, _p, tenant_id, slug):
+        resp = _submit_run(client, tenant_id, [7, 8])
+        assert resp.status_code == 202, resp.text
+        assert _used(sf, slug) == 0
+
+
+def test_demo_quota_run_lifecycle_get_delete_consume_nothing(monkeypatch):
+    _no_worker(monkeypatch)
+    with _demo_run_client(recognition_quota=5) as (client, sf, _p, tenant_id, slug):
+        created = _submit_run(client, tenant_id, [70])
+        assert created.status_code == 202, created.text
+        run_id = created.json()["run_id"]
+        used = _used(sf, slug)
+        assert used == 1
+
+        status_resp = client.get(f"/scene/describe/run/{run_id}")
+        assert status_resp.status_code == 200, status_resp.text
+        assert _used(sf, slug) == used
+
+        cancel_resp = client.delete(f"/scene/describe/run/{run_id}")
+        assert cancel_resp.status_code == 200, cancel_resp.text
+        assert _used(sf, slug) == used
+
+
+def test_demo_quota_run_duplicate_media_ids_charge_unique_only(monkeypatch):
+    """Duplicates must not over-charge (DS2B-PM-S2-04): units = unique media_ids."""
+    _no_worker(monkeypatch)
+    with _demo_run_client(recognition_quota=5) as (client, sf, _p, tenant_id, slug):
+        # Three listed ids, two unique — charge 2.
+        resp = _submit_run(client, tenant_id, [1, 1, 2])
+        assert resp.status_code == 202, resp.text
+        assert _used(sf, slug) == 2
+
+
+def test_bulk_endpoints_404_for_single_run_kind(monkeypatch):
+    """Design (g): single-run ids are unreachable via bulk get/items/cancel."""
+    _no_worker(monkeypatch)
+    with _client() as (client, sf):
+        # Create a single-run directly in the shared test DB.
+        async def _seed():
+            from scene.application.describe_run_repository import DescribeRunRepository
+            from scene.tests.test_describe_run_worker import TENANT_ID as _TENANT
+
+            async with sf() as s:
+                repo = DescribeRunRepository(s)
+                run_id = await repo.create_single_run(tenant_id=_TENANT, media_id=9001, image_bytes=b"single")
+                await s.commit()
+                return str(run_id)
+
+        import asyncio
+
+        run_id = asyncio.run(_seed())
+        for path in (
+            f"/scene/describe/run/{run_id}",
+            f"/scene/describe/run/{run_id}/items",
+        ):
+            resp = client.get(path)
+            assert resp.status_code == 404, (path, resp.text)
+        cancel = client.delete(f"/scene/describe/run/{run_id}")
+        assert cancel.status_code == 404, cancel.text

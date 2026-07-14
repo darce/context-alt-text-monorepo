@@ -179,6 +179,10 @@ class DemoEndedError(LookupError):
 class DemoQuotaExceededError(RuntimeError):
     """Demo recognition quota exhausted (DS3-BR-02)."""
 
+    def __init__(self, message: str = "demo_quota_exceeded", *, remaining: int = 0) -> None:
+        super().__init__(message)
+        self.remaining = remaining
+
 
 DEFAULT_SWEEP_STALL_LIMIT = 5
 
@@ -218,20 +222,37 @@ async def resolve_demo(session: AsyncSession, *, slug: str) -> DemoResolveContex
     )
 
 
-async def try_consume_demo_quota(session: AsyncSession, *, api_key_hash: str) -> bool:
-    """Atomically consume one recognition unit for a demo key if applicable.
+# Hard ceiling for a single consume call (int4-safe; HTTP boundary also caps).
+MAX_DEMO_QUOTA_UNITS = 500
 
+
+async def try_consume_demo_quota(
+    session: AsyncSession,
+    *,
+    api_key_hash: str,
+    units: int = 1,
+) -> bool:
+    """Atomically consume ``units`` compute units for a demo key if applicable.
+
+    Columns still named ``recognition_*`` meter all compute (pre-rename breadcrumb).
     Uses a single guarded UPDATE so concurrent requests cannot lose increments
-    (no read-then-write race).
+    (no read-then-write race). All-or-nothing: either ``units`` fit and are
+    consumed, or none are. Successful consumes derive remaining from RETURNING
+    (``recognition_quota - recognition_used``) so the post-update state is atomic.
 
     Returns:
         False when ``api_key_hash`` is not a demo registry key (caller proceeds).
-        True when a unit was consumed.
+        True when ``units`` were consumed.
 
     Raises:
-        DemoQuotaExceededError: demo key is at or over quota (0 rows updated
-            because ``recognition_used >= recognition_quota``).
+        ValueError: when ``units`` is outside ``1..MAX_DEMO_QUOTA_UNITS``.
+        DemoQuotaExceededError: demo key cannot fit ``units`` (0 rows updated
+            because over quota or revoked). Includes ``remaining`` budget on the
+            exception (0 when the instance is revoked).
     """
+    if units < 1 or units > MAX_DEMO_QUOTA_UNITS:
+        raise ValueError(f"units must be in 1..{MAX_DEMO_QUOTA_UNITS}")
+
     cleaned = (api_key_hash or "").strip()
     if not cleaned:
         return False
@@ -241,23 +262,34 @@ async def try_consume_demo_quota(session: AsyncSession, *, api_key_hash: str) ->
         .where(
             DemoInstance.api_key_ref == cleaned,
             DemoInstance.revoked.is_(False),
-            DemoInstance.recognition_used < DemoInstance.recognition_quota,
+            DemoInstance.recognition_used + units <= DemoInstance.recognition_quota,
         )
-        .values(recognition_used=DemoInstance.recognition_used + 1)
-        .returning(DemoInstance.slug, DemoInstance.recognition_used)
+        .values(recognition_used=DemoInstance.recognition_used + units)
+        .returning(
+            DemoInstance.slug,
+            DemoInstance.recognition_used,
+            DemoInstance.recognition_quota,
+        )
     )
     result = await session.execute(stmt)
     row = result.first()
     if row is not None:
+        # RETURNING yields (slug, used, quota) atomically with the consume;
+        # remaining = quota - used is available without a second SELECT.
         await session.flush()
         return True
 
+    # Fallback: classify miss (not-demo vs revoked vs over-quota).
+    # Revoked instances are excluded from "active remaining" and report 0.
     existing = (
         await session.execute(select(DemoInstance).where(DemoInstance.api_key_ref == cleaned))
     ).scalar_one_or_none()
     if existing is None:
         return False
-    raise DemoQuotaExceededError("demo_quota_exceeded")
+    if existing.revoked:
+        raise DemoQuotaExceededError(remaining=0)
+    remaining = max(0, int(existing.recognition_quota) - int(existing.recognition_used))
+    raise DemoQuotaExceededError(remaining=remaining)
 
 
 @dataclass(frozen=True)
@@ -341,6 +373,7 @@ __all__ = [
     "DemoEndedError",
     "DemoInstanceNotFoundError",
     "DemoQuotaExceededError",
+    "MAX_DEMO_QUOTA_UNITS",
     "DemoResolveContext",
     "ProvisionResult",
     "SweepResult",

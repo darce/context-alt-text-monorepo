@@ -39,7 +39,7 @@ describe('DashboardSyncHealthSection', () => {
     );
 
     expect(screen.getByText('The recognition backend is currently unreachable.')).toBeInTheDocument();
-    expect(screen.queryByText('Machine sync is healthy and curation replay is caught up.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Machine sync is healthy and local changes are caught up.')).not.toBeInTheDocument();
   });
 
   it('shows warning copy when the envelope reports warnings on an otherwise healthy effective state', () => {
@@ -66,6 +66,29 @@ describe('DashboardSyncHealthSection', () => {
     );
 
     expect(screen.getByText(/warning threshold/i)).toBeInTheDocument();
-    expect(screen.queryByText('Machine sync is healthy and curation replay is caught up.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Machine sync is healthy and local changes are caught up.')).not.toBeInTheDocument();
+  });
+
+  it('pairs the mirror-divergence banner with a warning icon second channel', () => {
+    render(
+      <DashboardSyncHealthSection
+        {...baseProps}
+        showMirrorDivergenceBanner
+        localClusterCount={3}
+        failedReplayCount={2}
+        effectiveSyncHealth="stale"
+        syncHealthEnvelope={{
+          breaker: { state: 'closed', base_url: 'http://localhost:8000', opened_at: null },
+          outbox: { pending: 0, failed: 0 },
+          conflicts: { open: 0 },
+          replays: { failed: 2, source: 'local' },
+          last_pull: { at: '2026-06-11T12:00:00Z', ok: true },
+          warnings: [],
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId('acx-dashboard-mirror-warning-icon')).toBeInTheDocument();
+    expect(screen.getByText(/Mirror is out of sync with the backend/i)).toBeInTheDocument();
   });
 });

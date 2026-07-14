@@ -2,9 +2,9 @@
 @use '../tokens/spacing';
 
 .acx-orientation-card {
-  background: var(--acx-color-surface-alt, #f0f7ff);
-  border: 1px solid var(--acx-color-primary-subtle, #ccdfff);
-  border-radius: 12px;
+  background: var(--acx-color-surface-alt);
+  border: 1px solid var(--acx-color-primary-subtle);
+  border-radius: var(--acx-radius-xl);
   padding: 24px;
   margin-bottom: 32px;
   display: flex;
@@ -18,7 +18,8 @@
 
     h2 {
       margin: 0;
-      font-size: 1.25rem;
+      font-size: var(--acx-text-xl);
+      line-height: var(--acx-leading-tight);
       color: var(--acx-color-primary);
     }
   }
@@ -27,7 +28,7 @@
     background: none;
     border: none;
     color: var(--acx-color-text-muted);
-    font-size: 0.85rem;
+    font-size: var(--acx-text-sm);
     cursor: pointer;
     text-decoration: underline;
 
@@ -55,28 +56,28 @@
   }
 
   &__icon-wrapper {
-    background: white;
+    background: var(--acx-color-surface-alt);
     color: var(--acx-color-primary);
     width: 44px;
     height: 44px;
-    border-radius: 50%;
+    border-radius: var(--acx-radius-circle);
     display: flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    box-shadow: var(--acx-shadow-1);
   }
 
   &__step-content {
     h3 {
       margin: 0 0 4px;
-      font-size: 1rem;
-      font-weight: 600;
+      font-size: var(--acx-text-base);
+      font-weight: var(--acx-font-weight-semibold);
     }
 
     p {
       margin: 0;
-      font-size: 0.875rem;
+      font-size: var(--acx-text-sm);
       line-height: 1.4;
       color: var(--acx-color-text-muted);
     }

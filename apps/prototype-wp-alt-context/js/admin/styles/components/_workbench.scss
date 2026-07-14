@@ -97,6 +97,9 @@
   }
 
   &__badge {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--acx-space-4);
     text-transform: uppercase;
     letter-spacing: 0.04em;
     font-size: var(--acx-text-xs);
@@ -104,6 +107,11 @@
     border-radius: var(--acx-radius-pill);
     background-color: var(--acx-color-warning-bg);
     color: var(--acx-color-warning-pill-text);
+  }
+
+  &__badge-mark {
+    font-weight: var(--acx-font-weight-bold);
+    line-height: 1;
   }
 
   &__badge--ok {
@@ -397,6 +405,7 @@
   &__title {
     margin: 0;
     font-size: var(--acx-text-lg);
+    line-height: var(--acx-leading-tight);
     font-weight: var(--acx-font-weight-semibold);
   }
 
@@ -719,6 +728,40 @@
   }
 }
 
+.acx-advanced-drawer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--acx-space-12);
+  margin-top: var(--acx-space-24);
+  padding-top: var(--acx-space-16);
+  border-top: 1px solid var(--acx-color-border);
+
+  &__trigger {
+    align-self: flex-start;
+    font-weight: var(--acx-font-weight-medium);
+  }
+
+  &__panel {
+    border: 1px solid var(--acx-color-border);
+    border-radius: var(--acx-radius-md);
+    background-color: var(--acx-color-surface-alt);
+    padding: var(--acx-space-16) var(--acx-space-20);
+  }
+
+  &__title {
+    margin: 0 0 var(--acx-space-8);
+    font-size: var(--acx-text-lg);
+    line-height: var(--acx-leading-tight);
+    color: var(--acx-color-text);
+  }
+
+  &__body {
+    margin: 0 0 var(--acx-space-16);
+    font-size: var(--acx-text-md);
+    color: var(--acx-color-text-muted);
+  }
+}
+
 // Suggestion Review Panel
 .acx-suggestion-panel {
   background-color: var(--acx-color-surface);
@@ -753,7 +796,7 @@
 
   &__count {
     background-color: var(--acx-color-accent);
-    color: white;
+    color: var(--acx-color-surface-alt);
     font-size: var(--acx-text-xs);
     font-weight: var(--acx-font-weight-semibold);
     padding: var(--acx-space-2) var(--acx-space-8);
@@ -900,8 +943,8 @@
   &--cluster {
     grid-template-columns: repeat(2, 1fr);
     gap: var(--acx-space-2);
-    width: var(--acx-thumb-size-md, var(--acx-space-80));
-    height: var(--acx-thumb-size-md, var(--acx-space-80));
+    width: var(--acx-thumb-size-md);
+    height: var(--acx-thumb-size-md);
   }
 
   &--candidates {
@@ -992,8 +1035,8 @@
     min-height: var(--acx-space-24);
 
     &--placeholder {
-      width: var(--acx-thumb-size-md, var(--acx-space-80));
-      height: var(--acx-thumb-size-md, var(--acx-space-80));
+      width: var(--acx-thumb-size-md);
+      height: var(--acx-thumb-size-md);
       border-radius: var(--acx-radius-sm);
       background-color: var(--acx-color-data-placeholder);
     }
@@ -1158,4 +1201,4 @@
 // - Radius: .acx-combobox__popover snapped 6px -> --acx-radius-md (8px); reviewed +2px ramp-consolidation snap (no exact 6px step; semantic scale is canonical, PR-02), accepted in the radius-correction baseline.
 // - 1px borders and 2px focus/tab strokes: intentionally raw — border-width is out of sr-004 scope.
 // - Component layout widths (68–480px), thumb offsets (-4px), and padding-right: 26px: intentionally raw.
-// - var(--acx-thumb-size-md, var(--acx-space-80)): component thumb layout fallback for 80px squares.
+// - var(--acx-thumb-size-md): token-defined in tokens/_spacing.scss (80px thumb squares).

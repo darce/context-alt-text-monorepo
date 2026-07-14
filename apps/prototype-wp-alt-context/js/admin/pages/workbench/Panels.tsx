@@ -2,6 +2,7 @@ import { __, _n, sprintf } from '@wordpress/i18n';
 
 import type { BatchRunStatus, JobProgress } from '../../api/recognition/types/scan';
 import type { RecognitionHistorySource } from '../../hooks/recognitionJobHistoryUtils';
+import { formatSyncJobPhase } from './syncPresentation';
 export { mediaEditUrl, rosterClustersUrl } from '../../utils/adminUrls';
 
 export const isClusteringActive = (phase?: string | null): boolean =>
@@ -297,23 +298,4 @@ const formatDuration = (seconds: number): string => {
   return sprintf(__('%d min %d sec', 'alt-context'), minutes, remainingSeconds);
 };
 
-const formatJobPhase = (phase: NonNullable<JobProgress['phase']>): string => {
-  switch (phase) {
-    case 'queued':
-      return __('Queued', 'alt-context');
-    case 'detecting':
-      return __('Detecting', 'alt-context');
-    case 'clustering':
-      return __('Clustering', 'alt-context');
-    case 'retrying':
-      return __('Retrying', 'alt-context');
-    case 'awaiting_projection':
-      return __('Projecting', 'alt-context');
-    case 'failed':
-      return __('Failed', 'alt-context');
-    case 'complete':
-      return __('Complete', 'alt-context');
-    default:
-      return phase;
-  }
-};
+const formatJobPhase = (phase: NonNullable<JobProgress['phase']>): string => formatSyncJobPhase(phase);

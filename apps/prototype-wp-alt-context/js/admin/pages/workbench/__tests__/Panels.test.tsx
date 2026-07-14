@@ -230,7 +230,7 @@ describe('ConfirmPanel', () => {
   it('renders phase label for awaiting_projection phase', () => {
     const progress: JobProgress = { completed: 100, total: 100, phase: 'awaiting_projection' };
     render(<ConfirmPanel {...baseProps} progress={progress} />);
-    expect(screen.getByText('Phase: Projecting')).toBeTruthy();
+    expect(screen.getByText('Phase: Syncing results')).toBeTruthy();
   });
 
   it('renders phase label for failed phase', () => {

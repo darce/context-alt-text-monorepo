@@ -108,6 +108,44 @@ require_once $altContextAutoload;
 // Explicit require_once guarantees the class is available on every request
 // regardless of classmap staleness.
 require_once ACX_PLUGIN_DIR . 'src/support/class-telemetry.php';
+
+// E21-12B (rg-016): the classes alt_context() constructs unconditionally on
+// plugins_loaded use the WordPress-style class-*.php filename convention, so
+// each is reachable only through the Composer classmap — which goes stale on
+// any checkout that adds a class without re-running `composer dump-autoload`.
+// That is exactly what took the whole site to a critical error when
+// class-retention-page.php shipped (E21-12) without a fresh dump: `new
+// RetentionPage()` inside the Menu constructor fataled every request, front
+// end and wp-admin alike. The block below makes the classmap-fragile bootstrap
+// classes load explicitly.
+//
+// Scope: the bootstrap classes that do NOT already self-require their own
+// dependencies (the admin surface + the two self-contained XMP classes). Load
+// order matters for the two hard load-time dependencies: trait-batch-limits.php
+// before class-admin.php (which does `use BatchLimits;` in the class body), and
+// class-abstract-spa-page.php before every concrete page that extends it. The
+// other plugins_loaded classes — Api and LifecycleManager — are deliberately
+// omitted: they already self-require their dependency chains at the top of
+// their own files (relying on the registered Composer autoloader for stable
+// interfaces), and requiring their entry files here would eagerly pull the
+// whole sovereign/sync + repositories subsystem into every request, a
+// load-model change that belongs in its own perf-reviewed slice. Their
+// residual risk is narrower (only their own entry file is classmap-only) and
+// pre-existed this incident; the acute gap — new files that do not self-require
+// — is the admin surface, covered here.
+require_once ACX_PLUGIN_DIR . 'src/support/trait-batch-limits.php';
+require_once ACX_PLUGIN_DIR . 'src/media/class-xmp-persistence-factory.php';
+require_once ACX_PLUGIN_DIR . 'src/api/class-xmp-embed-controller.php';
+require_once ACX_PLUGIN_DIR . 'src/admin/class-admin.php';
+require_once ACX_PLUGIN_DIR . 'src/admin/class-abstract-spa-page.php';
+require_once ACX_PLUGIN_DIR . 'src/admin/class-dashboard-page.php';
+require_once ACX_PLUGIN_DIR . 'src/admin/class-workbench-page.php';
+require_once ACX_PLUGIN_DIR . 'src/admin/class-roster-page.php';
+require_once ACX_PLUGIN_DIR . 'src/admin/class-settings-page.php';
+require_once ACX_PLUGIN_DIR . 'src/admin/class-description-history-page.php';
+require_once ACX_PLUGIN_DIR . 'src/admin/class-retention-page.php';
+require_once ACX_PLUGIN_DIR . 'src/admin/class-menu.php';
+
 if (defined('WP_CLI') && WP_CLI) {
     require_once ACX_PLUGIN_DIR . 'src/api/class-describe-controller.php';
     require_once ACX_PLUGIN_DIR . 'src/api/services/class-description-candidate-service.php';

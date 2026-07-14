@@ -54,7 +54,27 @@ describe('ClusterEditForm', () => {
     render(<ClusterEditForm {...defaultProps} labelInput="Per" />);
 
     expect(screen.getByText('Person A')).toBeInTheDocument();
-    expect(screen.getByText('95%')).toBeInTheDocument();
+    expect(screen.getByText(/95%/)).toBeInTheDocument();
+  });
+
+  it('pairs match-score color with a textual quality band (high/medium)', () => {
+    render(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput="P"
+        options={[
+          { value: '1', label: 'Person A', similarity: 0.95 },
+          { value: '2', label: 'Person B', similarity: 0.55 },
+        ]}
+      />,
+    );
+
+    const high = document.querySelector('.acx-identity-cluster__match-score--high');
+    const medium = document.querySelector('.acx-identity-cluster__match-score--medium');
+    expect(high?.textContent).toMatch(/95%\s*high/i);
+    expect(medium?.textContent).toMatch(/55%\s*medium/i);
+    expect(screen.getByText('high')).toBeInTheDocument();
+    expect(screen.getByText('medium')).toBeInTheDocument();
   });
 
   it('calls onLabelChange when a suggestion is clicked, and onConfirmSuggestion when confirm is clicked', async () => {

@@ -18,9 +18,9 @@ export const RETENTION_OPTIONS: { value: RetentionMode; label: string; descripti
   },
   {
     value: 'dispose_after_ack',
-    label: __('Dispose after acknowledgement', 'alt-context'),
+    label: __('Dispose after confirmation', 'alt-context'),
     description: __(
-      'Mark machine-derived working state for disposal once WordPress acknowledges projection.',
+      'Mark machine-derived working state for disposal once WordPress confirms results.',
       'alt-context',
     ),
   },

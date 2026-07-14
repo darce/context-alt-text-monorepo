@@ -114,23 +114,23 @@ describe('buildMilestones', () => {
 
   it('shows active projection milestone while syncing', () => {
     const milestones = buildMilestones(null, null, 'projecting', 'syncing');
-    const projM = milestones.find((m) => m.id === 'projection');
+    const projM = milestones.find((m) => m.id === 'results');
     expect(projM?.status).toBe('active');
     expect(projM?.label).toBe('Syncing results\u2026');
   });
 
   it('shows failed projection milestone on error', () => {
     const milestones = buildMilestones(null, null, 'projecting', 'error');
-    const projM = milestones.find((m) => m.id === 'projection');
+    const projM = milestones.find((m) => m.id === 'results');
     expect(projM?.status).toBe('failed');
-    expect(projM?.label).toBe('Projection sync failed');
+    expect(projM?.label).toBe('Results sync failed');
   });
 
   it('shows acknowledging label during acknowledging state', () => {
     const milestones = buildMilestones(null, null, 'projecting', 'acknowledging');
-    const projM = milestones.find((m) => m.id === 'projection');
+    const projM = milestones.find((m) => m.id === 'results');
     expect(projM?.status).toBe('active');
-    expect(projM?.label).toBe('Acknowledging results\u2026');
+    expect(projM?.label).toBe('Confirming results…');
   });
 
   it('shows clusters_created = 1 with singular label', () => {
@@ -198,6 +198,6 @@ describe('JobTimeline', () => {
 
   it('renders projection ready milestone after sync completes', () => {
     render(<JobTimeline scanProgress={null} clusterProgress={null} phase="projecting" projectionSyncState="ready" />);
-    expect(screen.getByText('Projected results ready for review')).toBeTruthy();
+    expect(screen.getByText('Results ready for review')).toBeTruthy();
   });
 });

@@ -4,10 +4,11 @@ import { getEndpoint, getConfig } from './config';
 export interface SettingsResponse {
   url: string;
   url_source: 'constant' | 'option' | 'filter' | 'default';
-  local_url: string;
-  local_url_source: 'constant' | 'option' | 'filter' | 'default';
   effective_target_url: string;
   effective_target_mode: 'service' | 'local';
+  // RECOG-1: read-only dev-hatch diagnostics. The product no longer exposes a
+  // target toggle; `recognition_source` reports 'local' only when the
+  // ACX_RECOGNITION_SOURCE constant/filter dev hatch is active.
   recognition_source: 'service' | 'local';
   recognition_source_source: 'constant' | 'option' | 'filter' | 'default';
   api_key_set: boolean;
@@ -51,8 +52,6 @@ export type RecognitionSourceValue = (typeof RecognitionSource)[keyof typeof Rec
 
 export interface SaveSettingsPayload {
   url?: string;
-  local_url?: string;
-  recognition_source?: RecognitionSourceValue;
   api_key?: string;
   description_budget?: {
     max_attempts: number;
@@ -85,7 +84,9 @@ const KNOWN_TEST_CONNECTION_OUTCOMES: ReadonlySet<string> = new Set(Object.value
 export const isTestConnectionOutcome = (value: unknown): value is TestConnectionOutcomeValue =>
   typeof value === 'string' && KNOWN_TEST_CONNECTION_OUTCOMES.has(value);
 
-export type TestConnectionProbeMode = 'local_liveness' | 'service_auth';
+// RECOG-1: the keyless local liveness probe is retired; test always runs the
+// authenticated service probe.
+export type TestConnectionProbeMode = 'service_auth';
 
 export interface TestConnectionResponse {
   outcome: TestConnectionOutcomeValue;
@@ -125,7 +126,6 @@ export const saveSettings = async (payload: SaveSettingsPayload): Promise<SaveSe
 };
 
 export interface TestConnectionPayload {
-  probe_target?: RecognitionSourceValue;
   // Set when the operator adopts the API key's tenant from the pairing-conflict banner;
   // read by class-settings-controller.php request_confirms_tenant_pairing.
   confirm_tenant_pairing?: boolean;

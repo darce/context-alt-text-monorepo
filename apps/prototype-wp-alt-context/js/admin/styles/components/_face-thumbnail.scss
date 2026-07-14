@@ -10,7 +10,7 @@
 
 .acx-face-thumbnail {
   display: inline-block;
-  border-radius: 50%;
+  border-radius: var(--acx-radius-circle);
   overflow: hidden;
   background-color: var(--acx-color-data-placeholder);
   position: relative;
@@ -48,7 +48,7 @@
       content: '';
       width: 40%;
       height: 40%;
-      border-radius: 50%;
+      border-radius: var(--acx-radius-circle);
       background-color: var(--acx-color-data-placeholder);
     }
   }
@@ -58,7 +58,7 @@
     display: block;
     width: 100%;
     height: 100%;
-    border-radius: 50%;
+    border-radius: var(--acx-radius-circle);
     background-color: var(--acx-color-data-placeholder);
   }
 

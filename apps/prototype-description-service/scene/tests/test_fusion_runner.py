@@ -46,9 +46,7 @@ def test_bakeoff_labels_include_expected_attachments(manifest):
 
 
 def test_staged_run_record_is_acx_eval_v1(manifest):
-    record = run_fusion_eval(
-        manifest, mode="staged", head_sha="a" * 40, started_at="2026-07-09T00:00:00Z"
-    )
+    record = run_fusion_eval(manifest, mode="staged", head_sha="a" * 40, started_at="2026-07-09T00:00:00Z")
     assert record["schema"] == SCHEMA
     assert record["kind"] == DocKind.RUN_RECORD.value
     assert record["provenance"]["fusion_mode"] == "staged"
@@ -61,9 +59,7 @@ def test_staged_run_record_is_acx_eval_v1(manifest):
 
 
 def test_build_reports_deterministic_on_fusion_records(manifest):
-    record = run_fusion_eval(
-        manifest, mode="staged", head_sha="b" * 40, started_at="2026-07-09T12:00:00Z"
-    )
+    record = run_fusion_eval(manifest, mode="staged", head_sha="b" * 40, started_at="2026-07-09T12:00:00Z")
     entries = manifest_entries_as_dicts(manifest)
     json_a, md_a = build_reports(record, entries)
     json_b, md_b = build_reports(record, entries)
@@ -76,21 +72,15 @@ def test_build_reports_deterministic_on_fusion_records(manifest):
 
 
 def test_staged_zero_misattachments_on_labeled_corpus(manifest):
-    record = run_fusion_eval(
-        manifest, mode="staged", head_sha="c" * 40, started_at="2026-07-09T00:00:00Z"
-    )
+    record = run_fusion_eval(manifest, mode="staged", head_sha="c" * 40, started_at="2026-07-09T00:00:00Z")
     mis = score_misattachments(record, manifest)
     assert mis["labeled_facts"] >= 10
     assert mis["misattachments"] == 0, mis["hits"]
 
 
 def test_adhoc_has_more_misattachments_than_staged(manifest):
-    staged = run_fusion_eval(
-        manifest, mode="staged", head_sha="d" * 40, started_at="2026-07-09T00:00:00Z"
-    )
-    adhoc = run_fusion_eval(
-        manifest, mode="adhoc", head_sha="d" * 40, started_at="2026-07-09T00:00:00Z"
-    )
+    staged = run_fusion_eval(manifest, mode="staged", head_sha="d" * 40, started_at="2026-07-09T00:00:00Z")
+    adhoc = run_fusion_eval(manifest, mode="adhoc", head_sha="d" * 40, started_at="2026-07-09T00:00:00Z")
     s_mis = score_misattachments(staged, manifest)["misattachments"]
     a_mis = score_misattachments(adhoc, manifest)["misattachments"]
     assert a_mis > s_mis
@@ -105,9 +95,7 @@ def test_multi_identity_entries_object_attach_with_distinct_geometry(manifest):
     would drop both as ambiguous_grounding, so this genuinely exercises
     discrimination.
     """
-    record = run_fusion_eval(
-        manifest, mode="staged", head_sha="a" * 40, started_at="2026-07-09T00:00:00Z"
-    )
+    record = run_fusion_eval(manifest, mode="staged", head_sha="a" * 40, started_at="2026-07-09T00:00:00Z")
     for suffix, names in (
         ("ccqw-erika.jpg", ("Caitlin Weaver", "Erika Hansen Miller")),
         ("kirstie-daniel-sunglasses.jpg", ("Daniel Arce", "Kirstie Mccarrel")),
@@ -122,9 +110,7 @@ def test_multi_identity_entries_object_attach_with_distinct_geometry(manifest):
 
 def test_mcm_planecrash_success_criterion(manifest):
     """Unconfirmed face not object-attached + garden picnic caption-level non-visible."""
-    record = run_fusion_eval(
-        manifest, mode="staged", head_sha="e" * 40, started_at="2026-07-09T00:00:00Z"
-    )
+    record = run_fusion_eval(manifest, mode="staged", head_sha="e" * 40, started_at="2026-07-09T00:00:00Z")
     item = next(i for i in record["items"] if i["path"].endswith("mcm-planecrash.jpg"))
     facts = {f["fact_id"]: f for f in item["describe"]["attachment_provenance"]["facts"]}
     identity = facts["identity:cluster:cluster-maria-correonero"]
@@ -170,9 +156,7 @@ def test_context_pack_derives_from_fixture_not_labels(manifest):
 
 def test_scorer_negative_control_flipped_label_is_flagged(manifest):
     """The scorer discriminates: flipping an expected label must produce a hit."""
-    record = run_fusion_eval(
-        manifest, mode="staged", head_sha="a" * 40, started_at="2026-07-09T00:00:00Z"
-    )
+    record = run_fusion_eval(manifest, mode="staged", head_sha="a" * 40, started_at="2026-07-09T00:00:00Z")
     flipped = manifest.model_copy(deep=True)
     caitlin = next(
         a
@@ -191,9 +175,7 @@ def test_scorer_negative_control_flipped_label_is_flagged(manifest):
 
 def test_adhoc_claims_derive_from_generated_caption(manifest):
     """Ad-hoc arm: fusion disabled, claims parsed from the caption text."""
-    record = run_fusion_eval(
-        manifest, mode="adhoc", head_sha="a" * 40, started_at="2026-07-09T00:00:00Z"
-    )
+    record = run_fusion_eval(manifest, mode="adhoc", head_sha="a" * 40, started_at="2026-07-09T00:00:00Z")
     item = next(i for i in record["items"] if i["path"].endswith("liam-maloney-painting.jpg"))
     describe = item["describe"]
     # Same service path, model-free stub adapter (report banner keys off this).
@@ -208,9 +190,7 @@ def test_adhoc_claims_derive_from_generated_caption(manifest):
 
 
 def test_adhoc_report_carries_stub_adapter_banner(manifest):
-    record = run_fusion_eval(
-        manifest, mode="adhoc", head_sha="a" * 40, started_at="2026-07-09T00:00:00Z"
-    )
+    record = run_fusion_eval(manifest, mode="adhoc", head_sha="a" * 40, started_at="2026-07-09T00:00:00Z")
     entries = manifest_entries_as_dicts(manifest)
     _, md = build_reports(record, entries)
     assert "seeded" in md
@@ -223,9 +203,7 @@ def test_degrade_missing_labels_and_empty_context(manifest):
     assert empty.expected_attachments == []
     assert build_typed_context_pack(empty, manifest.roster) is None
 
-    record = run_fusion_eval(
-        manifest, mode="staged", head_sha="f" * 40, started_at="2026-07-09T00:00:00Z", limit=None
-    )
+    record = run_fusion_eval(manifest, mode="staged", head_sha="f" * 40, started_at="2026-07-09T00:00:00Z", limit=None)
     item = next(i for i in record["items"] if i["path"] == empty.path)
     assert item["error"] is None
     assert item["describe"]["attachment_provenance"]["facts"] == []

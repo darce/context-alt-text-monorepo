@@ -42,4 +42,31 @@ class MenuTest extends TestCase
         $this->assertIsArray($historyPage['callback'] ?? null);
         $this->assertSame('render_description_history_page', $historyPage['callback'][1] ?? null);
     }
+
+    public function testRegistersRetentionSubmenu(): void
+    {
+        $menu = new Menu(
+            new DashboardPage(),
+            new WorkbenchPage(),
+            new RosterPage(),
+            new SettingsPage()
+        );
+
+        $menu->register_menu();
+
+        $retentionPage = null;
+        foreach ($GLOBALS['__ac_submenu_pages'] as $page) {
+            if (($page['menu_slug'] ?? null) === 'alt-context-retention') {
+                $retentionPage = $page;
+                break;
+            }
+        }
+
+        $this->assertIsArray($retentionPage);
+        $this->assertSame('alt-context-dashboard', $retentionPage['parent_slug'] ?? null);
+        $this->assertSame('Retention', $retentionPage['menu_title'] ?? null);
+        $this->assertSame('manage_options', $retentionPage['capability'] ?? null);
+        $this->assertIsArray($retentionPage['callback'] ?? null);
+        $this->assertSame('render_retention_page', $retentionPage['callback'][1] ?? null);
+    }
 }

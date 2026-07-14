@@ -16,6 +16,14 @@ use WP_REST_Request;
  */
 class MediaIdentitiesControllerTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        // RECOG-1: default source flipped to 'service' with an empty default URL.
+        // Pin a service target so backend-proxy paths have a non-empty effective target.
+        $this->setOption('acx_recognition_url', 'https://recognition.test');
+    }
+
     public function testMediaIdentitiesUsesLocalProjectionWhenSyncStatePresent(): void
     {
         $membersRepo = new class() extends NullIdentityMembersRepository {

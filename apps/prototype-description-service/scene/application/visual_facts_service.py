@@ -12,7 +12,7 @@ import asyncio
 import logging
 import time
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any, Protocol
 
 from pydantic import ValidationError
@@ -114,7 +114,7 @@ def build_visual_facts_envelope(
     return response.model_dump(mode="json")
 
 
-def _phrase_boxes_to_json(phrase_boxes) -> list[dict[str, Any]] | None:
+def phrase_boxes_to_json(phrase_boxes) -> list[dict[str, Any]] | None:
     if not phrase_boxes:
         return None
     return [
@@ -186,6 +186,7 @@ class VisualFactsService:
         context: Mapping[str, Any] | None,
         confirmed_faces: Sequence[ConfirmedFace] = (),
         naming_policy: NamingPolicy | None = None,
+        before_compute: Callable[[], Awaitable[None]] | None = None,
     ) -> VisualFactsResponse:
         start = time.perf_counter()
         image_hash = compute_image_hash(image_bytes)
@@ -211,6 +212,11 @@ class VisualFactsService:
                 )
                 await self._record_cache_hit(tenant_id=tenant_id, media_id=media_id, image_hash=image_hash)
                 return response
+
+        # Charge / side-effects only when real adapter compute is about to run
+        # (cache hits and decorative short-circuits never reach here).
+        if before_compute is not None:
+            await before_compute()
 
         # Offload to a thread so a slow adapter (local_cpu Florence ~30-60s) never
         # blocks the event loop — otherwise asyncpg drops the open DB connection
@@ -248,7 +254,7 @@ class VisualFactsService:
 
         if self._repo is not None:
             new_row = self._response_to_row(response)
-            new_row.phrase_boxes = _phrase_boxes_to_json(result.phrase_boxes)
+            new_row.phrase_boxes = phrase_boxes_to_json(result.phrase_boxes)
             row, inserted = await self._repo.insert_or_get_existing(new_row)
             if not inserted:
                 response = self._cache_hit_response(

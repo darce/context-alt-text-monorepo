@@ -6,6 +6,7 @@ import { useWorkbenchFilters } from '../../hooks/useWorkbenchFilters';
 import { useJobStateMachine } from '../../hooks/useJobStateMachine';
 import { useWorkbenchMedia, type WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
 import { getConfig } from '../../api/config';
+import { useSearchParams } from 'react-router-dom';
 import { useTabParam } from '../../hooks/useTabParam';
 import { useOverlayParam } from '../../hooks/useOverlayParam';
 import type { BatchRunStatus, JobProgress } from '../../api/recognition/types/scan';
@@ -17,11 +18,16 @@ import type { RecognitionHistorySource } from '../../hooks/recognitionJobHistory
 
 export const TAB_IDS = {
   scan: 'scan',
-  confirm: 'confirm',
 } as const;
+
+/** Legacy deep-link value only — URL shim maps it to scan + advanced open. */
+export const LEGACY_CONFIRM_TAB = 'confirm';
 
 export type WorkbenchTab = (typeof TAB_IDS)[keyof typeof TAB_IDS];
 export type { WorkbenchOverlay } from '../../api/recognition';
+
+export const ADVANCED_PARAM = 'advanced';
+export const ADVANCED_OPEN_VALUE = 'open';
 
 type ClusterPanelMode = 'none' | 'label' | 'review';
 
@@ -54,6 +60,8 @@ interface WorkbenchContextValue {
   setActiveSection: (section: WorkbenchTab) => void;
   activeOverlay: WorkbenchOverlay;
   setActiveOverlay: (overlay: WorkbenchOverlay) => void;
+  isAdvancedOpen: boolean;
+  setAdvancedOpen: (open: boolean) => void;
 
   // Job History
   jobId: string | undefined | null;
@@ -125,10 +133,8 @@ interface WorkbenchContextValue {
 const WorkbenchContext = createContext<WorkbenchContextValue | null>(null);
 
 export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [activeSection, setActiveSection] = useTabParam<WorkbenchTab>('tab', TAB_IDS.scan, [
-    TAB_IDS.scan,
-    TAB_IDS.confirm,
-  ]);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [activeSection, setActiveSection] = useTabParam<WorkbenchTab>('tab', TAB_IDS.scan, [TAB_IDS.scan]);
   const [activeOverlay, setActiveOverlay] = useOverlayParam<Exclude<WorkbenchOverlay, null>>('panel', [
     'conflicts',
     'dead-letter',
@@ -141,6 +147,42 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     mode: 'none',
     clusterId: null,
   });
+
+  // shim owned by E21-10 — maps legacy ?tab=confirm to scan + advanced drawer open
+  useEffect(() => {
+    if (searchParams.get('tab') !== LEGACY_CONFIRM_TAB) {
+      return;
+    }
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set('tab', TAB_IDS.scan);
+        next.set(ADVANCED_PARAM, ADVANCED_OPEN_VALUE);
+        return next;
+      },
+      { replace: true },
+    );
+  }, [searchParams, setSearchParams]);
+
+  const isAdvancedOpen = searchParams.get(ADVANCED_PARAM) === ADVANCED_OPEN_VALUE;
+
+  const setAdvancedOpen = React.useCallback(
+    (open: boolean): void => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (open) {
+            next.set(ADVANCED_PARAM, ADVANCED_OPEN_VALUE);
+          } else {
+            next.delete(ADVANCED_PARAM);
+          }
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
 
   const {
     jobId,
@@ -172,7 +214,7 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     perPage,
     search: normalizedSearch,
     status: statusFilter,
-    enabled: activeSection === TAB_IDS.scan,
+    enabled: true,
   });
 
   const mediaData = mediaQuery.data;
@@ -248,9 +290,9 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const handleSelectJobFromHistory = React.useCallback(
     (id: string): void => {
       selectJob(id);
-      setActiveSection(TAB_IDS.confirm);
+      setAdvancedOpen(true);
     },
-    [selectJob, setActiveSection],
+    [selectJob, setAdvancedOpen],
   );
 
   const statusMessage = useMemo(() => {
@@ -293,6 +335,8 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setActiveSection,
       activeOverlay,
       setActiveOverlay,
+      isAdvancedOpen,
+      setAdvancedOpen,
       jobId,
       jobHistory,
       jobStatuses,
@@ -353,6 +397,8 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       activeOverlay,
       setActiveSection,
       setActiveOverlay,
+      isAdvancedOpen,
+      setAdvancedOpen,
       jobId,
       jobHistory,
       jobStatuses,

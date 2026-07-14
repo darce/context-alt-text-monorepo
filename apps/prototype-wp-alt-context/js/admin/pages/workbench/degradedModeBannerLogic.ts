@@ -12,6 +12,11 @@ export const resolveEffectiveSyncHealth = (
   syncHealthEnvelope: SyncHealthResponse | null | undefined,
 ): SyncHealth => (syncHealthEnvelope && isSyncOffline(syncHealthEnvelope) ? 'offline' : legacySyncHealth);
 
+/**
+ * Plain-language dashboard summary. Kept free of syncPresentation imports to
+ * avoid a circular dependency (syncPresentation consumes resolveEffectiveSyncHealth).
+ * Copy must stay in lockstep with getSyncPresentationSummary.
+ */
 export const getDashboardSyncHealthSummary = (
   effectiveSyncHealth: SyncHealth,
   syncHealthEnvelope: SyncHealthResponse | null | undefined,
@@ -22,13 +27,13 @@ export const getDashboardSyncHealthSummary = (
 
   switch (effectiveSyncHealth) {
     case 'healthy':
-      return __('Machine sync is healthy and curation replay is caught up.', 'alt-context');
+      return __('Machine sync is healthy and local changes are caught up.', 'alt-context');
     case 'queued':
-      return __('Local curation changes are queued for replay.', 'alt-context');
+      return __('Local changes are waiting to sync.', 'alt-context');
     case 'conflicts':
-      return __('Conflict resolution is blocking part of the replay queue.', 'alt-context');
+      return __('Conflict resolution is blocking part of the sync queue.', 'alt-context');
     case 'failures':
-      return __('Some replay operations failed and need operator attention.', 'alt-context');
+      return __('Some sync operations failed and need operator attention.', 'alt-context');
     case 'offline':
       return __('The recognition backend is currently unreachable.', 'alt-context');
     case 'stale':

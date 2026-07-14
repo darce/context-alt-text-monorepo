@@ -5,8 +5,6 @@ import type { SettingsResponse } from '../settingsApi';
 const SETTINGS_RESPONSE_KEYS = [
   'url',
   'url_source',
-  'local_url',
-  'local_url_source',
   'effective_target_url',
   'effective_target_mode',
   'recognition_source',
@@ -24,8 +22,6 @@ describe('settings response contract', () => {
   const fixture: SettingsResponse = {
     url: 'https://api.example.com',
     url_source: 'option',
-    local_url: 'http://localhost:8000',
-    local_url_source: 'default',
     effective_target_url: 'https://api.example.com',
     effective_target_mode: 'service',
     recognition_source: 'service',

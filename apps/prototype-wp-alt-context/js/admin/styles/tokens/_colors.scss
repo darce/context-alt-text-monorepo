@@ -1,41 +1,70 @@
 :root {
-  --acx-color-surface: #f8fafc;
+  /* E21-4 design direction: cool, blue-biased neutrals toward the accent hue
+   * [COL-05][COL-06]; ramp ranked by value before hue [COL-04] so contrast
+   * passes by construction [A11Y-01]. Duty pairs are asserted in
+   * tokens/__tests__/design-tokens.test.ts — change a value, run that suite. */
+
+  /* Grey ramp (value-ranked; duty per step) */
+  --acx-gray-50: #f8fafc; /* app surface */
+  --acx-gray-100: #eef2f7; /* inset/alt surface */
+  --acx-gray-200: #e2e8f0; /* decorative borders */
+  --acx-gray-300: #cbd5e1; /* decorative borders / disabled fills (no 3:1 duty) */
+  --acx-gray-400: #94a3b8; /* disabled-control text ONLY (WCAG 1.4.3 exemption); NOT for placeholder or active labels */
+  --acx-gray-500: #64748b; /* secondary text/glyphs (>=4.5:1 on gray-50/white; also non-text 3:1 borders) */
+  --acx-gray-600: #475569; /* muted text (>=4.5:1 on white/gray-50/gray-100) */
+  --acx-gray-700: #334155; /* body text on tinted grounds (>=4.5:1) */
+  --acx-gray-900: #0f172a; /* primary text */
+
+  /* Role aliases (dominant surface roles) [COL-03] */
+  --acx-color-surface: var(--acx-gray-50);
   --acx-color-surface-alt: #ffffff;
-  --acx-color-border: #e2e8f0;
-  --acx-color-text: #0f172a;
-  --acx-color-text-muted: #475569;
+  --acx-color-border: var(--acx-gray-200);
+  --acx-color-text: var(--acx-gray-900);
+  --acx-color-text-muted: var(--acx-gray-600);
+  --acx-color-text-secondary: var(--acx-gray-600);
+  --acx-color-frame-muted: var(--acx-gray-300);
+  --acx-color-data-placeholder: var(--acx-gray-300);
+
+  /* Accent (identity anchor — sparse [COL-09]) */
   --acx-color-accent: #2563eb;
   --acx-color-accent-contrast: #ffffff;
+  --acx-color-accent-soft: rgb(37 99 235 / 10%); /* selection/focus tint (decorative) */
+  --acx-color-primary: var(--acx-color-accent);
+  --acx-color-primary-subtle: #ccdfff;
+
+  /* Support (panel tints) */
   --acx-color-panel: #eef2ff;
   --acx-color-panel-border: #cbd5f5;
+
+  /* Functional: danger */
   --acx-color-danger-soft: #fef2f2;
   --acx-color-danger-border: #fecaca;
   --acx-color-danger-strong: #991b1b;
   --acx-color-danger: #b42318;
   --acx-color-danger-hover: #991b1b;
-  --acx-color-success: #10b981;
+
+  /* Functional: success (glyph/text duty re-valued for floors, E21-4) */
+  --acx-color-success: #047857;
   --acx-color-success-bg: #dcfce7;
   --acx-color-success-text: #166534;
-  --acx-color-success-border: #22c55e;
-  --acx-color-error: #ef4444;
+  --acx-color-success-border: #16a34a;
+
+  /* Functional: warning */
   --acx-color-warning-bg: #fff7ed;
-  --acx-color-warning-border: #f59e0b;
+  --acx-color-warning-border: #b45309;
   --acx-color-warning-pill-bg: #fef3c7;
   --acx-color-warning-pill-text: #92400e;
-  --acx-color-frame-muted: #e0e0e0;
+
+  /* Functional: error/info (non-text duty only; text duty uses danger) */
+  --acx-color-error: #ef4444;
   --acx-color-info-border: #3b82f6;
-  --acx-color-primary-subtle: #ccdfff;
-  // REFA-3: these were referenced across components (workbench, cluster-grid, avatar,
-  // face-thumbnail, orientation-card, toast) but defined nowhere, so the declarations
-  // were dropped at render (secondary text/inherited, primary borders/currentColor,
-  // placeholder/transparent). Aliased to the nearest semantic sibling so every site
-  // resolves to a defined value; distinct hexes can be split out later if the design
-  // wants secondary/muted or primary/accent to diverge.
-  --acx-color-primary: var(--acx-color-accent);
-  --acx-color-text-secondary: var(--acx-color-text-muted);
-  --acx-color-data-placeholder: var(--acx-color-frame-muted);
+
+  /* Overlay + elevation scale [UI-08] */
   --acx-color-overlay: rgb(15 23 42 / 45%);
+  --acx-shadow-1: 0 4px 12px rgb(0 0 0 / 10%);
+  --acx-shadow-2: 0 8px 16px -6px rgb(15 23 42 / 18%);
+  --acx-shadow-3: 0 20px 25px -5px rgb(15 23 42 / 20%), 0 10px 10px -5px rgb(15 23 42 / 10%);
+  --acx-shadow-card: var(--acx-shadow-1);
   --acx-shadow-dialog-primary: 0 20px 25px -5px rgb(15 23 42 / 20%);
   --acx-shadow-dialog-secondary: 0 10px 10px -5px rgb(15 23 42 / 10%);
-  --acx-shadow-card: 0 4px 12px rgb(0 0 0 / 10%);
 }

@@ -327,3 +327,79 @@ def test_seed_readme_documents_v2_corpus():  # VLM-2C S4
     assert "are empty for every entry" not in readme, "stale VLM-2A rubric-empty claim"
     assert "manifest_version" in readme and "base_caption" in readme
     assert "phrase_boxes.json" in readme
+
+
+# --- VLM-6 S1: Golden-100 additive schema -----------------------------------
+
+# The pre-expansion golden-38 corpus, frozen by media_id so the historical
+# face-P/R subset stays comparable after Golden-100 renumbers nothing below 39.
+# Golden-100 additions MUST continue from media_id 39; this set is never edited.
+GOLDEN_38_MEDIA_IDS = frozenset(
+    {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+     23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38}
+)
+
+
+def test_legacy_entry_defaults_additive_fields(tmp_path):
+    """A manifest predating Golden-100 loads; new fields default empty/None."""
+    manifest = load_manifest(_write_manifest(tmp_path, _valid_manifest_dict()))
+    e = manifest.entries[0]
+    assert e.difficulty is None and e.domain is None
+    assert e.reference_facts == [] and e.spatial_facts == [] and e.provenance is None
+
+
+def test_golden100_fields_roundtrip(tmp_path):
+    data = _valid_manifest_dict()
+    data["entries"][0].update(
+        {
+            "difficulty": "hard",
+            "domain": "mirrors",
+            "reference_facts": [
+                {"text": "a mirror", "kind": "object", "phrases": ["mirror", "reflection"]},
+                {"text": "two people", "kind": "count", "polarity": "false", "phrases": ["two people", "group"]},
+            ],
+            "spatial_facts": [
+                {"subject": "Alice Example", "relation": "left_of", "reference": "Bob Example"}
+            ],
+            "provenance": {"source": "wikimedia", "license": "cc0", "url": "http://example/x"},
+        }
+    )
+    e = load_manifest(_write_manifest(tmp_path, data)).entries[0]
+    assert e.difficulty.value == "hard" and e.domain.value == "mirrors"
+    assert e.provenance.license.value == "cc0"
+    false_facts = [f for f in e.reference_facts if f.polarity.value == "false"]
+    assert false_facts and false_facts[0].match_targets() == ["two people", "group"]
+    assert e.spatial_facts[0].reference == "Bob Example"
+
+
+def test_reference_fact_phrases_fallback_to_text(tmp_path):
+    data = _valid_manifest_dict()
+    data["entries"][0]["reference_facts"] = [{"text": "a red bicycle", "kind": "object"}]
+    e = load_manifest(_write_manifest(tmp_path, data)).entries[0]
+    assert e.reference_facts[0].match_targets() == ["a red bicycle"]
+
+
+def test_unknown_domain_rejected(tmp_path):
+    data = _valid_manifest_dict()
+    data["entries"][0]["domain"] = "not_a_real_stratum"
+    with pytest.raises(ManifestError):
+        load_manifest(_write_manifest(tmp_path, data))
+
+
+def test_spatial_binary_relation_requires_reference(tmp_path):
+    data = _valid_manifest_dict()
+    data["entries"][0]["spatial_facts"] = [{"subject": "Alice Example", "relation": "left_of"}]
+    with pytest.raises(ManifestError):
+        load_manifest(_write_manifest(tmp_path, data))
+
+
+def test_golden38_subset_pin():
+    """The historical golden-38 media_ids are frozen (subset-pin, plan S1)."""
+    path = os.path.join(os.path.dirname(__file__), "seed", "golden.json")
+    manifest = load_manifest(path)
+    ids = {e.media_id for e in manifest.entries}
+    legacy = {i for i in ids if i <= 38}
+    assert legacy == GOLDEN_38_MEDIA_IDS, (
+        "golden-38 subset drifted; historical media_ids must never be renumbered — "
+        "Golden-100 additions continue from media_id 39"
+    )

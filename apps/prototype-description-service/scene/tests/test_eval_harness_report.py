@@ -238,3 +238,129 @@ def test_all_items_failed_aggregate_paths():  # S3-08
     assert scored["caption"]["mean_gated_score"] is None
     assert scored["faces"]["detection"]["precision"] is None
     assert "null" in md  # _fmt(None) rendered
+
+
+# --- ALTQ-1: quality axes, dual surface, eval modes ---
+
+
+def test_per_image_carries_quality_axes_and_quality_section():
+    scored = score_run_record(_run_record(), _manifest_entries())
+    row = next(r for r in scored["per_image"] if r["media_id"] == 1)
+    for key in (
+        "wrong_name_hits",
+        "hallucinated_names",
+        "meta_framing_hits",
+        "context_duplication_ratio",
+        "sentence_count",
+        "name_front_loaded",
+    ):
+        assert key in row
+    quality = scored["quality"]
+    assert quality["sentence_band"] == [1, 4]
+    assert quality["meta_framing_images"] == 0
+    assert scored["caption"]["name_precision"] == pytest.approx(1.0)
+    assert scored["caption"]["wrong_name_images"] == 0
+
+
+def test_wrong_name_from_easy_wrong_zeroes_caption_gate():
+    record, entries = _run_record(), _manifest_entries()
+    entries[0]["easy_wrong"] = ["Mallory Trap"]
+    record["items"][0]["describe"]["alt_text_draft"] = "Alice Example and Mallory Trap relax by a pool."
+    scored = score_run_record(record, entries)
+    row = next(r for r in scored["per_image"] if r["media_id"] == 1)
+    assert row["wrong_name_hits"] == ["Mallory Trap"]
+    assert row["gated_score"] == 0.0
+    assert scored["caption"]["wrong_name_images"] == 1
+
+
+def test_roster_hallucination_detected_across_corpus():
+    record, entries = _run_record(), _manifest_entries()
+    # Bob Builder is another entry's identity — naming him on Alice's image is a
+    # closed-roster hallucination.
+    record["items"][0]["describe"]["alt_text_draft"] = "Alice Example and Bob Builder relax by a pool."
+    scored = score_run_record(record, entries)
+    row = next(r for r in scored["per_image"] if r["media_id"] == 1)
+    assert row["hallucinated_names"] == ["Bob Builder"]
+    assert row["gated_score"] == 0.0
+
+
+def test_alt_text_long_scored_as_second_surface():
+    record, entries = _run_record(), _manifest_entries()
+    record["items"][0]["describe"]["alt_text_long"] = (
+        "Alice Example relaxes on a lounge chair beside a turquoise pool. Palm shadows cross the "
+        "deck. Her sunhat rests on the table beside a paperback."
+    )
+    scored = score_run_record(record, entries)
+    long_c = scored["caption_long"]
+    assert long_c["images_with_long"] == 1
+    assert long_c["insertion_rate"] == pytest.approx(1.0)
+    assert long_c["quality"]["sentence_band"] == [2, 8]
+    row = next(r for r in scored["per_image"] if r["media_id"] == 1)
+    assert row["long"]["sentence_count"] == 3
+    assert row["long"]["gated_score"] == 1.0
+
+
+def test_no_caption_long_section_without_long_surface():
+    scored = score_run_record(_run_record(), _manifest_entries())
+    assert "caption_long" not in scored
+
+
+def test_context_distractor_mode_counts_takes_and_resistance():
+    record, entries = _run_record(), _manifest_entries()
+    record["provenance"]["eval_mode"] = "context_distractor"
+    entries[0]["easy_wrong"] = ["Mallory Trap"]
+    record["items"][0]["describe"]["injected_distractor"] = "Mallory Trap"
+    record["items"][0]["describe"]["alt_text_draft"] = "Alice Example and Mallory Trap relax by a pool."
+    entries[1]["easy_wrong"] = ["Ned Nemo"]
+    record["items"][1]["describe"]["injected_distractor"] = "Ned Nemo"
+    scored = score_run_record(record, entries)
+    assert scored["eval_mode"] == "context_distractor"
+    d = scored["distractor"]
+    assert d["injected_images"] == 2
+    assert d["taken_images"] == 1
+    assert d["resistance_rate"] == pytest.approx(0.5)
+    taken_row = next(r for r in scored["per_image"] if r["media_id"] == 1)
+    assert taken_row["distractor_taken"] is True
+    assert taken_row["gated_score"] == 0.0  # a taken distractor is a wrong name
+
+
+def test_name_ablation_mode_gates_on_leaks_not_must_right():
+    record, entries = _run_record(), _manifest_entries()
+    record["provenance"]["eval_mode"] = "name_ablation"
+    record["items"][0]["describe"]["ablated_names"] = ["Alice Example"]
+    # Caption still names Alice although her name was stripped from context: leak.
+    scored = score_run_record(record, entries)
+    leak_row = next(r for r in scored["per_image"] if r["media_id"] == 1)
+    assert leak_row["gated_score"] == 0.0
+    assert leak_row["must_right_failures"] == []  # must-right suspended in ablation
+    clean_row = next(r for r in scored["per_image"] if r["media_id"] == 2)
+    assert clean_row["gated_score"] == 1.0  # "A man on a beach" leaks nothing
+    a = scored["ablation"]
+    assert a["eligible_images"] == 2
+    assert a["leak_images"] == 1
+    assert a["leak_free_rate"] == pytest.approx(0.5)
+
+
+def test_unknown_eval_mode_rejected():
+    record = _run_record()
+    record["provenance"]["eval_mode"] = "bogus"
+    with pytest.raises(ReportError):
+        score_run_record(record, _manifest_entries())
+
+
+def test_mode_banner_and_sections_rendered_in_markdown():
+    record, entries = _run_record(), _manifest_entries()
+    record["provenance"]["eval_mode"] = "name_ablation"
+    _json_doc, md = build_reports(record, entries)
+    assert "name_ablation" in md
+    assert "Name-ablation leak check" in md
+    assert "Quality axes" in md
+
+
+def test_reports_remain_deterministic_with_new_sections():
+    record, entries = _run_record(), _manifest_entries()
+    record["items"][0]["describe"]["alt_text_long"] = "Alice Example by a pool. Sunlight everywhere."
+    json_a, md_a = build_reports(record, entries)
+    json_b, md_b = build_reports(record, entries)
+    assert json_a == json_b
+    assert md_a == md_b

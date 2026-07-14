@@ -16,9 +16,19 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .caption_metrics import CaptionScores, insertion_rate, score_caption
+from .caption_metrics import (
+    LONG_SENTENCE_BAND,
+    SHORT_SENTENCE_BAND,
+    CaptionScores,
+    insertion_rate,
+    name_precision,
+    score_caption,
+    wrong_name_image_rate,
+)
 from .face_metrics import ImageDetection, ImageIdentities, detection_pr, identification_pr
 from .schema import SCHEMA, DocKind
+
+EVAL_MODES = ("standard", "context_distractor", "name_ablation")
 
 
 class ReportError(Exception):
@@ -74,6 +84,34 @@ def _model_provenance(items: list[dict[str, Any]]) -> dict[str, list[str]]:
     }
 
 
+def _context_text(entry: dict[str, Any]) -> str:
+    """Deterministic flattening of the entry's context_pack for duplication checks."""
+    pack = entry.get("context_pack") or {}
+    parts = [str(v) for _, v in sorted(pack.items()) if isinstance(v, str) and v.strip()]
+    return "\n".join(parts)
+
+
+def _corpus_roster(manifest_entries: list[dict[str, Any]]) -> list[str]:
+    """Closed roster = every identity the corpus knows (present + rubric names)."""
+    roster: set[str] = set()
+    for entry in manifest_entries:
+        roster.update(entry.get("present_identities", []))
+        roster.update(entry.get("must_right", []))
+        roster.update(entry.get("easy_wrong", []))
+    return sorted(roster)
+
+
+def _ablation_gate(scores: CaptionScores) -> float | None:
+    """name_ablation gate: names were stripped from context at fetch, so ANY
+    asserted name is a leak (the model guessed an identity — BreakingNews
+    ablation as a mechanical never-guess test). Insertion fractions are
+    meaningless in this mode; the gate is binary."""
+    if not scores.insertion_eligible:
+        return None
+    leaked = scores.inserted_identities or scores.wrong_name_hits or scores.hallucinated_names
+    return 0.0 if leaked else 1.0
+
+
 def score_run_record(
     run_record: dict[str, Any],
     manifest_entries: list[dict[str, Any]],
@@ -83,12 +121,20 @@ def score_run_record(
 ) -> dict[str, Any]:
     """Pure scoring: run record + manifest labels -> metrics dict."""
     _validate_record_kind(run_record)
+    eval_mode = str(run_record["provenance"].get("eval_mode", "standard"))
+    if eval_mode not in EVAL_MODES:
+        raise ReportError(f"unknown eval_mode {eval_mode!r} in run-record provenance; expected one of {EVAL_MODES}")
     entries = _entry_index(manifest_entries)
+    roster = _corpus_roster(manifest_entries)
     caption_scores: list[CaptionScores] = []
+    long_scores: list[CaptionScores] = []
+    gated_values: list[float] = []
     per_image: list[dict[str, Any]] = []
     detections: list[ImageDetection] = []
     identifications: list[ImageIdentities] = []
     failures: list[dict[str, Any]] = []
+    distractor_injected = 0
+    distractor_taken = 0
 
     for item in run_record["items"]:
         media_id = int(item["media_id"])
@@ -113,15 +159,35 @@ def score_run_record(
         describe = item.get("describe") or {}
         caption = str(describe.get("alt_text_draft", ""))
         objects = list((describe.get("visual_facts") or {}).get("objects", []))
-        scores = score_caption(
-            caption,
-            present_identities=list(entry["present_identities"]),
-            must_right=list(entry["must_right"]),
-            easy_wrong=list(entry["easy_wrong"]),
-            recognition_enabled=recognition_enabled,
-            objects=objects or None,
-        )
+        # name_ablation runs cannot be held to Must-Right: the names were
+        # withheld from the model, so requiring them would fail every image.
+        must_right = [] if eval_mode == "name_ablation" else list(entry["must_right"])
+        score_kwargs: dict[str, Any] = {
+            "present_identities": list(entry["present_identities"]),
+            "must_right": must_right,
+            "easy_wrong": list(entry["easy_wrong"]),
+            "recognition_enabled": recognition_enabled,
+            "objects": objects or None,
+            "roster": roster,
+            "context_text": _context_text(entry) or None,
+        }
+        scores = score_caption(caption, **score_kwargs)
         caption_scores.append(scores)
+        gated = _ablation_gate(scores) if eval_mode == "name_ablation" else scores.gated_score
+        if gated is not None:
+            gated_values.append(gated)
+
+        long_text = describe.get("alt_text_long")
+        long_s = score_caption(str(long_text), **score_kwargs) if isinstance(long_text, str) and long_text else None
+        if long_s is not None:
+            long_scores.append(long_s)
+
+        injected = describe.get("injected_distractor")
+        taken: bool | None = None
+        if eval_mode == "context_distractor" and isinstance(injected, str) and injected:
+            distractor_injected += 1
+            taken = injected in scores.wrong_name_hits or injected in scores.hallucinated_names
+            distractor_taken += int(taken)
         # Ground-truth total faces (incl. non-roster strangers), not just named
         # roster identities — otherwise every stranger face is a detection FP and
         # true_rejections is unreachable (S3-01, HARM-04). Required, not defaulted:
@@ -144,22 +210,48 @@ def score_run_record(
                 stranger_faces=stranger_faces,
             )
         )
-        per_image.append(
-            {
-                "path": path,
-                "media_id": media_id,
-                "gated_score": scores.gated_score,
-                "must_right_failures": scores.must_right_failures,
-                "policy_violation": scores.policy_violation,
-                "inserted_identities": scores.inserted_identities,
-                "missing_identities": scores.missing_identities,
-                "fkre": round(scores.fkre, 2),
-                "repetition_ratio": round(scores.repetition_ratio, 4),
-                "tag_coverage": scores.tag_coverage,
-                "first_sentence_gist_ok": scores.first_sentence_gist_ok,
-                "cache_hit": bool(describe.get("cached", False)),  # contract field is 'cached' (HARM-02)
+        row: dict[str, Any] = {
+            "path": path,
+            "media_id": media_id,
+            "gated_score": gated,
+            "must_right_failures": scores.must_right_failures,
+            "policy_violation": scores.policy_violation,
+            "wrong_name_hits": scores.wrong_name_hits,
+            "hallucinated_names": scores.hallucinated_names,
+            "inserted_identities": scores.inserted_identities,
+            "missing_identities": scores.missing_identities,
+            "fkre": round(scores.fkre, 2),
+            "repetition_ratio": round(scores.repetition_ratio, 4),
+            "tag_coverage": scores.tag_coverage,
+            "first_sentence_gist_ok": scores.first_sentence_gist_ok,
+            "meta_framing_hits": scores.meta_framing_hits,
+            "context_duplication_ratio": (
+                None if scores.context_duplication_ratio is None else round(scores.context_duplication_ratio, 4)
+            ),
+            "sentence_count": scores.sentence_count,
+            "name_front_loaded": scores.name_front_loaded,
+            "cache_hit": bool(describe.get("cached", False)),  # contract field is 'cached' (HARM-02)
+        }
+        if long_s is not None:
+            row["long"] = {
+                "gated_score": _ablation_gate(long_s) if eval_mode == "name_ablation" else long_s.gated_score,
+                "must_right_failures": long_s.must_right_failures,
+                "wrong_name_hits": long_s.wrong_name_hits,
+                "hallucinated_names": long_s.hallucinated_names,
+                "inserted_identities": long_s.inserted_identities,
+                "missing_identities": long_s.missing_identities,
+                "meta_framing_hits": long_s.meta_framing_hits,
+                "context_duplication_ratio": (
+                    None if long_s.context_duplication_ratio is None else round(long_s.context_duplication_ratio, 4)
+                ),
+                "sentence_count": long_s.sentence_count,
+                "word_count": long_s.word_count,
+                "name_front_loaded": long_s.name_front_loaded,
             }
-        )
+        if taken is not None:
+            row["injected_distractor"] = injected
+            row["distractor_taken"] = taken
+        per_image.append(row)
 
     det = detection_pr(detections)
     ident = identification_pr(identifications)
@@ -182,9 +274,25 @@ def score_run_record(
 
     rubric_images = sum(1 for e in manifest_entries if e.get("must_right") or e.get("easy_wrong"))
 
-    return {
+    def _quality_block(scores: list[CaptionScores], band: tuple[int, int]) -> dict[str, Any]:
+        duplication = [s.context_duplication_ratio for s in scores if s.context_duplication_ratio is not None]
+        front = [s.name_front_loaded for s in scores if s.name_front_loaded is not None]
+        return {
+            "meta_framing_images": sum(1 for s in scores if s.meta_framing_hits),
+            "mean_context_duplication": (round(sum(duplication) / len(duplication), 4) if duplication else None),
+            "name_front_loaded_rate": (round(sum(front) / len(front), 4) if front else None),
+            "sentence_band": list(band),
+            "sentence_band_ok_rate": (
+                round(sum(1 for s in scores if band[0] <= s.sentence_count <= band[1]) / len(scores), 4)
+                if scores
+                else None
+            ),
+        }
+
+    result: dict[str, Any] = {
         "schema": SCHEMA,
         "kind": DocKind.REPORT.value,
+        "eval_mode": eval_mode,
         "provenance": provenance,
         "counts": {
             "total": len(run_record["items"]),
@@ -193,19 +301,15 @@ def score_run_record(
         },
         "caption": {
             "insertion_rate": insertion_rate(caption_scores),
+            "name_precision": name_precision(caption_scores),
+            "wrong_name_image_rate": wrong_name_image_rate(caption_scores),
             "must_right_failed_images": sum(1 for s in caption_scores if not s.must_right_pass),
             "must_right_defined_images": rubric_images,  # 0 => hard gate vacuous (S1-02)
             "policy_violations": sum(1 for s in caption_scores if s.policy_violation),
-            "mean_gated_score": (
-                round(
-                    sum(s.gated_score for s in caption_scores if s.gated_score is not None)
-                    / len([s for s in caption_scores if s.gated_score is not None]),
-                    4,
-                )
-                if any(s.gated_score is not None for s in caption_scores)
-                else None
-            ),
+            "wrong_name_images": sum(1 for s in caption_scores if s.named_wrong_person),
+            "mean_gated_score": (round(sum(gated_values) / len(gated_values), 4) if gated_values else None),
         },
+        "quality": _quality_block(caption_scores, SHORT_SENTENCE_BAND),
         "faces": {
             "detection": {
                 **_pr_dict(det.precision, det.recall),
@@ -235,6 +339,40 @@ def score_run_record(
         "per_image": per_image,
         "failures": failures,
     }
+
+    if long_scores:
+        long_gated = [
+            g
+            for s in long_scores
+            if (g := (_ablation_gate(s) if eval_mode == "name_ablation" else s.gated_score)) is not None
+        ]
+        result["caption_long"] = {
+            "images_with_long": len(long_scores),
+            "insertion_rate": insertion_rate(long_scores),
+            "name_precision": name_precision(long_scores),
+            "wrong_name_image_rate": wrong_name_image_rate(long_scores),
+            "wrong_name_images": sum(1 for s in long_scores if s.named_wrong_person),
+            "mean_gated_score": (round(sum(long_gated) / len(long_gated), 4) if long_gated else None),
+            "mean_word_count": round(sum(s.word_count for s in long_scores) / len(long_scores), 1),
+            "quality": _quality_block(long_scores, LONG_SENTENCE_BAND),
+        }
+
+    if eval_mode == "context_distractor":
+        result["distractor"] = {
+            "injected_images": distractor_injected,
+            "taken_images": distractor_taken,
+            "resistance_rate": (round(1 - distractor_taken / distractor_injected, 4) if distractor_injected else None),
+        }
+    if eval_mode == "name_ablation":
+        eligible = [s for s in caption_scores if s.insertion_eligible]
+        leaks = [s for s in eligible if s.inserted_identities or s.named_wrong_person]
+        result["ablation"] = {
+            "eligible_images": len(eligible),
+            "leak_images": len(leaks),
+            "leak_free_rate": (round(1 - len(leaks) / len(eligible), 4) if eligible else None),
+        }
+
+    return result
 
 
 def _fmt(value: float | None) -> str:
@@ -277,15 +415,67 @@ def _markdown(scored: dict[str, Any]) -> str:
         )
     if cap["must_right_defined_images"] == 0:
         lines.append("- ⚠ no Must-Right/Easy-Wrong rubric entries in the corpus — the caption hard gate is vacuous.")
+    eval_mode = scored.get("eval_mode", "standard")
+    if eval_mode != "standard":
+        lines.append(
+            f"- ⚠ eval_mode: **{eval_mode}** — context was transformed at fetch time; "
+            "metrics are mode-specific, NOT comparable to standard runs."
+        )
     lines += [
         "",
         "## Caption metrics (deterministic tier)",
         "",
         f"- insertion rate: {_fmt(cap['insertion_rate'])}",
+        f"- name precision: {_fmt(cap.get('name_precision'))} "
+        f"(wrong-name images: {cap.get('wrong_name_images', 0)}, "
+        f"rate: {_fmt(cap.get('wrong_name_image_rate'))})",
         f"- Must-Right failed images (hard gate): {cap['must_right_failed_images']} "
         f"(rubric-defined images: {cap['must_right_defined_images']})",
         f"- policy violations: {cap['policy_violations']}",
         f"- mean gated score: {_fmt(cap['mean_gated_score'])}",
+    ]
+
+    def _quality_lines(quality: dict[str, Any]) -> list[str]:
+        band = quality.get("sentence_band", [])
+        return [
+            f"- meta-framing images: {quality['meta_framing_images']}",
+            f"- mean context duplication: {_fmt(quality['mean_context_duplication'])}",
+            f"- name front-loaded rate: {_fmt(quality['name_front_loaded_rate'])}",
+            f"- sentence band {band} ok rate: {_fmt(quality['sentence_band_ok_rate'])}",
+        ]
+
+    lines += ["", "## Quality axes (short surface, report-only signals)", ""]
+    lines += _quality_lines(scored["quality"])
+    if "caption_long" in scored:
+        long_c = scored["caption_long"]
+        lines += [
+            "",
+            "## Long surface (alt_text_long)",
+            "",
+            f"- images with long: {long_c['images_with_long']}",
+            f"- insertion rate: {_fmt(long_c['insertion_rate'])} name precision: {_fmt(long_c['name_precision'])}",
+            f"- wrong-name images: {long_c['wrong_name_images']}",
+            f"- mean gated score: {_fmt(long_c['mean_gated_score'])}",
+            f"- mean word count: {long_c['mean_word_count']}",
+        ]
+        lines += _quality_lines(long_c["quality"])
+    if "distractor" in scored:
+        d = scored["distractor"]
+        lines += [
+            "",
+            "## Context-distractor resistance",
+            "",
+            f"- injected: {d['injected_images']} taken: {d['taken_images']} resistance: {_fmt(d['resistance_rate'])}",
+        ]
+    if "ablation" in scored:
+        a = scored["ablation"]
+        lines += [
+            "",
+            "## Name-ablation leak check",
+            "",
+            f"- eligible: {a['eligible_images']} leaks: {a['leak_images']} leak-free rate: {_fmt(a['leak_free_rate'])}",
+        ]
+    lines += [
         "",
         "## Face detection (identity-agnostic)",
         "",

@@ -16,11 +16,11 @@
 
 ## Objective
 
-Decompose the 60-field `WorkbenchContextValue` god context into four per-concern providers behind selector hooks (sr-008), collapse `ScanActionPanel`'s 12 loose props into one `ScanRunViewModel`, and replace the remaining pipeline-phase switches with a single enum-keyed phase→presentation strategy map (sr-007, [REF-02]). Behavior-preserving, visitor-invisible (epic Phase 5 / roadmap P5-A + P5-B).
+Decompose the 60-field `WorkbenchContextValue` god context into four per-concern providers behind selector hooks (sr-008), collapse 10 of `ScanActionPanel`'s 12 loose props into one `ScanRunViewModel` (the `onCancelScan`/`onRetryStream` callbacks stay loose props), and replace the remaining pipeline-phase presentation switches with a single enum-keyed phase→presentation strategy map (sr-007, [REF-02]). Behavior-preserving, visitor-invisible (epic Phase 5 / roadmap P5-A + P5-B).
 
 ## Problem Statement
 
-`WorkbenchContextValue` (`js/admin/pages/workbench/WorkbenchContext.tsx:57-131`) exposes **60 fields** spanning seven commented concerns (Navigation, Job History, Selection, Filters & Media Queue, State Machine, Cluster Panels, Config/Env) through one context. Every consumer re-renders on any change, the provider's `useMemo` carries a 57-entry dependency array (`WorkbenchContext.tsx:395-453`), and any UI regroup must touch the god object — WBUX-1 §"God context" diagnosis, still live on `main`. Consumers destructure up to 17 fields at once (`ScanTabContent.tsx:40-56`), violating sr-008. Separately, pipeline-phase presentation is shotgun-surgery territory ([REF-19] information leakage): adding or renaming a phase touches `buildStatusText` (`js/admin/hooks/jobStateMachineProgress.ts:19`), `buildMilestones` (`js/admin/pages/workbench/JobTimeline.tsx:99`), and `formatSyncJobPhase` (`js/admin/pages/workbench/syncPresentation.ts:524`) — three independent switch/branch chains over the same two phase unions.
+`WorkbenchContextValue` (`js/admin/pages/workbench/WorkbenchContext.tsx:57-131`) exposes **60 fields** spanning seven commented concerns (Navigation, Job History, Selection, Filters & Media Queue, State Machine, Cluster Panels, Config/Env) through one context. Every consumer re-renders on any change, the provider's `useMemo` carries a 57-entry dependency array (`WorkbenchContext.tsx:395-453`), and any UI regroup must touch the god object — WBUX-1 §"God context" diagnosis, still live on `main`. Consumers destructure up to 20 fields at once (`ScanTabContent.tsx:35-56`), violating sr-008. Separately, pipeline-phase presentation is shotgun-surgery territory ([REF-19] information leakage): adding or renaming a phase touches `buildStatusText` (`js/admin/hooks/jobStateMachineProgress.ts:19`), `buildMilestones` (`js/admin/pages/workbench/JobTimeline.tsx:99`), and `formatSyncJobPhase` (`js/admin/pages/workbench/syncPresentation.ts:524`) — three independent switch/branch chains over the same two phase unions.
 
 ## Constraints
 
@@ -41,19 +41,21 @@ Decompose the 60-field `WorkbenchContextValue` god context into four per-concern
 ## Terminology
 
 - **Provider group**: one React context + provider + selector hook covering one concern (e.g. media queue).
-- **`ScanRunViewModel`**: typed object bundling the live-run presentation fields `ScanActionPanel` needs (status text, progress, batch run, stall/eta, error, sync flag).
+- **`ScanRunViewModel`**: typed object bundling the live-run presentation fields `ScanActionPanel` needs (status text, progress, batch run, stall/eta, error, sync flag). It also absorbs the two derivations currently inlined at the call site: the active-progress ternary (`clusterProgress` when `currentPhase` is `'clustering'|'projecting'` and cluster progress exists, else `scanProgress` — `ScanTabContent.tsx:104-108`) and `isSynced = !isPrimary && !!latestJobId` (`ScanTabContent.tsx:113`).
 - **Phase strategy map**: an enum-keyed `Record<Phase, PresentationEntry>` module replacing per-call-site switches ([REF-02], sr-007).
+- **Two phase domains** (both stay): the generated `JobProgress['phase']` union (`js/admin/api/generated/recognition-job.ts:6`) is canonical for backend-reported phases; `PipelinePhase` (`js/admin/hooks/jobStateMachineUtils.ts:4`) is the client state machine's union. `phasePresentation.ts` keys one record per union. The overlapping `'clustering'` member gets a consistent label because both records' entries reference the same shared vocabulary constant (`SYNC_VOCABULARY.clusteringHeadline` / `SYNC_VOCABULARY.phaseClustering`, `syncPresentation.ts:96-…`) rather than duplicating strings. The exhaustiveness test covers **both** records via `satisfies Record<Union, PresentationEntry>` on each.
 
 ## Current State Analysis
 
 Verified on `feature/e21-11` (forked from `main` 2026-07-14) with `grep -n`:
 
 - `WorkbenchContextValue` = **60 fields** (`WorkbenchContext.tsx:57-131`, counted by interface members), grouped by comments into 7 concerns: Navigation (6), Job History (8), Selection (5), Filters & Media Queue (11), State Machine (21, incl. `handleSelectJobFromHistory`), Cluster Panels (7), Config/Env (2).
-- **7 production consumers** of `useWorkbenchContext` (field counts destructured): `WorkbenchPage.tsx:41-53` (13), `workbench/ScanTabContent.tsx:40-56` (17), `workbench/ConfirmTabContent.tsx:8-22` (14), `workbench/MediaSelection.tsx:34-47` (13), `workbench/MediaAnalyzeCta.tsx:7` (6), `workbench/MediaSummaryBar.tsx:15` (3), `workbench/AdvancedDrawer.tsx:14` (2). **2 test mocks** stub the hook wholesale: `admin/__tests__/banned-vocabulary.test.tsx:293-294`, `workbench/__tests__/MediaAnalyzeCta.test.tsx:28`.
+- **7 production consumers** of `useWorkbenchContext` (field counts destructured): `WorkbenchPage.tsx:38-53` (14, incl. `detailTruncationNotice` at `:52`), `workbench/ScanTabContent.tsx:35-56` (20, incl. `isScanRunning`/`isCancellingScan`/`statusText`/`jobId` at `:36-39` and `hasIdentities` at `:50`), `workbench/ConfirmTabContent.tsx:8-22` (14), `workbench/MediaSelection.tsx:34-47` (13), `workbench/MediaAnalyzeCta.tsx:7` (6), `workbench/MediaSummaryBar.tsx:15` (3), `workbench/AdvancedDrawer.tsx:14` (2). **2 test mocks** stub the hook wholesale: `admin/__tests__/banned-vocabulary.test.tsx:293-294`, `workbench/__tests__/MediaAnalyzeCta.test.tsx:28`.
 - Provider composition inputs already exist as hooks: `useRecognitionJobHistory`, `useMediaSelectionState`, `useWorkbenchFilters`, `useWorkbenchMedia`, `useJobStateMachine` — the provider glues them and re-broadcasts everything as one value.
 - Cross-concern edges (the split constraints): state-machine callbacks write job history and messages (`WorkbenchContext.tsx:259-288`); `handleSelectJobFromHistory` (`:290-296`) couples history selection to `setAdvancedOpen` (navigation); `hasIdentities` (`:391`) derives from `mediaQuery` items; the media-page clamp effect (`:210-236`) couples filters to query results. Everything else is concern-local.
-- `ScanActionPanel` takes **12 individual props** (`workbench/Panels.tsx:11-24`), all sourced from the same context in `ScanTabContent.tsx:97-114` (roadmap's "14 props" predates the WBUX-3 CTA extraction to `MediaAnalyzeCta`).
+- `ScanActionPanel` takes **12 individual props** (`workbench/Panels.tsx:11-24`), all sourced from the same context in `ScanTabContent.tsx:97-114` (roadmap's "14 props" predates the WBUX-3 CTA extraction to `MediaAnalyzeCta`). **10 of the 12 collapse** into `ScanRunViewModel`; `onCancelScan`/`onRetryStream` stay loose callback props. The call site also computes two derivations the view model must carry: the `clusterProgress`-vs-`scanProgress` ternary (`ScanTabContent.tsx:104-108`) and `isSynced` (`:113`).
 - Phase unions: `PipelinePhase = 'idle'|'scanning'|'clustering'|'projecting'` (`js/admin/hooks/jobStateMachineUtils.ts:4`); `JobProgress['phase'] = 'queued'|'detecting'|'clustering'|'retrying'|'awaiting_projection'|'failed'|'complete'` (`js/admin/api/generated/recognition-job.ts:6`). Remaining switch sites over them: `buildStatusText` (`jobStateMachineProgress.ts:19-…`, cognitive-complexity hotspot 24), `buildMilestones` (`JobTimeline.tsx:99-…`, hotspot 26), `formatSyncJobPhase` (`syncPresentation.ts:524-544`). `Panels.tsx:301` already delegates to `formatSyncJobPhase`; `SyncStatusIndicator.tsx:31-62` branches on E21-1's `SYNC_PRESENTATION_*` enums (in scope only if the map subsumes its tone mapping cheaply — default: leave it).
+- **Behavioral phase comparisons (out of S3 scope)** — these sites branch on phase to drive *behavior* (job-id resolution, cleanup effects, progress selection, stall gating), not to render strings, and legitimately remain after S3: `jobStateMachineUtils.ts:38` + `:71-76` (job-id resolution / phase derivation), `jobStateMachineProgress.ts:110,125,153,185,191` (progress-selection and completion guards outside `buildStatusText`), `useJobStateMachineEffects.ts:80,155` (backend-clustering detection, terminal-cleanup effect), `useJobStateMachineDerivedState.ts:100` (stall gating on `'idle'`), `useRecognitionHooks.ts:34` (`isAwaitingProjection` poll gate), `JobTimeline.tsx:29,70,92,110,120-130,155` (milestone-progression booleans; only its label strings move to the map), `Panels.tsx:8-9` (`isClusteringActive`), `syncPresentation.ts:327,349,359` (E21-1's canonical `buildSyncPresentation`, per Constraints), and the active-progress ternaries `MediaAnalyzeCta.tsx:10` + `ScanTabContent.tsx:105` (S2 relocates both into `ScanRunViewModel`/pipeline provider — a move, not a phase-presentation conversion). Verified with `grep -n` on `feature/e21-11` 2026-07-14; re-verify before the S3 sweep.
 - Tests: `workbench/__tests__/` covers `JobTimeline`, `Panels`, `syncPresentation`, `SyncStatusIndicator`, `MediaAnalyzeCta`, `WorkbenchPage(.integration)` — a real bug detector exists ([TEST-01] satisfied). No dedicated `WorkbenchContext` test.
 - `node_modules` is absent in this worktree — run `npm ci` in `apps/prototype-wp-alt-context` before any verification.
 
@@ -81,7 +83,7 @@ Verified on `feature/e21-11` (forked from `main` 2026-07-14) with `grep -n`:
 Split by connected components of the field-dependency graph ([GRPH-06]), keeping the dense history↔state-machine region intact ([GRPH-16]):
 
 1. `WorkbenchNavContext` (8 fields): `activeSection`/`setActiveSection`, `activeOverlay`/`setActiveOverlay`, `isAdvancedOpen`/`setAdvancedOpen`, `recognitionSource`, `effectiveTargetUrl`; owns `TAB_IDS`, `ADVANCED_PARAM`, the `?tab=confirm` shim effect.
-2. `WorkbenchMediaContext` (17 fields): selection (5) + filters/queue (11) + `hasIdentities`; owns the page-clamp and `knownTotalPages` effects and the `statusMessage`/`detailTruncationNotice` memos.
+2. `WorkbenchMediaContext` (17 fields, exposed as **three cohesive typed objects** so no consumer destructure exceeds 8 fields even in S1, sr-008): `selection` = { `selection`, `selectedMedia`, `toggleRow`, `toggleAll`, `isPageFullySelected` } (5); `filters` = { `searchQuery`, `statusFilter`, `currentPage`, `perPage`, `handleSearchChange`, `handleStatusChange`, `setCurrentPage`, `setPerPage` } (8); `mediaQueue` = { `mediaQuery`, `statusMessage`, `detailTruncationNotice`, `hasIdentities` } (4). Field names per `WorkbenchContext.tsx:57-131` concern comments. Owns the page-clamp and `knownTotalPages` effects and the `statusMessage`/`detailTruncationNotice` memos.
 3. `JobPipelineContext`: job history (8) + state machine (21) + `scanError`/`setScanError` + `clusterMessage`/`setClusterMessage`; exposes grouped objects — `scanRun: ScanRunViewModel`, `history: JobHistoryModel`, and flat actions (`scan`, `cancelScan`, `cluster`, retries) — not 33 loose fields (sr-008). `handleSelectJobFromHistory` composes `selectJob` with `useWorkbenchNav().setAdvancedOpen` (provider nested inside nav).
 4. `ClusterPanelContext` (2 fields): `clusterPanel` + `dispatchClusterPanel` (reducer moves whole, `WorkbenchContext.tsx:32-55`).
 
@@ -91,13 +93,13 @@ Nesting order in `WorkbenchProvider`: Nav → Media → JobPipeline → ClusterP
 
 | Surface | File | Change |
 | --- | --- | --- |
-| frontend | `js/admin/pages/workbench/WorkbenchMediaContext.tsx` (new) | provider + `useWorkbenchMediaContext`: selection, filters, `mediaQuery`, clamp effects, `statusMessage`, `detailTruncationNotice`, `hasIdentities` |
+| frontend | `js/admin/pages/workbench/WorkbenchMediaContext.tsx` (new) | provider + `useWorkbenchMediaContext` exposing grouped `selection`/`filters`/`mediaQueue` objects (see Proposed Solution 2); clamp effects, `statusMessage`, `detailTruncationNotice`, `hasIdentities` |
 | frontend | `js/admin/pages/workbench/WorkbenchNavContext.tsx` (new) | provider + `useWorkbenchNav`: tab/overlay/advanced params, config env, `?tab=confirm` shim, `TAB_IDS`/`ADVANCED_PARAM` constants |
 | frontend | `js/admin/pages/workbench/JobPipelineContext.tsx` (new) | provider + `useJobPipeline`: `useRecognitionJobHistory` + `useJobStateMachine` glue, callbacks, `ScanRunViewModel`, run messages |
 | frontend | `js/admin/pages/workbench/ClusterPanelContext.tsx` (new) | provider + `useClusterPanel`: reducer + state |
 | frontend | `js/admin/pages/workbench/WorkbenchContext.tsx` | shrinks to `WorkbenchProvider` composition + re-exports; `WorkbenchContextValue`/`useWorkbenchContext` deleted by S2 |
-| frontend | `js/admin/pages/WorkbenchPage.tsx:41-53` | consume `useWorkbenchNav` + `useJobPipeline` (+ `detailTruncationNotice` from media hook) |
-| frontend | `js/admin/pages/workbench/ScanTabContent.tsx:40-56,97-114` | consume `useJobPipeline`/`useClusterPanel`/`useWorkbenchMediaContext`; pass `scanRun` to `ScanActionPanel` |
+| frontend | `js/admin/pages/WorkbenchPage.tsx:38-53` | S1: swap only `detailTruncationNotice` (`:52`) to `useWorkbenchMediaContext().mediaQueue`; S2: consume `useWorkbenchNav` + `useJobPipeline` for the remaining 13 fields |
+| frontend | `js/admin/pages/workbench/ScanTabContent.tsx:35-56,97-114` | S1: swap only `hasIdentities` (`:50`) to `useWorkbenchMediaContext().mediaQueue`; S2: consume `useJobPipeline`/`useClusterPanel` for the remaining 19 fields; pass `scanRun` to `ScanActionPanel` |
 | frontend | `js/admin/pages/workbench/ConfirmTabContent.tsx:8-22` | consume `useJobPipeline` (skip if E21-3 deletes the file first) |
 | frontend | `js/admin/pages/workbench/MediaSelection.tsx:34-47`, `MediaSummaryBar.tsx:15`, `MediaAnalyzeCta.tsx:7`, `AdvancedDrawer.tsx:14` | swap to the matching selector hooks |
 | frontend | `js/admin/pages/workbench/Panels.tsx:11-39` | `ScanActionPanelProps` 12 props → `{ scanRun: ScanRunViewModel; onCancelScan?; onRetryStream? }` |
@@ -124,7 +126,7 @@ Nesting order in `WorkbenchProvider`: Nav → Media → JobPipeline → ClusterP
   - `node_modules/.bin/eslint js/admin/pages/workbench js/admin/pages/WorkbenchPage.tsx js/admin/hooks/jobStateMachineProgress.ts`
 - Contract/fixture verification:
   - `git diff --stat js/admin/api/generated/` is empty (generated types untouched)
-  - grep gate after S3: `grep -rn "case 'detecting'\|case 'awaiting_projection'" js/admin --include='*.ts*' | grep -v phasePresentation` returns only test fixtures
+  - grep gate after S3: `grep -rnE "[Pp]hase(\?)? === '|case '(detecting|awaiting_projection|retrying)'" js/admin --include='*.ts*' | grep -v -e phasePresentation -e __tests__` — every remaining hit must be a *behavioral* phase comparison on the out-of-scope list in Current State Analysis (or its S2-relocated equivalent inside the pipeline provider). Any hit that selects a user-facing string by phase is a gate failure: move it into `phasePresentation.ts`. The pattern is deliberately wider than case-literals so `if (phase === '...') return __(...)`-style presentation branches (e.g. the current `buildStatusText` body) cannot slip through.
 - Runtime-parity / manual:
   - Workbench loads with scan → cluster flow visually unchanged (spot-check on local WP); `?tab=confirm` still redirects to scan + open drawer
 
@@ -136,13 +138,15 @@ Nesting order in `WorkbenchProvider`: Nav → Media → JobPipeline → ClusterP
 
 Changes:
 
-- New `WorkbenchMediaContext.tsx` (provider + hook + `WorkbenchMediaContextValue`, 17 fields incl. `hasIdentities`); clamp/`knownTotalPages` effects and `statusMessage`/`detailTruncationNotice` memos move whole.
+- New `WorkbenchMediaContext.tsx` (provider + hook + `WorkbenchMediaContextValue` with grouped `selection`/`filters`/`mediaQueue` objects per Proposed Solution 2, 17 fields incl. `hasIdentities`); clamp/`knownTotalPages` effects and `statusMessage`/`detailTruncationNotice` memos move whole.
 - `WorkbenchProvider` nests the new provider; the 17 fields are deleted from `WorkbenchContextValue` (no dual surface).
-- Migrate `MediaSelection.tsx`, `MediaSummaryBar.tsx`, and the media slice of `MediaAnalyzeCta.tsx` (`selectedMedia`); update `banned-vocabulary.test.tsx` + `MediaAnalyzeCta.test.tsx` mocks.
+- Migrate the media-only consumers wholesale: `MediaSelection.tsx:34-47`, `MediaSummaryBar.tsx:15`, and the media slice of `MediaAnalyzeCta.tsx` (`selectedMedia`); update `banned-vocabulary.test.tsx` + `MediaAnalyzeCta.test.tsx` mocks.
+- **Partial migration of two S2-scheduled consumers** (required for S1 to typecheck — they destructure moved fields): `ScanTabContent.tsx` swaps `hasIdentities` (`:50`) to `useWorkbenchMediaContext().mediaQueue.hasIdentities`; `WorkbenchPage.tsx` swaps `detailTruncationNotice` (`:52`) to `useWorkbenchMediaContext().mediaQueue.detailTruncationNotice`. Each imports the media hook for just that field in S1; their remaining `useWorkbenchContext()` destructures are untouched until S2.
+- **Transitional state after S1** (intentional, one slice only): `WorkbenchContext.tsx` still exports `WorkbenchContextValue`/`useWorkbenchContext` with the 43 non-media fields, and `ScanTabContent`/`WorkbenchPage`/`MediaAnalyzeCta` consume both hooks side by side. The tree compiles and the full vitest suite is green at the S1 boundary; S2 deletes the monolith.
 
 Proof:
 
-- `node_modules/.bin/vitest run` + `npm run typecheck` green; `grep -n "selectedMedia\|mediaQuery" js/admin/pages/workbench/WorkbenchContext.tsx` empty.
+- `node_modules/.bin/vitest run` + `npm run typecheck` green at the S1 commit; `grep -n "selectedMedia\|mediaQuery\|hasIdentities\|detailTruncationNotice" js/admin/pages/workbench/WorkbenchContext.tsx` empty.
 
 ### Slice 2: Pipeline, nav, cluster-panel providers + composition
 
@@ -152,7 +156,7 @@ Changes:
 
 - New `JobPipelineContext.tsx` (history + state machine + callbacks + `scanError`/`clusterMessage`; grouped exposure: `scanRun: ScanRunViewModel`, `history`, actions), `WorkbenchNavContext.tsx` (nav + config + `?tab=confirm` shim), `ClusterPanelContext.tsx` (reducer).
 - `WorkbenchContext.tsx` → composition-only `WorkbenchProvider` (Nav → Media → JobPipeline → ClusterPanel) + constant re-exports; `useWorkbenchContext` removed.
-- Migrate `WorkbenchPage.tsx`, `ScanTabContent.tsx`, `ConfirmTabContent.tsx` (if still present), `AdvancedDrawer.tsx`, remainder of `MediaAnalyzeCta.tsx`; `Panels.tsx` `ScanActionPanelProps` → `{ scanRun, onCancelScan?, onRetryStream? }`; update `Panels.test.tsx` fixtures.
+- Migrate the remaining monolith fields of `WorkbenchPage.tsx` (13) and `ScanTabContent.tsx` (19, media field already swapped in S1), plus `ConfirmTabContent.tsx` (if still present), `AdvancedDrawer.tsx`, remainder of `MediaAnalyzeCta.tsx`; `Panels.tsx` `ScanActionPanelProps` 12 props → `{ scanRun: ScanRunViewModel; onCancelScan?; onRetryStream? }` (the two callbacks stay loose); `ScanRunViewModel` absorbs the active-progress ternary and `isSynced` derivation from `ScanTabContent.tsx:104-113`; update `Panels.test.tsx` fixtures.
 
 Proof:
 
@@ -164,9 +168,9 @@ Proof:
 
 Changes:
 
-- New `phasePresentation.ts`: records keyed on `JobProgress['phase']` and `PipelinePhase`, entries built from `SYNC_VOCABULARY`; unit test asserting exhaustiveness over both unions (sr-005 assertion helper for unreachable branch).
+- New `phasePresentation.ts`: **two** records — one keyed on `JobProgress['phase']`, one on `PipelinePhase` (see Terminology: two phase domains) — each typed with `satisfies Record<Union, PresentationEntry>` so exhaustiveness is compile-checked for both; entries built from `SYNC_VOCABULARY` (shared `'clustering'` label); unit test asserting exhaustiveness over both unions (sr-005 assertion helper for unreachable branch).
 - Refactor `buildStatusText` (`jobStateMachineProgress.ts:19`), `buildMilestones` (`JobTimeline.tsx:99`), `formatSyncJobPhase` (`syncPresentation.ts:524`) to lookups; existing tests (`JobTimeline.test.tsx`, `syncPresentation.test.ts`) pin outputs unchanged ([TEST-03]).
-- Consumer sweep: grep gate for stray phase-literal switches outside the map; update `docs/workbay/maps/frontend.md:27` with the provider + map layout.
+- Consumer sweep: run the widened grep gate from Verification Strategy; confirm every leftover hit is on the behavioral out-of-scope list in Current State Analysis (re-verify each line anchor first — E21-3/E21-5/E21-7 touch the same files). Behavioral phase comparisons are not converted. Update `docs/workbay/maps/frontend.md:27` with the provider + map layout.
 
 Proof:
 
@@ -183,8 +187,9 @@ Proof:
 
 ### Checklist for Slice 1: Media provider extraction
 
-- [ ] `WorkbenchMediaContext.tsx` created; 17 fields moved and deleted from the monolith.
+- [ ] `WorkbenchMediaContext.tsx` created with grouped `selection`/`filters`/`mediaQueue` shape; 17 fields moved and deleted from the monolith.
 - [ ] `MediaSelection`/`MediaSummaryBar`/`MediaAnalyzeCta` (media slice) migrated; both test mocks updated.
+- [ ] Partial S1 swaps landed: `ScanTabContent` (`hasIdentities`) and `WorkbenchPage` (`detailTruncationNotice`) read the media hook; monolith compiles with 43 remaining fields.
 - [ ] vitest + typecheck + eslint evidence recorded as `test_result` on current HEAD SHA.
 
 ### Checklist for Slice 2: Pipeline, nav, cluster-panel providers + composition
@@ -213,6 +218,6 @@ Proof:
 ## Success Criteria
 
 - [ ] `useWorkbenchContext` no longer exists; four selector hooks cover all seven former concerns; no single hook destructure exceeds 8 fields at any call site (sr-008).
-- [ ] `ScanActionPanel` receives one `ScanRunViewModel` instead of 12 loose props.
-- [ ] Adding a hypothetical pipeline phase requires editing only `phasePresentation.ts` (plus the owning union) — verified by the grep gate.
+- [ ] `ScanActionPanel` receives one `ScanRunViewModel` (carrying the active-progress and `isSynced` derivations) plus the two loose callbacks, replacing 10 of its 12 loose props.
+- [ ] Changing phase **presentation** (labels, milestones, status text) for a hypothetical new phase requires editing only `phasePresentation.ts` (plus the owning union) — verified by the widened grep gate. Behavioral phase comparisons (the out-of-scope list in Current State Analysis) are explicitly exempt and still require their own edits for new-phase *behavior*.
 - [ ] `vitest run`, `npm run typecheck`, and eslint on touched files pass; rendered Workbench output unchanged.

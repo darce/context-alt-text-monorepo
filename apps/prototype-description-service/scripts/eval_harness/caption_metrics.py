@@ -17,6 +17,7 @@ detector, context-duplication ratio, sentence-count band, name-front-loading.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
@@ -63,6 +64,11 @@ def _contains(haystack: str, needle: str) -> bool:
     """
     if not needle:
         return False
+    # NFC-normalize both sides (ALTQ-1-REV-A-10): the wrong-name/hallucination
+    # HARD GATE rides on this helper, and an NFD manifest name vs an NFC model
+    # caption must not let a wrong name escape (same drift class as S1-07).
+    haystack = unicodedata.normalize("NFC", haystack)
+    needle = unicodedata.normalize("NFC", needle)
     return re.search(rf"(?<!\w){re.escape(needle)}(?!\w)", haystack, re.IGNORECASE) is not None
 
 
@@ -207,7 +213,10 @@ def score_caption(
     # name; a violation triggers on any distinctive fragment — asymmetric by
     # design, erring toward the gate.
     present_tokens = {t.lower() for n in present_identities for t in _name_tokens(n)}
-    wrong_name_hits = [n for n in easy_wrong if _trap_hit(caption, n, present_tokens)]
+    present_set = set(present_identities)
+    # A present identity erroneously listed in easy_wrong must never zero a
+    # correct caption (ALTQ-1-REV-A-05).
+    wrong_name_hits = [n for n in easy_wrong if n not in present_set and _trap_hit(caption, n, present_tokens)]
     trap_names = set(present_identities) | set(easy_wrong)
     hallucinated = [n for n in (roster or []) if n not in trap_names and _trap_hit(caption, n, present_tokens)]
 

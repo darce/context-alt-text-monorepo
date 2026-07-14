@@ -343,3 +343,19 @@ def test_wrong_name_image_rate_counts_ineligible_rows():  # A-06/B-02
         ),
     ]
     assert wrong_name_image_rate(scores) == pytest.approx(0.5)
+
+
+def test_present_identity_in_easy_wrong_never_zeroes_correct_caption():  # A-05
+    scores = score_caption(CAPTION, **_entry(easy_wrong=["Alice Example"]))
+    assert scores.wrong_name_hits == []
+    assert scores.gated_score == 1.0
+
+
+def test_nfc_nfd_name_drift_still_trips_gate():  # A-10
+    import unicodedata as _ud
+
+    nfd_name = _ud.normalize("NFD", "Zoë Quinn")
+    nfc_caption = _ud.normalize("NFC", "Alice Example and Zoë Quinn by a lake.")
+    scores = score_caption(nfc_caption, **_entry(easy_wrong=[nfd_name]))
+    assert scores.wrong_name_hits == [nfd_name]
+    assert scores.gated_score == 0.0

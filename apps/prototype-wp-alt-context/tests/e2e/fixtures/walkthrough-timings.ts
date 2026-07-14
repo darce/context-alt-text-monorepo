@@ -15,17 +15,29 @@ export interface WalkthroughStep {
   note: string | null;
 }
 
+/** Instrumentation caveats: the automated run is a rehearsal, not the human baseline. */
+export interface WalkthroughHarnessInfo {
+  headed: boolean;
+  slow_mo_ms: number;
+  note: string;
+}
+
 export interface FirstVisitorWalkthroughManifest {
   task_ref: string;
   captured_at: string;
   base_url: string;
   deploy_commit_sha: string | null;
+  harness: WalkthroughHarnessInfo;
   steps: WalkthroughStep[];
   /** Total ms from Workbench landing to first named person visible, null if never reached. */
   time_to_first_named_person_ms: number | null;
   first_named_person_reached: boolean;
   scan_triggered: boolean;
   scan_completed: boolean;
+  /** Which naming route the run took (e.g. 'top-cluster-card'), null if none reached. */
+  naming_route: string | null;
+  /** Actionable failure note when the walkthrough could not proceed (gate evidence). */
+  diagnostic: string | null;
   captures: Record<string, boolean>;
   verdict: 'pass' | 'fail';
 }
@@ -91,7 +103,9 @@ export const renderWalkthroughLogFragment = (manifest: FirstVisitorWalkthroughMa
 - Base URL: ${manifest.base_url}
 - Deploy SHA: ${manifest.deploy_commit_sha ?? 'unknown'}
 - **time-to-first-named-person: ${ttfnp}**
-- Verdict: **${manifest.verdict}**
+- Harness: headed=${manifest.harness.headed}, slowMo=${manifest.harness.slow_mo_ms}ms — ${manifest.harness.note}
+- Naming route: ${manifest.naming_route ?? 'none'}
+- Verdict: **${manifest.verdict}**${manifest.diagnostic ? `\n- Diagnostic: ${manifest.diagnostic}` : ''}
 
 | Step | Elapsed | Outcome |
 | --- | --- | --- |

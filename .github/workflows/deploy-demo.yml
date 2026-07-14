@@ -1,0 +1,173 @@
+name: Deploy demo (WordPress + ACX plugin)
+
+# Laptop-free demo deploy (DDEP-1). Reuses the single source of truth for deploy
+# logic — scripts/deploy/sync-demo.sh (rsync configs -> demo stack up ->
+# bootstrap-wp.sh plugin install -> Caddy promote -> vhost smoke) — from an
+# ephemeral tag:ci tailnet runner, mirroring deploy-recognition.yml.
+#
+# Trigger policy: workflow_dispatch ONLY; the demo is public, so deploys are
+# deliberate and serialized. The primary deliberate-action gate is the
+# CONFIRM=PROMOTE string input (free-plan private repos have no GitHub
+# required-reviewers); the `demo` Environment exists for secrets isolation only.
+# See docs/runbooks/deploy-demo-cicd.md for one-time setup.
+#
+# Signals: the deploy-smoke gates on the demo-walkthrough spec's TEST exit code
+# (surfaces render + RECOG-1 single-target contract = deploy landed). The
+# manifest's recognition verdict is informational only — a backend recognition
+# failure must not fail a successful deploy.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type PROMOTE to authorize a demo deploy (required)"
+        type: string
+        default: ""
+
+# One in-flight demo deploy; never cancel a deploy mid-flight.
+concurrency:
+  group: deploy-demo
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Environment scopes the demo secrets; it is NOT a reviewer gate (free plan).
+    environment: demo
+    env:
+      OCI_HOST: acx-backend.tail1a44b8.ts.net
+      OCI_USER: ubuntu
+      PLUGIN_APP_DIR: apps/prototype-wp-alt-context
+    steps:
+      - name: Require explicit confirmation (primary deliberate-action gate)
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "PROMOTE" ]; then
+            echo "::error::demo deploy requires the 'confirm' input = PROMOTE." \
+              "(Free-plan deliberate-action gate; private repos have no GitHub required-reviewers.)"
+            exit 1
+          fi
+          echo "demo deploy confirmed."
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.x"
+          cache: npm
+          cache-dependency-path: apps/prototype-wp-alt-context/package-lock.json
+
+      - name: Setup PHP + Composer
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          tools: composer
+
+      # package-plugin.sh (default build mode) runs `npm run build` itself and a
+      # staging-dir `composer install --no-dev`, and hard-errors if
+      # public/assets/dist is missing/empty — so npm ci MUST land first, and no
+      # separate workflow-level build step is needed.
+      - name: Install plugin build deps
+        working-directory: apps/prototype-wp-alt-context
+        run: npm ci
+
+      - name: Build plugin zip
+        working-directory: apps/prototype-wp-alt-context
+        run: bash scripts/release/package-plugin.sh
+
+      - name: Join tailnet (ephemeral node)
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+          args: --accept-dns=true
+
+      - name: Pin VM tailnet address + wait for SSH reachability
+        env:
+          OCI_VM_TS_IP: "100.115.186.109"
+        run: |
+          # Resolve the VM by its stable tailnet IP regardless of MagicDNS state
+          # on the runner (SNI still uses the hostname, so TLS stays valid).
+          echo "${OCI_VM_TS_IP} ${OCI_HOST}" | sudo tee -a /etc/hosts
+          for i in $(seq 1 20); do
+            if nc -z -w3 "${OCI_VM_TS_IP}" 22 2>/dev/null; then
+              echo "VM ${OCI_HOST} (${OCI_VM_TS_IP}) reachable on :22"; exit 0
+            fi
+            echo "waiting for tailnet route to VM... attempt ${i}/20"; sleep 3
+          done
+          echo "::error::VM ${OCI_VM_TS_IP}:22 not reachable over the tailnet after wait"; exit 1
+
+      - name: Configure SSH deploy key
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.ACX_DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          cat > ~/.ssh/config <<EOF
+          Host ${OCI_HOST}
+            User ${OCI_USER}
+            IdentityFile ~/.ssh/id_ed25519
+            StrictHostKeyChecking accept-new
+            IdentitiesOnly yes
+          EOF
+          chmod 600 ~/.ssh/config
+
+      # PLUGIN_ZIP stays unset on purpose: sync-demo.sh auto-picks the newest
+      # dist/alt-context-*.zip from the repo root. A command-prefix glob
+      # assignment would pass the literal string and break scp mid-deploy.
+      - name: Deploy demo stack + plugin
+        run: bash scripts/deploy/sync-demo.sh
+
+      # playwright.config.ts is deliberately headed (local evidence capture), so
+      # both browser steps need a virtual display on the headless runner.
+      - name: Install deploy-smoke browser deps (chromium + xvfb)
+        working-directory: apps/prototype-wp-alt-context
+        run: |
+          sudo apt-get update && sudo apt-get install -y xvfb
+          npm run e2e:install
+
+      - name: Mint demo admin auth state
+        working-directory: apps/prototype-wp-alt-context
+        env:
+          WP_BASE_URL: ${{ secrets.WP_BASE_URL }}
+          ACX_E2E_WP_ADMIN_USER: ${{ secrets.ACX_E2E_WP_ADMIN_USER }}
+          ACX_E2E_WP_ADMIN_PASS: ${{ secrets.ACX_E2E_WP_ADMIN_PASS }}
+        run: xvfb-run -a npm run e2e:auth
+
+      # File-scoped on purpose: bare `--project=evidence` sweeps all six evidence
+      # specs (including recognition-exercising scan-runtime), which would gate
+      # the deploy on recognition health. The evidence project depends on
+      # auth-setup, so the admin-cred env must be present here too.
+      - name: Deploy-smoke (walkthrough spec — gate on TEST exit code)
+        working-directory: apps/prototype-wp-alt-context
+        env:
+          WP_BASE_URL: ${{ secrets.WP_BASE_URL }}
+          ACX_E2E_WP_ADMIN_USER: ${{ secrets.ACX_E2E_WP_ADMIN_USER }}
+          ACX_E2E_WP_ADMIN_PASS: ${{ secrets.ACX_E2E_WP_ADMIN_PASS }}
+          ACX_PLAYWRIGHT_TASK_REF: deploy-smoke
+          ACX_DEPLOY_COMMIT_SHA: ${{ github.sha }}
+        run: xvfb-run -a bash scripts/playwright-cli.sh test --project=evidence evidence/demo-walkthrough.spec.ts
+
+      # Informational only: the manifest verdict reflects recognition health,
+      # which is out of scope for the deploy gate (observability follow-up).
+      - name: Report recognition verdict (informational)
+        if: always()
+        working-directory: apps/prototype-wp-alt-context
+        run: |
+          manifest=$(find local/playwright/deploy-smoke -name evidence-manifest.json -print -quit 2>/dev/null || true)
+          {
+            echo "## Demo deploy-smoke"
+            if [ -n "$manifest" ]; then
+              verdict=$(jq -r '.verdict // "unknown"' "$manifest")
+              echo "- Recognition manifest verdict (informational, does not gate): **${verdict}**"
+              echo '```json'
+              jq '{settings, scan, sovereignty}' "$manifest"
+              echo '```'
+            else
+              echo "- No evidence manifest found (smoke may have failed before the spec wrote it)."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

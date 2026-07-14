@@ -136,13 +136,28 @@ echo "==> Install/refresh systemd unit (operator enables manually if first insta
 $SCP "$SYSTEMD_SRC" "${OCI_USER}@${OCI_HOST}:/tmp/acx-demo.service"
 $SSH "sudo cp /tmp/acx-demo.service /etc/systemd/system/acx-demo.service && sudo systemctl daemon-reload"
 
-echo "==> Smoke four vhosts (demo may fail until DNS/TLS propagates)"
+# api.* vhosts have no root route (/ -> 404), so probe /health there; the demo
+# vhost serves the WP front page at /. A non-200 on any probe fails the deploy
+# (fail-loud; recovery is an idempotent re-run of this script).
+echo "==> Smoke four vhosts (api.* via /health, demo via /)"
 $SSH bash -se <<'EOF'
 set -euo pipefail
-for host in api.altcontext.com staging.api.altcontext.com dev.api.altcontext.com demo.altcontext.com; do
-  code=$(curl -fsS -o /dev/null -w '%{http_code}' "https://${host}/" || echo FAIL)
-  echo "${code} ${host}"
+smoke_fail=0
+probe() {
+  local host="$1" path="$2" code
+  code=$(curl -fsS -o /dev/null -w '%{http_code}' "https://${host}${path}" || echo 000)
+  if [[ "$code" == "200" ]]; then
+    echo "PASS ${host}${path} (${code})"
+  else
+    echo "FAIL ${host}${path} (${code})"
+    smoke_fail=1
+  fi
+}
+for host in api.altcontext.com staging.api.altcontext.com dev.api.altcontext.com; do
+  probe "$host" /health
 done
+probe demo.altcontext.com /
+exit "$smoke_fail"
 EOF
 
 echo "==> Done."

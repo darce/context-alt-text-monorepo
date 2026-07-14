@@ -8,7 +8,7 @@ import {
   renderDemoSmokeLogFragment,
   type DemoWalkthroughManifest,
 } from '../fixtures/demo-smoke-log';
-import { probeAcxConnection } from '../fixtures/wp-rest';
+import { fetchAcxSettings, probeAcxConnection } from '../fixtures/wp-rest';
 
 /**
  * E15-28 public-demo walkthrough proof.
@@ -101,6 +101,17 @@ test('captures E15-28 public demo walkthrough proof', async ({ page, baseURL }, 
     await page.goto(getAcxAdminRouteUrl(baseURL, 'alt-context-settings'));
     await expect(page).toHaveURL(/page=alt-context-settings/);
     await expect(page.locator(SETTINGS_SHELL)).toBeVisible();
+
+    // RECOG-1 single-target contract (deploy-landed signal for the CI deploy-smoke,
+    // DDEP-1): exactly one target card — the hosted-service card — and the settings
+    // GET payload no longer carries local_url*. These gate the TEST exit code
+    // (deploy landed) independently of the recognition manifest verdict.
+    await expect(page.getByTestId('acx-target-card-service')).toBeVisible();
+    await expect(page.locator('.acx-target-card')).toHaveCount(1);
+    const settingsSnapshot = (await fetchAcxSettings(page)) as unknown as Record<string, unknown>;
+    expect(settingsSnapshot.recognition_source).toBe('service');
+    expect(settingsSnapshot).not.toHaveProperty('local_url');
+    expect(settingsSnapshot).not.toHaveProperty('local_url_source');
 
     constantProvenanceVisible = await page
       .getByText(CONSTANT_PROVENANCE_TEXT)

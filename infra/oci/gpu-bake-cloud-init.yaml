@@ -62,7 +62,19 @@ write_files:
       say "5/6 download weights (Xet-aware hf client; 18.6GB Q4 + F16 mmproj)"
       python3 -m venv /opt/hfvenv || finish ACX_BAKE_FAILED "phase=hf_venv"
       /opt/hfvenv/bin/pip install -q -U "huggingface_hub[hf_xet]" || finish ACX_BAKE_FAILED "phase=hf_pip"
-      /opt/hfvenv/bin/python /usr/local/bin/acx-hf-download.py "$REPO_ID" "$MODELS" "$Q4" "$MMPROJ" || finish ACX_BAKE_FAILED "phase=dl_weights"
+      # Background the download + heartbeat downloaded bytes to the serial console
+      # every 45s [OBS-01]. The console ring-buffer always shows the LATEST line, so a
+      # control-plane console-history capture always reveals current progress even
+      # though the 18.6GB download emits no phase marker of its own. Stall = bytes flat
+      # across heartbeats [rg-007].
+      /opt/hfvenv/bin/python /usr/local/bin/acx-hf-download.py "$REPO_ID" "$MODELS" "$Q4" "$MMPROJ" &
+      DLPID=$!
+      while kill -0 "$DLPID" 2>/dev/null; do
+        sz=$(du -sb /opt/acx-gpu/dl /opt/acx-gpu/models 2>/dev/null | awk '{s+=$1} END{printf "%d", s+0}')
+        echo "ACX_BAKE_PROGRESS $(date -u +%FT%TZ) phase=dl bytes=${sz} target=~20GB" > /dev/console
+        sleep 45
+      done
+      wait "$DLPID" || finish ACX_BAKE_FAILED "phase=dl_weights"
       ( cd "$MODELS" && sha256sum qwen3-vl-30b-a3b-instruct-q4.gguf qwen3-vl-30b-a3b-instruct-mmproj.gguf > SHA256SUMS )
       chown -R ubuntu:ubuntu /opt/acx-gpu
       nvidia-smi > /opt/acx-gpu/nvidia-smi.txt 2>&1 || finish ACX_BAKE_FAILED "phase=nvidia_smi"

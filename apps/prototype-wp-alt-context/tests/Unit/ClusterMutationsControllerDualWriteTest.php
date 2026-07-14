@@ -28,6 +28,9 @@ class ClusterMutationsControllerDualWriteTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // RECOG-1: default source flipped to 'service' with an empty default URL.
+        // Pin a service target so backend-proxy paths have a non-empty effective target.
+        $this->setOption('acx_recognition_url', 'https://recognition.test');
         $this->repository = new ClusterMutationsRepositorySpy();
         $this->membersRepository = new ClusterMutationsMembersSpy();
         $this->syncStateRepository = new ClusterMutationsSyncStateSpy();

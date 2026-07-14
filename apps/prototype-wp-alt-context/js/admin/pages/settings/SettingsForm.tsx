@@ -1,59 +1,45 @@
 import React from 'react';
 import { __ } from '@wordpress/i18n';
 
+import { RecognitionSource, type SettingsResponse, type TestConnectionResponse } from '../../api/settingsApi';
 import {
-  RecognitionSource,
-  type RecognitionSourceValue,
-  type SettingsResponse,
-  type TestConnectionResponse,
-} from '../../api/settingsApi';
-import { TargetCard, TargetCardGroup } from '../../../components/ui/target-card';
-import { healthStatusForTarget } from './healthStatus';
+  HEALTH_STATUS_ICONS,
+  HEALTH_STATUS_LABELS,
+} from './settingsConstants';
+import { healthStatusForService } from './healthStatus';
 import { SOURCE_LABELS } from './settingsConstants';
 
 interface SettingsFormProps {
   data: SettingsResponse;
   url: string;
-  localUrl: string;
-  recognitionSource: RecognitionSourceValue;
   apiKey: string;
   descriptionBudgetMaxAttempts: string;
-  sourceReadOnly: boolean;
   urlReadOnly: boolean;
-  localUrlReadOnly: boolean;
   keyReadOnly: boolean;
   savePending: boolean;
   testPending: boolean;
   hasUnsavedRoutingChanges: boolean;
   testResult: TestConnectionResponse | null;
   onUrlChange: (value: string) => void;
-  onLocalUrlChange: (value: string) => void;
-  onRecognitionSourceChange: (value: RecognitionSourceValue) => void;
   onApiKeyChange: (value: string) => void;
   onDescriptionBudgetMaxAttemptsChange: (value: string) => void;
   onSave: (e: React.FormEvent) => void;
-  onTest: (target: RecognitionSourceValue) => void;
+  onTest: () => void;
   onFocusServiceUrl?: () => void;
 }
 
 export const SettingsForm = ({
   data,
   url,
-  localUrl,
-  recognitionSource,
   apiKey,
   descriptionBudgetMaxAttempts,
-  sourceReadOnly,
   urlReadOnly,
-  localUrlReadOnly,
   keyReadOnly,
   savePending,
   testPending,
   hasUnsavedRoutingChanges,
   testResult,
   onUrlChange,
-  onLocalUrlChange,
-  onRecognitionSourceChange,
   onApiKeyChange,
   onDescriptionBudgetMaxAttemptsChange,
   onSave,
@@ -61,107 +47,111 @@ export const SettingsForm = ({
   onFocusServiceUrl,
 }: SettingsFormProps): React.JSX.Element => {
   const serviceConfigured = url.trim() !== '';
-  const localIsEffective = data.effective_target_mode === RecognitionSource.LOCAL;
-  const serviceIsEffective = data.effective_target_mode === RecognitionSource.SERVICE;
+  // RECOG-1: local survives only as a dev-only code hatch; when active the
+  // effective target resolves to local. Surface it as a read-only diagnostic.
+  const devHatchActive = data.recognition_source === RecognitionSource.LOCAL;
+  const healthStatus = healthStatusForService(testResult);
 
   return (
     <form onSubmit={onSave} className="acx-settings__form">
-      <h3 className="acx-settings__section-title">{__('Recognition target', 'alt-context')}</h3>
+      <h3 className="acx-settings__section-title">{__('Recognition service', 'alt-context')}</h3>
 
-      <TargetCardGroup
-        value={recognitionSource}
-        onValueChange={onRecognitionSourceChange}
-        disabled={sourceReadOnly}
+      <div className="acx-target-card acx-target-card--active" data-testid="acx-target-card-service">
+        <div className="acx-target-card__header">
+          <span className="acx-target-card__title">
+            <span>{__('Hosted recognition service', 'alt-context')}</span>
+          </span>
+          <span className={`acx-target-card__health acx-target-card__health--${healthStatus}`}>
+            <span aria-hidden="true" className="acx-target-card__health-icon">
+              {HEALTH_STATUS_ICONS[healthStatus]}
+            </span>
+            {HEALTH_STATUS_LABELS[healthStatus]}
+          </span>
+        </div>
+
+        {!serviceConfigured ? (
+          <div className="acx-target-card__empty">
+            <p>{__('No service URL configured yet.', 'alt-context')}</p>
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onFocusServiceUrl?.();
+              }}
+            >
+              {__('Configure service URL', 'alt-context')}
+            </button>
+          </div>
+        ) : (
+          <div className="acx-target-card__body">
+            <label htmlFor="acx-settings-url">{__('Service API URL', 'alt-context')}</label>
+            <input
+              id="acx-settings-url"
+              type="url"
+              className="regular-text"
+              value={url}
+              onChange={(e) => onUrlChange(e.target.value)}
+              readOnly={urlReadOnly}
+              placeholder="https://api.altcontext.com"
+            />
+            <p className="description">
+              {SOURCE_LABELS[data.url_source] ?? data.url_source}
+              {urlReadOnly && <> &mdash; {__('read-only (override active)', 'alt-context')}</>}
+            </p>
+            <label htmlFor="acx-settings-key">{__('API Key', 'alt-context')}</label>
+            <input
+              id="acx-settings-key"
+              type="password"
+              className="regular-text"
+              value={apiKey}
+              onChange={(e) => onApiKeyChange(e.target.value)}
+              readOnly={keyReadOnly}
+              placeholder={data.api_key_set ? `Current: ${data.api_key_last4}` : __('Enter API key', 'alt-context')}
+            />
+            <p className="description">
+              {SOURCE_LABELS[data.key_source] ?? data.key_source}
+              {keyReadOnly && <> &mdash; {__('read-only (override active)', 'alt-context')}</>}
+            </p>
+          </div>
+        )}
+
+        <div className="acx-target-card__actions">
+          <button
+            type="button"
+            className="button button-secondary"
+            onClick={onTest}
+            disabled={testPending || hasUnsavedRoutingChanges || !serviceConfigured}
+          >
+            {testPending ? __('Checking…', 'alt-context') : __('Check health', 'alt-context')}
+          </button>
+        </div>
+      </div>
+
+      <p
+        className="description acx-settings__effective-target"
+        data-testid="acx-effective-routing"
+        role="status"
+        aria-live="polite"
       >
-        <TargetCard
-          id="acx-target-local"
-          title={__('Local development', 'alt-context')}
-          value={RecognitionSource.LOCAL}
-          isEffectiveTarget={localIsEffective}
-          deemphasized={recognitionSource !== RecognitionSource.LOCAL && !localIsEffective}
-          healthStatus={healthStatusForTarget(RecognitionSource.LOCAL, testResult)}
-          configured
-          disabled={sourceReadOnly}
-          onHealthCheck={() => onTest(RecognitionSource.LOCAL)}
-          healthCheckPending={testPending}
-          healthCheckDisabled={hasUnsavedRoutingChanges}
-        >
-          <label htmlFor="acx-settings-local-url">{__('Local service URL', 'alt-context')}</label>
-          <input
-            id="acx-settings-local-url"
-            type="url"
-            className="regular-text"
-            value={localUrl}
-            onChange={(e) => onLocalUrlChange(e.target.value)}
-            readOnly={localUrlReadOnly}
-            placeholder="http://localhost:8000"
-          />
-          <p className="description">
-            {SOURCE_LABELS[data.local_url_source] ?? data.local_url_source}
-            {localUrlReadOnly && <> &mdash; {__('read-only (override active)', 'alt-context')}</>}
-          </p>
-        </TargetCard>
-
-        <TargetCard
-          id="acx-target-service"
-          title={__('Hosted service', 'alt-context')}
-          value={RecognitionSource.SERVICE}
-          isEffectiveTarget={serviceIsEffective}
-          deemphasized={recognitionSource !== RecognitionSource.SERVICE && !serviceIsEffective}
-          healthStatus={healthStatusForTarget(RecognitionSource.SERVICE, testResult)}
-          configured={serviceConfigured}
-          disabled={sourceReadOnly}
-          emptyStateCta={__('Configure service URL', 'alt-context')}
-          onEmptyStateCta={onFocusServiceUrl}
-          onHealthCheck={() => onTest(RecognitionSource.SERVICE)}
-          healthCheckPending={testPending}
-          healthCheckDisabled={hasUnsavedRoutingChanges || !serviceConfigured}
-        >
-          <label htmlFor="acx-settings-url">{__('Service API URL', 'alt-context')}</label>
-          <input
-            id="acx-settings-url"
-            type="url"
-            className="regular-text"
-            value={url}
-            onChange={(e) => onUrlChange(e.target.value)}
-            readOnly={urlReadOnly}
-            placeholder="https://api.altcontext.com"
-          />
-          <p className="description">
-            {SOURCE_LABELS[data.url_source] ?? data.url_source}
-            {urlReadOnly && <> &mdash; {__('read-only (override active)', 'alt-context')}</>}
-          </p>
-          <label htmlFor="acx-settings-key">{__('API Key', 'alt-context')}</label>
-          <input
-            id="acx-settings-key"
-            type="password"
-            className="regular-text"
-            value={apiKey}
-            onChange={(e) => onApiKeyChange(e.target.value)}
-            readOnly={keyReadOnly}
-            placeholder={data.api_key_set ? `Current: ${data.api_key_last4}` : __('Enter API key', 'alt-context')}
-          />
-          <p className="description">
-            {SOURCE_LABELS[data.key_source] ?? data.key_source}
-            {keyReadOnly && <> &mdash; {__('read-only (override active)', 'alt-context')}</>}
-          </p>
-        </TargetCard>
-      </TargetCardGroup>
-
-      <p className="description acx-settings__effective-target" data-testid="acx-effective-routing">
         <strong>{__('Effective target', 'alt-context')}</strong>
         {' — '}
-        {data.effective_target_mode === RecognitionSource.LOCAL
-          ? __('Local development service', 'alt-context')
+        {devHatchActive
+          ? __('Local development service (developer hatch)', 'alt-context')
           : __('Hosted recognition service', 'alt-context')}
         {': '}
-        <code>{data.effective_target_url}</code>
+        <code>{data.effective_target_url || __('not configured', 'alt-context')}</code>
       </p>
 
-      <p className="description">
-        {SOURCE_LABELS[data.recognition_source_source] ?? data.recognition_source_source}
-        {sourceReadOnly && <> &mdash; {__('read-only (override active)', 'alt-context')}</>}
-      </p>
+      {devHatchActive ? (
+        <p className="description">
+          {__(
+            'Local recognition is enabled via the ACX_RECOGNITION_SOURCE developer constant. Remove it to use the hosted service.',
+            'alt-context',
+          )}
+        </p>
+      ) : null}
 
       {hasUnsavedRoutingChanges ? (
         <p className="description">
@@ -223,9 +213,9 @@ export const SettingsForm = ({
         <button
           type="submit"
           className="button button-primary"
-          disabled={savePending || (sourceReadOnly && urlReadOnly && localUrlReadOnly && keyReadOnly)}
+          disabled={savePending || (urlReadOnly && keyReadOnly)}
         >
-          {savePending ? __('Saving\u2026', 'alt-context') : __('Save Settings', 'alt-context')}
+          {savePending ? __('Saving…', 'alt-context') : __('Save Settings', 'alt-context')}
         </button>
       </p>
     </form>

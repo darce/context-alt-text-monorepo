@@ -102,11 +102,16 @@ const WorkbenchPageContent = (): React.JSX.Element => {
               <p>
                 {sprintf(
                   /* translators: %s is the effective local recognition service URL. */
-                  __('Alt Context is targeting the local recognition service at %s.', 'alt-context'),
+                  __('Alt Context is targeting the local recognition service at %s via the developer hatch.', 'alt-context'),
                   effectiveTargetUrl,
                 )}
               </p>
-              <p>{__('Use Settings to switch back to the hosted recognition service.', 'alt-context')}</p>
+              <p>
+                {__(
+                  'Remove the ACX_RECOGNITION_SOURCE developer constant to use the hosted recognition service.',
+                  'alt-context',
+                )}
+              </p>
             </div>
           )}
           {!isOnline && (

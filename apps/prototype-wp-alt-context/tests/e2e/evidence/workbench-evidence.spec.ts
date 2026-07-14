@@ -5,10 +5,9 @@ import { expect, test, type Page } from '@playwright/test';
 import { getAcxAdminRouteUrlWithParams } from '../fixtures/acx-routes';
 import {
   type AcxSettingsSnapshot,
-  ensureLocalRecognitionWhenProbeFails,
   ensureServiceRecognitionTarget,
   probeAcxConnection,
-  restoreRecognitionSourceIfNeeded,
+  restoreServiceUrlIfNeeded,
 } from '../fixtures/wp-rest';
 
 const WORKBENCH_SHELL_SELECTOR = '.acx-workbench';
@@ -225,8 +224,8 @@ test('captures E15-22 workbench avatar and progress evidence on LocalWP', async 
   const processedSamples: number[] = [];
   let settingsResult: { changed: boolean; before: AcxSettingsSnapshot; after: AcxSettingsSnapshot } = {
     changed: false,
-    before: { recognition_source: 'local', recognition_source_source: 'default', url: '', api_key_set: false },
-    after: { recognition_source: 'local', recognition_source_source: 'default', url: '', api_key_set: false },
+    before: { recognition_source: 'service', recognition_source_source: 'default', url: '', api_key_set: false },
+    after: { recognition_source: 'service', recognition_source_source: 'default', url: '', api_key_set: false },
   };
   let settingsProbeOutcome: string | null = null;
   let serviceSettingsRestored = false;
@@ -237,18 +236,9 @@ test('captures E15-22 workbench avatar and progress evidence on LocalWP', async 
   try {
     await openWorkbench(baseURL, page);
 
-    const localFallback = await ensureLocalRecognitionWhenProbeFails(page);
-    settingsResult = {
-      changed: localFallback.restored,
-      before: localFallback.before,
-      after: localFallback.after,
-    };
-    settingsProbeOutcome = localFallback.probeOutcome;
-    serviceSettingsRestored = localFallback.restored;
-
-    if (localFallback.restored) {
-      await openWorkbench(baseURL, page);
-    }
+    // RECOG-1: local is no longer REST-settable; capture whatever the effective
+    // (hosted-service or offline) target reports.
+    settingsProbeOutcome = await probeAcxConnection(page).catch(() => null);
 
     if (ensureServiceMode) {
       settingsResult = await ensureServiceRecognitionTarget(page, {
@@ -264,7 +254,7 @@ test('captures E15-22 workbench avatar and progress evidence on LocalWP', async 
       settingsProbeOutcome = await probeAcxConnection(page).catch(() => null);
 
       if (settingsProbeOutcome !== 'connected') {
-        serviceSettingsRestored = await restoreRecognitionSourceIfNeeded(page, settingsResult.before);
+        serviceSettingsRestored = await restoreServiceUrlIfNeeded(page, settingsResult.before);
         if (serviceSettingsRestored) {
           await openWorkbench(baseURL, page);
           settingsProbeOutcome = await probeAcxConnection(page).catch(() => null);
@@ -483,7 +473,7 @@ test('captures E15-22 workbench avatar and progress evidence on LocalWP', async 
     }
   } finally {
     if (ensureServiceMode && settingsResult.changed && !serviceSettingsRestored) {
-      serviceSettingsRestored = await restoreRecognitionSourceIfNeeded(page, settingsResult.before).catch(() => false);
+      serviceSettingsRestored = await restoreServiceUrlIfNeeded(page, settingsResult.before).catch(() => false);
     }
 
     const manifest: EvidenceManifest = {

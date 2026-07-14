@@ -37,7 +37,7 @@ The scan→review→confirm loop is the demo's story, but today it renders as fo
 - **Review queue**: the new card-at-a-time surface replacing the `SuggestionReviewPanel` stack.
 - **Queue driver**: the `selectNextAction` priority selector (`useWorkbenchFindings.ts:112-144`), promoted from scroll-helper to the thing that chooses which single card is shown.
 - **Person-commit**: creating or assigning a real roster person via `commitClusterToRosterEntry` (`POST .../roster/clusters/{id}/commit`). Distinct from **label-only rename** (`updateClusterLabel` → `PATCH .../clusters/{id}`, a `label` string with no roster person).
-- **Projection chip**: a filter chip for an E15-13 `queue_memberships` category — `singleton-proposals`, `hard-examples`, `needs-confirmation-after-merge` — rendered with human copy.
+- **Projection chip**: a filter chip over the review queue, **derived from the queue-item `KIND`** (not from roster `queue_memberships` — see below), rendered with the E15-13 projection vocabulary as human copy: assignment→"Singletons", merge→"Needs confirmation", plus a disabled "Hard examples (coming soon)" chip. Pending suggestions have no roster entry yet, so the roster-side `queue_memberships` field does not apply to this pre-commit queue (resolves PA-01).
 - **Deferred-commit undo**: optimistic UI + a single backend call deferred until the undo toast window closes; "Undo" cancels the pending call (no inverse endpoint needed).
 
 ## Current State Analysis (ground truth, verified 2026-07-13 on `feature/e21-5` @ `177ea0aa`)
@@ -93,15 +93,31 @@ No PHP, REST, or schema edits. Boundary verification (backend guidelines step 5)
 
 **1. Queue driver (promote `nextAction`).** Extend `selectNextAction` from "top item" to an ordered, filterable **queue view** over the same sources: expose the ordered list (not just `[0]`) and a `filter` by projection category, keeping the existing priority for the default (unfiltered) order. Keep `NEXT_ACTION_KIND` as the canonical kind enum (sr-007); add a projection-category enum alias over `queue_memberships` with human labels. No new queries — derive from the data `useWorkbenchFindings` already holds.
 
-**2. Card-at-a-time shell (`ReviewQueue`).** New `pages/workbench/identity-clusters/ReviewQueue.tsx` replaces the 4-queue body of `SuggestionReviewPanel`. Renders exactly one card (the current queue head) + a projection **filter-chip row** + a "N of M" position indicator + prev/next. Each card is the existing per-kind card (`SuggestionCard` / `MergeSuggestionCard` / name card) reused, not re-implemented. `SuggestionReviewPanel` becomes a thin host (header + `ReviewQueue` + bulk-accept disclosure) or is retired in favor of `ReviewQueue` directly at the `ScanTabContent.tsx:145` anchor. Card transition announces via live region (A11Y-21).
+**2. Card-at-a-time shell (`ReviewQueue`).** New `pages/workbench/identity-clusters/ReviewQueue.tsx` **retires the 4-queue stack body** and mounts directly at the `ScanTabContent.tsx:145` anchor (`#acx-findings-detail-anchor`); the old `SuggestionReviewPanel` is deleted, its header + bulk-accept disclosure folded into `ReviewQueue` (PA-04 — no "thin host" hedge). Renders exactly one card (the current queue head) + a projection **filter-chip row** + a "N of M" position indicator + prev/next. Each card is the existing per-kind card (`SuggestionCard` / `MergeSuggestionCard` / name card) reused, not re-implemented. `WorkbenchFindingsPanel`'s "Review next" button (`:159`) becomes a queue driver: it moves focus to the current card of the mounted `ReviewQueue` (via a shared ref/id), not a scroll-to or a separate labeling panel (PA-04). Card transition announces via live region (A11Y-21).
+
+**Per-kind action matrix** (grounded in `WorkbenchNextAction`, `useWorkbenchFindings.ts:33-43`) — resolves PA-02:
+
+| KIND | `clusterId` | Card primary | Notes |
+| --- | --- | --- | --- |
+| `ASSIGNMENT` | nullable | Accept / Reject; **person-commit only when `clusterId != null`** | `suggested_cluster_id` present on the suggestion; null → commit affordance hidden, accept/reject only |
+| `MERGE` | absent | Accept / Reject (merge) | no `clusterId` → **not** a person-commit card |
+| `NAME` | required | **Person-commit** (primary) | `clusterId` always present |
+| `CLUSTER` | required | **Person-commit** (primary) | unlabeled cluster; `clusterId` always present |
+
+Every review item resolves a `suggested_cluster_id` (`suggestionReviewItems.ts:12` groups by it), so the commit endpoint's `clusterId` requirement is satisfied for every kind that offers commit.
 
 **3. Optimistic accept/reject + announced undo (deferred-commit window).** On accept/reject, optimistically advance the queue and show a `useToast()` toast "Accepted — Undo" with a ~5s window; the single atomic POST fires when the window closes, and **Undo cancels the pending POST** and restores the card (rg-002-safe: exactly one backend call, or none). The toast is announced (Radix Toast is a live region; add an explicit `role="status"` assertion). No inverse/"un-accept" endpoint is invented. **Rejected alternative**: fire immediately + call an inverse endpoint on undo — rejected, no such endpoint exists and it would double the backend calls.
+
+**Undo failure + concurrency policy** (resolves PA-03):
+- **Single in-flight window.** At most one deferred commit pends at a time. Taking the next action (accept/reject/commit on the next card) **flushes** the prior pending commit immediately (fires its POST now) before opening the new window — so pending commits never overlap and never reorder.
+- **Post-window failure recovery.** If the flushed/closed-window POST rejects, **re-surface the item** at the queue head, revert the optimistic advance, and announce the failure via `role="alert"` (`aria-live=assertive`) with a retry affordance — the A11Y-24 error state. The failure must never be silent (today's `console.warn`-only path is the defect being removed).
+- **Unmount/navigation.** Leaving the Workbench (route change) or unmounting `ReviewQueue` flushes any pending commit synchronously so no action is silently dropped.
 
 **4. Bulk accept as a disclosure.** The confidence-threshold bulk-accept block collapses into a single disclosure ("Accept high-confidence…") reusing the existing atomic `POST .../bulk-accept`. The non-atomic **group** fan-out is removed (card-at-a-time handles a cluster as one card with its own atomic action).
 
 **5. Person-commit primary on the card.** Bring the roster-commit creatable combobox (reuse `components/ui/combobox.tsx` with `onCreate` + `commitClusterToRosterEntry`) onto the review card as the **primary** naming action; demote label-only (`updateClusterLabel`) to a tertiary "just label, don't add to roster" affordance. On success emit "View \<name\> →" toward `#/roster?person=<uuid>` (link vocabulary is E21-10's full contract; here we emit the one confirm affordance the roadmap names).
 
-**6. Projection chips.** Three chips from the canonical union with human labels; `singleton-proposals` + `needs-confirmation-after-merge` active (filter the queue), `hard-examples` renders a **"coming soon"** chip (disabled + notice, reusing the existing "unavailable until the review contract lands" precedent). Chip copy is human, never the raw union string (banned-vocabulary).
+**6. Projection chips (KIND-derived — resolves PA-01).** Chips filter the queue by the item's `KIND`, displayed with the E15-13 projection vocabulary as human copy: `ASSIGNMENT`→"Singletons", `MERGE`→"Needs confirmation", plus a disabled **"Hard examples (coming soon)"** chip (reuses the existing "unavailable until the review contract lands" precedent, `RosterEntriesSection.tsx:69-72`). The roster-side `queue_memberships` field is **not** read here — pending suggestions have no roster entry until commit, so a `queue_memberships` filter would be a category error over this pre-commit queue. If a future review contract lands hard-examples, its items enter the queue as a new `KIND` (or an assignment sub-type) and the chip activates — no roster-entry join required. Chip copy is human, never a raw enum string (banned-vocabulary).
 
 **7. Media-footer CTA hierarchy (state matrix).** Introduce a small per-state selector deciding the single primary CTA in `MediaSelection.tsx`'s footer: during select → Analyze is primary, Describe secondary; when a describe run is in flight → its progress owns the surface; when review is active → the queue owns primary and both footer CTAs are non-primary (consistent with E21-6's collapse). Encode the loading/empty/error/offline × focus + announcement matrix (A11Y-24) as acceptance. **Offline** here is the minimal disabled-with-reason + announced treatment; the full breaker/fail-fast model is E21-7 (P3-C) — note the seam, do not build it.
 
@@ -113,7 +129,7 @@ No PHP, REST, or schema edits. Boundary verification (backend guidelines step 5)
 | --- | --- | --- |
 | new | `js/admin/pages/workbench/identity-clusters/ReviewQueue.tsx` | Card-at-a-time queue shell: one card + projection chips + position/prev-next; consumes existing cards + mutations |
 | edit | `js/admin/pages/workbench/identity-clusters/SuggestionReviewPanel.tsx` | Retire the 4-queue stack body; host `ReviewQueue` + bulk-accept disclosure (or delete in favor of `ReviewQueue` at the anchor) |
-| edit | `js/admin/pages/workbench/identity-clusters/useWorkbenchFindings.ts` | Expose ordered/filterable queue (not just `[0]`) + projection-category alias enum |
+| edit | `js/admin/pages/workbench/identity-clusters/useWorkbenchFindings.ts` | Expose ordered/filterable queue (not just `[0]`); add a `KIND`→projection-chip-label map (sr-007) — no `queue_memberships` read |
 | edit | `js/admin/pages/workbench/identity-clusters/useSuggestionReviewMutations.ts` | Deferred-commit window + undo-cancel; remove need for the group fan-out |
 | edit | `js/admin/pages/workbench/identity-clusters/WorkbenchFindingsPanel.tsx` | "Review next" drives the card queue, not scroll/label routing |
 | edit | `js/admin/pages/workbench/identity-clusters/SuggestionCards.tsx` | "Name Person" routes to person-commit combobox (primary); label-only tertiary |
@@ -136,6 +152,7 @@ No PHP, REST, or schema edits. Boundary verification (backend guidelines step 5)
 - **E2E a11y** (Playwright, `ACX_E2E_SEEDED`): `review-queue.spec.ts` — `tabUntilFocused` keyboard-walk reaches accept/reject/name; `role=status` announced on card transition + undo toast; state-matrix cases (loading/empty/error/offline) keep focus + announce (A11Y-24). `workbench-axe.spec.ts` stays green.
 - **Tokenization**: `workbench-tokenization.test.ts` green over `_workbench.scss` + new `_review-queue.scss` (sr-004).
 - **Visual**: `workbench-visual.spec.ts` re-diffs (baseline already re-set at E21-4; new queue is an intended diff — re-baseline the review region once, documented).
+- **Seed coverage (resolves PA-05)**: the e2e cases each name the state they need. Chip filtering and the happy-path queue run against `ACX_E2E_SEEDED` rows that must include ≥1 assignment ("Singletons") **and** ≥1 merge ("Needs confirmation") pending suggestion — confirm the seed fixture provides both before asserting chips (extend the fixture if not). The **error** and **offline** state-matrix cases are **not** seed-dependent: run them as `ReviewQueue` **component tests** with mocked mutation-reject / navigator-offline state (deterministic, no live backend), keeping only loading/empty/happy in e2e. Hard-examples is asserted disabled (no seed needed).
 - **Manual (LocalWP)**: scan → review card appears (highest-priority) → accept → toast "Accepted — Undo" → Undo restores card (network shows no commit) → accept again → commits → name via combobox creates a roster person visible on `#/roster` → footer shows one primary CTA per state → airplane-mode reload keeps the queue legible + disabled-with-reason.
 - Every slice merges through the pre-merge gate (`handoff_close_check(enforce=True)`); findings in handoff by ID only.
 
@@ -156,7 +173,7 @@ Per-state single-primary gating (Analyze vs Describe); state-matrix a11y cases (
 ## Consolidated Checklist
 
 ### Checklist for Slice 1: Queue driver + shell
-- [ ] `selectNextAction` exposes ordered + filterable queue; projection-category enum alias added (sr-007)
+- [ ] `selectNextAction` exposes ordered + filterable queue; `KIND`→projection-chip-label map added (sr-007), no `queue_memberships` read
 - [ ] `ReviewQueue.tsx` renders exactly one card + chips + position/prev-next; reuses existing cards
 - [ ] 4-queue stack body retired at `ScanTabContent.tsx:145`; existing mutations still fire per card
 - [ ] `review-queue.spec.ts` seeded: keyboard-walk reaches actions; card-transition `role=status` asserted

@@ -18,7 +18,9 @@ const closedHealth: SyncHealthResponse = {
 describe('shouldShowDegradedBanner', () => {
   it.each([
     ['open breaker', { ...closedHealth, breaker: { ...closedHealth.breaker, state: 'open' as const } }, true],
-    ['failed last pull', { ...closedHealth, last_pull: { at: '2026-06-11T12:00:00Z', ok: false } }, true],
+    // A latched failed pull with a closed breaker is NOT offline — the service is
+    // reachable; the failed outcome self-repairs on the next successful pull.
+    ['failed last pull, breaker closed', { ...closedHealth, last_pull: { at: '2026-06-11T12:00:00Z', ok: false } }, false],
     [
       'threshold warning only',
       { ...closedHealth, warnings: [{ code: 'open_conflicts_high', message: 'warn', count: 30, threshold: 25 }] },
@@ -73,8 +75,10 @@ describe('DegradedModeBannerView', () => {
     expect(screen.getByTestId('acx-degraded-mode-banner-icon')).toBeInTheDocument();
   });
 
-  it('renders offline copy when last pull failed', () => {
-    render(
+  it('does not render "Working offline" when only last pull failed and the breaker is closed', () => {
+    // Regression guard: a latched last_pull.ok=false on a reachable backend must
+    // not surface the assertive offline banner (false-positive fix).
+    const { container } = render(
       <DegradedModeBannerView
         health={{
           ...closedHealth,
@@ -83,9 +87,8 @@ describe('DegradedModeBannerView', () => {
       />,
     );
 
-    expect(screen.getByRole('alert')).toBeInTheDocument();
-    expect(screen.getByText('Working offline')).toBeInTheDocument();
-    expect(screen.getByText(/local copy/i)).toBeInTheDocument();
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByText('Working offline')).not.toBeInTheDocument();
   });
 
   it('renders debt recovery links when counts are non-zero', () => {

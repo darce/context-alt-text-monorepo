@@ -7,7 +7,7 @@ Reuse E15-5 / E15-22 evidence headings in `docs/tasks/15.0/E15-28-demo-smoke-log
 
 - [ ] E15-3a LocalWP → OCI round-trip gate passed
 - [ ] E15-22 Workbench avatar / review-drawer proof captured
-- [ ] `make deploy-demo` succeeded (stack + bootstrap + Caddy)
+- [ ] `make deploy-demo` succeeded (stack + bootstrap + Caddy) — or laptop-free via CI: `gh workflow run deploy-demo.yml -f confirm=PROMOTE` (see `docs/runbooks/deploy-demo-cicd.md`)
 - [ ] Tenant/key minted with **explicit UUID** (`tenant-mint-runbook.md`)
 - [ ] `RECOGNITION_ALLOWED_ORIGINS` includes `https://demo.altcontext.com`
 - [ ] Seed media imported (`seed/import.sh`) with provenance table filled

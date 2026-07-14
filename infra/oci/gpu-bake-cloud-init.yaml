@@ -61,7 +61,7 @@ write_files:
 
       say "5/6 download weights (Xet-aware hf client; 18.6GB Q4 + F16 mmproj)"
       python3 -m venv /opt/hfvenv || finish ACX_BAKE_FAILED "phase=hf_venv"
-      /opt/hfvenv/bin/pip install -q -U "huggingface_hub[hf_xet]" || finish ACX_BAKE_FAILED "phase=hf_pip"
+      /opt/hfvenv/bin/pip install -q -U "huggingface_hub[hf_xet]" hf_transfer || finish ACX_BAKE_FAILED "phase=hf_pip"
       # Background the download + heartbeat downloaded bytes to the serial console
       # every 45s [OBS-01]. The console ring-buffer always shows the LATEST line, so a
       # control-plane console-history capture always reveals current progress even
@@ -94,6 +94,7 @@ write_files:
       # Download pinned GGUF weights via the HF Python API (Xet-aware, version-stable).
       # argv: repo_id models_dir q4_filename mmproj_filename
       import os, sys, shutil
+      os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")  # parallel downloader for non-Xet LFS
       from huggingface_hub import hf_hub_download
       repo, models_dir, q4, mmproj = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
       for fn, dst in ((q4, "qwen3-vl-30b-a3b-instruct-q4.gguf"),

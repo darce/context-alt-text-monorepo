@@ -24,7 +24,12 @@
 | `SyncStatusIndicator`     | `js/admin/pages/workbench/SyncStatusIndicator.tsx` | Sync health badge with state-driven UX         |
 | `ConflictInbox`           | `js/admin/pages/workbench/ConflictInbox.tsx`       | Conflict list, detail, resolution actions      |
 | `DeadLetterPanel`         | `js/admin/pages/workbench/DeadLetterPanel.tsx`     | Failed outbox operations, retry/discard        |
-| `WorkbenchContext`        | `js/admin/pages/workbench/WorkbenchContext.tsx`     | `activeOverlay` state synced with `panel` URL param |
+| `WorkbenchContext`        | `js/admin/pages/workbench/WorkbenchContext.tsx`     | `WorkbenchProvider` composition (Nav → Media → JobPipeline → ClusterPanel) + nav constant re-exports |
+| `WorkbenchNavContext`     | `js/admin/pages/workbench/WorkbenchNavContext.tsx`  | `useWorkbenchNav`: tab/overlay/advanced URL-param state, config env, `?tab=confirm` shim |
+| `WorkbenchMediaContext`   | `js/admin/pages/workbench/WorkbenchMediaContext.tsx` | `useWorkbenchMediaContext`: grouped `selection`/`filters`/`mediaQueue` objects |
+| `JobPipelineContext`      | `js/admin/pages/workbench/JobPipelineContext.tsx`   | `useJobPipeline`: job history + state machine; `scanRun: ScanRunViewModel`, `history`, actions |
+| `ClusterPanelContext`     | `js/admin/pages/workbench/ClusterPanelContext.tsx`  | `useClusterPanel`: cluster-panel reducer state + dispatch |
+| `phasePresentation`       | `js/admin/pages/workbench/phasePresentation.ts`     | Phase→presentation strategy map; one record per phase union (`JobProgress['phase']`, `PipelinePhase`), built on `SYNC_VOCABULARY` |
 
 Routes currently mounted in `App.tsx`: `/dashboard`, `/workbench`, `/roster`, and `/retention`.
 
@@ -96,7 +101,7 @@ Key limits: max 300 lines/component, max 5 `useState`, max 3 `useEffect`, max 10
 ### Add workbench overlay panel
 
 1. Create panel component in `js/admin/pages/workbench/`
-2. Add overlay variant to `WorkbenchOverlay` type in `WorkbenchContext.tsx`
+2. Add overlay variant to `WorkbenchOverlay` type in `WorkbenchNavContext.tsx`
 3. Render panel conditionally in `WorkbenchPage.tsx` when `activeOverlay` matches
 4. Link from `SyncStatusIndicator` badge or `DashboardPage` card via `?panel=<name>`
 

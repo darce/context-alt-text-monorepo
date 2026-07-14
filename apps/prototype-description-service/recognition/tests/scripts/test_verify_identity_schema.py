@@ -136,6 +136,23 @@ def test_missing_column_is_heal_repairable_and_named() -> None:
     assert report["exit_code"] == script.EXIT_HEAL_REPAIRABLE
 
 
+def test_non_additive_column_gap_requires_operator() -> None:
+    # MAINT-TPR-BR-04: a missing NOT NULL-without-default (or PK) column makes
+    # heal RAISE, so it must classify operator-required (exit 2), NOT
+    # heal-repairable (exit 1) — otherwise the boot chain crash-loops re-running
+    # a heal that can never converge.
+    script = _import_script()
+    kwargs = _complete_kwargs(script)
+    kwargs["column_gaps"] = {"media_identities": ["confidence"]}
+    kwargs["non_additive_column_gaps"] = {"media_identities": ["confidence"]}
+
+    report = script._validate_schema_state(**kwargs)
+
+    assert report["ok"] is False
+    assert report["exit_code"] == script.EXIT_OPERATOR_REQUIRED
+    assert report["non_additive_column_gaps"] == {"media_identities": ["confidence"]}
+
+
 def test_empty_column_gaps_is_ok() -> None:
     # An explicit empty mapping (no drift) must not flip the schema to failed.
     script = _import_script()

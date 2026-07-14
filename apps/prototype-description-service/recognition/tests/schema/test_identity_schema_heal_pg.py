@@ -136,6 +136,33 @@ def test_heal_restores_dropped_column(pg_empty_engine) -> None:
     assert "naming_agreement_enabled" in _table_columns(pg_empty_engine, "tenants")
 
 
+def test_heal_creates_every_orm_declared_column(pg_empty_engine) -> None:
+    # MAINT-TPR-BR-05 ratchet: verify_identity_schema derives expected columns
+    # from ORM Base.metadata while heal adds them from the migration's
+    # ensure_tables literals. If a model column is forgotten in ensure_tables,
+    # verify flags a gap heal can never fill (boot crash-loop). Assert the healed
+    # DB carries every ORM-declared column for each migration-owned table, so the
+    # two sources cannot silently diverge.
+    import db.models  # noqa: F401 - populate Base.metadata
+
+    from db.models.base_imports import Base
+
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+
+    expected = set(MIGRATION.EXPECTED_SCHEMA_TABLES)
+    gaps: dict[str, list[str]] = {}
+    for name, table in Base.metadata.tables.items():
+        if name not in expected:
+            continue
+        actual = _table_columns(pg_empty_engine, name)
+        missing = sorted(col.name for col in table.columns if col.name not in actual)
+        if missing:
+            gaps[name] = missing
+
+    assert not gaps, f"ORM columns not created by heal (ensure_tables drift): {gaps}"
+
+
 def test_verifier_detects_dropped_column_then_heal_repairs(pg_empty_engine) -> None:
     # Slice 3 E2E: a dropped column -> verifier exit 1 naming table+column;
     # heal -> verifier OK. Stamp alembic_version so the revision check passes

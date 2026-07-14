@@ -28,4 +28,21 @@ export const HEALTH_STATUS_ICONS: Record<HealthStatusValue, string> = {
   [HealthStatus.UNREACHABLE]: '\u26a0',
 };
 
+export const TenantPairing = {
+  PAIRED: 'paired',
+  UNPAIRED: 'unpaired',
+} as const;
+
+export type TenantPairingValue = (typeof TenantPairing)[keyof typeof TenantPairing];
+
+export const TENANT_PAIRING_ICONS: Record<TenantPairingValue, string> = {
+  [TenantPairing.PAIRED]: '\u2713',
+  [TenantPairing.UNPAIRED]: '\u25cb',
+};
+
+export const TENANT_PAIRING_LABELS: Record<TenantPairingValue, string> = {
+  [TenantPairing.PAIRED]: __('Paired with the recognition service', 'alt-context'),
+  [TenantPairing.UNPAIRED]: __('Not paired yet \u2014 check the connection to pair this tenant', 'alt-context'),
+};
+
 export const isReadOnly = (source: string): boolean => source === 'constant' || source === 'filter';

@@ -2,6 +2,16 @@
 // card + source radio group were retired). The radio-group grid
 // (`.acx-target-cards`), the de-emphasis treatment, the selectable label, and
 // the active badge are no longer rendered and have been removed.
+
+// Shared inline status indicator (icon + label). Extended by the recognition
+// health chip and the tenant pairing chip so both stay in sync.
+%acx-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--acx-space-8);
+  font-size: var(--acx-text-sm);
+}
+
 .acx-target-card {
   border: 2px solid var(--acx-color-border);
   border-radius: var(--acx-radius-md, 8px);
@@ -35,10 +45,7 @@
   }
 
   &__health {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--acx-space-8);
-    font-size: var(--acx-text-sm);
+    @extend %acx-status-pill;
     white-space: nowrap;
 
     &--not_checked {
@@ -112,11 +119,8 @@
 }
 
 .acx-settings__tenant-status {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--acx-space-8);
+  @extend %acx-status-pill;
   margin: 0;
-  font-size: var(--acx-text-sm);
 
   &--paired {
     color: var(--acx-color-success);

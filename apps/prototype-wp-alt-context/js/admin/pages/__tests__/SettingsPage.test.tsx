@@ -265,6 +265,18 @@ describe('SettingsPage', () => {
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ['sync', 'health'] });
   });
 
+  it('does not refetch sync health when a probe fails', () => {
+    // A failed probe must not clear the offline banner: sync.health stays as-is.
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    act(() => {
+      capturedTestOptions?.onError?.(new Error('boom'));
+    });
+
+    expect(mockInvalidateQueries).not.toHaveBeenCalledWith({ queryKey: ['sync', 'health'] });
+  });
+
   it('renders read-only fields when source is constant', () => {
     mockUseQuery.mockReturnValue(
       createMockQuery({

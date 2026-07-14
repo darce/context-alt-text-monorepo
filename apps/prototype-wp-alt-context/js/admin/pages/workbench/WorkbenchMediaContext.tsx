@@ -116,38 +116,32 @@ export const WorkbenchMediaProvider: React.FC<{ children: React.ReactNode }> = (
     );
   }, [mediaQuery.detailQuery.data]);
 
-  const value = useMemo<WorkbenchMediaContextValue>(
+  // Per-group memos keyed on leaf deps so each group's identity only changes
+  // when its own data changes (a consumer of one group must not re-render
+  // when an unrelated group changes).
+  const selectionGroup = useMemo<WorkbenchMediaSelection>(
     () => ({
-      selection: {
-        selection,
-        selectedMedia,
-        toggleRow,
-        toggleAll,
-        isPageFullySelected,
-      },
-      filters: {
-        searchQuery,
-        statusFilter,
-        currentPage: clampedPage,
-        perPage,
-        handleSearchChange,
-        handleStatusChange,
-        setCurrentPage,
-        setPerPage,
-      },
-      mediaQueue: {
-        mediaQuery,
-        statusMessage,
-        detailTruncationNotice,
-        hasIdentities: mediaItems.length > 0,
-      },
-    }),
-    [
       selection,
       selectedMedia,
       toggleRow,
       toggleAll,
       isPageFullySelected,
+    }),
+    [selection, selectedMedia, toggleRow, toggleAll, isPageFullySelected],
+  );
+
+  const filtersGroup = useMemo<WorkbenchMediaFilters>(
+    () => ({
+      searchQuery,
+      statusFilter,
+      currentPage: clampedPage,
+      perPage,
+      handleSearchChange,
+      handleStatusChange,
+      setCurrentPage,
+      setPerPage,
+    }),
+    [
       searchQuery,
       statusFilter,
       clampedPage,
@@ -156,11 +150,26 @@ export const WorkbenchMediaProvider: React.FC<{ children: React.ReactNode }> = (
       handleStatusChange,
       setCurrentPage,
       setPerPage,
+    ],
+  );
+
+  const mediaQueueGroup = useMemo<WorkbenchMediaQueue>(
+    () => ({
       mediaQuery,
       statusMessage,
       detailTruncationNotice,
-      mediaItems.length,
-    ],
+      hasIdentities: mediaItems.length > 0,
+    }),
+    [mediaQuery, statusMessage, detailTruncationNotice, mediaItems.length],
+  );
+
+  const value = useMemo<WorkbenchMediaContextValue>(
+    () => ({
+      selection: selectionGroup,
+      filters: filtersGroup,
+      mediaQueue: mediaQueueGroup,
+    }),
+    [selectionGroup, filtersGroup, mediaQueueGroup],
   );
 
   return <WorkbenchMediaContext.Provider value={value}>{children}</WorkbenchMediaContext.Provider>;

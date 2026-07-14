@@ -85,3 +85,48 @@ describe('phase status builders', () => {
     expect(JOB_PHASE_PRESENTATION.awaiting_projection.statusFallback).toBe('Syncing projected results…');
   });
 });
+
+describe('processed builders and progress aria labels', () => {
+  const CLUSTERING_FAMILY = ['clustering', 'retrying'] as const satisfies readonly JobPhase[];
+  const SCAN_FAMILY = [
+    'queued',
+    'detecting',
+    'awaiting_projection',
+    'failed',
+    'complete',
+  ] as const satisfies readonly JobPhase[];
+
+  it('clustering-family phases byte-match the legacy identities branch', () => {
+    for (const phase of CLUSTERING_FAMILY) {
+      const entry = JOB_PHASE_PRESENTATION[phase];
+      expect(entry.processed({ completed: 4, total: 11 })).toBe('Processed 4/11 identities');
+      // Legacy branch ignored images/faces signals for clustering phases.
+      expect(entry.processed({ completed: 4, total: 11, imagesProcessed: 2, facesFound: 9 })).toBe(
+        'Processed 4/11 identities',
+      );
+      expect(entry.progressAriaLabel).toBe('Clustering progress');
+    }
+  });
+
+  it('scan-family phases byte-match the legacy images branch', () => {
+    for (const phase of SCAN_FAMILY) {
+      const entry = JOB_PHASE_PRESENTATION[phase];
+      expect(entry.processed({ completed: 5, total: 20 })).toBe('Processed 5/20 images');
+      expect(entry.processed({ completed: 5, total: 20, imagesProcessed: 12 })).toBe('Processed 12/20 images');
+      expect(entry.processed({ completed: 5, total: 20, facesFound: 0 })).toBe('Processed 5/20 images · 0 faces found');
+      expect(entry.processed({ completed: 5, total: 20, imagesProcessed: 12, facesFound: 3 })).toBe(
+        'Processed 12/20 images · 3 faces found',
+      );
+      expect(entry.progressAriaLabel).toBe('Scan progress');
+    }
+  });
+
+  it('each family shares single builder and aria-label instances', () => {
+    expect(JOB_PHASE_PRESENTATION.retrying.processed).toBe(JOB_PHASE_PRESENTATION.clustering.processed);
+    for (const phase of SCAN_FAMILY) {
+      expect(JOB_PHASE_PRESENTATION[phase].processed).toBe(JOB_PHASE_PRESENTATION.queued.processed);
+      expect(JOB_PHASE_PRESENTATION[phase].progressAriaLabel).toBe(JOB_PHASE_PRESENTATION.queued.progressAriaLabel);
+    }
+    expect(JOB_PHASE_PRESENTATION.retrying.progressAriaLabel).toBe(JOB_PHASE_PRESENTATION.clustering.progressAriaLabel);
+  });
+});

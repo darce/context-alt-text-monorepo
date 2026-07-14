@@ -26,6 +26,14 @@ export type JobPhase = NonNullable<JobProgress['phase']>;
 /** Count-bearing live status copy; dynamic values arrive only via params. */
 export type PhaseStatusBuilder = (p: { completed: number; total: number; facesFound?: number }) => string;
 
+/** 'Processed …' progress line; call sites pass raw signals, the builder decides the copy. */
+export type ProcessedStatusBuilder = (p: {
+  completed: number;
+  total: number;
+  imagesProcessed?: number;
+  facesFound?: number;
+}) => string;
+
 /** Milestone label variants for a pipeline phase (JobTimeline). */
 export interface MilestoneLabels {
   active: string;
@@ -42,12 +50,30 @@ export interface PresentationEntry {
   statusFallback?: string;
   /** Milestone label variants (pipeline record only). */
   milestone?: MilestoneLabels;
+  /** 'Processed …' progress line (job record only). */
+  processed?: ProcessedStatusBuilder;
+  /** aria-label for the `<progress>` element (job record only). */
+  progressAriaLabel?: string;
 }
+
+// Shared per-family builders/labels — defined once, referenced by every entry
+// in the family so the two variants cannot drift apart.
+const PROCESSED_IDENTITIES: ProcessedStatusBuilder = (p) =>
+  sprintf(__('Processed %d/%d identities', 'alt-context'), p.completed, p.total);
+
+const PROCESSED_IMAGES: ProcessedStatusBuilder = (p) =>
+  sprintf(__('Processed %d/%d images', 'alt-context'), p.imagesProcessed ?? p.completed, p.total) +
+  (typeof p.facesFound === 'number' ? sprintf(__(' · %d faces found', 'alt-context'), p.facesFound) : '');
+
+const CLUSTERING_PROGRESS_ARIA_LABEL = __('Clustering progress', 'alt-context');
+const SCAN_PROGRESS_ARIA_LABEL = __('Scan progress', 'alt-context');
 
 export const JOB_PHASE_PRESENTATION = {
   queued: {
     label: SYNC_VOCABULARY.phaseQueued,
     status: (p) => sprintf(__('Queued %d items…', 'alt-context'), p.total),
+    processed: PROCESSED_IMAGES,
+    progressAriaLabel: SCAN_PROGRESS_ARIA_LABEL,
   },
   detecting: {
     label: SYNC_VOCABULARY.phaseDetecting,
@@ -60,24 +86,36 @@ export const JOB_PHASE_PRESENTATION = {
             p.facesFound,
           )
         : sprintf(__('Detecting faces… %d/%d processed', 'alt-context'), p.completed, p.total),
+    processed: PROCESSED_IMAGES,
+    progressAriaLabel: SCAN_PROGRESS_ARIA_LABEL,
   },
   clustering: {
     label: SYNC_VOCABULARY.phaseClustering,
     status: (p) => sprintf(__('Clustering %d/%d identities…', 'alt-context'), p.completed, p.total),
     statusFallback: __('Clustering faces…', 'alt-context'),
+    processed: PROCESSED_IDENTITIES,
+    progressAriaLabel: CLUSTERING_PROGRESS_ARIA_LABEL,
   },
   retrying: {
     label: SYNC_VOCABULARY.phaseRetrying,
+    processed: PROCESSED_IDENTITIES,
+    progressAriaLabel: CLUSTERING_PROGRESS_ARIA_LABEL,
   },
   awaiting_projection: {
     label: SYNC_VOCABULARY.phaseSyncingResults,
     statusFallback: __('Syncing projected results…', 'alt-context'),
+    processed: PROCESSED_IMAGES,
+    progressAriaLabel: SCAN_PROGRESS_ARIA_LABEL,
   },
   failed: {
     label: SYNC_VOCABULARY.phaseFailed,
+    processed: PROCESSED_IMAGES,
+    progressAriaLabel: SCAN_PROGRESS_ARIA_LABEL,
   },
   complete: {
     label: SYNC_VOCABULARY.phaseComplete,
+    processed: PROCESSED_IMAGES,
+    progressAriaLabel: SCAN_PROGRESS_ARIA_LABEL,
   },
 } satisfies Record<JobPhase, PresentationEntry>;
 

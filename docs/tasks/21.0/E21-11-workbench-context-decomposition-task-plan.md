@@ -200,9 +200,9 @@ Proof:
 
 ### Checklist for Slice 2: Pipeline, nav, cluster-panel providers + composition
 
-- [ ] `JobPipelineContext.tsx` / `WorkbenchNavContext.tsx` / `ClusterPanelContext.tsx` created; `useWorkbenchContext` deleted repo-wide.
-- [ ] `ScanActionPanel` consumes `ScanRunViewModel`; `Panels.test.tsx` fixtures updated.
-- [ ] All seven consumers migrated (or E21-3 deletion of `ConfirmTabContent` acknowledged); full suite evidence recorded.
+- [x] `JobPipelineContext.tsx` / `WorkbenchNavContext.tsx` / `ClusterPanelContext.tsx` created; `useWorkbenchContext` deleted repo-wide.
+- [x] `ScanActionPanel` consumes `ScanRunViewModel`; `Panels.test.tsx` fixtures updated.
+- [x] All seven consumers migrated (or E21-3 deletion of `ConfirmTabContent` acknowledged); full suite evidence recorded.
 
 ### Checklist for Slice 3: Phase strategy map + sweep
 

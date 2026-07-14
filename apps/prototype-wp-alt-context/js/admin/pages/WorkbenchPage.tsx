@@ -7,7 +7,9 @@ import { ScanTabContent } from './workbench/ScanTabContent';
 import { AdvancedDrawer } from './workbench/AdvancedDrawer';
 import { ConflictInbox } from './workbench/ConflictInbox';
 import { DeadLetterPanel } from './workbench/DeadLetterPanel';
-import { WorkbenchProvider, useWorkbenchContext, TAB_IDS, type WorkbenchTab } from './workbench/WorkbenchContext';
+import { WorkbenchProvider, TAB_IDS, type WorkbenchTab } from './workbench/WorkbenchContext';
+import { useWorkbenchNav } from './workbench/WorkbenchNavContext';
+import { useJobPipeline } from './workbench/JobPipelineContext';
 import { useWorkbenchMediaContext } from './workbench/WorkbenchMediaContext';
 
 interface WorkbenchSection {
@@ -36,21 +38,9 @@ export const WorkbenchPage = (): React.JSX.Element => (
 );
 
 const WorkbenchPageContent = (): React.JSX.Element => {
-  const {
-    activeSection,
-    setActiveSection,
-    recognitionSource,
-    effectiveTargetUrl,
-    activeOverlay,
-    setActiveOverlay,
-    isOnline,
-    isPrimary,
-    latestJobId,
-    currentPhase,
-    projectionSyncState,
-    projectionError,
-    retryProjectionSync,
-  } = useWorkbenchContext();
+  const { activeSection, setActiveSection, recognitionSource, effectiveTargetUrl, activeOverlay, setActiveOverlay } =
+    useWorkbenchNav();
+  const { scanRun, status, retryProjectionSync } = useJobPipeline();
   const { detailTruncationNotice } = useWorkbenchMediaContext().mediaQueue;
 
   const scanSection = WORKBENCH_SECTIONS[0];
@@ -78,9 +68,9 @@ const WorkbenchPageContent = (): React.JSX.Element => {
         <div className="acx-workbench__panels">
           <SyncStatusIndicator
             activeSection={activeSection}
-            pipelinePhase={currentPhase}
-            projectionState={projectionSyncState}
-            projectionError={projectionError}
+            pipelinePhase={status.currentPhase}
+            projectionState={status.projectionSyncState}
+            projectionError={status.projectionError}
             onRetryProjection={retryProjectionSync}
           />
           {activeOverlay ? (
@@ -103,7 +93,10 @@ const WorkbenchPageContent = (): React.JSX.Element => {
               <p>
                 {sprintf(
                   /* translators: %s is the effective local recognition service URL. */
-                  __('Alt Context is targeting the local recognition service at %s via the developer hatch.', 'alt-context'),
+                  __(
+                    'Alt Context is targeting the local recognition service at %s via the developer hatch.',
+                    'alt-context',
+                  ),
                   effectiveTargetUrl,
                 )}
               </p>
@@ -115,13 +108,13 @@ const WorkbenchPageContent = (): React.JSX.Element => {
               </p>
             </div>
           )}
-          {!isOnline && (
+          {!status.isOnline && (
             <div className="acx-notice acx-notice--warning">
               {__('Network connection lost. Reconnecting…', 'alt-context')}
             </div>
           )}
           {detailTruncationNotice && <div className="acx-notice acx-notice--info">{detailTruncationNotice}</div>}
-          {!isPrimary && !!latestJobId && (
+          {scanRun.isSynced && (
             <div className="acx-notice acx-notice--info">
               {__('This job is being processed in another tab.', 'alt-context')}
             </div>

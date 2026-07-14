@@ -15,18 +15,15 @@ vi.mock('@wordpress/i18n', () => ({
 
 const scan = vi.fn();
 
-let workbenchContext = {
-  isScanRunning: false,
-  scanProgress: null as { phase?: string | null } | null,
-  clusterProgress: null as { phase?: string | null } | null,
-  currentPhase: 'idle',
-  scan,
+let scanRun = {
+  isScanning: false,
+  progress: null as { phase?: string | null } | null,
 };
 
 let selectedMedia: { id: number }[] = [];
 
-vi.mock('../WorkbenchContext', () => ({
-  useWorkbenchContext: () => workbenchContext,
+vi.mock('../JobPipelineContext', () => ({
+  useJobPipeline: () => ({ scanRun, scan }),
 }));
 
 vi.mock('../WorkbenchMediaContext', () => ({
@@ -38,12 +35,9 @@ vi.mock('../WorkbenchMediaContext', () => ({
 describe('MediaAnalyzeCta', () => {
   beforeEach(() => {
     scan.mockClear();
-    workbenchContext = {
-      isScanRunning: false,
-      scanProgress: null,
-      clusterProgress: null,
-      currentPhase: 'idle',
-      scan,
+    scanRun = {
+      isScanning: false,
+      progress: null,
     };
     selectedMedia = [];
   });
@@ -67,9 +61,9 @@ describe('MediaAnalyzeCta', () => {
 
   it('shows scanning label and disables button while scanning', () => {
     selectedMedia = [{ id: 11 }];
-    workbenchContext = {
-      ...workbenchContext,
-      isScanRunning: true,
+    scanRun = {
+      ...scanRun,
+      isScanning: true,
     };
 
     render(<MediaAnalyzeCta />);
@@ -79,11 +73,10 @@ describe('MediaAnalyzeCta', () => {
 
   it('shows clustering label when the active progress phase is clustering', () => {
     selectedMedia = [{ id: 11 }];
-    workbenchContext = {
-      ...workbenchContext,
-      isScanRunning: true,
-      currentPhase: 'clustering',
-      clusterProgress: { phase: 'clustering' },
+    scanRun = {
+      ...scanRun,
+      isScanning: true,
+      progress: { phase: 'clustering' },
     };
 
     render(<MediaAnalyzeCta />);

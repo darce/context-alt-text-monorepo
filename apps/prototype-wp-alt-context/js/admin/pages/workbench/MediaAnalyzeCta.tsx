@@ -1,15 +1,13 @@
 import { __, _n, sprintf } from '@wordpress/i18n';
 
 import { isClusteringActive } from './Panels';
-import { useWorkbenchContext } from './WorkbenchContext';
+import { useJobPipeline } from './JobPipelineContext';
 import { useWorkbenchMediaContext } from './WorkbenchMediaContext';
 
 export const MediaAnalyzeCta = (): React.JSX.Element => {
-  const { isScanRunning, currentPhase, scanProgress, clusterProgress, scan } = useWorkbenchContext();
+  const { scanRun, scan } = useJobPipeline();
   const { selectedMedia } = useWorkbenchMediaContext().selection;
   const selectedCount = selectedMedia.length;
-  const activeProgress =
-    (currentPhase === 'clustering' || currentPhase === 'projecting') && clusterProgress ? clusterProgress : scanProgress;
 
   const handleScanFaces = (): void => {
     const mediaIds = selectedMedia.map((item) => item.id);
@@ -33,10 +31,10 @@ export const MediaAnalyzeCta = (): React.JSX.Element => {
         type="button"
         className="acx-apply-panel__scan"
         onClick={handleScanFaces}
-        disabled={isScanRunning || selectedCount === 0}
+        disabled={scanRun.isScanning || selectedCount === 0}
       >
-        {isScanRunning
-          ? isClusteringActive(activeProgress?.phase)
+        {scanRun.isScanning
+          ? isClusteringActive(scanRun.progress?.phase)
             ? __('Clustering identities…', 'alt-context')
             : __('Scanning media…', 'alt-context')
           : __('Analyze selected media', 'alt-context')}

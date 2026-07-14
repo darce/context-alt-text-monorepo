@@ -36,7 +36,11 @@ if [[ -z "${PLUGIN_ZIP:-}" ]]; then
   PLUGIN_ZIP="$(ls -t dist/alt-context-*.zip 2>/dev/null | head -1 || true)"
 fi
 
-for src in "$DEMO_COMPOSE_SRC" "$CADDYFILE_SRC" "$CADDY_COMPOSE_SRC" "$SYSTEMD_SRC" "$ENV_EXAMPLE_SRC" "$BOOTSTRAP_SRC" "$SEED_IMPORT_SRC"; do
+# Resolved early and preflighted with the other sources: discovering it missing
+# at the final smoke step would leave the Caddy promote applied but unsmoked.
+SMOKE_GATE_LIB="$(dirname "${BASH_SOURCE[0]}")/lib/smoke-gate.sh"
+
+for src in "$DEMO_COMPOSE_SRC" "$CADDYFILE_SRC" "$CADDY_COMPOSE_SRC" "$SYSTEMD_SRC" "$ENV_EXAMPLE_SRC" "$BOOTSTRAP_SRC" "$SEED_IMPORT_SRC" "$SMOKE_GATE_LIB"; do
   if [[ ! -f "$src" ]]; then
     echo "ERROR: source file not found: $src" >&2
     exit 2
@@ -109,6 +113,23 @@ PLUGIN_ZIP='${REMOTE_PLUGIN_ZIP}' ./bootstrap-wp.sh
 EOF
 fi
 
+# Baseline BEFORE the Caddy promote: an api.* vhost that was healthy (200) and
+# turns unhealthy after the promote is a deploy-caused edge regression and must
+# FAIL the smoke; one that was already broken stays a WARN (backend outage,
+# out of deploy scope). `caddy validate` below is syntax-only — it cannot catch
+# a typo'd reverse_proxy upstream, which is exactly what this baseline catches.
+echo "==> Capture pre-promote api vhost baseline"
+PRE_CODES=$($SSH bash -se <<'EOF'
+set -euo pipefail
+for host in api.altcontext.com staging.api.altcontext.com dev.api.altcontext.com; do
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "https://${host}/health" || true)
+  [[ -n "$code" && "$code" != "000" ]] || code=000
+  printf '%s=%s ' "$host" "$code"
+done
+EOF
+)
+echo "    baseline: ${PRE_CODES}"
+
 echo "==> Validate staged Caddy config, then promote"
 $SSH bash -se <<'EOF'
 set -euo pipefail
@@ -137,42 +158,85 @@ $SCP "$SYSTEMD_SRC" "${OCI_USER}@${OCI_HOST}:/tmp/acx-demo.service"
 $SSH "sudo cp /tmp/acx-demo.service /etc/systemd/system/acx-demo.service && sudo systemctl daemon-reload"
 
 # api.* vhosts have no root route (/ -> 404), so probe /health there; the demo
-# vhost serves the WP front page at /. Gate semantics: this deploy owns the edge
-# (Caddy promote) and the demo stack, NOT backend health — an unreachable vhost
-# (000: route/TLS broken by the promote) or a broken demo front page fails the
-# deploy; an api.* HTTP error (e.g. 502 backend outage) is a WARN, out of scope.
+# vhost serves the WP front page at /. Gate semantics (pinned by
+# scripts/deploy/tests/test-smoke-gate.sh; classification logic lives in
+# scripts/deploy/lib/smoke-gate.sh and is shipped to the VM inline): the deploy
+# owns the edge and the demo stack, NOT backend health. 000 after retries FAILs
+# (edge/TLS broken; retries absorb the Caddy-recreate/ACME startup window); an
+# api.* HTTP error FAILs only when the pre-promote baseline was healthy
+# (deploy-caused regression), else WARNs; the demo probe follows redirects and
+# requires a final 2xx that is not the WP installer (a wiped DB 302->install.php
+# answers 200 and is a broken demo, not a healthy one).
 echo "==> Smoke four vhosts (api.* via /health, demo via /)"
-$SSH bash -se <<'EOF'
+{
+  cat "$SMOKE_GATE_LIB"
+  printf 'PRE_CODES="%s"\n' "$PRE_CODES"
+  cat <<'EOF'
 set -euo pipefail
 smoke_fail=0
-fetch_code() {
-  local url="$1" code
-  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "$url" || true)
-  [[ -n "$code" && "$code" != "000" ]] || code=000
-  echo "$code"
+fetch_final() {
+  # -> "final_code final_url" after following redirects
+  local out
+  out=$(curl -sS -o /dev/null -L --max-redirs 5 --max-time 15 -w '%{http_code} %{url_effective}' "$1" || true)
+  [[ -n "${out%% *}" && "${out%% *}" != "000" ]] || out="000 -"
+  echo "$out"
+}
+probe_with_retry() {
+  # retry ONLY while unreachable (000): absorbs the Caddy recreate / ACME window
+  local url="$1" attempts="${2:-6}" out
+  for _ in $(seq 1 "$attempts"); do
+    out=$(fetch_final "$url")
+    [[ "${out%% *}" != "000" ]] && break
+    sleep 5
+  done
+  echo "$out"
+}
+pre_code_for() {
+  local host="$1" kv
+  for kv in $PRE_CODES; do
+    [[ "${kv%%=*}" == "$host" ]] && { echo "${kv#*=}"; return; }
+  done
+  echo ""
 }
 for host in api.altcontext.com staging.api.altcontext.com dev.api.altcontext.com; do
-  code=$(fetch_code "https://${host}/health")
-  if [[ "$code" == "000" ]]; then
-    echo "FAIL ${host}/health (unreachable — edge/TLS broken)"
-    smoke_fail=1
-  elif [[ "$code" == "200" ]]; then
-    echo "PASS ${host}/health (200)"
-  else
-    echo "WARN ${host}/health (${code} — backend unhealthy; not a deploy failure)"
+  out=$(probe_with_retry "https://${host}/health")
+  code=${out%% *}
+  pre=$(pre_code_for "$host")
+  verdict=$(classify_api_probe "$code" "$pre")
+  # A regression FAIL (reachable but unhealthy after a healthy baseline) gets one
+  # confirming re-sample: the just-recreated edge can serve a single transient
+  # 5xx while proxy routes settle, and a one-sample hard-fail trains operators
+  # to ignore the gate. 000 FAILs already had bounded retries above.
+  if [[ "$verdict" == "FAIL" && "$code" != "000" ]]; then
+    sleep 10
+    out=$(probe_with_retry "https://${host}/health")
+    code=${out%% *}
+    verdict=$(classify_api_probe "$code" "$pre")
   fi
+  case "$verdict" in
+    PASS) echo "PASS ${host}/health (200)" ;;
+    WARN) echo "WARN ${host}/health (${code}; pre-promote ${pre:-n/a} — pre-existing backend unhealth, not a deploy failure)" ;;
+    FAIL)
+      if [[ "$code" == "000" ]]; then
+        echo "FAIL ${host}/health (unreachable after retries — edge/TLS broken)"
+      else
+        echo "FAIL ${host}/health (${code}; was ${pre} pre-promote — deploy-caused edge regression)"
+      fi
+      smoke_fail=1 ;;
+  esac
 done
-# 3xx allowed: WordPress issues a canonical redirect while WP_HOME points at the
-# interim sslip.io host (see the Caddyfile note); the edge serving it is proof
-# enough that the demo vhost landed.
-code=$(fetch_code "https://demo.altcontext.com/")
-if [[ "$code" =~ ^[23] ]]; then
-  echo "PASS demo.altcontext.com/ (${code})"
+out=$(probe_with_retry "https://demo.altcontext.com/")
+code=${out%% *}
+final_url=${out#* }
+verdict=$(classify_demo_probe "$code" "$final_url")
+if [[ "$verdict" == "PASS" ]]; then
+  echo "PASS demo.altcontext.com/ (final ${code} at ${final_url})"
 else
-  echo "FAIL demo.altcontext.com/ (${code})"
+  echo "FAIL demo.altcontext.com/ (final ${code} at ${final_url})"
   smoke_fail=1
 fi
 exit "$smoke_fail"
 EOF
+} | $SSH bash -se
 
 echo "==> Done."

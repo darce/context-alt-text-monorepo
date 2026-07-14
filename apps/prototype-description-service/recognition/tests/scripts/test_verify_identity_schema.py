@@ -119,3 +119,31 @@ def test_complete_schema_exits_zero() -> None:
 
     assert report["ok"] is True
     assert report["exit_code"] == script.EXIT_OK
+
+
+def test_missing_column_is_heal_repairable_and_named() -> None:
+    # MAINT-TPR-01 / PA-03: an existing table missing an ORM-declared column is
+    # heal-repairable (heal() now adds it additively) and the gap names the
+    # table + column so operators/logs see the exact drift.
+    script = _import_script()
+    kwargs = _complete_kwargs(script)
+    kwargs["column_gaps"] = {"tenants": ["naming_agreement_enabled"]}
+
+    report = script._validate_schema_state(**kwargs)
+
+    assert report["ok"] is False
+    assert report["column_gaps"] == {"tenants": ["naming_agreement_enabled"]}
+    assert report["exit_code"] == script.EXIT_HEAL_REPAIRABLE
+
+
+def test_empty_column_gaps_is_ok() -> None:
+    # An explicit empty mapping (no drift) must not flip the schema to failed.
+    script = _import_script()
+    kwargs = _complete_kwargs(script)
+    kwargs["column_gaps"] = {"tenants": []}
+
+    report = script._validate_schema_state(**kwargs)
+
+    assert report["ok"] is True
+    assert report["column_gaps"] == {}
+    assert report["exit_code"] == script.EXIT_OK

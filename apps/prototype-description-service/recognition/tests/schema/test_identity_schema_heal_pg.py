@@ -105,6 +105,65 @@ def test_heal_restores_dropped_rls_policy(pg_empty_engine) -> None:
     assert has_policy
 
 
+def _table_columns(engine, table_name: str) -> set[str]:
+    with engine.connect() as conn:
+        return {
+            row[0]
+            for row in conn.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema='public' AND table_name=:t"
+                ),
+                {"t": table_name},
+            )
+        }
+
+
+def test_heal_restores_dropped_column(pg_empty_engine) -> None:
+    # MAINT-TPR-01 / PA-03: an existing table missing an expand-first column is
+    # the exact prod drift — `_ensure_table` no-ops on the existing table, so
+    # column reconciliation is what re-adds it. NOT NULL-with-server-default
+    # (naming_agreement_enabled) is additively re-addable.
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+    with pg_empty_engine.begin() as conn:
+        conn.execute(text("ALTER TABLE tenants DROP COLUMN naming_agreement_enabled"))
+    assert "naming_agreement_enabled" not in _table_columns(pg_empty_engine, "tenants")
+
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+
+    assert "naming_agreement_enabled" in _table_columns(pg_empty_engine, "tenants")
+
+
+def test_verifier_detects_dropped_column_then_heal_repairs(pg_empty_engine) -> None:
+    # Slice 3 E2E: a dropped column -> verifier exit 1 naming table+column;
+    # heal -> verifier OK. Stamp alembic_version so the revision check passes
+    # and the column drift is isolated.
+    from scripts.verify_identity_schema import EXIT_HEAL_REPAIRABLE, collect_and_validate
+
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+        conn.execute(text("CREATE TABLE alembic_version (version_num varchar(64) PRIMARY KEY)"))
+        conn.execute(text("INSERT INTO alembic_version VALUES (:rev)"), {"rev": MIGRATION.revision})
+
+    with pg_empty_engine.connect() as conn:
+        assert collect_and_validate(conn)["ok"] is True
+
+    with pg_empty_engine.begin() as conn:
+        conn.execute(text("ALTER TABLE tenants DROP COLUMN plan"))
+
+    with pg_empty_engine.connect() as conn:
+        report = collect_and_validate(conn)
+    assert report["exit_code"] == EXIT_HEAL_REPAIRABLE
+    assert "plan" in report["column_gaps"].get("tenants", [])
+
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+    with pg_empty_engine.connect() as conn:
+        assert collect_and_validate(conn)["ok"] is True
+
+
 def test_concurrent_sync_entrypoints_serialize_on_advisory_lock(pg_empty_engine) -> None:
     # BR2-10: two concurrent sync_schema() runs against the same empty DB must
     # both succeed (the loser waits on pg_advisory_xact_lock, then no-ops).

@@ -59,7 +59,7 @@ paste-ready `demo-walkthrough-smoke-log-fragment.md`. First-time setup:
 `(cd apps/prototype-wp-alt-context && npm ci && npm run e2e:install)`. Auth needs
 `ACX_E2E_WP_ADMIN_USER` / `ACX_E2E_WP_ADMIN_PASS`. Runs against the demo origin by
 default; for LocalWP (no wp-config constants) use
-`WP_BASE_URL=http://localhost:10010 ACX_E2E_REQUIRE_CONSTANT_PROVENANCE=0 make demo-walkthrough-proof`.
+`WP_BASE_URL=http://localhost:10010 ACX_E2E_REQUIRE_CONSTANT_PROVENANCE=0 ACX_E2E_REQUIRE_SERVICE_TARGET=0 make demo-walkthrough-proof` (the second flag keeps the RECOG-1 service-target gate from false-failing when the wp-config dev hatch is active).
 
 Playwright nests artifacts in a per-test subdir under
 `apps/prototype-wp-alt-context/local/playwright/<task-ref>/evidence/`; locate the

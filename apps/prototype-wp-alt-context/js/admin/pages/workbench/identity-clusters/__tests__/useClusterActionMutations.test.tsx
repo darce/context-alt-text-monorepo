@@ -95,15 +95,18 @@ describe('useClusterActionMutations pollSplitJob (BND-1-AUDIT-1)', () => {
     expect(invalidateQueries).not.toHaveBeenCalled();
   });
 
-  it('exposes splitGate offline and refuses split without calling remote', () => {
+  it('exposes splitGate offline and split fails fast with a visible error (RES-03)', async () => {
     offline = true;
-    const { result } = renderSplit();
+    const { result, onError } = renderSplit();
 
     expect(result.current.splitGate.disabled).toBe(true);
     expect(result.current.splitGate.title).toBe('Unavailable while the recognition service is offline');
     expect(result.current.splitGate['aria-disabled']).toBe(true);
 
     result.current.split('c1', 2);
+    await waitFor(() =>
+      expect(onError).toHaveBeenCalledWith('Unavailable while the recognition service is offline'),
+    );
     expect(recognitionApi.splitCluster).not.toHaveBeenCalled();
   });
 
@@ -113,4 +116,3 @@ describe('useClusterActionMutations pollSplitJob (BND-1-AUDIT-1)', () => {
     expect(result.current.splitGate.title).toBeUndefined();
   });
 });
-

@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from scripts.eval_harness.corpus_inventory import ImageRecord, dedupe_by_sha256, load_records
+from scripts.eval_harness.corpus_inventory import FEATURE_EDGE_PX, ImageRecord, dedupe_by_sha256, load_records
 from scripts.eval_harness.manifest import Domain
 
 
@@ -69,7 +69,7 @@ class FaceCountSource(StrEnum):
 # window every stratification feature is computed in. It also lands in a real gap in
 # the corpus — min-edge jumps from 88px (p2) to 387px (p3) — because everything under
 # it is derived face crops rather than photographs.
-MIN_CORPUS_EDGE_PX = 256
+MIN_CORPUS_EDGE_PX = FEATURE_EDGE_PX  # imported from corpus_inventory, not a drifting literal
 # Three or more faces reads as a crowd rather than a group portrait.
 CROWD_MIN_FACES = 3
 # Dense-scene membership is relative: the busiest quartile of the actual pool.
@@ -112,7 +112,9 @@ class Candidate:
     source: Source
     strata: tuple[Domain, ...]
     confidence: Confidence
-    publishable: bool
+    # Curation HINT only (the scan root is the public-figure set); the authoritative
+    # publishability gate is manifest.Provenance.is_publishable, not this flag (F-02).
+    public_figure_root: bool
     celeb_name: str | None
     face_count: int
     face_count_source: FaceCountSource
@@ -175,14 +177,17 @@ def celeb_label(record: ImageRecord, source: Source) -> str | None:
     return record.celeb_name if source is Source.CELEBS01 else None
 
 
-def is_publishable(record: ImageRecord, source: Source) -> bool:
-    """Fail-closed publishability: only the public-figure root publishes.
+def is_public_figure_root(record: ImageRecord, source: Source) -> bool:
+    """Curation HINT: True iff the image was scanned from the public-figure root.
 
-    The private-personal signal is the UPLOADS root, not the presence of an XMP
-    name. celebs01 embeds a (noisy, partial) name on 2320/2327 of its images —
-    "Al" for al_pacino — so treating any XMP name as personal would mark 99.7% of
-    the publishable corpus unpublishable. Uploads are False regardless, which is
-    what actually keeps the 219 named personal photos local-only.
+    This is a shortlist convenience flag, NOT the publishability authority — the
+    authoritative gate is manifest.Provenance.is_publishable, which fails closed on
+    private sources. Keeping the two separate (and this one named for what it is)
+    prevents the drift where a shortlist "publishable:true" disagrees with the report
+    gate. The private-personal signal is the UPLOADS root, not the presence of an XMP
+    name: celebs01 embeds a (noisy, partial) name on 2320/2327 of its images — "Al"
+    for al_pacino — so treating any XMP name as personal would mark 99.7% of the
+    public-figure corpus non-public. Uploads are False regardless.
     """
     return source is Source.CELEBS01
 
@@ -259,7 +264,7 @@ def _to_candidate(
         source=source,
         strata=domains,
         confidence=confidence,
-        publishable=is_publishable(record, source),
+        public_figure_root=is_public_figure_root(record, source),
         celeb_name=celeb_label(record, source),
         face_count=face_count,
         face_count_source=face_count_source,
@@ -360,8 +365,12 @@ def build_report(
     face data, and report the other ~6,400 uploads as peopleless.
     """
     rows = [(r, s) for r, s in records if r.sha256 not in exclude_sha256 and is_eligible(r)]
-    # Dedupe across BOTH roots at once: the same bytes can sit in either.
-    kept = {id(r) for r in dedupe_by_sha256([r for r, _ in rows])}
+    # Dedupe across BOTH roots at once: the same bytes can sit in either. Prefer the
+    # celebs01 copy on a cross-root collision so identical bytes keep their public-figure
+    # label regardless of --inventory argument order (stable sort leaves within-source
+    # order untouched; the kept filter then preserves the original row order).
+    dedup_order = sorted(rows, key=lambda rs: 0 if rs[1] is Source.CELEBS01 else 1)
+    kept = {id(r) for r in dedupe_by_sha256([r for r, _ in dedup_order])}
     rows = [(r, s) for r, s in rows if id(r) in kept]
 
     dense_edge_min = _quantile([r.edge_density for r, _ in rows if r.edge_density is not None], DENSE_EDGE_QUANTILE)
@@ -416,7 +425,7 @@ def _candidate_json(candidate: Candidate) -> dict:
         "source": str(candidate.source),
         "strata": [str(d) for d in candidate.strata],
         "confidence": str(candidate.confidence),
-        "publishable": candidate.publishable,
+        "public_figure_root": candidate.public_figure_root,
         "celeb_name": candidate.celeb_name,
         "face_count": candidate.face_count,
         "face_count_source": str(candidate.face_count_source),

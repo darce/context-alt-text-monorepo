@@ -11,6 +11,7 @@ import pytest
 from scripts.eval_harness.manifest import (
     GoldenManifest,
     ManifestError,
+    ReferenceFact,
     RubricEmptyWarning,
     load_manifest,
 )
@@ -116,6 +117,24 @@ def test_missing_required_entry_field_rejected(tmp_path):
     del data["entries"][0]["media_id"]
     with pytest.raises(ManifestError):
         load_manifest(_write_manifest(tmp_path, data))
+
+
+def test_media_id_below_one_rejected(tmp_path):
+    # media_id is synthetic and 1-based (analyze keys image_<media_id>); 0/negative must
+    # fail schema, matching the 'continue from 39, never reset to zero' contract (E-06).
+    data = _valid_manifest_dict()
+    data["entries"][0]["media_id"] = 0
+    with pytest.raises(ManifestError):
+        load_manifest(_write_manifest(tmp_path, data))
+
+
+def test_reference_fact_rejects_whitespace_only_phrases():
+    # A whitespace-only phrase is not a matchable target (match_targets filters it to
+    # [""] and matches nothing); reject it so scoring is never silently vacuous (E-07).
+    with pytest.raises(ValueError):
+        ReferenceFact(text="   ", kind="object", phrases=["   "])
+    # sanity: a genuine phrase (with blank text) still validates and yields the phrase.
+    assert ReferenceFact(text="", kind="object", phrases=["a red hat"]).match_targets() == ["a red hat"]
 
 
 def test_hash_verification_against_images_dir(tmp_path):
@@ -335,8 +354,45 @@ def test_seed_readme_documents_v2_corpus():  # VLM-2C S4
 # face-P/R subset stays comparable after Golden-100 renumbers nothing below 39.
 # Golden-100 additions MUST continue from media_id 39; this set is never edited.
 GOLDEN_38_MEDIA_IDS = frozenset(
-    {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
-     23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38}
+    {
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+    }
 )
 
 
@@ -358,9 +414,7 @@ def test_golden100_fields_roundtrip(tmp_path):
                 {"text": "a mirror", "kind": "object", "phrases": ["mirror", "reflection"]},
                 {"text": "two people", "kind": "count", "polarity": "false", "phrases": ["two people", "group"]},
             ],
-            "spatial_facts": [
-                {"subject": "Alice Example", "relation": "left_of", "reference": "Bob Example"}
-            ],
+            "spatial_facts": [{"subject": "Alice Example", "relation": "left_of", "reference": "Bob Example"}],
             "provenance": {"source": "wikimedia", "license": "cc0", "url": "http://example/x"},
         }
     )

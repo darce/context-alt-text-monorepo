@@ -244,6 +244,7 @@ def load_records(path: Path) -> list[ImageRecord]:
     if not path.exists():
         return []
     records: list[ImageRecord] = []
+    schema_dropped = 0
     for line in path.read_text().splitlines():
         line = line.strip()
         if not line:
@@ -253,8 +254,17 @@ def load_records(path: Path) -> list[ImageRecord]:
         except json.JSONDecodeError:
             continue  # truncated tail of an interrupted write
         if not isinstance(row, dict) or set(row) != _FIELD_NAMES:
+            schema_dropped += 1
             continue
         records.append(ImageRecord(**row))
+    if schema_dropped:
+        # A schema change silently invalidates the checkpoint; make the re-scan visible
+        # rather than letting --resume quietly redo work it looks like it already did (rg-008).
+        print(
+            f"WARNING: {path}: dropped {schema_dropped} checkpoint row(s) whose fields do not "
+            "match the current ImageRecord schema; those images will be re-inventoried",
+            file=sys.stderr,
+        )
     return records
 
 
@@ -269,21 +279,31 @@ def write_records(path: Path, records: Iterable[ImageRecord]) -> None:
             _append_record(handle, record)
 
 
-def _scan(root: Path, out: Path, *, limit: int | None, resume: bool) -> tuple[int, int]:
-    """Stream an inventory scan to ``out``, returning (new_count, resumed_count)."""
+def _scan(root: Path, out: Path, *, limit: int | None, resume: bool) -> tuple[int, int, int]:
+    """Stream an inventory scan to ``out``, returning (new_count, resumed_count, skipped_count)."""
     existing = load_records(out) if resume else []
     done = {record.path for record in existing}
     # Rewrite the kept prefix first: truncates on a fresh scan, and on a resume drops
     # any truncated tail line so appends can't land behind corrupt bytes.
     write_records(out, existing)
     written = 0
+    skipped = 0
     with out.open("a") as handle:
         for path in iter_new_images(root, done=done):
             if limit is not None and written >= limit:
                 break
-            _append_record(handle, inventory_image(path, root))
+            try:
+                record = inventory_image(path, root)
+            except Exception as exc:  # noqa: BLE001 — one unreadable/vanished file must not halt the scan (rg-007)
+                # Skip and continue rather than aborting: an unhandled raise here would
+                # end the whole scan, and since the file is never checkpointed every
+                # --resume would re-hit it and re-abort at the same spot (never completing).
+                skipped += 1
+                print(f"WARNING: skipping {path}: {type(exc).__name__}: {exc}", file=sys.stderr)
+                continue
+            _append_record(handle, record)
             written += 1
-    return written, len(existing)
+    return written, len(existing), skipped
 
 
 def _main(argv: Sequence[str] | None = None) -> int:
@@ -295,17 +315,19 @@ def _main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not args.root.is_dir():
         parser.error(f"root is not a directory: {args.root}")
-    written, resumed = _scan(args.root, args.out, limit=args.limit, resume=args.resume)
+    written, resumed, skipped = _scan(args.root, args.out, limit=args.limit, resume=args.resume)
     records = load_records(args.out)
     bw = sum(1 for r in records if r.bw_candidate)
     named = sum(1 for r in records if r.xmp_names)
     celebs = sum(1 for r in records if r.celeb_name)
     dupes = len(records) - len(dedupe_by_sha256(records))
     print(
-        f"{len(records)} images -> {args.out}  (+{written} new, resumed {resumed}, "
+        f"{len(records)} images -> {args.out}  (+{written} new, resumed {resumed}, skipped {skipped}, "
         f"dupes={dupes}, bw~{bw}, xmp-named={named}, celeb-labeled={celebs})"
     )
-    return 0
+    # Non-zero when a run inventoried nothing new yet hit unreadable files: a bounded
+    # signal that the scan made no progress rather than silently "succeeding" (rg-007).
+    return 1 if written == 0 and skipped > 0 else 0
 
 
 if __name__ == "__main__":

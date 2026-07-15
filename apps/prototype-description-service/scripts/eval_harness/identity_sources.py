@@ -80,9 +80,11 @@ def _extract_xmp_packet(image_bytes: bytes) -> str | None:
 
 
 # Element bodies are matched tolerating the inline xmlns:* attribute the writers
-# emit on every qualified element (the reason a naive `<tag>` match misses them).
+# emit on every qualified element (the reason a naive `<tag>` match misses them). The
+# prefix group is [\w-]+, not \w+, so hyphenated namespace prefixes match — the
+# MWG-Regions standard prefix is `mwg-rs` (e.g. <mwg-rs:Name>), which \w cannot match.
 def _tag(body: str, local: str) -> str | None:
-    m = re.search(rf"<\w+:{local}\b[^>]*>([^<]*)</\w+:{local}>", body)
+    m = re.search(rf"<[\w-]+:{local}\b[^>]*>([^<]*)</[\w-]+:{local}>", body)
     return m.group(1).strip() if m else None
 
 

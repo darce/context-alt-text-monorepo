@@ -113,6 +113,30 @@ class LicenseTag(StrEnum):
     FIXTURE = "fixture"  # pre-existing vendored fixture pool
 
 
+class ProvenanceSource(StrEnum):
+    """Canonical corpus-source vocabulary (sr-007). One definition shared by the
+    manifest, the strata shortlister, and the identity bridge so a source label can
+    never mean three different things across modules (the celeb->stranger identity
+    loss that a scattered string set caused).
+
+    CELEB/WIKIMEDIA/OPENVERSE are public-eligible; LOCALWP/OPERATOR are PRIVATE
+    (real personal photos, never published — see ``Provenance.is_publishable`` and
+    ``PRIVATE_SOURCES``); FIXTURE is vendored test material.
+    """
+
+    CELEB = "celeb"
+    WIKIMEDIA = "wikimedia"
+    OPENVERSE = "openverse"
+    LOCALWP = "localwp"
+    OPERATOR = "operator"
+    FIXTURE = "fixture"
+
+
+# Private roots are LOCAL-ONLY: a personal photo is never publishable regardless of
+# license or an explicit flag (fail-closed on the "never publish uploads" invariant).
+PRIVATE_SOURCES: frozenset[ProvenanceSource] = frozenset({ProvenanceSource.LOCALWP, ProvenanceSource.OPERATOR})
+
+
 class ManifestError(Exception):
     """Structural, hash, or label problem in the golden manifest. Fail fast."""
 
@@ -184,10 +208,11 @@ class ReferenceFact(BaseModel):
 
     @model_validator(mode="after")
     def _has_a_matchable_phrase(self) -> ReferenceFact:
-        # A fact must expose at least one non-empty match target so scoring is
-        # never silently vacuous (rg-008): fall back to text when phrases empty.
-        if not self.phrases and not self.text.strip():
-            raise ValueError("reference_fact needs non-empty text or at least one phrase")
+        # A fact must expose at least one non-blank match target so scoring is never
+        # silently vacuous (rg-008): whitespace-only phrases do not count — match_targets
+        # would filter them to [""] and match nothing.
+        if not any(p.strip() for p in self.phrases) and not self.text.strip():
+            raise ValueError("reference_fact needs non-empty text or at least one non-blank phrase")
         return self
 
     def match_targets(self) -> list[str]:
@@ -208,7 +233,7 @@ class Provenance(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    source: str  # fixture | localwp | wikimedia | openverse | operator | celeb | ...
+    source: ProvenanceSource
     license: LicenseTag
     url: str | None = None
     note: str | None = None
@@ -216,12 +241,17 @@ class Provenance(BaseModel):
 
     @property
     def is_publishable(self) -> bool:
-        """Effective publishability: explicit flag, else license-derived (fail-closed).
+        """Effective publishability: fail-closed on private source, then flag, then license.
 
-        Only CC0 / public-domain are publishable by default; every other class —
-        including consented personal, mock-entity, and fixtures — is local-only
-        unless a curator explicitly sets ``publishable=True`` (e.g. public figures).
+        A PRIVATE-source (localwp/operator) image is NEVER publishable — not by a
+        CC0/public-domain license and not by an explicit ``publishable=True`` — so a
+        mis-authored license or flag can never leak a personal photo (the crown-jewel
+        "never publish uploads" invariant). For public-eligible sources an explicit
+        flag wins, else only CC0 / public-domain publish by default (public figures
+        set the flag).
         """
+        if self.source in PRIVATE_SOURCES:
+            return False
         if self.publishable is not None:
             return self.publishable
         return self.license in (LicenseTag.CC0, LicenseTag.PUBLIC_DOMAIN)
@@ -273,7 +303,7 @@ class GoldenEntry(BaseModel):
 
     path: str
     sha256: str
-    media_id: int
+    media_id: int = Field(ge=1)  # synthetic, 1-based; never resets to zero (analyze keys image_<media_id>)
     face_count: int = Field(ge=0)
     present_identities: list[str]
     context_pack: ContextPack = Field(default_factory=ContextPack)

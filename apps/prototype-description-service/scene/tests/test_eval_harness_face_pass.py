@@ -284,7 +284,10 @@ def test_rows_checkpoint_as_they_complete(tmp_path):
         (rec("b.jpg"), Source.LOCALWP_UPLOADS, 900_001),
     ]
     run_face_pass(
-        candidates, FakeClient({900_000: 1, 900_001: 1}), roots={Source.LOCALWP_UPLOADS: tmp_path}, out=out,
+        candidates,
+        FakeClient({900_000: 1, 900_001: 1}),
+        roots={Source.LOCALWP_UPLOADS: tmp_path},
+        out=out,
         on_progress=spy,
     )
     assert seen == [1, 2]
@@ -308,6 +311,30 @@ def test_resume_keeps_earlier_rows_and_only_analyzes_the_rest(tmp_path):
     assert client.analyzed == [900_001]  # a.jpg was not re-fetched
     assert {r.sha256 for r in rows} == {"sha-a.jpg", "sha-b.jpg"}
     assert load_face_counts(out) == {"sha-a.jpg": 2, "sha-b.jpg": 1}
+
+
+def test_resume_drops_stale_error_rows_so_retries_do_not_double_count(tmp_path):
+    # An errored resume row is re-selected and retried by _main (done_sha excludes it);
+    # run_face_pass must not carry the old error row forward, else a retried-then-succeeded
+    # image counts as both an error and an ok and grows the checkpoint each cycle (B-01).
+    write_images(tmp_path, "b.jpg")
+    errored = FacePassRow("sha-b.jpg", "b.jpg", "localwp_uploads", 900_001, None, [], "TimeoutError: boom")
+    out = tmp_path / "faces.jsonl"
+    write_rows(out, [errored])
+
+    rows = run_face_pass(
+        [(rec("b.jpg"), Source.LOCALWP_UPLOADS, 900_001)],
+        FakeClient({900_001: 1}),
+        roots={Source.LOCALWP_UPLOADS: tmp_path},
+        out=out,
+        resume_rows=[errored],
+    )
+
+    # exactly one row for the sha — the stale error row is gone, only the fresh success remains
+    assert [r.sha256 for r in rows] == ["sha-b.jpg"]
+    assert [r.face_count for r in rows] == [1]
+    on_disk = load_face_pass_rows(out)
+    assert len(on_disk) == 1 and on_disk[0].error is None
 
 
 def test_a_truncated_final_line_is_dropped_rather_than_crashing_the_resume(tmp_path):

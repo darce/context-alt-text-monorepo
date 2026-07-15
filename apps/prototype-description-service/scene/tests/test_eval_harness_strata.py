@@ -20,7 +20,7 @@ from scripts.eval_harness.strata import (
     celeb_label,
     face_count_of,
     is_eligible,
-    is_publishable,
+    is_public_figure_root,
     load_inventory,
     report_json,
 )
@@ -79,20 +79,20 @@ def test_candidate_from_uploads_carries_no_celeb_name():
 
 
 def test_only_celebs01_publishes():
-    assert is_publishable(rec(), Source.CELEBS01) is True
-    assert is_publishable(rec(), Source.LOCALWP_UPLOADS) is False
+    assert is_public_figure_root(rec(), Source.CELEBS01) is True
+    assert is_public_figure_root(rec(), Source.LOCALWP_UPLOADS) is False
 
 
 def test_celebs_stay_publishable_despite_carrying_an_xmp_name():
     # 2320/2327 real celebs01 images embed a noisy partial name ("Al" for al_pacino).
     # Treating any XMP name as personal would mark 99.7% of the publishable corpus
     # unpublishable; the private-personal signal is the uploads root, not the name.
-    assert is_publishable(rec(xmp_names=["Al"]), Source.CELEBS01) is True
+    assert is_public_figure_root(rec(xmp_names=["Al"]), Source.CELEBS01) is True
 
 
 def test_named_personal_uploads_are_never_publishable():
     # The 219 XMP-named personal photos are local-only.
-    assert is_publishable(rec(xmp_names=["Maria Correonero"]), Source.LOCALWP_UPLOADS) is False
+    assert is_public_figure_root(rec(xmp_names=["Maria Correonero"]), Source.LOCALWP_UPLOADS) is False
 
 
 # --- bucketing ---------------------------------------------------------------
@@ -137,7 +137,7 @@ def test_faces_ranks_public_figures_ahead_of_uploads():
     rows.append((rec(path="zz_dali_3.jpg", celeb_name="Dali", xmp_face_count=1), Source.CELEBS01))
     candidates = build_report(rows, per_stratum=5).offline[Domain.FACES].candidates
     assert candidates[0].path == "zz_dali_3.jpg"
-    assert candidates[0].publishable is True
+    assert candidates[0].public_figure_root is True
 
 
 def test_faces_shortlist_spreads_across_identities_not_one_figure():

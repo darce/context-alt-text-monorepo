@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, fields
@@ -309,14 +310,30 @@ def _main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--root", action="append", required=True, metavar="SOURCE=DIR", help="image root per source")
     parser.add_argument("--out", type=Path, required=True, help="JSONL checkpoint")
-    parser.add_argument("--base-url", required=True)
-    parser.add_argument("--api-key", required=True)
-    parser.add_argument("--tenant-id", required=True, help="a SCRATCH tenant; never the roster-seeded eval tenant")
+    parser.add_argument("--base-url", default=os.environ.get("ACX_EVAL_BASE_URL"))
+    # Key via env only. The prod key is shown exactly once at mint, and a value passed
+    # as --api-key would sit in shell history and in `ps` for the whole run; a file
+    # would outlive the run entirely. Piping mint -> env -> here keeps it in process
+    # memory alone. Losing it costs nothing: the JSONL checkpoint holds the WORK, so a
+    # re-mint + --resume continues where a dead run stopped.
+    parser.add_argument(
+        "--tenant-id",
+        default=os.environ.get("ACX_EVAL_TENANT_ID"),
+        help="a SCRATCH tenant; never the roster-seeded eval tenant",
+    )
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--stall-limit", type=int, default=DEFAULT_STALL_LIMIT)
     parser.add_argument("--force", action="store_true", help="run even if the tenant has labeled clusters")
     args = parser.parse_args(argv)
+
+    api_key = os.environ.get("ACX_EVAL_API_KEY", "")
+    if not api_key:
+        parser.error("ACX_EVAL_API_KEY is unset (the key is env-only; see the module docstring)")
+    if not args.base_url:
+        parser.error("--base-url or ACX_EVAL_BASE_URL required")
+    if not args.tenant_id:
+        parser.error("--tenant-id or ACX_EVAL_TENANT_ID required")
 
     roots: dict[Source, Path] = {}
     for value in args.root:
@@ -333,7 +350,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
             parser.error(f"no --root given for source {source}")
         rows.extend((record, source) for record in load_records(path))
 
-    client = RemoteSceneClient(args.base_url, args.api_key, tenant_id=args.tenant_id)
+    client = RemoteSceneClient(args.base_url, api_key, tenant_id=args.tenant_id)
     try:
         if not args.force:
             assert_scratch_tenant(client)

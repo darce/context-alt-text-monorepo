@@ -2,16 +2,22 @@
 
 import hashlib
 import json
+from dataclasses import asdict
 
 from PIL import Image
 
 from scripts.eval_harness.corpus_inventory import (
     BW_SATURATION_THRESHOLD,
+    FLAT_COLOR_COVERAGE_THRESHOLD,
+    LOW_LIGHT_VALUE_THRESHOLD,
     ImageRecord,
     _main,
     dedupe_by_sha256,
     inventory_dir,
     inventory_image,
+    iter_new_images,
+    load_records,
+    write_records,
 )
 
 _IPTC_XMP = (
@@ -28,8 +34,8 @@ _IPTC_XMP = (
 )
 
 
-def _save(path, color, size=(40, 30), xmp: bytes | None = None):
-    Image.new("RGB", size, color).save(path, "JPEG")
+def _save(path, color, size=(40, 30), xmp: bytes | None = None, image: Image.Image | None = None):
+    (image if image is not None else Image.new("RGB", size, color)).save(path, "JPEG")
     if xmp is not None:
         # extract_face_regions scans raw bytes for the packet; appending after
         # EOI is enough for the reader and Pillow still decodes the image.
@@ -98,20 +104,140 @@ def test_dedupe_by_sha256(tmp_path):
     assert len(deduped) == 2
 
 
-def test_cli_writes_json(tmp_path, capsys):
+def test_dark_image_flags_low_light(tmp_path):
+    p = tmp_path / "night.jpg"
+    _save(p, (8, 8, 10))
+    rec = inventory_image(p, tmp_path)
+    assert rec.mean_value is not None and rec.mean_value < LOW_LIGHT_VALUE_THRESHOLD
+    assert rec.low_light_candidate is True
+
+
+def test_bright_image_not_low_light(tmp_path):
+    p = tmp_path / "day.jpg"
+    _save(p, (200, 190, 180))
+    rec = inventory_image(p, tmp_path)
+    assert rec.mean_value > LOW_LIGHT_VALUE_THRESHOLD and rec.low_light_candidate is False
+
+
+def test_flat_color_image_flags_chart_candidate(tmp_path):
+    # Two flat blocks == a screenshot/chart-like image: a couple of colors cover everything.
+    image = Image.new("RGB", (64, 64), (255, 255, 255))
+    image.paste(Image.new("RGB", (32, 64), (20, 60, 200)), (0, 0))
+    p = tmp_path / "chart.jpg"
+    _save(p, None, image=image)
+    rec = inventory_image(p, tmp_path)
+    assert rec.flat_color_coverage > FLAT_COLOR_COVERAGE_THRESHOLD
+    assert rec.flat_color_candidate is True
+
+
+def test_photo_like_noise_not_flat_color(tmp_path):
+    # Per-pixel varied content: no small set of colors covers the frame.
+    image = Image.new("RGB", (64, 64))
+    image.putdata([((x * 7) % 256, (y * 11) % 256, (x * y) % 256) for y in range(64) for x in range(64)])
+    p = tmp_path / "noise.jpg"
+    _save(p, None, image=image)
+    rec = inventory_image(p, tmp_path)
+    assert rec.flat_color_candidate is False
+    assert rec.edge_density > 0.0
+
+
+def test_flat_image_has_lower_edge_density_than_busy_image(tmp_path):
+    _save(tmp_path / "flat.jpg", (120, 120, 120), size=(64, 64))
+    busy = Image.new("RGB", (64, 64))
+    busy.putdata([(255, 255, 255) if (x + y) % 2 else (0, 0, 0) for y in range(64) for x in range(64)])
+    _save(tmp_path / "busy.jpg", None, image=busy)
+    flat = inventory_image(tmp_path / "flat.jpg", tmp_path)
+    dense = inventory_image(tmp_path / "busy.jpg", tmp_path)
+    assert dense.edge_density > flat.edge_density
+
+
+def test_large_image_features_use_bounded_thumbnail(tmp_path):
+    # Features are computed on a downscaled copy, but the RECORDED dims stay original.
+    p = tmp_path / "big.jpg"
+    _save(p, (30, 140, 60), size=(1200, 900))
+    rec = inventory_image(p, tmp_path)
+    assert rec.width == 1200 and rec.height == 900
+    assert rec.mean_saturation is not None and rec.bw_candidate is False
+
+
+def test_write_and_load_records_roundtrip_jsonl(tmp_path):
     _save(tmp_path / "julia_roberts_2.jpg", (200, 30, 30))
-    out = tmp_path / "inv.json"
-    rc = _main([str(tmp_path), "--out", str(out)])
-    assert rc == 0
-    data = json.loads(out.read_text())
-    assert data[0]["celeb_name"] == "Julia Roberts"
-    assert "images ->" in capsys.readouterr().out
+    out = tmp_path / "inv.jsonl"
+    records = inventory_dir(tmp_path)
+    write_records(out, records)
+    loaded = load_records(out)
+    assert loaded == records
+
+
+def test_load_records_skips_truncated_trailing_line(tmp_path):
+    # A checkpointed scan killed mid-write leaves a partial last line; resume must
+    # drop it rather than crash, and re-inventory that image.
+    out = tmp_path / "inv.jsonl"
+    good = json.dumps(asdict(inventory_image_stub()))
+    out.write_text(f"{good}\n{good[:40]}")
+    assert [r.path for r in load_records(out)] == ["p"]
+
+
+def test_load_records_skips_row_from_an_older_field_schema(tmp_path):
+    out = tmp_path / "inv.jsonl"
+    stale = asdict(inventory_image_stub())
+    del stale["edge_density"]
+    out.write_text(json.dumps(stale) + "\n")
+    assert load_records(out) == []
+
+
+def test_iter_new_images_skips_already_inventoried(tmp_path):
+    _save(tmp_path / "a.jpg", (10, 20, 30))
+    _save(tmp_path / "b.jpg", (40, 50, 60))
+    assert [p.name for p in iter_new_images(tmp_path, done={"a.jpg"})] == ["b.jpg"]
+
+
+def test_cli_writes_jsonl_and_resumes(tmp_path, capsys):
+    _save(tmp_path / "julia_roberts_2.jpg", (200, 30, 30))
+    out = tmp_path / "inv.jsonl"
+    assert _main([str(tmp_path), "--out", str(out)]) == 0
+    first = json.loads(out.read_text().splitlines()[0])
+    assert first["celeb_name"] == "Julia Roberts"
+
+    _save(tmp_path / "second.jpg", (30, 200, 30))
+    assert _main([str(tmp_path), "--out", str(out), "--resume"]) == 0
+    lines = [json.loads(line) for line in out.read_text().splitlines()]
+    assert [r["path"] for r in lines] == ["julia_roberts_2.jpg", "second.jpg"]
+    assert "resumed" in capsys.readouterr().out
+
+
+def test_cli_without_resume_restarts_the_scan(tmp_path):
+    _save(tmp_path / "a.jpg", (10, 20, 30))
+    out = tmp_path / "inv.jsonl"
+    _main([str(tmp_path), "--out", str(out)])
+    _main([str(tmp_path), "--out", str(out)])
+    assert len(out.read_text().splitlines()) == 1
 
 
 def test_record_is_frozen():
-    rec = ImageRecord("p", "s", 1, 1, 0.0, 1.0, None, [], 0, True)
+    rec = inventory_image_stub()
     try:
         rec.path = "y"  # type: ignore[misc]
     except AttributeError:
         return
     raise AssertionError("ImageRecord should be frozen")
+
+
+def inventory_image_stub() -> ImageRecord:
+    return ImageRecord(
+        path="p",
+        sha256="s",
+        width=1,
+        height=1,
+        mean_saturation=0.0,
+        mean_value=0.5,
+        aspect_ratio=1.0,
+        celeb_name=None,
+        xmp_names=[],
+        xmp_face_count=0,
+        bw_candidate=True,
+        low_light_candidate=False,
+        flat_color_coverage=0.1,
+        flat_color_candidate=False,
+        edge_density=0.2,
+    )

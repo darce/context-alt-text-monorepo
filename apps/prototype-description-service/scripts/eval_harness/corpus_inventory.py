@@ -7,11 +7,20 @@ operator review:
 - ``sha256`` (dedup + manifest key), ``width``/``height``, aspect ratio.
 - ``mean_saturation`` (HSV S-channel mean, 0..1) — near-zero flags the
   black-and-white stratum; a pixel statistic, not a model.
+- ``mean_value`` (HSV V-channel mean) — flags the low-light stratum.
+- ``flat_color_coverage`` — pixel share held by the few most common quantized
+  colors; high on charts/screenshots, low on photographs.
+- ``edge_density`` — mean edge response; ranks dense/busy scenes.
 - ``celeb_name`` from the filename (public-figure identity label).
 - ``xmp_names`` + ``xmp_face_count`` from embedded IPTC/MWG face regions.
 
+Every feature is a SHORTLISTING signal for operator review, never ground truth:
+the thresholds below pre-bucket candidates, and a human confirms the stratum.
 Face-count-by-model strata (people/crowds) come from a later pass against the
 remote recognition service; this module is the offline, local-only first pass.
+
+Scans are checkpointed: records stream to JSONL as they are computed, so a scan
+killed under memory pressure resumes with ``--resume`` instead of restarting.
 """
 
 from __future__ import annotations
@@ -22,11 +31,11 @@ import io
 import json
 import re
 import sys
-from collections.abc import Iterable, Sequence
-from dataclasses import asdict, dataclass
+from collections.abc import Iterable, Iterator, Sequence
+from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageFilter
 
 from scripts.eval_harness.identity_sources import (
     celeb_identity_from_filename,
@@ -47,22 +56,75 @@ class ImageRecord:
     width: int | None
     height: int | None
     mean_saturation: float | None  # 0..1; None if unreadable as an image
+    mean_value: float | None  # HSV V mean, 0..1; None if unreadable
     aspect_ratio: float | None
     celeb_name: str | None
     xmp_names: list[str]
     xmp_face_count: int
     bw_candidate: bool  # mean_saturation below the grayscale threshold
+    low_light_candidate: bool  # mean_value below the dark threshold
+    flat_color_coverage: float | None  # pixel share held by the top quantized colors
+    flat_color_candidate: bool  # chart/screenshot-like flat-color image
+    edge_density: float | None  # mean edge response, 0..1; ranks busy scenes
 
 
 # Empirically separates B&W/monochrome scans from muted-but-colored photos.
 BW_SATURATION_THRESHOLD = 0.06
+# HSV V mean below this reads as a night/underexposed frame rather than a dim one.
+LOW_LIGHT_VALUE_THRESHOLD = 0.22
+# Share of pixels held by FLAT_COLOR_TOP_N colors after 5-bit-per-channel
+# quantization. Charts/screenshots concentrate; photographs spread out.
+FLAT_COLOR_COVERAGE_THRESHOLD = 0.5
+FLAT_COLOR_TOP_N = 8
+# Features are computed on a copy bounded to this edge so a 9.6k-image scan stays
+# cheap on a memory-pressured host; recorded width/height remain the originals.
+FEATURE_EDGE_PX = 256
 
 
-def _mean_saturation(image: Image.Image) -> float:
-    """HSV S-channel mean normalized to 0..1 (0 = pure grayscale)."""
-    saturation = image.convert("RGB").convert("HSV").getchannel("S")
-    # Image.getextrema/histogram avoids pulling every pixel into Python.
-    histogram = saturation.histogram()
+def _feature_image(image: Image.Image) -> Image.Image:
+    """Downscale to a bounded copy for feature stats (a uniform, unbiased sample)."""
+    copy = image.convert("RGB")
+    copy.thumbnail((FEATURE_EDGE_PX, FEATURE_EDGE_PX), Image.BILINEAR)
+    return copy
+
+
+def _channel_mean(image: Image.Image, channel: str) -> float:
+    """Mean of one HSV channel normalized to 0..1, via the histogram (not per-pixel)."""
+    histogram = image.convert("HSV").getchannel(channel).histogram()
+    total = sum(histogram)
+    if total == 0:
+        return 0.0
+    weighted = sum(value * count for value, count in enumerate(histogram))
+    return (weighted / total) / 255.0
+
+
+def _flat_color_coverage(image: Image.Image) -> float:
+    """Pixel share held by the top-N colors at 5-bit-per-channel quantization.
+
+    Quantizing to a fixed grid (rather than an adaptive palette) keeps this
+    deterministic: near-identical shades collapse together, so large flat regions
+    of a chart or screenshot concentrate into a few bins while photographic
+    gradients stay spread across many.
+    """
+    quantized = image.point(lambda v: v & 0b11111000)
+    colors = quantized.getcolors(maxcolors=quantized.width * quantized.height)
+    if not colors:
+        return 0.0
+    total = sum(count for count, _ in colors)
+    if total == 0:
+        return 0.0
+    top = sorted((count for count, _ in colors), reverse=True)[:FLAT_COLOR_TOP_N]
+    return sum(top) / total
+
+
+def _edge_density(image: Image.Image) -> float:
+    """Mean edge-filter response, 0..1. The 1px border is cropped: FIND_EDGES
+    leaves a bright frame there that would otherwise scale with the image."""
+    edges = image.convert("L").filter(ImageFilter.FIND_EDGES)
+    if edges.width <= 2 or edges.height <= 2:
+        return 0.0
+    inner = edges.crop((1, 1, edges.width - 1, edges.height - 1))
+    histogram = inner.histogram()
     total = sum(histogram)
     if total == 0:
         return 0.0
@@ -75,11 +137,18 @@ def inventory_image(path: Path, root: Path) -> ImageRecord:
     data = path.read_bytes()
     sha = hashlib.sha256(data).hexdigest()
     width = height = None
-    mean_sat = aspect = None
+    mean_sat = mean_val = aspect = coverage = edges = None
     try:
         with Image.open(io.BytesIO(data)) as image:
+            # Read the true dims before draft(): drafting mutates image.size to the
+            # DCT-scaled decode size, which would otherwise be recorded as the original.
             width, height = image.width, image.height
-            mean_sat = _mean_saturation(image)
+            image.draft("RGB", (FEATURE_EDGE_PX, FEATURE_EDGE_PX))  # fast JPEG path; no-op otherwise
+            features = _feature_image(image)
+        mean_sat = _channel_mean(features, "S")
+        mean_val = _channel_mean(features, "V")
+        coverage = _flat_color_coverage(features)
+        edges = _edge_density(features)
         aspect = round(width / height, 4) if width and height else None
     except (OSError, ValueError, Image.DecompressionBombError):
         pass  # degrade-path: keep sha256 + XMP; image features stay None
@@ -91,11 +160,16 @@ def inventory_image(path: Path, root: Path) -> ImageRecord:
         width=width,
         height=height,
         mean_saturation=None if mean_sat is None else round(mean_sat, 4),
+        mean_value=None if mean_val is None else round(mean_val, 4),
         aspect_ratio=aspect,
         celeb_name=celeb_identity_from_filename(path.name),
         xmp_names=names,
         xmp_face_count=len(regions),
         bw_candidate=mean_sat is not None and mean_sat < BW_SATURATION_THRESHOLD,
+        low_light_candidate=mean_val is not None and mean_val < LOW_LIGHT_VALUE_THRESHOLD,
+        flat_color_coverage=None if coverage is None else round(coverage, 4),
+        flat_color_candidate=coverage is not None and coverage > FLAT_COLOR_COVERAGE_THRESHOLD,
+        edge_density=None if edges is None else round(edges, 4),
     )
 
 
@@ -107,6 +181,13 @@ def iter_original_images(root: Path) -> Iterable[Path]:
         if _THUMBNAIL_SUFFIX.search(path.name):
             continue
         yield path
+
+
+def iter_new_images(root: Path, *, done: set[str]) -> Iterator[Path]:
+    """Yield original images under ``root`` whose relative path isn't in ``done``."""
+    for path in iter_original_images(root):
+        if str(path.relative_to(root)) not in done:
+            yield path
 
 
 def inventory_dir(root: Path, *, limit: int | None = None) -> list[ImageRecord]:
@@ -130,23 +211,80 @@ def dedupe_by_sha256(records: Sequence[ImageRecord]) -> list[ImageRecord]:
     return out
 
 
+_FIELD_NAMES = {f.name for f in fields(ImageRecord)}
+
+
+def load_records(path: Path) -> list[ImageRecord]:
+    """Read a checkpoint JSONL back into records.
+
+    A scan killed mid-write leaves a truncated final line; it is dropped so a
+    resume re-inventories that one image instead of crashing. Rows missing fields
+    (written by an older schema) are likewise dropped and recomputed.
+    """
+    if not path.exists():
+        return []
+    records: list[ImageRecord] = []
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue  # truncated tail of an interrupted write
+        if not isinstance(row, dict) or set(row) != _FIELD_NAMES:
+            continue
+        records.append(ImageRecord(**row))
+    return records
+
+
+def _append_record(handle, record: ImageRecord) -> None:
+    handle.write(json.dumps(asdict(record)) + "\n")
+    handle.flush()  # checkpoint: a kill must not lose completed work
+
+
+def write_records(path: Path, records: Iterable[ImageRecord]) -> None:
+    with path.open("w") as handle:
+        for record in records:
+            _append_record(handle, record)
+
+
+def _scan(root: Path, out: Path, *, limit: int | None, resume: bool) -> tuple[int, int]:
+    """Stream an inventory scan to ``out``, returning (new_count, resumed_count)."""
+    existing = load_records(out) if resume else []
+    done = {record.path for record in existing}
+    # Rewrite the kept prefix first: truncates on a fresh scan, and on a resume drops
+    # any truncated tail line so appends can't land behind corrupt bytes.
+    write_records(out, existing)
+    written = 0
+    with out.open("a") as handle:
+        for path in iter_new_images(root, done=done):
+            if limit is not None and written >= limit:
+                break
+            _append_record(handle, inventory_image(path, root))
+            written += 1
+    return written, len(existing)
+
+
 def _main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Inventory an image directory for Golden-100 selection.")
     parser.add_argument("root", type=Path)
-    parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--limit", type=int, default=None)
-    parser.add_argument("--dedupe", action="store_true", help="drop content-duplicate images")
+    parser.add_argument("--out", type=Path, required=True, help="checkpoint JSONL (one record per line)")
+    parser.add_argument("--limit", type=int, default=None, help="max NEW images to inventory this run")
+    parser.add_argument("--resume", action="store_true", help="keep --out's records and scan only what's missing")
     args = parser.parse_args(argv)
     if not args.root.is_dir():
         parser.error(f"root is not a directory: {args.root}")
-    records = inventory_dir(args.root, limit=args.limit)
-    if args.dedupe:
-        records = dedupe_by_sha256(records)
-    args.out.write_text(json.dumps([asdict(r) for r in records], indent=2))
+    written, resumed = _scan(args.root, args.out, limit=args.limit, resume=args.resume)
+    records = load_records(args.out)
     bw = sum(1 for r in records if r.bw_candidate)
     named = sum(1 for r in records if r.xmp_names)
     celebs = sum(1 for r in records if r.celeb_name)
-    print(f"{len(records)} images -> {args.out}  (bw~{bw}, xmp-named={named}, celeb-labeled={celebs})")
+    dupes = len(records) - len(dedupe_by_sha256(records))
+    print(
+        f"{len(records)} images -> {args.out}  (+{written} new, resumed {resumed}, "
+        f"dupes={dupes}, bw~{bw}, xmp-named={named}, celeb-labeled={celebs})"
+    )
     return 0
 
 

@@ -55,12 +55,6 @@ export const useScanStatus = (jobId: string | null, enabled = true) =>
     enabled: Boolean(jobId) && enabled,
     queryFn: () => fetchScanStatus(jobId!),
     refetchInterval: (query) => getJobRefetchInterval(query.state.data),
-    retry: (failureCount, error) => {
-      if (error.message.includes('404')) {
-        return false;
-      }
-      return failureCount < 3;
-    },
   });
 
 export const useCancelScanJobs = (options?: UseMutationOptions<JobStatusResponse[], Error, string[], unknown>) =>
@@ -77,12 +71,6 @@ export const useMultiScanStatus = (jobIds: string[], enabled = true) =>
         queryFn: () => fetchScanStatus(jobId),
         enabled: Boolean(jobId) && enabled,
         refetchInterval: (query) => getJobRefetchInterval(query.state.data),
-        retry: (failureCount, error) => {
-          if (error.message.includes('404')) {
-            return false;
-          }
-          return failureCount < 3;
-        },
       }),
     ),
   });
@@ -93,12 +81,6 @@ export const useBatchRunStatus = (runId: string | null, enabled = true) =>
     enabled: Boolean(runId) && enabled,
     queryFn: () => fetchBatchRunStatus(runId!),
     refetchInterval: (query) => getBatchRunRefetchInterval(query.state.data),
-    retry: (failureCount, error) => {
-      if (error.message.includes('404')) {
-        return false;
-      }
-      return failureCount < 3;
-    },
   });
 
 /**

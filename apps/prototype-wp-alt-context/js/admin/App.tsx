@@ -11,12 +11,13 @@ import { ErrorBoundary } from '../components/ErrorBoundary';
 import { ToastProvider } from './context/ToastContext';
 import { DegradedModeBanner } from './pages/workbench/DegradedModeBanner';
 import { extractRouteFromHash, ensureHashInitialized, type RoutePath, DEFAULT_ROUTE } from './utils/routeHelpers';
+import { getRetryDelay, shouldRetryRequest } from './utils/retryPolicy';
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      retry: 1,
-      retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
+      retry: shouldRetryRequest,
+      retryDelay: getRetryDelay,
       refetchOnWindowFocus: false,
     },
   },

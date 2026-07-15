@@ -45,9 +45,11 @@ describe('DescribePanel', () => {
     hookState = { mutate, isPending: false, data: undefined, error: null, reset: vi.fn() };
   });
 
-  it('renders the Describe with AI control', () => {
+  it('renders the Describe with AI control (empty: no attachment id)', () => {
     render(<DescribePanel />);
-    expect(screen.getByRole('button', { name: /describe with ai/i })).toBeInTheDocument();
+    const button = screen.getByRole('button', { name: /describe with ai/i });
+    expect(button).toBeInTheDocument();
+    expect(button).toBeDisabled();
   });
 
   it('submits the parsed numeric media id', () => {

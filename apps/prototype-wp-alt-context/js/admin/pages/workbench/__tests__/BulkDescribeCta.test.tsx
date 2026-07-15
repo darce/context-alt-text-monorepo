@@ -43,7 +43,26 @@ const baseProps = {
   onRetryPolling: vi.fn(),
 };
 
-describe('BulkDescribeCta offline gate', () => {
+describe('BulkDescribeCta state matrix (A11Y-24)', () => {
+  // empty / loading / error fill gaps left by the offline column (Slice 2).
+  it('disables submit in empty selection state (zero selection)', () => {
+    render(<BulkDescribeCta {...baseProps} selectedCount={0} />);
+
+    expect(screen.getByRole('button', { name: 'Describe selected' })).toBeDisabled();
+  });
+
+  it('shows loading label and disables submit while submitting', () => {
+    render(<BulkDescribeCta {...baseProps} isSubmitting />);
+
+    expect(screen.getByRole('button', { name: 'Starting describe run…' })).toBeDisabled();
+  });
+
+  it('surfaces submit error message when present', () => {
+    render(<BulkDescribeCta {...baseProps} errorMessage="Describe service unavailable" />);
+
+    expect(screen.getByText('Describe service unavailable')).toBeInTheDocument();
+  });
+
   it('disables submit with offline reason when remoteActionDisabled', async () => {
     const onSubmit = vi.fn();
     render(

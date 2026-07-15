@@ -14,6 +14,7 @@ vi.mock('@wordpress/i18n', () => ({
 }));
 
 const scan = vi.fn();
+let offline = false;
 
 let scanRun = {
   isScanning: false,
@@ -32,9 +33,14 @@ vi.mock('../WorkbenchMediaContext', () => ({
   }),
 }));
 
+vi.mock('../../../hooks/useSyncOffline', () => ({
+  useSyncOffline: () => offline,
+}));
+
 describe('MediaAnalyzeCta', () => {
   beforeEach(() => {
     scan.mockClear();
+    offline = false;
     scanRun = {
       isScanning: false,
       progress: null,
@@ -82,5 +88,27 @@ describe('MediaAnalyzeCta', () => {
     render(<MediaAnalyzeCta />);
 
     expect(screen.getByRole('button', { name: 'Clustering identities…' })).toBeDisabled();
+  });
+
+  it('disables analyze with offline reason when breaker is open', async () => {
+    offline = true;
+    selectedMedia = [{ id: 11 }];
+    render(<MediaAnalyzeCta />);
+
+    const button = screen.getByRole('button', { name: 'Analyze selected media' });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute('title', 'Unavailable while the recognition service is offline');
+    expect(button).toHaveAttribute('aria-disabled', 'true');
+    await userEvent.click(button);
+    expect(scan).not.toHaveBeenCalled();
+  });
+
+  it('enables analyze when online with selection', () => {
+    selectedMedia = [{ id: 11 }];
+    render(<MediaAnalyzeCta />);
+
+    const button = screen.getByRole('button', { name: 'Analyze selected media' });
+    expect(button).not.toBeDisabled();
+    expect(button).not.toHaveAttribute('title');
   });
 });

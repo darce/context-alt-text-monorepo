@@ -7,6 +7,10 @@ import type { JobStatusResponse } from '../../../../api/recognition';
 import * as recognitionApi from '../../../../api/recognition';
 import { useClusterActionMutations } from '../useClusterActionMutations';
 
+vi.mock('@wordpress/i18n', () => ({
+  __: (text: string) => text,
+}));
+
 vi.mock('../../../../api/recognition', () => ({
   createClusterForIdentity: vi.fn(),
   fetchScanStatus: vi.fn(),
@@ -14,6 +18,12 @@ vi.mock('../../../../api/recognition', () => ({
   reassignClusterIdentity: vi.fn(),
   rejectSuggestion: vi.fn(),
   splitCluster: vi.fn(),
+}));
+
+let offline = false;
+
+vi.mock('../../../../hooks/useSyncOffline', () => ({
+  useSyncOffline: () => offline,
 }));
 
 const jobStatus = (status: JobStatusResponse['status'], message?: string): JobStatusResponse => ({
@@ -44,6 +54,7 @@ describe('useClusterActionMutations pollSplitJob (BND-1-AUDIT-1)', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    offline = false;
     vi.mocked(recognitionApi.splitCluster).mockResolvedValue({
       job_id: 'split-job-1',
       status: 'pending',
@@ -83,4 +94,23 @@ describe('useClusterActionMutations pollSplitJob (BND-1-AUDIT-1)', () => {
     await waitFor(() => expect(onError).toHaveBeenCalledWith('boom'));
     expect(invalidateQueries).not.toHaveBeenCalled();
   });
+
+  it('exposes splitGate offline and refuses split without calling remote', () => {
+    offline = true;
+    const { result } = renderSplit();
+
+    expect(result.current.splitGate.disabled).toBe(true);
+    expect(result.current.splitGate.title).toBe('Unavailable while the recognition service is offline');
+    expect(result.current.splitGate['aria-disabled']).toBe(true);
+
+    result.current.split('c1', 2);
+    expect(recognitionApi.splitCluster).not.toHaveBeenCalled();
+  });
+
+  it('exposes enabled splitGate online', () => {
+    const { result } = renderSplit();
+    expect(result.current.splitGate.disabled).toBe(false);
+    expect(result.current.splitGate.title).toBeUndefined();
+  });
 });
+

@@ -81,6 +81,10 @@ vi.mock('../identity-clusters/useClusterSuggestionsLoader', () => ({
   useClusterSuggestionsLoader: (_options: ClusterSuggestionsLoaderOptions) => useClusterSuggestionsLoaderMock(),
 }));
 
+vi.mock('../../../hooks/useSyncOffline', () => ({
+  useSyncOffline: () => false,
+}));
+
 vi.mock('../../../api/recognition', () => ({
   mergeCluster: vi.fn(),
   updateClusterLabel: vi.fn(),

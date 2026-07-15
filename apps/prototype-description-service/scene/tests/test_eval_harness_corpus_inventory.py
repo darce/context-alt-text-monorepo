@@ -94,6 +94,20 @@ def test_inventory_dir_skips_wp_thumbnails(tmp_path):
     assert [r.path for r in records] == ["hero.jpg"]
 
 
+def test_inventory_dir_skips_scaled_copy_when_the_original_is_present(tmp_path):
+    # WP re-encodes big uploads to `-scaled`; the bytes differ from the original so
+    # sha256 dedupe cannot catch the pair (398 such pairs in the real uploads tree).
+    _save(tmp_path / "IMG_2957.jpg", (10, 200, 10), size=(64, 48))
+    _save(tmp_path / "IMG_2957-scaled.jpg", (10, 200, 10), size=(32, 24))
+    assert [r.path for r in inventory_dir(tmp_path)] == ["IMG_2957.jpg"]
+
+
+def test_inventory_dir_keeps_a_scaled_only_upload(tmp_path):
+    # Some uploads exist ONLY as `-scaled`; dropping those loses the image itself.
+    _save(tmp_path / "IMG_0216-scaled.jpg", (10, 200, 10))
+    assert [r.path for r in inventory_dir(tmp_path)] == ["IMG_0216-scaled.jpg"]
+
+
 def test_dedupe_by_sha256(tmp_path):
     _save(tmp_path / "a.jpg", (5, 5, 5))
     _save(tmp_path / "b.jpg", (5, 5, 5))  # identical bytes => same sha

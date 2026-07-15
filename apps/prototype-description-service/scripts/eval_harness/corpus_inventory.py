@@ -47,6 +47,11 @@ _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic"}
 # WordPress generates resized copies named `<stem>-<W>x<H>.<ext>`; skip them so
 # the inventory holds originals only.
 _THUMBNAIL_SUFFIX = re.compile(r"-\d+x\d+\.[a-zA-Z]+$")
+# Above `big_image_size_threshold` WordPress also serves a `<stem>-scaled.<ext>`
+# re-encode beside the untouched original. It is the same photo at a different size,
+# so its bytes differ and sha256 dedupe cannot catch it — 398 such pairs sit in the
+# real uploads tree, and left in they double-count a stratum and burn review slots.
+_SCALED_SUFFIX = re.compile(r"-scaled(\.[a-zA-Z]+)$")
 
 
 @dataclass(frozen=True)
@@ -173,12 +178,27 @@ def inventory_image(path: Path, root: Path) -> ImageRecord:
     )
 
 
+def _is_redundant_scaled_copy(path: Path) -> bool:
+    """True for a WP `-scaled` re-encode whose untouched original sits beside it.
+
+    Gated on the original actually existing: some uploads are `-scaled`-only, and
+    dropping those unconditionally would lose the image rather than a duplicate.
+    """
+    match = _SCALED_SUFFIX.search(path.name)
+    if not match:
+        return False
+    return path.with_name(_SCALED_SUFFIX.sub(r"\1", path.name)).exists()
+
+
 def iter_original_images(root: Path) -> Iterable[Path]:
-    """Yield original image paths under ``root`` (WP `-WxH` thumbnails excluded)."""
+    """Yield original image paths under ``root``.
+
+    Excludes WP `-WxH` thumbnails and redundant `-scaled` re-encodes.
+    """
     for path in sorted(root.rglob("*")):
         if not path.is_file() or path.suffix.lower() not in _IMAGE_EXTS:
             continue
-        if _THUMBNAIL_SUFFIX.search(path.name):
+        if _THUMBNAIL_SUFFIX.search(path.name) or _is_redundant_scaled_copy(path):
             continue
         yield path
 

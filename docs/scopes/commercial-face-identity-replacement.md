@@ -1,6 +1,7 @@
 # Scope: Commercial Face Identity Replacement (FIR)
 
 **Intake**: 2026-07-15 · task FIR-1 · answers recorded in handoff MCP
+**Epic**: [E22 Commercial Face Identity Replacement](../epics/v0.5.0/commercial-face-identity-replacement-epic.md) · task plans in `docs/tasks/fir/`
 **Assessment**: [docs/assessments/current/commercial-face-pipeline-replacement-assessment-2026-07-15.md](../assessments/current/commercial-face-pipeline-replacement-assessment-2026-07-15.md)
 
 ## Problem

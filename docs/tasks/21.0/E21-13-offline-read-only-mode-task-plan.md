@@ -29,7 +29,7 @@ When the recognition backend is unreachable (circuit breaker **open**), remote-c
 Add `hooks/useSyncOffline.ts`: `useSyncOffline(): boolean` wrapping `useSyncHealth()` + `isSyncOffline`. Single-sources the derivation and copy semantics ([sr-007]). Returns `false` while health is loading (never gate before an authoritative result — mirrors the `!health` banner guard).
 
 ### 2. Disabled-with-reason affordance
-Add a small presentational helper (e.g. `components/RemoteActionGate.tsx` or a `useRemoteActionGate({offline})` returning `{disabled, ariaDisabled, title, reason}`) that pairs `disabled` + `aria-disabled` + `title` + an optional inline `<p className="description">` reason ([rg-004], [UI-02]/[sr-004], A11Y-11). Reuses the existing `SettingsForm` inline-description convention (`:159-163`) and `title`-tooltip pattern (`SuggestionReviewPanel`). The global announcement leans on the existing `DegradedModeBanner` live-region (`role="alert"` + `aria-live`) — do not add a second assertive region per action.
+Add a small presentational helper (shipped as `hooks/useRemoteActionGate.ts` returning `{disabled, 'aria-disabled', title}`) that pairs `disabled` + `aria-disabled` + `title` ([rg-004], [UI-02]/[sr-004], A11Y-11); the optional inline `<p className="description">` reason was dropped in implementation — `title` + the banner live-region carry the reason (see the a11y walkthrough doc). Reuses the existing `SettingsForm` inline-description convention (`:159-163`) and `title`-tooltip pattern (`SuggestionReviewPanel`). The global announcement leans on the existing `DegradedModeBanner` live-region (`role="alert"` + `aria-live`) — do not add a second assertive region per action.
 
 ### 3. Action classification (authoritative)
 
@@ -58,14 +58,14 @@ For each gated surface, cover **loading / empty / error / offline** × focus + a
 ## Slices
 
 ### Slice 1 — Shared offline signal + gate affordance
-- [ ] `hooks/useSyncOffline.ts` (+ test): returns `false` while loading, `true` when breaker open.
-- [ ] `useRemoteActionGate`/`RemoteActionGate` helper (+ test): `disabled` + `aria-disabled` + `title` + inline reason, token-styled.
-- [ ] Test seam: the `useSyncHealth`/`createMockQuery` breaker lever is for the **`useSyncOffline.ts` unit test only**. Extended *component* tests must **module-mock `useSyncOffline`** directly (`vi.mock('.../useSyncOffline')`, as `SyncStatusIndicator.test.tsx` mocks its hooks) — they render without a `QueryClientProvider`, so mocking `useSyncHealth` alone won't work.
+- [x] `hooks/useSyncOffline.ts` (+ test): returns `false` while loading, `true` when breaker open.
+- [x] `useRemoteActionGate`/`RemoteActionGate` helper (+ test): `disabled` + `aria-disabled` + `title` (inline reason dropped; see §2), token-styled.
+- [x] Test seam: the `useSyncHealth`/`createMockQuery` breaker lever is for the **`useSyncOffline.ts` unit test only**. Extended *component* tests must **module-mock `useSyncOffline`** directly (`vi.mock('.../useSyncOffline')`, as `SyncStatusIndicator.test.tsx` mocks its hooks) — they render without a `QueryClientProvider`, so mocking `useSyncHealth` alone won't work.
 
 ### Slice 2 — Gate the 6 remote-compute actions
-- [ ] Wire `useSyncOffline()` into the 6 gate points above; disabled + reason when offline; reactively re-enable on heal.
-- [ ] Confirm recovery affordances (test-connection, triggerSync, resetMirror) and all curation/local actions remain enabled — assert with tests.
-- [ ] Extend (module-mock `useSyncOffline` per Slice 1 seam): `MediaAnalyzeCta.test.tsx`, `Panels.test.tsx`, `useBulkDescribe.test.tsx`, `DescribePanel.test.tsx` (assert the **form-submit/Enter** path is gated, not just the button), `SettingsPage.test.tsx` (test-connection stays enabled offline), roster/cluster action tests.
+- [x] Wire `useSyncOffline()` into the 6 gate points above; disabled + reason when offline; reactively re-enable on heal.
+- [x] Confirm recovery affordances (test-connection, triggerSync, resetMirror) and all curation/local actions remain enabled — assert with tests.
+- [x] Extend (module-mock `useSyncOffline` per Slice 1 seam): `MediaAnalyzeCta.test.tsx`, `Panels.test.tsx`, `useBulkDescribe.test.tsx`, `DescribePanel.test.tsx` (assert the **form-submit/Enter** path is gated, not just the button), `SettingsPage.test.tsx` (test-connection stays enabled offline), roster/cluster action tests.
 
 ### Slice 3 — State matrix + a11y walkthrough
 - [x] Offline column added to each gated surface's state coverage (loading/empty/error/offline).

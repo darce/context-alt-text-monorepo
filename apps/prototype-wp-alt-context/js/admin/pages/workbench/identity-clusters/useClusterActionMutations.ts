@@ -13,6 +13,8 @@ import {
   rejectSuggestion,
   splitCluster,
 } from '../../../api/recognition';
+import { useRemoteActionGate } from '../../../hooks/useRemoteActionGate';
+import { useSyncOffline } from '../../../hooks/useSyncOffline';
 import { isScanSuccessStatus } from '../../../hooks/jobStateMachineUtils';
 import { delay, isAbortError } from './clusterMutationUtils';
 
@@ -54,6 +56,10 @@ export const useClusterActionMutations = ({
   onAbort,
   invalidateQueries,
 }: UseClusterActionMutationsOptions) => {
+  // RES-15: gate split only — reassign/pin/reject stay live offline (outbox curation).
+  const offline = useSyncOffline();
+  const splitGate = useRemoteActionGate(offline);
+
   const reassignMutation = useMutation({
     mutationKey: ['reassign-identities', clusterId],
     mutationFn: async (identityIds: string[]) => {
@@ -138,6 +144,9 @@ export const useClusterActionMutations = ({
       nClusters?: number;
       anchorIdentityId?: string;
     }) => {
+      if (offline) {
+        throw new Error(__('Unavailable while the recognition service is offline', 'alt-context'));
+      }
       const mode = (identityCount ?? 0) > SPLIT_ASYNC_THRESHOLD ? 'async' : 'sync';
       const result = await splitCluster(clusterId, { nClusters, anchorIdentityId, splitMode: 'forced', mode });
       if ('job_id' in result) {
@@ -208,8 +217,12 @@ export const useClusterActionMutations = ({
       assignToClusterMutation.mutate({ identityId, targetClusterId, signal }),
     createClusterForIdentity: (identityId: string, label: string, signal?: AbortSignal) =>
       createClusterMutation.mutate({ identityId, label, signal }),
-    split: (clusterId: string, nClusters = 2, anchorIdentityId?: string) =>
-      splitMutation.mutate({ clusterId, nClusters, anchorIdentityId }),
+    split: (clusterId: string, nClusters = 2, anchorIdentityId?: string) => {
+      if (offline) {
+        return;
+      }
+      splitMutation.mutate({ clusterId, nClusters, anchorIdentityId });
+    },
     rejectSuggestion: (suggestionId: string) => rejectSuggestionMutation.mutate(suggestionId),
     pinRepresentative: (representativeId: string, isPinned: boolean, signal?: AbortSignal) =>
       pinRepresentativeMutation.mutate({ representativeId, isPinned, signal }),
@@ -219,5 +232,6 @@ export const useClusterActionMutations = ({
     isSplitting: splitMutation.isPending,
     isRejectingSuggestion: rejectSuggestionMutation.isPending,
     isPinningRepresentative: pinRepresentativeMutation.isPending,
+    splitGate,
   };
 };

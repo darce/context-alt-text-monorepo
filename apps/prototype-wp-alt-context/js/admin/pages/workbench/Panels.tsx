@@ -162,6 +162,10 @@ interface ConfirmPanelProps {
   progress?: JobProgress | null;
   etaSeconds?: number | null;
   isSynced?: boolean;
+  /** Remote-compute offline gate (RES-15) — container threads useRemoteActionGate props. */
+  remoteActionDisabled?: boolean;
+  remoteActionTitle?: string;
+  remoteActionAriaDisabled?: true;
 }
 
 export const ConfirmPanel = ({
@@ -174,6 +178,9 @@ export const ConfirmPanel = ({
   progress,
   etaSeconds,
   isSynced,
+  remoteActionDisabled = false,
+  remoteActionTitle,
+  remoteActionAriaDisabled,
 }: ConfirmPanelProps) => (
   <div className="acx-apply-panel">
     <p>{__('Review the most recent recognition job and cluster the detected embeddings.', 'alt-context')}</p>
@@ -185,7 +192,14 @@ export const ConfirmPanel = ({
         {__('Status', 'alt-context')} — {status ?? __('Pending', 'alt-context')}
       </li>
     </ul>
-    <button type="button" className="acx-apply-panel__scan" onClick={onCluster} disabled={isClustering}>
+    <button
+      type="button"
+      className="acx-apply-panel__scan"
+      onClick={onCluster}
+      disabled={isClustering || remoteActionDisabled}
+      aria-disabled={remoteActionAriaDisabled}
+      title={remoteActionTitle}
+    >
       {isClustering ? __('Clustering faces…', 'alt-context') : __('Cluster the latest job results', 'alt-context')}
     </button>
     <button type="button" className="acx-link-button" onClick={onViewClusters} disabled={!jobId}>

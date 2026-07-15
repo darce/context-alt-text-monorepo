@@ -15,10 +15,10 @@ Remove the non-commercial InsightFace buffalo weights from the production face-i
 
 ## Hard Constraints
 
-1. **License isolation**: buffalo weights never in production images at commercial exposure; `insightface` only in a `[bench]` extra; benchmark embeddings never in the production DB (fixed-dim pgvector columns make mixing impossible anyway).
+1. **License isolation**: buffalo weights never in production images at commercial exposure; `insightface` only in a `[bench]` extra; benchmark embeddings never in the production DB. (Fixed-dim pgvector columns enforce this structurally only once prod is 128D — until the FIR-6 flip both are 512D, so pre-cutover separation is procedural: eval-env-only buffalo legs + run-artifact storage.)
 2. **Dark until gated** (RLSE-02/07): the new pipeline wires in behind a face-pipeline profile flag; the production default does not change until an **operator-recorded MCP gate decision** exists (bake-off report proposes; operator decides; switch-over slice is blocked without it).
 3. **CPU-first**: ARM A1 is the production path; A10/CUDA is bake-off-first, production GPU is follow-on (FIR-7).
-4. **Greenfield after verification**: no data migrations — but FIR-2 must first enumerate live tenants and record operator wipe/re-scan sign-off; the dimension flip (512→128, both surfaces + deploy configs) lands only in FIR-4's cutover slice.
+4. **Greenfield after verification**: no data migrations — but FIR-2 must first enumerate live tenants and record operator wipe/re-scan sign-off. The dimension **defaults** flip (512→128, `EMBEDDING_DIMENSION` + `PGVECTOR_DIM` + deploy configs) lands only in FIR-6's gated switch-over slice, so every FIR-4 deliverable is mergeable dark (no slice held hostage to a later gate); dev/eval environments exercise the 128D pipeline earlier via the `PGVECTOR_DIM` env without touching defaults.
 5. **Thresholds are measured, never copied** (guide §8.1, PERF-06): every similarity/quality/unknown threshold comes from FIR-6 calibration on ACX data.
 6. **Reuse VLM-6's Golden-150 harness** — six coordination asks + fallbacks per scope §Coordination; no parallel corpus, no forked walker without a recorded decision.
 
@@ -27,13 +27,13 @@ Remove the non-commercial InsightFace buffalo weights from the production face-i
 | Phase | Tasks | Outcome |
 | --- | --- | --- |
 | P1 Seam + adapters | FIR-2, FIR-3 | Model-neutral seams, provenance column, consumer audit, YuNet+SFace adapters with golden parity tests |
-| P2 Dark integration + harness | FIR-4, FIR-5 (parallel after FIR-3) | Pipeline wired dark with observability + boot-time hash verification; bake-off harness with occlusion-first slices + perf leg |
+| P2 Dark integration + harness | FIR-4 (after FIR-3) ∥ FIR-5 (scaffolding starts after FIR-2; candidate legs need FIR-3) | Pipeline wired dark with observability + boot-time hash verification; bake-off harness with occlusion-first slices + perf leg |
 | P3 Calibrate + gate + switch | FIR-6 | Quality rework, hard-case recovery (gate→weight→aggregate→constrain), bake-off report, operator gate, switch-over |
 | P4 Follow-ons | FIR-7 (GPU), FIR-8 (contingent escalation) | Production CUDA path; escalation ladder only on a failed gate |
 
 ## Task Decomposition
 
-Task definitions, dependency edges, and deliverables are canonical in the scope doc's [Task decomposition table](../../scopes/commercial-face-identity-replacement.md#task-decomposition). Task plans live in `docs/tasks/fir/` as `FIR-<n>-*-task-plan.md`, authored just-in-time per phase; FIR-2 and FIR-3 plans are written first (P1).
+Task definitions, dependency edges, and deliverables are canonical in the scope doc's [Task decomposition table](../../scopes/commercial-face-identity-replacement.md#task-decomposition). Task plans live in `docs/tasks/fir/` as `FIR-<n>-*-task-plan.md`; FIR-2 and FIR-3 plans are written (P1). **Just-in-time authoring is owned**: the agent starting a phase authors that phase's plans at phase entry (trigger: predecessor task reaches `done`), and every plan passes `/planning-review` with verdict `pass`/`pass_with_findings` before its `make task-start` — no plan, no branch.
 
 ## Exit Criteria
 

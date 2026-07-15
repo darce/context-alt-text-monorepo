@@ -34,7 +34,7 @@ The production embedder is license-blocked. The guide's verdict: YuNet is not a 
 
 ## Current State Analysis
 
-FIR-2 leaves: neutral observation dataclass, `EmbeddingModelManifest`, dim centralized (still 512 in prod; adapters here produce 128 and declare it via manifest — the flip is FIR-4's). `InsightFaceAdapter` remains the wired production implementation. No YuNet/SFace code exists anywhere in the repo.
+FIR-2 leaves: a single neutral `FaceDetection` seam type, `EmbeddingModelManifest`, dim centralized (defaults still 512; adapters here produce 128 and declare it via manifest — the default flip is FIR-6's switch-over; dev/eval use the `PGVECTOR_DIM` env). `InsightFaceAdapter` remains the wired production implementation. No YuNet/SFace code exists anywhere in the repo.
 
 ## Target Outcome
 

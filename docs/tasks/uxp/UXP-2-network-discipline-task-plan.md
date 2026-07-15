@@ -57,9 +57,11 @@ Not every `acx/v1/recognition/*` route reaches the recognition service; membersh
 | `useMediaIdentities` | 3s, **conditional** on `hasPendingClustering`; already `retry: false`, already stops on error | yes | **yes** |
 | `useRecognitionClusters` | 30s | sometimes — `ClusterReadService` serves the local projection mirror when `should_use_local_projection()` | **yes** (gating a local read costs nothing; not gating an upstream read costs a storm) |
 | `useSyncHealth` | 15s | **no** — `SyncHealthController::get_sync_health` reads a transient plus local `SyncStateRepository` / `OutboxQueryRepository` counts and makes zero upstream calls | **no** — see below |
-| `useSyncStatus` | 120s | yes | no — two orders of magnitude below the hot pollers; cannot contribute to a storm |
+| `useSyncStatus` | 120s | **no** — `SyncStatusController::get_sync_status` reads local `SyncStateRepository` state only; no `wp_remote_*` call | **no** — local; there is nothing to gate |
 
-**`useSyncHealth` is excluded deliberately.** It cannot produce a recognition 429, because it never calls recognition. Gating it would halve the operator's status freshness (15s → 30s) during a storm while saving zero upstream requests, and would couple a purely-local hook to the cooldown module for no benefit. It stays at 15s, unmodified.
+**The two sync hooks are excluded deliberately, and for the same reason:** neither calls recognition, so neither can produce a recognition 429 and neither contributes to a storm. Gating `useSyncHealth` would additionally halve the operator's status freshness (15s → 30s) exactly when they are trying to understand the storm, while saving zero upstream requests. Both stay unmodified.
+
+Both are nonetheless under the `acx/v1/recognition/*` route prefix — which is why membership is decided by what a query *calls*, not by what its URL *looks like*.
 
 ## Constraints
 
@@ -196,7 +198,7 @@ Changes:
 - `recognitionCooldown`: `openCooldown(seconds)`, `isCoolingDown()`, subscribe/notify; single source of truth (sr-007).
 - QueryClient error path opens the cooldown on 429/503-with-`Retry-After`.
 - Gate `refetchInterval` on the cooldown for exactly the membership set: `useScanStatus`, `useMultiScanStatus`, `useBatchRunStatus`, `useDescribeRunProgress`, `useMediaIdentities`, `useRecognitionClusters`. Resume on expiry.
-- `useSyncHealth` and `useSyncStatus` are **not** gated (membership table gives the reason for each).
+- `useSyncHealth` and `useSyncStatus` are **not** gated — both read local state only (membership table).
 
 Proof:
 

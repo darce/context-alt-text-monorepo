@@ -35,8 +35,9 @@ import argparse
 import json
 import os
 import sys
+import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import asdict, dataclass, fields
+from dataclasses import MISSING, asdict, dataclass, fields
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -94,6 +95,7 @@ class FacePassRow:
     face_count: int | None  # None iff the item errored
     names: list[str]
     error: str | None
+    elapsed_ms: float | None = None  # per-item analyze wall-clock (open-loop, PERF-03); None on legacy rows
 
 
 def assert_scratch_tenant(client: FaceClient) -> None:
@@ -181,6 +183,10 @@ def assign_media_ids(
 
 
 _ROW_FIELDS = {f.name for f in fields(FacePassRow)}
+# Required = fields with no default. Optional fields added later (e.g. elapsed_ms) may be
+# absent on legacy checkpoint rows; those are accepted and backfilled from the dataclass
+# default rather than dropped, so a schema addition never invalidates an existing pass (A-06).
+_REQUIRED_ROW_FIELDS = {f.name for f in fields(FacePassRow) if f.default is MISSING}
 
 
 def load_face_pass_rows(path: Path) -> list[FacePassRow]:
@@ -196,7 +202,8 @@ def load_face_pass_rows(path: Path) -> list[FacePassRow]:
             raw = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if not isinstance(raw, dict) or set(raw) != _ROW_FIELDS:
+        # required fields present, no unknown keys; missing optional fields backfill from defaults
+        if not isinstance(raw, dict) or not (_REQUIRED_ROW_FIELDS <= set(raw) <= _ROW_FIELDS):
             continue
         rows.append(FacePassRow(**raw))
     return rows
@@ -258,6 +265,7 @@ def run_face_pass(
     consecutive_failures = 0
     with out.open("a") as handle:
         for index, (record, source, media_id) in enumerate(candidates):
+            t0 = time.perf_counter()
             try:
                 image_path = roots[source] / record.path
                 image_bytes = image_path.read_bytes()
@@ -272,6 +280,7 @@ def run_face_pass(
                     face_count=face_count,
                     names=names,
                     error=None,
+                    elapsed_ms=round((time.perf_counter() - t0) * 1000, 1),
                 )
             except Exception as exc:  # noqa: BLE001 — per-item isolation is the contract
                 row = FacePassRow(
@@ -282,6 +291,7 @@ def run_face_pass(
                     face_count=None,
                     names=[],
                     error=f"{type(exc).__name__}: {exc}",
+                    elapsed_ms=round((time.perf_counter() - t0) * 1000, 1),
                 )
             _append_row(handle, row)
             done.append(row)
@@ -301,9 +311,29 @@ def run_face_pass(
     return done
 
 
+def _percentile(values: Sequence[float], q: float) -> float:
+    """Nearest-rank percentile (q in 0..1), deterministic, no numpy. Caller guarantees non-empty."""
+    ordered = sorted(values)
+    return ordered[min(int(q * len(ordered)), len(ordered) - 1)]
+
+
 def summarize(rows: Sequence[FacePassRow]) -> dict[str, Any]:
     ok = [r for r in rows if r.error is None and r.face_count is not None]
     counts = [r.face_count for r in ok]
+    # Execution stats: per-call analyze latency as PERCENTILES (PERF-01 — never an average),
+    # from the open-loop per-item timing (PERF-03). Absent on legacy rows -> latency_ms is None.
+    latencies = [r.elapsed_ms for r in rows if r.elapsed_ms is not None]
+    latency_ms = (
+        {
+            "n": len(latencies),
+            "p50": round(_percentile(latencies, 0.50), 1),
+            "p95": round(_percentile(latencies, 0.95), 1),
+            "p99": round(_percentile(latencies, 0.99), 1),
+            "max": round(max(latencies), 1),
+        }
+        if latencies
+        else None
+    )
     return {
         "scanned": len(rows),
         "ok": len(ok),
@@ -311,6 +341,7 @@ def summarize(rows: Sequence[FacePassRow]) -> dict[str, Any]:
         "with_faces": sum(1 for c in counts if c >= 1),
         "crowds": sum(1 for c in counts if c >= 3),
         "faces_found": sum(counts),
+        "latency_ms": latency_ms,
     }
 
 
@@ -382,6 +413,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
             if (index + 1) % 25 == 0:
                 print(f"  {index + 1}/{len(with_ids)} ...", flush=True)
 
+        t_start = time.perf_counter()
         done = run_face_pass(
             with_ids,
             client,
@@ -391,6 +423,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
             stall_limit=args.stall_limit,
             on_progress=progress,
         )
+        wall_s = time.perf_counter() - t_start
     except SeededTenantError as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)
         return 2
@@ -401,6 +434,14 @@ def _main(argv: Sequence[str] | None = None) -> int:
         client.close()
 
     summary = summarize(done)
+    # Wall-clock throughput for THIS run (resumed rows were timed in their own run). Latency
+    # percentiles are per-call (summarize.latency_ms); this is the open-loop run-level view.
+    summary["run"] = {
+        "analyzed_this_run": len(with_ids),
+        "resumed": len(resume_rows),
+        "wall_clock_s": round(wall_s, 1),
+        "images_per_min": round(len(with_ids) / wall_s * 60, 1) if wall_s > 0 and with_ids else None,
+    }
     print(json.dumps(summary, indent=2))
     return 0
 

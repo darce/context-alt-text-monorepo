@@ -243,15 +243,21 @@ admin-oci:
 # exactly once (api_key=…); copy it into the plugin Settings. Automated form of the
 # canonical prod mint in docs/runbooks/key-management.md Track 1.
 # Usage: make admin-oci-mint TENANT=<uuid> [SITE_URL=<url>]
-OCI_PROD_DIR ?= /opt/acx-backend/prod
+# TENANT/SITE_URL reach the shell via the environment (export) and are validated (UUID / URL
+# charset) BEFORE use — never textual make-expansion — so an operator-pasted value cannot inject
+# a command through the ssh double-hop [WEB-02]. The prod dir and --env are hardcoded so they
+# cannot diverge into a wrong-DB mint [MRG-D-02].
+export TENANT
+export SITE_URL
 admin-oci-mint:
-	@test -n "$(TENANT)" || { echo "usage: make admin-oci-mint TENANT=<uuid> [SITE_URL=<url=http://localhost:10018>]" >&2; exit 2; }
-	@echo "→ minting a prod key for tenant $(TENANT) (site $(or $(SITE_URL),http://localhost:10018)) via $(OCI_HOST) ..."
-	@ssh $(OCI_USER)@$(OCI_HOST) 'set -e; cd $(OCI_PROD_DIR); \
-		mk="docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod"; \
-		$$mk tenant create --tenant "$(TENANT)" --site-url "$(or $(SITE_URL),http://localhost:10018)"; \
-		$$mk create --tenant "$(TENANT)"'
-	@echo "→ copy the 'api_key=' value above into wp-admin → Alt Context Settings (shown once; unrecoverable)."
+	@set -e; \
+	tenant="$${TENANT:-}"; site="$${SITE_URL:-http://localhost:10018}"; \
+	test -n "$$tenant" || { echo "usage: make admin-oci-mint TENANT=<uuid> [SITE_URL=<url>]" >&2; exit 2; }; \
+	printf '%s' "$$tenant" | grep -qiE '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$$' || { echo "✗ TENANT must be a UUID (got '$$tenant')" >&2; exit 2; }; \
+	printf '%s' "$$site" | grep -qE '^https?://[A-Za-z0-9:/._-]+$$' || { echo "✗ SITE_URL has invalid characters (allowed: A-Za-z0-9 : / . _ -)" >&2; exit 2; }; \
+	echo "→ minting a prod key for tenant $$tenant (site $$site) via $(OCI_HOST) ..."; \
+	ssh $(OCI_USER)@$(OCI_HOST) "set -e; cd /opt/acx-backend/prod; mk=\"docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod\"; \$$mk tenant create --tenant \"$$tenant\" --site-url \"$$site\"; \$$mk create --tenant \"$$tenant\""; \
+	echo "→ copy the 'api_key=' value above into wp-admin → Alt Context Settings (shown once; unrecoverable)."
 
 # Reset local database (db-reset is an alias)
 reset db-reset:

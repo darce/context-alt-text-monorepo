@@ -70,6 +70,15 @@ describe('ClusterDrawerPanel rescan state matrix (RES-15, A11Y-24)', () => {
     expect(screen.getByRole('button', { name: 'Rescanning…' })).toBeDisabled();
   });
 
+  it('renders the detail error and keeps rescan available when detail loading fails', () => {
+    render(<ClusterDrawerPanel {...baseProps} detailError="Failed to load cluster identities." />);
+
+    const errorCopy = screen.getByText('Failed to load cluster identities.');
+    expect(errorCopy).toBeInTheDocument();
+    expect(errorCopy).toHaveClass('acx-cluster-drawer__status--error');
+    expect(screen.getByRole('button', { name: 'Rescan with sensitive settings' })).toBeEnabled();
+  });
+
   it('disables the sensitive rescan with an accessible reason while offline', () => {
     render(
       <ClusterDrawerPanel

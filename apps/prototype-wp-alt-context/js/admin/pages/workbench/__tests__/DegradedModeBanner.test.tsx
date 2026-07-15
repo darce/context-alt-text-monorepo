@@ -153,7 +153,10 @@ describe('DegradedModeBannerView', () => {
       />,
     );
 
-    expect(screen.getByRole('alert')).toBeInTheDocument();
+    // A11Y-23 / rg-004: advisory mode is a polite status region, not an assertive alert.
+    const banner = screen.getByRole('status');
+    expect(banner).toHaveAttribute('aria-live', 'polite');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.getByText('Sync attention needed')).toBeInTheDocument();
     expect(screen.queryByText('Working offline')).not.toBeInTheDocument();
     expect(screen.getByText(/warning threshold/i)).toBeInTheDocument();

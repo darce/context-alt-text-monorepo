@@ -174,6 +174,12 @@ Changes:
 - **Dogfooded face curation (shipped naming flow)**: provision a dedicated eval tenant on the existing dev/staging stack (`scripts/provision_demo.py` flow). Point the **existing** LocalWP install (`~/Development/wp-context-alt-text`, no new instance) at that tenant via `ACX_RECOGNITION_URL` / the `acx_recognition_base_url` filter + eval-tenant API key (**operator-performed** — agents never modify LocalWP config, per plugin-boundary rule; revert the setting after curation). Upload Golden-100 through the plugin so the recognition service's HDBSCAN clustering (`recognition/infrastructure/clustering/hdbscan_adapter.py`) proposes entity clusters, and **curate them in the plugin's shipped naming flow** (the E21-13 walkthrough surface) — this dogfoods the exact product curation path. Then a new export step (`scripts/eval_harness/` addition) reads curated identities back via the `/media/identities` endpoint (already consumed by `cli.py:231`), matches service media rows to golden.json entries by `sha256`/filename, and writes confirmed identity labels into the manifest. Corpus separation is manifest + tenant-scoped — no WP media-library "gallery" grouping is needed; WP is the curation UI, not the corpus organizer. The bench runner (S2/S3) still reads local files + manifest and never touches WP. **Anti-circularity rule**: service clustering output is a *draft only* — human confirmation is what makes it ground truth; recognition metrics are always scored against the curated truth, never against the service's own uncurated output. This doubles as an end-to-end exercise of the ingest→embed→cluster pipeline on hard strata.
 - **Spatial-relation facts**: for multi-face images, derive relative-placement facts (left-of / right-of / between, foreground/background) from the curated face boxes; captions claiming placements are scored for placement correctness alongside fabricated-fact rate.
 - `caption_metrics.py`: fabricated-fact hallucination metric.
+- **FIR-1 bake-off coordination — reuse this harness, don't fork it** (see `docs/scopes/commercial-face-identity-replacement.md` §Coordination, `feature/fir-1` @ `d3e21098`; decision `claude_fir1_vlm6_harness_coordination`). This curation pass is the cheapest place to capture FIR's face-recognition ground truth — operator labor is the locked binding constraint, so a second tagging pass would double it:
+  - **Keep the S1 curation eval tenant — do NOT dispose it.** The curation tenant (`4ddf8f36…`, LocalWP `localhost:10018`) is RETAINED after curation for the FIR bake-off; it holds the curated clusters/identities FIR-5 reuses. The earlier "disposable / orphan at teardown" framing is superseded for this tenant. (The synthetic face-pass tenant may still be disposed once its face-pass JSONL is backed up.)
+  - **Per-entry stratum tags in golden.json.** Write stratum membership (occlusion, low-light/blur, crowds, profile) into each entry's `domain`/`difficulty` manifest fields, not only into the strata sidecar/browse set — FIR-5 reads per-entry `domain` (occlusion is already a ≥5-image stratum) and drops its own `slice_tags`.
+  - **Persist ALL curated face boxes** (named + anonymous strangers, `name=None`) per entry — box-level detection ground truth for FIR's detector leg (YuNet vs SCRFD reference), not just `face_count`. XMP/MWG regions already carry the coords; the export step persists every box.
+  - **Anti-blind-spot: operator tags faces the detector missed.** Cluster drafts come from the buffalo-backed service, so faces its detector misses never appear as drafts; the operator must add missed faces (naming flow / XMP region tagging), or FIR inherits buffalo's blind spots as the truth ceiling — biasing the bake-off toward the incumbent.
+  - **Retain the full-res originals** — FIR needs them for synthetic-occlusion pairs (beyond the resolution floor already enforced).
 
 Proof:
 
@@ -189,6 +195,7 @@ Changes:
 - **Execution locus**: `bakeoff_runner.py` executes **on the bake host** (invoked over Tailscale SSH from the laptop, same access path as `acx-backend`); Golden-100 images are rsynced to the host once before the window; per-model metrics + raw generations are pulled back to the laptop after each model completes (so a window abort loses at most one model's outputs).
 - Weight pre-pull script; dry-run mode validated locally against a stub server.
 - **Per-stack smoke gate**: one real inference per serving stack before the window — llama.cpp via MiniCPM-V 4.6 GGUF locally (laptop/A1); vLLM and HF Transformers via their smallest candidate on a short throwaway GPU boot (≤1 h) or CPU-mode where the stack supports it. No stack enters S3 unsmoked.
+- **Modality-agnostic registry/run-record (FIR-1 reuse)**: the candidate registry schema and the run-record's face sections stay generic — the "face legs vacuous by design" stance (VLM-2B) was a scope choice, not a schema invariant. FIR-5 registers detector+embedder candidates in-process and reuses this same `fetch_run_record` walker (per-item isolation, rg-007 bounded stall), determinism re-score, and report machinery; the S2 freeze either includes FIR's face legs or FIR runs its own driver against the same corpus + manifest.
 
 Proof:
 
@@ -204,6 +211,7 @@ Changes:
 - Order: incumbent anchor first (validates harness in-window), then verified-evidence candidates, unverified labs last, Phi-4 anchor last.
 - Serving gate: 60 min/candidate; failures recorded as `serving-gate-failed` with the blocking error [AGT-06].
 - MiMo-VL: `/no_think` output-shape check + MMMU-anomaly probe.
+- **FIR-1 GPU co-scheduling**: FIR's ORT-CUDA detector/embedder legs ride this single S3 A10 window or explicitly book a second one — GPU hosts stay off otherwise [RES-07].
 - Teardown: terminate instance, verify OCID gone [RES-07].
 
 Proof:
@@ -270,6 +278,7 @@ Proof:
 - [ ] 62 new images selected, stratified (incl. occlusion/mirrors/crowds/abstract/art/B&W/animals ≥5 each), license/PII-screened, provenance recorded
 - [ ] Manifest schema extended (additive) + reference facts confirmed for all 100
 - [ ] Eval tenant provisioned; LocalWP pointed at it; Golden-100 uploaded via plugin; clusters curated in the shipped naming flow
+- [ ] FIR-1 capture (during this pass): per-entry `domain` tags in golden.json; ALL face boxes persisted (named + strangers); operator tagged detector-missed faces; curation tenant `4ddf8f36…` RETAINED (not disposed); full-res originals kept
 - [ ] Identity-export step implemented (/media/identities → golden.json by sha256 match); ground truth confirmed for all 100
 - [ ] Spatial-relation facts derived from curated face boxes for multi-face images
 - [ ] Hallucination + placement-correctness metrics implemented with unit tests

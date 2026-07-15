@@ -69,7 +69,10 @@ describe('DegradedModeBannerView', () => {
       />,
     );
 
-    expect(screen.getByRole('alert')).toBeInTheDocument();
+    const banner = screen.getByRole('alert');
+    expect(banner).toBeInTheDocument();
+    // A11Y-23: offline transition is announced via assertive live region.
+    expect(banner).toHaveAttribute('aria-live', 'assertive');
     expect(screen.getByText('Working offline')).toBeInTheDocument();
     expect(screen.getByText(/local copy/i)).toBeInTheDocument();
     expect(screen.getByTestId('acx-degraded-mode-banner-icon')).toBeInTheDocument();

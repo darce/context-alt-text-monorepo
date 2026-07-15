@@ -68,10 +68,10 @@ For each gated surface, cover **loading / empty / error / offline** × focus + a
 - [ ] Extend (module-mock `useSyncOffline` per Slice 1 seam): `MediaAnalyzeCta.test.tsx`, `Panels.test.tsx`, `useBulkDescribe.test.tsx`, `DescribePanel.test.tsx` (assert the **form-submit/Enter** path is gated, not just the button), `SettingsPage.test.tsx` (test-connection stays enabled offline), roster/cluster action tests.
 
 ### Slice 3 — State matrix + a11y walkthrough
-- [ ] Offline column added to each gated surface's state coverage (loading/empty/error/offline).
-- [ ] `WorkbenchPage.integration.test.tsx`: end-to-end gating (breaker open → disabled+reason → breaker heals → re-enabled).
-- [ ] Keyboard-only + screen-reader walkthrough note (A11Y-23); confirm banner live-region announces the transition.
-- [ ] Document breaker-vs-`navigator.onLine` (SSE hook) as the two offline notions; breaker governs gating.
+- [x] Offline column added to each gated surface's state coverage (loading/empty/error/offline).
+- [x] `WorkbenchPage.integration.test.tsx`: end-to-end gating (breaker open → disabled+reason → breaker heals → re-enabled).
+- [x] Keyboard-only + screen-reader walkthrough note (A11Y-23); confirm banner live-region announces the transition. → [`E21-13-offline-a11y-walkthrough.md`](./E21-13-offline-a11y-walkthrough.md)
+- [x] Document breaker-vs-`navigator.onLine` (SSE hook) as the two offline notions; breaker governs gating. → same walkthrough doc.
 
 ## Engineering heuristics
 

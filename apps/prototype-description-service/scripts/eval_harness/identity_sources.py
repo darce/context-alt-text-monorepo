@@ -20,19 +20,24 @@ from dataclasses import dataclass
 
 _TRAILING_INDEX = re.compile(r"_\d+$")
 _EXT = re.compile(r"\.(jpe?g|png|webp|gif|heic)$", re.IGNORECASE)
+_HAS_ALPHA_WORD = re.compile(r"[A-Za-z]{2,}")
 
 
 def celeb_identity_from_filename(filename: str) -> str | None:
-    """``robert_downey_jr._5.jpg`` -> "Robert Downey Jr."; None if no stem remains.
+    """``robert_downey_jr._5.jpg`` -> "Robert Downey Jr."; None for non-name stems.
 
     Strips the extension and the trailing ``_<index>`` disambiguator, then
-    title-cases the underscore-separated stem. The label is a scoring key, not a
-    canonical name — consistency with the seeded roster is what matters.
+    title-cases the underscore-separated stem. Returns None when the residual stem
+    doesn't look like a person name: empty, lacking an alphabetic word, or holding
+    ANY digit (once the numeric index is removed a real name has none — so
+    social-media / camera ids like ``28514407_10156297712651133_..._o`` or
+    ``IMG_9DABF3F03B85-1`` are rejected instead of yielding fake labels). The label
+    is a scoring key, not a canonical name.
     """
     stem = _EXT.sub("", filename.strip())
     stem = _TRAILING_INDEX.sub("", stem)
     stem = stem.strip("_ ")
-    if not stem or stem.isdigit():
+    if not stem or any(ch.isdigit() for ch in stem) or not _HAS_ALPHA_WORD.search(stem):
         return None
     return " ".join(part for part in stem.split("_") if part).title()
 

@@ -39,6 +39,19 @@ def test_celeb_identity_handles_path_and_empty():
     assert celeb_identity_from_filename("_.jpg") is None
 
 
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "28514407_10156297712651133_2186204419637901683_o.jpg",  # social-media upload id
+        "mcm224181_6641495121_2911_n.jpg",
+        "IMG_9DABF3F03B85-1.jpeg",  # camera id, no name word after index strip
+        "12345678.png",
+    ],
+)
+def test_non_name_filenames_yield_no_celeb_label(filename):
+    assert celeb_identity_from_filename(filename) is None
+
+
 def _jpeg_with_xmp(xmp: str) -> bytes:
     # Minimal JPEG SOI + an APP1 XMP-ish blob; the parser only needs the packet.
     return b"\xff\xd8\xff\xe1" + xmp.encode("utf-8") + b"\xff\xd9"

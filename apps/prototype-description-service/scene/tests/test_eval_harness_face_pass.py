@@ -337,6 +337,31 @@ def test_resume_drops_stale_error_rows_so_retries_do_not_double_count(tmp_path):
     assert len(on_disk) == 1 and on_disk[0].error is None
 
 
+def test_resume_preserves_errored_rows_not_retried_this_run(tmp_path):
+    # An errored resume row whose sha is NOT in this bounded run's candidates (e.g. beyond
+    # --limit) must stay on disk — it hasn't been re-attempted, so dropping it would silently
+    # lose outstanding failures from the checkpoint on a bounded/repeated resume (MRG-B-01).
+    write_images(tmp_path, "c.jpg")
+    errored_a = FacePassRow("sha-a.jpg", "a.jpg", "localwp_uploads", 900_000, None, [], "TimeoutError: boom")
+    ok_b = FacePassRow("sha-b.jpg", "b.jpg", "localwp_uploads", 900_001, 2, [], None)
+    out = tmp_path / "faces.jsonl"
+    write_rows(out, [errored_a, ok_b])
+
+    # this run's candidates = only C; A is NOT retried here
+    rows = run_face_pass(
+        [(rec("c.jpg"), Source.LOCALWP_UPLOADS, 900_002)],
+        FakeClient({900_002: 1}),
+        roots={Source.LOCALWP_UPLOADS: tmp_path},
+        out=out,
+        resume_rows=[errored_a, ok_b],
+    )
+
+    assert {r.sha256 for r in rows} == {"sha-a.jpg", "sha-b.jpg", "sha-c.jpg"}
+    on_disk = {r.sha256: r for r in load_face_pass_rows(out)}
+    assert on_disk["sha-a.jpg"].error is not None  # outstanding failure preserved, not dropped
+    assert on_disk["sha-c.jpg"].face_count == 1
+
+
 def test_a_truncated_final_line_is_dropped_rather_than_crashing_the_resume(tmp_path):
     out = tmp_path / "faces.jsonl"
     good = FacePassRow("sha-a.jpg", "a.jpg", "localwp_uploads", 900_000, 1, [], None)

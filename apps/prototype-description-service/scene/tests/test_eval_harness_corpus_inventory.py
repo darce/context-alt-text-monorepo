@@ -255,3 +255,52 @@ def inventory_image_stub() -> ImageRecord:
         flat_color_candidate=False,
         edge_density=0.2,
     )
+
+
+def test_scan_exits_nonzero_when_a_file_raises_and_nothing_else_inventoried(tmp_path, monkeypatch, capsys):
+    # A file whose inventory raises is SKIPPED (never aborts the scan); when it is the only
+    # file, _main reports it on stderr and returns 1 — a bounded no-progress signal (A-01, rg-007).
+    _save(tmp_path / "bad.jpg", (10, 20, 30))
+
+    def boom(path, root):
+        raise RuntimeError(f"boom on {path.name}")
+
+    monkeypatch.setattr("scripts.eval_harness.corpus_inventory.inventory_image", boom)
+    out = tmp_path / "inv.jsonl"
+    assert _main([str(tmp_path), "--out", str(out)]) == 1
+    err = capsys.readouterr().err
+    assert "skipping" in err and "bad.jpg" in err
+
+
+def test_scan_continues_past_a_raising_file_and_exits_zero_with_progress(tmp_path, monkeypatch, capsys):
+    # One bad file must not halt the scan: the good file is still inventoried and _main
+    # returns 0 because progress was made (A-01, rg-007).
+    import scripts.eval_harness.corpus_inventory as ci
+
+    _save(tmp_path / "aaa_good.jpg", (10, 200, 10))
+    _save(tmp_path / "zzz_bad.jpg", (10, 20, 30))
+    real = ci.inventory_image
+
+    def maybe_boom(path, root):
+        if path.name == "zzz_bad.jpg":
+            raise RuntimeError("boom")
+        return real(path, root)
+
+    monkeypatch.setattr(ci, "inventory_image", maybe_boom)
+    out = tmp_path / "inv.jsonl"
+    assert _main([str(tmp_path), "--out", str(out)]) == 0
+    assert [r.path for r in load_records(out)] == ["aaa_good.jpg"]
+    assert "skipping" in capsys.readouterr().err
+
+
+def test_load_records_warns_on_schema_drop_distinct_from_truncated_tail(tmp_path, capsys):
+    # A schema-mismatched checkpoint row is dropped WITH a stderr warning so a silent re-scan
+    # is visible, while a truncated tail line stays silent and uncounted (A-06).
+    out = tmp_path / "inv.jsonl"
+    stale = asdict(inventory_image_stub())
+    del stale["edge_density"]  # schema mismatch -> counted + warned
+    out.write_text(json.dumps(stale) + "\n" + '{"path": "trunc",')  # + truncated tail -> silent
+    assert load_records(out) == []
+    err = capsys.readouterr().err
+    assert "dropped 1 checkpoint row" in err
+    assert "trunc" not in err

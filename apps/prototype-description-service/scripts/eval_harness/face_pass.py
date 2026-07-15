@@ -243,13 +243,17 @@ def run_face_pass(
     failures aborts the pass — a dead tunnel or an expired key would otherwise
     write hundreds of identical error rows and call it a completed pass.
     """
-    # Carry only SUCCESSFUL rows forward. Errored resume rows are re-selected and retried
-    # by the caller (done_sha excludes them), so keeping their old rows would double-count a
-    # retried-then-succeeded image (one error + one ok) in summarize and grow the checkpoint
-    # unboundedly across --resume cycles. _main still derives the media-id map from ALL
-    # resume rows, so a retried item reuses its id (B-01).
-    kept = [row for row in resume_rows if row.error is None]
-    write_rows(out, kept)  # drops any truncated tail and stale error rows before appending
+    # Carry forward successful rows, plus any errored row NOT being retried this call. _main
+    # re-selects errored shas for retry but bounds `candidates` by --limit, so an errored row
+    # outside this run's slice (beyond the limit, or crowded out by other retries) must stay on
+    # disk until it is genuinely re-attempted — dropping it would silently lose outstanding
+    # failures from the checkpoint on a bounded/repeated resume (MRG-B-01). A sha that IS being
+    # retried has its old error row dropped so the fresh row is the only one, avoiding the
+    # error+ok double-count (B-01). _main still derives the media-id map from ALL resume rows,
+    # so a retried item reuses its id.
+    retry_shas = {record.sha256 for record, _source, _media_id in candidates}
+    kept = [row for row in resume_rows if row.error is None or row.sha256 not in retry_shas]
+    write_rows(out, kept)  # drops any truncated tail + stale error rows for shas retried this run
     done = list(kept)
     consecutive_failures = 0
     with out.open("a") as handle:

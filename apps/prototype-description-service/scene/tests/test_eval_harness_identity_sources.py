@@ -46,10 +46,29 @@ def test_celeb_identity_handles_path_and_empty():
         "mcm224181_6641495121_2911_n.jpg",
         "IMG_9DABF3F03B85-1.jpeg",  # camera id, no name word after index strip
         "12345678.png",
+        # Scraped `<handle>_<post-id>` uploads: an unbounded trailing-index strip ate
+        # the 19-digit id and yielded the fake public-figure labels "Ellynheald" /
+        # "Oliviajaynelee" on 21 of the first 200 real LocalWP uploads.
+        "ellynheald_3134640125107970990.jpg",
+        "oliviajaynelee_3644180080911632673.jpg",
     ],
 )
 def test_non_name_filenames_yield_no_celeb_label(filename):
     assert celeb_identity_from_filename(filename) is None
+
+
+def test_trailing_index_strip_is_bounded_to_short_disambiguators():
+    # celebs01 disambiguators run 1-2 digits; anything long is an opaque id that
+    # must stay in the stem so the no-digits guard rejects the filename.
+    assert celeb_identity_from_filename("madonna_7.jpg") == "Madonna"
+    assert celeb_identity_from_filename("clint_eastwood_99.jpg") == "Clint Eastwood"
+    assert celeb_identity_from_filename("handle_3134640125107970990.jpg") is None
+
+
+@pytest.mark.parametrize("filename", ["dali_3.jpg", "drake_11.jpg", "madonna.png", "rihanna_17.jpg"])
+def test_mononym_celebs_keep_their_label(filename):
+    # 93 celebs01 files are single-token names; a first+last requirement would drop them.
+    assert celeb_identity_from_filename(filename) is not None
 
 
 def _jpeg_with_xmp(xmp: str) -> bytes:

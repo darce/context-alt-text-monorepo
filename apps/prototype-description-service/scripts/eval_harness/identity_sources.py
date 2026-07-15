@@ -18,7 +18,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-_TRAILING_INDEX = re.compile(r"_\d+$")
+# A per-figure disambiguator is SHORT (celebs01 runs 1-2 digits). Bounding the
+# strip is what separates `madonna_7` from a scraped `handle_3134640125107970990`:
+# an unbounded `_\d+$` ate the 19-digit social post id and left a clean handle,
+# which then passed the no-digits check and yielded the fake label "Ellynheald".
+_TRAILING_INDEX = re.compile(r"_\d{1,3}$")
 _EXT = re.compile(r"\.(jpe?g|png|webp|gif|heic)$", re.IGNORECASE)
 _HAS_ALPHA_WORD = re.compile(r"[A-Za-z]{2,}")
 
@@ -26,13 +30,16 @@ _HAS_ALPHA_WORD = re.compile(r"[A-Za-z]{2,}")
 def celeb_identity_from_filename(filename: str) -> str | None:
     """``robert_downey_jr._5.jpg`` -> "Robert Downey Jr."; None for non-name stems.
 
-    Strips the extension and the trailing ``_<index>`` disambiguator, then
+    Strips the extension and the trailing short ``_<index>`` disambiguator, then
     title-cases the underscore-separated stem. Returns None when the residual stem
     doesn't look like a person name: empty, lacking an alphabetic word, or holding
     ANY digit (once the numeric index is removed a real name has none — so
     social-media / camera ids like ``28514407_10156297712651133_..._o`` or
     ``IMG_9DABF3F03B85-1`` are rejected instead of yielding fake labels). The label
     is a scoring key, not a canonical name.
+
+    Single-token stems are accepted: mononyms are real in this corpus (``dali``,
+    ``madonna``, ``rihanna``), so a first+last requirement would drop them.
     """
     stem = _EXT.sub("", filename.strip())
     stem = _TRAILING_INDEX.sub("", stem)

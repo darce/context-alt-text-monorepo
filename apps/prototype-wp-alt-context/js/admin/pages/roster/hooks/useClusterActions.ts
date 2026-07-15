@@ -6,7 +6,7 @@ import type { BatchAnalyzeResponse } from '../../../api/recognition';
 import { commitClusterToRosterEntry } from '../../../api/rosterApi';
 import { dismissCluster, mergeCluster, reassignClusterIdentity, scanFacesBatched } from '../../../api/recognition';
 import { useToast } from '../../../context/ToastContext';
-import { useRemoteActionGate } from '../../../hooks/useRemoteActionGate';
+import { offlineActionReason, useRemoteActionGate } from '../../../hooks/useRemoteActionGate';
 import { useSyncOffline } from '../../../hooks/useSyncOffline';
 
 interface ClusterActionOptions {
@@ -49,7 +49,7 @@ export const useClusterActions = ({
   >({
     mutationFn: ({ cluster, mediaIds }) => {
       if (offline) {
-        throw new Error(__('Unavailable while the recognition service is offline', 'alt-context'));
+        throw new Error(offlineActionReason());
       }
       return scanFacesBatched({ mediaIds, sensitivity: 'high', clusterId: cluster.id });
     },

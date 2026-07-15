@@ -52,6 +52,12 @@ vi.mock('../../api/config', () => ({
   resetConfigCache: mockResetConfigCache,
 }));
 
+// Recovery affordances must stay enabled while offline (plan §3, RES-15). Forcing the shared
+// offline signal to true guards against a future change gating test-connection on the breaker.
+vi.mock('../../hooks/useSyncOffline', () => ({
+  useSyncOffline: () => true,
+}));
+
 vi.mock('@tanstack/react-query', async () => {
   const actual = await vi.importActual<typeof import('@tanstack/react-query')>('@tanstack/react-query');
   return {
@@ -207,6 +213,18 @@ describe('SettingsPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Check health' }));
 
+    expect(testMutate).toHaveBeenCalledWith({});
+  });
+
+  it('keeps Check health enabled while the sync breaker reports offline (recovery affordance)', () => {
+    // useSyncOffline is module-mocked to true for this whole file — the probe must stay usable
+    // so the operator can heal the breaker (plan §3 trap-the-operator guard).
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    const probeButton = screen.getByRole('button', { name: 'Check health' });
+    expect(probeButton).toBeEnabled();
+    fireEvent.click(probeButton);
     expect(testMutate).toHaveBeenCalledWith({});
   });
 

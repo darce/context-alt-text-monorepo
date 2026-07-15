@@ -46,6 +46,19 @@ An ACX-owned face pipeline — YuNet 2026may (MIT) detection + 5 landmarks → f
 | FIR-7 (follow-on) | A10 GPU production path | FIR-6 | ORT-CUDA providers, FP16 + threshold recheck, engine caching |
 | FIR-8 (contingent) | Escalation ladder | failed FIR-6 gate | SFIQA-class learned quality model (2602.07403) → SeetaFace6 audit → licensed InsightFace quote → commercial SDK comparison → (last) occlusion-aware embedder training (synthetic-data SFace / LaCoVL / OccFace as references); YuNet retrain with depth-aware occlusion compositing (2512.11683) only if bake-off attributes occlusion losses to *detection misses* |
 
+## Coordination with VLM-6 (Golden-150 harness, in flight)
+
+VLM-6 S1/S2 builds most of what FIR-5 needs; FIR must reuse it, not fork it (NAME-02/REF-10: no parallel corpus, no synonym schema fields). Six adjustments, ordered by urgency — items 1–3 are cheapest **during the current S1 curation pass** (operator labor is VLM-6's locked binding constraint; a second tagging pass would double it):
+
+1. **Slice tags = VLM-6's `domain`/`difficulty` manifest fields.** FIR-5 drops its own `slice_tags` field and reads per-entry `domain` tags (occlusion is already a VLM-6 stratum, ≥5 images). Ask: strata membership (occlusion, low-light/blur, crowds, profile) must land **per-entry in golden.json**, not only in the strata sidecar/browse sets.
+2. **Persist ALL curated face boxes** (named + anonymous strangers, `name=None`) per manifest entry. XMP regions → `FaceRegion` already carry coords for named people; FIR's detector leg (YuNet vs SCRFD reference) needs box-level detection ground truth, not just `face_count`.
+3. **Anti-blind-spot rule in curation instructions**: cluster drafts come from the buffalo-backed service, so faces its detector misses never appear as drafts. Operator must add missed faces during curation (or via XMP region tagging), else FIR inherits buffalo's detection blind spots as the truth ceiling — biasing the bake-off toward the incumbent.
+4. **S2 candidate registry stays modality-agnostic**: registry schema + run-record face sections must not be caption-hardcoded ("face legs vacuous by design" was a VLM-2B scope choice, not a schema invariant). FIR-5 registers detector+embedder candidates in-process and reuses the same `fetch_run_record` walker (per-item isolation, rg-007 bounded stall), determinism re-score, and report machinery.
+5. **Rules adopted verbatim from VLM-6 locked decisions**: celebs01-only publishability (`is_publishable()` fail-closed — FIR bake-off reports/galleries included); identification P/R scored on celebs01, hard strata on uploads (never published); eval/prod tenant separation — FIR's offline leg touches no tenant at all, and the buffalo_l reference leg runs only in the non-commercial eval environment.
+6. **Co-schedule GPU work**: FIR's GPU legs (ORT-CUDA candidates) should ride VLM-6's single S3 A10 window or explicitly book a second window — GPU hosts stay off otherwise. The S2 runner freeze must either include FIR face legs or FIR runs its own driver against the same corpus + manifest.
+
+Sequencing: FIR-5 consumes VLM-6 S1 outputs (curated manifest + roster + face regions + retained full-res originals — also required for FIR's synthetic-occlusion pairs). FIR-5's harness work can start against golden-38 v2 immediately; slice-level occlusion conclusions wait for Golden-150 curation.
+
 ## Not-Doing
 
 - Video/track pipeline (companion doc exists; separate future epic).

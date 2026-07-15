@@ -37,9 +37,17 @@ describe('shouldRetryRequest', () => {
     expect(shouldRetryRequest(0, httpError(409))).toBe(false);
   });
 
-  it('retries a transport failure (native fetch rejection, no response)', () => {
+  it('retries a genuine network transport failure (fetch rejects with a TypeError)', () => {
+    // Per the Fetch spec a network failure rejects with a TypeError in every browser
+    // (Chrome "Failed to fetch", Firefox "NetworkError when attempting to fetch resource").
     expect(shouldRetryRequest(0, new TypeError('Failed to fetch'))).toBe(true);
-    expect(shouldRetryRequest(0, new Error('NetworkError when attempting to fetch resource'))).toBe(true);
+    expect(shouldRetryRequest(0, new TypeError('NetworkError when attempting to fetch resource'))).toBe(true);
+  });
+
+  it('does not retry a deterministic non-transport error (a response was received)', () => {
+    // e.g. fetchRequiredApi's empty-body Error or a queryFn invariant — retrying just wastes
+    // requests. Only genuine transport failures (TypeError) and explicit ask-again-later retry.
+    expect(shouldRetryRequest(0, new Error('Request to X succeeded but returned an empty response body.'))).toBe(false);
   });
 
   it('does not retry a parse failure (a response was received)', () => {
@@ -52,12 +60,17 @@ describe('shouldRetryRequest', () => {
     expect(shouldRetryRequest(0, err)).toBe(false);
   });
 
-  it('does not retry an aborted request (timeout signal / unmount)', () => {
+  it('does not retry an aborted OR timed-out request', () => {
     const abort = Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' });
     expect(shouldRetryRequest(0, abort)).toBe(false);
-    // DOMException-shaped abort (not an Error subclass in the browser).
-    const domAbort = { name: 'AbortError', message: 'aborted' };
-    expect(shouldRetryRequest(0, domAbort)).toBe(false);
+    // createRecognitionTimeoutSignal uses AbortSignal.timeout(), which aborts with a
+    // 'TimeoutError' DOMException — NOT 'AbortError'. This is the real recognition timeout
+    // path; retrying it here would reopen the storm the poller interval already covers.
+    const timeout = Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' });
+    expect(shouldRetryRequest(0, timeout)).toBe(false);
+    // DOMException-shaped (not an Error subclass in the browser).
+    expect(shouldRetryRequest(0, { name: 'AbortError', message: 'aborted' })).toBe(false);
+    expect(shouldRetryRequest(0, { name: 'TimeoutError', message: 'timed out' })).toBe(false);
   });
 
   it('is bounded: stops once RETRY_MAX_ATTEMPTS is reached even for a retryable class', () => {
@@ -89,5 +102,19 @@ describe('getRetryDelay', () => {
 
   it('uses backoff for a 429 without Retry-After', () => {
     expect(getRetryDelay(1, httpError(429))).toBe(2_000);
+  });
+
+  it('clamps a large Retry-After to the bounded ceiling (no hour-long freeze)', () => {
+    // A misbehaving intermediary emitting Retry-After: 3600 must not freeze a poller for 1h.
+    expect(getRetryDelay(0, httpError(429, 3600))).toBe(30_000);
+  });
+
+  it('clamps an overflow-scale Retry-After (guards the 32-bit setTimeout overflow → immediate retry)', () => {
+    // delay > 2,147,483,647 ms overflows setTimeout and fires immediately → a hot loop.
+    expect(getRetryDelay(0, httpError(503, 2_678_400))).toBe(30_000);
+  });
+
+  it('caps the exponential backoff branch at the same ceiling', () => {
+    expect(getRetryDelay(20, new TypeError('Failed to fetch'))).toBe(30_000);
   });
 });

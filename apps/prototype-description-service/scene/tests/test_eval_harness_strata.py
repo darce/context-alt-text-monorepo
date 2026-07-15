@@ -8,14 +8,18 @@ from scripts.eval_harness.corpus_inventory import ImageRecord, write_records
 from scripts.eval_harness.manifest import Domain
 from scripts.eval_harness.strata import (
     CROWD_MIN_FACES,
+    MIN_CORPUS_EDGE_PX,
     MIN_STRATUM_POOL,
     OFFLINE_DOMAINS,
     OPERATOR_DOMAINS,
     Confidence,
+    FaceCountSource,
     Source,
     _main,
     build_report,
     celeb_label,
+    face_count_of,
+    is_eligible,
     is_publishable,
     load_inventory,
     report_json,
@@ -24,23 +28,23 @@ from scripts.eval_harness.strata import (
 
 def rec(path="a.jpg", **over) -> ImageRecord:
     """A full-shape ImageRecord; override only what a test is about."""
-    base = dict(
-        path=path,
-        sha256=f"sha-{path}",
-        width=800,
-        height=600,
-        mean_saturation=0.4,
-        mean_value=0.5,
-        aspect_ratio=1.3333,
-        celeb_name=None,
-        xmp_names=[],
-        xmp_face_count=0,
-        bw_candidate=False,
-        low_light_candidate=False,
-        flat_color_coverage=0.1,
-        flat_color_candidate=False,
-        edge_density=0.2,
-    )
+    base = {
+        "path": path,
+        "sha256": f"sha-{path}",
+        "width": 800,
+        "height": 600,
+        "mean_saturation": 0.4,
+        "mean_value": 0.5,
+        "aspect_ratio": 1.3333,
+        "celeb_name": None,
+        "xmp_names": [],
+        "xmp_face_count": 0,
+        "bw_candidate": False,
+        "low_light_candidate": False,
+        "flat_color_coverage": 0.1,
+        "flat_color_candidate": False,
+        "edge_density": 0.2,
+    }
     base.update(over)
     return ImageRecord(**base)
 
@@ -321,6 +325,130 @@ def test_thin_stratum_is_flagged():
 def test_stratum_at_the_floor_is_not_thin():
     rows = [(rec(path=f"{i}.jpg", bw_candidate=True), Source.LOCALWP_UPLOADS) for i in range(MIN_STRATUM_POOL)]
     assert build_report(rows).offline[Domain.BLACK_AND_WHITE].thin is False
+
+
+# --- corpus eligibility -------------------------------------------------------
+
+
+def test_images_below_the_resolution_floor_are_not_corpus_material():
+    assert is_eligible(rec(width=1080, height=1350)) is True
+    assert is_eligible(rec(width=79, height=112)) is False  # a plugin face crop
+    assert is_eligible(rec(width=MIN_CORPUS_EDGE_PX, height=MIN_CORPUS_EDGE_PX)) is True
+
+
+def test_unreadable_images_are_not_corpus_material():
+    assert is_eligible(rec(width=None, height=None)) is False
+
+
+def test_tiny_crops_are_kept_out_of_every_stratum_and_the_browse_set():
+    # 217 such crops sit in the real uploads tree. Round-robin gave that 3.5% folder
+    # 25% of the operator's browse set, so this is not a cosmetic exclusion.
+    rows = [(rec(path=f"crop{i}.jpg", width=79, height=112), Source.LOCALWP_UPLOADS) for i in range(10)]
+    rows += [(rec(path="photo.jpg", width=1080, height=1350), Source.LOCALWP_UPLOADS)]
+
+    report = build_report(rows, face_counts={f"sha-crop{i}.jpg": 1 for i in range(10)})
+
+    assert report.pool_size == 1
+    assert report.offline[Domain.FACES].pool_size == 0  # crops never reach a stratum
+    assert [c.path for c in report.operator_review.candidates] == ["photo.jpg"]
+
+
+# --- model face counts (face_pass overlay) -----------------------------------
+
+
+def test_xmp_face_count_beats_a_model_count():
+    # An embedded face region was authored by a human; the model is the fallback.
+    count, source = face_count_of(rec(xmp_face_count=2), {"sha-a.jpg": 9})
+    assert (count, source) == (2, FaceCountSource.XMP)
+
+
+def test_model_count_fills_in_where_there_is_no_xmp():
+    count, source = face_count_of(rec(), {"sha-a.jpg": 3})
+    assert (count, source) == (3, FaceCountSource.MODEL)
+
+
+def test_an_image_nothing_looked_at_is_labeled_none_not_zero():
+    # Buckets identically to zero, but the label is what tells an unrun pass apart
+    # from a genuinely peopleless corpus.
+    count, source = face_count_of(rec(), {})
+    assert (count, source) == (0, FaceCountSource.NONE)
+
+
+def test_a_model_count_of_zero_is_labeled_model_not_none():
+    count, source = face_count_of(rec(), {"sha-a.jpg": 0})
+    assert (count, source) == (0, FaceCountSource.MODEL)
+
+
+def test_model_counts_populate_the_people_and_crowds_strata():
+    # The whole point of the pass: without the overlay these uploads are invisible
+    # to people/crowds, and crowds stays stuck at its 7-image floor.
+    rows = [(rec(path=f"{i}.jpg"), Source.LOCALWP_UPLOADS) for i in range(3)]
+    face_counts = {"sha-0.jpg": CROWD_MIN_FACES, "sha-1.jpg": 1, "sha-2.jpg": 0}
+
+    before = build_report([(r, s) for r, s in rows])
+    after = build_report([(r, s) for r, s in rows], face_counts=face_counts)
+
+    assert before.offline[Domain.PEOPLE].pool_size == 0
+    assert before.offline[Domain.CROWDS].pool_size == 0
+    assert after.offline[Domain.PEOPLE].pool_size == 2
+    assert after.offline[Domain.CROWDS].pool_size == 1
+    assert after.offline[Domain.FACES].pool_size == 1  # exactly-one-face only
+
+
+def test_people_shortlist_ranks_on_the_effective_count():
+    rows = [(rec(path=f"{i}.jpg"), Source.LOCALWP_UPLOADS) for i in range(3)]
+    report = build_report(rows, face_counts={"sha-0.jpg": 1, "sha-1.jpg": 5, "sha-2.jpg": 3})
+    assert [c.path for c in report.offline[Domain.PEOPLE].candidates] == ["1.jpg", "2.jpg", "0.jpg"]
+
+
+def test_candidate_json_carries_the_face_count_and_its_source():
+    rows = [(rec(path="a.jpg"), Source.LOCALWP_UPLOADS)]
+    data = report_json(build_report(rows, face_counts={"sha-a.jpg": 2}))
+    candidate = data["offline"]["people"]["candidates"][0]
+    assert candidate["face_count"] == 2
+    assert candidate["face_count_source"] == "model"
+
+
+def test_cli_warns_when_images_have_no_face_signal_at_all(tmp_path, capsys):
+    inv = tmp_path / "inv.jsonl"
+    write_records(inv, [rec(path=f"{i}.jpg") for i in range(3)])
+    out = tmp_path / "s.json"
+    assert _main(["--inventory", f"localwp_uploads={inv}", "--out", str(out)]) == 0
+    assert "have NO face signal" in capsys.readouterr().err
+
+
+def test_cli_reads_face_counts_and_stops_warning_once_covered(tmp_path, capsys):
+    inv = tmp_path / "inv.jsonl"
+    write_records(inv, [rec(path="a.jpg")])
+    faces = tmp_path / "faces.jsonl"
+    faces.write_text(
+        json.dumps(
+            {
+                "sha256": "sha-a.jpg",
+                "path": "a.jpg",
+                "source": "localwp_uploads",
+                "media_id": 900000,
+                "face_count": 4,
+                "names": [],
+                "error": None,
+            }
+        )
+        + "\n"
+    )
+    out = tmp_path / "s.json"
+    assert _main(["--inventory", f"localwp_uploads={inv}", "--out", str(out), "--face-counts", str(faces)]) == 0
+    data = json.loads(out.read_text())
+    assert data["offline"]["crowds"]["pool_size"] == 1
+    assert "have NO face signal" not in capsys.readouterr().err
+
+
+def test_cli_rejects_a_missing_face_counts_file(tmp_path):
+    inv = tmp_path / "inv.jsonl"
+    write_records(inv, [rec(path="a.jpg")])
+    with pytest.raises(SystemExit):
+        _main(
+            ["--inventory", f"localwp_uploads={inv}", "--out", str(tmp_path / "o.json"), "--face-counts", "/nope.jsonl"]
+        )
 
 
 # --- CLI ---------------------------------------------------------------------

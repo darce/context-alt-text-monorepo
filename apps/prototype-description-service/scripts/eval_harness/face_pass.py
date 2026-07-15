@@ -43,6 +43,7 @@ from typing import Any, Protocol
 from scripts.eval_harness.cli import _extract_identities
 from scripts.eval_harness.corpus_inventory import ImageRecord, dedupe_by_sha256, load_records
 from scripts.eval_harness.strata import Source, is_eligible
+from shared.secrets import get_secret_provider
 
 # The analyze route funnels media ids through `_extract_media_id`, which keeps only
 # the LAST SIX DIGITS (`int(digits[-6:])`). A 7-digit id is not rejected — it is
@@ -327,7 +328,11 @@ def _main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--force", action="store_true", help="run even if the tenant has labeled clusters")
     args = parser.parse_args(argv)
 
-    api_key = os.environ.get("ACX_EVAL_API_KEY", "")
+    # Through the SecretProvider seam, never a raw env read: ACX_EVAL_API_KEY is one of
+    # the seven guarded secret names, and `scripts/` is production source to that guard
+    # (recognition/tests/unit/test_no_raw_secret_reads.py). Reading os.environ directly
+    # also silently bypasses OciVaultSecretProvider. Same call as cli.py:337.
+    api_key = get_secret_provider().get_secret_optional("ACX_EVAL_API_KEY", "") or ""
     if not api_key:
         parser.error("ACX_EVAL_API_KEY is unset (the key is env-only; see the module docstring)")
     if not args.base_url:

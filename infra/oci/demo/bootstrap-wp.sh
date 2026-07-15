@@ -100,6 +100,15 @@ if ! wpcli wp core is-installed >/dev/null 2>&1; then
     --skip-email
 fi
 
+# Pretty permalinks are required for path-form REST (/wp-json/...): on the
+# default Plain structure WordPress canonical-redirects /wp-json/* to the
+# homepage (301 -> HTML), which breaks any client that hardcodes /wp-json/
+# (e.g. the deploy-smoke walkthrough spec). rewrite_structure() is idempotent;
+# --hard also rewrites .htaccess inside the Apache-based wordpress image.
+echo "==> Ensuring pretty permalink structure (path-form /wp-json REST)"
+wpcli wp rewrite structure '/%postname%/' --hard
+wpcli wp rewrite flush --hard
+
 if [[ -z "$PLUGIN_ZIP" ]]; then
   echo "ERROR: PLUGIN_ZIP must point at dist/alt-context-<version>.zip" >&2
   exit 2

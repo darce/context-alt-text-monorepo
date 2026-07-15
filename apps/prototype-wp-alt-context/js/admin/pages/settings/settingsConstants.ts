@@ -5,6 +5,7 @@ export const SOURCE_LABELS: Record<string, string> = {
   option: __('Saved in database', 'alt-context'),
   filter: __('Provided by a code filter', 'alt-context'),
   default: __('Not configured', 'alt-context'),
+  derived: __('Derived from the API key', 'alt-context'),
 };
 
 export const HealthStatus = {
@@ -25,6 +26,23 @@ export const HEALTH_STATUS_ICONS: Record<HealthStatusValue, string> = {
   [HealthStatus.NOT_CHECKED]: '\u25cb',
   [HealthStatus.REACHABLE]: '\u2713',
   [HealthStatus.UNREACHABLE]: '\u26a0',
+};
+
+export const TenantPairing = {
+  PAIRED: 'paired',
+  UNPAIRED: 'unpaired',
+} as const;
+
+export type TenantPairingValue = (typeof TenantPairing)[keyof typeof TenantPairing];
+
+export const TENANT_PAIRING_ICONS: Record<TenantPairingValue, string> = {
+  [TenantPairing.PAIRED]: '\u2713',
+  [TenantPairing.UNPAIRED]: '\u25cb',
+};
+
+export const TENANT_PAIRING_LABELS: Record<TenantPairingValue, string> = {
+  [TenantPairing.PAIRED]: __('Paired with the recognition service', 'alt-context'),
+  [TenantPairing.UNPAIRED]: __('Not paired yet \u2014 check the connection to pair this tenant', 'alt-context'),
 };
 
 export const isReadOnly = (source: string): boolean => source === 'constant' || source === 'filter';

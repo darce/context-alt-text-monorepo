@@ -197,14 +197,34 @@ class ReferenceFact(BaseModel):
 
 
 class Provenance(BaseModel):
-    """Per-image sourcing + license record (PII/license screen, plan S1)."""
+    """Per-image sourcing + license record (PII/license screen, plan S1).
+
+    ``publishable`` gates the S5 gallery split: public figures + CC0/public-domain
+    are publishable to the research hub; private personal images (real contacts)
+    are LOCAL-ONLY and excluded from any rd-published artifact. It defaults to a
+    conservative value derived from the license so a missing flag never leaks a
+    private image (see ``is_publishable``).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    source: str  # fixture | localwp | wikimedia | openverse | operator | ...
+    source: str  # fixture | localwp | wikimedia | openverse | operator | celeb | ...
     license: LicenseTag
     url: str | None = None
     note: str | None = None
+    publishable: bool | None = None  # None => derive conservatively from license
+
+    @property
+    def is_publishable(self) -> bool:
+        """Effective publishability: explicit flag, else license-derived (fail-closed).
+
+        Only CC0 / public-domain are publishable by default; every other class —
+        including consented personal, mock-entity, and fixtures — is local-only
+        unless a curator explicitly sets ``publishable=True`` (e.g. public figures).
+        """
+        if self.publishable is not None:
+            return self.publishable
+        return self.license in (LicenseTag.CC0, LicenseTag.PUBLIC_DOMAIN)
 
 
 class SpatialFact(BaseModel):

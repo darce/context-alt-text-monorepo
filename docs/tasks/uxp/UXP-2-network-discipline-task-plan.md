@@ -31,7 +31,7 @@ Three defects compound into a 429 storm. Each was resolved against the tree this
 
 **1. The fetch seam erases the error.** `fetchApi` (`js/admin/utils/http.ts`, the `!response.ok` branch) throws a bare `Error` with the status interpolated into a message string. Status and `Retry-After` survive only as prose. Downstream code already pays for this: three pollers sniff `error.message.includes('404')` to detect a 404.
 
-**2. Four private retry policies, none of which is the shared one.** The QueryClient (`js/admin/App.tsx:15-23`) sets `retry: 1` with exponential `retryDelay` for all queries — every 4xx retried once, `Retry-After` ignored ([RES-06] / [API-08]). But four hooks override it entirely:
+**2. Four private retry policies, none of which is the shared one.** The QueryClient (`js/admin/App.tsx` : `queryClient`) sets `retry: 1` with exponential `retryDelay` for all queries — every 4xx retried once, `Retry-After` ignored ([RES-06] / [API-08]). But four hooks override it entirely:
 
 | Hook | Local policy | Cadence |
 | --- | --- | --- |
@@ -41,6 +41,8 @@ Three defects compound into a 429 storm. Each was resolved against the tree this
 | `useDescribeRunProgress` (`useDescribeRunProgress.ts`) | `retry: DESCRIBE_RUN_POLL_RETRIES` (3) **plus its own `retryDelay`** (backoff cap 8s) | 2s |
 
 All four retry a 429 up to three times. These are the hottest queries in the admin.
+
+A fifth query, `useMediaIdentities`, sets `retry: false`. It is a private policy too, but a *conservative* one, and it stays — see slice 1.
 
 **3. The suggestion fan-out is N+1 twice over.** `InlineSuggestionPrompt` runs its own `useQuery` per card, rendered once per unlabeled cluster in `IdentityClusterItem` (the `!cluster.label && anchorIdentityId && canMutate` gate) — N unlabeled cards produce N parallel GETs. The server's `list_suggestions` (`suggestions.py`) **has no `top_k` parameter at all**: the client's `top_k=1` ("Only fetch top 1") is dropped by FastAPI, every match is returned, and each is enriched with a separate `cluster_repo.get_by_id`. [RES-12] nested inside itself, plus a client comment documenting behavior the server never implemented.
 
@@ -99,7 +101,7 @@ A 429 or overload-503 from a recognition-backed request puts the gated pollers i
 ## Context Loading
 
 - Rules: `docs/workbay/rules/frontend-guidelines.md`, `docs/workbay/rules/backend-php-guidelines.md`, `docs/workbay/rules/testing-typescript.md`, `docs/workbay/rules/testing-python.md`
-- Heuristics: `heuristics-canon` `engineering.md` ([RES-01], [RES-02], [RES-06], [RES-12], [API-01], [API-08], [API-09], [TEST-03], [TEST-06]). Vendored at `docs/reviews/uxp-2/lexicons/`.
+- Heuristics: `heuristics-canon` `engineering.md` ([RES-01], [RES-02], [RES-06], [RES-12], [RES-15], [API-01], [API-08], [API-09], [OBS-05], [REF-05], [REF-09], [RLSE-04], [TEST-03], [TEST-06]) and `accessibility.md` ([A11Y-21], [A11Y-24]). Vendored at `docs/reviews/uxp-2/lexicons/` — every ID above was checked to exist there before citation ([AGT-02]: a missing anchor is a finding, not a license to improvise). The local `docs/workbay/rules/engineering-heuristics.md` is byte-identical to canon as of 2026-07-15, but it is gitignored, so that parity is incidental — treat canon-via-`gh` as the source of record.
 - Handoff/MCP: task ref `UXP-2`; planning findings `UXP-2-PR-*`, `UXP-2-PR2-*`.
 
 ## Contract and Boundary Impact
@@ -107,7 +109,9 @@ A 429 or overload-503 from a recognition-backed request puts the gated pollers i
 | Boundary | Owner | Current Contract | Expected Change | Compatibility Needed? | Verification |
 | --- | --- | --- | --- | --- | --- |
 | `GET /identities/{id}/suggestions` `top_k` | recognition (Python) | param sent by client, **silently ignored** | honor as a clamped `Query`. **Behavior change** for `useClusterSuggestionsLoader`'s `top_k=5`, which today receives unbounded matches. | no — greenfield | API test bounding the returned match count |
-| `GET /suggestions` `identity_ids` | recognition (Python) | `limit`/`offset`/`min_confidence` | add `identity_ids`, max = `security_settings.max_page_size` (default 500), over-limit **rejected** not truncated. Must apply on **both** the plain and `min_confidence` paths. | no — additive ([API-09]) | API tests incl. `min_confidence` **and** `identity_ids` together |
+| `GET /suggestions` result completeness | recognition (Python) → client | caller must page; no truncation signal in the body | client sends `limit` ≥ id count; **a full page is treated as suspected truncation, not success** ([API-01]: could a client tell it was truncated?) | no | test: 60 unlabeled cards → every card resolves |
+| `GET /suggestions` `identity_ids` | recognition (Python) | `limit`/`offset`/`min_confidence`; **`limit` defaults to 50** | add `identity_ids`, max = `security_settings.max_page_size` (default 500), over-limit **rejected** not truncated. Must apply on **both** the plain and `min_confidence` paths. Client must send an explicit `limit` — see *Truncation* below. | no — additive | API tests incl. `min_confidence` **and** `identity_ids` together; **>50-card truncation test** |
+| `GET /identities/{id}/suggestions` behavior | recognition (Python) | `top_k` ignored → unbounded matches | enforcing it is a **breaking change for an existing caller** ([API-09]: changed defaults count as breaking — Hyrum's Law), not a mere tightening | no — greenfield, but the change must be *reasoned*, not waved through | test pinning the `top_k=5` caller's new bound |
 | `acx/v1/recognition/suggestions` proxy | proxy (PHP) | `limit`/`offset` in route `args` | `SuggestionsController::get_pending_suggestions` forwards `identity_ids`; route `args` gains an array entry | no | PHP proxy test |
 | `fetchApi` thrown type | frontend (internal) | `Error` with status in the message | `HTTPError` with `status` | n/a — but **four call sites string-sniff the message** and must migrate in the same slice | unit tests on the 404 path |
 
@@ -121,7 +125,15 @@ Four slices. Slice 1 makes the error honest and consolidates all four retry poli
 
 **Cooldown membership** is the explicit table above, keyed on whether the query reaches recognition. `useSyncHealth` is excluded because it provably does not.
 
+**The cooldown is a second breaker — name it as one** ([RES-15]: circuit-break integration points; stop calling what's already failing). The proxy already owns a server-side breaker; `recognitionCooldown` is a *client-side* one that trips on an upstream signal, suspends calls, and half-opens on expiry. Two consequences follow and are not optional: its state must be **observable** (RES-15's "expose breaker state to operations", and [OBS-05]: a new breaker without metrics), and its interaction with the proxy's breaker must be bounded the same way the retry budget is — a proxy 503-with-`Retry-After` (breaker open) and a client cooldown are the same signal at two layers, so the client waits, it does not re-probe.
+
+**Truncation — the batch must not silently lose cards.** `list_pending_suggestions` declares `limit: int = Query(default=50)`. A workbench with more than 50 unlabeled cards would send one request for up to 500 ids and receive **the first 50 rows**; every card past the cut renders no prompt, and the naive success criterion ("N cards → one request") passes while the feature is broken. This is [API-01]'s second, easily-skipped clause: *could a client tell it was truncated?* Therefore: the client sends an explicit `limit` ≥ the id count it asked for, and a response whose row count equals the requested `limit` is treated as **suspected truncation** — logged and surfaced, never silently accepted. The plan also deliberately deviates from [API-01]'s "clamp" guidance for `identity_ids` itself: clamping an id list silently drops identities, so over-limit is **rejected**. Both choices are stated here so a reviewer can disagree with them.
+
 **`Retry-After` parsing.** Delta-seconds is the contract. The TS parser accepts delta-seconds; HTTP-date is handled defensively for intermediaries but is explicitly out-of-contract; malformed values fall back to bounded backoff, never `NaN`.
+
+**The frozen state is a designed state, not a side effect** ([RLSE-04]: undesigned state is a bug — offline is one of the states that must be intentionally designed). A cooldown suspends six pollers for a server-dictated window, one of which (`useDescribeRunProgress`) drives a **progress bar**. A progress bar that stops advancing for 30s with no explanation reads as a hang, and the user's repair instinct — reload, re-run — is exactly the traffic the cooldown exists to prevent. So the cooldown is surfaced: affected surfaces show a brief "waiting for the service" state with the remaining window, and it is announced ([A11Y-21]: async updates without focus need a live region / `role="status"`, cross-referenced by [A11Y-24]'s state-matrix join). This is the one seam where the accessibility lexicon touches this plan.
+
+**Cooldown state is derived, not mirrored** ([REF-09]: a stored value computable from other data can desync). `isCoolingDown()` computes `Date.now() < expiresAt` on read; it does **not** cache a boolean flipped by a `setTimeout` callback. Background-tab timer throttling would leave such a flag stale and the pollers frozen past expiry — and fake-timer tests would not catch it.
 
 ## Files and Surfaces to Change
 
@@ -181,6 +193,7 @@ Changes:
 - `HTTPError` in `http.ts`: `status`, `retryAfterSeconds` (delta-seconds; HTTP-date defensive; malformed → `undefined`, never `NaN`), `endpoint`, `bodyPreview`.
 - QueryClient predicate: retry on transport failure and on 429/503-with-`Retry-After` (honoring the header, bounded attempts); never other 4xx; **no second 5xx layer**.
 - Delete all four private policies — the three in `useRecognitionHooks.ts` plus `useDescribeRunProgress`'s `retry` + `retryDelay` — and migrate their 404 guards from `error.message.includes('404')` to `error.status === 404` ([TEST-03]: characterize the current 404 behavior first; actual, not intended, is the contract).
+- **`useMediaIdentities` keeps `retry: false` — the one documented exception.** It genuinely diverges from the shared predicate (it declines even the transport-failure and 429/503-with-`Retry-After` retries). That is acceptable because the query is conditional, already stops polling on error, and is gated by the cooldown — its next scheduled poll *is* the retry. Retained deliberately, not by omission; the success criterion names it rather than pretending it does not exist.
 - Poll queries are GETs, so retry is idempotent by construction ([RES-01] — noted, not a risk).
 
 Proof:
@@ -211,7 +224,7 @@ Proof:
 
 Changes:
 
-- `top_k` becomes a real clamped `Query` on `list_suggestions`.
+- `top_k` becomes a real clamped `Query` on `list_suggestions`. This is a **breaking behavior change for an existing caller**, not a tightening: `useClusterSuggestionsLoader` sends `top_k=5` and today receives unbounded matches ([API-09]: changed defaults count as breaking — Hyrum's Law). Greenfield exempts us from a migration, not from the reasoning.
 - `identity_ids` threaded router → `SuggestionService.list_pending` → `SqlAlchemySuggestionRepository.list_pending_with_details`, bounded by `security_settings.max_page_size`, over-limit rejected ([API-01]).
 - **The `min_confidence` branch must bind it too.** `list_pending_suggestions` currently passes `suggestion_service.list_pending` to `_collect_min_confidence_page` as a bare two-arg callable invoked as `fn(batch_limit, batch_offset)`; an unbound `identity_ids` would be silently dropped there — this task's own headline bug, reintroduced. Bind via lambda/`partial`, mirroring the merge route's existing shape.
 - Batch the per-suggestion `cluster_repo.get_by_id` enrichment into one lookup ([RES-12]).
@@ -231,13 +244,16 @@ Proof:
 Changes:
 
 - `IdentityClusterList` derives the batch id set using **the same predicate as the render gate** — `!cluster.label && anchorIdentityId && canMutate` (`IdentityClusterItem`), where `canMutate = !isLabelOnly` and `isLabelOnly = dataSource === DATA_SOURCE.BACKEND_PROXY`. Consequences the implementation must honor: in label-only mode **no prompt renders, so the batch fetches nothing**; and `anchorIdentityId` is `representative?.identity_id`, currently derived inside `IdentityClusterItem` — the list must derive it from the same grouped cluster data (`groupIdentitiesByClusters`) rather than duplicating the rule.
-- `useInlineSuggestionBatch` issues the single call and maps `SuggestionResponse` (`rep_similarity`, `cluster_label`, `cluster_identity_count`) onto the prompt's props, which today arrive as `ClusterSuggestionMatch` (`label`, `similarity`, `identity_count`). The shapes are **not** interchangeable. Null rule: `cluster_label`/`cluster_identity_count` are nullable on `SuggestionResponse` but required on the prompt — drop rows with a null label (defence in depth behind the server filter) and default the count to 0, mirroring the per-card path.
+- `useInlineSuggestionBatch` issues the single call, sending an explicit **`limit` ≥ the id count** (never relying on the server's `default=50`), and treats `rows.length === limit` as **suspected truncation** — surfaced, not silently accepted ([API-01]).
+- It maps the Python `SuggestionResponse` (`rep_similarity`, `cluster_label`, `cluster_identity_count`) onto the prompt's props, which today arrive as the TS `ClusterSuggestion` type (`js/admin/api/recognition/types/cluster.ts` — `label`, `similarity`, `identity_count`; the Python-side model is `ClusterSuggestionMatch`). The shapes are **not** interchangeable. Null rule: `cluster_label`/`cluster_identity_count` are nullable on `SuggestionResponse` but required on the prompt — drop rows with a null label (defence in depth behind the server filter) and default the count to 0, mirroring the per-card path.
+- **Two hats** ([REF-05]): this slice moves `InlineSuggestionPrompt` to presentational *and* introduces batched fetching. They land as two commits — the structural move first, behavior unchanged, then the batch — so a reviewer can see each independently.
 - Top match per identity selected by `rep_similarity` descending.
 - `InlineSuggestionPrompt` becomes presentational, match by prop; the per-card `useQuery` and the false `// Only fetch top 1` comment both go.
 
 Proof:
 
 - Component: N unlabeled cards → exactly one fetch; label-only mode → zero fetches.
+- **Component: 60 unlabeled cards → every card resolves its prompt** — the guard against the `limit=50` truncation that "one request for N cards" would otherwise hide.
 - Unit: the `SuggestionResponse` → prompt-props mapping, incl. null handling and top-match selection.
 - Manual: network panel shows one suggestions request.
 
@@ -253,13 +269,15 @@ Proof:
 - [ ] `HTTPError` with `status` + delta-seconds `retryAfterSeconds`; `fetchApi` throws it.
 - [ ] Single QueryClient predicate: transport + 429/503-with-`Retry-After`; no other 4xx; no second 5xx layer.
 - [ ] All four private policies deleted (three in `useRecognitionHooks.ts`, one in `useDescribeRunProgress.ts`); 404 guards migrated to `error.status === 404`.
+- [ ] `useMediaIdentities`'s `retry: false` retained with its rationale recorded in code, not left as a silent divergence.
 - [ ] Characterization tests for current 404 behavior green before the migration.
 - [ ] Unit tests: 429 / 503+header / 503-bare / 403 / 404 / malformed header; each watched failing once.
 
 ### Checklist for Slice 2: Shared cooldown gate
 
-- [ ] `recognitionCooldown` module; single-source state values.
+- [ ] `recognitionCooldown` module; single-source state values; `isCoolingDown()` computes from `expiresAt`, never a cached flag ([REF-09]).
 - [ ] Exactly the six gated pollers gate on it; `useSyncHealth` and `useSyncStatus` untouched.
+- [ ] Cooldown state is observable ([RES-15]/[OBS-05]) and its frozen surfaces are designed + announced ([RLSE-04]/[A11Y-21]).
 - [ ] Fake-timer tests: suspend, resume, sync-health unaffected, no timer leak.
 
 ### Checklist for Slice 3a: Server — `top_k` + `identity_ids`
@@ -274,9 +292,10 @@ Proof:
 ### Checklist for Slice 3b: Client — one batched call
 
 - [ ] `IdentityClusterList` derives the id set with the render predicate; label-only mode fetches nothing.
+- [ ] Batch sends an explicit `limit` ≥ id count; a full page is treated as suspected truncation.
 - [ ] Response mapping implemented and unit-tested, incl. null rule and top-match selection.
-- [ ] `InlineSuggestionPrompt` presentational by prop; stale comment removed.
-- [ ] Component test: one request for N cards.
+- [ ] `InlineSuggestionPrompt` presentational by prop; stale comment removed. Structural move and batch land as separate commits ([REF-05]).
+- [ ] Component tests: one request for N cards; **60 cards all resolve**.
 
 ## Review Readiness
 
@@ -292,8 +311,10 @@ Proof:
 ## Success Criteria
 
 - [ ] With the dev recognition service rate-limiting, the console shows zero repeated-429 loops; gated pollers cool down and resume.
-- [ ] No query in the admin carries a private retry policy; one predicate governs all of them.
+- [ ] One predicate governs every query's retry behavior, with exactly one documented exception: `useMediaIdentities`'s deliberate `retry: false`.
 - [ ] A 503-with-`Retry-After` (breaker open) is waited out, not retried into.
 - [ ] The sync-health banner keeps updating at 15s throughout a cooldown.
+- [ ] A cooldown is visible and announced wherever it freezes a progress surface — no silent hang.
 - [ ] A workbench with N unlabeled cards issues one suggestions request; label-only mode issues none.
+- [ ] **A workbench with more than 50 unlabeled cards resolves a prompt for every card** — the batch never silently truncates.
 - [ ] `top_k` is honored and clamped by the server, and `identity_ids` filters on every code path including `min_confidence` — no ignored-param contract lie remains.

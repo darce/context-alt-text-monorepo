@@ -3,8 +3,11 @@
 # localwp-wp.sh — Run WP-CLI against LocalWP with durable PHP/socket resolution.
 #
 # Prefers a PHP 8.5-compatible wp-cli nightly when available. Otherwise it runs
-# the stable Homebrew wp under php@8.4 when present to avoid known PHP 8.5
-# deprecation noise from WP-CLI 2.12.0.
+# the stable Homebrew wp under php@8.4 when present. Either way, PHP deprecation
+# noise from WP-CLI's bundled phars (react/promise, php-cli-tools, etc.) under
+# PHP 8.4/8.5 is muted at the source via error_reporting, so wp output is not
+# drowned while real warnings/notices/errors stay visible. See
+# LOCALWP_WP_ERROR_REPORTING below to override.
 #
 # Wrapper-specific commands:
 #   ./scripts/localwp-wp.sh --print-plan
@@ -15,8 +18,14 @@
 #   LOCALWP_WP_NIGHTLY_BIN  Full path to a wp-nightly executable/phar.
 #   LOCALWP_WP_PHP84_BIN    Full path to php@8.4 executable.
 #   LOCALWP_WP_DISABLE_PHP84 Set to 1 to skip php@8.4 fallback resolution.
-#   LOCALWP_WP_FILTER_KNOWN_NOISE Set to 1 to force filtering the known
-#                                 WP-CLI 2.12.0 PHP 8.5 react/promise warning.
+#   LOCALWP_WP_FILTER_KNOWN_NOISE Set to 1 to force the legacy exact-match sed
+#                                 net for two known WP-CLI 2.12.0 deprecations.
+#                                 Secondary to source-level suppression below.
+#   LOCALWP_WP_ERROR_REPORTING PHP error_reporting applied to every wp run.
+#                              Defaults to muting deprecations only
+#                              ('E_ALL & ~E_DEPRECATED & ~E_USER_DEPRECATED');
+#                              set to 'E_ALL' to surface deprecations when
+#                              debugging plugin code.
 #   LOCALWP_SOCKET          Full path to mysqld.sock.
 #   LOCALWP_PHP_BIN         Full path to the default php executable.
 #
@@ -24,6 +33,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOCALWP_RUNTIME_HELPER="${SCRIPT_DIR}/localwp-runtime.sh"
+
+# Mute PHP deprecations at the source for every wp run. The deprecations come
+# from WP-CLI's bundled phars (react/promise, php-cli-tools) under PHP 8.4/8.5 —
+# unactionable noise that an exact-match line filter can never fully catch.
+# error_reporting keeps warnings/notices/errors visible; only deprecations drop.
+LOCALWP_WP_ERROR_REPORTING="${LOCALWP_WP_ERROR_REPORTING:-E_ALL & ~E_DEPRECATED & ~E_USER_DEPRECATED}"
 
 show_usage() {
 	cat <<'USAGE'
@@ -222,7 +237,7 @@ run_wp_inner() {
 		sock_link="/tmp/_acx_mysqld.$$.$RANDOM.sock"
 		rm -f "${sock_link}"
 		ln -s "${socket_path}" "${sock_link}"
-		if "${CHOSEN_PHP_BIN}" -d "mysqli.default_socket=${sock_link}" "${CHOSEN_WP_BIN}" "$@"; then
+		if "${CHOSEN_PHP_BIN}" -d "error_reporting=${LOCALWP_WP_ERROR_REPORTING}" -d "mysqli.default_socket=${sock_link}" "${CHOSEN_WP_BIN}" "$@"; then
 			status=0
 		else
 			status=$?
@@ -231,7 +246,7 @@ run_wp_inner() {
 		return "${status}"
 	fi
 
-	"${CHOSEN_PHP_BIN}" "${CHOSEN_WP_BIN}" "$@"
+	"${CHOSEN_PHP_BIN}" -d "error_reporting=${LOCALWP_WP_ERROR_REPORTING}" "${CHOSEN_WP_BIN}" "$@"
 }
 
 run_wp() {

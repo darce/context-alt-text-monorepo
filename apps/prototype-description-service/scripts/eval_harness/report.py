@@ -14,11 +14,26 @@ triaged away.
 from __future__ import annotations
 
 import json
+from enum import StrEnum
 from typing import Any
+
+from pydantic import ValidationError
 
 from .caption_metrics import CaptionScores, insertion_rate, score_caption
 from .face_metrics import ImageDetection, ImageIdentities, detection_pr, identification_pr
+from .manifest import Provenance
 from .schema import SCHEMA, DocKind
+
+
+class Audience(StrEnum):
+    """Who may receive the scored report artifact.
+
+    PUBLIC is hub-safe: only publishable corpus items. LOCAL is the full
+    operator view and remains the default for offline triage.
+    """
+
+    PUBLIC = "public"
+    LOCAL = "local"
 
 
 class ReportError(Exception):
@@ -28,6 +43,41 @@ class ReportError(Exception):
 
 def _entry_index(manifest_entries: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
     return {int(e["media_id"]): e for e in manifest_entries}
+
+
+def _entry_is_publishable(entry: dict[str, Any] | None) -> bool:
+    """Fail-closed publishability via manifest.Provenance.is_publishable (VLM-6 S1).
+
+    Missing entry, missing provenance, or unparseable provenance => not publishable.
+    Never infer publishable=True from absence.
+    """
+    if entry is None:
+        return False
+    raw = entry.get("provenance")
+    if not isinstance(raw, dict):
+        return False
+    try:
+        return Provenance.model_validate(raw).is_publishable
+    except ValidationError:
+        return False
+
+
+def _filter_for_public_audience(
+    run_record: dict[str, Any],
+    manifest_entries: list[dict[str, Any]],
+) -> tuple[dict[str, Any], list[dict[str, Any]], int]:
+    """Keep only publishable items/entries before scoring. Returns withheld count."""
+    entries = _entry_index(manifest_entries)
+    kept_items: list[dict[str, Any]] = []
+    for item in run_record["items"]:
+        media_id = int(item["media_id"])
+        if _entry_is_publishable(entries.get(media_id)):
+            kept_items.append(item)
+    filtered_record = {**run_record, "items": kept_items}
+    # Rubric / lookup surface: only publishable entries so public metrics stay scoped.
+    filtered_entries = [e for e in manifest_entries if _entry_is_publishable(e)]
+    withheld = len(run_record["items"]) - len(kept_items)
+    return filtered_record, filtered_entries, withheld
 
 
 def _pr_dict(precision: float | None, recall: float | None) -> dict[str, float | None]:
@@ -264,6 +314,14 @@ def _markdown(scored: dict[str, Any]) -> str:
         f"- images: {scored['counts']['scored']}/{scored['counts']['total']} scored, "
         f"{scored['counts']['failed']} failed",
     ]
+    # Honest redaction: public reports must state what they withheld (VLM-6 S1).
+    redaction = scored.get("redaction")
+    if redaction:
+        lines.append(
+            f"- redaction: audience=`{redaction['audience']}` — "
+            f"withheld {redaction['withheld_items']} of {redaction['total_items']} items "
+            "(local-only / non-publishable)"
+        )
     if "seeded" in model.get("adapters", []):
         lines.append(
             "- ⚠ produced by the model-free `seeded` stub adapter — harness-shakedown "
@@ -327,9 +385,34 @@ def build_reports(
     ignore_list: dict[str, Any] | None = None,
     *,
     score_manifest_sha256: str | None = None,
+    audience: Audience = Audience.LOCAL,
 ) -> tuple[str, str]:
-    """Return (json_report, markdown_report) — deterministic for identical inputs."""
+    """Return (json_report, markdown_report) — deterministic for identical inputs.
+
+    ``audience=LOCAL`` (default) scores the full corpus — byte-identical to the
+    pre-audience contract. ``audience=PUBLIC`` filters to publishable items only
+    (via ``Provenance.is_publishable``) and stamps a top-level ``redaction`` block
+    so withheld local-only items are never silent.
+    """
+    score_record = run_record
+    score_entries = manifest_entries
+    redaction: dict[str, Any] | None = None
+    if audience is Audience.PUBLIC:
+        total_items = len(run_record["items"])
+        score_record, score_entries, withheld = _filter_for_public_audience(
+            run_record, manifest_entries
+        )
+        redaction = {
+            "audience": Audience.PUBLIC.value,
+            "withheld_items": withheld,
+            "total_items": total_items,
+        }
     scored = score_run_record(
-        run_record, manifest_entries, ignore_list=ignore_list, score_manifest_sha256=score_manifest_sha256
+        score_record,
+        score_entries,
+        ignore_list=ignore_list,
+        score_manifest_sha256=score_manifest_sha256,
     )
+    if redaction is not None:
+        scored["redaction"] = redaction
     return json.dumps(scored, indent=2, sort_keys=True, ensure_ascii=False) + "\n", _markdown(scored)

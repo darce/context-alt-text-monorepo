@@ -1,0 +1,27 @@
+# OFFLOAD SANDBOX SHIM — DROP THIS FILE BEFORE MERGING TO main.
+#
+# The offload pass provisions its sandbox by `uv sync`-ing a depth-1 clone of this
+# worktree. The monorepo root ships no pyproject.toml, so that sync fails with
+# "No pyproject.toml found" and the pass dies during provisioning, before the brief
+# is ever read.
+#
+# Declaring a virtual (non-package) root makes `uv sync` succeed trivially: it
+# builds nothing and installs nothing. Every real package still lives under apps/*
+# and packages/* with its own pyproject.toml, and none of them are affected.
+#
+# This exists only so the offload lane can provision. It is not part of the build.
+#
+# DO NOT RUN `uv sync` IN THIS WORKTREE. Because this root declares no dependencies,
+# a sync here resolves to an empty set and prunes the environment: `uv sync --dry-run`
+# reports "Would uninstall 83 packages" against the lane's root .venv, which would
+# strip the workbay-protocol install the offload lane needs and reintroduce the
+# protocol skew that blocks dispatch. The offload sandbox is unaffected — it syncs a
+# fresh depth-1 clone that has no .venv to prune. Per-package work is unaffected too:
+# use each package's own directory (e.g. apps/prototype-description-service).
+[project]
+name = "context-alt-text-monorepo-root"
+version = "0.0.0"
+requires-python = ">=3.12"
+
+[tool.uv]
+package = false

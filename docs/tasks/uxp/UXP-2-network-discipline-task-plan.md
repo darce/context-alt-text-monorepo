@@ -108,9 +108,10 @@ A 429 or overload-503 from a recognition-backed request puts the gated pollers i
 
 | Boundary | Owner | Current Contract | Expected Change | Compatibility Needed? | Verification |
 | --- | --- | --- | --- | --- | --- |
-| `GET /identities/{id}/suggestions` `top_k` | recognition (Python) | param sent by client, **silently ignored** | honor as a clamped `Query`. Enforcing an ignored param is a **breaking change for an existing caller** ([API-09]: changed defaults count as breaking — Hyrum's Law), not a mere tightening: `useClusterSuggestionsLoader` sends `top_k=5` and today receives unbounded matches. | no — greenfield, but the change must be *reasoned*, not waved through | API test pinning the `top_k=5` caller's new bound |
-| `GET /identities/suggestions` (**new**) | recognition (Python) | does not exist | batch per-identity top-k, **keyed by identity_id**. `identity_ids` max = `security_settings.max_page_size` (500), over-limit **rejected** not truncated; `top_k` clamped. Row count is `≤ len(ids) × top_k` **by construction** — no global page cut. | no — purely additive ([API-09]: don't change it, add it) | API tests: subset returned; over-limit rejected; **60 ids × multi-suggestion fixture → every id resolves** |
-| `acx/v1/recognition/identities/suggestions` proxy (**new**) | proxy (PHP) | does not exist | new `SuggestionsController` route + method forwarding `identity_ids` + `top_k`; route `args` declares the array param | no | PHP proxy test |
+| `GET /identities/{id}/suggestions` `top_k` | recognition (Python) | param sent by client, **silently ignored** | honor as a clamped `Query`. Enforcing an ignored param is a **breaking change** ([API-09]: changed defaults count as breaking — Hyrum's Law), not a tightening — and the blast radius is **every caller of the route**, not just `useClusterSuggestionsLoader`: the PHP proxy *defaults* `top_k` to 5 when the client omits it. | no — greenfield, but the change must be *reasoned*, not waved through | API test pinning the new bound |
+| `GET /identities/suggestions` (**new**) | recognition (Python) | does not exist | batch per-identity top-k, **keyed by identity_id**. `identity_ids` = comma-joined scalar, max **100** (URL-budget-derived, not `max_page_size`), over-limit **rejected**; `top_k` clamped. Row count `≤ len(ids) × top_k` **by construction**. | no — purely additive ([API-09]) | API tests: subset keyed by id; over-limit rejected; **60-id fixture exercising multi-suggestion, unlabeled-first, and auto-label identities** |
+| `acx/v1/recognition/identities/suggestions` proxy (**new**) | proxy (PHP) | does not exist | new `SuggestionsController` route + method forwarding `identity_ids` **as an unchanged scalar** + `top_k`; route `args` declares a string param | no | PHP proxy test: 60 ids survive the hop intact |
+| `GET /identities/{id}/suggestions` `threshold` | recognition (Python) | proxy sends `threshold` (default `0.6`); **the route has no such param — it accepts `min_confidence`** | **not fixed here.** A second ignored param, same defect class as `top_k`, found while verifying it. Honouring it would start hiding sub-0.6 suggestions that display today — a user-visible change, not network discipline. | n/a | recorded as a follow-up finding, deliberately out of scope |
 | `fetchApi` thrown type | frontend (internal) | `Error` with status in the message | `HTTPError` with `status` | n/a — but **four call sites string-sniff the message** and must migrate in the same slice | unit tests on the 404 path |
 
 ## Proposed Solution
@@ -131,13 +132,30 @@ An earlier revision batched through `GET /suggestions` with an `identity_ids` fi
 
 The root mistake was the seam, and [API-10] names it: *interface is its own artifact — translate internal models at the boundary so storage refactors never break clients*. `/suggestions` returns `SuggestionResponse`, a row shape that mirrors the suggestions table. The workbench's question is not "give me a page of suggestion rows"; it is **"what is the top suggestion for each of these identities?"** Batching on a row-paginated storage surface forced the identity/row mismatch, the shape mapping, and the filter divergence — all three dissolve once the endpoint expresses the domain question.
 
-So: a **new `GET /identities/suggestions`** returning per-identity top-k keyed by identity id, reusing the existing `IdentitySuggestionsResponse` / `ClusterSuggestionMatch` shape the prompt already consumes and the same labeled-cluster filter as the per-card route. Row count is `≤ len(ids) × top_k` **by construction** ([API-01]/[RES-05]: bounded, and bounded by the thing the caller actually asked for), so there is no global page cut to truncate against and no truncation-detection heuristic to get wrong. Purely additive ([API-09]).
+So: a **new `GET /identities/suggestions`** returning per-identity top-k keyed by identity id, in the existing `ClusterSuggestionMatch` element shape the prompt already consumes (a **new** envelope schema — the existing `IdentitySuggestionsResponse` is flat `{matches: [...]}` for a single identity and is not keyed). Row count is `≤ len(ids) × top_k` **by construction** ([API-01]/[RES-05]: bounded by the thing the caller actually asked for), so there is no global page cut to truncate against and no truncation-detection heuristic to get wrong. Purely additive ([API-09]).
 
-Per-identity ranking uses `ROW_NUMBER() OVER (PARTITION BY identity_id ORDER BY rep_similarity DESC) <= top_k`. **Not `DISTINCT ON`** — that is Postgres-only, and the test suite runs `sqlite+aiosqlite:///:memory:` (`recognition/tests/conftest.py`) while production runs Postgres. `ROW_NUMBER` is portable to both. This repo has no existing window-function usage, so that portability is an implementation risk to verify early, not assume.
+**Filter parity — literally, not approximately.** The batch must apply the per-card route's filter *exactly*: pending suggestions whose cluster has a **truthy label** (`suggestions.py`: `if cluster and cluster.label`), plus `tenant_id` scoping. That is the whole filter. It is **not** `list_pending_with_details`'s stricter set (`user_confirmed IS TRUE` + `label NOT LIKE 'cluster-%'`) — that belongs to the abandoned `/suggestions` seam, and applying it here would silently drop any card whose top suggestion targets a labeled-but-unconfirmed cluster: PR4-01's failure mode wearing a different hat. This slice is network discipline; it must not change which prompts a user sees.
+
+Consequence, stated so nobody "fixes" it mid-slice: auto-generated `cluster-1234` labels **pass** the per-card filter today, so they must pass the batch filter too. `_is_meaningful_label` exists in that same router but is not used by the per-card route, which arguably contradicts its own docstring ("unlabeled cluster suggestions are not actionable"). That is a real latent defect — and a **behavior change**, therefore out of scope here. Recorded as a follow-up, not smuggled in.
+
+**Filter before rank, inside the window.** The per-card route filters to labeled clusters *first*, then sorts by similarity. The batch must do the same **inside** the windowed subquery. If `ROW_NUMBER` ranks the unfiltered set and the label filter sits in the outer query, an identity whose #1 suggestion targets an unlabeled cluster and whose #2 is labeled gets `rn=1` → filtered out → **no prompt at `top_k=1`**, while the per-card route happily shows #2. Same silent-drop symptom, third mechanism.
+
+Per-identity ranking uses `ROW_NUMBER() OVER (PARTITION BY identity_id ORDER BY representative_similarity DESC, created_at DESC) <= top_k`. The `created_at DESC` tie-break is not decoration: the per-card route sorts with Python's **stable** `sort()` over a `created_at DESC` list, so ties there resolve by recency. Ranking on similarity alone would make the parity test flake on tied similarities.
+
+**Not `DISTINCT ON`** — and the reason is worse than "not portable". SQLAlchemy does not error on SQLite; it **silently drops the `ON` clause** and emits plain `SELECT DISTINCT` (a deprecation warning only). So `DISTINCT ON` would go **green in tests while returning every row per identity**, and behave differently in production. Tests run `sqlite+aiosqlite:///:memory:` (`recognition/tests/conftest.py`); production is Postgres. `ROW_NUMBER` is portable to both and is verified to work under the repo's SQLite (3.50.4; window functions need ≥3.25).
 
 Cluster details are loaded in the same query (`joinedload`), not per row — the per-card route's `cluster_repo.get_by_id`-in-a-loop is the [RES-12] defect this slice exists to remove, and reintroducing it inside the batch would defeat the point.
 
-`identity_ids` over-limit is **rejected**, deliberately deviating from [API-01]'s "clamped client limits" guidance: clamping an id list silently drops identities, which is the same silent-loss failure in a different costume. Stated so a reviewer can disagree.
+**`identity_ids` wire format: one comma-joined string, end to end.** This must be pinned, because every naive encoding is broken across the three hops (TS → WP proxy → FastAPI) and one fails *silently*:
+
+- Repeated keys (`?identity_ids=a&identity_ids=b`, the FastAPI-idiomatic `Query(list[str])` form) — PHP's `$_GET` is **last-wins** and collapses them to a single id. 59 of 60 cards silently prompt-less. PR4-01's exact symptom, delivered by the query parser.
+- PHP-array syntax (`?identity_ids[]=a&identity_ids[]=b`) — WordPress parses it, but `proxy_request` forwards via `add_query_arg($query, $url)`, whose `build_query` emits `identity_ids[0]=a&identity_ids[1]=b`, which FastAPI binds to nothing → 422 or empty.
+
+So: the client sends **`identity_ids=<uuid>,<uuid>,…`** (a single scalar), the proxy forwards that scalar unchanged (`add_query_arg` handles scalars correctly), and the endpoint takes `identity_ids: str` and splits on `,`. UUIDs contain no commas, so the delimiter is safe. Each id is validated with `validate_entity_id` (→ 400 on garbage), **not** `_coerce_uuid`, which returns `None` and would match nothing silently.
+
+**`identity_ids` bound is 100, derived from the URL budget — not `max_page_size`.** 500 comma-joined UUIDs is ~18 KB of query string; nginx's `large_client_header_buffers` (8 KB) and Apache's `LimitRequestLine` (8190) default below that on *both* hops, so a 500-id request would die as a 414 before FastAPI ever saw it — a bound that cannot be exercised is not a bound. 100 ids ≈ 3.7 KB fits comfortably. Reusing `max_page_size` (a row-paging knob, `RECOGNITION_MAX_PAGE_SIZE`) for an id list would also couple two unrelated limits. The client chunks if a page ever exceeds 100 — `ceil(N/100)` requests is still a coarse interface ([RES-12]), not an N+1.
+
+Over-limit is **rejected**, deliberately deviating from [API-01]'s "clamped client limits" guidance: clamping an id list silently drops identities, which is the same silent-loss failure in yet another costume. Stated so a reviewer can disagree.
 
 **`Retry-After` parsing.** Delta-seconds is the contract. The TS parser accepts delta-seconds; HTTP-date is handled defensively for intermediaries but is explicitly out-of-contract; malformed values fall back to bounded backoff, never `NaN`.
 
@@ -238,20 +256,26 @@ Proof:
 Changes:
 
 - `top_k` becomes a real clamped `Query` on `list_suggestions`. This is a **breaking behavior change for an existing caller**, not a tightening: `useClusterSuggestionsLoader` sends `top_k=5` and today receives unbounded matches ([API-09]: changed defaults count as breaking — Hyrum's Law). Greenfield exempts us from a migration, not from the reasoning.
-- **New `GET /identities/suggestions`** (`list_identities_suggestions`): takes `identity_ids` + `top_k`, returns matches **keyed by identity id** in the existing `ClusterSuggestionMatch` shape. `identity_ids` bounded by `security_settings.max_page_size` (500), over-limit **rejected**; `top_k` clamped. Response size is `≤ len(ids) × top_k` by construction ([API-01]/[RES-05]) — no global page, so nothing to truncate.
-- Repository `list_for_identities`: **one** query using `ROW_NUMBER() OVER (PARTITION BY identity_id ORDER BY rep_similarity DESC) <= top_k`, the same `user_confirmed` + non-null + non-`cluster-` label filter as the per-card path, and `joinedload` for cluster details — no per-row `get_by_id` ([RES-12]).
-  - **Verify window-function portability first.** Tests run `sqlite+aiosqlite:///:memory:`; production is Postgres. `ROW_NUMBER` is portable to both; `DISTINCT ON` is **not** and must not be used. No window function exists in this repo yet — prove it works under SQLite before building on it.
-- PHP proxy: new route + method forwarding `identity_ids` + `top_k`; route `args` declares the array param.
-- **No filter divergence to decide.** Because the batch reuses the per-card filter, the two paths agree by construction. (An earlier revision batched via `/suggestions`, whose stricter `user_confirmed` filter would have silently changed which cards show a prompt; that divergence disappears with the seam.)
+- **New `GET /identities/suggestions`** (`list_identities_suggestions`): takes `identity_ids` (comma-joined scalar, ≤100, over-limit **rejected**, each id via `validate_entity_id`) + clamped `top_k`; returns matches **keyed by identity id**, elements in the existing `ClusterSuggestionMatch` shape under a **new** envelope schema. Response size `≤ len(ids) × top_k` by construction ([API-01]/[RES-05]).
+- Repository `list_for_identities`: **one** query, `tenant_id`-scoped, using `ROW_NUMBER() OVER (PARTITION BY identity_id ORDER BY representative_similarity DESC, created_at DESC) <= top_k`, with the **per-card filter applied inside the windowed subquery** (pending + truthy `cluster.label` only — *not* `user_confirmed`, *not* the `cluster-%` exclusion), and `joinedload` for cluster details — no per-row `get_by_id` ([RES-12]).
+  - **Verify window-function portability before building on it.** `ROW_NUMBER` under `sqlite+aiosqlite` (tests) and Postgres (prod). `DISTINCT ON` is forbidden: SQLAlchemy silently drops its `ON` clause on SQLite, so it would pass tests green while returning every row per identity.
+- PHP proxy: new route + method forwarding `identity_ids` (scalar, unchanged) + `top_k`; route `args` declares a string param.
+- **Filter parity is the requirement, and it is literal.** The batch applies the per-card filter exactly, so the two paths agree by construction and no card changes visibility. `cluster-*` labels pass today and must keep passing (see Proposed Solution).
 - `/suggestions` and its `min_confidence` path are **untouched** — no `identity_ids`, so no `_collect_min_confidence_page` binding hazard.
+- Also batch the per-card route's own `cluster_repo.get_by_id`-in-a-loop enrichment ([RES-12]) — it is the N+1 inside the N that this task named, and leaving it would mean the per-card route stays chatty for `useClusterSuggestionsLoader`.
 
 Proof:
 
-- API: `top_k` bounds count on the per-card route, incl. the `top_k=5` caller's changed behavior.
-- API: batch returns the requested subset keyed by id; over-limit id list rejected.
-- **API: 60 ids against a fixture where several identities have ≥2 pending suggestions → every id resolves.** This is the regression guard for the row-vs-identity bound; a one-suggestion-per-identity fixture would pass while the design was broken.
-- API: batch and per-card routes return the same match for the same identity (filter parity, pinned).
-- Runtime: the window-function query executes under both SQLite and Postgres.
+- API: `top_k` bounds count on the per-card route, incl. the changed behavior for every caller of that route.
+- API: batch returns the requested subset keyed by id; over-limit id list (>100) rejected.
+- **API: 60 ids against a fixture that actually exercises the failure modes** — a one-suggestion-per-identity fixture would green while the design was broken. The fixture must contain:
+  - several identities carrying **≥2 pending suggestions** (guards the row-vs-identity bound), and
+  - at least one identity whose **highest-similarity suggestion targets an unlabeled cluster and whose second targets a labeled one** (guards filter-before-rank: it must still resolve, matching the per-card route), and
+  - at least one identity whose top suggestion targets a `cluster-1234`-style auto-label (guards the deliberate parity decision: it must resolve, not be filtered).
+- API: batch and per-card routes return the **same** match for the same identity across that whole fixture (filter parity, pinned).
+- API: tied similarities resolve identically on both routes (`created_at DESC` tie-break).
+- Wire: a 60-id request survives TS → PHP proxy → FastAPI with all 60 ids arriving (guards the `$_GET` last-wins and `add_query_arg` array-syntax traps).
+- Runtime: the `ROW_NUMBER` query executes under both SQLite and Postgres.
 
 ### Slice 3b: Client — one batched call
 
@@ -297,12 +321,13 @@ Proof:
 
 ### Checklist for Slice 3a: Server — `top_k` + batch identity endpoint
 
-- [ ] Window-function portability proven under SQLite **and** Postgres before building on it (`ROW_NUMBER`, never `DISTINCT ON`).
-- [ ] `top_k` honored and clamped on `list_suggestions`; `top_k=5` caller's behavior change covered.
-- [ ] `GET /identities/suggestions` added: `identity_ids` bounded by `max_page_size` and over-limit rejected; `top_k` clamped; keyed by identity id.
-- [ ] Repository `list_for_identities`: one query, per-identity `ROW_NUMBER` bound, per-card filter reused, `joinedload` details (no per-row lookup).
-- [ ] PHP proxy route + method forward `identity_ids` + `top_k`; route `args` declares the array param.
-- [ ] Tests: 60 ids with multi-suggestion identities → all resolve; over-limit rejected; batch/per-card filter parity pinned.
+- [ ] Window-function portability proven under SQLite **and** Postgres before building on it (`ROW_NUMBER`, never `DISTINCT ON` — it silently drops `ON` under SQLite).
+- [ ] `top_k` honored and clamped on `list_suggestions`; behavior change covered for every caller (proxy defaults it to 5).
+- [ ] `GET /identities/suggestions` added: comma-joined `identity_ids` ≤100 (URL-budget bound), over-limit rejected, ids via `validate_entity_id`; `top_k` clamped; keyed by identity id; new envelope schema.
+- [ ] Repository `list_for_identities`: one `tenant_id`-scoped query; `ROW_NUMBER` partitioned by identity, ordered `representative_similarity DESC, created_at DESC`; **per-card filter inside the windowed subquery** (truthy label only — no `user_confirmed`, no `cluster-%` exclusion); `joinedload` details.
+- [ ] Per-card route's own `get_by_id`-in-a-loop enrichment batched.
+- [ ] PHP proxy route + method forward `identity_ids` as an unchanged scalar + `top_k`; route `args` declares a string param.
+- [ ] Tests: parity fixture (multi-suggestion, unlabeled-first, auto-label identities) → batch matches per-card exactly; over-limit rejected; 60 ids survive the wire hop; tie-break parity.
 
 ### Checklist for Slice 3b: Client — one batched call
 
@@ -331,4 +356,5 @@ Proof:
 - [ ] A cooldown is visible and announced wherever it freezes a progress surface — no silent hang.
 - [ ] A workbench with N unlabeled cards issues one suggestions request; label-only mode issues none.
 - [ ] **Every unlabeled card resolves its prompt regardless of how many cards are on screen or how many pending suggestions each identity carries** — the batch cannot silently drop a card, because its bound is per-identity by construction rather than a global page.
-- [ ] `top_k` is honored and clamped by the server — no ignored-param contract lie remains.
+- [ ] `top_k` is honored and clamped by the server. (`threshold` on the same route is **also** silently ignored — the proxy sends `threshold`, the route accepts `min_confidence` — and is deliberately left alone here: fixing it would hide sub-0.6 suggestions users see today. Recorded as a follow-up, so the claim is "top_k is fixed", not "no ignored param remains".)
+- [ ] No card changes visibility: the batch resolves a prompt for exactly the identities the per-card route would, across the parity fixture.

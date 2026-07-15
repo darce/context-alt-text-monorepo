@@ -17,7 +17,7 @@ Make the recognition pipeline's detection/embedding seam model-neutral so FIR-3 
 ## Intake
 
 - **Scope**: [commercial-face-identity-replacement.md](../../scopes/commercial-face-identity-replacement.md) (FIR-2 row) · assessment §3.1/§4 · intake decisions `claude_fir1_scope_intake_commercial_face_replacement` (#2376)
-- **Not-Doing here**: no YuNet/SFace code (FIR-3); no dimension flip (FIR-4 cutover slice — this task only centralizes the constant); no runtime wiring changes beyond what the dataclass change forces.
+- **Not-Doing here**: no YuNet/SFace code (FIR-3); no dimension flip (defaults flip in FIR-6's switch-over slice; dev/eval exercise 128D via the `PGVECTOR_DIM` env — this task only centralizes the constant); no runtime wiring changes beyond what the dataclass change forces.
 
 ## Problem Statement
 
@@ -25,7 +25,7 @@ Make the recognition pipeline's detection/embedding seam model-neutral so FIR-3 
 
 ## Constraints
 
-- **Two-hat rule (REF-05)**: slice 1 is pure refactor (behavior-preserving), slice 2 is the contract change. Never mixed.
+- **Two-hat rule (REF-05)**: the seam refactor (S2) and the age/gender contract change (S4) are separate slices — never mixed. S2 is behavior-preserving by definition; S4 is the only slice allowed to change observable payloads.
 - Provenance column is a plain text column + typed manifest value (DOM-05) — **no** model-registry service, no multi-dim query layer (REF-12).
 - Greenfield schema edits go directly into `001_identity_schema.py`; verify scripts (`sync_identity_schema.py`/`verify_identity_schema.py`) must stay green — verify fails closed on column gaps.
 - InsightFace keeps working on this branch (production still runs it until FIR-6); the refactor renames/reshapes around it, never breaks it.
@@ -40,22 +40,24 @@ Make the recognition pipeline's detection/embedding seam model-neutral so FIR-3 
 
 ## Target Outcome
 
-A `FaceObservation`-style neutral dataclass (bbox, 5 landmarks, confidence, embedding: np.ndarray, model_id) at the seam; `EmbeddingModelManifest` typed value (name, version, dimensions, normalization, metric) resolved from settings; `media_identities.embedding_model` populated on every write; age/gender gone from schema, exports, and API (or explicitly deferred with audit evidence if a consumer is found); embedding dim referenced from exactly one settings constant; recorded operator sign-off on tenant wipe/re-scan.
+**One neutral dataclass, not a third name (NAME-02/NAME-05)**: the existing application-layer `FaceDetection` becomes the single seam type (bbox, 5 landmarks, confidence, embedding: np.ndarray, model_id — insightface-only fields removed); infrastructure's `DetectedFace` is **deleted**, its adapter mapping directly into `FaceDetection`. Plus: `EmbeddingModelManifest` typed value (name, version, dimensions, normalization, metric) resolved from settings; `media_identities.embedding_model` populated on every write; age/gender gone from schema, exports, and API (or explicitly deferred by the S4 audit decision); embedding dim referenced from exactly one settings constant; recorded operator sign-off on tenant wipe/re-scan.
 
 ## Contract and Boundary Impact
 
 - **API**: `stores.py` face payload drops `age`/`gender` keys — consumer audit (WP plugin `apps/prototype-wp-alt-context/`, workbench UI) decides remove-vs-deprecate; result recorded as a decision.
 - **Export snapshots**: `export_service.py` schema change — bump snapshot schema marker if one exists; note in export docs.
-- **DB**: `+ embedding_model TEXT NOT NULL DEFAULT` (backfill n/a, greenfield), `- age`, `- gender`. Dimension untouched (512 until FIR-4).
+- **DB**: `+ embedding_model TEXT NOT NULL` — **no DEFAULT** (a default would convert missing provenance into fake provenance, RLSE-05); the write path supplies it explicitly, `insightface-buffalo_l@512d/l2/cosine` while InsightFace remains wired. `- age`, `- gender`. Dimension defaults untouched (512 until FIR-6's switch-over; dev/eval may set `PGVECTOR_DIM=128`).
+- **Rollback (RLSE-08)**: all FIR-2 schema edits are pre-switch-over and revert via branch revert + the standard greenfield reset — the provenance column is additive and the age/gender drops regenerate nothing that re-scan can't rebuild.
 
 ## Slice Delivery
 
 | Slice | Content | Verification |
 | --- | --- | --- |
-| S1 Greenfield verification | Enumerate live tenants (demo/prod DB), record operator wipe/re-scan sign-off as MCP decision; blocker if curation-worth-keeping found | decision recorded; blocker path exercised in dry form |
-| S2 Seam refactor (behavior-preserving) | Neutral observation dataclass; dim centralized to settings; stubs/tests parametrized; `EmbeddingModelManifest` type; adapter maps InsightFace → neutral shape | full suite green via `make check-remote`; no snapshot/API diffs (characterization asserts) |
-| S3 Provenance column | `embedding_model` column + write-path population (scan service) + verify/sync scripts + tests | schema verify green; new rows carry manifest id |
-| S4 age/gender contract change | Consumer audit (grep WP plugin + workbench for `age`/`gender` on the face payloads; record findings) → drop columns/exports/projections + test updates | audit decision recorded; `make check-remote` green; API characterization updated intentionally |
+| S1 Greenfield verification | Enumerate live tenants (demo/prod DB), record operator wipe/re-scan sign-off as MCP decision. **Refusal path defined**: operator declines → record blocker; S4 and the FIR-6 dimension flip are blocked on it; escalation = operator-owned re-scan comms plan before re-entry | verification = the recorded decision id (sign-off) or blocker id (refusal); no other exit |
+| S2a Characterization first | Author + land characterization tests pinning current behavior BEFORE any refactor (AGT-03): API face payload (`stores.py`), export snapshot shape (`export_service.py`), adapter output fields, stub embedding shape | new tests green against unmodified code; committed separately |
+| S2b Seam refactor (behavior-preserving) | `FaceDetection` becomes the single neutral seam type; `DetectedFace` deleted; dim centralized to settings; stubs/tests parametrized; `EmbeddingModelManifest` type; adapter maps InsightFace → `FaceDetection` | S2a characterization suite untouched and green; full suite via `make check-remote` |
+| S3 Provenance column | `embedding_model TEXT NOT NULL` (no DEFAULT) + explicit write-path population (scan service, incumbent manifest value) + verify/sync scripts + tests | schema verify green; test proves an INSERT without provenance fails |
+| S4 age/gender contract change | Consumer audit (grep WP plugin + workbench for `age`/`gender` on the face payloads; record findings) → **audit decision executes one of two paths**: remove columns/exports/projections now, or defer removal with a recorded consumer-migration decision | audit decision recorded naming the path taken; `make check-remote` green; S2a characterization updated intentionally (removal) or unchanged (deferral) |
 
 ## Files and Surfaces to Change
 
@@ -63,19 +65,20 @@ A `FaceObservation`-style neutral dataclass (bbox, 5 landmarks, confidence, embe
 
 ## Verification Strategy
 
-Scoped TDD per slice locally; `make check-remote` per slice close (never local full-suite). Characterization tests pin the API/export payloads before S4 changes them deliberately (rg-006/AGT-03: observe the failure the contract change causes, then accept it explicitly).
+Scoped TDD per slice locally; `make check-remote` per slice close (never local full-suite). S2a's characterization tests are the refactor's bug detector and exist **before** S2b touches anything (AGT-03: observe current behavior first, then prove it unchanged); S4 later changes those pins deliberately and visibly.
 
 ## Consolidated Checklist
 
-- [ ] S1 tenant enumeration + operator sign-off decision recorded
-- [ ] S2 neutral dataclass at seam; `embedding_512` gone from protocol layer
-- [ ] S2 dim referenced from a single settings constant (stubs/tests parametrized)
-- [ ] S3 `embedding_model` column + write-path + verify scripts green
-- [ ] S4 consumer audit decision recorded (WP plugin + workbench)
-- [ ] S4 age/gender removed from schema, export, API projection + tests
+- [ ] S1 tenant enumeration + operator sign-off decision (or blocker) recorded
+- [ ] S2a characterization tests landed green against unmodified code
+- [ ] S2b `FaceDetection` is the single seam type; `DetectedFace` deleted; characterization suite untouched
+- [ ] S2b dim referenced from a single settings constant (stubs/tests parametrized)
+- [ ] S3 `embedding_model` column (NOT NULL, no DEFAULT) + explicit write-path + INSERT-without-provenance failure test
+- [ ] S4 consumer audit decision recorded naming remove-now vs defer path
+- [ ] S4 executed per that decision (removal + test updates, or deferral decision with migration owner)
 - [ ] `make check-remote` green at branch end; `/review-parallel` run; zero open findings
 - [ ] Handoff: decisions per slice, `update_task_status(done)` + archive at close
 
 ## Success Criteria
 
-InsightFace still works through a model-neutral seam; a grep for `embedding_512|face\.age|face\.gender` in `recognition/application/` returns nothing; every new `media_identities` row records `embedding_model`; scope success criterion 7 (greenfield sign-off) satisfied.
+InsightFace still works through a model-neutral seam, proven by the untouched S2a characterization suite — not by grep alone. Mechanical checks (necessary, not sufficient): `DetectedFace` no longer exists; `rg "embedding_512|\.age\b|\.gender\b" recognition/ --type py` (application **and** infrastructure and interface_adapters, tests excluded per audit decision) returns nothing; a `512` literal audit in `recognition/` finds only the settings constant; the adapter-surface inventory test is extended to reject model-specific fields on the seam type. Every new `media_identities` row records `embedding_model`; scope success criterion 7 (greenfield sign-off) satisfied.

@@ -5,7 +5,7 @@
 
 ## 1. Verdict
 
-InsightFace buffalo models are non-commercial even for private server-side inference in a paid product; non-distribution is not an exception. Replace the production harness with an ACX-owned **YuNet (2026may, MIT) + SFace (2021dec, Apache-2.0)** pipeline behind the existing adapter seams; retain InsightFace **benchmark-only**, fully separated from production (deps, images, DB). The research guide's recommendation survives codebase review with four material adaptations (§3). The principal open risk is accuracy on ACX data, not licensing — per intake, **no fixed accuracy gate is set yet**; the bake-off produces the numbers, then the gate is decided (heuristic RLSE-03: invariants recorded before the audit that enforces them).
+InsightFace buffalo models are non-commercial even for private server-side inference in a paid product; non-distribution is not an exception. Replace the production harness with an ACX-owned **YuNet (2026may, MIT) + SFace (2021dec, Apache-2.0)** pipeline behind the existing adapter seams; retain InsightFace **benchmark-only**, fully separated from production (deps, images, DB). The research guide's recommendation survives codebase review with four material adaptations (§3). The principal open risk is accuracy on ACX data, not licensing — per intake, **no fixed accuracy gate is set yet**. This is a deliberate deviation from RLSE-03 (invariants belong *before* the audit), so it carries a structural compensation (RLSE-02: gates are not suggestions, and proximity makes the implementing agent the worst judge): the bake-off report proposes gate criteria, the **operator** records the gate as an MCP decision, and the FIR-6 switch-over slice is **blocked until that decision exists** — the implementing agent never judges its own gate.
 
 ## 2. Licensing position (from guide §2, operative rules)
 
@@ -36,13 +36,15 @@ The guide was written against a generic InsightFace deployment. The actual codeb
 | `recognition/application/health.py:check_model_cache`, `api/main.py:register_health_probes` | Model-cache probe checks pinned YuNet/SFace ONNX files instead of buffalo bundle |
 | `recognition/application/assignment/quality.py` | Pose inputs become landmark-derived proxies (§6); add sharpness/embedding-magnitude signals |
 | `recognition/application/scan/service.py`, `services/export_service.py`, `interface_adapters/http/deps/stores.py` | Remove age/gender writes/exports/API projection (intake: never product, wildly inaccurate; follow-up only after recognition is stable) |
-| `pyproject.toml` | `insightface` leaves `[local]`/`[gpu]`; new `[bench]` extra holds it for eval only; `opencv-python` pin decision (4.12 `FaceDetectorYN` vs OpenCV 5 for YuNet 2026may dynamic input) resolved in FIR-3; mypy override cleanup |
-| Docker/compose, `scripts/install_insightface_mac.sh`, model provisioning | Ship pinned ONNX files + license files in the artifact; **remove buffalo weights from production images** |
+| `pyproject.toml` | `insightface` leaves the `[face]` and `[gpu]` extras (no `[local]` extra exists); new `[bench]` extra holds it for eval only; `opencv-python` pin decision (4.12 `FaceDetectorYN` vs OpenCV 5 for YuNet 2026may dynamic input) resolved in FIR-3; mypy override cleanup |
+| Docker/compose, `scripts/install_insightface_mac.sh`, model provisioning | Ship pinned ONNX files + license files in the artifact, provenance-manifested (source URL + sha256 per file); hashes verified **at image build and at boot** (extend `check_model_cache` to fail closed on hash mismatch, not just presence); **remove buffalo weights from production images** at switch-over |
+| Observability | New pipeline emits per-scan metrics/logs: detection count, assignment vs unknown ratio, quality-gate rejection count, `embedding_model` id — the signals that make "more unknowns, not false assignments" falsifiable in production (OBS posture; RLSE-05 no silent failure) |
+| Cutover sequencing | FIR-4 wires adapters **dark** behind a face-pipeline profile flag (production default stays on the current pipeline); the flag flips and buffalo leaves prod images only in the FIR-6 switch-over slice, after the operator-recorded gate |
 | Tests | `test_adapter_surface_inventory`, circuit-breaker, generator-protocol, health-probe, retention-cache tests re-anchored; stub dims (512 default) centralized to settings (REF-19) |
 
 ### 4.2 Schema (direct edit in `001_identity_schema.py`, greenfield)
 
-- `media_identities.embedding`, `identity_cluster_representatives.embedding`, `mv_identity_cluster_centroids.centroid`: `vector(512)` → `vector(128)` via `PGVECTOR_DIM`. Unit-norm CHECKs and ivfflat cosine index carry over unchanged (128D = 4× smaller vectors → distance ops and index get *faster*, not slower).
+- `media_identities.embedding`, `identity_cluster_representatives.embedding`, `mv_identity_cluster_centroids.centroid`: `vector(512)` → `vector(128)`. **Two dimension surfaces must flip together**: the hardcoded `EMBEDDING_DIMENSION = 512` in `001_identity_schema.py:14` and the `PGVECTOR_DIM` env default in `db/settings.py:241`, plus every deploy config that sets it (`.env*`, `docker-compose*.yml`, `infra/oci` deploy env, reset scripts). FIR-2 only centralizes the constant; the **flip itself lands in FIR-4's cutover slice** together with the adapters, so there is no window where schema and embedder disagree. Unit-norm CHECKs and ivfflat cosine index carry over unchanged (128D = 4× smaller vectors → distance ops and index get *faster*, not slower).
 - Add `embedding_model` provenance column (text, e.g. `yunet-2026may+sface-2021dec@l2/cosine`) on `media_identities` — per-row provenance per guide §2.3/§16 without a registry service (REF-12 YAGNI).
 - Drop `age`/`gender` columns. `pose_*` columns stay but store landmark-derived estimates (nullable already).
 - Downstream: `sync_identity_schema.py`/`verify_identity_schema.py` (verify fails closed on column gaps), reset scripts, `.env`/compose `PGVECTOR_DIM`.
@@ -51,11 +53,11 @@ The guide was written against a generic InsightFace deployment. The actual codeb
 
 ### 4.3 Explicitly NOT touched
 
-Clustering algorithms (cosine on unit vectors — dimension-agnostic), roster module, curation/workbench UX, scene/describe + VLM captioning, WP plugin (consumes clusters/labels, not embeddings), tenant/RLS machinery, API contracts other than age/gender field removal.
+Clustering algorithms (cosine on unit vectors — dimension-agnostic), roster module, curation/workbench UX, scene/describe + VLM captioning, tenant/RLS machinery. The WP plugin never touches embeddings, but the age/gender **field removal is consumer-visible** (`stores.py` projection, `export_service.py` snapshots): FIR-2's consumer audit confirms whether the plugin/workbench read those fields before the contract change lands (DATA-03).
 
 ### 4.4 Thresholds (all recalibrated, never copied — guide §8.1)
 
-`ClusteringSettings.similarity_threshold` (0.6), `IdentityDetectionSettings.default_threshold` (0.45), `QualitySettings` pose divisor / min face size, per-cluster `similarity_threshold`, curriculum/maturity adjustments. SFace geometry ≠ buffalo geometry; every one comes out of FIR-6 calibration.
+`ClusteringSettings.similarity_threshold` (0.55) and `ClusteringLimitsSettings.similarity_threshold` (0.6) — two distinct knobs in `recognition/config/settings.py` — `IdentityDetectionSettings.default_threshold` (0.45), `QualitySettings` pose divisor / min face size, per-cluster `similarity_threshold`, curriculum/maturity adjustments. SFace geometry ≠ buffalo geometry; every one comes out of FIR-6 calibration.
 
 ## 5. Expected performance drop
 
@@ -64,6 +66,7 @@ Literature-derived expectation — **the bake-off is the real answer** (PERF-06 
 - **Recognition (SFace 2021dec vs buffalo_l ArcFace-R50):** near-parity on easy/frontal faces (LFW-class: ~99.6% vs ~99.8%); the gap widens on hard slices — expect roughly **3–7 points TAR at fixed FAR** worse on profile/low-res/occluded faces (IJB-C-class protocols), which is exactly the WP-media long tail. 128D vs 512D also means less headroom for very large galleries; irrelevant at current tenant roster sizes.
 - **Detection (YuNet vs SCRFD-10GF):** WIDER-hard AP ~0.81 vs ~0.83–0.85 — expect a few percent more **missed small/blurry/extreme-pose faces**; near-parity on medium/large faces. YuNet is dramatically cheaper on ARM CPU, which the production path needs.
 - **Recoverable:** multi-observation aggregation (cluster representatives/medoid templates), quality-gated enrollment, per-tenant threshold calibration, and the curation loop absorb part of the single-image gap. Net product-level effect plausibly lands at a **small increase in unassigned faces and curation corrections** rather than wrong-identity assignments — provided the unknown threshold + ambiguity margin are calibrated conservatively (§8.1 of the guide).
+- **Throughput is measured, not assumed** (PERF-01/06/07): the bake-off carries a perf leg — embeddings/sec and sec/image on the ARM A1 (and A10), cost per 1k images, p95 scan latency — and a recorded perf budget (≥ parity with the buffalo CPU path, or an explicit operator-accepted budget) is part of the gate inputs. "YuNet is dramatically cheaper" stays a hypothesis until this leg reports.
 
 ## 6. Extra dimensions from the literature (user-supplied corpora)
 
@@ -85,14 +88,14 @@ Directly usable, in priority order:
 
 ## 7. Benchmark harness readiness
 
-`scripts/eval_harness/` (VLM-2A) **already scores face-recognition P/R** — detection + identification, micro + per-identity macro — against the golden manifest via the live service (`analyze`/`wait_job`/`media_identities`), with seeded eval roster (`seed_roster.py`), deterministic re-scoring, and bounded-stall discipline. Golden manifest v2 is populated (88d5d820); VLM-6's Golden-100 curation extends the corpus.
+`scripts/eval_harness/` (VLM-2A) **already scores face-recognition P/R** — detection + identification, micro + per-identity macro — against the golden manifest via the live service (`analyze`/`wait_job`/`media_identities`), with seeded eval roster (`seed_roster.py`), deterministic re-scoring, and bounded-stall discipline. Golden manifest v2 is populated (88d5d820); VLM-6's Golden-150 curation extends the corpus (locked at 150 per VLM-6 continuity artifact — earlier docs say "Golden-100").
 
 Gaps to close for this bake-off (FIR-5):
 
 1. **Candidate swapping**: harness benchmarks *the deployed service*, one model stack at a time. Need either an env-selected face-pipeline profile on an eval instance (mirroring the hosted-provider pattern) or an offline in-process leg that runs detector+embedder candidates directly over the golden corpus.
 2. **Cluster-level metrics**: identification P/R exists; **false-merge/false-split rates, cluster purity, unknown-rejection at fixed FAR** (guide §12.2) do not. Neither does per-slice aggregation: golden manifest entries (37, verified) carry no hard-case tags — FIR-5 adds a `slice_tags` field (`occlusion`, `profile`, `low_res`, `blur`, `similar_people`, `unknown`) and per-slice metric rollups, with **occlusion as a first-class slice**.
 3. **buffalo_l reference leg** must run in the non-commercial eval environment only (`[bench]` extra), embeddings confined to run artifacts (§4.2 separation).
-4. **Corpus breadth**: 38 golden images is thin for threshold calibration; extend with Golden-100 + hard-slice additions (profile/low-res/blur/similar-people/unknowns, demographic slices).
+4. **Corpus breadth**: the 37-entry golden manifest (harness README says "38-image"; count verified 37) is thin for threshold calibration; extend with Golden-150 + hard-slice additions (profile/low-res/blur/similar-people/unknowns, demographic slices).
 
 Unit/integration test harness: protocol-based stubs mean existing suites survive the swap with re-anchoring only; goldens for landmark order, alignment affine, and normalization parity (guide checklist) are new and CPU-only — they fit the existing scoped-TDD + `make check-remote` gate flow.
 
@@ -111,11 +114,13 @@ Unit/integration test harness: protocol-based stubs mean existing suites survive
 
 ## 9. Risks & open questions
 
-1. **SFace accuracy on ACX hard slices** — top risk; escalation ladder pre-agreed: SeetaFace6 → licensed InsightFace hosted-service quote → commercial SDK → custom training (last).
+1. **SFace accuracy on ACX hard slices** — top risk; escalation ladder pre-agreed: SFIQA-class learned quality model → SeetaFace6 → licensed InsightFace hosted-service quote → commercial SDK → custom training (last).
 2. **OpenCV 4.12-pin vs OpenCV 5** for YuNet 2026may dynamic-input support — resolve in FIR-3 (ORT-first inference makes OpenCV version mostly a reference-impl concern).
 3. **Quality scoring without native pose** — landmark-derived roll/yaw proxies + sharpness + embedding magnitude; validate against curation outcomes in FIR-6.
 4. **Eval-tenant isolation** — buffalo embeddings must be provably absent from prod (image audit + `[bench]` extra + run-artifact-only storage).
 5. **Threshold cold-start** — until calibration lands, defaults must fail toward "unknown" rather than false assignment.
+6. **Greenfield is an assumption until FIR-2 verifies it** — live demo/prod tenants exist; wiping rosters/curation at re-scan needs recorded operator sign-off and, if any tenant's curation matters, a communicated re-scan plan (RLSE-04/05).
+7. **Rollback** — see the scope doc's Rollback section (RLSE-08): full revert is possible only pre-launch while buffalo remains lawful in non-commercial envs; post-switch-over the embedder is roll-forward-only, with the pipeline flag degrading recognition to fail-closed intake rather than reverting weights.
 
 ## 10. Addendum (2026-07-15): occlusion dimension + 11-paper technique sweep
 
@@ -144,7 +149,7 @@ Four patterns recur; they compose into one ordered strategy — **gate → weigh
 1. **Degradation-aware gating** (SFIQA, OccFace, S3POT, PLGSA — 4/11): don't repair bad crops, *detect* them and gate/down-weight before they pollute the gallery. REF-20 (define errors out of existence): an occluded face becomes a normal, handled input class ("observed, low-confidence"), not a silent false assignment.
 2. **Multi-observation aggregation** (FASR++, plus Cluster-and-Aggregate from §6): fuse several embeddings per identity. ALG-06 (catalog before code): plain mean/medoid of L2-normalized SFace vectors is the zero-cost version and is already our cluster-representative machinery.
 3. **Degradation-conditioned thresholds** (PLGSA OACT): raise the match threshold as occlusion severity rises. Maps directly onto existing code — `compute_identity_quality()` already returns `threshold_adjustment`; occlusion severity becomes one more input, not a new subsystem (REF-15 seam reuse).
-4. **Constraint-based assignment** (2606.23230): within one photo, each roster identity appears at most once — greedy per-face nearest-neighbor ignores this; Hungarian assignment over the face×candidate cosine matrix enforces it. ALG-01 (graph in disguise): it's a textbook assignment problem (`scipy.optimize.linear_sum_assignment`), zero model cost, and directly attacks the guide's "multiple similar-looking people in one image" slice.
+4. **Constraint-based assignment** (2606.23230): within one photo, each roster identity appears at most once — greedy per-face nearest-neighbor ignores this; Hungarian assignment over the face×candidate cosine matrix enforces it. ALG-01 (graph in disguise): it's a textbook assignment problem (`scipy.optimize.linear_sum_assignment`), zero model cost, and directly attacks the guide's "multiple similar-looking people in one image" slice. **Caveats** (RLSE-06): the one-to-one premise is false for mirrors, collages, and photo-in-photo; it runs *after* the quality gate (never rescues gated crops), and the mirrors/reflections bake-off stratum measures whether it must be disabled per-image or per-tenant.
 
 Everything else in the sweep (diffusion SR, GAN inversion, SAM, CLIP, LRM, detector retraining) fails ARCH-08 + the CPU-first intake decision and moves to the escalation ladder or offline curation.
 
@@ -152,7 +157,7 @@ Everything else in the sweep (diffusion SR, GAN inversion, SAM, CLIP, LRM, detec
 
 **No.** None of the 11 provides a commercially licensed, CPU-viable, occlusion-robust *embedder* (2/11 release code, 0/11 release usable weights+license). The evidence across the sweep is that hard-case recovery in our regime comes from pipeline intelligence around SFace: quality/occlusion gating (heuristic signals first: YuNet landmark confidence, eye-region sharpness/Laplacian, embedding magnitude per AdaFace/MagFace), OACT-style threshold adjustment, representative aggregation, and Hungarian within-photo assignment. If the occlusion slice still fails the (post-bake-off) gate after those land, the escalation is FIR-8: SFIQA-class learned quality model → SeetaFace6/licensed-InsightFace → occlusion-aware embedder training (LaCoVL/OccFace as design references) — training last, per the guide's data-governance warning.
 
-Credibility triage (AGT-03 posture — no unverified numbers into decisions): 2607.03581 and 2607.03073 have weak-rigor signals; their reported metrics must not seed thresholds or gate arguments.
+Credibility triage (PERF-06 measure-don't-guess; AGT-04 evidence discipline): 2607.03581 and 2607.03073 have weak-rigor signals; their reported metrics must not seed thresholds or gate arguments.
 
 ### 10.3 OpenCV 5 / new libraries
 

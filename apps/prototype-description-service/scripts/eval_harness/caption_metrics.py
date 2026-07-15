@@ -245,7 +245,12 @@ def score_hallucination(
     covered: list[str] = []
     missing: list[str] = []
     trap_count = 0
+    seen: set[tuple[str, FactKind, FactPolarity, tuple[str, ...]]] = set()
     for fact in reference_facts:
+        identity = (fact.text, fact.kind, fact.polarity, tuple(fact.phrases))
+        if identity in seen:
+            continue  # a duplicated reference fact must not double-count coverage/fabrication (D-04)
+        seen.add(identity)
         targets = fact.match_targets()
         hit = next((t for t in targets if _contains(caption, t)), None)
         if fact.polarity is FactPolarity.FALSE:
@@ -271,11 +276,13 @@ def score_hallucination(
 
 
 def fabricated_fact_rate(scores: Sequence[HallucinationScores], *, over: str = "all") -> float | None:
-    """Fraction of images caught fabricating (a lower bound — only authored traps fire).
+    """Fraction of IMAGES caught fabricating (a lower bound — only authored traps fire).
 
-    ``over='all'`` denominates over every scored image (corpus caught-rate);
-    ``over='trapped'`` denominates only over images that authored >=1 false-fact
-    (per-trap hit rate). Returns None when the denominator is empty.
+    Image-level: an image counts once toward ``caught`` if it tripped ANY trap, however
+    many it tripped. ``over='all'`` denominates over every scored image (corpus caught-
+    rate); ``over='trapped'`` denominates only over images that authored >=1 false-fact
+    (caught-rate AMONG trapped images — NOT a per-trap-instance rate: a 3-trap image that
+    trips 1 counts as fully caught). Returns None when the denominator is empty.
     """
     if over not in ("all", "trapped"):
         raise ValueError("over must be 'all' or 'trapped'")

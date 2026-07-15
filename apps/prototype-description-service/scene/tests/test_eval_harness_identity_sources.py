@@ -112,6 +112,24 @@ _MWG_XMP = """<x:xmpmeta xmlns:x="adobe:ns:meta/">
  </rdf:RDF>
 </x:xmpmeta>"""
 
+# An MWG region that DOES carry a confirmed name via the standard hyphenated prefix.
+_MWG_XMP_NAMED = """<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description xmlns:mwg-rs="http://www.metadataworkinggroup.com/schemas/regions/">
+   <mwg-rs:Regions><mwg-rs:RegionList><rdf:Seq>
+    <rdf:li>
+     <mwg-rs:Name>Grace Okafor</mwg-rs:Name>
+     <mwg-rs:Area xmlns:stArea="http://ns.adobe.com/xmp/sType/Area#">
+      <stArea:x>0.5115</stArea:x><stArea:y>0.4855</stArea:y>
+      <stArea:w>0.113</stArea:w><stArea:h>0.151</stArea:h>
+     </mwg-rs:Area>
+     <mwg-rs:Type>Face</mwg-rs:Type>
+    </rdf:li>
+   </rdf:Seq></mwg-rs:RegionList></mwg-rs:Regions>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>"""
+
 
 def test_iptc_region_name_and_box_parsed():
     regions = extract_face_regions(_jpeg_with_xmp(_IPTC_XMP))
@@ -128,6 +146,16 @@ def test_mwg_region_box_only_no_name():
     assert regions[0].x == 0.5115
 
 
+def test_mwg_region_hyphenated_prefix_name_parsed():
+    # The MWG-Regions canonical prefix is hyphenated (mwg-rs); a <mwg-rs:Name> the
+    # standard tools (Lightroom/digiKam/Photos) write must parse, or a confirmed face
+    # name is silently lost — the regex prefix group must allow '-' (E-03).
+    regions = extract_face_regions(_jpeg_with_xmp(_MWG_XMP_NAMED))
+    assert len(regions) == 1
+    assert regions[0].name == "Grace Okafor" and regions[0].source == "mwg"
+    assert named_identities(regions) == ["Grace Okafor"]
+
+
 def test_no_xmp_returns_empty():
     assert extract_face_regions(b"\xff\xd8\xff\xd9") == []
 
@@ -140,7 +168,8 @@ def test_named_identities_dedup_and_order():
 
 @pytest.mark.skipif(not os.path.isfile(_REAL_XMP_IMG), reason="real LocalWP XMP fixture not present")
 def test_real_localwp_image_yields_named_region():
-    regions = extract_face_regions(open(_REAL_XMP_IMG, "rb").read())
+    with open(_REAL_XMP_IMG, "rb") as fh:
+        regions = extract_face_regions(fh.read())
     named = named_identities(regions)
     assert "Tory Guzman" in named
     iptc = [r for r in regions if r.source == "iptc" and r.name]

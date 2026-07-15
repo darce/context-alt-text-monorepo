@@ -399,9 +399,7 @@ def build_reports(
     redaction: dict[str, Any] | None = None
     if audience is Audience.PUBLIC:
         total_items = len(run_record["items"])
-        score_record, score_entries, withheld = _filter_for_public_audience(
-            run_record, manifest_entries
-        )
+        score_record, score_entries, withheld = _filter_for_public_audience(run_record, manifest_entries)
         redaction = {
             "audience": Audience.PUBLIC.value,
             "withheld_items": withheld,

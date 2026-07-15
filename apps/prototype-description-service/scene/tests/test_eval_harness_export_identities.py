@@ -1,5 +1,7 @@
 """VLM-6 S1: curation->manifest identity bridge + publishable flag."""
 
+import pytest
+
 from scripts.eval_harness.export_identities import (
     enrich_entry,
     identities_for_image,
@@ -45,16 +47,16 @@ def test_publishable_explicit_wins():
 
 
 def test_publishable_license_derived_failclosed():
-    assert Provenance(source="x", license=LicenseTag.CC0).is_publishable is True
-    assert Provenance(source="x", license=LicenseTag.PUBLIC_DOMAIN).is_publishable is True
+    assert Provenance(source="wikimedia", license=LicenseTag.CC0).is_publishable is True
+    assert Provenance(source="wikimedia", license=LicenseTag.PUBLIC_DOMAIN).is_publishable is True
     # private/consented/mock/fixture are local-only unless explicitly flagged
     assert Provenance(source="localwp", license=LicenseTag.CONSENTED).is_publishable is False
-    assert Provenance(source="x", license=LicenseTag.MOCK_ENTITY).is_publishable is False
-    assert Provenance(source="x", license=LicenseTag.FIXTURE).is_publishable is False
+    assert Provenance(source="wikimedia", license=LicenseTag.MOCK_ENTITY).is_publishable is False
+    assert Provenance(source="wikimedia", license=LicenseTag.FIXTURE).is_publishable is False
 
 
 def test_publishable_explicit_false_overrides_cc0():
-    assert Provenance(source="x", license=LicenseTag.CC0, publishable=False).is_publishable is False
+    assert Provenance(source="wikimedia", license=LicenseTag.CC0, publishable=False).is_publishable is False
 
 
 # --- identities_for_image ----------------------------------------------------
@@ -139,3 +141,36 @@ def test_enrich_entry_personal_adds_spatial():
     out = enrich_entry(entry, _iptc_xmp(("Alice Ray", 0.2), ("Bob Lin", 0.8)))
     assert out["face_count"] == 2 and out["spatial_facts"]
     assert out["spatial_facts"][0]["subject"] == "Alice Ray"
+
+
+# --- VLM-6 review fixes: source-aware publishability + canonical source vocab -----
+
+
+def test_private_source_never_publishable_even_with_public_license():
+    # Crown-jewel invariant (E-01): a personal/upload photo is never publishable — not
+    # via a CC0/public-domain license and not via an explicit publishable=True flag.
+    assert Provenance(source="localwp", license=LicenseTag.CC0).is_publishable is False
+    assert Provenance(source="localwp", license=LicenseTag.PUBLIC_DOMAIN).is_publishable is False
+    assert Provenance(source="localwp", license=LicenseTag.CC0, publishable=True).is_publishable is False
+    assert Provenance(source="operator", license=LicenseTag.PUBLIC_DOMAIN, publishable=True).is_publishable is False
+
+
+def test_strata_scan_root_or_unknown_source_raises_not_strangers():
+    # A curator copying strata's scan-root label ("celebs01"/"localwp_uploads") verbatim
+    # into golden.json must fail loudly, not silently drop identity ground truth (E-02).
+    with pytest.raises(ValueError, match="unknown provenance source"):
+        identities_for_image(b"\xff\xd8\xff\xd9", source="celebs01", filename="al_pacino_10.jpg")
+    with pytest.raises(ValueError, match="unknown provenance source"):
+        identities_for_image(b"\xff\xd8\xff\xd9", source="localwp_uploads", filename="x.jpg")
+
+
+def test_enrich_entry_face_count_covers_curated_identities():
+    # A curated multi-identity entry whose image carries no XMP must not land below its
+    # own present_identities count (would raise ManifestError downstream) (E-04).
+    entry = {
+        "path": "group.jpg",
+        "provenance": {"source": "localwp", "license": "consented"},
+        "present_identities": ["Ana Ruiz", "Beto Sol", "Cyd Vega"],
+    }
+    out = enrich_entry(entry, b"\xff\xd8\xff\xd9")  # no XMP -> zero detected regions
+    assert out["face_count"] >= 3

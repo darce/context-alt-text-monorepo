@@ -214,6 +214,24 @@ def test_coverage_partial_and_none_when_no_true_facts():
     assert score_hallucination("x", reference_facts=[_false_fact("a", ["a"])]).coverage is None
 
 
+def test_duplicate_reference_facts_counted_once():
+    # A fact authored twice (same text/kind/polarity/phrases) must count once, or coverage
+    # and the FactKind fabrication tally are skewed (D-04).
+    facts = [
+        _true_fact("a bicycle", ["bicycle"]),
+        _true_fact("a bicycle", ["bicycle"]),  # duplicate authoring
+        _true_fact("a hat", ["hat"]),
+    ]
+    s = score_hallucination("A bicycle only.", reference_facts=facts)
+    assert s.covered_facts == ["a bicycle"]  # once, not twice
+    assert s.missing_facts == ["a hat"]
+    assert s.coverage == 0.5  # 1 / 2 distinct, not 2 / 3
+
+    dup_trap = [_false_fact("a dog", ["dog"]), _false_fact("a dog", ["dog"])]
+    s2 = score_hallucination("A dog runs.", reference_facts=dup_trap)
+    assert len(s2.fabricated_facts) == 1 and s2.trap_count == 1  # one real trap, not two
+
+
 def test_count_advisory_fires_on_overcount_but_not_headline():
     s = score_hallucination("Two people standing together.", reference_facts=[], face_count=1)
     assert s.count_advisory is not None and "2" in s.count_advisory
@@ -247,10 +265,13 @@ def test_fabricated_fact_rate_all_vs_trapped():
 
 def test_fabrication_by_kind_tally():
     scores = [
-        score_hallucination("a dog and a beach", reference_facts=[
-            _false_fact("a dog", ["dog"], kind=FactKind.OBJECT),
-            _false_fact("a beach", ["beach"], kind=FactKind.SCENE),
-        ]),
+        score_hallucination(
+            "a dog and a beach",
+            reference_facts=[
+                _false_fact("a dog", ["dog"], kind=FactKind.OBJECT),
+                _false_fact("a beach", ["beach"], kind=FactKind.SCENE),
+            ],
+        ),
         score_hallucination("a dog", reference_facts=[_false_fact("a dog", ["dog"], kind=FactKind.OBJECT)]),
     ]
     tally = fabrication_by_kind(scores)
@@ -258,7 +279,8 @@ def test_fabrication_by_kind_tally():
 
 
 def test_phrases_fallback_to_text_in_scoring():
-    s = score_hallucination("A red bicycle here.", reference_facts=[
-        ReferenceFact(text="red bicycle", kind=FactKind.OBJECT, polarity=FactPolarity.FALSE)
-    ])
+    s = score_hallucination(
+        "A red bicycle here.",
+        reference_facts=[ReferenceFact(text="red bicycle", kind=FactKind.OBJECT, polarity=FactPolarity.FALSE)],
+    )
     assert s.fabricated is True and s.fabricated_facts[0].matched_phrase == "red bicycle"

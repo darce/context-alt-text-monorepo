@@ -17,9 +17,9 @@ Operational shape:
 
 - **Bounded** (RES-05): ``--limit`` caps the pass; the pool is ~6,400 images and
   nothing here may grow to meet it.
-- **Sequential** (one image per job by default): the live box serves the demo and
-  is memory-pressured. This knowingly accepts a chatty remote interface (RES-12) —
-  ``--batch`` raises it — because degrading the demo box costs more than wall-clock.
+- **Sequential** (one image per job): the live box serves the demo and is
+  memory-pressured. This knowingly accepts a chatty remote interface (RES-12)
+  because degrading the demo box costs more than wall-clock.
 - **Idempotent** (RES-01, DATA-13): re-analyzing a media_id re-matches by bbox IoU
   and deletes orphaned rows (``scan/service.py`` step 6), so a resumed or retried
   item converges on the same count instead of accumulating duplicate faces.
@@ -53,7 +53,6 @@ from shared.secrets import get_secret_provider
 MEDIA_ID_BASE = 900_000
 MEDIA_ID_CEILING = 999_999
 DEFAULT_STALL_LIMIT = 5
-DEFAULT_BATCH = 1
 
 
 class SeededTenantError(Exception):
@@ -209,7 +208,11 @@ def load_face_counts(path: Path) -> dict[str, int]:
     An errored row carries no count and must not read as "zero faces" — that would
     turn a network failure into the claim that an image has no people in it.
     """
-    return {row.sha256: row.face_count for row in load_face_pass_rows(path) if row.error is None and row.face_count is not None}
+    return {
+        row.sha256: row.face_count
+        for row in load_face_pass_rows(path)
+        if row.error is None and row.face_count is not None
+    }
 
 
 def _append_row(handle: Any, row: FacePassRow) -> None:
@@ -240,8 +243,14 @@ def run_face_pass(
     failures aborts the pass — a dead tunnel or an expired key would otherwise
     write hundreds of identical error rows and call it a completed pass.
     """
-    write_rows(out, resume_rows)  # drops any truncated tail before appending
-    done = list(resume_rows)
+    # Carry only SUCCESSFUL rows forward. Errored resume rows are re-selected and retried
+    # by the caller (done_sha excludes them), so keeping their old rows would double-count a
+    # retried-then-succeeded image (one error + one ok) in summarize and grow the checkpoint
+    # unboundedly across --resume cycles. _main still derives the media-id map from ALL
+    # resume rows, so a retried item reuses its id (B-01).
+    kept = [row for row in resume_rows if row.error is None]
+    write_rows(out, kept)  # drops any truncated tail and stale error rows before appending
+    done = list(kept)
     consecutive_failures = 0
     with out.open("a") as handle:
         for index, (record, source, media_id) in enumerate(candidates):
@@ -306,9 +315,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
     from scripts.eval_harness.strata import _parse_inventory_arg
 
     parser = argparse.ArgumentParser(description="Fill model face counts for images with no XMP face data.")
-    parser.add_argument(
-        "--inventory", action="append", required=True, type=_parse_inventory_arg, metavar="SOURCE=PATH"
-    )
+    parser.add_argument("--inventory", action="append", required=True, type=_parse_inventory_arg, metavar="SOURCE=PATH")
     parser.add_argument("--root", action="append", required=True, metavar="SOURCE=DIR", help="image root per source")
     parser.add_argument("--out", type=Path, required=True, help="JSONL checkpoint")
     parser.add_argument("--base-url", default=os.environ.get("ACX_EVAL_BASE_URL"))
@@ -327,6 +334,8 @@ def _main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--stall-limit", type=int, default=DEFAULT_STALL_LIMIT)
     parser.add_argument("--force", action="store_true", help="run even if the tenant has labeled clusters")
     args = parser.parse_args(argv)
+    if args.stall_limit < 1:
+        parser.error("--stall-limit must be >= 1 (a non-positive threshold aborts on the first error)")
 
     # Through the SecretProvider seam, never a raw env read: ACX_EVAL_API_KEY is one of
     # the seven guarded secret names, and `scripts/` is production source to that guard

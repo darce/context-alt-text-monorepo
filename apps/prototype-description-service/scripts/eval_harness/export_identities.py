@@ -17,6 +17,7 @@ multi-face images so caption placement claims can be scored (plan S1).
 from __future__ import annotations
 
 import itertools
+import warnings
 from dataclasses import dataclass, field
 
 from scripts.eval_harness.identity_sources import (
@@ -25,10 +26,18 @@ from scripts.eval_harness.identity_sources import (
     extract_face_regions,
     named_identities,
 )
-from scripts.eval_harness.manifest import SpatialFact, SpatialRelation
+from scripts.eval_harness.manifest import ProvenanceSource, SpatialFact, SpatialRelation
 
-_CELEB_SOURCES = {"celeb", "celebs", "public_figure"}
-_PERSONAL_SOURCES = {"localwp", "personal", "operator"}
+# Source policy keyed off the canonical ProvenanceSource enum (sr-007), never scattered
+# string literals: CELEB -> filename identity, LOCALWP/OPERATOR -> XMP identity, the rest
+# (wikimedia/openverse/fixture) -> detection only. Matching the enum means a stale/foreign
+# label (e.g. strata's scan-root "celebs01") fails loudly instead of silently dropping
+# identity ground truth.
+_PERSONAL_SOURCES = frozenset({ProvenanceSource.LOCALWP, ProvenanceSource.OPERATOR})
+
+
+class CelebIdentityMissingWarning(UserWarning):
+    """A celeb-sourced image whose filename yields no identity label (surfaced, not silent)."""
 
 
 @dataclass(frozen=True)
@@ -78,12 +87,30 @@ def spatial_facts_from_regions(regions: list[FaceRegion]) -> list[SpatialFact]:
 
 
 def identities_for_image(image_bytes: bytes, *, source: str, filename: str) -> IdentityGroundTruth:
-    """Compute identity + spatial ground truth for one image, by provenance source."""
+    """Compute identity + spatial ground truth for one image, by provenance source.
+
+    ``source`` must be a canonical ``ProvenanceSource`` value; an unknown label (e.g.
+    strata's scan-root "celebs01" copied verbatim into golden.json) raises rather than
+    silently yielding a strangered, identity-less entry.
+    """
+    try:
+        src = ProvenanceSource(source)
+    except ValueError as exc:
+        raise ValueError(
+            f"unknown provenance source {source!r}; expected one of "
+            f"{[s.value for s in ProvenanceSource]} (did a strata scan-root label leak in?)"
+        ) from exc
     regions = extract_face_regions(image_bytes)
     face_count = len(regions)
-    src = source.lower()
-    if src in _CELEB_SOURCES:
+    if src is ProvenanceSource.CELEB:
         name = celeb_identity_from_filename(filename)
+        if name is None:
+            warnings.warn(
+                f"celeb-sourced image {filename!r} has no parseable identity in its filename; "
+                "the entry will carry zero identity ground truth",
+                CelebIdentityMissingWarning,
+                stacklevel=2,
+            )
         present = [name] if name else []
         face_count = max(face_count, 1)  # a public-figure portrait has >=1 face
         spatial: list[SpatialFact] = []  # single-figure portraits: no placement facts
@@ -91,7 +118,7 @@ def identities_for_image(image_bytes: bytes, *, source: str, filename: str) -> I
         present = named_identities(regions)
         spatial = spatial_facts_from_regions(regions)
     else:
-        present = []  # strangers / cc0 / fixtures: detection only, no identity
+        present = []  # wikimedia / openverse / fixture: detection only, no identity
         spatial = []
     return IdentityGroundTruth(present_identities=present, face_count=face_count, spatial_facts=spatial)
 
@@ -115,9 +142,13 @@ def enrich_entry(entry: dict, image_bytes: bytes) -> dict:
     updated = dict(entry)
     if not updated.get("present_identities"):
         updated["present_identities"] = gt.present_identities
-    updated.setdefault("face_count", gt.face_count)
-    if gt.face_count > updated.get("face_count", 0):
-        updated["face_count"] = gt.face_count
+    # face_count must cover the labeled identities (manifest's _face_count_covers_labeled
+    # invariant): take the max of any existing value, the freshly-detected count, and the
+    # identity count, so a curated entry whose image carries no embedded XMP can never land
+    # below its own present_identities list and raise a ManifestError far downstream.
+    updated["face_count"] = max(
+        int(updated.get("face_count") or 0), gt.face_count, len(updated.get("present_identities") or [])
+    )
     if gt.spatial_facts and not updated.get("spatial_facts"):
         updated["spatial_facts"] = [f.model_dump(exclude_none=True) for f in gt.spatial_facts]
     # must_right mirrors confirmed present identities (recognition-enabled corpus).

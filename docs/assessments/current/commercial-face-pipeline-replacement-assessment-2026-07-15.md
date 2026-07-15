@@ -90,7 +90,7 @@ Directly usable, in priority order:
 Gaps to close for this bake-off (FIR-5):
 
 1. **Candidate swapping**: harness benchmarks *the deployed service*, one model stack at a time. Need either an env-selected face-pipeline profile on an eval instance (mirroring the hosted-provider pattern) or an offline in-process leg that runs detector+embedder candidates directly over the golden corpus.
-2. **Cluster-level metrics**: identification P/R exists; **false-merge/false-split rates, cluster purity, unknown-rejection at fixed FAR** (guide §12.2) do not.
+2. **Cluster-level metrics**: identification P/R exists; **false-merge/false-split rates, cluster purity, unknown-rejection at fixed FAR** (guide §12.2) do not. Neither does per-slice aggregation: golden manifest entries (37, verified) carry no hard-case tags — FIR-5 adds a `slice_tags` field (`occlusion`, `profile`, `low_res`, `blur`, `similar_people`, `unknown`) and per-slice metric rollups, with **occlusion as a first-class slice**.
 3. **buffalo_l reference leg** must run in the non-commercial eval environment only (`[bench]` extra), embeddings confined to run artifacts (§4.2 separation).
 4. **Corpus breadth**: 38 golden images is thin for threshold calibration; extend with Golden-100 + hard-slice additions (profile/low-res/blur/similar-people/unknowns, demographic slices).
 
@@ -116,3 +116,44 @@ Unit/integration test harness: protocol-based stubs mean existing suites survive
 3. **Quality scoring without native pose** — landmark-derived roll/yaw proxies + sharpness + embedding magnitude; validate against curation outcomes in FIR-6.
 4. **Eval-tenant isolation** — buffalo embeddings must be provably absent from prod (image audit + `[bench]` extra + run-artifact-only storage).
 5. **Threshold cold-start** — until calibration lands, defaults must fail toward "unknown" rather than false assignment.
+
+## 10. Addendum (2026-07-15): occlusion dimension + 11-paper technique sweep
+
+**Occlusion is a first-class bake-off slice** (§7 gap 2): tagged real occluders (masks, sunglasses, hands, hair, partial framing) in the extended golden corpus, plus a **synthetic-occlusion paired protocol** — deterministic patch-masks applied to existing golden faces so every occluded measurement has an unoccluded twin (isolates occlusion effect per candidate; same trick OccFace uses to generate visibility pseudo-labels).
+
+Eleven user-supplied papers ingested (2512.11683 … 2607.05702). Per-paper verdicts:
+
+| Paper | Technique class | Verdict for ACX |
+| --- | --- | --- |
+| 2607.05702 FASR++ (diffusion face SR + multi-embedding Feature Combiner) | GPU diffusion at inference | SR impractical CPU-first; **borrow: multi-embedding aggregation** (training-free with SFace) |
+| 2607.03581 PLGSA (periocular attention + occlusion-adaptive cosine threshold) | new embedder + inference trick | Model unusable (no code, 858-image eval, AUC 1.0 — credibility flag); **borrow: OACT concept** — occlusion-severity-modulated match threshold |
+| 2607.03073 (EfficientNet-B0+CBAM, hybrid loss) | full retrain, replaces SFace | Skip — generic architecture paper, unverifiable venue, no weights |
+| 2606.23230 (privacy ReID, transformer + Hungarian assignment) | body ReID, not faces | **Borrow: Hungarian one-to-one within-photo assignment** — pure post-processing, zero retraining |
+| 2605.19821 LaCoVL-FER (landmark-gated sparse attention + CLIP) | expression, heavy (CLIP) | Skip for MVP; architectural reference only if we ever train an occlusion-aware embedder |
+| 2602.10728 OccFace (100-pt landmarks + per-point visibility) | new landmark model, no weights released | **Borrow: per-point visibility as occlusion gate/weight** — cheap proxy version from YuNet's 5 landmarks + patch statistics |
+| 2602.07403 SFIQA (lightweight 6-dim surveillance face IQA, EdgeNeXt) | small auxiliary quality model | Closest to adoptable as a model (CPU-feasible XXS/XS), but weights/license unconfirmed — heuristic quality gate first, SFIQA-class model only if measured gap |
+| 2601.12736 KaoLRM (LRM→FLAME 3D reconstruction) | heavy transformer, 3D output | Skip — wrong output type for identity, GPU-class |
+| 2602.00635 S3POT (occlusion segmentation via GAN inversion + SAM) | GPU stack | Skip for live path; at most offline GPU curation/labeling of the golden corpus's occlusion slice |
+| 2601.06239 (classical FR survey) | survey, pre-CNN methods | Noise — skip |
+| 2512.11683 Depth-Copy-Paste (depth-aware compositing augmentation) | detector retraining | Only helps if bake-off shows occlusion losses are *detection misses*; then a YuNet retrain candidate (escalation, not MVP) |
+
+### 10.1 Commonalities (heuristics-clustered)
+
+Four patterns recur; they compose into one ordered strategy — **gate → weight → aggregate → constrain** — all operating *around* a fixed embedder:
+
+1. **Degradation-aware gating** (SFIQA, OccFace, S3POT, PLGSA — 4/11): don't repair bad crops, *detect* them and gate/down-weight before they pollute the gallery. REF-20 (define errors out of existence): an occluded face becomes a normal, handled input class ("observed, low-confidence"), not a silent false assignment.
+2. **Multi-observation aggregation** (FASR++, plus Cluster-and-Aggregate from §6): fuse several embeddings per identity. ALG-06 (catalog before code): plain mean/medoid of L2-normalized SFace vectors is the zero-cost version and is already our cluster-representative machinery.
+3. **Degradation-conditioned thresholds** (PLGSA OACT): raise the match threshold as occlusion severity rises. Maps directly onto existing code — `compute_identity_quality()` already returns `threshold_adjustment`; occlusion severity becomes one more input, not a new subsystem (REF-15 seam reuse).
+4. **Constraint-based assignment** (2606.23230): within one photo, each roster identity appears at most once — greedy per-face nearest-neighbor ignores this; Hungarian assignment over the face×candidate cosine matrix enforces it. ALG-01 (graph in disguise): it's a textbook assignment problem (`scipy.optimize.linear_sum_assignment`), zero model cost, and directly attacks the guide's "multiple similar-looking people in one image" slice.
+
+Everything else in the sweep (diffusion SR, GAN inversion, SAM, CLIP, LRM, detector retraining) fails ARCH-08 + the CPU-first intake decision and moves to the escalation ladder or offline curation.
+
+### 10.2 Answer: "a new CNN method?"
+
+**No.** None of the 11 provides a commercially licensed, CPU-viable, occlusion-robust *embedder* (2/11 release code, 0/11 release usable weights+license). The evidence across the sweep is that hard-case recovery in our regime comes from pipeline intelligence around SFace: quality/occlusion gating (heuristic signals first: YuNet landmark confidence, eye-region sharpness/Laplacian, embedding magnitude per AdaFace/MagFace), OACT-style threshold adjustment, representative aggregation, and Hungarian within-photo assignment. If the occlusion slice still fails the (post-bake-off) gate after those land, the escalation is FIR-8: SFIQA-class learned quality model → SeetaFace6/licensed-InsightFace → occlusion-aware embedder training (LaCoVL/OccFace as design references) — training last, per the guide's data-governance warning.
+
+Credibility triage (AGT-03 posture — no unverified numbers into decisions): 2607.03581 and 2607.03073 have weak-rigor signals; their reported metrics must not seed thresholds or gate arguments.
+
+### 10.3 OpenCV 5 / new libraries
+
+OpenCV 5.0 (June 2026, Apache-2.0) helps **speed, not accuracy**: rewritten graph-based DNN engine (ONNX op coverage ~22%→80%+, dynamic shapes — what YuNet 2026may wants), **ARM KleidiCV acceleration for AArch64** (exactly our acx-backend CPU), FP16/BF16 Mat types. Costs: C++17 floor, 4.x→5 API migration. This tips open question §9-2 toward **pin OpenCV 5 in FIR-3** for the reference/CPU path while ONNX Runtime stays the primary inference route; re-run the golden parity tests after the pin (rg-010-adjacent: verify, don't assume). New libraries beyond that: **scipy** (or a ~40-line Hungarian implementation if we don't want the dependency) for assignment; explicitly *not* adopting SAM/CLIP/diffusion stacks in the MVP.

@@ -9,6 +9,7 @@ from scripts.eval_harness.export_identities import (
 )
 from scripts.eval_harness.identity_sources import FaceRegion
 from scripts.eval_harness.manifest import (
+    FaceBox,
     LicenseTag,
     Provenance,
     SpatialRelation,
@@ -174,3 +175,17 @@ def test_enrich_entry_face_count_covers_curated_identities():
     }
     out = enrich_entry(entry, b"\xff\xd8\xff\xd9")  # no XMP -> zero detected regions
     assert out["face_count"] >= 3
+
+
+def test_enrich_entry_persists_all_face_boxes_including_anonymous():
+    # FIR-1: box-level detection ground truth must include anonymous strangers (name=None),
+    # not just the named identities (which stay in present_identities).
+    entry = {"path": "group.jpg", "provenance": {"source": "localwp", "license": "consented"}}
+    out = enrich_entry(entry, _iptc_xmp(("Alice Ray", 0.2), ("", 0.8)))  # one named + one anonymous box
+    boxes = out["face_boxes"]
+    assert len(boxes) == 2
+    assert {b["name"] for b in boxes} == {"Alice Ray", None}
+    assert out["present_identities"] == ["Alice Ray"]  # names-only leg unchanged
+    # each persisted box round-trips through the FaceBox schema (locks output <-> schema)
+    parsed = [FaceBox(**b) for b in boxes]
+    assert all(0.0 <= fb.x <= 1.0 and fb.source == "iptc" for fb in parsed)

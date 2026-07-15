@@ -45,6 +45,9 @@ class IdentityGroundTruth:
     present_identities: list[str] = field(default_factory=list)
     face_count: int = 0
     spatial_facts: list[SpatialFact] = field(default_factory=list)
+    # Every detected region incl. anonymous strangers (name=None) — box-level detection
+    # ground truth for FIR-1, distinct from the named-only present_identities.
+    face_boxes: list[FaceRegion] = field(default_factory=list)
 
 
 def _placement_phrases(subject: str, reference: str, side: str) -> list[str]:
@@ -120,11 +123,13 @@ def identities_for_image(image_bytes: bytes, *, source: str, filename: str) -> I
     else:
         present = []  # wikimedia / openverse / fixture: detection only, no identity
         spatial = []
-    return IdentityGroundTruth(present_identities=present, face_count=face_count, spatial_facts=spatial)
+    return IdentityGroundTruth(
+        present_identities=present, face_count=face_count, spatial_facts=spatial, face_boxes=regions
+    )
 
 
 def enrich_entry(entry: dict, image_bytes: bytes) -> dict:
-    """Return a copy of a manifest entry with identity/face_count/spatial_facts filled.
+    """Return a copy of a manifest entry with identity/face_count/spatial_facts/face_boxes filled.
 
     Uses ``entry['provenance']['source']`` to select the source policy. Leaves the
     entry untouched when it has no provenance (legacy golden-38 entries). Never
@@ -151,6 +156,12 @@ def enrich_entry(entry: dict, image_bytes: bytes) -> dict:
     )
     if gt.spatial_facts and not updated.get("spatial_facts"):
         updated["spatial_facts"] = [f.model_dump(exclude_none=True) for f in gt.spatial_facts]
+    if gt.face_boxes and not updated.get("face_boxes"):
+        # Persist ALL detected boxes incl. anonymous strangers (name=None) — box-level
+        # detection ground truth for FIR-1, beyond the named-only present_identities.
+        updated["face_boxes"] = [
+            {"x": r.x, "y": r.y, "w": r.w, "h": r.h, "name": r.name, "source": r.source} for r in gt.face_boxes
+        ]
     # must_right mirrors confirmed present identities (recognition-enabled corpus).
     if updated.get("present_identities") and not updated.get("must_right"):
         updated["must_right"] = list(updated["present_identities"])

@@ -298,6 +298,25 @@ class SpatialFact(BaseModel):
         return f"{self.subject} {rel}"
 
 
+class FaceBox(BaseModel):
+    """A ground-truth face region: normalized centre (x, y) + size (w, h) in 0..1, an
+    optional confirmed identity name, and the region source (iptc | mwg).
+
+    Persisted for ALL curated faces — named people AND anonymous strangers
+    (``name=None``) — so a face-detection bake-off (FIR-1) has box-level ground truth,
+    not just ``face_count``. Coords mirror identity_sources.FaceRegion (centre-point).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    x: float
+    y: float
+    w: float
+    h: float
+    name: str | None = None
+    source: str  # iptc | mwg
+
+
 class GoldenEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -322,6 +341,9 @@ class GoldenEntry(BaseModel):
     domain: Domain | None = None
     reference_facts: list[ReferenceFact] = Field(default_factory=list)
     spatial_facts: list[SpatialFact] = Field(default_factory=list)
+    # All curated face boxes incl. anonymous strangers (name=None) — detection ground
+    # truth for the FIR-1 bake-off; additive/optional (see FIR-1 §Coordination).
+    face_boxes: list[FaceBox] = Field(default_factory=list)
     provenance: Provenance | None = None
 
     @field_validator("sha256")

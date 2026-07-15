@@ -26,7 +26,7 @@ import argparse
 import json
 import sys
 from collections import defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -49,6 +49,27 @@ class Confidence(StrEnum):
     NEEDS_OPERATOR = "needs_operator"
 
 
+class FaceCountSource(StrEnum):
+    """Which signal produced an image's face count. Neither is ground truth.
+
+    Recorded per candidate because the two are not interchangeable: XMP is a
+    human/Apple-Photos-authored face region, while MODEL is the recognition
+    pipeline's embeddable-face count (a lower bound). An operator reviewing a
+    ``crowds`` candidate needs to know which one put it there. NONE means nothing
+    looked at this image — distinct from a model that looked and found zero.
+    """
+
+    XMP = "xmp"
+    MODEL = "model"
+    NONE = "none"
+
+
+# An image whose short edge is under this is not Golden-150 material. The floor is
+# corpus_inventory's own FEATURE_EDGE_PX: below it, an image is smaller than the
+# window every stratification feature is computed in. It also lands in a real gap in
+# the corpus — min-edge jumps from 88px (p2) to 387px (p3) — because everything under
+# it is derived face crops rather than photographs.
+MIN_CORPUS_EDGE_PX = 256
 # Three or more faces reads as a crowd rather than a group portrait.
 CROWD_MIN_FACES = 3
 # Dense-scene membership is relative: the busiest quartile of the actual pool.
@@ -93,6 +114,8 @@ class Candidate:
     confidence: Confidence
     publishable: bool
     celeb_name: str | None
+    face_count: int
+    face_count_source: FaceCountSource
 
 
 @dataclass(frozen=True)
@@ -123,6 +146,25 @@ def load_inventory(path: Path, source: Source) -> list[tuple[ImageRecord, Source
     return [(record, source) for record in load_records(path)]
 
 
+def is_eligible(record: ImageRecord) -> bool:
+    """Whether an image can be Golden-150 material at all — before any stratum.
+
+    Excludes unreadable files and anything under the resolution floor. This is not a
+    stratum decision but an eligibility one, so it is applied to the pool rather than
+    left to the operator: the uploads tree carries 217 ~80x112 face crops emitted by
+    the plugin, which are derivatives of photos already in the corpus, are trivially
+    "one face", and cannot be fairly described by any captioning model under test.
+
+    Left in they were not merely inert. Round-robin gives a folder equal billing
+    regardless of size, so a folder holding 3.5% of the pool took 25% of the
+    operator's 200-image browse set, and would have taken a comparable slice of the
+    face pass's bounded remote budget.
+    """
+    if record.width is None or record.height is None:
+        return False
+    return min(record.width, record.height) >= MIN_CORPUS_EDGE_PX
+
+
 def celeb_label(record: ImageRecord, source: Source) -> str | None:
     """Identity label, or None. ONLY celebs01 filenames are identity labels.
 
@@ -145,6 +187,27 @@ def is_publishable(record: ImageRecord, source: Source) -> bool:
     return source is Source.CELEBS01
 
 
+def face_count_of(record: ImageRecord, face_counts: Mapping[str, int]) -> tuple[int, FaceCountSource]:
+    """Effective face count + which signal decided it. XMP wins where it exists.
+
+    An embedded face region was authored by a human (or Apple Photos) and beats a
+    model's count, so ``face_pass`` only ever looks at images whose XMP count is
+    zero and the two sources never disagree over one image.
+
+    An image absent from ``face_counts`` scores 0/NONE — nothing looked at it. That
+    is deliberately indistinguishable from "zero faces" for BUCKETING (both are
+    excluded from people), but the source label keeps the distinction legible: a
+    strata report where people is full of NONE is reporting an unrun pass, not an
+    empty corpus.
+    """
+    if record.xmp_face_count > 0:
+        return record.xmp_face_count, FaceCountSource.XMP
+    model = face_counts.get(record.sha256)
+    if model is None:
+        return 0, FaceCountSource.NONE
+    return model, FaceCountSource.MODEL
+
+
 def _quantile(values: Sequence[float], q: float) -> float | None:
     """Nearest-rank quantile. No numpy; deterministic on ties."""
     ordered = sorted(values)
@@ -154,15 +217,17 @@ def _quantile(values: Sequence[float], q: float) -> float | None:
     return ordered[index]
 
 
-def _domains_for(record: ImageRecord, source: Source, *, dense_edge_min: float | None) -> tuple[Domain, ...]:
+def _domains_for(
+    record: ImageRecord, source: Source, *, dense_edge_min: float | None, face_count: int
+) -> tuple[Domain, ...]:
     domains: list[Domain] = []
-    if record.xmp_face_count >= 1:
+    if face_count >= 1:
         domains.append(Domain.PEOPLE)
-    # celebs01 is a public-figure portrait set by construction; uploads need a face
-    # region to prove a single face is present.
-    if source is Source.CELEBS01 or record.xmp_face_count == 1:
+    # celebs01 is a public-figure portrait set by construction; uploads need a
+    # detected/annotated face to prove a single face is present.
+    if source is Source.CELEBS01 or face_count == 1:
         domains.append(Domain.FACES)
-    if record.xmp_face_count >= CROWD_MIN_FACES:
+    if face_count >= CROWD_MIN_FACES:
         domains.append(Domain.CROWDS)
     if record.bw_candidate:
         domains.append(Domain.BLACK_AND_WHITE)
@@ -181,8 +246,13 @@ def _domains_for(record: ImageRecord, source: Source, *, dense_edge_min: float |
 
 
 def _to_candidate(
-    record: ImageRecord, source: Source, domains: tuple[Domain, ...], confidence: Confidence
+    record: ImageRecord,
+    source: Source,
+    domains: tuple[Domain, ...],
+    confidence: Confidence,
+    face_counts: Mapping[str, int],
 ) -> Candidate:
+    face_count, face_count_source = face_count_of(record, face_counts)
     return Candidate(
         path=record.path,
         sha256=record.sha256,
@@ -191,30 +261,36 @@ def _to_candidate(
         confidence=confidence,
         publishable=is_publishable(record, source),
         celeb_name=celeb_label(record, source),
+        face_count=face_count,
+        face_count_source=face_count_source,
     )
 
 
 # Per-stratum sort key: the feature that decided membership, most-confident first.
 # Records whose deciding feature is None are dropped before ranking (an unreadable
-# image has no feature to rank on), so these never see None.
-_RANKERS = {
-    Domain.BLACK_AND_WHITE: (lambda r: r.mean_saturation, False),
-    Domain.LOW_LIGHT: (lambda r: r.mean_value, False),
-    Domain.CHARTS: (lambda r: r.flat_color_coverage, True),
-    Domain.DENSE_SCENE: (lambda r: r.edge_density, True),
-    Domain.PEOPLE: (lambda r: r.xmp_face_count, True),
-    Domain.CROWDS: (lambda r: r.xmp_face_count, True),
+# image has no feature to rank on), so these never see None. Every ranker takes the
+# effective-face-count lookup as its second argument, so the face strata rank on the
+# same number that decided their membership rather than on XMP alone.
+_RANKERS: dict[Domain, tuple[Callable[[ImageRecord, Callable[[ImageRecord], int]], float | None], bool]] = {
+    Domain.BLACK_AND_WHITE: (lambda r, _fc: r.mean_saturation, False),
+    Domain.LOW_LIGHT: (lambda r, _fc: r.mean_value, False),
+    Domain.CHARTS: (lambda r, _fc: r.flat_color_coverage, True),
+    Domain.DENSE_SCENE: (lambda r, _fc: r.edge_density, True),
+    Domain.PEOPLE: (lambda r, fc: fc(r), True),
+    Domain.CROWDS: (lambda r, fc: fc(r), True),
 }
 
 
-def _rank(domain: Domain, rows: list[tuple[ImageRecord, Source]]) -> list[tuple[ImageRecord, Source]]:
+def _rank(
+    domain: Domain, rows: list[tuple[ImageRecord, Source]], face_count: Callable[[ImageRecord], int]
+) -> list[tuple[ImageRecord, Source]]:
     if domain is Domain.FACES:
         return _rank_faces(rows)
     feature, descending = _RANKERS[domain]
-    rankable = [row for row in rows if feature(row[0]) is not None]
+    rankable = [row for row in rows if feature(row[0], face_count) is not None]
     # Path breaks every tie so repeated runs emit byte-identical shortlists.
     rankable.sort(key=lambda row: row[0].path)
-    rankable.sort(key=lambda row: feature(row[0]), reverse=descending)
+    rankable.sort(key=lambda row: feature(row[0], face_count), reverse=descending)
     return rankable
 
 
@@ -274,32 +350,44 @@ def build_report(
     operator_sample: int = 200,
     operator_sources: tuple[Source, ...] = OPERATOR_SOURCES,
     exclude_sha256: frozenset[str] = frozenset(),
+    face_counts: Mapping[str, int] = {},
 ) -> StrataReport:
-    """Bucket a tagged inventory into ranked offline shortlists + an operator browse set."""
-    rows = [(r, s) for r, s in records if r.sha256 not in exclude_sha256]
+    """Bucket a tagged inventory into ranked offline shortlists + an operator browse set.
+
+    ``face_counts`` (sha256 -> model face count, from ``face_pass``) fills the face
+    signal for images carrying no XMP regions. Without it the people/faces/crowds
+    strata see only the 2320 celebs01 + 219 uploads that happen to have embedded
+    face data, and report the other ~6,400 uploads as peopleless.
+    """
+    rows = [(r, s) for r, s in records if r.sha256 not in exclude_sha256 and is_eligible(r)]
     # Dedupe across BOTH roots at once: the same bytes can sit in either.
     kept = {id(r) for r in dedupe_by_sha256([r for r, _ in rows])}
     rows = [(r, s) for r, s in rows if id(r) in kept]
 
     dense_edge_min = _quantile([r.edge_density for r, _ in rows if r.edge_density is not None], DENSE_EDGE_QUANTILE)
+    face_count_by_record: dict[str, int] = {r.sha256: face_count_of(r, face_counts)[0] for r, _ in rows}
+
+    def face_count(record: ImageRecord) -> int:
+        return face_count_by_record[record.sha256]
 
     buckets: dict[Domain, list[tuple[ImageRecord, Source]]] = {d: [] for d in OFFLINE_DOMAINS}
     domains_by_row: dict[int, tuple[Domain, ...]] = {}
     for record, source in rows:
-        domains = _domains_for(record, source, dense_edge_min=dense_edge_min)
+        domains = _domains_for(record, source, dense_edge_min=dense_edge_min, face_count=face_count(record))
         domains_by_row[id(record)] = domains
         for domain in domains:
             buckets[domain].append((record, source))
 
     offline: dict[Domain, Shortlist] = {}
     for domain in OFFLINE_DOMAINS:
-        ranked = _rank(domain, buckets[domain])
+        ranked = _rank(domain, buckets[domain], face_count)
         offline[domain] = Shortlist(
             domain=domain,
             confidence=Confidence.OFFLINE,
             pool_size=len(ranked),
             candidates=[
-                _to_candidate(r, s, domains_by_row[id(r)], Confidence.OFFLINE) for r, s in ranked[:per_stratum]
+                _to_candidate(r, s, domains_by_row[id(r)], Confidence.OFFLINE, face_counts)
+                for r, s in ranked[:per_stratum]
             ],
         )
 
@@ -309,7 +397,9 @@ def build_report(
         domain=Domain.ABSTRACT,  # nominal anchor; the set serves every OPERATOR_DOMAINS member
         confidence=Confidence.NEEDS_OPERATOR,
         pool_size=len(browse_pool),
-        candidates=[_to_candidate(r, s, domains_by_row[id(r)], Confidence.NEEDS_OPERATOR) for r, s in browse],
+        candidates=[
+            _to_candidate(r, s, domains_by_row[id(r)], Confidence.NEEDS_OPERATOR, face_counts) for r, s in browse
+        ],
     )
     return StrataReport(
         offline=offline,
@@ -328,6 +418,8 @@ def _candidate_json(candidate: Candidate) -> dict:
         "confidence": str(candidate.confidence),
         "publishable": candidate.publishable,
         "celeb_name": candidate.celeb_name,
+        "face_count": candidate.face_count,
+        "face_count_source": str(candidate.face_count_source),
     }
 
 
@@ -376,6 +468,12 @@ def _main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--per-stratum", type=int, default=40)
     parser.add_argument("--operator-sample", type=int, default=200)
+    parser.add_argument(
+        "--face-counts",
+        type=Path,
+        default=None,
+        help="face_pass JSONL checkpoint; without it the face strata see XMP only",
+    )
     args = parser.parse_args(argv)
 
     rows: list[tuple[ImageRecord, Source]] = []
@@ -384,10 +482,29 @@ def _main(argv: Sequence[str] | None = None) -> int:
             parser.error(f"inventory not found: {path}")
         rows.extend(load_inventory(path, source))
 
-    report = build_report(rows, per_stratum=args.per_stratum, operator_sample=args.operator_sample)
+    face_counts: dict[str, int] = {}
+    if args.face_counts is not None:
+        if not args.face_counts.is_file():
+            parser.error(f"face counts not found: {args.face_counts}")
+        from scripts.eval_harness.face_pass import load_face_counts  # local: avoids an import cycle
+
+        face_counts = load_face_counts(args.face_counts)
+
+    report = build_report(
+        rows, per_stratum=args.per_stratum, operator_sample=args.operator_sample, face_counts=face_counts
+    )
     args.out.write_text(json.dumps(report_json(report), indent=2))
 
     print(f"pool {report.pool_size} images -> {args.out}")
+    unlooked = sum(1 for r, _ in rows if face_count_of(r, face_counts)[1] is FaceCountSource.NONE)
+    if unlooked:
+        # Loud by default: the face strata below are the one place where "no signal"
+        # and "no people" render identically, and only this line tells them apart.
+        print(
+            f"WARNING: {unlooked}/{len(rows)} images have NO face signal (no XMP regions, no face_pass "
+            "row) and count as 0 faces; people/faces/crowds below are provisional until face_pass covers them",
+            file=sys.stderr,
+        )
     print(f"{'domain':<18} {'confidence':<15} {'pool':>6} {'listed':>7}")
     for domain, shortlist in report.offline.items():
         flag = "  <- THIN" if shortlist.thin else ""

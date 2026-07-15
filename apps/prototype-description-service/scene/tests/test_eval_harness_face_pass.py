@@ -362,6 +362,47 @@ def test_resume_preserves_errored_rows_not_retried_this_run(tmp_path):
     assert on_disk["sha-c.jpg"].face_count == 1
 
 
+# --- execution stats -------------------------------------------------------------
+
+
+def test_summarize_reports_latency_percentiles():
+    # Execution stats: per-call analyze latency as PERCENTILES (PERF-01), from open-loop timing.
+    rows = [
+        FacePassRow("s1", "a.jpg", "localwp_uploads", 900_000, 2, [], None, elapsed_ms=100.0),
+        FacePassRow("s2", "b.jpg", "localwp_uploads", 900_001, 0, [], None, elapsed_ms=300.0),
+        FacePassRow("s3", "c.jpg", "localwp_uploads", 900_002, None, [], "TimeoutError: x", elapsed_ms=50.0),
+    ]
+    s = summarize(rows)
+    assert (s["scanned"], s["ok"], s["errors"]) == (3, 2, 1)
+    lat = s["latency_ms"]
+    assert lat["n"] == 3  # latency measured on ok AND errored calls
+    assert lat["p50"] == 100.0 and lat["p95"] == 300.0 and lat["max"] == 300.0
+
+
+def test_summarize_latency_none_on_legacy_rows_without_timing():
+    # Rows from the pre-elapsed_ms schema carry no timing -> latency_ms is None, not a crash.
+    s = summarize([FacePassRow("s1", "a.jpg", "localwp_uploads", 900_000, 2, [], None)])
+    assert s["latency_ms"] is None and s["ok"] == 1
+
+
+def test_load_face_pass_rows_backfills_missing_elapsed_ms(tmp_path):
+    # A checkpoint written by the pre-elapsed_ms schema must still load (elapsed_ms -> None),
+    # or a schema addition would silently drop the whole pass on the next --resume (A-06).
+    out = tmp_path / "faces.jsonl"
+    legacy = {
+        "sha256": "s1",
+        "path": "a.jpg",
+        "source": "localwp_uploads",
+        "media_id": 900_000,
+        "face_count": 2,
+        "names": [],
+        "error": None,  # no elapsed_ms key
+    }
+    out.write_text(json.dumps(legacy) + "\n")
+    rows = load_face_pass_rows(out)
+    assert len(rows) == 1 and rows[0].elapsed_ms is None and rows[0].face_count == 2
+
+
 def test_a_truncated_final_line_is_dropped_rather_than_crashing_the_resume(tmp_path):
     out = tmp_path / "faces.jsonl"
     good = FacePassRow("sha-a.jpg", "a.jpg", "localwp_uploads", 900_000, 1, [], None)
@@ -382,4 +423,5 @@ def test_summary_counts_crowds_and_errors():
         "with_faces": 1,
         "crowds": 1,
         "faces_found": 4,
+        "latency_ms": None,  # these rows carry no elapsed_ms (legacy shape)
     }

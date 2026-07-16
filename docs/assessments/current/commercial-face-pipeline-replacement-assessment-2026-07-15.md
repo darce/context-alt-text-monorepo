@@ -57,7 +57,7 @@ Clustering algorithms (cosine on unit vectors — dimension-agnostic), roster mo
 
 ### 4.4 Thresholds (all recalibrated, never copied — guide §8.1)
 
-`ClusteringSettings.similarity_threshold` (0.55) and `ClusteringLimitsSettings.similarity_threshold` (0.6) — two distinct knobs in `recognition/config/settings.py` — `IdentityDetectionSettings.default_threshold` (0.45), `QualitySettings` pose divisor / min face size, per-cluster `similarity_threshold`, curriculum/maturity adjustments. SFace geometry ≠ buffalo geometry; every one comes out of FIR-6 calibration.
+`ClusteringSettings.similarity_threshold` (0.55) and `QualitySettings` pose divisor / min face size (both defined in `recognition/application/settings/clustering.py`, re-exported through `recognition/config/settings.py`), `ClusteringLimitsSettings.similarity_threshold` (0.6) and `IdentityDetectionSettings.default_threshold` (0.45) (defined in `recognition/config/settings.py`), per-cluster `similarity_threshold`, curriculum/maturity adjustments. SFace geometry ≠ buffalo geometry; every one comes out of FIR-6 calibration.
 
 ## 5. Expected performance drop
 

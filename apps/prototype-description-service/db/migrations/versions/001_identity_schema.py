@@ -1364,6 +1364,9 @@ def ensure_tables(op) -> None:
         sa.Column("prompt_or_task_version", sa.String(length=64), nullable=False),
         sa.Column("visual_facts", sa.dialects.postgresql.JSONB(), nullable=False),
         sa.Column("alt_text_draft", sa.Text(), nullable=False),
+        # ALTQ-1: optional long-form surface (dual-length prompting); nullable so
+        # short-only adapters and pre-ALTQ-1 rows need no backfill.
+        sa.Column("alt_text_long", sa.Text(), nullable=True),
         sa.Column("context_used", sa.dialects.postgresql.JSONB(), nullable=False),
         sa.Column("provider_disclosure", sa.dialects.postgresql.JSONB(), nullable=False),
         # E19-4a: caption phrase-grounding boxes persisted with the cached

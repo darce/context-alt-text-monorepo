@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://context-alt-text.dev/schemas/image-description-response.schema.json",
   "title": "VisualFactsResponse",
-  "description": "Response of POST /scene/describe/multipart. All 17 core fields are required so model/provider provenance, tier state, and retention state are unavoidable on the wire. generic_draft/named_draft/naming_provenance are E19-4a additive optional preview fields (draft-only, never written to alt text); attachment_provenance is the E20-FUSION additive optional Stage-2 per-fact attachment provenance.",
+  "description": "Response of POST /scene/describe/multipart. All 17 core fields are required so model/provider provenance, tier state, and retention state are unavoidable on the wire. generic_draft/named_draft/naming_provenance are E19-4a additive optional preview fields (draft-only, never written to alt text); attachment_provenance is the E20-FUSION additive optional Stage-2 per-fact attachment provenance; alt_text_long is the ALTQ-1 additive optional long-form surface (null/absent when the adapter produces only the short draft).",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -150,6 +150,13 @@
     "result_generation": {
       "type": "integer",
       "minimum": 1
+    },
+    "alt_text_long": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "ALTQ-1 additive optional: long-form description surface from dual-length prompting, suited to the attachment description field. Null when the adapter produces only the short alt_text_draft. Never required — old clients and short-only adapters are unaffected."
     },
     "generic_draft": {
       "type": [

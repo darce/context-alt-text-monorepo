@@ -165,7 +165,8 @@ def test_happy_path_returns_15_fields_then_cached():
         assert r1.status_code == 200, r1.text
         body = r1.json()
         # 17 core + 3 E19-4a preview + 1 E20-FUSION attachment_provenance
-        assert len(body) == 21
+        # + 1 ALTQ-1 alt_text_long
+        assert len(body) == 22
 
         assert body["cached"] is False
         assert body["media_id"] == 42

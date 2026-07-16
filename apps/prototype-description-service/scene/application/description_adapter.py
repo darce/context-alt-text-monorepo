@@ -29,6 +29,9 @@ class AdapterResult:
     # E19-4a S4: caption phrase-grounding boxes ([0,1] top-left frame, the
     # VLM-2C phrase_boxes.json shape). Default empty — E19-1 callers unaffected.
     phrase_boxes: tuple[PhraseBox, ...] = field(default_factory=tuple)
+    # ALTQ-1: optional long-form surface from dual-length prompting. None when
+    # the adapter produces only the short draft — existing adapters unaffected.
+    alt_text_long: str | None = None
 
 
 @runtime_checkable

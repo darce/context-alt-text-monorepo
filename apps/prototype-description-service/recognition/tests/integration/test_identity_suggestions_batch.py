@@ -41,6 +41,7 @@ class ParityFixture:
     unlabeled_first_identity: str
     auto_label_identity: str
     tie_break_identity: str
+    resolved_first_identity: str
     suggestion_service: SuggestionService
     cluster_repo: SqlAlchemyClusterRepository
 
@@ -76,7 +77,7 @@ async def _seed_cluster(cluster_repo: SqlAlchemyClusterRepository, tenant_id: st
         )
     )
     assert cluster.id is not None
-    return cluster.id
+    return str(cluster.id)
 
 
 def _add_suggestion(
@@ -86,6 +87,7 @@ def _add_suggestion(
     cluster_id: str,
     similarity: float,
     created_at: datetime,
+    resolution: str = SuggestionStatus.PENDING.value,
 ) -> None:
     db_session.add(
         SuggestionModel(
@@ -95,7 +97,7 @@ def _add_suggestion(
             representative_similarity=similarity,
             avg_member_similarity=similarity,
             confidence_score=similarity,
-            resolution=SuggestionStatus.PENDING.value,
+            resolution=resolution,
             created_at=created_at,
         )
     )
@@ -112,7 +114,9 @@ async def parity_fixture(db_session: AsyncSession, tenant) -> ParityFixture:
       (deliberate filter-parity decision: it must resolve, not be filtered)
     - identity 7: two equal-similarity suggestions, newer created_at must win
       on both routes (tie-break parity)
-    - identities 8-59: one pending labeled-cluster suggestion each
+    - identity 8: highest-similarity suggestion is ACCEPTED (resolved), second
+      is pending+labeled (guards the pending filter living INSIDE the window)
+    - identities 9-59: one pending labeled-cluster suggestion each
     """
     tenant_id = str(tenant.id)
     cluster_repo = SqlAlchemyClusterRepository(db_session)
@@ -148,7 +152,22 @@ async def parity_fixture(db_session: AsyncSession, tenant) -> ParityFixture:
     _add_suggestion(db_session, tenant.id, tie_break_identity, tie_newer, 0.88, BASE_TIME)
     expected[tie_break_identity] = tie_newer
 
-    for offset, identity_id in enumerate(identity_ids[8:]):
+    resolved_first_identity = identity_ids[8]
+    accepted_cluster = await _seed_cluster(cluster_repo, tenant_id, "Already Accepted")
+    pending_second = await _seed_cluster(cluster_repo, tenant_id, "Pending Second Choice")
+    _add_suggestion(
+        db_session,
+        tenant.id,
+        resolved_first_identity,
+        accepted_cluster,
+        0.97,
+        BASE_TIME,
+        resolution=SuggestionStatus.ACCEPTED.value,
+    )
+    _add_suggestion(db_session, tenant.id, resolved_first_identity, pending_second, 0.87, BASE_TIME)
+    expected[resolved_first_identity] = pending_second
+
+    for offset, identity_id in enumerate(identity_ids[9:]):
         cluster_id = await _seed_cluster(cluster_repo, tenant_id, f"Single {offset}")
         _add_suggestion(db_session, tenant.id, identity_id, cluster_id, 0.60 + (offset % 30) * 0.01, BASE_TIME)
         expected[identity_id] = cluster_id
@@ -169,6 +188,7 @@ async def parity_fixture(db_session: AsyncSession, tenant) -> ParityFixture:
         unlabeled_first_identity=unlabeled_first_identity,
         auto_label_identity=auto_label_identity,
         tie_break_identity=tie_break_identity,
+        resolved_first_identity=resolved_first_identity,
         suggestion_service=suggestion_service,
         cluster_repo=cluster_repo,
     )
@@ -206,6 +226,7 @@ async def test_batch_matches_per_card_across_60_identity_fixture(parity_fixture:
         assert batch_match.cluster_id == per_card_match.cluster_id
         assert batch_match.label == per_card_match.label
         assert batch_match.similarity == pytest.approx(per_card_match.similarity)
+        assert batch_match.identity_count == per_card_match.identity_count
         assert batch_match.cluster_id == fx.expected_cluster_by_identity[identity_id]
 
     total_rows = sum(len(rows) for rows in batch.matches.values())
@@ -227,6 +248,39 @@ async def test_filter_before_rank_resolves_unlabeled_first_identity(parity_fixtu
     rows = batch.matches[fx.unlabeled_first_identity]
     assert [row.cluster_id for row in rows] == [fx.expected_cluster_by_identity[fx.unlabeled_first_identity]]
     assert rows[0].label == "Labeled Second Choice"
+
+
+@pytest.mark.asyncio
+async def test_pending_filter_inside_window_skips_resolved_top_suggestion(parity_fixture: ParityFixture) -> None:
+    """An identity whose #1 suggestion is already ACCEPTED resolves to its pending #2 on BOTH routes.
+
+    Guards the pending filter living INSIDE the windowed subquery: if it moved
+    outside, the accepted row would consume rank 1 and top_k=1 would drop the
+    identity entirely.
+    """
+    fx = parity_fixture
+    expected_cluster = fx.expected_cluster_by_identity[fx.resolved_first_identity]
+
+    batch = await list_identities_suggestions(
+        identity_ids=fx.resolved_first_identity,
+        _tenant_id=fx.tenant_id,
+        top_k=1,
+        suggestion_service=fx.suggestion_service,
+    )
+    rows = batch.matches[fx.resolved_first_identity]
+    assert [row.cluster_id for row in rows] == [expected_cluster]
+    assert rows[0].label == "Pending Second Choice"
+
+    per_card = await list_suggestions(
+        identity_id=fx.resolved_first_identity,
+        _tenant_id=fx.tenant_id,
+        min_confidence=None,
+        top_k=1,
+        suggestion_service=fx.suggestion_service,
+        cluster_repo=fx.cluster_repo,
+    )
+    assert [row.cluster_id for row in per_card.matches] == [expected_cluster]
+    assert per_card.matches[0].label == "Pending Second Choice"
 
 
 @pytest.mark.asyncio
@@ -275,7 +329,7 @@ async def test_top_k_two_bounds_rows_per_identity_not_globally(parity_fixture: P
     """top_k bounds rows PER identity: multi-suggestion identities return 2, singles return 1."""
     fx = parity_fixture
     multi_identity = fx.multi_suggestion_identities[0]
-    single_identity = fx.identity_ids[8]
+    single_identity = fx.identity_ids[9]
 
     batch = await list_identities_suggestions(
         identity_ids=f"{multi_identity},{single_identity}",

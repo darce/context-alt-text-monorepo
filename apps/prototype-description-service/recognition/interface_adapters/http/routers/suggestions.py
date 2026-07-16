@@ -120,6 +120,8 @@ async def list_identities_suggestions(
     One bounded call for "top suggestion for each of these identities": response
     row count is <= len(identity_ids) x top_k by construction. Filter parity with
     the per-card route is literal (pending + truthy cluster label only).
+    Out-of-range ``top_k`` is rejected with 400, never clamped (``MAX_TOP_K``,
+    ``validate_paging`` convention).
     """
     raw_ids = [item.strip() for item in identity_ids.split(",")]
     if len(raw_ids) > MAX_BATCH_IDENTITY_IDS:
@@ -128,7 +130,7 @@ async def list_identities_suggestions(
             detail=f"identity_ids exceeds maximum of {MAX_BATCH_IDENTITY_IDS}",
         )
     validated_ids = [validate_entity_id(item, field_name="identity_ids") for item in raw_ids]
-    validate_top_k(top_k, get_security_settings().max_page_size)
+    validate_top_k(top_k)
 
     grouped = await suggestion_service.list_for_identities(validated_ids, top_k=top_k)
     matches: dict[str, list[ClusterSuggestionMatch]] = {}
@@ -169,11 +171,13 @@ async def list_suggestions(
     cluster suggestions are not actionable (asking "Is this Unnamed cluster?" is meaningless).
 
     ``top_k`` bounds the match count after ranking (UXP-2 3a: previously accepted
-    but silently ignored); omitting it keeps the unbounded behavior.
+    but silently ignored); omitting it keeps the unbounded behavior. Out-of-range
+    ``top_k`` is rejected with 400, never clamped (``MAX_TOP_K``,
+    ``validate_paging`` convention).
     """
     validate_entity_id(identity_id, field_name="identity_id")
     if top_k is not None:
-        validate_top_k(top_k, get_security_settings().max_page_size)
+        validate_top_k(top_k)
     suggestions = await suggestion_service.list_for_identity(identity_id)
     if min_confidence is not None:
         suggestions = [suggestion for suggestion in suggestions if _meets_min_confidence(suggestion, min_confidence)]

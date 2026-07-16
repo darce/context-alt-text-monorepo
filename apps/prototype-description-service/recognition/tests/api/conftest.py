@@ -299,12 +299,14 @@ class FakeSuggestion:
         suggested_label_source: str | None = None,
         suggested_label_confidence: float | None = None,
         expires_at=None,  # noqa: ANN001
+        created_at: datetime | None = None,
     ) -> None:
         self.id = str(uuid.uuid4())
         self.identity_id = identity_id
         self.cluster_id = cluster_id
         self.representative_similarity = 0.9
         self.member_similarity = 0.85
+        self.created_at = created_at if created_at is not None else datetime.now(UTC)
         self.status = FakeSuggestionStatus()
         self.cluster_label = cluster_label
         self.cluster_identity_count = cluster_identity_count
@@ -516,7 +518,9 @@ class FakeSuggestionService:
                 and s.status.value == "pending"
                 and s.cluster_label
             ]
-            rows.sort(key=lambda s: s.representative_similarity, reverse=True)
+            # Match the real window's full sort key (similarity DESC, created_at DESC);
+            # ranking authority lives in the integration tests, this fake only mirrors it.
+            rows.sort(key=lambda s: (s.representative_similarity, s.created_at), reverse=True)
             top_rows = rows[:top_k]
             if top_rows:
                 grouped[identity_id] = [s.as_details() for s in top_rows]

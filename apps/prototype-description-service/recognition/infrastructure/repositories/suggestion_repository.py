@@ -116,7 +116,10 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
         suggestion targets an unlabeled cluster still resolves to its next labeled one.
 
         ``ROW_NUMBER`` is used (never ``DISTINCT ON``: SQLAlchemy silently drops the
-        ``ON`` clause under SQLite) and is portable across sqlite+aiosqlite and Postgres.
+        ``ON`` clause under SQLite). Portability is verified under sqlite+aiosqlite
+        by the batch integration suite, and under Postgres whenever the pg-marked
+        suite runs (``recognition/tests/integration/test_identity_suggestions_batch_pg.py``,
+        which skips when Postgres is unreachable).
         """
         tenant_uuid = _coerce_uuid(tenant_id)
         identity_uuids = [item for item in (_coerce_uuid(value) for value in identity_ids) if item is not None]

@@ -384,6 +384,7 @@ class IdentityBatchSuggestionsResponse(BaseModel):
     per requested identity, ranked server-side (similarity DESC, created_at DESC),
     and bounded to ``top_k`` rows per identity by construction. Requested
     identities with no eligible suggestion are omitted from the mapping.
+    Keys are canonicalized lowercase UUID strings as stored in the DB.
     """
 
     matches: dict[str, list[ClusterSuggestionMatch]]

@@ -20,6 +20,9 @@ use function current_time;
 use function gmdate;
 use function intdiv;
 use function is_array;
+use function is_finite;
+use function is_float;
+use function is_int;
 use function is_numeric;
 use function is_object;
 use function is_string;
@@ -292,9 +295,9 @@ class OutboxMaintenanceService {
 			return false;
 		}
 
-		$max_rows = max( 1, (int) apply_filters( 'acx_outbox_bulk_retry_max_rows', self::DEFAULT_BULK_RETRY_MAX_ROWS ) );
+		$max_rows = $this->resolve_positive_int_tunable( 'acx_outbox_bulk_retry_max_rows', self::DEFAULT_BULK_RETRY_MAX_ROWS );
 		$chunk_size = max( 1, (int) apply_filters( 'acx_outbox_drain_batch_size', OutboxDrain::DEFAULT_BATCH_SIZE ) );
-		$stride_seconds = max( 1, (int) apply_filters( 'acx_outbox_bulk_retry_pacing_stride_seconds', self::DEFAULT_BULK_RETRY_PACING_STRIDE_SECONDS ) );
+		$stride_seconds = $this->resolve_positive_int_tunable( 'acx_outbox_bulk_retry_pacing_stride_seconds', self::DEFAULT_BULK_RETRY_PACING_STRIDE_SECONDS );
 
 		$outbox_ids = $this->query_repository->find_failed_operation_ids( $normalized_tenant_id, $max_rows );
 		if ( array() === $outbox_ids ) {
@@ -340,6 +343,31 @@ class OutboxMaintenanceService {
 		}
 
 		return $requeued;
+	}
+
+	/**
+	 * Fail-safe tunable read (rg-008), mirroring OutboxDrain::resolve_positive_int_tunable:
+	 * a filter returning a non-finite, non-numeric, or non-positive value falls back to
+	 * the default — a bad filter can never shrink the bulk sweep or collapse the pacing
+	 * stride. Duplicated locally because the drain's validator is private to that class.
+	 */
+	private function resolve_positive_int_tunable( string $filter_name, int $default ): int {
+		$value = apply_filters( $filter_name, $default );
+
+		if ( is_int( $value ) ) {
+			return $value > 0 ? $value : $default;
+		}
+
+		if ( is_float( $value ) ) {
+			return is_finite( $value ) && $value > 0.0 ? max( 1, (int) $value ) : $default;
+		}
+
+		if ( is_string( $value ) && is_numeric( $value ) ) {
+			$numeric = (float) $value;
+			return is_finite( $numeric ) && $numeric > 0.0 ? max( 1, (int) $numeric ) : $default;
+		}
+
+		return $default;
 	}
 
 	public function discard_operation( int $outbox_id, string $tenant_id ): bool {

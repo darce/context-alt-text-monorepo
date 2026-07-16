@@ -11,6 +11,7 @@ import { useSyncStatus } from '../../hooks/useSyncStatus';
 
 const PAGE_SIZE = 20;
 const TIMELINE_PAGE_SIZE = 10;
+const BULK_RETRY_ARM_TIMEOUT_MS = 8000;
 const TIMELINE_STATUSES = ['all', 'pending', 'acknowledged', 'conflict', 'failed', 'discarded'] as const;
 type TimelineStatusFilter = (typeof TIMELINE_STATUSES)[number];
 
@@ -70,7 +71,7 @@ const deadLetterPanelReducer = (state: DeadLetterPanelState, action: DeadLetterP
     case 'setPendingDiscardId':
       return { ...state, pendingDiscardId: action.id };
     case 'setBulkRetryArmed':
-      return { ...state, bulkRetryArmed: action.armed };
+      return state.bulkRetryArmed === action.armed ? state : { ...state, bulkRetryArmed: action.armed };
     case 'setNotice':
       return { ...state, notice: action.notice };
     case 'setMutationError':
@@ -145,6 +146,29 @@ export const DeadLetterPanel = (): React.JSX.Element => {
   const bulkRetryMutation = useBulkRetryOperations();
   const syncStatusQuery = useSyncStatus();
 
+  const failedTotal = operationsQuery.data?.total;
+
+  // E15-35 Slice 2 review fix: the armed confirmation is time-boxed and scoped to the
+  // backlog it was armed against — it auto-disarms after a short window and whenever the
+  // failed total changes, so a stale confirm can never fire against a different backlog.
+  React.useEffect(() => {
+    if (!bulkRetryArmed) {
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      dispatch({ type: 'setBulkRetryArmed', armed: false });
+    }, BULK_RETRY_ARM_TIMEOUT_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [bulkRetryArmed]);
+
+  React.useEffect(() => {
+    dispatch({ type: 'setBulkRetryArmed', armed: false });
+  }, [failedTotal]);
+
   const handleRetry = async (id: number): Promise<void> => {
     try {
       await retryMutation.mutateAsync(id);
@@ -194,7 +218,14 @@ export const DeadLetterPanel = (): React.JSX.Element => {
       dispatch({ type: 'setMutationError', error: null });
       dispatch({
         type: 'setNotice',
-        notice: sprintf(__('%d failed changes queued to retry.', 'alt-context'), result.requeued),
+        notice:
+          result.failed_remaining > 0
+            ? sprintf(
+                __('%1$d failed changes queued to retry. %2$d remain — run again to queue the rest.', 'alt-context'),
+                result.requeued,
+                result.failed_remaining,
+              )
+            : sprintf(__('%d failed changes queued to retry.', 'alt-context'), result.requeued),
       });
     } catch {
       dispatch({ type: 'setNotice', notice: null });

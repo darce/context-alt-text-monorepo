@@ -20,6 +20,10 @@ interface ClusterActionsProps {
   canReject?: boolean;
   /** Whether any mutation is in progress */
   isPending: boolean;
+  /** Remote-compute offline gate for split only (RES-15). */
+  splitDisabled?: boolean;
+  splitTitle?: string;
+  splitAriaDisabled?: true;
   /** Called when edit button is clicked */
   onEdit: () => void;
   /** Called when "Wrong person" is clicked */
@@ -39,6 +43,9 @@ export const ClusterActions = ({
   canSplit,
   canReject = true,
   isPending,
+  splitDisabled = false,
+  splitTitle,
+  splitAriaDisabled,
   onEdit,
   onWrongPerson,
   onSplit,
@@ -68,7 +75,14 @@ export const ClusterActions = ({
         </button>
       )}
       {canSplit && (
-        <button type="button" className="acx-identity-cluster__action" onClick={onSplit} disabled={isPending}>
+        <button
+          type="button"
+          className="acx-identity-cluster__action"
+          onClick={onSplit}
+          disabled={isPending || splitDisabled}
+          aria-disabled={splitAriaDisabled}
+          title={splitTitle}
+        >
           {__('Split cluster', 'alt-context')}
         </button>
       )}

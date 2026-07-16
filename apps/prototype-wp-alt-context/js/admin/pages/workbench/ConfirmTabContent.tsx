@@ -1,25 +1,15 @@
 import React from 'react';
 import { __ } from '@wordpress/i18n';
+import { useRemoteActionGate } from '../../hooks/useRemoteActionGate';
+import { useSyncOffline } from '../../hooks/useSyncOffline';
 import { ConfirmPanel, RecentJobsPanel, rosterClustersUrl } from './Panels';
-import { useWorkbenchContext } from './WorkbenchContext';
+import { useJobPipeline } from './JobPipelineContext';
 
 export const ConfirmTabContent = (): React.JSX.Element => {
-  const {
-    jobId,
-    statusText,
-    cluster,
-    isScanRunning,
-    clusterMessage,
-    clusterProgress,
-    etaSeconds,
-    isPrimary,
-    latestJobId,
-    jobHistory,
-    jobStatuses,
-    historySource,
-    handleSelectJobFromHistory,
-    clearHistory,
-  } = useWorkbenchContext();
+  const { scanRun, status, history, cluster, handleSelectJobFromHistory, clearHistory } = useJobPipeline();
+  // RES-15: container owns offline signal; presentational ConfirmPanel receives props only.
+  const offline = useSyncOffline();
+  const remoteGate = useRemoteActionGate(offline);
   return (
     <>
       <div className="acx-workbench-help-card">
@@ -32,21 +22,24 @@ export const ConfirmTabContent = (): React.JSX.Element => {
         </p>
       </div>
       <ConfirmPanel
-        jobId={jobId ?? null}
-        status={statusText}
+        jobId={history.jobId ?? null}
+        status={scanRun.statusText}
         onCluster={cluster}
-        isClustering={isScanRunning}
-        progress={clusterProgress}
-        clusterMessage={clusterMessage}
+        isClustering={scanRun.isScanning}
+        progress={status.clusterProgress}
+        clusterMessage={status.clusterMessage}
         onViewClusters={() => window.location.assign(rosterClustersUrl())}
-        etaSeconds={etaSeconds}
-        isSynced={!isPrimary && !!latestJobId}
+        etaSeconds={scanRun.etaSeconds}
+        isSynced={scanRun.isSynced}
+        remoteActionDisabled={remoteGate.disabled}
+        remoteActionTitle={remoteGate.title}
+        remoteActionAriaDisabled={remoteGate['aria-disabled']}
       />
       <RecentJobsPanel
-        jobs={jobHistory}
-        statuses={jobStatuses}
-        activeJobId={jobId ?? null}
-        historySource={historySource}
+        jobs={history.jobHistory}
+        statuses={history.jobStatuses}
+        activeJobId={history.jobId ?? null}
+        historySource={history.historySource}
         onSelect={handleSelectJobFromHistory}
         onClear={clearHistory}
       />

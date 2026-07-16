@@ -35,6 +35,9 @@ from .schema import SCHEMA, DocKind
 
 EVAL_MODES = ("standard", "context_distractor", "name_ablation")
 
+# ALTQ-1 v3 three-surface: the title contract band (3-8 words, findings-derived).
+TITLE_WORD_BAND = (3, 8)
+
 
 class Audience(StrEnum):
     """Who may receive the scored report artifact.
@@ -245,6 +248,12 @@ def score_run_record(
     failures: list[dict[str, Any]] = []
     distractor_injected = 0
     distractor_taken = 0
+    # ALTQ-1 v3 three-surface title axis (additive: all-zero when no record item
+    # carries alt_text_title, and then nothing is surfaced in the report).
+    titles_present = 0
+    title_band_violations = 0
+    title_hallucinated_images = 0
+    title_hallucinated_names: set[str] = set()
 
     for item in run_record["items"]:
         media_id = int(item["media_id"])
@@ -322,6 +331,21 @@ def score_run_record(
         long_s = score_caption(str(long_text), **score_kwargs) if isinstance(long_text, str) and long_text else None
         if long_s is not None:
             long_scores.append(long_s)
+
+        # ALTQ-1 v3: titles run through the SAME closed-roster name traps as
+        # captions (score_caption) — a roster name the entry's context does not
+        # account for appearing in a title is a hallucination, exactly as it
+        # would be in the alt text. No new rubric axes: word band + name traps.
+        title = describe.get("alt_text_title")
+        if isinstance(title, str) and title.strip():
+            titles_present += 1
+            title_s = score_caption(title, **score_kwargs)
+            if not (TITLE_WORD_BAND[0] <= title_s.word_count <= TITLE_WORD_BAND[1]):
+                title_band_violations += 1
+            title_bad_names = [*title_s.wrong_name_hits, *title_s.hallucinated_names]
+            if title_bad_names:
+                title_hallucinated_images += 1
+                title_hallucinated_names.update(title_bad_names)
 
         taken: bool | None = None
         if isinstance(injected, str) and injected:
@@ -492,6 +516,17 @@ def score_run_record(
     if short_failed_images:
         result["caption"]["short_failed_images"] = short_failed_images
 
+    # ALTQ-1 v3: surfaced only when at least one item carries alt_text_title so
+    # every pre-v3 record keeps its exact report shape (additive schema).
+    if titles_present:
+        result["quality"]["title"] = {
+            "title_present": titles_present,
+            "word_band": list(TITLE_WORD_BAND),
+            "word_band_violations": title_band_violations,
+            "hallucinated_name_images": title_hallucinated_images,
+            "hallucinated_names": sorted(title_hallucinated_names),
+        }
+
     # ALTQ-1 Slice 3: additive latency axis — omitted entirely when the record
     # carries no timing data so untimed records keep their exact report shape.
     latency = _latency_summary(run_record["items"])
@@ -646,6 +681,14 @@ def _markdown(scored: dict[str, Any]) -> str:
 
     lines += ["", "## Quality axes (short surface, report-only signals)", ""]
     lines += _quality_lines(scored["quality"])
+    title_q = scored["quality"].get("title")
+    if title_q:
+        lines += [
+            f"- titles present: {title_q['title_present']}",
+            f"- title word band {title_q['word_band']} violations: {title_q['word_band_violations']}",
+            f"- title hallucinated-name images: {title_q['hallucinated_name_images']}"
+            + (f" ({', '.join(title_q['hallucinated_names'])})" if title_q["hallucinated_names"] else ""),
+        ]
     if "caption_long" in scored:
         long_c = scored["caption_long"]
         lines += [

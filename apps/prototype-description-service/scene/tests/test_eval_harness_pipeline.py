@@ -21,11 +21,13 @@ from scripts.eval_harness.bakeoff import (
     PROMPT_VARIANTS,
     BakeoffClient,
     PassOneJSONError,
+    ThreeSurfaceParseError,
     WeaveBenchRecordError,
     WeaveBenchSourceError,
     _apply_face_gate,
     _load_weave_bench_source,
     _parse_pass1_json,
+    _parse_three_surface_json,
     _stamp_pipeline_provenance,
     main,
     weave_bench_run_record,
@@ -810,3 +812,206 @@ def test_weave_bench_cli_aborts_on_malformed_source_without_images_dir(
     with pytest.raises(SystemExit) as excinfo:
         main(["--endpoint", "http://x", "--model-id", "m", "--weave-bench", str(bad)])
     assert "WeaveBenchRecordError" in str(excinfo.value)
+
+
+# --- ALTQ-1 v3: three-surface weave (title + WCAG alt + evocative caption) -----
+
+_V3_SURFACES = {
+    "title": "Woman at a rocky shoreline",
+    "alt": "Caitlin Weaver stands at the waterline of a rocky shoreline in a red jacket.",
+    "caption": (
+        "Caitlin Weaver pauses where the rocks meet the water, her red jacket bright "
+        "against the grey. The sky hangs low and overcast. The shoreline is quiet."
+    ),
+}
+_V3_JSON = json.dumps(_V3_SURFACES)
+_V3_FENCED = f"```json\n{_V3_JSON}\n```"
+
+
+def _v3_client(captured: list[dict], responses: list[object]) -> BakeoffClient:
+    return _client(captured, responses, prompt_variant="v3", two_pass=True)
+
+
+def test_v3_registered_three_surface_and_inherits_v2_style_rules() -> None:
+    v3 = PROMPT_VARIANTS["v3"]
+    assert v3.three_surface is True
+    assert v3.system == PROMPT_VARIANTS["v2"].system  # findings §3 style rules inherited, not forked
+    assert not PROMPT_VARIANTS["v1"].three_surface and not PROMPT_VARIANTS["v2"].three_surface
+
+
+def test_v3_requires_two_pass_and_rejects_dual_length_at_construction() -> None:  # rg-008 fail-fast
+    with pytest.raises(ValueError, match="two_pass"):
+        _client([], ["x"], prompt_variant="v3")
+    with pytest.raises(ValueError, match="dual_length"):
+        _client([], ["x"], prompt_variant="v3", two_pass=True, dual_length=True)
+
+
+def test_v3_cli_rejects_without_two_pass_and_with_dual_length() -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        main(["--endpoint", "http://x", "--model-id", "m", "--prompt-variant", "v3"])
+    assert "--two-pass" in str(excinfo.value)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["--endpoint", "http://x", "--model-id", "m", "--prompt-variant", "v3", "--two-pass", "--dual-length"])
+    assert "--dual-length" in str(excinfo.value)
+
+
+def test_v3_weave_message_carries_three_field_contract_facts_and_context() -> None:
+    captured: list[dict] = []
+    _describe(_v3_client(captured, [_FACTS_JSON, _V3_FENCED]), {"caption": "Caitlin Weaver on the peninsula."})
+    assert len(captured) == 2
+    system = _system_text(captured[1]["payload"])
+    # structured three-field output contract
+    assert '"title"' in system and '"alt"' in system and '"caption"' in system
+    assert "3-8 word" in system and "125" in system and "2-5 sentences" in system
+    assert "Never invent specifics" in system  # CapRL fabrication anti-pattern fenced out
+    # shared weave scaffolding EXTENDED, not forked: v2 style base + mismatch few-shot + never-guess
+    assert system.startswith(PROMPT_VARIANTS["v2"].system)
+    assert "Maria Chen" in system and "leave that name out" in system
+    assert "Never name or guess about anyone the context does not name." in system
+    user = _user_text(captured[1]["payload"])
+    assert "<<<FACTS>>>" in user and "rocky shoreline" in user
+    assert "<<<CONTEXT>>>" in user and "Caitlin Weaver" in user
+    # pass-1 stays context-free and unchanged by v3
+    assert "Caitlin Weaver" not in json.dumps(captured[0]["payload"])
+
+
+def test_v3_happy_path_parses_three_surfaces_into_describe_keys() -> None:
+    captured: list[dict] = []
+    describe = _describe(_v3_client(captured, [_FACTS_JSON, _V3_FENCED]), {"caption": "x"})
+    assert describe["alt_text_title"] == _V3_SURFACES["title"]
+    assert describe["alt_text_draft"] == _V3_SURFACES["alt"]
+    assert describe["alt_text_long"] == _V3_SURFACES["caption"]
+    assert describe["prompt_variant"] == "v3"  # provenance stamp, same mechanism as v1/v2
+    assert [p["pass"] for p in describe["passes"]] == ["describe_facts", "ground_weave"]
+    assert describe["passes"][1]["raw"] == _V3_FENCED  # raw weave output preserved for replay/triage
+
+
+def test_v3_malformed_or_incomplete_weave_json_is_typed_per_item_failure_and_run_continues(
+    tmp_path: Path,
+) -> None:
+    """[AGT-10] degrade loudly: a bad three-surface weave fails ONE item, not the run (rg-007)."""
+    entries = []
+    for i, name in enumerate(["img0.jpg", "img1.jpg"]):
+        (tmp_path / name).write_bytes(b"fake image bytes")
+        entries.append(
+            {
+                "path": name,
+                "sha256": f"{i}" * 64,
+                "media_id": 100 + i,
+                "face_count": 0,
+                "present_identities": [],
+                "context_pack": {"caption": "x"},
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+            }
+        )
+    manifest = GoldenManifest.model_validate({"manifest_version": 2, "roster": [], "entries": entries})
+    captured: list[dict] = []
+    # item 0: weave JSON missing the "caption" field; item 1: valid three-surface JSON.
+    missing_key = json.dumps({"title": "A title of five words", "alt": "An alt."})
+    client = _v3_client(captured, [_FACTS_JSON, missing_key, _FACTS_JSON, _V3_FENCED])
+    try:
+        record = fetch_run_record(manifest, str(tmp_path), client, head_sha="deadbeef")
+    finally:
+        client.close()
+    assert record["items"][0]["describe"] is None
+    assert "ThreeSurfaceParseError" in record["items"][0]["error"]
+    assert "caption" in record["items"][0]["error"]
+    assert record["items"][1]["describe"]["alt_text_title"] == _V3_SURFACES["title"]
+    assert record["items"][1]["describe"]["alt_text_draft"] == _V3_SURFACES["alt"]
+
+
+def test_parse_three_surface_json_accepts_fenced_and_bare_json() -> None:
+    for raw in (_V3_JSON, _V3_FENCED):
+        assert _parse_three_surface_json(raw) == _V3_SURFACES
+
+
+def test_parse_three_surface_json_rejects_malformed_missing_and_non_string() -> None:
+    with pytest.raises(ThreeSurfaceParseError, match="malformed"):
+        _parse_three_surface_json("Sure! Here are your three surfaces.")
+    with pytest.raises(ThreeSurfaceParseError, match="expected an object"):
+        _parse_three_surface_json("[1, 2]")
+    with pytest.raises(ThreeSurfaceParseError, match="caption"):
+        _parse_three_surface_json(json.dumps({"title": "A short title here", "alt": "An alt."}))
+    with pytest.raises(ThreeSurfaceParseError, match="alt"):
+        _parse_three_surface_json(json.dumps({"title": "T", "alt": ["not", "a", "string"], "caption": "C."}))
+    with pytest.raises(ThreeSurfaceParseError, match="title"):
+        _parse_three_surface_json(json.dumps({"title": "   ", "alt": "An alt.", "caption": "C."}))
+
+
+def test_v3_provenance_stamp_matches_v1_v2_mechanism() -> None:
+    provenance: dict = {}
+    _stamp_pipeline_provenance(
+        provenance, prompt_variant="v3", two_pass=True, dual_length=False, face_gate=False, eval_mode="standard"
+    )
+    assert provenance == {"prompt_variant": "v3", "two_pass": True}
+
+
+# --- v3 score side: title quality axis (additive, closed-roster name scan) -----
+
+
+def _v3_record(title: str) -> dict:
+    record = _old_shape_record()
+    record["provenance"]["prompt_variant"] = "v3"
+    record["provenance"]["two_pass"] = True
+    record["items"][0]["describe"].update(
+        {
+            "prompt_variant": "v3",
+            "alt_text_title": title,
+            "alt_text_draft": "Alice Example relaxes by a pool.",
+            "alt_text_long": "Alice Example relaxes by a sunlit pool. The water is calm. She smiles.",
+        }
+    )
+    return record
+
+
+def test_title_quality_block_counts_presence_and_word_band() -> None:
+    scored = score_run_record(_v3_record("Alice Example by the pool"), _entries())
+    assert scored["quality"]["title"] == {
+        "title_present": 1,
+        "word_band": [3, 8],
+        "word_band_violations": 0,
+        "hallucinated_name_images": 0,
+        "hallucinated_names": [],
+    }
+    # 2 words < band minimum and 9 words > band maximum both violate
+    scored = score_run_record(_v3_record("Pool day"), _entries())
+    assert scored["quality"]["title"]["word_band_violations"] == 1
+    scored = score_run_record(_v3_record("Alice Example relaxing by the pool on summer afternoon"), _entries())
+    assert scored["quality"]["title"]["word_band_violations"] == 1
+
+
+def test_title_hallucinated_name_scan_uses_closed_roster() -> None:
+    """A roster name the entry does not account for appearing in a TITLE is flagged
+    by the SAME closed-roster trap used for captions (planted out-of-entry name)."""
+    roster = ["Alice Example", "Bob Builder"]
+    scored = score_run_record(_v3_record("Bob Builder at the pool"), _entries(), manifest_roster=roster)
+    q = scored["quality"]["title"]
+    assert q["hallucinated_name_images"] == 1
+    assert q["hallucinated_names"] == ["Bob Builder"]
+    # the present identity in the title never trips the trap
+    scored = score_run_record(_v3_record("Alice Example by the pool"), _entries(), manifest_roster=roster)
+    assert scored["quality"]["title"]["hallucinated_name_images"] == 0
+    assert scored["quality"]["title"]["hallucinated_names"] == []
+
+
+def test_title_axis_absent_keeps_report_shape_unchanged() -> None:
+    """Additive-schema proof, mirroring the Slice-2 old-record test: no titles, no keys."""
+    scored = score_run_record(_old_shape_record(), _entries())
+    assert "title" not in scored["quality"]
+    _json_doc, md = build_reports(_old_shape_record(), _entries())
+    assert "titles present" not in md
+    # a titled v3 record re-scores bit-identically (report determinism preserved)
+    record = _v3_record("Alice Example by the pool")
+    assert build_reports(record, _entries()) == build_reports(record, _entries())
+
+
+def test_title_metrics_render_in_markdown() -> None:
+    _json_doc, md = build_reports(
+        _v3_record("Bob Builder at the pool"), _entries(), manifest_roster=["Alice Example", "Bob Builder"]
+    )
+    assert "titles present: 1" in md
+    assert "title word band [3, 8] violations: 0" in md
+    assert "title hallucinated-name images: 1 (Bob Builder)" in md
+    assert "prompt variant: `v3`" in md

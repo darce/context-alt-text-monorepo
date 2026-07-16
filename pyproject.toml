@@ -1,0 +1,9 @@
+# Lane-only shim: lets the grok secure-sandbox `uv sync` provisioning succeed
+# (repo intentionally has no root Python project). DROP BEFORE MERGE to main.
+[project]
+name = "uxp-net-1-lane-sandbox-shim"
+version = "0.0.0"
+requires-python = ">=3.11"
+
+[tool.uv]
+package = false

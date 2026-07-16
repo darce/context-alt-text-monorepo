@@ -675,6 +675,8 @@ class LifecycleManager {
 			created_at datetime NOT NULL,
 			claimed_at datetime DEFAULT NULL,
 			last_attempted_at datetime DEFAULT NULL,
+			next_attempt_at datetime DEFAULT NULL,
+			first_failed_at datetime DEFAULT NULL,
 			acknowledged_at datetime DEFAULT NULL,
 			PRIMARY KEY  (id),
 			UNIQUE KEY uq_idempotency (idempotency_key),

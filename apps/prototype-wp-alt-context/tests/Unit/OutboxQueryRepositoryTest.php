@@ -61,6 +61,45 @@ class OutboxQueryRepositoryTest extends TestCase
         $this->assertSame('dispatch_failed', $result[0]['last_error_code']);
     }
 
+    public function testLoadPendingOperationsGatesClaimOnElapsedNextAttemptAndProjectsRetryColumns(): void
+    {
+        // E15-35 Slice 1 (PR-09): the claim SELECT must skip rows whose next_attempt_at has not
+        // elapsed AND project first_failed_at/next_attempt_at — apply_result() operates only on
+        // the row array this SELECT returns, so the window-age decision needs the values read out.
+        global $wpdb;
+
+        $repository = new OutboxQueryRepository('wp_acx_sync_outbox');
+        $repository->load_pending_operations(25);
+
+        $matched = array_values(array_filter(
+            $wpdb->queries,
+            static fn (string $query): bool => str_contains($query, 'acx_sync_outbox')
+                && str_contains($query, "status = 'pending'")
+        ));
+        $this->assertNotEmpty($matched, 'Expected a pending-claim SELECT.');
+        $select = $matched[0];
+        $this->assertStringContainsString("( next_attempt_at IS NULL OR next_attempt_at <= '", $select);
+        $this->assertStringContainsString('first_failed_at', $select);
+        $this->assertStringContainsString('next_attempt_at', $select);
+    }
+
+    public function testEarliestPendingAttemptTimeReturnsMinCoalescedSchedule(): void
+    {
+        // E15-35 Slice 1: the drain reschedules itself for the earliest pending attempt; rows with
+        // NULL next_attempt_at are due immediately (coalesce to created_at).
+        global $wpdb;
+
+        $earliest = '2026-07-16 10:00:00';
+        $wpdb->queryResults[$wpdb->prepare(
+            'SELECT MIN(COALESCE(next_attempt_at, created_at)) FROM %i WHERE status = %s',
+            'wp_acx_sync_outbox',
+            'pending'
+        )] = $earliest;
+
+        $repository = new OutboxQueryRepository('wp_acx_sync_outbox');
+        $this->assertSame($earliest, $repository->earliest_pending_attempt_time());
+    }
+
     public function testReclaimStaleInFlightOperationsResetsLeaseExpiredRowsToPending(): void
     {
         // CON-3-FU-1: a drain that dies between claim_operation (pending->in_flight) and

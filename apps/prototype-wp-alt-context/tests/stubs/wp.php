@@ -1504,6 +1504,13 @@ if (!function_exists('wp_remote_request')) {
     }
 }
 
+if (!function_exists('wp_rand')) {
+    function wp_rand($min = 0, $max = 0): int
+    {
+        return mt_rand((int) $min, (int) $max);
+    }
+}
+
 if (!function_exists('current_time')) {
     function current_time($type, $gmt = 0)
     {

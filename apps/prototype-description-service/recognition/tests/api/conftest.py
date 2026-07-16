@@ -504,6 +504,24 @@ class FakeSuggestionService:
     async def list_for_identity(self, identity_id: str) -> list[FakeSuggestion]:
         return [s for s in self.suggestions.values() if isinstance(s, FakeSuggestion) and s.identity_id == identity_id]
 
+    async def list_for_identities(self, identity_ids, *, top_k):  # noqa: ANN001, ANN201
+        """Mirror SuggestionService.list_for_identities: top-k pending truthy-label rows per identity."""
+        grouped = {}
+        for identity_id in identity_ids:
+            rows = [
+                s
+                for s in self.suggestions.values()
+                if isinstance(s, FakeSuggestion)
+                and s.identity_id == identity_id
+                and s.status.value == "pending"
+                and s.cluster_label
+            ]
+            rows.sort(key=lambda s: s.representative_similarity, reverse=True)
+            top_rows = rows[:top_k]
+            if top_rows:
+                grouped[identity_id] = [s.as_details() for s in top_rows]
+        return grouped
+
     async def accept(self, suggestion_id: str) -> FakeSuggestion | None:
         suggestion = self.suggestions.get(suggestion_id)
         if not isinstance(suggestion, FakeSuggestion):

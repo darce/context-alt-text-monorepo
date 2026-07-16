@@ -50,9 +50,12 @@ window_started_at, instance_ocid, instance_ad, created_at)`.
   *before* the call — a crashed-and-superseded holder's retry token can never collide
   with the new generation's, and a same-holder timeout retry reuses the same token
   (no double instance) [RES-01, DATA-13].
-- **Crash recovery**: new generation first reconciles: list instances tagged
-  `acx-opportunistic-gpu`; adopt one whose tag matches a prior generation and is healthy
-  (readiness passes) or terminate it if not — before any new launch.
+- **Crash recovery**: new generation first reconciles: list instances carrying the
+  freeform tags `acx-opportunistic-gpu` + `acx-lease-generation=<generation>` (both
+  stamped at launch — the generation lives on the instance, not only in the DB); adopt
+  one whose generation tag predates the current generation and is healthy (readiness
+  passes) or terminate it if not — before any new launch. The reaper (§3) uses the same
+  generation tag to decide orphanhood.
 
 ### 2. Acquisition loop (bounded, probe-first) [RES-06]
 
@@ -95,8 +98,12 @@ window_started_at, instance_ocid, instance_ad, created_at)`.
   the last 24 h above a threshold → breaker **open**.
 - **Open**: no `LaunchInstance` at all; routing is CPU-only; state surface says
   `breaker_open` (UI shows the steady "CPU mode" chip, no toast churn).
-- **Half-open**: probe via free `ComputeCapacityReport` only, on a slow cadence (e.g.
-  every 30 min). Observing `AVAILABLE` closes the breaker; the *next trigger* may launch.
+- **Half-open**: the breaker enters half-open automatically on its probe cadence (every
+  30 min while open); half-open performs one free `ComputeCapacityReport` sweep only.
+  Observing `AVAILABLE` closes the breaker; the *next trigger* may launch. Anything else
+  re-opens for another cadence interval.
+- The consecutive-give-up counter `K` resets to zero on any successful acquisition
+  (instance reached `serving`).
 - Breaker state is persisted next to the lease row and exported (metrics + status
   resource).
 
@@ -167,8 +174,9 @@ Config is structurally validated at service start; malformed/missing keys fail f
   to `D_boot` (~$0.50) with zero work.
 - **Flapping worst case**: with hysteresis + `I`, the fastest possible cycle is
   ~(boot 10 m + serve ≥0 + idle 10 m) ≈ 3 cycles/hr ⇒ still ≤ $2/hr — flapping cannot
-  exceed steady-hold cost, but it converts up to ~33% of it into boot tax; the flap-rate
-  metric exists to catch it.
+  exceed steady-hold cost (one instance bills ≤ 1 RUNNING-hr/hr), but at the degenerate
+  serve≈0 cycle up to **50%** of the spend is boot tax; the flap-rate metric exists to
+  catch it.
 - **Hard ceiling**: `B_month` (default $150/mo) forces the breaker open — the true
   worst-case monthly spend is `B_month`, by construction, not an estimate. (Reference:
   8 h/day steady hold ≈ $480/mo would trip the cap long before month-end; a reservation

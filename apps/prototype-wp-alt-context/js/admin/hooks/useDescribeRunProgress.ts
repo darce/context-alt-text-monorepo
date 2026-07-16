@@ -8,6 +8,8 @@ import {
   type DescribeRunStatus,
 } from '../api/describeApi';
 import { JOB_PROGRESS_STALL_THRESHOLD_MS } from './useJobProgressStream';
+import { gateRefetchInterval } from '../utils/recognitionCooldown';
+import { isAbortLike } from '../utils/retryPolicy';
 
 /**
  * Honest per-image progress for a bulk describe run (WBUX-3 S6-02).
@@ -29,6 +31,13 @@ export interface DescribeRunProgress {
   isTerminal: boolean;
   stalledForSeconds: number | null;
   isPolling: boolean;
+  /**
+   * The last status poll failed transiently (abort/timeout) but polling
+   * continues — progress is frozen at the last known values, not dead
+   * (UXP-2 BR-07). Distinct from isError, which is a hard stop with a Retry
+   * affordance.
+   */
+  isFrozen: boolean;
   isError: boolean;
   error: Error | null;
   retry: () => void;
@@ -45,8 +54,12 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
       return fetchBulkDescribeRun(runId);
     },
     enabled: runId !== null,
-    refetchInterval: (q) => {
-      if (q.state.status === 'error') {
+    // Gated on the shared recognition cooldown (UXP-2 slice 2).
+    refetchInterval: gateRefetchInterval((q) => {
+      // BR-07: a transient abort/timeout on a 2s status poll must not dead-end
+      // the progress bar — the shared policy never retries abort-like errors,
+      // so the next scheduled poll IS the retry. Only hard failures stop.
+      if (q.state.status === 'error' && !isAbortLike(q.state.error)) {
         return false;
       }
       const data = q.state.data;
@@ -54,13 +67,14 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
         return false;
       }
       return DESCRIBE_RUN_POLL_INTERVAL_MS;
-    },
+    }),
   });
 
   const run = query.data ?? null;
   const status = run?.status ?? null;
   const isTerminal = status !== null && isDescribeRunTerminal(status);
-  const isError = query.isError;
+  const isFrozen = query.isError && isAbortLike(query.error);
+  const isError = query.isError && !isFrozen;
 
   const { refetch } = query;
   const retry = useCallback(() => {
@@ -95,9 +109,10 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
   }, [run]);
 
   // Tick the stall indicator once per second while the run is live. A polling
-  // error surfaces its own Retry affordance, so suppress the stall banner then.
+  // error surfaces its own Retry affordance, and a frozen poll already shows
+  // the paused notice, so suppress the speculative stall banner in both.
   useEffect(() => {
-    if (runId === null || isTerminal || isError) {
+    if (runId === null || isTerminal || isError || isFrozen) {
       setStalledForSeconds(null);
       return;
     }
@@ -109,15 +124,13 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
         return;
       }
       const elapsedMs = Date.now() - baseline;
-      setStalledForSeconds(
-        elapsedMs >= JOB_PROGRESS_STALL_THRESHOLD_MS ? Math.floor(elapsedMs / 1000) : null,
-      );
+      setStalledForSeconds(elapsedMs >= JOB_PROGRESS_STALL_THRESHOLD_MS ? Math.floor(elapsedMs / 1000) : null);
     };
 
     updateStallState();
     const intervalId = window.setInterval(updateStallState, 1_000);
     return () => window.clearInterval(intervalId);
-  }, [runId, isTerminal, isError]);
+  }, [runId, isTerminal, isError, isFrozen]);
 
   // Terminal (processed) items over total: completed + failed + skipped, so the
   // bar reaches 100% when every item is done regardless of per-item outcome.
@@ -134,6 +147,7 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
     isTerminal,
     stalledForSeconds,
     isPolling: runId !== null && !isTerminal && !isError,
+    isFrozen,
     isError,
     error: query.error ?? null,
     retry,

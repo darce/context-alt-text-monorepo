@@ -7,10 +7,17 @@ export const MAX_RETRY_DELAY_MS = 30_000;
 const ABORT_LIKE_NAMES = new Set(['AbortError', 'TimeoutError']);
 
 /** Duck-type: DOMException is NOT an Error subclass in the browser. */
-const isAbortLike = (error: unknown): boolean =>
-  typeof error === 'object' &&
-  error !== null &&
-  ABORT_LIKE_NAMES.has((error as { name?: unknown }).name as string);
+export const isAbortLike = (error: unknown): boolean =>
+  typeof error === 'object' && error !== null && ABORT_LIKE_NAMES.has((error as { name?: unknown }).name as string);
+
+/**
+ * The server's explicit "ask again later": 429, or 503 carrying Retry-After.
+ * Single classification shared by the retry predicate and the recognition
+ * cooldown (REF-19: one policy, no per-consumer re-derivation).
+ */
+export const isCooldownSignal = (error: unknown): error is HTTPError =>
+  error instanceof HTTPError &&
+  (error.status === 429 || (error.status === 503 && error.retryAfterSeconds !== undefined));
 
 /**
  * Shared QueryClient retry predicate.
@@ -21,7 +28,7 @@ export const shouldRetryRequest = (failureCount: number, error: unknown): boolea
     return false;
   }
   if (error instanceof HTTPError) {
-    return error.status === 429 || (error.status === 503 && error.retryAfterSeconds !== undefined);
+    return isCooldownSignal(error);
   }
   if (error instanceof ResponseParseError) {
     return false;

@@ -7,6 +7,7 @@ import {
   type DescribeRunResponse,
   type DescribeRunStatus,
 } from '../api/describeApi';
+import { gateRefetchInterval } from '../utils/rateLimitCooldown';
 import { JOB_PROGRESS_STALL_THRESHOLD_MS } from './useJobProgressStream';
 
 /**
@@ -50,7 +51,7 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
     enabled: runId !== null,
     retry: DESCRIBE_RUN_POLL_RETRIES,
     retryDelay: (attempt) => Math.min(1_000 * 2 ** attempt, 8_000),
-    refetchInterval: (q) => {
+    refetchInterval: gateRefetchInterval((q) => {
       if (q.state.status === 'error') {
         return false;
       }
@@ -59,7 +60,7 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
         return false;
       }
       return DESCRIBE_RUN_POLL_INTERVAL_MS;
-    },
+    }),
   });
 
   const run = query.data ?? null;

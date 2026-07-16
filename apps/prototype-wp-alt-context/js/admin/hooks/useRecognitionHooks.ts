@@ -24,6 +24,7 @@ import {
   type JobStatusResponse,
 } from '../api/recognition';
 import { queryKeys } from '../api/queryKeys';
+import { gateRefetchInterval } from '../utils/rateLimitCooldown';
 
 /**
  * Returns the polling interval for a recognition job status query.
@@ -54,7 +55,7 @@ export const useScanStatus = (jobId: string | null, enabled = true) =>
     queryKey: queryKeys.jobs.status(jobId),
     enabled: Boolean(jobId) && enabled,
     queryFn: () => fetchScanStatus(jobId!),
-    refetchInterval: (query) => getJobRefetchInterval(query.state.data),
+    refetchInterval: gateRefetchInterval((query) => getJobRefetchInterval(query.state.data)),
     retry: (failureCount, error) => {
       if (error.message.includes('404')) {
         return false;
@@ -76,7 +77,7 @@ export const useMultiScanStatus = (jobIds: string[], enabled = true) =>
         queryKey: queryKeys.jobs.status(jobId),
         queryFn: () => fetchScanStatus(jobId),
         enabled: Boolean(jobId) && enabled,
-        refetchInterval: (query) => getJobRefetchInterval(query.state.data),
+        refetchInterval: gateRefetchInterval((query) => getJobRefetchInterval(query.state.data)),
         retry: (failureCount, error) => {
           if (error.message.includes('404')) {
             return false;
@@ -92,7 +93,7 @@ export const useBatchRunStatus = (runId: string | null, enabled = true) =>
     queryKey: queryKeys.jobs.batchRun(runId),
     enabled: Boolean(runId) && enabled,
     queryFn: () => fetchBatchRunStatus(runId!),
-    refetchInterval: (query) => getBatchRunRefetchInterval(query.state.data),
+    refetchInterval: gateRefetchInterval((query) => getBatchRunRefetchInterval(query.state.data)),
     retry: (failureCount, error) => {
       if (error.message.includes('404')) {
         return false;
@@ -135,7 +136,7 @@ export const useRecognitionClusters = (params: ClusterListParams = {}) =>
   useQuery<ClusterListResponse>({
     queryKey: queryKeys.clusters.list(params),
     queryFn: () => listRecognitionClusters(params),
-    refetchInterval: 30_000,
+    refetchInterval: gateRefetchInterval(30_000),
   });
 
 export const useRecognitionCluster = (clusterId: string | null, enabled = true) =>

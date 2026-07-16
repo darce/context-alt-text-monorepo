@@ -273,6 +273,7 @@ vi.mock('../pages/workbench/JobPipelineContext', () => {
     scan: vi.fn(),
     cancelScan: vi.fn(),
     cluster: vi.fn(),
+    retryClustering: vi.fn(),
     retryProjectionSync: vi.fn(),
     retryScanStream: vi.fn(),
     handleSelectJobFromHistory: vi.fn(),

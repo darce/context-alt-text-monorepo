@@ -52,7 +52,15 @@ export const useJobStateMachine = ({
     void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
   }, [queryClient]);
 
-  const { scanMutation, clusterMutation, cancelMutation } = useJobStateMachineMutations({
+  const {
+    scanMutation,
+    clusterMutation,
+    cancelMutation,
+    startCluster,
+    retryClustering,
+    clusterQueuedSeconds,
+    canRetryClustering,
+  } = useJobStateMachineMutations({
     activeJobIds,
     addJob,
     removeJob,
@@ -134,7 +142,7 @@ export const useJobStateMachine = ({
     setIsWaitingForScanCompletion,
     sseStatus,
     removeJob,
-    cluster: () => clusterMutation.mutate(),
+    cluster: startCluster,
     latestClusterJob,
     currentPhase,
     syncTrigger,
@@ -153,6 +161,7 @@ export const useJobStateMachine = ({
       latestJobId,
       scanPending: scanMutation.isPending,
       clusterPending: clusterMutation.isPending,
+      clusterQueuedSeconds,
       waitingForCompletion: isWaitingForScanCompletion,
       scanStatus: scanStatusQuery.data,
       batchRunStatus: batchRunStatusQuery.data,
@@ -200,7 +209,9 @@ export const useJobStateMachine = ({
     // Actions
     scan: handleScan,
     cancelScan: cancelMutation.mutate,
-    cluster: clusterMutation.mutate,
+    cluster: startCluster,
+    retryClustering,
+    canRetryClustering,
     retryProjectionSync,
     retryScanStream,
   };

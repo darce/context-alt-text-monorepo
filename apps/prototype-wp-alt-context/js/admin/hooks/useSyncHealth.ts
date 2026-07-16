@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { fetchSyncHealth, type SyncHealthResponse } from '../api/recognition';
 import { queryKeys } from '../api/queryKeys';
+import { gateRefetchInterval } from '../utils/rateLimitCooldown';
 
 const SYNC_HEALTH_STALE_MS = 15_000;
 const SYNC_HEALTH_REFETCH_MS = 15_000;
@@ -11,5 +12,5 @@ export const useSyncHealth = () =>
     queryKey: queryKeys.sync.health(),
     queryFn: () => fetchSyncHealth(),
     staleTime: SYNC_HEALTH_STALE_MS,
-    refetchInterval: SYNC_HEALTH_REFETCH_MS,
+    refetchInterval: gateRefetchInterval(SYNC_HEALTH_REFETCH_MS),
   });

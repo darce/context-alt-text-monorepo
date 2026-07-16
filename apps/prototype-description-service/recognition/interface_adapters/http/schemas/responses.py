@@ -377,6 +377,18 @@ class IdentitySuggestionsResponse(BaseModel):
     matches: list[ClusterSuggestionMatch]
 
 
+class IdentityBatchSuggestionsResponse(BaseModel):
+    """Batch identity-suggestions envelope keyed by identity id (UXP-2 Slice 3a).
+
+    Distinct from the flat ``IdentitySuggestionsResponse``: matches are grouped
+    per requested identity, ranked server-side (similarity DESC, created_at DESC),
+    and bounded to ``top_k`` rows per identity by construction. Requested
+    identities with no eligible suggestion are omitted from the mapping.
+    """
+
+    matches: dict[str, list[ClusterSuggestionMatch]]
+
+
 class ScanProgressEnvelopeResponse(BaseModel):
     """Poll-cheap scan progress envelope (E15-27 Slice 2)."""
 
@@ -668,6 +680,7 @@ __all__ = [
     "DetectedIdentityDebugExtras",
     "FaceBoxResponse",
     "HealthCheckResponse",
+    "IdentityBatchSuggestionsResponse",
     "IdentityResponse",
     "IdentitySuggestionsResponse",
     "JobProgressResponse",

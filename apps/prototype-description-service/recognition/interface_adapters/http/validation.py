@@ -50,6 +50,12 @@ def validate_paging(limit: int, offset: int, max_limit: int) -> None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="offset must be non-negative")
 
 
+def validate_top_k(top_k: int, max_top_k: int) -> None:
+    """Enforce top_k bounds with 400 responses instead of 422 (validate_paging convention)."""
+    if top_k < 1 or top_k > max_top_k:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="top_k out of range")
+
+
 def validate_label(label: str | None) -> str | None:
     """Reject labels containing HTML/script content."""
     if label is None:
@@ -64,4 +70,4 @@ def validate_label(label: str | None) -> str | None:
     return stripped
 
 
-__all__ = ["validate_entity_id", "validate_paging", "validate_label", "is_uuid"]
+__all__ = ["validate_entity_id", "validate_paging", "validate_top_k", "validate_label", "is_uuid"]

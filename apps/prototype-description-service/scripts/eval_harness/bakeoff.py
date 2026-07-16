@@ -25,12 +25,18 @@ ALTQ-1 Slice 2 pipeline levers (all provenance-stamped, all off by default):
 (long-first generation + text-only compression to the short alt), and
 ``--face-gate`` (harness-side face-gated naming simulated from manifest
 ``face_boxes``; fail closed — service wiring is Slice 4).
+
+ALTQ-1 Slice 3 adds ``--weave-bench <run_record.json>``: replay the committed
+pass-1 facts of an existing ``--two-pass`` run through the pass-2 weave
+TEXT-ONLY (no image part) against this endpoint — the CPU synthesis cell.
+Provenance carries ``weave_bench: true`` + the source record's identity/sha.
 """
 
 from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import mimetypes
 import os
@@ -51,12 +57,14 @@ from .cli import (
     _head_sha,
     _keep_arg,
     _limit_arg,
+    _manifest_sha,
     fetch_run_record,
     prune_out_dir,
 )
-from .manifest import ManifestError, load_manifest
+from .manifest import GoldenManifest, ManifestError, load_manifest
 from .remote_client import RemoteClientError, RemoteSceneClient
 from .report import EVAL_MODES
+from .schema import SCHEMA, DocKind
 
 _CAPTION_MAX_TOKENS = 512
 _CONTEXT_BEGIN = "<<<CONTEXT>>>"
@@ -368,31 +376,10 @@ class BakeoffClient(RemoteSceneClient):
         context_pack: dict[str, Any],
     ) -> dict[str, Any]:
         """POST /v1/chat/completions (1-3 calls per pipeline config) -> describe dict scoreable by ``report``."""
-        stamps: dict[str, Any] = {}
-        traits = self.entry_traits.get(media_id, {})
-        if self.eval_mode != "standard":
-            if self.eval_mode == "name_ablation":
-                # Full-roster ablation (ALTQ-1-REV-A-03/B-03): strip every name
-                # the corpus knows, not just this entry's present identities.
-                all_names = list(
-                    dict.fromkeys([*traits.get("present", []), *traits.get("easy_wrong", []), *self.roster])
-                )
-                context_pack, ablated = _ablate_names(context_pack, all_names)
-                stamps["ablated_names"] = ablated
-            elif self.eval_mode == "context_distractor":
-                context_pack, injected = _inject_distractor(context_pack, list(traits.get("easy_wrong", [])))
-                if injected is not None:
-                    stamps["injected_distractor"] = injected
-        if self.face_gate:
-            # After the eval-mode transform, so a gated run measures the gate's
-            # resistance to the injected distractor (and ablation stays ablated).
-            known_names = list(dict.fromkeys([*traits.get("present", []), *traits.get("easy_wrong", []), *self.roster]))
-            context_pack, gate_stamp = _apply_face_gate(context_pack, self.face_fixtures.get(media_id, []), known_names)
-            stamps["face_gate"] = gate_stamp
+        context_pack, stamps = self._transformed_context(media_id, context_pack)
 
         image_part = {"type": "image_url", "image_url": {"url": _data_url(image_bytes, filename)}}
-        variant = PROMPT_VARIANTS[self.prompt_variant]
-        system = variant.system_long if self.dual_length else variant.system
+        system = self._system_prompt()
         passes: list[dict[str, Any]] = []
         if self.two_pass:
             facts_raw = self._timed_chat(
@@ -405,16 +392,7 @@ class BakeoffClient(RemoteSceneClient):
             )
             _parse_pass1_json(facts_raw)  # malformed pass-1 JSON => typed per-item failure
             caption = self._timed_chat(
-                [
-                    {"role": "system", "content": f"{system}\n\n{_WEAVE_INSTRUCTIONS}"},
-                    {
-                        "role": "user",
-                        "content": [
-                            image_part,
-                            {"type": "text", "text": self._weave_user_text(facts_raw, context_pack)},
-                        ],
-                    },
-                ],
+                self._weave_messages(facts_raw, context_pack, image_part=image_part),
                 pass_name="ground_weave",
                 passes=passes,
             )
@@ -457,6 +435,82 @@ class BakeoffClient(RemoteSceneClient):
         if self.two_pass or self.dual_length:
             result["passes"] = passes
         return result
+
+    def weave_bench_describe(self, *, media_id: int, facts_raw: str, context_pack: dict[str, Any]) -> dict[str, Any]:
+        """ALTQ-1 Slice 3: replay recorded pass-1 facts through pass-2 TEXT-ONLY -> scoreable describe dict.
+
+        Same eval-mode/face-gate transforms and provenance stamps as the live
+        path (shared ``_transformed_context``), same weave prompt (shared
+        ``_weave_messages``); the only delta from live pass-2 is the absent
+        image part — no image bytes are read or sent (the CPU synthesis cell)."""
+        context_pack, stamps = self._transformed_context(media_id, context_pack)
+        passes: list[dict[str, Any]] = []
+        caption = self._timed_chat(
+            self._weave_bench_messages(facts_raw, context_pack),
+            pass_name="weave_bench",
+            passes=passes,
+        )
+        return {
+            "adapter": "bakeoff",
+            "model_id": self.model_id,
+            "model_version": self.model_version,
+            "prompt_variant": self.prompt_variant,
+            **stamps,
+            "alt_text_draft": caption,
+            "passes": passes,
+        }
+
+    def _transformed_context(
+        self, media_id: int, context_pack: dict[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Fetch-time eval-mode + face-gate context transforms with their per-item stamps.
+
+        Shared by live ``describe`` and ``weave_bench_describe`` so a replay run
+        measures the identical prompt surface the live pipeline would build."""
+        stamps: dict[str, Any] = {}
+        traits = self.entry_traits.get(media_id, {})
+        if self.eval_mode != "standard":
+            if self.eval_mode == "name_ablation":
+                # Full-roster ablation (ALTQ-1-REV-A-03/B-03): strip every name
+                # the corpus knows, not just this entry's present identities.
+                all_names = list(
+                    dict.fromkeys([*traits.get("present", []), *traits.get("easy_wrong", []), *self.roster])
+                )
+                context_pack, ablated = _ablate_names(context_pack, all_names)
+                stamps["ablated_names"] = ablated
+            elif self.eval_mode == "context_distractor":
+                context_pack, injected = _inject_distractor(context_pack, list(traits.get("easy_wrong", [])))
+                if injected is not None:
+                    stamps["injected_distractor"] = injected
+        if self.face_gate:
+            # After the eval-mode transform, so a gated run measures the gate's
+            # resistance to the injected distractor (and ablation stays ablated).
+            known_names = list(dict.fromkeys([*traits.get("present", []), *traits.get("easy_wrong", []), *self.roster]))
+            context_pack, gate_stamp = _apply_face_gate(context_pack, self.face_fixtures.get(media_id, []), known_names)
+            stamps["face_gate"] = gate_stamp
+        return context_pack, stamps
+
+    def _system_prompt(self) -> str:
+        variant = PROMPT_VARIANTS[self.prompt_variant]
+        return variant.system_long if self.dual_length else variant.system
+
+    def _weave_messages(
+        self, facts_raw: str, context_pack: dict[str, Any], *, image_part: dict[str, Any] | None
+    ) -> list[dict[str, Any]]:
+        """Pass-2 weave messages: variant system + ``_WEAVE_INSTRUCTIONS`` (mismatch
+        few-shot), fenced facts + context user text. ``image_part=None`` is the
+        weave-bench replay shape — identical text, no image."""
+        content: list[dict[str, Any]] = [{"type": "text", "text": self._weave_user_text(facts_raw, context_pack)}]
+        if image_part is not None:
+            content.insert(0, image_part)
+        return [
+            {"role": "system", "content": f"{self._system_prompt()}\n\n{_WEAVE_INSTRUCTIONS}"},
+            {"role": "user", "content": content},
+        ]
+
+    def _weave_bench_messages(self, facts_raw: str, context_pack: dict[str, Any]) -> list[dict[str, Any]]:
+        """ALTQ-1 Slice 3: pass-2 replay messages WITHOUT the image part (CPU synthesis cell)."""
+        return self._weave_messages(facts_raw, context_pack, image_part=None)
 
     def _timed_chat(self, messages: list[dict[str, Any]], *, pass_name: str, passes: list[dict[str, Any]]) -> str:
         """One greedy chat completion; appends {pass, raw, latency_s} so the A/B
@@ -533,6 +587,164 @@ class BakeoffClient(RemoteSceneClient):
 
     def media_identities(self, media_ids: list[int]) -> Any:
         return []
+
+
+# --- ALTQ-1 Slice 3: --weave-bench replay (pass-2 text-only from recorded facts) ---
+
+
+class WeaveBenchSourceError(RemoteClientError):
+    """A source run-record item carries no replayable pass-1 facts (fetch error,
+    missing ``describe.passes``, or ``passes[0]`` is not the ``describe_facts``
+    pass). Typed so the replay walker records it as a per-item failure and the
+    run continues (rg-007, [AGT-10] degrade loudly)."""
+
+
+class WeaveBenchRecordError(Exception):
+    """The ``--weave-bench`` source file is not a replayable run record (unreadable
+    JSON, wrong document kind, no items) — a whole-run abort, never a silent skip."""
+
+
+def _load_weave_bench_source(path: Path) -> tuple[dict[str, Any], str]:
+    """Load + validate the ``--weave-bench`` source run record -> (record, file sha256).
+
+    Malformed sources abort loudly BEFORE any endpoint call; per-item facts
+    problems degrade to ``WeaveBenchSourceError`` at replay time instead."""
+    try:
+        raw_bytes = path.read_bytes()
+        record = json.loads(raw_bytes)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise WeaveBenchRecordError(f"--weave-bench source {path} is not readable JSON: {exc}") from exc
+    if not isinstance(record, dict):
+        raise WeaveBenchRecordError(f"--weave-bench source {path} must contain a JSON object")
+    kind = record.get("kind")
+    if kind is not None and kind != DocKind.RUN_RECORD.value:
+        raise WeaveBenchRecordError(
+            f"--weave-bench source {path} has kind={kind!r}, expected {DocKind.RUN_RECORD.value!r} "
+            "(did you pass a report file?)"
+        )
+    if not isinstance(record.get("provenance"), dict):
+        raise WeaveBenchRecordError(f"--weave-bench source {path} has no provenance block")
+    items = record.get("items")
+    if not isinstance(items, list) or not items:
+        raise WeaveBenchRecordError(f"--weave-bench source {path} carries no items to replay")
+    return record, hashlib.sha256(raw_bytes).hexdigest()
+
+
+def _weave_bench_facts(item: dict[str, Any]) -> str:
+    """Pass-1 facts from a source item's ``describe.passes[0]`` (the ``describe_facts`` pass)."""
+    if item.get("error"):
+        raise WeaveBenchSourceError(f"source item recorded a fetch error, nothing to replay: {item['error']}")
+    describe = item.get("describe")
+    passes = describe.get("passes") if isinstance(describe, dict) else None
+    first = passes[0] if isinstance(passes, list) and passes else None
+    if not isinstance(first, dict) or first.get("pass") != "describe_facts":
+        raise WeaveBenchSourceError(
+            "source item carries no pass-1 facts (describe.passes[0].pass != 'describe_facts') — "
+            "was the source record produced by a --two-pass run?"
+        )
+    raw = first.get("raw")
+    if not isinstance(raw, str) or not raw.strip():
+        raise WeaveBenchSourceError("source item's pass-1 facts are empty (describe.passes[0].raw)")
+    return raw
+
+
+def weave_bench_run_record(
+    source_record: dict[str, Any],
+    manifest: GoldenManifest,
+    client: BakeoffClient,
+    *,
+    source_path: str,
+    source_sha256: str,
+    head_sha: str,
+    limit: int | None = None,
+    stall_limit: int = DEFAULT_STALL_LIMIT,
+    started_at: str = "1970-01-01T00:00:00Z",
+) -> dict[str, Any]:
+    """Replay each source item's committed pass-1 facts through pass-2 text-only.
+
+    Mirrors ``cli.fetch_run_record`` walker semantics: per-item isolation,
+    bounded-stall abort with a diagnosable partial record (rg-007), per-item
+    wall-clock ``latency_s``. Output is a normal caption run record whose
+    provenance carries ``weave_bench: true`` plus the source record's identity
+    (path/sha) so a report can never mis-attribute the CPU synthesis cell to a
+    live image-grounded run."""
+    source_prov = source_record["provenance"]
+    entries = {e.media_id: e for e in manifest.entries}
+    source_items = source_record["items"][:limit] if limit is not None else source_record["items"]
+    items: list[dict[str, Any]] = []
+    consecutive_failures = 0
+
+    def _record(aborted: bool = False) -> dict[str, Any]:
+        provenance: dict[str, Any] = {
+            "manifest_sha256": _manifest_sha(manifest),
+            "base_url": getattr(client, "base_url", "unknown"),
+            "head_sha": head_sha,
+            "started_at": started_at,
+            "weave_bench": True,
+            "weave_bench_source": {
+                "path": source_path,
+                "sha256": source_sha256,
+                "manifest_sha256": source_prov.get("manifest_sha256"),
+                "head_sha": source_prov.get("head_sha"),
+                "started_at": source_prov.get("started_at"),
+            },
+        }
+        record: dict[str, Any] = {
+            "schema": SCHEMA,
+            "kind": DocKind.RUN_RECORD.value,
+            "provenance": provenance,
+            "items": items,
+        }
+        if aborted:
+            record["aborted"] = True
+        return record
+
+    for source_item in source_items:
+        try:
+            media_id = int(source_item["media_id"])
+        except (KeyError, TypeError, ValueError) as exc:
+            # No usable media_id => the OUTPUT record would be unscoreable; that is
+            # a malformed source (whole-run abort), not a per-item degrade.
+            raise WeaveBenchRecordError(
+                f"--weave-bench source item without a usable media_id: {str(source_item)[:200]}"
+            ) from exc
+        item: dict[str, Any] = {
+            "media_id": media_id,
+            "path": source_item.get("path", f"media_id:{media_id}"),
+            "describe": None,
+            "identities": [],
+            "face_count": 0,
+            "error": None,
+            "latency_s": None,
+        }
+        started = time.monotonic()
+        try:
+            facts_raw = _weave_bench_facts(source_item)
+            entry = entries.get(media_id)
+            if entry is None:
+                raise WeaveBenchSourceError(f"media_id {media_id} is not in the replay manifest")
+            item["describe"] = client.weave_bench_describe(
+                media_id=media_id,
+                facts_raw=facts_raw,
+                context_pack=entry.context_pack.model_dump(exclude_none=True),
+            )
+        except Exception as exc:  # noqa: BLE001 — per-item isolation is the contract (rg-007)
+            item["error"] = f"{type(exc).__name__}: {exc}"
+            item["latency_s"] = round(time.monotonic() - started, 3)
+            consecutive_failures += 1
+            if consecutive_failures >= stall_limit:
+                items.append(item)
+                raise BoundedStallError(
+                    f"{consecutive_failures} consecutive item failures (last: {item['path']}); "
+                    "aborting weave-bench run",
+                    partial_record=_record(aborted=True),
+                ) from exc
+        else:
+            item["latency_s"] = round(time.monotonic() - started, 3)
+            consecutive_failures = 0
+        items.append(item)
+
+    return _record()
 
 
 def _render_context(context_pack: dict[str, Any]) -> str:
@@ -665,15 +877,40 @@ def main(argv: list[str] | None = None) -> None:
             "with a manifest face_boxes match stay in the prompt, with positional binding; fail closed."
         ),
     )
+    parser.add_argument(
+        "--weave-bench",
+        default=None,
+        metavar="RUN_RECORD",
+        help=(
+            "ALTQ-1 Slice 3 replay: re-run an existing --two-pass run record's committed pass-1 facts "
+            "through the pass-2 weave TEXT-ONLY (no image part) against this endpoint — the CPU synthesis "
+            "cell. GOLDEN_IMAGES_DIR is not required; incompatible with --two-pass/--dual-length."
+        ),
+    )
     args = parser.parse_args(argv)
+
+    if args.weave_bench is not None and (args.two_pass or args.dual_length):
+        sys.exit("--weave-bench replays recorded pass-1 facts through pass-2 only; drop --two-pass/--dual-length")
 
     if os.environ.get("ACX_EVAL_LIVE") != "1":
         sys.exit("bakeoff fetch requires ACX_EVAL_LIVE=1 (safety gate, as VLM-2A live pattern)")
-    images_dir = os.environ.get("GOLDEN_IMAGES_DIR", "")
-    if not images_dir:
-        sys.exit("GOLDEN_IMAGES_DIR is not set — see scene/tests/seed/README.md for the rsync bootstrap")
 
-    manifest = load_manifest(args.manifest, images_dir=images_dir)
+    source_record: dict[str, Any] | None = None
+    source_sha256 = ""
+    if args.weave_bench is not None:
+        try:
+            source_record, source_sha256 = _load_weave_bench_source(Path(args.weave_bench))
+        except WeaveBenchRecordError as exc:
+            sys.exit(f"WeaveBenchRecordError: {exc}")
+        # Text-only replay: no image bytes are sent, so the originals dir is not
+        # required and the manifest loads without image verification (as `cli score`).
+        images_dir = ""
+        manifest = load_manifest(args.manifest)
+    else:
+        images_dir = os.environ.get("GOLDEN_IMAGES_DIR", "")
+        if not images_dir:
+            sys.exit("GOLDEN_IMAGES_DIR is not set — see scene/tests/seed/README.md for the rsync bootstrap")
+        manifest = load_manifest(args.manifest, images_dir=images_dir)
     entry_traits = {
         e.media_id: {"present": list(e.present_identities), "easy_wrong": list(e.easy_wrong)} for e in manifest.entries
     }
@@ -705,8 +942,11 @@ def main(argv: list[str] | None = None) -> None:
     out_dir.mkdir(exist_ok=True)
     # ``run-<stamp>-*`` so cli.prune_out_dir groups these records; slug the model id so
     # HF-style ids ('Qwen/Qwen3-VL-4B') do not inject a '/' into the default filename.
+    bench_suffix = "-weave-bench" if args.weave_bench is not None else ""
     record_path = (
-        Path(args.out) if args.out else out_dir / f"run-{stamp}-bakeoff-{_safe_model_slug(args.model_id)}.json"
+        Path(args.out)
+        if args.out
+        else out_dir / f"run-{stamp}-bakeoff-{_safe_model_slug(args.model_id)}{bench_suffix}.json"
     )
 
     # rg-008 fail-fast: prove the output path is writable BEFORE the multi-image live run so a
@@ -717,15 +957,30 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(f"run-record parent directory is not writable ({record_path.parent}): {exc}")
 
     try:
-        record = fetch_run_record(
-            manifest,
-            images_dir,
-            client,
-            head_sha=_head_sha(),
-            limit=args.limit,
-            stall_limit=args.stall_limit,
-            started_at=started_at,
-        )
+        if source_record is not None:
+            record = weave_bench_run_record(
+                source_record,
+                manifest,
+                client,
+                source_path=str(args.weave_bench),
+                source_sha256=source_sha256,
+                head_sha=_head_sha(),
+                limit=args.limit,
+                stall_limit=args.stall_limit,
+                started_at=started_at,
+            )
+        else:
+            record = fetch_run_record(
+                manifest,
+                images_dir,
+                client,
+                head_sha=_head_sha(),
+                limit=args.limit,
+                stall_limit=args.stall_limit,
+                started_at=started_at,
+            )
+    except WeaveBenchRecordError as exc:
+        sys.exit(f"WeaveBenchRecordError: {exc}")
     except BoundedStallError as exc:
         aborted_path = record_path.with_name(record_path.stem + "-aborted.json")
         _stamp_pipeline_provenance(

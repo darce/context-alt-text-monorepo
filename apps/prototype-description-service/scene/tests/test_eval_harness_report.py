@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from scripts.eval_harness.report import Audience, ReportError, build_reports, score_run_record
+from scripts.eval_harness.report import Audience, ReportError, _latency_summary, build_reports, score_run_record
 
 
 def _run_record() -> dict:
@@ -427,6 +427,8 @@ def test_ablation_gate_zeroes_leak_on_recognition_disabled_row():  # A-04
     row = next(r for r in scored["per_image"] if r["media_id"] == 1)
     assert row["gated_score"] == 0.0  # leaked name gates even though ineligible
     assert scored["ablation"]["leak_images"] == 1
+
+
 # --- VLM-6 S1: audience-aware public vs local report split --------------------
 
 _LOCAL_PATH = "localwp/uploads/jane-doe-birthday.jpg"
@@ -619,3 +621,80 @@ def test_public_reports_deterministic():
     b_json, b_md = build_reports(record, entries, audience=Audience.PUBLIC)
     assert a_json == b_json
     assert a_md == b_md
+
+
+# --- ALTQ-1 Slice 3: latency summary (additive) --------------------------------
+
+
+def test_latency_summary_absent_without_timing_data_keeps_report_shape():
+    """ADDITIVE ONLY: a record with no timing data produces no latency section
+    (and hence a byte-identical report to the pre-latency scorer)."""
+    record, entries = _run_record(), _manifest_entries()
+    scored = score_run_record(record, entries)
+    assert "latency" not in scored
+    json_doc, md = build_reports(record, entries)
+    assert "latency" not in json.loads(json_doc)
+    assert "latency" not in md
+
+
+def test_latency_summary_single_call_items_percentiles():
+    items = [
+        {"media_id": i, "describe": {"alt_text_draft": "x"}, "error": None, "latency_s": lat}
+        for i, lat in enumerate([4.0, 1.0, 3.0, 2.0])
+    ]
+    assert _latency_summary(items) == {
+        "images_timed": 4,
+        "wall_clock_s": {"p50": 2.0, "p95": 4.0},  # nearest-rank on sorted values
+        "model_calls": {"per_image_mean": 1.0, "total": 4},
+    }
+
+
+def test_latency_summary_sums_passes_and_counts_model_calls():
+    def _two_pass_item(media_id: int, l1: float, l2: float) -> dict:
+        return {
+            "media_id": media_id,
+            "describe": {
+                "alt_text_draft": "x",
+                "passes": [
+                    {"pass": "describe_facts", "raw": "{}", "latency_s": l1},
+                    {"pass": "ground_weave", "raw": "x", "latency_s": l2},
+                ],
+            },
+            "error": None,
+            "latency_s": l1 + l2 + 99.0,  # per-pass timing must win over the item field when present
+        }
+
+    summary = _latency_summary([_two_pass_item(1, 1.0, 2.0), _two_pass_item(2, 3.0, 4.0)])
+    assert summary == {
+        "images_timed": 2,
+        "wall_clock_s": {"p50": 3.0, "p95": 7.0},
+        "model_calls": {"per_image_mean": 2.0, "total": 4},
+    }
+
+
+def test_latency_summary_skips_error_and_untimed_items():
+    items = [
+        {"media_id": 1, "describe": None, "error": "boom", "latency_s": 5.0},
+        {"media_id": 2, "describe": {"alt_text_draft": "x"}, "error": None},  # no latency field at all
+        {"media_id": 3, "describe": {"alt_text_draft": "x"}, "error": None, "latency_s": None},
+        {"media_id": 4, "describe": {"alt_text_draft": "x"}, "error": None, "latency_s": 2.5},
+    ]
+    summary = _latency_summary(items)
+    assert summary["images_timed"] == 1
+    assert summary["wall_clock_s"] == {"p50": 2.5, "p95": 2.5}
+    assert _latency_summary(items[:3]) is None  # nothing timed at all => no section
+
+
+def test_latency_section_and_markdown_line_render_when_timed():
+    record, entries = _run_record(), _manifest_entries()
+    record["items"][0]["latency_s"] = 3.2
+    record["items"][1]["latency_s"] = 1.1
+    json_doc, md = build_reports(record, entries)
+    scored = json.loads(json_doc)
+    assert scored["latency"] == {
+        "images_timed": 2,
+        "wall_clock_s": {"p50": 1.1, "p95": 3.2},
+        "model_calls": {"per_image_mean": 1.0, "total": 2},
+    }
+    assert "- latency: per-image wall-clock p50 1.1s p95 3.2s (2 timed)" in md
+    assert build_reports(record, entries) == build_reports(record, entries)  # determinism holds

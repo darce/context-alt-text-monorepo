@@ -14,6 +14,7 @@ triaged away.
 from __future__ import annotations
 
 import json
+import math
 from enum import StrEnum
 from typing import Any
 
@@ -165,6 +166,59 @@ def _ablation_gate(scores: CaptionScores) -> float | None:
     if not scores.insertion_eligible:
         return None
     return 1.0
+
+
+def _percentile(sorted_values: list[float], q: float) -> float:
+    """Nearest-rank percentile on ascending pre-sorted values — deterministic, no interpolation."""
+    rank = max(math.ceil(q * len(sorted_values)), 1)
+    return sorted_values[rank - 1]
+
+
+def _latency_summary(items: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """ALTQ-1 Slice 3: per-image wall-clock + model-call aggregates from run-record timing.
+
+    Wall-clock per image = sum of ``describe.passes[*].latency_s`` when the item
+    carries timed passes (multi-call pipelines), else the walker's single
+    ``latency_s`` item field. Model calls per image = ``len(passes)`` or 1.
+    Items with an error or no timing data are skipped. Returns ``None`` when
+    nothing is timed so untimed (pre-Slice-3 fixture) records keep their exact
+    report shape (additive schema). Pure and deterministic; NO cost math here —
+    $/1k images stays a memo-time formula (plan §Slice 3)."""
+    wall_clock: list[float] = []
+    calls: list[int] = []
+    for item in items:
+        if item.get("error"):
+            continue
+        describe = item.get("describe") or {}
+        passes = describe.get("passes")
+        if isinstance(passes, list) and passes:
+            latencies = [
+                p["latency_s"] for p in passes if isinstance(p, dict) and isinstance(p.get("latency_s"), int | float)
+            ]
+            if not latencies:
+                continue
+            wall_clock.append(round(sum(latencies), 3))
+            calls.append(len(passes))
+        else:
+            latency = item.get("latency_s")
+            if not isinstance(latency, int | float):
+                continue
+            wall_clock.append(round(float(latency), 3))
+            calls.append(1)
+    if not wall_clock:
+        return None
+    ordered = sorted(wall_clock)
+    return {
+        "images_timed": len(wall_clock),
+        "wall_clock_s": {
+            "p50": round(_percentile(ordered, 0.5), 3),
+            "p95": round(_percentile(ordered, 0.95), 3),
+        },
+        "model_calls": {
+            "per_image_mean": round(sum(calls) / len(calls), 4),
+            "total": sum(calls),
+        },
+    }
 
 
 def score_run_record(
@@ -438,6 +492,12 @@ def score_run_record(
     if short_failed_images:
         result["caption"]["short_failed_images"] = short_failed_images
 
+    # ALTQ-1 Slice 3: additive latency axis — omitted entirely when the record
+    # carries no timing data so untimed records keep their exact report shape.
+    latency = _latency_summary(run_record["items"])
+    if latency is not None:
+        result["latency"] = latency
+
     if long_scores:
         long_gated = [
             g
@@ -523,6 +583,13 @@ def _markdown(scored: dict[str, Any]) -> str:
             "identification sections below are **vacuous by design** (stub `analyze`/"
             "`media_identities`); 0% is expected, NOT a recognition regression."
         )
+    if prov.get("weave_bench"):
+        source = prov.get("weave_bench_source") or {}
+        lines.append(
+            "- ⚠ weave-bench replay: pass-2 re-run text-only from recorded pass-1 facts "
+            f"(source run: `{source.get('path', 'unknown')}` sha256 `{source.get('sha256', 'unknown')}`); "
+            "no image was sent — NOT comparable to image-grounded runs."
+        )
     if cap["must_right_defined_images"] == 0:
         lines.append("- ⚠ no Must-Right/Easy-Wrong rubric entries in the corpus — the caption hard gate is vacuous.")
     eval_mode = scored.get("eval_mode", "standard")
@@ -544,6 +611,15 @@ def _markdown(scored: dict[str, Any]) -> str:
         lines.append(
             f"- ⚠ short-surface compression failed on {cap['short_failed_images']} image(s) — "
             "long surface kept and scored; short surface excluded from caption metrics."
+        )
+    latency = scored.get("latency")
+    if latency:
+        wall = latency["wall_clock_s"]
+        calls = latency["model_calls"]
+        lines.append(
+            f"- latency: per-image wall-clock p50 {wall['p50']}s p95 {wall['p95']}s "
+            f"({latency['images_timed']} timed) · model calls/image: {calls['per_image_mean']} "
+            f"(total {calls['total']})"
         )
     lines += [
         "",

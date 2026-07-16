@@ -137,8 +137,15 @@ async def _require_auth_impl(
     api_key_header_value: str | None,
     background_tasks: BackgroundTasks | None,
     session: AsyncSession | None,
+    enforce_tenant_match: bool = True,
 ) -> AuthContext:
-    """Shared auth implementation that keeps the direct-call test seam explicit."""
+    """Shared auth implementation that keeps the direct-call test seam explicit.
+
+    When ``enforce_tenant_match`` is False (whoami discovery), a valid key
+    authenticates even if ``X-Tenant-ID`` disagrees with the key's tenant claim.
+    Key resolution, expiry/revocation, rate-limit inputs, and audit emissions
+    remain identical either way.
+    """
     settings = get_security_settings()
     if not settings.auth_enabled:
         return AuthContext(token=None, tenant_claim=None, api_key_id=None, is_admin=False, enabled=False)
@@ -195,7 +202,7 @@ async def _require_auth_impl(
                 trace_id=None,
             )
         raise
-    if tenant_claim and x_tenant_id:
+    if enforce_tenant_match and tenant_claim and x_tenant_id:
         provided = normalize_tenant_id(x_tenant_id)
         if tenant_claim != provided:
             emit_auth_event(
@@ -306,6 +313,30 @@ async def require_auth(
         api_key_header_value=api_key_header_value,
         background_tasks=background_tasks,
         session=session,
+        enforce_tenant_match=True,
+    )
+
+
+async def require_auth_key_only(
+    background_tasks: BackgroundTasks,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    api_key_header_value: str | None = Header(default=None, alias="X-Api-Key"),
+    session: AsyncSession | None = Depends(get_optional_session),
+) -> AuthContext:
+    """Validate API key without comparing ``X-Tenant-ID`` to the key tenant claim.
+
+    Used by discovery routes (e.g. ``/tenant/whoami``) where the caller may not
+    yet know the canonical tenant bound to the key. All other key checks
+    (hash lookup, expiry, revocation) match ``require_auth``.
+    """
+    return await _require_auth_impl(
+        authorization=authorization,
+        x_tenant_id=x_tenant_id,
+        api_key_header_value=api_key_header_value,
+        background_tasks=background_tasks,
+        session=session,
+        enforce_tenant_match=False,
     )
 
 
@@ -342,6 +373,7 @@ __all__ = [
     "AuthContext",
     "record_api_key_use",
     "require_auth",
+    "require_auth_key_only",
     "get_current_tenant",
     "require_write_access",
 ]

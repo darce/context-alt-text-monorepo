@@ -4,6 +4,7 @@ import { __, sprintf } from '@wordpress/i18n';
 import type { JobProgress } from '../../api/recognition/types/scan';
 import type { PipelinePhase } from '../../hooks/jobStateMachineUtils';
 import type { ProjectionSyncState } from '../../hooks/useJobStateMachineEffects';
+import { PIPELINE_PHASE_PRESENTATION } from './phasePresentation';
 import { SYNC_VOCABULARY } from './syncPresentation';
 
 export interface JobTimelineProps {
@@ -108,9 +109,10 @@ const buildMilestones = (
 
   // --- Scan milestone ---
   if (phase === 'scanning' || scanProgress) {
+    const scanLabels = PIPELINE_PHASE_PRESENTATION.scanning.milestone;
     milestones.push({
       id: 'scan',
-      label: scanDone ? SYNC_VOCABULARY.scanComplete : SYNC_VOCABULARY.scanningHeadline,
+      label: scanDone ? scanLabels.complete : scanLabels.active,
       status: scanDone ? 'completed' : 'active',
       detail: scanProgress ? buildScanDetail(scanProgress, scanDone) : undefined,
     });
@@ -136,13 +138,10 @@ const buildMilestones = (
     // Compute retry values before the push so they are not shadowed.
     const { retryCount, lastErrorCode } = getRetryInfo(clusterProgress, clusterPhase);
 
+    const clusterLabels = PIPELINE_PHASE_PRESENTATION.clustering.milestone;
     milestones.push({
       id: 'clustering',
-      label: clusterFailed
-        ? SYNC_VOCABULARY.clusteringFailed
-        : clusterDone
-          ? SYNC_VOCABULARY.clusteringComplete
-          : SYNC_VOCABULARY.clusteringHeadline,
+      label: clusterFailed ? clusterLabels.failed : clusterDone ? clusterLabels.complete : clusterLabels.active,
       status: clusterStatus,
       detail: clusterProgress ? buildClusterDetail(clusterProgress, clusterDone, clusterStatus) : undefined,
     });
@@ -169,17 +168,20 @@ const buildMilestones = (
       projStatus = 'pending';
     }
 
+    // Phase-derived labels come from the map; the ready/acknowledging variants
+    // are projection-sync-state copy and stay on SYNC_VOCABULARY.
+    const resultsLabels = PIPELINE_PHASE_PRESENTATION.projecting.milestone;
     milestones.push({
       id: 'results',
       label: projFailed
-        ? SYNC_VOCABULARY.resultsSyncFailed
+        ? resultsLabels.failed
         : projectionReady
           ? SYNC_VOCABULARY.resultsReadyHeadline.replace(/\.$/, '')
           : projDone
-            ? SYNC_VOCABULARY.resultsSynced
+            ? resultsLabels.complete
             : projectionSyncState === 'acknowledging'
               ? SYNC_VOCABULARY.resultsAcknowledgingHeadline
-              : SYNC_VOCABULARY.resultsSyncingHeadline,
+              : resultsLabels.active,
       status: projStatus,
     });
   }

@@ -24,7 +24,7 @@ DEMO_WALKTHROUGH_APP  := $(ROOT_MAKEFILE_DIR)/apps/prototype-wp-alt-context
         deploy-verify deploy-verify-dev deploy-verify-staging deploy-verify-prod \
         deploy-status \
         deploy-compose-dev deploy-compose-staging deploy-compose-prod \
-        reset-remote db-reset-remote demo-walkthrough-proof
+        reset-remote db-reset-remote demo-walkthrough-proof walkthrough-first-visitor
 
 deploy-help:
 	@echo "Recognition service deploy targets:"
@@ -74,7 +74,12 @@ deploy-help:
 	@echo "  Demo walkthrough proof (Playwright evidence — screenshots + smoke-log fragment):"
 	@echo "    First-time setup: (cd apps/prototype-wp-alt-context && npm ci && npm run e2e:install)"
 	@echo "    make demo-walkthrough-proof                Drive demo.altcontext.com walkthrough; emit evidence"
-	@echo "    WP_BASE_URL=http://localhost:10010 ACX_E2E_REQUIRE_CONSTANT_PROVENANCE=0 make demo-walkthrough-proof   LocalWP (no wp-config constants)"
+	@echo "    WP_BASE_URL=http://localhost:10010 ACX_E2E_REQUIRE_CONSTANT_PROVENANCE=0 ACX_E2E_REQUIRE_SERVICE_TARGET=0 make demo-walkthrough-proof   LocalWP (no wp-config constants / dev hatch)"
+	@echo "    Requires ACX_E2E_WP_ADMIN_USER / ACX_E2E_WP_ADMIN_PASS for non-interactive auth."
+	@echo ""
+	@echo "  First-visitor walkthrough (E21-13, roadmap §Phase-3 Gate — timings manifest + fragment):"
+	@echo "    make walkthrough-first-visitor             Scan → review → first named person on demo.altcontext.com"
+	@echo "    WP_BASE_URL=http://localhost:10010 make walkthrough-first-visitor               LocalWP origin override"
 	@echo "    Requires ACX_E2E_WP_ADMIN_USER / ACX_E2E_WP_ADMIN_PASS for non-interactive auth."
 	@echo ""
 	@echo "  Optional overrides: OCI_HOST OCI_USER OCIR_REGISTRY OCIR_NAMESPACE IMAGE_NAME GIT_REF"
@@ -180,6 +185,28 @@ deploy-demo:
 # an evidence manifest, and a paste-ready smoke-log fragment under the task-scoped
 # local/playwright/<task-ref>/evidence/ artifact dir. Auth bootstraps from
 # ACX_E2E_WP_ADMIN_USER/ACX_E2E_WP_ADMIN_PASS (interactive page.pause() otherwise).
+# First-visitor walkthrough (E21-13, roadmap §Phase-3 Gate): scripted scan → review →
+# first-named-person against WP_BASE_URL with per-step timings; emits
+# walkthrough-manifest.json (time_to_first_named_person_ms) + a paste-ready fragment.
+# The unaided human observation follows the same script; this is its instrumented run.
+walkthrough-first-visitor: WP_BASE_URL ?= https://demo.altcontext.com
+walkthrough-first-visitor: ACX_PLAYWRIGHT_TASK_REF ?= E21-13
+walkthrough-first-visitor:
+	@cd "$(DEMO_WALKTHROUGH_APP)" && \
+		if [ ! -d node_modules ]; then \
+			echo "walkthrough-first-visitor: dependencies missing. First run: (cd apps/prototype-wp-alt-context && npm ci && npm run e2e:install)" >&2; \
+			exit 2; \
+		fi
+	@cd "$(DEMO_WALKTHROUGH_APP)" && npm run e2e:install >/dev/null
+	@cd "$(DEMO_WALKTHROUGH_APP)" && \
+		WP_BASE_URL="$(WP_BASE_URL)" \
+		ACX_PLAYWRIGHT_TASK_REF="$(ACX_PLAYWRIGHT_TASK_REF)" \
+		ACX_DEPLOY_COMMIT_SHA="$${ACX_DEPLOY_COMMIT_SHA:-$$(git rev-parse HEAD 2>/dev/null || true)}" \
+		bash scripts/playwright-cli.sh test --project=evidence tests/e2e/evidence/first-visitor-walkthrough.spec.ts
+	@echo "==> First-visitor walkthrough artifacts under:"
+	@echo "    $(DEMO_WALKTHROUGH_APP)/local/playwright/$(ACX_PLAYWRIGHT_TASK_REF)/evidence/"
+	@echo "    find $(DEMO_WALKTHROUGH_APP)/local/playwright/$(ACX_PLAYWRIGHT_TASK_REF)/evidence -name first-visitor-walkthrough-fragment.md"
+
 demo-walkthrough-proof: WP_BASE_URL ?= https://demo.altcontext.com
 demo-walkthrough-proof: ACX_PLAYWRIGHT_TASK_REF ?= E15-28
 demo-walkthrough-proof:

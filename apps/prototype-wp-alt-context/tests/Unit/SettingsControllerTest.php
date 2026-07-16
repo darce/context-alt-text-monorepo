@@ -50,11 +50,13 @@ class SettingsControllerTest extends TestCase
         $data = $response->get_data();
         $this->assertSame('', $data['url']);
         $this->assertSame('default', $data['url_source']);
-        $this->assertSame('local', $data['recognition_source']);
+        $this->assertSame('service', $data['recognition_source']);
         $this->assertSame('default', $data['recognition_source_source']);
-        $this->assertSame('http://localhost:8000', $data['local_url']);
-        $this->assertSame('http://localhost:8000', $data['effective_target_url']);
-        $this->assertSame('local', $data['effective_target_mode']);
+        // RECOG-1: GET no longer emits local_url / local_url_source.
+        $this->assertArrayNotHasKey('local_url', $data);
+        $this->assertArrayNotHasKey('local_url_source', $data);
+        $this->assertSame('', $data['effective_target_url']);
+        $this->assertSame('service', $data['effective_target_mode']);
         $this->assertFalse($data['api_key_set']);
         $this->assertSame('', $data['api_key_last4']);
         $this->assertSame('default', $data['key_source']);
@@ -75,10 +77,11 @@ class SettingsControllerTest extends TestCase
         $data = $response->get_data();
         $this->assertSame('https://api.example.com', $data['url']);
         $this->assertSame('option', $data['url_source']);
-        $this->assertSame('local', $data['recognition_source']);
+        // RECOG-1: default source is 'service'; effective target is the service URL.
+        $this->assertSame('service', $data['recognition_source']);
         $this->assertSame('default', $data['recognition_source_source']);
-        $this->assertSame('http://localhost:8000', $data['effective_target_url']);
-        $this->assertSame('local', $data['effective_target_mode']);
+        $this->assertSame('https://api.example.com', $data['effective_target_url']);
+        $this->assertSame('service', $data['effective_target_mode']);
         $this->assertTrue($data['api_key_set']);
         $this->assertSame('****1234', $data['api_key_last4']);
         $this->assertSame('option', $data['key_source']);
@@ -258,10 +261,11 @@ class SettingsControllerTest extends TestCase
         $data = $response->get_data();
         $this->assertSame('https://const.example.com', $data['url']);
         $this->assertSame('constant', $data['url_source']);
-        $this->assertSame('local', $data['recognition_source']);
+        // RECOG-1: default source is 'service'; effective target is the constant service URL.
+        $this->assertSame('service', $data['recognition_source']);
         $this->assertSame('default', $data['recognition_source_source']);
-        $this->assertSame('http://localhost:8000', $data['effective_target_url']);
-        $this->assertSame('local', $data['effective_target_mode']);
+        $this->assertSame('https://const.example.com', $data['effective_target_url']);
+        $this->assertSame('service', $data['effective_target_mode']);
         $this->assertSame('constant', $data['key_source']);
         $this->assertSame('****efgh', $data['api_key_last4']);
     }
@@ -273,6 +277,8 @@ class SettingsControllerTest extends TestCase
         $this->setUserCapability('manage_options', true);
 
         $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        // RECOG-1: recognition_source is no longer a savable field. Posting it is
+        // silently ignored — no option written, not present in the saved array.
         $request->set_body_params([
             'recognition_source' => 'local',
             'url' => 'https://new-api.example.com',
@@ -284,11 +290,11 @@ class SettingsControllerTest extends TestCase
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $data = $response->get_data();
         $this->assertSame('ok', $data['result']);
-        $this->assertContains('recognition_source', $data['saved']);
+        $this->assertNotContains('recognition_source', $data['saved']);
         $this->assertContains('url', $data['saved']);
         $this->assertContains('api_key', $data['saved']);
 
-        $this->assertSame('local', get_option('acx_recognition_source'));
+        $this->assertFalse(get_option('acx_recognition_source', false));
         $this->assertSame('https://new-api.example.com', get_option('acx_recognition_url'));
         $this->assertSame('new-key-12345678', get_option('acx_recognition_api_key'));
     }
@@ -595,6 +601,86 @@ class SettingsControllerTest extends TestCase
         $this->assertArrayNotHasKey('tenant_paired', $data);
     }
 
+    public function testProbeMismatchAutoAdoptsAndReprobesToGreen(): void
+    {
+        $this->configureProbe();
+        // No acx_recognition_tenant_id option: resolve() derives + persists the auto-derived bootstrap id.
+        // A mismatched key 403s the first probe (TENANT_MISMATCH); a never-paired auto-derived site must
+        // auto-adopt the key's tenant and recover to green within the SAME "Check health" request.
+        $keyTenant = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+        $this->queueHttpResponse($this->buildTenantMismatchResponse());
+        $this->queueHttpResponse($this->buildWhoamiResponse($keyTenant));
+        $this->queueHttpResponse($this->buildOkResponse());
+
+        $data = $this->controller
+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
+            ->get_data();
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(3, $calls, 'exactly one pairing whoami + one re-probe -- no retry loop');
+        $this->assertStringEndsWith('/health/detailed', $calls[0]['url']);
+        $this->assertStringEndsWith('/recognition/tenant/whoami', $calls[1]['url']);
+        $this->assertStringEndsWith('/health/detailed', $calls[2]['url']);
+        $this->assertSame(
+            $keyTenant,
+            $calls[2]['args']['headers']['X-Tenant-ID'] ?? null,
+            're-probe must carry the adopted tenant identity'
+        );
+
+        $this->assertSame(ProbeOutcome::CONNECTED, $data['outcome']);
+        $this->assertTrue($data['tenant_paired']);
+        $this->assertTrue(TenantIdentity::is_paired());
+        $this->assertSame($keyTenant, get_option('acx_recognition_tenant_id'));
+    }
+
+    public function testProbeMismatchSurfacesConflictWhenPairedElsewhere(): void
+    {
+        $this->configureProbe();
+        // A pinned (non-auto-derived) tenant whose key now maps elsewhere must NOT auto-adopt: it surfaces
+        // the explicit TENANT_PAIRING_CONFLICT for the operator to confirm, and must not re-probe.
+        $persisted = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+        $keyTenant = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+        $this->setOption('acx_recognition_tenant_id', $persisted);
+        $this->queueHttpResponse($this->buildTenantMismatchResponse());
+        $this->queueHttpResponse($this->buildWhoamiResponse($keyTenant));
+
+        $data = $this->controller
+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
+            ->get_data();
+
+        $this->assertCount(2, $this->getHttpCalls(), 'a conflict must not trigger a re-probe');
+        $this->assertSame(ProbeOutcome::TENANT_PAIRING_CONFLICT, $data['outcome']);
+        $this->assertSame($persisted, $data['persisted_tenant_id']);
+        $this->assertSame($keyTenant, $data['key_tenant_id']);
+        $this->assertFalse(TenantIdentity::is_paired());
+        $this->assertSame($persisted, get_option('acx_recognition_tenant_id'));
+    }
+
+    public function testProbeMismatchPairingErrorReturnsProbeOutcomeAsIs(): void
+    {
+        $this->configureProbe();
+        // Auto-derived + never-paired, so adoption is eligible -- but the whoami lookup fails, so adoption
+        // never happens. The original probe outcome (TENANT_MISMATCH) is returned as-is with a pairing_error,
+        // and no re-probe fires.
+        $this->queueHttpResponse($this->buildTenantMismatchResponse());
+        $this->queueHttpResponse(
+            array(
+                'response' => array('code' => 503, 'message' => 'Service Unavailable'),
+                'body'     => '{"detail":"database unavailable"}',
+            )
+        );
+
+        $data = $this->controller
+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
+            ->get_data();
+
+        $this->assertCount(2, $this->getHttpCalls(), 'a failed pairing must not trigger a re-probe');
+        $this->assertSame(ProbeOutcome::TENANT_MISMATCH, $data['outcome'], 'probe outcome returned as-is on pairing error');
+        $this->assertSame('database unavailable', $data['pairing_error']);
+        $this->assertFalse(TenantIdentity::is_paired());
+        $this->assertArrayNotHasKey('tenant_paired', $data);
+    }
+
     public function testProbeDispatchReturnsNotConfiguredWithoutHttpCall(): void
     {
         $this->setUserCapability('manage_options', true);
@@ -610,48 +696,11 @@ class SettingsControllerTest extends TestCase
         $this->assertSame([], $this->getHttpCalls(), 'wp_remote_get must not be called when service URL is missing');
     }
 
-    public function testProbeDispatchHitsLocalHealthWhenLocalModeIsActive(): void
-    {
-        $this->setUserCapability('manage_options', true);
-        $this->setOption('acx_recognition_url', 'https://api.example.com');
-        $this->setOption('acx_recognition_source', 'local');
-        $this->setOption('acx_recognition_local_url', 'http://localhost:8001');
-        $this->queueHttpResponse($this->buildOkResponse());
-
-        $response = $this->controller->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'));
-        $data     = $response->get_data();
-
-        $calls = $this->getHttpCalls();
-        $this->assertCount(1, $calls);
-        $this->assertSame('http://localhost:8001/health', $calls[0]['url']);
-        $this->assertArrayNotHasKey('X-API-Key', $calls[0]['args']['headers'] ?? array());
-        $this->assertSame(ProbeOutcome::CONNECTED, $data['outcome']);
-        $this->assertSame('local_liveness', $data['probe_mode']);
-        $this->assertSame('http://localhost:8001/health', $data['probed_url']);
-    }
-
-    public function testProbeDispatchHonorsExplicitProbeTarget(): void
-    {
-        $this->setUserCapability('manage_options', true);
-        $this->setOption('acx_recognition_url', 'https://api.example.com');
-        $this->setOption('acx_recognition_source', 'service');
-        $this->setOption('acx_recognition_api_key', 'test-key');
-        $this->setOption('acx_recognition_local_url', 'http://localhost:8001');
-        $this->queueHttpResponse($this->buildOkResponse());
-
-        $request = new WP_REST_Request('POST', '/acx/v1/settings/test');
-        $request->set_body_params(array('probe_target' => 'local'));
-
-        $response = $this->controller->test_connection($request);
-        $data     = $response->get_data();
-        $calls    = $this->getHttpCalls();
-
-        $this->assertCount(1, $calls);
-        $this->assertSame('http://localhost:8001/health', $calls[0]['url']);
-        $this->assertSame(ProbeOutcome::CONNECTED, $data['outcome']);
-        $this->assertSame('local_liveness', $data['probe_mode']);
-        $this->assertSame('http://localhost:8001/health', $data['probed_url']);
-    }
+    // RECOG-1: the keyless local /health liveness probe (probe_mode 'local_liveness')
+    // and the probe_target=local dispatch were removed. test_connection now always
+    // runs the authenticated service probe (/health/detailed, probe_mode
+    // 'service_auth'). The former testProbeDispatchHitsLocalHealthWhenLocalModeIsActive
+    // and testProbeDispatchHonorsExplicitProbeTarget tests were deleted with that behavior.
 
     /**
      * @dataProvider outcomeProvider
@@ -826,6 +875,17 @@ class SettingsControllerTest extends TestCase
         return [
             'response' => ['code' => 200, 'message' => 'OK'],
             'body'     => '{"pool":"healthy"}',
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function buildTenantMismatchResponse(): array
+    {
+        return [
+            'response' => ['code' => 403, 'message' => 'Forbidden'],
+            'body'     => '{"detail":"tenant mismatch"}',
         ];
     }
 

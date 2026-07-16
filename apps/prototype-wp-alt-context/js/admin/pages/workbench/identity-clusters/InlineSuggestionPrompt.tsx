@@ -3,6 +3,9 @@
  *
  * Shows a compact confirmation UI directly on the identity card instead of
  * requiring users to open the dropdown to see suggestions.
+ *
+ * Fetches via a shared batched query (GET /recognition/suggestions?limit=500)
+ * so N unlabeled cards produce one network request (React Query key dedupe).
  */
 
 import React from 'react';
@@ -10,7 +13,11 @@ import { __ } from '@wordpress/i18n';
 import { useQuery } from '@tanstack/react-query';
 
 import { queryKeys } from '../../../api/queryKeys';
-import { fetchIdentitySuggestions, type ClusterSuggestion } from '../../../api/recognition';
+import {
+  fetchAllPendingSuggestionRows,
+  reduceInlineSuggestionsByIdentity,
+  type InlineTopMatch,
+} from './inlineSuggestionBatch';
 
 interface InlineSuggestionPromptProps {
   /** Identity ID to fetch suggestions for */
@@ -28,6 +35,7 @@ interface InlineSuggestionPromptProps {
  *
  * The backend controls all threshold decisions - if a suggestion exists,
  * it means the backend determined it's worth showing to the user.
+ * Client reduction keeps labeled-only top-1 per identity (per-identity route parity).
  */
 export const InlineSuggestionPrompt = ({
   identityId,
@@ -35,16 +43,19 @@ export const InlineSuggestionPrompt = ({
   onReject,
   isPending,
 }: InlineSuggestionPromptProps): React.JSX.Element | null => {
-  // Fetch top suggestion for this identity
-  const { data: suggestions, isLoading } = useQuery({
-    queryKey: queryKeys.suggestions.inlineFor(identityId),
-    queryFn: () => fetchIdentitySuggestions(identityId, 1), // Only fetch top 1
-    staleTime: 60000, // Cache for 1 minute
+  // Shared batch query — every card uses the same key so React Query fires once.
+  const { data: byIdentity, isLoading } = useQuery({
+    queryKey: queryKeys.suggestions.inlineBatch(),
+    queryFn: async () => {
+      const rows = await fetchAllPendingSuggestionRows();
+      return reduceInlineSuggestionsByIdentity(rows);
+    },
+    staleTime: 60000,
     enabled: Boolean(identityId),
   });
 
-  // Get the top suggestion - backend already filtered for threshold
-  const topMatch: ClusterSuggestion | undefined = suggestions?.matches?.[0];
+  // Absent identity in the batch = no labeled suggestion (render honestly).
+  const topMatch: InlineTopMatch | undefined = byIdentity?.get(identityId);
   const hasSuggestion = topMatch?.label;
 
   // Don't render if loading or no suggestion with a label

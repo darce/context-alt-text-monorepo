@@ -1,0 +1,263 @@
+name: Deploy demo (WordPress + ACX plugin)
+
+# Laptop-free demo deploy (DDEP-1). Reuses the single source of truth for deploy
+# logic — scripts/deploy/sync-demo.sh (rsync configs -> demo stack up ->
+# bootstrap-wp.sh plugin install -> Caddy promote -> vhost smoke) — from an
+# ephemeral tag:ci tailnet runner, mirroring deploy-recognition.yml.
+#
+# Trigger policy: workflow_dispatch ONLY; the demo is public, so deploys are
+# deliberate and serialized. Gate stack: CONFIRM=PROMOTE string input (primary
+# deliberate-action gate; free-plan private repos have no GitHub
+# required-reviewers) + a main-only ref gate with an explicit allow_non_main
+# opt-in (rollback to a known-good ref, or a one-time feature-ref proof). The
+# `demo` Environment exists for secrets isolation only.
+# See docs/runbooks/deploy-demo-cicd.md for one-time setup.
+#
+# Signals: the deploy-smoke gates on the demo-walkthrough spec's TEST exit code
+# (surfaces render + RECOG-1 single-target contract = deploy landed). The
+# manifest's recognition verdict is informational only — a backend recognition
+# failure must not fail a successful deploy.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type PROMOTE to authorize a demo deploy (required)"
+        type: string
+        default: ""
+      allow_non_main:
+        description: "Explicitly allow deploying a non-main ref to the PUBLIC demo (rollback / one-time proof)"
+        type: boolean
+        default: false
+
+# One in-flight demo deploy; never cancel a deploy mid-flight.
+concurrency:
+  group: deploy-demo
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # One hung network step must not hold the serialized deploy-demo lane for
+    # GitHub's 6h default — this job is the cut vertex of the deploy chain.
+    timeout-minutes: 30
+    # Environment scopes the demo secrets; it is NOT a reviewer gate (free plan).
+    environment: demo
+    env:
+      OCI_HOST: acx-backend.tail1a44b8.ts.net
+      OCI_USER: ubuntu
+      # Public URL — an Actions *variable*, not a secret: secret-masking would
+      # redact every URL in Playwright failure output, blinding the smoke's own
+      # diagnostics. Fallback keeps the workflow runnable before vars are set.
+      WP_BASE_URL: ${{ vars.WP_BASE_URL || 'https://demo.altcontext.com' }}
+    steps:
+      # Env indirection on purpose (here and on every dispatch-controlled value,
+      # including ref names — $(), backticks and quotes are legal in git refs):
+      # interpolating untrusted input directly into the script would allow shell
+      # injection on a runner that later holds the deploy key and tailnet access.
+      - name: Require explicit confirmation (primary deliberate-action gate)
+        env:
+          CONFIRM_INPUT: ${{ github.event.inputs.confirm }}
+        run: |
+          if [ "$CONFIRM_INPUT" != "PROMOTE" ]; then
+            echo "::error::demo deploy requires the 'confirm' input = PROMOTE." \
+              "(Free-plan deliberate-action gate; private repos have no GitHub required-reviewers.)"
+            exit 1
+          fi
+          echo "demo deploy confirmed."
+
+      # The demo is public: deploys come from main unless explicitly opted out
+      # (rollback to a known-good ref, or the one-time feature-ref proof). The
+      # Environment deployment-branch rule (runbook) adds the same guard at the
+      # secrets layer once the operator sets it.
+      - name: Enforce main-only ref (allow_non_main to override)
+        if: github.ref != 'refs/heads/main'
+        env:
+          ALLOW_NON_MAIN: ${{ github.event.inputs.allow_non_main }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$ALLOW_NON_MAIN" != "true" ]; then
+            echo "::error::Ref '$REF_NAME' is not main. Re-dispatch with allow_non_main=true to deploy a non-main ref to the PUBLIC demo."
+            exit 1
+          fi
+          echo "::warning::Deploying non-main ref '$REF_NAME' to the PUBLIC demo (allow_non_main=true)."
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.x"
+          cache: npm
+          cache-dependency-path: apps/prototype-wp-alt-context/package-lock.json
+
+      - name: Setup PHP + Composer
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          tools: composer
+
+      # engine-strict=true + package.json engines.npm ^11.14.1 make `npm ci`
+      # hard-fail on the npm 10.x that setup-node's Node 22.x bundles. Pin the
+      # packageManager npm the same way architecture-compliance.yml does.
+      - name: Upgrade npm
+        run: npm install --global npm@11.14.1
+
+      # package-plugin.sh (default build mode) runs `npm run build` itself and a
+      # staging-dir `composer install --no-dev`, and hard-errors if
+      # public/assets/dist is missing/empty — so npm ci MUST land first, and no
+      # separate workflow-level build step is needed.
+      - name: Install plugin build deps
+        working-directory: apps/prototype-wp-alt-context
+        run: npm ci
+
+      - name: Build plugin zip
+        working-directory: apps/prototype-wp-alt-context
+        run: bash scripts/release/package-plugin.sh
+
+      - name: Join tailnet (ephemeral node)
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+          args: --accept-dns=true
+
+      - name: Pin VM tailnet address + wait for SSH reachability
+        env:
+          # Repo-level Actions variable so a VM rebuild is a one-place edit
+          # (deploy-recognition.yml consumes the same variable).
+          OCI_VM_TS_IP: ${{ vars.OCI_VM_TS_IP || '100.115.186.109' }}
+        run: |
+          # Resolve the VM by its stable tailnet IP regardless of MagicDNS state
+          # on the runner (SNI still uses the hostname, so TLS stays valid).
+          echo "${OCI_VM_TS_IP} ${OCI_HOST}" | sudo tee -a /etc/hosts
+          for i in $(seq 1 20); do
+            if nc -z -w3 "${OCI_VM_TS_IP}" 22 2>/dev/null; then
+              echo "VM ${OCI_HOST} (${OCI_VM_TS_IP}) reachable on :22"; exit 0
+            fi
+            echo "waiting for tailnet route to VM... attempt ${i}/20"; sleep 3
+          done
+          echo "::error::VM ${OCI_VM_TS_IP}:22 not reachable over the tailnet after wait"; exit 1
+
+      # Host-key policy: accept-new on an ephemeral runner is TOFU every run
+      # (no key persists), so when the operator provides the VM's public host
+      # key (ACX_VM_SSH_HOST_KEY secret, from `ssh-keyscan -t ed25519 <vm>` on
+      # an authorized machine) we pin it and set StrictHostKeyChecking yes.
+      # Without it we fall back to accept-new and say so loudly.
+      - name: Configure SSH deploy key
+        env:
+          VM_HOST_KEY: ${{ secrets.ACX_VM_SSH_HOST_KEY }}
+          DEPLOY_KEY: ${{ secrets.ACX_DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          if [ -n "$VM_HOST_KEY" ]; then
+            printf '%s\n' "$VM_HOST_KEY" > ~/.ssh/known_hosts
+            chmod 600 ~/.ssh/known_hosts
+            HOSTKEY_POLICY=yes
+          else
+            echo "::warning::ACX_VM_SSH_HOST_KEY not set — falling back to StrictHostKeyChecking accept-new (per-run TOFU; host authenticity rests on tailnet identity + IP pin only)."
+            HOSTKEY_POLICY=accept-new
+          fi
+          cat > ~/.ssh/config <<EOF
+          Host ${OCI_HOST}
+            User ${OCI_USER}
+            IdentityFile ~/.ssh/id_ed25519
+            StrictHostKeyChecking ${HOSTKEY_POLICY}
+            IdentitiesOnly yes
+          EOF
+          chmod 600 ~/.ssh/config
+
+      # PLUGIN_ZIP stays unset on purpose: sync-demo.sh auto-picks the newest
+      # dist/alt-context-*.zip from the repo root. A command-prefix glob
+      # assignment would pass the literal string and break scp mid-deploy.
+      - name: Deploy demo stack + plugin
+        run: bash scripts/deploy/sync-demo.sh
+
+      # sync-demo.sh's smoke runs ON the VM (its own network namespace); this
+      # probe traverses the public path (DNS, 443 ingress, security lists) the
+      # gate actually certifies for visitors. Demo gates; api.* informational
+      # (backend health is out of deploy scope from this vantage).
+      - name: Public-path probe (runner vantage)
+        run: |
+          out=$(curl -sS -o /dev/null -L --max-redirs 5 --max-time 20 -w '%{http_code} %{url_effective}' "${WP_BASE_URL}/" || true)
+          code=${out%% *}; final_url=${out#* }
+          case "$code" in
+            2*) case "$final_url" in
+                  *wp-admin/install.php*|*wp-admin/setup-config.php*)
+                    echo "::error::Public probe landed on the WP installer (${final_url}) — demo DB is not provisioned."; exit 1 ;;
+                  *) echo "PASS public ${WP_BASE_URL}/ (final ${code} at ${final_url})" ;;
+                esac ;;
+            *) echo "::error::Public probe of ${WP_BASE_URL}/ failed (final ${code:-000})"; exit 1 ;;
+          esac
+          for host in api.altcontext.com staging.api.altcontext.com dev.api.altcontext.com; do
+            c=$(curl -sS -o /dev/null --max-time 15 -w '%{http_code}' "https://${host}/health" || true)
+            echo "INFO public ${host}/health (${c:-000})"
+          done
+
+      # playwright.config.ts is deliberately headed (local evidence capture), so
+      # the browser step needs a virtual display on the headless runner.
+      - name: Install deploy-smoke browser deps (chromium + xvfb)
+        working-directory: apps/prototype-wp-alt-context
+        run: |
+          sudo apt-get update && sudo apt-get install -y xvfb
+          # --with-deps: the Playwright-pinned chromium's shared libs are not
+          # guaranteed on ubuntu-latest across image updates.
+          bash scripts/playwright-cli.sh install --with-deps chromium
+
+      # File-scoped on purpose: bare `--project=evidence` sweeps all six evidence
+      # specs (including recognition-exercising scan-runtime), which would gate
+      # the deploy on recognition health. No separate e2e:auth step: the
+      # evidence project depends on auth-setup (playwright.config.ts), which
+      # performs the login unconditionally — a standalone mint would just run
+      # the identical login twice against the public demo.
+      # ACX_E2E_* env pins the manifest's recognition provenance (the spec
+      # defaults recognition_url to staging otherwise) and keeps the two
+      # contract gates (provenance badge / RECOG-1 single-target) independently
+      # controlled.
+      - name: Deploy-smoke (walkthrough spec — gate on TEST exit code)
+        working-directory: apps/prototype-wp-alt-context
+        env:
+          WP_BASE_URL: ${{ env.WP_BASE_URL }}
+          ACX_E2E_WP_ADMIN_USER: ${{ secrets.ACX_E2E_WP_ADMIN_USER }}
+          ACX_E2E_WP_ADMIN_PASS: ${{ secrets.ACX_E2E_WP_ADMIN_PASS }}
+          ACX_E2E_RECOGNITION_URL: ${{ vars.ACX_E2E_RECOGNITION_URL || 'https://api.altcontext.com' }}
+          ACX_E2E_REQUIRE_CONSTANT_PROVENANCE: "1"
+          ACX_E2E_REQUIRE_SERVICE_TARGET: "1"
+          ACX_PLAYWRIGHT_TASK_REF: deploy-smoke
+          ACX_DEPLOY_COMMIT_SHA: ${{ github.sha }}
+        run: xvfb-run -a bash scripts/playwright-cli.sh test --project=evidence evidence/demo-walkthrough.spec.ts
+
+      # Informational only: the manifest verdict reflects recognition health,
+      # which is out of scope for the deploy gate (observability follow-up).
+      - name: Report recognition verdict (informational)
+        if: always()
+        # Informational means it must never fail the job — not even on a
+        # truncated manifest.
+        continue-on-error: true
+        working-directory: apps/prototype-wp-alt-context
+        run: |
+          # Newest manifest wins: CI retries can leave one per attempt dir.
+          # xargs -r: GNU xargs runs `ls -t` on the cwd for EMPTY input without
+          # it, which would silently pick a garbage path and hide the honest
+          # "no manifest" message.
+          manifest=$(find local/playwright/deploy-smoke -name evidence-manifest.json -print0 2>/dev/null \
+            | xargs -0r ls -t 2>/dev/null | head -1 || true)
+          {
+            echo "## Demo deploy-smoke"
+            if [ -n "$manifest" ]; then
+              verdict=$(jq -r '.verdict // "unknown"' "$manifest" 2>/dev/null || echo unknown)
+              echo "- Recognition manifest verdict (informational, does not gate): **${verdict}**"
+              echo '```json'
+              jq '{settings, scan, sovereignty}' "$manifest" 2>/dev/null || echo '"manifest unreadable"'
+              echo '```'
+            else
+              echo "- No evidence manifest found (smoke may have failed before the spec wrote it)."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

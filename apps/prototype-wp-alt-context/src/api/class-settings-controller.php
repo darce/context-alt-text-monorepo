@@ -103,8 +103,6 @@ class SettingsController {
 			array(
 				'url'                       => $snapshot['service_url'],
 				'url_source'                => $snapshot['service_url_source'],
-				'local_url'                 => $snapshot['local_url'],
-				'local_url_source'          => $snapshot['local_url_source'],
 				'effective_target_url'      => $snapshot['effective_target_url'],
 				'effective_target_mode'     => $snapshot['effective_target_mode'],
 				'recognition_source'        => $snapshot['recognition_source'],
@@ -138,36 +136,15 @@ class SettingsController {
 			$saved[] = 'url';
 		}
 
-		if ( isset( $body['recognition_source'] ) && is_string( $body['recognition_source'] ) ) {
-			$recognition_source = trim( $body['recognition_source'] );
-			if ( ! $this->is_valid_recognition_source( $recognition_source ) ) {
-				return new WP_Error(
-					'invalid_recognition_source',
-					'Recognition source must be either service or local.',
-					array( 'status' => 400 )
-				);
-			}
-			update_option( 'acx_recognition_source', $recognition_source );
-			$saved[] = 'recognition_source';
-		}
+		// RECOG-1: the product no longer writes acx_recognition_source or
+		// acx_recognition_local_url. Local remains a dev-only code hatch reachable
+		// via the ACX_RECOGNITION_SOURCE / ACX_RECOGNITION_LOCAL_URL constants (or
+		// their filters), never the Settings surface.
 
 		if ( isset( $body['api_key'] ) && is_string( $body['api_key'] ) ) {
 			$key = trim( $body['api_key'] );
 			update_option( 'acx_recognition_api_key', $key );
 			$saved[] = 'api_key';
-		}
-
-		if ( isset( $body['local_url'] ) && is_string( $body['local_url'] ) ) {
-			$local_url = trim( $body['local_url'] );
-			if ( '' !== $local_url && ! $this->is_valid_url( $local_url ) ) {
-				return new WP_Error(
-					'invalid_local_url',
-					'The local recognition URL must be a valid HTTP or HTTPS URL.',
-					array( 'status' => 400 )
-				);
-			}
-			update_option( 'acx_recognition_local_url', $local_url );
-			$saved[] = 'local_url';
 		}
 
 		if ( isset( $body['description_budget'] ) && is_array( $body['description_budget'] ) ) {
@@ -214,17 +191,14 @@ class SettingsController {
 	}
 
 	public function test_connection( WP_REST_Request $request ): WP_REST_Response {
-		$snapshot     = $this->endpoint_resolver->resolve_settings_snapshot();
-		$probe_target = $request->get_param( 'probe_target' );
-		if ( is_string( $probe_target ) && in_array( $probe_target, array( 'local', 'service' ), true ) ) {
-			$mode = $probe_target;
-			$url  = 'local' === $mode ? $snapshot['local_url'] : $snapshot['service_url'];
-		} else {
-			$mode = $snapshot['effective_target_mode'];
-			$url  = $snapshot['effective_target_url'];
-		}
+		// RECOG-1: the keyless local `/health` liveness probe and the
+		// probe_target=local dispatch are retired. Test always exercises the
+		// authenticated service probe against the effective target (the dev hatch,
+		// if active, routes the effective target to local and is probed with a key).
+		$snapshot = $this->endpoint_resolver->resolve_settings_snapshot();
+		$url      = $snapshot['effective_target_url'];
 
-		if ( 'service' === $mode && '' === $snapshot['service_url'] ) {
+		if ( '' === $url ) {
 			return new WP_REST_Response(
 				array(
 					'outcome'     => ProbeOutcome::NOT_CONFIGURED,
@@ -233,22 +207,6 @@ class SettingsController {
 				),
 				200
 			);
-		}
-
-		if ( 'local' === $mode ) {
-			$health_url = rtrim( $url, '/' ) . '/health';
-			$response   = wp_remote_get(
-				$health_url,
-				array(
-					'timeout' => 10,
-				)
-			);
-
-			$payload = $this->build_probe_payload( $response );
-			$payload['probe_mode'] = 'local_liveness';
-			$payload['probed_url'] = $health_url;
-
-			return new WP_REST_Response( $payload, 200 );
 		}
 
 		$key_resolution = $this->resolve_key_source();
@@ -272,7 +230,12 @@ class SettingsController {
 		$payload['probe_mode'] = 'service_auth';
 		$payload['probed_url'] = $health_url;
 
-		if ( ProbeOutcome::CONNECTED !== ( $payload['outcome'] ?? null ) ) {
+		// A mismatched key (403 -> TENANT_MISMATCH) is a first-time / paired-elsewhere pairing signal,
+		// not a terminal error: attempt pairing so a never-paired auto-derived site can auto-adopt and
+		// recover in a single "Check health" click. Every other non-CONNECTED outcome is terminal.
+		$probe_outcome    = $payload['outcome'] ?? null;
+		$pairing_eligible = in_array( $probe_outcome, array( ProbeOutcome::CONNECTED, ProbeOutcome::TENANT_MISMATCH ), true );
+		if ( ! $pairing_eligible ) {
 			return new WP_REST_Response( $payload, 200 );
 		}
 
@@ -286,11 +249,38 @@ class SettingsController {
 		$pairing_errors  = array( ProbeOutcome::NETWORK_ERROR, ProbeOutcome::SERVER_ERROR );
 		if ( in_array( $pairing_outcome, $pairing_errors, true ) ) {
 			$detail = is_string( $pairing['detail'] ?? null ) ? $pairing['detail'] : 'Tenant pairing failed.';
-			unset( $pairing['outcome'], $pairing['status_code'] );
-			$payload                 = array_merge( $payload, $pairing );
+			// Isolate the pairing failure into pairing_error; the probe's own detail (e.g. the mismatch
+			// reason) must survive so the banner still reports the underlying probe outcome as-is.
+			unset( $pairing['outcome'], $pairing['status_code'], $pairing['detail'] );
+			$payload                  = array_merge( $payload, $pairing );
 			$payload['pairing_error'] = $detail;
-		} else {
-			$payload = array_merge( $payload, $pairing );
+
+			return new WP_REST_Response( $payload, 200 );
+		}
+
+		$payload = array_merge( $payload, $pairing );
+
+		// Recovery from a mismatch: adoption just re-pointed this site at the key's canonical tenant,
+		// so re-probe /health/detailed EXACTLY ONCE with the adopted identity to reach green in the same
+		// request. Strictly bounded -- one pairing attempt + one re-probe, never a retry loop. If the
+		// re-probe still fails, its outcome is returned as-is. A conflict (paired elsewhere) does not
+		// adopt, so it skips the re-probe and surfaces TENANT_PAIRING_CONFLICT to the banner.
+		$adopted = true === ( $pairing['tenant_paired'] ?? false );
+		if ( $adopted && ProbeOutcome::TENANT_MISMATCH === $probe_outcome ) {
+			$reprobe_headers                = $headers;
+			$reprobe_headers['X-Tenant-ID'] = TenantIdentity::resolve()['value'];
+			$reprobe_response               = wp_remote_get(
+				$health_url,
+				array(
+					'headers' => $reprobe_headers,
+					'timeout' => 10,
+				)
+			);
+
+			$reprobe_payload               = $this->build_probe_payload( $reprobe_response );
+			$reprobe_payload['probe_mode'] = 'service_auth';
+			$reprobe_payload['probed_url'] = $health_url;
+			$payload                       = array_merge( $reprobe_payload, $pairing );
 		}
 
 		return new WP_REST_Response( $payload, 200 );
@@ -582,9 +572,5 @@ class SettingsController {
 			return false;
 		}
 		return isset( $parts['scheme'], $parts['host'] ) && in_array( $parts['scheme'], array( 'http', 'https' ), true );
-	}
-
-	private function is_valid_recognition_source( string $source ): bool {
-		return in_array( $source, array( 'service', 'local' ), true );
 	}
 }

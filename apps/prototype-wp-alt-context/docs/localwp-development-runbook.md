@@ -116,6 +116,30 @@ Use the ZIP path for:
 - rollbackable manual smoke runs
 - any case where you need to know exactly what artifact was tested
 
+## Recognition Credentials: Two Ways To Manage, One Place To Mint
+
+> **Canonical key/tenant guidance:**
+> [docs/runbooks/key-management.md](../../../docs/runbooks/key-management.md).
+> A LocalWP install pointing at `https://api.altcontext.com` is a **Track 1**
+> client: its tenant + key are minted on the **prod** `/admin` console (or the
+> VM-side CLI) — never on the local `admin-dev` console, whose keys are
+> laptop-only fixtures.
+
+The plugin accepts credentials from two tiers, and **constants always beat
+options**:
+
+1. **Settings page (user-style)** — paste the service URL and API key into
+   wp-admin → Alt Context Settings; stored as WP options, sources report
+   `option`. This only works while no `ACX_RECOGNITION_URL` /
+   `ACX_RECOGNITION_API_KEY` constants are defined — if they are, the Settings
+   fields are overridden and report `constant`.
+2. **`wp-config.local.php` constants (gate-style)** — the reproducible path
+   below, preferred for release/gate verification because the credential
+   survives plugin reinstalls and stays out of the DB.
+
+Pick one tier per install and stay on it; a half-and-half config (URL from a
+constant, key from an option) is legal but confusing to debug.
+
 ## Gate Secrets: Site-Local Config
 
 For `E15-3a`, keep the production-scoped LocalWP gate key out of:
@@ -143,6 +167,13 @@ define('ACX_RECOGNITION_URL', 'https://api.altcontext.com');
 define('ACX_RECOGNITION_API_KEY', '<raw production key>');
 ```
 
+> **The `<?php` opening tag is load-bearing.** A tag-less file passes
+> `php -l` (it lints as plain text) but `require` will echo its contents as
+> raw output instead of executing the `define()`s — the constants silently
+> never exist and the text leaks into the page before headers. If Settings
+> reports `url_source=default` despite this file existing, check the tag
+> first.
+
 Then load it from `wp-config.php` using a defensive include:
 
 ```php
@@ -164,6 +195,40 @@ Why this pattern:
 - the ZIP-installed plugin no longer depends on source-checkout `.env.local`
 - the Settings screen will truthfully report `url_source=constant` and `key_source=constant`
 
+### Dev Recognition Hatch: Opt Back Into The Local Backend
+
+Hosted **service** is the canonical recognition target and the default. `local`
+is retired from the product surface — there is no Settings toggle. A developer
+who needs to point the plugin at a local description-service backend
+(`http://localhost:8000` from `apps/prototype-description-service`) opts in via a
+**dev-only code hatch** in `wp-config.local.php` (next to the LocalWP site's
+`wp-config.php`, untracked):
+
+```php
+<?php
+declare(strict_types=1);
+
+// Dev-only hatch: force the retired local recognition backend. Never a
+// product/Settings feature — remove these defines to return to hosted service.
+define('ACX_RECOGNITION_SOURCE', 'local');
+define('ACX_RECOGNITION_LOCAL_URL', 'http://localhost:8000');
+```
+
+Load it from `wp-config.php` with the same defensive include shown above. The
+plugin resolves the `ACX_RECOGNITION_SOURCE` constant (or the
+`acx_recognition_source` filter) before any option, so this flips the effective
+target to the local URL chain. Remove the defines to fall back to the default
+hosted service. This is strictly a local developer convenience — never ship it
+or expose it as a Settings option.
+
+The local backend needs its own **local fixture** key (`make dev-mint-key` /
+`make dev-setup` in `apps/prototype-description-service`) — hosted-service
+keys do not work against it, and its fixture keys do not work against the
+hosted service. This is Track 2 in
+[key-management.md](../../../docs/runbooks/key-management.md#track-2--local-fast-loop-fixtures-only);
+the assessment that kept the local service alive as a fast dev loop is
+[recorded in the tech-debt registry](../../../docs/tasks/tech-debt/local-vs-oci-description-service-drift-and-retirement.md).
+
 ### What Not To Use For The Gate
 
 Do not store the production-scoped LocalWP gate key in:
@@ -177,41 +242,51 @@ not the durable source of truth for `E15-3a`.
 
 ## Rotate / Verify / Revoke
 
-The backend key lifecycle CLI is:
+Keys for a LocalWP install that targets `https://api.altcontext.com` live in
+the **prod identity DB** and are minted/revoked there — canonically via the
+prod `/admin` console over the tailnet, with the VM-side CLI as fallback. Full
+flow, tunnel command, and token location:
+[key-management.md § Track 1](../../../docs/runbooks/key-management.md#track-1--mint-a-hosted-service-key-incl-localwp--remote).
 
-```bash
-cd apps/prototype-description-service
-python -m scripts.manage_api_keys create --tenant <tenant-uuid>
-python -m scripts.manage_api_keys revoke --key-id <key-uuid>
-```
+Running `python -m scripts.manage_api_keys` from the laptop **cannot** mint
+Track 1 keys: `--env` is mandatory, `--env prod` refuses local DSNs, and the
+prod Postgres is only reachable inside the VM's docker network. The local
+CLI/console mints laptop-only fixtures (Track 2).
 
-The `create` command prints the raw key to stdout once and the `key_id` to
-stderr. Treat stdout as secret material and do not paste it into repo files or
-the run log.
+> **Prod DB resets orphan every existing key.** If the plugin suddenly gets
+> 401/403 with a key that used to work, re-mint before debugging anything
+> else.
 
 ### 1. Create A Fresh Gate Key
 
-First, ask the LocalWP helper for the canonical tenant UUID used by the plugin:
+First, ask the LocalWP helper which tenant UUID the plugin currently pairs
+with (repo root):
 
 ```bash
-cd /Users/daniel/Development/context-alt-text-monorepo-e15-3a
 bash scripts/localwp-gate-status.sh --wp-path "$HOME/Development/wp-context-alt-text/app/public"
 ```
 
-Copy `tenant_uuid` from that JSON and use it in the create command. This avoids
-hand-deriving the UUID and guarantees the CLI key is issued for the same tenant
-identity the plugin sends in `X-Tenant-ID`.
+If this install has no tenant yet on prod, generate a **fresh** UUID
+(`uuidgen`) — never reuse `00000000-0000-4000-8000-000000000001`, which is the
+demo site's prod tenant *and* the local-fixture default (see
+[key-management.md § Tenant UUID discipline](../../../docs/runbooks/key-management.md#tenant-uuid-discipline)).
 
-From the monorepo:
+Mint on the prod `/admin` console (create tenant → mint key), or via the
+VM-side CLI:
 
 ```bash
-cd /Users/daniel/Development/context-alt-text-monorepo-e15-3a/apps/prototype-description-service
-python -m scripts.manage_api_keys create --tenant <tenant-uuid>
+ssh ubuntu@acx-backend.tail1a44b8.ts.net
+cd /opt/acx-backend/prod
+docker compose -f docker-compose.env.yml exec -T api \
+  python -m scripts.manage_api_keys --env prod tenant create \
+  --tenant <fresh-uuid> --site-url http://localhost:10010
+docker compose -f docker-compose.env.yml exec -T api \
+  python -m scripts.manage_api_keys --env prod create --tenant <fresh-uuid>
 ```
 
 Capture:
 
-- raw key from stdout
+- raw key from stdout (shown exactly once)
 - `key_id=...` from stderr
 
 Immediately compute a fingerprint for the run log:
@@ -303,11 +378,14 @@ to plugin options.
 ### 5. Revoke The Previous Key
 
 Once the new key is verified and the run log fingerprint is updated, revoke the
-old key:
+old key — on the prod `/admin` console (revoke button, idempotent) or the
+VM-side CLI:
 
 ```bash
-cd /Users/daniel/Development/context-alt-text-monorepo-e15-3a/apps/prototype-description-service
-python -m scripts.manage_api_keys revoke --key-id <old-key-uuid>
+ssh ubuntu@acx-backend.tail1a44b8.ts.net
+cd /opt/acx-backend/prod
+docker compose -f docker-compose.env.yml exec -T api \
+  python -m scripts.manage_api_keys --env prod revoke --key-id <old-key-uuid>
 ```
 
 Record in the run log:

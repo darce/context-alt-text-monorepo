@@ -78,7 +78,11 @@ export const fetchIdentitySuggestions = async (identityId: string, topK = 5): Pr
   });
 };
 
-export const fetchPendingSuggestions = async (limit = 10, offset = 0): Promise<PendingSuggestionsResponse> => {
+export const fetchPendingSuggestions = async (
+  limit = 10,
+  offset = 0,
+  timeoutMs = 2_000,
+): Promise<PendingSuggestionsResponse> => {
   const base = getEndpoint('recognitionSuggestions');
   const url = new URL(base, window.location.origin);
   url.searchParams.set('limit', String(limit));
@@ -87,7 +91,7 @@ export const fetchPendingSuggestions = async (limit = 10, offset = 0): Promise<P
   const response = await fetchRequiredApi<PendingSuggestionsResponse>(url.toString(), {
     method: 'GET',
     restNonce: getConfig().nonce,
-    signal: createRecognitionTimeoutSignal(2_000),
+    signal: createRecognitionTimeoutSignal(timeoutMs),
   });
 
   return mapPendingSuggestions(response);

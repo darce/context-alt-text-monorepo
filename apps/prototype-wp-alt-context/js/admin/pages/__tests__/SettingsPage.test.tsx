@@ -14,9 +14,11 @@ interface CapturedMutationOptions {
   onError?: (err: unknown) => void;
 }
 
-const { mockUseQuery, mockUseMutation } = vi.hoisted(() => ({
+const { mockUseQuery, mockUseMutation, mockInvalidateQueries, mockFetchQuery } = vi.hoisted(() => ({
   mockUseQuery: vi.fn<() => QueryHookResult>(),
   mockUseMutation: vi.fn<(options?: CapturedMutationOptions) => MutationHookResult>(),
+  mockInvalidateQueries: vi.fn(),
+  mockFetchQuery: vi.fn(),
 }));
 
 vi.mock('@wordpress/i18n', () => ({
@@ -50,11 +52,17 @@ vi.mock('../../api/config', () => ({
   resetConfigCache: mockResetConfigCache,
 }));
 
+// Recovery affordances must stay enabled while offline (plan §3, RES-15). Forcing the shared
+// offline signal to true guards against a future change gating test-connection on the breaker.
+vi.mock('../../hooks/useSyncOffline', () => ({
+  useSyncOffline: () => true,
+}));
+
 vi.mock('@tanstack/react-query', async () => {
   const actual = await vi.importActual<typeof import('@tanstack/react-query')>('@tanstack/react-query');
   return {
     ...actual,
-    useQueryClient: () => ({ invalidateQueries: vi.fn() }),
+    useQueryClient: () => ({ invalidateQueries: mockInvalidateQueries, fetchQuery: mockFetchQuery }),
     useQuery: mockUseQuery,
     useMutation: mockUseMutation,
   };
@@ -63,8 +71,6 @@ vi.mock('@tanstack/react-query', async () => {
 const defaultSettings: SettingsResponse = {
   url: 'https://api.example.com',
   url_source: 'option',
-  local_url: 'http://localhost:8000',
-  local_url_source: 'default',
   effective_target_url: 'https://api.example.com',
   effective_target_mode: 'service',
   recognition_source: 'service',
@@ -89,14 +95,17 @@ const defaultSettings: SettingsResponse = {
 
 const saveMutate = vi.fn();
 const testMutate = vi.fn();
+let capturedSaveOptions: CapturedMutationOptions | undefined;
 let capturedTestOptions: CapturedMutationOptions | undefined;
 
 const installMutationMock = (): void => {
   let mutationCallIndex = 0;
+  capturedSaveOptions = undefined;
   capturedTestOptions = undefined;
   mockUseMutation.mockImplementation((options) => {
     mutationCallIndex++;
     if (mutationCallIndex % 2 === 1) {
+      capturedSaveOptions = options;
       return createMockMutation({ mutate: saveMutate });
     }
     capturedTestOptions = options;
@@ -106,6 +115,7 @@ const installMutationMock = (): void => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockFetchQuery.mockResolvedValue(defaultSettings);
   installMutationMock();
 });
 
@@ -127,21 +137,9 @@ describe('SettingsPage', () => {
     render(<SettingsPage />);
 
     expect(screen.getByLabelText('Service API URL')).toHaveValue('https://api.example.com');
-    expect(screen.getByLabelText('Local service URL')).toHaveValue('http://localhost:8000');
-    expect(screen.getByRole('radio', { name: /Hosted service/ })).toBeChecked();
     expect(screen.getByTestId('acx-effective-routing')).toHaveTextContent('https://api.example.com');
     expect(screen.getByRole('button', { name: 'Save Settings' })).toBeEnabled();
-    expect(screen.getAllByRole('button', { name: 'Check health' })).toHaveLength(2);
-  });
-
-  it('saves the recognition source when the operator switches to local mode', () => {
-    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
-    render(<SettingsPage />);
-
-    fireEvent.click(screen.getByRole('radio', { name: /Local development/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
-
-    expect(saveMutate).toHaveBeenCalledWith({ recognition_source: 'local' });
+    expect(screen.getAllByRole('button', { name: 'Check health' })).toHaveLength(1);
   });
 
   it('saves settings when the form is submitted with changes', () => {
@@ -209,16 +207,28 @@ describe('SettingsPage', () => {
     expect(saveMutate).not.toHaveBeenCalled();
   });
 
-  it('tests connection and invokes the test mutation with probe_target', () => {
+  it('tests connection and invokes the test mutation for the service target', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
     render(<SettingsPage />);
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Check health' })[1]);
+    fireEvent.click(screen.getByRole('button', { name: 'Check health' }));
 
-    expect(testMutate).toHaveBeenCalledWith({ probe_target: 'service' });
+    expect(testMutate).toHaveBeenCalledWith({});
   });
 
-  it('updates the matching health chip after a successful probe', () => {
+  it('keeps Check health enabled while the sync breaker reports offline (recovery affordance)', () => {
+    // useSyncOffline is module-mocked to true for this whole file — the probe must stay usable
+    // so the operator can heal the breaker (plan §3 trap-the-operator guard).
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    const probeButton = screen.getByRole('button', { name: 'Check health' });
+    expect(probeButton).toBeEnabled();
+    fireEvent.click(probeButton);
+    expect(testMutate).toHaveBeenCalledWith({});
+  });
+
+  it('updates the service health chip after a successful probe', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
     render(<SettingsPage />);
 
@@ -230,7 +240,59 @@ describe('SettingsPage', () => {
     });
 
     expect(screen.getByTestId('acx-target-card-service')).toHaveTextContent('Reachable');
-    expect(screen.getByTestId('acx-target-card-local')).toHaveTextContent('Not checked');
+  });
+
+  it('renders the tenant id and unpaired status when the tenant is not paired', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    expect(screen.getByTestId('acx-tenant-id')).toHaveTextContent('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
+    expect(screen.getByTestId('acx-tenant-pairing-status')).toHaveTextContent('Not paired yet');
+  });
+
+  it('renders the paired status when the tenant is paired', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: { ...defaultSettings, tenant_paired: true } }));
+    render(<SettingsPage />);
+
+    expect(screen.getByTestId('acx-tenant-pairing-status')).toHaveTextContent(
+      'Paired with the recognition service',
+    );
+  });
+
+  it('refetches sync health after a successful save so the offline banner clears', async () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    expect(capturedSaveOptions?.onSuccess).toBeDefined();
+    // onSuccess is async at runtime but typed void; wrap so we await the real work.
+    await act(async () => {
+      await Promise.resolve(capturedSaveOptions!.onSuccess!(undefined));
+    });
+
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ['sync', 'health'] });
+  });
+
+  it('refetches sync health after a successful probe so the offline banner clears', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    act(() => {
+      capturedTestOptions?.onSuccess?.({ outcome: 'connected', probe_mode: 'service_auth' });
+    });
+
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ['sync', 'health'] });
+  });
+
+  it('does not refetch sync health when a probe fails', () => {
+    // A failed probe must not clear the offline banner: sync.health stays as-is.
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    act(() => {
+      capturedTestOptions?.onError?.(new Error('boom'));
+    });
+
+    expect(mockInvalidateQueries).not.toHaveBeenCalledWith({ queryKey: ['sync', 'health'] });
   });
 
   it('renders read-only fields when source is constant', () => {
@@ -248,71 +310,58 @@ describe('SettingsPage', () => {
 
     expect(screen.getByLabelText('Service API URL')).toHaveAttribute('readOnly');
     expect(screen.getByLabelText('API Key')).toHaveAttribute('readOnly');
-    expect(screen.getByRole('button', { name: 'Save Settings' })).toBeEnabled();
   });
 
-  it('disables Save when every routing field is read-only', () => {
+  it('keeps Save enabled for description-budget edits even when routing fields are read-only', () => {
+    // RECOG-1 B-02: the description budget is always editable, so read-only
+    // routing fields (constant/filter-managed url + key) must not disable Save.
     mockUseQuery.mockReturnValue(
       createMockQuery({
         data: {
           ...defaultSettings,
-          recognition_source_source: 'constant' as const,
           url_source: 'constant' as const,
-          local_url_source: 'constant' as const,
           key_source: 'constant' as const,
         },
       }),
     );
     render(<SettingsPage />);
 
-    expect(screen.getByRole('button', { name: 'Save Settings' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save Settings' })).toBeEnabled();
   });
 
-  it('shows configure CTA when service mode has no URL', () => {
+  it('lets a fresh install enter the service URL when unconfigured', () => {
+    // RECOG-1 B-01: with the service default and an empty URL, the Service API
+    // URL input MUST be present and editable — the CTA alone would be a dead end.
     mockUseQuery.mockReturnValue(
       createMockQuery({
         data: {
           ...defaultSettings,
           url: '',
-          effective_target_url: 'http://localhost:8000',
-          effective_target_mode: 'local',
-          recognition_source: 'local',
+          effective_target_url: '',
+          effective_target_mode: 'service',
+          recognition_source: 'service',
         },
       }),
     );
     render(<SettingsPage />);
 
-    fireEvent.click(screen.getByRole('radio', { name: /Hosted service/ }));
     expect(screen.getByRole('button', { name: 'Configure service URL' })).toBeInTheDocument();
-  });
-
-  it('enables Check health on both configured target cards', () => {
-    mockUseQuery.mockReturnValue(
-      createMockQuery({
-        data: {
-          ...defaultSettings,
-          recognition_source: 'local' as const,
-          effective_target_url: 'http://localhost:8000',
-          effective_target_mode: 'local' as const,
-        },
-      }),
-    );
-    render(<SettingsPage />);
-
-    const healthButtons = screen.getAllByRole('button', { name: 'Check health' });
-    expect(healthButtons).toHaveLength(2);
-    healthButtons.forEach((button) => expect(button).toBeEnabled());
+    const urlInput = screen.getByLabelText('Service API URL');
+    expect(urlInput).toBeInTheDocument();
+    expect(urlInput).not.toHaveAttribute('readOnly');
+    fireEvent.change(urlInput, { target: { value: 'https://api.altcontext.com' } });
+    expect(urlInput).toHaveValue('https://api.altcontext.com');
   });
 
   it('disables Check health when routing edits are unsaved', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
     render(<SettingsPage />);
 
-    fireEvent.click(screen.getByRole('radio', { name: /Local development/ }));
-
-    screen.getAllByRole('button', { name: 'Check health' }).forEach((button) => {
-      expect(button).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Service API URL'), {
+      target: { value: 'https://new-api.example.com' },
     });
+
+    expect(screen.getByRole('button', { name: 'Check health' })).toBeDisabled();
     expect(screen.getByText(/Save settings before scanning or testing/)).toBeInTheDocument();
   });
 
@@ -402,6 +451,23 @@ describe('SettingsPage', () => {
       expect(banner).toHaveTextContent('different site');
     });
 
+    it('renders a confirm-pairing action on the tenant_mismatch banner', () => {
+      renderWithLoadedSettings();
+      driveOutcome({ outcome: 'tenant_mismatch', status_code: 403, detail: 'tenant mismatch' });
+      const banner = bannerFor('tenant_mismatch');
+      expect(banner).toHaveTextContent('Tenant mismatch.');
+      expect(screen.getByTestId('acx-confirm-tenant-pairing')).toBeInTheDocument();
+    });
+
+    it('sends confirm_tenant_pairing when the mismatch adopt button is clicked', () => {
+      renderWithLoadedSettings();
+      driveOutcome({ outcome: 'tenant_mismatch', status_code: 403, detail: 'tenant mismatch' });
+
+      fireEvent.click(screen.getByTestId('acx-confirm-tenant-pairing'));
+
+      expect(testMutate).toHaveBeenCalledWith({ confirm_tenant_pairing: true });
+    });
+
     it('renders the tenant_pairing_conflict banner with tenant ids and confirm control', () => {
       renderWithLoadedSettings();
       driveOutcome({
@@ -426,31 +492,7 @@ describe('SettingsPage', () => {
 
       fireEvent.click(screen.getByTestId('acx-confirm-tenant-pairing'));
 
-      expect(testMutate).toHaveBeenCalledWith({ probe_target: 'service', confirm_tenant_pairing: true });
-    });
-
-    it('keeps tenant-pairing confirmation on the tested service target when effective mode is local', () => {
-      mockUseQuery.mockReturnValue(
-        createMockQuery({
-          data: {
-            ...defaultSettings,
-            effective_target_mode: 'local',
-            effective_target_url: 'http://localhost:8000',
-            recognition_source: 'local',
-          },
-        }),
-      );
-      render(<SettingsPage />);
-
-      fireEvent.click(screen.getAllByRole('button', { name: 'Check health' })[1]);
-      driveOutcome({
-        outcome: 'tenant_pairing_conflict',
-        persisted_tenant_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
-        key_tenant_id: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
-      });
-      fireEvent.click(screen.getByTestId('acx-confirm-tenant-pairing'));
-
-      expect(testMutate).toHaveBeenLastCalledWith({ probe_target: 'service', confirm_tenant_pairing: true });
+      expect(testMutate).toHaveBeenCalledWith({ confirm_tenant_pairing: true });
     });
 
     it('renders the rate_limited banner and interpolates retry_after_seconds', () => {
@@ -516,42 +558,5 @@ describe('SettingsPage', () => {
       const banner = bannerFor('network_error');
       expect(banner).toHaveTextContent('Could not reach the recognition service.');
     });
-
-    it('uses local network_error copy when the mutation rejects in local mode', () => {
-      mockUseQuery.mockReturnValue(
-        createMockQuery({
-          data: {
-            ...defaultSettings,
-            effective_target_mode: 'local',
-            effective_target_url: 'http://localhost:8000',
-            recognition_source: 'local',
-          },
-        }),
-      );
-      render(<SettingsPage />);
-      act(() => {
-        capturedTestOptions!.onError!(new Error('connection refused'));
-      });
-      const banner = bannerFor('network_error');
-      expect(banner).toHaveTextContent('Could not reach the local recognition service.');
-      expect(banner).toHaveTextContent('make serve');
-    });
-  });
-
-  it('keeps Save enabled when only local_url is editable', () => {
-    mockUseQuery.mockReturnValue(
-      createMockQuery({
-        data: {
-          ...defaultSettings,
-          recognition_source_source: 'constant',
-          url_source: 'constant',
-          key_source: 'constant',
-          local_url_source: 'option',
-        },
-      }),
-    );
-    render(<SettingsPage />);
-
-    expect(screen.getByRole('button', { name: 'Save Settings' })).toBeEnabled();
   });
 });

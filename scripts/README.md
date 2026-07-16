@@ -71,10 +71,18 @@ Behavior:
 - otherwise runs stable `wp` under `php@8.4` when present
 - otherwise falls back to the default PHP resolved by `localwp-runtime.sh`
 - injects the discovered LocalWP MySQL socket via `mysqli.default_socket`
+- mutes WP-CLI's bundled-phar deprecation noise at the source via
+  `error_reporting` (warnings/notices/errors stay visible)
 
 Supports `LOCALWP_WP_BIN`, `LOCALWP_WP_NIGHTLY_BIN`, `LOCALWP_WP_PHP84_BIN`,
-`LOCALWP_WP_DISABLE_PHP84`, `LOCALWP_WP_FILTER_KNOWN_NOISE`, `LOCALWP_SOCKET`,
-and `LOCALWP_PHP_BIN` env overrides.
+`LOCALWP_WP_DISABLE_PHP84`, `LOCALWP_WP_DISABLE_NIGHTLY`,
+`LOCALWP_WP_ERROR_REPORTING`, `LOCALWP_SOCKET`, and `LOCALWP_PHP_BIN` env
+overrides. Set `LOCALWP_WP_ERROR_REPORTING=E_ALL` to surface deprecations when
+debugging plugin code. Deprecation muting is bootstrap-scoped — a command that
+boots WordPress with `WP_DEBUG=true` re-enables `E_DEPRECATED`.
+
+Running `wp` directly (bypassing this wrapper) does not get the mute; use the
+wrapper, or pass `WP_CLI_PHP_ARGS="-d error_reporting='E_ALL & ~E_DEPRECATED & ~E_USER_DEPRECATED'"`.
 
 ## localwp-gate-status.sh
 

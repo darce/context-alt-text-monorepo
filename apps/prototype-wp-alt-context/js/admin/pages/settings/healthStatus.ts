@@ -1,24 +1,16 @@
-import {
-  RecognitionSource,
-  TestConnectionOutcome,
-  type RecognitionSourceValue,
-  type TestConnectionResponse,
-} from '../../api/settingsApi';
+import { TestConnectionOutcome, type TestConnectionResponse } from '../../api/settingsApi';
 import { HealthStatus, type HealthStatusValue } from './settingsConstants';
 
-export const healthStatusForTarget = (
-  target: RecognitionSourceValue,
+// RECOG-1: single hosted-service target. The probe is always the authenticated
+// service probe, so health maps directly from the latest test result.
+export const healthStatusForService = (
   testResult: TestConnectionResponse | null,
 ): HealthStatusValue => {
   if (!testResult) {
     return HealthStatus.NOT_CHECKED;
   }
 
-  const probeMatchesTarget =
-    (target === RecognitionSource.LOCAL && testResult.probe_mode === 'local_liveness') ||
-    (target === RecognitionSource.SERVICE && testResult.probe_mode === 'service_auth');
-
-  if (!probeMatchesTarget) {
+  if (testResult.probe_mode !== 'service_auth') {
     return HealthStatus.NOT_CHECKED;
   }
 

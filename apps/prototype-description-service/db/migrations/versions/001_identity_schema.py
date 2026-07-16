@@ -135,6 +135,51 @@ def _relkind(op, name: str) -> str | None:
     )
 
 
+def _existing_columns(op, table_name: str) -> set[str]:
+    return {
+        row[0]
+        for row in op.get_bind().execute(
+            sa.text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = current_schema() AND table_name = :t"
+            ),
+            {"t": table_name},
+        )
+    }
+
+
+def _ensure_columns(op, table_name: str, *columns) -> None:
+    """Additively add any declared column missing from an already-existing table.
+
+    ``_ensure_table`` no-ops when the table exists, so an expand-first column
+    added to the model after the table was first created never lands — every
+    ORM path selecting it then 500s while the table and alembic revision still
+    look healthy (MAINT-TPR-01 / PA-03: prod ``tenants.naming_agreement_enabled``).
+    Additive-only: a missing primary key, or a missing NOT NULL column with no
+    server default, is non-additive drift and raises for operator remediation
+    rather than guessing a backfill value.
+    """
+    existing = _existing_columns(op, table_name)
+    for column in columns:
+        # `_ensure_table` is also passed table-level constructs (CheckConstraint,
+        # ForeignKeyConstraint, Index); only real columns are additively healable.
+        if not isinstance(column, sa.Column):
+            continue
+        if column.name in existing:
+            continue
+        if column.primary_key:
+            raise RuntimeError(
+                f"{table_name}.{column.name} (primary key) is missing from an "
+                "existing table; non-additive drift, operator remediation required"
+            )
+        if not column.nullable and column.server_default is None:
+            raise RuntimeError(
+                f"{table_name}.{column.name} is NOT NULL without a server default; "
+                "cannot add it additively to an existing table (operator remediation)"
+            )
+        op.add_column(table_name, column)
+
+
 def _ensure_table(op, table_name: str, *columns, **kw) -> None:
     relkind = _relkind(op, table_name)
     if relkind is None:
@@ -146,6 +191,10 @@ def _ensure_table(op, table_name: str, *columns, **kw) -> None:
             f"{table_name!r} exists with relkind {relkind!r} (expected a table); "
             "drop the impostor relation before healing (operator action)"
         )
+    else:
+        # Table exists: reconcile additive column drift so an expand-first
+        # column added after first creation still lands (MAINT-TPR-01 / PA-03).
+        _ensure_columns(op, table_name, *columns)
 
 
 def _ensure_index(op, index_name: str, table_name: str, columns, **kw) -> None:

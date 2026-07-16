@@ -3,18 +3,19 @@
  *
  * Shows a compact confirmation UI directly on the identity card instead of
  * requiring users to open the dropdown to see suggestions.
+ *
+ * Presentational: the top suggestion is supplied by the caller (a single
+ * batched fetch at the list level), so this component owns no data fetching.
  */
 
 import React from 'react';
 import { __ } from '@wordpress/i18n';
-import { useQuery } from '@tanstack/react-query';
 
-import { queryKeys } from '../../../api/queryKeys';
-import { fetchIdentitySuggestions, type ClusterSuggestion } from '../../../api/recognition';
+import { type ClusterSuggestion } from '../../../api/recognition';
 
 interface InlineSuggestionPromptProps {
-  /** Identity ID to fetch suggestions for */
-  identityId: string;
+  /** Top server-ranked suggestion for this identity, or undefined when none applies */
+  match: ClusterSuggestion | undefined;
   /** Called when user confirms the suggestion */
   onConfirm: (clusterId: string, label: string) => void;
   /** Called when user rejects the suggestion */
@@ -30,35 +31,23 @@ interface InlineSuggestionPromptProps {
  * it means the backend determined it's worth showing to the user.
  */
 export const InlineSuggestionPrompt = ({
-  identityId,
+  match,
   onConfirm,
   onReject,
   isPending,
 }: InlineSuggestionPromptProps): React.JSX.Element | null => {
-  // Fetch top suggestion for this identity
-  const { data: suggestions, isLoading } = useQuery({
-    queryKey: queryKeys.suggestions.inlineFor(identityId),
-    queryFn: () => fetchIdentitySuggestions(identityId, 1), // Only fetch top 1
-    staleTime: 60000, // Cache for 1 minute
-    enabled: Boolean(identityId),
-  });
-
-  // Get the top suggestion - backend already filtered for threshold
-  const topMatch: ClusterSuggestion | undefined = suggestions?.matches?.[0];
-  const hasSuggestion = topMatch?.label;
-
-  // Don't render if loading or no suggestion with a label
-  if (isLoading || !hasSuggestion || !topMatch) {
+  // Don't render without a suggestion that carries a label.
+  if (!match?.label) {
     return null;
   }
 
-  const matchPercent = Math.round(topMatch.similarity * 100);
+  const matchPercent = Math.round(match.similarity * 100);
 
   return (
     <div className="acx-inline-suggestion">
       <div className="acx-inline-suggestion__prompt">
         <span className="acx-inline-suggestion__question">
-          {__('Is this', 'alt-context')} <strong>{topMatch.label}</strong>?
+          {__('Is this', 'alt-context')} <strong>{match.label}</strong>?
         </span>
         <span className="acx-inline-suggestion__confidence">{matchPercent}%</span>
       </div>
@@ -66,7 +55,7 @@ export const InlineSuggestionPrompt = ({
         <button
           type="button"
           className="button button-primary button-small acx-inline-suggestion__yes"
-          onClick={() => onConfirm(topMatch.cluster_id, topMatch.label)}
+          onClick={() => onConfirm(match.cluster_id, match.label)}
           disabled={isPending}
         >
           {__('Yes', 'alt-context')}

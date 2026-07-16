@@ -496,6 +496,29 @@ class LifecycleManagerTest extends TestCase
         $this->assertSame(ACX_VERSION, get_option('acx_version'));
     }
 
+    public function testMaybeUpgradeOutboxSchemaCarriesRetryBackoffColumns(): void
+    {
+        // E15-35 Slice 1: existing installs heal the two new outbox retry columns through the
+        // plugin version bump -> maybe_upgrade() -> dbDelta($outbox_sql) path (no hand-rolled
+        // ALTER TABLE). dbDelta caveats: one column per line, dbDelta-normalized nullable datetime.
+        $this->setOption('acx_version', '0.0.1-stale');
+
+        $this->manager->maybe_upgrade();
+
+        $queries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
+        $outboxSql = '';
+        foreach ($queries as $sql) {
+            if (str_contains($sql, 'acx_sync_outbox')) {
+                $outboxSql = $sql;
+                break;
+            }
+        }
+
+        $this->assertNotSame('', $outboxSql, 'Expected the outbox CREATE TABLE to run on upgrade.');
+        $this->assertMatchesRegularExpression('/^\s*next_attempt_at datetime DEFAULT NULL,$/m', $outboxSql);
+        $this->assertMatchesRegularExpression('/^\s*first_failed_at datetime DEFAULT NULL,$/m', $outboxSql);
+    }
+
     public function testMaybeUpgradeIsStrictNoopWhenStoredVersionMatches(): void
     {
         $this->setOption('acx_version', ACX_VERSION);

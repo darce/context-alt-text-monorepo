@@ -240,8 +240,12 @@ class OutboxMaintenanceService {
 				'last_error_code' => null,
 				'last_error_message' => null,
 				'last_attempted_at' => null,
+				// E15-35: a requeued op starts a fresh retry window — stale first_failed_at
+				// would instantly re-terminate it on the next retryable failure.
+				'first_failed_at' => null,
+				'next_attempt_at' => null,
 			),
-			array( '%s', '%d', '%s', '%s', '%s' )
+			array( '%s', '%d', '%s', '%s', '%s', '%s', '%s' )
 		);
 		if ( ! $updated ) {
 			return false;
@@ -288,8 +292,11 @@ class OutboxMaintenanceService {
 			'expected_base_version' => max( 0, $backend_version ),
 			'last_error_code' => null,
 			'last_error_message' => null,
+			// E15-35: re-enqueue starts a fresh retry window (see retry_failed_operation).
+			'first_failed_at' => null,
+			'next_attempt_at' => null,
 		);
-		$format = array( '%s', '%d', '%d', '%s', '%s' );
+		$format = array( '%s', '%d', '%d', '%s', '%s', '%s', '%s' );
 
 		$normalized_merged_value = is_string( $merged_value ) ? trim( $merged_value ) : '';
 		if ( '' !== $normalized_merged_value ) {

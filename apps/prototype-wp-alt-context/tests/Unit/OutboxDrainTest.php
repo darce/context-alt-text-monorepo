@@ -111,12 +111,15 @@ class OutboxDrainTest extends TestCase
 		$this->assertStringContainsString("WHERE id = 7 AND status = 'in_flight'", $updateQuery);
 	}
 
-	public function testDrainMarksFailedAfterMaxAttempts(): void
+	public function testDrainMarksFailedWhenAttemptsReachHardCapBackstop(): void
 	{
+		// E15-35 Slice 1: the count terminal is a hard-cap backstop (default 40), replacing the
+		// superseded count-only acx_outbox_max_attempts=5 terminal that dead-lettered the incident.
 		global $wpdb;
 
 		$row = $this->pendingOperationRow();
-		$row['attempts'] = 4;
+		$row['attempts'] = 39;
+		$row['first_failed_at'] = gmdate('Y-m-d H:i:s', time() - 3600);
 		$wpdb->mockResults = [$row];
 
 		$dispatcher = new class() extends OutboxDispatcher {
@@ -135,7 +138,314 @@ class OutboxDrainTest extends TestCase
 
 		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
 		$this->assertStringContainsString("status = 'failed'", $updateQuery);
+		$this->assertStringContainsString('attempts = 40', $updateQuery);
+		$this->assertStringContainsString('next_attempt_at = NULL', $updateQuery);
 		$this->assertStringContainsString("WHERE id = 7 AND status = 'in_flight'", $updateQuery);
+	}
+
+	public function testRetryableFailureSetsFirstFailedAtAndBoundedAdditiveJitterBackoff(): void
+	{
+		// E15-35 Slice 1 proof: first retryable failure stamps first_failed_at = last_attempted_at
+		// and schedules next_attempt_at = now + base(60s) + additive jitter [0, 0.1*delay], so the
+		// row can never be re-claimed immediately (next_attempt_at strictly > now at attempts=1).
+		global $wpdb;
+		$wpdb->mockResults = [$this->pendingOperationRow()];
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public function dispatch_batch(array $operations): array {
+				return [[
+					'status' => 'failed',
+					'error_code' => 'remote_error',
+					'error_message' => 'backend unavailable',
+					'retryable' => true,
+				],];
+			}
+		};
+
+		$drain = new OutboxDrain($dispatcher);
+		$drain->drain();
+
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
+		$this->assertStringContainsString("status = 'pending'", $updateQuery);
+
+		$attemptedAt = $this->extractDatetimeColumn($updateQuery, 'last_attempted_at');
+		$firstFailedAt = $this->extractDatetimeColumn($updateQuery, 'first_failed_at');
+		$nextAttemptAt = $this->extractDatetimeColumn($updateQuery, 'next_attempt_at');
+		$this->assertSame($attemptedAt, $firstFailedAt);
+
+		$delay = strtotime($nextAttemptAt) - strtotime($attemptedAt);
+		$this->assertGreaterThanOrEqual(60, $delay, 'next_attempt_at must be at least base seconds ahead');
+		$this->assertLessThanOrEqual(66, $delay, 'jitter must stay within +10% of the delay');
+	}
+
+	public function testRetryableFailureBackoffRampDoublesAndCapsAtHourlyCeiling(): void
+	{
+		// E15-35 Slice 1 proof: exponential ramp 60,120,240,... capped at 3600s per attempt.
+		global $wpdb;
+
+		$scenarios = [
+			// attempts pre-increment 2 -> post-increment n=3 -> delay 240s (+ jitter <= 24s).
+			['attempts' => 2, 'min' => 240, 'max' => 264],
+			// attempts pre-increment 9 -> n=10 -> raw 30720s, capped to 3600s (+ jitter <= 360s).
+			['attempts' => 9, 'min' => 3600, 'max' => 3960],
+		];
+
+		foreach ($scenarios as $scenario) {
+			$wpdb->reset();
+			$row = $this->pendingOperationRow();
+			$row['attempts'] = $scenario['attempts'];
+			$row['first_failed_at'] = gmdate('Y-m-d H:i:s', time() - 600);
+			$wpdb->mockResults = [$row];
+
+			$dispatcher = new class() extends OutboxDispatcher {
+				public function dispatch_batch(array $operations): array {
+					return [[
+						'status' => 'failed',
+						'error_code' => 'remote_error',
+						'error_message' => 'backend unavailable',
+						'retryable' => true,
+					],];
+				}
+			};
+
+			$drain = new OutboxDrain($dispatcher);
+			$drain->drain();
+
+			$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
+			$this->assertStringContainsString("status = 'pending'", $updateQuery);
+
+			$attemptedAt = $this->extractDatetimeColumn($updateQuery, 'last_attempted_at');
+			$nextAttemptAt = $this->extractDatetimeColumn($updateQuery, 'next_attempt_at');
+			$delay = strtotime($nextAttemptAt) - strtotime($attemptedAt);
+			$this->assertGreaterThanOrEqual($scenario['min'], $delay);
+			$this->assertLessThanOrEqual($scenario['max'], $delay);
+		}
+	}
+
+	public function testRetryWindowTerminalFiresBeforeHardCap(): void
+	{
+		// E15-35 Slice 1 proof: the 24h retry window is the primary terminal — a row first failed
+		// 25h ago dead-letters even though attempts (29) is far below the hard cap (40).
+		global $wpdb;
+
+		$row = $this->pendingOperationRow();
+		$row['attempts'] = 28;
+		$row['first_failed_at'] = gmdate('Y-m-d H:i:s', time() - (25 * 3600));
+		$wpdb->mockResults = [$row];
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public function dispatch_batch(array $operations): array {
+				return [[
+					'status' => 'failed',
+					'error_code' => 'remote_error',
+					'error_message' => 'backend unavailable',
+					'retryable' => true,
+				],];
+			}
+		};
+
+		$drain = new OutboxDrain($dispatcher);
+		$drain->drain();
+
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
+		$this->assertStringContainsString("status = 'failed'", $updateQuery);
+		$this->assertStringContainsString('attempts = 29', $updateQuery);
+		$this->assertStringContainsString('next_attempt_at = NULL', $updateQuery);
+	}
+
+	public function testNonRetryableFailureDeadLettersImmediatelyAtFirstAttempt(): void
+	{
+		// E15-35 Slice 1: NO behavior change for the non-retryable class (401/403/4xx/invalid
+		// payload) — still dead-letters at attempt 1 with no backoff schedule.
+		global $wpdb;
+		$wpdb->mockResults = [$this->pendingOperationRow()];
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public function dispatch_batch(array $operations): array {
+				return [[
+					'status' => 'failed',
+					'error_code' => 'unauthorized',
+					'error_message' => 'auth rejected',
+					'retryable' => false,
+				],];
+			}
+		};
+
+		$drain = new OutboxDrain($dispatcher);
+		$drain->drain();
+
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
+		$this->assertStringContainsString("status = 'failed'", $updateQuery);
+		$this->assertStringContainsString('attempts = 1', $updateQuery);
+		$this->assertStringContainsString('next_attempt_at = NULL', $updateQuery);
+	}
+
+	public function testRetryableOperationThatRecoversWithinWindowAcknowledges(): void
+	{
+		// E15-35 Slice 1 proof: an op mid-backoff (first_failed_at 1h old, attempts=3) that gets a
+		// healthy response acknowledges and clears its retry-schedule bookkeeping.
+		global $wpdb;
+
+		$row = $this->pendingOperationRow();
+		$row['attempts'] = 3;
+		$row['first_failed_at'] = gmdate('Y-m-d H:i:s', time() - 3600);
+		$wpdb->mockResults = [$row];
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public function dispatch_batch(array $operations): array {
+				return [[
+					'status' => 'acknowledged',
+					'backend_version' => 44,
+				],];
+			}
+		};
+
+		$drain = new OutboxDrain($dispatcher);
+		$drain->drain();
+
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
+		$this->assertStringContainsString("status = 'acknowledged'", $updateQuery);
+		$this->assertStringContainsString('first_failed_at = NULL', $updateQuery);
+		$this->assertStringContainsString('next_attempt_at = NULL', $updateQuery);
+	}
+
+	public function testHardCapFilterOverrideLowersCountBackstop(): void
+	{
+		// E15-35 Slice 1: hard cap is filter-overridable (replaces acx_outbox_max_attempts, PR-12).
+		add_filter(
+			'acx_outbox_retry_hard_cap_attempts',
+			static fn (): int => 3
+		);
+
+		global $wpdb;
+		$row = $this->pendingOperationRow();
+		$row['attempts'] = 2;
+		$row['first_failed_at'] = gmdate('Y-m-d H:i:s', time() - 600);
+		$wpdb->mockResults = [$row];
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public function dispatch_batch(array $operations): array {
+				return [[
+					'status' => 'failed',
+					'error_code' => 'remote_error',
+					'error_message' => 'backend unavailable',
+					'retryable' => true,
+				],];
+			}
+		};
+
+		$drain = new OutboxDrain($dispatcher);
+		$drain->drain();
+
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
+		$this->assertStringContainsString("status = 'failed'", $updateQuery);
+		$this->assertStringContainsString('attempts = 3', $updateQuery);
+	}
+
+	public function testInvalidTunableFiltersFallBackToDefaultsAndKeepCeilingEnforced(): void
+	{
+		// E15-35 Slice 1 proof (rg-008): a bad filter can never disable the terminal ceiling —
+		// invalid window/hard-cap values fall back to defaults, so a 25h-old failure still
+		// dead-letters by the default 24h window.
+		add_filter(
+			'acx_outbox_retry_window_seconds',
+			static fn (): int => -1
+		);
+		add_filter(
+			'acx_outbox_retry_hard_cap_attempts',
+			static fn (): string => 'not-a-number'
+		);
+		add_filter(
+			'acx_outbox_retry_backoff_base_seconds',
+			static fn (): float => INF
+		);
+
+		global $wpdb;
+		$row = $this->pendingOperationRow();
+		$row['attempts'] = 1;
+		$row['first_failed_at'] = gmdate('Y-m-d H:i:s', time() - (25 * 3600));
+		$wpdb->mockResults = [$row];
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public function dispatch_batch(array $operations): array {
+				return [[
+					'status' => 'failed',
+					'error_code' => 'remote_error',
+					'error_message' => 'backend unavailable',
+					'retryable' => true,
+				],];
+			}
+		};
+
+		$drain = new OutboxDrain($dispatcher);
+		$drain->drain();
+
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
+		$this->assertStringContainsString("status = 'failed'", $updateQuery);
+		$this->assertStringContainsString('next_attempt_at = NULL', $updateQuery);
+	}
+
+	public function testInvalidBackoffBaseFilterFallsBackToDefaultDelay(): void
+	{
+		// E15-35 Slice 1 (rg-008): an invalid backoff base cannot zero-out the delay — the
+		// schedule falls back to the 60s default.
+		add_filter(
+			'acx_outbox_retry_backoff_base_seconds',
+			static fn (): int => 0
+		);
+
+		global $wpdb;
+		$wpdb->mockResults = [$this->pendingOperationRow()];
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public function dispatch_batch(array $operations): array {
+				return [[
+					'status' => 'failed',
+					'error_code' => 'remote_error',
+					'error_message' => 'backend unavailable',
+					'retryable' => true,
+				],];
+			}
+		};
+
+		$drain = new OutboxDrain($dispatcher);
+		$drain->drain();
+
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
+		$attemptedAt = $this->extractDatetimeColumn($updateQuery, 'last_attempted_at');
+		$nextAttemptAt = $this->extractDatetimeColumn($updateQuery, 'next_attempt_at');
+		$delay = strtotime($nextAttemptAt) - strtotime($attemptedAt);
+		$this->assertGreaterThanOrEqual(60, $delay);
+		$this->assertLessThanOrEqual(66, $delay);
+	}
+
+	public function testDrainSchedulesNextDrainAtEarliestPendingAttemptWhenNoRowIsDue(): void
+	{
+		// E15-35 Slice 1 proof: pending rows all mid-backoff -> the drain schedules a single
+		// future event at the earliest next_attempt_at instead of busy-looping immediately.
+		global $wpdb;
+		$wpdb->mockResults = [];
+
+		$earliest = gmdate('Y-m-d H:i:s', time() + 600);
+		$wpdb->queryResults[$wpdb->prepare(
+			'SELECT id FROM %i WHERE status = %s ORDER BY created_at ASC LIMIT 1',
+			'wp_acx_sync_outbox',
+			'pending'
+		)] = '5';
+		$wpdb->queryResults[$wpdb->prepare(
+			'SELECT MIN(COALESCE(next_attempt_at, created_at)) FROM %i WHERE status = %s',
+			'wp_acx_sync_outbox',
+			'pending'
+		)] = $earliest;
+
+		$drain = new OutboxDrain(new OutboxDispatcher());
+		$drain->drain();
+
+		$key = 'acx_sync_drain_curation_outbox::' . md5(serialize([]));
+		$scheduled = $GLOBALS['__ac_scheduled'][$key]['timestamp'] ?? null;
+		$this->assertNotNull($scheduled, 'Expected a future single drain event for the earliest pending attempt.');
+		$this->assertGreaterThanOrEqual(time() + 595, $scheduled);
+		$this->assertLessThanOrEqual(time() + 605, $scheduled);
 	}
 
 	public function testDrainClaimsPendingRowAsInFlightBeforeDispatch(): void
@@ -534,6 +844,9 @@ class OutboxDrainTest extends TestCase
 		$row['entity_key'] = 'cluster-label';
 		$row['payload'] = '{"cluster_uuid":"cluster-label","label":"Renamed Cluster"}';
 		$row['attempts'] = 4;
+		// E15-35 Slice 1: repeated 5xx no longer dead-letters by count alone — the op terminates
+		// once its first failure is older than the 24h retry window.
+		$row['first_failed_at'] = gmdate('Y-m-d H:i:s', time() - (25 * 3600));
 		$wpdb->mockResults = [$row];
 		$this->setOption('acx_recognition_url', 'http://localhost:8000');
 		$this->configureSyncMetricQueries('tenant-test-123', [
@@ -870,6 +1183,8 @@ class OutboxDrainTest extends TestCase
 			'local_revision' => 4,
 			'payload' => '{"cluster_uuid":"cluster-1","person_uuid":"person-1"}',
 			'attempts' => 0,
+			'first_failed_at' => null,
+			'next_attempt_at' => null,
 			'created_at' => '2026-03-10 12:00:00',
 		], $overrides);
 	}
@@ -886,6 +1201,14 @@ class OutboxDrainTest extends TestCase
 		}
 
 		$this->fail(sprintf('Unable to find query containing "%s".', $needle));
+	}
+
+	private function extractDatetimeColumn(string $query, string $column): string
+	{
+		$matched = preg_match('/' . preg_quote($column, '/') . " = '([^']+)'/", $query, $matches);
+		$this->assertSame(1, $matched, sprintf('Expected a quoted datetime for column "%s" in: %s', $column, $query));
+
+		return $matches[1];
 	}
 
 	private function findFirstQueryContaining(array $queries, string $needle): string

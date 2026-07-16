@@ -3,6 +3,6 @@ revision = 3
 requires-python = ">=3.11"
 
 [[package]]
-name = "uxp-net-1-lane-sandbox-shim"
+name = "uxp-1-lane-sandbox-shim"
 version = "0.0.0"
 source = { virtual = "." }

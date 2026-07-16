@@ -8,9 +8,9 @@
 > and the async-pool adversarial review
 > [`../assessments/current/gpu-availability-async-pool-adversarial-review-2026-07-16.md`](../assessments/current/gpu-availability-async-pool-adversarial-review-2026-07-16.md).
 >
-> Revised 2026-07-16 (r2) to close plan-analyze findings PA-TSVCN-01..05 (review-run 429) and
-> planning-review findings PR-TSVCN-01..20 (review-run `planning-review-tsvcn-20260716-01`,
-> conditional_pass) — see handoff for finding bodies; they are not duplicated here.
+> Revised 2026-07-16 (r3) closing planning-review rounds 1+2 (runs
+> `planning-review-tsvcn-20260716-01/-02`, findings PR-TSVCN-01..20 and PR2-TSVCN-01..23) —
+> finding bodies live in handoff, not here.
 
 ## What we found this session (why this plan exists)
 
@@ -31,7 +31,9 @@ a chain of blockers and root-caused each:
      variable entirely.
    - Editing the *shared* subnet security list has blast radius (rightly guardrailed).
 3. **Compute must stay off the laptop** (8 GB RAM, near-zero free; grok offload admission-refused
-   on swap floor). The laptop is control-plane only.
+   on swap floor). The laptop is control-plane only — but note: laptop-*driven* request loops
+   (the Qwen cell below) still require the laptop awake for the run's duration; the JSONL resume
+   design makes interruptions cheap.
 4. **Tailscale-per-node has a baked-identity trap.** The original A10 image carried a fixed
    Tailscale node identity; a fresh instance from it collides. Fresh nodes need *ephemeral* keys —
    and any reuse of that custom image must scrub the baked state (Phase 1 step 8).
@@ -43,37 +45,56 @@ killing the rotating-IP problem and the MTU variable at once.
 ## Requirement update (2026-07-16): CPU-first bake-off
 
 GPU provisioning is unreliable (capacity lottery above), so the description/caption bake-off must
-**not depend on GPU at all**. This plan's batch topology serves a CPU-first matrix with explicit
-per-model budgets and ownership:
+**not depend on GPU at all**. The CPU-first matrix, with per-cell budgets, owners, and drivers
+(all repo paths are repo-root-relative):
 
 | Cell | Owner | Substrate | Corpus | Wall-clock budget | Driver |
 |---|---|---|---|---|---|
-| Florence-2-large CPU baseline | VLM-6 | `E4.Flex` 16 OCPU/64 GB, private-only | 646 images | ~7 h @ measured 39 s/img (`scene/infrastructure/vlm/profiles.py:12`); fan out to 2 VMs ≈ 3.5 h if needed | **(new)** on-box `florence_describe.py` wrapping `scene/infrastructure/vlm/florence_local_adapter.py` — must be committed to `apps/prototype-description-service/scripts/eval_harness/` before the first batch run |
-| Qwen3-VL-30B-A3B Q4 GGUF CPU | VLM-6 | same | **spike first** (see below) | decided by spike | llama.cpp server on-box (cloud-init) + existing laptop-side `apps/prototype-description-service/scripts/eval_harness/out/describe_baseline.py` with `BAKEOFF_BASE_URL=http://<vm-private-ip>:8080` over the routed path |
-| ALTQ-1 caption-synthesis cells | ALTQ-1 | per ALTQ-1's plan | `scene/tests/seed/golden.json` (37 entries) | GPU config matrix ≤ 1 h (A10); CPU cell = text-only pass-2 weave only | ALTQ-1's `bakeoff.py` (`PROMPT_VARIANTS`/`dual_length`) — **exists only on `feature/altq-1`**; merging that branch (to `main` or into the bake-off branch) is a hard precondition of running any ALTQ-1 cell from this topology |
+| Florence-2-large CPU baseline | VLM-6 | `E4.Flex` 16 OCPU/64 GB, private-only | 646 images | ~7 h @ 39 s/img — **A1-measured** (`apps/prototype-description-service/scene/config/profiles.py:12`); sanity-check the first 10 images on E4 before committing to fan-out; 2 VMs ≈ 3.5 h | **(new)** on-box `florence_describe.py` wrapping `apps/prototype-description-service/scene/infrastructure/vlm/florence_local_adapter.py` — committed to `scripts/eval_harness/` before the first batch run (handoff next-action **#6**) |
+| Qwen3-VL-30B-A3B Q4 GGUF CPU | VLM-6 | same | **spike first**, then subset (see gate below) | decided by spike | laptop-side `apps/prototype-description-service/scripts/eval_harness/describe_baseline.py` (tracked; moved out of the gitignored `out/` dir in r3) with `BAKEOFF_BASE_URL=http://<vm-private-ip>:8080` — **requires step-7's `:8080` ACL widening first**, and the llama.cpp server on the VM must use the serving flags below |
+| ALTQ-1 caption-synthesis cells | ALTQ-1 | per ALTQ-1's plan | `apps/prototype-description-service/scene/tests/seed/golden.json` (37 entries) | **GPU-gated**: the A10 config matrix (≤ 1 h) is deferred until a launch lands — it is *not* part of the CPU-first critical path; only the text-only pass-2 weave cell runs on CPU | ALTQ-1's `bakeoff.py` — the `PROMPT_VARIANTS`/`dual_length` **version** exists only on `feature/altq-1` (it supersedes main's VLM-2B transport in the *same file* that `describe_baseline.py` imports). Merging `feature/altq-1` is owned by ALTQ-1 (handoff next-action **#5**) and must land **before** Qwen bake-off runs start — a mid-run merge rewrites the Qwen cell's transport under a resumable run |
+
+**Qwen serving config (mandatory).** The llama.cpp server must run the live protocol from
+[`../tasks/vlm/VLM-2B-a1-serving-notes.md`](../tasks/vlm/VLM-2B-a1-serving-notes.md) (normative —
+see its "full live serving command"), in particular **`--image-max-tokens 1536`** and the vision
+`--mmproj`: without the cap, Qwen3-VL dynamic resolution blew large golden images past 600 s and
+aborted the first live run via bounded-stall; with it, healthy items run ~206–208 s/img. The
+driver's per-item ceiling is 900 s (`--timeout 900`, the `bakeoff.py` default).
 
 **Qwen CPU spike gate.** No CPU measurement exists for the 30B-A3B model
-([`cpu-tiered-serving-plan-2026-07-16.md`](../assessments/current/cpu-tiered-serving-plan-2026-07-16.md) § model table
-and § 4): nearest anchor is the 4B at 206 s/img on A1 CPU. Before committing the 646-image corpus,
-run that plan's **timeboxed 10-image probe** on the E4 box (abort criteria: mean > 600 s/img).
-Full-corpus run only if the projection is **≤ 12 h**; otherwise fall back to a subset — Golden-150
-(**pending VLM-6 S1 curation — no manifest exists yet**; interim fallback is the 37-entry
-`golden.json`) — or fan out across multiple VMs. A projection worse than 600 s/img kills the CPU-30B
-cell per the tiered-serving plan's own abort criteria.
+([`cpu-tiered-serving-plan-2026-07-16.md`](../assessments/current/cpu-tiered-serving-plan-2026-07-16.md)
+§ model table and § 4): the nearest anchor is the 4B at **206 s/img** (A1 CPU, capped config).
+Run that plan's **timeboxed 10-image probe** on the E4 box first — abort on **mean > 600 s/img
+or RSS beyond the box** (both legs of the plan's criteria; the RSS leg is near-moot at 64 GB).
+Be explicit about the expected outcome: at the 206 s anchor, the full 646-image corpus is
+**37 h on one box — not a viable primary path** (≤ 12 h would require 67 s/img, a 3× improvement
+no evidence supports). Therefore:
+
+- **Primary (bake-off comparison): subset.** `golden.json` (37 entries, exists) now; **Golden-150
+  when VLM-6 S1 curation lands** (no manifest exists yet). The tiered-serving plan's "Golden-100"
+  award names a manifest that also doesn't exist — reconciling that ladder is handoff next-action
+  **#7**. 37 × 206 s ≈ **2.1 h** — comfortably inside any session.
+- **Full-646 is reserved for the winning config only**, via either **≥ 4-VM fan-out**
+  (~162 img × 206 s ≈ 9.3 h per VM, at the cost of ~18 GB weight + mmproj NAT egress *per VM*)
+  or an explicitly accepted single-box multi-day run (~37 h). Neither happens by default.
 
 **GPU is opportunistic only**: if an A10 launch happens to succeed, the identical private-only
-pattern applies. A failed GPU launch never blocks the bake-off.
+pattern applies. A failed GPU launch never blocks the CPU-first cells; the one GPU-*gated* row
+(ALTQ-1's config matrix) carries its own deferral disposition in the matrix.
 
 **Ownership / cross-plan drift:** VLM-6 owns the Florence and Qwen description baselines and this
-topology; ALTQ-1 owns the synthesis cells. ALTQ-1's task plan still prescribes the retired
-public-subnet + on-box pattern for GPU acquisition — **follow-up: amend the ALTQ-1 plan to the
-private-only topology** once this doc's Phase 0 lands (tracked as a handoff next-action, not here).
+topology; ALTQ-1 owns the synthesis cells. Two adjacent plans still prescribe the retired
+public-subnet pattern and are flagged for amendment in handoff: the **ALTQ-1 task plan**
+(next-action **#5**, owner ALTQ-1) and the **cpu-tiered-serving plan** (next-action **#7**, owner
+VLM-6, which also settles the post-probe corpus ladder).
 
-**Consequence for networking**: every CPU VM installs deps at boot (CPU torch, llama.cpp, and for
-Qwen the pinned **~18 GB** Q4 GGUF — `docs/tasks/vlm/VLM-3-gpu-detailed-tier-task-plan.md` pins it),
+**Consequence for networking**: every CPU VM provisions at boot via **(new)**
+`infra/oci/cpu-batch-cloud-init.yaml` (owned by next-action **#6**; `infra/oci/` today has only
+the prod and GPU cloud-inits, and the GPU one bakes weights at image-bake time — a different
+pattern). Boot downloads: llama.cpp build, the pinned **~18 GB** Q4 GGUF
+(`docs/tasks/vlm/VLM-3-gpu-detailed-tier-task-plan.md` pins it) **plus the vision mmproj** —
 so **NAT egress is mandatory** (Decision D1). At ~18 GB per boot, pre-baking a CPU image pays for
-itself after roughly two relaunches — still an optimization, not the egress fix, but plan it once
-the stack stabilizes.
+itself after roughly two relaunches — still an optimization, not the egress fix.
 
 ## Verified network facts (OCI CLI, 2026-07-16) — closes PA-TSVCN-02's unknowns
 
@@ -128,8 +149,10 @@ Two hard implications:
   `10.0.1.0/24` ingress rule; no tailnet CIDRs appear inside the VCN.
 - **D4 (closes PR-TSVCN-05)** — batch-subnet ingress is scoped to **`10.0.1.0/24`** (subnet
   router SNAT source + Phase-2 in-VCN prod callers) plus **`10.0.2.0/24`** (worker
-  intercommunication), NOT the full `/16` — matching D3's least-privilege stance; a future
-  subnet in `acx-vcn` gets no implicit access to batch VMs.
+  intercommunication), NOT the full `/16`. Trade-off accepted: any future legitimate consumer
+  subnet needs a seclist edit, and the scoping is CIDR-granular only (`protocol: all` keeps all
+  ports open *from* those two subnets) — finer port scoping can come later if the batch subnet
+  ever hosts anything sensitive.
 
 ## Plan (steps to execute)
 
@@ -138,12 +161,13 @@ Two hard implications:
 OCI side (agent-runnable; each command captures the OCID the next one consumes):
 
 ```bash
-# 1. NAT gateway
+# 1. NAT gateway (wait until AVAILABLE so step 2 can reference it)
 TENANCY=$(grep -m1 tenancy ~/.oci/config | cut -d= -f2 | tr -d ' ')
 VCN=$(oci network vcn list --compartment-id "$TENANCY" \
   --query 'data[?"display-name"==`acx-vcn`].id | [0]' --raw-output)
 NAT=$(oci network nat-gateway create --compartment-id "$TENANCY" --vcn-id "$VCN" \
-  --display-name acx-nat --query 'data.id' --raw-output)
+  --display-name acx-nat --wait-for-state AVAILABLE \
+  --query 'data.id' --raw-output)
 
 # 2. Private route table (0.0.0.0/0 -> NAT)
 RT=$(oci network route-table create --compartment-id "$TENANCY" --vcn-id "$VCN" \
@@ -175,7 +199,8 @@ Tailscale side (operator):
    advertises, it has no route to consume, and accepting future third-party routes would widen
    prod's surface.
 6. Tailscale admin console: **approve** the `10.0.2.0/24` route for `acx-backend` (or add an
-   `autoApprovers` entry if the node is tagged, e.g. `"autoApprovers": {"routes": {"10.0.2.0/24": ["tag:infra"]}}`).
+   `autoApprovers` entry — the node is tagged `tag:oci-vm`, so:
+   `"autoApprovers": {"routes": {"10.0.2.0/24": ["tag:oci-vm"]}}`).
 7. Tailscale ACL — **precondition: ACL grants are additive.** Inspect the policy file first; if
    the default `{"action":"accept","src":["*"],"dst":["*:*"]}` rule (or any rule whose dst covers
    `10.0.2.0/24`) is present, a scoped rule below is decorative — every tailnet node reaches the
@@ -186,11 +211,19 @@ Tailscale side (operator):
    {"action": "accept", "src": ["<laptop-user-or-tag>"], "dst": ["10.0.2.0/24:22"]}
    ```
 
-   Widen ports only when a concrete need appears (e.g. llama.cpp `:8080` for the Qwen cell —
-   add `"10.0.2.0/24:8080"` when that cell runs). Never add a `10.0.0.0/16` or `10.0.1.0/24`
-   destination.
+   The Qwen cell additionally needs `"10.0.2.0/24:8080"` (llama.cpp) — add it when that cell
+   runs; the matrix row calls this out. Never add a `10.0.0.0/16` or `10.0.1.0/24` destination.
 
-**Phase 0 acceptance (must pass before any batch launch):**
+**Phase 0 acceptance (must pass before any batch launch).** Re-derive the shell context first —
+steps 4–7 happen on other machines, plausibly days later:
+
+```bash
+TENANCY=$(grep -m1 tenancy ~/.oci/config | cut -d= -f2 | tr -d ' ')
+VCN=$(oci network vcn list --compartment-id "$TENANCY" \
+  --query 'data[?"display-name"==`acx-vcn`].id | [0]' --raw-output)
+SUBNET=$(oci network subnet list --compartment-id "$TENANCY" --vcn-id "$VCN" \
+  --query 'data[?"display-name"==`acx-batch-subnet`].id | [0]' --raw-output)
+```
 
 - a. `oci network nat-gateway list --compartment-id "$TENANCY" --vcn-id "$VCN"` shows `acx-nat`
   AVAILABLE with `block-traffic: false`; subnet list shows `acx-batch-subnet 10.0.2.0/24` with
@@ -200,11 +233,13 @@ Tailscale side (operator):
   omitempty and unreliable): `tailscale status --json | jq '.Peer[] | select(.HostName=="acx-backend") | .PrimaryRoutes'`
   must list `10.0.2.0/24`; the admin console is authoritative if the field is null.
 - c. On the laptop: `netstat -rn | grep '10.0.2'` shows the subnet routed via the Tailscale
-  interface (macOS renders it `10.0.2/24`). If absent, confirm **"Use Tailscale subnets"** is
-  enabled in the macOS Tailscale app before debugging anything else.
+  interface (macOS renders it `10.0.2/24`), and `tailscale ping acx-backend` succeeds. If the
+  route is absent, confirm **"Use Tailscale subnets"** is enabled in the macOS Tailscale app
+  before debugging anything else.
 - d. **End-to-end canary**: launch one minimal private VM in `acx-batch-subnet` (any small flex
-  shape) **with the laptop's public key injected** (`--ssh-authorized-keys-file ~/.ssh/id_ed25519.pub`),
-  then `ssh -o ConnectTimeout=30 ubuntu@<private-ip>` from the laptop and, on the VM,
+  shape **on an Ubuntu image**) **with the laptop's public key injected**
+  (`--ssh-authorized-keys-file ~/.ssh/id_ed25519.pub`), then
+  `ssh -o ConnectTimeout=30 ubuntu@<private-ip>` from the laptop and, on the VM,
   `curl -sI --max-time 30 https://pypi.org` (proves NAT egress). On SSH failure walk the ladder
   in order: **laptop route installed (c)** → route approved (b) → ACL (7) → forwarding (b) →
   security list (3). **Terminate the canary on both success and failure paths** (reuse one canary
@@ -212,33 +247,64 @@ Tailscale side (operator):
   Do not proceed to Phase 1 until the canary passes.
 
 **Phase 0 abort:** if Phase 0 half-completes (NAT created but subnet fails; route advertised but
-approval abandoned), run the Phase-3 decommission deletes (step 14) for whatever was created —
-half-built state is inert but must not linger unrecorded; note the abort in the handoff log.
+approval abandoned), run the decommission deletes (**step 15, *Decommission* bullet**) for
+whatever was created — half-built state is inert but must not linger unrecorded; note the abort
+in the handoff log.
 
 ### Phase 1 — Batch launches switch to private-only (agent-automatable once Phase 0 lands)
 
+Corpus source (both the rsync source and the Qwen driver depend on it): the originals root is
+`/Volumes/Butter/WP/vlm/app/public/wp-content/uploads/` per the tracked inventory
+`apps/prototype-description-service/scripts/eval_harness/vlm-corpus-attachments-20260716.tsv`
+(646 rows, no size column — measure with `du -sh` before transfer). **Pre-run mount check:**
+`test -d /Volumes/Butter/WP/vlm/app/public/wp-content/uploads || echo "MOUNT BUTTER FIRST"` —
+an unmounted volume means silent empty rsyncs and mid-run driver crashes.
+
 8. Launch bake-off VMs in `acx-batch-subnet` with `--assign-public-ip false` and the laptop
-   pubkey injected: **CPU-first** per the matrix above (`E4.Flex` 16 OCPU/64 GB). GPU (A10 from
-   the custom image, rotating AD-1/2/3) is opportunistic acceleration only — and any launch from
-   that image **must scrub the baked Tailscale identity** (cloud-init:
+   pubkey injected. Reference launch (fill AD/image from `oci compute image list`):
+
+   ```bash
+   oci compute instance launch --compartment-id "$TENANCY" \
+     --availability-domain <AD> --shape VM.Standard.E4.Flex \
+     --shape-config '{"ocpus":16,"memoryInGBs":64}' \
+     --image-id <ubuntu-22.04-image-ocid> --subnet-id "$SUBNET" \
+     --assign-public-ip false --ssh-authorized-keys-file ~/.ssh/id_ed25519.pub \
+     --user-data-file infra/oci/cpu-batch-cloud-init.yaml \
+     --display-name acx-batch-<run-id>
+   ```
+
+   `<run-id>` format: `<model>-<substrate>-YYYYMMDD-HHMM` (e.g. `qwen30b-cpu-20260716-1430`).
+   GPU (A10 from the custom image, rotating AD-1/2/3) is opportunistic acceleration only — and
+   any launch from that image **must scrub the baked Tailscale identity** (cloud-init:
    `systemctl disable --now tailscaled && rm -rf /var/lib/tailscale`) — it carries the fixed
    node identity this doc's finding #4 diagnosed.
 9. Discover each VM's private IP:
    `oci compute instance list-vnics --instance-id <id> --query 'data[0]."private-ip"' --raw-output`
-   Then gate on **both** reachability and provisioning before handing the VM to the batch driver:
+   Then gate on **both** reachability and provisioning:
    `ssh -o ConnectTimeout=30 -o BatchMode=yes ubuntu@<private-ip> 'timeout 1800 cloud-init status --wait'`
-   — SSH-up alone proves reachability, not that the multi-GB dep install finished. On failure,
-   rerun the Phase-0 ladder instead of relaunching the VM (the VM is almost never the problem;
-   this session proved it).
-10. Transfer the corpus with bounded I/O:
-    `rsync -az --timeout=60 -e "ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4" <originals>/ ubuntu@<private-ip>:corpus/`
-    (measure corpus bytes with `du -sh` before transfer; the 646-row TSV inventory has no size
-    column). Run the on-box describe/caption jobs using the **driver named in the matrix** for
-    that cell — there is no generic "run the job" step; a cell without a committed driver does
-    not launch.
-11. **Pull results before terminate** (a face-pass output was already lost once to ephemeral
-    storage): `rsync -az --timeout=60 ubuntu@<private-ip>:results/ docs/tasks/vlm/bakeoff-results/<run-id>/`,
-    verify **row count = corpus count**, commit — THEN terminate.
+   **Triage by failure class** — they are not interchangeable:
+   - *SSH connection fails* → network problem → walk the Phase-0 ladder (the VM is almost never
+     the problem; this session proved it).
+   - *Exit 124 (timeout)* → provisioning still running — the ~18 GB weight pull can exceed
+     30 min on throttled mirrors; extend the timeout or wait, don't touch the network.
+   - *cloud-init exit 1/2 (error/degraded)* → provisioning failed; SSH already proved
+     reachability, so read `/var/log/cloud-init-output.log` on the VM — the ladder will find
+     nothing.
+   For the **Qwen cell** add a server-readiness gate before the first request:
+   `curl -s --max-time 10 http://<private-ip>:8080/health` (needs step-7's `:8080` ACL widening) —
+   `cloud-init` done ≠ 18 GB model loaded.
+10. **On-box cells (Florence):** transfer the corpus with bounded I/O —
+    `rsync -az --timeout=60 -e "ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4" /Volumes/Butter/WP/vlm/app/public/wp-content/uploads/ ubuntu@<private-ip>:corpus/`
+    — then run the driver named in the matrix. A cell without a committed driver does not launch.
+    **Laptop-driven cells (Qwen):** no corpus transfer — `describe_baseline.py` streams each
+    image over `/v1/chat/completions`; run it from the laptop repo with `BAKEOFF_BASE_URL` set.
+    The laptop must stay awake for the run; the JSONL progressive log makes it resumable after
+    interruption (`CHUNK`-sized appends, completed IDs skipped on restart).
+11. **Secure results before terminate** (a face-pass output was already lost once to ephemeral
+    storage). *Florence (on-box results):*
+    `rsync -az --timeout=60 ubuntu@<private-ip>:results/ docs/tasks/vlm/bakeoff-results/<run-id>/`.
+    *Qwen (results land laptop-side in `docs/tasks/vlm/bakeoff-results/` already):* nothing to
+    pull. **Both:** verify **row count = corpus count**, commit — THEN terminate.
 12. Terminate the VM with `--preserve-boot-volume false` (otherwise boot volumes orphan and
     accumulate across launches). Nothing else to clean up — no Tailscale node, no security-list
     rule, no public IP.
@@ -256,10 +322,10 @@ half-built state is inert but must not linger unrecorded; note the abort in the 
 14. Once migrated, remove the stale public-IP SSH `/32` rules from the shared security list; keep
     batch subnets no-public-IP.
 15. **Router health + decommission:**
-    - *Health*: before each batch session, run the laptop-side checks (Phase 0 acceptance c) —
-      `tailscale status` plus `tailscale ping acx-backend`. If the router is down, dev access is
-      down (known SPOF, prod unaffected); break-glass fallback is **Option A** (per-VM ephemeral
-      key) for that session only.
+    - *Health*: before each batch session, run acceptance check c (laptop route present, plus
+      `tailscale ping acx-backend`). If the router is down, dev access is down (known SPOF, prod
+      unaffected); break-glass fallback is **Option A** (per-VM ephemeral key) for that session
+      only.
     - *Decommission* (retirement, or Phase-0 abort cleanup): on `acx-backend`
       `sudo tailscale up --advertise-routes=` (restating other flags), delete the route + ACL
       entry in the admin console, revert the sysctl forwarding entries, and delete
@@ -281,10 +347,11 @@ undesirable; it reintroduces per-VM secret handling.
   down. Production is unaffected (in-VCN). Mitigated by the Phase-3 health check + Option A
   break-glass; acceptable for dev.
 - **Prod host on the batch data plane**: with SNAT, all laptop↔VM bytes (corpus up, results
-  down) transit `acx-backend` as the relay hop. This is network relay only — no batch *compute*
-  on the prod host (the learnings doc forbids that) — but sustained multi-GB transfers share the
-  prod NIC; schedule large transfers off peak and watch the host during them. Weight downloads
-  (~18 GB/boot for Qwen) go via the NAT gateway, **not** through `acx-backend`.
+  down, Qwen request loop) transit `acx-backend` as the relay hop. This is network relay only —
+  no batch *compute* on the prod host (the learnings doc forbids that) — but sustained multi-GB
+  transfers share the prod NIC; schedule large transfers off peak and watch the host during
+  them. Weight downloads (~18 GB + mmproj per boot for Qwen) go via the NAT gateway, **not**
+  through `acx-backend`.
 - **CIDR overlap**: `marketing-vcn` also uses `10.0.0.0/16`. Mitigated by advertising only
   `10.0.2.0/24`; if marketing ever needs tailnet routing, it must be re-IPed or given a distinct
   advertised range first.
@@ -298,7 +365,9 @@ undesirable; it reintroduces per-VM secret handling.
 ## Immediate next action
 
 Operator runs **Phase 0** (agent can run OCI steps 1–3; Tailscale steps 4–7 are operator-only),
-finishing with the canary acceptance check (d). Then the agent runs the **Qwen CPU 10-image
-spike**, and on a ≤ 12 h projection launches the bake-off **CPU-first and private-only** in
-`acx-batch-subnet` — ending the security-list/IP churn permanently. The stranded public-IP VM#3
-(`132.145.140.89`) is already terminated.
+finishing with the canary acceptance check (d). In parallel, the agent completes handoff
+next-action **#6** (commit `florence_describe.py` + `infra/oci/cpu-batch-cloud-init.yaml`). Then:
+the **Qwen CPU 10-image spike**, and on its projection the **subset bake-off** (golden.json now,
+Golden-150 post-S1) — CPU-first and private-only in `acx-batch-subnet`, ending the
+security-list/IP churn permanently. The stranded public-IP VM#3 (`132.145.140.89`) is already
+terminated.

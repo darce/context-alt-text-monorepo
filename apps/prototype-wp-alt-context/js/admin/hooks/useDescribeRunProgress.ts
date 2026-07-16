@@ -23,7 +23,6 @@ import { JOB_PROGRESS_STALL_THRESHOLD_MS } from './useJobProgressStream';
 const DESCRIBE_RUN_POLL_INTERVAL_MS = 2_000;
 // Bounded retry so a single transient poll failure self-heals instead of freezing
 // the run (FE-02). Backoff caps at 8s; after these attempts the error is surfaced.
-const DESCRIBE_RUN_POLL_RETRIES = 3;
 
 export interface DescribeRunProgress {
   run: DescribeRunResponse | null;
@@ -49,8 +48,6 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
       return fetchBulkDescribeRun(runId);
     },
     enabled: runId !== null,
-    retry: DESCRIBE_RUN_POLL_RETRIES,
-    retryDelay: (attempt) => Math.min(1_000 * 2 ** attempt, 8_000),
     refetchInterval: gateRefetchInterval((q) => {
       if (q.state.status === 'error') {
         return false;

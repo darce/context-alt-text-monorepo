@@ -50,7 +50,7 @@ export const ScanActionPanel = ({ scanRun, onCancelScan, onRetryStream }: ScanAc
         </button>
       )}
       {statusText && (
-        <p className="acx-apply-panel__status">
+        <p className="acx-apply-panel__status" role="status" aria-live="polite">
           {sprintf(__('Job %s: %s', 'alt-context'), jobId ?? __('pending', 'alt-context'), statusText)}
         </p>
       )}
@@ -149,7 +149,7 @@ export const ScanActionPanel = ({ scanRun, onCancelScan, onRetryStream }: ScanAc
         </>
       )}
       {errorMessage && (
-        <div className="acx-apply-panel__status acx-apply-panel__status--error">
+        <div className="acx-apply-panel__status acx-apply-panel__status--error" role="alert">
           <p>{errorMessage}</p>
           {onRetryClustering && (
             <div className="acx-apply-panel__actions">

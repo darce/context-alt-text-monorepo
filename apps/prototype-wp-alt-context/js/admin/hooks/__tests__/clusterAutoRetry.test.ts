@@ -196,4 +196,25 @@ describe('createClusterAutoRetry', () => {
     vi.advanceTimersByTime(1000);
     expect(mutate).toHaveBeenCalledTimes(2);
   });
+  it('dispose latches: a late 429 after unmount schedules no zombie retry', () => {
+    const { mutate, controller } = buildHarness();
+
+    controller.start();
+    expect(mutate).toHaveBeenCalledTimes(1);
+
+    controller.dispose();
+
+    // 429 lands after unmount (mutation callbacks still fire post-unmount in RQ v5).
+    const scheduled = controller.noteError(rateLimited(2));
+    expect(scheduled).toBe(false);
+
+    vi.advanceTimersByTime(60_000);
+    expect(mutate).toHaveBeenCalledTimes(1);
+
+    // Latched for good: start/manualRetry are no-ops too.
+    controller.start();
+    controller.manualRetry();
+    expect(mutate).toHaveBeenCalledTimes(1);
+  });
+
 });

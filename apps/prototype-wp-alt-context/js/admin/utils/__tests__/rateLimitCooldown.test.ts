@@ -7,6 +7,7 @@ import {
   gateRefetchInterval,
   isCoolingDown,
   noteRateLimited,
+  runAfterCooldown,
 } from '../rateLimitCooldown';
 
 describe('rateLimitCooldown', () => {
@@ -49,16 +50,55 @@ describe('rateLimitCooldown', () => {
     expect(isCoolingDown()).toBe(false);
   });
 
-  it('gateRefetchInterval returns false during cooldown and baseMs after expiry', () => {
+  it('gateRefetchInterval returns remaining cooldown ms during cooldown, baseMs after expiry', () => {
     const interval = gateRefetchInterval(15_000);
 
     expect(interval()).toBe(15_000);
 
+    // Never false during cooldown: RQ clears a false interval permanently on idle pages.
     noteRateLimited(5);
-    expect(interval()).toBe(false);
+    expect(interval()).toBe(5000);
 
-    vi.advanceTimersByTime(5000);
+    vi.advanceTimersByTime(3000);
+    expect(interval()).toBe(2000);
+
+    vi.advanceTimersByTime(2000);
     expect(interval()).toBe(15_000);
+  });
+
+  it('gateRefetchInterval clamps a nearly-expired cooldown to a 1s floor', () => {
+    const interval = gateRefetchInterval(15_000);
+
+    noteRateLimited(5);
+    vi.advanceTimersByTime(4800);
+    expect(interval()).toBe(1000);
+  });
+
+  it('noteRateLimited never shortens an armed cooldown', () => {
+    noteRateLimited(60);
+    noteRateLimited(null); // headerless default 30s must not shrink the 60s deadline
+
+    expect(cooldownRemainingMs()).toBe(60_000);
+
+    noteRateLimited(90);
+    expect(cooldownRemainingMs()).toBe(90_000);
+  });
+
+  it('runAfterCooldown executes immediately when idle and defers during cooldown', () => {
+    const fn = vi.fn();
+
+    runAfterCooldown(fn);
+    expect(fn).toHaveBeenCalledTimes(1);
+
+    noteRateLimited(5);
+    runAfterCooldown(fn);
+    expect(fn).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(4999);
+    expect(fn).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(1);
+    expect(fn).toHaveBeenCalledTimes(2);
   });
 
   it('gateRefetchInterval composes with conditional interval functions', () => {
@@ -70,8 +110,8 @@ describe('rateLimitCooldown', () => {
     expect(interval({ active: false })).toBe(false);
 
     noteRateLimited(3);
-    expect(interval({ active: true })).toBe(false);
-    expect(interval({ active: false })).toBe(false);
+    expect(interval({ active: true })).toBe(3000);
+    expect(interval({ active: false })).toBe(3000);
 
     vi.advanceTimersByTime(3000);
     expect(interval({ active: true })).toBe(2000);

@@ -9,6 +9,7 @@ field is additive: an old-shape record scores byte-identically.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -20,12 +21,16 @@ from scripts.eval_harness.bakeoff import (
     PROMPT_VARIANTS,
     BakeoffClient,
     PassOneJSONError,
+    WeaveBenchRecordError,
+    WeaveBenchSourceError,
     _apply_face_gate,
+    _load_weave_bench_source,
     _parse_pass1_json,
     _stamp_pipeline_provenance,
     main,
+    weave_bench_run_record,
 )
-from scripts.eval_harness.cli import fetch_run_record
+from scripts.eval_harness.cli import BoundedStallError, fetch_run_record
 from scripts.eval_harness.manifest import GoldenManifest
 from scripts.eval_harness.report import build_reports, score_run_record
 
@@ -524,3 +529,284 @@ def test_new_shape_record_rescore_bit_identical() -> None:
     a = build_reports(record, _entries())
     b = build_reports(record, _entries())
     assert a == b
+
+
+# --- ALTQ-1 Slice 3: --weave-bench replay (pass-2 text-only, no image) ---------
+
+_WEAVE_CAPTION = "Caitlin Weaver stands at the waterline."
+
+
+def _weave_source_item(media_id: int, path: str, facts: str = _FACTS_JSON) -> dict:
+    """One item of a --two-pass GPU run record: passes[0] carries the pass-1 facts."""
+    return {
+        "media_id": media_id,
+        "path": path,
+        "describe": {
+            "adapter": "bakeoff",
+            "model_id": "qwen3-vl-30b",
+            "model_version": None,
+            "prompt_variant": "v2",
+            "alt_text_draft": _WEAVE_CAPTION,
+            "passes": [
+                {"pass": "describe_facts", "raw": facts, "latency_s": 8.1},
+                {"pass": "ground_weave", "raw": _WEAVE_CAPTION, "latency_s": 11.2},
+            ],
+        },
+        "identities": [],
+        "face_count": 0,
+        "error": None,
+        "latency_s": 19.3,
+    }
+
+
+def _weave_source_record(items: list[dict]) -> dict:
+    return {
+        "schema": "acx-eval/v1",
+        "kind": "run_record",
+        "provenance": {
+            "manifest_sha256": "f" * 64,
+            "base_url": "http://gpu.test:8080",
+            "head_sha": "a" * 40,
+            "started_at": "2026-07-16T00:00:00Z",
+            "prompt_variant": "v2",
+            "two_pass": True,
+        },
+        "items": items,
+    }
+
+
+def _weave_manifest(media_ids: list[int]) -> GoldenManifest:
+    entries = []
+    for i, media_id in enumerate(media_ids):
+        entries.append(
+            {
+                "path": f"img{i}.jpg",
+                "sha256": f"{i}" * 64,
+                "media_id": media_id,
+                "face_count": 0,
+                "present_identities": [],
+                "context_pack": {"caption": "Caitlin Weaver on the peninsula."},
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+            }
+        )
+    return GoldenManifest.model_validate({"manifest_version": 2, "roster": ["Caitlin Weaver"], "entries": entries})
+
+
+def test_weave_bench_messages_match_live_pass2_without_image() -> None:
+    """The replay weave message is byte-identical to live pass-2 minus ONLY the image part."""
+    pack = {"caption": "Caitlin Weaver on the peninsula."}
+    captured_live: list[dict] = []
+    live = _client(captured_live, [_FACTS_JSON, _WEAVE_CAPTION], two_pass=True, prompt_variant="v2")
+    _describe(live, dict(pack))
+    live_pass2 = captured_live[1]["payload"]
+
+    captured_bench: list[dict] = []
+    bench = _client(captured_bench, [_WEAVE_CAPTION], prompt_variant="v2")
+    bench.weave_bench_describe(media_id=7, facts_raw=_FACTS_JSON, context_pack=dict(pack))
+    bench_payload = captured_bench[0]["payload"]
+
+    assert _system_text(bench_payload) == _system_text(live_pass2)  # variant system + weave few-shot
+    assert _user_text(bench_payload) == _user_text(live_pass2)  # same fenced facts + context
+    assert "Maria Chen" in _system_text(bench_payload)  # mismatch few-shot present
+    assert _has_image_part(live_pass2)
+    assert not _has_image_part(bench_payload), "weave-bench must never send an image part"
+
+
+def test_weave_bench_describe_returns_scoreable_single_pass_shape() -> None:
+    captured: list[dict] = []
+    client = _client(captured, [_WEAVE_CAPTION], prompt_variant="v2")
+    describe = client.weave_bench_describe(media_id=7, facts_raw=_FACTS_JSON, context_pack={"caption": "x"})
+    assert describe["alt_text_draft"] == _WEAVE_CAPTION
+    assert describe["adapter"] == "bakeoff"
+    assert describe["prompt_variant"] == "v2"
+    assert [p["pass"] for p in describe["passes"]] == ["weave_bench"]
+    assert isinstance(describe["passes"][0]["latency_s"], float)
+
+
+def test_weave_bench_applies_context_distractor_transform_and_stamp() -> None:
+    """The replay shares the live fetch-time transforms — a distractor cell replays as one."""
+    captured: list[dict] = []
+    client = _client(
+        captured,
+        [_WEAVE_CAPTION],
+        eval_mode="context_distractor",
+        entry_traits={7: {"present": [], "easy_wrong": ["Mallory Trap"]}},
+    )
+    describe = client.weave_bench_describe(media_id=7, facts_raw=_FACTS_JSON, context_pack={"caption": "x"})
+    assert describe["injected_distractor"] == "Mallory Trap"
+    assert "Mallory Trap" in _user_text(captured[0]["payload"])
+
+
+def test_weave_bench_run_record_replays_and_stamps_source_provenance() -> None:
+    source = _weave_source_record([_weave_source_item(101, "img0.jpg"), _weave_source_item(102, "img1.jpg")])
+    manifest = _weave_manifest([101, 102])
+    captured: list[dict] = []
+    client = _client(captured, [_WEAVE_CAPTION, "A second caption."], prompt_variant="v2")
+    try:
+        record = weave_bench_run_record(
+            source, manifest, client, source_path="out/run-gpu.json", source_sha256="c" * 64, head_sha="deadbeef"
+        )
+    finally:
+        client.close()
+    prov = record["provenance"]
+    assert prov["weave_bench"] is True
+    assert prov["weave_bench_source"] == {
+        "path": "out/run-gpu.json",
+        "sha256": "c" * 64,
+        "manifest_sha256": "f" * 64,
+        "head_sha": "a" * 40,
+        "started_at": "2026-07-16T00:00:00Z",
+    }
+    assert record["kind"] == "run_record"
+    assert [i["error"] for i in record["items"]] == [None, None]
+    assert record["items"][0]["describe"]["alt_text_draft"] == _WEAVE_CAPTION
+    assert all(isinstance(i["latency_s"], float) for i in record["items"])
+    # scoring works UNCHANGED on the output — it is a normal caption run record
+    entries = [e.model_dump() for e in manifest.entries]
+    a = build_reports(record, entries)
+    b = build_reports(record, entries)
+    assert a == b, "re-score must stay bit-identical"
+    scored = json.loads(a[0])
+    assert scored["counts"] == {"total": 2, "scored": 2, "failed": 0}
+    assert scored["provenance"]["weave_bench"] is True
+    assert scored["latency"]["images_timed"] == 2  # Slice-3 latency axis rides the replay record
+    assert "weave-bench replay" in a[1]  # markdown attribution banner
+
+
+def test_weave_bench_missing_facts_is_typed_failure_and_run_continues() -> None:
+    no_passes = _weave_source_item(101, "img0.jpg")
+    del no_passes["describe"]["passes"]
+    fetch_failed = _weave_source_item(102, "img1.jpg")
+    fetch_failed["describe"] = None
+    fetch_failed["error"] = "RemoteClientError: timeout"
+    wrong_first = _weave_source_item(103, "img2.jpg")
+    wrong_first["describe"]["passes"] = [{"pass": "caption", "raw": "a dual-length long", "latency_s": 1.0}]
+    good = _weave_source_item(104, "img3.jpg")
+    source = _weave_source_record([no_passes, fetch_failed, wrong_first, good])
+    manifest = _weave_manifest([101, 102, 103, 104])
+    captured: list[dict] = []
+    client = _client(captured, [_WEAVE_CAPTION])
+    try:
+        record = weave_bench_run_record(
+            source, manifest, client, source_path="s.json", source_sha256="c" * 64, head_sha="d"
+        )
+    finally:
+        client.close()
+    errors = [i["error"] for i in record["items"]]
+    assert all(e is not None and "WeaveBenchSourceError" in e for e in errors[:3])
+    assert errors[3] is None
+    assert record["items"][3]["describe"]["alt_text_draft"] == _WEAVE_CAPTION
+    assert len(captured) == 1, "only the replayable item may reach the endpoint"
+
+
+def test_weave_bench_media_id_missing_from_manifest_is_per_item_failure() -> None:
+    source = _weave_source_record([_weave_source_item(999, "img0.jpg")])
+    manifest = _weave_manifest([101])
+    client = _client([], [_WEAVE_CAPTION])
+    try:
+        record = weave_bench_run_record(
+            source, manifest, client, source_path="s.json", source_sha256="c" * 64, head_sha="d"
+        )
+    finally:
+        client.close()
+    assert "WeaveBenchSourceError" in record["items"][0]["error"]
+    assert "999" in record["items"][0]["error"]
+
+
+def test_weave_bench_bounded_stall_aborts_with_partial_record() -> None:
+    items = []
+    for i in range(4):
+        item = _weave_source_item(101 + i, f"img{i}.jpg")
+        del item["describe"]["passes"]
+        items.append(item)
+    source = _weave_source_record(items)
+    manifest = _weave_manifest([101, 102, 103, 104])
+    client = _client([], [_WEAVE_CAPTION])
+    try:
+        with pytest.raises(BoundedStallError) as excinfo:
+            weave_bench_run_record(
+                source, manifest, client, source_path="s.json", source_sha256="c" * 64, head_sha="d", stall_limit=3
+            )
+    finally:
+        client.close()
+    partial = excinfo.value.partial_record
+    assert partial["aborted"] is True
+    assert partial["provenance"]["weave_bench"] is True
+    assert len(partial["items"]) == 3
+    assert all(i["error"] is not None for i in partial["items"])
+
+
+def test_load_weave_bench_source_returns_record_and_file_sha(tmp_path: Path) -> None:
+    source = _weave_source_record([_weave_source_item(101, "img0.jpg")])
+    path = tmp_path / "run.json"
+    path.write_text(json.dumps(source))
+    record, sha = _load_weave_bench_source(path)
+    assert record["items"][0]["media_id"] == 101
+    assert sha == hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_load_weave_bench_source_rejects_malformed_records(tmp_path: Path) -> None:
+    """Malformed source record => clear whole-run abort, never a silent partial replay."""
+    not_json = tmp_path / "bad.json"
+    not_json.write_text("{nope")
+    with pytest.raises(WeaveBenchRecordError, match="not readable JSON"):
+        _load_weave_bench_source(not_json)
+
+    not_object = tmp_path / "list.json"
+    not_object.write_text("[1, 2]")
+    with pytest.raises(WeaveBenchRecordError, match="JSON object"):
+        _load_weave_bench_source(not_object)
+
+    report_doc = tmp_path / "report.json"
+    report_doc.write_text(json.dumps({"schema": "acx-eval/v1", "kind": "report", "provenance": {}, "items": [{}]}))
+    with pytest.raises(WeaveBenchRecordError, match="run_record"):
+        _load_weave_bench_source(report_doc)
+
+    no_items = tmp_path / "empty.json"
+    no_items.write_text(json.dumps({"schema": "acx-eval/v1", "kind": "run_record", "provenance": {}, "items": []}))
+    with pytest.raises(WeaveBenchRecordError, match="no items"):
+        _load_weave_bench_source(no_items)
+
+    missing = tmp_path / "does-not-exist.json"
+    with pytest.raises(WeaveBenchRecordError, match="not readable"):
+        _load_weave_bench_source(missing)
+
+
+def test_weave_bench_facts_missing_raw_is_typed_failure() -> None:
+    item = _weave_source_item(101, "img0.jpg")
+    item["describe"]["passes"][0]["raw"] = None  # failed pass-1 recorded raw=None
+    source = _weave_source_record([item, _weave_source_item(102, "img1.jpg")])
+    manifest = _weave_manifest([101, 102])
+    captured: list[dict] = []
+    client = _client(captured, [_WEAVE_CAPTION])
+    try:
+        record = weave_bench_run_record(
+            source, manifest, client, source_path="s.json", source_sha256="c" * 64, head_sha="d"
+        )
+    finally:
+        client.close()
+    assert "WeaveBenchSourceError" in record["items"][0]["error"]
+    assert record["items"][1]["error"] is None
+
+
+def test_weave_bench_cli_flag_rejects_two_pass_and_dual_length() -> None:
+    for extra in ("--two-pass", "--dual-length"):
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--endpoint", "http://x", "--model-id", "m", "--weave-bench", "r.json", extra])
+        assert "--weave-bench" in str(excinfo.value)
+
+
+def test_weave_bench_cli_aborts_on_malformed_source_without_images_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The replay is text-only: GOLDEN_IMAGES_DIR must not be required, and a malformed
+    source aborts loudly before any manifest load or endpoint call."""
+    monkeypatch.setenv("ACX_EVAL_LIVE", "1")
+    monkeypatch.delenv("GOLDEN_IMAGES_DIR", raising=False)
+    bad = tmp_path / "source.json"
+    bad.write_text("{not json")
+    with pytest.raises(SystemExit) as excinfo:
+        main(["--endpoint", "http://x", "--model-id", "m", "--weave-bench", str(bad)])
+    assert "WeaveBenchRecordError" in str(excinfo.value)

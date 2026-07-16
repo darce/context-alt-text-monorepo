@@ -24,6 +24,7 @@ import {
   type UpdateRetentionPolicyRequest,
 } from '../api/recognition';
 import { queryKeys } from '../api/queryKeys';
+import { gateRefetchInterval } from '../utils/rateLimitCooldown';
 
 export const useRetentionStatus = () =>
   useQuery<RetentionStatusResponse>({
@@ -64,13 +65,13 @@ export const useExportJobStatus = (jobId: string | null): UseQueryResult<ExportJ
       return getExportJobStatus(jobId);
     },
     enabled: jobId !== null,
-    refetchInterval: (query) => {
+    refetchInterval: gateRefetchInterval((query) => {
       const status = query.state.data?.status;
       if (status === 'completed' || status === 'failed') {
         return false;
       }
       return 2000;
-    },
+    }),
   });
 
 export const useDownloadExportJobData = () =>

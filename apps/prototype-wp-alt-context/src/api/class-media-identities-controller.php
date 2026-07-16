@@ -227,9 +227,14 @@ class MediaIdentitiesController extends AbstractRecognitionProxyController {
 	}
 
 	/**
-	 * Mirrors ClusterProjectionSyncService::maybe_bootstrap_after_proxy_read:
-	 * after a successful proxy read, converge the projection via an inline
-	 * pull, falling back to one deduped cron event when the inline pull fails.
+	 * After a successful proxy read, converge the projection via an inline
+	 * pull, falling back to one deduped cron event when the inline pull does
+	 * not succeed. Unlike ClusterProjectionSyncService::maybe_bootstrap_after_proxy_read
+	 * the inline leg is cooldown-gated (`perform()`, not the bypass): this runs on
+	 * the visitor read path, so SyncPullJob's failure cooldowns bound repeated
+	 * pull cost during partial outages and dedup concurrent requests; a
+	 * cooldown-skipped pull still schedules the cron fallback, which performs
+	 * the bypass pull. A throwing pull must never break the proxy response.
 	 */
 	private function maybe_bootstrap_after_proxy_read( string $tenant_id, WP_REST_Response|WP_Error $response ): WP_REST_Response|WP_Error {
 		if ( ! ( $response instanceof WP_REST_Response ) ) {
@@ -245,7 +250,21 @@ class MediaIdentitiesController extends AbstractRecognitionProxyController {
 			return $response;
 		}
 
-		$inline_result = $sync_pull_job->perform_bypass_cooldown( $tenant_id );
+		try {
+			$inline_result = $sync_pull_job->perform( $tenant_id );
+		} catch ( Throwable $throwable ) {
+			do_action(
+				'acx_sync_pull_failed',
+				array(
+					'tenant_id' => $tenant_id,
+					'context' => 'bootstrap_after_proxy_read',
+					'message' => $throwable->getMessage(),
+				)
+			);
+			$this->schedule_bootstrap_sync_event( $tenant_id );
+			return $response;
+		}
+
 		if ( ! $inline_result->is_success() ) {
 			$this->schedule_bootstrap_sync_event( $tenant_id );
 		}

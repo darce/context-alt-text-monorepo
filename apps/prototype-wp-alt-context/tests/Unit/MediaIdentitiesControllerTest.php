@@ -94,6 +94,7 @@ class MediaIdentitiesControllerTest extends TestCase
         $this->assertSame([], $data['identities_by_media'] ?? null);
         $this->assertSame('unavailable', $data['data_source'] ?? null);
         // E15-37 Slice 1: a dead backend triggers neither an inline pull nor a scheduled bootstrap.
+        $this->assertSame([], $pullJob->performCalls);
         $this->assertSame([], $pullJob->bypassCalls);
         $this->assertSame([], $this->scheduledBootstrapEvents());
     }
@@ -181,7 +182,8 @@ class MediaIdentitiesControllerTest extends TestCase
 
         $data = $response->get_data();
         $this->assertSame(RecognitionDataSource::BACKEND_PROXY, $data['data_source'] ?? null);
-        $this->assertSame([self::currentTenantId()], $pullJob->bypassCalls, 'Inline bootstrap pull expected in-request.');
+        $this->assertSame([self::currentTenantId()], $pullJob->performCalls, 'Inline bootstrap pull expected in-request.');
+        $this->assertSame([], $pullJob->bypassCalls, 'Inline leg is cooldown-gated; bypass is reserved for the cron handler.');
         $this->assertSame([], $this->scheduledBootstrapEvents(), 'No cron fallback when the inline pull succeeds.');
     }
 
@@ -190,7 +192,7 @@ class MediaIdentitiesControllerTest extends TestCase
         $membersRepo = new NullIdentityMembersRepository();
         $syncRepo = new NullSyncStateRepository();
         $pullJob = new SpySyncPullJob();
-        $pullJob->succeed = false;
+        $pullJob->performResult = SyncPullResult::failed();
 
         $controller = new MediaIdentitiesController($membersRepo, $syncRepo, new MemberResponseMapper(), $pullJob);
         $this->queueHttpResponse([
@@ -212,6 +214,70 @@ class MediaIdentitiesControllerTest extends TestCase
 
         $controller->get_media_identities($request);
         $this->assertCount(1, $this->scheduledBootstrapEvents(), 'Queued event must dedup the second read.');
+    }
+
+    public function testMediaIdentitiesColdStartCooldownSkippedInlinePullStillSchedulesFallback(): void
+    {
+        $membersRepo = new NullIdentityMembersRepository();
+        $syncRepo = new NullSyncStateRepository();
+        $pullJob = new SpySyncPullJob();
+        $pullJob->performResult = SyncPullResult::skipped();
+
+        $controller = new MediaIdentitiesController($membersRepo, $syncRepo, new MemberResponseMapper(), $pullJob);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '[{"identity_id":"identity-1","media_id":22}]',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/media-identities');
+        $request->set_param('media_ids', [22]);
+
+        $response = $controller->get_media_identities($request);
+
+        $data = $response->get_data();
+        $this->assertSame(RecognitionDataSource::BACKEND_PROXY, $data['data_source'] ?? null);
+        $this->assertSame([self::currentTenantId()], $pullJob->performCalls);
+        $events = $this->scheduledBootstrapEvents();
+        $this->assertCount(1, $events, 'Cooldown-skipped inline pull must leave the deduped cron fallback scheduled.');
+        $this->assertSame([self::currentTenantId()], array_values($events)[0]['args']);
+    }
+
+    public function testMediaIdentitiesInlinePullThrowableKeepsProxyResponseIntact(): void
+    {
+        $membersRepo = new NullIdentityMembersRepository();
+        $syncRepo = new NullSyncStateRepository();
+        $pullJob = new SpySyncPullJob();
+        $pullJob->performThrows = new \RuntimeException('pull boom');
+
+        $received = [];
+        add_action('acx_sync_pull_failed', static function (array $payload) use (&$received): void {
+            $received[] = $payload;
+        });
+
+        $controller = new MediaIdentitiesController($membersRepo, $syncRepo, new MemberResponseMapper(), $pullJob);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '[{"identity_id":"identity-1","media_id":22}]',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/media-identities');
+        $request->set_param('media_ids', [22]);
+
+        $response = $controller->get_media_identities($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $data = $response->get_data();
+        $this->assertSame(RecognitionDataSource::BACKEND_PROXY, $data['data_source'] ?? null);
+        $this->assertArrayHasKey('22', $data['identities_by_media'] ?? []);
+
+        $this->assertCount(1, $received, 'A throwing inline pull must fire the failure action.');
+        $this->assertSame('bootstrap_after_proxy_read', $received[0]['context'] ?? null);
+        $this->assertSame('pull boom', $received[0]['message'] ?? null);
+
+        $events = $this->scheduledBootstrapEvents();
+        $this->assertCount(1, $events, 'A throwing inline pull must schedule the deduped cron fallback.');
+        $this->assertSame([self::currentTenantId()], array_values($events)[0]['args']);
     }
 
     public function testMediaIdentitiesColdStartProxyReadConvergesSoFollowUpReadServesLocalProjection(): void
@@ -238,7 +304,7 @@ class MediaIdentitiesControllerTest extends TestCase
         };
         $syncRepo = new NullSyncStateRepository();
         $pullJob = new SpySyncPullJob();
-        $pullJob->onBypass = static function () use ($membersRepo): void {
+        $pullJob->onPerform = static function () use ($membersRepo): void {
             $membersRepo->hasRows = true;
         };
 
@@ -484,16 +550,34 @@ class MediaIdentitiesControllerTest extends TestCase
 final class SpySyncPullJob implements SyncPullJobInterface
 {
     /** @var list<string> */
+    public array $performCalls = [];
+
+    /** @var list<string> */
     public array $bypassCalls = [];
 
     public bool $succeed = true;
+
+    public ?SyncPullResult $performResult = null;
+
+    public ?\Throwable $performThrows = null;
+
+    /** @var ?callable(string):void */
+    public $onPerform = null;
 
     /** @var ?callable(string):void */
     public $onBypass = null;
 
     public function perform(string $tenant_id): SyncPullResult
     {
-        return SyncPullResult::ok();
+        $this->performCalls[] = $tenant_id;
+        if (null !== $this->performThrows) {
+            throw $this->performThrows;
+        }
+        if (null !== $this->onPerform) {
+            ($this->onPerform)($tenant_id);
+        }
+
+        return $this->performResult ?? SyncPullResult::ok();
     }
 
     public function perform_bypass_cooldown(string $tenant_id): SyncPullResult

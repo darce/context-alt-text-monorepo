@@ -407,6 +407,7 @@ _W1_LOCAL_PATH = "localwp/uploads/jane-doe-birthday.jpg"
 _W1_LOCAL_NAME = "Jane Doe Private"
 _W1_PUBLIC_PATH = "celebs01/obama-podium.jpg"
 _W1_PUBLIC_NAME = "Barack Obama"
+_W1_INTERNAL_BASE_URL = "https://acx-backend.internal.example.ts.net"
 
 
 def _w1_audience_manifest_and_record(tmp_path):
@@ -451,7 +452,12 @@ def _w1_audience_manifest_and_record(tmp_path):
             {
                 "schema": SCHEMA,
                 "kind": DocKind.RUN_RECORD.value,
-                "provenance": {"manifest_sha256": "0" * 64, "base_url": "x", "head_sha": "f" * 40, "started_at": "t"},
+                "provenance": {
+                    "manifest_sha256": "0" * 64,
+                    "base_url": _W1_INTERNAL_BASE_URL,
+                    "head_sha": "f" * 40,
+                    "started_at": "t",
+                },
                 "items": [
                     {
                         "media_id": 10,
@@ -498,6 +504,7 @@ def test_cmd_score_public_audience_emits_redacted_public_artifact(tmp_path, monk
         assert _W1_LOCAL_PATH not in blob
         assert _W1_LOCAL_NAME not in blob
         assert "Wrong Celebrity" not in blob  # wrong_names pair from the local item
+        assert _W1_INTERNAL_BASE_URL not in blob  # run-level endpoint redacted (VLM6-S5-BR-01)
     assert _W1_PUBLIC_NAME in public_json
     # The full LOCAL report is still written for operator triage, unredacted.
     local_json = (tmp_path / "run-x-report.json").read_text()

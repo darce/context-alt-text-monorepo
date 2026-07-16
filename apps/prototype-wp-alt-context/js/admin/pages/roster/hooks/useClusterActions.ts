@@ -6,6 +6,8 @@ import type { BatchAnalyzeResponse } from '../../../api/recognition';
 import { commitClusterToRosterEntry } from '../../../api/rosterApi';
 import { dismissCluster, mergeCluster, reassignClusterIdentity, scanFacesBatched } from '../../../api/recognition';
 import { useToast } from '../../../context/ToastContext';
+import { offlineActionReason, useRemoteActionGate } from '../../../hooks/useRemoteActionGate';
+import { useSyncOffline } from '../../../hooks/useSyncOffline';
 
 interface ClusterActionOptions {
   onReassignSettled?: () => void;
@@ -25,6 +27,9 @@ export const useClusterActions = ({
   const queryClient = useQueryClient();
   const { success, error: showToastError } = useToast();
   const [bulkMergeProgress, setBulkMergeProgress] = React.useState<{ current: number; total: number } | null>(null);
+  // RES-15: gate sensitive rescan only — curation (merge/reassign/commit/dismiss) stays live offline.
+  const offline = useSyncOffline();
+  const rescanGate = useRemoteActionGate(offline);
 
   const reassignMutation = useMutation<void, Error, { faceId: string; targetClusterId: string | null }>({
     mutationFn: (variables) =>
@@ -42,7 +47,12 @@ export const useClusterActions = ({
     Error,
     { cluster: { id: string; sample_identities: { media_id: number }[] }; mediaIds: number[] }
   >({
-    mutationFn: ({ cluster, mediaIds }) => scanFacesBatched({ mediaIds, sensitivity: 'high', clusterId: cluster.id }),
+    mutationFn: ({ cluster, mediaIds }) => {
+      if (offline) {
+        throw new Error(offlineActionReason());
+      }
+      return scanFacesBatched({ mediaIds, sensitivity: 'high', clusterId: cluster.id });
+    },
     onSuccess: (data) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
       const firstJob = data.jobs[0];
@@ -132,6 +142,7 @@ export const useClusterActions = ({
     bulkMergeMutation,
     bulkDismissMutation,
     bulkMergeProgress,
+    rescanGate,
     errorMessage:
       reassignMutation.error?.message ??
       rescanMutation.error?.message ??

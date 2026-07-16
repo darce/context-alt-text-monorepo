@@ -6,6 +6,42 @@ export interface HTTPOptions {
 }
 
 /**
+ * Typed non-ok HTTP failure. Message format matches the legacy bare Error so
+ * catch sites that sniff `.message` keep working.
+ * AbortError / timeout rejections are never wrapped — they pass through fetch.
+ */
+export class HTTPError extends Error {
+  readonly status: number;
+  readonly retryAfterSeconds: number | null;
+
+  constructor(message: string, status: number, retryAfterSeconds: number | null) {
+    super(message);
+    this.name = 'HTTPError';
+    this.status = status;
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
+/**
+ * Parse Retry-After as integer delta-seconds only. Absent or unparseable → null.
+ * HTTP-date form is intentionally ignored (MVP uses the service's integer seconds).
+ */
+export const parseRetryAfterSeconds = (value: string | null): number | null => {
+  if (value === null) {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    return null;
+  }
+  const seconds = Number(trimmed);
+  if (!Number.isFinite(seconds)) {
+    return null;
+  }
+  return seconds;
+};
+
+/**
  * Strip trailing slash from a URL path.
  */
 export const stripTrailingSlash = (value: string): string => (value.endsWith('/') ? value.slice(0, -1) : value);
@@ -44,7 +80,13 @@ export const fetchApi = async <T>(endpoint: string, options: HTTPOptions = {}): 
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`Request to ${endpoint} failed (${response.status}): ${errorText}`);
+    const status = response.status;
+    const retryAfterSeconds = parseRetryAfterSeconds(response.headers.get('Retry-After'));
+    throw new HTTPError(
+      `Request to ${endpoint} failed (${status}): ${errorText}`,
+      status,
+      retryAfterSeconds,
+    );
   }
 
   // 204/205 intentionally return no body.

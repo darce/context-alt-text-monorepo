@@ -16,6 +16,7 @@ interface UseJobStateMachineDerivedStateOptions {
   latestJobId: string | null;
   scanPending: boolean;
   clusterPending: boolean;
+  clusterQueuedSeconds?: number | null;
   waitingForCompletion: boolean;
   scanStatus: JobStatusResponse | undefined;
   batchRunStatus?: BatchRunStatus;
@@ -32,6 +33,7 @@ export const useJobStateMachineDerivedState = ({
   latestJobId,
   scanPending,
   clusterPending,
+  clusterQueuedSeconds = null,
   waitingForCompletion,
   scanStatus,
   batchRunStatus,
@@ -43,6 +45,7 @@ export const useJobStateMachineDerivedState = ({
     () =>
       buildStatusText({
         clusterPending,
+        clusterQueuedSeconds,
         sseStatus,
         sseProgress,
         activeJobIds,
@@ -51,7 +54,17 @@ export const useJobStateMachineDerivedState = ({
         latestJobId,
         scanPending,
       }),
-    [activeJobIds, batchRunStatus, clusterPending, latestJobId, scanPending, scanStatus, sseProgress, sseStatus],
+    [
+      activeJobIds,
+      batchRunStatus,
+      clusterPending,
+      clusterQueuedSeconds,
+      latestJobId,
+      scanPending,
+      scanStatus,
+      sseProgress,
+      sseStatus,
+    ],
   );
 
   const rawScanProgress = useMemo(

@@ -1,12 +1,16 @@
 import { __, sprintf } from '@wordpress/i18n';
 
 import type { BatchRunStatus, JobProgress, JobStatusResponse } from '../api/recognition/types/scan';
+import { JOB_PHASE_PRESENTATION } from '../pages/workbench/phasePresentation';
+import { formatClusterQueuedStatus } from './clusterAutoRetry';
 import type { PersistedJob } from './useJobPersistence';
 import type { JobStatus } from './useJobProgressStream';
 import { isScanSuccessStatus, isScanTerminalStatus, type PipelinePhase } from './jobStateMachineUtils';
 
 interface StatusTextParams {
   clusterPending: boolean;
+  /** Seconds until the next bounded cluster auto-retry (honest queued status). */
+  clusterQueuedSeconds?: number | null;
   sseStatus: JobStatus;
   sseProgress: JobProgress | null;
   activeJobIds: string[];
@@ -18,6 +22,7 @@ interface StatusTextParams {
 
 export const buildStatusText = ({
   clusterPending,
+  clusterQueuedSeconds,
   sseStatus,
   sseProgress,
   activeJobIds,
@@ -26,15 +31,26 @@ export const buildStatusText = ({
   latestJobId,
   scanPending,
 }: StatusTextParams): string | undefined => {
+  // Cross-signal precedence below (which signal wins) is behavior and stays
+  // here; every phase-derived string comes from JOB_PHASE_PRESENTATION.
+  // Queued auto-retry sits above live clustering progress so AGT-10 stays honest
+  // while the mutation is idle between 429 attempts.
+  if (typeof clusterQueuedSeconds === 'number' && clusterQueuedSeconds > 0) {
+    return formatClusterQueuedStatus(clusterQueuedSeconds);
+  }
+
   if (clusterPending || sseProgress?.phase === 'clustering') {
     if (sseProgress) {
-      return sprintf(__('Clustering %d/%d identities…', 'alt-context'), sseProgress.completed, sseProgress.total);
+      return JOB_PHASE_PRESENTATION.clustering.status({
+        completed: sseProgress.completed,
+        total: sseProgress.total,
+      });
     }
-    return __('Clustering faces…', 'alt-context');
+    return JOB_PHASE_PRESENTATION.clustering.statusFallback;
   }
 
   if (sseProgress?.phase === 'awaiting_projection' || scanStatus?.progress?.phase === 'awaiting_projection') {
-    return __('Syncing projected results…', 'alt-context');
+    return JOB_PHASE_PRESENTATION.awaiting_projection.statusFallback;
   }
 
   if (batchRunStatus && batchRunStatus.submitted_total > 0) {
@@ -56,20 +72,21 @@ export const buildStatusText = ({
 
   if (activeJobIds.length > 0) {
     if (sseProgress?.phase === 'queued') {
-      return sprintf(__('Queued %d items…', 'alt-context'), sseProgress.total);
+      return JOB_PHASE_PRESENTATION.queued.status({
+        completed: sseProgress.completed,
+        total: sseProgress.total,
+      });
     }
     if (sseProgress?.phase === 'detecting') {
+      // Signal selection (images_processed over completed) stays here; the
+      // faces-found copy variants live in the map's builder.
       const processed = sseProgress.images_processed ?? sseProgress.completed;
       const faces = sseProgress.faces_found;
-      if (typeof faces === 'number') {
-        return sprintf(
-          __('Detecting faces… %d/%d processed · %d faces found', 'alt-context'),
-          processed,
-          sseProgress.total,
-          faces,
-        );
-      }
-      return sprintf(__('Detecting faces… %d/%d processed', 'alt-context'), processed, sseProgress.total);
+      return JOB_PHASE_PRESENTATION.detecting.status({
+        completed: processed,
+        total: sseProgress.total,
+        ...(typeof faces === 'number' ? { facesFound: faces } : {}),
+      });
     }
     if (isScanSuccessStatus(sseStatus)) {
       return 'completed';

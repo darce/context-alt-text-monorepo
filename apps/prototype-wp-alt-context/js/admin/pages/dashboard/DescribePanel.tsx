@@ -2,6 +2,8 @@ import React, { useId, useState } from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 
 import { useDescribeMedia } from '../../hooks/useDescribeMedia';
+import { useRemoteActionGate } from '../../hooks/useRemoteActionGate';
+import { useSyncOffline } from '../../hooks/useSyncOffline';
 import { resolveDescribeErrorMessage } from '../../api/describeApi';
 
 /**
@@ -14,10 +16,13 @@ export const DescribePanel = (): React.JSX.Element => {
   const inputId = useId();
   const [mediaIdInput, setMediaIdInput] = useState('');
   const mutation = useDescribeMedia();
+  // RES-15/RES-03: fold offline into canSubmit + handleSubmit so Enter cannot bypass.
+  const offline = useSyncOffline();
+  const remoteGate = useRemoteActionGate(offline);
 
   const parsedId = Number.parseInt(mediaIdInput, 10);
   const hasValidId = Number.isInteger(parsedId) && parsedId > 0;
-  const canSubmit = hasValidId && !mutation.isPending;
+  const canSubmit = hasValidId && !mutation.isPending && !offline;
 
   const handleSubmit = (event: React.FormEvent): void => {
     event.preventDefault();
@@ -59,7 +64,13 @@ export const DescribePanel = (): React.JSX.Element => {
           onChange={(event) => setMediaIdInput(event.target.value)}
           placeholder={__('e.g. 42', 'alt-context')}
         />
-        <button type="submit" className="acx-button acx-button--primary" disabled={!canSubmit}>
+        <button
+          type="submit"
+          className="acx-button acx-button--primary"
+          disabled={!canSubmit}
+          aria-disabled={remoteGate['aria-disabled']}
+          title={remoteGate.title}
+        >
           {mutation.isPending ? __('Describing…', 'alt-context') : __('Describe with AI', 'alt-context')}
         </button>
       </form>

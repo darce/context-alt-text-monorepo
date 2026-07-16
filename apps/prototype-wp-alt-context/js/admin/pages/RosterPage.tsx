@@ -300,6 +300,9 @@ export const RosterPage = (): React.JSX.Element => {
         onClose={handleCloseDrawer}
         onRescanCluster={handleRescanCluster}
         isRescanning={actions.rescanMutation.isPending}
+        rescanDisabled={actions.rescanGate.disabled}
+        rescanTitle={actions.rescanGate.title}
+        rescanAriaDisabled={actions.rescanGate['aria-disabled']}
         onCommitCluster={handleCommitCluster}
         onOpenPersonWorkspace={handleOpenPersonWorkspace}
         isCommitting={actions.commitMutation.isPending}

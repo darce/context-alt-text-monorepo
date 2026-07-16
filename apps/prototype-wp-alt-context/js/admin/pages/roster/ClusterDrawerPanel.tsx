@@ -17,6 +17,10 @@ interface Props {
   onClose: () => void;
   onRescanCluster: (cluster: ClusterSummary, identities: ClusterIdentity[]) => void;
   isRescanning: boolean;
+  /** Remote-compute offline gate for sensitive rescan (RES-15). */
+  rescanDisabled?: boolean;
+  rescanTitle?: string;
+  rescanAriaDisabled?: true;
   onCommitCluster: (cluster: ClusterSummary, assignment: { rosterEntryId?: number; newEntryName?: string }) => void;
   onOpenPersonWorkspace: (personUuid: string) => void;
   isCommitting: boolean;
@@ -39,6 +43,9 @@ export const ClusterDrawerPanel = ({
   onClose,
   onRescanCluster,
   isRescanning,
+  rescanDisabled = false,
+  rescanTitle,
+  rescanAriaDisabled,
   onCommitCluster,
   onOpenPersonWorkspace,
   isCommitting,
@@ -245,7 +252,9 @@ export const ClusterDrawerPanel = ({
             type="button"
             className="acx-apply-panel__scan"
             onClick={() => onRescanCluster(cluster, identitiesToDisplay)}
-            disabled={isRescanning || !hasIdentities}
+            disabled={isRescanning || !hasIdentities || rescanDisabled}
+            aria-disabled={rescanAriaDisabled}
+            title={rescanTitle}
           >
             {isRescanning ? __('Rescanning…', 'alt-context') : __('Rescan with sensitive settings', 'alt-context')}
           </button>

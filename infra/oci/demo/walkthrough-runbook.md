@@ -7,7 +7,7 @@ Reuse E15-5 / E15-22 evidence headings in `docs/tasks/15.0/E15-28-demo-smoke-log
 
 - [ ] E15-3a LocalWP → OCI round-trip gate passed
 - [ ] E15-22 Workbench avatar / review-drawer proof captured
-- [ ] `make deploy-demo` succeeded (stack + bootstrap + Caddy)
+- [ ] `make deploy-demo` succeeded (stack + bootstrap + Caddy) — or laptop-free via CI: `gh workflow run deploy-demo.yml -f confirm=PROMOTE` (see `docs/runbooks/deploy-demo-cicd.md`)
 - [ ] Tenant/key minted with **explicit UUID** (`tenant-mint-runbook.md`)
 - [ ] `RECOGNITION_ALLOWED_ORIGINS` includes `https://demo.altcontext.com`
 - [ ] Seed media imported (`seed/import.sh`) with provenance table filled
@@ -59,7 +59,7 @@ paste-ready `demo-walkthrough-smoke-log-fragment.md`. First-time setup:
 `(cd apps/prototype-wp-alt-context && npm ci && npm run e2e:install)`. Auth needs
 `ACX_E2E_WP_ADMIN_USER` / `ACX_E2E_WP_ADMIN_PASS`. Runs against the demo origin by
 default; for LocalWP (no wp-config constants) use
-`WP_BASE_URL=http://localhost:10010 ACX_E2E_REQUIRE_CONSTANT_PROVENANCE=0 make demo-walkthrough-proof`.
+`WP_BASE_URL=http://localhost:10010 ACX_E2E_REQUIRE_CONSTANT_PROVENANCE=0 ACX_E2E_REQUIRE_SERVICE_TARGET=0 make demo-walkthrough-proof` (the second flag keeps the RECOG-1 service-target gate from false-failing when the wp-config dev hatch is active).
 
 Playwright nests artifacts in a per-test subdir under
 `apps/prototype-wp-alt-context/local/playwright/<task-ref>/evidence/`; locate the

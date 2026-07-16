@@ -11,6 +11,7 @@ import {
   type SettingsResponse,
 } from '../api/settingsApi';
 import { resetConfigCache } from '../api/config';
+import { queryKeys } from '../api/queryKeys';
 import { SettingsForm } from './settings/SettingsForm';
 import { SettingsRoutingBanner } from './settings/SettingsRoutingBanner';
 import { TestConnectionBannerView } from './settings/TestConnectionBannerView';
@@ -44,6 +45,9 @@ export const SettingsPage = (): React.JSX.Element => {
       dispatch({ type: 'setSaveMessage', message: __('Settings saved.', 'alt-context'), tone: 'success' });
       dispatch({ type: 'setApiKey', value: '' });
       await queryClient.invalidateQueries({ queryKey: ['settings'] });
+      // A saved URL/key may repair the recognition breaker; refetch sync health
+      // so the degraded/offline banner clears without waiting for its 15s poll.
+      await queryClient.invalidateQueries({ queryKey: queryKeys.sync.health() });
       const refreshed = await queryClient.fetchQuery({
         queryKey: ['settings'],
         queryFn: fetchSettings,
@@ -63,6 +67,9 @@ export const SettingsPage = (): React.JSX.Element => {
     mutationFn: testConnection,
     onSuccess: (data) => {
       dispatch({ type: 'setTestResult', value: data });
+      // A reachable probe (or an adopted tenant) means the service is back;
+      // refetch sync health so the offline banner clears immediately.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.sync.health() });
     },
     onError: () => {
       dispatch({

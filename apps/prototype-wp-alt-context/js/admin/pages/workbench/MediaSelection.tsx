@@ -1,14 +1,6 @@
 import { ChangeEvent, useState } from 'react';
 import * as Select from '@radix-ui/react-select';
-import {
-  AlertTriangle,
-  Check,
-  CheckCircle2,
-  ChevronDown,
-  Clock,
-  Loader2,
-  XCircle,
-} from 'lucide-react';
+import { AlertTriangle, Check, CheckCircle2, ChevronDown, Clock, Loader2, XCircle } from 'lucide-react';
 import { __, sprintf } from '@wordpress/i18n';
 import type { WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
 import type { WorkbenchMediaStatus } from '../../api/workbenchMediaApi';
@@ -20,6 +12,7 @@ import { BulkDescribeReviewLink } from './BulkDescribeReviewLink';
 import { Checkbox } from '../../../components/ui/checkbox';
 import { useBulkDescribe } from '../../hooks/useBulkDescribe';
 import type { DescribeRunProgress } from '../../hooks/useDescribeRunProgress';
+import { useRecognitionCooldown } from '../../hooks/useRecognitionCooldown';
 import { useRemoteActionGate } from '../../hooks/useRemoteActionGate';
 import { useSyncOffline } from '../../hooks/useSyncOffline';
 import { DESCRIBE_RUN_STATUS, type DescribeRunStatus } from '../../api/describeApi';
@@ -391,14 +384,27 @@ const formatEtaLabel = (etaSeconds: number | null): string => {
   return sprintf(__('~%1$dm %2$ds remaining', 'alt-context'), minutes, seconds);
 };
 
-const BulkDescribeProgress = ({
-  progress,
-  onRetry,
-}: {
-  progress: DescribeRunProgress;
-  onRetry: () => void;
-}) => {
-  const { run, status, progressFraction, etaSeconds, stalledForSeconds, isTerminal, isError } = progress;
+const BulkDescribeProgress = ({ progress, onRetry }: { progress: DescribeRunProgress; onRetry: () => void }) => {
+  const { run, status, progressFraction, etaSeconds, stalledForSeconds, isTerminal, isError, isFrozen } = progress;
+  const cooldown = useRecognitionCooldown();
+
+  // Frozen surface is a designed state (RLSE-04): a transient poll timeout
+  // (BR-07) or the shared recognition cooldown pauses updates, so say so —
+  // otherwise a stopped bar reads as a hang and invites the reload traffic the
+  // cooldown exists to prevent. Announced by the surrounding polite live
+  // region (A11Y-21); icon paired with color (sr-004).
+  const isWaiting = !isTerminal && !isError && (isFrozen || cooldown.isCoolingDown);
+  const waitingNotice = isWaiting ? (
+    <span className="acx-media-selection__bulk-describe-paused">
+      <Clock aria-hidden="true" size={16} />
+      {cooldown.isCoolingDown && cooldown.remainingSeconds > 0
+        ? sprintf(
+            __('Waiting for the service — progress updates paused, retrying in %ds.', 'alt-context'),
+            cooldown.remainingSeconds,
+          )
+        : __('Waiting for the service — progress updates paused.', 'alt-context')}
+    </span>
+  ) : null;
 
   if (isError) {
     return (
@@ -424,6 +430,7 @@ const BulkDescribeProgress = ({
           <Loader2 className="acx-media-selection__bulk-describe-spin" aria-hidden="true" size={16} />
           {SYNC_VOCABULARY.describeStarting}
         </span>
+        {waitingNotice}
       </div>
     );
   }
@@ -433,11 +440,7 @@ const BulkDescribeProgress = ({
   // Processed = every terminal item (completed + failed + skipped) so the bar
   // and count reflect true progress, not just successes.
   const processed = run.completed + run.failed + run.skipped;
-  const countsLabel = sprintf(
-    __('%1$d of %2$d processed', 'alt-context'),
-    processed,
-    run.total,
-  );
+  const countsLabel = sprintf(__('%1$d of %2$d processed', 'alt-context'), processed, run.total);
 
   return (
     <div className="acx-media-selection__bulk-describe-progress" role="status" aria-live="polite">
@@ -476,13 +479,11 @@ const BulkDescribeProgress = ({
           <span className="acx-media-selection__bulk-describe-eta">{formatEtaLabel(etaSeconds)}</span>
         ) : null}
       </div>
+      {waitingNotice}
       {stalledForSeconds !== null ? (
         <span className="acx-media-selection__bulk-describe-stall">
           <AlertTriangle aria-hidden="true" size={16} />
-          {sprintf(
-            __('No progress for %ds — the run may be stalled.', 'alt-context'),
-            stalledForSeconds,
-          )}
+          {sprintf(__('No progress for %ds — the run may be stalled.', 'alt-context'), stalledForSeconds)}
         </span>
       ) : null}
     </div>

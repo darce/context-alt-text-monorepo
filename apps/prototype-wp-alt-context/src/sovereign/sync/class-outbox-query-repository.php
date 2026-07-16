@@ -383,7 +383,7 @@ class OutboxQueryRepository {
 			$wpdb->prepare(
 				'SELECT id FROM %i WHERE status = %s ORDER BY created_at ASC LIMIT 1',
 				$this->table_name,
-				'pending'
+				OutboxStatus::PENDING
 			)
 		);
 

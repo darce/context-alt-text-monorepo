@@ -423,29 +423,119 @@ class OutboxDrainTest extends TestCase
 	{
 		// E15-35 Slice 1 proof: pending rows all mid-backoff -> the drain schedules a single
 		// future event at the earliest next_attempt_at instead of busy-looping immediately.
-		global $wpdb;
-		$wpdb->mockResults = [];
-
-		$earliest = gmdate('Y-m-d H:i:s', time() + 600);
-		$wpdb->queryResults[$wpdb->prepare(
-			'SELECT id FROM %i WHERE status = %s ORDER BY created_at ASC LIMIT 1',
-			'wp_acx_sync_outbox',
-			'pending'
-		)] = '5';
-		$wpdb->queryResults[$wpdb->prepare(
-			'SELECT MIN(COALESCE(next_attempt_at, created_at)) FROM %i WHERE status = %s',
-			'wp_acx_sync_outbox',
-			'pending'
-		)] = $earliest;
+		// Action Scheduler is available in the suite, so the schedule lands on the AS path
+		// and no WP-Cron duplicate is booked (E15-35-BR-02).
+		$this->configurePendingBacklog(time() + 600);
 
 		$drain = new OutboxDrain(new OutboxDispatcher());
 		$drain->drain();
 
-		$key = 'acx_sync_drain_curation_outbox::' . md5(serialize([]));
-		$scheduled = $GLOBALS['__ac_scheduled'][$key]['timestamp'] ?? null;
-		$this->assertNotNull($scheduled, 'Expected a future single drain event for the earliest pending attempt.');
+		$scheduled = $this->actionSchedulerDrainTimestamp();
+		$this->assertIsInt($scheduled, 'Expected a future single drain action for the earliest pending attempt.');
 		$this->assertGreaterThanOrEqual(time() + 595, $scheduled);
 		$this->assertLessThanOrEqual(time() + 605, $scheduled);
+		$this->assertFalse(wp_next_scheduled('acx_sync_drain_curation_outbox'), 'AS path succeeded: no WP-Cron duplicate.');
+	}
+
+	public function testDrainSchedulesNextDrainViaWpCronWhenActionSchedulerScheduleFails(): void
+	{
+		// E15-35-BR-02: AS-failure fall-through — as_schedule_single_action returning a
+		// non-positive id must land the future drain on WP-Cron instead.
+		$GLOBALS['__ac_action_scheduler_enqueue_result'] = 0;
+		$this->configurePendingBacklog(time() + 600);
+
+		$drain = new OutboxDrain(new OutboxDispatcher());
+		$drain->drain();
+
+		$this->assertFalse($this->actionSchedulerDrainTimestamp());
+		$scheduled = wp_next_scheduled('acx_sync_drain_curation_outbox');
+		$this->assertNotFalse($scheduled, 'Expected the WP-Cron fallback to book the future drain.');
+		$this->assertGreaterThanOrEqual(time() + 595, (int) $scheduled);
+		$this->assertLessThanOrEqual(time() + 605, (int) $scheduled);
+	}
+
+	public function testDrainAdvancesLaterParkedDrainToEarlierPendingAttempt(): void
+	{
+		// E15-35-BR-01: a drain parked at a later backoff anchor must be advanced when the
+		// backlog's earliest pending attempt is now earlier.
+		as_schedule_single_action(time() + 3900, 'acx_sync_drain_curation_outbox', [], 'acx-sync');
+		$this->configurePendingBacklog(time() + 600);
+
+		$drain = new OutboxDrain(new OutboxDispatcher());
+		$drain->drain();
+
+		$scheduled = $this->actionSchedulerDrainTimestamp();
+		$this->assertIsInt($scheduled);
+		$this->assertGreaterThanOrEqual(time() + 595, $scheduled);
+		$this->assertLessThanOrEqual(time() + 605, $scheduled, 'Later parked drain must advance to the earlier pending attempt.');
+	}
+
+	public function testDrainKeepsEarlierExistingScheduleWhenBacklogIsDueLater(): void
+	{
+		// Dedup preserved: an existing drain already booked EARLIER than the backlog's
+		// earliest attempt stays put — backoff wake-ups never stack (E15-35-BR-01).
+		as_schedule_single_action(time() + 60, 'acx_sync_drain_curation_outbox', [], 'acx-sync');
+		$existing = $this->actionSchedulerDrainTimestamp();
+		$this->configurePendingBacklog(time() + 600);
+
+		$drain = new OutboxDrain(new OutboxDispatcher());
+		$drain->drain();
+
+		$this->assertSame($existing, $this->actionSchedulerDrainTimestamp(), 'Earlier existing schedule must be kept.');
+		$this->assertFalse(wp_next_scheduled('acx_sync_drain_curation_outbox'));
+	}
+
+	public function testMaybeScheduleDrainAdvancesParkedFutureActionSchedulerDrainToNow(): void
+	{
+		// E15-35-BR-01 block scenario A: OutboxWriter::enqueue during a parked backoff anchor.
+		// The parked future drain must be advanced so due-now work dispatches immediately.
+		as_schedule_single_action(time() + 3900, 'acx_sync_drain_curation_outbox', [], 'acx-sync');
+
+		OutboxDrain::maybe_schedule_drain();
+
+		$scheduled = $this->actionSchedulerDrainTimestamp();
+		$this->assertIsInt($scheduled);
+		$this->assertLessThanOrEqual(time(), $scheduled, 'Parked future drain must be advanced to now for due-now work.');
+	}
+
+	public function testMaybeScheduleDrainKeepsAlreadyDueActionSchedulerDrain(): void
+	{
+		as_schedule_single_action(time() - 5, 'acx_sync_drain_curation_outbox', [], 'acx-sync');
+		$existing = $this->actionSchedulerDrainTimestamp();
+
+		OutboxDrain::maybe_schedule_drain();
+
+		$this->assertSame($existing, $this->actionSchedulerDrainTimestamp(), 'Already-due drain must be kept (dedup).');
+		$this->assertFalse(wp_next_scheduled('acx_sync_drain_curation_outbox'));
+	}
+
+	public function testMaybeScheduleDrainAdvancesParkedFutureWpCronDrainWhenActionSchedulerFails(): void
+	{
+		// WP-Cron mirror of the advance: parked future WP-Cron event + AS unable to enqueue.
+		$GLOBALS['__ac_action_scheduler_enqueue_result'] = 0;
+		wp_schedule_single_event(time() + 3900, 'acx_sync_drain_curation_outbox', []);
+
+		OutboxDrain::maybe_schedule_drain();
+
+		$scheduled = wp_next_scheduled('acx_sync_drain_curation_outbox');
+		$this->assertNotFalse($scheduled);
+		$this->assertLessThanOrEqual(time(), (int) $scheduled, 'Parked future WP-Cron drain must be advanced to now.');
+	}
+
+	public function testRetryFailedOperationDuringParkedBackoffSchedulesImmediateDrain(): void
+	{
+		// E15-35-BR-01 block scenario B: operator retry clears next_attempt_at to make the row
+		// due NOW; a parked backoff anchor must not defer the dispatch by up to ~1.1h.
+		$tenantId = 'tenant-test-123';
+		$this->configureSyncMetricQueries($tenantId, ['pending' => 1]);
+		as_schedule_single_action(time() + 3900, 'acx_sync_drain_curation_outbox', [], 'acx-sync');
+
+		$drain = new OutboxDrain(new OutboxDispatcher());
+		$this->assertTrue($drain->retry_failed_operation(9, $tenantId));
+
+		$scheduled = $this->actionSchedulerDrainTimestamp();
+		$this->assertIsInt($scheduled);
+		$this->assertLessThanOrEqual(time(), $scheduled, 'Retry made the row due now: parked drain must advance to now.');
 	}
 
 	public function testDrainClaimsPendingRowAsInFlightBeforeDispatch(): void
@@ -1299,6 +1389,37 @@ class OutboxDrainTest extends TestCase
 			$tenantId,
 			'failed'
 		)] = $failedAt;
+	}
+
+	/**
+	 * Mock a pending backlog whose rows are all mid-backoff: nothing loadable now,
+	 * has_pending_operations() true, earliest attempt at the given epoch.
+	 */
+	private function configurePendingBacklog(int $earliestTimestamp): void
+	{
+		global $wpdb;
+		$wpdb->mockResults = [];
+
+		$wpdb->queryResults[$wpdb->prepare(
+			'SELECT id FROM %i WHERE status = %s ORDER BY created_at ASC LIMIT 1',
+			'wp_acx_sync_outbox',
+			'pending'
+		)] = '5';
+		$wpdb->queryResults[$wpdb->prepare(
+			'SELECT MIN(COALESCE(next_attempt_at, created_at)) FROM %i WHERE status = %s',
+			'wp_acx_sync_outbox',
+			'pending'
+		)] = gmdate('Y-m-d H:i:s', $earliestTimestamp);
+	}
+
+	/**
+	 * @return int|bool Action Scheduler drain timestamp, or false when none is scheduled.
+	 */
+	private function actionSchedulerDrainTimestamp(): int|bool
+	{
+		$scheduled = as_next_scheduled_action('acx_sync_drain_curation_outbox', [], 'acx-sync');
+
+		return is_int($scheduled) || is_bool($scheduled) ? $scheduled : false;
 	}
 
 	private function isHookScheduled(string $hook): bool

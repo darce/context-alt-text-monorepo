@@ -15,10 +15,10 @@ use AltContext\Sovereign\Mappers\ClusterResponseMapper;
 use AltContext\Sovereign\Mappers\MemberResponseMapper;
 use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
 use AltContext\Sovereign\Sync\SyncPullJobInterface;
-use AltContext\Sovereign\Sync\SyncPullResult;
 use AltContext\Tests\Stubs\NullClustersRepository;
 use AltContext\Tests\Stubs\NullIdentityMembersRepository;
 use AltContext\Tests\Stubs\NullSyncStateRepository;
+use AltContext\Tests\Stubs\SpySyncPullJob;
 use AltContext\Tests\TestCase;
 use WP_Error;
 use WP_REST_Request;
@@ -84,6 +84,85 @@ class ClusterReadServiceTest extends TestCase
         $this->assertCount(1, $GLOBALS['__ac_scheduled']);
     }
 
+    public function testListClustersWipeClassServesLocalWithAsyncHealAndZeroSynchronousHttp(): void
+    {
+        $GLOBALS['__ac_scheduled'] = [];
+        $host = new class() implements ClustersHostInterface {
+            /** @var list<string> */
+            public array $proxy_calls = [];
+
+            public function get_tenant_id(): string
+            {
+                return 'tenant-1';
+            }
+
+            public function proxy_recognition_request(
+                string $method,
+                string $path,
+                array $body = [],
+                array $query = [],
+                string $request_class = 'auto',
+                string $body_kind = 'json',
+                ?int $max_body_bytes = null
+            ): WP_REST_Response|WP_Error {
+                $this->proxy_calls[] = $path;
+                return new WP_Error('unexpected_proxy_call', 'Wipe-class local read must not proxy.', ['status' => 500]);
+            }
+
+            public function host_should_use_local_projection_gate(
+                SyncStateRepositoryInterface $sync_state_repository,
+                string $tenant_id
+            ): bool {
+                return false;
+            }
+
+            public function host_is_projection_stale(?string $updated_at): bool
+            {
+                return true;
+            }
+        };
+
+        $rowsRepo = new class() extends NullClustersRepository {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
+
+            public function list_for_tenant(string $tenant_id, int $limit = 50, int $offset = 0, array $filters = []): array
+            {
+                return [
+                    ['cluster_uuid' => 'cluster-1', 'label' => 'Alice', 'identity_count' => 2, 'total_count' => 1],
+                ];
+            }
+        };
+
+        $syncJob = new SpySyncPullJob();
+        $service = $this->makeService(
+            $host,
+            use_local_projection: false,
+            clusters_repository: $rowsRepo,
+            sync_pull_job: $syncJob
+        );
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters');
+        $request->set_param('limit', 10);
+
+        $response = $service->list_clusters($request);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $data = $response->get_data();
+        $this->assertCount(1, $data['clusters']);
+        $this->assertSame(1, $data['total']);
+        $this->assertSame([], $host->proxy_calls, 'Sync-state wipe with surviving rows must serve local, never proxy.');
+        $this->assertSame([], $syncJob->performCalls, 'Newly-qualifying read must not run an inline pull.');
+        $this->assertSame([], $syncJob->bypassCalls);
+        $this->assertCount(1, $GLOBALS['__ac_scheduled']);
+        $scheduled_key = array_key_first($GLOBALS['__ac_scheduled']);
+        $this->assertIsString($scheduled_key);
+        $this->assertStringStartsWith(self::BOOTSTRAP_HOOK . '::', $scheduled_key);
+        $this->assertSame(['tenant-1'], $GLOBALS['__ac_scheduled'][$scheduled_key]['args']);
+    }
+
     public function testListClusterLabelsLocalProjectionUsesEnvelopeService(): void
     {
         $labelsRepo = new class() extends NullClustersRepository {
@@ -144,7 +223,8 @@ class ClusterReadServiceTest extends TestCase
     private function makeService(
         ClustersHostInterface $host,
         bool $use_local_projection,
-        ?NullClustersRepository $clusters_repository = null
+        ?NullClustersRepository $clusters_repository = null,
+        ?SyncPullJobInterface $sync_pull_job = null
     ): ClusterReadService {
         $syncHost = new class($use_local_projection) implements ClustersHostInterface {
             public function __construct(private bool $use_local_projection) {}
@@ -179,22 +259,7 @@ class ClusterReadServiceTest extends TestCase
             }
         };
 
-        $syncJob = new class() implements SyncPullJobInterface {
-            public function perform(string $tenant_id): SyncPullResult
-            {
-                return SyncPullResult::ok();
-            }
-
-            public function perform_bypass_cooldown(string $tenant_id): SyncPullResult
-            {
-                return SyncPullResult::ok();
-            }
-
-            public function perform_projection_payload(string $tenant_id, array $payload): SyncPullResult
-            {
-                return SyncPullResult::ok();
-            }
-        };
+        $syncJob = $sync_pull_job ?? new SpySyncPullJob();
 
         $clustersRepo = $clusters_repository ?? new NullClustersRepository();
         $membersRepo = new NullIdentityMembersRepository();

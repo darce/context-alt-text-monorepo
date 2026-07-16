@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BulkRetryResponse, OutboxListResponse, OutboxMutationResponse, OutboxOperation } from '../../../api/recognition';
@@ -428,6 +428,98 @@ describe('DeadLetterPanel', () => {
     });
 
     expect(screen.getByText('5 failed changes queued to retry.')).toBeInTheDocument();
+    // failed_remaining: 0 -> no remainder copy.
+    expect(screen.queryByText(/remain — run again to queue the rest/)).not.toBeInTheDocument();
+  });
+
+  it('surfaces the remainder when the bulk retry response reports failed changes left over', async () => {
+    const mutateAsync = vi.fn().mockResolvedValue({ requeued: 1000, failed_remaining: 234 });
+    mockedUseBulkRetryOperations.mockReturnValue(
+      createMockMutation<BulkRetryResponse, Error, void>({
+        mutateAsync,
+      }),
+    );
+
+    renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry all failed (1)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm retry all failed (1)' }));
+
+    await waitFor(() => {
+      expect(mutateAsync).toHaveBeenCalledTimes(1);
+    });
+
+    expect(
+      screen.getByText('1000 failed changes queued to retry. 234 remain — run again to queue the rest.'),
+    ).toBeInTheDocument();
+  });
+
+  it('auto-disarms the bulk retry confirmation after the timeout', () => {
+    vi.useFakeTimers();
+    try {
+      const mutateAsync = vi.fn().mockResolvedValue({ requeued: 1, failed_remaining: 0 });
+      mockedUseBulkRetryOperations.mockReturnValue(
+        createMockMutation<BulkRetryResponse, Error, void>({
+          mutateAsync,
+        }),
+      );
+
+      renderPanel();
+      fireEvent.click(screen.getByRole('button', { name: 'Retry all failed (1)' }));
+      expect(screen.getByRole('button', { name: 'Confirm retry all failed (1)' })).toBeInTheDocument();
+
+      act(() => {
+        vi.advanceTimersByTime(9000);
+      });
+
+      // Disarmed: the next click re-arms instead of firing the mutation.
+      const button = screen.getByRole('button', { name: 'Retry all failed (1)' });
+      fireEvent.click(button);
+      expect(mutateAsync).not.toHaveBeenCalled();
+      expect(screen.getByRole('button', { name: 'Confirm retry all failed (1)' })).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('disarms the bulk retry confirmation when the failed total changes', () => {
+    const mutateAsync = vi.fn().mockResolvedValue({ requeued: 1, failed_remaining: 0 });
+    mockedUseBulkRetryOperations.mockReturnValue(
+      createMockMutation<BulkRetryResponse, Error, void>({
+        mutateAsync,
+      }),
+    );
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <DeadLetterPanel />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry all failed (1)' }));
+    expect(screen.getByRole('button', { name: 'Confirm retry all failed (1)' })).toBeInTheDocument();
+
+    mockedUseDeadLetterOperations.mockReturnValue(
+      createMockQuery<OutboxListResponse>({
+        data: {
+          items: [buildOperation(), buildOperation({ id: 12, entity_key: 'cluster-2' })],
+          total: 2,
+          limit: 20,
+          offset: 0,
+        },
+      }),
+    );
+    rerender(
+      <QueryClientProvider client={client}>
+        <DeadLetterPanel />
+      </QueryClientProvider>,
+    );
+
+    // Disarmed by the total change: the next click re-arms instead of firing.
+    const button = screen.getByRole('button', { name: 'Retry all failed (2)' });
+    fireEvent.click(button);
+    expect(mutateAsync).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Confirm retry all failed (2)' })).toBeInTheDocument();
   });
 
   it('shows progress while the bulk retry is pending', () => {

@@ -135,6 +135,105 @@ class OutboxMaintenanceServiceTest extends TestCase
         $this->assertSame(60, $chunkThree - $chunkTwo);
     }
 
+    public function testBulkRetryInvalidTunableFiltersFallBackToDefaults(): void
+    {
+        // E15-35 Slice 2 review fix (rg-008, slice-1 convention): broken bulk tunable
+        // filters can never shrink the sweep to a single row or collapse the pacing
+        // stride — non-positive / non-numeric values fall back to the defaults.
+        global $wpdb;
+
+        $tenantId = 'tenant-test-123';
+        $this->configureSyncMetricQueries($tenantId, [
+            'pending' => 3,
+            'failed' => 0,
+            'conflicts' => 0,
+        ]);
+        add_filter('acx_outbox_drain_batch_size', static fn (): int => 1);
+        add_filter('acx_outbox_bulk_retry_max_rows', static fn (): bool => false);
+        add_filter('acx_outbox_bulk_retry_pacing_stride_seconds', static fn (): float => INF);
+
+        $wpdb->tableRows['wp_acx_sync_outbox'] = [
+            $this->buildOutboxRow(1, $tenantId, 'failed'),
+            $this->buildOutboxRow(2, $tenantId, 'failed'),
+            $this->buildOutboxRow(3, $tenantId, 'failed'),
+        ];
+
+        $service = new OutboxMaintenanceService();
+        $before = (int) current_time('timestamp');
+        // Default max rows (1000) sweeps all three rows despite the broken filter.
+        $this->assertSame(3, $service->retry_failed_operations_bulk($tenantId));
+
+        // Default stride (60s) despite the INF filter.
+        $rowsById = array_column($wpdb->tableRows['wp_acx_sync_outbox'], null, 'id');
+        $this->assertNull($rowsById[1]['next_attempt_at']);
+        $chunkTwo = $this->parseWpTimestamp((string) $rowsById[2]['next_attempt_at']);
+        $this->assertGreaterThanOrEqual($before + 60, $chunkTwo);
+        $this->assertLessThanOrEqual($before + 62, $chunkTwo);
+    }
+
+    public function testBulkRetryGarbageAndZeroTunableFiltersFallBackToDefaults(): void
+    {
+        // E15-35 Slice 2 review fix (rg-008): non-numeric string and zero values are
+        // rejected the same way the slice-1 drain tunables reject them.
+        global $wpdb;
+
+        $tenantId = 'tenant-test-123';
+        $this->configureSyncMetricQueries($tenantId, [
+            'pending' => 2,
+            'failed' => 0,
+            'conflicts' => 0,
+        ]);
+        add_filter('acx_outbox_drain_batch_size', static fn (): int => 1);
+        add_filter('acx_outbox_bulk_retry_max_rows', static fn (): string => 'garbage');
+        add_filter('acx_outbox_bulk_retry_pacing_stride_seconds', static fn (): int => 0);
+
+        $wpdb->tableRows['wp_acx_sync_outbox'] = [
+            $this->buildOutboxRow(1, $tenantId, 'failed'),
+            $this->buildOutboxRow(2, $tenantId, 'failed'),
+        ];
+
+        $service = new OutboxMaintenanceService();
+        $before = (int) current_time('timestamp');
+        $this->assertSame(2, $service->retry_failed_operations_bulk($tenantId));
+
+        $rowsById = array_column($wpdb->tableRows['wp_acx_sync_outbox'], null, 'id');
+        $chunkTwo = $this->parseWpTimestamp((string) $rowsById[2]['next_attempt_at']);
+        $this->assertGreaterThanOrEqual($before + 60, $chunkTwo);
+        $this->assertLessThanOrEqual($before + 62, $chunkTwo);
+    }
+
+    public function testBulkRetryValidTunableOverridesAreHonored(): void
+    {
+        // Valid overrides pass through: max rows caps the sweep, stride spreads chunks.
+        global $wpdb;
+
+        $tenantId = 'tenant-test-123';
+        $this->configureSyncMetricQueries($tenantId, [
+            'pending' => 2,
+            'failed' => 1,
+            'conflicts' => 0,
+        ]);
+        add_filter('acx_outbox_drain_batch_size', static fn (): int => 1);
+        add_filter('acx_outbox_bulk_retry_max_rows', static fn (): int => 2);
+        add_filter('acx_outbox_bulk_retry_pacing_stride_seconds', static fn (): int => 120);
+
+        $wpdb->tableRows['wp_acx_sync_outbox'] = [
+            $this->buildOutboxRow(1, $tenantId, 'failed'),
+            $this->buildOutboxRow(2, $tenantId, 'failed'),
+            $this->buildOutboxRow(3, $tenantId, 'failed'),
+        ];
+
+        $service = new OutboxMaintenanceService();
+        $before = (int) current_time('timestamp');
+        $this->assertSame(2, $service->retry_failed_operations_bulk($tenantId));
+
+        $rowsById = array_column($wpdb->tableRows['wp_acx_sync_outbox'], null, 'id');
+        $this->assertSame('failed', $rowsById[3]['status']);
+        $chunkTwo = $this->parseWpTimestamp((string) $rowsById[2]['next_attempt_at']);
+        $this->assertGreaterThanOrEqual($before + 120, $chunkTwo);
+        $this->assertLessThanOrEqual($before + 122, $chunkTwo);
+    }
+
     public function testBulkRetryReturnsZeroAndSkipsSideEffectsWhenNothingFailed(): void
     {
         global $wpdb;

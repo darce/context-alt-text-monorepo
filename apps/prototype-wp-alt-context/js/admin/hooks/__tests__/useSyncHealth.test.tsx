@@ -57,17 +57,44 @@ describe('useSyncHealth', () => {
       vi.useRealTimers();
     });
 
-    it('composed refetchInterval yields false during cooldown then resumes base interval', () => {
+    it('composed refetchInterval waits out the cooldown then resumes base interval', () => {
       // Same composition as useSyncHealth: gateRefetchInterval(SYNC_HEALTH_REFETCH_MS)
       const refetchInterval = gateRefetchInterval(SYNC_HEALTH_REFETCH_MS);
 
       expect(refetchInterval()).toBe(SYNC_HEALTH_REFETCH_MS);
 
       noteRateLimited(10);
-      expect(refetchInterval()).toBe(false);
+      expect(refetchInterval()).toBe(10_000);
 
       vi.advanceTimersByTime(10_000);
       expect(refetchInterval()).toBe(SYNC_HEALTH_REFETCH_MS);
+    });
+
+    it('pauses the real useSyncHealth poll during cooldown and resumes after expiry', async () => {
+      const fetchSyncHealthMock = vi.mocked(recognitionApi.fetchSyncHealth);
+      fetchSyncHealthMock.mockClear();
+      fetchSyncHealthMock.mockResolvedValue({
+        breaker: { state: 'closed', base_url: 'http://localhost:8000', opened_at: null },
+        outbox: { pending: 0, failed: 0 },
+        conflicts: { open: 0 },
+        replays: { failed: null, source: 'unavailable_local' },
+        last_pull: { at: null, ok: true },
+        warnings: [],
+      });
+
+      noteRateLimited(60);
+      renderHook(() => useSyncHealth(), { wrapper });
+
+      // Mount fetch is not interval-driven and is expected.
+      await vi.waitFor(() => expect(fetchSyncHealthMock).toHaveBeenCalledTimes(1));
+
+      // Base interval elapses inside the cooldown — the real hook must not poll.
+      await vi.advanceTimersByTimeAsync(SYNC_HEALTH_REFETCH_MS + 1_000);
+      expect(fetchSyncHealthMock).toHaveBeenCalledTimes(1);
+
+      // Advance to just past cooldown expiry (t=61s): the gated interval fires once.
+      await vi.advanceTimersByTimeAsync(45_000);
+      await vi.waitFor(() => expect(fetchSyncHealthMock).toHaveBeenCalledTimes(2));
     });
   });
 });

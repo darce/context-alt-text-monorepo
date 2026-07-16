@@ -5,15 +5,23 @@
 
 export const DEFAULT_COOLDOWN_SECONDS = 30;
 
+/**
+ * Floor for the gated interval during cooldown. React Query clears the timer
+ * entirely when refetchInterval is false and only re-evaluates on query events,
+ * so the gate must return a real delay to guarantee polling resumes at expiry.
+ */
+const MIN_GATED_INTERVAL_MS = 1_000;
+
 let cooldownUntilMs = 0;
 
 /**
  * Start or extend the global cooldown from a 429.
  * Uses Retry-After when present; otherwise DEFAULT_COOLDOWN_SECONDS.
+ * Never shortens an already-armed cooldown (a longer server-stated deadline wins).
  */
 export const noteRateLimited = (retryAfterSeconds: number | null): void => {
   const seconds = retryAfterSeconds ?? DEFAULT_COOLDOWN_SECONDS;
-  cooldownUntilMs = Date.now() + seconds * 1000;
+  cooldownUntilMs = Math.max(cooldownUntilMs, Date.now() + seconds * 1000);
 };
 
 /** True while Date.now() is before the cooldown deadline. */
@@ -23,8 +31,10 @@ export const isCoolingDown = (): boolean => Date.now() < cooldownUntilMs;
 export const cooldownRemainingMs = (): number => Math.max(0, cooldownUntilMs - Date.now());
 
 /**
- * React Query refetchInterval function that yields false during cooldown,
- * otherwise the fixed base interval.
+ * React Query refetchInterval function that waits out the cooldown, then the
+ * fixed base interval. During cooldown it returns the remaining cooldown time
+ * (never false: a false interval is cleared and only re-evaluated on query
+ * events, which never fire on idle pages — polling would freeze permanently).
  */
 export function gateRefetchInterval(baseMs: number): () => number | false;
 
@@ -41,7 +51,7 @@ export function gateRefetchInterval<TQuery>(
 ): (query: TQuery) => number | false {
   return (query: TQuery) => {
     if (isCoolingDown()) {
-      return false;
+      return Math.max(MIN_GATED_INTERVAL_MS, cooldownRemainingMs());
     }
     if (typeof baseMsOrFn === 'function') {
       return baseMsOrFn(query);
@@ -49,6 +59,19 @@ export function gateRefetchInterval<TQuery>(
     return baseMsOrFn;
   };
 }
+
+/**
+ * Run `fn` immediately when no cooldown is active, otherwise defer it until
+ * the cooldown expires. Used to hold invalidation-triggered refetch bursts
+ * (they bypass refetchInterval) out of an active rate-limit window.
+ */
+export const runAfterCooldown = (fn: () => void): void => {
+  if (!isCoolingDown()) {
+    fn();
+    return;
+  }
+  setTimeout(fn, cooldownRemainingMs());
+};
 
 /** Test-only: clear module cooldown between tests. */
 export const _resetForTests = (): void => {

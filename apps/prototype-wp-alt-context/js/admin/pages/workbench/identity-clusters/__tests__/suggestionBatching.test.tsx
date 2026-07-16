@@ -1,12 +1,13 @@
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { PendingSuggestion } from '../../../../api/recognition';
 import { InlineSuggestionPrompt } from '../InlineSuggestionPrompt';
 import {
   INLINE_SUGGESTION_BATCH_LIMIT,
+  INLINE_SUGGESTION_BATCH_TIMEOUT_MS,
   reduceInlineSuggestionsByIdentity,
 } from '../inlineSuggestionBatch';
 import * as recognitionApi from '../../../../api/recognition';
@@ -83,7 +84,6 @@ describe('reduceInlineSuggestionsByIdentity', () => {
       cluster_id: 'c-high',
       label: 'Alicia',
       similarity: 0.95,
-      identity_count: 3,
     });
     // id-b only had null/empty labels — absent means no labeled suggestion (AGT-10)
     expect(byIdentity.has('id-b')).toBe(false);
@@ -92,16 +92,17 @@ describe('reduceInlineSuggestionsByIdentity', () => {
       cluster_id: 'c-bob',
       label: 'Bob',
       similarity: 0.88,
-      identity_count: 12,
     });
   });
 });
 
 describe('InlineSuggestionPrompt batched query', () => {
+  const createdClients: QueryClient[] = [];
   const createWrapper = () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
+    createdClients.push(queryClient);
     const wrapper = ({ children }: { children: ReactNode }) => (
       <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     );
@@ -110,6 +111,10 @@ describe('InlineSuggestionPrompt batched query', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    createdClients.splice(0).forEach((client) => client.clear());
   });
 
   it('renders N identities with exactly one suggestions list request (limit=500)', async () => {
@@ -143,7 +148,7 @@ describe('InlineSuggestionPrompt batched query', () => {
       data_source: 'backend_proxy',
     });
 
-    const { wrapper, queryClient } = createWrapper();
+    const { wrapper } = createWrapper();
     const onConfirm = vi.fn();
     const onReject = vi.fn();
 
@@ -164,9 +169,60 @@ describe('InlineSuggestionPrompt batched query', () => {
 
     // K = ceil(P/500) with P <= 500 → 1 request for N cards (RES-15)
     expect(fetchPending).toHaveBeenCalledTimes(1);
-    expect(fetchPending).toHaveBeenCalledWith(INLINE_SUGGESTION_BATCH_LIMIT, 0);
+    expect(fetchPending).toHaveBeenCalledWith(
+      INLINE_SUGGESTION_BATCH_LIMIT,
+      0,
+      INLINE_SUGGESTION_BATCH_TIMEOUT_MS,
+    );
+  });
 
-    queryClient.clear();
+  it('pages through pending suggestions: exactly ceil(P/500) requests when P > 500', async () => {
+    const fetchPending = vi.mocked(recognitionApi.fetchPendingSuggestions);
+    const fullPage = Array.from({ length: INLINE_SUGGESTION_BATCH_LIMIT }, (_, i) =>
+      buildSuggestion({
+        id: `p1-${i}`,
+        identity_id: `id-p1-${i}`,
+        cluster_label: 'Page One',
+        representative_similarity: 0.7,
+      }),
+    );
+    fetchPending
+      .mockResolvedValueOnce({
+        suggestions: fullPage,
+        limit: INLINE_SUGGESTION_BATCH_LIMIT,
+        offset: 0,
+        data_source: 'backend_proxy',
+      })
+      .mockResolvedValueOnce({
+        suggestions: [
+          buildSuggestion({
+            id: 's-late',
+            identity_id: 'id-late',
+            suggested_cluster_id: 'c-late',
+            cluster_label: 'Late Page Match',
+            representative_similarity: 0.93,
+          }),
+        ],
+        limit: INLINE_SUGGESTION_BATCH_LIMIT,
+        offset: INLINE_SUGGESTION_BATCH_LIMIT,
+        data_source: 'backend_proxy',
+      });
+
+    const { wrapper } = createWrapper();
+    render(
+      <InlineSuggestionPrompt identityId="id-late" onConfirm={vi.fn()} onReject={vi.fn()} isPending={false} />,
+      { wrapper },
+    );
+
+    // Identity on page 2 still gets its prompt — no silent drop past the first page.
+    await waitFor(() => expect(screen.getByText('Late Page Match')).toBeInTheDocument());
+    expect(fetchPending).toHaveBeenCalledTimes(2);
+    expect(fetchPending).toHaveBeenNthCalledWith(
+      2,
+      INLINE_SUGGESTION_BATCH_LIMIT,
+      INLINE_SUGGESTION_BATCH_LIMIT,
+      INLINE_SUGGESTION_BATCH_TIMEOUT_MS,
+    );
   });
 
   it('renders nothing for an identity with no labeled suggestion (same empty state as today)', async () => {
@@ -191,7 +247,7 @@ describe('InlineSuggestionPrompt batched query', () => {
       data_source: 'backend_proxy',
     });
 
-    const { wrapper, queryClient } = createWrapper();
+    const { wrapper } = createWrapper();
     const { container } = render(
       <InlineSuggestionPrompt
         identityId="id-empty"
@@ -208,8 +264,6 @@ describe('InlineSuggestionPrompt batched query', () => {
       expect(container.querySelector('.acx-inline-suggestion')).toBeNull();
     });
     expect(screen.queryByText('Is this')).not.toBeInTheDocument();
-
-    queryClient.clear();
   });
 
   it('shows top match label and similarity for the selected identity', async () => {
@@ -236,7 +290,7 @@ describe('InlineSuggestionPrompt batched query', () => {
       data_source: 'backend_proxy',
     });
 
-    const { wrapper, queryClient } = createWrapper();
+    const { wrapper } = createWrapper();
     render(
       <InlineSuggestionPrompt identityId="id-1" onConfirm={vi.fn()} onReject={vi.fn()} isPending={false} />,
       { wrapper },
@@ -245,7 +299,5 @@ describe('InlineSuggestionPrompt batched query', () => {
     await waitFor(() => expect(screen.getByText('High Match')).toBeInTheDocument());
     expect(screen.getByText('87%')).toBeInTheDocument();
     expect(screen.queryByText('Low')).not.toBeInTheDocument();
-
-    queryClient.clear();
   });
 });

@@ -48,6 +48,9 @@ export type ClusterAutoRetryListener = {
 export const createClusterAutoRetry = (listener: ClusterAutoRetryListener) => {
   let attempts = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  // Mutation callbacks fire from Mutation.execute() even after unmount; the
+  // latch stops a late 429 from arming a zombie timer that POSTs in the background.
+  let disposed = false;
 
   const clearTimer = (): void => {
     if (timer !== null) {
@@ -57,6 +60,9 @@ export const createClusterAutoRetry = (listener: ClusterAutoRetryListener) => {
   };
 
   const fire = (): void => {
+    if (disposed) {
+      return;
+    }
     attempts += 1;
     listener.mutate();
   };
@@ -70,12 +76,18 @@ export const createClusterAutoRetry = (listener: ClusterAutoRetryListener) => {
   return {
     /** Begin a new auto-retry sequence (post-batch or fresh manual cluster). */
     start: (): void => {
+      if (disposed) {
+        return;
+      }
       reset();
       fire();
     },
 
     /** Manual Retry clustering after ceiling (or any terminal cluster error). */
     manualRetry: (): void => {
+      if (disposed) {
+        return;
+      }
       reset();
       fire();
     },
@@ -90,6 +102,9 @@ export const createClusterAutoRetry = (listener: ClusterAutoRetryListener) => {
      * @returns true when a retry was scheduled (caller must not surface error yet).
      */
     noteError: (error: unknown): boolean => {
+      if (disposed) {
+        return false;
+      }
       if (canAutoRetryCluster(attempts, error)) {
         const httpError = error as HTTPError;
         const seconds = resolveClusterRetryDelaySeconds(httpError);
@@ -121,6 +136,7 @@ export const createClusterAutoRetry = (listener: ClusterAutoRetryListener) => {
     getAttemptCount: (): number => attempts,
 
     dispose: (): void => {
+      disposed = true;
       clearTimer();
     },
   };

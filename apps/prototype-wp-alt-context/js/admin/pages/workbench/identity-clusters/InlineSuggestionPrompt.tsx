@@ -13,10 +13,10 @@ import { __ } from '@wordpress/i18n';
 import { useQuery } from '@tanstack/react-query';
 
 import { queryKeys } from '../../../api/queryKeys';
-import { fetchPendingSuggestions, type ClusterSuggestion } from '../../../api/recognition';
 import {
-  INLINE_SUGGESTION_BATCH_LIMIT,
+  fetchAllPendingSuggestionRows,
   reduceInlineSuggestionsByIdentity,
+  type InlineTopMatch,
 } from './inlineSuggestionBatch';
 
 interface InlineSuggestionPromptProps {
@@ -47,15 +47,15 @@ export const InlineSuggestionPrompt = ({
   const { data: byIdentity, isLoading } = useQuery({
     queryKey: queryKeys.suggestions.inlineBatch(),
     queryFn: async () => {
-      const response = await fetchPendingSuggestions(INLINE_SUGGESTION_BATCH_LIMIT, 0);
-      return reduceInlineSuggestionsByIdentity(response.suggestions);
+      const rows = await fetchAllPendingSuggestionRows();
+      return reduceInlineSuggestionsByIdentity(rows);
     },
     staleTime: 60000,
     enabled: Boolean(identityId),
   });
 
   // Absent identity in the batch = no labeled suggestion (render honestly).
-  const topMatch: ClusterSuggestion | undefined = byIdentity?.get(identityId);
+  const topMatch: InlineTopMatch | undefined = byIdentity?.get(identityId);
   const hasSuggestion = topMatch?.label;
 
   // Don't render if loading or no suggestion with a label

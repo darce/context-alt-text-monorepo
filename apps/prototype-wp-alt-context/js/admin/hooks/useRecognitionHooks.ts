@@ -24,6 +24,7 @@ import {
   type JobStatusResponse,
 } from '../api/recognition';
 import { queryKeys } from '../api/queryKeys';
+import { shouldRetryJobStatusQuery } from '../utils/queryRetry';
 import { gateRefetchInterval } from '../utils/rateLimitCooldown';
 
 /**
@@ -56,12 +57,7 @@ export const useScanStatus = (jobId: string | null, enabled = true) =>
     enabled: Boolean(jobId) && enabled,
     queryFn: () => fetchScanStatus(jobId!),
     refetchInterval: gateRefetchInterval((query) => getJobRefetchInterval(query.state.data)),
-    retry: (failureCount, error) => {
-      if (error.message.includes('404')) {
-        return false;
-      }
-      return failureCount < 3;
-    },
+    retry: shouldRetryJobStatusQuery,
   });
 
 export const useCancelScanJobs = (options?: UseMutationOptions<JobStatusResponse[], Error, string[], unknown>) =>
@@ -78,12 +74,7 @@ export const useMultiScanStatus = (jobIds: string[], enabled = true) =>
         queryFn: () => fetchScanStatus(jobId),
         enabled: Boolean(jobId) && enabled,
         refetchInterval: gateRefetchInterval((query) => getJobRefetchInterval(query.state.data)),
-        retry: (failureCount, error) => {
-          if (error.message.includes('404')) {
-            return false;
-          }
-          return failureCount < 3;
-        },
+        retry: shouldRetryJobStatusQuery,
       }),
     ),
   });
@@ -94,12 +85,7 @@ export const useBatchRunStatus = (runId: string | null, enabled = true) =>
     enabled: Boolean(runId) && enabled,
     queryFn: () => fetchBatchRunStatus(runId!),
     refetchInterval: gateRefetchInterval((query) => getBatchRunRefetchInterval(query.state.data)),
-    retry: (failureCount, error) => {
-      if (error.message.includes('404')) {
-        return false;
-      }
-      return failureCount < 3;
-    },
+    retry: shouldRetryJobStatusQuery,
   });
 
 /**

@@ -61,6 +61,41 @@ class OutboxQueryRepositoryTest extends TestCase
         $this->assertSame('dispatch_failed', $result[0]['last_error_code']);
     }
 
+    public function testFindFailedOperationIdsReturnsTenantScopedFailedIdsOldestFirst(): void
+    {
+        // E15-35 Slice 2: bulk requeue reads its failed-id set through this query — it must
+        // scope to the tenant, match only failed rows, and order oldest-first (id ASC) so the
+        // paced next_attempt_at spread is deterministic.
+        global $wpdb;
+
+        $tenantId = 'tenant-test-123';
+        $wpdb->tableRows['wp_acx_sync_outbox'] = [
+            ['id' => 5, 'tenant_id' => $tenantId, 'status' => 'failed'],
+            ['id' => 2, 'tenant_id' => $tenantId, 'status' => 'failed'],
+            ['id' => 3, 'tenant_id' => $tenantId, 'status' => 'pending'],
+            ['id' => 4, 'tenant_id' => 'tenant-other', 'status' => 'failed'],
+        ];
+
+        $repository = new OutboxQueryRepository('wp_acx_sync_outbox');
+        $this->assertSame([2, 5], $repository->find_failed_operation_ids($tenantId, 1000));
+    }
+
+    public function testFindFailedOperationIdsHonorsLimitAndRejectsBlankTenant(): void
+    {
+        global $wpdb;
+
+        $tenantId = 'tenant-test-123';
+        $wpdb->tableRows['wp_acx_sync_outbox'] = [
+            ['id' => 1, 'tenant_id' => $tenantId, 'status' => 'failed'],
+            ['id' => 2, 'tenant_id' => $tenantId, 'status' => 'failed'],
+            ['id' => 3, 'tenant_id' => $tenantId, 'status' => 'failed'],
+        ];
+
+        $repository = new OutboxQueryRepository('wp_acx_sync_outbox');
+        $this->assertSame([1, 2], $repository->find_failed_operation_ids($tenantId, 2));
+        $this->assertSame([], $repository->find_failed_operation_ids('   ', 1000));
+    }
+
     public function testLoadPendingOperationsGatesClaimOnElapsedNextAttemptAndProjectsRetryColumns(): void
     {
         // E15-35 Slice 1 (PR-09): the claim SELECT must skip rows whose next_attempt_at has not

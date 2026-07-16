@@ -51,7 +51,9 @@ class OutboxDrain {
 	private const DRAIN_HOOK = 'acx_sync_drain_curation_outbox';
 	private const PURGE_HOOK = 'acx_sync_purge_terminal_rows';
 	private const ACTION_SCHEDULER_GROUP = 'acx-sync';
-	private const DEFAULT_BATCH_SIZE = 25;
+	// Public so OutboxMaintenanceService can pace bulk requeue in drain-batch-sized
+	// chunks against the same 'acx_outbox_drain_batch_size' filter (E15-35 Slice 2).
+	public const DEFAULT_BATCH_SIZE = 25;
 	private const DEFAULT_CLAIM_LEASE_SECONDS = 300;
 
 	// E15-35 Slice 1 retry tunables. Window-first by construction: the exponential ramp
@@ -343,6 +345,16 @@ class OutboxDrain {
 
 	public function retry_failed_operation( int $outbox_id, string $tenant_id ): bool {
 		return $this->maintenance_service->retry_failed_operation( $outbox_id, $tenant_id );
+	}
+
+	/**
+	 * Thin delegator (REFA-6 convention) for E15-35 Slice 2 bulk dead-letter recovery.
+	 *
+	 * @return int|false Number of rows requeued, or false when the tenant id is invalid
+	 *                   or the database adapter is unavailable.
+	 */
+	public function retry_failed_operations_bulk( string $tenant_id ): int|false {
+		return $this->maintenance_service->retry_failed_operations_bulk( $tenant_id );
 	}
 
 	public function discard_operation( int $outbox_id, string $tenant_id ): bool {

@@ -74,4 +74,9 @@ export interface OutboxMutationResponse {
   operation: OutboxOperation | null;
 }
 
+export interface BulkRetryResponse {
+  requeued: number;
+  failed_remaining: number;
+}
+
 export type WorkbenchOverlay = 'conflicts' | 'dead-letter' | null;

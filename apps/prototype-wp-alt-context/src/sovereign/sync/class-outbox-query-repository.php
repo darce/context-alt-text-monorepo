@@ -223,6 +223,53 @@ class OutboxQueryRepository {
 	}
 
 	/**
+	 * Failed row IDs for a tenant, oldest first (E15-35 Slice 2 bulk requeue).
+	 *
+	 * Ordered by id ASC (monotonic insert order) so the caller's paced
+	 * next_attempt_at spread is deterministic and oldest work drains first.
+	 *
+	 * @return int[]
+	 */
+	public function find_failed_operation_ids( string $tenant_id, int $limit ): array {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		if (
+			'' === $normalized_tenant_id
+			|| ! isset( $wpdb )
+			|| ! is_object( $wpdb )
+			|| ! method_exists( $wpdb, 'prepare' )
+			|| ! method_exists( $wpdb, 'get_results' )
+		) {
+			return array();
+		}
+
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				'SELECT id FROM %i WHERE tenant_id = %s AND status = %s ORDER BY id ASC LIMIT %d',
+				$this->table_name,
+				$normalized_tenant_id,
+				OutboxStatus::FAILED,
+				max( 1, $limit )
+			),
+			ARRAY_A
+		);
+		if ( ! is_array( $rows ) ) {
+			return array();
+		}
+
+		$outbox_ids = array();
+		foreach ( $rows as $row ) {
+			$outbox_id = is_array( $row ) ? (int) ( $row['id'] ?? 0 ) : 0;
+			if ( $outbox_id > 0 ) {
+				$outbox_ids[] = $outbox_id;
+			}
+		}
+
+		return $outbox_ids;
+	}
+
+	/**
 	 * @return array<int,array<string,mixed>>
 	 */
 	public function load_pending_operations( int $batch_size ): array {

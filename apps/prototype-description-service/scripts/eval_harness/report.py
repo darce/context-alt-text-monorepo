@@ -213,7 +213,6 @@ def score_run_record(
             continue
         recognition_enabled = bool(entry["policy"]["recognition_enabled"])
         describe = item.get("describe") or {}
-        caption = str(describe.get("alt_text_draft", ""))
         objects = list((describe.get("visual_facts") or {}).get("objects", []))
         # name_ablation runs cannot be held to Must-Right: the names were
         # withheld from the model, so requiring them would fail every image.
@@ -249,11 +248,21 @@ def score_run_record(
             "roster": roster,
             "context_text": _context_text(entry) or None,
         }
-        scores = score_caption(caption, **score_kwargs)
-        caption_scores.append(scores)
-        gated = _ablation_gate(scores) if eval_mode == "name_ablation" else scores.gated_score
-        if gated is not None:
-            gated_values.append(gated)
+        # ALTQ-1 Slice 2 degrade path: a ``short_error`` stamp means compression
+        # to the short surface failed at fetch time — the long surface is kept
+        # and scored, the short is marked failed instead of being charged to the
+        # model as an empty caption. Absent the stamp (every pre-Slice-2 record)
+        # the path below is byte-identical to the old behaviour.
+        short_error = describe.get("short_error")
+        scores: CaptionScores | None = None
+        gated: float | None = None
+        if short_error is None:
+            caption = str(describe.get("alt_text_draft", ""))
+            scores = score_caption(caption, **score_kwargs)
+            caption_scores.append(scores)
+            gated = _ablation_gate(scores) if eval_mode == "name_ablation" else scores.gated_score
+            if gated is not None:
+                gated_values.append(gated)
 
         long_text = describe.get("alt_text_long")
         long_s = score_caption(str(long_text), **score_kwargs) if isinstance(long_text, str) and long_text else None
@@ -263,7 +272,9 @@ def score_run_record(
         taken: bool | None = None
         if isinstance(injected, str) and injected:
             distractor_injected += 1
-            taken = injected in scores.wrong_name_hits or (long_s is not None and injected in long_s.wrong_name_hits)
+            taken = (scores is not None and injected in scores.wrong_name_hits) or (
+                long_s is not None and injected in long_s.wrong_name_hits
+            )
             distractor_taken += int(taken)
         # Ground-truth total faces (incl. non-roster strangers), not just named
         # roster identities — otherwise every stranger face is a detection FP and
@@ -291,24 +302,28 @@ def score_run_record(
             "path": path,
             "media_id": media_id,
             "gated_score": gated,
-            "must_right_failures": scores.must_right_failures,
-            "policy_violation": scores.policy_violation,
-            "wrong_name_hits": scores.wrong_name_hits,
-            "hallucinated_names": scores.hallucinated_names,
-            "inserted_identities": scores.inserted_identities,
-            "missing_identities": scores.missing_identities,
-            "fkre": round(scores.fkre, 2),
-            "repetition_ratio": round(scores.repetition_ratio, 4),
-            "tag_coverage": scores.tag_coverage,
-            "first_sentence_gist_ok": scores.first_sentence_gist_ok,
-            "meta_framing_hits": scores.meta_framing_hits,
+            "must_right_failures": scores.must_right_failures if scores is not None else None,
+            "policy_violation": scores.policy_violation if scores is not None else None,
+            "wrong_name_hits": scores.wrong_name_hits if scores is not None else None,
+            "hallucinated_names": scores.hallucinated_names if scores is not None else None,
+            "inserted_identities": scores.inserted_identities if scores is not None else None,
+            "missing_identities": scores.missing_identities if scores is not None else None,
+            "fkre": round(scores.fkre, 2) if scores is not None else None,
+            "repetition_ratio": round(scores.repetition_ratio, 4) if scores is not None else None,
+            "tag_coverage": scores.tag_coverage if scores is not None else None,
+            "first_sentence_gist_ok": scores.first_sentence_gist_ok if scores is not None else None,
+            "meta_framing_hits": scores.meta_framing_hits if scores is not None else None,
             "context_duplication_ratio": (
-                None if scores.context_duplication_ratio is None else round(scores.context_duplication_ratio, 4)
+                None
+                if scores is None or scores.context_duplication_ratio is None
+                else round(scores.context_duplication_ratio, 4)
             ),
-            "sentence_count": scores.sentence_count,
-            "name_front_loaded": scores.name_front_loaded,
+            "sentence_count": scores.sentence_count if scores is not None else None,
+            "name_front_loaded": scores.name_front_loaded if scores is not None else None,
             "cache_hit": bool(describe.get("cached", False)),  # contract field is 'cached' (HARM-02)
         }
+        if short_error is not None:
+            row["short_error"] = str(short_error)
         if long_s is not None:
             row["long"] = {
                 "gated_score": _ablation_gate(long_s) if eval_mode == "name_ablation" else long_s.gated_score,
@@ -417,6 +432,12 @@ def score_run_record(
         "failures": failures,
     }
 
+    # ALTQ-1 Slice 2: surfaced only when a short compression actually failed so
+    # pre-Slice-2 records keep their exact report shape (additive schema).
+    short_failed_images = sum(1 for r in per_image if "short_error" in r)
+    if short_failed_images:
+        result["caption"]["short_failed_images"] = short_failed_images
+
     if long_scores:
         long_gated = [
             g
@@ -509,6 +530,20 @@ def _markdown(scored: dict[str, Any]) -> str:
         lines.append(
             f"- ⚠ eval_mode: **{eval_mode}** — context was transformed at fetch time; "
             "metrics are mode-specific, NOT comparable to standard runs."
+        )
+    # ALTQ-1 Slice 2 attribution: the prompt/pipeline config that produced the
+    # captions (absent on pre-Slice-2 records — nothing rendered then).
+    prompt_variant = prov.get("prompt_variant")
+    if prompt_variant:
+        pipeline_flags = [flag for flag in ("two_pass", "dual_length", "face_gate") if prov.get(flag)]
+        lines.append(
+            f"- prompt variant: `{prompt_variant}`"
+            + (f" pipeline: {', '.join(pipeline_flags)}" if pipeline_flags else "")
+        )
+    if cap.get("short_failed_images"):
+        lines.append(
+            f"- ⚠ short-surface compression failed on {cap['short_failed_images']} image(s) — "
+            "long surface kept and scored; short surface excluded from caption metrics."
         )
     lines += [
         "",

@@ -292,6 +292,11 @@ EOF
       if [ ! -e "$worktree_path" ]; then
         "$script_dir/secure-offload-clone.sh" --primary "$orchestrator_root" --dest "$worktree_path" --branch "$branch" >/dev/null \
           || die "secure offload sandbox creation failed (secret scan or clone error above)"
+      elif [ ! -e "$worktree_path/.acx-secure-offload" ]; then
+        # A pre-existing dest without the sandbox marker is a plain worktree sharing
+        # the primary .git — reusing it hands the full history to the untrusted
+        # backend, the exact exposure secure mode exists to prevent. Fail closed.
+        die "secure offload requires a sandbox at $worktree_path, but an unmarked (plain) checkout exists there; remove it or close its lane first"
       fi
     elif [ ! -d "$worktree_path/.git" ] && [ ! -f "$worktree_path/.git" ]; then
       git -C "$orchestrator_root" worktree add "$worktree_path" -b "$branch"

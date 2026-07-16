@@ -320,6 +320,9 @@ export const IdentityClusterItem = ({
                 canSplit={canMutate && Boolean(cluster.clusterId)}
                 canReject={canMutate && (isSingleton || cluster.members.length === 1)}
                 isPending={mutations.isPending}
+                splitDisabled={mutations.splitGate.disabled}
+                splitTitle={mutations.splitGate.title}
+                splitAriaDisabled={mutations.splitGate['aria-disabled']}
                 onEdit={startEditing}
                 onWrongPerson={handleWrongPerson}
                 onSplit={handleSplit}

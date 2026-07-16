@@ -22,6 +22,7 @@ export const ScanActionPanel = ({ scanRun, onCancelScan, onRetryStream }: ScanAc
     statusText,
     jobId,
     errorMessage,
+    onRetryClustering,
     progress,
     batchRunStatus,
     stallSeconds,
@@ -49,7 +50,7 @@ export const ScanActionPanel = ({ scanRun, onCancelScan, onRetryStream }: ScanAc
         </button>
       )}
       {statusText && (
-        <p className="acx-apply-panel__status">
+        <p className="acx-apply-panel__status" role="status" aria-live="polite">
           {sprintf(__('Job %s: %s', 'alt-context'), jobId ?? __('pending', 'alt-context'), statusText)}
         </p>
       )}
@@ -147,7 +148,18 @@ export const ScanActionPanel = ({ scanRun, onCancelScan, onRetryStream }: ScanAc
           )}
         </>
       )}
-      {errorMessage && <p className="acx-apply-panel__status acx-apply-panel__status--error">{errorMessage}</p>}
+      {errorMessage && (
+        <div className="acx-apply-panel__status acx-apply-panel__status--error" role="alert">
+          <p>{errorMessage}</p>
+          {onRetryClustering && (
+            <div className="acx-apply-panel__actions">
+              <button type="button" className="acx-link-button" onClick={onRetryClustering}>
+                {__('Retry clustering', 'alt-context')}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
@@ -162,6 +174,10 @@ interface ConfirmPanelProps {
   progress?: JobProgress | null;
   etaSeconds?: number | null;
   isSynced?: boolean;
+  /** Remote-compute offline gate (RES-15) — container threads useRemoteActionGate props. */
+  remoteActionDisabled?: boolean;
+  remoteActionTitle?: string;
+  remoteActionAriaDisabled?: true;
 }
 
 export const ConfirmPanel = ({
@@ -174,6 +190,9 @@ export const ConfirmPanel = ({
   progress,
   etaSeconds,
   isSynced,
+  remoteActionDisabled = false,
+  remoteActionTitle,
+  remoteActionAriaDisabled,
 }: ConfirmPanelProps) => (
   <div className="acx-apply-panel">
     <p>{__('Review the most recent recognition job and cluster the detected embeddings.', 'alt-context')}</p>
@@ -185,7 +204,14 @@ export const ConfirmPanel = ({
         {__('Status', 'alt-context')} — {status ?? __('Pending', 'alt-context')}
       </li>
     </ul>
-    <button type="button" className="acx-apply-panel__scan" onClick={onCluster} disabled={isClustering}>
+    <button
+      type="button"
+      className="acx-apply-panel__scan"
+      onClick={onCluster}
+      disabled={isClustering || remoteActionDisabled}
+      aria-disabled={remoteActionAriaDisabled}
+      title={remoteActionTitle}
+    >
       {isClustering ? __('Clustering faces…', 'alt-context') : __('Cluster the latest job results', 'alt-context')}
     </button>
     <button type="button" className="acx-link-button" onClick={onViewClusters} disabled={!jobId}>

@@ -1,5 +1,5 @@
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 
 import { DashboardSyncHealthSection } from '../DashboardSyncHealthSection';
 
@@ -90,5 +90,33 @@ describe('DashboardSyncHealthSection', () => {
 
     expect(screen.getByTestId('acx-dashboard-mirror-warning-icon')).toBeInTheDocument();
     expect(screen.getByText(/Mirror is out of sync with the backend/i)).toBeInTheDocument();
+  });
+
+  it('keeps Reset mirror enabled and firing while the breaker is open (recovery affordance)', () => {
+    // resetMirror heals the breaker; gating it would trap the operator offline (plan §3, RES-15).
+    const onResetMirror = vi.fn();
+    render(
+      <DashboardSyncHealthSection
+        {...baseProps}
+        showMirrorDivergenceBanner
+        localClusterCount={3}
+        failedReplayCount={2}
+        onResetMirror={onResetMirror}
+        effectiveSyncHealth="offline"
+        syncHealthEnvelope={{
+          breaker: { state: 'open', base_url: 'http://localhost:8000', opened_at: null },
+          outbox: { pending: 0, failed: 0 },
+          conflicts: { open: 0 },
+          replays: { failed: 2, source: 'local' },
+          last_pull: { at: '2026-06-11T12:00:00Z', ok: true },
+          warnings: [],
+        }}
+      />,
+    );
+
+    const resetButton = screen.getByRole('button', { name: 'Reset mirror' });
+    expect(resetButton).toBeEnabled();
+    fireEvent.click(resetButton);
+    expect(onResetMirror).toHaveBeenCalled();
   });
 });

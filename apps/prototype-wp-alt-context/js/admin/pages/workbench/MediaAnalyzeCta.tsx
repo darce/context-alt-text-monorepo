@@ -1,5 +1,7 @@
 import { __, _n, sprintf } from '@wordpress/i18n';
 
+import { useRemoteActionGate } from '../../hooks/useRemoteActionGate';
+import { useSyncOffline } from '../../hooks/useSyncOffline';
 import { isClusteringActive } from './Panels';
 import { useJobPipeline } from './JobPipelineContext';
 import { useWorkbenchMediaContext } from './WorkbenchMediaContext';
@@ -8,8 +10,14 @@ export const MediaAnalyzeCta = (): React.JSX.Element => {
   const { scanRun, scan } = useJobPipeline();
   const { selectedMedia } = useWorkbenchMediaContext().selection;
   const selectedCount = selectedMedia.length;
+  // Co-located hook + button — gate directly (RES-15, RES-03).
+  const offline = useSyncOffline();
+  const remoteGate = useRemoteActionGate(offline);
 
   const handleScanFaces = (): void => {
+    if (offline) {
+      return;
+    }
     const mediaIds = selectedMedia.map((item) => item.id);
     if (mediaIds.length === 0) {
       return;
@@ -31,7 +39,9 @@ export const MediaAnalyzeCta = (): React.JSX.Element => {
         type="button"
         className="acx-apply-panel__scan"
         onClick={handleScanFaces}
-        disabled={scanRun.isScanning || selectedCount === 0}
+        disabled={scanRun.isScanning || selectedCount === 0 || remoteGate.disabled}
+        aria-disabled={remoteGate['aria-disabled']}
+        title={remoteGate.title}
       >
         {scanRun.isScanning
           ? isClusteringActive(scanRun.progress?.phase)

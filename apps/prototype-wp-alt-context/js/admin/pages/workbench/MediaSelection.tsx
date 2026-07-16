@@ -20,6 +20,8 @@ import { BulkDescribeReviewLink } from './BulkDescribeReviewLink';
 import { Checkbox } from '../../../components/ui/checkbox';
 import { useBulkDescribe } from '../../hooks/useBulkDescribe';
 import type { DescribeRunProgress } from '../../hooks/useDescribeRunProgress';
+import { useRemoteActionGate } from '../../hooks/useRemoteActionGate';
+import { useSyncOffline } from '../../hooks/useSyncOffline';
 import { DESCRIBE_RUN_STATUS, type DescribeRunStatus } from '../../api/describeApi';
 import { useWorkbenchMediaContext } from './WorkbenchMediaContext';
 import { SYNC_VOCABULARY } from './syncPresentation';
@@ -31,6 +33,9 @@ interface MediaSelectionProps {
 
 export const MediaSelection = ({ collapsed = false, onExpand }: MediaSelectionProps): React.JSX.Element => {
   const { selection: mediaSelection, filters, mediaQueue } = useWorkbenchMediaContext();
+  // RES-15: container owns offline signal; BulkDescribeCta is pure presentational.
+  const offline = useSyncOffline();
+  const remoteGate = useRemoteActionGate(offline);
   const { selection, toggleRow, toggleAll } = mediaSelection;
   const {
     searchQuery,
@@ -150,7 +155,13 @@ export const MediaSelection = ({ collapsed = false, onExpand }: MediaSelectionPr
             progress={describeProgress}
             isPanelVisible={isDescribePanelVisible}
             errorMessage={bulkDescribe.submit.error?.message ?? bulkDescribe.cancel.error?.message ?? null}
+            remoteActionDisabled={remoteGate.disabled}
+            remoteActionTitle={remoteGate.title}
+            remoteActionAriaDisabled={remoteGate['aria-disabled']}
             onSubmit={() => {
+              if (offline) {
+                return;
+              }
               setDismissedRunId(null);
               bulkDescribe.submit.mutate(selectedMediaIds);
             }}
@@ -270,13 +281,18 @@ interface BulkDescribeCtaProps {
   progress: DescribeRunProgress;
   isPanelVisible: boolean;
   errorMessage: string | null;
+  /** Remote-compute offline gate (RES-15) — never applied to cancel. */
+  remoteActionDisabled?: boolean;
+  remoteActionTitle?: string;
+  remoteActionAriaDisabled?: true;
   onSubmit: () => void;
   onCancel: () => void;
   onDismiss: () => void;
   onRetryPolling: () => void;
 }
 
-const BulkDescribeCta = ({
+/** Exported for unit tests of the presentational submit gate. */
+export const BulkDescribeCta = ({
   selectedCount,
   isSubmitting,
   isCancelling,
@@ -285,6 +301,9 @@ const BulkDescribeCta = ({
   progress,
   isPanelVisible,
   errorMessage,
+  remoteActionDisabled = false,
+  remoteActionTitle,
+  remoteActionAriaDisabled,
   onSubmit,
   onCancel,
   onDismiss,
@@ -301,7 +320,9 @@ const BulkDescribeCta = ({
         <button
           type="button"
           className="button"
-          disabled={selectedCount === 0 || isSubmitting || isRunning}
+          disabled={selectedCount === 0 || isSubmitting || isRunning || remoteActionDisabled}
+          aria-disabled={remoteActionAriaDisabled}
+          title={remoteActionTitle}
           onClick={onSubmit}
         >
           {isSubmitting ? SYNC_VOCABULARY.describeStarting : __('Describe selected', 'alt-context')}

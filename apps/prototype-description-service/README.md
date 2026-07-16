@@ -94,6 +94,11 @@ Every secret has one documented owner and one fetch mechanism. The authoritative
 per-secret ownership matrix (domain / owner / source-of-truth / consumer / prod
 target) is [`docs/secrets-inventory.md`](docs/secrets-inventory.md).
 
+- **Key/tenant track selection** (which console mints what, for whom) is
+  defined once in
+  [`docs/runbooks/key-management.md`](../../docs/runbooks/key-management.md) —
+  consoles and CLIs mint into the DB of the environment they run in, never
+  across environments.
 - **Local onboarding — one command:** `make dev-setup` copies `.env.example` →
   `.env` (never clobbers an existing one), then mints a **local test fixture**
   API key. Mint additional local fixture keys with `make dev-mint-key`. Both

@@ -135,6 +135,7 @@ def test_record_success_resets_failure_count() -> None:
     assert snapshot.failure_count == 0
 
 
+@pytest.mark.timing
 def test_allow_request_fast_path_under_10ms_when_open() -> None:
     clock = _FakeClock()
     breaker = _build_breaker(clock)
@@ -145,9 +146,15 @@ def test_allow_request_fast_path_under_10ms_when_open() -> None:
         breaker.allow_request()
     elapsed_ms = (time.perf_counter() - started) * 1000
 
-    # Fast-path cost is per-call; budget generously: even 1000 calls comfortably
-    # fit under 10ms on CI. The plan's "<10ms" SLO is per-call, this asserts the
-    # fast path is not accidentally performing IO.
+    # Fast-path cost is per-call; the budget is generous because the claim under
+    # test is "the fast path performs no IO", not a real latency SLO (the plan's
+    # "<10ms" is per-call).
+    #
+    # A wall-clock budget cannot tell "accidental IO" apart from "the host is
+    # slow", so this is `timing`-marked and runs serial, out of the parallel fast
+    # lane: unmarked, it ran on the remote gate (systemd CPUQuota=200%, Ampere
+    # A1) where 1000 calls exceed 10ms for want of CPU, reddening `make
+    # check-remote` for every task while passing on any dev Mac.
     assert elapsed_ms < 10, f"1000 open-state admission checks took {elapsed_ms:.2f}ms"
 
 

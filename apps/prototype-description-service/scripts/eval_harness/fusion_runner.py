@@ -60,7 +60,7 @@ from scene.interface_adapters.http.schemas.requests import (
 )
 
 from .manifest import GoldenEntry, GoldenManifest, ManifestError, load_manifest
-from .report import build_reports
+from .report import Audience, build_reports
 from .schema import SCHEMA, DocKind
 
 Mode = Literal["staged", "adhoc"]
@@ -695,6 +695,12 @@ def main(argv: list[str] | None = None) -> int:
     # fusion_runner.py → eval_harness → scripts → service → apps → monorepo root
     parser.add_argument("--out-dir", default=str(Path(__file__).resolve().parents[4] / "docs" / "tasks" / "20.0"))
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument(
+        "--audience",
+        choices=(Audience.LOCAL.value, Audience.PUBLIC.value),
+        default=Audience.LOCAL.value,
+        help="public ALSO emits a redacted publishable-only <stem>-report.public.{json,md} (VLM-6 S5 W1)",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -735,6 +741,17 @@ def main(argv: list[str] | None = None) -> int:
         (out_dir / f"{stem}-report.json").write_text(json_report)
         (out_dir / f"{stem}-report.md").write_text(md_report)
         (out_dir / f"{stem}-misattachment.json").write_text(json.dumps(mis, indent=2, sort_keys=True) + "\n")
+        # VLM-6 S5 W1: redacted public export. Rebuilt with audience=PUBLIC (not the
+        # mis-attachment-appended local md, whose hit paths can be local-only).
+        if args.audience == Audience.PUBLIC.value:
+            public_json, public_md = build_reports(
+                record,
+                entries,
+                audience=Audience.PUBLIC,
+                score_manifest_sha256=record["provenance"]["manifest_sha256"],
+            )
+            (out_dir / f"{stem}-report.public.json").write_text(public_json)
+            (out_dir / f"{stem}-report.public.md").write_text(public_md)
         print(f"{mode}: misattachments={mis['misattachments']}/{mis['labeled_facts']} → {out_dir / stem}-report.md")
 
     return 0

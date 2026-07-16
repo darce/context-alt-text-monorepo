@@ -30,6 +30,31 @@ def test_invert_phrase_none_without_direction():
     assert _invert_phrase("Alice next to Bob") is None
 
 
+def test_invert_phrase_handles_trailing_punctuation():  # VLM-6 S5 W3 / VLM6-D-02
+    # A directional token with attached punctuation must still invert (was None),
+    # with the punctuation preserved so the wrong-claim phrase keeps its shape.
+    assert _invert_phrase("in the foreground.") == "in the background."
+    assert _invert_phrase("to the left, near X") == "to the right, near X"
+    assert _invert_phrase("(above)") == "(below)"
+
+
+def test_between_correct_claim():  # VLM-6 S5 W2 / VLM6-D-01
+    facts = [_fact("Alice", SpatialRelation.BETWEEN, "Bob", ["Alice between Bob and Carol"], "Carol")]
+    s = score_placement("Here is Alice between Bob and Carol, smiling.", spatial_facts=facts)
+    assert s.correct == ["Alice between Bob and Carol"] and s.wrong == []
+    assert s.accuracy == 1.0 and s.claims == 1
+
+
+def test_between_wrong_claim_detected():  # VLM-6 S5 W2 / VLM6-D-01
+    # A wrong between-claim (a NON-subject entity in the middle) previously scored
+    # as 'no claim' (accuracy=None); it must now score as wrong.
+    facts = [_fact("Alice", SpatialRelation.BETWEEN, "Bob", ["Alice between Bob and Carol"], "Carol")]
+    s = score_placement("The photo shows Bob between Alice and Carol.", spatial_facts=facts)
+    assert s.correct == []
+    assert s.wrong and s.wrong[0][0] == "Alice between Bob and Carol"
+    assert s.accuracy == 0.0 and s.claims == 1
+
+
 def test_correct_placement_claim():
     facts = [_fact("Alice", SpatialRelation.LEFT_OF, "Bob", ["Alice to the left of Bob"])]
     s = score_placement("Here is Alice to the left of Bob, smiling.", spatial_facts=facts)

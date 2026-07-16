@@ -38,7 +38,7 @@ from shared.secrets import get_secret_provider
 
 from .manifest import GoldenManifest, ManifestError, _resolve_image, load_manifest
 from .remote_client import RemoteClientError, RemoteSceneClient
-from .report import ReportError, build_reports, score_run_record
+from .report import Audience, ReportError, build_reports, score_run_record
 from .schema import SCHEMA, DocKind
 from .seed_roster import seed, seed_scenes
 
@@ -470,6 +470,23 @@ def _cmd_score(args: argparse.Namespace) -> None:
     json_path, md_path = Path(f"{base}-report.json"), Path(f"{base}-report.md")
     json_path.write_text(json_doc)
     md_path.write_text(md_doc)
+    # VLM-6 S5 W1 (VLM6-C-01 / VLM6-F-03): audience-aware export. Additive — the
+    # full LOCAL report above is always written (operator triage + the failure gate
+    # below score the whole corpus); --audience public ALSO emits a redacted,
+    # publishable-only artifact. This is the sole sanctioned eval->public path,
+    # the prerequisite that makes the rd.altcontext.com gallery (RND-1) safe.
+    if getattr(args, "audience", Audience.LOCAL.value) == Audience.PUBLIC.value:
+        public_json, public_md = build_reports(
+            record,
+            entries,
+            ignore_list=ignore_list,
+            score_manifest_sha256=manifest_sha,
+            audience=Audience.PUBLIC,
+        )
+        public_json_path, public_md_path = Path(f"{base}-report.public.json"), Path(f"{base}-report.public.md")
+        public_json_path.write_text(public_json)
+        public_md_path.write_text(public_md)
+        print(public_md_path)
     scored = score_run_record(record, entries, ignore_list=ignore_list, score_manifest_sha256=manifest_sha)
     print(md_path)
     print(
@@ -530,6 +547,20 @@ def main(argv: list[str] | None = None) -> None:
         p.add_argument("--llm-judge", action="store_true", help="stub — not implemented (§6c)")
         p.add_argument("--check-determinism", action="store_true")
 
+    def _audience_flag(p: argparse.ArgumentParser) -> None:
+        # score/run only. LOCAL (default) writes the full operator report unchanged;
+        # PUBLIC additionally emits a redacted publishable-only public artifact.
+        p.add_argument(
+            "--audience",
+            choices=(Audience.LOCAL.value, Audience.PUBLIC.value),
+            default=Audience.LOCAL.value,
+            help=(
+                "local (default) writes the full operator report; public ALSO emits a "
+                "redacted publishable-only <run>-report.public.{json,md} (the only sanctioned "
+                "eval->public path)"
+            ),
+        )
+
     def _provider_flags(p: argparse.ArgumentParser) -> None:
         # fetch/run only — score is pure/offline and must not accept paid-run flags.
         p.add_argument(
@@ -563,12 +594,14 @@ def main(argv: list[str] | None = None) -> None:
 
     score_p = sub.add_parser("score", help="run record -> reports (pure, offline)")
     _common(score_p)
+    _audience_flag(score_p)
     score_p.add_argument("--run-record", required=True)
     score_p.set_defaults(func=_cmd_score)
 
     run_p = sub.add_parser("run", help="fetch then score")
     _common(run_p)
     _provider_flags(run_p)
+    _audience_flag(run_p)
     run_p.set_defaults(func=_cmd_run)
 
     seed_p = sub.add_parser("seed-roster", help="idempotent eval-tenant roster seeding")

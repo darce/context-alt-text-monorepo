@@ -2,6 +2,7 @@ import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 
 import type { OutboxOperation } from '../../api/recognition';
+import { useBulkRetryOperations } from '../../hooks/useBulkRetryOperations';
 import { useDeadLetterOperations } from '../../hooks/useDeadLetterOperations';
 import { useDiscardOperation } from '../../hooks/useDiscardOperation';
 import { useOutboxOperations } from '../../hooks/useOutboxOperations';
@@ -34,6 +35,7 @@ interface DeadLetterPanelState {
   timelineOffset: number;
   timelineStatus: TimelineStatusFilter;
   pendingDiscardId: number | null;
+  bulkRetryArmed: boolean;
   notice: string | null;
   mutationError: string | null;
 }
@@ -43,6 +45,7 @@ type DeadLetterPanelAction =
   | { type: 'setTimelineOffset'; offset: number }
   | { type: 'setTimelineStatus'; status: TimelineStatusFilter }
   | { type: 'setPendingDiscardId'; id: number | null }
+  | { type: 'setBulkRetryArmed'; armed: boolean }
   | { type: 'setNotice'; notice: string | null }
   | { type: 'setMutationError'; error: string | null };
 
@@ -51,6 +54,7 @@ const INITIAL_STATE: DeadLetterPanelState = {
   timelineOffset: 0,
   timelineStatus: 'all',
   pendingDiscardId: null,
+  bulkRetryArmed: false,
   notice: null,
   mutationError: null,
 };
@@ -65,6 +69,8 @@ const deadLetterPanelReducer = (state: DeadLetterPanelState, action: DeadLetterP
       return { ...state, timelineStatus: action.status };
     case 'setPendingDiscardId':
       return { ...state, pendingDiscardId: action.id };
+    case 'setBulkRetryArmed':
+      return { ...state, bulkRetryArmed: action.armed };
     case 'setNotice':
       return { ...state, notice: action.notice };
     case 'setMutationError':
@@ -126,7 +132,7 @@ const formatPayloadSummary = (payload: Record<string, unknown> | undefined): str
 
 export const DeadLetterPanel = (): React.JSX.Element => {
   const [state, dispatch] = React.useReducer(deadLetterPanelReducer, INITIAL_STATE);
-  const { offset, timelineOffset, timelineStatus, pendingDiscardId, notice, mutationError } = state;
+  const { offset, timelineOffset, timelineStatus, pendingDiscardId, bulkRetryArmed, notice, mutationError } = state;
 
   const operationsQuery = useDeadLetterOperations({ limit: PAGE_SIZE, offset });
   const timelineQuery = useOutboxOperations({
@@ -136,6 +142,7 @@ export const DeadLetterPanel = (): React.JSX.Element => {
   });
   const retryMutation = useRetryOperation();
   const discardMutation = useDiscardOperation();
+  const bulkRetryMutation = useBulkRetryOperations();
   const syncStatusQuery = useSyncStatus();
 
   const handleRetry = async (id: number): Promise<void> => {
@@ -170,6 +177,30 @@ export const DeadLetterPanel = (): React.JSX.Element => {
       dispatch({
         type: 'setMutationError',
         error: __('Unable to discard this operation. Please try again.', 'alt-context'),
+      });
+    }
+  };
+
+  const handleBulkRetry = async (): Promise<void> => {
+    if (!bulkRetryArmed) {
+      dispatch({ type: 'setMutationError', error: null });
+      dispatch({ type: 'setBulkRetryArmed', armed: true });
+      return;
+    }
+
+    dispatch({ type: 'setBulkRetryArmed', armed: false });
+    try {
+      const result = await bulkRetryMutation.mutateAsync();
+      dispatch({ type: 'setMutationError', error: null });
+      dispatch({
+        type: 'setNotice',
+        notice: sprintf(__('%d failed changes queued to retry.', 'alt-context'), result.requeued),
+      });
+    } catch {
+      dispatch({ type: 'setNotice', notice: null });
+      dispatch({
+        type: 'setMutationError',
+        error: __('Unable to retry all failed changes. Please try again.', 'alt-context'),
       });
     }
   };
@@ -210,6 +241,24 @@ export const DeadLetterPanel = (): React.JSX.Element => {
     <section aria-label="Failed changes panel">
       <h3>{__('Failed changes', 'alt-context')}</h3>
       <p>{sprintf(__('Showing %1$d-%2$d of %3$d failed changes.', 'alt-context'), rangeStart, rangeEnd, total)}</p>
+      <div className="acx-dashboard__actions">
+        {/* E15-35 Slice 2: bulk recovery is inherently N-dependent — at zero the control
+            stays visible (count included) but disabled, per rg-003's intent. */}
+        <button
+          type="button"
+          className="button button-secondary"
+          onClick={() => {
+            void handleBulkRetry();
+          }}
+          disabled={total === 0 || bulkRetryMutation.isPending || retryMutation.isPending || discardMutation.isPending}
+        >
+          {bulkRetryMutation.isPending
+            ? __('Retrying all failed…', 'alt-context')
+            : bulkRetryArmed
+              ? sprintf(__('Confirm retry all failed (%d)', 'alt-context'), total)
+              : sprintf(__('Retry all failed (%d)', 'alt-context'), total)}
+        </button>
+      </div>
       {notice ? (
         <div className="acx-notice acx-notice--info">
           <p>{notice}</p>

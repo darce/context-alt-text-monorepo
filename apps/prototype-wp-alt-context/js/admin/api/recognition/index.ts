@@ -81,6 +81,7 @@ export type {
   OutboxOperation,
   OutboxListResponse,
   OutboxMutationResponse,
+  BulkRetryResponse,
   WorkbenchOverlay,
 } from './types';
 
@@ -155,5 +156,6 @@ export {
   fetchOutboxOperations,
   fetchFailedOutboxOperations,
   retryFailedOperation,
+  bulkRetryFailedOperations,
   discardFailedOperation,
 } from './conflictApi';

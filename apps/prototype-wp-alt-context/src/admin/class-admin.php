@@ -291,14 +291,16 @@ class Admin {
 			return;
 		}
 
+		// RECOG-1: local is a dev-only code hatch (ACX_RECOGNITION_SOURCE constant /
+		// filter); the product Settings surface no longer exposes a target toggle, so
+		// this notice is a developer diagnostic — remove the constant to return to the
+		// hosted service, not a Settings link.
 		$effective_url = $resolver->get_effective_base_url();
-		$settings_url  = admin_url( 'admin.php?page=alt-context-settings' );
 		echo '<div class="notice notice-warning"><p>';
 		printf(
-			/* translators: 1: effective local recognition URL, 2: link to settings page */
-			esc_html__( 'Alt Context is in local recognition mode and will send requests to %1$s. %2$s to switch to the hosted recognition service.', 'alt-context' ),
-			esc_html( $effective_url ),
-			'<a href="' . esc_url( $settings_url ) . '">' . esc_html__( 'Go to Settings', 'alt-context' ) . '</a>'
+			/* translators: %s: effective local recognition URL */
+			esc_html__( 'Alt Context is using the developer local-recognition hatch (ACX_RECOGNITION_SOURCE=local) and will send requests to %s. Remove that constant to use the hosted recognition service.', 'alt-context' ),
+			esc_html( $effective_url )
 		);
 		echo '</p></div>';
 	}

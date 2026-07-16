@@ -409,9 +409,13 @@ describe('WorkbenchPage', () => {
     renderWorkbench();
 
     expect(
-      screen.getByText('Alt Context is targeting the local recognition service at http://localhost:8001.'),
+      screen.getByText(
+        'Alt Context is targeting the local recognition service at http://localhost:8001 via the developer hatch.',
+      ),
     ).toBeInTheDocument();
-    expect(screen.getByText('Use Settings to switch back to the hosted recognition service.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Remove the ACX_RECOGNITION_SOURCE developer constant to use the hosted recognition service.'),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/local recognition URL fallback/i)).not.toBeInTheDocument();
   });
 

@@ -1,8 +1,9 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { __ } from '@wordpress/i18n';
 
 import type { ClusterResponse } from '../api/recognition';
 import { formatScanSubmissionError, resolveScanErrorMessage } from '../api/recognition/scanApiError';
+import { createClusterAutoRetry } from './clusterAutoRetry';
 import type { JobType } from './useJobPersistence';
 import { useScanIdentities, useClusterIdentities, useCancelScanJobs } from './useRecognitionHooks';
 
@@ -41,6 +42,16 @@ export const useJobStateMachineMutations = ({
     activeJobIds.forEach((id) => removeJob(id));
   }, [activeJobIds, removeJob]);
 
+  const [clusterQueuedSeconds, setClusterQueuedSeconds] = useState<number | null>(null);
+  const [canRetryClustering, setCanRetryClustering] = useState(false);
+
+  const onClusterCompleteRef = useRef(onClusterComplete);
+  const onClusterErrorRef = useRef(onClusterError);
+  useEffect(() => {
+    onClusterCompleteRef.current = onClusterComplete;
+    onClusterErrorRef.current = onClusterError;
+  }, [onClusterComplete, onClusterError]);
+
   const scanMutation = useScanIdentities({
     onMutate: () => {
       onScanStart?.();
@@ -74,21 +85,65 @@ export const useJobStateMachineMutations = ({
     },
   });
 
+  const mutateClusterRef = useRef<() => void>(() => {});
+
+  const retryControllerRef = useRef(
+    createClusterAutoRetry({
+      mutate: () => {
+        mutateClusterRef.current();
+      },
+      onQueued: (seconds) => {
+        setClusterQueuedSeconds(seconds);
+      },
+      onExhausted: () => {
+        setCanRetryClustering(true);
+      },
+      onTerminalError: (message) => {
+        onClusterErrorRef.current?.(message);
+      },
+      fallbackErrorMessage: __('Clustering failed. Please try again.', 'alt-context'),
+    }),
+  );
+
+  useEffect(
+    () => () => {
+      retryControllerRef.current.dispose();
+    },
+    [],
+  );
+
   const clusterMutation = useClusterIdentities({
     onSuccess: (data) => {
+      retryControllerRef.current.noteSuccess();
+      setCanRetryClustering(false);
       if (data.id && data.status === 'pending') {
         addJob(data.id, 'clustering', data.total_identities_clustered || 0);
         return;
       }
       invalidateIdentities();
-      onClusterComplete?.(data);
+      onClusterCompleteRef.current?.(data);
     },
     onError: (error) => {
-      const message =
-        error instanceof Error ? error.message : __('Clustering failed. Please try again.', 'alt-context');
-      onClusterError?.(message);
+      // 429: auto-retry up to CLUSTER_RETRY_MAX_ATTEMPTS (MutationCache arms shared cooldown).
+      // Non-429 / ceiling: controller surfaces onTerminalError; never blind-retry other 4xx.
+      retryControllerRef.current.noteError(error);
     },
   });
+
+  // Keep the ref current during render so start/retry never hit a stale no-op.
+  mutateClusterRef.current = () => {
+    clusterMutation.mutate();
+  };
+
+  const startCluster = useCallback(() => {
+    setCanRetryClustering(false);
+    retryControllerRef.current.start();
+  }, []);
+
+  const retryClustering = useCallback(() => {
+    setCanRetryClustering(false);
+    retryControllerRef.current.manualRetry();
+  }, []);
 
   const cancelMutation = useCancelScanJobs({
     onMutate: () => {
@@ -108,5 +163,13 @@ export const useJobStateMachineMutations = ({
     },
   });
 
-  return { scanMutation, clusterMutation, cancelMutation };
+  return {
+    scanMutation,
+    clusterMutation,
+    cancelMutation,
+    startCluster,
+    retryClustering,
+    clusterQueuedSeconds,
+    canRetryClustering,
+  };
 };

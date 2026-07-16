@@ -1,5 +1,15 @@
 # Runbook: Operator `/admin` console for tenant API-key lifecycle
 
+> **Scope — read this first.** The console manages the database of the
+> environment it runs in, nothing else: the **local** `admin-dev` console
+> mints laptop-only test fixtures; the **prod** console (reached over the
+> tailnet, section (b)) is the only issuer of keys that work against
+> `api.altcontext.com` — including keys for LocalWP installs that target the
+> hosted service. Each environment has its **own** `RECOGNITION_ADMIN_TOKEN`;
+> the local `.env` token will be rejected by the prod console by design.
+> Track selection and the full decision table:
+> [key-management.md](key-management.md).
+
 > **Replaces** the manual `docker exec ... python -m scripts.manage_api_keys`
 > ceremony for routine tenant + key work. The CLI remains a supported fallback
 > (see `docs/workbay/contracts/security.md` § Operator CLI: Key Rotation

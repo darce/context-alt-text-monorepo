@@ -112,6 +112,11 @@ const clusterActionState = {
     isPending: false,
   }),
   bulkMergeProgress: null,
+  rescanGate: {
+    disabled: false,
+    'aria-disabled': undefined as true | undefined,
+    title: undefined as string | undefined,
+  },
   errorMessage: null,
   resetAll: vi.fn(),
 };

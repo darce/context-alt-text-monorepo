@@ -85,6 +85,8 @@ Each API key is scoped to a specific tenant. The service enforces tenant isolati
 
 If an API key's tenant claim doesn't match the normalized `X-Tenant-ID` header, `require_auth` raises `HTTPException(status_code=403, detail="tenant mismatch")`.
 
+**Discovery exception — `GET /recognition/tenant/whoami`** (MAINT-TPR-01): this one route uses `require_auth_key_only` instead of `require_auth`. Key resolution is identical (hash, expiry, revocation, disabled-auth handling) but the `tenant_claim != X-Tenant-ID` comparison is skipped, so the route returns the key's canonical tenant regardless of the header. This lets a client that pasted a mismatched key learn the key's tenant and pair to it in one step; disclosure is bounded to the caller's own key binding. Every other route stays strict. Sole consumer is the plugin's `attempt_tenant_pairing`.
+
 ## Write Access Control
 
 Mutate endpoints (POST, PATCH, DELETE) require additional write access verification via the `require_write_access` dependency:

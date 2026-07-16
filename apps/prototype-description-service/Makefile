@@ -1,4 +1,4 @@
-.PHONY: help test test-integration lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready dev-setup dev-mint-key logs-tail logs-rotate logs-clean logs-archive worker-daemon db-reset reset admin-dev admin-test admin-open admin-token admin-status admin-down admin-oci-serve admin-oci provision-customer FORCE
+.PHONY: help test test-integration lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready dev-setup dev-mint-key logs-tail logs-rotate logs-clean logs-archive worker-daemon db-reset reset admin-dev admin-test admin-open admin-token admin-status admin-down admin-oci-serve admin-oci admin-oci-mint provision-customer FORCE
 
 PYTEST_WORKERS ?= 4
 
@@ -12,8 +12,8 @@ help:
 	@echo "  make install    - Install core dependencies only"
 	@echo "  make postgres-start - Start local PostgreSQL via Homebrew (if needed)"
 	@echo "  make dev-ready  - Prepare local env for development/testing (no dependency install)"
-	@echo "  make dev-setup  - Onboard local env (.env from example if absent, then mint a DB API key)"
-	@echo "  make dev-mint-key - Bootstrap local tenant + mint a DB API key (prints raw key once)"
+	@echo "  make dev-setup  - Onboard local env (.env from example if absent, then mint a LOCAL TEST FIXTURE key)"
+	@echo "  make dev-mint-key - LOCAL TEST FIXTURES ONLY: bootstrap local tenant + mint a DB API key (not a real tenant)"
 	@echo "  make serve      - Start PostgreSQL + development server + scan worker"
 	@echo "  make stop       - Stop the development server"
 	@echo "  make check      - Run linting, type checking, and tests"
@@ -33,7 +33,8 @@ help:
 	@echo "  make admin-open   - Open the /admin console in a browser"
 	@echo "  make admin-status - Show service/admin reachability state"
 	@echo "  make admin-down   - Stop the local service"
-	@echo "  make provision-customer EMAIL=<e> [PLAN=pro] [LABEL=\"Name\"] [ENV=local] - Concierge mint real tenant+key (AP-7)"
+	@echo "  make provision-customer EMAIL=<e> ENV=prod [PLAN=pro] [LABEL=\"Name\"] - Concierge mint real tenant+key (AP-7; ENV=prod required)"
+	@echo "  make admin-oci-mint TENANT=<uuid> [SITE_URL=<url>] - Mint a prod tenant key on the VM (no secret leaves the VM); prints the key once"
 	@echo "  make lane-*     - Worktree lane commands (forwarded to root Makefile; run 'make help' from repo root for full list)"
 	@echo "  make worker-daemon* - Worker daemon controls (run/status/stop/resume/tail) forwarded to root Makefile"
 	@echo ""
@@ -109,13 +110,16 @@ serve: dev-ready
 stop:
 	@./scripts/start_prototype_local.sh stop
 
-# Mint a DB-backed local API key (replaces the retired RECOGNITION_ALLOWED_API_KEYS allowlist).
-# Prints the raw key once on stdout (api_key=...). Override tenant/site if needed:
+# LOCAL TEST FIXTURES ONLY — mints a DB-backed key for the fixed local dev tenant.
+# This is NOT a real/production tenant; real tenants are minted against the OCI/prod
+# --env prod DB via `make provision-customer ENV=prod`. Prints the raw key once on
+# stdout (api_key=...). Override tenant/site if needed:
 #   make dev-mint-key DEV_TENANT_ID=<uuid> DEV_SITE_URL=http://localhost:10003
 DEV_TENANT_ID ?= 00000000-0000-4000-8000-000000000001
 DEV_SITE_URL ?= http://localhost:10003
 
 dev-mint-key:
+	@echo "⚠ dev-mint-key: LOCAL TEST FIXTURES ONLY — not a real/production tenant. Real tenants: make provision-customer ENV=prod" >&2
 	@echo "Bootstrapping local tenant $(DEV_TENANT_ID) at $(DEV_SITE_URL)..."
 	@$(UV_RUN) python -m scripts.manage_api_keys --env local tenant create \
 		--tenant $(DEV_TENANT_ID) --site-url $(DEV_SITE_URL)
@@ -123,8 +127,10 @@ dev-mint-key:
 	@$(UV_RUN) python -m scripts.manage_api_keys --env local create --tenant $(DEV_TENANT_ID)
 
 # One-shot local onboarding: seed .env from the example (never clobber), remind
-# which values matter, then mint a DB API key. Safe to re-run (idempotent .env).
+# which values matter, then mint a LOCAL TEST FIXTURE key. Safe to re-run
+# (idempotent .env). LOCAL TEST FIXTURES ONLY — not a real/production tenant.
 dev-setup:
+	@echo "⚠ dev-setup: LOCAL TEST FIXTURES ONLY — mints a local dev fixture key, not a real/production tenant. Real tenants: make provision-customer ENV=prod" >&2
 	@if [ -f .env ]; then \
 		echo "✓ .env already present — leaving it unchanged (idempotent)"; \
 	elif [ -f .env.example ]; then \
@@ -140,7 +146,7 @@ dev-setup:
 	@echo "  RECOGNITION_RUNTIME_MODE=development             — keep local (not production)"
 	@echo "  RECOGNITION_AUTH_ENABLED=1                       — require bearer keys"
 	@echo "  RECOGNITION_ADMIN_*                              — optional; use make admin-dev to enable /admin"
-	@echo "  Tenant API keys                                  — mint via make dev-mint-key (DB-only; no env allowlist)"
+	@echo "  Tenant API keys (LOCAL FIXTURES)                 — mint via make dev-mint-key (DB-only; local fixtures, not real tenants)"
 	@echo ""
 	@echo "Minting a local tenant API key next (requires Postgres; run make postgres-start / make dev-ready first if needed)..."
 	@$(MAKE) dev-mint-key DEV_TENANT_ID="$(DEV_TENANT_ID)" DEV_SITE_URL="$(DEV_SITE_URL)"
@@ -162,14 +168,21 @@ admin-test:
 
 # AP-7: mint a real (non-demo) customer tenant + API key via the shared minter.
 # Idempotent on EMAIL. Prints raw key once + WP install snippet.
-# Usage: make provision-customer EMAIL=c@example.com PLAN=pro LABEL="Acme" [ENV=local]
+# ENV must be set explicitly to `prod` — this target refuses to default to the
+# local DB so real customers are never minted against a dev database by omission.
+# Usage: make provision-customer EMAIL=c@example.com ENV=prod PLAN=pro LABEL="Acme"
 provision-customer:
 	@if [ -z "$(EMAIL)" ]; then \
-		echo "EMAIL is required. Example: make provision-customer EMAIL=customer@example.com PLAN=pro LABEL=\"Acme Co\""; \
+		echo "EMAIL is required. Example: make provision-customer EMAIL=customer@example.com ENV=prod PLAN=pro LABEL=\"Acme Co\""; \
+		exit 1; \
+	fi
+	@if [ "$(ENV)" != "prod" ]; then \
+		echo "✗ provision-customer mints REAL customer tenants and requires ENV=prod (got ENV='$(ENV)'). Refusing to default to the local DB." >&2; \
+		echo "  For local test fixtures use: make dev-mint-key" >&2; \
 		exit 1; \
 	fi
 	@$(UV_RUN) python -m scripts.provision_customer \
-		--env "$(or $(ENV),local)" \
+		--env "$(ENV)" \
 		--email "$(EMAIL)" \
 		--plan "$(or $(PLAN),pro)" \
 		$(if $(LABEL),--label "$(LABEL)",)
@@ -220,6 +233,31 @@ admin-oci:
 		000) echo "✗ $$url unreachable: not on the tailnet, MagicDNS/HTTPS off, or serve not published. Check 'tailscale status' and run 'make admin-oci-serve'." >&2; exit 1 ;; \
 		*) echo "✗ $$url -> $$code (unexpected); not opening." >&2; exit 1 ;; \
 	esac
+
+# Mint a prod API key for a tenant WITHOUT bringing any secret to the laptop. Runs the
+# canonical CLI inside the prod `api` container over the tailnet, so the container's own
+# DB creds do the write — the /admin HTTP route (and its RECOGNITION_ADMIN_TOKEN) are not
+# involved at all, and the prod token stays in /opt/acx-backend/prod/secrets/.env where it
+# belongs [WEB-16: secrets only in a secret store/env; SEC-04: least-privilege; SEC-01: the
+# laptop<->VM SSH is a trust boundary — don't cross it with the token]. The raw key prints
+# exactly once (api_key=…); copy it into the plugin Settings. Automated form of the
+# canonical prod mint in docs/runbooks/key-management.md Track 1.
+# Usage: make admin-oci-mint TENANT=<uuid> [SITE_URL=<url>]
+# TENANT/SITE_URL reach the shell via the environment (export) and are validated (UUID / URL
+# charset) BEFORE use — never textual make-expansion — so an operator-pasted value cannot inject
+# a command through the ssh double-hop [WEB-02]. The prod dir and --env are hardcoded so they
+# cannot diverge into a wrong-DB mint [MRG-D-02].
+export TENANT
+export SITE_URL
+admin-oci-mint:
+	@set -e; \
+	tenant="$${TENANT:-}"; site="$${SITE_URL:-http://localhost:10018}"; \
+	test -n "$$tenant" || { echo "usage: make admin-oci-mint TENANT=<uuid> [SITE_URL=<url>]" >&2; exit 2; }; \
+	printf '%s' "$$tenant" | grep -qiE '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$$' || { echo "✗ TENANT must be a UUID (got '$$tenant')" >&2; exit 2; }; \
+	printf '%s' "$$site" | grep -qE '^https?://[A-Za-z0-9:/._-]+$$' || { echo "✗ SITE_URL has invalid characters (allowed: A-Za-z0-9 : / . _ -)" >&2; exit 2; }; \
+	echo "→ minting a prod key for tenant $$tenant (site $$site) via $(OCI_HOST) ..."; \
+	ssh $(OCI_USER)@$(OCI_HOST) "set -e; cd /opt/acx-backend/prod; mk=\"docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod\"; \$$mk tenant create --tenant \"$$tenant\" --site-url \"$$site\"; \$$mk create --tenant \"$$tenant\""; \
+	echo "→ copy the 'api_key=' value above into wp-admin → Alt Context Settings (shown once; unrecoverable)."
 
 # Reset local database (db-reset is an alias)
 reset db-reset:

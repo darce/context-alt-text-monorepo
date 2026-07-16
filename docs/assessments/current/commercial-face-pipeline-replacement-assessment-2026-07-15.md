@@ -93,7 +93,7 @@ Directly usable, in priority order:
 Gaps to close for this bake-off (FIR-5):
 
 1. **Candidate swapping**: harness benchmarks *the deployed service*, one model stack at a time. Need either an env-selected face-pipeline profile on an eval instance (mirroring the hosted-provider pattern) or an offline in-process leg that runs detector+embedder candidates directly over the golden corpus.
-2. **Cluster-level metrics**: identification P/R exists; **false-merge/false-split rates, cluster purity, unknown-rejection at fixed FAR** (guide §12.2) do not. Neither does per-slice aggregation: golden manifest entries (37, verified) carry no hard-case tags — FIR-5 adds a `slice_tags` field (`occlusion`, `profile`, `low_res`, `blur`, `similar_people`, `unknown`) and per-slice metric rollups, with **occlusion as a first-class slice**.
+2. **Cluster-level metrics**: identification P/R exists; **false-merge/false-split rates, cluster purity, unknown-rejection at fixed FAR** (guide §12.2) do not. Neither does per-slice aggregation: golden manifest entries (37, verified) carry no hard-case tags — FIR-5 reads VLM-6's per-entry `domain` tags (`masked`, `sunglasses`, `occlusion_other`, `profile`, `low_res`, `blur`, `similar_people`, `unknown`) and adds per-slice metric rollups, with **the occlusion family first-class and split three ways** — masks and sunglasses are distinct, product-frequent failure modes in user uploads and cheap to separate at tagging time. Slice floors: scope doc §FIR-5 slice sizing.
 3. **buffalo_l reference leg** must run in the non-commercial eval environment only (`[bench]` extra), embeddings confined to run artifacts (§4.2 separation).
 4. **Corpus breadth**: the 37-entry golden manifest (harness README says "38-image"; count verified 37) is thin for threshold calibration; extend with Golden-150 + hard-slice additions (profile/low-res/blur/similar-people/unknowns, demographic slices).
 
@@ -124,7 +124,7 @@ Unit/integration test harness: protocol-based stubs mean existing suites survive
 
 ## 10. Addendum (2026-07-15): occlusion dimension + 11-paper technique sweep
 
-**Occlusion is a first-class bake-off slice** (§7 gap 2): tagged real occluders (masks, sunglasses, hands, hair, partial framing) in the extended golden corpus, plus a **synthetic-occlusion paired protocol** — deterministic patch-masks applied to existing golden faces so every occluded measurement has an unoccluded twin (isolates occlusion effect per candidate; same trick OccFace uses to generate visibility pseudo-labels).
+**The occlusion family is first-class and split into three tags** (§7 gap 2): `masked` and `sunglasses` — the two product-frequent occluders in user uploads — plus `occlusion_other` (hands, hair, objects, partial framing). Each gets tagged real examples in the extended golden corpus **and** a **synthetic-paired protocol** — deterministic mask/sunglasses/patch overlays applied to existing golden faces so every occluded measurement has an unoccluded twin (isolates the occlusion effect per candidate and carries the statistical power; same trick OccFace uses to generate visibility pseudo-labels). Real tags stay small and validate the synthetic slices (scope §FIR-5 slice sizing).
 
 Eleven user-supplied papers ingested (2512.11683 … 2607.05702). Per-paper verdicts:
 

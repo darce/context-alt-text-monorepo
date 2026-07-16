@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DescribePanel } from '../DescribePanel';
 
 const mutate = vi.fn();
+let offline = false;
 
 interface HookState {
   mutate: typeof mutate;
@@ -17,6 +18,10 @@ let hookState: HookState;
 
 vi.mock('../../../hooks/useDescribeMedia', () => ({
   useDescribeMedia: () => hookState,
+}));
+
+vi.mock('../../../hooks/useSyncOffline', () => ({
+  useSyncOffline: () => offline,
 }));
 
 const sampleResult = {
@@ -36,12 +41,15 @@ const enterMediaId = (value: string) => {
 describe('DescribePanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    offline = false;
     hookState = { mutate, isPending: false, data: undefined, error: null, reset: vi.fn() };
   });
 
-  it('renders the Describe with AI control', () => {
+  it('renders the Describe with AI control (empty: no attachment id)', () => {
     render(<DescribePanel />);
-    expect(screen.getByRole('button', { name: /describe with ai/i })).toBeInTheDocument();
+    const button = screen.getByRole('button', { name: /describe with ai/i });
+    expect(button).toBeInTheDocument();
+    expect(button).toBeDisabled();
   });
 
   it('submits the parsed numeric media id', () => {
@@ -75,5 +83,33 @@ describe('DescribePanel', () => {
     };
     render(<DescribePanel />);
     expect(screen.getByText(/requires a GPU host/i)).toBeInTheDocument();
+  });
+
+  it('disables submit with offline reason when breaker is open', () => {
+    offline = true;
+    render(<DescribePanel />);
+    enterMediaId('42');
+    const button = screen.getByRole('button', { name: /describe with ai/i });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute('title', 'Unavailable while the recognition service is offline');
+    expect(button).toHaveAttribute('aria-disabled', 'true');
+  });
+
+  it('gates form submit / Enter while offline (not button-only)', () => {
+    offline = true;
+    render(<DescribePanel />);
+    enterMediaId('42');
+    const form = screen.getByRole('button', { name: /describe with ai/i }).closest('form');
+    expect(form).toBeTruthy();
+    fireEvent.submit(form!);
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it('allows form submit when online with a valid id', () => {
+    render(<DescribePanel />);
+    enterMediaId('7');
+    const form = screen.getByRole('button', { name: /describe with ai/i }).closest('form');
+    fireEvent.submit(form!);
+    expect(mutate).toHaveBeenCalledWith(7);
   });
 });

@@ -340,6 +340,30 @@ describe('SyncStatusIndicator', () => {
     expect(container.querySelector('.acx-sync-status__badge--ok')).not.toBeInTheDocument();
   });
 
+  it('keeps the Retry sync affordance enabled and firing while the breaker is open (recovery affordance)', () => {
+    // triggerSync heals the breaker; gating it would trap the operator offline (plan §3, RES-15).
+    mockReturn.data = buildSyncStatus({
+      sync_health: 'offline',
+      is_stale: false,
+      last_sync_result: 'unreachable',
+    });
+    syncHealthMock.data = {
+      breaker: { state: 'open', base_url: 'http://localhost:8000', opened_at: null },
+      outbox: { pending: 0, failed: 0 },
+      conflicts: { open: 0 },
+      replays: { failed: null, source: 'unavailable_local' },
+      last_pull: { at: '2026-06-11T12:00:00Z', ok: true },
+      warnings: [],
+    };
+
+    render(<SyncStatusIndicator />);
+
+    const retryButton = screen.getByRole('button', { name: 'Retry' });
+    expect(retryButton).toBeEnabled();
+    fireEvent.click(retryButton);
+    expect(mutateSpy).toHaveBeenCalled();
+  });
+
   it('renders syncing state when trigger is pending', () => {
     mockReturn.data = buildSyncStatus({ is_stale: true, sync_health: 'stale' });
     (mockTrigger as Record<string, unknown>).isPending = true;

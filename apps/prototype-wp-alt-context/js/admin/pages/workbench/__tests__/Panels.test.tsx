@@ -68,6 +68,22 @@ describe('ScanActionPanel', () => {
     expect(screen.getByText('Something went wrong')).toBeTruthy();
   });
 
+  it('renders Retry clustering when onRetryClustering is provided after auto-retry ceiling', async () => {
+    const onRetryClustering = vi.fn();
+    render(
+      <ScanActionPanel
+        scanRun={{
+          ...baseScanRun,
+          errorMessage: 'Clustering failed after rate-limit retries. Use Retry clustering to try again.',
+          onRetryClustering,
+        }}
+        onCancelScan={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Retry clustering' }));
+    expect(onRetryClustering).toHaveBeenCalledOnce();
+  });
+
   it('renders cancel button and calls handler', async () => {
     const onCancelScan = vi.fn();
     render(<ScanActionPanel scanRun={{ ...baseScanRun, isScanning: true }} onCancelScan={onCancelScan} />);
@@ -244,5 +260,27 @@ describe('ConfirmPanel', () => {
   it('renders clusterMessage when provided', () => {
     render(<ConfirmPanel {...baseProps} clusterMessage="Clustering completed successfully" />);
     expect(screen.getByText('Clustering completed successfully')).toBeTruthy();
+  });
+
+  it('disables cluster button with offline reason when remoteActionDisabled', () => {
+    render(
+      <ConfirmPanel
+        {...baseProps}
+        remoteActionDisabled
+        remoteActionAriaDisabled
+        remoteActionTitle="Unavailable while the recognition service is offline"
+      />,
+    );
+    const button = screen.getByRole('button', { name: 'Cluster the latest job results' });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute('title', 'Unavailable while the recognition service is offline');
+    expect(button).toHaveAttribute('aria-disabled', 'true');
+  });
+
+  it('keeps cluster button enabled online without remote gate props', () => {
+    render(<ConfirmPanel {...baseProps} />);
+    const button = screen.getByRole('button', { name: 'Cluster the latest job results' });
+    expect(button).not.toBeDisabled();
+    expect(button).not.toHaveAttribute('title');
   });
 });

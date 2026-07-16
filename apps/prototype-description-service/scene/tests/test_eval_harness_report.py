@@ -405,6 +405,23 @@ def test_public_serialized_output_leaks_no_local_path_or_name():
     assert _PUBLIC_PATH in json_doc or "obama" in json_doc.lower()
 
 
+def test_public_redacts_run_level_base_url():  # VLM6-S5-BR-01
+    """base_url is the live recognition endpoint (an internal host on real runs); it
+    must not leak into the hub-safe public artifact even though it is run-level, not
+    per-item, provenance."""
+    record, entries = _audience_fixtures()
+    record["provenance"]["base_url"] = "https://acx-backend.internal.example.ts.net"
+    json_doc, md = build_reports(record, entries, audience=Audience.PUBLIC)
+    for blob in (json_doc, md):
+        assert "acx-backend.internal.example.ts.net" not in blob
+    scored = json.loads(json_doc)
+    assert scored["provenance"]["base_url"] == "redacted"
+    assert "base_url: redacted" in md
+    # LOCAL still shows the real endpoint (operator view).
+    local_json, _local_md = build_reports(record, entries, audience=Audience.LOCAL)
+    assert "acx-backend.internal.example.ts.net" in local_json
+
+
 def test_local_output_unchanged_byte_identical_to_default():
     """LOCAL is the default and must stay byte-identical to pre-audience behaviour."""
     record, entries = _run_record(), _manifest_entries()

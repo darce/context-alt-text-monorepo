@@ -41,6 +41,14 @@ class ReportError(Exception):
     run-record item whose media_id is absent from the score-time manifest."""
 
 
+# Run-level provenance fields withheld from PUBLIC artifacts. Item-level redaction
+# (paths/names) is not enough: ``base_url`` is the live recognition endpoint, an
+# internal host on real bake-off runs (localhost curation tenant or an OCI/Tailscale
+# VM), and would leak infrastructure topology into the hub-safe surface (VLM6-S5-BR-01).
+_PUBLIC_PROVENANCE_REDACTED = "redacted"
+_PUBLIC_PROVENANCE_WITHHELD_FIELDS = ("base_url",)
+
+
 def _entry_index(manifest_entries: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
     return {int(e["media_id"]): e for e in manifest_entries}
 
@@ -413,4 +421,9 @@ def build_reports(
     )
     if redaction is not None:
         scored["redaction"] = redaction
+        # Withhold internal run-level provenance (base_url endpoint) so the hub-safe
+        # public artifact never discloses infrastructure topology (VLM6-S5-BR-01).
+        for field_name in _PUBLIC_PROVENANCE_WITHHELD_FIELDS:
+            if scored["provenance"].get(field_name):
+                scored["provenance"][field_name] = _PUBLIC_PROVENANCE_REDACTED
     return json.dumps(scored, indent=2, sort_keys=True, ensure_ascii=False) + "\n", _markdown(scored)

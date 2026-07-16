@@ -45,6 +45,7 @@ use function wp_clear_scheduled_hook;
 use function wp_next_scheduled;
 use function wp_schedule_event;
 use function wp_schedule_single_event;
+use function wp_unschedule_event;
 
 class OutboxDrain {
 	private const DRAIN_HOOK = 'acx_sync_drain_curation_outbox';
@@ -122,8 +123,7 @@ class OutboxDrain {
 	public static function maybe_schedule_drain(): void {
 		if ( function_exists( 'as_enqueue_async_action' ) && function_exists( 'as_next_scheduled_action' ) ) {
 			$group = self::action_scheduler_group();
-			$existing = as_next_scheduled_action( self::DRAIN_HOOK, array(), $group );
-			if ( false !== $existing && null !== $existing ) {
+			if ( self::existing_action_satisfies( time(), $group ) ) {
 				return;
 			}
 
@@ -138,20 +138,19 @@ class OutboxDrain {
 			}
 		}
 
-		if ( false === wp_next_scheduled( self::DRAIN_HOOK, array() ) ) {
-			wp_schedule_single_event( time(), self::DRAIN_HOOK, array() );
-		}
+		self::schedule_wp_cron_drain_at( time() );
 	}
 
 	/**
 	 * Schedule a single future drain (E15-35): Action Scheduler when available, WP-Cron fallback.
-	 * Skipped when a drain is already queued so backoff wake-ups never stack.
+	 * Skipped when a drain is already queued at or before the requested time, so backoff
+	 * wake-ups never stack; a drain parked LATER than the requested time is advanced
+	 * (E15-35-BR-01: a parked backoff anchor must never make earlier-due work wait).
 	 */
 	private static function schedule_drain_at( int $timestamp ): void {
 		if ( function_exists( 'as_schedule_single_action' ) && function_exists( 'as_next_scheduled_action' ) ) {
 			$group = self::action_scheduler_group();
-			$existing = as_next_scheduled_action( self::DRAIN_HOOK, array(), $group );
-			if ( false !== $existing && null !== $existing ) {
+			if ( self::existing_action_satisfies( $timestamp, $group ) ) {
 				return;
 			}
 
@@ -166,9 +165,53 @@ class OutboxDrain {
 			}
 		}
 
-		if ( false === wp_next_scheduled( self::DRAIN_HOOK, array() ) ) {
-			wp_schedule_single_event( $timestamp, self::DRAIN_HOOK, array() );
+		self::schedule_wp_cron_drain_at( $timestamp );
+	}
+
+	/**
+	 * True when an existing Action Scheduler drain already runs at or before $desired
+	 * (skip scheduling: the queued drain covers the work). A drain parked LATER than
+	 * $desired is unscheduled so the caller can book the earlier slot (E15-35-BR-01):
+	 * enqueue and operator retry make rows due NOW, and a parked backoff anchor of up
+	 * to ~66min must not defer them.
+	 */
+	private static function existing_action_satisfies( int $desired, string $group ): bool {
+		$existing = as_next_scheduled_action( self::DRAIN_HOOK, array(), $group );
+		if ( true === $existing ) {
+			// A pending async action or one running right now: due immediately.
+			return true;
 		}
+
+		if ( false === $existing || null === $existing || ! is_numeric( $existing ) ) {
+			return false;
+		}
+
+		if ( (int) $existing <= $desired ) {
+			return true;
+		}
+
+		if ( function_exists( 'as_unschedule_action' ) ) {
+			as_unschedule_action( self::DRAIN_HOOK, array(), $group );
+		}
+
+		return false;
+	}
+
+	/**
+	 * WP-Cron mirror of the same policy: keep an existing event at or before $timestamp,
+	 * advance a later-parked one, book one when none exists.
+	 */
+	private static function schedule_wp_cron_drain_at( int $timestamp ): void {
+		$existing = wp_next_scheduled( self::DRAIN_HOOK, array() );
+		if ( false !== $existing && (int) $existing <= $timestamp ) {
+			return;
+		}
+
+		if ( false !== $existing ) {
+			wp_unschedule_event( (int) $existing, self::DRAIN_HOOK, array() );
+		}
+
+		wp_schedule_single_event( $timestamp, self::DRAIN_HOOK, array() );
 	}
 
 	public static function clear_scheduled_drain(): void {

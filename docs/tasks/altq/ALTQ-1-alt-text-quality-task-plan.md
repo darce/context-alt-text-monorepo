@@ -107,13 +107,13 @@ against the 7b baseline.
 
 ### Checklist for Slice 4: Service integration + contract change
 
-- [ ] `describe` response contract: additive `alt_text_long` in
+- [x] `describe` response contract: additive `alt_text_long` in
       [`docs/workbay/contracts/image-description-api.md`](../../workbay/contracts/image-description-api.md)
       + service response model; old clients unaffected (additive-only).
-- [ ] WP plugin surfaces: short → alt field, long → description field;
+- [x] WP plugin surfaces: short → alt field, long → description field;
       operator setting `acx_alt_style` (naming convention `acx_*`); exposed via
       the existing `acx/v1` settings surface.
-- [ ] Contract docs/fixtures updated per boundary discipline (fixtures mirror
+- [x] Contract docs/fixtures updated per boundary discipline (fixtures mirror
       the new optional field; contract parity check green) [rg-005, rg-006].
 
 ### Review Readiness

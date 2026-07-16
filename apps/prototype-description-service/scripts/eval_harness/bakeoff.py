@@ -118,11 +118,16 @@ _PROMPT_V2_SYSTEM = (
 
 @dataclass(frozen=True)
 class PromptVariant:
-    """A named system-prompt pair: short-surface generation and long-first generation."""
+    """A named system-prompt pair: short-surface generation and long-first generation.
+
+    ``three_surface`` variants (v3) emit all three publish surfaces
+    (title/alt/caption) from ONE structured pass-2 weave call — they are only
+    valid with ``two_pass`` and supersede the dual-length compression call."""
 
     name: str
     system: str
     system_long: str
+    three_surface: bool = False
 
 
 PROMPT_VARIANTS: dict[str, PromptVariant] = {
@@ -131,6 +136,14 @@ PROMPT_VARIANTS: dict[str, PromptVariant] = {
     ),
     "v2": PromptVariant(
         "v2", _PROMPT_V2_SYSTEM, _PROMPT_V2_SYSTEM.replace("Write 2-4 sentences.", "Write 4-8 sentences.")
+    ),
+    # v3 inherits v2's findings-§3 style rules unchanged; the three-surface
+    # output contract lives in the weave addendum (_V3_THREE_SURFACE_INSTRUCTIONS).
+    "v3": PromptVariant(
+        "v3",
+        _PROMPT_V2_SYSTEM,
+        _PROMPT_V2_SYSTEM.replace("Write 2-4 sentences.", "Write 4-8 sentences."),
+        three_surface=True,
     ),
 }
 DEFAULT_PROMPT_VARIANT = "v1"
@@ -163,6 +176,31 @@ _WEAVE_INSTRUCTIONS = (
     'Example of that rule: the context says "Also pictured: Maria Chen" but the '
     "facts list a single man at a workbench — the correct alt text describes "
     "only the man and never mentions Maria Chen."
+)
+
+# v3 three-surface output contract (ALTQ-1): the weave returns ONE fenced JSON
+# object carrying all three publish surfaces in a single call, superseding the
+# dual-length compression call for this variant. Every concrete detail in every
+# field must come from the committed pass-1 facts or the supplied context — the
+# CapRL failure mode (evocative captions inventing specifics) is the
+# anti-pattern this fences out.
+_V3_THREE_SURFACE_INSTRUCTIONS = (
+    "Output format: instead of one plain-prose alt text, return a single JSON "
+    "object inside a fenced ```json code block, with exactly these three string "
+    "fields and nothing else:\n"
+    '- "title": a terse 3-8 word label of the image subject. Front-load the '
+    "subject. No trailing period. Supplied names may appear when they fit "
+    "naturally.\n"
+    '- "alt": functional alt text of at most 125 characters, following every '
+    "style rule above: front-load the subject and their action, factual "
+    "register, plain prose. Weave the supplied identities in, with their "
+    "positional binding when more than one person is present.\n"
+    '- "caption": a free-form evocative caption of 2-5 sentences. A lyrical '
+    "register is welcome here, but every concrete detail — objects, legible "
+    "text, places, counts, names — must come from the committed facts or the "
+    "supplied context. Never invent specifics. Weave the supplied names in "
+    "naturally.\n"
+    "The never-guess and pixels-win rules apply to all three fields."
 )
 
 # Text-only compression (findings §4): the short alt is derived FROM the
@@ -241,6 +279,40 @@ def _parse_pass1_json(raw: str) -> dict[str, Any]:
             f"pass-1 returned JSON {type(parsed).__name__}, expected an object; raw output: {raw[:200]!r}"
         )
     return parsed
+
+
+class ThreeSurfaceParseError(RemoteClientError):
+    """The v3 weave returned output that is not the three-surface JSON object
+    (malformed JSON, non-object, or a missing/blank/non-string title/alt/caption
+    field). Typed so the fetch walker records it as a per-item failure and the
+    run continues (rg-007, [AGT-10] degrade loudly)."""
+
+
+_THREE_SURFACE_KEYS = ("title", "alt", "caption")
+
+
+def _parse_three_surface_json(raw: str) -> dict[str, str]:
+    """Parse the v3 weave's three-surface output, tolerating a markdown code fence
+    (mirrors ``_parse_pass1_json``). Strict on shape: all three keys must be
+    non-blank strings; extra keys are tolerated."""
+    text = raw.strip()
+    fenced = _JSON_FENCE_RE.match(text)
+    if fenced:
+        text = fenced.group(1)
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ThreeSurfaceParseError(f"v3 weave returned malformed JSON ({exc}); raw output: {raw[:200]!r}") from exc
+    if not isinstance(parsed, dict):
+        raise ThreeSurfaceParseError(
+            f"v3 weave returned JSON {type(parsed).__name__}, expected an object; raw output: {raw[:200]!r}"
+        )
+    bad = [k for k in _THREE_SURFACE_KEYS if not isinstance(parsed.get(k), str) or not parsed[k].strip()]
+    if bad:
+        raise ThreeSurfaceParseError(
+            f"v3 weave JSON is missing/blank/non-string field(s) {bad}; raw output: {raw[:200]!r}"
+        )
+    return {k: parsed[k].strip() for k in _THREE_SURFACE_KEYS}
 
 
 def _face_position(x: float) -> str:
@@ -352,6 +424,19 @@ class BakeoffClient(RemoteSceneClient):
             raise ValueError(f"eval_mode {eval_mode!r} requires entry_traits (per-media_id identities)")
         if prompt_variant not in PROMPT_VARIANTS:
             raise ValueError(f"unknown prompt_variant {prompt_variant!r}; expected one of {sorted(PROMPT_VARIANTS)}")
+        if PROMPT_VARIANTS[prompt_variant].three_surface:
+            # rg-008 fail-fast: the three-surface contract lives in the pass-2
+            # weave; without two_pass it would never reach the model.
+            if not two_pass:
+                raise ValueError(
+                    f"prompt_variant {prompt_variant!r} emits title/alt/caption from the pass-2 weave "
+                    "and requires two_pass=True (--two-pass)"
+                )
+            if dual_length:
+                raise ValueError(
+                    f"prompt_variant {prompt_variant!r} already emits the long surface in the weave; "
+                    "dual_length is incompatible (drop --dual-length)"
+                )
         if face_gate and face_fixtures is None:
             raise ValueError("face_gate requires face_fixtures (per-media_id manifest face_boxes dicts)")
         if face_gate and not (roster or entry_traits):
@@ -381,6 +466,7 @@ class BakeoffClient(RemoteSceneClient):
         image_part = {"type": "image_url", "image_url": {"url": _data_url(image_bytes, filename)}}
         system = self._system_prompt()
         passes: list[dict[str, Any]] = []
+        surfaces: dict[str, str] | None = None
         if self.two_pass:
             facts_raw = self._timed_chat(
                 [
@@ -396,6 +482,9 @@ class BakeoffClient(RemoteSceneClient):
                 pass_name="ground_weave",
                 passes=passes,
             )
+            if PROMPT_VARIANTS[self.prompt_variant].three_surface:
+                # malformed/incomplete three-surface JSON => typed per-item failure
+                surfaces = _parse_three_surface_json(caption)
         else:
             caption = self._timed_chat(
                 [
@@ -413,7 +502,13 @@ class BakeoffClient(RemoteSceneClient):
             "prompt_variant": self.prompt_variant,
             **stamps,
         }
-        if self.dual_length:
+        if surfaces is not None:
+            # v3 three-surface: one weave call carried all three publish surfaces
+            # (supersedes the dual-length compression call for this variant).
+            result["alt_text_title"] = surfaces["title"]
+            result["alt_text_draft"] = surfaces["alt"]
+            result["alt_text_long"] = surfaces["caption"]
+        elif self.dual_length:
             # Long-first: the generated caption IS the long surface; the short is
             # compressed from it text-only, so it can never contradict the long.
             result["alt_text_long"] = caption
@@ -498,13 +593,18 @@ class BakeoffClient(RemoteSceneClient):
         self, facts_raw: str, context_pack: dict[str, Any], *, image_part: dict[str, Any] | None
     ) -> list[dict[str, Any]]:
         """Pass-2 weave messages: variant system + ``_WEAVE_INSTRUCTIONS`` (mismatch
-        few-shot), fenced facts + context user text. ``image_part=None`` is the
-        weave-bench replay shape — identical text, no image."""
+        few-shot), fenced facts + context user text. Three-surface variants (v3)
+        append the structured-output addendum on top — same builder, extended,
+        never forked. ``image_part=None`` is the weave-bench replay shape —
+        identical text, no image."""
         content: list[dict[str, Any]] = [{"type": "text", "text": self._weave_user_text(facts_raw, context_pack)}]
         if image_part is not None:
             content.insert(0, image_part)
+        system = f"{self._system_prompt()}\n\n{_WEAVE_INSTRUCTIONS}"
+        if PROMPT_VARIANTS[self.prompt_variant].three_surface:
+            system = f"{system}\n\n{_V3_THREE_SURFACE_INSTRUCTIONS}"
         return [
-            {"role": "system", "content": f"{self._system_prompt()}\n\n{_WEAVE_INSTRUCTIONS}"},
+            {"role": "system", "content": system},
             {"role": "user", "content": content},
         ]
 
@@ -850,7 +950,11 @@ def main(argv: list[str] | None = None) -> None:
         "--prompt-variant",
         choices=sorted(PROMPT_VARIANTS),
         default=DEFAULT_PROMPT_VARIANT,
-        help="named system-prompt variant (ALTQ-1 registry); stamped into run-record provenance for attribution",
+        help=(
+            "named system-prompt variant (ALTQ-1 registry); stamped into run-record provenance for "
+            "attribution. v3 is the three-surface weave (title/alt/caption in one structured pass-2 "
+            "call) and requires --two-pass."
+        ),
     )
     parser.add_argument(
         "--two-pass",
@@ -891,6 +995,17 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.weave_bench is not None and (args.two_pass or args.dual_length):
         sys.exit("--weave-bench replays recorded pass-1 facts through pass-2 only; drop --two-pass/--dual-length")
+
+    if PROMPT_VARIANTS[args.prompt_variant].three_surface:
+        if not args.two_pass:
+            sys.exit(
+                f"--prompt-variant {args.prompt_variant} emits title/alt/caption from the pass-2 weave; add --two-pass"
+            )
+        if args.dual_length:
+            sys.exit(
+                f"--prompt-variant {args.prompt_variant} already emits the long surface in the weave; "
+                "drop --dual-length"
+            )
 
     if os.environ.get("ACX_EVAL_LIVE") != "1":
         sys.exit("bakeoff fetch requires ACX_EVAL_LIVE=1 (safety gate, as VLM-2A live pattern)")

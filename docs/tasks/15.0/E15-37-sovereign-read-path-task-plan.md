@@ -238,8 +238,8 @@ Proof (TEST_CMD: `cd apps/prototype-wp-alt-context && npm test -- js/admin/hooks
 
 ### Checklist for Slice 2: Cluster-read rows-first qualification
 
-- [ ] OR-broadened qualification in `ClusterProjectionSyncService`; inline stale pull retained for the previously-qualifying path; newly-qualifying path heals async (scheduled event, zero synchronous HTTP).
-- [ ] Existing clusters-read fixtures pass unmodified; new wipe-class test (rows present, sync-state absent → local).
+- [x] OR-broadened qualification in `ClusterProjectionSyncService`; inline stale pull retained for the previously-qualifying path; newly-qualifying path heals async (scheduled event, zero synchronous HTTP).
+- [x] Existing clusters-read fixtures pass unmodified; new wipe-class test (rows present, sync-state absent → local).
 
 ### Checklist for Slice 3: Honest degraded state
 

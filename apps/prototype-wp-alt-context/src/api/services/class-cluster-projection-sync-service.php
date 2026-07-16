@@ -56,28 +56,43 @@ class ClusterProjectionSyncService {
 		$this->sync_pull_job_factory = $sync_pull_job_factory;
 	}
 
+	/**
+	 * Rows-first qualification ([DATA-14], [API-09] additive): a read qualifies
+	 * for the local projection when the sync-state gate passes OR projection
+	 * rows exist for the tenant. The E15-35 wipe class (sync-state row lost
+	 * while rows survive) therefore no longer flips reads to the remote proxy.
+	 */
 	public function should_use_local_projection( string $tenant_id ): bool {
-		$has_projection = $this->host->host_should_use_local_projection_gate( $this->sync_state_repository, $tenant_id );
-		if ( ! $has_projection ) {
+		if ( $this->host->host_should_use_local_projection_gate( $this->sync_state_repository, $tenant_id ) ) {
+			$updated_at    = $this->sync_state_repository->get_last_updated( $tenant_id );
+			$sync_pull_job = $this->resolve_sync_pull_job();
+			if ( $this->host->host_is_projection_stale( $updated_at ) && null !== $sync_pull_job ) {
+				try {
+					$sync_pull_job->perform( $tenant_id );
+				} catch ( Throwable $e ) {
+					do_action(
+						'acx_sync_pull_failed',
+						array(
+							'tenant_id' => $tenant_id,
+							'context' => 'stale_projection_read',
+							'message' => $e->getMessage(),
+						)
+					);
+				}
+			}
+
+			return true;
+		}
+
+		if ( ! $this->clusters_repository->has_projection_rows_for_tenant( $tenant_id ) ) {
 			return false;
 		}
 
-		$updated_at    = $this->sync_state_repository->get_last_updated( $tenant_id );
-		$sync_pull_job = $this->resolve_sync_pull_job();
-		if ( $this->host->host_is_projection_stale( $updated_at ) && null !== $sync_pull_job ) {
-			try {
-				$sync_pull_job->perform( $tenant_id );
-			} catch ( Throwable $e ) {
-				do_action(
-					'acx_sync_pull_failed',
-					array(
-						'tenant_id' => $tenant_id,
-						'context' => 'stale_projection_read',
-						'message' => $e->getMessage(),
-					)
-				);
-			}
-		}
+		// Newly-qualifying state (gate fails, rows present): serve local and
+		// heal async via one deduped single event. Never pull inline here —
+		// this is exactly the state that must keep serving with the machine
+		// offline, and an inline pull would hold the read for the proxy timeout.
+		$this->schedule_bootstrap_sync_event( $tenant_id );
 
 		return true;
 	}
@@ -98,13 +113,17 @@ class ClusterProjectionSyncService {
 
 		$inline_result = $sync_pull_job->perform_bypass_cooldown( $tenant_id );
 		if ( ! $inline_result->is_success() ) {
-			$args = array( $tenant_id );
-			if ( false === wp_next_scheduled( $this->bootstrap_sync_hook, $args ) ) {
-				wp_schedule_single_event( time(), $this->bootstrap_sync_hook, $args );
-			}
+			$this->schedule_bootstrap_sync_event( $tenant_id );
 		}
 
 		return $response;
+	}
+
+	private function schedule_bootstrap_sync_event( string $tenant_id ): void {
+		$args = array( $tenant_id );
+		if ( false === wp_next_scheduled( $this->bootstrap_sync_hook, $args ) ) {
+			wp_schedule_single_event( time(), $this->bootstrap_sync_hook, $args );
+		}
 	}
 
 	public function perform_bootstrap_sync( string $tenant_id ): void {

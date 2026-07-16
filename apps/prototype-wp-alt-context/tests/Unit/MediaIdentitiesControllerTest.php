@@ -8,9 +8,9 @@ use AltContext\Api\Api;
 use AltContext\Api\MediaIdentitiesController;
 use AltContext\Api\RecognitionDataSource;
 use AltContext\Sovereign\Mappers\MemberResponseMapper;
-use AltContext\Sovereign\Sync\SyncPullJobInterface;
 use AltContext\Sovereign\Sync\SyncPullResult;
 use AltContext\Tests\Stubs\NullIdentityMembersRepository;
+use AltContext\Tests\Stubs\SpySyncPullJob;
 use AltContext\Tests\Stubs\NullSyncStateRepository;
 use AltContext\Tests\TestCase;
 use WP_REST_Request;
@@ -541,57 +541,5 @@ class MediaIdentitiesControllerTest extends TestCase
         $data = $response->get_data();
         $this->assertSame('backend_proxy', $data['data_source'] ?? null);
         $this->assertArrayHasKey('22', $data['identities_by_media'] ?? []);
-    }
-}
-
-/**
- * Recording SyncPullJobInterface spy for Slice 1 convergence assertions.
- */
-final class SpySyncPullJob implements SyncPullJobInterface
-{
-    /** @var list<string> */
-    public array $performCalls = [];
-
-    /** @var list<string> */
-    public array $bypassCalls = [];
-
-    public bool $succeed = true;
-
-    public ?SyncPullResult $performResult = null;
-
-    public ?\Throwable $performThrows = null;
-
-    /** @var ?callable(string):void */
-    public $onPerform = null;
-
-    /** @var ?callable(string):void */
-    public $onBypass = null;
-
-    public function perform(string $tenant_id): SyncPullResult
-    {
-        $this->performCalls[] = $tenant_id;
-        if (null !== $this->performThrows) {
-            throw $this->performThrows;
-        }
-        if (null !== $this->onPerform) {
-            ($this->onPerform)($tenant_id);
-        }
-
-        return $this->performResult ?? SyncPullResult::ok();
-    }
-
-    public function perform_bypass_cooldown(string $tenant_id): SyncPullResult
-    {
-        $this->bypassCalls[] = $tenant_id;
-        if (null !== $this->onBypass) {
-            ($this->onBypass)($tenant_id);
-        }
-
-        return $this->succeed ? SyncPullResult::ok() : SyncPullResult::failed();
-    }
-
-    public function perform_projection_payload(string $tenant_id, array $payload): SyncPullResult
-    {
-        return SyncPullResult::ok();
     }
 }

@@ -64,9 +64,11 @@ class RecognitionDataSourceTest extends TestCase
     /**
      * Grep-guard (Slice 1): the four data_source literals may be declared only in
      * class-recognition-data-source.php. Scans runtime sources (src/**) for
-     * declaration contexts only — `const … = '<literal>'` and hardcoded
-     * `'data_source' => '<literal>'` array values — so UI copy and the distinct
-     * PROJECTION_STATUS vocabulary do not false-positive.
+     * declaration contexts only — `const … = '<literal>'`, hardcoded
+     * `'data_source' => '<literal>'` array values, and vocabulary literals passed
+     * as positional call arguments (e.g. `new ClusterReadConfig('backend_proxy', …)`,
+     * which neither of the first two patterns would catch) — so UI copy and the
+     * distinct PROJECTION_STATUS vocabulary do not false-positive.
      */
     public function testNoStrayDataSourceLiteralDeclarationsInRuntimeSources(): void
     {
@@ -75,6 +77,7 @@ class RecognitionDataSourceTest extends TestCase
         $patterns = [
             '/const\s+\w+\s*=\s*\'(' . $alternation . ')\'/',
             '/\'data_source\'\s*=>\s*\'(' . $alternation . ')\'/',
+            '/[(,]\s*\'(' . $alternation . ')\'\s*[,)]/',
         ];
 
         $violations = [];

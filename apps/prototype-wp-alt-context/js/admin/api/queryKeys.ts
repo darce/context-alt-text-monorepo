@@ -76,6 +76,8 @@ export const queryKeys = {
     identityFor: (identityId: string | undefined) => [...queryKeys.suggestions.identity(), identityId] as const,
     inline: () => [...queryKeys.suggestions.all, 'inline'] as const,
     inlineFor: (identityId: string) => [...queryKeys.suggestions.inline(), identityId] as const,
+    inlineBatch: (identityIds: readonly string[]) =>
+      [...queryKeys.suggestions.inline(), 'batch', identityIds] as const,
   },
   dashboard: {
     all: ['dashboard'] as const,

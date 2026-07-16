@@ -32,6 +32,8 @@ export { WorkbenchFindingsPanel } from './WorkbenchFindingsPanel';
 export { useClusterEditState } from './useClusterEditState';
 export { useClusterMutations } from './useClusterMutations';
 export { useClusterSuggestions } from './useClusterSuggestions';
+export { useInlineSuggestionBatch } from './useInlineSuggestionBatch';
+export type { InlineSuggestionBatchResult } from './useInlineSuggestionBatch';
 
 // Utils
 export { formatClusterLabel, groupIdentitiesByClusters, getEditableClusterId } from './utils';

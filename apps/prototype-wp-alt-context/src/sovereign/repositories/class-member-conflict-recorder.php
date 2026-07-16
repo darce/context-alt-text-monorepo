@@ -37,6 +37,20 @@ class MemberConflictRecorder {
 	 * decide storm suppression and to build the aggregate's code-partitioned entity
 	 * map (E15-35 Slice 3).
 	 *
+	 * Presence here is intentionally cluster-qualified: a curated member counts as
+	 * `curated_member_deleted` only when its identity is absent from the incoming
+	 * members that carry BOTH an identity_uuid and a cluster_uuid (see the
+	 * identity+cluster guard below). This deliberately mirrors the deletion surface
+	 * driven by record_missing_curated_member_conflicts(): its `incoming_identity_ids`
+	 * argument is built from the merger's normalized member list, which already
+	 * drops cluster-less rows (IdentityMemberSnapshotMerger::merge_snapshot_for_tenant,
+	 * identity+cluster filter). Keeping both surfaces on the same cluster-qualified
+	 * presence set is what makes the storm pre-count agree exactly with the per-entity
+	 * rows the recorder later writes — the single-pre-count-drives-suppression invariant.
+	 * Do not relax this to identity-only presence on one side without doing the same on
+	 * the merger's feed, or the pre-count and the recorded conflicts will diverge for
+	 * incoming members that arrive with an identity but no cluster.
+	 *
 	 * @param array<string,array<string,mixed>> $curated_members Keyed by identity_uuid.
 	 * @param array<int,array<string,mixed>> $incoming_members
 	 * @return array{curated_member_deleted:string[], member_cluster_reassignment:array<string,string>}

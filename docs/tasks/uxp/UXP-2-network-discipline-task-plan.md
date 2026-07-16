@@ -58,6 +58,7 @@ Not every `acx/v1/recognition/*` route reaches the recognition service; membersh
 | `useDescribeRunProgress` | 2s (until terminal) | yes — `describe/runs/{id}` | **yes** |
 | `useMediaIdentities` | 3s, **conditional** on `hasPendingClustering`; already `retry: false`, already stops on error | yes | **yes** |
 | `useRecognitionClusters` | 30s | sometimes — `ClusterReadService` serves the local projection mirror when `should_use_local_projection()` | **yes** (gating a local read costs nothing; not gating an upstream read costs a storm) |
+| `useExportJobStatus` | 2s (until `completed`/`failed`) | yes — `RetentionController::get_export_job_status` `proxy_request`s `/retention/export/{id}/status` upstream (not a local table) | **yes** — 7th gated poller; missed by the slice-2 six-poller roster, gated by the slice-2 review fix (mirrors `useDescribeRunProgress`) |
 | `useSyncHealth` | 15s | **no** — `SyncHealthController::get_sync_health` reads a transient plus local `SyncStateRepository` / `OutboxQueryRepository` counts and makes zero upstream calls | **no** — see below |
 | `useSyncStatus` | 120s | **no** — `SyncStatusController::get_sync_status` reads local `SyncStateRepository` state only; no `wp_remote_*` call | **no** — local; there is nothing to gate |
 

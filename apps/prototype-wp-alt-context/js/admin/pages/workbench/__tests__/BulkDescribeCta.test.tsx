@@ -152,7 +152,12 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
 
     render(<BulkDescribeCta {...baseProps} isRunning runId="run-1" progress={progress} isPanelVisible />);
 
-    expect(screen.getByText(/retrying in 30s/)).toBeInTheDocument();
+    // The remaining window is visible but aria-hidden so the polite live region
+    // is not re-announced every second (A11Y-21); the announced sentence stays
+    // static while only the countdown ticks.
+    const countdown = screen.getByText(/Retrying in 30s\./);
+    expect(countdown).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.getByText('Waiting for the service — progress updates paused.')).toBeInTheDocument();
   });
 
   it('keeps cancel enabled while a run is active even when offline gate is set', async () => {

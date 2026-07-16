@@ -265,6 +265,14 @@
     font-weight: var(--acx-font-weight-semibold);
   }
 
+  /* Per-second countdown: visible but aria-hidden so the polite live region is
+     not re-announced every tick (A11Y-21). Dimmed against the static label. */
+  &__bulk-describe-countdown {
+    color: var(--acx-color-text-muted);
+    font-weight: var(--acx-font-weight-normal);
+    font-variant-numeric: tabular-nums;
+  }
+
   &__analyze {
     display: flex;
     flex: 0 1 26rem;

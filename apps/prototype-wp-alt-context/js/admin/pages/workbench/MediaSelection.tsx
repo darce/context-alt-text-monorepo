@@ -16,6 +16,7 @@ import { useRecognitionCooldown } from '../../hooks/useRecognitionCooldown';
 import { useRemoteActionGate } from '../../hooks/useRemoteActionGate';
 import { useSyncOffline } from '../../hooks/useSyncOffline';
 import { DESCRIBE_RUN_STATUS, type DescribeRunStatus } from '../../api/describeApi';
+import { isCooldownSignal } from '../../utils/retryPolicy';
 import { useWorkbenchMediaContext } from './WorkbenchMediaContext';
 import { SYNC_VOCABULARY } from './syncPresentation';
 
@@ -384,29 +385,42 @@ const formatEtaLabel = (etaSeconds: number | null): string => {
   return sprintf(__('~%1$dm %2$ds remaining', 'alt-context'), minutes, seconds);
 };
 
-const BulkDescribeProgress = ({ progress, onRetry }: { progress: DescribeRunProgress; onRetry: () => void }) => {
+export const BulkDescribeProgress = ({ progress, onRetry }: { progress: DescribeRunProgress; onRetry: () => void }) => {
   const { run, status, progressFraction, etaSeconds, stalledForSeconds, isTerminal, isError, isFrozen } = progress;
   const cooldown = useRecognitionCooldown();
 
+  // A hard error whose cause IS the armed cooldown (429/503-with-Retry-After)
+  // is the same signal as the waiting state, not a dead run: prefer the calm
+  // paused notice over the assertive role=alert Retry so the two breakers don't
+  // shout past each other (BR review). A non-cooldown hard error still alerts.
+  const errorIsArmedCooldown = isError && cooldown.isCoolingDown && isCooldownSignal(progress.error);
+  const hardError = isError && !errorIsArmedCooldown;
+
   // Frozen surface is a designed state (RLSE-04): a transient poll timeout
-  // (BR-07) or the shared recognition cooldown pauses updates, so say so —
-  // otherwise a stopped bar reads as a hang and invites the reload traffic the
-  // cooldown exists to prevent. Announced by the surrounding polite live
-  // region (A11Y-21); icon paired with color (sr-004).
-  const isWaiting = !isTerminal && !isError && (isFrozen || cooldown.isCoolingDown);
+  // (BR-07), the shared recognition cooldown, or a cooldown-caused hard error
+  // pauses updates, so say so — otherwise a stopped bar reads as a hang and
+  // invites the reload traffic the cooldown exists to prevent. Announced by the
+  // surrounding polite live region (A11Y-21); icon paired with color (sr-004).
+  //
+  // The announced sentence is static so the polite region does not re-announce
+  // every second (A11Y-21); the ticking countdown lives in an aria-hidden span
+  // — visible, never re-read by a screen reader.
+  const isWaiting = !isTerminal && !hardError && (isFrozen || cooldown.isCoolingDown);
   const waitingNotice = isWaiting ? (
     <span className="acx-media-selection__bulk-describe-paused">
       <Clock aria-hidden="true" size={16} />
-      {cooldown.isCoolingDown && cooldown.remainingSeconds > 0
-        ? sprintf(
-            __('Waiting for the service — progress updates paused, retrying in %ds.', 'alt-context'),
-            cooldown.remainingSeconds,
-          )
-        : __('Waiting for the service — progress updates paused.', 'alt-context')}
+      <span className="acx-media-selection__bulk-describe-paused-label">
+        {__('Waiting for the service — progress updates paused.', 'alt-context')}
+      </span>
+      {cooldown.isCoolingDown && cooldown.remainingSeconds > 0 ? (
+        <span className="acx-media-selection__bulk-describe-countdown" aria-hidden="true">
+          {sprintf(__('Retrying in %ds.', 'alt-context'), cooldown.remainingSeconds)}
+        </span>
+      ) : null}
     </span>
   ) : null;
 
-  if (isError) {
+  if (hardError) {
     return (
       <div className="acx-media-selection__bulk-describe-progress" role="alert" aria-live="assertive">
         <span className="acx-media-selection__bulk-describe-status acx-media-selection__bulk-describe-status--danger">

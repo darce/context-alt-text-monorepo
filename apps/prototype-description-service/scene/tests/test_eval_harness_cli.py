@@ -403,6 +403,118 @@ def test_cli_limit_and_keep_reject_non_positive():  # S8-03 / S6-02
         assert excinfo.value.code == 2
 
 
+_W1_LOCAL_PATH = "localwp/uploads/jane-doe-birthday.jpg"
+_W1_LOCAL_NAME = "Jane Doe Private"
+_W1_PUBLIC_PATH = "celebs01/obama-podium.jpg"
+_W1_PUBLIC_NAME = "Barack Obama"
+
+
+def _w1_audience_manifest_and_record(tmp_path):
+    """One publishable celeb (media 10) + one local-only personal photo (media 20)."""
+    from scripts.eval_harness.schema import SCHEMA, DocKind
+
+    entries = [
+        {
+            "path": _W1_PUBLIC_PATH,
+            "sha256": "a" * 64,
+            "media_id": 10,
+            "face_count": 1,
+            "present_identities": [_W1_PUBLIC_NAME],
+            "context_pack": {},
+            "base_caption": "",
+            "must_right": [_W1_PUBLIC_NAME],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+            "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
+        },
+        {
+            "path": _W1_LOCAL_PATH,
+            "sha256": "b" * 64,
+            "media_id": 20,
+            "face_count": 1,
+            "present_identities": [_W1_LOCAL_NAME],
+            "context_pack": {},
+            "base_caption": "",
+            "must_right": [],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+            "provenance": {"source": "localwp", "license": "consented", "publishable": False},
+        },
+    ]
+    manifest_path = tmp_path / "golden.json"
+    manifest_path.write_text(
+        json.dumps({"manifest_version": 2, "roster": [_W1_PUBLIC_NAME, _W1_LOCAL_NAME], "entries": entries})
+    )
+    record_path = tmp_path / "run-x.json"
+    record_path.write_text(
+        json.dumps(
+            {
+                "schema": SCHEMA,
+                "kind": DocKind.RUN_RECORD.value,
+                "provenance": {"manifest_sha256": "0" * 64, "base_url": "x", "head_sha": "f" * 40, "started_at": "t"},
+                "items": [
+                    {
+                        "media_id": 10,
+                        "path": _W1_PUBLIC_PATH,
+                        "describe": {
+                            "alt_text_draft": f"{_W1_PUBLIC_NAME} at a podium.",
+                            "visual_facts": {"objects": []},
+                        },
+                        "identities": [_W1_PUBLIC_NAME],
+                        "face_count": 1,
+                        "error": None,
+                    },
+                    {
+                        "media_id": 20,
+                        "path": _W1_LOCAL_PATH,
+                        "describe": {
+                            "alt_text_draft": f"{_W1_LOCAL_NAME} at a party.",
+                            "visual_facts": {"objects": []},
+                        },
+                        "identities": ["Wrong Celebrity"],
+                        "face_count": 1,
+                        "error": None,
+                    },
+                ],
+            }
+        )
+    )
+    return manifest_path, record_path
+
+
+def test_cmd_score_public_audience_emits_redacted_public_artifact(tmp_path, monkeypatch):  # VLM-6 S5 W1
+    """--audience public writes a distinct <run>-report.public.{json,md} with only
+    publishable entries and no local path/name leak (VLM6-C-01 / VLM6-F-03)."""
+    manifest_path, record_path = _w1_audience_manifest_and_record(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path), "--audience", "public"])
+
+    public_json = (tmp_path / "run-x-report.public.json").read_text()
+    public_md = (tmp_path / "run-x-report.public.md").read_text()
+    scored = json.loads(public_json)
+    assert {p["media_id"] for p in scored["per_image"]} == {10}  # only publishable scored
+    assert scored["redaction"]["withheld_items"] == 1
+    for blob in (public_json, public_md):
+        assert _W1_LOCAL_PATH not in blob
+        assert _W1_LOCAL_NAME not in blob
+        assert "Wrong Celebrity" not in blob  # wrong_names pair from the local item
+    assert _W1_PUBLIC_NAME in public_json
+    # The full LOCAL report is still written for operator triage, unredacted.
+    local_json = (tmp_path / "run-x-report.json").read_text()
+    assert _W1_LOCAL_PATH in local_json
+    assert "redaction" not in json.loads(local_json)
+
+
+def test_cmd_score_default_local_emits_no_public_artifact(tmp_path, monkeypatch):  # VLM-6 S5 W1
+    """Default audience stays byte-compatible: no public artifact is produced."""
+    manifest_path, record_path = _w1_audience_manifest_and_record(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)])
+    assert (tmp_path / "run-x-report.json").exists()
+    assert not (tmp_path / "run-x-report.public.json").exists()
+    assert not (tmp_path / "run-x-report.public.md").exists()
+
+
 def test_cmd_score_exits_nonzero_when_items_failed(tmp_path, monkeypatch):  # S7-01
     from scripts.eval_harness import cli as cli_mod
     from scripts.eval_harness.schema import SCHEMA, DocKind

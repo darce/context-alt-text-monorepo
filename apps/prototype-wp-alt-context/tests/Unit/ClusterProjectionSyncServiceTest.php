@@ -67,6 +67,7 @@ class ClusterProjectionSyncServiceTest extends TestCase
     public function testNewlyQualifyingRowsPresentServesLocalAndSchedulesOneDedupedHealEvent(): void
     {
         $GLOBALS['__ac_scheduled'] = [];
+        $GLOBALS['__ac_schedule_single_event_calls'] = [];
         $syncJob = new SpySyncPullJob();
         $rowsRepo = new class() extends NullClustersRepository {
             public function has_projection_rows_for_tenant(string $tenant_id): bool
@@ -89,9 +90,24 @@ class ClusterProjectionSyncServiceTest extends TestCase
         $this->assertIsString($scheduled_key);
         $this->assertStringStartsWith(self::BOOTSTRAP_HOOK . '::', $scheduled_key);
         $this->assertSame(['tenant-1'], $GLOBALS['__ac_scheduled'][$scheduled_key]['args']);
+        $this->assertCount(
+            1,
+            $GLOBALS['__ac_schedule_single_event_calls'],
+            'First read must invoke wp_schedule_single_event exactly once.'
+        );
 
+        // Second read: wp_next_scheduled now returns a live timestamp, so the
+        // production dedup guard must short-circuit and NOT re-invoke
+        // wp_schedule_single_event. The keyed __ac_scheduled map cannot prove
+        // this (a second schedule overwrites the same key), so we assert on
+        // the append-only invocation log — deleting the guard makes this RED.
         $this->assertTrue($service->should_use_local_projection('tenant-1'));
         $this->assertCount(1, $GLOBALS['__ac_scheduled'], 'Heal event must be deduped via wp_next_scheduled.');
+        $this->assertCount(
+            1,
+            $GLOBALS['__ac_schedule_single_event_calls'],
+            'Heal event must be deduped: wp_schedule_single_event must fire once across two reads.'
+        );
     }
 
     public function testGateFailsNoRowsStaysRemoteAndSchedulesNothing(): void

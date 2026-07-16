@@ -173,7 +173,7 @@ Changes:
 
 Proof (TEST_CMD: `cd apps/prototype-wp-alt-context && vendor/bin/phpunit --filter ClusterReadServiceTest`):
 
-- Sync-state row absent + projection rows present → `list_clusters` serves local (`data_source: local_projection`), zero synchronous HTTP, and exactly one deduped `acx_bootstrap_sync` heal event scheduled (no inline pull on this path).
+- Sync-state row absent + projection rows present → `list_clusters` serves local (zero synchronous HTTP / zero proxy calls, response matches the local `build_cluster_list_envelope` shape) and schedules exactly one deduped `acx_bootstrap_sync` heal event (no inline pull on this path).
 - Sync-state row absent + no rows → proxy path unchanged (existing fixtures `tests/fixtures/clusters-read/*` pass unmodified).
 - Existing stale-projection fixture (`list_clusters_stale_projection_sync`) passes unmodified ([TEST-03]).
 

@@ -95,6 +95,16 @@ describe('recognitionCooldown', () => {
       openCooldownFromError(undefined);
       expect(isCoolingDown()).toBe(false);
     });
+
+    it('never arms from abort-like errors — a local timeout must not freeze all six pollers', () => {
+      // The slice-1 HIGH was exactly this class: 'TimeoutError' (AbortSignal.timeout)
+      // treated differently from 'AbortError'. A client-side timeout is not a server
+      // back-off signal; arming here would turn every 10s status-poll timeout into a
+      // 30s global suspension of the whole gated set.
+      openCooldownFromError(new DOMException('signal timed out', 'TimeoutError'));
+      openCooldownFromError(new DOMException('The user aborted a request.', 'AbortError'));
+      expect(isCoolingDown()).toBe(false);
+    });
   });
 
   describe('gateRefetchInterval', () => {

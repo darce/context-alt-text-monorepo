@@ -266,7 +266,11 @@ case "$subcommand" in
     # Secure-by-default for untrusted offload backends: the grok Build CLI bundles the
     # full .git history to gs://grok-code-session-traces regardless of opt-out, and a
     # shared worktree exposes all history. Use a shallow, secret-scanned clone instead.
-    case "$offload_backend" in grok|grok-cli|grok-*|GROK*) secure_clone=1 ;; esac
+    # Lowercase-normalize so every grok-prefixed spelling (grok4, grokcli, Grok,
+    # GROK-remote, ...) routes to the secure clone — a missed variant fails open.
+    case "$(printf '%s' "$offload_backend" | tr '[:upper:]' '[:lower:]')" in
+      grok*) secure_clone=1 ;;
+    esac
     script_dir="$(cd "$(dirname "$0")" && pwd)"
 
     if [ "$dry_run" -eq 1 ]; then
@@ -480,16 +484,35 @@ EOF
       fi
     fi
 
+    # Secure offload sandboxes (scripts/secure-offload-clone.sh) are standalone
+    # shallow clones, not registered worktrees: `git worktree remove` fatals on
+    # them. The clone script drops a marker file so close can rm -rf instead.
+    secure_sandbox=0
+    if [ -f "$worktree_path/.acx-secure-offload" ]; then
+      secure_sandbox=1
+    fi
+
     if [ "$dry_run" -eq 1 ]; then
-      if [ "$force" -eq 1 ]; then
+      if [ "$secure_sandbox" -eq 1 ]; then
+        cat <<EOF
+[dry-run] rm -rf $worktree_path   (secure offload sandbox marker present; not a registered worktree)
+EOF
+      elif [ "$force" -eq 1 ]; then
         cat <<EOF
 [dry-run] git -C $orchestrator_root worktree remove --force $worktree_path
+EOF
+      else
+        cat <<EOF
+[dry-run] git -C $orchestrator_root worktree remove $worktree_path
+EOF
+      fi
+      if [ "$force" -eq 1 ]; then
+        cat <<EOF
 [dry-run] git -C $orchestrator_root branch -D $branch
 [dry-run] mcp-workbay-handoff lane-upsert --lane-id $lane_id --worktree-path $worktree_path --branch $branch --status closed
 EOF
       else
         cat <<EOF
-[dry-run] git -C $orchestrator_root worktree remove $worktree_path
 [dry-run] git -C $orchestrator_root branch -d $branch
 [dry-run] mcp-workbay-handoff lane-upsert --lane-id $lane_id --worktree-path $worktree_path --branch $branch --status closed
 EOF
@@ -497,7 +520,9 @@ EOF
       exit 0
     fi
 
-    if [ "$is_git_repo" -eq 1 ]; then
+    if [ "$secure_sandbox" -eq 1 ]; then
+      rm -rf "$worktree_path"
+    elif [ "$is_git_repo" -eq 1 ]; then
       if [ "$force" -eq 1 ]; then
         git -C "$orchestrator_root" worktree remove --force "$worktree_path"
       else

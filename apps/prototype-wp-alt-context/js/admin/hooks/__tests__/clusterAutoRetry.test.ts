@@ -1,0 +1,199 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { HTTPError } from '../../utils/http';
+import { DEFAULT_COOLDOWN_SECONDS } from '../../utils/rateLimitCooldown';
+import { buildStatusText } from '../jobStateMachineProgress';
+import {
+  CLUSTER_RETRY_MAX_ATTEMPTS,
+  canAutoRetryCluster,
+  createClusterAutoRetry,
+  formatClusterQueuedStatus,
+  formatClusterRetryExhaustedMessage,
+  isRetryableClusterError,
+  resolveClusterRetryDelaySeconds,
+} from '../clusterAutoRetry';
+
+const rateLimited = (retryAfterSeconds: number | null = 2): HTTPError =>
+  new HTTPError('Request to /cluster failed (429): rate limited', 429, retryAfterSeconds);
+
+const serverError = (): HTTPError => new HTTPError('Request to /cluster failed (500): boom', 500, null);
+
+const clientError = (): HTTPError => new HTTPError('Request to /cluster failed (400): bad', 400, null);
+
+describe('clusterAutoRetry pure helpers', () => {
+  it('exports a hard ceiling of exactly 3 total attempts (RES-06)', () => {
+    expect(CLUSTER_RETRY_MAX_ATTEMPTS).toBe(3);
+  });
+
+  it('treats only 429 as retryable (API-08)', () => {
+    expect(isRetryableClusterError(rateLimited(2))).toBe(true);
+    expect(isRetryableClusterError(serverError())).toBe(false);
+    expect(isRetryableClusterError(clientError())).toBe(false);
+    expect(isRetryableClusterError(new Error('plain'))).toBe(false);
+  });
+
+  it('honors Retry-After and falls back to DEFAULT_COOLDOWN_SECONDS', () => {
+    expect(resolveClusterRetryDelaySeconds(rateLimited(2))).toBe(2);
+    expect(resolveClusterRetryDelaySeconds(rateLimited(null))).toBe(DEFAULT_COOLDOWN_SECONDS);
+  });
+
+  it('allows auto-retry only while attempts remain under the ceiling', () => {
+    expect(canAutoRetryCluster(1, rateLimited(2))).toBe(true);
+    expect(canAutoRetryCluster(2, rateLimited(2))).toBe(true);
+    expect(canAutoRetryCluster(3, rateLimited(2))).toBe(false);
+    expect(canAutoRetryCluster(1, clientError())).toBe(false);
+  });
+
+  it('formats honest queued status copy (AGT-10)', () => {
+    expect(formatClusterQueuedStatus(2)).toBe('Clustering queued — starting in 2s');
+  });
+});
+
+describe('createClusterAutoRetry', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const buildHarness = () => {
+    const mutate = vi.fn();
+    const onQueued = vi.fn();
+    const onExhausted = vi.fn();
+    const onTerminalError = vi.fn();
+    const controller = createClusterAutoRetry({
+      mutate,
+      onQueued,
+      onExhausted,
+      onTerminalError,
+      fallbackErrorMessage: 'Clustering failed. Please try again.',
+    });
+    return { mutate, onQueued, onExhausted, onTerminalError, controller };
+  };
+
+  it('(a) 429 with Retry-After: 2 → exactly 3 bounded attempts spaced by the server delay', () => {
+    const { mutate, onQueued, onExhausted, onTerminalError, controller } = buildHarness();
+
+    controller.start();
+    expect(mutate).toHaveBeenCalledTimes(1);
+    expect(controller.getAttemptCount()).toBe(1);
+
+    expect(controller.noteError(rateLimited(2))).toBe(true);
+    expect(onQueued).toHaveBeenLastCalledWith(2);
+    expect(onTerminalError).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(2000);
+    expect(mutate).toHaveBeenCalledTimes(2);
+    expect(controller.getAttemptCount()).toBe(2);
+
+    expect(controller.noteError(rateLimited(2))).toBe(true);
+    vi.advanceTimersByTime(2000);
+    expect(mutate).toHaveBeenCalledTimes(3);
+    expect(controller.getAttemptCount()).toBe(3);
+
+    expect(controller.noteError(rateLimited(2))).toBe(false);
+    expect(mutate).toHaveBeenCalledTimes(3);
+    expect(onExhausted).toHaveBeenCalledTimes(1);
+    expect(onTerminalError).toHaveBeenCalledWith(formatClusterRetryExhaustedMessage());
+
+    vi.advanceTimersByTime(10_000);
+    expect(mutate).toHaveBeenCalledTimes(3);
+  });
+
+  it('(b) exposes queued-status copy between attempts with the right seconds', () => {
+    const { onQueued, controller } = buildHarness();
+
+    controller.start();
+    controller.noteError(rateLimited(2));
+
+    expect(onQueued).toHaveBeenCalledWith(2);
+    const status = buildStatusText({
+      clusterPending: false,
+      clusterQueuedSeconds: 2,
+      sseStatus: 'pending',
+      sseProgress: null,
+      activeJobIds: [],
+      scanStatus: undefined,
+      latestJobId: null,
+      scanPending: false,
+    });
+    expect(status).toBe('Clustering queued — starting in 2s');
+
+    vi.advanceTimersByTime(2000);
+    expect(onQueued).toHaveBeenLastCalledWith(null);
+  });
+
+  it('(c) manual-retry affordance after ceiling resets attempts', () => {
+    const { mutate, onExhausted, onTerminalError, controller } = buildHarness();
+
+    controller.start();
+    controller.noteError(rateLimited(1));
+    vi.advanceTimersByTime(1000);
+    controller.noteError(rateLimited(1));
+    vi.advanceTimersByTime(1000);
+    controller.noteError(rateLimited(1));
+
+    expect(onExhausted).toHaveBeenCalledTimes(1);
+    expect(onTerminalError).toHaveBeenCalledWith(formatClusterRetryExhaustedMessage());
+    expect(mutate).toHaveBeenCalledTimes(3);
+
+    controller.manualRetry();
+    expect(mutate).toHaveBeenCalledTimes(4);
+    expect(controller.getAttemptCount()).toBe(1);
+
+    // Full auto-retry budget available again after manual retry.
+    controller.noteError(rateLimited(1));
+    vi.advanceTimersByTime(1000);
+    expect(mutate).toHaveBeenCalledTimes(5);
+  });
+
+  it('(d) recovered 429 (attempt 2 succeeds) → completes with no error surface', () => {
+    const { mutate, onQueued, onExhausted, onTerminalError, controller } = buildHarness();
+
+    controller.start();
+    expect(mutate).toHaveBeenCalledTimes(1);
+
+    expect(controller.noteError(rateLimited(2))).toBe(true);
+    expect(onQueued).toHaveBeenLastCalledWith(2);
+
+    vi.advanceTimersByTime(2000);
+    expect(mutate).toHaveBeenCalledTimes(2);
+
+    controller.noteSuccess();
+    expect(onQueued).toHaveBeenLastCalledWith(null);
+    expect(onExhausted).not.toHaveBeenCalled();
+    expect(onTerminalError).not.toHaveBeenCalled();
+    expect(controller.getAttemptCount()).toBe(0);
+  });
+
+  it('(e) non-429 error → immediate error path, zero retries', () => {
+    const { mutate, onQueued, onExhausted, onTerminalError, controller } = buildHarness();
+
+    controller.start();
+    expect(mutate).toHaveBeenCalledTimes(1);
+
+    expect(controller.noteError(clientError())).toBe(false);
+    expect(onTerminalError).toHaveBeenCalledWith('Request to /cluster failed (400): bad');
+    expect(onExhausted).not.toHaveBeenCalled();
+    expect(onQueued).toHaveBeenCalledWith(null);
+
+    vi.advanceTimersByTime(60_000);
+    expect(mutate).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses DEFAULT_COOLDOWN_SECONDS when Retry-After is null', () => {
+    const { mutate, onQueued, controller } = buildHarness();
+
+    controller.start();
+    controller.noteError(rateLimited(null));
+    expect(onQueued).toHaveBeenLastCalledWith(DEFAULT_COOLDOWN_SECONDS);
+
+    vi.advanceTimersByTime((DEFAULT_COOLDOWN_SECONDS - 1) * 1000);
+    expect(mutate).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(1000);
+    expect(mutate).toHaveBeenCalledTimes(2);
+  });
+});

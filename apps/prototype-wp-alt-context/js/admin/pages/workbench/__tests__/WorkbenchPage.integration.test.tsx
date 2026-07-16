@@ -8,10 +8,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetConfigCache } from '../../../api/config';
 import { queryKeys } from '../../../api/queryKeys';
 import * as recognitionApi from '../../../api/recognition';
-import type { SyncStatusResponse, SyncTriggerResponse } from '../../../api/recognition';
+import type { SyncHealthResponse, SyncStatusResponse, SyncTriggerResponse } from '../../../api/recognition';
 import { DATA_SOURCE } from '../../../api/recognition/types';
 import type { JobStatusResponse } from '../../../api/recognition/types/scan';
 import { WorkbenchPage } from '../../WorkbenchPage';
+
+const syncHealthEnvelope = (breakerState: 'open' | 'closed'): SyncHealthResponse => ({
+  breaker: {
+    state: breakerState,
+    base_url: 'http://localhost:8000',
+    opened_at: breakerState === 'open' ? '2026-07-14T12:00:00Z' : null,
+  },
+  outbox: { pending: 0, failed: 0 },
+  conflicts: { open: 0 },
+  replays: { failed: null, source: 'unavailable_local' },
+  last_pull: { at: '2026-07-14T12:00:00Z', ok: true },
+  warnings: [],
+});
 
 // Mutable ref consumed by the hoisted useCombinedScanStatus mock so individual
 // tests can drive the pipeline phase (e.g. awaiting_projection) before render.
@@ -66,6 +79,7 @@ vi.mock('../../../api/recognition', async () => {
     fetchPendingNameSuggestions: vi.fn(),
     fetchTopUnlabeledClusters: vi.fn(),
     triggerSync: vi.fn(),
+    fetchSyncHealth: vi.fn(),
   };
 });
 
@@ -716,5 +730,71 @@ describe('WorkbenchPage (integration-lite)', () => {
     expect(
       screen.queryByText('No findings yet. Run a scan and new findings will appear here automatically.'),
     ).not.toBeInTheDocument();
+  });
+
+  it('re-enables gated analyze CTA reactively when sync-health breaker heals (no remount)', async () => {
+    // Auto-heal reactivity (E21-13 risk): breaker open → disabled+reason → 15s-poll
+    // envelope flip to closed → CTA re-enabled without remounting WorkbenchPage.
+    vi.mocked(recognitionApi.fetchMediaIdentities).mockResolvedValue({
+      identities_by_media: { '11': [] },
+    });
+    vi.mocked(recognitionApi.fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(recognitionApi.fetchSyncHealth).mockResolvedValue(syncHealthEnvelope('open'));
+
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+          staleTime: Infinity,
+          refetchOnMount: false,
+          refetchOnWindowFocus: false,
+          refetchOnReconnect: false,
+        },
+      },
+    });
+    client.setQueryData(
+      queryKeys.media.workbenchPage({ page: 1, perPage: 10, search: '', status: 'all' }),
+      baseMediaResponse,
+    );
+    client.setQueryData(queryKeys.media.identitiesByIds([11]), {
+      identities_by_media: { '11': [] },
+    });
+    client.setQueryData(queryKeys.sync.health(), syncHealthEnvelope('open'));
+
+    renderWithClient(client);
+
+    const user = userEvent.setup();
+    // Media queue may already be expanded; only click the summary expand control if present.
+    const showMediaTable = screen.queryByRole('button', { name: 'Show media table' });
+    if (showMediaTable) {
+      await user.click(showMediaTable);
+    }
+
+    // Banner lives in App.tsx (unit-tested with aria-live); this page-level test
+    // proves the gated analyze CTA reacts to the sync-health envelope flip.
+    const rowCheckbox = await screen.findByRole('checkbox', { name: /Select media item Photo Name/i });
+    await user.click(rowCheckbox);
+
+    const scanButton = await screen.findByRole('button', { name: /Analyze selected media/i });
+    // Selection present so disable is from the breaker gate, not zero-selection.
+    expect(await screen.findByText(/Ready to analyze 1 media item/i)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(scanButton).toBeDisabled();
+      expect(scanButton).toHaveAttribute('title', 'Unavailable while the recognition service is offline');
+      expect(scanButton).toHaveAttribute('aria-disabled', 'true');
+    });
+
+    // Simulate the 15s health poll delivering a healed envelope (same QueryClient /
+    // mounted tree — no remount, no navigation).
+    client.setQueryData(queryKeys.sync.health(), syncHealthEnvelope('closed'));
+
+    await waitFor(() => {
+      expect(scanButton).toBeEnabled();
+      expect(scanButton).not.toHaveAttribute('title');
+    });
   });
 });

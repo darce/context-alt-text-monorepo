@@ -28,11 +28,14 @@ use function max;
 use function trim;
 
 final class ConflictResolutionService {
+	public const OUTBOX_OPERATION_CLUSTER_LABEL_UPDATED = 'cluster_label_updated';
+	public const OUTBOX_OPERATION_IDENTITY_REASSIGNED   = 'identity_reassigned';
+
 	public const ACCEPT_MACHINE_OUTBOX_OPERATIONS = array(
-		'cluster_label_updated',
+		self::OUTBOX_OPERATION_CLUSTER_LABEL_UPDATED,
 		'cluster_dismissed',
 		'cluster_undismissed',
-		'identity_reassigned',
+		self::OUTBOX_OPERATION_IDENTITY_REASSIGNED,
 		'cluster_person_bound',
 		'cluster_person_unbound',
 	);
@@ -296,7 +299,7 @@ final class ConflictResolutionService {
 				'label' => $label,
 			);
 			$target_revision = max( 1, (int) ( $cluster['local_revision'] ?? 0 ) + 1 );
-			if ( ! $this->enqueue_restore_operation( $tenant_id, 'cluster_label_updated', 'cluster', $cluster_uuid, $backend_version, $target_revision, $payload ) ) {
+			if ( ! $this->enqueue_restore_operation( $tenant_id, self::OUTBOX_OPERATION_CLUSTER_LABEL_UPDATED, 'cluster', $cluster_uuid, $backend_version, $target_revision, $payload ) ) {
 				return null;
 			}
 			++$enqueued;
@@ -329,7 +332,7 @@ final class ConflictResolutionService {
 				'target_cluster_id' => $local_cluster_uuid,
 				'user_id' => function_exists( 'get_current_user_id' ) ? (int) get_current_user_id() : 0,
 			);
-			if ( ! $this->enqueue_restore_operation( $tenant_id, 'identity_reassigned', 'member', $identity_uuid, $backend_version, 1, $payload ) ) {
+			if ( ! $this->enqueue_restore_operation( $tenant_id, self::OUTBOX_OPERATION_IDENTITY_REASSIGNED, 'member', $identity_uuid, $backend_version, 1, $payload ) ) {
 				return null;
 			}
 			++$enqueued;
@@ -530,6 +533,17 @@ final class ConflictResolutionService {
 	 * across the persisted, code-partitioned entity set — the same mutations the
 	 * per-code branches use. Entities already gone locally are idempotently skipped
 	 * (0 affected rows is not a failure for an accepted deletion).
+	 *
+	 * Truncation is intentionally multi-cycle here. When the divergence exceeded the
+	 * storm entity cap (DEFAULT_STORM_ENTITY_CAP = 2000), the aggregate persisted only
+	 * the first <=2000 keys and flagged entity_set_truncated. Unlike restore_local
+	 * (which fails closed on a truncated aggregate), accept_backend reconciles exactly
+	 * that persisted <=2000-key subset and returns true — it does NOT attempt the
+	 * unpersisted remainder, which was never recorded on this row. The remainder is
+	 * expected to converge on the next projection cycle: the still-diverging entities
+	 * raise a fresh backend_roster_regressed aggregate (a new backend_version) that the
+	 * operator accepts in turn, so a very large regression drains over successive
+	 * cycles rather than in a single accept.
 	 *
 	 * @param array<string,mixed> $conflict
 	 */

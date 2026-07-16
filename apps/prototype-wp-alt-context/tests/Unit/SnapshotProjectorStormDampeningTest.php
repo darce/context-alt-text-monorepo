@@ -6,6 +6,9 @@ namespace AltContext\Tests\Unit;
 
 use AltContext\Sovereign\Sync\ConflictRepository;
 use AltContext\Sovereign\Sync\SnapshotProjector;
+use AltContext\Tests\Stubs\SnapshotProjectorClustersSpy;
+use AltContext\Tests\Stubs\SnapshotProjectorMembersSpy;
+use AltContext\Tests\Stubs\SnapshotProjectorSyncStateSpy;
 use AltContext\Tests\TestCase;
 
 /**

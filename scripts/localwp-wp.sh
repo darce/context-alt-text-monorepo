@@ -2,12 +2,16 @@
 #
 # localwp-wp.sh — Run WP-CLI against LocalWP with durable PHP/socket resolution.
 #
-# Prefers a PHP 8.5-compatible wp-cli nightly when available. Otherwise it runs
-# the stable Homebrew wp under php@8.4 when present. Either way, PHP deprecation
-# noise from WP-CLI's bundled phars (react/promise, php-cli-tools, etc.) under
-# PHP 8.4/8.5 is muted at the source via error_reporting, so wp output is not
-# drowned while real warnings/notices/errors stay visible. See
-# LOCALWP_WP_ERROR_REPORTING below to override.
+# Prefers a PHP 8.5-compatible wp-cli nightly when available; otherwise the
+# stable Homebrew wp under php@8.4. PHP deprecation noise from WP-CLI's bundled
+# phars (react/promise, php-cli-tools) — emitted during wp-cli's own bootstrap,
+# before WordPress loads — is muted at the source via error_reporting, so wp
+# output is not drowned while real warnings/notices/errors stay visible.
+#
+# Scope note: a command that boots WordPress with WP_DEBUG=true re-enables
+# E_DEPRECATED (wp_debug_mode() calls error_reporting(E_ALL)), so deprecations
+# raised by plugin/theme/core code AFTER bootstrap can still surface. Only the
+# wp-cli framework/bootstrap noise is muted here; see LOCALWP_WP_ERROR_REPORTING.
 #
 # Wrapper-specific commands:
 #   ./scripts/localwp-wp.sh --print-plan
@@ -18,9 +22,8 @@
 #   LOCALWP_WP_NIGHTLY_BIN  Full path to a wp-nightly executable/phar.
 #   LOCALWP_WP_PHP84_BIN    Full path to php@8.4 executable.
 #   LOCALWP_WP_DISABLE_PHP84 Set to 1 to skip php@8.4 fallback resolution.
-#   LOCALWP_WP_FILTER_KNOWN_NOISE Set to 1 to force the legacy exact-match sed
-#                                 net for two known WP-CLI 2.12.0 deprecations.
-#                                 Secondary to source-level suppression below.
+#   LOCALWP_WP_DISABLE_NIGHTLY Set to 1 to skip wp-nightly resolution (forces the
+#                              stable/php84 path; also makes tests hermetic).
 #   LOCALWP_WP_ERROR_REPORTING PHP error_reporting applied to every wp run.
 #                              Defaults to muting deprecations only
 #                              ('E_ALL & ~E_DEPRECATED & ~E_USER_DEPRECATED');
@@ -34,9 +37,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOCALWP_RUNTIME_HELPER="${SCRIPT_DIR}/localwp-runtime.sh"
 
-# Mute PHP deprecations at the source for every wp run. The deprecations come
+# Mute PHP deprecations at the source for every wp run. The reported noise comes
 # from WP-CLI's bundled phars (react/promise, php-cli-tools) under PHP 8.4/8.5 —
-# unactionable noise that an exact-match line filter can never fully catch.
+# unactionable, and an exact-match line filter can never fully catch it.
 # error_reporting keeps warnings/notices/errors visible; only deprecations drop.
 LOCALWP_WP_ERROR_REPORTING="${LOCALWP_WP_ERROR_REPORTING:-E_ALL & ~E_DEPRECATED & ~E_USER_DEPRECATED}"
 
@@ -115,6 +118,10 @@ resolve_php84_bin() {
 }
 
 resolve_nightly_wp_bin() {
+	if [[ "${LOCALWP_WP_DISABLE_NIGHTLY:-0}" == "1" ]]; then
+		return 1
+	fi
+
 	if [[ -n "${LOCALWP_WP_NIGHTLY_BIN:-}" ]]; then
 		if [[ -x "${LOCALWP_WP_NIGHTLY_BIN}" ]]; then
 			echo "${LOCALWP_WP_NIGHTLY_BIN}"
@@ -206,26 +213,8 @@ print_plan() {
 	printf 'socket=%s\n' "${socket_path}"
 }
 
-should_filter_known_noise() {
-	if [[ "${LOCALWP_WP_FILTER_KNOWN_NOISE:-0}" == "1" ]]; then
-		return 0
-	fi
-
-	if [[ "${CHOSEN_MODE}" != "default" ]]; then
-		return 1
-	fi
-
-	php_reports_major_minor "${CHOSEN_PHP_BIN}" "8.5"
-}
-
-filter_known_noise() {
-	sed \
-		-e '/^PHP Deprecated:  Case statements followed by a semicolon (;) are deprecated, use a colon (:) instead in phar:\/\/.*\/vendor\/react\/promise\/src\/functions\.php on line 369$/d' \
-		-e '/^Deprecated: Case statements followed by a semicolon (;) are deprecated, use a colon (:) instead in phar:\/\/.*\/vendor\/react\/promise\/src\/functions\.php on line 369$/d' \
-		-e '/^PHP Deprecated:  Using null as an array offset is deprecated, use an empty string instead in phar:\/\/.*\/vendor\/wp-cli\/php-cli-tools\/lib\/cli\/Colors\.php on line 95$/d' \
-		-e '/^Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar:\/\/.*\/vendor\/wp-cli\/php-cli-tools\/lib\/cli\/Colors\.php on line 95$/d'
-}
-
+# Run wp under the resolved php, muting deprecations at the source. Output is
+# streamed live (no tempfile buffering) so stdout/stderr interleave correctly.
 run_wp_inner() {
 	local socket_path=""
 	local sock_link=""
@@ -251,28 +240,9 @@ run_wp_inner() {
 
 run_wp() {
 	local socket_path=""
-	local status=0
-	local stdout_file=""
-	local stderr_file=""
 	choose_runner
 	socket_path="$(discover_socket_or_empty)"
-
-	if ! should_filter_known_noise; then
-		exec /bin/bash "${BASH_SOURCE[0]}" --wrapper-no-filter "${socket_path}" "$@"
-	fi
-
-	stdout_file="$(mktemp)"
-	stderr_file="$(mktemp)"
-	if run_wp_inner "${socket_path}" "$@" >"${stdout_file}" 2>"${stderr_file}"; then
-		status=0
-	else
-		status=$?
-	fi
-
-	filter_known_noise <"${stdout_file}"
-	filter_known_noise <"${stderr_file}" >&2
-	rm -f "${stdout_file}" "${stderr_file}"
-	return "${status}"
+	run_wp_inner "${socket_path}" "$@"
 }
 
 COMMAND="${1:-}"
@@ -283,13 +253,6 @@ case "${COMMAND}" in
 		;;
 	--wrapper-help)
 		show_usage
-		;;
-	--wrapper-no-filter)
-		shift
-		socket_path="${1:-}"
-		shift || true
-		choose_runner
-		run_wp_inner "${socket_path}" "$@"
 		;;
 	--help|-h|help)
 		run_wp "$@"

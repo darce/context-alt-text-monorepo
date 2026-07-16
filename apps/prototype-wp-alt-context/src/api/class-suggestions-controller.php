@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+require_once __DIR__ . '/class-recognition-data-source.php';
+
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -17,9 +19,9 @@ use function sanitize_text_field;
 use function sprintf;
 
 class SuggestionsController extends AbstractRecognitionProxyController {
-	private const DATA_SOURCE_BACKEND_PROXY = 'backend_proxy';
-	private const DATA_SOURCE_ENDPOINT_ERROR = 'endpoint_error';
-	private const DATA_SOURCE_UNAVAILABLE = 'unavailable';
+	private const DATA_SOURCE_BACKEND_PROXY = RecognitionDataSource::BACKEND_PROXY;
+	private const DATA_SOURCE_ENDPOINT_ERROR = RecognitionDataSource::ENDPOINT_ERROR;
+	private const DATA_SOURCE_UNAVAILABLE = RecognitionDataSource::UNAVAILABLE;
 	private const REQUEST_CLASS_POST_SCAN_READ = 'post_scan_read';
 
 	public function register_routes(): void {

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+require_once __DIR__ . '/class-recognition-data-source.php';
 require_once __DIR__ . '/interface-clusters-host.php';
 require_once __DIR__ . '/services/class-cluster-response-envelope-service.php';
 require_once __DIR__ . '/services/class-cluster-projection-sync-service.php';
@@ -45,10 +46,10 @@ use WP_REST_Response;
 use function add_action;
 
 class ClustersController extends AbstractRecognitionProxyController implements ClustersHostInterface {
-	private const BOOTSTRAP_SYNC_HOOK = 'acx_bootstrap_sync';
-	private const DATA_SOURCE_BACKEND_PROXY = 'backend_proxy';
-	private const DATA_SOURCE_LOCAL_PROJECTION = 'local_projection';
-	private const DATA_SOURCE_UNAVAILABLE = 'unavailable';
+	private const BOOTSTRAP_SYNC_HOOK = RecognitionDataSource::BOOTSTRAP_SYNC_HOOK;
+	private const DATA_SOURCE_BACKEND_PROXY = RecognitionDataSource::BACKEND_PROXY;
+	private const DATA_SOURCE_LOCAL_PROJECTION = RecognitionDataSource::LOCAL_PROJECTION;
+	private const DATA_SOURCE_UNAVAILABLE = RecognitionDataSource::UNAVAILABLE;
 	private const PROJECTION_STATUS_AVAILABLE = 'available';
 	private const PROJECTION_STATUS_BOOTSTRAPPING = 'bootstrapping';
 	private ClustersRepositoryInterface $clusters_repository;

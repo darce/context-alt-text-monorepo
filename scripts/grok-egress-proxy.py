@@ -18,6 +18,18 @@ Usage:
       NO_PROXY= grok "your task"
   # An ALLOW line for api.x.ai + zero EXFIL-BLOCKED lines and a working session
   # => inference works and the bundle upload was denied.
+
+LIMITATIONS (host-level control, not a content inspector):
+  - ALLOW tunnels are opaque TLS passthrough: bytes to an allowlisted host are
+    NOT audited. If xAI ever proxies the bundle upload through an allowed host,
+    this control does not see it — the shallow-clone sandbox is the backstop.
+  - CONNECT is restricted to port 443 on allowlisted hosts; any other port is
+    denied and logged as DENIED-PORT (an arbitrary-port tunnel to an allowed
+    domain would otherwise be a generic TCP relay).
+  - The relay uses a 60s idle timeout: a tunnel with no traffic in either
+    direction for 60s is severed. Long-lived idle streams (slow SSE sessions,
+    stalled uploads) may be cut; grok retries re-establish the tunnel.
+  - Plain HTTP (non-CONNECT) is refused outright (405).
 """
 from __future__ import annotations
 import argparse, datetime, re, select, socket, threading
@@ -74,6 +86,10 @@ class Proxy:
                 client.sendall(b"HTTP/1.1 405 Method Not Allowed\r\n\r\n"); return
             host, port = m.group(1), int(m.group(2))
             verdict = classify(host)
+            # Allowlisted hosts may only be reached on 443 — any other port would
+            # turn an allowed domain into a generic TCP relay.
+            if verdict == "ALLOW" and port != 443:
+                verdict = "DENIED-PORT"
             self.log(verdict, host, port)
             if verdict != "ALLOW":
                 client.sendall(b"HTTP/1.1 403 Forbidden (acx grok egress-deny)\r\n\r\n"); return

@@ -41,6 +41,25 @@ Validated 2026-07-13: `api.x.ai` → `ALLOW` (tunnel established); `storage.goog
 lane launcher so grok always runs with `HTTPS_PROXY` set (belt with the sandbox's
 suspenders).
 
+### Limitations (why the sandbox stays mandatory)
+
+- **ALLOW tunnels are unaudited.** The proxy is a host-level allow/deny gate over
+  opaque TLS passthrough — bytes sent to an allowlisted host are not inspected.
+  If the bundle upload ever moves behind `api.x.ai`/`grok.com`, this control is
+  blind to it; the shallow-clone sandbox (nothing historical to bundle) is the
+  backstop.
+- **Port restriction.** CONNECT is permitted only to **port 443** on allowlisted
+  hosts; any other port is denied and logged as `DENIED-PORT`. (Without this, an
+  allowed domain would be a generic TCP relay.)
+- **60s idle timeout.** The tunnel relay severs connections idle for 60s in both
+  directions. Long-lived idle streams (slow SSE inference sessions, stalled
+  transfers) may be cut mid-stream; grok's retry re-establishes the tunnel, but
+  count on occasional severed long sessions.
+- **Proxy-honoring traffic only.** Only traffic that respects `HTTPS_PROXY` is
+  covered. A client that ignores proxy env vars bypasses this entirely — the
+  OS-level deny (iptables/PF below) is the stronger variant if that is observed.
+- Plain HTTP (non-CONNECT) is refused (405).
+
 ## OCI-VM variant (only if offload moves to a VM) — iptables
 
 Coarser (IP-based; GCS IPs rotate, so refresh on a timer or prefer the proxy above):

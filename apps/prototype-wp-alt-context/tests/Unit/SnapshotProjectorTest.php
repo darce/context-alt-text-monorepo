@@ -418,6 +418,9 @@ class SnapshotProjectorTest extends TestCase
 
         $syncRepo = new SnapshotProjectorSyncStateSpy();
         $syncRepo->postRefreshConflictCount = 1;
+        // Two curated clusters survive in the incoming snapshot so the single
+        // missing cluster stays below the E15-35 storm threshold (1 of 3 <= 50%)
+        // and the per-entity conflict path is exercised.
         $projector = new SnapshotProjector(
             new SnapshotProjectorClustersSpy([
                 'cluster-missing' => [
@@ -427,6 +430,18 @@ class SnapshotProjectorTest extends TestCase
                     'curation_state' => 'dismissed',
                     'snapshot_version' => 12,
                     'local_revision' => 5,
+                ],
+                'cluster-kept-1' => [
+                    'cluster_uuid' => 'cluster-kept-1',
+                    'label' => 'Kept One',
+                    'snapshot_version' => 12,
+                    'local_revision' => 2,
+                ],
+                'cluster-kept-2' => [
+                    'cluster_uuid' => 'cluster-kept-2',
+                    'label' => 'Kept Two',
+                    'snapshot_version' => 12,
+                    'local_revision' => 2,
                 ],
             ]),
             new SnapshotProjectorMembersSpy(),
@@ -448,7 +463,10 @@ class SnapshotProjectorTest extends TestCase
             'tenant-conflicts',
             [
                 'snapshot_version' => 19,
-                'clusters' => [],
+                'clusters' => [
+                    ['cluster_uuid' => 'cluster-kept-1', 'label' => 'Kept One', 'identity_count' => 1],
+                    ['cluster_uuid' => 'cluster-kept-2', 'label' => 'Kept Two', 'identity_count' => 1],
+                ],
                 'members' => [],
             ]
         );
@@ -973,6 +991,10 @@ class SnapshotProjectorMembersSpy extends NullIdentityMembersRepository
     public array $mergedMembers = [];
     public array $mergedMemberBatches = [];
     public int $memberPageSize = 0;
+    /** @var array<int,bool> Suppression flag received per merge call. */
+    public array $suppressionFlags = [];
+    /** @var array<string,array<string,mixed>> Curated members keyed by identity_uuid. */
+    public array $curatedMembers = [];
     /** @var array<string,array<int,array<string,mixed>>> */
     private array $membersByCluster;
 
@@ -984,11 +1006,12 @@ class SnapshotProjectorMembersSpy extends NullIdentityMembersRepository
         $this->membersByCluster = $membersByCluster;
     }
 
-    public function merge_snapshot_for_tenant(string $tenant_id, array $members, int $snapshot_version): void
+    public function merge_snapshot_for_tenant(string $tenant_id, array $members, int $snapshot_version, bool $suppress_conflict_storm = false): void
     {
         $this->members = $members;
         $this->mergedMembers = $members;
         $this->mergedMemberBatches[] = $members;
+        $this->suppressionFlags[] = $suppress_conflict_storm;
         $groupedMembers = [];
         foreach ($members as $member) {
             if (!is_array($member)) {
@@ -1025,6 +1048,11 @@ class SnapshotProjectorMembersSpy extends NullIdentityMembersRepository
         }
 
         return array_slice($members, $offset, $limit);
+    }
+
+    public function get_curated_members_for_tenant(string $tenant_id): array
+    {
+        return $this->curatedMembers;
     }
 }
 

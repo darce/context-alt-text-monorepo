@@ -6,6 +6,9 @@ namespace AltContext\Sovereign\Sync;
 
 require_once __DIR__ . '/class-conflict-repository.php';
 require_once __DIR__ . '/class-outbox-drain.php';
+require_once __DIR__ . '/class-curation-idempotency-key.php';
+require_once __DIR__ . '/interface-outbox-writer.php';
+require_once __DIR__ . '/class-outbox-writer.php';
 require_once __DIR__ . '/../repositories/class-clusters-repository.php';
 require_once __DIR__ . '/../repositories/class-identity-members-repository.php';
 require_once __DIR__ . '/../repositories/interface-clusters-repository.php';
@@ -16,9 +19,12 @@ use AltContext\Sovereign\Repositories\ClustersRepositoryInterface;
 use AltContext\Sovereign\Repositories\IdentityMembersRepository;
 use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
 
+use function function_exists;
+use function get_current_user_id;
 use function in_array;
 use function is_array;
 use function is_string;
+use function max;
 use function trim;
 
 final class ConflictResolutionService {
@@ -41,21 +47,26 @@ final class ConflictResolutionService {
 	private OutboxDrain $outbox_drain;
 	private ClustersRepositoryInterface $clusters_repository;
 	private IdentityMembersRepositoryInterface $members_repository;
+	private OutboxWriterInterface $outbox_writer;
 
 	public function __construct(
 		?ConflictRepository $conflict_repository = null,
 		?OutboxDrain $outbox_drain = null,
 		?ClustersRepositoryInterface $clusters_repository = null,
-		?IdentityMembersRepositoryInterface $members_repository = null
+		?IdentityMembersRepositoryInterface $members_repository = null,
+		?OutboxWriterInterface $outbox_writer = null
 	) {
 		$this->conflict_repository = $conflict_repository ?? new ConflictRepository();
 		$this->outbox_drain = $outbox_drain ?? new OutboxDrain();
 		$this->clusters_repository = $clusters_repository ?? new ClustersRepository();
 		$this->members_repository = $members_repository ?? new IdentityMembersRepository();
+		$this->outbox_writer = $outbox_writer ?? new OutboxWriter();
 	}
 
 	/**
-	 * @return array{ok:bool, reason:'success'|'not_found'|'already_resolved'|'resolution_not_allowed'|'entity_mutation_failed'|'conflict_update_failed', metrics_refreshed:bool}
+	 * @return array{ok:bool, reason:'success'|'not_found'|'already_resolved'|'resolution_not_allowed'|'entity_mutation_failed'|'conflict_update_failed', metrics_refreshed:bool, restore_report?:array{enqueued:int, skipped:int, skipped_keys:string[]}}
+	 *         restore_report is present only for successful restore_local resolutions: entities whose
+	 *         local curated state no longer exists are skipped and counted, not fatal.
 	 */
 	public function resolve( int $conflict_id, string $resolution, string $tenant_id, ?string $merged_value = null ): array {
 		global $wpdb;
@@ -69,7 +80,20 @@ final class ConflictResolutionService {
 			);
 		}
 
-		if ( ! in_array( $resolution, array( 'accepted', 'dismissed', 'accept_backend', 'merge' ), true ) ) {
+		if ( ! in_array( $resolution, array( 'accepted', 'dismissed', 'accept_backend', 'merge', 'restore_local' ), true ) ) {
+			return array(
+				'ok' => false,
+				'reason' => 'resolution_not_allowed',
+				'metrics_refreshed' => false,
+			);
+		}
+
+		// restore_local is code-guarded (PR3-03): only a non-truncated
+		// backend_roster_regressed aggregate qualifies, so whitelisting the string
+		// cannot turn restore_local into a silent no-op resolve of ordinary conflicts.
+		// A truncated aggregate fails closed — the operator uses accept_backend or
+		// bulk dead-letter recovery instead of silently restoring a subset.
+		if ( 'restore_local' === $resolution && ! $this->is_restorable_roster_regression( $conflict ) ) {
 			return array(
 				'ok' => false,
 				'reason' => 'resolution_not_allowed',
@@ -104,6 +128,7 @@ final class ConflictResolutionService {
 		$has_outbox_conflict = ! empty( $conflict['outbox_id'] );
 		$mutation_ok = true;
 		$metrics_refreshed = false;
+		$restore_report = null;
 
 		if ( 'accepted' === $resolution || 'accept_backend' === $resolution ) {
 			if ( $has_outbox_conflict ) {
@@ -159,6 +184,14 @@ final class ConflictResolutionService {
 				);
 				$metrics_refreshed = $mutation_ok;
 			}
+		} elseif ( 'restore_local' === $resolution ) {
+			// Top-level branch by construction (PR2-01): resolve_projection_acceptance()
+			// only runs under accepted|accept_backend, so restore_local dispatches here,
+			// beside merge/accept_backend. Local curation is the good copy — synthesize
+			// re-push outbox ops instead of mutating local state.
+			$restore_report = $this->restore_local_roster_curation( $conflict, $tenant_id );
+			$mutation_ok = null !== $restore_report;
+			$metrics_refreshed = $mutation_ok && $restore_report['enqueued'] > 0;
 		} elseif ( $has_outbox_conflict ) {
 			$mutation_ok = $this->outbox_drain->re_enqueue_with_current_base(
 				(int) $conflict['outbox_id'],
@@ -195,11 +228,136 @@ final class ConflictResolutionService {
 			);
 		}
 
-		return array(
+		$result = array(
 			'ok' => true,
 			'reason' => 'success',
 			'metrics_refreshed' => $metrics_refreshed,
 		);
+		if ( null !== $restore_report ) {
+			$result['restore_report'] = $restore_report;
+		}
+
+		return $result;
+	}
+
+	/**
+	 * restore_local eligibility guard: only a backend_roster_regressed aggregate
+	 * whose persisted entity set was NOT truncated may be restored.
+	 *
+	 * @param array<string,mixed> $conflict
+	 */
+	private function is_restorable_roster_regression( array $conflict ): bool {
+		if ( ConflictRepository::CONFLICT_CODE_BACKEND_ROSTER_REGRESSED !== (string) ( $conflict['conflict_code'] ?? '' ) ) {
+			return false;
+		}
+
+		$machine_payload = $conflict['machine_payload'] ?? array();
+		return ! ( is_array( $machine_payload ) && ! empty( $machine_payload['entity_set_truncated'] ) );
+	}
+
+	/**
+	 * Synthesize re-push outbox ops for every entity in the aggregate's persisted,
+	 * code-partitioned entity map, from bulk local curated reads (two queries, not
+	 * 2N lookups). Entities whose local curated state no longer exists are skipped
+	 * and reported — a partially-restorable set must not fail the resolution.
+	 * Idempotency keys come from the shared derivation so a replayed resolution
+	 * cannot double-apply.
+	 *
+	 * @param array<string,mixed> $conflict
+	 * @return array{enqueued:int, skipped:int, skipped_keys:string[]}|null Null when an enqueue write fails.
+	 */
+	private function restore_local_roster_curation( array $conflict, string $tenant_id ): ?array {
+		$machine_payload = is_array( $conflict['machine_payload'] ?? null ) ? $conflict['machine_payload'] : array();
+		$entities = is_array( $machine_payload['entities'] ?? null ) ? $machine_payload['entities'] : array();
+		$backend_version = max( 0, (int) ( $conflict['backend_version'] ?? 0 ) );
+
+		$curated_clusters = $this->clusters_repository->get_curated_clusters_for_tenant( $tenant_id );
+		$curated_members  = $this->members_repository->get_curated_members_for_tenant( $tenant_id );
+
+		$enqueued = 0;
+		$skipped = 0;
+		$skipped_keys = array();
+
+		$deleted_cluster_keys = is_array( $entities['curated_cluster_deleted'] ?? null ) ? $entities['curated_cluster_deleted'] : array();
+		foreach ( $deleted_cluster_keys as $cluster_uuid ) {
+			$cluster_uuid = trim( (string) $cluster_uuid );
+			$cluster = $curated_clusters[ $cluster_uuid ] ?? null;
+			$label = is_array( $cluster ) ? trim( (string) ( $cluster['label'] ?? '' ) ) : '';
+			if ( '' === $cluster_uuid || ! is_array( $cluster ) || '' === $label ) {
+				++$skipped;
+				if ( '' !== $cluster_uuid ) {
+					$skipped_keys[] = $cluster_uuid;
+				}
+				continue;
+			}
+
+			$payload = array(
+				'cluster_uuid' => $cluster_uuid,
+				'label' => $label,
+			);
+			$target_revision = max( 1, (int) ( $cluster['local_revision'] ?? 0 ) + 1 );
+			if ( ! $this->enqueue_restore_operation( $tenant_id, 'cluster_label_updated', 'cluster', $cluster_uuid, $backend_version, $target_revision, $payload ) ) {
+				return null;
+			}
+			++$enqueued;
+		}
+
+		$member_keys = array();
+		foreach ( array( 'curated_member_deleted', 'member_cluster_reassignment' ) as $member_code ) {
+			$partition = is_array( $entities[ $member_code ] ?? null ) ? $entities[ $member_code ] : array();
+			foreach ( $partition as $identity_uuid ) {
+				$member_keys[] = trim( (string) $identity_uuid );
+			}
+		}
+
+		foreach ( $member_keys as $identity_uuid ) {
+			$member = $curated_members[ $identity_uuid ] ?? null;
+			$local_cluster_uuid = is_array( $member ) ? trim( (string) ( $member['cluster_uuid'] ?? '' ) ) : '';
+			if ( '' === $identity_uuid || ! is_array( $member ) || '' === $local_cluster_uuid ) {
+				++$skipped;
+				if ( '' !== $identity_uuid ) {
+					$skipped_keys[] = $identity_uuid;
+				}
+				continue;
+			}
+
+			// Same payload shape ClusterMutationsController enqueues for a member
+			// reassignment; the target is the LOCAL curated cluster (the good copy).
+			$payload = array(
+				'tenant_id' => $tenant_id,
+				'identity_id' => $identity_uuid,
+				'target_cluster_id' => $local_cluster_uuid,
+				'user_id' => function_exists( 'get_current_user_id' ) ? (int) get_current_user_id() : 0,
+			);
+			if ( ! $this->enqueue_restore_operation( $tenant_id, 'identity_reassigned', 'member', $identity_uuid, $backend_version, 1, $payload ) ) {
+				return null;
+			}
+			++$enqueued;
+		}
+
+		return array(
+			'enqueued' => $enqueued,
+			'skipped' => $skipped,
+			'skipped_keys' => $skipped_keys,
+		);
+	}
+
+	/**
+	 * @param array<string,mixed> $payload
+	 */
+	private function enqueue_restore_operation( string $tenant_id, string $operation_type, string $entity_type, string $entity_key, int $expected_base_version, int $target_revision, array $payload ): bool {
+		$result = $this->outbox_writer->enqueue(
+			$tenant_id,
+			$operation_type,
+			$entity_type,
+			$entity_key,
+			$expected_base_version,
+			$target_revision,
+			$payload,
+			CurationIdempotencyKey::derive( $tenant_id, $operation_type, $entity_type, $entity_key, $target_revision, $payload )
+		);
+
+		return false !== $result;
 	}
 
 	private function clear_curation_for_entity( string $entity_type, string $entity_key, string $tenant_id ): int {
@@ -358,7 +516,65 @@ final class ConflictResolutionService {
 			return $this->accept_backend_person_name_conflict( $conflict, $tenant_id );
 		}
 
+		// E15-35 Slice 3: without this branch an aggregate falls through to the
+		// `return false` below → entity_mutation_failed, so it could never clear.
+		if ( ConflictRepository::CONFLICT_CODE_BACKEND_ROSTER_REGRESSED === $conflict_code ) {
+			return $this->accept_backend_roster_regression( $conflict, $tenant_id );
+		}
+
 		return false;
+	}
+
+	/**
+	 * accept_backend for the aggregate: apply the per-entity deletes/reassignments
+	 * across the persisted, code-partitioned entity set — the same mutations the
+	 * per-code branches use. Entities already gone locally are idempotently skipped
+	 * (0 affected rows is not a failure for an accepted deletion).
+	 *
+	 * @param array<string,mixed> $conflict
+	 */
+	private function accept_backend_roster_regression( array $conflict, string $tenant_id ): bool {
+		$machine_payload = is_array( $conflict['machine_payload'] ?? null ) ? $conflict['machine_payload'] : array();
+		$entities = is_array( $machine_payload['entities'] ?? null ) ? $machine_payload['entities'] : array();
+		if ( array() === $entities ) {
+			return false;
+		}
+
+		$deleted_cluster_keys = is_array( $entities['curated_cluster_deleted'] ?? null ) ? $entities['curated_cluster_deleted'] : array();
+		foreach ( $deleted_cluster_keys as $cluster_uuid ) {
+			$cluster_uuid = trim( (string) $cluster_uuid );
+			if ( '' !== $cluster_uuid ) {
+				$this->clusters_repository->delete_cluster_with_members( $cluster_uuid, $tenant_id );
+			}
+		}
+
+		$deleted_member_keys = is_array( $entities['curated_member_deleted'] ?? null ) ? $entities['curated_member_deleted'] : array();
+		foreach ( $deleted_member_keys as $identity_uuid ) {
+			$identity_uuid = trim( (string) $identity_uuid );
+			if ( '' !== $identity_uuid ) {
+				$this->members_repository->delete_member( $identity_uuid, $tenant_id );
+			}
+		}
+
+		$reassigned_member_keys = is_array( $entities['member_cluster_reassignment'] ?? null ) ? $entities['member_cluster_reassignment'] : array();
+		$reassignment_targets = is_array( $machine_payload['reassignment_targets'] ?? null ) ? $machine_payload['reassignment_targets'] : array();
+		foreach ( $reassigned_member_keys as $identity_uuid ) {
+			$identity_uuid = trim( (string) $identity_uuid );
+			if ( '' === $identity_uuid ) {
+				continue;
+			}
+
+			$target_cluster_uuid = trim( (string) ( $reassignment_targets[ $identity_uuid ] ?? '' ) );
+			if ( '' !== $target_cluster_uuid ) {
+				$this->members_repository->accept_machine_cluster_assignment( $identity_uuid, $target_cluster_uuid, $tenant_id );
+			} else {
+				// No recorded target: clear the curation guard so the next
+				// projection cycle applies the backend assignment.
+				$this->members_repository->reset_curation( $identity_uuid, $tenant_id );
+			}
+		}
+
+		return true;
 	}
 
 	/**

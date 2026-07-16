@@ -236,13 +236,13 @@ Proof:
 
 ### Checklist for Slice 3: Storm dampening
 
-- [ ] Projector pre-counts curated cluster **and** member divergence; threshold (`>=20` OR `>50%`) + aggregate conflict (counts + `backend_version` + code-partitioned entity map, capped at the filterable max with `entity_set_truncated` flag) implemented.
-- [ ] Suppression flag threaded projector → snapshot-merger → member-conflict-recorder so both surfaces suppress per-entity rows in the same cycle.
-- [ ] Cross-cycle dedup: no new aggregate while an open one exists for the same `backend_version`.
-- [ ] Conflict repository + frontend banner support the aggregate code (both resolution actions).
-- [ ] `restore_local` reachable end-to-end: `:72` whitelist entry + top-level dispatch branch (code-guarded to `backend_roster_regressed`, non-truncated; else `resolution_not_allowed`) + `OutboxWriterInterface` ctor injection + bulk-read op synthesis via the extracted `class-curation-idempotency-key.php` helper; missing local state skipped and reported via `restore_report` (docblock updated), not fatal.
-- [ ] `accept_backend` wired as a `backend_roster_regressed` branch in `resolve_projection_acceptance()` (current-state failure is `entity_mutation_failed`, not `resolution_not_allowed`).
-- [ ] PHP + TS tests cover above/below threshold on **both** surfaces, cross-cycle suppression, and both resolution directions asserting **post-resolution data outcome**, not just status.
+- [x] Projector pre-counts curated cluster **and** member divergence; threshold (`>=20` OR `>50%`) + aggregate conflict (counts + `backend_version` + code-partitioned entity map, capped at the filterable max with `entity_set_truncated` flag) implemented.
+- [x] Suppression flag threaded projector → snapshot-merger → member-conflict-recorder so both surfaces suppress per-entity rows in the same cycle.
+- [x] Cross-cycle dedup: no new aggregate while an open one exists for the same `backend_version`.
+- [x] Conflict repository + frontend banner support the aggregate code (both resolution actions).
+- [x] `restore_local` reachable end-to-end: `:72` whitelist entry + top-level dispatch branch (code-guarded to `backend_roster_regressed`, non-truncated; else `resolution_not_allowed`) + `OutboxWriterInterface` ctor injection + bulk-read op synthesis via the extracted `class-curation-idempotency-key.php` helper; missing local state skipped and reported via `restore_report` (docblock updated), not fatal.
+- [x] `accept_backend` wired as a `backend_roster_regressed` branch in `resolve_projection_acceptance()` (current-state failure is `entity_mutation_failed`, not `resolution_not_allowed`).
+- [x] PHP + TS tests cover above/below threshold on **both** surfaces, cross-cycle suppression, and both resolution directions asserting **post-resolution data outcome**, not just status.
 
 ## Review Readiness
 

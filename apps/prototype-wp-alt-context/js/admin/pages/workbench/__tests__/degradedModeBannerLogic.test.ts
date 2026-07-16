@@ -1,5 +1,10 @@
 import type { SyncHealthResponse } from '../../../api/recognition/types/sync';
-import { getDashboardSyncHealthSummary, resolveEffectiveSyncHealth } from '../degradedModeBannerLogic';
+import {
+  getDashboardSyncHealthSummary,
+  resolveEffectiveSyncHealth,
+  shouldShowDegradedBanner,
+  translateSyncHealthWarning,
+} from '../degradedModeBannerLogic';
 
 const buildEnvelope = (overrides: Partial<SyncHealthResponse> = {}): SyncHealthResponse => ({
   breaker: { state: 'closed', base_url: 'http://localhost:8000', opened_at: null },
@@ -43,5 +48,24 @@ describe('getDashboardSyncHealthSummary', () => {
     });
 
     expect(getDashboardSyncHealthSummary('healthy', envelope)).toContain('warning threshold');
+  });
+});
+
+describe('backend_roster_regressed warning (E15-35 Slice 3)', () => {
+  const regressionWarning = {
+    code: 'backend_roster_regressed',
+    message: 'raw server message',
+    count: 1,
+    threshold: 1,
+  };
+
+  it('translates the aggregate warning into the degraded-mode banner copy', () => {
+    expect(translateSyncHealthWarning(regressionWarning)).toContain('roster looks rolled back');
+    expect(translateSyncHealthWarning(regressionWarning)).toContain('local curation is preserved');
+  });
+
+  it('shows the degraded banner while the aggregate warning is open', () => {
+    expect(shouldShowDegradedBanner(buildEnvelope({ warnings: [regressionWarning] }))).toBe(true);
+    expect(shouldShowDegradedBanner(buildEnvelope())).toBe(false);
   });
 });

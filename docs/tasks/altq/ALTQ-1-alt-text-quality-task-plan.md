@@ -182,7 +182,7 @@ cost/latency axes; CPU cells never blocked by GPU capacity.
       vacuous without it — fail-closed gate ablates every name). If curated
       boxes cover < 30/37 entries, run the face-gate cell on the covered
       subset and say so in the report.
-- [ ] **New tooling (test-first, before any bench)**: `--weave-bench` replay
+- [x] **New tooling (test-first, before any bench)**: `--weave-bench` replay
       mode (pass-2 text-only from a recorded pass-1; no `image_part`) and
       `report.py:_latency_summary` (p50/p95 per image + model-call count per
       config). Transport-stubbed tests green.

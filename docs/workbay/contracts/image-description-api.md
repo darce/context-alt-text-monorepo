@@ -100,6 +100,16 @@ per-`roster_id` `identity_name_suppressions` list, a **roster requirement**
 (an identity without a `roster_id` is never nameable — it would otherwise be
 unsuppressable), and a minimum face-detection confidence (0.8).
 
+#### ALTQ-1 additive optional dual-length field
+
+- `alt_text_long` (`string|null`) — long-form description surface produced by
+  dual-length prompting, suited to the attachment **description** field (the
+  short `alt_text_draft` remains the alt-attribute surface). `null` when the
+  adapter produces only the short draft — the pre-ALTQ-1 behavior. **Never** in
+  the schema `required` set; old clients and short-only adapters are
+  unaffected. Cached rows persist the long surface, so cache hits return the
+  same dual-length payload as the original generation.
+
 ### Errors
 
 | Status | When |

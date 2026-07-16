@@ -166,11 +166,77 @@ def test_response_is_full_15_field_contract():
         r = await svc.describe(tenant_id=uuid.uuid4(), media_id=1, image_bytes=b"x", context={"a": 1})
         dumped = r.model_dump()
         # 17 core + 3 E19-4a preview + 1 E20-FUSION attachment_provenance
-        assert len(dumped) == 21
+        # + 1 ALTQ-1 alt_text_long
+        assert len(dumped) == 22
         assert dumped["generic_draft"] is None and dumped["named_draft"] is None
         assert dumped["provider_disclosure"]["provider"] == "none"
         assert dumped["context_used"] == {"sources": [], "applied": False}
         assert dumped["retention_class"] == "retain_all"
+
+    asyncio.run(body())
+
+
+class DualLengthAdapter:
+    """ALTQ-1: an adapter that produces both the short draft and a long surface."""
+
+    kind = DescriptionAdapterKind.SEEDED
+    model_id = "dual-length-test"
+    model_version = "1"
+    prompt_or_task_version = "1"
+
+    LONG = "A tabby cat lounging on a woven mat in warm afternoon light near a window."
+
+    def describe(self, *, image_bytes, context):
+        return AdapterResult(
+            caption="A cat on a mat.",
+            objects=("cat", "mat"),
+            ocr_text=None,
+            alt_text_draft="A cat on a mat.",
+            context_sources=(),
+            context_applied=False,
+            alt_text_long=self.LONG,
+        )
+
+
+def test_alt_text_long_flows_from_adapter_to_response():
+    async def body():
+        svc = VisualFactsService(adapter=DualLengthAdapter())
+        r = await svc.describe(tenant_id=uuid.uuid4(), media_id=1, image_bytes=b"x", context=None)
+        assert r.alt_text_long == DualLengthAdapter.LONG
+        assert r.model_dump()["alt_text_long"] == DualLengthAdapter.LONG
+
+    asyncio.run(body())
+
+
+def test_alt_text_long_absent_defaults_to_none():
+    async def body():
+        # Old adapters never set alt_text_long — the wire value stays null.
+        svc = VisualFactsService(adapter=SeededDescriptionAdapter())
+        r = await svc.describe(tenant_id=uuid.uuid4(), media_id=1, image_bytes=b"x", context=None)
+        assert r.alt_text_long is None
+
+    asyncio.run(body())
+
+
+def test_alt_text_long_persists_and_survives_cache_hit():
+    async def body():
+        engine, sf = await _sessionmaker()
+        tenant = uuid.uuid4()
+        adapter = CountingAdapter(DualLengthAdapter())
+        async with sf() as s:
+            svc = VisualFactsService(adapter=adapter, repository=ImageDescriptionRepository(s))
+            r1 = await svc.describe(tenant_id=tenant, media_id=7, image_bytes=IMG, context=CTX)
+            await s.commit()
+        assert r1.cached is False
+        assert r1.alt_text_long == DualLengthAdapter.LONG
+
+        async with sf() as s:
+            svc2 = VisualFactsService(adapter=adapter, repository=ImageDescriptionRepository(s))
+            r2 = await svc2.describe(tenant_id=tenant, media_id=8, image_bytes=IMG, context=CTX)
+            assert r2.cached is True
+            assert adapter.calls == 1
+            assert r2.alt_text_long == DualLengthAdapter.LONG
+        await engine.dispose()
 
     asyncio.run(body())
 

@@ -56,6 +56,9 @@ class ImageDescription(Base):
     prompt_or_task_version: Mapped[str] = mapped_column(String(64), nullable=False)
     visual_facts: Mapped[dict] = mapped_column(_json_col(), nullable=False)
     alt_text_draft: Mapped[str] = mapped_column(Text, nullable=False)
+    # ALTQ-1: optional long-form surface persisted alongside the short draft so
+    # cache hits return the same dual-length payload as the original generation.
+    alt_text_long: Mapped[str | None] = mapped_column(Text, nullable=True)
     context_used: Mapped[dict] = mapped_column(_json_col(), nullable=False)
     provider_disclosure: Mapped[dict] = mapped_column(_json_col(), nullable=False)
     # E19-4a: caption phrase-grounding boxes ([{phrase, span, box}, ...] in the

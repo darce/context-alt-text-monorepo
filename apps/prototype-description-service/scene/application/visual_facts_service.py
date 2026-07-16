@@ -100,6 +100,7 @@ def build_visual_facts_envelope(
             ocr_text=result.ocr_text,
         ),
         alt_text_draft=result.alt_text_draft,
+        alt_text_long=result.alt_text_long,
         context_used=ContextUsed(sources=list(result.context_sources), applied=result.context_applied),
         provider_disclosure=ProviderDisclosure(
             provider=provider,
@@ -246,6 +247,7 @@ class VisualFactsService:
             objects=list(result.objects),
             ocr_text=result.ocr_text,
             alt_text_draft=result.alt_text_draft,
+            alt_text_long=result.alt_text_long,
             context_sources=list(result.context_sources),
             context_applied=result.context_applied,
             duration_ms=_elapsed_ms(start),
@@ -429,6 +431,7 @@ class VisualFactsService:
         context_applied: bool,
         duration_ms: int,
         attachment_provenance: AttachmentProvenance | None = None,
+        alt_text_long: str | None = None,
     ) -> VisualFactsResponse:
         provider = _PROVIDER_FOR_ADAPTER[self._adapter.kind]
         return VisualFactsResponse(
@@ -442,6 +445,7 @@ class VisualFactsService:
             prompt_or_task_version=self._adapter.prompt_or_task_version,
             visual_facts=VisualFacts(caption=caption, objects=objects, ocr_text=ocr_text),
             alt_text_draft=alt_text_draft,
+            alt_text_long=alt_text_long,
             context_used=ContextUsed(sources=context_sources, applied=context_applied),
             provider_disclosure=ProviderDisclosure(
                 provider=provider,
@@ -476,6 +480,7 @@ class VisualFactsService:
             prompt_or_task_version=row.prompt_or_task_version,
             visual_facts=VisualFacts(**row.visual_facts),
             alt_text_draft=row.alt_text_draft,
+            alt_text_long=row.alt_text_long,
             context_used=ContextUsed(**row.context_used),
             provider_disclosure=ProviderDisclosure(**row.provider_disclosure),
             cached=cached,
@@ -499,6 +504,7 @@ class VisualFactsService:
             prompt_or_task_version=response.prompt_or_task_version,
             visual_facts=response.visual_facts.model_dump(),
             alt_text_draft=response.alt_text_draft,
+            alt_text_long=response.alt_text_long,
             context_used=response.context_used.model_dump(),
             provider_disclosure=response.provider_disclosure.model_dump(),
             retention_class=response.retention_class.value,

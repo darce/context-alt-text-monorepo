@@ -25,8 +25,8 @@ The product invariant — the WP plugin owns sovereign curation ground truth ([D
 Root causes, all verified at branch base `83a89b70` (scope-brief anchors re-checked; two claims re-anchored, see Current State Analysis):
 
 1. **Remote-by-default gate.** `MediaIdentitiesController::get_media_identities()` serves the local projection only when `should_use_local_projection()` passes (`src/api/class-media-identities-controller.php:86`, `:198-201`): the tenant's sync-state row must carry a snapshot version or updated-at (`src/api/class-abstract-recognition-proxy-controller.php:247-260`) **and** projection rows must exist. Cold start, a missing/stale sync-state row, or projection rows regressed by a bad snapshot (the E15-35 storm incident) silently routes the read to the **remote** service — curated ground truth becomes reachable only through the network.
-2. **Transport failure renders as "no people".** On proxy failure the controller returns `identities_by_media: {}` + `data_source: 'unavailable'` with HTTP 200 (`class-media-identities-controller.php:109-117`) — the UI handles that envelope (see re-anchor below). But when the **client** aborts first — `fetchMediaIdentities` times out at 2 s (`js/admin/api/recognition/identityQueriesApi.ts:51`) and the hook sets `retry: false`, `staleTime: 15_000` (`js/admin/hooks/useMediaIdentities.ts:27-28`) — the query errors with no envelope at all, `identitiesDataSource` stays `undefined`, and every row renders the genuine-empty copy "No identities detected yet" (`js/admin/pages/workbench/identity-clusters/IdentityClusterList.tsx:55`). A slow remote (cold container, WAN) reads as data loss ([RLSE-05] silent failure the user believes is truth; [OBS-08] "no events" indistinguishable from "capture broken"). The 2 s bound itself is correct ([RES-02]); local-first sourcing is what makes it a non-event ([RES-03]).
-3. **Read-path load.** The hook always prefetches the next media page (`js/admin/hooks/useWorkbenchMedia.ts:59-76`, unconditional on success), doubling per-view load on the WP endpoint whose per-attachment srcset/terms lookups are N+1 (`src/api/class-api.php:196`). The identities leg additionally crosses the WAN whenever the gate in (1) fails.
+2. **Transport failure renders as "no people".** On proxy failure the controller returns `identities_by_media: {}` + `data_source: 'unavailable'` with HTTP 200 (`class-media-identities-controller.php:109-117`) — the UI handles that envelope (see re-anchor below). But when the **client** aborts first — `fetchMediaIdentities` times out at 2 s (`js/admin/api/recognition/identityQueriesApi.ts:51`) and the hook sets `retry: false`, `staleTime: 15_000` (`js/admin/hooks/useMediaIdentities.ts:27-28`) — the query errors with no envelope at all, `identitiesDataSource` stays `undefined`, and every row renders the genuine-empty copy "No identities detected yet" (`js/admin/pages/workbench/identity-clusters/IdentityClusterList.tsx:54`). A slow remote (cold container, WAN) reads as data loss ([RLSE-05] silent failure the user believes is truth; [OBS-08] "no events" indistinguishable from "capture broken"). The 2 s bound itself is correct ([RES-02]); local-first sourcing is what makes it a non-event ([RES-03]).
+3. **Read-path load.** The hook always prefetches the next media page (`js/admin/hooks/useWorkbenchMedia.ts:59-76`, unconditional on success), doubling per-view load on the WP endpoint whose per-attachment srcset/terms lookups are N+1 (`src/api/class-api.php:243-245`). The identities leg additionally crosses the WAN whenever the gate in (1) fails.
 
 ## Constraints
 
@@ -38,7 +38,7 @@ Root causes, all verified at branch base `83a89b70` (scope-brief anchors re-chec
 - **Status enums centralized** (sr-007): TS already owns `DATA_SOURCE` as a single `as const` object (`js/admin/api/recognition/types/dataSource.ts:1-8`). PHP scatters the same literals across three controllers (`class-media-identities-controller.php:24-26`, `class-clusters-controller.php:49-51`, `class-suggestions-controller.php:20-22`) plus config strings (`class-cluster-read-config.php:16`); Slice 1 centralizes them. No new magic strings anywhere.
 - **Do not regress the 429 cooldown seam** (UXP-NET-1): `gateRefetchInterval` (`js/admin/utils/rateLimitCooldown.ts`) documents that a `false` interval freezes polling until a query event; the clustering-poll base fn's `false` returns are inside the gate by design. Slice 3 must not add a new bare-`false` polling path and must keep the cooldown gate wrapping any interval it touches.
 - **Plugin boundary only.** Changes confined to `apps/prototype-wp-alt-context/`. Never touch WP core, LocalWP config, or `~/Local Sites/`.
-- **Client retry stays bounded and 5xx/transport-only** ([RES-06], [API-08]): capped attempts, backoff, never retry a 4xx.
+- **Client retry semantics are owned by UXP-2's shared `retryPolicy`** ([RES-06], [API-08]): `js/admin/utils/retryPolicy.ts` (lands with `feature/uxp-2`) is adopted as-is — retries only 429, 503-with-`Retry-After`, and `TypeError` transport failures; never 4xx, parse errors, or abort-like errors; capped at `RETRY_MAX_ATTEMPTS = 3`; delay honors `Retry-After`, clamped at `MAX_RETRY_DELAY_MS = 30_000`. `useMediaIdentities` keeps `retry: false` per UXP-2's recorded exception rationale; E15-37 adds recovery as a single scheduled post-cooldown refetch, not a second retry vocabulary (Slice 3).
 
 ## Workflow Principles
 
@@ -63,12 +63,12 @@ Root causes, all verified at branch base `83a89b70` (scope-brief anchors re-chec
   - *"Frontend merges `identities ?? []` without distinguishing `data_source`"* — partially drifted. The merge itself (`useWorkbenchMedia.ts:49-57`) is source-blind, but the leaf component distinguishes the `unavailable` envelope (above). The real gap is the query-**error** path (2 s abort, `retry: false`), where no envelope exists. Slice 3 targets that path.
   - *"Three-request waterfall … independent legs are not joined ([PERF-10])"* — drifted. Detail and identities queries both key off `mediaIds` and fire in the same render tick (`useWorkbenchMedia.ts:41-47`); the legs are already joined. The remaining pipeline is two-stage (page → detail ∥ identities), which is structural: the ids are input to stage 2. Slice 4 is reframed to prefetch discipline; folding identities into the detail endpoint is a measured stretch ([PERF-06]).
 - **Asymmetric sibling gate**: cluster reads gate on sync-state only — `ClusterProjectionSyncService::should_use_local_projection` (`src/api/services/class-cluster-projection-sync-service.php:59-83`) calls the same abstract gate helper and treats staleness as a background-refresh trigger (inline sync pull), not a read block; `ClusterReadService` consults it at five call sites (`class-cluster-read-service.php:53/:94/:202/:233/:264`). It has no rows conjunct, so the E15-35 wipe class (sync-state row lost) flips cluster reads remote too.
-- **Already local end-to-end** (scope-brief open question resolved): the media-library "tags" surface reads `wp_get_object_terms(..., 'post_tag')` inside `Api::get_workbench_media()` (`class-api.php:196`) — pure local WP data, no recognition dependency, no treatment needed.
-- **Cold-start convergence exists for clusters only**: after a successful proxy read the cluster path bootstraps the projection (`maybe_bootstrap_after_proxy_read`, `class-cluster-projection-sync-service.php:85-108`; scheduler fallback `class-cluster-read-service.php:144-145` on hook `acx_bootstrap_sync`, registered at `class-clusters-controller.php:48/:117`). The media-identities proxy path never schedules a bootstrap, so a tenant whose workbench only exercises this route never converges to sovereign reads.
+- **Already local end-to-end** (scope-brief open question resolved): the media-library "tags" surface reads `wp_get_object_terms(..., 'post_tag')` inside `Api::get_workbench_media()` (`class-api.php:245`) — pure local WP data, no recognition dependency, no treatment needed.
+- **Cold-start convergence exists for clusters only — and its cron fallback is a no-op**: after a successful proxy read the cluster path bootstraps the projection via `maybe_bootstrap_after_proxy_read` (`class-cluster-projection-sync-service.php:85-108`) — **inline** `perform_bypass_cooldown` first, `wp_schedule_single_event` fallback only when the inline pull fails (same dedup at `class-cluster-read-service.php:144-145`). Two gaps: (a) the media-identities proxy path never triggers any bootstrap, so a tenant whose workbench only exercises this route never converges to sovereign reads; (b) the `acx_bootstrap_sync` handler is **never bound in cron context** — the only `add_action` lives in `ClustersController::__construct` (`class-clusters-controller.php:117`, hook name at `:48`), and that controller is constructed solely inside `RecognitionController::ensureProjectionControllers()` (`class-recognition-controller.php:330-421`), reached only through route resolvers during `rest_api_init` (`class-api.php:71` → `:176`). wp-cron requests never fire `rest_api_init`, so the scheduled fallback event dispatches to zero listeners and convergence silently never happens.
 
 ## Target Outcome
 
-`GET /acx/v1/recognition/media-identities` serves the local projection whenever the tenant has any projection rows — sync-state row present, missing, or stale — and proxies only on true cold start, scheduling a bootstrap sync after a successful proxy read so the next read is local. Cluster reads qualify for local the same rows-first way. In the workbench, a failed or timed-out identities fetch renders the existing unavailable affordance (with bounded retry), never the genuine-empty copy; previously loaded labels stay visible through a failed refetch. Next-page prefetch waits until the current page's queries settle. With Wi-Fi off, a curated tenant's media library shows curated labels on first load.
+`GET /acx/v1/recognition/media-identities` serves the local projection whenever the tenant has any projection rows — sync-state row present, missing, or stale — and proxies only on true cold start, converging after a successful proxy read (inline bootstrap pull, cron-scheduled fallback whose handler is bound at plugin load) so the next read is local; a local read with missing/stale sync-state schedules the same async heal. Cluster reads qualify for local the same rows-first way. In the workbench, a failed or timed-out identities fetch renders the existing unavailable affordance (one-shot post-cooldown recovery plus the manual retry affordance), never the genuine-empty copy; previously loaded labels stay visible through a failed refetch. Next-page prefetch waits until the current page's queries settle. With Wi-Fi off, a curated tenant's media library shows curated labels on first load.
 
 ## Context Loading
 
@@ -84,11 +84,12 @@ Root causes, all verified at branch base `83a89b70` (scope-brief anchors re-chec
 | `GET acx/v1/recognition/media-identities` | plugin (PHP) | `{identities_by_media, data_source}`; source picked by sync-state ∧ rows | envelope unchanged; source picked by rows-first rule | yes — envelope byte-compatible, `data_source` values unchanged ([API-09]) | controller tests pin envelope + `data_source` semantics per source state |
 | `should_use_local_projection_gate` helper | plugin (PHP, abstract controller) | sync-state snapshot/updated-at presence (`:247-260`) | helper unchanged; callers stop using it as a read precondition (media identities) or OR it with rows presence (clusters) | no (protected internal) | unit tests on both callers |
 | `data_source` vocabulary PHP ↔ TS | plugin (both) | same 4 literals declared in 4 PHP sites + 1 TS module | PHP literals centralized into one constants class; values byte-identical | yes — rg-005 parity; TS untouched | grep-clean (no stray literals) + existing envelope tests pass unmodified ([TEST-03]) |
-| `acx_bootstrap_sync` scheduled hook | plugin (PHP) | scheduled by cluster read path only | additional scheduler call site after successful media-identities proxy read | no (additive; handler unchanged) | unit test asserts single-event scheduled, deduped via `wp_next_scheduled` |
+| `acx_bootstrap_sync` scheduled hook | plugin (PHP) | scheduled by cluster read path; handler bound only during `rest_api_init` (lazy controller construction) | handler registered unconditionally at plugin load (`Api::init()`); hook name moves to the shared constants surface; new scheduler call sites: media-identities cold-start fallback and stale-local heals | no (additive; hook name and handler behavior unchanged) | unit tests assert the handler is bound in cron context (plugin bootstrapped, `rest_api_init` never fired) and single-event dedup via `wp_next_scheduled` |
 | Backend `/recognition/media/identities` | recognition service | proxied verbatim | **none** — reference only | no | existing proxy tests |
 
 ## Coordination and Dependencies
 
+- **UXP-2 is a hard dependency and merges first.** `feature/uxp-2` ships the shared client retry seam `js/admin/utils/retryPolicy.ts` — `shouldRetryRequest`/`getRetryDelay`: abort-like errors (`AbortError`, `TimeoutError`, duck-typed by name because DOMException is not an `Error` subclass) are never retried; `HTTPError` retries only on 429 or 503-with-`Retry-After`; `ResponseParseError` never; genuine `TypeError` transport failures retry; `RETRY_MAX_ATTEMPTS = 3`; delay honors `Retry-After` and clamps at `MAX_RETRY_DELAY_MS = 30_000` (`retryPolicy.ts:3-45`). It also marks `useMediaIdentities`'s `retry: false` as a deliberate exception to the shared policy: "conditional query already stops polling on error; next scheduled poll (recognition cooldown in slice 2) is the retry. [RES-06]" (uxp-2 `useMediaIdentities.ts:26-28`). Slice 3 adopts that policy and that exception as-is instead of introducing a second retry vocabulary. Rebase note: the uxp-2 copy of the hook predates this branch base's UXP-NET-1 `gateRefetchInterval` wrapper (`useMediaIdentities.ts:32` here, bare `refetchInterval` there); when reconciling after UXP-2 lands on main, keep both the wrapper and the retry-exception comment.
 - **E15-35 (outbox resilience)** is plan-stage on `feature/e15-35`; no file overlap — E15-35 touches the outbox drain/projector (write side), E15-37 touches read controllers/hooks. The two protect the same projection rows from opposite sides; no merge-ordering constraint.
 - **UXP-NET-1 (merged)** owns the 429 cooldown seam this task must not regress (Constraints).
 - No REFA-* extraction in flight on these files at base `83a89b70`.
@@ -99,35 +100,39 @@ Four independently mergeable slices, backend-first:
 
 1. **Local-first gate inversion for media identities (PHP)** — rows-first source selection + cold-start bootstrap convergence + PHP `data_source` centralization (the root cause).
 2. **Rows-first qualification for cluster reads (PHP)** — close the same wipe-class hole in the sibling gate, additively.
-3. **Honest degraded identity state (TS)** — the client-abort path renders the unavailable affordance, keeps cached labels, retries boundedly.
+3. **Honest degraded identity state (TS)** — the client-abort path renders the unavailable affordance, keeps cached labels, recovers via one post-cooldown refetch under UXP-2's shared retry policy.
 4. **Read-path load discipline (TS)** — prefetch waits for the current page to settle.
 
-Recommended merge order 1 → 2 → 3 → 4 (1 removes the WAN from curated reads; 2 extends the fix; 3 makes the residual cold-start failure honest; 4 trims load).
+Recommended merge order: UXP-2 lands on `main` first (hard dependency, see Coordination), then 1 → 2 → 3 → 4 (1 removes the WAN from curated reads; 2 extends the fix; 3 makes the residual cold-start failure honest; 4 trims load).
 
 ## Files and Surfaces to Change
 
 | Surface | File | Change |
 | --- | --- | --- |
-| backend | `src/api/class-recognition-data-source.php` (new) | Final constants class owning the four `data_source` literals (sr-007, [REF-19]); mirrors TS `DATA_SOURCE` byte-for-byte |
-| backend | `src/api/class-media-identities-controller.php` | `should_use_local_projection()` (`:198-201`) → rows-first (drop sync-state conjunct); schedule `acx_bootstrap_sync` after successful proxy read; consts delegate to the shared class |
+| backend | `src/api/class-recognition-data-source.php` (new) | Final constants class owning the four `data_source` literals (sr-007, [REF-19]); mirrors TS `DATA_SOURCE` byte-for-byte; also owns the `acx_bootstrap_sync` hook-name constant (single declaration consumed by `ClustersController`, the media path, and the plugin-load handler registration) |
+| backend | `src/api/class-media-identities-controller.php` | `should_use_local_projection()` (`:198-201`) → rows-first (drop sync-state conjunct); after successful proxy read, converge via inline pull with deduped cron fallback; schedule the async heal when serving locally with missing/stale sync-state; consts delegate to the shared class |
+| backend | `src/api/class-api.php` | `Api::init()` (`:68-71`, runs at `plugins_loaded`) registers the `acx_bootstrap_sync` handler unconditionally so cron dispatch has a listener; callback composes the sync pull job lazily on first fire |
 | backend | `src/api/class-clusters-controller.php`, `src/api/class-suggestions-controller.php`, `src/api/services/class-cluster-read-config.php` (construction site) | Replace duplicated `data_source` literals with the shared class (no behavior change) |
-| backend | `src/api/services/class-cluster-projection-sync-service.php` | `should_use_local_projection()` (`:59-83`): qualify on gate **OR** `clusters_repository->has_projection_rows_for_tenant`; stale-triggered inline pull retained |
-| frontend | `js/admin/hooks/useMediaIdentities.ts` | Bounded retry (transport/5xx only, capped, backoff — [RES-06], [API-08]); expose error state unchanged |
-| frontend | `js/admin/pages/workbench/MediaSelection.tsx`, `MediaSelectionTableBody.tsx`, `identity-clusters/IdentityClusterList.tsx` | Derive a single availability input for the leaf: query error (no envelope) renders the same unavailable affordance as `data_source: 'unavailable'`; genuine empty copy reserved for successful local/proxy responses |
+| backend | `src/api/services/class-cluster-projection-sync-service.php` | `should_use_local_projection()` (`:59-83`): qualify on gate **OR** `clusters_repository->has_projection_rows_for_tenant`; inline stale pull retained for the previously-qualifying path; newly-qualifying path heals via a scheduled single event (async) |
+| frontend | `js/admin/hooks/useMediaIdentities.ts` | Keep `retry: false` (UXP-2 exception rationale); add a one-shot scheduled post-cooldown refetch on error; expose error + `isPlaceholderData` to the availability derivation |
+| frontend | `js/admin/pages/workbench/MediaSelection.tsx`, `MediaSelectionTableBody.tsx`, `identity-clusters/IdentityClusterList.tsx` | Derive a single availability input for the leaf: query error (no envelope) — including `isError && isPlaceholderData` — renders the same unavailable affordance as `data_source: 'unavailable'`; genuine empty copy reserved for successful local/proxy responses |
 | frontend | `js/admin/hooks/useWorkbenchMedia.ts` | Next-page prefetch gated on current-page queries settled (`:59-76`) |
-| tests | `tests/Unit/MediaIdentitiesControllerTest.php`, `tests/Unit/ClusterReadServiceTest.php`, `js/admin/pages/workbench/__tests__/**`, hook tests | Per-slice coverage below |
+| tests | `tests/Unit/MediaIdentitiesControllerTest.php`, `tests/Unit/RecognitionDataSourceTest.php` (new), `tests/Unit/ClusterReadServiceTest.php`, `js/admin/pages/workbench/__tests__/**`, hook tests | Per-slice coverage below |
 
 ## Related Files
 
 | File | Note |
 | --- | --- |
 | `src/api/class-abstract-recognition-proxy-controller.php` | Gate helper (`:247-260`) stays for the clusters OR-path; `is_projection_stale` (`:307-323`) unchanged |
-| `src/api/class-cluster-mutations-controller.php` | Mutation-side rows guards (`:275-276`, `:302`) unchanged — mutations already require local rows, so serving stale-but-local topology reads cannot enable an unsafe mutation |
+| `src/api/class-cluster-mutations-controller.php` | Unchanged. `should_proxy_mutation_to_backend` (`:274-277`) proxies mutations **remotely** when the tenant has no projection rows — that no-rows path is untouched here. The safety argument is scoped to rows-present tenants: local mutations validate their target against the projection (`get_projected_cluster_or_error` `:292-311`, `projection_not_ready` 409 at `:302-308`), so serving stale-but-local reads cannot enable an unsafe local mutation |
 | `js/admin/utils/rateLimitCooldown.ts` | Cooldown gate wrapping the clustering poll — must keep wrapping it |
-| `src/api/class-api.php` | `get_workbench_media()` N+1 (`:196`) — measured stretch only ([PERF-06]) |
+| `js/admin/utils/retryPolicy.ts` (lands with UXP-2) | Shared client retry seam adopted as-is by Slice 3; not modified by this task |
+| `src/api/class-recognition-proxy-policy.php` | `post_scan_read` proxy policy (`:40-46`) — reference for the retry-budget statement; not modified |
+| `src/api/class-api.php` | `get_workbench_media()` N+1 (`:243-245`) — measured stretch only ([PERF-06]) |
 
 ## Verification Strategy
 
+- Provisioning before any TEST_CMD: `cd apps/prototype-wp-alt-context && composer install && npm ci` (PHPUnit runs from `vendor/bin`, the JS suite from `node_modules`). `tests/Unit/RecognitionDataSourceTest.php` is a **new** file introduced by Slice 1 — its filter match relies on the file existing, not on prior fixtures.
 - Deterministic tests per slice (TEST_CMDs inline below; scoped filters locally — full suites belong on the remote gate via `make check-remote`).
 - Manual/runtime-parity: LocalWP tenant with curated rows, Wi-Fi off → media library shows curated labels on first load, no degraded banner; cold tenant with service down → unavailable affordance, not "No identities detected yet"; the proxy seam is faked at the HTTP boundary in unit tests ([TEST-04] — the existing `queueHttpResponse` harness in `tests/Unit/MediaIdentitiesControllerTest.php` is the seam).
 - Characterization before change ([TEST-03]): existing controller/service/UI tests must pass unmodified except where the test itself pinned the defective gate semantics; those updates are named in the slice.
@@ -136,21 +141,25 @@ Recommended merge order 1 → 2 → 3 → 4 (1 removes the WAN from curated read
 
 ### Slice 1: Local-first gate inversion for media identities (PHP)
 
-**Goal**: A tenant with any projection rows is served locally — sync-state row present, absent, or wiped — and a cold-start proxy read schedules projection bootstrap so the proxy is used at most transiently.
+**Goal**: A tenant with any projection rows is served locally — sync-state row present, absent, or wiped — and a cold-start proxy read converges the projection (inline pull, cron-scheduled fallback with a handler that actually runs in cron) so the proxy is used at most transiently.
 
 Changes:
 
 - `MediaIdentitiesController::should_use_local_projection()` (`:198-201`): return `members_repository->has_projection_rows_for_tenant( $tenant_id )` alone; the sync-state conjunct is deleted (staleness is a sync concern — the projection rows *are* the ground truth, and a derived freshness marker must not veto the source of record, [DATA-14], [REF-09]). Empty-tenant guard preserved (the repository already short-circuits, `class-identity-members-read-repository.php:243-249`).
-- After a **successful** backend-proxy read (200-normalized path only, mirroring `maybe_bootstrap_after_proxy_read`'s status check), schedule `wp_schedule_single_event( time(), 'acx_bootstrap_sync', array( $tenant_id ) )` guarded by `wp_next_scheduled` — same dedup pattern as `class-cluster-read-service.php:144-145`. The unavailable path schedules nothing (no point bootstrapping from a dead backend).
-- Add `src/api/class-recognition-data-source.php` — final class, four public string constants matching `dataSource.ts:1-8` exactly. `MediaIdentitiesController`, `ClustersController`, `SuggestionsController` consts and the `ClusterReadConfig` construction strings delegate to it. Pure mechanical centralization (sr-007, [REF-19], rg-005 parity); zero behavior change, existing envelope tests pass unmodified ([TEST-03]).
+- After a **successful** backend-proxy read (200-normalized path only), converge by mirroring `maybe_bootstrap_after_proxy_read` (`class-cluster-projection-sync-service.php:85-108`) exactly: run the **inline** `perform_bypass_cooldown` pull first; only when the inline pull fails, schedule `wp_schedule_single_event( time(), <hook>, array( $tenant_id ) )` guarded by `wp_next_scheduled` — same dedup as `class-cluster-read-service.php:144-145`. The unavailable path does neither (no point bootstrapping from a dead backend).
+- Register the `acx_bootstrap_sync` handler **unconditionally at plugin load**, so the cron fallback actually executes: `add_action` in `Api::init()` (`class-api.php:68-71`, which runs on `plugins_loaded` via `AltContext::init()`, `src/class-alt-context.php:35-42`, hooked at `alt-context.php:305-309`), with a callback that composes the sync pull job lazily on first fire — no eager controller construction at load. Today the only binding is `ClustersController::__construct` (`class-clusters-controller.php:117`), reachable solely through `RecognitionController::ensureProjectionControllers()` (`class-recognition-controller.php:330-421`) during `rest_api_init`; wp-cron never fires `rest_api_init`, so scheduled events currently dispatch to zero listeners. The constructor binding stays (duplicate registration of distinct callbacks on the same hook is harmless; the handler itself is idempotent via the pull job's own cooldown/dedup).
+- Staleness trigger on the local path: when the read serves locally **and** the sync-state row is missing or stale (`is_projection_stale`, `class-abstract-recognition-proxy-controller.php:307-323`), schedule the same deduped single event — async only, never an inline pull here: the local read must return immediately with the machine offline. Staleness bound: locally served data may lag the backend by up to `acx_sync_stale_threshold_seconds` (default 3600 s, floor 60 s — `:317-318`) plus WP-cron dispatch latency, converging when the now-cron-bound handler runs.
+- Add `src/api/class-recognition-data-source.php` — final class, four public string constants matching `dataSource.ts:1-8` exactly, plus the `acx_bootstrap_sync` hook-name constant (one declaration site; `ClustersController` `:48`, the `Api::init()` registration, and the media-path schedulers all consume it). `MediaIdentitiesController`, `ClustersController`, `SuggestionsController` consts and the `ClusterReadConfig` construction strings delegate to it. Pure mechanical centralization (sr-007, [REF-19], rg-005 parity); zero behavior change, existing envelope tests pass unmodified ([TEST-03]).
 
 Proof (TEST_CMD: `cd apps/prototype-wp-alt-context && vendor/bin/phpunit --filter 'MediaIdentitiesControllerTest|RecognitionDataSourceTest'`):
 
 - Rows present + `NullSyncStateRepository` (no snapshot version, no updated-at — the incident state) → `data_source: local_projection`, labels from the repository, **zero HTTP requests issued** (the seam harness asserts no queued response consumed).
 - Rows present + fresh sync-state → local (unchanged; existing test still passes).
-- No rows + proxy success → `backend_proxy` **and** exactly one `acx_bootstrap_sync` single event scheduled; second read with a queued event schedules no duplicate.
-- No rows + proxy failure → `data_source: unavailable`, HTTP 200, nothing scheduled (existing test extended with the scheduling assertion).
-- Vocabulary test: shared-class constants byte-equal to the TS values (fixture-pinned), and a repo-wide grep in the test guards against stray re-declared literals.
+- Rows present + missing/stale sync-state → local response **and** exactly one deduped heal event scheduled; zero synchronous HTTP.
+- No rows + proxy success → `backend_proxy`, inline bootstrap pull performed in-request (pull-job spy); with the inline pull forced to fail, exactly one `acx_bootstrap_sync` single event scheduled and no duplicate on a second read with a queued event.
+- No rows + proxy failure → `data_source: unavailable`, HTTP 200, no pull and nothing scheduled (existing test extended with the scheduling assertion).
+- Handler bound in cron context: plugin surface bootstrapped with `rest_api_init` never fired, then `do_action( 'acx_bootstrap_sync', $tenant )` → the sync pull job performs (spy-asserted). This pins the plugin-load registration, not the REST-lazy one.
+- Vocabulary test: shared-class constants byte-equal to the TS values (fixture-pinned). Grep-guard scope, exactly: scan `apps/prototype-wp-alt-context/src/**/*.php` (runtime code only — `tests/`, `vendor/`, and all JS excluded) for the four literals in declaration contexts only — `const … = '<literal>'` and hardcoded `'data_source' => '<literal>'` array values — allowing only `class-recognition-data-source.php` itself. The context restriction is deliberate: bare-word matching would false-positive on UI copy ("Identity data unavailable") and on the distinct `PROJECTION_STATUS` vocabulary, whose `available`/`bootstrapping`/`unavailable` values are out of scope.
 
 ### Slice 2: Rows-first qualification for cluster reads (PHP)
 
@@ -159,31 +168,34 @@ Proof (TEST_CMD: `cd apps/prototype-wp-alt-context && vendor/bin/phpunit --filte
 Changes:
 
 - `ClusterProjectionSyncService::should_use_local_projection()` (`:59-83`): qualify when the sync-state gate passes **OR** `clusters_repository->has_projection_rows_for_tenant( $tenant_id )` is true. Strictly additive broadening — every read that served local before still serves local ([API-09] applied to an internal decision surface); the "sync-state present, rows empty" state keeps its current local path, whose emptiness the existing targeted-repair machinery already handles (`class-cluster-read-service.php:162-168`, `:275-277`).
-- Stale-triggered inline sync pull retained unchanged (`:65-80`) — under rows-first it now also fires for tenants whose sync-state row is missing, which is exactly the state that should self-heal. Guard: `get_last_updated` returning `null` already maps to stale (`is_projection_stale`, `class-abstract-recognition-proxy-controller.php:307-310`).
+- Heal split by qualification path. The **previously-qualifying** state (sync-state gate passes, projection stale) keeps its existing inline pull unchanged (`:65-80`). The **newly-qualifying** state (gate fails, rows present) heals **async**: schedule one deduped `acx_bootstrap_sync` single event and return — never run the inline pull there, because that is precisely the state that must keep serving with the machine offline, and an inline pull would hold the read for the proxy timeout. Offline latency bound: the newly-qualifying local read issues zero synchronous HTTP; added cost is one `wp_next_scheduled` lookup plus at most one cron-event insert (local DB only) — the response returns immediately. (`get_last_updated` returning `null` maps to stale — `is_projection_stale`, `class-abstract-recognition-proxy-controller.php:307-310` — so the scheduled heal covers the missing-row case.)
 - No change to `ClustersController`, mutation guards, or the abstract gate helper.
 
 Proof (TEST_CMD: `cd apps/prototype-wp-alt-context && vendor/bin/phpunit --filter ClusterReadServiceTest`):
 
-- Sync-state row absent + projection rows present → `list_clusters` serves local (`data_source: local_projection`), no proxy call, and the stale path triggers one inline sync-pull attempt.
+- Sync-state row absent + projection rows present → `list_clusters` serves local (`data_source: local_projection`), zero synchronous HTTP, and exactly one deduped `acx_bootstrap_sync` heal event scheduled (no inline pull on this path).
 - Sync-state row absent + no rows → proxy path unchanged (existing fixtures `tests/fixtures/clusters-read/*` pass unmodified).
 - Existing stale-projection fixture (`list_clusters_stale_projection_sync`) passes unmodified ([TEST-03]).
 
 ### Slice 3: Honest degraded identity state (TS)
 
-**Goal**: A failed or timed-out identities fetch is visually distinct from "this image has no people", previously loaded labels survive a failed refetch, and transient failures retry boundedly.
+**Goal**: A failed or timed-out identities fetch is visually distinct from "this image has no people", previously loaded labels survive a failed refetch, and recovery from a transient failure is a single scheduled post-cooldown refetch under UXP-2's shared retry policy — no second retry vocabulary.
 
 Changes:
 
 - Availability derivation: in `MediaSelection.tsx` (`:134`), the value threaded to the table becomes unavailable-shaped when `identityQuery.isError` (no envelope exists on this path, so presentation must derive the state; this is a UI-state derivation, not envelope fabrication — the API layer still never invents `data_source`, rg-015 respected). Implement as a small named union/`as const` derivation (sr-007) rather than inline ternaries, so `IdentityClusterList` keeps a single `dataSource`-shaped input and its existing `unavailable` branch (`IdentityClusterList.tsx:44-52`) renders for both the envelope and the error path. Retry affordance already wired (`MediaSelection.tsx:135`).
-- Cached-label persistence: React Query retains last-success `data` for an errored query on the same key, so labels persist through a failed refetch automatically — pin it with a test, and ensure the derivation only overrides to unavailable when there is **no data to show** (rows with cached identities keep rendering them; the row-level notice is not added for stale-but-present data in this slice).
-- Bounded retry in `useMediaIdentities` (`:27`): replace `retry: false` with a capped policy — max 2 retries, exponential delay, and never retry HTTP 4xx ([RES-06], [API-08]); timeout/abort and 5xx-shaped failures are the retryable class. The clustering `refetchInterval` gate is untouched, stays wrapped in `gateRefetchInterval`, and no new code path returns a bare `false` interval outside the existing design (Constraints).
+- Cached-label persistence: React Query retains last-success `data` for an errored query on the same key, so labels persist through a failed refetch automatically — pin it with a test, and ensure the derivation only overrides to unavailable when there is **no real data to show** (rows with cached identities for the current key keep rendering them; the row-level notice is not added for stale-but-present data in this slice).
+- placeholderData edge: the hook carries `placeholderData: (previousData) => previousData` (`useMediaIdentities.ts:29`), so on a key change (new page) an errored query can hold the **previous key's** rows as placeholder. The derivation must map `isError && isPlaceholderData` to unavailable — placeholder rows are another page's identities and must not render as current data; the persistence rule above applies only to non-placeholder data for the current key.
+- Retry policy: **adopt UXP-2's shared `retryPolicy.ts` as-is, and keep `retry: false`** on this query (`useMediaIdentities.ts:27`) per UXP-2's recorded exception rationale (uxp-2 `useMediaIdentities.ts:26-28`; see Coordination). Under the shared policy the 2 s abort surfaces as `TimeoutError` — abort-like, never retried — so query-level retries would not address the symptom anyway. E15-37's recovery is a **single scheduled refetch after cooldown**: on query error, arm exactly one timer (cleared on unmount, key change, or success) that calls `refetch()` once after the cooldown window, deferring to any active UXP-NET-1 rate-limit cooldown. One-shot and cooldown-governed — not a retry-policy divergence. The clustering `refetchInterval` stays wrapped in `gateRefetchInterval` (`:32`) and no new code path returns a bare-`false` interval outside the existing design (Constraints).
+- End-to-end retry budget (stated so review can audit amplification): the server proxy for this route runs the `post_scan_read` policy — **one** upstream attempt, zero server-side retries, 10 s timeout, circuit disabled (`class-recognition-proxy-policy.php:40-46`); the client's 2 s abort does **not** cancel the in-flight PHP request, which still completes (or times out) server-side. Client side: zero automatic query retries (`retry: false`) plus the one-shot post-cooldown refetch → at most two automatic client requests per error episode, each mapping to at most one upstream attempt — no client × server retry multiplication. Further attempts are user-initiated via the retry affordance. All recovery delay is governed by `Retry-After`/cooldown, never an ungated backoff race.
 
 Proof (TEST_CMD: `cd apps/prototype-wp-alt-context && npm test -- js/admin/pages/workbench js/admin/hooks`):
 
 - Integration test (identities fetch rejects/aborts, media + detail succeed): rows render the unavailable affordance ("Identity data unavailable") with retry button — the genuine-empty copy does not appear ([RLSE-05], [OBS-08]).
 - Genuine empty (200, `data_source: local_projection`, empty map) → "No identities detected yet." (unchanged).
 - Timeline test: successful load → failed refetch on the same key → previously rendered labels still visible.
-- Retry policy unit test: 4xx not retried; abort/5xx retried at most twice with growing delay ([TEST-06]: assert the failing expectation first).
+- Placeholder edge test: key change with the new key's fetch erroring while placeholder rows from the previous key are held → unavailable affordance renders; the previous key's rows do not render as current data.
+- One-shot recovery test: query error arms exactly one scheduled refetch after the cooldown window; unmount or key change cancels it; query-level `retry` remains `false` (asserted) ([TEST-06]: assert the failing expectation first).
 
 ### Slice 4: Read-path load discipline (TS)
 
@@ -202,7 +214,7 @@ Proof (TEST_CMD: `cd apps/prototype-wp-alt-context && npm test -- js/admin/hooks
 ## Not Doing (Out of Scope)
 
 - **Folding identities into `GET /workbench/media/detail`** (one fewer round trip, [RES-12]): deferred. With Slice 1 the identities leg is local and cheap for curated tenants, shrinking the win; folding also couples two responses with different cache lifetimes (identities invalidate on curation, details are immutable). Decide on measurement after this task lands — recorded as an open question for planning review.
-- **Server N+1 in `Api::get_workbench_media()`** (`class-api.php:196`): local-only cost, no measurement yet ([PERF-06]). Stretch.
+- **Server N+1 in `Api::get_workbench_media()`** (`class-api.php:243-245`): local-only cost, no measurement yet ([PERF-06]). Stretch.
 - **Outbox/push-side resilience** — E15-35. **Split-topology drain** — reserved E15-36.
 - **Offline caching of remote-only data**: cold-start tenants legitimately need the network once.
 - **Raising or removing the 2 s client timeout**: the bound is correct ([RES-02]); sovereignty, not patience, is the fix.
@@ -218,20 +230,22 @@ Proof (TEST_CMD: `cd apps/prototype-wp-alt-context && npm test -- js/admin/hooks
 ### Checklist for Slice 1: Media-identities gate inversion
 
 - [ ] Rows-first `should_use_local_projection()`; sync-state conjunct deleted (not flagged).
-- [ ] Bootstrap scheduling after successful proxy read, deduped via `wp_next_scheduled`; nothing scheduled on unavailable.
-- [ ] `RecognitionDataSource` constants class adopted at all four PHP declaration sites; TS parity test added.
-- [ ] PHP tests cover rows-without-sync-state (zero HTTP), cold-start proxy + bootstrap scheduling, unavailable envelope unchanged.
+- [ ] Cold-start convergence after successful proxy read: inline pull first, deduped cron fallback via `wp_next_scheduled`; nothing on unavailable.
+- [ ] `acx_bootstrap_sync` handler registered at plugin load in `Api::init()`; cron-context binding test green.
+- [ ] Local reads with missing/stale sync-state schedule the async heal; hook name consumed from the shared constant everywhere.
+- [ ] `RecognitionDataSource` constants class (incl. hook-name constant) adopted at all four PHP declaration sites; TS parity test added with the scoped grep guard.
+- [ ] PHP tests cover rows-without-sync-state (zero HTTP), cold-start proxy + inline-pull convergence + fallback scheduling, unavailable envelope unchanged.
 
 ### Checklist for Slice 2: Cluster-read rows-first qualification
 
-- [ ] OR-broadened qualification in `ClusterProjectionSyncService`; inline stale pull retained.
+- [ ] OR-broadened qualification in `ClusterProjectionSyncService`; inline stale pull retained for the previously-qualifying path; newly-qualifying path heals async (scheduled event, zero synchronous HTTP).
 - [ ] Existing clusters-read fixtures pass unmodified; new wipe-class test (rows present, sync-state absent → local).
 
 ### Checklist for Slice 3: Honest degraded state
 
 - [ ] Query-error path renders the unavailable affordance via the existing `IdentityClusterList` branch; genuine-empty copy unreachable from error states.
-- [ ] Cached labels persist through failed refetch (test-pinned).
-- [ ] Bounded retry (≤2, backoff, never 4xx); no new bare-`false` refetch interval; cooldown gate untouched.
+- [ ] Cached labels persist through failed refetch (test-pinned); `isError && isPlaceholderData` maps to unavailable.
+- [ ] UXP-2 shared `retryPolicy` adopted; `retry: false` kept per its recorded exception; one-shot post-cooldown refetch tested; retry-budget statement holds; no new bare-`false` refetch interval; cooldown gate untouched.
 
 ### Checklist for Slice 4: Load discipline
 
@@ -254,7 +268,7 @@ Proof (TEST_CMD: `cd apps/prototype-wp-alt-context && npm test -- js/admin/hooks
 
 - [ ] Curated tenant, sync-state row deleted, network down: media library renders curated labels on first load from the local projection — proven by unit test (zero HTTP) and manual offline check.
 - [ ] Cold tenant, service down: workbench shows the unavailable affordance with retry; the "No identities detected yet" copy appears only for genuinely empty successful responses.
-- [ ] Cold tenant, service up: first read proxies, schedules bootstrap; a subsequent read after sync serves `local_projection`.
+- [ ] Cold tenant, service up: first read proxies and **converges** — the inline pull populates projection rows in-request, or (inline pull failing) the fallback event's cron-bound handler performs the sync when fired without `rest_api_init` ever running; asserted on the follow-up read serving `local_projection` with rows present, not on `wp_next_scheduled`.
 - [ ] Cluster/label/member reads survive the sync-state wipe class without flipping to the proxy.
 - [ ] No next-page prefetch before the current page's queries settle; per-view request count for a non-paginating user drops by the prefetch share.
 - [ ] All four `data_source` literals originate from exactly one PHP class and one TS module; grep finds no stray declarations.

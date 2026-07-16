@@ -11,12 +11,58 @@ import { ErrorBoundary } from '../components/ErrorBoundary';
 import { ToastProvider } from './context/ToastContext';
 import { DegradedModeBanner } from './pages/workbench/DegradedModeBanner';
 import { extractRouteFromHash, ensureHashInitialized, type RoutePath, DEFAULT_ROUTE } from './utils/routeHelpers';
+import { HTTPError } from './utils/http';
+
+/** Max retries after the first failure (API-08: ~3 total attempts). */
+export const QUERY_MAX_RETRIES = 2;
+
+const isAbortLike = (error: unknown): boolean => {
+  if (error instanceof DOMException && error.name === 'AbortError') {
+    return true;
+  }
+  if (error instanceof Error && error.name === 'AbortError') {
+    return true;
+  }
+  return false;
+};
+
+/**
+ * Status-aware query retry (RES-06/API-08).
+ * Never retries unmodified 4xx except 429; 429 and 5xx/network are bounded.
+ * AbortError is timeout classification — never HTTP-retried.
+ */
+export const shouldRetryQuery = (failureCount: number, error: unknown): boolean => {
+  if (failureCount >= QUERY_MAX_RETRIES) {
+    return false;
+  }
+  if (isAbortLike(error)) {
+    return false;
+  }
+  if (error instanceof HTTPError) {
+    if (error.status >= 400 && error.status < 500) {
+      return error.status === 429;
+    }
+    return true;
+  }
+  // Network / non-HTTP errors: keep bounded retry.
+  return true;
+};
+
+/**
+ * Bounded exponential backoff (RES-06), with 429 + Retry-After honoring the server.
+ */
+export const getQueryRetryDelay = (attemptIndex: number, error: unknown): number => {
+  if (error instanceof HTTPError && error.status === 429 && error.retryAfterSeconds != null) {
+    return error.retryAfterSeconds * 1000;
+  }
+  return Math.min(1000 * 2 ** attemptIndex, 30000);
+};
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      retry: 1,
-      retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
+      retry: shouldRetryQuery,
+      retryDelay: getQueryRetryDelay,
       refetchOnWindowFocus: false,
     },
   },

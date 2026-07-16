@@ -14,31 +14,38 @@ vi.mock('@wordpress/i18n', () => ({
 }));
 
 const scan = vi.fn();
+let offline = false;
 
-let workbenchContext = {
-  selectedMedia: [] as { id: number }[],
-  isScanRunning: false,
-  scanProgress: null as { phase?: string | null } | null,
-  clusterProgress: null as { phase?: string | null } | null,
-  currentPhase: 'idle',
-  scan,
+let scanRun = {
+  isScanning: false,
+  progress: null as { phase?: string | null } | null,
 };
 
-vi.mock('../WorkbenchContext', () => ({
-  useWorkbenchContext: () => workbenchContext,
+let selectedMedia: { id: number }[] = [];
+
+vi.mock('../JobPipelineContext', () => ({
+  useJobPipeline: () => ({ scanRun, scan }),
+}));
+
+vi.mock('../WorkbenchMediaContext', () => ({
+  useWorkbenchMediaContext: () => ({
+    selection: { selectedMedia },
+  }),
+}));
+
+vi.mock('../../../hooks/useSyncOffline', () => ({
+  useSyncOffline: () => offline,
 }));
 
 describe('MediaAnalyzeCta', () => {
   beforeEach(() => {
     scan.mockClear();
-    workbenchContext = {
-      selectedMedia: [],
-      isScanRunning: false,
-      scanProgress: null,
-      clusterProgress: null,
-      currentPhase: 'idle',
-      scan,
+    offline = false;
+    scanRun = {
+      isScanning: false,
+      progress: null,
     };
+    selectedMedia = [];
   });
 
   it('renders zero-selection prompt and disabled button', () => {
@@ -49,10 +56,7 @@ describe('MediaAnalyzeCta', () => {
   });
 
   it('renders item count and scans selected media when selection is non-zero', async () => {
-    workbenchContext = {
-      ...workbenchContext,
-      selectedMedia: [{ id: 11 }, { id: 12 }, { id: 13 }],
-    };
+    selectedMedia = [{ id: 11 }, { id: 12 }, { id: 13 }];
 
     render(<MediaAnalyzeCta />);
 
@@ -62,10 +66,10 @@ describe('MediaAnalyzeCta', () => {
   });
 
   it('shows scanning label and disables button while scanning', () => {
-    workbenchContext = {
-      ...workbenchContext,
-      selectedMedia: [{ id: 11 }],
-      isScanRunning: true,
+    selectedMedia = [{ id: 11 }];
+    scanRun = {
+      ...scanRun,
+      isScanning: true,
     };
 
     render(<MediaAnalyzeCta />);
@@ -74,16 +78,37 @@ describe('MediaAnalyzeCta', () => {
   });
 
   it('shows clustering label when the active progress phase is clustering', () => {
-    workbenchContext = {
-      ...workbenchContext,
-      selectedMedia: [{ id: 11 }],
-      isScanRunning: true,
-      currentPhase: 'clustering',
-      clusterProgress: { phase: 'clustering' },
+    selectedMedia = [{ id: 11 }];
+    scanRun = {
+      ...scanRun,
+      isScanning: true,
+      progress: { phase: 'clustering' },
     };
 
     render(<MediaAnalyzeCta />);
 
     expect(screen.getByRole('button', { name: 'Clustering identities…' })).toBeDisabled();
+  });
+
+  it('disables analyze with offline reason when breaker is open', async () => {
+    offline = true;
+    selectedMedia = [{ id: 11 }];
+    render(<MediaAnalyzeCta />);
+
+    const button = screen.getByRole('button', { name: 'Analyze selected media' });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute('title', 'Unavailable while the recognition service is offline');
+    expect(button).toHaveAttribute('aria-disabled', 'true');
+    await userEvent.click(button);
+    expect(scan).not.toHaveBeenCalled();
+  });
+
+  it('enables analyze when online with selection', () => {
+    selectedMedia = [{ id: 11 }];
+    render(<MediaAnalyzeCta />);
+
+    const button = screen.getByRole('button', { name: 'Analyze selected media' });
+    expect(button).not.toBeDisabled();
+    expect(button).not.toHaveAttribute('title');
   });
 });

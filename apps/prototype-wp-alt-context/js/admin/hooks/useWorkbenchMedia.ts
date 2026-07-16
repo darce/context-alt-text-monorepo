@@ -75,12 +75,61 @@ export const useWorkbenchMedia = ({ page, perPage, search, status = 'all', enabl
       .catch(() => undefined);
   }, [mediaQuery.isSuccess, mediaQuery.data?.totalPages, page, perPage, search, status, queryClient]);
 
-  return {
-    ...mediaQuery,
-    itemsWithIdentities,
-    detailQuery,
-    identitiesQuery,
-  };
+  // useQuery results are fresh tracked proxies every render; memoize on the
+  // leaf fields consumers read so the hook's return identity is stable.
+  const detailSurface = useMemo(
+    () => ({
+      data: detailQuery.data,
+      isPending: detailQuery.isPending,
+      isLoading: detailQuery.isLoading,
+      isFetching: detailQuery.isFetching,
+      isError: detailQuery.isError,
+      refetch: detailQuery.refetch,
+    }),
+    [
+      detailQuery.data,
+      detailQuery.isPending,
+      detailQuery.isLoading,
+      detailQuery.isFetching,
+      detailQuery.isError,
+      detailQuery.refetch,
+    ],
+  );
+
+  const identitiesSurface = useMemo(
+    () => ({
+      data: identitiesQuery.data,
+      isLoading: identitiesQuery.isLoading,
+      isError: identitiesQuery.isError,
+      refetch: identitiesQuery.refetch,
+    }),
+    [identitiesQuery.data, identitiesQuery.isLoading, identitiesQuery.isError, identitiesQuery.refetch],
+  );
+
+  return useMemo(
+    () => ({
+      data: mediaQuery.data,
+      isPending: mediaQuery.isPending,
+      isFetching: mediaQuery.isFetching,
+      isError: mediaQuery.isError,
+      isSuccess: mediaQuery.isSuccess,
+      refetch: mediaQuery.refetch,
+      itemsWithIdentities,
+      detailQuery: detailSurface,
+      identitiesQuery: identitiesSurface,
+    }),
+    [
+      mediaQuery.data,
+      mediaQuery.isPending,
+      mediaQuery.isFetching,
+      mediaQuery.isError,
+      mediaQuery.isSuccess,
+      mediaQuery.refetch,
+      itemsWithIdentities,
+      detailSurface,
+      identitiesSurface,
+    ],
+  );
 };
 
 export type { WorkbenchMediaItem, WorkbenchMediaResponse };

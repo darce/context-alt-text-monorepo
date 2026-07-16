@@ -152,5 +152,6 @@ export const useClusterMutations = ({
     isSplitting: actionMutations.isSplitting,
     isRejectingSuggestion: actionMutations.isRejectingSuggestion,
     isPinningRepresentative: actionMutations.isPinningRepresentative,
+    splitGate: actionMutations.splitGate,
   };
 };

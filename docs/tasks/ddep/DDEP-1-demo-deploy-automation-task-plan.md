@@ -67,7 +67,7 @@ The demo (`demo.altcontext.com`, a WordPress + MariaDB container stack on the OC
 | Boundary | Owner | Current Contract | Expected Change | Compatibility Needed? | Verification |
 | --- | --- | --- | --- | --- | --- |
 | CI → OCI VM deploy | infra/CI | `deploy-recognition.yml` deploys backend only; demo is laptop-only | Add `deploy-demo.yml` running `sync-demo.sh` under `tag:ci` | no (additive; new workflow) | `actionlint`; dispatch on the feature ref |
-| `sync-demo.sh` vhost smoke | infra deploy script | curls `/` on all vhosts (api.* → 404 false-fail) | Probe `/health` for `api.*`; keep a 200-path probe for demo | no (internal script) | run the smoke against live vhosts |
+| `sync-demo.sh` vhost smoke | infra deploy script | curls `/` on all vhosts (api.* → 404 false-fail) | Probe `/health` for `api.*` (pre/post-promote baseline: FAIL only deploy-caused regressions); demo `/` follows redirects, final 2xx non-installer (contract updated by DDEP-2) | no (internal script) | run the smoke against live vhosts |
 | Post-deploy acceptance | CI | none for demo | Run demo-walkthrough spec asserting surfaces render + RECOG-1 single-target contract; fail-loud | no | spec exit code on a healthy vs broken deploy |
 
 ## Proposed Solution
@@ -81,7 +81,7 @@ Add `.github/workflows/deploy-demo.yml`, a near-clone of `deploy-recognition.yml
 | Surface | File | Change |
 | --- | --- | --- |
 | tooling/CI | `.github/workflows/deploy-demo.yml` | New `workflow_dispatch` demo deploy (mirror recognition pattern) |
-| tooling/deploy | `scripts/deploy/sync-demo.sh` | Fix vhost smoke: `/health` for `api.*`; clear pass/fail; keep demo 200-path |
+| tooling/deploy | `scripts/deploy/sync-demo.sh` | Fix vhost smoke: `/health` for `api.*`; clear pass/fail; demo `/` final-2xx after redirects, installer-guarded (DDEP-2) |
 | tests | `apps/prototype-wp-alt-context/tests/e2e/evidence/demo-walkthrough.spec.ts` | Add/confirm an assertion that the RECOG-1 single-target Settings contract is live (no local card / no `local_url` in GET) so the smoke proves the plugin landed, not just that WP renders |
 | docs | `docs/runbooks/deploy-demo-cicd.md` (or extend `deploy-recognition-cicd.md`) | One-time secrets + Environment setup; how to dispatch; smoke semantics (deploy vs recognition) |
 
@@ -126,7 +126,7 @@ Proof:
 **Goal**: The vhost smoke reports true health, and the workflow gates on deploy-success (not recognition health), fail-loud.
 
 Changes:
-- `sync-demo.sh`: probe `/health` for `api.*` vhosts (keep a 200 path for demo); explicit pass/fail lines.
+- `sync-demo.sh`: probe `/health` for `api.*` vhosts; demo `/` gated on final 2xx after following redirects with a WP-installer guard (contract as revised by DDEP-2); explicit pass/fail lines.
 - `demo-walkthrough.spec.ts`: assert the RECOG-1 single-target contract so the smoke proves the plugin landed; keep the recognition manifest verdict as informational.
 - Wire the spec as the workflow's post-deploy acceptance step: gate on the spec's test exit code; publish the recognition verdict as a job annotation (informational).
 - CI prerequisites for the spec (runner-side): `npm run e2e:install` (chromium) after `npm ci`; mint auth via `npm run e2e:auth` with `WP_BASE_URL=https://demo.altcontext.com`, `ACX_E2E_WP_ADMIN_USER`, `ACX_E2E_WP_ADMIN_PASS` supplied as `demo` Environment secrets. `e2e:auth` writes `tests/e2e/.auth/storageState.json` — on an ephemeral runner this is a fresh path each run, so the local-dev shared-storageState clobber concern does not apply; keep the path runner-local and never cache/upload it as an artifact.
@@ -167,5 +167,5 @@ Proof:
 ## Success Criteria
 - [ ] A demo deploy runs entirely from CI (`gh workflow run deploy-demo.yml`) with no operator laptop/SSH and no new standing VM access.
 - [x] The deploy is dispatch-only, serialized (concurrency), and gated by the PROMOTE confirmation (primary control), with the `demo` Environment isolating secrets.
-- [x] `sync-demo.sh` vhost smoke reports true health for `api.*` (no benign-`404` false failure).
-- [x] The post-deploy smoke fails a broken deploy but does not fail on the out-of-scope recognition round-trip failure.
+- [ ] `sync-demo.sh` vhost smoke reports true health for `api.*` (no benign-`404` false failure). *(implemented + characterization-tested at DDEP-2; runtime confirmation rides the first CI dispatch)*
+- [ ] The post-deploy smoke fails a broken deploy but does not fail on the out-of-scope recognition round-trip failure. *(implemented + characterization-tested at DDEP-2; runtime confirmation rides the first CI dispatch)*

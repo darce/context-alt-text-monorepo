@@ -4,8 +4,15 @@ import type { SyncHealth, SyncHealthResponse, SyncHealthWarning } from '../../ap
 
 import { SCAN_CONFLICTS_HREF, SCAN_DEAD_LETTER_HREF } from './workbenchOverlayLinks';
 
+// "Offline" means the recognition service is *currently unreachable*, which is
+// the breaker's job (2-failure threshold, self-healing / 60s auto-expire).
+// `last_pull.ok` is a LATCHED historical sync-outcome: a single transient pull
+// blip writes it false and it stays false until the next *successful* background
+// pull — the 15s health poll never repairs it. Treating that as "offline" showed
+// "Working offline" on a fully reachable backend (false positive). A failed pull
+// with a closed breaker is at most advisory (surfaced via warnings), not offline.
 export const isSyncOffline = (health: SyncHealthResponse): boolean =>
-  health.breaker.state === 'open' || health.last_pull.ok === false;
+  health.breaker.state === 'open';
 
 export const resolveEffectiveSyncHealth = (
   legacySyncHealth: SyncHealth,

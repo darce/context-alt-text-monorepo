@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { __ } from '@wordpress/i18n';
 
 import { ConfirmTabContent } from './ConfirmTabContent';
-import { useWorkbenchContext } from './WorkbenchContext';
+import { useWorkbenchNav } from './WorkbenchNavContext';
 
 const ADVANCED_DRAWER_TITLE = __('Advanced: jobs & recovery', 'alt-context');
 
@@ -11,7 +11,7 @@ const ADVANCED_DRAWER_TITLE = __('Advanced: jobs & recovery', 'alt-context');
  * Focus contract: open → focus into panel; Esc → close + restore focus to trigger.
  */
 export const AdvancedDrawer = (): React.JSX.Element => {
-  const { isAdvancedOpen, setAdvancedOpen } = useWorkbenchContext();
+  const { isAdvancedOpen, setAdvancedOpen } = useWorkbenchNav();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const wasOpenRef = useRef(false);
@@ -76,10 +76,7 @@ export const AdvancedDrawer = (): React.JSX.Element => {
         >
           <h2 className="acx-advanced-drawer__title">{ADVANCED_DRAWER_TITLE}</h2>
           <p className="acx-advanced-drawer__body">
-            {__(
-              'Job history, clustering, and recovery controls for when a scan needs follow-up.',
-              'alt-context',
-            )}
+            {__('Job history, clustering, and recovery controls for when a scan needs follow-up.', 'alt-context')}
           </p>
           <ConfirmTabContent />
         </div>

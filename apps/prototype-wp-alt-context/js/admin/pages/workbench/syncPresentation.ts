@@ -12,6 +12,8 @@ import type { SyncHealth, SyncHealthResponse, SyncStatusResponse } from '../../a
 import type { PipelinePhase } from '../../hooks/jobStateMachineUtils';
 import type { ProjectionSyncState } from '../../hooks/useJobStateMachineEffects';
 import { resolveEffectiveSyncHealth } from './degradedModeBannerLogic';
+import { JOB_PHASE_PRESENTATION, type JobPhase } from './phasePresentation';
+import { SYNC_VOCABULARY } from './syncVocabulary';
 import { buildWorkbenchOverlayHref } from './workbenchOverlayLinks';
 import type { WorkbenchTab } from './WorkbenchContext';
 
@@ -89,100 +91,11 @@ export interface SyncPresentation {
   badgeHref?: string;
 }
 
-/**
- * All user-facing status vocabulary. Plain language only — no topology /
- * replay / projection / dead-letter jargon.
- */
-export const SYNC_VOCABULARY = {
-  loading: __('Checking sync…', 'alt-context'),
-  empty: __('No sync recorded yet', 'alt-context'),
-  error: __('Sync status unavailable', 'alt-context'),
-  offlineHeadline: __('Waiting for service…', 'alt-context'),
-  offlineBadge: __('Offline', 'alt-context'),
-  offlineDetail: __('Showing your local copy; changes will sync when the service returns.', 'alt-context'),
-  offlineBannerTitle: __('Working offline', 'alt-context'),
-  attentionBannerTitle: __('Sync attention needed', 'alt-context'),
-  healthyHeadline: __('Last sync: %s', 'alt-context'),
-  healthyBadge: __('Fresh', 'alt-context'),
-  healthySummary: __('Machine sync is healthy and local changes are caught up.', 'alt-context'),
-  queuedHeadline: __('Local changes are waiting to sync.', 'alt-context'),
-  queuedBadge: __('Queued', 'alt-context'),
-  queuedSummary: __('Local changes are waiting to sync.', 'alt-context'),
-  staleHeadline: __('Last sync: %s', 'alt-context'),
-  staleBadge: __('Stale', 'alt-context'),
-  staleSummary: __('Machine state is stale and should be refreshed.', 'alt-context'),
-  conflictsHeadline: __('Conflict resolution is required before sync can catch up.', 'alt-context'),
-  conflictsBadge: __('Conflicts', 'alt-context'),
-  conflictsSummary: __('Conflict resolution is blocking part of the sync queue.', 'alt-context'),
-  failuresHeadline: __('Some sync operations need attention.', 'alt-context'),
-  failuresBadge: __('Failures', 'alt-context'),
-  failuresSummary: __('Some sync operations failed and need operator attention.', 'alt-context'),
-  syncingHeadline: __('Syncing…', 'alt-context'),
-  syncingBadge: __('In Progress', 'alt-context'),
-  scanningHeadline: __('Scanning…', 'alt-context'),
-  clusteringHeadline: __('Clustering…', 'alt-context'),
-  describingHeadline: __('Describing…', 'alt-context'),
-  resultsReadyHeadline: __('Results ready for review.', 'alt-context'),
-  resultsReadyBadge: __('Ready', 'alt-context'),
-  resultsSyncingHeadline: __('Syncing results…', 'alt-context'),
-  resultsAcknowledgingHeadline: __('Confirming results…', 'alt-context'),
-  resultsErrorHeadline: __('Waiting for service…', 'alt-context'),
-  connectedEmptyHeadline: __('Service connected — no clusters yet', 'alt-context'),
-  syncCompletedHeadline: __('Sync completed: %s', 'alt-context'),
-  syncCompletedBare: __('Sync completed', 'alt-context'),
-  retry: __('Retry', 'alt-context'),
-  retrySync: __('Retry sync', 'alt-context'),
-  syncNow: __('Sync now', 'alt-context'),
-  pendingChanges: __('Pending changes: %d', 'alt-context'),
-  failedOps: __('Failed operations: %d', 'alt-context'),
-  conflictsCount: __('Conflicts: %d', 'alt-context'),
-  lastChangeConfirmed: __('Last change confirmed: %s', 'alt-context'),
-  lastConflict: __('Last conflict: %s', 'alt-context'),
-  lastFailure: __('Last failure: %s', 'alt-context'),
-  syncBacklog: __('Sync backlog: pending %1$d, applied %2$d, failed %3$d, conflicts %4$d', 'alt-context'),
-  syncBacklogShort: __('Sync backlog: pending %1$d, failed %2$d, conflicts %3$d', 'alt-context'),
-  pendingChangesLabel: __('Pending changes', 'alt-context'),
-  failedOpsLabel: __('Failed operations', 'alt-context'),
-  conflictsLabel: __('Conflicts', 'alt-context'),
-  reviewFailedOps: __('Review failed sync operations', 'alt-context'),
-  resolveConflicts: __('Resolve sync conflicts', 'alt-context'),
-  openWorkbenchDetail: __('Inspect sync status, scans, and queued sync work.', 'alt-context'),
-  openFailedOpsDetail: __('Retry or discard failed sync operations.', 'alt-context'),
-  scanComplete: __('Scan complete', 'alt-context'),
-  clusteringComplete: __('Clustering complete', 'alt-context'),
-  clusteringFailed: __('Clustering failed', 'alt-context'),
-  resultsSyncFailed: __('Results sync failed', 'alt-context'),
-  resultsSynced: __('Results synced', 'alt-context'),
-  phaseQueued: __('Queued', 'alt-context'),
-  phaseDetecting: __('Detecting', 'alt-context'),
-  phaseClustering: __('Clustering', 'alt-context'),
-  phaseRetrying: __('Retrying', 'alt-context'),
-  phaseSyncingResults: __('Syncing results', 'alt-context'),
-  phaseFailed: __('Failed', 'alt-context'),
-  phaseComplete: __('Complete', 'alt-context'),
-  describeStarting: __('Starting describe run…', 'alt-context'),
-  describeLost: __('Lost connection to the describe run.', 'alt-context'),
-  describeQueued: __('Queued', 'alt-context'),
-  describeRunning: __('Describing', 'alt-context'),
-  describeCompleted: __('Completed', 'alt-context'),
-  describeCompletedWithErrors: __('Completed with errors', 'alt-context'),
-  describeFailed: __('Failed', 'alt-context'),
-  describeCancelled: __('Cancelled', 'alt-context'),
-  // Person workspace vocabulary covered by this task (E21-9 owns full rewrite).
-  dataVersion: __('Data version: %d', 'alt-context'),
-  matchedFaces: __('%d matched faces', 'alt-context'),
-  reviewQueues: __('Review queues', 'alt-context'),
-  updateStatus: __('Update status: %s', 'alt-context'),
-  lastUpdated: __('Last updated: %s', 'alt-context'),
-  afterNextRefresh: __('after the next refresh', 'alt-context'),
-  retentionDispose: __('Retention: Dispose after confirm', 'alt-context'),
-  retentionPurge: __('Retention: Purge on demand', 'alt-context'),
-  retentionRetain: __('Retention: Retain all', 'alt-context'),
-  syncModeDelta: __('Delta sync', 'alt-context'),
-  syncModeFull: __('Full sync', 'alt-context'),
-  attentionSummary: __('Sync attention needed.', 'alt-context'),
-  offlineSummary: __('The recognition backend is currently unreachable.', 'alt-context'),
-} as const;
+// SYNC_VOCABULARY lives in ./syncVocabulary (leaf module) so the phase
+// strategy map can build entries from it while this file reads the map for
+// formatSyncJobPhase — no circular import. Re-exported to keep the E21-1
+// surface unchanged.
+export { SYNC_VOCABULARY } from './syncVocabulary';
 
 export type JobActivity = 'idle' | 'scan' | 'cluster' | 'describe';
 
@@ -520,27 +433,14 @@ export const getSyncPresentationSummary = (
   }
 };
 
-/** Map job progress phase codes to plain-language labels. */
-export const formatSyncJobPhase = (phase: string): string => {
-  switch (phase) {
-    case 'queued':
-      return SYNC_VOCABULARY.phaseQueued;
-    case 'detecting':
-      return SYNC_VOCABULARY.phaseDetecting;
-    case 'clustering':
-      return SYNC_VOCABULARY.phaseClustering;
-    case 'retrying':
-      return SYNC_VOCABULARY.phaseRetrying;
-    case 'awaiting_projection':
-      return SYNC_VOCABULARY.phaseSyncingResults;
-    case 'failed':
-      return SYNC_VOCABULARY.phaseFailed;
-    case 'complete':
-      return SYNC_VOCABULARY.phaseComplete;
-    default:
-      return phase;
-  }
-};
+/**
+ * Map job progress phase codes to plain-language labels. Keeps the wide
+ * `(phase: string): string` signature with unknown-phase passthrough — the
+ * exported contract; callers narrow at their own seam.
+ */
+export const formatSyncJobPhase = (phase: string): string =>
+  // The cast widens the key: unknown phases resolve to undefined at runtime.
+  JOB_PHASE_PRESENTATION[phase as JobPhase]?.label ?? phase;
 
 export const formatRetentionModeLabel = (mode: string): string => {
   switch (mode) {

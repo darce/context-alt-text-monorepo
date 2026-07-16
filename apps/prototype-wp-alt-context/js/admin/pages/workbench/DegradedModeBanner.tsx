@@ -26,10 +26,11 @@ export const DegradedModeBannerView = ({ health }: DegradedModeBannerViewProps):
 
   const isOffline = isSyncOffline(health);
 
+  // rg-004: alert implies assertive; advisory mode pairs status with polite instead.
   return (
     <div
       className={`acx-empty-state-warning acx-degraded-mode-banner${isOffline ? '' : ' acx-degraded-mode-banner--advisory'}`}
-      role="alert"
+      role={isOffline ? 'alert' : 'status'}
       aria-live={isOffline ? 'assertive' : 'polite'}
       data-testid="acx-degraded-mode-banner"
     >

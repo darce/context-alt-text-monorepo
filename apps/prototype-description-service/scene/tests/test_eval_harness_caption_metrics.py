@@ -359,3 +359,131 @@ def test_nfc_nfd_name_drift_still_trips_gate():  # A-10
     scores = score_caption(nfc_caption, **_entry(easy_wrong=[nfd_name]))
     assert scores.wrong_name_hits == [nfd_name]
     assert scores.gated_score == 0.0
+# --- VLM-6 S1: fabricated-fact hallucination metric --------------------------
+
+from scripts.eval_harness.caption_metrics import (  # noqa: E402
+    fabricated_fact_rate,
+    fabrication_by_kind,
+    score_hallucination,
+)
+from scripts.eval_harness.manifest import (  # noqa: E402
+    FactKind,
+    FactPolarity,
+    ReferenceFact,
+)
+
+
+def _false_fact(text, phrases, kind=FactKind.OBJECT):
+    return ReferenceFact(text=text, kind=kind, polarity=FactPolarity.FALSE, phrases=phrases)
+
+
+def _true_fact(text, phrases=None, kind=FactKind.OBJECT):
+    return ReferenceFact(text=text, kind=kind, polarity=FactPolarity.TRUE, phrases=phrases or [])
+
+
+def test_false_fact_trap_flags_fabrication_with_kind():
+    facts = [_false_fact("a dog", ["dog", "puppy"], kind=FactKind.OBJECT)]
+    s = score_hallucination("A puppy playing on grass.", reference_facts=facts)
+    assert s.fabricated is True
+    assert s.fabricated_facts[0].kind is FactKind.OBJECT
+    assert s.fabricated_facts[0].matched_phrase == "puppy"
+    assert s.trap_count == 1
+
+
+def test_no_fabrication_when_trap_absent():
+    facts = [_false_fact("a dog", ["dog", "puppy"])]
+    s = score_hallucination("A cat on a sofa.", reference_facts=facts)
+    assert s.fabricated is False and s.fabricated_facts == []
+
+
+def test_trap_match_is_word_boundary_not_substring():
+    # 'dog' must not fire on 'dogma'/'dogged'
+    facts = [_false_fact("a dog", ["dog"])]
+    assert score_hallucination("A dogged pursuit of dogma.", reference_facts=facts).fabricated is False
+
+
+def test_true_fact_coverage():
+    facts = [_true_fact("a bicycle", ["bicycle", "bike"]), _true_fact("red color", ["red"])]
+    s = score_hallucination("A red bike leaning on a wall.", reference_facts=facts)
+    assert set(s.covered_facts) == {"a bicycle", "red color"}
+    assert s.missing_facts == [] and s.coverage == 1.0
+
+
+def test_coverage_partial_and_none_when_no_true_facts():
+    facts = [_true_fact("a bicycle", ["bicycle"]), _true_fact("a hat", ["hat"])]
+    s = score_hallucination("A bicycle only.", reference_facts=facts)
+    assert s.covered_facts == ["a bicycle"] and s.missing_facts == ["a hat"]
+    assert s.coverage == 0.5
+    assert score_hallucination("x", reference_facts=[_false_fact("a", ["a"])]).coverage is None
+
+
+def test_duplicate_reference_facts_counted_once():
+    # A fact authored twice (same text/kind/polarity/phrases) must count once, or coverage
+    # and the FactKind fabrication tally are skewed (D-04).
+    facts = [
+        _true_fact("a bicycle", ["bicycle"]),
+        _true_fact("a bicycle", ["bicycle"]),  # duplicate authoring
+        _true_fact("a hat", ["hat"]),
+    ]
+    s = score_hallucination("A bicycle only.", reference_facts=facts)
+    assert s.covered_facts == ["a bicycle"]  # once, not twice
+    assert s.missing_facts == ["a hat"]
+    assert s.coverage == 0.5  # 1 / 2 distinct, not 2 / 3
+
+    dup_trap = [_false_fact("a dog", ["dog"]), _false_fact("a dog", ["dog"])]
+    s2 = score_hallucination("A dog runs.", reference_facts=dup_trap)
+    assert len(s2.fabricated_facts) == 1 and s2.trap_count == 1  # one real trap, not two
+
+
+def test_count_advisory_fires_on_overcount_but_not_headline():
+    s = score_hallucination("Two people standing together.", reference_facts=[], face_count=1)
+    assert s.count_advisory is not None and "2" in s.count_advisory
+    assert s.fabricated is False  # advisory never drives the headline
+
+
+def test_count_advisory_silent_when_within_facecount():
+    assert score_hallucination("Three people talking.", reference_facts=[], face_count=3).count_advisory is None
+    assert score_hallucination("A person walking.", reference_facts=[], face_count=1).count_advisory is None
+    # no face_count -> no advisory at all
+    assert score_hallucination("A crowd of people.", reference_facts=[], face_count=None).count_advisory is None
+
+
+def test_count_advisory_collective_nouns():
+    # A collective quantifier fires only when paired with a people noun (precision-first:
+    # "a crowd of issues" / "a couple of birds" must not read as a people overcount).
+    assert score_hallucination("A crowd of people.", reference_facts=[], face_count=1).count_advisory is not None
+    assert score_hallucination("A group of men.", reference_facts=[], face_count=1).count_advisory is not None
+    assert score_hallucination("A couple sitting.", reference_facts=[], face_count=0).count_advisory is None
+
+
+def test_fabricated_fact_rate_all_vs_trapped():
+    trapped_hit = score_hallucination("a dog", reference_facts=[_false_fact("a dog", ["dog"])])
+    trapped_clean = score_hallucination("a cat", reference_facts=[_false_fact("a dog", ["dog"])])
+    untrapped = score_hallucination("anything", reference_facts=[])
+    scores = [trapped_hit, trapped_clean, untrapped]
+    assert fabricated_fact_rate(scores, over="all") == pytest.approx(1 / 3)
+    assert fabricated_fact_rate(scores, over="trapped") == pytest.approx(1 / 2)
+    assert fabricated_fact_rate([untrapped], over="trapped") is None
+
+
+def test_fabrication_by_kind_tally():
+    scores = [
+        score_hallucination(
+            "a dog and a beach",
+            reference_facts=[
+                _false_fact("a dog", ["dog"], kind=FactKind.OBJECT),
+                _false_fact("a beach", ["beach"], kind=FactKind.SCENE),
+            ],
+        ),
+        score_hallucination("a dog", reference_facts=[_false_fact("a dog", ["dog"], kind=FactKind.OBJECT)]),
+    ]
+    tally = fabrication_by_kind(scores)
+    assert tally[FactKind.OBJECT] == 2 and tally[FactKind.SCENE] == 1
+
+
+def test_phrases_fallback_to_text_in_scoring():
+    s = score_hallucination(
+        "A red bicycle here.",
+        reference_facts=[ReferenceFact(text="red bicycle", kind=FactKind.OBJECT, polarity=FactPolarity.FALSE)],
+    )
+    assert s.fabricated is True and s.fabricated_facts[0].matched_phrase == "red bicycle"

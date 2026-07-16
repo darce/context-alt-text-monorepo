@@ -23,6 +23,15 @@ import { isAbortLike } from '../utils/retryPolicy';
  */
 const DESCRIBE_RUN_POLL_INTERVAL_MS = 2_000;
 
+/**
+ * Consecutive abort-like poll failures that flip a frozen run to a hard error
+ * (UXP-2 BR review). A single timeout freezes-and-thaws (BR-07), but a frozen
+ * bar that never recovers is a silent hang: at the 2s cadence, 5 dead polls is
+ * ~>10s of dead air, at which point the run stops polling and surfaces the
+ * Retry affordance instead of freezing forever.
+ */
+const FROZEN_POLL_ESCALATION_THRESHOLD = 5;
+
 export interface DescribeRunProgress {
   run: DescribeRunResponse | null;
   status: DescribeRunStatus | null;
@@ -44,6 +53,13 @@ export interface DescribeRunProgress {
 }
 
 export const useDescribeRunProgress = (runId: string | null): DescribeRunProgress => {
+  // Consecutive abort-like poll failures, tracked across renders. Read inside
+  // the refetchInterval predicate (stops the poll once escalated) and surfaced
+  // as a hard error below. A ref drives the poll decision; the mirrored state
+  // forces the re-render that flips isFrozen -> isError.
+  const consecutiveFrozenPollsRef = useRef(0);
+  const [frozenPollStreak, setFrozenPollStreak] = useState(0);
+
   const query = useQuery<DescribeRunResponse, Error>({
     queryKey: ['bulkDescribeRun', runId],
     queryFn: () => {
@@ -62,6 +78,11 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
       if (q.state.status === 'error' && !isAbortLike(q.state.error)) {
         return false;
       }
+      // Bounded frozen state: once too many consecutive polls abort, stop
+      // retrying and let the hard-error Retry affordance take over.
+      if (consecutiveFrozenPollsRef.current >= FROZEN_POLL_ESCALATION_THRESHOLD) {
+        return false;
+      }
       const data = q.state.data;
       if (data && isDescribeRunTerminal(data.status)) {
         return false;
@@ -70,10 +91,39 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
     }),
   });
 
+  // Count consecutive abort-like poll failures off the query's update
+  // watermarks: a fresh abort-like error advances the streak; any fresh data
+  // resets it. Watermarks are unambiguous regardless of whether retained data
+  // keeps the query's status 'success' or 'error'.
+  const { dataUpdatedAt, errorUpdatedAt, error: queryError } = query;
+  const lastCountedErrorAtRef = useRef(0);
+  const lastCountedDataAtRef = useRef(0);
+  useEffect(() => {
+    if (dataUpdatedAt > lastCountedDataAtRef.current) {
+      lastCountedDataAtRef.current = dataUpdatedAt;
+      consecutiveFrozenPollsRef.current = 0;
+      setFrozenPollStreak(0);
+    }
+    if (errorUpdatedAt > lastCountedErrorAtRef.current && isAbortLike(queryError)) {
+      lastCountedErrorAtRef.current = errorUpdatedAt;
+      consecutiveFrozenPollsRef.current += 1;
+      setFrozenPollStreak(consecutiveFrozenPollsRef.current);
+    }
+  }, [dataUpdatedAt, errorUpdatedAt, queryError]);
+
+  // Reset the frozen-streak accounting whenever the tracked run changes.
+  useEffect(() => {
+    consecutiveFrozenPollsRef.current = 0;
+    lastCountedErrorAtRef.current = 0;
+    lastCountedDataAtRef.current = 0;
+    setFrozenPollStreak(0);
+  }, [runId]);
+
   const run = query.data ?? null;
   const status = run?.status ?? null;
   const isTerminal = status !== null && isDescribeRunTerminal(status);
-  const isFrozen = query.isError && isAbortLike(query.error);
+  const frozenStreakExceeded = frozenPollStreak >= FROZEN_POLL_ESCALATION_THRESHOLD;
+  const isFrozen = query.isError && isAbortLike(query.error) && !frozenStreakExceeded;
   const isError = query.isError && !isFrozen;
 
   const { refetch } = query;

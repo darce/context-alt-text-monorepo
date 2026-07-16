@@ -17,6 +17,7 @@ import { _resetCooldownForTests, openCooldown, openCooldownFromError } from '../
 import { useBatchRunStatus, useMultiScanStatus, useRecognitionClusters, useScanStatus } from '../useRecognitionHooks';
 import { useDescribeRunProgress } from '../useDescribeRunProgress';
 import { useMediaIdentities } from '../useMediaIdentities';
+import { useExportJobStatus } from '../useRetentionStatus';
 import { useRecognitionCooldown } from '../useRecognitionCooldown';
 import { useSyncHealth } from '../useSyncHealth';
 
@@ -29,6 +30,7 @@ vi.mock('../../api/recognition', async () => {
     listRecognitionClusters: vi.fn(),
     fetchMediaIdentities: vi.fn(),
     fetchSyncHealth: vi.fn(),
+    getExportJobStatus: vi.fn(),
   };
 });
 
@@ -43,6 +45,7 @@ const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClus
 const fetchMediaIdentitiesMock = vi.mocked(recognitionApi.fetchMediaIdentities);
 const fetchSyncHealthMock = vi.mocked(recognitionApi.fetchSyncHealth);
 const fetchBulkDescribeRunMock = vi.mocked(describeApi.fetchBulkDescribeRun);
+const getExportJobStatusMock = vi.mocked(recognitionApi.getExportJobStatus);
 
 /** All six gated pollers plus the deliberately ungated sync-health poller. */
 const useAllPollers = () => {
@@ -264,5 +267,47 @@ describe('useRecognitionCooldown observable state', () => {
     });
     unmount();
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe('recognition cooldown gate over the export-job-status poller (7th)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-16T12:00:00.000Z'));
+    _resetCooldownForTests();
+    vi.clearAllMocks();
+    getExportJobStatusMock.mockResolvedValue({
+      job_id: 'job-1',
+      status: 'processing',
+    });
+  });
+
+  afterEach(() => {
+    _resetCooldownForTests();
+    vi.useRealTimers();
+  });
+
+  it('suspends the 2s export-status poll for the whole window, then resumes at expiry', async () => {
+    openCooldown(30);
+
+    renderHook(() => useExportJobStatus('job-1'), { wrapper: createWrapper() });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // Mount fetch happens once; the cooldown gates the interval, not the mount.
+    expect(getExportJobStatusMock).toHaveBeenCalledTimes(1);
+
+    // Across the whole window the 2s poll never fires again.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(29_000);
+    });
+    expect(getExportJobStatusMock).toHaveBeenCalledTimes(1);
+
+    // Past expiry the poll resumes on its own 2s cadence without a remount.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6_000);
+    });
+    expect(getExportJobStatusMock.mock.calls.length).toBeGreaterThan(1);
   });
 });

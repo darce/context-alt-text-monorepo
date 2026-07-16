@@ -3,10 +3,12 @@
  *
  * Module-level single source of truth (sr-007): one "ask again later" from a
  * recognition-backed request quiets every gated poller for the server-stated
- * window. Membership is the explicit six-poller set in the task plan —
+ * window. Membership is the explicit poller set in the task plan —
  * useScanStatus, useMultiScanStatus, useBatchRunStatus, useDescribeRunProgress,
- * useMediaIdentities, useRecognitionClusters. useSyncHealth / useSyncStatus
- * read local state only and are deliberately not gated.
+ * useMediaIdentities, useRecognitionClusters, and useExportJobStatus (the 7th,
+ * added by the slice-2 review fix — its 2s poll reaches recognition via the
+ * retention export-status proxy). useSyncHealth / useSyncStatus read local
+ * state only and are deliberately not gated.
  */
 
 import { isCooldownSignal } from './retryPolicy';

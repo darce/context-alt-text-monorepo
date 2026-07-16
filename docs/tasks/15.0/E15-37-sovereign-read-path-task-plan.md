@@ -229,12 +229,12 @@ Proof (TEST_CMD: `cd apps/prototype-wp-alt-context && npm test -- js/admin/hooks
 
 ### Checklist for Slice 1: Media-identities gate inversion
 
-- [ ] Rows-first `should_use_local_projection()`; sync-state conjunct deleted (not flagged).
-- [ ] Cold-start convergence after successful proxy read: inline pull first, deduped cron fallback via `wp_next_scheduled`; nothing on unavailable.
-- [ ] `acx_bootstrap_sync` handler registered at plugin load in `Api::init()`; cron-context binding test green.
-- [ ] Local reads with missing/stale sync-state schedule the async heal; hook name consumed from the shared constant everywhere.
-- [ ] `RecognitionDataSource` constants class (incl. hook-name constant) adopted at all four PHP declaration sites; TS parity test added with the scoped grep guard.
-- [ ] PHP tests cover rows-without-sync-state (zero HTTP), cold-start proxy + inline-pull convergence + fallback scheduling, unavailable envelope unchanged.
+- [x] Rows-first `should_use_local_projection()`; sync-state conjunct deleted (not flagged).
+- [x] Cold-start convergence after successful proxy read: inline pull first, deduped cron fallback via `wp_next_scheduled`; nothing on unavailable.
+- [x] `acx_bootstrap_sync` handler registered at plugin load in `Api::init()`; cron-context binding test green.
+- [x] Local reads with missing/stale sync-state schedule the async heal; hook name consumed from the shared constant everywhere.
+- [x] `RecognitionDataSource` constants class (incl. hook-name constant) adopted at all four PHP declaration sites; TS parity test added with the scoped grep guard.
+- [x] PHP tests cover rows-without-sync-state (zero HTTP), cold-start proxy + inline-pull convergence + fallback scheduling, unavailable envelope unchanged.
 
 ### Checklist for Slice 2: Cluster-read rows-first qualification
 

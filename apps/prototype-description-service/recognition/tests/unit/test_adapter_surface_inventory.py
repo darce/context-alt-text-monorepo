@@ -169,6 +169,23 @@ def test_only_known_application_seams_make_remote_adapter_calls() -> None:
     assert _find_remote_call_sites(repo_root) == _ALLOWED_REMOTE_CALL_SITES
 
 
+# Exact neutral seam field set (must match FaceDetection). Pose retained for
+# quality/clustering + API (orchestrator-accepted); age/gender excluded (FIR-2 S4).
+_ALLOWED_SEAM_FIELDS = frozenset(
+    {
+        "media_id",
+        "bbox",
+        "confidence",
+        "embedding",
+        "pose_pitch",
+        "pose_yaw",
+        "pose_roll",
+        "image_phash",
+        "landmark_quality",
+        "model_id",
+    }
+)
+
 # Model-specific field names that must not reappear on the neutral seam type.
 _FORBIDDEN_SEAM_FIELDS = frozenset(
     {
@@ -185,9 +202,14 @@ _FORBIDDEN_SEAM_FIELDS = frozenset(
 
 
 def test_face_detection_seam_rejects_model_specific_fields() -> None:
-    """Neutral FaceDetection must not leak InsightFace-specific field names."""
+    """Neutral FaceDetection must match allowlist and reject InsightFace-only fields."""
     field_names = {f.name for f in fields(FaceDetection)}
+    assert field_names == _ALLOWED_SEAM_FIELDS, (
+        f"FaceDetection fields drifted: extra={sorted(field_names - _ALLOWED_SEAM_FIELDS)} "
+        f"missing={sorted(_ALLOWED_SEAM_FIELDS - field_names)}"
+    )
     leaked = field_names & _FORBIDDEN_SEAM_FIELDS
     assert not leaked, f"model-specific fields on FaceDetection: {sorted(leaked)}"
-    assert "model_id" in field_names
-    assert "embedding" in field_names
+    # Re-add pins would fail both equality and forbidden intersection.
+    assert "age" not in field_names
+    assert "gender" not in field_names

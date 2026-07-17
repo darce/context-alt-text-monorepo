@@ -140,6 +140,9 @@ class TestInsightFaceFaceDetector:
         assert detections[0].model_id == "buffalo_l@insightface"
         assert detections[0].landmark_quality is not None
         assert 0.0 <= detections[0].landmark_quality <= 1.0
+        # FIR-2 S4: demographic attrs must stay off the seam payload.
+        assert not hasattr(detections[0], "age")
+        assert not hasattr(detections[0], "gender")
 
     @pytest.mark.asyncio
     async def test_fetches_url_sources(self) -> None:

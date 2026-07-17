@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import ast
 from collections.abc import Iterable
+from dataclasses import fields
 from pathlib import Path
+
+from recognition.application.embedding.detector import FaceDetection
 
 # These are the only application-layer files that should mention InsightFaceAdapter.
 # tasks/scan.py belongs here because it wires adapter providers, even though it
@@ -164,3 +167,24 @@ def test_only_known_application_seams_make_remote_adapter_calls() -> None:
     repo_root = _repo_root()
 
     assert _find_remote_call_sites(repo_root) == _ALLOWED_REMOTE_CALL_SITES
+
+
+# Model-specific field names that must not reappear on the neutral seam type.
+_FORBIDDEN_SEAM_FIELDS = frozenset(
+    {
+        "embedding_512",
+        "embedding_1024",
+        "normed_embedding",
+        "det_score",
+        "kps",
+    }
+)
+
+
+def test_face_detection_seam_rejects_model_specific_fields() -> None:
+    """Neutral FaceDetection must not leak InsightFace-specific field names."""
+    field_names = {f.name for f in fields(FaceDetection)}
+    leaked = field_names & _FORBIDDEN_SEAM_FIELDS
+    assert not leaked, f"model-specific fields on FaceDetection: {sorted(leaked)}"
+    assert "model_id" in field_names
+    assert "embedding" in field_names

@@ -6,8 +6,10 @@ from __future__ import annotations
 
 import numpy as np
 
-# Embedding layout constants
-FACE_EMBEDDING_DIM = 512
+from recognition.config import get_settings
+
+# Single source: recognition.config.settings IdentityDetectionSettings.embedding_dimension
+FACE_EMBEDDING_DIM = get_settings().identity_detection.embedding_dimension
 
 
 def extract_face_embedding(embedding: np.ndarray) -> np.ndarray:

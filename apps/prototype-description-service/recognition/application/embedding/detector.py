@@ -15,7 +15,7 @@ import io
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 import httpx
@@ -32,7 +32,7 @@ from recognition.application.integrations import (
 )
 
 if TYPE_CHECKING:
-    from recognition.infrastructure.embeddings import DetectedFace, InsightFaceAdapter
+    from recognition.infrastructure.embeddings import InsightFaceAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -75,12 +75,16 @@ def _compute_detection_quality(
 
 @dataclass
 class FaceDetection:
-    """Detected face bounding box, confidence, and optional embedding for a media asset."""
+    """Neutral detection/embedding seam type (model-agnostic).
+
+    Pose/age/gender remain optional until FIR-2 S4 contract change.
+    ``model_id`` is stamped by the producing adapter from EmbeddingModelManifest.
+    """
 
     media_id: str
     bbox: tuple[int, int, int, int]
     confidence: float
-    embedding: np.ndarray | None = None  # 512D or 1024D face embedding (unit normalized)
+    embedding: np.ndarray | None = None  # unit-normalized face embedding
     # Detection metadata
     pose_pitch: float | None = None
     pose_yaw: float | None = None
@@ -89,6 +93,7 @@ class FaceDetection:
     gender: int | None = None  # 0=female, 1=male
     image_phash: str | None = None
     landmark_quality: float | None = None
+    model_id: str = ""
 
 
 class DetectionTimeoutError(TimeoutError):
@@ -240,42 +245,28 @@ class InsightFaceFaceDetector(FaceDetectorProtocol):
             # Detect faces and get embeddings in one pass
             try:
 
-                async def detect_current_image(current_image_bytes: bytes = current_source_bytes) -> list[DetectedFace]:
+                async def detect_current_image(current_image_bytes: bytes = current_source_bytes) -> list[FaceDetection]:
                     return await wait_for_adapter(
                         self._adapter.detect_faces(current_image_bytes),
                         timeout_s=self._timeout,
                         adapter_name="insightface.detect_faces",
                     )
 
-                faces: list[DetectedFace] = await self._breaker.call(detect_current_image)
+                faces: list[FaceDetection] = await self._breaker.call(detect_current_image)
                 for face in faces:
-                    # Extract pose angles
-                    pose_pitch = face.pose[0] if face.pose else None
-                    pose_yaw = face.pose[1] if face.pose else None
-                    pose_roll = face.pose[2] if face.pose else None
-
                     # Compute quality from detection metrics (confidence + pose + size)
                     detection_quality = _compute_detection_quality(
                         confidence=face.confidence,
-                        pose_pitch=pose_pitch,
-                        pose_yaw=pose_yaw,
-                        pose_roll=pose_roll,
+                        pose_pitch=face.pose_pitch,
+                        pose_yaw=face.pose_yaw,
+                        pose_roll=face.pose_roll,
                         bbox=face.bbox,
                     )
 
-                    # Use the 512D face embedding directly (already unit normalized)
                     detections.append(
-                        FaceDetection(
+                        replace(
+                            face,
                             media_id=media_id,
-                            bbox=face.bbox,
-                            confidence=face.confidence,
-                            embedding=face.embedding_512,
-                            # InsightFace metadata
-                            pose_pitch=pose_pitch,
-                            pose_yaw=pose_yaw,
-                            pose_roll=pose_roll,
-                            age=face.age,
-                            gender=face.gender,
                             image_phash=image_phash,
                             landmark_quality=detection_quality,
                         )
@@ -300,6 +291,7 @@ FaceDetector = StubFaceDetector
 __all__ = [
     "DetectionAdapterError",
     "DetectionTimeoutError",
+    "FaceDetection",
     "FaceDetectorProtocol",
     "StubFaceDetector",
     "UnavailableFaceDetector",

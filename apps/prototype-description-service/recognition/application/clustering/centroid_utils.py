@@ -56,7 +56,7 @@ def compute_similarity(
     Return cosine similarity between two embeddings clamped to [0, 1].
 
     IMPORTANT: Uses only the face embedding portion (first 512D) for similarity.
-    This prevents false matches due to metadata attributes (pose, age, etc.)
+    This prevents false matches due to metadata attributes (pose, etc.)
     """
     vec_a = np.array(embedding_a, dtype=np.float32)
     vec_b = np.array(embedding_b, dtype=np.float32)

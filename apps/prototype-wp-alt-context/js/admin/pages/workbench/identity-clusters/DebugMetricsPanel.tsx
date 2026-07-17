@@ -1,8 +1,8 @@
 /**
  * Debug metrics panel for development environments.
  *
- * Displays InsightFace metadata (pose, age, gender, detection score, etc.)
- * and clustering decision info when available.
+ * Displays pose, detection score, landmark quality, and clustering decision
+ * info when available. Age/gender removed (FIR-2 S4).
  * Only shown when wp_get_environment_type() === 'development'.
  */
 
@@ -71,8 +71,6 @@ export const DebugMetricsPanel = ({ metrics }: DebugMetricsPanelProps): React.JS
 
   const {
     pose,
-    age,
-    gender,
     det_score,
     bbox_area,
     landmark_quality,
@@ -107,7 +105,7 @@ export const DebugMetricsPanel = ({ metrics }: DebugMetricsPanelProps): React.JS
       >
         <span className="acx-debug-metrics__icon">🔍</span>
         <span className="acx-debug-metrics__summary">
-          {gender === 'male' ? '♂' : '♀'} ~{Math.round(age)}y
+          {poseLabel}
           {match_similarity !== null && match_similarity < 1.0 && ` | ${(match_similarity * 100).toFixed(0)}%`}
           {clustering_method && ` | ${formatClusteringMethod(clustering_method)}`}
         </span>
@@ -185,14 +183,6 @@ export const DebugMetricsPanel = ({ metrics }: DebugMetricsPanelProps): React.JS
               </dd>
             </div>
           )}
-          <div className="acx-debug-metrics__row">
-            <dt>{__('Age', 'alt-context')}</dt>
-            <dd>{age.toFixed(1)}</dd>
-          </div>
-          <div className="acx-debug-metrics__row">
-            <dt>{__('Gender', 'alt-context')}</dt>
-            <dd>{gender === 'male' ? __('Male', 'alt-context') : __('Female', 'alt-context')}</dd>
-          </div>
           <div className="acx-debug-metrics__row">
             <dt>{__('Detection', 'alt-context')}</dt>
             <dd>{(det_score * 100).toFixed(1)}%</dd>

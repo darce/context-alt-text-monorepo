@@ -3,10 +3,9 @@
 Pins today's field shapes and contract payloads BEFORE the S2b seam refactor.
 TEST-ONLY: no production code changes. No DB, network, or InsightFace model load.
 
-Heuristic anchors (docs/strategy/engineering-heuristics.md):
-- CHAR-01: pin observable producer shapes before refactor
-- TEST-03: characterization against unmodified production code
-- REAL-01: construct real-shaped inputs from producer field contracts
+Heuristic anchors (docs/reference/engineering-heuristics-canon.md):
+- TEST-03: characterization before change — pin actual current behavior first
+- AGT-03: make it fail before making it pass — observe current behavior before claiming the pin holds
 """
 
 from __future__ import annotations

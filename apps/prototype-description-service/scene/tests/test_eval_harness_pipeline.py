@@ -17,6 +17,8 @@ import httpx
 import pytest
 
 from scripts.eval_harness.bakeoff import (
+    _CAPTION_MAX_TOKENS,
+    _PASS1_MAX_TOKENS,
     DEFAULT_PROMPT_VARIANT,
     PROMPT_VARIANTS,
     BakeoffClient,
@@ -221,6 +223,23 @@ def test_two_pass_records_per_pass_raw_and_latency() -> None:
     assert passes[0]["raw"] == _FACTS_JSON
     assert passes[1]["raw"] == "Caitlin Weaver stands at the waterline."
     assert all(isinstance(p["latency_s"], float) and p["latency_s"] >= 0 for p in passes)
+
+
+def test_two_pass_pass1_gets_larger_token_budget_than_the_caption() -> None:
+    # regression: pass-1 emits a full facts JSON (legible_text) that truncated at
+    # the caption budget on text-dense images -> PassOneJSONError (646-run: 5 lost).
+    assert _PASS1_MAX_TOKENS > _CAPTION_MAX_TOKENS
+    captured: list[dict] = []
+    client = _client(captured, [_FACTS_JSON, "Caitlin Weaver stands at the waterline."], two_pass=True)
+    _describe(client, {"caption": "Caitlin Weaver on the peninsula."})
+    assert captured[0]["payload"]["max_tokens"] == _PASS1_MAX_TOKENS  # describe_facts
+    assert captured[1]["payload"]["max_tokens"] == _CAPTION_MAX_TOKENS  # ground_weave
+
+
+def test_single_pass_caption_keeps_the_caption_token_budget() -> None:
+    captured: list[dict] = []
+    _describe(_client(captured, ["A plain caption."]), {})
+    assert captured[0]["payload"]["max_tokens"] == _CAPTION_MAX_TOKENS
 
 
 def test_two_pass_malformed_pass1_json_is_typed_per_item_failure_and_run_continues(tmp_path: Path) -> None:

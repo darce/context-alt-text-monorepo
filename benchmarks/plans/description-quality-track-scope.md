@@ -67,6 +67,38 @@ that same mechanism.
 - Judge calibration agreement with the human seed is reported and above the bar
   before any judge-only number is used as a gate.
 
+## Explicit-content corpus (separate, tenant-gated) — deferred sub-track
+
+Added 2026-07-16 per operator decision: explicit content is measured and tuned in
+**isolation**, not mixed into the general corpus.
+
+- **Separate corpus in a dedicated tenant.** Explicit content lives in its own
+  recognition/curation tenant (reusing the multi-tenant pattern of the 10018
+  curation tenant; keys via `docs/runbooks/key-management.md` /
+  `make admin-oci-mint`). The tenant **gates results**: only holders of that
+  tenant key can see, curate, or label them.
+- **Never in the shareable tree.** Explicit-corpus outputs must NOT land in
+  `benchmarks/` (which is committed to `main` and may be shared) — they stay
+  tenant-scoped and access-gated. The quality harness is therefore built
+  **tenant-aware from the start** (manifests carry a tenant; reports/dashboard
+  exclude gated tenants from any shareable output), even though this sub-track's
+  bake-off runs later.
+- **Same global register, harder test.** The accurate register is still global
+  ("captions match content"); this corpus is where it is **stress-tested and
+  tuned**, because explicit content is exactly where VLMs euphemize or refuse.
+  It is a tuning + compliance-measurement set, not a different register.
+- **The decisive model-compliance gate.** A model that describes general content
+  accurately but softens or refuses on explicit content fails full coverage — so
+  this sub-track's bake-off is likely the **strongest single model discriminator**
+  for the product. Self-hosted open weights are the only viable path (hosted APIs
+  refuse and are off the table for privacy regardless).
+- **Requirements before it runs.** Documented consent/provenance for every image;
+  provenance private + `publishable=False` + tenant-scoped; pairwise labeling by
+  **authorized reviewers only**; upload/consent policy is the operator's, the
+  describer only describes what is submitted.
+- **Deferred**: separate bake-off, later. Scoped now so tenant-isolation is
+  designed in, not retrofitted.
+
 ## Constraints / risks
 
 - **Compliance is empirical and model-dependent** — some VLMs soften or refuse
@@ -92,6 +124,9 @@ that same mechanism.
   directly answers "better").
 - No new adult-content classifier / moderation layer — the product describes what
   is submitted; upload policy is the user's, not the describer's.
+- The **explicit-content bake-off does not run in the MVP** — only its
+  tenant-aware isolation is designed in now; the corpus curation + separate
+  bake-off are a deferred sub-track (own tenant, own review, later).
 
 ## Ownership / next
 

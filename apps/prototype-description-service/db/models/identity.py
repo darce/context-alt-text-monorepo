@@ -64,8 +64,6 @@ class MediaIdentity(Base):
     pose_yaw: Mapped[float | None] = mapped_column(Float, nullable=True)
     pose_roll: Mapped[float | None] = mapped_column(Float, nullable=True)
     quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
-    age: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    gender: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 0=female, 1=male
     image_phash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_exported_snapshot_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     moved_by_merge_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)

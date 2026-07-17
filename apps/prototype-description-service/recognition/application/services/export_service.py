@@ -309,8 +309,6 @@ class TenantExportService:
             "pose_yaw": identity.pose_yaw,
             "pose_roll": identity.pose_roll,
             "quality_score": identity.quality_score,
-            "age": identity.age,
-            "gender": identity.gender,
             "image_phash": identity.image_phash,
             "last_exported_snapshot_id": _serialize_uuid(identity.last_exported_snapshot_id),
             "disposed_at": _serialize_timestamp(identity.disposed_at),

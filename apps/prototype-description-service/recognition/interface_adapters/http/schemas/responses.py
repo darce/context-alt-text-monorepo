@@ -101,8 +101,6 @@ class DetectedIdentityDebugExtras(BaseModel):
     """Debug-only fields returned when include_debug=true."""
 
     pose: PoseResponse
-    age: float
-    gender: Literal["female", "male"]
     det_score: float
     bbox_area: int
     landmark_quality: float

@@ -181,8 +181,6 @@ class TestFaceDetectionSeamFromAdapter:
             pose_pitch=5.0,
             pose_yaw=-10.0,
             pose_roll=2.0,
-            age=35,
-            gender=1,
             model_id=model_id,
         )
 
@@ -192,12 +190,12 @@ class TestFaceDetectionSeamFromAdapter:
         assert face.pose_pitch == 5.0
         assert face.pose_yaw == -10.0
         assert face.pose_roll == 2.0
-        assert face.age == 35
-        assert face.gender == 1
         assert face.model_id == model_id
+        assert not hasattr(face, "age")
+        assert not hasattr(face, "gender")
 
     def test_optional_fields_can_be_none(self) -> None:
-        """Optional pose/age/gender may be None on the seam."""
+        """Optional pose may be None on the seam."""
         embedding = np.random.randn(512).astype(np.float32)
 
         face = FaceDetection(
@@ -208,11 +206,7 @@ class TestFaceDetectionSeamFromAdapter:
             pose_pitch=None,
             pose_yaw=None,
             pose_roll=None,
-            age=None,
-            gender=None,
             model_id=incumbent_embedding_model_manifest().model_id,
         )
 
         assert face.pose_pitch is None
-        assert face.age is None
-        assert face.gender is None

@@ -152,7 +152,7 @@ class InsightFaceAdapter:
         for face in faces:
             bbox = tuple(int(x) for x in face.bbox)
 
-            # Extract optional attributes
+            # Pose angles feed quality scoring + clustering maturity (not product fields).
             pose_pitch: float | None = None
             pose_yaw: float | None = None
             pose_roll: float | None = None
@@ -160,9 +160,6 @@ class InsightFaceAdapter:
                 pose_pitch = float(face.pose[0])
                 pose_yaw = float(face.pose[1])
                 pose_roll = float(face.pose[2])
-
-            age = int(face.age) if hasattr(face, "age") and face.age is not None else None
-            gender = int(face.gender) if hasattr(face, "gender") and face.gender is not None else None
 
             results.append(
                 FaceDetection(
@@ -173,8 +170,6 @@ class InsightFaceAdapter:
                     pose_pitch=pose_pitch,
                     pose_yaw=pose_yaw,
                     pose_roll=pose_roll,
-                    age=age,
-                    gender=gender,
                     model_id=model_id,
                 )
             )

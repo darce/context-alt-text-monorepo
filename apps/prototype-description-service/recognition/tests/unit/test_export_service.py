@@ -53,8 +53,6 @@ async def test_export_service_returns_portable_payload_and_records_audit_events(
         pose_yaw=2.0,
         pose_roll=3.0,
         quality_score=0.91,
-        age=33,
-        gender=1,
         image_phash="abc123",
     )
     disposed_identity = MediaIdentity(

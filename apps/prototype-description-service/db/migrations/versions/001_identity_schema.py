@@ -327,12 +327,10 @@ def ensure_tables(op) -> None:
         sa.Column("embedding", Vector(EMBEDDING_DIMENSION), nullable=False),
         # Embedding provenance: required, no default (missing must fail closed — RLSE-05).
         sa.Column("embedding_model", sa.Text(), nullable=False),
-        # InsightFace metadata
+        # InsightFace metadata (pose for quality/clustering; age/gender removed FIR-2 S4)
         sa.Column("pose_pitch", sa.Float(), nullable=True),
         sa.Column("pose_yaw", sa.Float(), nullable=True),
         sa.Column("pose_roll", sa.Float(), nullable=True),
-        sa.Column("age", sa.Integer(), nullable=True),
-        sa.Column("gender", sa.Integer(), nullable=True),  # 0=female, 1=male
         sa.Column("quality_score", sa.Float(), nullable=True),
         sa.Column("image_phash", sa.String(length=64), nullable=True),
         sa.Column("last_exported_snapshot_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=True),

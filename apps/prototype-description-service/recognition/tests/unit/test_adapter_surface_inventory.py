@@ -177,6 +177,9 @@ _FORBIDDEN_SEAM_FIELDS = frozenset(
         "normed_embedding",
         "det_score",
         "kps",
+        # InsightFace demographic attributes (FIR-2 S4 removed)
+        "age",
+        "gender",
     }
 )
 

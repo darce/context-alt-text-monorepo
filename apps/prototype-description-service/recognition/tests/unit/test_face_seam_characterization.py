@@ -27,7 +27,7 @@ from recognition.interface_adapters.http.deps.stores import MediaIdentityService
 
 # --- Expected field / key sets (pinned to current producers) ---
 
-# S2b deliberate pin update: FaceDetection gains model_id; DetectedFace deleted.
+# S4 deliberate pin update: age/gender removed from seam, export, debug metrics.
 FACE_DETECTION_FIELDS = frozenset(
     {
         "media_id",
@@ -37,8 +37,6 @@ FACE_DETECTION_FIELDS = frozenset(
         "pose_pitch",
         "pose_yaw",
         "pose_roll",
-        "age",
-        "gender",
         "image_phash",
         "landmark_quality",
         "model_id",
@@ -59,8 +57,6 @@ EXPORT_IDENTITY_KEYS = frozenset(
         "pose_yaw",
         "pose_roll",
         "quality_score",
-        "age",
-        "gender",
         "image_phash",
         "last_exported_snapshot_id",
         "disposed_at",
@@ -74,8 +70,6 @@ EXPORT_BBOX_KEYS = frozenset({"x", "y", "width", "height"})
 DEBUG_METRICS_BASE_KEYS = frozenset(
     {
         "pose",
-        "age",
-        "gender",
         "det_score",
         "bbox_area",
         "landmark_quality",
@@ -95,8 +89,6 @@ def _unit_embedding() -> list[float]:
 
 def _media_identity(
     *,
-    age: int | None = None,
-    gender: int | None = None,
     pose_pitch: float | None = None,
     pose_yaw: float | None = None,
     pose_roll: float | None = None,
@@ -118,8 +110,6 @@ def _media_identity(
         pose_yaw=pose_yaw,
         pose_roll=pose_roll,
         quality_score=0.91,
-        age=age,
-        gender=gender,
         image_phash="abc123",
         created_at=datetime.now(tz=UTC),
     )
@@ -136,7 +126,7 @@ def test_face_detection_field_set_is_pinned() -> None:
 
 
 def test_face_detection_accepts_none_optional_metadata() -> None:
-    """CHAR: degrade path — optional pose/age/gender/embedding may be None."""
+    """CHAR: degrade path — optional pose/embedding may be None."""
     detection = FaceDetection(
         media_id="media-1",
         bbox=(0, 0, 10, 10),
@@ -145,8 +135,6 @@ def test_face_detection_accepts_none_optional_metadata() -> None:
         pose_pitch=None,
         pose_yaw=None,
         pose_roll=None,
-        age=None,
-        gender=None,
         image_phash=None,
         landmark_quality=None,
     )
@@ -154,8 +142,6 @@ def test_face_detection_accepts_none_optional_metadata() -> None:
     assert detection.pose_pitch is None
     assert detection.pose_yaw is None
     assert detection.pose_roll is None
-    assert detection.age is None
-    assert detection.gender is None
 
 
 # ---------------------------------------------------------------------------
@@ -195,29 +181,29 @@ async def test_stub_embedding_generator_produces_shape_512() -> None:
 
 
 def test_serialize_identity_key_set_and_bbox_keys() -> None:
-    """CHAR: export _serialize_identity exact keys incl. age/gender + bbox x/y/width/height."""
+    """CHAR: export _serialize_identity exact keys + bbox x/y/width/height (no age/gender)."""
     service = TenantExportService(session=cast(AsyncSession, SimpleNamespace()))
-    identity = _media_identity(age=33, gender=1, pose_pitch=1.0, pose_yaw=2.0, pose_roll=3.0)
+    identity = _media_identity(pose_pitch=1.0, pose_yaw=2.0, pose_roll=3.0)
 
     payload = service._serialize_identity(identity)
 
     assert set(payload.keys()) == EXPORT_IDENTITY_KEYS
     assert set(cast(dict[str, object], payload["bbox"]).keys()) == EXPORT_BBOX_KEYS
-    assert payload["age"] == 33
-    assert payload["gender"] == 1
+    assert "age" not in payload
+    assert "gender" not in payload
     assert payload["bbox"] == {"x": 10, "y": 20, "width": 30, "height": 40}
 
 
 def test_serialize_identity_degrade_optional_none() -> None:
-    """CHAR: export path preserves None for optional pose/age/gender fields."""
+    """CHAR: export path preserves None for optional pose fields."""
     service = TenantExportService(session=cast(AsyncSession, SimpleNamespace()))
-    identity = _media_identity(age=None, gender=None, pose_pitch=None, pose_yaw=None, pose_roll=None)
+    identity = _media_identity(pose_pitch=None, pose_yaw=None, pose_roll=None)
 
     payload = service._serialize_identity(identity)
 
     assert set(payload.keys()) == EXPORT_IDENTITY_KEYS
-    assert payload["age"] is None
-    assert payload["gender"] is None
+    assert "age" not in payload
+    assert "gender" not in payload
     assert payload["pose_pitch"] is None
     assert payload["pose_yaw"] is None
     assert payload["pose_roll"] is None
@@ -248,8 +234,8 @@ class _StubSession:
 
 @pytest.mark.asyncio
 async def test_debug_metrics_base_key_set_and_pose_subkeys() -> None:
-    """CHAR: debug_metrics base keys (no cluster) incl. age/gender + pose pitch/yaw/roll."""
-    identity = _media_identity(age=40, gender=1, pose_pitch=5.0, pose_yaw=-3.0, pose_roll=1.5)
+    """CHAR: debug_metrics base keys (no cluster) + pose pitch/yaw/roll; no age/gender."""
+    identity = _media_identity(pose_pitch=5.0, pose_yaw=-3.0, pose_roll=1.5)
     row = SimpleNamespace(
         MediaIdentity=identity,
         cluster_id=None,
@@ -266,14 +252,14 @@ async def test_debug_metrics_base_key_set_and_pose_subkeys() -> None:
     pose = cast(dict[str, object], debug["pose"])
     assert set(pose.keys()) == DEBUG_POSE_KEYS
     assert pose == {"pitch": 5.0, "yaw": -3.0, "roll": 1.5}
-    assert debug["age"] == 40.0
-    assert debug["gender"] == "male"
+    assert "age" not in debug
+    assert "gender" not in debug
 
 
 @pytest.mark.asyncio
 async def test_debug_metrics_degrade_optional_none() -> None:
-    """CHAR: when pose/age/gender are None, debug_metrics coerces age→0, pose→0, gender→female."""
-    identity = _media_identity(age=None, gender=None, pose_pitch=None, pose_yaw=None, pose_roll=None)
+    """CHAR: when pose is None, debug_metrics coerces pose→0; age/gender absent."""
+    identity = _media_identity(pose_pitch=None, pose_yaw=None, pose_roll=None)
     row = SimpleNamespace(
         MediaIdentity=identity,
         cluster_id=None,
@@ -289,5 +275,5 @@ async def test_debug_metrics_degrade_optional_none() -> None:
     pose = cast(dict[str, object], debug["pose"])
     assert set(pose.keys()) == DEBUG_POSE_KEYS
     assert pose == {"pitch": 0.0, "yaw": 0.0, "roll": 0.0}
-    assert debug["age"] == 0.0
-    assert debug["gender"] == "female"
+    assert "age" not in debug
+    assert "gender" not in debug

@@ -35,8 +35,6 @@ def _adapter_face(
     bbox: tuple[int, int, int, int] = (10, 20, 100, 150),
     confidence: float = 0.95,
     pose: tuple[float, float, float] | None = (5.0, -3.0, 1.0),
-    age: int | None = 30,
-    gender: int | None = 1,
 ) -> FaceDetection:
     """Build a FaceDetection as returned by InsightFaceAdapter (media_id filled later)."""
     pose_pitch = pose[0] if pose else None
@@ -50,8 +48,6 @@ def _adapter_face(
         pose_pitch=pose_pitch,
         pose_yaw=pose_yaw,
         pose_roll=pose_roll,
-        age=age,
-        gender=gender,
         model_id="buffalo_l@insightface",
     )
 
@@ -141,8 +137,6 @@ class TestInsightFaceFaceDetector:
         assert detections[0].confidence == 0.95
         assert detections[0].embedding is not None
         assert detections[0].pose_pitch == 5.0
-        assert detections[0].age == 30
-        assert detections[0].gender == 1
         assert detections[0].model_id == "buffalo_l@insightface"
         assert detections[0].landmark_quality is not None
         assert 0.0 <= detections[0].landmark_quality <= 1.0
@@ -151,7 +145,7 @@ class TestInsightFaceFaceDetector:
     async def test_fetches_url_sources(self) -> None:
         """URL sources should be fetched and processed."""
         mock_adapter = MagicMock()
-        mock_face = _adapter_face(pose=None, age=None, gender=None)
+        mock_face = _adapter_face(pose=None)
         mock_adapter.detect_faces = AsyncMock(return_value=[mock_face])
 
         detector = InsightFaceFaceDetector(mock_adapter)
@@ -182,7 +176,7 @@ class TestInsightFaceFaceDetector:
     async def test_uses_shared_client_when_provided(self) -> None:
         """Should use provided AsyncClient instead of creating a new one."""
         mock_adapter = MagicMock()
-        mock_face = _adapter_face(pose=None, age=None, gender=None)
+        mock_face = _adapter_face(pose=None)
         mock_adapter.detect_faces = AsyncMock(return_value=[mock_face])
 
         mock_response = MagicMock()
@@ -213,15 +207,11 @@ class TestInsightFaceFaceDetector:
             bbox=(10, 10, 50, 50),
             confidence=0.9,
             pose=(1.0, 2.0, 3.0),
-            age=25,
-            gender=0,
         )
         mock_face2 = _adapter_face(
             bbox=(100, 100, 150, 150),
             confidence=0.85,
             pose=(-1.0, -2.0, -3.0),
-            age=35,
-            gender=1,
         )
         mock_adapter.detect_faces = AsyncMock(return_value=[mock_face1, mock_face2])
 

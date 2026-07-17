@@ -47,8 +47,6 @@ def _face_detection(
         pose_pitch=None,
         pose_yaw=None,
         pose_roll=None,
-        age=None,
-        gender=None,
         model_id="buffalo_l@insightface",
     )
 

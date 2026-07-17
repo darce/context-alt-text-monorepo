@@ -77,8 +77,8 @@ def _compute_detection_quality(
 class FaceDetection:
     """Neutral detection/embedding seam type (model-agnostic).
 
-    Pose/age/gender remain optional until FIR-2 S4 contract change.
-    ``model_id`` is stamped by the producing adapter from EmbeddingModelManifest.
+    Age/gender removed (FIR-2 S4). Pose angles remain for quality scoring and
+    clustering maturity; ``model_id`` is stamped by the producing adapter.
     """
 
     media_id: str
@@ -89,8 +89,6 @@ class FaceDetection:
     pose_pitch: float | None = None
     pose_yaw: float | None = None
     pose_roll: float | None = None
-    age: int | None = None
-    gender: int | None = None  # 0=female, 1=male
     image_phash: str | None = None
     landmark_quality: float | None = None
     model_id: str = ""

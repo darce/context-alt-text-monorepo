@@ -22,6 +22,7 @@ async def test_log_decision_emits_recognition_event(db_session, tenant) -> None:
         bbox_height=10,
         confidence=0.99,
         embedding=[0.0] * 512,
+        embedding_model="buffalo_l@insightface",
     )
     cluster = IdentityCluster(tenant_id=tenant.id, label=None, user_confirmed=False, identity_count=0)
     db_session.add_all([identity, cluster])

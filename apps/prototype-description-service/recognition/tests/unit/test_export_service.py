@@ -48,6 +48,7 @@ async def test_export_service_returns_portable_payload_and_records_audit_events(
         bbox_height=40,
         confidence=0.97,
         embedding=_unit_embedding(),
+        embedding_model="buffalo_l@insightface",
         pose_pitch=1.0,
         pose_yaw=2.0,
         pose_roll=3.0,
@@ -67,6 +68,7 @@ async def test_export_service_returns_portable_payload_and_records_audit_events(
         bbox_height=41,
         confidence=0.98,
         embedding=_unit_embedding(),
+        embedding_model="buffalo_l@insightface",
         disposed_at=datetime.now(tz=UTC),
     )
     cluster = IdentityCluster(
@@ -268,6 +270,7 @@ async def test_export_service_omits_disposed_nested_cluster_state(db_session, te
                 bbox_height=4,
                 confidence=0.99,
                 embedding=_unit_embedding(),
+                embedding_model="buffalo_l@insightface",
             ),
             MediaIdentity(
                 id=disposed_identity_id,
@@ -280,6 +283,7 @@ async def test_export_service_omits_disposed_nested_cluster_state(db_session, te
                 bbox_height=8,
                 confidence=0.91,
                 embedding=_unit_embedding(),
+                embedding_model="buffalo_l@insightface",
                 disposed_at=datetime.now(tz=UTC),
             ),
             IdentityCluster(

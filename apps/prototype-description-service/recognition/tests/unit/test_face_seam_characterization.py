@@ -113,6 +113,7 @@ def _media_identity(
         bbox_height=40,
         confidence=0.97,
         embedding=_unit_embedding(),
+        embedding_model="buffalo_l@insightface",
         pose_pitch=pose_pitch,
         pose_yaw=pose_yaw,
         pose_roll=pose_roll,

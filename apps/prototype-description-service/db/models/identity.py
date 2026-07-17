@@ -56,6 +56,8 @@ class MediaIdentity(Base):
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
 
     embedding: Mapped[list[float]] = mapped_column(Vector(_DB_SETTINGS.pgvector_dimension), nullable=False)
+    # Provenance of the embedding vector (manifest model_id). NOT NULL, no default.
+    embedding_model: Mapped[str] = mapped_column(Text, nullable=False)
 
     # InsightFace metadata
     pose_pitch: Mapped[float | None] = mapped_column(Float, nullable=True)

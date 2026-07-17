@@ -314,6 +314,7 @@ class ScanService:
             old_row.bbox_height = int(det.bbox[3] - det.bbox[1])
             old_row.confidence = float(det.confidence)
             old_row.embedding = det.embedding.tolist()
+            old_row.embedding_model = det.model_id
             old_row.pose_pitch = det.pose_pitch
             old_row.pose_yaw = det.pose_yaw
             old_row.pose_roll = det.pose_roll
@@ -343,6 +344,7 @@ class ScanService:
                     bbox_height=int(det.bbox[3] - det.bbox[1]),
                     confidence=float(det.confidence),
                     embedding=det.embedding.tolist(),
+                    embedding_model=det.model_id,
                     pose_pitch=det.pose_pitch,
                     pose_yaw=det.pose_yaw,
                     pose_roll=det.pose_roll,

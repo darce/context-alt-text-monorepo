@@ -96,8 +96,29 @@ Added 2026-07-16 per operator decision: explicit content is measured and tuned i
   provenance private + `publishable=False` + tenant-scoped; pairwise labeling by
   **authorized reviewers only**; upload/consent policy is the operator's, the
   describer only describes what is submitted.
-- **Deferred**: separate bake-off, later. Scoped now so tenant-isolation is
-  designed in, not retrofitted.
+- **Also the test ground for COCO-marker + multilayered scene description
+  (E22 / insightface replacement).** Beyond VLM prompting, the explicit corpus
+  is where the detection-grounded, layered scene-description architecture gets
+  exercised — because pose, region, and spatial grounding matter most there:
+  - **COCO markers** = object/region/keypoint (pose) detections in COCO format
+    from the rebuilt non-face detection layer (RF-DETR SOTA-COCO / OWLv2 open-
+    vocab; `segmentation-vlm-pipeline-feasibility-2026-06-15.md`), grounding what
+    the describer asserts. For explicit content, pose keypoints + region boxes
+    give the accurate anatomical/spatial structure the register demands.
+  - **Multilayered approach** = the tiered composition from
+    `caption-context-enrichment-assessment-2026-07-05.md` §3: scene-level
+    orientation first → regional groupings → fine detail, with **constrain-then-
+    map** naming (detectors emit only roster-checkable tokens; names mapped
+    deterministically at merge; never generated) and the CPU-cheap verification
+    layer (ghosting probe / geometric consistency) as anti-fabrication gates.
+  - So this corpus does double duty: it stress-tests the **accurate register**
+    (VLM prompting) *and* the **detection-grounded layered synthesis** the E22
+    face-pipeline replacement introduces — the two are complementary (markers
+    ground the register's accuracy claims, the register turns markers into faithful
+    prose). The insightface replacement supplies the marker layer; DESCQUAL-1's
+    judge/pairwise measures whether the layered output is actually better.
+- **Deferred**: separate bake-off, later. Scoped now so tenant-isolation **and
+  marker/tier awareness** are designed in, not retrofitted.
 
 ## Constraints / risks
 

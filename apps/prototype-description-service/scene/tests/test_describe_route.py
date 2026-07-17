@@ -311,6 +311,7 @@ def _seed_confirmed_identity(label="Daniel", *, media_id=42, roster_id=None, sup
             bbox_height=20,
             confidence=0.97,
             embedding=[1.0] + [0.0] * (_DB_SETTINGS.pgvector_dimension - 1),
+            embedding_model="buffalo_l@insightface",
         )
         cluster = IdentityCluster(
             tenant_id=uuid.UUID(TENANT_ID),

@@ -47,6 +47,7 @@ async def test_retention_export_then_purge_all_records_audit_and_clears_machine_
         bbox_height=21,
         confidence=0.97,
         embedding=_unit_embedding(),
+        embedding_model="buffalo_l@insightface",
     )
     cluster = IdentityCluster(
         tenant_id=tenant.id,
@@ -164,6 +165,7 @@ async def test_dispose_after_ack_then_purge_disposed_only_removes_acknowledged_s
         bbox_height=10,
         confidence=0.98,
         embedding=_unit_embedding(),
+        embedding_model="buffalo_l@insightface",
     )
     exported_cluster = IdentityCluster(
         tenant_id=tenant.id,
@@ -256,6 +258,7 @@ async def test_dispose_after_ack_then_purge_disposed_only_removes_acknowledged_s
         bbox_height=12,
         confidence=0.97,
         embedding=_unit_embedding(),
+        embedding_model="buffalo_l@insightface",
     )
     surviving_cluster = IdentityCluster(
         tenant_id=tenant.id,

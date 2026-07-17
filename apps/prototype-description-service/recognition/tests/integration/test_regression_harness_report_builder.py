@@ -20,6 +20,7 @@ async def test_generate_canonical_report_includes_labeled_clusters(db_session, t
         bbox_height=40,
         confidence=0.99,
         embedding=[0.0] * 512,
+        embedding_model="buffalo_l@insightface",
     )
     identity_2 = MediaIdentity(
         tenant_id=tenant.id,
@@ -31,6 +32,7 @@ async def test_generate_canonical_report_includes_labeled_clusters(db_session, t
         bbox_height=41,
         confidence=0.98,
         embedding=[0.1] * 512,
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add_all([identity_1, identity_2])
     await db_session.commit()

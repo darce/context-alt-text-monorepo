@@ -325,6 +325,8 @@ def ensure_tables(op) -> None:
         sa.Column("bbox_height", sa.Integer(), nullable=False),
         sa.Column("confidence", sa.Float(), nullable=False),
         sa.Column("embedding", Vector(EMBEDDING_DIMENSION), nullable=False),
+        # Embedding provenance: required, no default (missing must fail closed — RLSE-05).
+        sa.Column("embedding_model", sa.Text(), nullable=False),
         # InsightFace metadata
         sa.Column("pose_pitch", sa.Float(), nullable=True),
         sa.Column("pose_yaw", sa.Float(), nullable=True),

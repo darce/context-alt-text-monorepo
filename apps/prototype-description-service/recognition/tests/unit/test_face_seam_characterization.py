@@ -16,7 +16,6 @@ from types import SimpleNamespace
 from typing import Any, cast
 from uuid import uuid4
 
-import numpy as np
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,11 +23,11 @@ from db.models.identity import MediaIdentity
 from recognition.application.embedding.detector import FaceDetection
 from recognition.application.embedding.generator import EmbeddingResult, StubEmbeddingGenerator
 from recognition.application.services.export_service import TenantExportService
-from recognition.infrastructure.embeddings import DetectedFace
 from recognition.interface_adapters.http.deps.stores import MediaIdentityService
 
 # --- Expected field / key sets (pinned to current producers) ---
 
+# S2b deliberate pin update: FaceDetection gains model_id; DetectedFace deleted.
 FACE_DETECTION_FIELDS = frozenset(
     {
         "media_id",
@@ -42,18 +41,7 @@ FACE_DETECTION_FIELDS = frozenset(
         "gender",
         "image_phash",
         "landmark_quality",
-    }
-)
-
-DETECTED_FACE_FIELDS = frozenset(
-    {
-        "bbox",
-        "confidence",
-        "embedding_512",
-        "pose",
-        "age",
-        "gender",
-        "landmarks",
+        "model_id",
     }
 )
 
@@ -170,31 +158,8 @@ def test_face_detection_accepts_none_optional_metadata() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 2. Infrastructure: DetectedFace (dataclass only — no InsightFace load)
+# 2. (S2b) DetectedFace inventory deleted — class removed; FaceDetection is sole seam
 # ---------------------------------------------------------------------------
-
-
-def test_detected_face_field_set_is_pinned() -> None:
-    """CHAR: DetectedFace exact field set (embedding_512 + pose/age/gender)."""
-    assert {f.name for f in fields(DetectedFace)} == DETECTED_FACE_FIELDS
-
-
-def test_detected_face_accepts_none_optional_metadata() -> None:
-    """CHAR: degrade path — pose/age/gender/landmarks may be None."""
-    face = DetectedFace(
-        bbox=(1, 2, 3, 4),
-        confidence=0.9,
-        embedding_512=np.zeros(512, dtype=np.float32),
-        pose=None,
-        age=None,
-        gender=None,
-        landmarks=None,
-    )
-    assert face.embedding_512.shape == (512,)
-    assert face.pose is None
-    assert face.age is None
-    assert face.gender is None
-    assert face.landmarks is None
 
 
 # ---------------------------------------------------------------------------

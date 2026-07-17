@@ -67,6 +67,11 @@ from .report import EVAL_MODES
 from .schema import SCHEMA, DocKind
 
 _CAPTION_MAX_TOKENS = 512
+# Pass-1 emits a full facts JSON including ``legible_text`` (verbatim in-image text),
+# which is unbounded on text-dense images (screenshots, posters). At the caption
+# budget it truncates mid-string -> PassOneJSONError; give the structured pass its
+# own larger budget so the JSON closes (the 646-corpus run lost 5 items this way).
+_PASS1_MAX_TOKENS = 1536
 _CONTEXT_BEGIN = "<<<CONTEXT>>>"
 _CONTEXT_END = "<<<END_CONTEXT>>>"
 _FACTS_BEGIN = "<<<FACTS>>>"
@@ -475,6 +480,7 @@ class BakeoffClient(RemoteSceneClient):
                 ],
                 pass_name="describe_facts",
                 passes=passes,
+                max_tokens=_PASS1_MAX_TOKENS,
             )
             _parse_pass1_json(facts_raw)  # malformed pass-1 JSON => typed per-item failure
             caption = self._timed_chat(
@@ -612,9 +618,18 @@ class BakeoffClient(RemoteSceneClient):
         """ALTQ-1 Slice 3: pass-2 replay messages WITHOUT the image part (CPU synthesis cell)."""
         return self._weave_messages(facts_raw, context_pack, image_part=None)
 
-    def _timed_chat(self, messages: list[dict[str, Any]], *, pass_name: str, passes: list[dict[str, Any]]) -> str:
+    def _timed_chat(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        pass_name: str,
+        passes: list[dict[str, Any]],
+        max_tokens: int = _CAPTION_MAX_TOKENS,
+    ) -> str:
         """One greedy chat completion; appends {pass, raw, latency_s} so the A/B
-        bench can attribute per-pass latency (raw=None on failure)."""
+        bench can attribute per-pass latency (raw=None on failure). ``max_tokens``
+        defaults to the caption budget; the structured pass-1 raises it so a
+        fact-dense JSON never truncates mid-string (PassOneJSONError)."""
         started = time.monotonic()
         try:
             payload = self._request_dict(
@@ -623,7 +638,7 @@ class BakeoffClient(RemoteSceneClient):
                 json={
                     "model": self.model_id,
                     "temperature": 0,
-                    "max_tokens": _CAPTION_MAX_TOKENS,
+                    "max_tokens": max_tokens,
                     "messages": messages,
                 },
             )

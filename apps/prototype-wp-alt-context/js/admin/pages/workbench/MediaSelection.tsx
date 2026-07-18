@@ -19,13 +19,23 @@ import { DESCRIBE_RUN_STATUS, type DescribeRunStatus } from '../../api/describeA
 import { isCooldownSignal } from '../../utils/retryPolicy';
 import { useWorkbenchMediaContext } from './WorkbenchMediaContext';
 import { SYNC_VOCABULARY } from './syncPresentation';
+import { selectMediaFooterCtaState } from './mediaFooterCtaState';
 
 interface MediaSelectionProps {
   collapsed?: boolean;
   onExpand?: () => void;
+  /**
+   * §7: a review card / label / review panel primary is on screen. When true the
+   * card owns the single viewport accent primary, so both footer CTAs step down.
+   */
+  reviewActive?: boolean;
 }
 
-export const MediaSelection = ({ collapsed = false, onExpand }: MediaSelectionProps): React.JSX.Element => {
+export const MediaSelection = ({
+  collapsed = false,
+  onExpand,
+  reviewActive = false,
+}: MediaSelectionProps): React.JSX.Element => {
   const { selection: mediaSelection, filters, mediaQueue } = useWorkbenchMediaContext();
   // RES-15: container owns offline signal; BulkDescribeCta is pure presentational.
   const offline = useSyncOffline();
@@ -84,6 +94,10 @@ export const MediaSelection = ({ collapsed = false, onExpand }: MediaSelectionPr
     : identityQuery.isError
       ? __('Unable to load identity data.', 'alt-context')
       : null;
+
+  // §7 media-footer CTA hierarchy: a per-state selector resolves the SINGLE
+  // accent primary across the footer, reconciled against the review card.
+  const footerCta = selectMediaFooterCtaState({ reviewActive, describeRunning: isDescribeRunning });
 
   if (collapsed) {
     return <MediaSummaryBar onExpand={onExpand ?? (() => undefined)} />;
@@ -149,9 +163,9 @@ export const MediaSelection = ({ collapsed = false, onExpand }: MediaSelectionPr
             progress={describeProgress}
             isPanelVisible={isDescribePanelVisible}
             errorMessage={bulkDescribe.submit.error?.message ?? bulkDescribe.cancel.error?.message ?? null}
-            remoteActionDisabled={remoteGate.disabled}
             remoteActionTitle={remoteGate.title}
             remoteActionAriaDisabled={remoteGate['aria-disabled']}
+            accentPrimary={footerCta.accentOwner === 'describe'}
             onSubmit={() => {
               if (offline) {
                 return;
@@ -167,7 +181,7 @@ export const MediaSelection = ({ collapsed = false, onExpand }: MediaSelectionPr
             onDismiss={() => setDismissedRunId(activeDescribeRunId)}
             onRetryPolling={() => describeProgress.retry()}
           />
-          <MediaAnalyzeCta />
+          <MediaAnalyzeCta accentPrimary={footerCta.accentOwner === 'analyze'} />
         </div>
       </div>
       {detailStatusMessage && (
@@ -266,6 +280,9 @@ const MediaSelectionToolbar = ({
   </div>
 );
 
+/** aria-describedby target for the §7 offline reason on the describe submit CTA. */
+const DESCRIBE_OFFLINE_REASON_ID = 'acx-describe-offline-reason';
+
 interface BulkDescribeCtaProps {
   selectedCount: number;
   isSubmitting: boolean;
@@ -275,10 +292,14 @@ interface BulkDescribeCtaProps {
   progress: DescribeRunProgress;
   isPanelVisible: boolean;
   errorMessage: string | null;
-  /** Remote-compute offline gate (RES-15) — never applied to cancel. */
-  remoteActionDisabled?: boolean;
+  /**
+   * Remote-compute offline gate (RES-15). §7: aria-disabled only (still focusable,
+   * reason via aria-describedby) — never HTML `disabled`. Never applied to cancel.
+   */
   remoteActionTitle?: string;
   remoteActionAriaDisabled?: true;
+  /** §7 accent ownership: mark the describe surface as the single accent primary. */
+  accentPrimary?: boolean;
   onSubmit: () => void;
   onCancel: () => void;
   onDismiss: () => void;
@@ -295,9 +316,9 @@ export const BulkDescribeCta = ({
   progress,
   isPanelVisible,
   errorMessage,
-  remoteActionDisabled = false,
   remoteActionTitle,
   remoteActionAriaDisabled,
+  accentPrimary = false,
   onSubmit,
   onCancel,
   onDismiss,
@@ -307,20 +328,30 @@ export const BulkDescribeCta = ({
   // Cannot cancel an errored/finished run — offer to clear the panel instead so a
   // new run can start from the terminal state (FE-01, rg-003).
   const canDismiss = isPanelVisible && (progress.isTerminal || progress.isError);
+  const offlineGated = Boolean(remoteActionAriaDisabled);
 
   return (
-    <div className="acx-media-selection__bulk-describe">
+    <div
+      className="acx-media-selection__bulk-describe"
+      {...(accentPrimary ? { 'data-acx-accent-primary': true } : {})}
+    >
       <div className="acx-media-selection__bulk-describe-actions">
         <button
           type="button"
           className="button"
-          disabled={selectedCount === 0 || isSubmitting || isRunning || remoteActionDisabled}
+          disabled={selectedCount === 0 || isSubmitting || isRunning}
           aria-disabled={remoteActionAriaDisabled}
+          aria-describedby={offlineGated ? DESCRIBE_OFFLINE_REASON_ID : undefined}
           title={remoteActionTitle}
           onClick={onSubmit}
         >
           {isSubmitting ? SYNC_VOCABULARY.describeStarting : __('Describe selected', 'alt-context')}
         </button>
+        {offlineGated && remoteActionTitle ? (
+          <span id={DESCRIBE_OFFLINE_REASON_ID} className="screen-reader-text">
+            {remoteActionTitle}
+          </span>
+        ) : null}
         {canCancel ? (
           <button type="button" className="button button-link" disabled={isCancelling} onClick={onCancel}>
             {isCancelling ? __('Cancelling…', 'alt-context') : __('Cancel describe run', 'alt-context')}

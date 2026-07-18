@@ -90,17 +90,36 @@ describe('MediaAnalyzeCta', () => {
     expect(screen.getByRole('button', { name: 'Clustering identities…' })).toBeDisabled();
   });
 
-  it('disables analyze with offline reason when breaker is open', async () => {
+  it('gates analyze with aria-disabled + a reason when offline (§7: never HTML disabled)', async () => {
     offline = true;
     selectedMedia = [{ id: 11 }];
     render(<MediaAnalyzeCta />);
 
     const button = screen.getByRole('button', { name: 'Analyze selected media' });
-    expect(button).toBeDisabled();
-    expect(button).toHaveAttribute('title', 'Unavailable while the recognition service is offline');
+    // §7 offline row: still focusable (not HTML disabled), reason reachable.
+    expect(button).not.toBeDisabled();
     expect(button).toHaveAttribute('aria-disabled', 'true');
+    expect(button).toHaveAttribute('title', 'Unavailable while the recognition service is offline');
+    const reasonId = button.getAttribute('aria-describedby');
+    expect(reasonId).toBeTruthy();
+    expect(document.getElementById(reasonId ?? '')).toHaveTextContent(
+      'Unavailable while the recognition service is offline',
+    );
     await userEvent.click(button);
     expect(scan).not.toHaveBeenCalled();
+  });
+
+  it('renders the accent-primary marker only in the primary variant (§7 hierarchy)', () => {
+    selectedMedia = [{ id: 11 }];
+    const { rerender } = render(<MediaAnalyzeCta accentPrimary />);
+    let button = screen.getByRole('button', { name: 'Analyze selected media' });
+    expect(button).toHaveAttribute('data-acx-accent-primary', 'true');
+    expect(button.className).not.toContain('acx-apply-panel__scan--secondary');
+
+    rerender(<MediaAnalyzeCta accentPrimary={false} />);
+    button = screen.getByRole('button', { name: 'Analyze selected media' });
+    expect(button).not.toHaveAttribute('data-acx-accent-primary');
+    expect(button.className).toContain('acx-apply-panel__scan--secondary');
   });
 
   it('enables analyze when online with selection', () => {

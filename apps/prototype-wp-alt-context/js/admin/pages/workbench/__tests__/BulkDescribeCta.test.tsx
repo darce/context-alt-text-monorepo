@@ -69,24 +69,36 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
     expect(screen.getByText('Describe service unavailable')).toBeInTheDocument();
   });
 
-  it('disables submit with offline reason when remoteActionDisabled', async () => {
+  it('gates submit with aria-disabled + a reason when offline (§7: never HTML disabled)', () => {
     const onSubmit = vi.fn();
     render(
       <BulkDescribeCta
         {...baseProps}
         onSubmit={onSubmit}
-        remoteActionDisabled
         remoteActionAriaDisabled
         remoteActionTitle="Unavailable while the recognition service is offline"
       />,
     );
 
     const button = screen.getByRole('button', { name: 'Describe selected' });
-    expect(button).toBeDisabled();
-    expect(button).toHaveAttribute('title', 'Unavailable while the recognition service is offline');
+    // §7 offline row: still focusable (not HTML disabled), reason reachable.
+    expect(button).not.toBeDisabled();
     expect(button).toHaveAttribute('aria-disabled', 'true');
-    await userEvent.click(button);
-    expect(onSubmit).not.toHaveBeenCalled();
+    expect(button).toHaveAttribute('title', 'Unavailable while the recognition service is offline');
+    const reasonId = button.getAttribute('aria-describedby');
+    expect(reasonId).toBeTruthy();
+    expect(document.getElementById(reasonId ?? '')).toHaveTextContent(
+      'Unavailable while the recognition service is offline',
+    );
+    // The onSubmit prop itself guards offline in the container (if (offline) return).
+  });
+
+  it('marks the describe surface as the accent primary only when it owns the footer accent (§7)', () => {
+    const { rerender, container } = render(<BulkDescribeCta {...baseProps} accentPrimary />);
+    expect(container.querySelectorAll('[data-acx-accent-primary]')).toHaveLength(1);
+
+    rerender(<BulkDescribeCta {...baseProps} accentPrimary={false} />);
+    expect(container.querySelectorAll('[data-acx-accent-primary]')).toHaveLength(0);
   });
 
   it('enables submit when online with selection', async () => {
@@ -175,7 +187,6 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
         runId="run-1"
         progress={progress}
         isPanelVisible
-        remoteActionDisabled
         remoteActionAriaDisabled
         remoteActionTitle="Unavailable while the recognition service is offline"
         onCancel={onCancel}

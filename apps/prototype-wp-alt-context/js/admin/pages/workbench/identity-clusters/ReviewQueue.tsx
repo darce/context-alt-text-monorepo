@@ -1,9 +1,9 @@
 /**
- * E21-5 Slice 1b — card-at-a-time review queue shell.
+ * E21-5 Slice 1b/2 — card-at-a-time review queue shell + immediate-commit hold.
  *
  * Renders exactly one review card + filter chips + N-of-M + prev/next.
  * Index is controlled (lifted to ScanTabContent); filter mirrored via kind props.
- * Reuses existing per-kind cards; mutations unchanged this slice.
+ * Accept/reject rides the Slice-2 hold/flush/gated-advance mutation choreography.
  */
 
 import React from 'react';
@@ -35,10 +35,13 @@ import {
 import { SuggestionCard, type FaceOriginalTarget, type ReviewSuggestion } from './SuggestionCards';
 import { TopClusterCard } from './TopClusterCard';
 import { useSuggestionReviewData } from './useSuggestionReviewData';
+import type { ScheduleCommitResult, SuggestionCommitKind } from './useSuggestionReviewMutations';
 import { useSuggestionReviewQueries } from './useSuggestionReviewQueries';
 import { useWorkbenchFindings } from './useWorkbenchFindings';
 
 const LOW_CONFIDENCE_THRESHOLD = 0.6;
+
+const HOLD_STATUS_COPY = __('Saving… — Undo', 'alt-context');
 
 export interface ReviewQueueHandle {
   focusCurrentCard: () => void;
@@ -231,10 +234,13 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     };
 
     const handlePrev = (): void => {
+      // BR-13: manual nav must not inherit a stale post-action focus arm.
+      clearAdvanceFocus();
       onIndexChange(prevQueueIndex(safeIndex, length));
     };
 
     const handleNext = (): void => {
+      clearAdvanceFocus();
       onIndexChange(nextQueueIndex(safeIndex, length));
     };
 
@@ -366,12 +372,21 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               nameById={nameById}
               topClustersById={topClustersById}
               isPending={data.isAnyMutationPending}
-              mutations={data.mutations}
+              hold={data.hold}
               onReview={onReview}
               onLabel={onLabel}
               onOpenOriginal={(target) => setLightbox(target)}
               markAdvanceFocus={markAdvanceFocus}
               clearAdvanceFocus={clearAdvanceFocus}
+              scheduleAccept={data.scheduleAccept}
+              scheduleReject={data.scheduleReject}
+              scheduleAcceptMerge={data.scheduleAcceptMerge}
+              scheduleRejectMerge={data.scheduleRejectMerge}
+              scheduleAcceptName={data.scheduleAcceptName}
+              scheduleRejectName={data.scheduleRejectName}
+              undoHold={data.undoHold}
+              retryFailure={data.retryFailure}
+              setHoldPaused={data.setHoldPaused}
             />
           )}
         </div>
@@ -401,13 +416,81 @@ interface CurrentCardProps {
   nameById: Map<string, PendingNameSuggestion>;
   topClustersById: Map<string, TopUnlabeledCluster>;
   isPending: boolean;
-  mutations: ReturnType<typeof useSuggestionReviewData>['mutations'];
+  hold: ReturnType<typeof useSuggestionReviewData>['hold'];
   onReview?: (clusterId: string) => void;
   onLabel?: (clusterId: string) => void;
   onOpenOriginal: (target: FaceOriginalTarget) => void;
   markAdvanceFocus: () => void;
   clearAdvanceFocus: () => void;
+  scheduleAccept: (suggestionId: string) => Promise<ScheduleCommitResult>;
+  scheduleReject: (suggestionId: string) => Promise<ScheduleCommitResult>;
+  scheduleAcceptMerge: (suggestionId: string) => Promise<ScheduleCommitResult>;
+  scheduleRejectMerge: (suggestionId: string) => Promise<ScheduleCommitResult>;
+  scheduleAcceptName: (suggestionId: string) => Promise<ScheduleCommitResult>;
+  scheduleRejectName: (suggestionId: string) => Promise<ScheduleCommitResult>;
+  undoHold: () => void;
+  retryFailure: () => Promise<ScheduleCommitResult> | null;
+  setHoldPaused: (paused: boolean) => void;
 }
+
+const holdMatchesCard = (
+  hold: CurrentCardProps['hold'],
+  kinds: readonly SuggestionCommitKind[],
+  suggestionId: string,
+): boolean =>
+  hold.suggestionId === suggestionId && hold.kind !== null && kinds.includes(hold.kind);
+
+/** Hold region: status announce + Undo; countdown pauses on focus/hover (A11Y-16). */
+const CommitHoldRegion = ({
+  phase,
+  errorMessage,
+  onUndo,
+  onRetry,
+  onPausedChange,
+}: {
+  phase: 'holding' | 'committing' | 'failed';
+  errorMessage: string | null;
+  onUndo: () => void;
+  onRetry: () => void;
+  onPausedChange: (paused: boolean) => void;
+}): React.JSX.Element => {
+  if (phase === 'failed') {
+    return (
+      <div className="acx-review-queue__failure" role="alert">
+        <p className="acx-review-queue__failure-message">
+          {errorMessage ?? __('Save failed. Retry to try again.', 'alt-context')}
+        </p>
+        <button type="button" className="button acx-review-queue__retry" onClick={onRetry}>
+          {__('Retry', 'alt-context')}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="acx-review-queue__hold"
+      role="status"
+      aria-live="polite"
+      onFocusCapture={() => onPausedChange(true)}
+      onBlurCapture={(event) => {
+        const related = event.relatedTarget;
+        if (!(related instanceof Node) || !event.currentTarget.contains(related)) {
+          onPausedChange(false);
+        }
+      }}
+      onPointerEnter={() => onPausedChange(true)}
+      onPointerLeave={() => onPausedChange(false)}
+    >
+      <span className="acx-review-queue__hold-message">{HOLD_STATUS_COPY}</span>
+      {phase === 'holding' ? (
+        <button type="button" className="button acx-review-queue__undo" onClick={onUndo}>
+          {__('Undo', 'alt-context')}
+        </button>
+      ) : null}
+    </div>
+  );
+};
 
 const CurrentCard = ({
   item,
@@ -416,21 +499,57 @@ const CurrentCard = ({
   nameById,
   topClustersById,
   isPending,
-  mutations,
+  hold,
   onReview,
   onLabel,
   onOpenOriginal,
   markAdvanceFocus,
   clearAdvanceFocus,
+  scheduleAccept,
+  scheduleReject,
+  scheduleAcceptMerge,
+  scheduleRejectMerge,
+  scheduleAcceptName,
+  scheduleRejectName,
+  undoHold,
+  retryFailure,
+  setHoldPaused,
 }: CurrentCardProps): React.JSX.Element | null => {
-  // BR-13: drop stale pending-focus when the mutation fails so a later key
-  // change (e.g. Next) does not surprise-focus.
-  const mutateWithAdvanceFocus = <TVariables,>(
-    mutate: (variables: TVariables, options?: { onError?: () => void }) => void,
-    variables: TVariables,
-  ): void => {
+  // Arm focus before the POST so removal→key-change can place it; clear on
+  // undo/failure (BR-13) so a later key change does not surprise-focus.
+  const runScheduled = (schedule: () => Promise<ScheduleCommitResult>): void => {
     markAdvanceFocus();
-    mutate(variables, { onError: clearAdvanceFocus });
+    void schedule().then((result) => {
+      if (result.outcome !== 'committed') {
+        clearAdvanceFocus();
+      }
+    });
+  };
+
+  const holdRegionFor = (kinds: readonly SuggestionCommitKind[], suggestionId: string) => {
+    if (!holdMatchesCard(hold, kinds, suggestionId)) {
+      return null;
+    }
+    if (hold.phase === 'idle') {
+      return null;
+    }
+    return (
+      <CommitHoldRegion
+        phase={hold.phase === 'failed' ? 'failed' : hold.phase === 'committing' ? 'committing' : 'holding'}
+        errorMessage={hold.errorMessage}
+        onUndo={undoHold}
+        onRetry={() => {
+          void retryFailure()?.then((result) => {
+            if (result.outcome === 'committed') {
+              markAdvanceFocus();
+            } else {
+              clearAdvanceFocus();
+            }
+          });
+        }}
+        onPausedChange={setHoldPaused}
+      />
+    );
   };
 
   switch (item.kind) {
@@ -451,6 +570,7 @@ const CurrentCard = ({
               item.label,
             )
           : null;
+      const assignmentHold = holdRegionFor(['accept', 'reject'], suggestion.suggestionId);
       return (
         <>
           {runHint ? <p className="acx-review-queue__run-hint">{runHint}</p> : null}
@@ -458,10 +578,10 @@ const CurrentCard = ({
             suggestion={suggestion}
             lowConfidenceThreshold={LOW_CONFIDENCE_THRESHOLD}
             onAccept={() => {
-              mutateWithAdvanceFocus(mutations.accept.mutate, suggestion.suggestionId);
+              runScheduled(() => scheduleAccept(suggestion.suggestionId));
             }}
             onReject={() => {
-              mutateWithAdvanceFocus(mutations.reject.mutate, suggestion.suggestionId);
+              runScheduled(() => scheduleReject(suggestion.suggestionId));
             }}
             onReview={(clusterId) => {
               if (onReview && clusterId) {
@@ -470,6 +590,8 @@ const CurrentCard = ({
             }}
             onOpenOriginal={onOpenOriginal}
             isPending={isPending}
+            actionAccessory={assignmentHold}
+            actionAccessoryAfter={hold.kind === 'reject' ? 'reject' : 'accept'}
           />
         </>
       );
@@ -481,18 +603,23 @@ const CurrentCard = ({
           <p className="acx-review-queue__empty">{__('This suggestion is no longer available.', 'alt-context')}</p>
         );
       }
+      const mergeHold = holdRegionFor(['acceptMerge', 'rejectMerge'], suggestion.id);
       return (
-        <MergeSuggestionCard
-          suggestion={suggestion}
-          onAccept={() => {
-            mutateWithAdvanceFocus(mutations.acceptMerge.mutate, suggestion.id);
-          }}
-          onReject={() => {
-            mutateWithAdvanceFocus(mutations.rejectMerge.mutate, suggestion.id);
-          }}
-          onOpenOriginal={onOpenOriginal}
-          isPending={mutations.acceptMerge.isPending || mutations.rejectMerge.isPending}
-        />
+        <>
+          <MergeSuggestionCard
+            suggestion={suggestion}
+            onAccept={() => {
+              runScheduled(() => scheduleAcceptMerge(suggestion.id));
+            }}
+            onReject={() => {
+              runScheduled(() => scheduleRejectMerge(suggestion.id));
+            }}
+            onOpenOriginal={onOpenOriginal}
+            isPending={isPending}
+            actionAccessory={mergeHold}
+            actionAccessoryAfter={hold.kind === 'acceptMerge' ? 'accept' : 'reject'}
+          />
+        </>
       );
     }
     case NEXT_ACTION_KIND.NAME: {
@@ -506,6 +633,8 @@ const CurrentCard = ({
         suggestion.confidence_score !== null &&
         suggestion.confidence_score !== undefined &&
         suggestion.confidence_score < LOW_CONFIDENCE_THRESHOLD;
+      const nameHold = holdRegionFor(['acceptName', 'rejectName'], suggestion.id);
+      const afterAccept = hold.kind === 'acceptName' || hold.kind === null;
       return (
         <div
           className="acx-suggestion-card acx-name-suggestion-card"
@@ -530,23 +659,25 @@ const CurrentCard = ({
             <button
               type="button"
               className="button button-primary acx-suggestion-card__accept"
-              disabled={mutations.acceptName.isPending || mutations.rejectName.isPending}
+              disabled={isPending}
               onClick={() => {
-                mutateWithAdvanceFocus(mutations.acceptName.mutate, suggestion.id);
+                runScheduled(() => scheduleAcceptName(suggestion.id));
               }}
             >
               {__('Accept', 'alt-context')}
             </button>
+            {afterAccept ? nameHold : null}
             <button
               type="button"
               className="button acx-suggestion-card__reject"
-              disabled={mutations.acceptName.isPending || mutations.rejectName.isPending}
+              disabled={isPending}
               onClick={() => {
-                mutateWithAdvanceFocus(mutations.rejectName.mutate, suggestion.id);
+                runScheduled(() => scheduleRejectName(suggestion.id));
               }}
             >
               {__('Reject', 'alt-context')}
             </button>
+            {!afterAccept ? nameHold : null}
           </div>
         </div>
       );

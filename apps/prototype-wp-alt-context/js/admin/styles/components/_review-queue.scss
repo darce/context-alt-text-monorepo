@@ -141,6 +141,39 @@
     font-size: var(--acx-text-xs);
     color: var(--acx-color-text-muted);
   }
+
+  /* Slice 2 — pre-commit hold + persistent failure */
+  &__hold,
+  &__failure {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--acx-space-8);
+    min-height: var(--acx-space-24);
+    font-size: var(--acx-text-sm);
+  }
+
+  &__hold {
+    color: var(--acx-color-text-secondary);
+  }
+
+  &__hold-message {
+    font-weight: var(--acx-font-weight-medium);
+  }
+
+  &__failure {
+    color: var(--acx-color-danger);
+  }
+
+  &__failure-message {
+    margin: 0;
+  }
+
+  &__undo,
+  &__retry {
+    min-width: var(--acx-space-24);
+    min-height: var(--acx-space-24);
+  }
 }
 
 /* ② Face crop control — ≥48×48 (FaceThumbnail size=md) */

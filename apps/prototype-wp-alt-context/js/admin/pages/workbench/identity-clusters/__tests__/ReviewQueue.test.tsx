@@ -19,6 +19,28 @@ import { queryKeys } from '../../../../api/queryKeys';
 import type { ReviewQueueKindParam } from '../../../../hooks/workbenchQueueUrl';
 import { ReviewQueue, type ReviewQueueHandle } from '../ReviewQueue';
 import { REVIEW_QUEUE_DRAIN_MESSAGE } from '../reviewQueueDriver';
+import { UNDO_HOLD_MS } from '../useSuggestionReviewMutations';
+
+/**
+ * Click an accept/reject control under fake setTimeout so the Slice-2 hold can
+ * expire deterministically without 5s wall-clock waits (promises stay real).
+ */
+const clickAndCommitHold = async (button: HTMLElement): Promise<void> => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    act(() => {
+      button.click();
+    });
+    // Hold should be open (Saving…); expire the window.
+    await act(async () => {
+      vi.advanceTimersByTime(UNDO_HOLD_MS);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  } finally {
+    vi.useRealTimers();
+  }
+};
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -240,9 +262,9 @@ describe('ReviewQueue', () => {
     });
     expect(screen.getByText('1 of 2')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'Yes' }));
+    await clickAndCommitHold(screen.getByRole('button', { name: 'Yes' }));
     await waitFor(() => {
-      expect(acceptSuggestion).toHaveBeenCalledWith('sugg-1', expect.anything());
+      expect(acceptSuggestion).toHaveBeenCalledWith('sugg-1');
     });
     // BR-08: index stays at head; next card occupies the slot after removal.
     await waitFor(() => {
@@ -287,14 +309,13 @@ describe('ReviewQueue', () => {
       }),
     );
 
-    const user = userEvent.setup();
     renderQueue();
 
     const yes = await screen.findByRole('button', { name: 'Yes' });
     yes.focus();
     expect(yes).toHaveFocus();
 
-    await user.click(yes);
+    await clickAndCommitHold(yes);
 
     await waitFor(() => {
       expect(acceptSuggestion).toHaveBeenCalled();
@@ -332,7 +353,6 @@ describe('ReviewQueue', () => {
     });
 
     const anchorRef = React.createRef<HTMLDivElement>();
-    const user = userEvent.setup();
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, retryDelay: 0 } },
     });
@@ -345,7 +365,7 @@ describe('ReviewQueue', () => {
       </QueryClientProvider>,
     );
 
-    await user.click(await screen.findByRole('button', { name: 'Yes' }));
+    await clickAndCommitHold(await screen.findByRole('button', { name: 'Yes' }));
 
     await waitFor(() => {
       expect(acceptSuggestion).toHaveBeenCalled();
@@ -437,19 +457,18 @@ describe('ReviewQueue', () => {
 
     const { queryClient } = renderQueue();
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
-    const user = userEvent.setup();
 
-    await user.click(await screen.findByRole('button', { name: 'Yes' }));
+    await clickAndCommitHold(await screen.findByRole('button', { name: 'Yes' }));
 
     await waitFor(() => {
-      expect(acceptSuggestion).toHaveBeenCalledWith('sugg-1', expect.anything());
+      expect(acceptSuggestion).toHaveBeenCalledWith('sugg-1');
     });
     await waitFor(() => {
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.projection.all });
     });
   });
 
-  it('fires reject mutation unchanged', async () => {
+  it('fires reject mutation after hold window', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [
         {
@@ -473,13 +492,12 @@ describe('ReviewQueue', () => {
       message: 'ok',
     });
 
-    const user = userEvent.setup();
     renderQueue();
 
-    await user.click(await screen.findByRole('button', { name: 'No' }));
+    await clickAndCommitHold(await screen.findByRole('button', { name: 'No' }));
 
     await waitFor(() => {
-      expect(rejectSuggestion).toHaveBeenCalledWith('sugg-1', expect.anything());
+      expect(rejectSuggestion).toHaveBeenCalledWith('sugg-1');
     });
   });
 
@@ -843,14 +861,16 @@ describe('ReviewQueue', () => {
 
     const yes = await screen.findByRole('button', { name: 'Yes' });
     yes.focus();
-    await user.click(yes);
+    await clickAndCommitHold(yes);
 
     await waitFor(() => {
       expect(acceptMergeSuggestion).toHaveBeenCalled();
     });
-    // Still on first merge card.
+    // Still on first merge card (failure leaves item at head).
     expect(screen.getByText('Are these the same person?')).toBeInTheDocument();
     expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    // Persistent failure alert.
+    expect(screen.getByRole('alert')).toBeInTheDocument();
 
     // Blur so a later surprise-focus is unambiguous.
     (document.activeElement as HTMLElement | null)?.blur();
@@ -887,10 +907,9 @@ describe('ReviewQueue', () => {
       message: 'ok',
     });
 
-    const user = userEvent.setup();
     renderQueue();
 
-    await user.click(await screen.findByRole('button', { name: 'Yes' }));
+    await clickAndCommitHold(await screen.findByRole('button', { name: 'Yes' }));
     await waitFor(() => {
       expect(acceptSuggestion).toHaveBeenCalled();
     });

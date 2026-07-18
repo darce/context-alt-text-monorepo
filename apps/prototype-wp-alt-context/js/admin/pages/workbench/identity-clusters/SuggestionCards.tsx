@@ -23,6 +23,9 @@ interface SuggestionCardProps {
   onOpenOriginal?: (target: FaceOriginalTarget) => void;
   isPending: boolean;
   lowConfidenceThreshold: number;
+  /** Slice-2 hold/failure chrome — placed immediately after the actioned control. */
+  actionAccessory?: React.ReactNode;
+  actionAccessoryAfter?: 'accept' | 'reject';
 }
 
 const FaceCropControl = ({
@@ -74,6 +77,8 @@ export const SuggestionCard = ({
   onOpenOriginal,
   isPending,
   lowConfidenceThreshold,
+  actionAccessory = null,
+  actionAccessoryAfter = 'accept',
 }: SuggestionCardProps): React.JSX.Element => {
   // buildSuggestionReviewItems guarantees a human-labeled target with truthy label (UXP-3-BR-22).
   const displayLabel = suggestion.label ?? '';
@@ -170,9 +175,11 @@ export const SuggestionCard = ({
         >
           {__('Yes', 'alt-context')}
         </button>
+        {actionAccessoryAfter === 'accept' ? actionAccessory : null}
         <button type="button" className="button acx-suggestion-card__reject" onClick={onReject} disabled={isPending}>
           {__('No', 'alt-context')}
         </button>
+        {actionAccessoryAfter === 'reject' ? actionAccessory : null}
         {onReview ? (
           <button
             type="button"

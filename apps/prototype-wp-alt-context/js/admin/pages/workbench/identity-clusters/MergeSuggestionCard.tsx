@@ -10,6 +10,9 @@ export interface MergeSuggestionCardProps {
   onReject: () => void;
   onOpenOriginal?: (target: FaceOriginalTarget) => void;
   isPending: boolean;
+  /** Slice-2 hold/failure chrome — placed immediately after the actioned control. */
+  actionAccessory?: React.ReactNode;
+  actionAccessoryAfter?: 'accept' | 'reject';
 }
 
 const FaceCropControl = ({
@@ -59,6 +62,8 @@ export const MergeSuggestionCard = ({
   onReject,
   onOpenOriginal,
   isPending,
+  actionAccessory = null,
+  actionAccessoryAfter = 'accept',
 }: MergeSuggestionCardProps): React.JSX.Element => {
   const matchPercent = Math.round(suggestion.similarity * 100);
   const clusterALabel = suggestion.cluster_a_label ?? __('Unnamed cluster', 'alt-context');
@@ -128,9 +133,11 @@ export const MergeSuggestionCard = ({
         >
           {__('Yes', 'alt-context')}
         </button>
+        {actionAccessoryAfter === 'accept' ? actionAccessory : null}
         <button type="button" className="button acx-suggestion-card__reject" onClick={onReject} disabled={isPending}>
           {__('No', 'alt-context')}
         </button>
+        {actionAccessoryAfter === 'reject' ? actionAccessory : null}
       </div>
     </div>
   );

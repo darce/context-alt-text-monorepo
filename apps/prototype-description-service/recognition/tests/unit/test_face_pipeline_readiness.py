@@ -260,6 +260,87 @@ def test_mtime_size_drift_triggers_reverify(tmp_path: Path, monkeypatch: pytest.
     assert "sface" in third.detail
 
 
+def test_license_only_drift_triggers_unhealthy_without_model_byte_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FINALB-04 [EMB-05][DRIFT-02][OBS-08]: LICENSE.sface drift invalidates readiness.
+
+    After one successful synthetic model+license verification, tampering or
+    deleting only the license file (model bytes untouched) must make the next
+    probe UNHEALTHY and name sface/license. Cache freshness must restat license
+    identity — not only model mtime/size — while still avoiding full model
+    rehash on every healthy probe when both artifacts are stable.
+    """
+    _align_dims_to_sface(monkeypatch)
+    _install_synthetic_pair(tmp_path, monkeypatch)
+    _stub_shared_runtime_loader(monkeypatch, tmp_path)
+
+    model_hash_calls = {"n": 0}
+    # Count full model-file sha256 via provenance helper used by load_verified_model.
+    import recognition.infrastructure.face_pipeline.provenance as prov_mod
+
+    real_sha = prov_mod._file_sha256
+
+    def _counting_sha(path: Path) -> str:
+        # Only count model ONNX hashes (not license) so healthy re-probes stay cheap.
+        if path.suffix == ".onnx" or path.name.endswith(".onnx"):
+            model_hash_calls["n"] += 1
+        return real_sha(path)
+
+    monkeypatch.setattr(prov_mod, "_file_sha256", _counting_sha)
+
+    first = health_mod.check_face_pipeline_models(tmp_path)
+    assert first.status.value == "ok", first.detail
+    hashes_after_first = model_hash_calls["n"]
+    assert hashes_after_first >= 2  # yunet + sface model bytes verified once
+
+    # Stable re-probe: model + license unchanged → must not rehash large model
+    # on every healthy hit (efficient cache intent preserved).
+    second = health_mod.check_face_pipeline_models(tmp_path)
+    assert second.status.value == "ok", second.detail
+    assert model_hash_calls["n"] == hashes_after_first, (
+        "healthy re-probe must not rehash model bytes when model+license identity "
+        f"is stable; hashes first={hashes_after_first} second={model_hash_calls['n']}"
+    )
+
+    # Tamper only LICENSE.sface — model ONNX bytes and mtime/size untouched.
+    sface_lic = tmp_path / MODEL_MANIFEST["sface"].license_file
+    assert sface_lic.is_file()
+    sface_model = tmp_path / MODEL_MANIFEST["sface"].file_name
+    model_before = sface_model.read_bytes()
+    sface_lic.write_bytes(sface_lic.read_bytes() + b"\n#tampered-license\n")
+
+    third = health_mod.check_face_pipeline_models(tmp_path)
+    assert third.status.value == "unhealthy", (
+        "license-only drift must flip readiness UNHEALTHY; "
+        f"got status={third.status.value!r} detail={third.detail!r}"
+    )
+    detail_l = third.detail.lower()
+    assert "sface" in detail_l, f"detail must name sface: {third.detail!r}"
+    assert "license" in detail_l, f"detail must name license: {third.detail!r}"
+    # Model bytes truly unchanged (contract is license identity, not model rewrite).
+    assert sface_model.read_bytes() == model_before
+
+    # Delete-only path: restore valid license then remove it entirely.
+    health_mod.reset_face_pipeline_verify_cache_for_tests()
+    _install_synthetic_pair(tmp_path, monkeypatch)  # rewrite clean pair
+    _stub_shared_runtime_loader(monkeypatch, tmp_path)
+    ok_again = health_mod.check_face_pipeline_models(tmp_path)
+    assert ok_again.status.value == "ok", ok_again.detail
+
+    lic_path = tmp_path / MODEL_MANIFEST["sface"].license_file
+    model_path = tmp_path / MODEL_MANIFEST["sface"].file_name
+    model_snapshot = model_path.read_bytes()
+    lic_path.unlink()
+    assert model_path.read_bytes() == model_snapshot
+
+    deleted = health_mod.check_face_pipeline_models(tmp_path)
+    assert deleted.status.value == "unhealthy", deleted.detail
+    deleted_l = deleted.detail.lower()
+    assert "sface" in deleted_l
+    assert "license" in deleted_l
+
+
 def test_unverified_bytes_never_ok_via_call_count(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """mtime+size alone never green-lights never-verified bytes."""
     _align_dims_to_sface(monkeypatch)

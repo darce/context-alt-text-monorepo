@@ -353,11 +353,11 @@ Per-state single-primary gating (Analyze vs Describe) with the pinned token role
 - [x] FBT-1 criterion 4 assertion green (open pane never shows retired/stale membership after any merge)
 
 ### Checklist for Slice 8: CTA hierarchy + state matrix
-- [ ] One primary CTA per screen state — state-driven, expressed via the pinned token roles (accent bg + contrast text + semibold vs neutral/ghost)
-- [ ] Viewport single-accent-primary assertion: footer + card reconciled, count = 1 per state
-- [ ] §7 focus/announcement matrix implemented and asserted per state; offline uses `aria-disabled` + sync-strip live-region announce
-- [ ] DebugMetricsPanel dev-gate regression test (null in non-dev)
-- [ ] NAV-03 chrome stability asserted: entering/leaving `label`/`review` panel modes does not restyle or relocate the surrounding queue chrome (snapshot or layout probe)
+- [x] One primary CTA per screen state — state-driven, expressed via the pinned token roles (accent bg + contrast text + semibold vs neutral/ghost)
+- [x] Viewport single-accent-primary assertion: footer + card reconciled, count = 1 per state
+- [x] §7 focus/announcement matrix implemented and asserted per state; offline uses `aria-disabled` + sync-strip live-region announce
+- [x] DebugMetricsPanel dev-gate regression test (null in non-dev)
+- [x] NAV-03 chrome stability asserted: entering/leaving `label`/`review` panel modes does not restyle or relocate the surrounding queue chrome (snapshot or layout probe)
 - [ ] Visual re-baseline of the review region documented (checks sense-groups, focal point, type steps)
 - [ ] Manual VoiceOver protocol executed and recorded; walkthrough-script metric re-run recorded vs baseline; unaided first-time-user session repeated and recorded
 

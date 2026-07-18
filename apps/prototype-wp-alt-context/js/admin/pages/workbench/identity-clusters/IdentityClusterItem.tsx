@@ -193,7 +193,15 @@ export const IdentityClusterItem = ({
 
   // Proactive matching while typing
   React.useEffect(() => {
+    // Bail paths must abort any in-flight lookup so a late response cannot re-arm
+    // matchedCluster after we cleared it (UXP-3-BR-45).
+    const abortInFlightMatch = () => {
+      matchAbortRef.current?.abort();
+      matchAbortRef.current = null;
+    };
+
     if (!editState.isEditing) {
+      abortInFlightMatch();
       setMatchedCluster(null);
       return;
     }
@@ -203,6 +211,7 @@ export const IdentityClusterItem = ({
     // Exact bail (B6 / UXP-3-BR-39): case-only edits must still run proactive match so
     // "bob"→"Bob" against a different "Bob" cluster arms the Merge-with preview.
     if (!trimmed || trimmed === currentLabel) {
+      abortInFlightMatch();
       setMatchedCluster(null);
       return;
     }
@@ -215,7 +224,10 @@ export const IdentityClusterItem = ({
       try {
         const match = await findClusterByLabel(trimmed, abortController.signal);
         if (!abortController.signal.aborted) {
-          setMatchedCluster(filterEditableClusterMatch(match, editableClusterId));
+          // Mirror save-path BR-40: remote exact-dupe (match.label === currentLabel) renames,
+          // so the preview must not promise Merge/Assign (UXP-3-BR-44).
+          const filtered = filterEditableClusterMatch(match, editableClusterId);
+          setMatchedCluster(filtered?.label === currentLabel ? null : filtered);
         }
       } catch {
         // Ignore

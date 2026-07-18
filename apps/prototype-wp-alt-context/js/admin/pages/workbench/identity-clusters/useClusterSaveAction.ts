@@ -46,6 +46,7 @@ interface UseClusterSaveActionOptions {
 /**
  * Resolve a person-source option matching the typed label (case-insensitive).
  * Person rows win over same-named clusters so free-text never silent-merges.
+ * Returns the trimmed roster label so padded options normalize at one point (UXP-3-BR-46).
  */
 export const findPersonOptionLabel = (options: readonly ComboboxOption[], label: string): string | null => {
   const normalized = label.toLowerCase().trim();
@@ -55,7 +56,7 @@ export const findPersonOptionLabel = (options: readonly ComboboxOption[], label:
   const person = options.find(
     (option) => option.source === 'person' && option.label.toLowerCase().trim() === normalized,
   );
-  return person?.label ?? null;
+  return person ? person.label.trim() : null;
 };
 
 export const useClusterSaveAction = ({
@@ -88,7 +89,8 @@ export const useClusterSaveAction = ({
   });
 
   /**
-   * Explicit person-source path: rename/create only — never findClusterByLabel / merge / assign.
+   * Rename/create only — never findClusterByLabel / merge / assign.
+   * Used by the person-source path and by free-type rename arms (exact-dupe BR-40, unmatched label).
    */
   const applyPersonLabel = React.useCallback(
     (label: string, abortController: AbortController): boolean => {
@@ -212,8 +214,8 @@ export const useClusterSaveAction = ({
         // with canonical person casing (never merge into a same-named cluster).
         const personCanonical = findPersonOptionLabel(options, trimmed);
         if (personCanonical) {
-          // Already at person canonical casing: case-only free-type would rename to the
-          // same label (false "Saved!" + pointless mutation). Differing person casing still renames.
+          // personCanonical is already trimmed (findPersonOptionLabel). Already at that
+          // label → no-op; differing casing still renames (UXP-3-BR-43 / BR-46).
           if (personCanonical === currentLabel) {
             cancelEditing();
             resetSaveStatus();
@@ -241,7 +243,8 @@ export const useClusterSaveAction = ({
         // match is already self-filtered (filterEditableClusterMatch). When a DIFFERENT
         // cluster's label exactly equals currentLabel (remote exact-dupe, FIX-8), a case-only
         // edit of OUR cluster must rename — never silent cancelEditing and never surprise-merge
-        // into the duplicate (UXP-3-BR-40). Case-variant labels still merge below.
+        // into the duplicate (UXP-3-BR-40). Reuses applyPersonLabel for the rename arm.
+        // Case-variant labels still merge below.
         if (match?.label === currentLabel) {
           mutationStarted = applyPersonLabel(trimmed, abortController);
           if (!mutationStarted) {

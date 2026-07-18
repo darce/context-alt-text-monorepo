@@ -18,6 +18,7 @@ class _PhaseSession:
     def __init__(self) -> None:
         self.job = SimpleNamespace(status=JobStatus.PENDING, started_at=None)
         self.commit_calls = 0
+        self.rollback_calls = 0
         self._in_transaction = True
 
     async def get(self, _model, _job_id):
@@ -26,6 +27,10 @@ class _PhaseSession:
     async def commit(self) -> None:
         self.commit_calls += 1
         self._in_transaction = False
+
+    async def rollback(self) -> None:
+        self.rollback_calls += 1
+        self._in_transaction = True
 
     def in_transaction(self) -> bool:
         return self._in_transaction

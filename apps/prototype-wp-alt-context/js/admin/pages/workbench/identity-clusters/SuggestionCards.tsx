@@ -34,16 +34,16 @@ export const SuggestionCard = ({
   suggestion,
   onAccept,
   onReject,
-  onLabel,
   onReview,
   isPending,
   lowConfidenceThreshold,
 }: SuggestionCardProps): React.JSX.Element => {
+  // onLabel retained on the props interface for call-site stability; unlabeled
+  // rows never reach this card (buildSuggestionReviewItems / isHumanLabeledTarget).
+  // buildSuggestionReviewItems guarantees a human-labeled target with truthy label (UXP-3-BR-22).
+  const displayLabel = suggestion.label ?? '';
   const matchPercent = Math.round(suggestion.similarity * 100);
   const isLowConfidence = suggestion.similarity < lowConfidenceThreshold;
-  const suggestedLabel = suggestion.enrichment?.suggestedLabel;
-  const hasLabel = Boolean(suggestion.label ?? suggestedLabel);
-  const displayLabel = suggestion.label ?? suggestedLabel ?? __('Unnamed cluster', 'alt-context');
   const identityFace =
     suggestion.enrichment?.identityMediaUrl && suggestion.enrichment?.identityBbox
       ? { mediaUrl: suggestion.enrichment.identityMediaUrl, bbox: suggestion.enrichment.identityBbox }
@@ -55,8 +55,7 @@ export const SuggestionCard = ({
           bbox: suggestion.enrichment.representativeBbox,
         }
       : null;
-  const identityThumbUrl =
-    suggestion.enrichment?.identityThumbUrl ?? suggestion.enrichment?.identityMediaUrl ?? null;
+  const identityThumbUrl = suggestion.enrichment?.identityThumbUrl ?? suggestion.enrichment?.identityMediaUrl ?? null;
   const representativeThumbUrl =
     suggestion.enrichment?.representativeThumbUrl ?? suggestion.enrichment?.representativeMediaUrl ?? null;
 
@@ -109,24 +108,7 @@ export const SuggestionCard = ({
       </div>
       <div className="acx-suggestion-card__content">
         <p className="acx-suggestion-card__question">
-          {hasLabel ? (
-            <>
-              {__('Is this', 'alt-context')} <strong>{displayLabel}</strong>?
-              {suggestedLabel && !suggestion.label && (
-                <span className="acx-badge acx-badge--inferred" title={__('Inferred label', 'alt-context')}>
-                  {suggestion.enrichment?.suggestedLabelSource === 'similar_cluster'
-                    ? __('Similar to labeled', 'alt-context')
-                    : suggestion.enrichment?.suggestedLabelSource === 'identity'
-                      ? __('Identity match', 'alt-context')
-                      : suggestion.enrichment?.suggestedLabelSource === 'roster'
-                        ? __('Roster match', 'alt-context')
-                        : __('Suggested', 'alt-context')}
-                </span>
-              )}
-            </>
-          ) : (
-            <strong>{__('Name this person', 'alt-context')}</strong>
-          )}
+          {__('Is this', 'alt-context')} <strong>{displayLabel}</strong>?
         </p>
         <p className="acx-suggestion-card__match">
           {matchPercent}% {__('match', 'alt-context')}
@@ -143,35 +125,17 @@ export const SuggestionCard = ({
       </div>
 
       <div className="acx-suggestion-card__actions">
-        {hasLabel ? (
-          <>
-            <button
-              type="button"
-              className="button button-primary acx-suggestion-card__accept"
-              onClick={onAccept}
-              disabled={isPending}
-            >
-              {__('Yes', 'alt-context')}
-            </button>
-            <button
-              type="button"
-              className="button acx-suggestion-card__reject"
-              onClick={onReject}
-              disabled={isPending}
-            >
-              {__('No', 'alt-context')}
-            </button>
-          </>
-        ) : (
-          <button
-            type="button"
-            className="button button-primary acx-suggestion-card__label"
-            onClick={() => onLabel(suggestion.clusterId)}
-            disabled={isPending}
-          >
-            {__('Name Person', 'alt-context')}
-          </button>
-        )}
+        <button
+          type="button"
+          className="button button-primary acx-suggestion-card__accept"
+          onClick={onAccept}
+          disabled={isPending}
+        >
+          {__('Yes', 'alt-context')}
+        </button>
+        <button type="button" className="button acx-suggestion-card__reject" onClick={onReject} disabled={isPending}>
+          {__('No', 'alt-context')}
+        </button>
         {onReview ? (
           <button
             type="button"

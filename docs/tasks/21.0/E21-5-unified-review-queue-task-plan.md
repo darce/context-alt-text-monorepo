@@ -327,9 +327,9 @@ Per-state single-primary gating (Analyze vs Describe) with the pinned token role
 - [x] banned-vocabulary sweep extended to the queue incl. chip + disclosure copy and green
 
 ### Checklist for Slice 4: Show-all members (③)
-- [ ] PA-10 server leg landed per §9 dual-path checklist (PHP local + proxy, recognition route + repo offset — verified absent today); additive params only; tests cover both PHP paths + recognition route
-- [ ] Show-all affordance with client paging over `{members, limit, total, truncated}`; never fetch-all [RES-05]
-- [ ] `truncated` drives the bulk disabled-while-truncated gate (§4); no other endpoint touched
+- [x] PA-10 server leg landed per §9 dual-path checklist (PHP local + proxy, recognition route + repo offset — verified absent today); additive params only; tests cover both PHP paths + recognition route
+- [x] Show-all affordance with client paging over `{members, limit, total, truncated}`; never fetch-all [RES-05]
+- [x] `truncated` drives the bulk disabled-while-truncated gate (§4); no other endpoint touched
 
 ### Checklist for Slice 5: Multi-select bulk + M1 (①)
 - [ ] Explicit multi-select default-empty; selection lifted to `ScanTabContent` (survives panel round-trip — asserted); commit chrome "Accept N for <label>" only when labels homogeneous, else "Accept N selected"; preview set = exactly the selection; bulk hold announced "Saving N… — Undo"

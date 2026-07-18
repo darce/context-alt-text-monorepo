@@ -120,4 +120,66 @@ describe('IdentityClusterItem proactive match (UXP-3-BR-39)', () => {
     expect(screen.queryByRole('button', { name: /Merge with/i })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^Save$/i })).toBeInTheDocument();
   });
+
+  it('exact-dupe remote "bob" + typed "Bob" keeps Save (no Merge-with) — UXP-3-BR-44', async () => {
+    // Remote match label exactly equals current cluster label → save-path renames (BR-40).
+    // Preview must not promise Merge/Assign.
+    findClusterByLabel.mockResolvedValue({
+      id: 'dupe-bob',
+      label: 'bob',
+      identityCount: 3,
+    });
+
+    renderItem();
+
+    fireEvent.click(screen.getByRole('button', { name: 'bob' }));
+    fireEvent.change(screen.getByPlaceholderText(/enter a name/i), { target: { value: 'Bob' } });
+    await flushMatchDebounce();
+
+    expect(findClusterByLabel).toHaveBeenCalledWith('Bob', expect.any(AbortSignal));
+    expect(screen.queryByRole('button', { name: /Merge with/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Save$/i })).toBeInTheDocument();
+  });
+
+  it('reverting to exact label aborts in-flight match so preview stays Save — UXP-3-BR-45', async () => {
+    let resolveMatch!: (value: { id: string; label: string; identityCount: number }) => void;
+    const deferred = new Promise<{ id: string; label: string; identityCount: number }>((resolve) => {
+      resolveMatch = resolve;
+    });
+    findClusterByLabel.mockImplementation((_label: string, signal?: AbortSignal) =>
+      deferred.then((value) => {
+        if (signal?.aborted) {
+          const err = new Error('Aborted');
+          err.name = 'AbortError';
+          throw err;
+        }
+        return value;
+      }),
+    );
+
+    renderItem();
+
+    fireEvent.click(screen.getByRole('button', { name: 'bob' }));
+    const input = screen.getByPlaceholderText(/enter a name/i);
+    fireEvent.change(input, { target: { value: 'Bob' } });
+    await flushMatchDebounce();
+
+    expect(findClusterByLabel).toHaveBeenCalledWith('Bob', expect.any(AbortSignal));
+
+    // Bail to exact current label before the deferred response settles.
+    fireEvent.change(input, { target: { value: 'bob' } });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      resolveMatch({ id: 'other-bob', label: 'Bob', identityCount: 2 });
+      await deferred;
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByRole('button', { name: /Merge with/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Save$/i })).toBeInTheDocument();
+  });
 });

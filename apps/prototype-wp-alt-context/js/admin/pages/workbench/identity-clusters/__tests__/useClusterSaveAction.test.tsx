@@ -371,4 +371,32 @@ describe('useClusterSaveAction casing grid (B6)', () => {
       expect(cancelEditing).not.toHaveBeenCalled();
     }
   });
+
+  it('8. padded person label trims before BR-43 guard (UXP-3-BR-46)', async () => {
+    // Person option "Bob " must normalize to "Bob" so cluster "Bob" + typed "bob" no-ops
+    // instead of applyPersonLabel("Bob ") → trim → rename("Bob") (false "Saved!").
+    const { result, mutations, cancelEditing, findClusterByLabel } = renderSaveAction({
+      clusterLabel: 'Bob',
+      labelInput: 'bob',
+      members: [member({ cluster_label: 'Bob' })],
+      options: [
+        {
+          value: namingOptionValue('person', 1),
+          label: 'Bob ',
+          source: 'person',
+          group: 'All Labels',
+        },
+      ],
+    });
+
+    await act(async () => {
+      await result.current.handleSave();
+    });
+
+    expect(mutations.rename).not.toHaveBeenCalled();
+    expect(mutations.merge).not.toHaveBeenCalled();
+    expect(mutations.createClusterForIdentity).not.toHaveBeenCalled();
+    expect(findClusterByLabel).not.toHaveBeenCalled();
+    expect(cancelEditing).toHaveBeenCalled();
+  });
 });

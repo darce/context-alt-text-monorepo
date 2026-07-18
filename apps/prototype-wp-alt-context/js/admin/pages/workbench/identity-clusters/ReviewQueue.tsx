@@ -57,6 +57,7 @@ import {
   useBulkReviewCommit,
   type BulkCommitItem,
 } from './useBulkReviewCommit';
+import { useMergeSurvivors } from './MergeSurvivorContext';
 import { useSelectedClusterTruncation } from './useSelectedClusterTruncation';
 import { useSuggestionReviewData } from './useSuggestionReviewData';
 import {
@@ -69,6 +70,7 @@ import {
   type SuggestionCommitKind,
 } from './useSuggestionReviewMutations';
 import { useSuggestionReviewQueries } from './useSuggestionReviewQueries';
+import { useLiveReviewTarget } from './useLiveReviewTarget';
 import { useWorkbenchFindings } from './useWorkbenchFindings';
 
 /** Cluster id for person-commit chrome / orphaned status surface (item.clusterId authoritative). */
@@ -236,6 +238,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     const findings = useWorkbenchFindings();
     const data = useSuggestionReviewData();
     const { topUnlabeledClusters } = useSuggestionReviewQueries();
+    const { resolveSurvivor } = useMergeSurvivors();
     const cardRegionRef = React.useRef<HTMLDivElement>(null);
     const [lightbox, setLightbox] = React.useState<FaceOriginalTarget | null>(null);
     const [liveMessage, setLiveMessage] = React.useState('');
@@ -414,6 +417,17 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
 
     const currentItem = length > 0 ? filteredQueue[safeIndex] : null;
     const currentKey = currentItem ? queueItemKey(currentItem) : null;
+
+    // Lightweight open-target guard on the head card's cluster (when present).
+    // Announce retirement; do NOT fight projection-driven index advance (removal ≠ retirement).
+    const headClusterId = currentItem ? itemClusterId(currentItem) : null;
+    const { status: headLiveStatus } = useLiveReviewTarget(headClusterId, {
+      resolveSurvivor: (retiredId) => resolveSurvivor(retiredId),
+      onAnnounce: (message) => setLiveMessage(message),
+      // Queue does not own a bound review pane — projection re-derivation advances the card.
+      onRebind: undefined,
+      onClose: undefined,
+    });
 
     const assignmentById = React.useMemo(
       () => flattenAssignmentSuggestions(data.reviewItems),
@@ -698,8 +712,12 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     const showEndpointErrorWarning =
       length === 0 && data.assignmentDataSource === DATA_SOURCE.ENDPOINT_ERROR;
 
+    // Criterion 4: suppress head-card body once the open cluster is known retired.
+    const suppressRetiredHead =
+      headClusterId != null && (headLiveStatus === 'retired' || headLiveStatus === 'rebound');
+
     return (
-      <div className="acx-review-queue">
+      <div className="acx-review-queue" data-live-target-status={headLiveStatus}>
         <header className="acx-review-queue__header">
           <h3 className="acx-review-queue__title">{__('Review Suggestions', 'alt-context')}</h3>
           {length > 0 ? (
@@ -984,6 +1002,10 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             />
           ) : length === 0 || !currentItem ? (
             <p className="acx-review-queue__empty">{__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context')}</p>
+          ) : suppressRetiredHead ? (
+            <p className="acx-review-queue__retired" data-testid="acx-review-queue-retired-head">
+              {liveMessage || __('This review target is no longer available.', 'alt-context')}
+            </p>
           ) : (
             <CurrentCard
               item={currentItem}

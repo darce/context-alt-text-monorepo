@@ -31,9 +31,12 @@ import {
   VIEW_IN_ROSTER_COPY,
   VIEW_IN_ROSTER_HREF,
 } from '../personCommitCopy';
+import { MergeSurvivorProvider } from '../MergeSurvivorContext';
 import { CommitHoldRegion, ReviewQueue, type ReviewQueueHandle } from '../ReviewQueue';
 import { REVIEW_QUEUE_DRAIN_MESSAGE } from '../reviewQueueDriver';
 import { HOLD_STATUS_COPY, UNDO_HOLD_MS } from '../useSuggestionReviewMutations';
+import { LIVE_TARGET_CLOSE_ANNOUNCE } from '../useLiveReviewTarget';
+import { HTTPError } from '../../../../utils/http';
 
 /**
  * Click an accept/reject control under fake setTimeout so the Slice-2 hold can
@@ -177,6 +180,12 @@ const ReviewQueueHarness = ({
   );
 };
 
+const withQueueProviders = (queryClient: QueryClient, children: React.ReactNode) => (
+  <QueryClientProvider client={queryClient}>
+    <MergeSurvivorProvider>{children}</MergeSurvivorProvider>
+  </QueryClientProvider>
+);
+
 const renderQueue = (props: HarnessProps = {}) => {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -184,11 +193,7 @@ const renderQueue = (props: HarnessProps = {}) => {
     },
   });
 
-  const utils = render(
-    <QueryClientProvider client={queryClient}>
-      <ReviewQueueHarness {...props} />
-    </QueryClientProvider>,
-  );
+  const utils = render(withQueueProviders(queryClient, <ReviewQueueHarness {...props} />));
 
   return { queryClient, ...utils };
 };
@@ -434,9 +439,11 @@ describe('ReviewQueue', () => {
 
     render(
       <QueryClientProvider client={queryClient}>
-        <div ref={anchorRef} className="acx-findings-detail-anchor" tabIndex={-1}>
-          <ReviewQueueHarness emptyStateAnchorRef={anchorRef} />
-        </div>
+        <MergeSurvivorProvider>
+          <div ref={anchorRef} className="acx-findings-detail-anchor" tabIndex={-1}>
+            <ReviewQueueHarness emptyStateAnchorRef={anchorRef} />
+          </div>
+        </MergeSurvivorProvider>
       </QueryClientProvider>,
     );
 
@@ -864,7 +871,9 @@ describe('ReviewQueue', () => {
     const user = userEvent.setup();
     render(
       <QueryClientProvider client={queryClient}>
-        <Parent />
+        <MergeSurvivorProvider>
+          <Parent />
+        </MergeSurvivorProvider>
       </QueryClientProvider>,
     );
 
@@ -1046,7 +1055,9 @@ describe('ReviewQueue', () => {
     });
     render(
       <QueryClientProvider client={queryClient}>
-        <Parent />
+        <MergeSurvivorProvider>
+          <Parent />
+        </MergeSurvivorProvider>
       </QueryClientProvider>,
     );
 
@@ -1457,7 +1468,9 @@ describe('ReviewQueue', () => {
     });
     render(
       <QueryClientProvider client={queryClient}>
-        <ReviewQueueHarness onLabel={onLabel} />
+        <MergeSurvivorProvider>
+          <ReviewQueueHarness onLabel={onLabel} />
+        </MergeSurvivorProvider>
       </QueryClientProvider>,
     );
 
@@ -1731,7 +1744,9 @@ describe('ReviewQueue', () => {
     });
     render(
       <QueryClientProvider client={queryClient}>
-        <ReviewQueueHarness onReview={onReview} />
+        <MergeSurvivorProvider>
+          <ReviewQueueHarness onReview={onReview} />
+        </MergeSurvivorProvider>
       </QueryClientProvider>,
     );
 
@@ -2064,7 +2079,9 @@ describe('ReviewQueue', () => {
       });
       render(
         <QueryClientProvider client={queryClient}>
-          <Parent />
+          <MergeSurvivorProvider>
+            <Parent />
+          </MergeSurvivorProvider>
         </QueryClientProvider>,
       );
 
@@ -2254,7 +2271,9 @@ describe('ReviewQueue', () => {
       const user = userEvent.setup();
       render(
         <QueryClientProvider client={queryClient}>
-          <Parent />
+          <MergeSurvivorProvider>
+            <Parent />
+          </MergeSurvivorProvider>
         </QueryClientProvider>,
       );
 
@@ -2417,7 +2436,9 @@ describe('ReviewQueue', () => {
       const user = userEvent.setup();
       render(
         <QueryClientProvider client={queryClient}>
-          <Parent />
+          <MergeSurvivorProvider>
+            <Parent />
+          </MergeSurvivorProvider>
         </QueryClientProvider>,
       );
 
@@ -2479,6 +2500,59 @@ describe('ReviewQueue', () => {
         'aria-pressed',
         'true',
       );
+    });
+  });
+
+  describe('open-target lifecycle (E21-5 Slice 7 / FBT-1 criterion 4)', () => {
+    it('announces retirement and suppresses head card when head cluster 404s', async () => {
+      vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+        suggestions: [
+          {
+            id: 'assign-live-1',
+            identity_id: 'id-1',
+            cluster_id: 'cluster-head',
+            cluster_label: 'Alex',
+            representative_similarity: 0.95,
+            resolution: 'pending',
+            identity_media_url: 'http://example.test/id.jpg',
+            identity_bbox: { x: 0, y: 0, width: 10, height: 10 },
+            representative_media_url: 'http://example.test/rep.jpg',
+            representative_bbox: { x: 0, y: 0, width: 10, height: 10 },
+          },
+        ],
+        limit: 50,
+        offset: 0,
+        data_source: DATA_SOURCE.SERVICE,
+      });
+      vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+        suggestions: [],
+        limit: 10,
+        offset: 0,
+      });
+      vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+        suggestions: [],
+        limit: 10,
+        offset: 0,
+      });
+      vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({ clusters: [] });
+      vi.mocked(fetchClusterMembers).mockRejectedValue(
+        new HTTPError({
+          status: 404,
+          retryAfterSeconds: undefined,
+          endpoint: '/clusters/cluster-head/members',
+          bodyPreview: 'cluster_not_found',
+          message: 'not found',
+        }),
+      );
+
+      renderQueue();
+
+      await waitFor(() => {
+        expect(screen.getByTestId('acx-review-queue-retired-head')).toBeInTheDocument();
+      });
+      expect(screen.getByRole('status')).toHaveTextContent(LIVE_TARGET_CLOSE_ANNOUNCE);
+      // Criterion 4: no stale card body for the retired head cluster.
+      expect(screen.queryByTestId('acx-review-card')).not.toBeInTheDocument();
     });
   });
 });

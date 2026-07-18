@@ -1,0 +1,236 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { renderHook, waitFor } from '@testing-library/react';
+import type { ReactNode } from 'react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { fetchClusterMembers } from '../../../../api/recognition';
+import type { ClusterMembersResponse } from '../../../../api/recognition';
+import { HTTPError } from '../../../../utils/http';
+import {
+  LIVE_TARGET_CLOSE_ANNOUNCE,
+  LIVE_TARGET_REBIND_ANNOUNCE,
+  useLiveReviewTarget,
+} from '../useLiveReviewTarget';
+
+vi.mock('@wordpress/i18n', () => ({
+  __: (text: string) => text,
+  sprintf: (text: string, ...values: (string | number)[]) => {
+    let index = 0;
+    return text
+      .replace(/%(\d+)\$[sd]/g, (_match, group: string) => String(values[Number(group) - 1] ?? ''))
+      .replace(/%[sd]/g, () => String(values[index++] ?? ''));
+  },
+}));
+
+vi.mock('../../../../api/recognition', async () => {
+  const actual = await vi.importActual<typeof import('../../../../api/recognition')>(
+    '../../../../api/recognition',
+  );
+  return {
+    ...actual,
+    fetchClusterMembers: vi.fn(),
+  };
+});
+
+const notFound = (clusterId = 'x'): HTTPError =>
+  new HTTPError({
+    status: 404,
+    retryAfterSeconds: undefined,
+    endpoint: `/acx/v1/recognition/clusters/${clusterId}/members`,
+    bodyPreview: 'cluster_not_found',
+    message: 'cluster not found',
+  });
+
+const okMembers = (): ClusterMembersResponse => ({
+  members: [
+    {
+      identity_id: 'id-1',
+      media_id: 1,
+      similarity: 0.9,
+      confidence: 0.9,
+      bbox: { x: 0, y: 0, width: 10, height: 10 },
+      thumb_url: 'http://example.test/t.jpg',
+    },
+  ],
+  limit: 1,
+  total: 1,
+  truncated: false,
+});
+
+const createWrapper = () => {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  );
+  return wrapper;
+};
+
+describe('useLiveReviewTarget', () => {
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('stays live when the existence query succeeds', async () => {
+    vi.mocked(fetchClusterMembers).mockResolvedValue(okMembers());
+    const onClose = vi.fn();
+    const onRebind = vi.fn();
+
+    const { result } = renderHook(
+      () => useLiveReviewTarget('cluster-live', { onClose, onRebind }),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => {
+      expect(result.current.status).toBe('live');
+      expect(result.current.resolvedClusterId).toBe('cluster-live');
+    });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onRebind).not.toHaveBeenCalled();
+    expect(fetchClusterMembers).toHaveBeenCalledWith('cluster-live', { limit: 1 });
+  });
+
+  it('branch (B): 404 with recorded survivor rebinds + announces once', async () => {
+    vi.mocked(fetchClusterMembers).mockRejectedValue(notFound('cluster-x'));
+    const onAnnounce = vi.fn();
+    const onRebind = vi.fn();
+    const onClose = vi.fn();
+
+    const { result } = renderHook(
+      () =>
+        useLiveReviewTarget('cluster-x', {
+          resolveSurvivor: (id) => (id === 'cluster-x' ? 'cluster-survivor' : null),
+          onAnnounce,
+          onRebind,
+          onClose,
+        }),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => {
+      expect(result.current.status).toBe('rebound');
+    });
+    expect(result.current.resolvedClusterId).toBe('cluster-survivor');
+    expect(onRebind).toHaveBeenCalledTimes(1);
+    expect(onRebind).toHaveBeenCalledWith('cluster-survivor');
+    expect(onAnnounce).toHaveBeenCalledWith(LIVE_TARGET_REBIND_ANNOUNCE);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('branch (A): 404 without survivor closes + announces once', async () => {
+    vi.mocked(fetchClusterMembers).mockRejectedValue(notFound('cluster-x'));
+    const onAnnounce = vi.fn();
+    const onRebind = vi.fn();
+    const onClose = vi.fn();
+
+    const { result } = renderHook(
+      () =>
+        useLiveReviewTarget('cluster-x', {
+          resolveSurvivor: () => null,
+          onAnnounce,
+          onRebind,
+          onClose,
+        }),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => {
+      expect(result.current.status).toBe('retired');
+    });
+    expect(result.current.resolvedClusterId).toBeNull();
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onAnnounce).toHaveBeenCalledWith(LIVE_TARGET_CLOSE_ANNOUNCE);
+    expect(onRebind).not.toHaveBeenCalled();
+  });
+
+  it('self-heal: wrong survivor guess rebinds then closes when survivor also 404s', async () => {
+    vi.mocked(fetchClusterMembers).mockImplementation((clusterId) => {
+      return Promise.reject(notFound(clusterId));
+    });
+
+    const announces: string[] = [];
+    const rebinds: string[] = [];
+    let openId: string | null = 'cluster-x';
+    const survivors = new Map([['cluster-x', 'cluster-wrong']]);
+
+    const { result, rerender } = renderHook(
+      ({ id }: { id: string | null }) =>
+        useLiveReviewTarget(id, {
+          resolveSurvivor: (retired) => survivors.get(retired) ?? null,
+          onAnnounce: (m) => announces.push(m),
+          onRebind: (survivor) => {
+            rebinds.push(survivor);
+            openId = survivor;
+          },
+          onClose: () => {
+            openId = null;
+          },
+        }),
+      { wrapper: createWrapper(), initialProps: { id: openId } },
+    );
+
+    await waitFor(() => {
+      expect(result.current.status).toBe('rebound');
+    });
+    expect(rebinds).toEqual(['cluster-wrong']);
+
+    // Parent rebinds open id → remount path simulated via rerender.
+    rerender({ id: 'cluster-wrong' });
+
+    await waitFor(() => {
+      expect(result.current.status).toBe('retired');
+    });
+    expect(announces).toEqual([LIVE_TARGET_REBIND_ANNOUNCE, LIVE_TARGET_CLOSE_ANNOUNCE]);
+    expect(openId).toBeNull();
+  });
+
+  it('non-404 errors keep status live (fail-safe)', async () => {
+    vi.mocked(fetchClusterMembers).mockRejectedValue(
+      new HTTPError({
+        status: 503,
+        retryAfterSeconds: 1,
+        endpoint: '/members',
+        bodyPreview: '',
+        message: 'unavailable',
+      }),
+    );
+    const onClose = vi.fn();
+
+    const { result } = renderHook(() => useLiveReviewTarget('cluster-blip', { onClose }), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(fetchClusterMembers).toHaveBeenCalled();
+    });
+    // Allow the error effect to run.
+    await waitFor(() => {
+      expect(result.current.status).toBe('live');
+    });
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('fires retirement handlers only once per open target', async () => {
+    vi.mocked(fetchClusterMembers).mockRejectedValue(notFound());
+    const onClose = vi.fn();
+    const onAnnounce = vi.fn();
+
+    const { rerender } = renderHook(
+      ({ id }: { id: string | null }) =>
+        useLiveReviewTarget(id, { resolveSurvivor: () => null, onClose, onAnnounce }),
+      { wrapper: createWrapper(), initialProps: { id: 'cluster-x' as string | null } },
+    );
+
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    // Same id re-render must not re-fire.
+    rerender({ id: 'cluster-x' });
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(onAnnounce).toHaveBeenCalledTimes(1);
+    });
+  });
+});

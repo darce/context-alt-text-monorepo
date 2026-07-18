@@ -11,6 +11,7 @@ import { useMutation, type QueryClient } from '@tanstack/react-query';
 
 import { queryKeys } from '../../../api/queryKeys';
 import type {
+  PendingMergeSuggestion,
   PendingMergeSuggestionsResponse,
   PendingNameSuggestionsResponse,
 } from '../../../api/recognition/types';
@@ -24,7 +25,9 @@ import {
   rejectSuggestion,
 } from '../../../api/recognition';
 import { commitClusterToRosterEntry } from '../../../api/rosterApi';
+import { useOptionalMergeSurvivors } from './MergeSurvivorContext';
 import { PERSON_COMMIT_FAILURE_COPY } from './personCommitCopy';
+import { resolveMergeSurvivor } from './resolveMergeSurvivor';
 import { invalidateSuggestionProjection } from './suggestionProjection';
 import type { SuggestionReviewPage } from './useSuggestionReviewQueries';
 
@@ -139,6 +142,19 @@ export const useSuggestionReviewMutations = ({
   awaitBulkIdleOrFlushRef,
   isBulkActiveRef,
 }: UseSuggestionReviewMutationsOptions) => {
+  const mergeSurvivors = useOptionalMergeSurvivors();
+  const mergeSurvivorsRef = React.useRef(mergeSurvivors);
+  mergeSurvivorsRef.current = mergeSurvivors;
+
+  const recordMergeSurvivorFromSuggestion = React.useCallback((suggestion: PendingMergeSuggestion) => {
+    const api = mergeSurvivorsRef.current;
+    if (!api) {
+      return;
+    }
+    const { survivorId, retiredId } = resolveMergeSurvivor(suggestion);
+    api.recordMergeSurvivor(retiredId, survivorId);
+  }, []);
+
   const [hold, setHold] = React.useState<CommitHoldState>({
     phase: 'idle',
     kind: null,
@@ -353,7 +369,10 @@ export const useSuggestionReviewMutations = ({
       }
 
       try {
-        await fireCommitApi(kind, suggestionId);
+        const response = await fireCommitApi(kind, suggestionId);
+        if (kind === 'acceptMerge' && response) {
+          recordMergeSurvivorFromSuggestion(response as PendingMergeSuggestion);
+        }
         applySuccessSideEffects(kind, suggestionId);
         failedHoldRef.current = null;
         if (options.updateUi) {
@@ -380,7 +399,7 @@ export const useSuggestionReviewMutations = ({
         committingRef.current = false;
       }
     },
-    [applySuccessSideEffects, fireCommitApi, setHoldSafe],
+    [applySuccessSideEffects, fireCommitApi, recordMergeSurvivorFromSuggestion, setHoldSafe],
   );
 
   const flushHeldInternal = React.useCallback(
@@ -825,7 +844,10 @@ export const useSuggestionReviewMutations = ({
       // Do not resolve as committed before the POST — callers unmounted; hang is fine.
       // Fire-and-forget — no UI update path (RLSE-05: no await-in-cleanup).
       void fireCommitApi(held.kind, held.suggestionId).then(
-        () => {
+        (response) => {
+          if (held.kind === 'acceptMerge' && response) {
+            recordMergeSurvivorFromSuggestion(response as PendingMergeSuggestion);
+          }
           applySuccessSideEffects(held.kind, held.suggestionId);
         },
         () => {
@@ -833,7 +855,7 @@ export const useSuggestionReviewMutations = ({
         },
       );
     };
-  }, [applySuccessSideEffects, clearHeldTimer, fireCommitApi]);
+  }, [applySuccessSideEffects, clearHeldTimer, fireCommitApi, recordMergeSurvivorFromSuggestion]);
 
   // Raw mutations remain for bulkAccept and any direct callers; assignment accept/reject
   // no longer use optimistic onMutate — ReviewQueue schedules through the hold API.
@@ -864,7 +886,8 @@ export const useSuggestionReviewMutations = ({
 
   const acceptMergeMutation = useMutation({
     mutationFn: acceptMergeSuggestion,
-    onSuccess: (_data, suggestionId) => {
+    onSuccess: (data, suggestionId) => {
+      recordMergeSurvivorFromSuggestion(data);
       removeMergeSuggestionFromCache(suggestionId);
       void queryClient.invalidateQueries({ queryKey: mergePendingKey });
       invalidateMediaIdentities();

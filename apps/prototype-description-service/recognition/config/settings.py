@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from recognition.application.settings import ClusteringSettings
 from recognition.application.settings.scan import ScanSettings
@@ -227,3 +227,18 @@ class RecognitionSettings(BaseModel):
         ),
         description="MIME allow-list for image_<media_id> parts on the multipart route.",
     )
+
+    @model_validator(mode="after")
+    def _check_embedding_pgvector_pair(self) -> RecognitionSettings:
+        """Fail fast when identity embedding dim != DB pgvector dim (CR-09).
+
+        Lazy-import db settings to avoid import cycles at module load.
+        Pairing is profile-independent (insightface and face_pipeline).
+        """
+        from db.settings import get_database_settings
+
+        pg_dim = int(get_database_settings().pgvector_dimension)
+        id_dim = int(self.identity_detection.embedding_dimension)
+        if id_dim != pg_dim:
+            raise ValueError(f"identity_detection.embedding_dimension ({id_dim}) != pgvector_dimension ({pg_dim})")
+        return self

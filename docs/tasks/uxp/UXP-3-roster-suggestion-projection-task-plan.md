@@ -273,7 +273,7 @@ Proof: the five-case grid (§ slice 2) with characterization-first ordering; ann
 
 - [x] Each slice: `/branch-review` with findings in MCP; remote grok as second reviewer at slice 0 and before merge.
 - [x] Handoff decision per slice (record + notify), `render_handoff(kind='dashboard')` after writes.
-- [ ] Pre-merge gate: `handoff_close_check(enforce=True)` with fresh test evidence at HEAD.
+- [x] Pre-merge gate: `handoff_close_check(enforce=True)` with fresh test evidence at HEAD.
 
 ## Success Criteria
 

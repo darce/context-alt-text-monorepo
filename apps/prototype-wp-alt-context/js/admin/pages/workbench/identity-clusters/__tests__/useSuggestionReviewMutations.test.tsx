@@ -120,7 +120,7 @@ describe('useSuggestionReviewMutations', () => {
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
     const { result } = renderMutations();
 
-    await act(async () => {
+    act(() => {
       result.current.mutations.reject.mutate('sugg-a');
     });
 

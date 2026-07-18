@@ -261,7 +261,7 @@ Proof: the five-case grid (§ slice 2) with characterization-first ordering; ann
 - [x] Pre-save duplicate guard over the **pre-dedupe universe** with explicit merge/rename/cancel (person+cluster same-name fixture — PR-18); merge action names its target and shows label + member count before commit, disabled with no unique target (PR-23/PR-24); panel-path merge back-out verified; dead 409 `duplicateMatch` branch deleted.
 - [x] Pin control removed from `ClusterPreview` **and** plumbing from `IdentityClusterItem`; mutation/API untouched.
 - [x] Combobox a11y: names incl. source, live-region announcements, non-color badges, [A11Y-24] roster state matrix.
-- [ ] E21-9 pull-in decision (out) recorded in handoff at slice close.
+- [x] E21-9 pull-in decision (out) recorded in handoff at slice close.
 
 ### Slice 2
 

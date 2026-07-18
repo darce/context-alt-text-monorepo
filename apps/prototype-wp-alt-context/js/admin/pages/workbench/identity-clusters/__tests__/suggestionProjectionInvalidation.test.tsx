@@ -146,7 +146,7 @@ describe('SUGGESTION_PROJECTION_INVALIDATION_EVENTS per-site wiring', () => {
     resetConfigCache();
   });
 
-  describe('suggestionAcceptReject', () => {
+  describe('suggestionAccept', () => {
     it('accept invalidates projection exactly and keeps clusters.all + media.identities', async () => {
       // TEST-06 predicted first failure (pre-sweep / missing accept coverage):
       // "expected invalidateQueries to have been called with { queryKey: ['suggestions','projection'] }"
@@ -177,7 +177,43 @@ describe('SUGGESTION_PROJECTION_INVALIDATION_EVENTS per-site wiring', () => {
 
       await waitFor(() => {
         expectProjectionInvalidated(invalidateSpy);
-        expectCrossFamilyPresent(invalidateSpy, 'suggestionAcceptReject');
+        expectCrossFamilyPresent(invalidateSpy, 'suggestionAccept');
+      });
+    });
+  });
+
+  describe('suggestionReject', () => {
+    it('reject invalidates projection and keeps clusters.all (no media.identities by design)', async () => {
+      // TEST-06 predicted first failure (pre-split map / missing reject coverage):
+      // "expected invalidateQueries to have been called with { queryKey: ['suggestions','projection'] }"
+      // if reject's onSettled invalidation were dropped — previously untested.
+      const queryClient = makeQueryClient();
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+      const bulkActionRef = { current: false };
+
+      vi.mocked(recognitionApi.rejectSuggestion).mockResolvedValue({
+        suggestion_id: 'sugg-a',
+        resolution: 'rejected',
+        identity_id: 'identity-a',
+        cluster_id: null,
+        message: 'ok',
+      });
+
+      const { result } = renderHook(() => useSuggestionReviewMutations({ queryClient, bulkActionRef }), {
+        wrapper: wrapperFor(queryClient),
+      });
+
+      act(() => {
+        result.current.mutations.reject.mutate('sugg-a');
+      });
+
+      await waitFor(() => {
+        expect(recognitionApi.rejectSuggestion).toHaveBeenCalled();
+      });
+
+      await waitFor(() => {
+        expectProjectionInvalidated(invalidateSpy);
+        expectCrossFamilyPresent(invalidateSpy, 'suggestionReject');
       });
     });
   });
@@ -334,9 +370,9 @@ describe('SUGGESTION_PROJECTION_INVALIDATION_EVENTS per-site wiring', () => {
   });
 
   describe('event map coverage guard', () => {
-    it('enumerates the seven D4 events so missing suite keys fail loud', () => {
+    it('enumerates the eight D4 events so missing suite keys fail loud', () => {
       // TEST-06 predicted first failure if a map key is dropped without a suite:
-      // "expected […7 keys] to equal […]" length / membership mismatch.
+      // "expected […8 keys] to equal […]" length / membership mismatch.
       expect(Object.keys(SUGGESTION_PROJECTION_INVALIDATION_EVENTS).sort()).toEqual(
         [
           'bulkAccept',
@@ -344,7 +380,8 @@ describe('SUGGESTION_PROJECTION_INVALIDATION_EVENTS per-site wiring', () => {
           'clusterLabelSetClear',
           'clusterMerge',
           'scanRecomputeCompletion',
-          'suggestionAcceptReject',
+          'suggestionAccept',
+          'suggestionReject',
           'syncTrigger',
         ].sort(),
       );

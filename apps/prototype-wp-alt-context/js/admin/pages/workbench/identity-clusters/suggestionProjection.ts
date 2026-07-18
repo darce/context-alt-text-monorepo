@@ -234,9 +234,17 @@ export const invalidateSuggestionProjection = (queryClient: QueryClient): Promis
  * label, merge, and scan also touch media.identities (UXP-3 finding, recorded in handoff).
  */
 export const SUGGESTION_PROJECTION_INVALIDATION_EVENTS = {
-  suggestionAcceptReject: {
+  suggestionAccept: {
     invalidatesAssignmentProjection: true,
     keptCrossFamilyTargets: ['clusters.all', 'media.identities'] as const,
+  },
+  /**
+   * Reject changes no media/identity assignment, so it deliberately does NOT
+   * invalidate media.identities — split from accept so the map stays honest.
+   */
+  suggestionReject: {
+    invalidatesAssignmentProjection: true,
+    keptCrossFamilyTargets: ['clusters.all'] as const,
   },
   bulkAccept: {
     invalidatesAssignmentProjection: true,

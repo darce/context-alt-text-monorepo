@@ -81,6 +81,9 @@ export const useClusterActions = ({
           newEntryName: variables.newEntryName,
         }),
       onSuccess: () => {
+        // clusterLabelSetClear event (SUGGESTION_PROJECTION_INVALIDATION_EVENTS):
+        // committing labels a cluster, changing its suggestion eligibility everywhere.
+        void invalidateSuggestionProjection(queryClient);
         void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
         void queryClient.invalidateQueries({ queryKey: queryKeys.roster.entries() });
         success(__('Cluster committed to roster entry.', 'alt-context'));
@@ -106,6 +109,9 @@ export const useClusterActions = ({
       }
     },
     onSuccess: () => {
+      // clusterMerge event (SUGGESTION_PROJECTION_INVALIDATION_EVENTS): absorbed source
+      // clusters may back pending assignment suggestions on any surface.
+      void invalidateSuggestionProjection(queryClient);
       void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
       success(__('Clusters merged successfully.', 'alt-context'));
     },

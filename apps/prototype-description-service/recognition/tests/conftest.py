@@ -173,6 +173,7 @@ class FakeDetector:
                 media_id=mid,
                 bbox=(10, 10, 100, 100),
                 confidence=0.99,
+                model_id="stub-detector@test",
             )
             detections.append(detection)
         return detections

@@ -39,9 +39,7 @@ def _expected_incumbent_model_id() -> str:
 
 
 @pytest.mark.asyncio
-async def test_media_identity_insert_without_embedding_model_fails_not_null(
-    db_session, tenant: Tenant
-) -> None:
+async def test_media_identity_insert_without_embedding_model_fails_not_null(db_session, tenant: Tenant) -> None:
     """NOT NULL without DEFAULT: omitting embedding_model must fail closed (RLSE-05)."""
     identity = MediaIdentity(
         id=uuid4(),
@@ -88,9 +86,7 @@ class _ProvenanceDetector(FaceDetectorProtocol):
 
 
 @pytest.mark.asyncio
-async def test_scan_write_path_populates_embedding_model_from_manifest(
-    db_session, tenant: Tenant
-) -> None:
+async def test_scan_write_path_populates_embedding_model_from_manifest(db_session, tenant: Tenant) -> None:
     """Scan persist stamps media_identities.embedding_model from det.model_id (manifest)."""
     expected_model_id = _expected_incumbent_model_id()
     service = ScanService(
@@ -120,8 +116,7 @@ def test_incumbent_manifest_model_id_derives_from_fields() -> None:
     """model_id is derived: framework-name@Nd/normalization/metric (framework not in version slot)."""
     manifest = incumbent_embedding_model_manifest()
     assert manifest.model_id == (
-        f"{manifest.framework}-{manifest.name}"
-        f"@{manifest.dimensions}d/{manifest.normalization}/{manifest.metric}"
+        f"{manifest.framework}-{manifest.name}@{manifest.dimensions}d/{manifest.normalization}/{manifest.metric}"
     )
     # Pin the incumbent shape for buffalo_l @ 512 / l2 / cosine.
     assert manifest.model_id == "insightface-buffalo_l@512d/l2/cosine"
@@ -142,9 +137,7 @@ def test_embedding_model_manifest_model_id_not_hardcoded_string() -> None:
 
 
 @pytest.mark.asyncio
-async def test_scan_rejects_empty_model_id_before_media_identity_write(
-    db_session, tenant: Tenant
-) -> None:
+async def test_scan_rejects_empty_model_id_before_media_identity_write(db_session, tenant: Tenant) -> None:
     """Empty FaceDetection.model_id is rejected before media_identities insert."""
     service = ScanService(
         session=db_session,
@@ -168,9 +161,7 @@ async def test_stub_face_detector_stamps_stub_model_id() -> None:
 
 
 @pytest.mark.asyncio
-async def test_scan_write_path_persists_stub_model_id(
-    db_session, tenant: Tenant
-) -> None:
+async def test_scan_write_path_persists_stub_model_id(db_session, tenant: Tenant) -> None:
     """Scan persist path stores stub-detector@test when StubFaceDetector is used.
 
     StubFaceDetector does not emit embeddings; inject a stub detection that

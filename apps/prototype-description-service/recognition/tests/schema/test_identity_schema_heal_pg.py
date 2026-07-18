@@ -111,8 +111,7 @@ def _table_columns(engine, table_name: str) -> set[str]:
             row[0]
             for row in conn.execute(
                 text(
-                    "SELECT column_name FROM information_schema.columns "
-                    "WHERE table_schema='public' AND table_name=:t"
+                    "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=:t"
                 ),
                 {"t": table_name},
             )
@@ -144,7 +143,6 @@ def test_heal_creates_every_orm_declared_column(pg_empty_engine) -> None:
     # DB carries every ORM-declared column for each migration-owned table, so the
     # two sources cannot silently diverge.
     import db.models  # noqa: F401 - populate Base.metadata
-
     from db.models.base_imports import Base
 
     with pg_empty_engine.begin() as conn:

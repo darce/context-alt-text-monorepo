@@ -27,8 +27,8 @@ if str(_SERVICE_ROOT) not in sys.path:
 import cv2  # noqa: E402
 
 from recognition.infrastructure.face_pipeline.aligner import (  # noqa: E402
-    FivePointAligner,
     YUNET_LANDMARK_NAMES,
+    FivePointAligner,
 )
 from recognition.infrastructure.face_pipeline.opencv_ref import (  # noqa: E402
     DEFAULT_NMS_THRESHOLD,
@@ -75,9 +75,7 @@ def aligner_source_image(seed: int = SEED) -> tuple[np.ndarray, np.ndarray]:
         img[i, :, 0] = (i + seed) % 256
         img[:, i, 1] = (i * 2 + seed) % 256
         img[i, i, 2] = 255
-    img = np.clip(img.astype(np.int16) + rng.randint(-3, 4, img.shape), 0, 255).astype(
-        np.uint8
-    )
+    img = np.clip(img.astype(np.int16) + rng.randint(-3, 4, img.shape), 0, 255).astype(np.uint8)
     # YuNet order: right eye, left eye, nose, right mouth, left mouth
     landmarks = np.array(
         [
@@ -118,9 +116,7 @@ def write_embedding_goldens() -> dict:
     return meta
 
 
-def _face_box_from_landmarks(
-    landmarks: np.ndarray, *, image_shape: tuple[int, ...]
-) -> np.ndarray:
+def _face_box_from_landmarks(landmarks: np.ndarray, *, image_shape: tuple[int, ...]) -> np.ndarray:
     """Build FaceDetectorYN-style 15-vector for FaceRecognizerSF.alignCrop."""
     h, w = int(image_shape[0]), int(image_shape[1])
     box = np.zeros(15, dtype=np.float32)
@@ -171,9 +167,7 @@ def write_aligner_goldens() -> dict:
         "oracle": "cv2.FaceRecognizerSF.alignCrop",
         "oracle_model": MODEL_MANIFEST["sface"].file_name,
     }
-    (FIXTURE_DIR / "aligner_meta.json").write_text(
-        json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    (FIXTURE_DIR / "aligner_meta.json").write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return meta
 
 
@@ -217,12 +211,7 @@ def cartoon_face_image(
     rng = np.random.RandomState(seed)
     img = np.full((size, size, 3), 200, dtype=np.float32)
     yy, xx = np.mgrid[0:size, 0:size]
-    head = np.exp(
-        -(
-            ((xx - size / 2) / (head_rx * size)) ** 2
-            + ((yy - size / 2) / (head_ry * size)) ** 2
-        )
-    )
+    head = np.exp(-(((xx - size / 2) / (head_rx * size)) ** 2 + ((yy - size / 2) / (head_ry * size)) ** 2))
     skin = np.array([150.0, 180.0, 220.0], dtype=np.float32)
     bg = np.array([200.0, 200.0, 200.0], dtype=np.float32)
     img = bg + head[..., None] * (skin - bg)
@@ -235,18 +224,10 @@ def cartoon_face_image(
         )
         img = img * (1.0 - 0.9 * eye[..., None])
     mouth = np.exp(
-        -(
-            ((xx - size / 2) / (0.08 * size)) ** 2
-            + ((yy - (size / 2 + mouth_y * size)) / (0.03 * size)) ** 2
-        )
+        -(((xx - size / 2) / (0.08 * size)) ** 2 + ((yy - (size / 2 + mouth_y * size)) / (0.03 * size)) ** 2)
     )
     img = img * (1.0 - 0.5 * mouth[..., None])
-    nose = np.exp(
-        -(
-            ((xx - size / 2) / (0.03 * size)) ** 2
-            + ((yy - (size / 2 + 0.02 * size)) / (0.06 * size)) ** 2
-        )
-    )
+    nose = np.exp(-(((xx - size / 2) / (0.03 * size)) ** 2 + ((yy - (size / 2 + 0.02 * size)) / (0.06 * size)) ** 2))
     img = img + nose[..., None] * np.array([-20.0, -15.0, -10.0], dtype=np.float32)
     img = np.clip(img, 0, 255).astype(np.uint8)
     noise = rng.randn(size, size, 3).astype(np.float32) * noise_scale
@@ -267,9 +248,7 @@ def write_detector_goldens() -> dict:
         "head_rx": 0.27,
         "head_ry": 0.36,
         "noise_scale": 3.0,
-        "description": (
-            "seeded gaussian soft face (skin disc + dark eyes + nose + mouth)"
-        ),
+        "description": ("seeded gaussian soft face (skin disc + dark eyes + nose + mouth)"),
     }
     img = cartoon_face_image(
         **{
@@ -314,9 +293,7 @@ def write_detector_goldens() -> dict:
             "procedure": procedure,
         }
         faces_path.unlink(missing_ok=True)
-        skip_path.write_text(
-            json.dumps(note, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
+        skip_path.write_text(json.dumps(note, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         return note
 
     d0 = detections[0]
@@ -353,9 +330,7 @@ def write_detector_goldens() -> dict:
         },
     }
     skip_path.unlink(missing_ok=True)
-    faces_path.write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    faces_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return payload
 
 

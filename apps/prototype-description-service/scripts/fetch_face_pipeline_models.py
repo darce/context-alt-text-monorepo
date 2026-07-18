@@ -21,6 +21,7 @@ git-tracked license files.
 from __future__ import annotations
 
 import argparse
+import contextlib  # noqa: E402  (stdlib; placed with imports)
 import hashlib
 import sys
 import urllib.error
@@ -65,10 +66,8 @@ def _file_sha256(path: Path) -> str:
 
 
 def _unlink_quiet(path: Path) -> None:
-    try:
+    with contextlib.suppress(OSError):
         path.unlink(missing_ok=True)
-    except OSError:
-        pass
 
 
 def _partial_path(dest: Path) -> Path:
@@ -102,24 +101,22 @@ def download_file(
     written = 0
     try:
         try:
-            with urllib.request.urlopen(url, timeout=timeout_s) as resp:  # noqa: S310
-                with partial.open("wb") as fh:
-                    while True:
-                        chunk = resp.read(_CHUNK_SIZE)
-                        if not chunk:
-                            break
-                        written += len(chunk)
-                        if written > cap:
-                            raise ModelFetchError(
-                                f"download exceeded cap of {cap} bytes for {url}"
-                            )
-                        fh.write(chunk)
+            with (
+                urllib.request.urlopen(url, timeout=timeout_s) as resp,  # noqa: S310
+                partial.open("wb") as fh,
+            ):
+                while True:
+                    chunk = resp.read(_CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    if written > cap:
+                        raise ModelFetchError(f"download exceeded cap of {cap} bytes for {url}")
+                    fh.write(chunk)
         except ModelFetchError:
             raise
         except urllib.error.HTTPError as exc:
-            raise ModelFetchError(
-                f"download failed: HTTP {exc.code} for {url}"
-            ) from exc
+            raise ModelFetchError(f"download failed: HTTP {exc.code} for {url}") from exc
         except urllib.error.URLError as exc:
             raise ModelFetchError(f"download failed: {exc.reason} for {url}") from exc
         except TimeoutError as exc:
@@ -151,34 +148,29 @@ def download_verified(
     ``.partial`` is always unlinked in ``finally`` (missing_ok after replace).
     """
     if expected_sha256 == PENDING_OPERATOR_FETCH:
-        raise ModelFetchError(
-            f"{label}: manifest still {PENDING_OPERATOR_FETCH}; cannot verify {dest}"
-        )
+        raise ModelFetchError(f"{label}: manifest still {PENDING_OPERATOR_FETCH}; cannot verify {dest}")
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     partial = _partial_path(dest)
     written = 0
     try:
         try:
-            with urllib.request.urlopen(url, timeout=timeout_s) as resp:  # noqa: S310
-                with partial.open("wb") as fh:
-                    while True:
-                        chunk = resp.read(_CHUNK_SIZE)
-                        if not chunk:
-                            break
-                        written += len(chunk)
-                        if written > max_bytes:
-                            raise ModelFetchError(
-                                f"{label}: download exceeded cap of {max_bytes} "
-                                f"bytes for {url}"
-                            )
-                        fh.write(chunk)
+            with (
+                urllib.request.urlopen(url, timeout=timeout_s) as resp,  # noqa: S310
+                partial.open("wb") as fh,
+            ):
+                while True:
+                    chunk = resp.read(_CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    if written > max_bytes:
+                        raise ModelFetchError(f"{label}: download exceeded cap of {max_bytes} bytes for {url}")
+                    fh.write(chunk)
         except ModelFetchError:
             raise
         except urllib.error.HTTPError as exc:
-            raise ModelFetchError(
-                f"download failed: HTTP {exc.code} for {url}"
-            ) from exc
+            raise ModelFetchError(f"download failed: HTTP {exc.code} for {url}") from exc
         except urllib.error.URLError as exc:
             raise ModelFetchError(f"download failed: {exc.reason} for {url}") from exc
         except TimeoutError as exc:
@@ -192,15 +184,13 @@ def download_verified(
         actual_size = partial.stat().st_size
         if expected_size is not None and expected_size > 0 and actual_size != expected_size:
             raise ModelFetchError(
-                f"{label}: size mismatch for {partial.name}: "
-                f"expected {expected_size}, got {actual_size}"
+                f"{label}: size mismatch for {partial.name}: expected {expected_size}, got {actual_size}"
             )
 
         actual = _file_sha256(partial)
         if actual != expected_sha256:
             raise ModelFetchError(
-                f"{label}: sha256 mismatch for {partial.name}: "
-                f"expected {expected_sha256}, got {actual}"
+                f"{label}: sha256 mismatch for {partial.name}: expected {expected_sha256}, got {actual}"
             )
 
         try:
@@ -284,9 +274,7 @@ def fetch_all(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Fetch YuNet + SFace ONNX models with sha256 verification."
-    )
+    parser = argparse.ArgumentParser(description="Fetch YuNet + SFace ONNX models with sha256 verification.")
     parser.add_argument(
         "--dest",
         type=Path,

@@ -154,7 +154,7 @@ const resolveToken = (map: Map<string, string>, name: string, depth = 0): string
     throw new Error(`token ${name} is not defined`);
   }
 
-  const aliasMatch = raw.match(/^var\((--acx-[a-z0-9-]+)\)$/);
+  const aliasMatch = /^var\((--acx-[a-z0-9-]+)\)$/.exec(raw);
 
   return aliasMatch ? resolveToken(map, aliasMatch[1], depth + 1) : raw;
 };
@@ -182,7 +182,7 @@ const TEXT_FLOOR = 4.5;
 const NON_TEXT_FLOOR = 3;
 
 // [foreground token, background token, floor]
-const DUTY_PAIRS: ReadonlyArray<readonly [string, string, number]> = [
+const DUTY_PAIRS: readonly (readonly [string, string, number])[] = [
   ['--acx-color-text-muted', '--acx-color-surface-alt', TEXT_FLOOR],
   ['--acx-color-text-muted', '--acx-gray-50', TEXT_FLOOR],
   ['--acx-color-text-muted', '--acx-gray-100', TEXT_FLOOR],

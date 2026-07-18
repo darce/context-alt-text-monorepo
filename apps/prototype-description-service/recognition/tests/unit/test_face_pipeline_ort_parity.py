@@ -27,10 +27,10 @@ from recognition.infrastructure.face_pipeline.ort_adapters import (
 )
 from recognition.infrastructure.face_pipeline.provenance import MODEL_MANIFEST
 from recognition.tests.unit.face_pipeline_support import (
+    _FIXTURE_DIR,
     MODELS_PRESENT,
     MODELS_SKIP,
     SFACE_EMBEDDING_DIM,
-    _FIXTURE_DIR,
     border_clipped_face_canvas,
     cartoon_from_procedure,
     cosine,
@@ -115,14 +115,10 @@ def test_decode_yunet_level_score_composition_and_threshold() -> None:
     # score = sqrt(0.81) = 0.9
     bbox = np.zeros((1, 4), dtype=np.float32)
     kps = np.zeros((1, 10), dtype=np.float32)
-    above = decode_yunet_level(
-        cls, obj, bbox, kps, stride=stride, pad_w=pad_w, pad_h=pad_h, score_threshold=0.9
-    )
+    above = decode_yunet_level(cls, obj, bbox, kps, stride=stride, pad_w=pad_w, pad_h=pad_h, score_threshold=0.9)
     assert len(above) == 1
     assert above[0].score == pytest.approx(0.9, abs=1e-6)
-    below = decode_yunet_level(
-        cls, obj, bbox, kps, stride=stride, pad_w=pad_w, pad_h=pad_h, score_threshold=0.91
-    )
+    below = decode_yunet_level(cls, obj, bbox, kps, stride=stride, pad_w=pad_w, pad_h=pad_h, score_threshold=0.91)
     assert below == []
 
 
@@ -133,9 +129,7 @@ def test_decode_clamps_scores_above_one() -> None:
     obj = np.array([2.0], dtype=np.float32)
     bbox = np.zeros((1, 4), dtype=np.float32)
     kps = np.zeros((1, 10), dtype=np.float32)
-    dets = decode_yunet_level(
-        cls, obj, bbox, kps, stride=stride, pad_w=pad_w, pad_h=pad_h, score_threshold=0.5
-    )
+    dets = decode_yunet_level(cls, obj, bbox, kps, stride=stride, pad_w=pad_w, pad_h=pad_h, score_threshold=0.5)
     assert len(dets) == 1
     assert dets[0].score == pytest.approx(1.0)
 
@@ -149,9 +143,7 @@ def test_decode_negative_logits_upper_clamp_only() -> None:
     bbox = np.zeros((1, 4), dtype=np.float32)
     kps = np.zeros((1, 10), dtype=np.float32)
     # score_threshold=0.0 still drops NaN (NaN >= 0 is False)
-    dets = decode_yunet_level(
-        cls, obj, bbox, kps, stride=stride, pad_w=pad_w, pad_h=pad_h, score_threshold=0.0
-    )
+    dets = decode_yunet_level(cls, obj, bbox, kps, stride=stride, pad_w=pad_w, pad_h=pad_h, score_threshold=0.0)
     assert dets == []
 
 
@@ -238,14 +230,10 @@ def test_decode_determinism_modelless() -> None:
     obj = rng.random(4).astype(np.float32)
     bbox = rng.normal(size=(4, 4)).astype(np.float32) * 0.1
     kps = rng.normal(size=(4, 10)).astype(np.float32) * 0.1
-    a = decode_yunet_level(
-        cls, obj, bbox, kps, stride=stride, pad_w=pad_w, pad_h=pad_h, score_threshold=0.0
-    )
-    b = decode_yunet_level(
-        cls, obj, bbox, kps, stride=stride, pad_w=pad_w, pad_h=pad_h, score_threshold=0.0
-    )
+    a = decode_yunet_level(cls, obj, bbox, kps, stride=stride, pad_w=pad_w, pad_h=pad_h, score_threshold=0.0)
+    b = decode_yunet_level(cls, obj, bbox, kps, stride=stride, pad_w=pad_w, pad_h=pad_h, score_threshold=0.0)
     assert len(a) == len(b)
-    for da, db in zip(a, b):
+    for da, db in zip(a, b, strict=False):
         np.testing.assert_array_equal(da.bbox, db.bbox)
         np.testing.assert_array_equal(da.landmarks, db.landmarks)
         assert da.score == db.score
@@ -362,9 +350,7 @@ def test_ort_detector_float01_gate(ort_yunet_detector) -> None:
 @pytest.mark.skipif(not MODELS_PRESENT, reason=MODELS_SKIP)
 def test_ort_detector_empty_and_batch(ort_yunet_detector) -> None:
     assert ort_yunet_detector.detect([np.zeros((100, 100, 3), dtype=np.uint8)]) == [[]]
-    out = ort_yunet_detector.detect(
-        [np.zeros((80, 80, 3), dtype=np.uint8), np.zeros((120, 90, 3), dtype=np.uint8)]
-    )
+    out = ort_yunet_detector.detect([np.zeros((80, 80, 3), dtype=np.uint8), np.zeros((120, 90, 3), dtype=np.uint8)])
     assert len(out) == 2
 
 
@@ -404,9 +390,7 @@ def _assert_detector_count_and_match(
     *,
     expect_min: int = 1,
 ) -> None:
-    assert len(ocv_faces) == len(ort_faces), (
-        f"detection count mismatch ocv={len(ocv_faces)} ort={len(ort_faces)}"
-    )
+    assert len(ocv_faces) == len(ort_faces), f"detection count mismatch ocv={len(ocv_faces)} ort={len(ort_faces)}"
     assert len(ocv_faces) >= expect_min
     pairs = greedy_match_by_iou(ocv_faces, ort_faces)
     assert len(pairs) == len(ocv_faces)
@@ -434,12 +418,8 @@ def test_detector_parity_cartoon_fixture() -> None:
     score_th = float(meta["score_threshold"])
     nms_th = float(meta["nms_threshold"])
 
-    ocv_faces = OpenCVYuNetDetector(
-        score_threshold=score_th, nms_threshold=nms_th
-    ).detect([img])[0]
-    ort_faces = OrtYuNetDetector(
-        score_threshold=score_th, nms_threshold=nms_th
-    ).detect([img])[0]
+    ocv_faces = OpenCVYuNetDetector(score_threshold=score_th, nms_threshold=nms_th).detect([img])[0]
+    ort_faces = OrtYuNetDetector(score_threshold=score_th, nms_threshold=nms_th).detect([img])[0]
 
     assert len(ocv_faces) == len(ort_faces)
     assert len(ocv_faces) >= 1
@@ -526,7 +506,7 @@ def test_detector_and_embedder_determinism(ort_sface_embedder) -> None:
     r1 = det_real.detect([img])[0]
     assert len(r0) >= 1
     assert len(r0) == len(r1)
-    for fa, fb in zip(r0, r1):
+    for fa, fb in zip(r0, r1, strict=False):
         np.testing.assert_array_equal(fa.bbox, fb.bbox)
         np.testing.assert_array_equal(fa.landmarks, fb.landmarks)
         assert fa.score == fb.score

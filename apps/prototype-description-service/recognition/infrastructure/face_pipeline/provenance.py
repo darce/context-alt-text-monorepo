@@ -60,10 +60,7 @@ MODEL_MANIFEST: dict[str, ModelProvenance] = {
     "yunet": ModelProvenance(
         file_name="face_detection_yunet_2026may.onnx",
         sha256="ebafce4e3c118d6554634be5c27ab333b4c047a9a8c3faf1d7cf93101c22f0f0",
-        source_url=(
-            f"{_OPENCV_ZOO_MEDIA}/models/face_detection_yunet/"
-            "face_detection_yunet_2026may.onnx"
-        ),
+        source_url=(f"{_OPENCV_ZOO_MEDIA}/models/face_detection_yunet/face_detection_yunet_2026may.onnx"),
         source_ref=OPENCV_ZOO_COMMIT,
         license_id="MIT",
         license_file="LICENSE.yunet",
@@ -77,10 +74,7 @@ MODEL_MANIFEST: dict[str, ModelProvenance] = {
     "sface": ModelProvenance(
         file_name="face_recognition_sface_2021dec.onnx",
         sha256="0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
-        source_url=(
-            f"{_OPENCV_ZOO_MEDIA}/models/face_recognition_sface/"
-            "face_recognition_sface_2021dec.onnx"
-        ),
+        source_url=(f"{_OPENCV_ZOO_MEDIA}/models/face_recognition_sface/face_recognition_sface_2021dec.onnx"),
         source_ref=OPENCV_ZOO_COMMIT,
         license_id="Apache-2.0",
         license_file="LICENSE.sface",
@@ -140,23 +134,18 @@ def load_verified_model(name: str, *, models_dir: Path | None = None) -> Path:
     path = root / entry.file_name
     if not path.is_file():
         raise ModelIntegrityError(
-            f"model file missing for {name!r}: {path} "
-            f"(expected {entry.file_name} from {entry.source_url})"
+            f"model file missing for {name!r}: {path} (expected {entry.file_name} from {entry.source_url})"
         )
 
     actual_size = path.stat().st_size
     if entry.size_bytes > 0 and actual_size != entry.size_bytes:
         raise ModelIntegrityError(
-            f"size mismatch for {name!r}: expected {entry.size_bytes} bytes, "
-            f"got {actual_size} at {path}"
+            f"size mismatch for {name!r}: expected {entry.size_bytes} bytes, got {actual_size} at {path}"
         )
 
     actual = _file_sha256(path)
     if actual != entry.sha256:
-        raise ModelIntegrityError(
-            f"sha256 mismatch for {name!r}: expected {entry.sha256}, "
-            f"got {actual} at {path}"
-        )
+        raise ModelIntegrityError(f"sha256 mismatch for {name!r}: expected {entry.sha256}, got {actual} at {path}")
 
     # License is part of the load-time integrity surface (fail-closed).
     if entry.license_sha256 == PENDING_OPERATOR_FETCH:
@@ -167,8 +156,7 @@ def load_verified_model(name: str, *, models_dir: Path | None = None) -> Path:
     license_path = root / entry.license_file
     if not license_path.is_file():
         raise ModelIntegrityError(
-            f"license file missing for {name!r}: {license_path} "
-            f"(expected {entry.license_file} next to model)"
+            f"license file missing for {name!r}: {license_path} (expected {entry.license_file} next to model)"
         )
     actual_license = _file_sha256(license_path)
     if actual_license != entry.license_sha256:

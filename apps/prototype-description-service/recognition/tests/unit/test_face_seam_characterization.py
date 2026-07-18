@@ -495,9 +495,7 @@ def test_cluster_rep_debug_metrics_key_set_is_pinned() -> None:
         },
     }
     assert set(debug_metrics.keys()) == CLUSTER_REP_DEBUG_METRICS_KEYS
-    assert set(cast(dict[str, object], debug_metrics["pose_buckets"]).keys()) == (
-        CLUSTER_REP_DEBUG_POSE_BUCKETS_KEYS
-    )
+    assert set(cast(dict[str, object], debug_metrics["pose_buckets"]).keys()) == (CLUSTER_REP_DEBUG_POSE_BUCKETS_KEYS)
     assert set(cast(dict[str, object], debug_metrics["pose"]).keys()) == DEBUG_POSE_KEYS
     assert "age" not in debug_metrics
     assert "gender" not in debug_metrics

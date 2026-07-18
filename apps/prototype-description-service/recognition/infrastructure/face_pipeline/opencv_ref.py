@@ -13,8 +13,8 @@ Heuristics: rg-015 (no invented contract metadata), rg-013-style purity
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 import cv2
 import numpy as np
@@ -34,7 +34,6 @@ from recognition.infrastructure.face_pipeline._common import (
     resolve_sface_embedding_dim,
 )
 from recognition.infrastructure.face_pipeline.provenance import (
-    MODEL_MANIFEST,
     load_verified_model,
 )
 
@@ -53,8 +52,7 @@ def _parse_faces(faces: np.ndarray | None) -> list[RawDetection]:
         row = np.asarray(row, dtype=np.float32).reshape(-1)
         if row.size < 15:
             raise FacePipelineInputError(
-                f"FaceDetectorYN row has {row.size} fields, expected ≥15 "
-                "(x,y,w,h + 5×2 landmarks + score)"
+                f"FaceDetectorYN row has {row.size} fields, expected ≥15 (x,y,w,h + 5×2 landmarks + score)"
             )
         bbox = row[0:4].copy()
         landmarks = row[4:14].reshape(5, 2).copy()

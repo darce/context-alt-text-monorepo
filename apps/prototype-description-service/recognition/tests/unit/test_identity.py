@@ -67,4 +67,4 @@ def test_extract_face_embedding_returns_512d() -> None:
     face_emb = identity.extract_face_embedding()
 
     assert face_emb.shape == (face_embedding_dim(),)
-    assert np.array_equal(face_emb, extended[:face_embedding_dim()])
+    assert np.array_equal(face_emb, extended[: face_embedding_dim()])

@@ -152,6 +152,7 @@ class StubFaceDetector(FaceDetectorProtocol):
                     bbox=(x1, y1, x1 + width, y1 + height),
                     confidence=float(confidence),
                     image_phash=image_phash,
+                    model_id="stub-detector@test",
                 )
             )
         return detections

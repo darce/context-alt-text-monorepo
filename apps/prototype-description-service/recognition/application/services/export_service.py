@@ -26,7 +26,7 @@ from recognition.application.services.audit_service import AuditService
 from recognition.domain.job import JobStatus
 from recognition.infrastructure.repositories._helpers import coerce_uuid
 
-EXPORT_SCHEMA_VERSION = 2
+EXPORT_SCHEMA_VERSION = 3
 
 
 def _serialize_timestamp(value: datetime | None) -> str | None:

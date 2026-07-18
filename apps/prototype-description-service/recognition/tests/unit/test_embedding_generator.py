@@ -16,6 +16,7 @@ import pytest
 
 import recognition.application.embedding.generator as generator_module
 from recognition.application.embedding.detector import FaceDetection
+from recognition.application.embedding.manifest import incumbent_embedding_model_manifest
 from recognition.application.embedding.generator import (
     EmbeddingAdapterError,
     EmbeddingGenerator,
@@ -47,7 +48,7 @@ def _face_detection(
         pose_pitch=None,
         pose_yaw=None,
         pose_roll=None,
-        model_id="buffalo_l@insightface",
+        model_id=incumbent_embedding_model_manifest().model_id,
     )
 
 

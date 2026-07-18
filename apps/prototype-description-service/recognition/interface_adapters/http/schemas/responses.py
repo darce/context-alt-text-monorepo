@@ -97,21 +97,6 @@ class PoseBucketResponse(BaseModel):
     current_bucket: tuple[int, int] | None = None
 
 
-class DetectedIdentityDebugExtras(BaseModel):
-    """Debug-only fields returned when include_debug=true."""
-
-    pose: PoseResponse
-    det_score: float
-    bbox_area: int
-    landmark_quality: float
-    clustering_method: str | None = None
-    clustering_algorithm: str | None = None
-    similarity_threshold: float | None = None
-    match_similarity: float | None = None
-    representative_count: int | None = None
-    pose_buckets: PoseBucketResponse | None = None
-
-
 class RepresentativeResponse(BaseModel):
     """Cluster representative details."""
 
@@ -315,7 +300,7 @@ class ExportResponse(BaseModel):
 
     tenant_id: str
     exported_at: datetime
-    schema_version: int = 2
+    schema_version: int = 3
     counts: dict[str, int] = Field(default_factory=dict)
     data: dict[str, Any] = Field(default_factory=dict)
 
@@ -663,7 +648,6 @@ __all__ = [
     "ClusterSnapshotResponse",
     "ConnectionPoolStats",
     "CreateClusterForIdentityResponse",
-    "DetectedIdentityDebugExtras",
     "FaceBoxResponse",
     "HealthCheckResponse",
     "IdentityResponse",

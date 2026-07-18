@@ -464,5 +464,10 @@ async def test_worker_capability_heartbeat_includes_profile(monkeypatch: pytest.
     worker = sw.ScanWorker(sw.ScanWorkerConfig(postgres_dsn="sqlite+aiosqlite:///:memory:"))
     await worker._ensure_embedding_runtime()
     assert published.get("available") is True
-    assert published.get("reason") == "profile=face_pipeline"
+    reason = str(published.get("reason") or "")
+    assert reason.startswith("profile=face_pipeline")
+    assert "media_processed=0" in reason
+    assert "faces_detected=0" in reason
+    assert "rows_matched=0" in reason
+    assert "rows_new=0" in reason
     await worker.__aexit__(None, None, None)

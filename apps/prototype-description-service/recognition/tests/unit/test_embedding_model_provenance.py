@@ -99,7 +99,7 @@ async def test_scan_write_path_populates_embedding_model_from_manifest(db_sessio
         media_id=media_id,
         media_url=f"http://example.test/{media_id}.jpg",
     )
-    assert count == 1
+    assert int(count) == 1
 
     result = await db_session.execute(
         select(MediaIdentity).where(
@@ -189,7 +189,7 @@ async def test_scan_write_path_persists_stub_model_id(db_session, tenant: Tenant
         media_id=media_id,
         media_url=f"http://example.test/{media_id}.jpg",
     )
-    assert count == 1
+    assert int(count) == 1
 
     result = await db_session.execute(
         select(MediaIdentity).where(

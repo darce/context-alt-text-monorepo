@@ -28,7 +28,11 @@ from recognition.application.embedding.generator import (
     EmbeddingGeneratorProtocol,
     StubEmbeddingGenerator,
 )
-from recognition.application.scan.capability import publish_embedding_runtime_capability
+from recognition.application.scan.capability import (
+    ScanWorkerCounters,
+    format_capability_reason,
+    publish_embedding_runtime_capability,
+)
 from recognition.application.scan.queue_repository import ScanQueueItem
 from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.config import get_settings as get_recognition_settings
@@ -110,6 +114,8 @@ class ScanWorker:
             return FilesystemObjectStore(root=worker_blob_root, tenant_id=tenant_id)
 
         self._object_store_factory = _worker_object_store_factory
+        # Cumulative reconcile counters published on every heartbeat ([OBS-05]/[OBS-08]).
+        self._scan_counters = ScanWorkerCounters()
 
         self._scan_handler = ScanItemHandler(
             session_factory=self._session_factory,
@@ -118,6 +124,7 @@ class ScanWorker:
             max_attempts=self._config.max_attempts,
             max_concurrency=self._config.max_concurrency,
             object_store_factory=self._object_store_factory,
+            counters=self._scan_counters,
         )
         self._job_handlers = {
             "split": SplitJobHandler(),
@@ -238,15 +245,17 @@ class ScanWorker:
             max_attempts=self._config.max_attempts,
             max_concurrency=self._config.max_concurrency,
             object_store_factory=self._object_store_factory,
+            counters=self._scan_counters,
         )
         await self._heartbeat_embedding_runtime_capability()
 
     async def _publish_embedding_runtime_capability(self, session: AsyncSession) -> None:
         """Write the worker-published embedding-runtime heartbeat for API intake.
 
-        Contract expansion (S3CR-07): ``reason`` is additive ``profile=<name>`` when
-        available (and ``profile=<name>; <detail>`` when unavailable). Pre-S3 used
-        ``reason=None`` on the ready path; consumers must accept the profile prefix.
+        Contract expansion (S3CR-07 / S4): ``reason`` carries ``profile=<name>`` plus
+        always-present cumulative counters (zeros until first media) so silence is
+        distinguishable from health ([OBS-05], [OBS-08]). Pre-S3 used ``reason=None``
+        on the ready path; consumers must accept the profile + counter suffix.
         """
         from recognition.shared.db.dialect import is_postgres
 
@@ -255,14 +264,22 @@ class ScanWorker:
         profile = get_recognition_settings().face_pipeline.profile
         if self._runtime_mode == "test" or self._embedding_runtime_ready:
             available = True
-            reason = f"profile={profile}"
+            reason = format_capability_reason(profile=profile, counters=self._scan_counters)
         elif isinstance(self._detector, UnavailableFaceDetector):
             available = False
             base = self._detector.reason or "embedding runtime unavailable"
-            reason = f"profile={profile}; {base}"
+            reason = format_capability_reason(
+                profile=profile,
+                available_detail=base,
+                counters=self._scan_counters,
+            )
         else:
             available = False
-            reason = f"profile={profile}; embedding runtime not initialized"
+            reason = format_capability_reason(
+                profile=profile,
+                available_detail="embedding runtime not initialized",
+                counters=self._scan_counters,
+            )
         await publish_embedding_runtime_capability(session, available=available, reason=reason)
 
     async def _heartbeat_embedding_runtime_capability(self) -> None:

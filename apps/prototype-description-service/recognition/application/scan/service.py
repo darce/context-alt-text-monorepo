@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from collections.abc import Awaitable, Callable, Iterable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -35,6 +37,29 @@ ObjectStoreFactory = Callable[[str], ObjectStore]
 logger = logging.getLogger(__name__)
 
 _DB_SETTINGS = get_database_settings()
+
+
+@dataclass(frozen=True, slots=True)
+class ReconcileResult:
+    """Per-media identity reconcile counts (row recycling, not assignment/unknown).
+
+    ``matched`` / ``new`` are re-scan MediaIdentity row recycling counts from IoU
+    matching. Assignment/unknown metrics live in clustering (FIR-6).
+    ``detected`` is the inbound detection count; ``total`` is rows written/updated
+    (``matched + new``), preserving the pre-S4 ``process_media_item`` int semantics.
+    """
+
+    detected: int
+    matched: int
+    new: int
+
+    @property
+    def total(self) -> int:
+        """Rows matched or newly inserted (historical identities_detected count)."""
+        return self.matched + self.new
+
+    def __int__(self) -> int:
+        return self.total
 
 
 async def run_scan_three_phase[PersistResult](
@@ -171,12 +196,23 @@ class ScanService:
                     url = s
                     break
 
-            total_persisted += await self._persist_identities(
+            started = time.perf_counter()
+            result = await self._persist_identities(
                 tenant_uuid=tenant_uuid,
                 media_id=mid_int,
                 detections=dets,
                 media_url=url,
             )
+            duration_ms = (time.perf_counter() - started) * 1000.0
+            _emit_scan_media_reconciled(
+                media_id=mid_int,
+                tenant_id=str(tenant_uuid),
+                job_id=str(job_id),
+                result=result,
+                detections=dets,
+                duration_ms=duration_ms,
+            )
+            total_persisted += result.total
 
         scan_job.processed_media = len(media_ids_list)
         scan_job.identities_detected = total_persisted
@@ -229,7 +265,8 @@ class ScanService:
         tenant_id: str,
         media_id: int,
         media_url: str,
-    ) -> int:
+        job_id: uuid.UUID | str | None = None,
+    ) -> ReconcileResult:
         """Process a single media item and persist detected identities.
 
         Uses 'Identity ID Recycling' to preserve existing UUIDs for the same faces,
@@ -241,7 +278,13 @@ class ScanService:
         cross-tenant URIs at open() time) and pass the bytes to the
         detector. Legacy URL transport (http://, https://) keeps passing
         the URL string unchanged.
+
+        Returns:
+            ReconcileResult with detected/matched/new counts. Callers that need
+            the historical int (identities_detected = matched + new) use
+            ``.total`` or ``int(result)``.
         """
+        started = time.perf_counter()
         tenant_uuid = uuid.UUID(str(tenant_id))
         detector_source: bytes | str = media_url
         if media_url.startswith("file://") and self._object_store_factory is not None:
@@ -249,12 +292,22 @@ class ScanService:
             with store.open(media_url) as fh:
                 detector_source = fh.read()
         detections: list[FaceDetection] = await self._detector.detect([detector_source])
-        return await self._persist_identities(
+        result = await self._persist_identities(
             tenant_uuid=tenant_uuid,
             media_id=media_id,
             detections=detections,
             media_url=media_url,
         )
+        duration_ms = (time.perf_counter() - started) * 1000.0
+        _emit_scan_media_reconciled(
+            media_id=media_id,
+            tenant_id=str(tenant_uuid),
+            job_id=str(job_id) if job_id is not None else None,
+            result=result,
+            detections=detections,
+            duration_ms=duration_ms,
+        )
+        return result
 
     async def _persist_identities(
         self,
@@ -263,8 +316,12 @@ class ScanService:
         media_id: int,
         detections: list[FaceDetection],
         media_url: str | None = None,
-    ) -> int:
-        """Helper to persist detections with Identity ID Recycling."""
+    ) -> ReconcileResult:
+        """Persist detections with Identity ID Recycling; return reconcile counts.
+
+        ``matched`` / ``new`` are re-scan row recycling counts, not assignment or
+        unknown labels (those live in clustering / FIR-6).
+        """
         # 1. Fetch existing identities for this media item
         stmt = select(MediaIdentity).where(
             MediaIdentity.tenant_id == tenant_uuid,
@@ -304,10 +361,13 @@ class ScanService:
                 matched.append((old, unmatched_new.pop(best_det_idx)))
                 orphaned_old.remove(old)
 
+        expected_dim = int(_DB_SETTINGS.pgvector_dimension)
+
         # 4. Update matched identities (preserves PK/UUID)
         for old_row, det in matched:
             if det.embedding is None:
                 continue
+            _assert_embedding_dimension(det, expected_dim=expected_dim)
             if not det.model_id:
                 raise ValueError("embedding_model provenance missing on FaceDetection")
             old_row.bbox_x = int(det.bbox[0])
@@ -333,6 +393,7 @@ class ScanService:
         for det in unmatched_new:
             if det.embedding is None:
                 continue
+            _assert_embedding_dimension(det, expected_dim=expected_dim)
             if not det.model_id:
                 raise ValueError("embedding_model provenance missing on FaceDetection")
             new_rows.append(
@@ -362,7 +423,69 @@ class ScanService:
                 await self._session.delete(orphan)
 
         await self._session.flush()
-        return len(matched) + len(new_rows)
+        # total = matched + new preserves pre-S4 int return (len(matched)+len(new_rows)).
+        return ReconcileResult(
+            detected=len(detections),
+            matched=len(matched),
+            new=len(new_rows),
+        )
+
+
+def _assert_embedding_dimension(det: FaceDetection, *, expected_dim: int) -> None:
+    """Fail closed when a detection embedding does not match pgvector width ([EMB-01])."""
+    if det.embedding is None:
+        return
+    actual = len(det.embedding)
+    if actual != expected_dim:
+        raise ValueError(f"embedding length {actual} != pgvector_dimension {expected_dim}")
+
+
+def _face_pipeline_profile() -> str:
+    from recognition.config import get_settings
+
+    return str(get_settings().face_pipeline.profile)
+
+
+def _embedding_model_from_detections(detections: list[FaceDetection]) -> str | None:
+    for det in detections:
+        if det.model_id:
+            return det.model_id
+    return None
+
+
+def _emit_scan_media_reconciled(
+    *,
+    media_id: int,
+    tenant_id: str,
+    job_id: str | None,
+    result: ReconcileResult,
+    detections: list[FaceDetection],
+    duration_ms: float,
+) -> None:
+    """Emit one wide structured log event per processed media item ([OBS-01..03]).
+
+    ``matched`` / ``new`` are re-scan row recycling counts, not assignment/unknown.
+    """
+    # Late import: correlation middleware lives under interface_adapters.http and
+    # importing it at module load would cycle through deps.services → ScanService.
+    from recognition.interface_adapters.http.middleware.correlation import get_correlation_id
+
+    logger.info(
+        "scan_media_reconciled",
+        extra={
+            "event": "scan_media_reconciled",
+            "media_id": media_id,
+            "tenant_id": tenant_id,
+            "job_id": job_id,
+            "correlation_id": get_correlation_id(),
+            "detected": result.detected,
+            "matched": result.matched,
+            "new": result.new,
+            "embedding_model": _embedding_model_from_detections(detections),
+            "profile": _face_pipeline_profile(),
+            "duration_ms": round(duration_ms, 3),
+        },
+    )
 
 
 def _extract_media_id(value: str) -> int:
@@ -396,4 +519,4 @@ def _compute_iou(bbox1: tuple[float, float, float, float], bbox2: tuple[float, f
     return intersection_area / union_area
 
 
-__all__ = ["ScanService", "run_scan_three_phase"]
+__all__ = ["ReconcileResult", "ScanService", "run_scan_three_phase"]

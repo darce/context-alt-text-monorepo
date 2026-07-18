@@ -46,7 +46,7 @@ class NullIdentityMembersRepository implements IdentityMembersRepositoryInterfac
 		return 0;
 	}
 
-	public function count_for_cluster( string $cluster_uuid ): int {
+	public function count_for_cluster( string $cluster_uuid, ?string $tenant_id = null ): int {
 		return 0;
 	}
 

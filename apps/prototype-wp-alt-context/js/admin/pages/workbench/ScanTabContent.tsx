@@ -139,6 +139,7 @@ export const ScanTabContent = (): React.JSX.Element => {
             />
           ) : clusterPanel.mode === 'review' && clusterPanel.clusterId ? (
             <ClusterReviewPanel
+              key={clusterPanel.clusterId}
               clusterId={clusterPanel.clusterId}
               onClose={() => dispatchClusterPanel({ type: 'close' })}
             />

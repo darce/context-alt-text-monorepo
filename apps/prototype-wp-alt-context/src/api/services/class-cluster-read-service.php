@@ -261,8 +261,15 @@ class ClusterReadService {
 			return new WP_Error( 'missing_cluster_id', 'Cluster ID is required.', array( 'status' => 400 ) );
 		}
 
-		$limit  = $this->resolve_cluster_members_limit( $request );
-		$offset = absint( $request->get_param( 'offset' ) ?? 0 );
+		$limit = $this->resolve_cluster_members_limit( $request );
+		if ( $limit instanceof WP_Error ) {
+			return $limit;
+		}
+
+		$offset = $this->resolve_cluster_members_offset( $request );
+		if ( $offset instanceof WP_Error ) {
+			return $offset;
+		}
 
 		if ( $this->dependencies->projection_sync_service->should_use_local_projection( $tenant_id ) ) {
 			$cluster_row = $this->dependencies->clusters_repository->find_by_uuid( $cluster_id );
@@ -283,7 +290,7 @@ class ClusterReadService {
 			if ( isset( $member_rows[0]['total_count'] ) && is_numeric( $member_rows[0]['total_count'] ) ) {
 				$total = max( 0, (int) $member_rows[0]['total_count'] );
 			} else {
-				$total = $this->dependencies->members_repository->count_for_cluster( $cluster_id );
+				$total = $this->dependencies->members_repository->count_for_cluster( $cluster_id, $tenant_id );
 			}
 			return new WP_REST_Response( $this->dependencies->response_envelope_service->build_cluster_members_envelope( $members, $limit, $total, $offset ), 200 );
 		}
@@ -299,19 +306,42 @@ class ClusterReadService {
 			)
 		);
 		$response = $this->dependencies->projection_sync_service->maybe_bootstrap_after_proxy_read( $tenant_id, $response );
-		return $this->dependencies->response_envelope_service->normalize_cluster_members_response( $response, $limit, $offset );
+		return $this->dependencies->response_envelope_service->normalize_cluster_members_response( $response );
 	}
 
 	/**
-	 * Resolve members page size: default max, min 1, capped at GET_CLUSTER_MEMBERS_MAX_LIMIT.
+	 * Resolve members page size: default max; reject-not-clamp on out-of-range
+	 * values (400), matching recognition's validate_paging policy so both legs
+	 * of the boundary behave identically.
 	 */
-	private function resolve_cluster_members_limit( WP_REST_Request $request ): int {
+	private function resolve_cluster_members_limit( WP_REST_Request $request ): int|WP_Error {
 		$raw = $request->get_param( 'limit' );
 		if ( null === $raw || '' === $raw ) {
 			return self::GET_CLUSTER_MEMBERS_MAX_LIMIT;
 		}
 
-		return max( 1, min( absint( $raw ), self::GET_CLUSTER_MEMBERS_MAX_LIMIT ) );
+		if ( ! is_numeric( $raw ) || (int) $raw < 1 || (int) $raw > self::GET_CLUSTER_MEMBERS_MAX_LIMIT ) {
+			return new WP_Error( 'invalid_limit', 'limit out of range', array( 'status' => 400 ) );
+		}
+
+		return absint( $raw );
+	}
+
+	/**
+	 * Resolve members page offset: default 0; reject-not-clamp on negative
+	 * values (400), matching recognition's validate_paging policy.
+	 */
+	private function resolve_cluster_members_offset( WP_REST_Request $request ): int|WP_Error {
+		$raw = $request->get_param( 'offset' );
+		if ( null === $raw || '' === $raw ) {
+			return 0;
+		}
+
+		if ( ! is_numeric( $raw ) || (int) $raw < 0 ) {
+			return new WP_Error( 'invalid_offset', 'offset must be non-negative', array( 'status' => 400 ) );
+		}
+
+		return absint( $raw );
 	}
 
 	/**

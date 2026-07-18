@@ -121,6 +121,9 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
   const [duplicateGuard, setDuplicateGuard] = useState<DuplicateGuardState | null>(null);
   const [allowRenameAnyway, setAllowRenameAnyway] = useState(false);
   const [lastMerge, setLastMerge] = useState<MergeClusterResponse | null>(null);
+  const [showAllAnnouncement, setShowAllAnnouncement] = useState<string | null>(null);
+  const memberGridRef = useRef<HTMLDivElement | null>(null);
+  const wasExpandingRef = useRef(false);
   /** Combobox calls onValueChange after onSelect; skip clearing the guard for that echo. */
   const skipGuardClearOnNextValueRef = useRef(false);
   const queryClient = useQueryClient();
@@ -133,6 +136,7 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
     setDuplicateGuard(null);
     setAllowRenameAnyway(false);
     setLastMerge(null);
+    setShowAllAnnouncement(null);
     skipGuardClearOnNextValueRef.current = false;
   }, [clusterId]);
 
@@ -166,6 +170,22 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
     expandError,
     showAll,
   } = useShowAllClusterMembers(clusterId);
+
+  // AT affordance: when expansion completes the show-all button unmounts, so
+  // announce completion and move focus to the member grid before it drops.
+  useEffect(() => {
+    if (wasExpandingRef.current && !isExpanding && isFullyLoaded && !expandError) {
+      setShowAllAnnouncement(
+        sprintf(
+          /* translators: %d: total member count */
+          __('All %d members shown', 'alt-context'),
+          total,
+        ),
+      );
+      memberGridRef.current?.focus();
+    }
+    wasExpandingRef.current = isExpanding;
+  }, [isExpanding, isFullyLoaded, expandError, total]);
 
   const {
     data: persons = [],
@@ -459,7 +479,7 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
       </div>
 
       <div className="acx-cluster-labeling-panel__content">
-        <div className="acx-cluster-labeling-panel__grid">
+        <div className="acx-cluster-labeling-panel__grid" ref={memberGridRef} tabIndex={-1}>
           {isLoading ? (
             <p>{__('Loading faces...', 'alt-context')}</p>
           ) : members.length > 0 ? (
@@ -485,6 +505,9 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
             <p>{__('No members found.', 'alt-context')}</p>
           )}
         </div>
+        <p className="acx-cluster-members-show-all__announce" role="status" aria-live="polite">
+          {showAllAnnouncement}
+        </p>
         {truncated && !isFullyLoaded ? (
           <div className="acx-cluster-members-show-all">
             <button

@@ -40,9 +40,10 @@ const createWrapper = () => {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return ({ children }: { children: ReactNode }) => (
+  const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
   );
+  return Object.assign(wrapper, { queryClient });
 };
 
 describe('useShowAllClusterMembers', () => {
@@ -113,6 +114,160 @@ describe('useShowAllClusterMembers', () => {
       const limit = params.limit ?? 0;
       return offset + limit <= 5;
     })).toBe(true);
+  });
+
+  it('discards in-flight show-all results when the cluster changes mid-paging', async () => {
+    const fetchMock = vi.mocked(fetchClusterMembers);
+    let releasePage: (value: ClusterMembersResponse) => void = () => undefined;
+
+    fetchMock.mockImplementation((clusterId, params = {}) => {
+      const offset = params.offset ?? 0;
+      if (clusterId === 'cluster-a') {
+        if (offset === 0) {
+          return Promise.resolve(
+            makeEnvelope([makeMember('a1'), makeMember('a2')], { limit: 2, total: 4, truncated: true }),
+          );
+        }
+        // Hold the second page open until the test switches clusters.
+        return new Promise<ClusterMembersResponse>((resolve) => {
+          releasePage = resolve;
+        });
+      }
+      return Promise.resolve(makeEnvelope([makeMember('b1')], { limit: 2, total: 1, truncated: false }));
+    });
+
+    const { result, rerender } = renderHook(({ clusterId }) => useShowAllClusterMembers(clusterId), {
+      wrapper: createWrapper(),
+      initialProps: { clusterId: 'cluster-a' },
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    let showAllPromise: Promise<void> = Promise.resolve();
+    act(() => {
+      showAllPromise = result.current.showAll();
+    });
+
+    rerender({ clusterId: 'cluster-b' });
+
+    await waitFor(() => {
+      expect(result.current.members.map((m) => m.identity_id)).toEqual(['b1']);
+    });
+
+    await act(async () => {
+      releasePage(makeEnvelope([makeMember('a3'), makeMember('a4')], { limit: 2, total: 4, truncated: false }));
+      await showAllPromise;
+    });
+
+    // Stale cluster-a pages never leak into cluster-b state.
+    expect(result.current.members.map((m) => m.identity_id)).toEqual(['b1']);
+    expect(result.current.expandError).toBeNull();
+  });
+
+  it('drops the expanded snapshot back to the honest first page after a refetch', async () => {
+    const fetchMock = vi.mocked(fetchClusterMembers);
+    let removed = false;
+
+    fetchMock.mockImplementation((_clusterId, params = {}) => {
+      const offset = params.offset ?? 0;
+      if (removed) {
+        return Promise.resolve(makeEnvelope([makeMember('m1')], { limit: 2, total: 1, truncated: false }));
+      }
+      if (offset === 0) {
+        return Promise.resolve(
+          makeEnvelope([makeMember('m1'), makeMember('m2')], { limit: 2, total: 3, truncated: true }),
+        );
+      }
+      return Promise.resolve(makeEnvelope([makeMember('m3')], { limit: 1, total: 3, truncated: false }));
+    });
+
+    const wrapper = createWrapper();
+    const { result } = renderHook(() => useShowAllClusterMembers('cluster-refetch'), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    await act(async () => {
+      await result.current.showAll();
+    });
+    expect(result.current.members.map((m) => m.identity_id)).toEqual(['m1', 'm2', 'm3']);
+
+    // Mutation invalidates + refetch returns the member-removed envelope.
+    removed = true;
+    await act(async () => {
+      await wrapper.queryClient.refetchQueries();
+    });
+
+    await waitFor(() => {
+      expect(result.current.members.map((m) => m.identity_id)).toEqual(['m1']);
+    });
+    expect(result.current.isFullyLoaded).toBe(true);
+  });
+
+  it('surfaces an error and keeps the honest first page when a mid-run page comes back empty', async () => {
+    const fetchMock = vi.mocked(fetchClusterMembers);
+
+    fetchMock.mockImplementation((_clusterId, params = {}) => {
+      const offset = params.offset ?? 0;
+      if (offset === 0) {
+        return Promise.resolve(
+          makeEnvelope([makeMember('m1'), makeMember('m2')], { limit: 2, total: 5, truncated: true }),
+        );
+      }
+      return Promise.resolve(makeEnvelope([], { limit: 2, total: 5, truncated: true }));
+    });
+
+    const { result } = renderHook(() => useShowAllClusterMembers('cluster-empty-page'), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    await act(async () => {
+      await result.current.showAll();
+    });
+
+    expect(result.current.expandError).toBe('Unable to load remaining members.');
+    expect(result.current.members.map((m) => m.identity_id)).toEqual(['m1', 'm2']);
+    // Not stamped complete: the affordance stays available for a retry.
+    expect(result.current.isFullyLoaded).toBe(false);
+    expect(result.current.isExpanding).toBe(false);
+  });
+
+  it('surfaces an error and keeps the honest first page when a mid-run page rejects', async () => {
+    const fetchMock = vi.mocked(fetchClusterMembers);
+
+    fetchMock.mockImplementation((_clusterId, params = {}) => {
+      const offset = params.offset ?? 0;
+      if (offset === 0) {
+        return Promise.resolve(
+          makeEnvelope([makeMember('m1'), makeMember('m2')], { limit: 2, total: 5, truncated: true }),
+        );
+      }
+      return Promise.reject(new Error('network down'));
+    });
+
+    const { result } = renderHook(() => useShowAllClusterMembers('cluster-reject'), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    await act(async () => {
+      await result.current.showAll();
+    });
+
+    expect(result.current.expandError).toBe('network down');
+    expect(result.current.members.map((m) => m.identity_id)).toEqual(['m1', 'm2']);
+    expect(result.current.isFullyLoaded).toBe(false);
+    expect(result.current.isExpanding).toBe(false);
   });
 
   it('does not fetch again when already fully loaded', async () => {

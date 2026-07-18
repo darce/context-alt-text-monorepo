@@ -34,6 +34,9 @@ interface ClusterReviewPanelProps {
 export const ClusterReviewPanel = ({ clusterId, onClose }: ClusterReviewPanelProps): React.JSX.Element => {
   const queryClient = useQueryClient();
   const [pendingRemovalIdentityId, setPendingRemovalIdentityId] = React.useState<string | null>(null);
+  const [showAllAnnouncement, setShowAllAnnouncement] = React.useState<string | null>(null);
+  const memberGridRef = React.useRef<HTMLDivElement | null>(null);
+  const wasExpandingRef = React.useRef(false);
 
   const {
     members,
@@ -46,6 +49,22 @@ export const ClusterReviewPanel = ({ clusterId, onClose }: ClusterReviewPanelPro
     expandError,
     showAll,
   } = useShowAllClusterMembers(clusterId);
+
+  // AT affordance: when expansion completes the show-all button unmounts, so
+  // announce completion and move focus to the member grid before it drops.
+  React.useEffect(() => {
+    if (wasExpandingRef.current && !isExpanding && isFullyLoaded && !expandError) {
+      setShowAllAnnouncement(
+        sprintf(
+          /* translators: %d: total member count */
+          __('All %d members shown', 'alt-context'),
+          total,
+        ),
+      );
+      memberGridRef.current?.focus();
+    }
+    wasExpandingRef.current = isExpanding;
+  }, [isExpanding, isFullyLoaded, expandError, total]);
 
   const removeMutation = useMutation({
     mutationFn: (identityId: string) => removeClusterMember(identityId, true),
@@ -91,7 +110,7 @@ export const ClusterReviewPanel = ({ clusterId, onClose }: ClusterReviewPanelPro
           <p>{__('Unable to load cluster members.', 'alt-context')}</p>
         ) : members.length > 0 ? (
           <>
-            <div className="acx-cluster-review-panel__grid">
+            <div className="acx-cluster-review-panel__grid" ref={memberGridRef} tabIndex={-1}>
               {members.map((member) => (
                 <div key={member.identity_id} className="acx-cluster-member-card">
                   <div className="acx-cluster-member-card__thumbnail">
@@ -130,6 +149,9 @@ export const ClusterReviewPanel = ({ clusterId, onClose }: ClusterReviewPanelPro
                 </div>
               ))}
             </div>
+            <p className="acx-cluster-members-show-all__announce" role="status" aria-live="polite">
+              {showAllAnnouncement}
+            </p>
             {truncated && !isFullyLoaded ? (
               <div className="acx-cluster-members-show-all">
                 <button

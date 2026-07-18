@@ -55,7 +55,7 @@ class IdentityMembersReadRepository {
 				INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
 				LEFT JOIN %i p ON p.id = c.person_id
 				WHERE m.cluster_uuid = %s AND c.tenant_id = %s
-				ORDER BY m.updated_at DESC LIMIT %d OFFSET %d',
+				ORDER BY m.updated_at DESC, m.identity_uuid LIMIT %d OFFSET %d',
 				array(
 					$this->members_table_name,
 					$this->clusters_table_name,
@@ -73,7 +73,7 @@ class IdentityMembersReadRepository {
 				LEFT JOIN %i c ON c.cluster_uuid = m.cluster_uuid
 				LEFT JOIN %i p ON p.id = c.person_id
 				WHERE m.cluster_uuid = %s
-				ORDER BY m.updated_at DESC LIMIT %d OFFSET %d',
+				ORDER BY m.updated_at DESC, m.identity_uuid LIMIT %d OFFSET %d',
 				array(
 					$this->members_table_name,
 					$this->clusters_table_name,
@@ -219,7 +219,7 @@ class IdentityMembersReadRepository {
 			INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
 			LEFT JOIN %i p ON p.id = c.person_id
 			WHERE c.tenant_id = %s AND m.attachment_id IN ($placeholders)
-			ORDER BY m.updated_at DESC",
+			ORDER BY m.updated_at DESC, m.identity_uuid",
 			array_merge(
 				array(
 					$this->members_table_name,
@@ -274,7 +274,7 @@ class IdentityMembersReadRepository {
 		return null !== $wpdb->get_var( $sql );
 	}
 
-	public function count_for_cluster( string $cluster_uuid ): int {
+	public function count_for_cluster( string $cluster_uuid, ?string $tenant_id = null ): int {
 		global $wpdb;
 
 		$normalized_cluster_uuid = trim( $cluster_uuid );
@@ -286,13 +286,27 @@ class IdentityMembersReadRepository {
 			return 0;
 		}
 
-		$sql = $this->prepare_query(
-			'SELECT COUNT(*) FROM %i WHERE cluster_uuid = %s',
-			array(
-				$this->members_table_name,
-				$normalized_cluster_uuid,
-			)
-		);
+		if ( null !== $tenant_id && '' !== trim( $tenant_id ) ) {
+			$sql = $this->prepare_query(
+				'SELECT COUNT(*) FROM %i m
+				INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
+				WHERE m.cluster_uuid = %s AND c.tenant_id = %s',
+				array(
+					$this->members_table_name,
+					$this->clusters_table_name,
+					$normalized_cluster_uuid,
+					trim( $tenant_id ),
+				)
+			);
+		} else {
+			$sql = $this->prepare_query(
+				'SELECT COUNT(*) FROM %i WHERE cluster_uuid = %s',
+				array(
+					$this->members_table_name,
+					$normalized_cluster_uuid,
+				)
+			);
+		}
 
 		if ( ! is_string( $sql ) || '' === $sql ) {
 			return 0;

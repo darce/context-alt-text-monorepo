@@ -732,7 +732,7 @@ class RecognitionControllerIdentityMembersRepositorySpy extends NullIdentityMemb
         return 2;
     }
 
-    public function count_for_cluster(string $cluster_uuid): int
+    public function count_for_cluster(string $cluster_uuid, ?string $tenant_id = null): int
     {
         return '2e489e1d-0f64-4694-9082-5779d6cc7e52' === $cluster_uuid ? 3 : 2;
     }

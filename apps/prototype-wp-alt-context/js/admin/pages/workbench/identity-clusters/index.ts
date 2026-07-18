@@ -27,7 +27,7 @@ export { ClusterLabelingPanel } from './ClusterLabelingPanel';
 export { ClusterReviewPanel } from './ClusterReviewPanel';
 export { InlineSuggestionPrompt } from './InlineSuggestionPrompt';
 export { AnchorSelectionModal } from './AnchorSelectionModal';
-export { TopClustersSection } from './TopClustersSection';
+export { TopClusterCard } from './TopClusterCard';
 export { WorkbenchFindingsPanel } from './WorkbenchFindingsPanel';
 
 // Hooks

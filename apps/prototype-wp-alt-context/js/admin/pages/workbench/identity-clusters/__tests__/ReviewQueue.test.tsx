@@ -5,6 +5,7 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  acceptMergeSuggestion,
   acceptSuggestion,
   fetchPendingMergeSuggestions,
   fetchPendingNameSuggestions,
@@ -17,6 +18,7 @@ import { resetConfigCache } from '../../../../api/config';
 import { queryKeys } from '../../../../api/queryKeys';
 import type { ReviewQueueKindParam } from '../../../../hooks/workbenchQueueUrl';
 import { ReviewQueue, type ReviewQueueHandle } from '../ReviewQueue';
+import { REVIEW_QUEUE_DRAIN_MESSAGE } from '../reviewQueueDriver';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -179,36 +181,43 @@ describe('ReviewQueue', () => {
   });
 
   it('navigates with prev/next without changing index on accept (PR-54 live-queue semantics)', async () => {
-    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
-      suggestions: [
-        {
-          id: 'sugg-1',
-          identity_id: 'identity-1',
-          suggested_cluster_id: 'cluster-1',
-          representative_similarity: 0.95,
-          avg_member_similarity: 0.9,
-          cluster_label: 'Alex',
-          cluster_identity_count: 3,
-        },
-        {
-          id: 'sugg-2',
-          identity_id: 'identity-2',
-          suggested_cluster_id: 'cluster-2',
-          representative_similarity: 0.7,
-          avg_member_similarity: 0.65,
-          cluster_label: 'Jordan',
-          cluster_identity_count: 2,
-        },
-      ],
-      limit: 10,
-      offset: 0,
-    });
-    vi.mocked(acceptSuggestion).mockResolvedValue({
-      suggestion_id: 'sugg-1',
-      resolution: 'accepted',
-      identity_id: 'identity-1',
-      cluster_id: 'cluster-1',
-      message: 'ok',
+    // Live list: refetch after accept must return the remaining item only.
+    let pendingRows = [
+      {
+        id: 'sugg-1',
+        identity_id: 'identity-1',
+        suggested_cluster_id: 'cluster-1',
+        representative_similarity: 0.95,
+        avg_member_similarity: 0.9,
+        cluster_label: 'Alex',
+        cluster_identity_count: 3,
+      },
+      {
+        id: 'sugg-2',
+        identity_id: 'identity-2',
+        suggested_cluster_id: 'cluster-2',
+        representative_similarity: 0.7,
+        avg_member_similarity: 0.65,
+        cluster_label: 'Jordan',
+        cluster_identity_count: 2,
+      },
+    ];
+    vi.mocked(fetchPendingSuggestions).mockImplementation(() =>
+      Promise.resolve({
+        suggestions: pendingRows.map((row) => ({ ...row })),
+        limit: 10,
+        offset: 0,
+      }),
+    );
+    vi.mocked(acceptSuggestion).mockImplementation((id: string) => {
+      pendingRows = pendingRows.filter((row) => row.id !== id);
+      return Promise.resolve({
+        suggestion_id: id,
+        resolution: 'accepted' as const,
+        identity_id: 'identity-1',
+        cluster_id: 'cluster-1',
+        message: 'ok',
+      });
     });
 
     const user = userEvent.setup();
@@ -234,6 +243,11 @@ describe('ReviewQueue', () => {
     await user.click(screen.getByRole('button', { name: 'Yes' }));
     await waitFor(() => {
       expect(acceptSuggestion).toHaveBeenCalledWith('sugg-1', expect.anything());
+    });
+    // BR-08: index stays at head; next card occupies the slot after removal.
+    await waitFor(() => {
+      expect(screen.getByText('1 of 1')).toBeInTheDocument();
+      expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Jordan/);
     });
   });
 
@@ -379,11 +393,22 @@ describe('ReviewQueue', () => {
 
     await screen.findByText(/Is this/);
     expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    // BR-14: two KIND chips only — no third "All" button.
+    expect(screen.queryByRole('button', { name: 'All' })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Possible duplicates' }));
     expect(await screen.findByText('Are these the same person?')).toBeInTheDocument();
     expect(screen.getAllByTestId('acx-review-card')).toHaveLength(1);
     expect(screen.getByText('1 of 1')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Possible duplicates' })).toHaveAttribute('aria-pressed', 'true');
+
+    // Toggle active chip → unfiltered/all.
+    await user.click(screen.getByRole('button', { name: 'Possible duplicates' }));
+    await waitFor(() => {
+      expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: 'Possible duplicates' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('button', { name: 'Close matches' })).toHaveAttribute('aria-pressed', 'false');
   });
 
   it('fires existing accept mutation and invalidates projection keys', async () => {
@@ -648,5 +673,231 @@ describe('ReviewQueue', () => {
     expect(screen.queryByRole('button', { name: 'Yes all' })).not.toBeInTheDocument();
     expect(screen.queryByText('Bulk accept')).not.toBeInTheDocument();
     expect(screen.getAllByTestId('acx-review-card')).toHaveLength(1);
+  });
+
+  it('preserves restored index across staggered query resolution (BR-06 reload gate)', async () => {
+    // assignment+merge resolve first (1 assignment only) while name/cluster stay
+    // pending. Old gate treated findings as settled → clamped index 3 → 0 permanently.
+    let resolveName!: (value: Awaited<ReturnType<typeof fetchPendingNameSuggestions>>) => void;
+    let resolveClusters!: (value: Awaited<ReturnType<typeof fetchTopUnlabeledClusters>>) => void;
+
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-0',
+          identity_id: 'identity-0',
+          suggested_cluster_id: 'cluster-0',
+          representative_similarity: 0.95,
+          avg_member_similarity: 0.9,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveName = resolve;
+        }),
+    );
+    vi.mocked(fetchTopUnlabeledClusters).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveClusters = resolve;
+        }),
+    );
+
+    // Seeded like rq=…all.3 — controlled index 3 owned by parent (ScanTabContent).
+    const Parent = (): React.JSX.Element => {
+      const [index, setIndex] = React.useState(3);
+      const [kind, setKind] = React.useState<ReviewQueueKindParam>('all');
+      return (
+        <div>
+          <span data-testid="parent-index">{index}</span>
+          <ReviewQueue index={index} onIndexChange={setIndex} kind={kind} onKindChange={setKind} />
+        </div>
+      );
+    };
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Parent />
+      </QueryClientProvider>,
+    );
+
+    // Partial settle: assignment+merge done, name/cluster still in flight.
+    await waitFor(() => {
+      expect(fetchPendingSuggestions).toHaveBeenCalled();
+      expect(fetchPendingMergeSuggestions).toHaveBeenCalled();
+      // Queue shell may render the partial assignment card, but must NOT clamp.
+      expect(screen.getByTestId('parent-index')).toHaveTextContent('3');
+    });
+
+    act(() => {
+      resolveName({ suggestions: [], limit: 25, offset: 0 });
+      resolveClusters({
+        clusters: [
+          {
+            id: 'cluster-c1',
+            tenant_id: 'test-tenant-id',
+            label: null,
+            is_labeled: false,
+            is_auto_label: false,
+            identity_count: 5,
+            user_confirmed: false,
+            representatives: [],
+          },
+          {
+            id: 'cluster-c2',
+            tenant_id: 'test-tenant-id',
+            label: null,
+            is_labeled: false,
+            is_auto_label: false,
+            identity_count: 4,
+            user_confirmed: false,
+            representatives: [],
+          },
+          {
+            id: 'cluster-c3',
+            tenant_id: 'test-tenant-id',
+            label: null,
+            is_labeled: false,
+            is_auto_label: false,
+            identity_count: 3,
+            user_confirmed: false,
+            representatives: [],
+          },
+          {
+            id: 'cluster-c4',
+            tenant_id: 'test-tenant-id',
+            label: null,
+            is_labeled: false,
+            is_auto_label: false,
+            identity_count: 2,
+            user_confirmed: false,
+            representatives: [],
+          },
+        ],
+        limit: 20,
+        total: 4,
+        truncated: false,
+        singleton_count: 0,
+        data_source: DATA_SOURCE.LOCAL_PROJECTION,
+      });
+    });
+
+    // Full queue: [Alex, c1, c2, c3, c4] — index 3 is cluster-c3.
+    await waitFor(() => {
+      expect(screen.getByTestId('parent-index')).toHaveTextContent('3');
+      expect(screen.getByText('4 of 5')).toBeInTheDocument();
+      expect(screen.getByTestId('acx-review-card')).toHaveAttribute('data-review-kind', 'cluster');
+    });
+  });
+
+  it('does not move focus on Next after a failed accept (BR-13)', async () => {
+    // Use merge accept (no optimistic remove) so a failure leaves the card in place
+    // with a stale pending-focus ref — the bug the clear-on-error fix targets.
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'merge-1',
+          cluster_a_id: 'a',
+          cluster_b_id: 'b',
+          similarity: 0.88,
+          status: 'pending',
+          cluster_a_label: 'Alex',
+          cluster_b_label: 'Jordan',
+        },
+        {
+          id: 'merge-2',
+          cluster_a_id: 'c',
+          cluster_b_id: 'd',
+          similarity: 0.8,
+          status: 'pending',
+          cluster_a_label: 'Casey',
+          cluster_b_label: 'Drew',
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(acceptMergeSuggestion).mockRejectedValue(new Error('merge accept failed'));
+
+    const user = userEvent.setup();
+    renderQueue();
+
+    const yes = await screen.findByRole('button', { name: 'Yes' });
+    yes.focus();
+    await user.click(yes);
+
+    await waitFor(() => {
+      expect(acceptMergeSuggestion).toHaveBeenCalled();
+    });
+    // Still on first merge card.
+    expect(screen.getByText('Are these the same person?')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+
+    // Blur so a later surprise-focus is unambiguous.
+    (document.activeElement as HTMLElement | null)?.blur();
+
+    await user.click(screen.getByRole('button', { name: 'Next review item' }));
+    await waitFor(() => {
+      expect(screen.getByText('2 of 2')).toBeInTheDocument();
+    });
+    // Stale pending-focus must not auto-focus the primary after Next.
+    expect(screen.getByRole('button', { name: 'Yes' })).not.toHaveFocus();
+  });
+
+  it('uses the shared drain message for empty state and drain announcement', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-only',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 1,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(acceptSuggestion).mockResolvedValue({
+      suggestion_id: 'sugg-only',
+      resolution: 'accepted',
+      identity_id: 'identity-1',
+      cluster_id: 'cluster-1',
+      message: 'ok',
+    });
+
+    const user = userEvent.setup();
+    renderQueue();
+
+    await user.click(await screen.findByRole('button', { name: 'Yes' }));
+    await waitFor(() => {
+      expect(acceptSuggestion).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      const statuses = screen.getAllByRole('status');
+      expect(statuses.some((node) => within(node).queryByText(REVIEW_QUEUE_DRAIN_MESSAGE))).toBe(true);
+      expect(screen.getByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeInTheDocument();
+    });
   });
 });

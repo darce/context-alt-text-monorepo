@@ -23,37 +23,26 @@ import {
  * observation is a human session that follows the same script; this spec is its
  * instrumented rehearsal, not its replacement (see `manifest.harness`).
  *
- * Naming paths (grounded in TopClusterCard/TopClustersSection/ClusterLabelingPanel
- * and their unit tests), tried in priority order:
- *   1. `top-cluster-card` — an unlabeled card's "Name this person" title action
- *      opens ClusterLabelingPanel; the name is committed through the creatable
- *      Combobox (trigger → CommandInput → Create/option commit → Save).
- *   2. `suggested-label-confirm` — a suggested-label card ("Is this X?") is named
- *      by its "Yes" confirm button (TopClustersSection.confirmSuggestedLabelMutation
- *      labels/merges the cluster directly; no labeling panel is involved).
- *   3. `review-next` — the findings panel's "Review next" opens the labeling panel
- *      only when its next action targets a cluster (NEXT_ACTION_KIND.CLUSTER, hint
- *      "Name the largest unlabeled group"); other kinds merely scroll to the queues,
- *      so this route is guarded by waiting for the panel and falling through.
- * If no route is available the run fails with a diagnostic in the manifest —
- * a failed walkthrough is itself gate evidence and must say why.
+ * Naming paths (E21-5 ReviewQueue surface; TopClustersSection retired), tried in order:
+ *   1. `queue-cluster-primary` — head card is a cluster: "Name this person" opens
+ *      ClusterLabelingPanel (TopClusterCard title action).
+ *   2. `queue-nav-to-cluster` — prev/next until a cluster card is current, then the
+ *      same primary action.
+ *   3. `queue-card-tertiary` — reserved for Slice 3 tertiary label affordance (not
+ *      wired yet; diagnostic notes queue state if only this path remains).
+ * If no route is available the run fails with a diagnostic that names the queue
+ * state — a failed walkthrough is itself gate evidence and must say why.
  */
 
 const WORKBENCH_SHELL = '.acx-workbench';
 const SCAN_BUTTON_NAME = /Analyze selected media/i;
 const MEDIA_CHECKBOX_NAME = /Select media item/i;
-const TOP_CLUSTERS_SECTION = '.acx-top-clusters-section';
-const TOP_CLUSTER_CARD = '.acx-top-cluster-card';
-// TopClustersSection renders `--empty` variants (unavailable / no clusters / all
-// labeled / singletons-only) that contain no cards; only cards inside the
-// non-empty section are actionable.
-const ACTIONABLE_TOP_CLUSTER_CARD = `${TOP_CLUSTERS_SECTION}:not(${TOP_CLUSTERS_SECTION}--empty) ${TOP_CLUSTER_CARD}`;
+const REVIEW_QUEUE = '.acx-review-queue';
+const REVIEW_CARD = `${REVIEW_QUEUE} [data-testid="acx-review-card"]`;
 const LABELING_PANEL = '.acx-cluster-labeling-panel';
 const FINDINGS_PANEL = '.acx-findings-panel';
 // WorkbenchFindingsPanel skeleton variants; "Review next" only exists in the base panel.
 const ACTIONABLE_FINDINGS_PANEL = `${FINDINGS_PANEL}:not(${FINDINGS_PANEL}--loading):not(${FINDINGS_PANEL}--error):not(${FINDINGS_PANEL}--unavailable)`;
-const SUGGESTION_PANEL = '.acx-suggestion-panel';
-const SUGGESTED_CARD_CONFIRM = '.acx-top-cluster-card__confirm-btn';
 
 const MAX_SCAN_MEDIA = 5;
 const SCAN_POLL_MS = 5_000;
@@ -64,7 +53,7 @@ const NAMING_SURFACE_TIMEOUT_MS = 120_000;
 // wait only needs to cover a rendered (expanded) table.
 const MEDIA_TABLE_WAIT_MS = 10_000;
 const SAVE_CLOSE_TIMEOUT_MS = 30_000;
-const REVIEW_NEXT_PANEL_WAIT_MS = 10_000;
+const QUEUE_NAV_MAX_STEPS = 40;
 
 // Mirrors playwright.config.ts `evidence` project (headless: false, launchOptions.slowMo).
 const HARNESS_INFO = {
@@ -72,10 +61,6 @@ const HARNESS_INFO = {
   slow_mo_ms: 200,
   note: 'instrumented rehearsal; timings not comparable to the unaided human baseline',
 };
-
-const NO_NAMING_ROUTE_DIAGNOSTIC =
-  'no unlabeled cluster available — reseed or unlabel one ' +
-  '(no "Name this person" card, no suggested-label card, and "Review next" did not open the labeling panel)';
 
 const taskRef = (process.env.ACX_PLAYWRIGHT_TASK_REF ?? 'E21-13').trim();
 const deployCommitSha = (process.env.ACX_DEPLOY_COMMIT_SHA ?? '').trim() || null;
@@ -89,9 +74,33 @@ const capture = async (page: Page, outputPath: string, captures: Record<string, 
 };
 
 type NamingRoute =
-  | { kind: 'top-cluster-card' }
-  | { kind: 'suggested-label-confirm'; card: Locator; suggestedLabel: string }
-  | { kind: 'review-next' };
+  | { kind: 'queue-cluster-primary' }
+  | { kind: 'queue-nav-to-cluster' };
+
+const describeQueueState = async (page: Page): Promise<string> => {
+  const queue = page.locator(REVIEW_QUEUE);
+  if (!(await queue.isVisible().catch(() => false))) {
+    return 'review queue not visible';
+  }
+  const position = ((await page.locator(`${REVIEW_QUEUE} .acx-review-queue__position`).innerText().catch(() => '')) ?? '')
+    .trim();
+  const cardKind =
+    ((await page.locator(REVIEW_CARD).getAttribute('data-review-kind').catch(() => null)) ?? 'none').trim();
+  const emptyCopy = ((await page.locator(`${REVIEW_QUEUE} .acx-review-queue__empty`).innerText().catch(() => '')) ?? '')
+    .trim();
+  if (emptyCopy) {
+    return `queue empty (${position || '0 of 0'}): ${emptyCopy}`;
+  }
+  return `queue position=${position || 'unknown'} headKind=${cardKind}`;
+};
+
+const noNamingRouteDiagnostic = async (page: Page): Promise<string> => {
+  const state = await describeQueueState(page);
+  return (
+    'no naming route on review queue — reseed or unlabel a cluster ' +
+    `(expected "Name this person" on a cluster card via head or prev/next; ${state})`
+  );
+};
 
 /**
  * Commit a name through the creatable Combobox the way the component does it
@@ -198,95 +207,75 @@ test('first-visitor walkthrough: scan → review → first named person, timed',
     );
     await capture(page, testInfo.outputPath('walkthrough-2-post-scan.png'), captures, 'walkthrough-2-post-scan.png');
 
-    // Step 3 — review surface ACTIONABLE, not merely painted: either a real
-    // top-cluster card inside a non-empty "Name These People" section, or an
+    // Step 3 — review surface ACTIONABLE: settled review queue with a card, or an
     // enabled "Review next" in the loaded findings panel. Loading/error/empty
-    // variants are excluded, so the recorded timing is the moment the visitor
-    // can actually act, not when a skeleton first renders.
+    // variants are excluded so the timing is when the visitor can act.
     await timer.step('review-surface-actionable', async () => {
-      const actionableCard = page.locator(ACTIONABLE_TOP_CLUSTER_CARD).first();
+      const queueCard = page.locator(REVIEW_CARD).first();
       const enabledReviewNext = page
         .locator(`${ACTIONABLE_FINDINGS_PANEL} button:enabled`)
         .filter({ hasText: 'Review next' })
         .first();
-      await actionableCard.or(enabledReviewNext).first().waitFor({
+      await queueCard.or(enabledReviewNext).first().waitFor({
         state: 'visible',
         timeout: NAMING_SURFACE_TIMEOUT_MS,
       });
     });
-    // Seed-dependent suggestion queues, captured opportunistically for the re-rank read.
+    // Queue chrome presence for the re-rank read (suggestion-panel retired).
     captures['walkthrough-3-suggestions.png'] = await page
-      .locator(SUGGESTION_PANEL)
+      .locator(REVIEW_QUEUE)
       .first()
       .isVisible()
       .catch(() => false);
     await capture(page, testInfo.outputPath('walkthrough-3-review.png'), captures, 'walkthrough-3-review.png');
 
-    // Step 4 — resolve the naming route in priority order (see header comment).
+    // Step 4 — resolve the naming route against the queue surface (see header).
     const route = await timer.step('open-naming-form', async (): Promise<NamingRoute> => {
-      // (a) Unlabeled top-cluster card: title action "Name this person" opens the panel.
-      const nameButton = page.getByRole('button', { name: 'Name this person' }).first();
-      if (await nameButton.isVisible().catch(() => false)) {
-        await nameButton.click();
-        await page.locator(LABELING_PANEL).waitFor({ state: 'visible', timeout: 15_000 });
-        return { kind: 'top-cluster-card' };
-      }
-
-      // (b) Suggested-label card ("Is this X?"): its "Yes" confirms the suggested
-      // name directly (TopClustersSection labels/merges the cluster; no panel opens).
-      const suggestedCard = page
-        .locator(ACTIONABLE_TOP_CLUSTER_CARD)
-        .filter({ has: page.locator(SUGGESTED_CARD_CONFIRM) })
-        .first();
-      if (await suggestedCard.isVisible().catch(() => false)) {
-        const title = ((await suggestedCard.locator('.acx-top-cluster-card__title').innerText().catch(() => '')) ?? '')
-          .trim();
-        const suggestedLabel = /^Is this (.+)\?$/.exec(title)?.[1]?.trim() ?? null;
-        if (suggestedLabel) {
-          return { kind: 'suggested-label-confirm', card: suggestedCard, suggestedLabel };
-        }
-      }
-
-      // (c) "Review next" — only opens the labeling panel when the next action is a
-      // cluster (hint: "Name the largest unlabeled group"); other kinds scroll to the
-      // queues instead, so guard with a bounded wait and fall through on no-show.
+      // Ensure the queue is focused if findings panel is the only actionable control.
       const reviewNext = page
         .locator(`${ACTIONABLE_FINDINGS_PANEL} button:enabled`)
         .filter({ hasText: 'Review next' })
         .first();
       if (await reviewNext.isVisible().catch(() => false)) {
-        await reviewNext.click();
-        const panelOpened = await page
-          .locator(LABELING_PANEL)
-          .waitFor({ state: 'visible', timeout: REVIEW_NEXT_PANEL_WAIT_MS })
-          .then(() => true)
-          .catch(() => false);
-        if (panelOpened) {
-          return { kind: 'review-next' };
+        await reviewNext.click().catch(() => undefined);
+      }
+
+      const nameButtonInCard = () =>
+        page.locator(REVIEW_CARD).getByRole('button', { name: 'Name this person' }).first();
+
+      // (a) Head card is already a cluster with "Name this person".
+      if (await nameButtonInCard().isVisible().catch(() => false)) {
+        await nameButtonInCard().click();
+        await page.locator(LABELING_PANEL).waitFor({ state: 'visible', timeout: 15_000 });
+        return { kind: 'queue-cluster-primary' };
+      }
+
+      // (b) Drive prev/next until a cluster card exposes the primary naming action.
+      const nextBtn = page.getByRole('button', { name: 'Next review item' });
+      for (let step = 0; step < QUEUE_NAV_MAX_STEPS; step += 1) {
+        if (!(await nextBtn.isEnabled().catch(() => false))) {
+          break;
+        }
+        await nextBtn.click();
+        if (await nameButtonInCard().isVisible().catch(() => false)) {
+          await nameButtonInCard().click();
+          await page.locator(LABELING_PANEL).waitFor({ state: 'visible', timeout: 15_000 });
+          return { kind: 'queue-nav-to-cluster' };
         }
       }
 
-      diagnostic = NO_NAMING_ROUTE_DIAGNOSTIC;
-      throw new Error(NO_NAMING_ROUTE_DIAGNOSTIC);
+      diagnostic = await noNamingRouteDiagnostic(page);
+      throw new Error(diagnostic);
     });
     if (!route) {
-      throw new Error(NO_NAMING_ROUTE_DIAGNOSTIC);
+      diagnostic = await noNamingRouteDiagnostic(page);
+      throw new Error(diagnostic);
     }
     namingRoute = route.kind;
     await capture(page, testInfo.outputPath('walkthrough-4-naming-form.png'), captures, 'walkthrough-4-naming-form.png');
 
-    // Step 5 — name the person.
+    // Step 5 — name the person via ClusterLabelingPanel Combobox + Save.
     await timer.step('name-first-person', async () => {
-      if (route.kind === 'suggested-label-confirm') {
-        // Confirming "Is this X?" IS naming a person: the mutation labels (or merges)
-        // the cluster and optimistically removes the card from the naming queue.
-        namedPersonLabel = route.suggestedLabel;
-        await route.card.locator(SUGGESTED_CARD_CONFIRM).click();
-        await route.card.waitFor({ state: 'hidden', timeout: SAVE_CLOSE_TIMEOUT_MS });
-        return;
-      }
-
-      // Labeling-panel routes: commit the name through the Combobox, then Save.
       const panel = page.locator(LABELING_PANEL);
       namedPersonLabel = await commitNameViaCombobox(page, panel, visitorName);
 

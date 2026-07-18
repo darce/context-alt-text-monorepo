@@ -43,6 +43,13 @@ export type WorkbenchNextAction =
   | { kind: typeof NEXT_ACTION_KIND.CLUSTER; clusterId: string }
   | { kind: typeof NEXT_ACTION_KIND.NONE; reason: NoneReason };
 
+/**
+ * Drain / empty-queue copy (plan §7 matrix). Shared by the role=status
+ * announcement and the empty-state region so unit + e2e assert one string.
+ * Empty-on-mount stays unannounced (live region only fires after a prior card).
+ */
+export const REVIEW_QUEUE_DRAIN_MESSAGE = 'All caught up — no items need review';
+
 /** Filter chip kinds for the pre-commit review queue (KIND-derived). */
 export const REVIEW_QUEUE_FILTER = {
   ALL: 'all',

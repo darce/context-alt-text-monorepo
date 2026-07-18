@@ -153,6 +153,7 @@ const makeFindingsViewModel = (overrides: Partial<WorkbenchFindingsViewModel> = 
   isError: false,
   isUnavailable: false,
   isReadOnly: false,
+  queueSettled: true,
   nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.EMPTY },
   queue: [],
   ...overrides,

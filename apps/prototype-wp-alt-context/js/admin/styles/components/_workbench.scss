@@ -762,60 +762,6 @@
   }
 }
 
-// Suggestion Review Panel
-.acx-suggestion-panel {
-  background-color: var(--acx-color-surface);
-  border: 1px solid var(--acx-color-border);
-  border-radius: var(--acx-radius-md);
-  padding: var(--acx-space-16);
-  margin-bottom: var(--acx-space-16);
-
-  &--loading {
-    text-align: center;
-    color: var(--acx-color-text-secondary);
-  }
-
-  &--empty {
-    text-align: center;
-  }
-
-  &__title {
-    display: flex;
-    align-items: center;
-    gap: var(--acx-space-8);
-    margin: 0 0 var(--acx-space-8);
-    font-size: var(--acx-text-base);
-    font-weight: var(--acx-font-weight-semibold);
-  }
-
-  &__content {
-    display: flex;
-    flex-direction: column;
-    gap: var(--acx-space-12);
-  }
-
-  &__count {
-    background-color: var(--acx-color-accent);
-    color: var(--acx-color-surface-alt);
-    font-size: var(--acx-text-xs);
-    font-weight: var(--acx-font-weight-semibold);
-    padding: var(--acx-space-2) var(--acx-space-8);
-    border-radius: var(--acx-radius-lg);
-  }
-
-  &__description {
-    margin: 0 0 var(--acx-space-12);
-    color: var(--acx-color-text-secondary);
-    font-size: var(--acx-text-sm);
-  }
-
-  &__list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--acx-space-12);
-  }
-}
-
 .acx-suggestion-card {
   display: flex;
   align-items: center;
@@ -928,78 +874,9 @@
     padding: var(--acx-space-4) var(--acx-space-12);
     font-size: var(--acx-text-sm);
   }
-
-  &__group-items {
-    width: 100%;
-    margin-top: var(--acx-space-8);
-  }
 }
 
-.acx-face-grid-preview {
-  display: grid;
-  overflow: hidden;
-  border-radius: var(--acx-radius-sm);
-
-  &--cluster {
-    grid-template-columns: repeat(2, 1fr);
-    gap: var(--acx-space-2);
-    width: var(--acx-thumb-size-md);
-    height: var(--acx-thumb-size-md);
-  }
-
-  &--candidates {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: var(--acx-space-4);
-    width: 144px;
-    min-height: 68px;
-  }
-
-  &__image {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    display: block;
-  }
-}
-
-// Top Clusters Section - Shown when no suggestions are pending
-.acx-top-clusters-section {
-  text-align: left;
-
-  &--empty {
-    padding: var(--acx-space-12);
-    background-color: var(--acx-color-surface-alt);
-    border: 1px solid var(--acx-color-border);
-    border-radius: var(--acx-radius-md);
-  }
-
-  &__title {
-    margin: 0 0 var(--acx-space-8);
-    font-size: var(--acx-text-base);
-    font-weight: var(--acx-font-weight-semibold);
-    color: var(--acx-color-text);
-  }
-
-  &__description {
-    margin: 0 0 var(--acx-space-12);
-    color: var(--acx-color-text-secondary);
-    font-size: var(--acx-text-sm);
-  }
-
-  &__list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--acx-space-12);
-  }
-
-  &__empty-message {
-    margin: 0;
-    color: var(--acx-color-text-secondary);
-    font-size: var(--acx-text-sm);
-  }
-}
-
-// Top Cluster Card - Individual cluster for curation
+// Top Cluster Card - Individual cluster for curation (ReviewQueue)
 .acx-top-cluster-card {
   display: flex;
   align-items: center;

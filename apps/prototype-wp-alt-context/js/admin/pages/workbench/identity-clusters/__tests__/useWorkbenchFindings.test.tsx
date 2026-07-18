@@ -103,6 +103,7 @@ const makeState = (overrides: Partial<WorkbenchFindingsSourceState> = {}): Workb
   topUnlabeledDataSource: DATA_SOURCE.LOCAL_PROJECTION,
   isLoading: false,
   isError: false,
+  queueSettled: true,
   ...overrides,
 });
 

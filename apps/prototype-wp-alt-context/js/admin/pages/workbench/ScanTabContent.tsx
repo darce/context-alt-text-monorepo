@@ -1,14 +1,19 @@
 import React from 'react';
 import { __ } from '@wordpress/i18n';
 import { ErrorBoundary } from '../../../components/ErrorBoundary';
+import {
+  useWorkbenchFilters,
+  type ReviewQueueKindParam,
+} from '../../hooks/useWorkbenchFilters';
 import { useScrollRestoration } from '../../hooks/useScrollRestoration';
 import { ScanActionPanel } from './Panels';
 import { JobTimeline } from './JobTimeline';
 import {
   ClusterLabelingPanel,
   ClusterReviewPanel,
-  SuggestionReviewPanel,
+  ReviewQueue,
   WorkbenchFindingsPanel,
+  type ReviewQueueHandle,
 } from './identity-clusters';
 import { useWorkbenchFindings } from './identity-clusters/useWorkbenchFindings';
 import { MediaSelection } from './MediaSelection';
@@ -37,11 +42,23 @@ export const ScanTabContent = (): React.JSX.Element => {
   const { scanRun, status, history, cancelScan, retryScanStream } = useJobPipeline();
   const { clusterPanel, dispatchClusterPanel } = useClusterPanel();
   const { hasIdentities } = useWorkbenchMediaContext().mediaQueue;
+  const { queueState, setQueueState } = useWorkbenchFilters();
 
   const findingsDetailRef = React.useRef<HTMLDivElement>(null);
+  const reviewQueueRef = React.useRef<ReviewQueueHandle>(null);
   const findings = useWorkbenchFindings();
   const [userExpandedMedia, setUserExpandedMedia] = React.useState(false);
   const previousHasFindings = React.useRef(findings.hasFindings);
+
+  // Lifted queue index + kind — survives label/review panel unmount of ReviewQueue.
+  const [queueIndex, setQueueIndex] = React.useState(queueState.index);
+  const [queueKind, setQueueKind] = React.useState<ReviewQueueKindParam>(queueState.kind);
+
+  // URL → local (reload / external writer).
+  React.useEffect(() => {
+    setQueueIndex(queueState.index);
+    setQueueKind(queueState.kind);
+  }, [queueState.index, queueState.kind]);
 
   React.useEffect(() => {
     if (findings.hasFindings && !previousHasFindings.current) {
@@ -53,14 +70,35 @@ export const ScanTabContent = (): React.JSX.Element => {
   const isMediaCollapsed =
     findings.hasFindings && !userExpandedMedia && !findings.isLoading && !findings.isError && !findings.isUnavailable;
 
+  const handleIndexChange = React.useCallback(
+    (nextIndex: number): void => {
+      setQueueIndex(nextIndex);
+      setQueueState({ index: nextIndex });
+    },
+    [setQueueState],
+  );
+
+  const handleKindChange = React.useCallback(
+    (nextKind: ReviewQueueKindParam): void => {
+      setQueueKind(nextKind);
+      setQueueState({ kind: nextKind, index: 0 });
+      setQueueIndex(0);
+    },
+    [setQueueState],
+  );
+
   const handleTargetFindings = (): void => {
     const anchor = findingsDetailRef.current;
-    if (!anchor) {
+    if (anchor) {
+      anchor.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+    }
+    // Drive the mounted queue (not scroll-only): focus current card primary.
+    if (reviewQueueRef.current) {
+      reviewQueueRef.current.focusCurrentCard();
       return;
     }
-    anchor.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
-    // WHY: move keyboard/SR focus with the scroll so "Review next" lands users on the queues.
-    anchor.focus({ preventScroll: true });
+    // Panel mode or empty: fall back to anchor focus.
+    anchor?.focus({ preventScroll: true });
   };
 
   const handleCancelScan = (): void => {
@@ -105,7 +143,13 @@ export const ScanTabContent = (): React.JSX.Element => {
               onClose={() => dispatchClusterPanel({ type: 'close' })}
             />
           ) : (
-            <SuggestionReviewPanel
+            <ReviewQueue
+              ref={reviewQueueRef}
+              index={queueIndex}
+              onIndexChange={handleIndexChange}
+              kind={queueKind}
+              onKindChange={handleKindChange}
+              emptyStateAnchorRef={findingsDetailRef}
               onLabel={(clusterId: string) => dispatchClusterPanel({ type: 'open_label', clusterId })}
               onReview={(clusterId: string) => dispatchClusterPanel({ type: 'open_review', clusterId })}
             />

@@ -91,4 +91,37 @@ describe('useWorkbenchFilters', () => {
     expect(result.current.currentPage).toBe(1);
     expect(result.current.perPage).toBe(100);
   });
+
+  it('defaults queue state when rq is omitted', () => {
+    const { result } = renderHook(() => useWorkbenchFilters(), { wrapper });
+
+    expect(result.current.queueState).toEqual({ kind: 'all', band: 'all', index: 0 });
+    expect(result.current.getQueueState()).toEqual({ kind: 'all', band: 'all', index: 0 });
+  });
+
+  it('parses rq=kind.band.index and falls back on malformed values', () => {
+    const { result: ok } = renderHook(() => useWorkbenchFilters(), {
+      wrapper: wrapperForUrl('/?rq=assignment.all.3'),
+    });
+    expect(ok.current.queueState).toEqual({ kind: 'assignment', band: 'all', index: 3 });
+
+    const { result: bad } = renderHook(() => useWorkbenchFilters(), {
+      wrapper: wrapperForUrl('/?rq=not-a-valid-value'),
+    });
+    expect(bad.current.queueState).toEqual({ kind: 'all', band: 'all', index: 0 });
+  });
+
+  it('setQueueState merges into rq without dropping other params', () => {
+    const { result } = renderHook(() => useWorkbenchFilters(), {
+      wrapper: wrapperForUrl('/?s=face&p=2&rq=all.all.1'),
+    });
+
+    act(() => {
+      result.current.setQueueState({ kind: 'merge', index: 4 });
+    });
+
+    expect(result.current.queueState).toEqual({ kind: 'merge', band: 'all', index: 4 });
+    expect(result.current.searchQuery).toBe('face');
+    expect(result.current.currentPage).toBe(2);
+  });
 });

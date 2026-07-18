@@ -31,7 +31,7 @@ interface IdentityClusterListProps {
  * - Actions: Edit, Wrong person, Split
  *
  * NOTE: v4.12.0 - CurateTopClustersPrompt removed; naming queue is now in
- * SuggestionReviewPanel for unified curation flow.
+ * ReviewQueue for unified curation flow.
  */
 export const IdentityClusterList = ({
   identities,

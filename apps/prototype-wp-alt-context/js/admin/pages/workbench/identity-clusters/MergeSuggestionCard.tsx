@@ -2,18 +2,62 @@ import React from 'react';
 import { __ } from '@wordpress/i18n';
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
 import type { PendingMergeSuggestion } from '../../../api/recognition';
+import type { FaceOriginalTarget } from './SuggestionCards';
 
 export interface MergeSuggestionCardProps {
   suggestion: PendingMergeSuggestion;
   onAccept: () => void;
   onReject: () => void;
+  onOpenOriginal?: (target: FaceOriginalTarget) => void;
   isPending: boolean;
 }
+
+const FaceCropControl = ({
+  mediaUrl,
+  bbox,
+  alt,
+  onOpen,
+}: {
+  mediaUrl: string;
+  bbox: NonNullable<PendingMergeSuggestion['cluster_a_representative_bbox']>;
+  alt: string;
+  onOpen?: (target: FaceOriginalTarget) => void;
+}): React.JSX.Element => {
+  if (!onOpen) {
+    return (
+      <FaceThumbnail
+        mediaUrl={mediaUrl}
+        bbox={bbox}
+        size="md"
+        alt={alt}
+        className="acx-suggestion-card__thumb"
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className="acx-face-crop-control"
+      onClick={() => onOpen({ mediaUrl, bbox, label: alt })}
+      aria-label={__('View original photo', 'alt-context')}
+    >
+      <FaceThumbnail
+        mediaUrl={mediaUrl}
+        bbox={bbox}
+        size="md"
+        alt={alt}
+        className="acx-suggestion-card__thumb"
+      />
+    </button>
+  );
+};
 
 export const MergeSuggestionCard = ({
   suggestion,
   onAccept,
   onReject,
+  onOpenOriginal,
   isPending,
 }: MergeSuggestionCardProps): React.JSX.Element => {
   const matchPercent = Math.round(suggestion.similarity * 100);
@@ -29,16 +73,19 @@ export const MergeSuggestionCard = ({
   const clusterBCount = suggestion.cluster_b_identity_count;
 
   return (
-    <div className="acx-suggestion-card acx-suggestion-card--merge">
+    <div
+      className="acx-suggestion-card acx-suggestion-card--merge"
+      data-testid="acx-review-card"
+      data-review-kind="merge"
+    >
       <div className="acx-suggestion-card__faces">
         <div className="acx-suggestion-card__face">
           {hasClusterAFace ? (
-            <FaceThumbnail
+            <FaceCropControl
               mediaUrl={suggestion.cluster_a_representative_media_url!}
               bbox={suggestion.cluster_a_representative_bbox!}
-              size="md"
-              alt={__('Cluster representative', 'alt-context')}
-              className="acx-suggestion-card__thumb"
+              alt={clusterALabel}
+              onOpen={onOpenOriginal}
             />
           ) : (
             <span className="acx-suggestion-card__thumb acx-suggestion-card__thumb--placeholder" />
@@ -50,12 +97,11 @@ export const MergeSuggestionCard = ({
         </div>
         <div className="acx-suggestion-card__face">
           {hasClusterBFace ? (
-            <FaceThumbnail
+            <FaceCropControl
               mediaUrl={suggestion.cluster_b_representative_media_url!}
               bbox={suggestion.cluster_b_representative_bbox!}
-              size="md"
-              alt={__('Cluster representative', 'alt-context')}
-              className="acx-suggestion-card__thumb"
+              alt={clusterBLabel}
+              onOpen={onOpenOriginal}
             />
           ) : (
             <span className="acx-suggestion-card__thumb acx-suggestion-card__thumb--placeholder" />

@@ -89,7 +89,7 @@ vi.mock('../../workbench/identity-clusters', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../workbench/identity-clusters')>();
   return {
     ...actual,
-    SuggestionReviewPanel: () => null,
+    ReviewQueue: () => null,
     IdentityClusterList: () => null,
   };
 });

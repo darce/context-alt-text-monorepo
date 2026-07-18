@@ -22,7 +22,7 @@ import {
   type ReviewQueueFilter,
   type ReviewQueueItem,
   type WorkbenchNextAction,
-} from './reviewQueue';
+} from './reviewQueueDriver';
 import { useSuggestionReviewQueries } from './useSuggestionReviewQueries';
 
 export {
@@ -47,7 +47,7 @@ export {
   removeAtQueueIndex,
   REVIEW_QUEUE_FILTER,
   queueItemToNextAction,
-} from './reviewQueue';
+} from './reviewQueueDriver';
 
 export interface WorkbenchFindingsCounts {
   assignments: number;

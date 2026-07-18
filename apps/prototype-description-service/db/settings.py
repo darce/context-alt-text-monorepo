@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 from functools import lru_cache
@@ -224,6 +225,26 @@ def _resolve_pgvector_dimension() -> int:
     return value
 
 
+def _resolve_embedding_timeout_s() -> float:
+    """Parse DB_EMBEDDING_TIMEOUT_SECONDS as a finite strictly-positive float.
+
+    Rejects NaN, ±Inf, zero, and negatives so serving admission cannot inherit
+    an unbounded wait budget ([CFG-01/02], [RES-03]).
+    """
+    raw = os.getenv("DB_EMBEDDING_TIMEOUT_SECONDS", "30")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Invalid DB_EMBEDDING_TIMEOUT_SECONDS={raw!r}; must be a finite positive number"
+        ) from exc
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(
+            f"Invalid DB_EMBEDDING_TIMEOUT_SECONDS={raw!r}; must be a finite positive number"
+        )
+    return value
+
+
 @lru_cache(maxsize=1)
 def get_database_settings() -> DatabaseSettings:
     """Load settings from environment variables with sensible defaults."""
@@ -254,7 +275,7 @@ def get_database_settings() -> DatabaseSettings:
         sync_dsn = _infer_sync_dsn(async_dsn)
 
     pgvector_dim = _resolve_pgvector_dimension()
-    embedding_timeout_s = float(os.getenv("DB_EMBEDDING_TIMEOUT_SECONDS", "30"))
+    embedding_timeout_s = _resolve_embedding_timeout_s()
     pool_size = int(os.getenv("DB_POOL_SIZE", "20"))
     max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "10"))
     pool_timeout = int(os.getenv("DB_POOL_TIMEOUT", "30"))

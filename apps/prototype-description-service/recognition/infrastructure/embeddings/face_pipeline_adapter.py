@@ -103,7 +103,11 @@ class FacePipelineAdmissionGate:
         return self._capacity
 
     async def acquire(self, *, timeout_s: float) -> None:
-        """Acquire one slot within ``timeout_s`` seconds; raise ``TimeoutError`` on expiry."""
+        """Acquire one slot within ``timeout_s`` seconds; raise ``TimeoutError`` on expiry.
+
+        Rechecks the monotonic deadline after every sleep/yield and never takes a
+        permit that became free only after the caller's budget expired ([RES-02]).
+        """
         if timeout_s <= 0:
             if self._sem.acquire(blocking=False):
                 return
@@ -117,6 +121,9 @@ class FacePipelineAdmissionGate:
                 raise TimeoutError("face pipeline admission timed out")
             # Short sleep keeps the event loop free; never call_soon_threadsafe.
             await asyncio.sleep(min(0.005, remaining))
+            # Recheck after await: delayed wake must not steal a post-deadline permit.
+            if deadline - time.perf_counter() <= 0:
+                raise TimeoutError("face pipeline admission timed out")
             if self._sem.acquire(blocking=False):
                 return
 

@@ -390,6 +390,7 @@ def _standalone_ready_app(monkeypatch: pytest.MonkeyPatch):
     from fastapi import FastAPI
 
     from api.main import register_health_probes
+    from db.settings import get_database_settings
     from recognition.interface_adapters.http import deps as dependencies
     from recognition.interface_adapters.http.deps.auth import AuthContext, require_auth
     from recognition.interface_adapters.http.deps.circuit_breaker import (
@@ -403,8 +404,18 @@ def _standalone_ready_app(monkeypatch: pytest.MonkeyPatch):
     register_health_probes(app)
 
     async def _session_yielder():
+        # Live pgvector typmod probe (FINALA-02): return matching identity columns.
+        dim = int(get_database_settings().pgvector_dimension)
+        rows = [
+            ("media_identities", "embedding", dim),
+            ("identity_cluster_representatives", "embedding", dim),
+            ("mv_identity_cluster_centroids", "centroid", dim),
+        ]
+        result = MagicMock()
+        result.all = MagicMock(return_value=rows)
+        result.fetchall = MagicMock(return_value=rows)
         session = MagicMock()
-        session.execute = AsyncMock(return_value=None)
+        session.execute = AsyncMock(return_value=result)
         yield session
 
     app.dependency_overrides[dependencies.get_observability_session] = _session_yielder

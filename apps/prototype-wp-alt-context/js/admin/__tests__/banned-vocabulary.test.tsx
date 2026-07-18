@@ -427,6 +427,8 @@ describe('banned vocabulary across js/admin pages', () => {
     );
     // BR-33: sweep every exported person-commit copy constant (import *).
     const personCommitCopy = await import('../pages/workbench/identity-clusters/personCommitCopy');
+    // Slice 5: bulk commit / hold / PR-38 labels.
+    const bulkCopy = await import('../pages/workbench/identity-clusters/useBulkReviewCommit');
 
     const personCommitStrings = Object.values(personCommitCopy).filter(
       (value) => typeof value === 'string',
@@ -435,6 +437,9 @@ describe('banned vocabulary across js/admin pages', () => {
       NEXT_ACTION_CHIP_LABEL[NEXT_ACTION_KIND.ASSIGNMENT],
       NEXT_ACTION_CHIP_LABEL[NEXT_ACTION_KIND.MERGE],
       ...personCommitStrings,
+      bulkCopy.bulkCommitLabel(4, 'Maria'),
+      bulkCopy.bulkCommitLabel(3, null),
+      bulkCopy.bulkHoldStatusCopy(5),
     ].join(' ');
 
     for (const banned of BANNED_STRINGS) {
@@ -445,6 +450,9 @@ describe('banned vocabulary across js/admin pages', () => {
     expect(surface).toContain(personCommitCopy.PERSON_COMMIT_COMBOBOX_ARIA);
     expect(surface).toContain(personCommitCopy.PERSON_COMMIT_PLACEHOLDER);
     expect(surface).toContain(personCommitCopy.PERSON_COMMIT_COMMITTING_COPY);
+    expect(surface).toContain('Accept 4 for Maria');
+    expect(surface).toContain('Accept 3 selected');
+    expect(surface).toContain('Saving 5… — Undo');
     expect(surface).not.toMatch(UUID_REGEX);
   });
 });

@@ -62,6 +62,7 @@ class _FakeSession:
         self.added: list[object] = []
         self.deleted: list[object] = []
         self.flush_calls = 0
+        self.commit_calls = 0
 
     async def execute(self, _stmt):  # noqa: ANN001
         return _FakeResult(self.existing)
@@ -77,6 +78,9 @@ class _FakeSession:
 
     async def flush(self) -> None:
         self.flush_calls += 1
+
+    async def commit(self) -> None:
+        self.commit_calls += 1
 
 
 def _det(
@@ -234,8 +238,13 @@ async def test_wide_event_shape_both_profiles(
     assert rec.new == 1
     assert rec.embedding_model == model_id
     assert rec.profile == profile
-    assert isinstance(rec.duration_ms, (int, float))
-    assert rec.duration_ms >= 0
+    # Worker path: detect + persist scoped honestly (S4CR-01).
+    assert isinstance(rec.persist_ms, (int, float))
+    assert rec.persist_ms >= 0
+    assert isinstance(rec.detect_ms, (int, float))
+    assert rec.detect_ms >= 0
+    assert getattr(rec, "duration_ms", None) is None
+    assert session.commit_calls >= 1
 
 
 @pytest.mark.asyncio
@@ -271,9 +280,6 @@ async def test_save_job_results_emits_one_event_per_media(
         async def get(self, _model, _id):  # noqa: ANN001
             return job
 
-        async def commit(self) -> None:
-            return None
-
     session = _JobSession()
     service = ScanService(session=session, detector=MagicMock(), generator=MagicMock())
     dets = [
@@ -291,6 +297,213 @@ async def test_save_job_results_emits_one_event_per_media(
     events = [r for r in caplog.records if getattr(r, "event", None) == "scan_media_reconciled"]
     assert len(events) == 2
     assert job.identities_detected == 2
+    for rec in events:
+        assert isinstance(rec.persist_ms, (int, float))
+        assert rec.persist_ms >= 0
+        # Detect is out of scope on save_job_results — do not fake detect_ms.
+        assert not hasattr(rec, "detect_ms")
+
+
+@pytest.mark.asyncio
+async def test_save_job_results_zero_detection_media_emits_detected_zero(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """S4CR-02: media with no faces still run _persist_identities + emit detected=0."""
+    job_id = uuid.uuid4()
+    tenant = uuid.uuid4()
+    job = SimpleNamespace(
+        id=job_id,
+        status=None,
+        processed_media=0,
+        identities_detected=0,
+        completed_at=None,
+    )
+    existing_m2 = _existing_row(tenant_id=tenant)
+    existing_m2.media_id = 2
+
+    class _JobSession(_FakeSession):
+        async def get(self, _model, _id):  # noqa: ANN001
+            return job
+
+    # Empty dets orphan-clean existing rows (verified on a single-media job).
+    session_orphan = _JobSession(existing=[existing_m2])
+    service_orphan = ScanService(session=session_orphan, detector=MagicMock(), generator=MagicMock())
+    with caplog.at_level(logging.INFO, logger="recognition.application.scan.service"):
+        await service_orphan.save_job_results(
+            job_id=job_id,
+            tenant_id=str(tenant),
+            media_ids=["2"],
+            media_sources=["http://example.test/2.jpg"],
+            detections=[],
+        )
+    assert existing_m2 in session_orphan.deleted
+    orphan_events = [r for r in caplog.records if getattr(r, "event", None) == "scan_media_reconciled"]
+    assert len(orphan_events) == 1
+    assert orphan_events[0].media_id == 2
+    assert orphan_events[0].detected == 0
+    assert orphan_events[0].matched == 0
+    assert orphan_events[0].new == 0
+
+    # Mixed job: media 1 has faces, media 2 has zero detections → two events.
+    caplog.clear()
+    session_mixed = _JobSession()
+    service_mixed = ScanService(session=session_mixed, detector=MagicMock(), generator=MagicMock())
+    with caplog.at_level(logging.INFO, logger="recognition.application.scan.service"):
+        await service_mixed.save_job_results(
+            job_id=job_id,
+            tenant_id=str(tenant),
+            media_ids=["1", "2"],
+            media_sources=["http://example.test/1.jpg", "http://example.test/2.jpg"],
+            detections=[_det(media_id="http://example.test/1.jpg", bbox=(10, 10, 40, 40))],
+        )
+    mixed = {r.media_id: r for r in caplog.records if getattr(r, "event", None) == "scan_media_reconciled"}
+    assert set(mixed) == {1, 2}
+    assert mixed[1].detected == 1
+    assert mixed[2].detected == 0
+    assert mixed[2].matched == 0
+    assert mixed[2].new == 0
+
+
+@pytest.mark.asyncio
+async def test_save_job_results_no_events_when_later_media_raises(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """S4CR-03: batch failure before commit emits zero events for earlier media."""
+    job_id = uuid.uuid4()
+    tenant = uuid.uuid4()
+    job = SimpleNamespace(
+        id=job_id,
+        status=None,
+        processed_media=0,
+        identities_detected=0,
+        completed_at=None,
+    )
+
+    class _JobSession(_FakeSession):
+        async def get(self, _model, _id):  # noqa: ANN001
+            return job
+
+    session = _JobSession()
+    service = ScanService(session=session, detector=MagicMock(), generator=MagicMock())
+    dets = [
+        _det(media_id="http://example.test/1.jpg", bbox=(10, 10, 40, 40)),
+        _det(
+            media_id="http://example.test/2.jpg",
+            bbox=(10, 10, 40, 40),
+            emb_dim=max(1, _DIM - 1),
+        ),
+    ]
+    with (
+        caplog.at_level(logging.INFO, logger="recognition.application.scan.service"),
+        pytest.raises(ValueError, match=r"embedding length"),
+    ):
+        await service.save_job_results(
+            job_id=job_id,
+            tenant_id=str(tenant),
+            media_ids=["1", "2"],
+            media_sources=["http://example.test/1.jpg", "http://example.test/2.jpg"],
+            detections=dets,
+        )
+    events = [r for r in caplog.records if getattr(r, "event", None) == "scan_media_reconciled"]
+    assert events == []
+    assert session.commit_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_no_event_when_detect_or_persist_raises(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """S4CR-05: detect/persist exceptions emit no scan_media_reconciled (worker + inline)."""
+
+    class _BoomDetector(FaceDetectorProtocol):
+        async def detect(self, sources: Iterable[bytes | str]) -> list[FaceDetection]:
+            raise RuntimeError("detect boom")
+
+    session = _FakeSession()
+    service = ScanService(session=session, detector=_BoomDetector())
+    with (
+        caplog.at_level(logging.INFO, logger="recognition.application.scan.service"),
+        pytest.raises(RuntimeError, match="detect boom"),
+    ):
+        await service.process_media_item(
+            tenant_id=str(uuid.uuid4()),
+            media_id=1,
+            media_url="http://example.test/1.jpg",
+        )
+    assert [r for r in caplog.records if getattr(r, "event", None) == "scan_media_reconciled"] == []
+
+    # Persist-path raise (wrong-dim embedding) on process_media_item.
+    session2 = _FakeSession()
+    service2 = ScanService(
+        session=session2,
+        detector=_FixedDetector([_det(emb_dim=max(1, _DIM - 1))]),
+    )
+    with (
+        caplog.at_level(logging.INFO, logger="recognition.application.scan.service"),
+        pytest.raises(ValueError, match=r"embedding length"),
+    ):
+        await service2.process_media_item(
+            tenant_id=str(uuid.uuid4()),
+            media_id=2,
+            media_url="http://example.test/2.jpg",
+        )
+    assert [r for r in caplog.records if getattr(r, "event", None) == "scan_media_reconciled"] == []
+
+    # Inline save_job_results raise.
+    job_id = uuid.uuid4()
+    job = SimpleNamespace(
+        id=job_id,
+        status=None,
+        processed_media=0,
+        identities_detected=0,
+        completed_at=None,
+    )
+
+    class _JobSession(_FakeSession):
+        async def get(self, _model, _id):  # noqa: ANN001
+            return job
+
+    session3 = _JobSession()
+    service3 = ScanService(session=session3, detector=MagicMock(), generator=MagicMock())
+    with (
+        caplog.at_level(logging.INFO, logger="recognition.application.scan.service"),
+        pytest.raises(ValueError, match=r"embedding length"),
+    ):
+        await service3.save_job_results(
+            job_id=job_id,
+            tenant_id=str(uuid.uuid4()),
+            media_ids=["3"],
+            media_sources=["http://example.test/3.jpg"],
+            detections=[_det(media_id="http://example.test/3.jpg", emb_dim=max(1, _DIM - 1))],
+        )
+    assert [r for r in caplog.records if getattr(r, "event", None) == "scan_media_reconciled"] == []
+
+
+@pytest.mark.asyncio
+async def test_emit_failure_does_not_fail_scan(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S4CR-06: telemetry exception is swallowed; scan still succeeds."""
+    session = _FakeSession()
+    service = ScanService(session=session, detector=_FixedDetector([_det()]))
+    service._cached_face_pipeline_profile = None
+
+    def _boom_settings(*_args, **_kwargs):  # noqa: ANN002, ANN003
+        raise RuntimeError("settings boom")
+
+    # get_settings is imported inside _face_pipeline_profile from recognition.config
+    monkeypatch.setattr("recognition.config.get_settings", _boom_settings)
+
+    with caplog.at_level(logging.ERROR, logger="recognition.application.scan.service"):
+        result = await service.process_media_item(
+            tenant_id=str(uuid.uuid4()),
+            media_id=1,
+            media_url="http://example.test/1.jpg",
+        )
+    assert result.total == 1
+    assert session.commit_calls >= 1
+    assert any("scan_media_reconciled emission failed" in r.getMessage() for r in caplog.records)
 
 
 @pytest.mark.asyncio

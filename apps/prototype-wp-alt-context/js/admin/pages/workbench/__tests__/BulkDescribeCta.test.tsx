@@ -93,12 +93,57 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
     // The onSubmit prop itself guards offline in the container (if (offline) return).
   });
 
-  it('marks the describe surface as the accent primary only when it owns the footer accent (§7)', () => {
+  it('marks the SUBMIT BUTTON (not a neutral wrapper) as the accent primary when it owns the footer accent (§7 / BR-73)', () => {
     const { rerender, container } = render(<BulkDescribeCta {...baseProps} accentPrimary />);
-    expect(container.querySelectorAll('[data-acx-accent-primary]')).toHaveLength(1);
+    const marked = container.querySelectorAll('[data-acx-accent-primary]');
+    expect(marked).toHaveLength(1);
+    // BR-73: the marker sits on the actually-accent-styled submit button — never the
+    // wrapper div — and the accent chrome class rides with it.
+    const button = screen.getByRole('button', { name: 'Describe selected' });
+    expect(marked[0]).toBe(button);
+    expect(button.className).toContain('acx-accent-primary-action');
 
     rerender(<BulkDescribeCta {...baseProps} accentPrimary={false} />);
     expect(container.querySelectorAll('[data-acx-accent-primary]')).toHaveLength(0);
+    expect(screen.getByRole('button', { name: 'Describe selected' }).className).not.toContain(
+      'acx-accent-primary-action',
+    );
+  });
+
+  it('offline never HTML-disables even at zero selection — reason stays reachable (§7 / BR-74)', () => {
+    render(
+      <BulkDescribeCta
+        {...baseProps}
+        selectedCount={0}
+        remoteActionAriaDisabled
+        remoteActionTitle="Unavailable while the recognition service is offline"
+      />,
+    );
+
+    const button = screen.getByRole('button', { name: 'Describe selected' });
+    // Airplane-mode reload at zero selection: focusable (not HTML disabled), reason reachable.
+    expect(button).not.toBeDisabled();
+    expect(button).toHaveAttribute('aria-disabled', 'true');
+    const reasonId = button.getAttribute('aria-describedby');
+    expect(reasonId).toBeTruthy();
+    expect(document.getElementById(reasonId ?? '')).toHaveTextContent(
+      'Unavailable while the recognition service is offline',
+    );
+  });
+
+  it('does not fire onSubmit when clicked while offline-gated (§7 / BR-76)', async () => {
+    const onSubmit = vi.fn();
+    render(
+      <BulkDescribeCta
+        {...baseProps}
+        onSubmit={onSubmit}
+        remoteActionAriaDisabled
+        remoteActionTitle="Unavailable while the recognition service is offline"
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Describe selected' }));
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it('enables submit when online with selection', async () => {

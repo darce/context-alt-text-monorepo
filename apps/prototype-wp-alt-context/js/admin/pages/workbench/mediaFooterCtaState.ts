@@ -41,6 +41,13 @@ export interface MediaFooterCtaInputs {
  *
  * Ordering matters: a review card outranks a describe run for accent ownership so
  * the card's on-screen primary is never doubled by the footer.
+ *
+ * This selector only decides which surface MAY carry the accent token; the single
+ * accent-primary invariant is proven against the rendered DOM (`data-acx-accent-primary`
+ * count) — see `mediaFooterSinglePrimary.dom.test.tsx` — not by arithmetic here.
+ * `reviewActive` is the SAME signal the queue uses to place the card marker
+ * (ScanTabContent wires ReviewQueue's card-primary presence into it), so the
+ * footer demotion and the card marker can never disagree.
  */
 export const selectMediaFooterCtaState = ({
   reviewActive,
@@ -55,17 +62,5 @@ export const selectMediaFooterCtaState = ({
   return { accentOwner: 'analyze', analyzeVariant: 'primary', describeVariant: 'secondary' };
 };
 
-/** Footer-local accent-primary element count (the card's 1 lives outside the footer). */
-export const footerAccentPrimaryCount = (state: MediaFooterCtaState): number =>
-  state.accentOwner === 'card' ? 0 : 1;
-
-/**
- * Viewport single-accent-primary invariant (§7 / COL-03): the footer's accent
- * count reconciled against the review card's contribution (1 when a review card
- * or panel primary is on screen, else 0) is EXACTLY ONE in every screen state.
- */
-export const viewportAccentPrimaryCount = (state: MediaFooterCtaState, reviewActive: boolean): number =>
-  footerAccentPrimaryCount(state) + (reviewActive ? 1 : 0);
-
-/** DOM marker for the single accent-primary element — counted by the viewport assertion. */
+/** DOM marker for the single accent-primary element — counted by the DOM invariant test. */
 export const ACCENT_PRIMARY_ATTR = 'data-acx-accent-primary';

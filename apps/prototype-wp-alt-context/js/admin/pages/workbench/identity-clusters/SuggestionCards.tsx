@@ -28,6 +28,13 @@ interface SuggestionCardProps {
   /** Slice-2 hold/failure chrome — placed immediately after the actioned control. */
   actionAccessory?: React.ReactNode;
   actionAccessoryAfter?: 'accept' | 'reject';
+  /**
+   * §7 single accent primary: when true, Accept is this card's accent-primary and
+   * carries the `data-acx-accent-primary` marker + accent chrome (COL-03). The
+   * ReviewQueue only sets this on the mounted current card, so exactly one marker
+   * is present per rendered viewport.
+   */
+  accentPrimary?: boolean;
 }
 
 const FaceCropControl = ({
@@ -82,6 +89,7 @@ export const SuggestionCard = ({
   lowConfidenceThreshold,
   actionAccessory = null,
   actionAccessoryAfter = 'accept',
+  accentPrimary = false,
 }: SuggestionCardProps): React.JSX.Element => {
   // buildSuggestionReviewItems guarantees a human-labeled target with truthy label (UXP-3-BR-22).
   const displayLabel = suggestion.label ?? '';
@@ -172,10 +180,15 @@ export const SuggestionCard = ({
       <div className="acx-suggestion-card__actions">
         <button
           type="button"
-          className="button button-primary acx-suggestion-card__accept"
+          className={
+            accentPrimary
+              ? 'button button-primary acx-suggestion-card__accept acx-accent-primary-action'
+              : 'button button-primary acx-suggestion-card__accept'
+          }
           onClick={onAccept}
           disabled={isPending}
           title={isPending && disabledReason ? disabledReason : undefined}
+          {...(accentPrimary ? { 'data-acx-accent-primary': true } : {})}
         >
           {__('Yes', 'alt-context')}
         </button>

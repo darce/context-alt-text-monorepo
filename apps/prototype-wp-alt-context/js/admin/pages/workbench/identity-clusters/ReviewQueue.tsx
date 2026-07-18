@@ -124,6 +124,14 @@ export interface ReviewQueueProps {
   onReview?: (clusterId: string) => void;
   /** Anchor div for drain-focus (tabIndex=-1). */
   emptyStateAnchorRef?: React.RefObject<HTMLElement | null>;
+  /**
+   * §7 / BR-75: reports whether an actual review card with a single accent-primary
+   * action is currently rendered (not loading/error/warning/empty/drain/retired).
+   * ScanTabContent uses this — NOT findings totals — to drive footer demotion, so
+   * the SAME signal that places the card's `data-acx-accent-primary` marker also
+   * demotes the footer CTAs → exactly one accent primary per rendered viewport.
+   */
+  onCardPrimaryPresenceChange?: (present: boolean) => void;
 }
 
 /** Suggestion id for bulk-selectable queue items; null for CLUSTER (no accept POST). */
@@ -232,6 +240,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       onLabel,
       onReview,
       emptyStateAnchorRef,
+      onCardPrimaryPresenceChange,
     },
     ref,
   ): React.JSX.Element | null {
@@ -680,11 +689,71 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       });
     };
 
-    if (data.hasInitialFailure && data.failureCount <= 2) {
+    // §7 render-branch flags, hoisted above the early returns so the card-primary
+    // presence signal is computed in every state (BR-75).
+    const showUnavailableWarning =
+      length === 0 && data.assignmentDataSource === DATA_SOURCE.UNAVAILABLE;
+    const showEndpointErrorWarning =
+      length === 0 && data.assignmentDataSource === DATA_SOURCE.ENDPOINT_ERROR;
+    // Criterion 4: suppress head-card body once the open cluster is known retired.
+    const suppressRetiredHead =
+      headClusterId != null && (headLiveStatus === 'retired' || headLiveStatus === 'rebound');
+
+    const isInitialFailureBranch = data.hasInitialFailure && data.failureCount <= 2;
+    const isLoadingBranch = data.isLoading || findings.isLoading;
+    const isErrorBranch = data.isError && findings.isError;
+
+    // The current queue item resolves to a real card (its suggestion/cluster is in
+    // the by-id map) — guards the rare projection race where an item is queued but
+    // its detail row is not yet loaded (CurrentCard would render a bodyless "no
+    // longer available" note with no primary action).
+    const currentCardResolvable = ((): boolean => {
+      if (!currentItem) {
+        return false;
+      }
+      switch (currentItem.kind) {
+        case NEXT_ACTION_KIND.ASSIGNMENT:
+          return assignmentById.has(currentItem.suggestionId);
+        case NEXT_ACTION_KIND.MERGE:
+          return mergeById.has(currentItem.suggestionId);
+        case NEXT_ACTION_KIND.NAME:
+          return nameById.has(currentItem.suggestionId);
+        case NEXT_ACTION_KIND.CLUSTER:
+          return topClustersById.has(currentItem.clusterId);
+      }
+    })();
+
+    // BR-75: a single accent-primary card action is on screen iff CurrentCard's real
+    // branch renders. This is the SAME condition that mounts the marked primary, so
+    // the footer demotion it drives can never disagree with the card marker.
+    const cardPrimaryPresent =
+      !isInitialFailureBranch &&
+      !isLoadingBranch &&
+      !isErrorBranch &&
+      !showUnavailableWarning &&
+      !showEndpointErrorWarning &&
+      length > 0 &&
+      currentItem !== null &&
+      !suppressRetiredHead &&
+      currentCardResolvable;
+
+    React.useEffect(() => {
+      onCardPrimaryPresenceChange?.(cardPrimaryPresent);
+    }, [cardPrimaryPresent, onCardPrimaryPresenceChange]);
+    // Report absence on unmount (e.g. a panel replaces the queue) so a stale "present"
+    // never lingers in the parent's footer-demotion state.
+    React.useEffect(
+      () => () => {
+        onCardPrimaryPresenceChange?.(false);
+      },
+      [onCardPrimaryPresenceChange],
+    );
+
+    if (isInitialFailureBranch) {
       return null;
     }
 
-    if (data.isLoading || findings.isLoading) {
+    if (isLoadingBranch) {
       return (
         <div className="acx-review-queue acx-review-queue--loading" role="status" aria-live="polite">
           <p>{__('Loading review queue…', 'alt-context')}</p>
@@ -692,7 +761,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       );
     }
 
-    if (data.isError && findings.isError) {
+    if (isErrorBranch) {
       return (
         <div className="acx-review-queue acx-review-queue--error">
           <p>{__('Failed to load suggestions.', 'alt-context')}</p>
@@ -706,15 +775,6 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         </div>
       );
     }
-
-    const showUnavailableWarning =
-      length === 0 && data.assignmentDataSource === DATA_SOURCE.UNAVAILABLE;
-    const showEndpointErrorWarning =
-      length === 0 && data.assignmentDataSource === DATA_SOURCE.ENDPOINT_ERROR;
-
-    // Criterion 4: suppress head-card body once the open cluster is known retired.
-    const suppressRetiredHead =
-      headClusterId != null && (headLiveStatus === 'retired' || headLiveStatus === 'rebound');
 
     return (
       <div className="acx-review-queue" data-live-target-status={headLiveStatus}>
@@ -1009,6 +1069,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           ) : (
             <CurrentCard
               item={currentItem}
+              accentPrimary
               assignmentById={assignmentById}
               mergeById={mergeById}
               nameById={nameById}
@@ -1089,6 +1150,12 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
 
 interface CurrentCardProps {
   item: ReviewQueueItem;
+  /**
+   * §7: this is the mounted current card, so its single per-kind primary (accept
+   * for ASSIGNMENT/MERGE, person-commit confirm for NAME/CLUSTER) carries the
+   * `data-acx-accent-primary` marker + accent chrome — exactly one per viewport.
+   */
+  accentPrimary: boolean;
   assignmentById: Map<string, ReviewSuggestion>;
   mergeById: Map<string, PendingMergeSuggestion>;
   nameById: Map<string, PendingNameSuggestion>;
@@ -1221,6 +1288,7 @@ export const CommitHoldRegion = ({
 
 const CurrentCard = ({
   item,
+  accentPrimary,
   assignmentById,
   mergeById,
   nameById,
@@ -1310,6 +1378,9 @@ const CurrentCard = ({
       <PersonCommitControl
         clusterId={clusterId}
         isPrimary={isPrimary}
+        // §7: person-commit confirm is the accent primary only when it is the card's
+        // primary kind (NAME/CLUSTER) — never doubled with an accept button.
+        accentPrimary={accentPrimary && isPrimary}
         phase={phaseForCard}
         errorMessage={errorForCard}
         // Stay interactive during accept hold — schedulePersonCommit flushes first.
@@ -1370,6 +1441,7 @@ const CurrentCard = ({
           />
           <SuggestionCard
             suggestion={suggestion}
+            accentPrimary={accentPrimary}
             lowConfidenceThreshold={LOW_CONFIDENCE_THRESHOLD}
             onAccept={() => {
               runScheduled(() => scheduleAccept(suggestion.suggestionId));
@@ -1410,6 +1482,7 @@ const CurrentCard = ({
           />
           <MergeSuggestionCard
             suggestion={suggestion}
+            accentPrimary={accentPrimary}
             onAccept={() => {
               runScheduled(() => scheduleAcceptMerge(suggestion.id));
             }}

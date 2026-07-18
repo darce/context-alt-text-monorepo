@@ -41,6 +41,13 @@ export interface PersonCommitControlProps {
   onJustLabel?: (clusterId: string) => void;
   /** Optional prefilled create name (e.g. NAME suggestion). */
   suggestedCreateName?: string | null;
+  /**
+   * §7 single accent primary: when this control is the card's primary (NAME/CLUSTER),
+   * the Confirm button carries the `data-acx-accent-primary` marker + accent chrome
+   * (COL-03). The success surface has no Confirm; it is a transient post-commit state
+   * as the card advances, so no marker is emitted there.
+   */
+  accentPrimary?: boolean;
 }
 
 export const PersonCommitControl = ({
@@ -53,6 +60,7 @@ export const PersonCommitControl = ({
   onRetry,
   onJustLabel,
   suggestedCreateName = null,
+  accentPrimary = false,
 }: PersonCommitControlProps): React.JSX.Element => {
   const [selectedEntryId, setSelectedEntryId] = React.useState('');
   const [newEntryName, setNewEntryName] = React.useState('');
@@ -171,11 +179,14 @@ export const PersonCommitControl = ({
           type="button"
           className={
             isPrimary
-              ? 'button button-primary acx-person-commit__confirm'
+              ? accentPrimary
+                ? 'button button-primary acx-person-commit__confirm acx-accent-primary-action'
+                : 'button button-primary acx-person-commit__confirm'
               : 'button acx-person-commit__confirm'
           }
           onClick={handleConfirm}
           disabled={!canCommit}
+          {...(isPrimary && accentPrimary ? { 'data-acx-accent-primary': true } : {})}
         >
           {phase === 'committing'
             ? __(PERSON_COMMIT_COMMITTING_COPY, 'alt-context')

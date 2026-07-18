@@ -60,7 +60,11 @@ export const MediaAnalyzeCta = ({ accentPrimary = true }: MediaAnalyzeCtaProps =
         type="button"
         className={buttonClassName}
         onClick={handleScanFaces}
-        disabled={scanRun.isScanning || selectedCount === 0}
+        // BR-74: offline never HTML-disables — that drops the button from tab order,
+        // stranding the aria-describedby reason on an unfocusable control. Offline is
+        // gated by aria-disabled + the onClick guard only; the reason stays reachable.
+        // Zero-selection/scanning still HTML-disable when online.
+        disabled={!offline && (scanRun.isScanning || selectedCount === 0)}
         aria-disabled={remoteGate['aria-disabled']}
         aria-describedby={offline ? ANALYZE_OFFLINE_REASON_ID : undefined}
         title={remoteGate.title}

@@ -12,6 +12,17 @@ import { ScanTabContent } from '../ScanTabContent';
  * findings anchor, the findings panel, the media footer). This is the layout
  * probe: the surrounding chrome signature is identical across all three modes and
  * only the anchor's single child differs.
+ *
+ * BR-79 scope note: the real, un-mocked chrome whose stability this asserts is the
+ * queue-shell anchor (`.acx-findings-detail-anchor`) rendered by ScanTabContent
+ * itself — its className, tabindex, and structural position (footer always follows
+ * it) are checked below against the live DOM. The swappable children (queue/panels)
+ * and the peripheral panels (findings panel, action panel, footer) are stubbed
+ * because this probe is about POSITION/IDENTITY stability, not their internals.
+ * JSDOM has no layout/computed-style engine, so a *restyle* (a CSS change that keeps
+ * the same class names) cannot be detected here — that check belongs to the operator
+ * visual re-baseline. This test guards the structural contract; it does not (and in
+ * JSDOM cannot) guard pixels.
  */
 
 vi.mock('@wordpress/i18n', () => ({
@@ -170,9 +181,14 @@ describe('ScanTabContent — NAV-03 stable panel-mode chrome (§2 rider)', () =>
     // Only the anchor content swaps; the surrounding chrome is byte-identical.
     expect(labelSig).toEqual(queueSig);
     expect(reviewSig).toEqual(queueSig);
-    // Footer never relocated (always follows the anchor) and anchor never restyled.
+    // Real-chrome class-level assertions (BR-79): the queue-shell anchor is rendered
+    // by ScanTabContent (not a stub), so its className/tabindex are the live DOM. A
+    // class change here WOULD fail; a pure CSS restyle would not (JSDOM has no
+    // computed styles) — that is the operator visual re-baseline's job, per the note.
     expect(queueSig.footerFollowsAnchor).toBe(true);
     expect(queueSig.anchorClass).toBe('acx-findings-detail-anchor');
+    expect(labelSig.anchorClass).toBe('acx-findings-detail-anchor');
+    expect(reviewSig.anchorClass).toBe('acx-findings-detail-anchor');
     expect(queueSig.anchorTabIndex).toBe('-1');
   });
 });

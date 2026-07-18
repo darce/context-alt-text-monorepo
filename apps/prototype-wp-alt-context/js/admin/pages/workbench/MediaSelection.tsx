@@ -331,19 +331,29 @@ export const BulkDescribeCta = ({
   const offlineGated = Boolean(remoteActionAriaDisabled);
 
   return (
-    <div
-      className="acx-media-selection__bulk-describe"
-      {...(accentPrimary ? { 'data-acx-accent-primary': true } : {})}
-    >
+    <div className="acx-media-selection__bulk-describe">
       <div className="acx-media-selection__bulk-describe-actions">
         <button
           type="button"
-          className="button"
-          disabled={selectedCount === 0 || isSubmitting || isRunning}
+          // BR-73: the accent marker + accent chrome live on the submit button (the
+          // actually-accent-styled primary), never on the neutral wrapper div.
+          className={accentPrimary ? 'button acx-accent-primary-action' : 'button'}
+          // BR-74: offline never HTML-disables — the aria-describedby reason must stay
+          // reachable on a focusable control. Offline is gated by aria-disabled + the
+          // onClick guard; zero-selection/submitting/running still disable when online.
+          disabled={!offlineGated && (selectedCount === 0 || isSubmitting || isRunning)}
           aria-disabled={remoteActionAriaDisabled}
           aria-describedby={offlineGated ? DESCRIBE_OFFLINE_REASON_ID : undefined}
           title={remoteActionTitle}
-          onClick={onSubmit}
+          onClick={() => {
+            // BR-76: presentational offline guard mirrors MediaAnalyzeCta — activation is
+            // a no-op while offline-gated (the container onSubmit also fail-fasts offline).
+            if (offlineGated) {
+              return;
+            }
+            onSubmit();
+          }}
+          {...(accentPrimary ? { 'data-acx-accent-primary': true } : {})}
         >
           {isSubmitting ? SYNC_VOCABULARY.describeStarting : __('Describe selected', 'alt-context')}
         </button>

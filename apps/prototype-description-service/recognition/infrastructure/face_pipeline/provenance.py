@@ -168,13 +168,83 @@ def load_verified_model(name: str, *, models_dir: Path | None = None) -> Path:
     return path
 
 
+@dataclass(frozen=True, slots=True)
+class ModelVerifyOutcome:
+    """One-shot verified-load outcome for eager readiness probes ([EMB-05])."""
+
+    name: str
+    ok: bool
+    reason: str | None
+    path: Path
+    mtime_ns: int
+    size: int
+
+
+def verify_face_pipeline_model(name: str, *, models_dir: Path | None = None) -> ModelVerifyOutcome:
+    """Run ``load_verified_model`` and return a cacheable outcome (mtime/size stamp).
+
+    Used by profile-aware readiness so probes never report OK for bytes that
+    have not passed sha256 at least once in this process ([EMB-05], [DRIFT-02]).
+    """
+    entry = MODEL_MANIFEST.get(name)
+    if entry is None:
+        root = Path(models_dir) if models_dir is not None else DEFAULT_MODELS_DIR
+        return ModelVerifyOutcome(
+            name=name,
+            ok=False,
+            reason=f"unknown model name: {name!r}",
+            path=root / name,
+            mtime_ns=0,
+            size=0,
+        )
+    root = Path(models_dir) if models_dir is not None else DEFAULT_MODELS_DIR
+    path = root / entry.file_name
+    try:
+        verified = load_verified_model(name, models_dir=root)
+        st = verified.stat()
+        return ModelVerifyOutcome(
+            name=name,
+            ok=True,
+            reason=None,
+            path=verified,
+            mtime_ns=st.st_mtime_ns,
+            size=st.st_size,
+        )
+    except ModelIntegrityError as exc:
+        mtime_ns = 0
+        size = 0
+        if path.is_file():
+            st = path.stat()
+            mtime_ns = st.st_mtime_ns
+            size = st.st_size
+        return ModelVerifyOutcome(
+            name=name,
+            ok=False,
+            reason=str(exc),
+            path=path,
+            mtime_ns=mtime_ns,
+            size=size,
+        )
+
+
+def verify_face_pipeline_models(*, models_dir: Path | None = None) -> dict[str, ModelVerifyOutcome]:
+    """Eagerly verify both YuNet and SFace; returns per-artifact outcomes."""
+    return {
+        "yunet": verify_face_pipeline_model("yunet", models_dir=models_dir),
+        "sface": verify_face_pipeline_model("sface", models_dir=models_dir),
+    }
+
+
 __all__ = [
     "DEFAULT_MODELS_DIR",
     "LICENSE_SOURCE_URLS",
     "MODEL_MANIFEST",
     "ModelIntegrityError",
     "ModelProvenance",
+    "ModelVerifyOutcome",
     "OPENCV_ZOO_COMMIT",
     "PENDING_OPERATOR_FETCH",
     "load_verified_model",
+    "verify_face_pipeline_model",
+    "verify_face_pipeline_models",
 ]

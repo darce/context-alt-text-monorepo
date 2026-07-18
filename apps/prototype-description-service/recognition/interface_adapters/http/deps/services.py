@@ -367,49 +367,18 @@ def get_scan_service_builder(
 ) -> Callable[[str], Awaitable[ScanService]]:
     """Return a builder for ScanService with DB session and embedder.
 
-    Uses real InsightFace adapters in production mode, stubs in test mode.
-    Set RECOGNITION_RUNTIME_MODE=test to use deterministic stubs.
+    Profile-aware via ``build_embedding_runtime`` (insightface default /
+    face_pipeline dark). Set RECOGNITION_RUNTIME_MODE=test for stubs.
     """
-    from recognition.application.embedding.detector import (
-        InsightFaceFaceDetector,
-        StubFaceDetector,
-        UnavailableFaceDetector,
-    )
-    from recognition.application.embedding.generator import (
-        InsightFaceEmbeddingGenerator,
-        StubEmbeddingGenerator,
-        UnavailableEmbeddingGenerator,
-    )
     from recognition.config import get_settings as get_recognition_settings
-
-    settings = get_recognition_settings()
-    runtime_mode = settings.runtime_mode
+    from recognition.infrastructure.embeddings.runtime_factory import build_embedding_runtime
 
     async def _builder(tenant_id: str) -> ScanService:
         if session is None:
             raise RuntimeError("Database session is required for ScanService")
 
-        if runtime_mode == "test":
-            # Use deterministic stubs for testing
-            detector = StubFaceDetector()
-            generator = StubEmbeddingGenerator()
-        else:
-            # Production mode: use real InsightFace (shared singleton)
-            try:
-                adapter = await get_shared_insightface_adapter()
-                detector = InsightFaceFaceDetector(adapter)
-                generator = InsightFaceEmbeddingGenerator(adapter)
-            except Exception as exc:
-                # Production must fail closed; deterministic stubs are test-only.
-                import logging
-
-                logging.getLogger(__name__).exception(
-                    "InsightFace runtime unavailable; scan service will fail closed. "
-                    "Install with: pip install 'prototype-description-service[local]'",
-                )
-                reason = str(exc) or exc.__class__.__name__
-                detector = UnavailableFaceDetector(reason)
-                generator = UnavailableEmbeddingGenerator(reason)
+        settings = get_recognition_settings()
+        detector, generator = await build_embedding_runtime(settings=settings)
 
         return ScanService(
             session=session,

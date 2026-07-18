@@ -21,22 +21,19 @@ from db.settings import get_database_settings
 from db.tenant_context import enable_rls_bypass, set_tenant_context
 from recognition.application.embedding.detector import (
     FaceDetectorProtocol,
-    InsightFaceFaceDetector,
     StubFaceDetector,
     UnavailableFaceDetector,
 )
 from recognition.application.embedding.generator import (
     EmbeddingGeneratorProtocol,
-    InsightFaceEmbeddingGenerator,
     StubEmbeddingGenerator,
-    UnavailableEmbeddingGenerator,
 )
 from recognition.application.scan.capability import publish_embedding_runtime_capability
 from recognition.application.scan.queue_repository import ScanQueueItem
 from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.config import get_settings as get_recognition_settings
 from recognition.domain.job import CLUSTERING_JOB_TYPES, JobStatus
-from recognition.infrastructure.embeddings import get_shared_insightface_adapter
+from recognition.infrastructure.embeddings.runtime_factory import build_embedding_runtime
 from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
 from recognition.worker.handlers.clustering import ClusteringJobHandler, CurationJobHandler, SplitJobHandler
 from recognition.worker.handlers.scan import ScanItemHandler
@@ -208,24 +205,23 @@ class ScanWorker:
         now = datetime.now(tz=UTC)
         if self._embedding_retry_after is not None and now < self._embedding_retry_after:
             return
-        try:
-            adapter = await get_shared_insightface_adapter()
-            if self._http_client is None:
-                self._http_client = httpx.AsyncClient(timeout=30.0)
-            self._detector = InsightFaceFaceDetector(adapter, client=self._http_client)
-            self._generator = InsightFaceEmbeddingGenerator(adapter)
+        settings = get_recognition_settings()
+        if self._http_client is None:
+            self._http_client = httpx.AsyncClient(timeout=30.0)
+        self._detector, self._generator = await build_embedding_runtime(
+            settings=settings,
+            http_client=self._http_client,
+        )
+        if isinstance(self._detector, UnavailableFaceDetector):
+            self._embedding_runtime_ready = False
+            self._embedding_retry_after = now + timedelta(seconds=30)
+        else:
             self._embedding_retry_after = None
             self._embedding_runtime_ready = True
-        except Exception as exc:
-            logger.exception("Failed to initialize InsightFace adapter; scan items will fail closed until it recovers.")
-            reason = str(exc) or exc.__class__.__name__
-            self._detector = UnavailableFaceDetector(reason)
-            self._generator = UnavailableEmbeddingGenerator(reason)
-            self._embedding_retry_after = now + timedelta(seconds=30)
 
         # BR-11: preserve the ObjectStore factory wired in __init__ so the
         # production scan_handler keeps multipart-blob support after the
-        # InsightFace adapter loads (or after the stub fallback fires).
+        # adapter loads (or after the fail-closed fallback fires).
         self._scan_handler = ScanItemHandler(
             session_factory=self._session_factory,
             detector=self._detector,
@@ -242,15 +238,17 @@ class ScanWorker:
 
         if not is_postgres(session):
             return
+        profile = get_recognition_settings().face_pipeline.profile
         if self._runtime_mode == "test" or self._embedding_runtime_ready:
             available = True
-            reason = None
+            reason = f"profile={profile}"
         elif isinstance(self._detector, UnavailableFaceDetector):
             available = False
-            reason = self._detector.reason
+            base = self._detector.reason or "embedding runtime unavailable"
+            reason = f"profile={profile}; {base}"
         else:
             available = False
-            reason = "embedding runtime not initialized"
+            reason = f"profile={profile}; embedding runtime not initialized"
         await publish_embedding_runtime_capability(session, available=available, reason=reason)
 
     async def _heartbeat_embedding_runtime_capability(self) -> None:

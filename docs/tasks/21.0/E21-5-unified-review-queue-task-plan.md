@@ -341,10 +341,10 @@ Per-state single-primary gating (Analyze vs Describe) with the pinned token role
 - [x] Matrix M1 green: single / review-each / multi-select-bulk assert exact mutated id set [TEST-08]; zero calls to legacy `bulk-accept`
 
 ### Checklist for Slice 6: Band filters + harness + M2 (④)
-- [ ] Band chips filter via predicate over `ProjectedSuggestion.similarity` post-`isHumanLabeledTarget`; no numeric/slider control anywhere; band × KIND compose
-- [ ] Three-consumer harness imports `suggestionProjectionMatrix`; fetch-layer mocked per surface (existing UXP-3 test recipe cited); **leg-specific** expected ids per consumer; per-case consumer applicability by leg keys; convergence to each leg's own expectation after each invalidation event on a shared QueryClient (the FBT-1 criterion-2 handshake)
-- [ ] UXP-3 dismiss-invalidation divergence (wave notes: BR-23) confirmed-as-designed or fixed — recorded either way, never ambiguous
-- [ ] Matrix M2 green (band filter × bulk intersection); no policy re-derivation — contract imports only [REF-16]
+- [x] Band chips filter via predicate over `ProjectedSuggestion.similarity` post-`isHumanLabeledTarget`; no numeric/slider control anywhere; band × KIND compose
+- [x] Three-consumer harness imports `suggestionProjectionMatrix`; fetch-layer mocked per surface (existing UXP-3 test recipe cited); **leg-specific** expected ids per consumer; per-case consumer applicability by leg keys; convergence to each leg's own expectation after each invalidation event on a shared QueryClient (the FBT-1 criterion-2 handshake)
+- [x] UXP-3 dismiss-invalidation divergence (wave notes: BR-23) confirmed-as-designed or fixed — recorded either way, never ambiguous
+- [x] Matrix M2 green (band filter × bulk intersection); no policy re-derivation — contract imports only [REF-16]
 
 ### Checklist for Slice 7: Open-target lifecycle (⑤ / B1)
 - [ ] PA-06 recorded: built in E21-5 ⑤; E15-23 transfer note landed in that plan's intake (one build surface, never two)

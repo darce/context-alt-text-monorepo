@@ -39,6 +39,14 @@ logger = logging.getLogger(__name__)
 _DB_SETTINGS = get_database_settings()
 
 
+class PersistIntegrityError(ValueError):
+    """Durable terminal failure during identity persist (wrong dim / missing provenance).
+
+    Raised instead of bare ``ValueError`` so job orchestrators can catch it and
+    mark the scan job FAILED rather than leaving it stuck in RUNNING [RLSE-05][OBS-08].
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class ReconcileResult:
     """Per-media identity reconcile counts (row recycling, not assignment/unknown).
@@ -298,6 +306,7 @@ class ScanService:
             EmbeddingTimeoutError,
             DetectionAdapterError,
             EmbeddingAdapterError,
+            PersistIntegrityError,
         ) as exc:
             await self.mark_job_failed(job_id, str(exc))
             raise
@@ -448,7 +457,7 @@ class ScanService:
                 continue
             _assert_embedding_dimension(det, expected_dim=expected_dim)
             if not det.model_id:
-                raise ValueError("embedding_model provenance missing on FaceDetection")
+                raise PersistIntegrityError("embedding_model provenance missing on FaceDetection")
             old_row.bbox_x = int(det.bbox[0])
             old_row.bbox_y = int(det.bbox[1])
             old_row.bbox_width = int(det.bbox[2] - det.bbox[0])
@@ -475,7 +484,7 @@ class ScanService:
                 continue
             _assert_embedding_dimension(det, expected_dim=expected_dim)
             if not det.model_id:
-                raise ValueError("embedding_model provenance missing on FaceDetection")
+                raise PersistIntegrityError("embedding_model provenance missing on FaceDetection")
             new_rows.append(
                 MediaIdentity(
                     tenant_id=tenant_uuid,
@@ -524,7 +533,9 @@ def _assert_embedding_dimension(det: FaceDetection, *, expected_dim: int) -> Non
         return
     actual = len(det.embedding)
     if actual != expected_dim:
-        raise ValueError(f"embedding length {actual} != pgvector_dimension {expected_dim}")
+        raise PersistIntegrityError(
+            f"embedding length {actual} != pgvector_dimension {expected_dim}"
+        )
 
 
 def _face_pipeline_profile() -> str:
@@ -627,4 +638,4 @@ def _compute_iou(bbox1: tuple[float, float, float, float], bbox2: tuple[float, f
     return intersection_area / union_area
 
 
-__all__ = ["ReconcileResult", "ScanService", "run_scan_three_phase"]
+__all__ = ["PersistIntegrityError", "ReconcileResult", "ScanService", "run_scan_three_phase"]

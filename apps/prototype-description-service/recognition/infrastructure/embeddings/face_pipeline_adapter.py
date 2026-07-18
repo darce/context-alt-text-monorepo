@@ -75,6 +75,8 @@ _FACE_PIPELINE_SUBMIT_SEMAPHORE = asyncio.Semaphore(_FACE_PIPELINE_MAX_WORKERS)
 _SHARED_LOCK = threading.Lock()
 # Single atomic snapshot: (cache_key, runtime_or_sticky_error).
 _SHARED: tuple[tuple[Any, ...], FacePipelineRuntime | FacePipelineRuntimeUnavailableError] | None = None
+# Process-wide detect breaker — shared across HTTP/inline/worker build sites [RES-03].
+_SHARED_DETECT_BREAKER: AdapterCircuitBreaker | None = None
 
 FACE_PIPELINE_GENERATOR_REASON = "face_pipeline embeds in detect()"
 
@@ -301,6 +303,24 @@ def get_shared_face_pipeline_runtime(
         return runtime
 
 
+def get_shared_face_pipeline_detect_breaker() -> AdapterCircuitBreaker:
+    """Process-wide circuit breaker for face_pipeline.detect [RES-03][SERVE-01].
+
+    Double-checked lock mirroring ``get_shared_face_pipeline_runtime`` so HTTP
+    and inline build_embedding_runtime sites share open/closed state with the
+    long-lived worker (not a fresh breaker per detector instance).
+    """
+    global _SHARED_DETECT_BREAKER
+
+    shared = _SHARED_DETECT_BREAKER
+    if shared is not None:
+        return shared
+    with _SHARED_LOCK:
+        if _SHARED_DETECT_BREAKER is None:
+            _SHARED_DETECT_BREAKER = create_adapter_circuit_breaker("face_pipeline.detect")
+        return _SHARED_DETECT_BREAKER
+
+
 def reset_shared_face_pipeline_runtime_for_tests() -> None:
     """Clear the process singleton for isolated tests.
 
@@ -308,10 +328,14 @@ def reset_shared_face_pipeline_runtime_for_tests() -> None:
     and is **not** shut down or replaced here. Workers may still be running when
     the runtime snapshot is cleared; tests that need a clean executor must not
     assume reset reclaims in-flight work (CR-10).
+
+    Also clears the shared ``face_pipeline.detect`` breaker so tests do not
+    leak open/closed state across cases (GROKHARM-03).
     """
-    global _SHARED
+    global _SHARED, _SHARED_DETECT_BREAKER
     with _SHARED_LOCK:
         _SHARED = None
+        _SHARED_DETECT_BREAKER = None
 
 
 class FacePipelineFaceDetector(FaceDetectorProtocol):
@@ -540,6 +564,7 @@ __all__ = [
     "assert_three_way_embedding_dimensions",
     "decode_image_bytes",
     "face_pipeline_unavailable_generator",
+    "get_shared_face_pipeline_detect_breaker",
     "get_shared_face_pipeline_runtime",
     "reset_shared_face_pipeline_runtime_for_tests",
     "sface_embedding_model_manifest",

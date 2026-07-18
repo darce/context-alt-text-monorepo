@@ -58,6 +58,7 @@ async def build_embedding_runtime(
         from recognition.infrastructure.embeddings.face_pipeline_adapter import (
             FacePipelineFaceDetector,
             face_pipeline_unavailable_generator,
+            get_shared_face_pipeline_detect_breaker,
             get_shared_face_pipeline_runtime,
         )
 
@@ -73,6 +74,7 @@ async def build_embedding_runtime(
                 runtime,
                 client=http_client,
                 timeout=float(settings.face_pipeline.timeout_s),
+                breaker=get_shared_face_pipeline_detect_breaker(),
             )
             generator: EmbeddingGeneratorProtocol = face_pipeline_unavailable_generator()
             return detector, generator

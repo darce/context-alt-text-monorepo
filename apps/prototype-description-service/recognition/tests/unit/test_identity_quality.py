@@ -6,7 +6,74 @@ from recognition.application.assignment.quality import (
     compute_identity_quality,
     compute_quality_adjustment,
 )
+from recognition.application.embedding.detector import _compute_detection_quality
 from recognition.domain.maturity import ClusterMaturityLevel
+
+
+def test_compute_detection_quality_uses_corner_bbox_not_edge_as_size() -> None:
+    """GROKHARM-02 [SERVE-08, PROV-06]: corner (x1,y1,x2,y2) must not treat x2/y2 as w/h.
+
+    An 80px face at (500,400,580,480) must score like width=80 height=80, not like
+    absolute edges 580/480. A 40px face far from the origin must not be size-boosted
+    to size_factor=1.0 (min_face_size default 80).
+    """
+    conf = 0.9
+    # Finding anchor: 80×80 at far origin offset.
+    corner_80 = (500, 400, 580, 480)
+    score_80 = _compute_detection_quality(
+        confidence=conf,
+        pose_pitch=None,
+        pose_yaw=None,
+        pose_roll=None,
+        bbox=corner_80,
+    )
+    expected_80 = compute_identity_quality(
+        confidence=conf,
+        pose_pitch=None,
+        pose_yaw=None,
+        pose_roll=None,
+        bbox_width=80,
+        bbox_height=80,
+    ).score
+    wrong_edge_80 = compute_identity_quality(
+        confidence=conf,
+        pose_pitch=None,
+        pose_yaw=None,
+        pose_roll=None,
+        bbox_width=580,
+        bbox_height=480,
+    ).score
+    assert score_80 == expected_80
+    # Note: at min_face_size=80, wrong edges (580/480) also size-saturate → same score.
+    # Discriminating case is a sub-min face far from origin (fail-first under the bug).
+    _ = wrong_edge_80
+
+    corner_40 = (500, 400, 540, 440)  # 40×40 far from origin
+    score_40 = _compute_detection_quality(
+        confidence=conf,
+        pose_pitch=None,
+        pose_yaw=None,
+        pose_roll=None,
+        bbox=corner_40,
+    )
+    expected_40 = compute_identity_quality(
+        confidence=conf,
+        pose_pitch=None,
+        pose_yaw=None,
+        pose_roll=None,
+        bbox_width=40,
+        bbox_height=40,
+    ).score
+    wrong_edge_40 = compute_identity_quality(
+        confidence=conf,
+        pose_pitch=None,
+        pose_yaw=None,
+        pose_roll=None,
+        bbox_width=540,
+        bbox_height=440,
+    ).score
+    assert score_40 == expected_40
+    assert score_40 < wrong_edge_40  # fail-first under edge-as-width bug
 
 
 class TestComputeIdentityQuality:

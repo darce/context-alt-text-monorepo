@@ -122,7 +122,7 @@ Outcome metric (PROD-01): **time-to-first-named-person** on the live demo — ba
 | Person-commit | REST `acx/v1/recognition/roster/clusters/{id}/commit` | called only from roster drawer | also called from the review card | none (same body) |
 | Label-only rename | REST `PATCH recognition/clusters/{id}` | primary naming path | demoted to tertiary "just label" action | none |
 | `queue_memberships` / `projection_status` | generated `roster-entry.ts` | roster surfaces | **unchanged — not read by the queue** (chips are `KIND`-derived; see §6) | none |
-| Cluster members list | REST members route (envelope `{members, limit, total, truncated}`) | client sends no paging params | route accepts `limit`/`offset` (③ / PA-10 carve-out) — verify-first; unchanged if already supported | **additive params only** (the wave's single permitted server leg) |
+| Cluster members list | REST members route (envelope `{members, limit, total, truncated}`) | client sends no paging params; server has none (verified) | route accepts `limit`/`offset` (③ / PA-10 carve-out — the leg fires for certain, §9 dual-path checklist) | **additive params only** (the wave's single permitted server leg) |
 | Suggestion projection | `suggestionProjection.ts` (UXP-3, client-side) | exported contract | consumed as-is (predicate/comparator/keys/invalidation map/fixture) — never re-derived | none (import-only) |
 | Workbench URL params | `useWorkbenchFilters` (`s,p,perPage,status`; `tab` lives in `WorkbenchNavContext`) | no queue param | queue filter, band, **and position** add one `rq=<kind>.<band>.<index>` param (§2; `rq` avoids the roster route's differently-grammared `queue=`) | additive, shimmed |
 
@@ -246,7 +246,7 @@ Route tests cover both PHP paths + the recognition route; envelope `{members, li
 | test | `js/admin/pages/workbench/identity-clusters/__tests__/projectionConsumerHarness.test.tsx` (new) | ④ three-consumer harness importing `suggestionProjectionMatrix` (criterion-2 handshake; BR-23 reconciliation); matrices M1/M2 live here or beside the surfaces they exercise |
 | new | `js/admin/pages/workbench/identity-clusters/useLiveReviewTarget.ts` (+ test) | ⑤ live-derived open target; consumed by `ReviewQueue` card + `ClusterReviewPanel`; retire→rebind / retire→close+announce+focus tests |
 | edit | `js/admin/pages/workbench/identity-clusters/{ClusterLabelingPanel,ClusterReviewPanel}.tsx` + `api/recognition/clusterApiMembers.ts` | ③ show-all affordance + optional `{limit, offset}` on `fetchClusterMembers` |
-| edit (conditional) | `src/api/class-clusters-controller.php` (+ `class-cluster-read-service.php` pass-through) | PA-10 leg: additive `limit`/`offset` on the members route, only if absent (verify-first); route test |
+| edit (server leg) | `src/api/class-clusters-controller.php` + `src/api/services/class-cluster-read-service.php` (local path ~:257-285 AND proxy leg :290) | PA-10 leg: additive `limit`/`offset` on the members route (verified absent today — fires for certain); route tests both PHP paths |
 
 ## Related Files (read, likely unchanged)
 
@@ -280,8 +280,8 @@ Roster-commit creatable combobox on the card → `commitClusterToRosterEntry`; t
 
 **Mid-task checkpoint (complexity budget — PA-26).** After Slice 3 lands, the core queue (driver, shell, undo choreography, person-commit) is shippable on its own. The orchestrator records a checkpoint decision at that point: either continue Slices 4–8 under this task ref, or — if the fold slices are stalled or the wave re-prioritizes — **re-scope Slices 4–7 into a follow-on task ref** and close E21-5 at the core (Slice 8's close protocol runs at whichever boundary ends the task). This prevents a stall in the fold work from stranding the shipped core in an unclosed task.
 
-### Slice 4: Show-all members (③ — B3; verify-first server leg) (implementer per current mandate; orchestrator reviews)
-Client paging over the members envelope with a show-all affordance on grouped/cluster surfaces; **verify first** whether the members route already accepts `limit`/`offset` — if not, the PA-10 server leg adds them (additive params only, envelope unchanged) [RES-05]. **Exit**: truncated groups can expand to full membership via paged fetches; `truncated` flag drives the §4 disabled-while-truncated bulk gate; server leg (if any) covered by a route test; no other endpoint touched.
+### Slice 4: Show-all members (③ — B3; server leg fires for certain) (implementer per current mandate; orchestrator reviews)
+Client paging over the members envelope with a show-all affordance in `ClusterLabelingPanel`/`ClusterReviewPanel`; the PA-10 server leg per §9's dual-path checklist (verified absent today — PHP local + proxy paths, recognition route + repo offset; additive params only, envelope unchanged) [RES-05]. **Exit**: truncated groups can expand to full membership via paged fetches; `truncated` flag drives the §4 disabled-while-truncated bulk gate; both PHP paths + the recognition route covered by tests; no other endpoint touched.
 
 ### Slice 5: Multi-select bulk + matrix M1 (① — after Slice 4; no bulk enables on grouped cards before ③) (implementer per current mandate; orchestrator reviews)
 §4's model end-to-end: explicit multi-select (default empty), verb+count+person-label commit, preview set, undo hold, sequential per-id atomic commits with stop-on-failure re-surface; joint B3/B4 AC (disabled or total-N+hidden-count confirm while unexpanded) [UI-06][CON-05]. **Exit**: matrix **M1** green (single / review-each / multi-select-bulk — exact mutated id set asserted per path [TEST-08]); zero calls to legacy `bulk-accept`; first-failure stops the run, announces, remainder stays selected.
@@ -327,7 +327,7 @@ Per-state single-primary gating (Analyze vs Describe) with the pinned token role
 - [ ] banned-vocabulary sweep extended to the queue incl. chip + disclosure copy and green
 
 ### Checklist for Slice 4: Show-all members (③)
-- [ ] Members-route paging verified-first; PA-10 server leg (`limit`/`offset`) added only if absent, additive params only, route test covers it
+- [ ] PA-10 server leg landed per §9 dual-path checklist (PHP local + proxy, recognition route + repo offset — verified absent today); additive params only; tests cover both PHP paths + recognition route
 - [ ] Show-all affordance with client paging over `{members, limit, total, truncated}`; never fetch-all [RES-05]
 - [ ] `truncated` drives the bulk disabled-while-truncated gate (§4); no other endpoint touched
 

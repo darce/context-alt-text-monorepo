@@ -206,8 +206,9 @@ class ScanWorker:
         if self._embedding_retry_after is not None and now < self._embedding_retry_after:
             return
         settings = get_recognition_settings()
-        if self._http_client is None:
-            self._http_client = httpx.AsyncClient(timeout=30.0)
+        # Pre-S3 semantics (S3CR-02): do not allocate httpx.AsyncClient until the
+        # factory returns a usable detector; on Unavailable close/clear any client
+        # so none exists while the runtime is not ready. Retry after 30s.
         self._detector, self._generator = await build_embedding_runtime(
             settings=settings,
             http_client=self._http_client,
@@ -215,7 +216,15 @@ class ScanWorker:
         if isinstance(self._detector, UnavailableFaceDetector):
             self._embedding_runtime_ready = False
             self._embedding_retry_after = now + timedelta(seconds=30)
+            if self._http_client is not None:
+                await self._http_client.aclose()
+                self._http_client = None
         else:
+            if self._http_client is None:
+                self._http_client = httpx.AsyncClient(timeout=30.0)
+                # Attach shared client after success (factory ran with None).
+                if hasattr(self._detector, "_client"):
+                    self._detector._client = self._http_client
             self._embedding_retry_after = None
             self._embedding_runtime_ready = True
 
@@ -233,7 +242,12 @@ class ScanWorker:
         await self._heartbeat_embedding_runtime_capability()
 
     async def _publish_embedding_runtime_capability(self, session: AsyncSession) -> None:
-        """Write the worker-published embedding-runtime heartbeat for API intake."""
+        """Write the worker-published embedding-runtime heartbeat for API intake.
+
+        Contract expansion (S3CR-07): ``reason`` is additive ``profile=<name>`` when
+        available (and ``profile=<name>; <detail>`` when unavailable). Pre-S3 used
+        ``reason=None`` on the ready path; consumers must accept the profile prefix.
+        """
         from recognition.shared.db.dialect import is_postgres
 
         if not is_postgres(session):

@@ -146,6 +146,8 @@ async def test_scan_worker_retries_runtime_init_after_failure(monkeypatch: pytes
     assert calls == 1
     assert worker._embedding_runtime_ready is False
     assert worker._embedding_retry_after is not None
+    # S3CR-02: no httpx client while runtime is not ready.
+    assert worker._http_client is None
     assert not isinstance(worker._scan_handler._detector, StubFaceDetector)
     assert not isinstance(worker._scan_handler._generator, StubEmbeddingGenerator)
 
@@ -155,6 +157,7 @@ async def test_scan_worker_retries_runtime_init_after_failure(monkeypatch: pytes
     worker._embedding_retry_after = None
     await worker._ensure_embedding_runtime()
     assert calls == 2
+    assert worker._http_client is None
 
     await worker.__aexit__(None, None, None)
 

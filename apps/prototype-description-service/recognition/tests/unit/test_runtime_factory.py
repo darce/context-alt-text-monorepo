@@ -19,6 +19,7 @@ from recognition.application.embedding.generator import (
     StubEmbeddingGenerator,
     UnavailableEmbeddingGenerator,
 )
+from recognition.infrastructure.embeddings import face_pipeline_adapter as fpa
 from recognition.infrastructure.embeddings import runtime_factory as rf
 from recognition.infrastructure.embeddings.face_pipeline_adapter import (
     FACE_PIPELINE_GENERATOR_REASON,
@@ -117,8 +118,9 @@ async def test_factory_face_pipeline_success(monkeypatch: pytest.MonkeyPatch) ->
             self.client = client
             self.timeout = timeout
 
-    monkeypatch.setattr(rf, "get_shared_face_pipeline_runtime", _get_runtime)
-    monkeypatch.setattr(rf, "FacePipelineFaceDetector", _FPDet)
+    # Lazy import reads from face_pipeline_adapter (S3CR-01); patch there.
+    monkeypatch.setattr(fpa, "get_shared_face_pipeline_runtime", _get_runtime)
+    monkeypatch.setattr(fpa, "FacePipelineFaceDetector", _FPDet)
 
     client = object()
     det, gen = await rf.build_embedding_runtime(
@@ -137,7 +139,7 @@ async def test_factory_face_pipeline_failure_atomic_both_unavailable(monkeypatch
     def _boom(**kwargs: Any) -> FacePipelineRuntime:
         raise FacePipelineRuntimeUnavailableError("sface missing")
 
-    monkeypatch.setattr(rf, "get_shared_face_pipeline_runtime", _boom)
+    monkeypatch.setattr(fpa, "get_shared_face_pipeline_runtime", _boom)
     det, gen = await rf.build_embedding_runtime(settings=_settings(profile="face_pipeline"))
     assert isinstance(det, UnavailableFaceDetector)
     assert isinstance(gen, UnavailableEmbeddingGenerator)
@@ -159,14 +161,54 @@ async def test_factory_face_pipeline_ignores_adapter_provider(monkeypatch: pytes
         def __init__(self, rt, *, client=None, timeout=None) -> None:
             self.runtime = rt
 
-    monkeypatch.setattr(rf, "get_shared_face_pipeline_runtime", lambda **kw: runtime)
-    monkeypatch.setattr(rf, "FacePipelineFaceDetector", _FPDet)
+    monkeypatch.setattr(fpa, "get_shared_face_pipeline_runtime", lambda **kw: runtime)
+    monkeypatch.setattr(fpa, "FacePipelineFaceDetector", _FPDet)
 
     await rf.build_embedding_runtime(
         settings=_settings(profile="face_pipeline"),
         adapter_provider=_provider,
     )
     assert called["n"] == 0
+
+
+@pytest.mark.asyncio
+async def test_factory_insightface_survives_poisoned_face_pipeline_import(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S3CR-01: insightface factory path must not import face_pipeline_adapter."""
+    import sys
+    import types
+
+    # Poison the adapter module so any import raises.
+    poisoned = types.ModuleType("recognition.infrastructure.embeddings.face_pipeline_adapter")
+
+    def _boom_getattr(name: str) -> object:
+        raise ImportError(f"poisoned face_pipeline_adapter: {name}")
+
+    poisoned.__getattr__ = _boom_getattr  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "recognition.infrastructure.embeddings.face_pipeline_adapter", poisoned)
+
+    adapter = object()
+
+    async def _adapter() -> object:
+        return adapter
+
+    class _Det:
+        def __init__(self, a, client=None) -> None:
+            self.adapter = a
+
+    class _Gen:
+        def __init__(self, a) -> None:
+            self.adapter = a
+
+    monkeypatch.setattr(rf, "get_shared_insightface_adapter", _adapter)
+    monkeypatch.setattr(rf, "InsightFaceFaceDetector", _Det)
+    monkeypatch.setattr(rf, "InsightFaceEmbeddingGenerator", _Gen)
+
+    det, gen = await rf.build_embedding_runtime(settings=_settings(profile="insightface"))
+    assert isinstance(det, _Det)
+    assert isinstance(gen, _Gen)
+    assert det.adapter is adapter
 
 
 @pytest.mark.asyncio

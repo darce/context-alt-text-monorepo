@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import subprocess
@@ -12,6 +13,7 @@ from starlette.middleware.cors import CORSMiddleware
 from api.logging_config import configure_logging
 from db.session import get_pool_stats
 from recognition.application.health import (
+    CheckResult,
     aggregate_status,
     check_breaker,
     check_database,
@@ -287,19 +289,49 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
     Model-cache probe is profile-aware ([OBS-08]): insightface uses the
     existing onnx-count check; face_pipeline uses eager sha256 verification
     with mtime/size drift re-verify ([EMB-05]).
+
+    Settings are constructed once at registration (S3CR-06); only the profile
+    env key is re-read per probe (cheap). Invalid profile yields aggregated
+    UNHEALTHY 503 on /ready (S3CR-04); create_app still hard-fails on boot.
     """
     commit_sha = _resolve_version_commit_sha() or "unknown"
+    # Hoist full settings parse once; close over cache/model paths (S3CR-06).
+    settings = RecognitionSettings()
+    insightface_cache_dir = model_cache_dir or settings.insightface.model_cache_dir
+    insightface_model_name = settings.insightface.model_name
+    face_pipeline_models_dir = settings.face_pipeline.resolved_models_dir
+    _allowed_profiles = frozenset({"insightface", "face_pipeline"})
 
-    def _model_probe() -> tuple[object, Path, str]:
-        """Return (CheckResult, cache_dir_for_detail, model_label)."""
-        settings = RecognitionSettings()
-        profile = settings.face_pipeline.profile
+    def _current_profile() -> str:
+        """Cheap per-probe profile re-read (env only; no full settings re-parse)."""
+        raw = os.environ.get("RECOGNITION_FACE_PIPELINE_PROFILE", "insightface").strip()
+        return raw or "insightface"
+
+    async def _model_probe() -> tuple[CheckResult, Path, str]:
+        """Return (CheckResult, cache_dir_for_detail, model_label).
+
+        face_pipeline verification runs off the event loop (S3CR-03).
+        Invalid profile → UNHEALTHY CheckResult (S3CR-04), not HTTP 500.
+        """
+        profile = _current_profile()
+        if profile not in _allowed_profiles:
+            return (
+                CheckResult(
+                    "model_cache",
+                    HealthStatus.UNHEALTHY,
+                    f"invalid face_pipeline profile: {profile}",
+                ),
+                insightface_cache_dir,
+                insightface_model_name,
+            )
         if profile == "face_pipeline":
-            models_dir = settings.face_pipeline.resolved_models_dir
-            return check_face_pipeline_models(models_dir), models_dir, "yunet+sface"
-        cache_dir = model_cache_dir or settings.insightface.model_cache_dir
-        model_name = settings.insightface.model_name
-        return check_model_cache(cache_dir, model_name=model_name), cache_dir, model_name
+            mc_check = await asyncio.to_thread(check_face_pipeline_models, face_pipeline_models_dir)
+            return mc_check, face_pipeline_models_dir, "yunet+sface"
+        return (
+            check_model_cache(insightface_cache_dir, model_name=insightface_model_name),
+            insightface_cache_dir,
+            insightface_model_name,
+        )
 
     @app.get("/health", summary="Liveness probe (PR-01)")
     def liveness() -> dict[str, str]:
@@ -318,7 +350,7 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
         session: AsyncSession | None = Depends(http_deps.get_observability_session),
     ) -> dict[str, object]:
         breaker = get_or_create_session_dependency_circuit_breaker(app)
-        mc_check, _, _ = _model_probe()
+        mc_check, _, _ = await _model_probe()
         checks = [
             await check_database(session),
             check_breaker(breaker),
@@ -339,17 +371,22 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
         _: object = Depends(require_auth),
         session: AsyncSession | None = Depends(http_deps.get_observability_session),
     ) -> dict[str, object]:
-        # Auth-gated diagnostic surface. Returns pool stats + breaker state +
-        # model-cache inventory for operators; never hit by load-balancer
-        # probes. Shares aggregator + probes with /ready so the two stay in
-        # sync without duplicate implementations.
+        """Auth-gated diagnostic surface.
+
+        Contract expansion (S3CR-07): ``model_cache.profile`` is additive so
+        operators can see the active face_pipeline profile without a second
+        settings parse (reuses registration-time paths + cheap env profile).
+        """
+        # Returns pool stats + breaker state + model-cache inventory for
+        # operators; never hit by load-balancer probes. Shares aggregator +
+        # probes with /ready so the two stay in sync without duplicates.
         breaker = get_or_create_session_dependency_circuit_breaker(app)
         db_check = await check_database(session)
         breaker_check = check_breaker(breaker)
-        mc_check, cache_dir, model_name = _model_probe()
+        mc_check, cache_dir, model_name = await _model_probe()
         status = aggregate_status([db_check, breaker_check, mc_check])
-        settings = RecognitionSettings()
-        if settings.face_pipeline.profile == "face_pipeline":
+        profile = _current_profile()
+        if profile == "face_pipeline":
             bundle_files = sum(
                 1 for name in ("yunet", "sface") if (cache_dir / MODEL_MANIFEST[name].file_name).is_file()
             )
@@ -382,7 +419,7 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
                 "bundle_files": bundle_files,
                 "status": mc_check.status.value,
                 "detail": mc_check.detail,
-                "profile": settings.face_pipeline.profile,
+                "profile": profile,
             },
             "embedding_runtime": embedding_runtime,
         }

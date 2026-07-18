@@ -27,11 +27,6 @@ from recognition.application.embedding.generator import (
 )
 from recognition.config.settings import RecognitionSettings
 from recognition.infrastructure.embeddings import get_shared_insightface_adapter
-from recognition.infrastructure.embeddings.face_pipeline_adapter import (
-    FacePipelineFaceDetector,
-    face_pipeline_unavailable_generator,
-    get_shared_face_pipeline_runtime,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +53,14 @@ async def build_embedding_runtime(
 
     profile = settings.face_pipeline.profile
     if profile == "face_pipeline":
+        # Lazy import: keep the insightface dark default free of the face_pipeline
+        # (ORT/cv2) import graph until the profile is actually selected (S3CR-01).
+        from recognition.infrastructure.embeddings.face_pipeline_adapter import (
+            FacePipelineFaceDetector,
+            face_pipeline_unavailable_generator,
+            get_shared_face_pipeline_runtime,
+        )
+
         try:
             runtime = get_shared_face_pipeline_runtime(
                 profile=profile,

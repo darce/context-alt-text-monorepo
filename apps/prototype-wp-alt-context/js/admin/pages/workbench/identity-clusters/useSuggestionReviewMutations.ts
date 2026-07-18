@@ -92,6 +92,13 @@ export interface PersonCommitResult {
 interface UseSuggestionReviewMutationsOptions {
   queryClient: QueryClient;
   bulkActionRef: React.MutableRefObject<boolean>;
+  /**
+   * Slice-5 bulk coordinator: when a single action is scheduled, flush/wait
+   * any bulk hold/sequence first (PR-30 bulk→single ordering).
+   */
+  awaitBulkIdleOrFlushRef?: React.MutableRefObject<(() => Promise<void>) | null>;
+  /** True while bulk is holding or committing — forces scheduleCommit busy path. */
+  isBulkActiveRef?: React.MutableRefObject<boolean>;
 }
 
 const reviewPageKey = queryKeys.suggestions.projection.reviewPage(0);
@@ -126,6 +133,8 @@ interface HeldCommit {
 export const useSuggestionReviewMutations = ({
   queryClient,
   bulkActionRef,
+  awaitBulkIdleOrFlushRef,
+  isBulkActiveRef,
 }: UseSuggestionReviewMutationsOptions) => {
   const [hold, setHold] = React.useState<CommitHoldState>({
     phase: 'idle',
@@ -453,7 +462,13 @@ export const useSuggestionReviewMutations = ({
 
       // Idle path: open the hold synchronously so the Saving… state is visible in the
       // same turn as the click (tests and AT both observe this immediately).
-      if (!heldRef.current && !committingRef.current && !personCommittingRef.current) {
+      // When bulk is holding/committing, take the busy path so bulk flushes first (PR-30).
+      if (
+        !heldRef.current &&
+        !committingRef.current &&
+        !personCommittingRef.current &&
+        !isBulkActiveRef?.current
+      ) {
         return openHold(kind, suggestionId);
       }
 
@@ -463,6 +478,15 @@ export const useSuggestionReviewMutations = ({
       return new Promise<ScheduleCommitResult>((resolve) => {
         const prepare = async (): Promise<void> => {
           // BR-23: drop late prepares after unmount.
+          if (!mountedRef.current) {
+            resolve({ outcome: 'failed', kind, suggestionId });
+            return;
+          }
+          // PR-30 bulk→single: flush/wait bulk hold/sequence before opening a single hold.
+          const awaitBulk = awaitBulkIdleOrFlushRef?.current;
+          if (awaitBulk) {
+            await awaitBulk();
+          }
           if (!mountedRef.current) {
             resolve({ outcome: 'failed', kind, suggestionId });
             return;
@@ -501,7 +525,14 @@ export const useSuggestionReviewMutations = ({
         );
       });
     },
-    [flushHeldInternal, hold.phase, hold.suggestionId, openHold],
+    [
+      awaitBulkIdleOrFlushRef,
+      flushHeldInternal,
+      hold.phase,
+      hold.suggestionId,
+      isBulkActiveRef,
+      openHold,
+    ],
   );
 
   const undoHold = React.useCallback((): void => {
@@ -593,6 +624,40 @@ export const useSuggestionReviewMutations = ({
     );
     return scheduled;
   }, [flushHeldInternal]);
+
+  /**
+   * Slice-5 bulk: fire one atomic commit without hold UI (side-effects on success).
+   * Caller owns single-in-flight sequencing across the bulk set.
+   */
+  const commitOneNow = React.useCallback(
+    async (
+      kind: SuggestionCommitKind,
+      suggestionId: string,
+    ): Promise<'committed' | 'failed'> => {
+      const run = async (): Promise<'committed' | 'failed'> => {
+        const result = await executeHeldCommit(kind, suggestionId, { updateUi: false });
+        return result.outcome === 'committed' ? 'committed' : 'failed';
+      };
+      const scheduled = chainRef.current.then(run, run);
+      chainRef.current = scheduled.then(
+        () => undefined,
+        () => undefined,
+      );
+      return scheduled;
+    },
+    [executeHeldCommit],
+  );
+
+  /** True while a single-item hold/commit targets this suggestion id (select exclusion). */
+  const isSuggestionHeld = React.useCallback(
+    (suggestionId: string): boolean => {
+      if (!hold.suggestionId || hold.suggestionId !== suggestionId) {
+        return false;
+      }
+      return hold.phase === 'holding' || hold.phase === 'committing' || hold.phase === 'failed';
+    },
+    [hold.phase, hold.suggestionId],
+  );
 
   /**
    * Slice 3: person-commit fires immediately (no undo hold) after flushing any
@@ -890,6 +955,8 @@ export const useSuggestionReviewMutations = ({
     retryFailure,
     setHoldPaused,
     flushHeld,
+    commitOneNow,
+    isSuggestionHeld,
     mutations: {
       accept: acceptMutation,
       reject: rejectMutation,

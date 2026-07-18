@@ -1,10 +1,11 @@
 /**
- * E21-5 Slice 1b/2/3 — card-at-a-time review queue + hold + person-commit.
+ * E21-5 Slice 1b–5 — card-at-a-time review queue + hold + person-commit + multi-select bulk.
  *
- * Renders exactly one review card + filter chips + N-of-M + prev/next.
- * Index is controlled (lifted to ScanTabContent); filter mirrored via kind props.
+ * Renders exactly one review card + filter chips + N-of-M + prev/next + selection tray.
+ * Index + selection are controlled (lifted to ScanTabContent); filter mirrored via kind props.
  * Accept/reject rides the Slice-2 hold/flush/gated-advance mutation choreography.
  * Person-commit (Slice 3) is flush-then-immediate; no undo window.
+ * Multi-select bulk (Slice 5): sequential per-id accepts, PR-30 state machine, PR-38 labels.
  */
 
 import React from 'react';
@@ -43,6 +44,11 @@ import {
 } from './reviewQueueDriver';
 import { SuggestionCard, type FaceOriginalTarget, type ReviewSuggestion } from './SuggestionCards';
 import { TopClusterCard } from './TopClusterCard';
+import {
+  useBulkReviewCommit,
+  type BulkCommitItem,
+} from './useBulkReviewCommit';
+import { useSelectedClusterTruncation } from './useSelectedClusterTruncation';
 import { useSuggestionReviewData } from './useSuggestionReviewData';
 import {
   HOLD_STATUS_COPY,
@@ -93,11 +99,80 @@ export interface ReviewQueueProps {
   /** Controlled kind filter from URL. */
   kind: ReviewQueueKindParam;
   onKindChange: (kind: ReviewQueueKindParam) => void;
+  /**
+   * PR-31: id-keyed selection set lifted to ScanTabContent (survives panel
+   * unmount). Default empty; controlled prop pair into bulk hooks.
+   */
+  selectedIds: ReadonlySet<string>;
+  onSelectedIdsChange: (next: Set<string>) => void;
   onLabel?: (clusterId: string) => void;
   onReview?: (clusterId: string) => void;
   /** Anchor div for drain-focus (tabIndex=-1). */
   emptyStateAnchorRef?: React.RefObject<HTMLElement | null>;
 }
+
+/** Suggestion id for bulk-selectable queue items; null for CLUSTER (no accept POST). */
+const itemSuggestionId = (item: ReviewQueueItem): string | null => {
+  switch (item.kind) {
+    case NEXT_ACTION_KIND.ASSIGNMENT:
+    case NEXT_ACTION_KIND.MERGE:
+    case NEXT_ACTION_KIND.NAME:
+      return item.suggestionId;
+    case NEXT_ACTION_KIND.CLUSTER:
+      return null;
+  }
+};
+
+/** Target cluster for truncation gate — merge has none; plain accepts without cluster are ungated. */
+const itemTargetClusterId = (item: ReviewQueueItem): string | null => {
+  switch (item.kind) {
+    case NEXT_ACTION_KIND.ASSIGNMENT:
+      return item.clusterId;
+    case NEXT_ACTION_KIND.NAME:
+      return item.clusterId;
+    case NEXT_ACTION_KIND.MERGE:
+    case NEXT_ACTION_KIND.CLUSTER:
+      return null;
+  }
+};
+
+const itemBulkLabel = (item: ReviewQueueItem): string | null => {
+  switch (item.kind) {
+    case NEXT_ACTION_KIND.ASSIGNMENT:
+      return item.label;
+    case NEXT_ACTION_KIND.NAME:
+      return null;
+    case NEXT_ACTION_KIND.MERGE:
+    case NEXT_ACTION_KIND.CLUSTER:
+      return null;
+  }
+};
+
+const itemCommitKind = (item: ReviewQueueItem): SuggestionCommitKind | null => {
+  switch (item.kind) {
+    case NEXT_ACTION_KIND.ASSIGNMENT:
+      return 'accept';
+    case NEXT_ACTION_KIND.MERGE:
+      return 'acceptMerge';
+    case NEXT_ACTION_KIND.NAME:
+      return 'acceptName';
+    case NEXT_ACTION_KIND.CLUSTER:
+      return null;
+  }
+};
+
+const itemPreviewLabel = (item: ReviewQueueItem): string => {
+  switch (item.kind) {
+    case NEXT_ACTION_KIND.ASSIGNMENT:
+      return item.label ?? __('Close match', 'alt-context');
+    case NEXT_ACTION_KIND.MERGE:
+      return __('Possible duplicate', 'alt-context');
+    case NEXT_ACTION_KIND.NAME:
+      return __('Suggested name', 'alt-context');
+    case NEXT_ACTION_KIND.CLUSTER:
+      return __('Unlabeled group', 'alt-context');
+  }
+};
 
 const queueItemKey = (item: ReviewQueueItem): string => {
   switch (item.kind) {
@@ -130,7 +205,17 @@ const flattenAssignmentSuggestions = (
 
 export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>(
   function ReviewQueue(
-    { index, onIndexChange, kind, onKindChange, onLabel, onReview, emptyStateAnchorRef },
+    {
+      index,
+      onIndexChange,
+      kind,
+      onKindChange,
+      selectedIds,
+      onSelectedIdsChange,
+      onLabel,
+      onReview,
+      emptyStateAnchorRef,
+    },
     ref,
   ): React.JSX.Element | null {
     const findings = useWorkbenchFindings();
@@ -139,6 +224,9 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     const cardRegionRef = React.useRef<HTMLDivElement>(null);
     const [lightbox, setLightbox] = React.useState<FaceOriginalTarget | null>(null);
     const [liveMessage, setLiveMessage] = React.useState('');
+    const [selectionOpen, setSelectionOpen] = React.useState(false);
+    /** User confirmed bulk while truncation-gated (UI-06 total-N confirm). */
+    const [truncationConfirmed, setTruncationConfirmed] = React.useState(false);
     const previousItemKeyRef = React.useRef<string | null>(null);
     const pendingFocusAfterRemovalRef = React.useRef(false);
 
@@ -147,6 +235,100 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       () => filterReviewQueue(findings.queue, filter),
       [findings.queue, filter],
     );
+
+    const queueBySuggestionId = React.useMemo(() => {
+      const map = new Map<string, ReviewQueueItem>();
+      for (const item of findings.queue) {
+        const sid = itemSuggestionId(item);
+        if (sid) {
+          map.set(sid, item);
+        }
+      }
+      return map;
+    }, [findings.queue]);
+
+    const resolveBulkItems = React.useCallback(
+      (ids: readonly string[]): BulkCommitItem[] => {
+        const items: BulkCommitItem[] = [];
+        for (const id of ids) {
+          const item = queueBySuggestionId.get(id);
+          if (!item) {
+            continue;
+          }
+          const commitKind = itemCommitKind(item);
+          if (!commitKind) {
+            continue;
+          }
+          items.push({
+            suggestionId: id,
+            commitKind,
+            label: itemBulkLabel(item),
+          });
+        }
+        return items;
+      },
+      [queueBySuggestionId],
+    );
+
+    const bulk = useBulkReviewCommit({
+      selectedIds,
+      onSelectedIdsChange,
+      resolveItems: resolveBulkItems,
+      flushHeldSingle: data.flushHeld,
+      commitOne: data.commitOneNow,
+      heldSingleSuggestionId: data.hold.suggestionId,
+      setBulkActionActive: data.setBulkActionActive,
+      onBulkSequenceSettled: () => {
+        data.invalidateSuggestionQueries();
+        data.invalidateMediaIdentities();
+      },
+      isBulkActiveRef: data.isBulkActiveRef,
+      awaitBulkIdleOrFlushRef: data.awaitBulkIdleOrFlushRef,
+    });
+
+    const selectedTargetClusterIds = React.useMemo(() => {
+      const ids: string[] = [];
+      for (const sid of selectedIds) {
+        const item = queueBySuggestionId.get(sid);
+        if (!item) {
+          continue;
+        }
+        const clusterId = itemTargetClusterId(item);
+        if (clusterId) {
+          ids.push(clusterId);
+        }
+      }
+      return ids;
+    }, [queueBySuggestionId, selectedIds]);
+
+    const truncation = useSelectedClusterTruncation(selectedTargetClusterIds);
+
+    // Drop selected ids that left the projection; announce count update.
+    const pruneMissingIds = bulk.pruneMissingIds;
+    React.useEffect(() => {
+      const present = new Set<string>();
+      for (const item of findings.queue) {
+        const sid = itemSuggestionId(item);
+        if (sid) {
+          present.add(sid);
+        }
+      }
+      const dropped = pruneMissingIds(present);
+      if (dropped > 0) {
+        setLiveMessage(
+          sprintf(
+            /* translators: %d: number of items removed from selection */
+            __('%d selected item(s) no longer available — selection updated.', 'alt-context'),
+            dropped,
+          ),
+        );
+      }
+    }, [findings.queue, pruneMissingIds]);
+
+    // Reset truncation confirm when selection or gate changes.
+    React.useEffect(() => {
+      setTruncationConfirmed(false);
+    }, [selectedIds, truncation.isTruncationGated]);
 
     const length = filteredQueue.length;
     const safeIndex = clampQueueIndex(index, length);
@@ -291,17 +473,17 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     /**
      * BR-16: leaving a held card (prev/next/filter) flushes the hold first.
      * Advance is gated on success; failure re-surfaces on the held card.
+     * Slice-5: also flush/wait bulk hold/sequence before navigating (PR-30).
      */
     const navigateAfterFlush = React.useCallback(
       (navigate: () => void): void => {
         clearAdvanceFocus();
         // BR-29: leave succeeded/failed person-commit surface when leaving the card.
         data.clearPersonCommitSuccess();
-        if (data.hold.phase !== 'holding') {
-          navigate();
-          return;
-        }
-        void data.flushHeld().then((result) => {
+
+        const afterSingleFlush = (
+          result: ScheduleCommitResult | null | undefined,
+        ): void => {
           if (result == null || result.outcome === 'committed') {
             if (result?.outcome === 'committed') {
               setLiveMessage(__('Saved. Moving to next review item.', 'alt-context'));
@@ -309,7 +491,6 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             navigate();
             return;
           }
-          // failed — stay; failure surface already on the held card.
           if (result.outcome === 'failed') {
             setLiveMessage(
               result.kind.startsWith('reject')
@@ -317,10 +498,55 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                 : __('Accept failed. Retry to try again.', 'alt-context'),
             );
           }
-        });
+        };
+
+        // Bulk active: flush/wait sequence first, then any single hold, then navigate.
+        if (bulk.isBulkActive) {
+          void bulk.awaitBulkIdleOrFlush().then(() => {
+            if (data.hold.phase === 'holding') {
+              void data.flushHeld().then(afterSingleFlush);
+              return;
+            }
+            navigate();
+          });
+          return;
+        }
+
+        // Original single-hold fast path (BR-16) — sync check, no bulk await.
+        if (data.hold.phase !== 'holding') {
+          navigate();
+          return;
+        }
+        void data.flushHeld().then(afterSingleFlush);
       },
-      [clearAdvanceFocus, data],
+      [bulk, clearAdvanceFocus, data],
     );
+
+    const truncationBlocksCommit =
+      truncation.isTruncationGated && !truncationConfirmed && selectedIds.size > 0;
+    const truncationReason = truncation.isTruncationGated
+      ? sprintf(
+          /* translators: 1: total members, 2: hidden count beyond first page */
+          __(
+            'Selection includes groups with %1$d total faces (%2$d not shown). Expand or confirm before accepting.',
+            'alt-context',
+          ),
+          truncation.gatedTotal,
+          truncation.gatedHiddenCount,
+        )
+      : null;
+
+    const selectedPreviewItems = React.useMemo(() => {
+      const rows: { id: string; label: string }[] = [];
+      for (const id of selectedIds) {
+        const item = queueBySuggestionId.get(id);
+        if (!item) {
+          continue;
+        }
+        rows.push({ id, label: itemPreviewLabel(item) });
+      }
+      return rows;
+    }, [queueBySuggestionId, selectedIds]);
 
     // BR-30: when person-commit fails/succeeds after the card advanced away, surface
     // alert/status in queue chrome (card-scoped phase never mounts).
@@ -450,7 +676,132 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               {__('Next', 'alt-context')}
             </button>
           </div>
+
+          {/* G3 selection tray — chrome, not a review card (PA-14 one-card invariant). */}
+          <div
+            className="acx-review-queue__selection-tray"
+            data-testid="acx-review-selection-tray"
+          >
+            <span className="acx-review-queue__selection-count">
+              {sprintf(
+                /* translators: %d: number of selected review items */
+                __('%d selected', 'alt-context'),
+                selectedIds.size,
+              )}
+            </span>
+            <button
+              type="button"
+              className="acx-review-queue__selection-review"
+              disabled={selectedIds.size === 0}
+              aria-expanded={selectionOpen}
+              onClick={() => setSelectionOpen((open) => !open)}
+            >
+              {__('Review selection', 'alt-context')}
+            </button>
+          </div>
         </div>
+
+        {selectionOpen && selectedIds.size > 0 ? (
+          <div
+            className="acx-review-queue__selection-panel"
+            data-testid="acx-review-selection-panel"
+          >
+            <ul className="acx-review-queue__selection-preview">
+              {selectedPreviewItems.map((row) => (
+                <li key={row.id} className="acx-review-queue__selection-preview-row">
+                  <span className="acx-review-queue__selection-preview-label">{row.label}</span>
+                </li>
+              ))}
+            </ul>
+
+            {truncation.isTruncationGated ? (
+              <p className="acx-review-queue__truncation-reason" role="status">
+                {truncationReason}
+              </p>
+            ) : null}
+
+            {truncationBlocksCommit ? (
+              <button
+                type="button"
+                className="button acx-review-queue__truncation-confirm"
+                onClick={() => setTruncationConfirmed(true)}
+              >
+                {sprintf(
+                  /* translators: 1: total members across gated clusters, 2: hidden count */
+                  __('Confirm %1$d total (%2$d not shown)', 'alt-context'),
+                  truncation.gatedTotal,
+                  truncation.gatedHiddenCount,
+                )}
+              </button>
+            ) : null}
+
+            <button
+              type="button"
+              className="button button-primary acx-review-queue__bulk-commit"
+              data-testid="acx-bulk-commit"
+              disabled={
+                selectedIds.size === 0 ||
+                bulk.isBulkActive ||
+                truncationBlocksCommit ||
+                truncation.isLoading
+              }
+              title={truncationBlocksCommit ? (truncationReason ?? undefined) : undefined}
+              onClick={() => {
+                void bulk.initiateBulk();
+              }}
+            >
+              {bulk.commitLabelForSelection}
+            </button>
+          </div>
+        ) : null}
+
+        {bulk.bulk.phase === 'holding' || bulk.bulk.phase === 'committing' ? (
+          <div
+            className="acx-review-queue__hold acx-review-queue__bulk-hold"
+            role="status"
+            aria-live="polite"
+            data-testid="acx-bulk-hold"
+            onFocusCapture={() => bulk.setBulkHoldPaused(true)}
+            onBlurCapture={(event) => {
+              const related = event.relatedTarget;
+              if (!(related instanceof Node) || !event.currentTarget.contains(related)) {
+                bulk.setBulkHoldPaused(false);
+              }
+            }}
+            onPointerEnter={() => bulk.setBulkHoldPaused(true)}
+            onPointerLeave={() => bulk.setBulkHoldPaused(false)}
+          >
+            <span className="acx-review-queue__hold-message">{bulk.bulkHoldAnnounce}</span>
+            {bulk.bulk.phase === 'holding' ? (
+              <button
+                type="button"
+                className="button acx-review-queue__undo"
+                onClick={() => bulk.undoBulk()}
+              >
+                {__('Undo', 'alt-context')}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
+        {bulk.bulk.phase === 'partial_failed' && bulk.bulk.partialFailure ? (
+          <div
+            className="acx-review-queue__failure acx-review-queue__bulk-failure"
+            role="alert"
+            data-testid="acx-bulk-partial-failure"
+          >
+            <p className="acx-review-queue__failure-message">{bulk.bulk.partialFailure.message}</p>
+            <button
+              type="button"
+              className="button acx-review-queue__retry"
+              onClick={() => {
+                void bulk.retryBulk();
+              }}
+            >
+              {__('Retry', 'alt-context')}
+            </button>
+          </div>
+        ) : null}
 
         <div className="acx-review-queue__live" role="status" aria-live="polite">
           {liveMessage}
@@ -520,7 +871,9 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               mergeById={mergeById}
               nameById={nameById}
               topClustersById={topClustersById}
-              isCardPending={data.isCardPending}
+              isCardPending={(suggestionId, kinds) =>
+                data.isCardPending(suggestionId, kinds) || bulk.isBulkActive
+              }
               hold={data.hold}
               retryPending={data.retryPending}
               personCommit={data.personCommit}
@@ -541,6 +894,20 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               undoHold={data.undoHold}
               retryFailure={data.retryFailure}
               setHoldPaused={data.setHoldPaused}
+              isSelected={
+                itemSuggestionId(currentItem)
+                  ? bulk.isIdSelected(itemSuggestionId(currentItem)!)
+                  : false
+              }
+              isSelectDisabled={
+                !itemSuggestionId(currentItem) ||
+                !bulk.isIdSelectable(itemSuggestionId(currentItem)!)
+              }
+              onToggleSelect={
+                itemSuggestionId(currentItem)
+                  ? () => bulk.toggleSelect(itemSuggestionId(currentItem)!)
+                  : undefined
+              }
             />
           )}
         </div>
@@ -590,7 +957,37 @@ interface CurrentCardProps {
   undoHold: () => void;
   retryFailure: () => Promise<ScheduleCommitResult> | null;
   setHoldPaused: (paused: boolean) => void;
+  isSelected: boolean;
+  isSelectDisabled: boolean;
+  onToggleSelect?: () => void;
 }
+
+/** Per-card Select affordance (PA-14) — accumulates into the lifted selection set. */
+const SelectToggle = ({
+  selected,
+  disabled,
+  onToggle,
+}: {
+  selected: boolean;
+  disabled: boolean;
+  onToggle?: () => void;
+}): React.JSX.Element | null => {
+  if (!onToggle) {
+    return null;
+  }
+  return (
+    <button
+      type="button"
+      className={`acx-review-queue__select${selected ? ' is-selected' : ''}`}
+      data-testid="acx-review-select"
+      aria-pressed={selected}
+      disabled={disabled}
+      onClick={onToggle}
+    >
+      {selected ? __('Selected', 'alt-context') : __('Select', 'alt-context')}
+    </button>
+  );
+};
 
 const holdMatchesCard = (
   hold: CurrentCardProps['hold'],
@@ -685,6 +1082,9 @@ const CurrentCard = ({
   undoHold,
   retryFailure,
   setHoldPaused,
+  isSelected,
+  isSelectDisabled,
+  onToggleSelect,
 }: CurrentCardProps): React.JSX.Element | null => {
   // Arm focus before the POST so removal→key-change can place it; clear on
   // undo/failure (BR-13) so a later key change does not surprise-focus.
@@ -794,6 +1194,11 @@ const CurrentCard = ({
       return (
         <>
           {runHint ? <p className="acx-review-queue__run-hint">{runHint}</p> : null}
+          <SelectToggle
+            selected={isSelected}
+            disabled={isSelectDisabled}
+            onToggle={onToggleSelect}
+          />
           <SuggestionCard
             suggestion={suggestion}
             lowConfidenceThreshold={LOW_CONFIDENCE_THRESHOLD}
@@ -828,6 +1233,11 @@ const CurrentCard = ({
       const mergeHold = holdRegionFor(mergeKinds, suggestion.id);
       return (
         <>
+          <SelectToggle
+            selected={isSelected}
+            disabled={isSelectDisabled}
+            onToggle={onToggleSelect}
+          />
           <MergeSuggestionCard
             suggestion={suggestion}
             onAccept={() => {
@@ -870,6 +1280,11 @@ const CurrentCard = ({
           data-testid="acx-review-card"
           data-review-kind="name"
         >
+          <SelectToggle
+            selected={isSelected}
+            disabled={isSelectDisabled}
+            onToggle={onToggleSelect}
+          />
           <div className="acx-suggestion-card__content">
             <p className="acx-suggestion-card__question">
               {__('Suggested name:', 'alt-context')} <strong>{suggestion.suggested_name}</strong>

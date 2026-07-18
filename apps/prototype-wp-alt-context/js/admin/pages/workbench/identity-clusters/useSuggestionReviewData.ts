@@ -12,6 +12,9 @@ export const useSuggestionReviewData = () => {
   const queryClient = useQueryClient();
   const [bulkActionClusterId, setBulkActionClusterId] = React.useState<string | null>(null);
   const bulkActionRef = React.useRef(false);
+  /** Slice-5: ReviewQueue bulk hook assigns these for single↔bulk ordering. */
+  const awaitBulkIdleOrFlushRef = React.useRef<(() => Promise<void>) | null>(null);
+  const isBulkActiveRef = React.useRef(false);
 
   const {
     assignmentQuery,
@@ -52,24 +55,32 @@ export const useSuggestionReviewData = () => {
     retryFailure,
     setHoldPaused,
     flushHeld,
+    commitOneNow,
+    isSuggestionHeld,
   } = useSuggestionReviewMutations({
     queryClient,
     bulkActionRef,
+    awaitBulkIdleOrFlushRef,
+    isBulkActiveRef,
   });
 
   // COR-3 (rg-015): no authoritative backlog total exists; count loaded suggestions.
   const assignmentCount = assignmentSuggestions?.length ?? 0;
   const hasNoSuggestionData = !assignmentQuery.data && !mergeQuery.data;
-  const hasInitialFailure = (assignmentQuery.failureCount > 0 || mergeQuery.failureCount > 0) && hasNoSuggestionData;
+  const hasInitialFailure =
+    (assignmentQuery.failureCount > 0 || mergeQuery.failureCount > 0) && hasNoSuggestionData;
   const isLoading =
     !hasInitialFailure &&
-    ((assignmentQuery.isLoading && !assignmentQuery.data) || (mergeQuery.isLoading && !mergeQuery.data));
+    ((assignmentQuery.isLoading && !assignmentQuery.data) ||
+      (mergeQuery.isLoading && !mergeQuery.data));
   const isError = assignmentQuery.isError && mergeQuery.isError && hasNoSuggestionData;
   const failureCount = Math.max(assignmentQuery.failureCount, mergeQuery.failureCount);
   const tenantId = getConfig().tenant_id;
 
   // BR-15: do NOT fold isHoldActive into a global pending flag — that disabled every
   // card during a hold and made §3 flush-on-next-action production-dead.
+  // Slice-5 bulk pending is applied per-card in ReviewQueue via bulk.isBulkActive
+  // (refs are not reactive — do not read bulkActionRef/isBulkActiveRef here).
   const isBulkOrMutationPending =
     bulkActionClusterId !== null ||
     mutations.accept.isPending ||
@@ -91,6 +102,10 @@ export const useSuggestionReviewData = () => {
     [isBulkOrMutationPending, isCardActionsDisabled],
   );
 
+  const setBulkActionActive = React.useCallback((active: boolean): void => {
+    bulkActionRef.current = active;
+  }, []);
+
   return {
     assignmentSuggestions,
     assignmentDataSource,
@@ -111,6 +126,9 @@ export const useSuggestionReviewData = () => {
     bulkActionClusterId,
     setBulkActionClusterId,
     bulkActionRef,
+    setBulkActionActive,
+    awaitBulkIdleOrFlushRef,
+    isBulkActiveRef,
     refetchAssignment: () => assignmentQuery.refetch(),
     refetchMerge: () => mergeQuery.refetch(),
     refetchName: () => nameQuery.refetch(),
@@ -137,6 +155,8 @@ export const useSuggestionReviewData = () => {
     retryFailure,
     setHoldPaused,
     flushHeld,
+    commitOneNow,
+    isSuggestionHeld,
   };
 };
 

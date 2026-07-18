@@ -53,6 +53,10 @@ export const ScanTabContent = (): React.JSX.Element => {
   // Lifted queue index + kind — survives label/review panel unmount of ReviewQueue.
   const [queueIndex, setQueueIndex] = React.useState(queueState.index);
   const [queueKind, setQueueKind] = React.useState<ReviewQueueKindParam>(queueState.kind);
+  // PR-31: id-keyed selection lifted beside index — panel round-trips preserve it.
+  const [selectedSuggestionIds, setSelectedSuggestionIds] = React.useState<Set<string>>(
+    () => new Set(),
+  );
 
   // URL → local (reload / external writer).
   React.useEffect(() => {
@@ -150,6 +154,8 @@ export const ScanTabContent = (): React.JSX.Element => {
               onIndexChange={handleIndexChange}
               kind={queueKind}
               onKindChange={handleKindChange}
+              selectedIds={selectedSuggestionIds}
+              onSelectedIdsChange={setSelectedSuggestionIds}
               emptyStateAnchorRef={findingsDetailRef}
               onLabel={(clusterId: string) => dispatchClusterPanel({ type: 'open_label', clusterId })}
               onReview={(clusterId: string) => dispatchClusterPanel({ type: 'open_review', clusterId })}

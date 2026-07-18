@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   acceptMergeSuggestion,
   acceptSuggestion,
+  bulkAcceptSuggestions,
+  fetchClusterMembers,
   fetchPendingMergeSuggestions,
   fetchPendingNameSuggestions,
   fetchPendingSuggestions,
@@ -93,6 +95,12 @@ vi.mock('../../../../api/recognition', async () => {
     rejectMergeSuggestion: vi.fn(),
     rejectNameSuggestion: vi.fn(),
     bulkAcceptSuggestions: vi.fn(),
+    fetchClusterMembers: vi.fn().mockResolvedValue({
+      members: [],
+      limit: 25,
+      total: 0,
+      truncated: false,
+    }),
     fetchTopUnlabeledClusters: vi.fn(),
     dismissCluster: vi.fn().mockResolvedValue(undefined),
     mergeCluster: vi.fn().mockResolvedValue(undefined),
@@ -138,6 +146,7 @@ const ReviewQueueHarness = ({
 }: HarnessProps): React.JSX.Element => {
   const [index, setIndex] = React.useState(initialIndex);
   const [kind, setKind] = React.useState<ReviewQueueKindParam>(initialKind);
+  const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
   return (
     <ReviewQueue
       ref={queueRef}
@@ -145,6 +154,8 @@ const ReviewQueueHarness = ({
       onIndexChange={setIndex}
       kind={kind}
       onKindChange={setKind}
+      selectedIds={selectedIds}
+      onSelectedIdsChange={setSelectedIds}
       emptyStateAnchorRef={emptyStateAnchorRef}
       onLabel={onLabel}
       onReview={onReview}
@@ -807,6 +818,7 @@ describe('ReviewQueue', () => {
     const Parent = (): React.JSX.Element => {
       const [index, setIndex] = React.useState(1);
       const [kind, setKind] = React.useState<ReviewQueueKindParam>('all');
+      const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
       const [mounted, setMounted] = React.useState(true);
       return (
         <div>
@@ -814,7 +826,14 @@ describe('ReviewQueue', () => {
             toggle-panel
           </button>
           {mounted ? (
-            <ReviewQueue index={index} onIndexChange={setIndex} kind={kind} onKindChange={setKind} />
+            <ReviewQueue
+              index={index}
+              onIndexChange={setIndex}
+              kind={kind}
+              onKindChange={setKind}
+              selectedIds={selectedIds}
+              onSelectedIdsChange={setSelectedIds}
+            />
           ) : (
             <p>panel-mode</p>
           )}
@@ -986,10 +1005,18 @@ describe('ReviewQueue', () => {
     const Parent = (): React.JSX.Element => {
       const [index, setIndex] = React.useState(3);
       const [kind, setKind] = React.useState<ReviewQueueKindParam>('all');
+      const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
       return (
         <div>
           <span data-testid="parent-index">{index}</span>
-          <ReviewQueue index={index} onIndexChange={setIndex} kind={kind} onKindChange={setKind} />
+          <ReviewQueue
+            index={index}
+            onIndexChange={setIndex}
+            kind={kind}
+            onKindChange={setKind}
+            selectedIds={selectedIds}
+            onSelectedIdsChange={setSelectedIds}
+          />
         </div>
       );
     };
@@ -1755,6 +1782,233 @@ describe('ReviewQueue', () => {
         rosterEntryId: undefined,
         newEntryName: 'Al',
       });
+    });
+  });
+
+  describe('Slice 5 multi-select bulk + matrix M1 surface', () => {
+    const seedMariaGroup = () => {
+      vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+        suggestions: [
+          {
+            id: 'sugg-m1',
+            identity_id: 'identity-m1',
+            suggested_cluster_id: 'cluster-maria',
+            representative_similarity: 0.95,
+            avg_member_similarity: 0.9,
+            cluster_label: 'Maria',
+            cluster_identity_count: 5,
+          },
+          {
+            id: 'sugg-m2',
+            identity_id: 'identity-m2',
+            suggested_cluster_id: 'cluster-maria',
+            representative_similarity: 0.9,
+            avg_member_similarity: 0.85,
+            cluster_label: 'Maria',
+            cluster_identity_count: 5,
+          },
+        ],
+        limit: 10,
+        offset: 0,
+      });
+    };
+
+    it('default-empty selection tray; Select toggles; PR-38 Accept N for label; zero bulk-accept', async () => {
+      seedMariaGroup();
+      vi.mocked(acceptSuggestion).mockImplementation((id: string) =>
+        Promise.resolve({
+          suggestion_id: id,
+          resolution: 'accepted' as const,
+          identity_id: `identity-${id}`,
+          cluster_id: 'cluster-maria',
+          message: 'ok',
+        }),
+      );
+      vi.mocked(fetchClusterMembers).mockResolvedValue({
+        members: [],
+        limit: 25,
+        total: 2,
+        truncated: false,
+      });
+
+      const user = userEvent.setup();
+      renderQueue();
+
+      await screen.findByRole('button', { name: 'Yes' });
+      expect(screen.getByTestId('acx-review-selection-tray')).toHaveTextContent('0 selected');
+      expect(screen.getAllByTestId('acx-review-card')).toHaveLength(1);
+
+      await user.click(screen.getByTestId('acx-review-select'));
+      expect(screen.getByTestId('acx-review-selection-tray')).toHaveTextContent('1 selected');
+
+      await user.click(screen.getByRole('button', { name: 'Next review item' }));
+      await waitFor(() => {
+        expect(screen.getByTestId('acx-review-select')).toBeInTheDocument();
+      });
+      await user.click(screen.getByTestId('acx-review-select'));
+      expect(screen.getByTestId('acx-review-selection-tray')).toHaveTextContent('2 selected');
+
+      await user.click(screen.getByRole('button', { name: 'Review selection' }));
+      expect(screen.getByTestId('acx-review-selection-panel')).toBeInTheDocument();
+      expect(screen.getByTestId('acx-bulk-commit')).toHaveTextContent('Accept 2 for Maria');
+
+      // Wait for truncation prefetch to settle (commit is disabled while loading).
+      await waitFor(() => {
+        expect(screen.getByTestId('acx-bulk-commit')).not.toBeDisabled();
+      });
+
+      // Arm hold under fake timers so UNDO_HOLD_MS advance is deterministic.
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        await act(async () => {
+          screen.getByTestId('acx-bulk-commit').click();
+          await Promise.resolve();
+        });
+        expect(screen.getByTestId('acx-bulk-hold')).toHaveTextContent('Saving 2… — Undo');
+        expect(acceptSuggestion).not.toHaveBeenCalled();
+        expect(bulkAcceptSuggestions).not.toHaveBeenCalled();
+
+        await act(async () => {
+          vi.advanceTimersByTime(UNDO_HOLD_MS);
+          await Promise.resolve();
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+
+      await waitFor(() => {
+        expect(acceptSuggestion).toHaveBeenCalled();
+      });
+      const mutated = vi.mocked(acceptSuggestion).mock.calls.map((c) => c[0]);
+      expect(mutated).toEqual(['sugg-m1', 'sugg-m2']);
+      expect(bulkAcceptSuggestions).not.toHaveBeenCalled();
+    });
+
+    it('bulk undo during hold = 0 POSTs', async () => {
+      seedMariaGroup();
+      vi.mocked(acceptSuggestion).mockClear();
+      vi.mocked(fetchClusterMembers).mockResolvedValue({
+        members: [],
+        limit: 25,
+        total: 2,
+        truncated: false,
+      });
+      const user = userEvent.setup();
+      renderQueue();
+      await screen.findByRole('button', { name: 'Yes' });
+      await user.click(screen.getByTestId('acx-review-select'));
+      await user.click(screen.getByRole('button', { name: 'Review selection' }));
+      await waitFor(() => {
+        expect(screen.getByTestId('acx-bulk-commit')).not.toBeDisabled();
+      });
+
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        await act(async () => {
+          screen.getByTestId('acx-bulk-commit').click();
+          await Promise.resolve();
+        });
+        expect(screen.getByTestId('acx-bulk-hold')).toBeInTheDocument();
+        act(() => {
+          screen.getByRole('button', { name: 'Undo' }).click();
+        });
+        await act(async () => {
+          vi.advanceTimersByTime(UNDO_HOLD_MS);
+          await Promise.resolve();
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+      expect(acceptSuggestion).not.toHaveBeenCalled();
+      expect(bulkAcceptSuggestions).not.toHaveBeenCalled();
+    });
+
+    it('truncation gate: truncated target disables commit until total-N confirm', async () => {
+      seedMariaGroup();
+      vi.mocked(fetchClusterMembers).mockResolvedValue({
+        members: [
+          {
+            identity_id: 'i1',
+            media_id: 1,
+            similarity: 0.9,
+            confidence: 0.9,
+            bbox: { x: 0, y: 0, width: 1, height: 1 },
+          },
+        ],
+        limit: 1,
+        total: 12,
+        truncated: true,
+      });
+
+      const user = userEvent.setup();
+      renderQueue();
+      await screen.findByRole('button', { name: 'Yes' });
+      await user.click(screen.getByTestId('acx-review-select'));
+      await user.click(screen.getByRole('button', { name: 'Review selection' }));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('acx-bulk-commit')).toBeDisabled();
+      });
+      expect(screen.getByTestId('acx-review-selection-panel')).toHaveTextContent(/12 total/);
+
+      await user.click(screen.getByRole('button', { name: /Confirm 12 total/i }));
+      expect(screen.getByTestId('acx-bulk-commit')).not.toBeDisabled();
+    });
+
+    it('selection survives panel round-trip (lifted selectedIds)', async () => {
+      seedMariaGroup();
+      const user = userEvent.setup();
+
+      const Parent = (): React.JSX.Element => {
+        const [index, setIndex] = React.useState(0);
+        const [kind, setKind] = React.useState<ReviewQueueKindParam>('all');
+        const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
+        const [mounted, setMounted] = React.useState(true);
+        return (
+          <div>
+            <button type="button" onClick={() => setMounted((v) => !v)}>
+              toggle-panel
+            </button>
+            <span data-testid="selection-size">{selectedIds.size}</span>
+            {mounted ? (
+              <ReviewQueue
+                index={index}
+                onIndexChange={setIndex}
+                kind={kind}
+                onKindChange={setKind}
+                selectedIds={selectedIds}
+                onSelectedIdsChange={setSelectedIds}
+              />
+            ) : (
+              <p>panel-mode</p>
+            )}
+          </div>
+        );
+      };
+
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+      });
+      render(
+        <QueryClientProvider client={queryClient}>
+          <Parent />
+        </QueryClientProvider>,
+      );
+
+      await screen.findByRole('button', { name: 'Yes' });
+      await user.click(screen.getByTestId('acx-review-select'));
+      expect(screen.getByTestId('selection-size')).toHaveTextContent('1');
+
+      await user.click(screen.getByRole('button', { name: 'toggle-panel' }));
+      expect(screen.getByText('panel-mode')).toBeInTheDocument();
+      expect(screen.getByTestId('selection-size')).toHaveTextContent('1');
+
+      await user.click(screen.getByRole('button', { name: 'toggle-panel' }));
+      await screen.findByRole('button', { name: 'Yes' });
+      expect(screen.getByTestId('acx-review-selection-tray')).toHaveTextContent('1 selected');
+      expect(screen.getByTestId('acx-review-select')).toHaveAttribute('aria-pressed', 'true');
     });
   });
 });

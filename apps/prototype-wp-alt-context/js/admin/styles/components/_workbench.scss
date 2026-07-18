@@ -631,6 +631,15 @@
     border: 1px solid var(--acx-color-accent);
     background-color: var(--acx-color-accent);
     color: var(--acx-color-accent-contrast);
+
+    /* §7 media-footer hierarchy: when Analyze is not the state's accent primary
+       it steps down to a neutral/ghost secondary — no accent (COL-03/COL-09). */
+    &--secondary {
+      border-color: var(--acx-color-border);
+      background-color: var(--acx-color-surface);
+      color: var(--acx-color-text);
+      font-weight: var(--acx-font-weight-normal);
+    }
   }
 
   &--empty {

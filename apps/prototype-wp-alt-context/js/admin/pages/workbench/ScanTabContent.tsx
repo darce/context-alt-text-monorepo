@@ -106,6 +106,16 @@ export const ScanTabContent = (): React.JSX.Element => {
   const isMediaCollapsed =
     findings.hasFindings && !userExpandedMedia && !findings.isLoading && !findings.isError && !findings.isUnavailable;
 
+  // §7 media-footer CTA hierarchy: a review card / label / review panel primary is
+  // on screen (mirrors the anchor's rendered branch below). When true the card owns
+  // the single viewport accent primary, so the footer's CTAs step down to secondary.
+  const reviewSurfaceActive =
+    clusterPanel.mode === 'label'
+      ? true
+      : reviewClusterId !== null
+        ? true
+        : findings.hasFindings && !findings.isLoading && !findings.isError && !findings.isUnavailable;
+
   const handleIndexChange = React.useCallback(
     (nextIndex: number): void => {
       setQueueIndex(nextIndex);
@@ -214,7 +224,11 @@ export const ScanTabContent = (): React.JSX.Element => {
           )}
         </div>
       </ErrorBoundary>
-      <MediaSelection collapsed={isMediaCollapsed} onExpand={() => setUserExpandedMedia(true)} />
+      <MediaSelection
+        collapsed={isMediaCollapsed}
+        onExpand={() => setUserExpandedMedia(true)}
+        reviewActive={reviewSurfaceActive}
+      />
     </>
   );
 };

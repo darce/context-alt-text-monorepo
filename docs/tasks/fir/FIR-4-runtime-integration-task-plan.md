@@ -13,7 +13,7 @@
 
 ## Objective
 
-Wire the FIR-3 face_pipeline (YuNet+SFace ORT adapters) into the runtime behind the FIR-2 seam, **dark**: a `FacePipelineSettings` profile flag whose production default stays on the incumbent InsightFace path until FIR-6's operator-gated switch-over ([RLSE-07]). Ship boot-time sha256 fail-closed model verification, the observability surface FIR-6's calibration needs, dependency/license isolation (insightface → `[bench]` extra), and Rider-1: `onnxruntime>=1.22` bump with the FIR-3 parity suite re-run as its quality gate ([SERVE-07]).
+Wire the FIR-3 face_pipeline (YuNet+SFace ORT adapters) into the runtime behind the FIR-2 seam, **dark**: a `FacePipelineSettings` profile setting whose production default stays on the incumbent InsightFace path until FIR-6's operator-gated switch-over ([RLSE-07]). Ship boot-time sha256 fail-closed model verification, the observability surface FIR-6's calibration needs, dependency/license isolation (insightface → `[bench]` extra), and Rider-1: `onnxruntime>=1.22` bump with the FIR-3 parity suite re-run as its quality gate ([SERVE-07]).
 
 ## Intake
 
@@ -27,7 +27,7 @@ FIR-3 landed parity-proven adapters that nothing constructs at runtime. The runt
 ## Constraints
 
 - **Dark by construction**: production default = incumbent. The flag is the only entry to the new path; both branches of the flag are tested live matrix, and the flag inventory is explicit — one flag, documented, removed at FIR-6 switch-over or FIR-8 abandonment ([SERVE-03], [RLSE-07]).
-- **One embedding space per comparison** ([EMB-01]): the face_pipeline path emits 128D under manifest `opencv-sface@128d/l2/cosine`; incumbent rows are 512D `insightface-buffalo_l@512d/l2/cosine`. When the flag selects face_pipeline, startup must verify `pgvector_dimension == manifest.dimensions` and fail closed on mismatch — never write a 128D vector into a 512D index or vice versa. Rows always stamp `embedding_model` ([PROV-01], [PROV-06]); the existing NOT-NULL + `ValueError` guard in `ScanService` stays load-bearing.
+- **One embedding space per comparison** ([EMB-01]): the face_pipeline path emits 128D under manifest `opencv-sface@128d/l2/cosine`; incumbent rows are 512D `insightface-buffalo_l@512d/l2/cosine`. When the flag selects face_pipeline, the shared factory verifies `pgvector_dimension == manifest.dimensions` at construction and fails closed on mismatch (yields `Unavailable*` carrying the mismatch reason, surfaced DEGRADED/UNHEALTHY via the profile-aware readiness check) — never write a 128D vector into a 512D index or vice versa. Rows always stamp `embedding_model` ([PROV-01], [PROV-06]); the existing NOT-NULL + `ValueError` guard in `ScanService` stays load-bearing.
 - **Fail closed, loudly**: model file missing / sha256 mismatch / license-hash mismatch → `UnavailableFaceDetector`/`UnavailableEmbeddingGenerator` with a recorded reason + UNHEALTHY /ready, never a silent stub fallback in production mode ([RLSE-05], [AGT-10]). Stub remains test-mode-only, as today.
 - **Transform parity**: the bridge composes `OrtYuNetDetector → FivePointAligner → OrtSFaceEmbedder` exactly as the FIR-3 parity tests do; no re-implemented preprocessing, no bbox/landmark math beyond the xywh→corner conversion at the seam boundary ([SERVE-08], rg-015: adapters must not invent contract metadata).
 - **Timeouts + breaker parity with incumbent**: the new path gets the same timeout and circuit-breaker treatment `InsightFaceFaceDetector` has ([RES-02], [RES-03]); in-process ORT calls are wrapped with the executor/timeout pattern already used by the incumbent.
@@ -42,14 +42,14 @@ FIR-3 landed parity-proven adapters that nothing constructs at runtime. The runt
 
 ## Target Outcome
 
-`RECOGNITION_FACE_PIPELINE__PROFILE` (or equivalent nested-settings env) selects `insightface` (default) | `face_pipeline` | `stub`(test). All three construction sites branch through one shared factory ([SERVE-01], [REF-15]) so the selection logic lives once. The face_pipeline path is fully operable dark in dev/eval: fetch models → boot verifies sha256 fail-closed → scans stamp `opencv-sface@128d/l2/cosine` → observability shows per-scan detection count, assignment/unknown ratio, quality-gate rejections, `embedding_model` in logs/metrics ([OBS-01], [OBS-02]). insightface imports survive only behind the `[bench]` extra; ORT ≥1.22 everywhere.
+`RECOGNITION_FACE_PIPELINE_PROFILE` selects `insightface` (default) | `face_pipeline`; `runtime_mode == "test"` keeps selecting stubs orthogonally, as today. Flat env vars per the existing convention — `RecognitionSettings` is a plain pydantic `BaseModel` whose fields read `os.environ` in `default_factory` (like `RECOGNITION_RUNTIME_MODE`); there is no pydantic-settings nested delimiter in this codebase, so `FacePipelineSettings` fields each bind their own flat `RECOGNITION_FACE_PIPELINE_*` env. All three construction sites branch through one shared factory ([SERVE-01], [REF-15]) so the selection logic lives once. The face_pipeline path is fully operable dark in dev/eval: fetch models → boot verifies sha256 fail-closed → scans stamp `opencv-sface@128d/l2/cosine` → observability shows per-scan detection count, assignment/unknown ratio, quality-gate rejections, `embedding_model` in logs/metrics ([OBS-01], [OBS-02]). insightface imports survive only behind the `[bench]` extra; ORT ≥1.22 everywhere.
 
 ## Contract and Boundary Impact
 
-- New `FacePipelineSettings` on `RecognitionSettings` (profile, models_dir, score/nms thresholds pass-through, timeout) — config is a reviewed, asserted artifact: validated at load ([PROV-08], rg-008).
-- New bridge module inside `face_pipeline` (or `infrastructure/embeddings`) implementing the FIR-2 protocols; `face_pipeline` package still imports nothing from worker/HTTP layers (existing import-purity test extends to the bridge if it lives in-package; if the bridge needs seam types, it lives beside the incumbent adapter instead — decide in S2, record in the slice decision).
+- New `FacePipelineSettings` on `RecognitionSettings` (profile, models_dir, score/nms thresholds pass-through, timeout) — flat `RECOGNITION_FACE_PIPELINE_*` envs; config is a reviewed, asserted artifact: profile value validated at load, unknown value → hard error ([PROV-08], rg-008).
+- New bridge module `recognition/infrastructure/embeddings/face_pipeline_adapter.py` implementing the FIR-2 protocols. **Decided (not S2-deferred)**: the bridge lives beside the incumbent adapter, importing seam types + the `face_pipeline` package; `face_pipeline` itself stays pure (existing import-purity test unchanged, rg-013-style).
 - `/ready` semantics extended: profile-aware model verification (sha256, not file count) — DEGRADED/UNHEALTHY reasons name the failing artifact ([OBS-05]).
-- `pyproject.toml`: extras re-cut (`[face]` loses insightface → new `[bench]`), `onnxruntime>=1.22`. Docker build gains build-time model verification for the dark path (fetch script `--verify-only` mode or equivalent).
+- `pyproject.toml` extras re-cut — target matrix: `[face]` = **removed** (its only member was insightface; grep for `[face]`/`extra == "face"` consumers in docs/scripts/CI and update); `[gpu]` = `onnxruntime-gpu>=1.22 ; platform_system=='Linux'` only (insightface dropped); new `[bench]` = `insightface>=0.7.3,<1.0.0` (eval-env/bake-off only — FIR-5's buffalo reference legs install `[bench]`); core deps gain nothing (cv2/ort/numpy already core). `onnxruntime>=1.22` core. Docker build gains build-time model verification: `scripts/fetch_face_pipeline_models.py` gets a `--verify-only` mode (exit non-zero on missing/hash-mismatch) invoked as a Dockerfile `RUN` in the target that ships models.
 - No REST/DB/wire schema change. No WP-plugin impact.
 
 ## Slice Delivery
@@ -59,14 +59,14 @@ FIR-3 landed parity-proven adapters that nothing constructs at runtime. The runt
 | S1 Rider-1 ORT bump | `onnxruntime>=1.22` (+ `onnxruntime-gpu` mirror in `[gpu]`); lockfile/venv refresh | FIR-3 parity suite (79 tests) green on bumped ORT ([SERVE-07]); `make check-remote` green |
 | S2 Bridge + settings | `FacePipelineSettings` (validated at load, rg-008); bridge classes implementing `FaceDetectorProtocol`/`EmbeddingGeneratorProtocol` composing FIR-3 adapters + aligner; manifest → `EmbeddingModelManifest` mapping; dim-mismatch fail-closed guard ([EMB-01]); timeout wrapper ([RES-02]) | TDD unit tests: bytes→FaceDetection E2E on golden fixtures, corner-bbox conversion, model_id stamp ([PROV-06]), dim guard raises, zero-face/decode-failure paths, timeout behaviour; characterization: incumbent path untouched ([TEST-03]) |
 | S3 Wiring behind flag | Shared factory; three construction sites branch on profile; Unavailable fail-closed on missing/tampered models; boot `check_model_cache` extension → profile-aware sha256 verification ([EMB-05]) | Both flag branches tested at every site ([SERVE-03]); tampered-model boot test → UNHEALTHY; test-mode still stubs; scan_worker capability heartbeat reflects profile |
-| S4 Observability | Per-scan wide event: detection count, assignment/unknown ratio, quality-gate rejections, `embedding_model`, profile, correlation id ([OBS-01], [OBS-02], [OBS-03]); counters/gauges exposed ([OBS-05]); silence-detectable (scan events present when scans ran, [OBS-08]) | Unit tests assert event shape/fields on both profiles; log-capture integration test on a dark-profile scan |
-| S5 License isolation + deps sweep | insightface → `[bench]` extra (out of `[face]`/`[gpu]`); Dockerfile rework (no insightface in default target; build-time model verification for dark path); `install_insightface_mac.sh` replaced with face_pipeline fetch flow; repo-wide docs/runbooks sweep for buffalo/insightface references | Import guard test: default install path never imports insightface; `uv sync` matrix (default, `[bench]`) resolves; docs sweep grep-clean or explicitly annotated (bench-only) |
+| S4 Observability | One wide structured event per scan job, emitted at `ScanItemHandler` (worker/handlers/scan.py) completion ([OBS-02]): detection count, reconcile outcome counts from `ScanService._reconcile` (matched vs new-identity rows — the scan-time assignment/unknown proxy; true assignment ratios live in clustering), quality-gate rejection count (from `compute_identity_quality` gating in the assignment path), `embedding_model`, profile, correlation/job id ([OBS-01], [OBS-03]); counters exposed via existing worker capability/metrics surface ([OBS-05]); scans-ran-but-no-events distinguishable from no-scans ([OBS-08]) | Unit tests assert event shape/fields on both profiles; log-capture integration test on a dark-profile scan |
+| S5 License isolation + deps sweep | Extras re-cut per Contract-Impact matrix (`[face]` removed, `[gpu]` = onnxruntime-gpu only, new `[bench]` = insightface); Dockerfile rework (no insightface in default target; `fetch_face_pipeline_models.py --verify-only` build-time gate); `install_insightface_mac.sh` replaced with face_pipeline fetch flow; repo-wide docs/runbooks sweep for buffalo/insightface/`[face]`-extra references | Import guard test: default install path never imports insightface; `uv sync` matrix (default, `[bench]`, `[gpu]`) resolves; docs sweep grep-clean or explicitly annotated (bench-only) |
 
 S1 first (de-risks the base every later slice runs on); S2→S3→S4 sequential; S5 last (touches the most surfaces, benefits from a stable tree).
 
 ## Files and Surfaces to Change
 
-`pyproject.toml` (ORT bump, extras re-cut) · `recognition/config/settings.py` (+`FacePipelineSettings`) · new bridge module + factory (`recognition/infrastructure/face_pipeline/bridge.py` or `recognition/infrastructure/embeddings/face_pipeline_adapter.py` — S2 decision) · `recognition/worker/scan_worker.py` `_ensure_embedding_runtime` · `recognition/application/tasks/scan.py` · `recognition/interface_adapters/http/deps/services.py` · `recognition/application/health.py` `check_model_cache` + `api/main.py` call site · observability: scan event emission in `ScanService`/`ScanItemHandler` · `Dockerfile`, `scripts/install_insightface_mac.sh` (replacement), `scripts/setup.sh`, `scripts/fetch_face_pipeline_models.py` (`--verify-only` if needed) · docs/runbooks sweep · tests under `recognition/tests/unit/` + integration.
+`pyproject.toml` (ORT bump, extras re-cut) · `recognition/config/settings.py` (+`FacePipelineSettings`) · new bridge module + factory (`recognition/infrastructure/embeddings/face_pipeline_adapter.py`; factory beside the construction sites' shared import surface) · `recognition/worker/scan_worker.py` `_ensure_embedding_runtime` · `recognition/application/tasks/scan.py` · `recognition/interface_adapters/http/deps/services.py` · `recognition/application/health.py` `check_model_cache` + `api/main.py` call site · observability: scan event emission in `ScanService`/`ScanItemHandler` · `Dockerfile`, `scripts/install_insightface_mac.sh` (replacement), `scripts/setup.sh`, `scripts/fetch_face_pipeline_models.py` (add `--verify-only`) · docs/runbooks sweep · tests under `recognition/tests/unit/` + integration.
 
 ## Verification Strategy
 
@@ -74,13 +74,52 @@ Scoped TDD per slice locally (never local full-suite); `make check-remote` green
 
 ## Consolidated Checklist
 
-- [ ] S1: ORT≥1.22 landed; FIR-3 parity suite green on bumped runtime; check-remote green
-- [ ] S2: bridge implements both FIR-2 protocols over FIR-3 adapters; dim-mismatch fail-closed; model_id stamped from manifest; unit suite green
-- [ ] S3: profile flag wired at all three sites via shared factory; production default = incumbent (verified by test); tampered/missing model → Unavailable + UNHEALTHY; sha256 boot verification profile-aware
-- [ ] S4: wide per-scan event with detection count, assignment/unknown ratio, quality-gate rejections, embedding_model, profile; both profiles asserted
-- [ ] S5: insightface only in `[bench]`; default install imports clean; Dockerfile + mac script + docs sweep done
-- [ ] Real-corpus dark smoke run recorded (56 imgs, stamps + counts + observability verified)
-- [ ] Per-slice adversarial review (≥1 remote grok HIGH), zero open findings; handoff decisions per slice; check-remote green at HEAD
+### Context and Ownership
+
+- Owner: Claude Fable 5 orchestrating; implementation offloaded to remote grok-cli HIGH (grok-4.5) per slice via lane `fir-4`.
+- Worktree: `/Users/daniel/Development/context-alt-text-monorepo-fir-4` on `feature/fir-4`; merge from root after `handoff_close_check(enforce=True)`.
+- Prereq for any real-path run: `cd apps/prototype-description-service && uv run python scripts/fetch_face_pipeline_models.py` (ONNX bytes are gitignored).
+- Scoped gate per slice: FIR-3 suite `uv run pytest recognition/tests/unit/test_face_pipeline_provenance.py recognition/tests/unit/test_face_pipeline_opencv_ref.py recognition/tests/unit/test_face_pipeline_ort_parity.py -q` + slice-local tests; branch gate `make check-remote` (baseline 2084 passed).
+
+### Checklist for S1: Rider-1 ORT bump
+
+- [ ] `pyproject.toml` L32 `onnxruntime>=1.16.0` → `>=1.22`; `[gpu]` mirror `onnxruntime-gpu>=1.22`
+- [ ] `uv sync`/lock refresh resolves on macOS-arm64 + Linux
+- [ ] FIR-3 parity suite (79 tests) green on bumped ORT — no tolerance widening ([SERVE-07])
+- [ ] `make check-remote` green; slice decision recorded
+
+### Checklist for S2: Bridge + settings
+
+- [ ] `FacePipelineSettings` on `RecognitionSettings` (flat `RECOGNITION_FACE_PIPELINE_*` envs; profile ∈ {insightface, face_pipeline}, invalid → load-time error)
+- [ ] `recognition/infrastructure/embeddings/face_pipeline_adapter.py`: `FacePipelineFaceDetector(FaceDetectorProtocol)` + `FacePipelineEmbeddingGenerator(EmbeddingGeneratorProtocol)` composing `OrtYuNetDetector → FivePointAligner → OrtSFaceEmbedder`; xywh→corner conversion; `model_id` stamped from `MODEL_MANIFEST`-derived `EmbeddingModelManifest` ([PROV-06], [SERVE-08])
+- [ ] Dim-mismatch guard raises at construction ([EMB-01]); zero-face, decode-failure, timeout paths tested ([RES-02])
+- [ ] Characterization: incumbent path byte-untouched ([TEST-03]); every new test observed failing first ([TEST-06])
+
+### Checklist for S3: Wiring behind flag
+
+- [ ] Shared factory (single construction seam); `scan_worker._ensure_embedding_runtime`, `tasks/scan.py`, `deps/services.py get_scan_service_builder` all branch through it
+- [ ] Production default = incumbent, asserted by test; `runtime_mode=="test"` still stubs
+- [ ] Missing/tampered model → `Unavailable*` + reason; boot `check_model_cache` profile-aware sha256 verification, tampered-model test → UNHEALTHY ([EMB-05])
+- [ ] Both flag branches tested at every site ([SERVE-03]); worker capability heartbeat reflects profile
+
+### Checklist for S4: Observability
+
+- [ ] Wide per-scan event at `ScanItemHandler` completion: detection count, matched/new reconcile counts, quality-gate rejections, `embedding_model`, profile, job/correlation id ([OBS-01..03])
+- [ ] Counters on worker metrics/capability surface ([OBS-05]); silence distinguishable from health ([OBS-08])
+- [ ] Event shape asserted on both profiles; log-capture integration test dark-profile
+
+### Checklist for S5: License isolation + deps sweep
+
+- [ ] Extras: `[face]` removed, `[gpu]` = onnxruntime-gpu only, `[bench]` = insightface; consumers of `[face]` updated
+- [ ] Default-install import guard: no insightface import reachable; `uv sync` matrix resolves
+- [ ] Dockerfile: no insightface default target; `--verify-only` model gate in image build
+- [ ] `install_insightface_mac.sh` replaced by face_pipeline fetch flow; docs/runbooks sweep grep-clean or bench-annotated
+
+### Review Readiness
+
+- [ ] Per-slice adversarial review (≥1 remote grok HIGH reviewer + local adversarial subagent), findings cite heuristic IDs, batch-recorded in MCP; all findings fixed/deferred with evidence + full 40-char SHA
+- [ ] Real-corpus dark smoke recorded (56 eval-fixture imgs: stamps, counts vs FIR-3 baseline, observability output)
+- [ ] `make check-remote` green at HEAD; zero open findings; `handoff_close_check(enforce=True)` passes; slice decisions recorded
 
 ## Success Criteria
 

@@ -179,8 +179,59 @@ describe('useClusterSaveAction casing grid (B6)', () => {
     expect(mutations.merge).not.toHaveBeenCalled();
     expect(cancelEditing).not.toHaveBeenCalled();
     expect(queueSaveStatus).toHaveBeenCalled();
-    // Self-match filtered / null lookup — rename path, not merge
+    // Null lookup — rename path, not merge
     expect(findClusterByLabel).toHaveBeenCalledWith('Bob', expect.any(AbortSignal));
+  });
+
+  it('1b. bob→Bob with self-match from findClusterByLabel still renames (filterEditableClusterMatch)', async () => {
+    // UXP-3-BR-41: grid 1 only mocked null; pin self-id filter → rename, not merge/cancel
+    const findClusterByLabel = vi.fn().mockResolvedValue({
+      id: 'editable',
+      label: 'bob',
+      identityCount: 1,
+    });
+    const { result, mutations, cancelEditing, queueSaveStatus } = renderSaveAction({
+      clusterLabel: 'bob',
+      labelInput: 'Bob',
+      members: [member({ cluster_label: 'bob' })],
+      findClusterByLabel,
+    });
+
+    await act(async () => {
+      await result.current.handleSave();
+    });
+
+    expect(findClusterByLabel).toHaveBeenCalledWith('Bob', expect.any(AbortSignal));
+    expect(mutations.rename).toHaveBeenCalledWith('Bob', expect.any(AbortSignal));
+    expect(mutations.merge).not.toHaveBeenCalled();
+    expect(cancelEditing).not.toHaveBeenCalled();
+    expect(queueSaveStatus).toHaveBeenCalled();
+  });
+
+  it('1c. bob→BOB with different exact-duplicate "bob" cluster renames typed casing (not cancel/merge)', async () => {
+    // UXP-3-BR-40: post-lookup match.label === currentLabel after self-filter is a remote dupe;
+    // case-only edit intent is rename of OUR cluster, never silent cancelEditing.
+    const findClusterByLabel = vi.fn().mockResolvedValue({
+      id: 'dupe-bob',
+      label: 'bob',
+      identityCount: 3,
+    });
+    const { result, mutations, cancelEditing, queueSaveStatus } = renderSaveAction({
+      clusterLabel: 'bob',
+      labelInput: 'BOB',
+      members: [member({ cluster_label: 'bob' })],
+      findClusterByLabel,
+    });
+
+    await act(async () => {
+      await result.current.handleSave();
+    });
+
+    expect(findClusterByLabel).toHaveBeenCalledWith('BOB', expect.any(AbortSignal));
+    expect(mutations.rename).toHaveBeenCalledWith('BOB', expect.any(AbortSignal));
+    expect(mutations.merge).not.toHaveBeenCalled();
+    expect(cancelEditing).not.toHaveBeenCalled();
+    expect(queueSaveStatus).toHaveBeenCalled();
   });
 
   it('2. Bob→Bob no-ops: exact same label still cancels without mutation', async () => {

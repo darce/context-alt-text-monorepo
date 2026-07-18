@@ -269,17 +269,6 @@ export const IdentityClusterItem = ({
     [cluster, mutations],
   );
 
-  const handleToggleRepresentativePin = React.useCallback(
-    (representative: (typeof cluster.members)[number], nextPinned: boolean) => {
-      const representativeId = representative.representative_id ?? representative.identity_id;
-      if (!cluster.clusterId || !representativeId) {
-        return;
-      }
-      mutations.pinRepresentative(representativeId, nextPinned);
-    },
-    [cluster, mutations],
-  );
-
   const saveLabel = React.useMemo(() => {
     if (saveStatus === 'queued') {
       return __('Saving…', 'alt-context');
@@ -297,12 +286,7 @@ export const IdentityClusterItem = ({
 
   return (
     <div className={`acx-identity-cluster ${editState.isEditing ? 'acx-identity-cluster--editing' : ''}`}>
-      <ClusterPreview
-        representative={representative}
-        memberCount={cluster.members.length}
-        onTogglePin={canMutate ? handleToggleRepresentativePin : undefined}
-        isPinning={mutations.isPinningRepresentative}
-      />
+      <ClusterPreview representative={representative} memberCount={cluster.members.length} />
 
       <div className="acx-identity-cluster__info">
         {!editState.isEditing ? (

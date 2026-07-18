@@ -332,13 +332,13 @@ Per-state single-primary gating (Analyze vs Describe) with the pinned token role
 - [x] `truncated` drives the bulk disabled-while-truncated gate (§4); no other endpoint touched
 
 ### Checklist for Slice 5: Multi-select bulk + M1 (①)
-- [ ] Explicit multi-select default-empty; selection lifted to `ScanTabContent` (survives panel round-trip — asserted); commit chrome "Accept N for <label>" only when labels homogeneous, else "Accept N selected"; preview set = exactly the selection; bulk hold announced "Saving N… — Undo"
-- [ ] Sequential per-id atomic commits; first failure stops run, persistent `role=alert` names landed+remaining, remainder stays selected [CON-05]
-- [ ] Bulk state machine tests: bulk-undo = 0 POSTs; single→bulk + bulk→single flush ordering; in-hold id selection exclusion (no double POST)
-- [ ] Joint B3/B4 AC via `useSelectedClusterTruncation` (envelope `truncated`/`total` per selected target cluster): disabled-with-reason or total-N+hidden-count confirm while any selected target is truncated-unexpanded [UI-06]
-- [ ] Selection surface per §4: per-card Select toggle, id-keyed tray in G3, preview list in the confirm disclosure; one-card invariant (scoped to review cards) still green
-- [ ] Bulk×unmount policy unit-tested: fire item 1 synchronously, cancel remainder, remainder re-appears pending on next mount; committed prefix leaves the tray; alert names landed + remaining counts
-- [ ] Matrix M1 green: single / review-each / multi-select-bulk assert exact mutated id set [TEST-08]; zero calls to legacy `bulk-accept`
+- [x] Explicit multi-select default-empty; selection lifted to `ScanTabContent` (survives panel round-trip — asserted); commit chrome "Accept N for <label>" only when labels homogeneous, else "Accept N selected"; preview set = exactly the selection; bulk hold announced "Saving N… — Undo"
+- [x] Sequential per-id atomic commits; first failure stops run, persistent `role=alert` names landed+remaining, remainder stays selected [CON-05]
+- [x] Bulk state machine tests: bulk-undo = 0 POSTs; single→bulk + bulk→single flush ordering; in-hold id selection exclusion (no double POST)
+- [x] Joint B3/B4 AC via `useSelectedClusterTruncation` (envelope `truncated`/`total` per selected target cluster): disabled-with-reason or total-N+hidden-count confirm while any selected target is truncated-unexpanded [UI-06]
+- [x] Selection surface per §4: per-card Select toggle, id-keyed tray in G3, preview list in the confirm disclosure; one-card invariant (scoped to review cards) still green
+- [x] Bulk×unmount policy unit-tested: fire item 1 synchronously, cancel remainder, remainder re-appears pending on next mount; committed prefix leaves the tray; alert names landed + remaining counts
+- [x] Matrix M1 green: single / review-each / multi-select-bulk assert exact mutated id set [TEST-08]; zero calls to legacy `bulk-accept`
 
 ### Checklist for Slice 6: Band filters + harness + M2 (④)
 - [ ] Band chips filter via predicate over `ProjectedSuggestion.similarity` post-`isHumanLabeledTarget`; no numeric/slider control anywhere; band × KIND compose

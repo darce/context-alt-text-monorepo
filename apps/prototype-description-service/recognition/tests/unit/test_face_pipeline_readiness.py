@@ -235,12 +235,11 @@ def test_unverified_bytes_never_ok_via_call_count(tmp_path: Path, monkeypatch: p
     assert "forced-unverified" in blocked.detail
 
 
-def test_register_health_probes_branches_on_profile(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """register_health_probes uses face_pipeline check when profile is face_pipeline."""
+def _standalone_ready_app(monkeypatch: pytest.MonkeyPatch):
+    """Minimal FastAPI with health probes + open session/auth (no full create_app)."""
     from unittest.mock import AsyncMock
 
     from fastapi import FastAPI
-    from fastapi.testclient import TestClient
 
     from api.main import register_health_probes
     from recognition.interface_adapters.http import deps as dependencies
@@ -249,13 +248,6 @@ def test_register_health_probes_branches_on_profile(monkeypatch: pytest.MonkeyPa
         SessionDependencyCircuitBreaker,
         initialize_session_dependency_circuit_breaker,
     )
-
-    _install_synthetic_pair(tmp_path, monkeypatch)
-
-    monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_PROFILE", "face_pipeline")
-    monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_MODELS_DIR", str(tmp_path))
-    # Keep dim pair valid (default 512).
-    monkeypatch.delenv("RECOGNITION_EMBEDDING_DIMENSION", raising=False)
 
     app = FastAPI()
     breaker = SessionDependencyCircuitBreaker(failure_threshold=3, window_seconds=30, half_open_after_seconds=10)
@@ -273,6 +265,21 @@ def test_register_health_probes_branches_on_profile(monkeypatch: pytest.MonkeyPa
         return AuthContext(token=None, tenant_claim=None, enabled=False)
 
     app.dependency_overrides[require_auth] = _auth_ok
+    return app
+
+
+def test_register_health_probes_branches_on_profile(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """register_health_probes uses face_pipeline check when profile is face_pipeline."""
+    from fastapi.testclient import TestClient
+
+    _install_synthetic_pair(tmp_path, monkeypatch)
+
+    monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_PROFILE", "face_pipeline")
+    monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_MODELS_DIR", str(tmp_path))
+    # Keep dim pair valid (default 512).
+    monkeypatch.delenv("RECOGNITION_EMBEDDING_DIMENSION", raising=False)
+
+    app = _standalone_ready_app(monkeypatch)
     client = TestClient(app)
 
     resp = client.get("/ready")
@@ -286,3 +293,66 @@ def test_register_health_probes_branches_on_profile(monkeypatch: pytest.MonkeyPa
     assert detailed.status_code == 200
     dbody = detailed.json()
     assert dbody["model_cache"]["profile"] == "face_pipeline"
+
+
+def test_model_probe_verify_runs_off_event_loop(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """S3CR-03: face_pipeline verify must not run on the event-loop thread."""
+    import asyncio
+    import threading
+
+    from fastapi.testclient import TestClient
+
+    import api.main as api_main
+
+    _install_synthetic_pair(tmp_path, monkeypatch)
+    monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_PROFILE", "face_pipeline")
+    monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_MODELS_DIR", str(tmp_path))
+    monkeypatch.delenv("RECOGNITION_EMBEDDING_DIMENSION", raising=False)
+
+    verify_threads: list[int] = []
+    loop_threads: list[int] = []
+    real = health_mod.verify_face_pipeline_model
+    real_to_thread = asyncio.to_thread
+
+    def _record_thread(name: str, *, models_dir: Path | None = None):
+        verify_threads.append(threading.get_ident())
+        return real(name, models_dir=models_dir)
+
+    async def _spy_to_thread(func, /, *args, **kwargs):  # type: ignore[no-untyped-def]
+        loop_threads.append(threading.get_ident())
+        return await real_to_thread(func, *args, **kwargs)
+
+    monkeypatch.setattr(health_mod, "verify_face_pipeline_model", _record_thread)
+    monkeypatch.setattr(api_main.asyncio, "to_thread", _spy_to_thread)
+
+    app = _standalone_ready_app(monkeypatch)
+    client = TestClient(app)
+
+    resp = client.get("/ready")
+    assert resp.status_code == 200, resp.text
+    assert verify_threads, "verify_face_pipeline_model must run for face_pipeline probe"
+    assert loop_threads, "asyncio.to_thread must be used for face_pipeline model probe"
+    assert all(vtid != ltid for vtid in verify_threads for ltid in loop_threads), (
+        f"verify ran on event-loop thread; loop={loop_threads} verify={verify_threads}"
+    )
+
+
+def test_ready_invalid_profile_returns_503(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """S3CR-04: invalid profile → /ready 503 with named model_cache detail (not 500)."""
+    from fastapi.testclient import TestClient
+
+    # Register with a valid default so RegistrationSettings() succeeds, then
+    # flip the env so the per-probe profile re-read sees the bad value.
+    monkeypatch.delenv("RECOGNITION_FACE_PIPELINE_PROFILE", raising=False)
+    app = _standalone_ready_app(monkeypatch)
+    monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_PROFILE", "not_a_real_profile")
+
+    client = TestClient(app)
+    resp = client.get("/ready")
+    assert resp.status_code == 503, resp.text
+    body = resp.json()
+    assert body["status"] == "unhealthy"
+    mc = next(c for c in body["checks"] if c["name"] == "model_cache")
+    assert mc["status"] == "unhealthy"
+    assert "invalid face_pipeline profile" in mc["detail"]
+    assert "not_a_real_profile" in mc["detail"]

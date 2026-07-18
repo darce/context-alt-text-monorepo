@@ -7,6 +7,7 @@ functions — the HTTP layer owns wiring them to FastAPI dependencies.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -26,7 +27,9 @@ from shared.health import HealthReport, HealthStatus
 
 # Process-local eager verify cache for face_pipeline readiness ([EMB-05]).
 # Keyed by absolute model path; value is last full-verify outcome.
+# Lock required once verify may run off the event loop (S3CR-05).
 _FACE_PIPELINE_VERIFY_CACHE: dict[str, ModelVerifyOutcome] = {}
+_FACE_PIPELINE_VERIFY_CACHE_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,22 +99,23 @@ def _cached_verify_outcome(name: str, *, models_dir: Path) -> ModelVerifyOutcome
     path = models_dir / entry.file_name
     cache_key = str(path.resolve()) if path.exists() else str(path)
 
-    cached = _FACE_PIPELINE_VERIFY_CACHE.get(cache_key)
-    if path.is_file():
-        st = path.stat()
-        if cached is not None and cached.mtime_ns == st.st_mtime_ns and cached.size == st.st_size:
-            return cached
-    elif cached is not None and not cached.ok and cached.mtime_ns == 0 and cached.size == 0:
-        # Missing file already verified-failed with no stat; re-check so recovery works.
-        pass
+    with _FACE_PIPELINE_VERIFY_CACHE_LOCK:
+        cached = _FACE_PIPELINE_VERIFY_CACHE.get(cache_key)
+        if path.is_file():
+            st = path.stat()
+            if cached is not None and cached.mtime_ns == st.st_mtime_ns and cached.size == st.st_size:
+                return cached
+        elif cached is not None and not cached.ok and cached.mtime_ns == 0 and cached.size == 0:
+            # Missing file already verified-failed with no stat; re-check so recovery works.
+            pass
 
-    outcome = verify_face_pipeline_model(name, models_dir=models_dir)
-    # Cache under resolved path when present so renames don't leak stale OK.
-    store_key = str(outcome.path.resolve()) if outcome.path.exists() else cache_key
-    _FACE_PIPELINE_VERIFY_CACHE[store_key] = outcome
-    if store_key != cache_key:
-        _FACE_PIPELINE_VERIFY_CACHE[cache_key] = outcome
-    return outcome
+        outcome = verify_face_pipeline_model(name, models_dir=models_dir)
+        # Cache under resolved path when present so renames don't leak stale OK.
+        store_key = str(outcome.path.resolve()) if outcome.path.exists() else cache_key
+        _FACE_PIPELINE_VERIFY_CACHE[store_key] = outcome
+        if store_key != cache_key:
+            _FACE_PIPELINE_VERIFY_CACHE[cache_key] = outcome
+        return outcome
 
 
 def check_face_pipeline_models(models_dir: Path) -> CheckResult:
@@ -138,7 +142,8 @@ def check_face_pipeline_models(models_dir: Path) -> CheckResult:
 
 def reset_face_pipeline_verify_cache_for_tests() -> None:
     """Clear the process-local verify cache (unit tests only)."""
-    _FACE_PIPELINE_VERIFY_CACHE.clear()
+    with _FACE_PIPELINE_VERIFY_CACHE_LOCK:
+        _FACE_PIPELINE_VERIFY_CACHE.clear()
 
 
 def aggregate_status(checks: list[CheckResult]) -> HealthStatus:

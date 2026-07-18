@@ -3,7 +3,8 @@
 FIR-3 S1: pin model bytes by sha256 with source URL/ref and license hashes.
 Adapters (S2/S3) load models only through ``load_verified_model``.
 
-Heuristics: rg-008 (validate at load), AGT-02 (no fabricated hashes).
+Heuristics: rg-008 (config validate-at-load), AGT-02 (no unresolved anchors),
+rg-015 (manifest is single source for EmbeddingModelManifest field values).
 """
 
 from __future__ import annotations
@@ -30,7 +31,13 @@ class ModelIntegrityError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class ModelProvenance:
-    """Pinned provenance for one ONNX model artifact."""
+    """Pinned provenance for one ONNX model artifact.
+
+    Embedding-contract fields (``embedding_dim``, ``normalization``, ``metric``,
+    ``framework``) are the single source for ``EmbeddingModelManifest`` values
+    consumed by S2/S3 adapters (rg-015). Detector-only entries use ``None`` for
+    embedding fields.
+    """
 
     file_name: str
     sha256: str
@@ -40,6 +47,10 @@ class ModelProvenance:
     license_file: str
     license_sha256: str
     size_bytes: int
+    framework: str
+    embedding_dim: int | None = None
+    normalization: str | None = None
+    metric: str | None = None
 
 
 # Hashes computed from bytes downloaded in-sandbox at FIR-3 S1 from the
@@ -58,6 +69,10 @@ MODEL_MANIFEST: dict[str, ModelProvenance] = {
         license_file="LICENSE.yunet",
         license_sha256="c83b8120c50ccbd4c4f96edf53141bdd566ebb8f8e9227e415326aa1b1aba958",
         size_bytes=229_738,
+        framework="opencv",
+        embedding_dim=None,
+        normalization=None,
+        metric=None,
     ),
     "sface": ModelProvenance(
         file_name="face_recognition_sface_2021dec.onnx",
@@ -71,6 +86,10 @@ MODEL_MANIFEST: dict[str, ModelProvenance] = {
         license_file="LICENSE.sface",
         license_sha256="cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
         size_bytes=38_696_353,
+        framework="opencv",
+        embedding_dim=128,
+        normalization="l2",
+        metric="cosine",
     ),
 }
 
@@ -93,10 +112,18 @@ def _file_sha256(path: Path) -> str:
 
 
 def load_verified_model(name: str, *, models_dir: Path | None = None) -> Path:
-    """Return the path to a model only after sha256 verification succeeds.
+    """Return the path to a model only after model + license integrity checks pass.
 
-    Fail-closed: missing file, pending sentinel, size mismatch, or hash
-    mismatch all raise ``ModelIntegrityError``. Never returns an unverified path.
+    Fail-closed: missing file, pending sentinel, size mismatch, model hash
+    mismatch, missing license, or license hash mismatch all raise
+    ``ModelIntegrityError``.
+
+    Integrity is checked at call time against the on-disk files. This is a
+    verify-then-open TOCTOU window: a concurrent writer could replace the model
+    file after the hash check and before the caller opens the returned path.
+    Acceptable under the trusted-operator models-dir threat model (operators
+    control ``models/``; untrusted multi-writer environments should re-hash at
+    open or pass an already-opened fd).
     """
     entry = MODEL_MANIFEST.get(name)
     if entry is None:
@@ -129,6 +156,25 @@ def load_verified_model(name: str, *, models_dir: Path | None = None) -> Path:
         raise ModelIntegrityError(
             f"sha256 mismatch for {name!r}: expected {entry.sha256}, "
             f"got {actual} at {path}"
+        )
+
+    # License is part of the load-time integrity surface (fail-closed).
+    if entry.license_sha256 == PENDING_OPERATOR_FETCH:
+        raise ModelIntegrityError(
+            f"license hash for {name!r} is {PENDING_OPERATOR_FETCH}; "
+            "operator must pin the real license sha256 before load"
+        )
+    license_path = root / entry.license_file
+    if not license_path.is_file():
+        raise ModelIntegrityError(
+            f"license file missing for {name!r}: {license_path} "
+            f"(expected {entry.license_file} next to model)"
+        )
+    actual_license = _file_sha256(license_path)
+    if actual_license != entry.license_sha256:
+        raise ModelIntegrityError(
+            f"license sha256 mismatch for {name!r}: expected {entry.license_sha256}, "
+            f"got {actual_license} at {license_path}"
         )
 
     return path

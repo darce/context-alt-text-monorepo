@@ -26,10 +26,7 @@ class EmbeddingModelManifest:
     @property
     def model_id(self) -> str:
         """Stable identifier stamped onto FaceDetection.model_id."""
-        return (
-            f"{self.framework}-{self.name}"
-            f"@{self.dimensions}d/{self.normalization}/{self.metric}"
-        )
+        return f"{self.framework}-{self.name}@{self.dimensions}d/{self.normalization}/{self.metric}"
 
 
 def incumbent_embedding_model_manifest() -> EmbeddingModelManifest:

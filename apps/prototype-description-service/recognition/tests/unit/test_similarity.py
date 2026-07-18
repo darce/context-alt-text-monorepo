@@ -6,9 +6,9 @@ import numpy as np
 import pytest
 
 from recognition.shared.similarity import (
-    face_embedding_dim,
     compute_face_similarity,
     extract_face_embedding,
+    face_embedding_dim,
     normalize_face_embedding,
     normalize_vector,
 )
@@ -21,7 +21,7 @@ def test_extract_face_embedding_truncates_larger_vectors() -> None:
     face = extract_face_embedding(extended)
 
     assert face.shape[0] == face_embedding_dim()
-    assert np.array_equal(face, extended[:face_embedding_dim()])
+    assert np.array_equal(face, extended[: face_embedding_dim()])
 
 
 def test_extract_face_embedding_512d() -> None:

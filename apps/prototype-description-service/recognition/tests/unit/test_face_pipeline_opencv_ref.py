@@ -13,10 +13,10 @@ import pytest
 
 from recognition.infrastructure.face_pipeline.aligner import (
     ALIGNED_SIZE,
-    AlignmentError,
-    FivePointAligner,
     SFACE_CANONICAL_LANDMARKS_112,
     YUNET_LANDMARK_NAMES,
+    AlignmentError,
+    FivePointAligner,
     similarity_transform_matrix,
 )
 from recognition.infrastructure.face_pipeline.opencv_ref import (
@@ -31,10 +31,10 @@ from recognition.infrastructure.face_pipeline.provenance import (
     load_verified_model,
 )
 from recognition.tests.unit.face_pipeline_support import (
+    _FIXTURE_DIR,
     MODELS_PRESENT,
     MODELS_SKIP,
     SFACE_EMBEDDING_DIM,
-    _FIXTURE_DIR,
     load_generate_goldens,
     load_json,
     run_import_purity_check,
@@ -166,18 +166,14 @@ def test_aligner_determinism() -> None:
 
 def test_aligner_float01_trap_raises() -> None:
     img01 = np.full((40, 40, 3), 0.25, dtype=np.float32)
-    landmarks = np.array(
-        [[10, 10], [30, 10], [20, 18], [12, 28], [28, 28]], dtype=np.float64
-    )
+    landmarks = np.array([[10, 10], [30, 10], [20, 18], [12, 28], [28, 28]], dtype=np.float64)
     with pytest.raises(AlignmentError, match=r"\[0,1\]-float"):
         FivePointAligner().align(img01, landmarks)
 
 
 def test_aligner_float255_ok() -> None:
     img = np.full((40, 40, 3), 200.0, dtype=np.float64)
-    landmarks = np.array(
-        [[10, 10], [30, 10], [20, 18], [12, 28], [28, 28]], dtype=np.float64
-    )
+    landmarks = np.array([[10, 10], [30, 10], [20, 18], [12, 28], [28, 28]], dtype=np.float64)
     result = FivePointAligner().align(img, landmarks)
     assert result.crop.shape == (ALIGNED_SIZE, ALIGNED_SIZE, 3)
     assert result.crop.dtype == np.uint8
@@ -341,8 +337,7 @@ def test_raw_sface_feature_not_prenormalized() -> None:
     raw_norm = float(np.linalg.norm(raw))
     assert np.isfinite(raw_norm) and raw_norm > 0.0
     assert abs(raw_norm - 1.0) > 1e-3, (
-        f"raw FaceRecognizerSF.feature appears pre-normalized (norm={raw_norm}); "
-        "normalization step would be untested"
+        f"raw FaceRecognizerSF.feature appears pre-normalized (norm={raw_norm}); normalization step would be untested"
     )
     out = emb.embed([crop])
     assert float(np.linalg.norm(out[0])) == pytest.approx(1.0, abs=1e-6)
@@ -432,10 +427,7 @@ def test_detector_cartoon_golden_within_tolerances() -> None:
     skip_path = _FIXTURE_DIR / "detector_golden_skip.json"
     if skip_path.is_file() and not golden_path.is_file():
         note = _load_json("detector_golden_skip.json")
-        pytest.skip(
-            f"detector-output golden skipped ({note.get('status')}): "
-            f"{note.get('reason', '')[:200]}"
-        )
+        pytest.skip(f"detector-output golden skipped ({note.get('status')}): {note.get('reason', '')[:200]}")
     assert golden_path.is_file(), "expected detector_faces.json golden fixture"
     meta = _load_json("detector_faces.json")
     assert meta["status"] == "recorded"
@@ -462,9 +454,7 @@ def test_detector_cartoon_golden_within_tolerances() -> None:
     d0 = faces[0]
     exp = meta["detection"]
     tol = meta["tolerances"]
-    np.testing.assert_allclose(
-        d0.bbox, np.asarray(exp["bbox_xywh"], dtype=np.float32), atol=tol["bbox_px"]
-    )
+    np.testing.assert_allclose(d0.bbox, np.asarray(exp["bbox_xywh"], dtype=np.float32), atol=tol["bbox_px"])
     np.testing.assert_allclose(
         d0.landmarks,
         np.asarray(exp["landmarks_xy"], dtype=np.float32),
@@ -481,9 +471,7 @@ def test_detector_cartoon_golden_within_tolerances() -> None:
         eye_sep=float(proc["eye_sep"]),
         mouth_y=float(proc["mouth_y"]),
     )
-    expected_names = meta.get("expected_landmark_nearest_names") or list(
-        YUNET_LANDMARK_NAMES
-    )
+    expected_names = meta.get("expected_landmark_nearest_names") or list(YUNET_LANDMARK_NAMES)
     nearest_budget = float(tol.get("landmark_nearest_px", 50.0))
     name_list = list(drawn.keys())
     coords = {n: np.asarray(drawn[n], dtype=np.float64) for n in name_list}
@@ -496,8 +484,7 @@ def test_detector_cartoon_golden_within_tolerances() -> None:
             f"expected {expected_name}; dists={ {k: round(v, 1) for k, v in dists.items()} }"
         )
         assert dists[expected_name] <= nearest_budget, (
-            f"landmark[{i}] ({expected_name}) dist={dists[expected_name]:.1f} "
-            f"> budget {nearest_budget}"
+            f"landmark[{i}] ({expected_name}) dist={dists[expected_name]:.1f} > budget {nearest_budget}"
         )
 
 

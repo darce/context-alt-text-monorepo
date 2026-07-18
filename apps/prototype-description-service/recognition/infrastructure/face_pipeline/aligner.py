@@ -157,8 +157,7 @@ class FivePointAligner:
         if output_size != ALIGNED_SIZE:
             # SFace canonical landmarks are defined for 112 only.
             raise ValueError(
-                f"FivePointAligner only supports output_size={ALIGNED_SIZE} "
-                f"(SFace canonical), got {output_size}"
+                f"FivePointAligner only supports output_size={ALIGNED_SIZE} (SFace canonical), got {output_size}"
             )
         self.output_size = output_size
 
@@ -180,9 +179,7 @@ class FivePointAligner:
             raise AlignmentError("image is None")
         img = np.asarray(image)
         if img.ndim != 3 or img.shape[2] != 3:
-            raise AlignmentError(
-                f"expected H×W×3 BGR image, got shape {getattr(img, 'shape', None)}"
-            )
+            raise AlignmentError(f"expected H×W×3 BGR image, got shape {getattr(img, 'shape', None)}")
         if img.dtype != np.uint8:
             if np.issubdtype(img.dtype, np.floating):
                 # Reject [0,1]-float trap (would clip to near-black and poison crops).

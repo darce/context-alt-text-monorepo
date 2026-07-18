@@ -24,10 +24,9 @@ from recognition.infrastructure.face_pipeline.provenance import (
 _SERVICE_ROOT = Path(__file__).resolve().parents[3]
 _FIXTURE_DIR = _SERVICE_ROOT / "recognition" / "tests" / "fixtures" / "face_pipeline"
 
-MODELS_PRESENT = (
-    (DEFAULT_MODELS_DIR / MODEL_MANIFEST["yunet"].file_name).is_file()
-    and (DEFAULT_MODELS_DIR / MODEL_MANIFEST["sface"].file_name).is_file()
-)
+MODELS_PRESENT = (DEFAULT_MODELS_DIR / MODEL_MANIFEST["yunet"].file_name).is_file() and (
+    DEFAULT_MODELS_DIR / MODEL_MANIFEST["sface"].file_name
+).is_file()
 MODELS_SKIP = (
     "FIR-3 face models missing under recognition/infrastructure/face_pipeline/models/ — "
     "run: uv run python scripts/fetch_face_pipeline_models.py "
@@ -65,12 +64,10 @@ def run_import_purity_check(
 ) -> None:
     """Subprocess import purity probe (shared by opencv_ref / ort / _common)."""
     required_checks = "\n".join(
-        f'if "{m}" not in sys.modules:\n    raise SystemExit("expected {m} imported")'
-        for m in required_modules
+        f'if "{m}" not in sys.modules:\n    raise SystemExit("expected {m} imported")' for m in required_modules
     )
     forbidden_mod_checks = "\n".join(
-        f'if "{m}" in sys.modules:\n    raise SystemExit("forbidden module present: {m}")'
-        for m in forbidden_modules
+        f'if "{m}" in sys.modules:\n    raise SystemExit("forbidden module present: {m}")' for m in forbidden_modules
     )
     code = f"""
 import sys
@@ -86,9 +83,7 @@ print("ok")
 """
     env = os.environ.copy()
     existing = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = (
-        str(_SERVICE_ROOT) if not existing else f"{_SERVICE_ROOT}{os.pathsep}{existing}"
-    )
+    env["PYTHONPATH"] = str(_SERVICE_ROOT) if not existing else f"{_SERVICE_ROOT}{os.pathsep}{existing}"
     result = subprocess.run(
         [sys.executable, "-c", code],
         capture_output=True,
@@ -98,8 +93,7 @@ print("ok")
         check=False,
     )
     assert result.returncode == 0, (
-        f"import purity failed rc={result.returncode}\n"
-        f"stdout={result.stdout}\nstderr={result.stderr}"
+        f"import purity failed rc={result.returncode}\nstdout={result.stdout}\nstderr={result.stderr}"
     )
     assert "ok" in result.stdout
 
@@ -136,7 +130,7 @@ def greedy_match_by_iou(left, right) -> list[tuple[object, object, float]]:
         best_i = -1
         best_iou = -1.0
         best_fb = None
-        for i, (orig_j, fb) in enumerate(remaining):
+        for i, (_orig_j, fb) in enumerate(remaining):
             iou = iou_xywh(fa.bbox, fb.bbox)
             if iou > best_iou:
                 best_iou = iou

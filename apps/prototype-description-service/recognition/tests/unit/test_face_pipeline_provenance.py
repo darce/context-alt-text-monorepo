@@ -21,8 +21,8 @@ import pytest
 
 from recognition.infrastructure.face_pipeline.provenance import (
     DEFAULT_MODELS_DIR,
-    PENDING_OPERATOR_FETCH,
     MODEL_MANIFEST,
+    PENDING_OPERATOR_FETCH,
     ModelIntegrityError,
     ModelProvenance,
     _file_sha256,
@@ -177,9 +177,7 @@ def test_load_verified_model_unknown_name_raises(tmp_path: Path) -> None:
         load_verified_model("not-a-model", models_dir=tmp_path)
 
 
-def test_load_verified_model_missing_license_raises(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_load_verified_model_missing_license_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Load-time license presence is fail-closed (BR-04)."""
     payload = b"model-ok-bytes"
     file_name = "face_detection_yunet_2026may.onnx"
@@ -197,9 +195,7 @@ def test_load_verified_model_missing_license_raises(
         load_verified_model("yunet", models_dir=tmp_path)
 
 
-def test_load_verified_model_license_hash_mismatch_raises(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_load_verified_model_license_hash_mismatch_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Load-time license hash mismatch is fail-closed (BR-04)."""
     payload = b"model-ok-bytes"
     file_name = "face_detection_yunet_2026may.onnx"
@@ -222,7 +218,7 @@ def test_load_verified_model_license_hash_mismatch_raises(
 def test_module_manifest_covers_yunet_and_sface() -> None:
     """Production manifest registers both models with required provenance fields."""
     assert set(MODEL_MANIFEST) == {"yunet", "sface"}
-    for key, entry in MODEL_MANIFEST.items():
+    for _key, entry in MODEL_MANIFEST.items():
         assert isinstance(entry, ModelProvenance)
         assert entry.file_name.endswith(".onnx")
         assert entry.source_url
@@ -286,9 +282,7 @@ print("ok")
 """
     env = os.environ.copy()
     existing = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = (
-        str(_SERVICE_ROOT) if not existing else f"{_SERVICE_ROOT}{os.pathsep}{existing}"
-    )
+    env["PYTHONPATH"] = str(_SERVICE_ROOT) if not existing else f"{_SERVICE_ROOT}{os.pathsep}{existing}"
     result = subprocess.run(
         [sys.executable, "-c", code],
         capture_output=True,
@@ -298,8 +292,7 @@ print("ok")
         check=False,
     )
     assert result.returncode == 0, (
-        f"import purity failed rc={result.returncode}\n"
-        f"stdout={result.stdout}\nstderr={result.stderr}"
+        f"import purity failed rc={result.returncode}\nstdout={result.stdout}\nstderr={result.stderr}"
     )
     assert "ok" in result.stdout
 
@@ -313,9 +306,7 @@ def _load_fetch_script() -> ModuleType:
     return module
 
 
-def test_fetch_script_download_failure_is_actionable(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_fetch_script_download_failure_is_actionable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Every I/O call has a degrade path: download failure raises typed error (not silent)."""
     fetch = _load_fetch_script()
 
@@ -327,9 +318,7 @@ def test_fetch_script_download_failure_is_actionable(
         fetch.fetch_all(dest_dir=tmp_path)
 
 
-def test_fetch_script_verifies_against_manifest(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_fetch_script_verifies_against_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Successful download of matching bytes lands files; hash mismatch refuses."""
     fetch = _load_fetch_script()
     yunet = MODEL_MANIFEST["yunet"]
@@ -348,9 +337,7 @@ def test_fetch_script_verifies_against_manifest(
         fetch.fetch_all(dest_dir=tmp_path, models=("yunet",))
 
 
-def test_fetch_script_size_ok_sha256_mismatch_raises(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_fetch_script_size_ok_sha256_mismatch_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Correct size_bytes + wrong sha256 hits the hash-mismatch branch (BR-08 mutant guard)."""
     fetch = _load_fetch_script()
     yunet = MODEL_MANIFEST["yunet"]
@@ -368,17 +355,14 @@ def test_fetch_script_size_ok_sha256_mismatch_raises(
             expected_sha256 = kwargs.get("expected_sha256", "")
             expected_size = kwargs.get("expected_size")
             label = kwargs.get("label", "artifact")
-            if expected_size is not None and expected_size > 0:
-                if partial.stat().st_size != expected_size:
-                    raise fetch.ModelFetchError(
-                        f"{label}: size mismatch for {partial.name}: "
-                        f"expected {expected_size}, got {partial.stat().st_size}"
-                    )
+            if expected_size is not None and expected_size > 0 and partial.stat().st_size != expected_size:
+                raise fetch.ModelFetchError(
+                    f"{label}: size mismatch for {partial.name}: expected {expected_size}, got {partial.stat().st_size}"
+                )
             actual = _sha256(partial.read_bytes())
             if actual != expected_sha256:
                 raise fetch.ModelFetchError(
-                    f"{label}: sha256 mismatch for {partial.name}: "
-                    f"expected {expected_sha256}, got {actual}"
+                    f"{label}: sha256 mismatch for {partial.name}: expected {expected_sha256}, got {actual}"
                 )
             partial.replace(dest)
         finally:
@@ -390,9 +374,7 @@ def test_fetch_script_size_ok_sha256_mismatch_raises(
         fetch.fetch_one("yunet", dest_dir=tmp_path)
 
 
-def test_fetch_script_license_hash_mismatch_raises(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_fetch_script_license_hash_mismatch_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """License hash-verify path in fetch refuses bad license bytes (BR-08)."""
     fetch = _load_fetch_script()
     yunet = MODEL_MANIFEST["yunet"]
@@ -436,8 +418,7 @@ def test_fetch_script_license_hash_mismatch_raises(
         actual = _sha256(bad)
         if actual != expected_sha256:
             raise fetch.ModelFetchError(
-                f"{label}: sha256 mismatch for {dest.name}: "
-                f"expected {expected_sha256}, got {actual}"
+                f"{label}: sha256 mismatch for {dest.name}: expected {expected_sha256}, got {actual}"
             )
         dest.write_bytes(bad)
 
@@ -448,9 +429,7 @@ def test_fetch_script_license_hash_mismatch_raises(
     # (verify-before-publish: wrong license never published)
 
 
-def test_fetch_failure_preserves_preexisting_license(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_fetch_failure_preserves_preexisting_license(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Mid-run model verify failure never unlinks pre-existing license files (BR-01)."""
     fetch = _load_fetch_script()
     yunet = MODEL_MANIFEST["yunet"]
@@ -466,9 +445,7 @@ def test_fetch_failure_preserves_preexisting_license(
         dest.parent.mkdir(parents=True, exist_ok=True)
         junk = dest.with_suffix(dest.suffix + ".partial")
         junk.write_bytes(b"partial-junk")
-        raise fetch.ModelFetchError(
-            f"model 'yunet': sha256 mismatch for {junk.name}: expected x, got y"
-        )
+        raise fetch.ModelFetchError(f"model 'yunet': sha256 mismatch for {junk.name}: expected x, got y")
 
     monkeypatch.setattr(fetch, "download_verified", _fail_model)
     with pytest.raises(fetch.ModelFetchError, match="sha256 mismatch"):
@@ -480,9 +457,7 @@ def test_fetch_failure_preserves_preexisting_license(
     assert not (tmp_path / yunet.file_name).exists()
 
 
-def test_download_verified_over_cap_raises(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_download_verified_over_cap_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Stream byte cap aborts with ModelFetchError (BR-09)."""
     fetch = _load_fetch_script()
     dest = tmp_path / "cap.onnx"

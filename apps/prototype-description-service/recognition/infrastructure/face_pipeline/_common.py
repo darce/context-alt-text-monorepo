@@ -33,8 +33,7 @@ def resolve_sface_embedding_dim() -> int:
     dim = MODEL_MANIFEST["sface"].embedding_dim
     if dim is None:
         raise ValueError(
-            "MODEL_MANIFEST['sface'].embedding_dim is None; "
-            "refusing to invent a default embedding dimension (rg-015)"
+            "MODEL_MANIFEST['sface'].embedding_dim is None; refusing to invent a default embedding dimension (rg-015)"
         )
     return int(dim)
 
@@ -74,9 +73,7 @@ def ensure_bgr_u8(image: np.ndarray, *, label: str = "image") -> np.ndarray:
         raise FacePipelineInputError(f"{label} is None")
     arr = np.asarray(image)
     if arr.ndim != 3 or arr.shape[2] != 3:
-        raise FacePipelineInputError(
-            f"{label}: expected H×W×3 BGR, got shape {getattr(arr, 'shape', None)}"
-        )
+        raise FacePipelineInputError(f"{label}: expected H×W×3 BGR, got shape {getattr(arr, 'shape', None)}")
     if arr.dtype != np.uint8:
         if np.issubdtype(arr.dtype, np.floating):
             finite = arr[np.isfinite(arr)]
@@ -124,14 +121,11 @@ def embed_batch(
             )
         raw = np.asarray(feature_fn(img), dtype=np.float32).reshape(-1)
         if raw.size != embedding_dim:
-            raise FacePipelineInputError(
-                f"crops[{i}]: expected embedding dim {embedding_dim}, got {raw.size}"
-            )
+            raise FacePipelineInputError(f"crops[{i}]: expected embedding dim {embedding_dim}, got {raw.size}")
         norm = float(np.linalg.norm(raw))
         if norm == 0.0 or not np.isfinite(norm):
             raise ZeroNormEmbeddingError(
-                f"crops[{i}]: SFace embedding has zero/non-finite L2 norm "
-                f"(norm={norm}); refusing silent zero-fill"
+                f"crops[{i}]: SFace embedding has zero/non-finite L2 norm (norm={norm}); refusing silent zero-fill"
             )
         vectors.append(raw / norm)
     return np.stack(vectors, axis=0).astype(np.float32, copy=False)

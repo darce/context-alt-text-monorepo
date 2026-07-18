@@ -24,8 +24,9 @@ rg-013-style purity (onnxruntime/numpy + face_pipeline siblings only; no cv2).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Final, Sequence
+from typing import Final
 
 import numpy as np
 import onnxruntime as ort
@@ -38,7 +39,6 @@ from recognition.infrastructure.face_pipeline._common import (
     SFACE_EMBEDDING_DIM,
     FacePipelineInputError,
     RawDetection,
-    ZeroNormEmbeddingError,
     _ensure_bgr_u8,
     embed_batch,
 )
@@ -81,9 +81,7 @@ def _ort_session(model_path: Path) -> ort.InferenceSession:
     )
 
 
-def _pad_to_divisor(
-    image: np.ndarray, *, divisor: int = _YUNET_DIVISOR
-) -> tuple[np.ndarray, int, int]:
+def _pad_to_divisor(image: np.ndarray, *, divisor: int = _YUNET_DIVISOR) -> tuple[np.ndarray, int, int]:
     """Pad BGR image bottom/right to multiple of ``divisor`` (OpenCV padWithDivisor)."""
     h, w = image.shape[:2]
     pad_w = ((w - 1) // divisor + 1) * divisor
@@ -97,9 +95,7 @@ def _pad_to_divisor(
 
 def _bgr_to_nchw_float(image_u8: np.ndarray) -> np.ndarray:
     """BGR uint8 HWC → float32 NCHW scale=1.0 (OpenCV blobFromImage defaults)."""
-    return np.ascontiguousarray(
-        image_u8.astype(np.float32).transpose(2, 0, 1)[None, ...]
-    )
+    return np.ascontiguousarray(image_u8.astype(np.float32).transpose(2, 0, 1)[None, ...])
 
 
 def _bgr_to_sface_blob(crop_u8: np.ndarray) -> np.ndarray:
@@ -337,9 +333,7 @@ class OrtYuNetDetector:
         out_names = set(self._output_names)
         missing = [n for n in _YUNET_OUTPUT_NAMES if n not in out_names]
         if missing:
-            raise FacePipelineInputError(
-                f"YuNet ONNX missing expected outputs {missing}; got {sorted(out_names)}"
-            )
+            raise FacePipelineInputError(f"YuNet ONNX missing expected outputs {missing}; got {sorted(out_names)}")
 
     @property
     def score_threshold(self) -> float:
@@ -361,7 +355,7 @@ class OrtYuNetDetector:
             padded, pad_w, pad_h = _pad_to_divisor(img)
             blob = _bgr_to_nchw_float(padded)
             raw_outs = self._session.run(None, {self._input_name: blob})
-            outputs = {name: arr for name, arr in zip(self._output_names, raw_outs)}
+            outputs = dict(zip(self._output_names, raw_outs, strict=False))
             faces = decode_yunet_outputs(
                 outputs,
                 pad_w=pad_w,

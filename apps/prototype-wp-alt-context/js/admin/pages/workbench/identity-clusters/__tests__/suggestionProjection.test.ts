@@ -11,6 +11,7 @@ import {
   compareSuggestions,
   fromIdentityMatch,
   fromPendingRow,
+  identityBatchIdsKey,
   invalidateSuggestionProjection,
   isHumanLabeledTarget,
   isIdentityLegResolution,
@@ -155,19 +156,32 @@ describe('adapters', () => {
       expect(projected.similarity).toBe(0.66);
       expect(projected.identityCount).toBeUndefined();
       expect(projected.createdAt).toBeUndefined();
-      expect(projected.enrichment).toEqual({
-        identityMediaId: undefined,
+      expect(projected.resolution).toBeUndefined();
+      expect(projected.enrichment).toStrictEqual({
         identityMediaUrl: 'https://example.test/id.jpg',
-        identityThumbUrl: undefined,
-        identityBbox: undefined,
-        representativeMediaId: undefined,
-        representativeMediaUrl: undefined,
         representativeThumbUrl: 'https://example.test/thumb.jpg',
-        representativeBbox: undefined,
         suggestedLabel: 'Zed',
         suggestedLabelSource: 'identity',
         suggestedLabelConfidence: 0.4,
       });
+      expect(Object.keys(projected.enrichment ?? {})).toHaveLength(5);
+    });
+
+    it('omits enrichment entirely when the row carries no enrichment fields', () => {
+      const bare = fromPendingRow(buildPendingRow({ id: 'bare', identity_id: 'i' }));
+      expect(bare).not.toHaveProperty('enrichment');
+    });
+
+    it('passes resolution through and omits identityCount for non-finite values', () => {
+      const resolved = fromPendingRow(
+        buildPendingRow({ id: 'r', identity_id: 'i', resolution: SUGGESTION_RESOLUTION.ACCEPTED }),
+      );
+      expect(resolved.resolution).toBe(SUGGESTION_RESOLUTION.ACCEPTED);
+
+      const nanCount = fromPendingRow(
+        buildPendingRow({ id: 'n', identity_id: 'i', cluster_identity_count: Number.NaN }),
+      );
+      expect(nanCount.identityCount).toBeUndefined();
     });
 
     it('sets identityCount only when cluster_identity_count is a number', () => {
@@ -192,7 +206,7 @@ describe('adapters', () => {
 
     it('does not attach enrichment on identity adapter (review-only)', () => {
       const identity = fromIdentityMatch('i', buildClusterMatch({ cluster_id: 'c', label: 'A', similarity: 0.1 }));
-      const pending = fromPendingRow(buildPendingRow({ id: 's', identity_id: 'i' }));
+      const pending = fromPendingRow(buildPendingRow({ id: 's', identity_id: 'i', suggested_label: 'Zed' }));
       expect(identity.enrichment).toBeUndefined();
       expect(pending.enrichment).toBeDefined();
     });
@@ -219,21 +233,23 @@ describe('matrix fixture outcomes', () => {
     expect(projected[0]?.label).toBe('Bob');
   });
 
-  it('all-ineligible window: yields no prompt (empty projection)', () => {
+  it('all-ineligible window with an eligible 6th beyond it: yields no prompt', () => {
     const { allIneligibleWindow: caseData } = suggestionProjectionMatrix;
-    expect(caseData.matches).toHaveLength(PROJECTION_TOP_K);
+    expect(caseData.matches).toHaveLength(PROJECTION_TOP_K + 1);
+    expect(isHumanLabeledTarget(caseData.matches[PROJECTION_TOP_K]?.label)).toBe(true);
     const projected = projectIdentityWindow(caseData.identityId, caseData.matches);
     expect(projected).toEqual([]);
     expect(caseData.expectedIdentityTopSuggestionId).toBeUndefined();
   });
 
-  it('Person N labeled-but-unconfirmed is eligible on identity-keyed surfaces', () => {
+  it('Person N labeled-but-unconfirmed: eligible inline/dropdown, absent from the review queue', () => {
     const { labeledButUnconfirmedPersonN: caseData } = suggestionProjectionMatrix;
     expect(isHumanLabeledTarget('Person 3')).toBe(true);
     const projected = projectIdentityWindow(caseData.identityId, caseData.matches);
     expect(projected.map((p) => p.suggestionId)).toEqual(caseData.expectedIdentitySuggestionIds);
-    const review = projectReviewQueue(caseData.pendingRows);
+    const review = projectReviewQueue(caseData.reviewQueueRows);
     expect(review.map((p) => p.suggestionId)).toEqual(caseData.expectedReviewSuggestionIds);
+    expect(review).toEqual([]);
   });
 
   it('tied similarities: identity preserves arrival order; review uses createdAt desc', () => {
@@ -252,7 +268,17 @@ describe('matrix fixture outcomes', () => {
 
     const reviewProjected = projectReviewQueue(caseData.pendingRows);
     expect(reviewProjected.map((p) => p.suggestionId)).toEqual(caseData.expectedReviewSuggestionIds);
-    expect(reviewProjected.some((p) => p.suggestionId === 'sug-stale-accepted')).toBe(true);
+    const staleRow = reviewProjected.find((p) => p.suggestionId === 'sug-stale-accepted');
+    expect(staleRow?.resolution).toBe(SUGGESTION_RESOLUTION.ACCEPTED);
+  });
+});
+
+describe('identityBatchIdsKey', () => {
+  it('normalizes order and duplicates to one canonical key', () => {
+    expect(identityBatchIdsKey(['id-b', 'id-a'])).toBe('id-a,id-b');
+    expect(identityBatchIdsKey(['id-a', 'id-b', 'id-a'])).toBe('id-a,id-b');
+    expect(identityBatchIdsKey(['id-b', 'id-a'])).toBe(identityBatchIdsKey(['id-a', 'id-b']));
+    expect(identityBatchIdsKey([])).toBe('');
   });
 });
 
@@ -319,26 +345,37 @@ describe('SUGGESTION_PROJECTION_INVALIDATION_EVENTS', () => {
     }
   });
 
-  it('preserves the D4 cross-family targets', () => {
+  it('preserves the live-verified cross-family targets per event', () => {
     expect(SUGGESTION_PROJECTION_INVALIDATION_EVENTS.suggestionAcceptReject.keptCrossFamilyTargets).toEqual([
       'clusters.all',
+      'media.identities',
     ]);
     expect(SUGGESTION_PROJECTION_INVALIDATION_EVENTS.bulkAccept.keptCrossFamilyTargets).toEqual([
       'mergePending',
       'namePending',
+      'clusters.all',
     ]);
     expect(SUGGESTION_PROJECTION_INVALIDATION_EVENTS.clusterLabelSetClear.keptCrossFamilyTargets).toEqual([
       'mergePending',
-      'clusters',
+      'clusters.all',
+      'clusters.labels',
+      'media.identities',
     ]);
     expect(SUGGESTION_PROJECTION_INVALIDATION_EVENTS.clusterMerge.keptCrossFamilyTargets).toEqual([
       'mergePending',
-      'clusters',
+      'clusters.all',
+      'clusters.labels',
+      'media.identities',
     ]);
-    expect(SUGGESTION_PROJECTION_INVALIDATION_EVENTS.clusterDismiss.keptCrossFamilyTargets).toEqual(['mergePending']);
+    expect(SUGGESTION_PROJECTION_INVALIDATION_EVENTS.clusterDismiss.keptCrossFamilyTargets).toEqual([
+      'clusters.topUnlabeled',
+      'clusters.all',
+    ]);
     expect(SUGGESTION_PROJECTION_INVALIDATION_EVENTS.scanRecomputeCompletion.keptCrossFamilyTargets).toEqual([
       'mergePending',
       'namePending',
+      'media.identities',
+      'clusters.topUnlabeled',
     ]);
     expect(SUGGESTION_PROJECTION_INVALIDATION_EVENTS.syncTrigger.keptCrossFamilyTargets).toEqual([]);
     expect(SUGGESTION_PROJECTION_INVALIDATION_EVENTS.syncTrigger.viaSuggestionsAllRoot).toBe(true);

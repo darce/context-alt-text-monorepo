@@ -31,21 +31,26 @@ const PERSON_N_IDENTITY_ID = 'identity-person-n';
 const TIED_IDENTITY_ID = 'identity-tied';
 const STALE_IDENTITY_ID = 'identity-stale';
 
-/** 1. Multi-suggestion identity — several eligible rows, distinct similarities. */
+/**
+ * 1. Multi-suggestion identity — several eligible rows, distinct similarities.
+ * Arrival order is deliberately NOT similarity-desc (0.81, 0.92, 0.7): the identity leg
+ * must preserve this server order untouched, so any client re-sort turns the test red,
+ * while the review leg must re-order to similarity-desc.
+ */
 const multiSuggestionIdentityMatches: ClusterSuggestion[] = [
-  buildClusterMatch({
-    suggestion_id: 'sug-multi-a',
-    cluster_id: 'cluster-alice',
-    label: 'Alice',
-    similarity: 0.92,
-    identity_count: 12,
-  }),
   buildClusterMatch({
     suggestion_id: 'sug-multi-b',
     cluster_id: 'cluster-alicia',
     label: 'Alicia',
     similarity: 0.81,
     identity_count: 5,
+  }),
+  buildClusterMatch({
+    suggestion_id: 'sug-multi-a',
+    cluster_id: 'cluster-alice',
+    label: 'Alice',
+    similarity: 0.92,
+    identity_count: 12,
   }),
   buildClusterMatch({
     suggestion_id: 'sug-multi-c',
@@ -103,19 +108,30 @@ const clusterFirstThenHumanMatches: ClusterSuggestion[] = [
 /**
  * 3. All-ineligible-window — all PROJECTION_TOP_K rows ineligible (residual: no prompt).
  */
-const allIneligibleWindowMatches: ClusterSuggestion[] = Array.from({ length: PROJECTION_TOP_K }, (_, i) =>
+const allIneligibleWindowMatches: ClusterSuggestion[] = [
+  ...Array.from({ length: PROJECTION_TOP_K }, (_, i) =>
+    buildClusterMatch({
+      suggestion_id: `sug-inelig-${i}`,
+      cluster_id: `cluster-auto-inelig-${i}`,
+      label: i % 2 === 0 ? `cluster-${1000 + i}` : '   ',
+      similarity: 0.9 - i * 0.01,
+    }),
+  ),
+  // The plan's named residual: an eligible 6th row beyond the window still yields no prompt.
   buildClusterMatch({
-    suggestion_id: `sug-inelig-${i}`,
-    cluster_id: `cluster-auto-inelig-${i}`,
-    label: i % 2 === 0 ? `cluster-${1000 + i}` : '   ',
-    similarity: 0.9 - i * 0.01,
+    suggestion_id: 'sug-inelig-human-beyond',
+    cluster_id: 'cluster-human-beyond',
+    label: 'Human Beyond',
+    similarity: 0.5,
   }),
-);
+];
 
 /**
  * 4. Labeled-but-unconfirmed "Person N" — ELIGIBLE on identity-keyed surfaces
- * (human-format label, not cluster-prefixed). Queue-membership divergence for later consumers,
- * not a conflicting top match.
+ * (human-format label, not cluster-prefixed). The D2 residual is a QUEUE-MEMBERSHIP
+ * divergence: the server's stricter review SQL excludes this row, so the review leg's
+ * input is empty — the row shows inline/dropdown and NOT on the review queue. The client
+ * predicate accepting it is defense-in-depth, never a way back onto the queue.
  */
 const labeledButUnconfirmedPersonNMatches: ClusterSuggestion[] = [
   buildClusterMatch({
@@ -127,17 +143,8 @@ const labeledButUnconfirmedPersonNMatches: ClusterSuggestion[] = [
   }),
 ];
 
-const labeledButUnconfirmedPersonNPending: PendingSuggestion[] = [
-  buildPendingRow({
-    id: 'sug-person-3',
-    identity_id: PERSON_N_IDENTITY_ID,
-    suggested_cluster_id: 'cluster-person-3',
-    cluster_label: 'Person 3',
-    representative_similarity: 0.87,
-    cluster_identity_count: 1,
-    created_at: '2026-02-01T10:00:00.000Z',
-  }),
-];
+/** What the review endpoint actually returns for this identity: nothing. */
+const labeledButUnconfirmedPersonNReviewRows: PendingSuggestion[] = [];
 
 /**
  * 5. Tied similarities — identity leg preserves arrival order; review leg uses createdAt desc.
@@ -213,8 +220,10 @@ export const suggestionProjectionMatrix = {
     identityId: MULTI_IDENTITY_ID,
     matches: multiSuggestionIdentityMatches,
     pendingRows: multiSuggestionIdentityPending,
-    expectedIdentitySuggestionIds: ['sug-multi-a', 'sug-multi-b', 'sug-multi-c'],
-    expectedIdentityTopSuggestionId: 'sug-multi-a',
+    /** Identity leg: server arrival order preserved verbatim (NOT similarity-desc). */
+    expectedIdentitySuggestionIds: ['sug-multi-b', 'sug-multi-a', 'sug-multi-c'],
+    expectedIdentityTopSuggestionId: 'sug-multi-b',
+    /** Review leg: re-sorted similarity-desc regardless of arrival. */
     expectedReviewSuggestionIdsBySimilarity: ['sug-multi-a', 'sug-multi-b', 'sug-multi-c'],
   },
   clusterFirstThenHuman: {
@@ -233,11 +242,12 @@ export const suggestionProjectionMatrix = {
   labeledButUnconfirmedPersonN: {
     identityId: PERSON_N_IDENTITY_ID,
     matches: labeledButUnconfirmedPersonNMatches,
-    pendingRows: labeledButUnconfirmedPersonNPending,
+    reviewQueueRows: labeledButUnconfirmedPersonNReviewRows,
     /** Human-format "Person N" is eligible on identity-keyed surfaces. */
     expectedIdentitySuggestionIds: ['sug-person-3'],
     expectedIdentityTopSuggestionId: 'sug-person-3',
-    expectedReviewSuggestionIds: ['sug-person-3'],
+    /** D2 residual pinned: the server review queue never contains this row. */
+    expectedReviewSuggestionIds: [] as string[],
   },
   tiedSimilarities: {
     identityId: TIED_IDENTITY_ID,

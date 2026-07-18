@@ -47,6 +47,8 @@ export interface ProjectedSuggestionEnrichment {
  *   identity matches always supply a string label.
  * - `identityCount` optional: always present on identity matches; review rows may omit/null it.
  * - `createdAt` optional: identity payload has none; pending rows may include created_at.
+ * - `resolution` optional: review rows carry it; without it the review UI cannot tell a
+ *   stale-accepted repair row from a pending one (double-accept risk). Identity payload has none.
  * - `enrichment` review-leg only.
  */
 export interface ProjectedSuggestion {
@@ -57,6 +59,7 @@ export interface ProjectedSuggestion {
   similarity: number;
   identityCount?: number;
   createdAt?: string;
+  resolution?: PendingSuggestion['resolution'];
   enrichment?: ProjectedSuggestionEnrichment;
 }
 
@@ -114,10 +117,41 @@ export const fromIdentityMatch = (identityId: string, match: ClusterSuggestion):
   return projected;
 };
 
+const ENRICHMENT_SOURCE_FIELDS = [
+  ['identityMediaId', 'identity_media_id'],
+  ['identityMediaUrl', 'identity_media_url'],
+  ['identityThumbUrl', 'identity_thumb_url'],
+  ['identityBbox', 'identity_bbox'],
+  ['representativeMediaId', 'representative_media_id'],
+  ['representativeMediaUrl', 'representative_media_url'],
+  ['representativeThumbUrl', 'representative_thumb_url'],
+  ['representativeBbox', 'representative_bbox'],
+  ['suggestedLabel', 'suggested_label'],
+  ['suggestedLabelSource', 'suggested_label_source'],
+  ['suggestedLabelConfidence', 'suggested_label_confidence'],
+] as const satisfies readonly (readonly [keyof ProjectedSuggestionEnrichment, keyof PendingSuggestion])[];
+
+/**
+ * Honest absence (rg-015): only fields the payload actually carries become keys;
+ * `enrichment` itself is omitted when the row has none, so `if (p.enrichment)` means
+ * "the payload had enrichment data", never "the adapter ran".
+ */
+const buildEnrichment = (row: PendingSuggestion): ProjectedSuggestionEnrichment | undefined => {
+  let enrichment: ProjectedSuggestionEnrichment | undefined;
+  for (const [projectedField, sourceField] of ENRICHMENT_SOURCE_FIELDS) {
+    const value = row[sourceField];
+    if (value !== undefined) {
+      enrichment ??= {};
+      (enrichment as Record<string, unknown>)[projectedField] = value;
+    }
+  }
+  return enrichment;
+};
+
 /**
  * TOTAL adapter from a pending-list PendingSuggestion row.
- * Passes through null/undefined labels and enrichment fields without inventing defaults (rg-015).
- * identityCount is set only when cluster_identity_count is a finite number (null/undefined omitted).
+ * Passes through null labels and enrichment fields without inventing defaults (rg-015).
+ * identityCount is set only when cluster_identity_count is a finite number (null/undefined/NaN omitted).
  */
 export const fromPendingRow = (row: PendingSuggestion): ProjectedSuggestion => {
   const projected: ProjectedSuggestion = {
@@ -126,25 +160,20 @@ export const fromPendingRow = (row: PendingSuggestion): ProjectedSuggestion => {
     clusterId: row.suggested_cluster_id,
     label: row.cluster_label,
     similarity: row.representative_similarity,
-    enrichment: {
-      identityMediaId: row.identity_media_id,
-      identityMediaUrl: row.identity_media_url,
-      identityThumbUrl: row.identity_thumb_url,
-      identityBbox: row.identity_bbox,
-      representativeMediaId: row.representative_media_id,
-      representativeMediaUrl: row.representative_media_url,
-      representativeThumbUrl: row.representative_thumb_url,
-      representativeBbox: row.representative_bbox,
-      suggestedLabel: row.suggested_label,
-      suggestedLabelSource: row.suggested_label_source,
-      suggestedLabelConfidence: row.suggested_label_confidence,
-    },
   };
-  if (typeof row.cluster_identity_count === 'number') {
-    projected.identityCount = row.cluster_identity_count;
+  const identityCount = row.cluster_identity_count;
+  if (typeof identityCount === 'number' && Number.isFinite(identityCount)) {
+    projected.identityCount = identityCount;
   }
   if (row.created_at !== undefined) {
     projected.createdAt = row.created_at;
+  }
+  if (row.resolution !== undefined) {
+    projected.resolution = row.resolution;
+  }
+  const enrichment = buildEnrichment(row);
+  if (enrichment !== undefined) {
+    projected.enrichment = enrichment;
   }
   return projected;
 };
@@ -183,6 +212,14 @@ export const projectReviewQueue = (rows: readonly PendingSuggestion[]): Projecte
     .slice()
     .sort(compareSuggestions);
 
+/**
+ * Canonical serializer for `queryKeys.suggestions.projection.identityBatch`.
+ * Every consumer must build idsKey through this (dedupe + sort + ','-join) or the
+ * co-shipped inline/dropdown legs cache under divergent keys and double-fetch.
+ */
+export const identityBatchIdsKey = (identityIds: readonly string[]): string =>
+  [...new Set(identityIds)].sort().join(',');
+
 export const invalidateSuggestionProjection = (queryClient: QueryClient): Promise<void> =>
   queryClient.invalidateQueries({
     queryKey: queryKeys.suggestions.projection.all,
@@ -190,33 +227,36 @@ export const invalidateSuggestionProjection = (queryClient: QueryClient): Promis
 
 /**
  * Invalidation event map (D4) as data for UXP-5 wiring.
- * Each row records whether the assignment projection invalidates and which
- * cross-family targets live today and must be preserved.
+ * `keptCrossFamilyTargets` is the verified live inventory (2026-07-17 code audit), not a
+ * copy of the plan table — 0b-4/UXP-5 must preserve these calls; tests assert presence,
+ * never forbid extras. Divergence from the plan's D4 table: dismiss sites invalidate
+ * clusters.topUnlabeled (card) / clusters.all (roster bulk), not mergePending; accept,
+ * label, merge, and scan also touch media.identities (UXP-3 finding, recorded in handoff).
  */
 export const SUGGESTION_PROJECTION_INVALIDATION_EVENTS = {
   suggestionAcceptReject: {
     invalidatesAssignmentProjection: true,
-    keptCrossFamilyTargets: ['clusters.all'] as const,
+    keptCrossFamilyTargets: ['clusters.all', 'media.identities'] as const,
   },
   bulkAccept: {
     invalidatesAssignmentProjection: true,
-    keptCrossFamilyTargets: ['mergePending', 'namePending'] as const,
+    keptCrossFamilyTargets: ['mergePending', 'namePending', 'clusters.all'] as const,
   },
   clusterLabelSetClear: {
     invalidatesAssignmentProjection: true,
-    keptCrossFamilyTargets: ['mergePending', 'clusters'] as const,
+    keptCrossFamilyTargets: ['mergePending', 'clusters.all', 'clusters.labels', 'media.identities'] as const,
   },
   clusterMerge: {
     invalidatesAssignmentProjection: true,
-    keptCrossFamilyTargets: ['mergePending', 'clusters'] as const,
+    keptCrossFamilyTargets: ['mergePending', 'clusters.all', 'clusters.labels', 'media.identities'] as const,
   },
   clusterDismiss: {
     invalidatesAssignmentProjection: true,
-    keptCrossFamilyTargets: ['mergePending'] as const,
+    keptCrossFamilyTargets: ['clusters.topUnlabeled', 'clusters.all'] as const,
   },
   scanRecomputeCompletion: {
     invalidatesAssignmentProjection: true,
-    keptCrossFamilyTargets: ['mergePending', 'namePending'] as const,
+    keptCrossFamilyTargets: ['mergePending', 'namePending', 'media.identities', 'clusters.topUnlabeled'] as const,
   },
   syncTrigger: {
     invalidatesAssignmentProjection: true,

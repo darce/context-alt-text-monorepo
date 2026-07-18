@@ -48,6 +48,7 @@ async def _seed_identity(session: AsyncSession, tenant_id: uuid.UUID, media_id: 
         bbox_height=1,
         confidence=0.99,
         embedding=_unit_embedding(),
+        embedding_model="stub-detector@test",
     )
     session.add(identity)
     await session.flush()

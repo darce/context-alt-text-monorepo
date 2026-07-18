@@ -87,4 +87,4 @@ Re-open this evaluation when **any** of:
 - [pg_durable docs](https://microsoft.github.io/pg_durable/) · [microsoft/pg_durable (GitHub)](https://github.com/microsoft/pg_durable) · [InfoQ coverage (2026-06)](https://www.infoq.com/news/2026/06/postgresql-pg-durable/)
 - [PostgreSQL 19 Beta 1 announcement](https://www.postgresql.org/about/news/postgresql-19-beta-1-released-3313/) · [pgvector/pgvector Docker Hub](https://hub.docker.com/r/pgvector/pgvector)
 - [roadmap-pg18-upgrade.md](roadmap-pg18-upgrade.md) · [caption-context-enrichment-assessment-2026-07-05.md §8](../assessments/current/caption-context-enrichment-assessment-2026-07-05.md)
-- Engineering heuristics: [docs/strategy/engineering-heuristics.md](../strategy/engineering-heuristics.md) — cited: ARCH-04, ARCH-06, ARCH-08, RES-01, RES-06, RES-07, RES-10, DATA-13, REF-15.
+- Engineering heuristics: [heuristics-canon lexicons/engineering.md](https://github.com/darce/heuristics-canon/blob/main/lexicons/engineering.md) (canonical; gitignored mirror: `docs/workbay/rules/engineering-heuristics.md`) — cited: ARCH-04, ARCH-06, ARCH-08, RES-01, RES-06, RES-07, RES-10, DATA-13, REF-15.

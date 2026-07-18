@@ -22,6 +22,19 @@ use function wp_json_encode;
 class ConflictRepository {
 	use PreparesSqlQueries;
 
+	/**
+	 * Aggregate conflict code recorded once per mass-divergence cycle instead of a
+	 * per-entity curated_* conflict storm (E15-35 Slice 3).
+	 */
+	public const CONFLICT_CODE_BACKEND_ROSTER_REGRESSED = 'backend_roster_regressed';
+
+	/**
+	 * Constant entity coordinates for the aggregate row so upsert semantics keep at
+	 * most one open aggregate per tenant.
+	 */
+	public const AGGREGATE_ENTITY_TYPE = 'roster';
+	public const AGGREGATE_ENTITY_KEY  = 'backend_roster';
+
 	private string $table_name;
 
 	public function __construct( ?string $table_name = null ) {
@@ -210,6 +223,59 @@ class ConflictRepository {
 		}
 
 		return $this->resolve_insert_id( $wpdb );
+	}
+
+	/**
+	 * Record the aggregate backend-roster-regression conflict with cross-cycle dedup:
+	 * while an open aggregate already exists for the same backend_version nothing is
+	 * written; an open aggregate for another backend_version is refreshed in place via
+	 * the projection-conflict upsert, so at most one aggregate row is ever open.
+	 *
+	 * @param array<string,mixed> $machine_payload Counts + code-partitioned entity map (+ truncation flag).
+	 * @param array<string,mixed> $local_payload   Local curated-state summary.
+	 */
+	public function record_backend_roster_regression( string $tenant_id, int $backend_version, array $machine_payload, array $local_payload ): int|false {
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			return false;
+		}
+
+		$existing_open_aggregate = $this->find_open_backend_roster_regression( $normalized_tenant_id );
+		if (
+			is_array( $existing_open_aggregate )
+			&& max( 0, $backend_version ) === (int) ( $existing_open_aggregate['backend_version'] ?? -1 )
+		) {
+			return max( 1, (int) ( $existing_open_aggregate['id'] ?? 1 ) );
+		}
+
+		return $this->record_projection_conflict(
+			$normalized_tenant_id,
+			self::AGGREGATE_ENTITY_TYPE,
+			self::AGGREGATE_ENTITY_KEY,
+			self::CONFLICT_CODE_BACKEND_ROSTER_REGRESSED,
+			$backend_version,
+			0,
+			0,
+			$machine_payload,
+			$local_payload
+		);
+	}
+
+	/**
+	 * @return array<string,mixed>|null Open aggregate row (id, backend_version, resolution_status) when present.
+	 */
+	public function find_open_backend_roster_regression( string $tenant_id ): ?array {
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			return null;
+		}
+
+		return $this->find_open_projection_conflict(
+			$normalized_tenant_id,
+			self::AGGREGATE_ENTITY_TYPE,
+			self::AGGREGATE_ENTITY_KEY,
+			self::CONFLICT_CODE_BACKEND_ROSTER_REGRESSED
+		);
 	}
 
 	/**

@@ -178,6 +178,9 @@ class FakeClusterRepository:
     async def get_by_id(self, cluster_id: str) -> FakeClusterForRepo | None:
         return self.clusters.get(cluster_id)
 
+    async def get_by_ids(self, cluster_ids: Sequence[str]) -> list[FakeClusterForRepo]:
+        return [self.clusters[cluster_id] for cluster_id in cluster_ids if cluster_id in self.clusters]
+
     async def get_members(self, cluster_id: str):
         return []
 

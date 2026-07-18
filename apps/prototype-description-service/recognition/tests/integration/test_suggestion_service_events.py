@@ -42,6 +42,7 @@ async def test_accept_emits_suggestion_resolved_event(db_session, tenant) -> Non
             bbox_height=1,
             confidence=0.99,
             embedding=[0.0] * 512,
+            embedding_model="buffalo_l@insightface",
         )
     )
     await db_session.commit()
@@ -110,6 +111,7 @@ async def test_resolve_for_identity_emits_suggestion_resolved_event(db_session, 
             bbox_height=1,
             confidence=0.99,
             embedding=[0.0] * 512,
+            embedding_model="buffalo_l@insightface",
         )
     )
     await db_session.commit()

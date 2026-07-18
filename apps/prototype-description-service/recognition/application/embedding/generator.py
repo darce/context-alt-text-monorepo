@@ -27,11 +27,18 @@ from recognition.application.integrations import (
     create_adapter_circuit_breaker,
     wait_for_adapter,
 )
+from recognition.config import get_settings
 
 if TYPE_CHECKING:
-    from recognition.infrastructure.embeddings import DetectedFace, InsightFaceAdapter
+    from recognition.application.embedding.detector import FaceDetection
+    from recognition.infrastructure.embeddings import InsightFaceAdapter
 
 logger = logging.getLogger(__name__)
+
+
+def _default_embedding_dim() -> int:
+    """Single source: recognition settings identity_detection.embedding_dimension."""
+    return get_settings().identity_detection.embedding_dimension
 
 
 @dataclass
@@ -80,8 +87,8 @@ class EmbeddingGeneratorProtocol(ABC):
 class StubEmbeddingGenerator(EmbeddingGeneratorProtocol):
     """Deterministic stub generator for tests - generates fake embeddings from hashes."""
 
-    def __init__(self, embedding_dim: int = 512) -> None:
-        self.embedding_dim = embedding_dim
+    def __init__(self, embedding_dim: int | None = None) -> None:
+        self.embedding_dim = embedding_dim if embedding_dim is not None else _default_embedding_dim()
 
     async def generate(self, face_images: Iterable[bytes]) -> list[EmbeddingResult]:
         """Return deterministic fake embeddings based on input hashes."""
@@ -125,12 +132,12 @@ class InsightFaceEmbeddingGenerator(EmbeddingGeneratorProtocol):
     def __init__(
         self,
         adapter: InsightFaceAdapter,
-        embedding_dim: int = 512,
+        embedding_dim: int | None = None,
         timeout: float | None = None,
         breaker: AdapterCircuitBreaker | None = None,
     ) -> None:
         self._adapter = adapter
-        self.embedding_dim = embedding_dim
+        self.embedding_dim = embedding_dim if embedding_dim is not None else _default_embedding_dim()
         self._timeout = timeout if timeout is not None else get_database_settings().embedding_timeout_s
         self._breaker = breaker or create_adapter_circuit_breaker("insightface.analyze")
 
@@ -148,21 +155,27 @@ class InsightFaceEmbeddingGenerator(EmbeddingGeneratorProtocol):
 
             try:
                 # Run detection and embedding in one pass
-                async def analyze_current_image(current_image_bytes: bytes = image_bytes) -> list[DetectedFace]:
+                async def analyze_current_image(current_image_bytes: bytes = image_bytes) -> list[FaceDetection]:
                     return await wait_for_adapter(
                         self._adapter.analyze(current_image_bytes),
                         timeout_s=self._timeout,
                         adapter_name="insightface.analyze",
                     )
 
-                face_results: list[DetectedFace] = await self._breaker.call(analyze_current_image)
+                face_results: list[FaceDetection] = await self._breaker.call(analyze_current_image)
 
-                for _face in face_results:
+                for face in face_results:
+                    if face.embedding is None:
+                        logger.warning(
+                            "Skipping face with missing embedding for media_id=%s",
+                            media_id,
+                        )
+                        continue
                     results.append(
                         EmbeddingResult(
                             media_id=media_id,
-                            embedding=_face.embedding_512,  # Use 512D embedding
-                            confidence=_face.confidence,
+                            embedding=face.embedding,
+                            confidence=face.confidence,
                         )
                     )
             except AdapterTimeoutError as exc:

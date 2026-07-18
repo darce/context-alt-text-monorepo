@@ -71,6 +71,7 @@ async def test_sqlalchemy_cluster_repository_get_delta_returns_changed_clusters_
                 bbox_height=40,
                 confidence=0.9,
                 embedding=[0.1] * 512,
+                embedding_model="buffalo_l@insightface",
             ),
             MediaIdentityModel(
                 id=newer_identity_id,
@@ -83,6 +84,7 @@ async def test_sqlalchemy_cluster_repository_get_delta_returns_changed_clusters_
                 bbox_height=42,
                 confidence=0.95,
                 embedding=[0.2] * 512,
+                embedding_model="buffalo_l@insightface",
             ),
         ]
     )
@@ -176,6 +178,7 @@ async def test_sqlalchemy_cluster_repository_get_delta_returns_full_current_memb
                 bbox_height=46,
                 confidence=0.93,
                 embedding=[0.3] * 512,
+                embedding_model="buffalo_l@insightface",
             ),
             MediaIdentityModel(
                 id=second_identity_id,
@@ -188,6 +191,7 @@ async def test_sqlalchemy_cluster_repository_get_delta_returns_full_current_memb
                 bbox_height=48,
                 confidence=0.94,
                 embedding=[0.4] * 512,
+                embedding_model="buffalo_l@insightface",
             ),
         ]
     )

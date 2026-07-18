@@ -80,6 +80,7 @@ def _make_media_identity_rows(tenant_id: uuid.UUID, count: int, db_session) -> l
                 bbox_height=10,
                 confidence=0.99,
                 embedding=embedding.tolist(),
+                embedding_model="buffalo_l@insightface",
             )
         )
     return rows

@@ -66,8 +66,8 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 	/**
 	 * @param array<int,array<string,mixed>> $members
 	 */
-	public function merge_snapshot_for_tenant( string $tenant_id, array $members, int $snapshot_version ): void {
-		$this->snapshot_merger->merge_snapshot_for_tenant( $tenant_id, $members, $snapshot_version );
+	public function merge_snapshot_for_tenant( string $tenant_id, array $members, int $snapshot_version, bool $suppress_conflict_storm = false ): void {
+		$this->snapshot_merger->merge_snapshot_for_tenant( $tenant_id, $members, $snapshot_version, $suppress_conflict_storm );
 	}
 
 	/**

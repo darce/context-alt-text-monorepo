@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+use stdClass;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -30,6 +31,31 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 				'methods'             => 'GET',
 				'callback'            => array( $this, 'get_identity_suggestions' ),
 				'permission_callback' => array( $this, 'can_manage_recognition' ),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/recognition/identities/suggestions',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'get_identities_suggestions' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+				'args'                => array(
+					'identity_ids' => array(
+						// 'array' would trigger rest_sanitize_array -> wp_parse_list, splitting
+						// the comma-joined scalar so add_query_arg emits identity_ids[0]=...,
+						// which binds nothing on the FastAPI side. Must stay 'string'.
+						'type'        => 'string',
+						'required'    => true,
+						'description' => 'Comma-joined identity UUIDs (max 100), forwarded unchanged.',
+					),
+					'top_k'        => array(
+						'type'        => 'integer',
+						'default'     => 1,
+						'description' => 'Maximum suggestions per identity.',
+					),
+				),
 			)
 		);
 
@@ -189,10 +215,11 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 			return new WP_Error( 'missing_identity_id', 'Identity ID is required.', array( 'status' => 400 ) );
 		}
 
+		// No 'threshold': the recognition route accepts only min_confidence, so the
+		// old param never bound (UXP-3 0b-5 dead-param removal).
 		$query = array(
 			'tenant_id' => $this->get_tenant_id(),
 			'top_k'     => absint( $request->get_param( 'top_k' ) ?? 5 ),
-			'threshold' => (float) ( $request->get_param( 'threshold' ) ?? 0.6 ),
 		);
 
 		$response = $this->proxy_request(
@@ -208,6 +235,43 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 			return new WP_REST_Response(
 				array(
 					'matches' => array(),
+				),
+				200
+			);
+		}
+
+		return $response;
+	}
+
+	public function get_identities_suggestions( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$identity_ids = sanitize_text_field( (string) $request->get_param( 'identity_ids' ) );
+
+		if ( '' === $identity_ids ) {
+			return new WP_Error( 'missing_identity_ids', 'Identity IDs are required.', array( 'status' => 400 ) );
+		}
+
+		$query = array(
+			'tenant_id'    => $this->get_tenant_id(),
+			// Forwarded as the unchanged comma-joined scalar; FastAPI validates
+			// each id and rejects over-limit lists (>100) with 400.
+			'identity_ids' => $identity_ids,
+			'top_k'        => absint( $request->get_param( 'top_k' ) ?? 1 ),
+		);
+
+		$response = $this->proxy_request(
+			'GET',
+			'/recognition/identities/suggestions',
+			array(),
+			$query
+		);
+		if ( $this->is_backend_overloaded( $response ) ) {
+			return parent::backend_overloaded_response( $response );
+		}
+		if ( $this->is_proxy_unavailable( $response ) ) {
+			return new WP_REST_Response(
+				array(
+					// Keyed-by-id envelope: empty mapping must serialize as {} not [].
+					'matches' => new stdClass(),
 				),
 				200
 			);

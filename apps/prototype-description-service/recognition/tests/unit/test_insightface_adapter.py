@@ -16,7 +16,9 @@ import pytest
 
 # Try to import - skip tests if dependencies are broken
 try:
-    from recognition.infrastructure.embeddings import DetectedFace, InsightFaceAdapter
+    from recognition.application.embedding.detector import FaceDetection
+    from recognition.application.embedding.manifest import incumbent_embedding_model_manifest
+    from recognition.infrastructure.embeddings import InsightFaceAdapter
 
     HAS_ADAPTER = True
 except (ImportError, AttributeError) as e:
@@ -44,6 +46,7 @@ class TestInsightFaceAdapterInit:
         assert "device" in info
         assert "det_thresh" in info
         assert info["model_loaded"] is False
+        assert info["model_id"] == incumbent_embedding_model_manifest().model_id
 
 
 @pytest.mark.skipif(not HAS_ADAPTER, reason="InsightFace adapter dependencies not available")
@@ -162,47 +165,48 @@ class TestInsightFaceAdapterExecutorOffload:
 
 
 @pytest.mark.skipif(not HAS_ADAPTER, reason="InsightFace adapter dependencies not available")
-class TestDetectedFaceDataclass:
-    """Tests for the DetectedFace dataclass."""
+class TestFaceDetectionSeamFromAdapter:
+    """Adapter emits the neutral FaceDetection seam (DetectedFace removed)."""
 
-    def test_detected_face_holds_all_fields(self) -> None:
-        """DetectedFace should store all detection metadata."""
+    def test_face_detection_holds_seam_fields(self) -> None:
+        """FaceDetection stores detection metadata used by the scan path."""
         embedding = np.random.randn(512).astype(np.float32)
-        landmarks = np.random.randn(5, 2).astype(np.float32)
+        model_id = incumbent_embedding_model_manifest().model_id
 
-        face = DetectedFace(
+        face = FaceDetection(
+            media_id="",
             bbox=(10, 20, 100, 150),
             confidence=0.95,
-            embedding_512=embedding,
-            pose=(5.0, -10.0, 2.0),
-            age=35,
-            gender=1,
-            landmarks=landmarks,
+            embedding=embedding,
+            pose_pitch=5.0,
+            pose_yaw=-10.0,
+            pose_roll=2.0,
+            model_id=model_id,
         )
 
         assert face.bbox == (10, 20, 100, 150)
         assert face.confidence == 0.95
-        np.testing.assert_array_equal(face.embedding_512, embedding)
-        assert face.pose == (5.0, -10.0, 2.0)
-        assert face.age == 35
-        assert face.gender == 1
-        np.testing.assert_array_equal(face.landmarks, landmarks)
+        np.testing.assert_array_equal(face.embedding, embedding)
+        assert face.pose_pitch == 5.0
+        assert face.pose_yaw == -10.0
+        assert face.pose_roll == 2.0
+        assert face.model_id == model_id
+        assert not hasattr(face, "age")
+        assert not hasattr(face, "gender")
 
     def test_optional_fields_can_be_none(self) -> None:
-        """Optional fields (pose, age, gender, landmarks) can be None."""
+        """Optional pose may be None on the seam."""
         embedding = np.random.randn(512).astype(np.float32)
 
-        face = DetectedFace(
+        face = FaceDetection(
+            media_id="",
             bbox=(10, 20, 100, 150),
             confidence=0.95,
-            embedding_512=embedding,
-            pose=None,
-            age=None,
-            gender=None,
-            landmarks=None,
+            embedding=embedding,
+            pose_pitch=None,
+            pose_yaw=None,
+            pose_roll=None,
+            model_id=incumbent_embedding_model_manifest().model_id,
         )
 
-        assert face.pose is None
-        assert face.age is None
-        assert face.gender is None
-        assert face.landmarks is None
+        assert face.pose_pitch is None

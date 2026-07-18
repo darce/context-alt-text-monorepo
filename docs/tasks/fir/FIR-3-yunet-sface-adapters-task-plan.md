@@ -63,12 +63,12 @@ Golden tests are the heart of this task (guide checklist: landmark order, affine
 
 ## Consolidated Checklist
 
-- [ ] S1 models pinned (sha256 + license hashes + source URLs), loader fail-closed test
-- [ ] S2 OpenCV reference + golden fixtures committed
-- [ ] S3 ORT parity: embeddings cosine ≥ 0.999 vs reference, boxes IoU ≥ 0.99, zero-norm raises
-- [ ] S4 OpenCV pin ADR recorded; chosen pin lands with both suites green
-- [ ] Import-purity test: `face_pipeline` imports nothing from worker/HTTP layers
-- [ ] Real-corpus smoke run + distribution eyeballed, result recorded
+- [x] S1 models pinned (sha256 + license hashes + source URLs), loader fail-closed test
+- [x] S2 OpenCV reference + golden fixtures committed
+- [x] S3 ORT parity: embeddings cosine ≥ 0.999 vs reference, boxes IoU ≥ 0.99, zero-norm raises
+- [x] S4 OpenCV pin ADR recorded; chosen pin lands with both suites green
+- [x] Import-purity test: `face_pipeline` imports nothing from worker/HTTP layers
+- [x] Real-corpus smoke run + distribution eyeballed, result recorded
 - [ ] `make check-remote` green; `/review-parallel`; zero open findings; handoff decisions per slice
 
 ## Success Criteria

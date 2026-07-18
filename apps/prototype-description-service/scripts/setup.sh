@@ -3,8 +3,9 @@
 # Handles platform-specific dependencies (macOS Apple Silicon vs Linux).
 #
 # Usage:
-#   ./scripts/setup.sh           # Install all dependencies including face detection
-#   ./scripts/setup.sh --no-face # Skip face detection dependencies
+#   ./scripts/setup.sh            # Core + face_pipeline model fetch
+#   ./scripts/setup.sh --no-face  # Core only (skip model fetch)
+#   ./scripts/setup.sh --bench    # Also install insightface ([bench] extra)
 
 set -euo pipefail
 
@@ -15,11 +16,14 @@ PROJECT_VENV_PYTHON="${PROJECT_ROOT}/.venv/bin/python"
 
 # Parse arguments
 INSTALL_FACE=1
+INSTALL_BENCH=0
 for arg in "$@"; do
   case $arg in
     --no-face)
       INSTALL_FACE=0
-      shift
+      ;;
+    --bench)
+      INSTALL_BENCH=1
       ;;
   esac
 done
@@ -28,18 +32,20 @@ echo "[setup] Syncing locked core dependencies via uv.lock..."
 cd "${PROJECT_ROOT}"
 VIRTUAL_ENV= "${UV_BIN}" sync --locked --extra dev
 
-if [[ "${INSTALL_FACE}" -eq 1 ]]; then
-  echo "[setup] Installing face detection dependencies..."
-  
+if [[ "${INSTALL_BENCH}" -eq 1 ]]; then
+  echo "[setup] Installing insightface via [bench] extra (FIR-5 bake-off / incumbent)..."
   if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]]; then
-    echo "[setup] Detected macOS Apple Silicon - using specialized install script..."
-    PYTHON_BIN="${PROJECT_VENV_PYTHON}" "${SCRIPT_DIR}/install_insightface_mac.sh"
+    PYTHON_BIN="${PROJECT_VENV_PYTHON}" "${SCRIPT_DIR}/install_insightface_mac.sh" --bench
   else
-    echo "[setup] Syncing locked InsightFace dependencies..."
-    VIRTUAL_ENV= "${UV_BIN}" sync --locked --extra dev --extra face
+    VIRTUAL_ENV= "${UV_BIN}" sync --locked --extra dev --extra bench
   fi
+fi
+
+if [[ "${INSTALL_FACE}" -eq 1 ]]; then
+  echo "[setup] Fetching face_pipeline ONNX models (YuNet + SFace)..."
+  PYTHON_BIN="${PROJECT_VENV_PYTHON}" "${SCRIPT_DIR}/install_insightface_mac.sh"
 else
-  echo "[setup] Skipping face detection dependencies (--no-face specified)"
+  echo "[setup] Skipping face_pipeline model fetch (--no-face specified)"
 fi
 
 echo ""
@@ -48,3 +54,6 @@ echo ""
 echo "Next steps:"
 echo "  make serve   # Start development server"
 echo "  make check   # Run linting, type checking, and tests"
+echo "  # Dark face_pipeline profile: set RECOGNITION_FACE_PIPELINE_PROFILE=face_pipeline"
+echo "  #   + PGVECTOR_DIM=128 + RECOGNITION_EMBEDDING_DIMENSION=128 (fresh DB)."
+echo "  # Incumbent / bake-off: ./scripts/setup.sh --bench"

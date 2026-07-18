@@ -94,7 +94,9 @@ async def build_embedding_runtime(
     except Exception as exc:
         logger.exception(
             "InsightFace runtime unavailable; scan paths will fail closed. "
-            "Install with: pip install 'prototype-description-service[local]'",
+            "Install with: pip install 'prototype-description-service[bench]' "
+            "(or: uv sync --extra bench). Required for the incumbent dark-default profile; "
+            "face_pipeline uses core deps + scripts/fetch_face_pipeline_models.py.",
         )
         reason = str(exc) or exc.__class__.__name__
         return UnavailableFaceDetector(reason), UnavailableEmbeddingGenerator(reason)

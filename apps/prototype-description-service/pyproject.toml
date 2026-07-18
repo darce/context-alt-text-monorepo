@@ -64,12 +64,13 @@ dev = [
     "types-Pillow",
     "types-networkx",
 ]
-# Face detection - requires platform-specific install on macOS, see README
-face = [
+# InsightFace for FIR-5 bake-off legs and the FIR-4 dark-default prod image
+# (Dockerfile installs .[bench] so the incumbent path stays available until FIR-6).
+# Not required for the face_pipeline profile (YuNet+SFace / core deps only).
+bench = [
     "insightface>=0.7.3,<1.0.0",
 ]
 gpu = [
-    "insightface>=0.7.3,<1.0.0",
     "onnxruntime-gpu>=1.22.0 ; platform_system == \"Linux\"",
 ]
 dashboard = [
@@ -77,7 +78,7 @@ dashboard = [
     "textual>=3.0.0,<4.0.0",
 ]
 # Local-CPU VLM (Florence-2) for image description (E19-1 D3). Isolated from the
-# recognition-only default install: never pulled by `dev`/`face`/`gpu`, so the
+# recognition-only default install: never pulled by `dev`/`bench`/`gpu`, so the
 # default build and the live OCIR image stay torch-free.
 vlm = [
     # Florence-2's trust_remote_code modeling pre-dates the transformers attention

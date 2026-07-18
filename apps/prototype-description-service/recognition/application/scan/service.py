@@ -64,6 +64,19 @@ class ReconcileResult:
         return self.total
 
 
+@dataclass(slots=True)
+class _PendingReconcileEvent:
+    """Telemetry payload stashed until the caller's durable commit succeeds."""
+
+    media_id: int
+    tenant_id: str
+    job_id: str | None
+    result: ReconcileResult
+    detections: list[FaceDetection]
+    persist_ms: float
+    detect_ms: float
+
+
 async def run_scan_three_phase[PersistResult](
     *,
     mark_running: Callable[[], Awaitable[object]],
@@ -104,6 +117,9 @@ class ScanService:
         self._object_store_factory = object_store_factory
         # Cached once per service instance (S4CR-06); settings load is not free.
         self._cached_face_pipeline_profile: str | None = None
+        # Stashed by process_media_item for emit after the caller's durable commit
+        # (handler session boundary). Not used by save_job_results.
+        self._pending_reconcile_event: _PendingReconcileEvent | None = None
 
     async def analyze_media(
         self,
@@ -305,11 +321,17 @@ class ScanService:
         detector. Legacy URL transport (http://, https://) keeps passing
         the URL string unchanged.
 
+        Flush-only on this session: the worker handler owns the durable commit
+        together with queue-item status (pre-S4 / rg-002). Call
+        :meth:`emit_pending_scan_media_reconciled` only after that commit so
+        ``scan_media_reconciled`` never outruns durability (S4CR-03).
+
         Returns:
             ReconcileResult with detected/matched/new counts. Callers that need
             the historical int (identities_detected = matched + new) use
             ``.total`` or ``int(result)``.
         """
+        self._pending_reconcile_event = None
         tenant_uuid = uuid.UUID(str(tenant_id))
         detector_source: bytes | str = media_url
         if media_url.startswith("file://") and self._object_store_factory is not None:
@@ -326,11 +348,9 @@ class ScanService:
             detections=detections,
             media_url=media_url,
         )
-        # Durable commit before telemetry so the event never outruns the DB
-        # (worker path previously flushed only; handler committed later).
-        await self._session.commit()
         persist_ms = (time.perf_counter() - persist_started) * 1000.0
-        _emit_scan_media_reconciled(
+        # Stash only — emit after the caller's durable commit (handler boundary).
+        self._pending_reconcile_event = _PendingReconcileEvent(
             media_id=media_id,
             tenant_id=str(tenant_uuid),
             job_id=str(job_id) if job_id is not None else None,
@@ -338,9 +358,28 @@ class ScanService:
             detections=detections,
             persist_ms=persist_ms,
             detect_ms=detect_ms,
-            get_profile=self._face_pipeline_profile_cached,
         )
         return result
+
+    def emit_pending_scan_media_reconciled(self) -> None:
+        """Emit the stashed ``process_media_item`` event after a durable commit.
+
+        No-op when nothing is pending (e.g. detect/persist raised before stash).
+        """
+        pending = self._pending_reconcile_event
+        if pending is None:
+            return
+        self._pending_reconcile_event = None
+        _emit_scan_media_reconciled(
+            media_id=pending.media_id,
+            tenant_id=pending.tenant_id,
+            job_id=pending.job_id,
+            result=pending.result,
+            detections=pending.detections,
+            persist_ms=pending.persist_ms,
+            detect_ms=pending.detect_ms,
+            get_profile=self._face_pipeline_profile_cached,
+        )
 
     async def _persist_identities(
         self,

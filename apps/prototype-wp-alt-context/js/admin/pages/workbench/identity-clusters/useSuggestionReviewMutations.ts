@@ -54,7 +54,7 @@ export const useSuggestionReviewMutations = ({ queryClient, bulkActionRef }: Use
       return { previous };
     },
     onError: (error, _suggestionId, context) => {
-      console.warn('[SuggestionReviewPanel] accept failed, restoring cache:', error);
+      console.warn('[ReviewQueue] accept failed, restoring cache:', error);
       if (context?.previous) {
         queryClient.setQueryData(reviewPageKey, context.previous);
       }
@@ -85,7 +85,7 @@ export const useSuggestionReviewMutations = ({ queryClient, bulkActionRef }: Use
       return { previous };
     },
     onError: (error, _suggestionId, context) => {
-      console.warn('[SuggestionReviewPanel] reject failed, restoring cache:', error);
+      console.warn('[ReviewQueue] reject failed, restoring cache:', error);
       if (context?.previous) {
         queryClient.setQueryData(reviewPageKey, context.previous);
       }

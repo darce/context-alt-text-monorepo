@@ -17,7 +17,7 @@ const listComponentScssFiles = (): string[] =>
 const isExempt = (line: string): boolean =>
   /(?:\/\/|\/\*)\s*(REFA-3|E21-4)\s+disposition:/.test(line);
 
-const literalPatterns: ReadonlyArray<{ name: string; re: RegExp }> = [
+const literalPatterns: readonly { name: string; re: RegExp }[] = [
   { name: 'hex', re: /#[0-9a-fA-F]{3,8}\b/ },
   { name: 'rgb/rgba', re: /rgba?\(/ },
   // Named color keywords used as color values (not white-space, etc.)
@@ -34,7 +34,7 @@ const literalPatterns: ReadonlyArray<{ name: string; re: RegExp }> = [
   ];
 
 /** Raw px spacing — applied in the generic loop (E21-5 closes the spacing gap). */
-const spacingLiteralPatterns: ReadonlyArray<{ name: string; re: RegExp }> = [
+const spacingLiteralPatterns: readonly { name: string; re: RegExp }[] = [
   { name: 'spacing-gap', re: /(?<![\w-])gap(?:-(?:x|y))?:\s*[0-9]+px\b/ },
   {
     name: 'spacing-padding',

@@ -24,6 +24,7 @@ from recognition.infrastructure.face_pipeline.provenance import (
     MODEL_MANIFEST,
     PENDING_OPERATOR_FETCH,
     ModelIntegrityError,
+    ModelMissingError,
     ModelProvenance,
     _file_sha256,
     load_verified_model,
@@ -132,7 +133,7 @@ def test_load_verified_model_tampered_raises(tmp_path: Path, monkeypatch: pytest
 
 
 def test_load_verified_model_missing_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Missing on-disk model refuses to load."""
+    """Missing on-disk model refuses to load as ModelMissingError (non-integrity)."""
     file_name = "face_recognition_sface_2021dec.onnx"
     entry = _make_entry(
         file_name=file_name,
@@ -149,8 +150,10 @@ def test_load_verified_model_missing_raises(tmp_path: Path, monkeypatch: pytest.
     )
     monkeypatch.setitem(MODEL_MANIFEST, "sface", entry)
 
-    with pytest.raises(ModelIntegrityError, match="missing"):
+    with pytest.raises(ModelMissingError, match="missing"):
         load_verified_model("sface", models_dir=tmp_path)
+    # Not a sticky integrity failure class.
+    assert not issubclass(ModelMissingError, ModelIntegrityError)
 
 
 def test_load_verified_model_sentinel_hash_refuses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -167,7 +170,7 @@ def test_load_verified_model_sentinel_hash_refuses(tmp_path: Path, monkeypatch: 
     )
     monkeypatch.setitem(MODEL_MANIFEST, "yunet", entry)
 
-    with pytest.raises(ModelIntegrityError, match=PENDING_OPERATOR_FETCH):
+    with pytest.raises(ModelMissingError, match=PENDING_OPERATOR_FETCH):
         load_verified_model("yunet", models_dir=tmp_path)
 
 
@@ -191,7 +194,7 @@ def test_load_verified_model_missing_license_raises(tmp_path: Path, monkeypatch:
     )
     monkeypatch.setitem(MODEL_MANIFEST, "yunet", entry)
 
-    with pytest.raises(ModelIntegrityError, match="license file missing"):
+    with pytest.raises(ModelMissingError, match="license file missing"):
         load_verified_model("yunet", models_dir=tmp_path)
 
 

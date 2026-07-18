@@ -118,16 +118,33 @@ def _install_synthetic_pair(
     return yunet_payload, expected_sface
 
 
+def _align_dims_to_sface(monkeypatch: pytest.MonkeyPatch) -> None:
+    """SFace manifest is 128-d; readiness three-way guard needs matching env."""
+    monkeypatch.setenv("RECOGNITION_EMBEDDING_DIMENSION", "128")
+    monkeypatch.setenv("PGVECTOR_DIM", "128")
+    from db.settings import get_database_settings
+    from recognition.config import get_settings
+
+    get_settings.cache_clear()
+    get_database_settings.cache_clear()
+
+
 @pytest.fixture(autouse=True)
 def _clear_verify_cache() -> None:
     health_mod.reset_face_pipeline_verify_cache_for_tests()
     yield
     health_mod.reset_face_pipeline_verify_cache_for_tests()
+    from db.settings import get_database_settings
+    from recognition.config import get_settings
+
+    get_settings.cache_clear()
+    get_database_settings.cache_clear()
 
 
 @pytest.mark.skipif(not MODELS_PRESENT, reason=MODELS_SKIP)
-def test_check_face_pipeline_models_happy_path_real_models() -> None:
+def test_check_face_pipeline_models_happy_path_real_models(monkeypatch: pytest.MonkeyPatch) -> None:
     """Happy path: verify against real fetched models dir (models-present only)."""
+    _align_dims_to_sface(monkeypatch)
     load_verified_model("yunet", models_dir=DEFAULT_MODELS_DIR)
     load_verified_model("sface", models_dir=DEFAULT_MODELS_DIR)
 
@@ -138,10 +155,28 @@ def test_check_face_pipeline_models_happy_path_real_models() -> None:
 
 def test_check_face_pipeline_models_happy_path_synthetic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Modelless happy path via synthetic manifest (CI coverage without ONNX)."""
+    _align_dims_to_sface(monkeypatch)
     _install_synthetic_pair(tmp_path, monkeypatch)
     result = health_mod.check_face_pipeline_models(tmp_path)
     assert result.status.value == "ok"
     assert "yunet" in result.detail or "verified" in result.detail
+
+
+def test_check_face_pipeline_models_dim_mismatch_unhealthy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """E2E-03: verified models + env dim != manifest 128 → UNHEALTHY with dim reason."""
+    _install_synthetic_pair(tmp_path, monkeypatch)
+    # Defaults / explicit 512 disagree with SFace-128.
+    monkeypatch.setenv("RECOGNITION_EMBEDDING_DIMENSION", "512")
+    monkeypatch.setenv("PGVECTOR_DIM", "512")
+    from db.settings import get_database_settings
+    from recognition.config import get_settings
+
+    get_settings.cache_clear()
+    get_database_settings.cache_clear()
+
+    result = health_mod.check_face_pipeline_models(tmp_path)
+    assert result.status.value == "unhealthy"
+    assert "dimension" in result.detail.lower() or "mismatch" in result.detail.lower()
 
 
 def test_check_face_pipeline_models_tampered_byte_unhealthy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -165,6 +200,7 @@ def test_check_face_pipeline_models_missing_sface_atomic_unhealthy(
 
 
 def test_mtime_size_drift_triggers_reverify(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _align_dims_to_sface(monkeypatch)
     _install_synthetic_pair(tmp_path, monkeypatch)
 
     verify_calls = {"n": 0}
@@ -197,6 +233,7 @@ def test_mtime_size_drift_triggers_reverify(tmp_path: Path, monkeypatch: pytest.
 
 def test_unverified_bytes_never_ok_via_call_count(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """mtime+size alone never green-lights never-verified bytes."""
+    _align_dims_to_sface(monkeypatch)
     _install_synthetic_pair(tmp_path, monkeypatch)
 
     health_mod.reset_face_pipeline_verify_cache_for_tests()
@@ -272,12 +309,11 @@ def test_register_health_probes_branches_on_profile(monkeypatch: pytest.MonkeyPa
     """register_health_probes uses face_pipeline check when profile is face_pipeline."""
     from fastapi.testclient import TestClient
 
+    _align_dims_to_sface(monkeypatch)
     _install_synthetic_pair(tmp_path, monkeypatch)
 
     monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_PROFILE", "face_pipeline")
     monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_MODELS_DIR", str(tmp_path))
-    # Keep dim pair valid (default 512).
-    monkeypatch.delenv("RECOGNITION_EMBEDDING_DIMENSION", raising=False)
 
     app = _standalone_ready_app(monkeypatch)
     client = TestClient(app)
@@ -295,6 +331,32 @@ def test_register_health_probes_branches_on_profile(monkeypatch: pytest.MonkeyPa
     assert dbody["model_cache"]["profile"] == "face_pipeline"
 
 
+def test_ready_face_pipeline_dim_mismatch_503(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """E2E-03: /ready UNHEALTHY when models verify but env dims != SFace-128."""
+    from fastapi.testclient import TestClient
+
+    _install_synthetic_pair(tmp_path, monkeypatch)
+    monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_PROFILE", "face_pipeline")
+    monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_MODELS_DIR", str(tmp_path))
+    monkeypatch.setenv("RECOGNITION_EMBEDDING_DIMENSION", "512")
+    monkeypatch.setenv("PGVECTOR_DIM", "512")
+    from db.settings import get_database_settings
+    from recognition.config import get_settings
+
+    get_settings.cache_clear()
+    get_database_settings.cache_clear()
+
+    app = _standalone_ready_app(monkeypatch)
+    client = TestClient(app)
+    resp = client.get("/ready")
+    assert resp.status_code == 503, resp.text
+    body = resp.json()
+    assert body["status"] == "unhealthy"
+    mc = next(c for c in body["checks"] if c["name"] == "model_cache")
+    assert mc["status"] == "unhealthy"
+    assert "dimension" in mc["detail"].lower() or "mismatch" in mc["detail"].lower()
+
+
 def test_model_probe_verify_runs_off_event_loop(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """S3CR-03: face_pipeline verify must not run on the event-loop thread."""
     import asyncio
@@ -304,10 +366,10 @@ def test_model_probe_verify_runs_off_event_loop(monkeypatch: pytest.MonkeyPatch,
 
     import api.main as api_main
 
+    _align_dims_to_sface(monkeypatch)
     _install_synthetic_pair(tmp_path, monkeypatch)
     monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_PROFILE", "face_pipeline")
     monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_MODELS_DIR", str(tmp_path))
-    monkeypatch.delenv("RECOGNITION_EMBEDDING_DIMENSION", raising=False)
 
     verify_threads: list[int] = []
     loop_threads: list[int] = []

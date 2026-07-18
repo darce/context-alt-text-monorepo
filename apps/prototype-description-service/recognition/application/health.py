@@ -124,6 +124,10 @@ def check_face_pipeline_models(models_dir: Path) -> CheckResult:
     First probe (or API boot) runs full ``load_verified_model`` per artifact and
     caches (ok|reason, mtime, size). Subsequent probes re-stat only; drift
     triggers full re-verify. UNHEALTHY detail names the failing artifact.
+
+    After model verification passes, also assert three-way embedding dimension
+    equality (manifest == pgvector == identity_detection) so a 512-dim env with
+    SFace-128 models cannot report ready (E2E-03).
     """
     root = Path(models_dir)
     failures: list[str] = []
@@ -136,6 +140,19 @@ def check_face_pipeline_models(models_dir: Path) -> CheckResult:
             "model_cache",
             HealthStatus.UNHEALTHY,
             "; ".join(failures),
+        )
+    try:
+        from recognition.infrastructure.embeddings.face_pipeline_adapter import (
+            assert_three_way_embedding_dimensions,
+            sface_embedding_model_manifest,
+        )
+
+        assert_three_way_embedding_dimensions(sface_embedding_model_manifest())
+    except Exception as exc:
+        return CheckResult(
+            "model_cache",
+            HealthStatus.UNHEALTHY,
+            f"embedding dimension mismatch: {exc}",
         )
     return CheckResult("model_cache", HealthStatus.OK, f"verified: yunet+sface @ {root}")
 

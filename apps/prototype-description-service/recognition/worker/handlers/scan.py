@@ -87,7 +87,8 @@ class ScanItemHandler:
                 try:
                     # process_media_item is flush-only (pre-S4); this session
                     # commits identity rows + queue-item status together, then
-                    # emits scan_media_reconciled (S4CR-03, rg-002).
+                    # emits scan_media_reconciled and bumps counters only after
+                    # the durable commit gate (S4CR-03, rg-002, E2E-01).
                     reconcile = await scan_service.process_media_item(
                         tenant_id=str(item.tenant_id),
                         media_id=item.media_id,
@@ -95,6 +96,12 @@ class ScanItemHandler:
                         job_id=item.job_id,
                     )
                     identities_detected = _identities_detected_count(reconcile)
+                    await repo.mark_item_completed(
+                        item_id=item.id,
+                        completed_at=now,
+                        identities_detected=identities_detected,
+                    )
+                    await session.commit()
                     if self._counters is not None:
                         self._counters.record(
                             detected=reconcile.detected
@@ -103,12 +110,6 @@ class ScanItemHandler:
                             matched=reconcile.matched if isinstance(reconcile, ReconcileResult) else 0,
                             new=reconcile.new if isinstance(reconcile, ReconcileResult) else 0,
                         )
-                    await repo.mark_item_completed(
-                        item_id=item.id,
-                        completed_at=now,
-                        identities_detected=identities_detected,
-                    )
-                    await session.commit()
                     scan_service.emit_pending_scan_media_reconciled()
                     logger.info(
                         "[worker] COMPLETE scan_item request_id=%s job_id=%s item_id=%s identities=%s",
@@ -117,7 +118,7 @@ class ScanItemHandler:
                         item.id,
                         identities_detected,
                     )
-                except Exception as exc:  # pragma: no cover
+                except Exception as exc:
                     error_message = str(exc)
                     await self._handle_item_failure(
                         repo=repo,

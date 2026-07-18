@@ -33,10 +33,13 @@ from recognition.application.embedding.generator import UnavailableEmbeddingGene
 from recognition.application.embedding.manifest import EmbeddingModelManifest
 from recognition.infrastructure.embeddings import face_pipeline_adapter as fpa
 from recognition.infrastructure.face_pipeline._common import RawDetection, ZeroNormEmbeddingError
+from recognition.infrastructure.face_pipeline.aligner import AlignmentError
 from recognition.infrastructure.face_pipeline.provenance import (
     DEFAULT_MODELS_DIR,
     MODEL_MANIFEST,
     ModelIntegrityError,
+    ModelMissingError,
+    load_verified_model,
 )
 from recognition.tests.unit.face_pipeline_support import (
     MODELS_PRESENT,
@@ -324,7 +327,7 @@ async def test_detect_populates_phash_and_quality(monkeypatch: pytest.MonkeyPatc
 
 
 def test_selective_cache_missing_file_retries_after_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
-    """CR-03: FileNotFoundError is non-sticky; integrity is sticky."""
+    """CR-03 / E2E-02: ModelMissingError is non-sticky; integrity is sticky."""
     _align_dims_to_sface(monkeypatch)
     fpa.reset_shared_face_pipeline_runtime_for_tests()
 
@@ -333,7 +336,7 @@ def test_selective_cache_missing_file_retries_after_fetch(monkeypatch: pytest.Mo
     def loader(**kwargs: object) -> fpa.FacePipelineRuntime:
         calls.append("load")
         if len(calls) == 1:
-            raise FileNotFoundError("model missing")
+            raise ModelMissingError("model file missing for 'sface'")
         return fpa.FacePipelineRuntime(
             detector=MagicMock(),
             aligner=MagicMock(),
@@ -347,7 +350,7 @@ def test_selective_cache_missing_file_retries_after_fetch(monkeypatch: pytest.Mo
 
     monkeypatch.setattr(fpa, "_load_face_pipeline_runtime", loader)
 
-    with pytest.raises(fpa.FacePipelineRuntimeUnavailableError, match="model missing"):
+    with pytest.raises(fpa.FacePipelineRuntimeUnavailableError, match="model file missing"):
         fpa.get_shared_face_pipeline_runtime(profile="face_pipeline", models_dir=DEFAULT_MODELS_DIR)
 
     # Non-sticky: second call retries loader and succeeds after 'fetch'.
@@ -370,6 +373,94 @@ def test_selective_cache_missing_file_retries_after_fetch(monkeypatch: pytest.Mo
     with pytest.raises(fpa.FacePipelineRuntimeUnavailableError):
         fpa.get_shared_face_pipeline_runtime(profile="face_pipeline", models_dir=DEFAULT_MODELS_DIR)
     assert integrity_calls == 1  # sticky — no second load
+
+
+def test_missing_sface_models_dir_recovers_when_file_appears(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """E2E-02: missing sface is non-sticky; second call succeeds after file appears (no reset)."""
+    import hashlib
+
+    from recognition.infrastructure.face_pipeline.provenance import ModelProvenance
+
+    _align_dims_to_sface(monkeypatch)
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+
+    yunet_payload = b"syn-yunet-recover"
+    sface_payload = b"syn-sface-recover"
+    yunet_lic = b"MIT-yunet"
+    sface_lic = b"Apache-sface"
+
+    def _sha(data: bytes) -> str:
+        return hashlib.sha256(data).hexdigest()
+
+    monkeypatch.setitem(
+        MODEL_MANIFEST,
+        "yunet",
+        ModelProvenance(
+            file_name="face_detection_yunet_2026may.onnx",
+            sha256=_sha(yunet_payload),
+            source_url="https://example.test/yunet.onnx",
+            source_ref="syn",
+            license_id="MIT",
+            license_file="LICENSE.yunet",
+            license_sha256=_sha(yunet_lic),
+            size_bytes=len(yunet_payload),
+            framework="opencv",
+        ),
+    )
+    monkeypatch.setitem(
+        MODEL_MANIFEST,
+        "sface",
+        ModelProvenance(
+            file_name="face_recognition_sface_2021dec.onnx",
+            sha256=_sha(sface_payload),
+            source_url="https://example.test/sface.onnx",
+            source_ref="syn",
+            license_id="Apache-2.0",
+            license_file="LICENSE.sface",
+            license_sha256=_sha(sface_lic),
+            size_bytes=len(sface_payload),
+            framework="opencv",
+            embedding_dim=128,
+            normalization="l2",
+            metric="cosine",
+        ),
+    )
+    (tmp_path / "face_detection_yunet_2026may.onnx").write_bytes(yunet_payload)
+    (tmp_path / "LICENSE.yunet").write_bytes(yunet_lic)
+    (tmp_path / "LICENSE.sface").write_bytes(sface_lic)
+    # sface model file intentionally absent for first call
+
+    load_calls = 0
+
+    def loader(*, models_dir: Path, **kwargs: object) -> fpa.FacePipelineRuntime:
+        nonlocal load_calls
+        load_calls += 1
+        # Exercise real missing-file / verify path.
+        load_verified_model("yunet", models_dir=models_dir)
+        load_verified_model("sface", models_dir=models_dir)
+        return fpa.FacePipelineRuntime(
+            detector=MagicMock(),
+            aligner=MagicMock(),
+            embedder=MagicMock(),
+            manifest=fpa.sface_embedding_model_manifest(),
+            models_dir=models_dir,
+            score_threshold=0.9,
+            nms_threshold=0.3,
+            top_k=5000,
+        )
+
+    monkeypatch.setattr(fpa, "_load_face_pipeline_runtime", loader)
+
+    with pytest.raises(fpa.FacePipelineRuntimeUnavailableError) as first_exc:
+        fpa.get_shared_face_pipeline_runtime(profile="face_pipeline", models_dir=tmp_path)
+    assert isinstance(first_exc.value.__cause__, ModelMissingError)
+    assert load_calls == 1
+
+    # Provision sface without reset_shared_face_pipeline_runtime_for_tests.
+    (tmp_path / "face_recognition_sface_2021dec.onnx").write_bytes(sface_payload)
+    runtime = fpa.get_shared_face_pipeline_runtime(profile="face_pipeline", models_dir=tmp_path)
+    assert runtime is not None
+    assert load_calls == 2
 
 
 def test_selective_cache_value_error_not_sticky(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -511,8 +602,8 @@ def test_reset_hook_documents_process_lifetime_executor() -> None:
 
 
 @pytest.mark.asyncio
-async def test_zero_norm_embedding_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
-    """CR-06: ZeroNormEmbeddingError → DetectionAdapterError with zero_norm_embedding: prefix."""
+async def test_zero_norm_embedding_drops_face(monkeypatch: pytest.MonkeyPatch) -> None:
+    """E2E-04 / CR-06: ZeroNormEmbeddingError drops the face; all-drop → []."""
     runtime = _mock_runtime(monkeypatch)
     landmarks = np.array(
         [[20, 20], [40, 20], [30, 30], [22, 40], [38, 40]],
@@ -530,10 +621,47 @@ async def test_zero_norm_embedding_prefix(monkeypatch: pytest.MonkeyPatch) -> No
     runtime.embedder.embed.side_effect = ZeroNormEmbeddingError("zero vector")  # type: ignore[attr-defined]
 
     det = fpa.FacePipelineFaceDetector(runtime, timeout=5.0)
-    with pytest.raises(DetectionAdapterError) as exc_info:
-        await det.detect([_png_bytes(Image.new("RGB", (64, 64), color=(1, 1, 1)))])
-    assert "zero_norm_embedding:" in exc_info.value.error_message
-    assert isinstance(exc_info.value.__cause__, ZeroNormEmbeddingError)
+    faces = await det.detect([_png_bytes(Image.new("RGB", (64, 64), color=(1, 1, 1)))])
+    assert faces == []
+
+
+@pytest.mark.asyncio
+async def test_per_face_align_failure_keeps_sibling(monkeypatch: pytest.MonkeyPatch) -> None:
+    """E2E-04: one face with degenerate landmarks is dropped; sibling still returned."""
+    runtime = _mock_runtime(monkeypatch)
+    good_lm = np.array(
+        [[20, 20], [40, 20], [30, 30], [22, 40], [38, 40]],
+        dtype=np.float32,
+    )
+    bad_lm = np.zeros((5, 2), dtype=np.float32)
+    good = RawDetection(
+        bbox=np.array([10.0, 10.0, 40.0, 50.0], dtype=np.float32),
+        landmarks=good_lm,
+        score=0.95,
+    )
+    bad = RawDetection(
+        bbox=np.array([50.0, 10.0, 40.0, 50.0], dtype=np.float32),
+        landmarks=bad_lm,
+        score=0.91,
+    )
+    runtime.detector.detect.return_value = [[good, bad]]  # type: ignore[attr-defined]
+
+    def _align(_bgr: object, landmarks: np.ndarray) -> MagicMock:
+        if float(np.var(landmarks)) == 0.0:
+            raise AlignmentError("degenerate landmarks (zero variance); cannot align")
+        aligned = MagicMock()
+        aligned.crop = np.zeros((112, 112, 3), dtype=np.uint8)
+        return aligned
+
+    runtime.aligner.align.side_effect = _align  # type: ignore[attr-defined]
+    emb = np.ones(SFACE_EMBEDDING_DIM, dtype=np.float32)
+    emb /= float(np.linalg.norm(emb))
+    runtime.embedder.embed.return_value = [emb]  # type: ignore[attr-defined]
+
+    det = fpa.FacePipelineFaceDetector(runtime, timeout=5.0)
+    faces = await det.detect([_png_bytes(Image.new("RGB", (128, 128), color=(10, 20, 30)))])
+    assert len(faces) == 1
+    assert faces[0].confidence == pytest.approx(0.95)
 
 
 # ---------------------------------------------------------------------------

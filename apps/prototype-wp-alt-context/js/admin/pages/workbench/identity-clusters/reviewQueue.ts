@@ -119,6 +119,20 @@ const flattenAssignments = (reviewItems: readonly SuggestionReviewItem[]): Revie
 };
 
 /**
+ * Filter an already-built queue by KIND. Consumers of `WorkbenchFindingsViewModel.queue`
+ * hold items (not sources) — use this instead of re-calling `buildReviewQueue`.
+ */
+export const filterReviewQueue = (
+  items: readonly ReviewQueueItem[],
+  filter: ReviewQueueFilter,
+): ReviewQueueItem[] => {
+  if (filter === REVIEW_QUEUE_FILTER.ALL) {
+    return [...items];
+  }
+  return items.filter((item) => item.kind === filter);
+};
+
+/**
  * Full ordered queue: assignments (flattened) → merges → names → largest unlabeled clusters.
  * Default (unfiltered) order preserves the historical selectNextAction priority.
  */
@@ -141,13 +155,7 @@ export const buildReviewQueue = (
     clusterId: cluster.id,
   }));
 
-  const ordered: ReviewQueueItem[] = [...assignments, ...merges, ...names, ...clusters];
-
-  if (filter === REVIEW_QUEUE_FILTER.ALL) {
-    return ordered;
-  }
-
-  return ordered.filter((item) => item.kind === filter);
+  return filterReviewQueue([...assignments, ...merges, ...names, ...clusters], filter);
 };
 
 /** Map a queue head item to the WorkbenchNextAction shape consumers already use. */
@@ -182,8 +190,10 @@ export const emptyNextAction = (reason: NoneReason): WorkbenchNextAction => ({
  * PR-54 index semantics (driver-level, pure).
  *
  * - Successful commit does **not** increment the index: removal advances the
- *   queue (the item at the head slot changes). Use `removeAtQueueIndex`.
- * - prev/next are the **only** index mutations.
+ *   queue. Use `removeAtQueueCursor` — it returns the post-removal items and a
+ *   range-safe cursor (same slot when a later item slides in; clamped when the
+ *   removed item was the tail).
+ * - prev/next are the **only** intentional index steppers; both are range-safe.
  * - A restored index clamps to `min(index, length - 1)`; empty → 0 (empty state).
  */
 
@@ -198,24 +208,59 @@ export const clampQueueIndex = (index: number, length: number): number => {
   return Math.min(index, length - 1);
 };
 
-/** Prev is an index mutation (only when index > 0). */
-export const prevQueueIndex = (index: number): number => Math.max(0, index - 1);
+/**
+ * Prev is an index mutation. Incoming index is clamped into
+ * `[0, max(0, length-1)]` before stepping back (so oversized/negative stay in range).
+ */
+export const prevQueueIndex = (index: number, length: number): number => {
+  if (length <= 0) {
+    return 0;
+  }
+  const clamped = clampQueueIndex(index, length);
+  return Math.max(0, clamped - 1);
+};
 
-/** Next is an index mutation (clamped to last item). */
+/**
+ * Next is an index mutation. Incoming index is clamped into
+ * `[0, max(0, length-1)]` before stepping forward (so negative floors at 0, then +1).
+ */
 export const nextQueueIndex = (index: number, length: number): number => {
   if (length <= 0) {
     return 0;
   }
-  return Math.min(index + 1, length - 1);
+  const clamped = clampQueueIndex(index, length);
+  return Math.min(clamped + 1, length - 1);
 };
 
 /**
- * Successful commit/removal: drop the item at `index` without changing the
- * caller's index. The same index then points at the former next item (or empty).
+ * Successful commit/removal: drop the item at `index` and return a cursor-safe
+ * result. The returned `index` is `clampQueueIndex(index, items.length)` after
+ * removal:
+ * - head/mid removal: same index now points at the former next item
+ * - last-item removal: cursor lands on the new last item
+ * - emptied queue: index is 0 (empty-state handling remains a caller obligation)
+ * - out-of-bounds index: no-op copy of items; cursor clamped to the current length
  */
-export const removeAtQueueIndex = <T>(items: readonly T[], index: number): T[] => {
+export const removeAtQueueCursor = <T>(
+  items: readonly T[],
+  index: number,
+): { items: T[]; index: number } => {
   if (index < 0 || index >= items.length) {
-    return [...items];
+    return {
+      items: [...items],
+      index: clampQueueIndex(index, items.length),
+    };
   }
-  return items.filter((_, i) => i !== index);
+  const nextItems = items.filter((_, i) => i !== index);
+  return {
+    items: nextItems,
+    index: clampQueueIndex(index, nextItems.length),
+  };
 };
+
+/**
+ * Items-only removal helper. Prefer `removeAtQueueCursor` when the caller also
+ * holds a cursor — this path does not return a post-removal index.
+ */
+export const removeAtQueueIndex = <T>(items: readonly T[], index: number): T[] =>
+  removeAtQueueCursor(items, index).items;

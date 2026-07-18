@@ -40,8 +40,10 @@ export {
 export {
   buildReviewQueue,
   clampQueueIndex,
+  filterReviewQueue,
   nextQueueIndex,
   prevQueueIndex,
+  removeAtQueueCursor,
   removeAtQueueIndex,
   REVIEW_QUEUE_FILTER,
   queueItemToNextAction,
@@ -93,7 +95,7 @@ export interface WorkbenchFindingsViewModel {
   nextAction: WorkbenchNextAction;
   /**
    * Full ordered, unfiltered review queue (groups flattened per-suggestion).
-   * Filter with `buildReviewQueue(..., filter)` — not applied here so existing
+   * Filter with `filterReviewQueue(queue, filter)` — not applied here so existing
    * consumers of nextAction keep default priority semantics.
    */
   queue: ReviewQueueItem[];

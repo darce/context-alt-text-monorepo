@@ -8,9 +8,13 @@ Heuristics: [TEST-06][SERVE-08][EMB-01][PROV-06][RLSE-05][PROV-08]
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import io
 import shutil
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -20,11 +24,20 @@ import pytest
 from PIL import Image
 from pydantic import ValidationError
 
-from recognition.application.embedding.detector import DetectionAdapterError
+from recognition.application.embedding.detector import (
+    DetectionAdapterError,
+    DetectionTimeoutError,
+    _compute_detection_quality,
+)
 from recognition.application.embedding.generator import UnavailableEmbeddingGenerator
 from recognition.application.embedding.manifest import EmbeddingModelManifest
 from recognition.infrastructure.embeddings import face_pipeline_adapter as fpa
-from recognition.infrastructure.face_pipeline.provenance import DEFAULT_MODELS_DIR, MODEL_MANIFEST
+from recognition.infrastructure.face_pipeline._common import RawDetection, ZeroNormEmbeddingError
+from recognition.infrastructure.face_pipeline.provenance import (
+    DEFAULT_MODELS_DIR,
+    MODEL_MANIFEST,
+    ModelIntegrityError,
+)
 from recognition.tests.unit.face_pipeline_support import (
     MODELS_PRESENT,
     MODELS_SKIP,
@@ -32,6 +45,8 @@ from recognition.tests.unit.face_pipeline_support import (
     cartoon_from_procedure,
     load_json,
 )
+
+DECODE_GOLDEN_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "face_pipeline" / "decode_golden"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -43,15 +58,6 @@ def _fresh_settings_module():
 
     importlib.reload(settings_module)
     return settings_module
-
-
-def _incumbent_decode(image_bytes: bytes) -> np.ndarray:
-    """Reference decode matching InsightFaceAdapter._bytes_to_cv2 (inline)."""
-    pil_image = Image.open(io.BytesIO(image_bytes))
-    if pil_image.mode != "RGB":
-        pil_image = pil_image.convert("RGB")
-    rgb_array = np.array(pil_image)
-    return cv2.cvtColor(rgb_array, cv2.COLOR_RGB2BGR)
 
 
 def _png_bytes(image: Image.Image, *, format: str = "PNG") -> bytes:
@@ -75,12 +81,28 @@ def _align_dims_to_sface(monkeypatch: pytest.MonkeyPatch) -> None:
     _clear_settings_caches()
 
 
+def _mock_runtime(monkeypatch: pytest.MonkeyPatch) -> fpa.FacePipelineRuntime:
+    _align_dims_to_sface(monkeypatch)
+    manifest = fpa.sface_embedding_model_manifest()
+    return fpa.FacePipelineRuntime(
+        detector=MagicMock(),
+        aligner=MagicMock(),
+        embedder=MagicMock(),
+        manifest=manifest,
+        models_dir=DEFAULT_MODELS_DIR,
+        score_threshold=0.9,
+        nms_threshold=0.3,
+        top_k=5000,
+    )
+
+
 @pytest.fixture(autouse=True)
 def _restore_settings_caches_after_test() -> None:
     """Avoid leaking RECOGNITION_EMBEDDING_DIMENSION / PGVECTOR_DIM into sibling modules."""
     yield
     _clear_settings_caches()
     fpa.reset_shared_face_pipeline_runtime_for_tests()
+
 
 # ---------------------------------------------------------------------------
 # Modelless — settings
@@ -127,7 +149,10 @@ def test_invalid_face_pipeline_profile_explicit_raises() -> None:
 
 
 def test_embedding_dimension_env_binding(monkeypatch: pytest.MonkeyPatch) -> None:
+    # CR-09 pairing: both knobs must agree when only testing embedding_dimension env.
     monkeypatch.setenv("RECOGNITION_EMBEDDING_DIMENSION", "128")
+    monkeypatch.setenv("PGVECTOR_DIM", "128")
+    _clear_settings_caches()
     mod = _fresh_settings_module()
     settings = mod.RecognitionSettings()
     assert settings.identity_detection.embedding_dimension == 128
@@ -135,9 +160,31 @@ def test_embedding_dimension_env_binding(monkeypatch: pytest.MonkeyPatch) -> Non
 
 def test_embedding_dimension_default_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("RECOGNITION_EMBEDDING_DIMENSION", raising=False)
+    monkeypatch.delenv("PGVECTOR_DIM", raising=False)
+    _clear_settings_caches()
     mod = _fresh_settings_module()
     settings = mod.RecognitionSettings()
     assert settings.identity_detection.embedding_dimension == 512
+
+
+def test_embedding_pgvector_pair_agree(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CR-09: matching dims load cleanly."""
+    monkeypatch.setenv("RECOGNITION_EMBEDDING_DIMENSION", "256")
+    monkeypatch.setenv("PGVECTOR_DIM", "256")
+    _clear_settings_caches()
+    mod = _fresh_settings_module()
+    settings = mod.RecognitionSettings()
+    assert settings.identity_detection.embedding_dimension == 256
+
+
+def test_embedding_pgvector_pair_disagree_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CR-09: mismatch fails at RecognitionSettings load."""
+    monkeypatch.setenv("RECOGNITION_EMBEDDING_DIMENSION", "128")
+    monkeypatch.setenv("PGVECTOR_DIM", "512")
+    _clear_settings_caches()
+    mod = _fresh_settings_module()
+    with pytest.raises((ValueError, ValidationError), match="pgvector_dimension"):
+        mod.RecognitionSettings()
 
 
 # ---------------------------------------------------------------------------
@@ -172,34 +219,19 @@ def test_three_way_dim_guard_raises_on_mismatch(monkeypatch: pytest.MonkeyPatch)
     _clear_settings_caches()
 
     manifest = fpa.sface_embedding_model_manifest()
-    with pytest.raises(ValueError, match="three-way guard"):
+    with pytest.raises(ValueError, match="three-way guard|dimension mismatch"):
         fpa.assert_three_way_embedding_dimensions(manifest)
 
-def test_decode_image_bytes_matches_incumbent_rgb_and_non_rgb() -> None:
-    # Deterministic RGB image
-    rgb = Image.new("RGB", (8, 6), color=(10, 20, 30))
-    for x in range(8):
-        for y in range(6):
-            rgb.putpixel((x, y), (x * 10 % 256, y * 20 % 256, (x + y) * 7 % 256))
-    rgb_bytes = _png_bytes(rgb)
 
-    # Palette (non-RGB) and LA
-    palette = Image.new("P", (8, 6))
-    palette.putpalette([i % 256 for i in range(768)])
-    for x in range(8):
-        for y in range(6):
-            palette.putpixel((x, y), (x + y * 8) % 256)
-    palette_bytes = _png_bytes(palette)
-
-    la = Image.new("LA", (8, 6), color=(100, 200))
-    la_bytes = _png_bytes(la)
-
-    for label, payload in (("rgb", rgb_bytes), ("palette", palette_bytes), ("la", la_bytes)):
-        expected = _incumbent_decode(payload)
+def test_decode_image_bytes_matches_golden_fixtures() -> None:
+    """CR-02: decode_image_bytes equals committed .npy from real InsightFaceAdapter."""
+    for name in ("rgb", "palette", "la"):
+        payload = (DECODE_GOLDEN_DIR / f"{name}.png").read_bytes()
+        expected = np.load(DECODE_GOLDEN_DIR / f"{name}.npy")
         actual = fpa.decode_image_bytes(payload)
-        assert actual.shape == expected.shape, label
-        assert actual.dtype == expected.dtype, label
-        np.testing.assert_array_equal(actual, expected, err_msg=label)
+        assert actual.shape == expected.shape, name
+        assert actual.dtype == expected.dtype, name
+        np.testing.assert_array_equal(actual, expected, err_msg=name)
 
 
 def test_decode_failure_raises_on_garbage() -> None:
@@ -221,22 +253,9 @@ async def test_unavailable_generator_message() -> None:
 @pytest.mark.asyncio
 async def test_zero_face_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     """Decode succeeds but detector returns no faces → empty list (not error)."""
-    _align_dims_to_sface(monkeypatch)
-    manifest = fpa.sface_embedding_model_manifest()
-    mock_detector = MagicMock()
-    mock_detector.detect.return_value = [[]]
-    runtime = fpa.FacePipelineRuntime(
-        detector=mock_detector,
-        aligner=MagicMock(),
-        embedder=MagicMock(),
-        manifest=manifest,
-        models_dir=DEFAULT_MODELS_DIR,
-        score_threshold=0.9,
-        nms_threshold=0.3,
-        top_k=5000,
-    )
+    runtime = _mock_runtime(monkeypatch)
+    runtime.detector.detect.return_value = [[]]  # type: ignore[attr-defined]
     det = fpa.FacePipelineFaceDetector(runtime, timeout=5.0)
-    # Tiny solid image
     img = Image.new("RGB", (16, 16), color=(40, 40, 40))
     faces = await det.detect([_png_bytes(img)])
     assert faces == []
@@ -244,21 +263,337 @@ async def test_zero_face_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.asyncio
 async def test_decode_failure_path_raises_adapter_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime = _mock_runtime(monkeypatch)
+    det = fpa.FacePipelineFaceDetector(runtime, timeout=5.0)
+    with pytest.raises(DetectionAdapterError, match="decode failed"):
+        await det.detect([b"definitely-not-image-bytes"])
+
+
+# ---------------------------------------------------------------------------
+# CR-01 — phash + quality parity
+# ---------------------------------------------------------------------------
+
+
+def test_quality_with_pose_none_via_helper() -> None:
+    """CR-01 modelless: quality tolerates pose_*=None (same helper as adapter)."""
+    score = _compute_detection_quality(
+        confidence=0.95,
+        pose_pitch=None,
+        pose_yaw=None,
+        pose_roll=None,
+        bbox=(10, 20, 50, 80),
+    )
+    assert 0.0 <= score <= 1.0
+
+
+@pytest.mark.asyncio
+async def test_detect_populates_phash_and_quality(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CR-01: one-pass path stamps image_phash + landmark_quality in [0,1]."""
+    runtime = _mock_runtime(monkeypatch)
+    landmarks = np.array(
+        [[20, 20], [40, 20], [30, 30], [22, 40], [38, 40]],
+        dtype=np.float32,
+    )
+    raw = RawDetection(
+        bbox=np.array([10.0, 10.0, 40.0, 50.0], dtype=np.float32),
+        landmarks=landmarks,
+        score=0.97,
+    )
+    runtime.detector.detect.return_value = [[raw]]  # type: ignore[attr-defined]
+    crop = np.zeros((112, 112, 3), dtype=np.uint8)
+    aligned = MagicMock()
+    aligned.crop = crop
+    runtime.aligner.align.return_value = aligned  # type: ignore[attr-defined]
+    emb = np.ones(SFACE_EMBEDDING_DIM, dtype=np.float32)
+    emb /= float(np.linalg.norm(emb))
+    runtime.embedder.embed.return_value = [emb]  # type: ignore[attr-defined]
+
+    det = fpa.FacePipelineFaceDetector(runtime, timeout=5.0)
+    img = Image.new("RGB", (64, 64), color=(12, 34, 56))
+    faces = await det.detect([_png_bytes(img)])
+    assert len(faces) == 1
+    assert faces[0].image_phash is not None
+    assert isinstance(faces[0].image_phash, str)
+    assert faces[0].landmark_quality is not None
+    assert 0.0 <= faces[0].landmark_quality <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# CR-03 — selective Unavailable caching
+# ---------------------------------------------------------------------------
+
+
+def test_selective_cache_missing_file_retries_after_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CR-03: FileNotFoundError is non-sticky; integrity is sticky."""
     _align_dims_to_sface(monkeypatch)
-    manifest = fpa.sface_embedding_model_manifest()
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+
+    calls: list[str] = []
+
+    def loader(**kwargs: object) -> fpa.FacePipelineRuntime:
+        calls.append("load")
+        if len(calls) == 1:
+            raise FileNotFoundError("model missing")
+        return fpa.FacePipelineRuntime(
+            detector=MagicMock(),
+            aligner=MagicMock(),
+            embedder=MagicMock(),
+            manifest=fpa.sface_embedding_model_manifest(),
+            models_dir=DEFAULT_MODELS_DIR,
+            score_threshold=0.9,
+            nms_threshold=0.3,
+            top_k=5000,
+        )
+
+    monkeypatch.setattr(fpa, "_load_face_pipeline_runtime", loader)
+
+    with pytest.raises(fpa.FacePipelineRuntimeUnavailableError, match="model missing"):
+        fpa.get_shared_face_pipeline_runtime(profile="face_pipeline", models_dir=DEFAULT_MODELS_DIR)
+
+    # Non-sticky: second call retries loader and succeeds after 'fetch'.
+    runtime = fpa.get_shared_face_pipeline_runtime(profile="face_pipeline", models_dir=DEFAULT_MODELS_DIR)
+    assert runtime is not None
+    assert len(calls) == 2
+
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+    integrity_calls = 0
+
+    def integrity_loader(**kwargs: object) -> fpa.FacePipelineRuntime:
+        nonlocal integrity_calls
+        integrity_calls += 1
+        raise ModelIntegrityError("sha256 mismatch for 'sface'")
+
+    monkeypatch.setattr(fpa, "_load_face_pipeline_runtime", integrity_loader)
+
+    with pytest.raises(fpa.FacePipelineRuntimeUnavailableError):
+        fpa.get_shared_face_pipeline_runtime(profile="face_pipeline", models_dir=DEFAULT_MODELS_DIR)
+    with pytest.raises(fpa.FacePipelineRuntimeUnavailableError):
+        fpa.get_shared_face_pipeline_runtime(profile="face_pipeline", models_dir=DEFAULT_MODELS_DIR)
+    assert integrity_calls == 1  # sticky — no second load
+
+
+def test_selective_cache_value_error_not_sticky(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CR-03: dim-guard ValueError raises without caching."""
+    _align_dims_to_sface(monkeypatch)
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+    calls = 0
+
+    def loader(**kwargs: object) -> fpa.FacePipelineRuntime:
+        nonlocal calls
+        calls += 1
+        raise ValueError("three-way guard mismatch")
+
+    monkeypatch.setattr(fpa, "_load_face_pipeline_runtime", loader)
+    with pytest.raises(fpa.FacePipelineRuntimeUnavailableError):
+        fpa.get_shared_face_pipeline_runtime(profile="face_pipeline", models_dir=DEFAULT_MODELS_DIR)
+    with pytest.raises(fpa.FacePipelineRuntimeUnavailableError):
+        fpa.get_shared_face_pipeline_runtime(profile="face_pipeline", models_dir=DEFAULT_MODELS_DIR)
+    assert calls == 2
+
+
+# ---------------------------------------------------------------------------
+# CR-04 / CR-05 — semaphore, timeout, breaker, executor identity
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_detect_timeout_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CR-05(b): timeout path → DetectionTimeoutError."""
+    runtime = _mock_runtime(monkeypatch)
+
+    def slow_detect(image_bytes: bytes, media_id: str) -> list:
+        time.sleep(1.0)
+        return []
+
+    det = fpa.FacePipelineFaceDetector(runtime, timeout=0.05)
+    monkeypatch.setattr(det, "_detect_sync", slow_detect)
+    img = Image.new("RGB", (8, 8), color=(1, 2, 3))
+    with pytest.raises(DetectionTimeoutError):
+        await det.detect([_png_bytes(img)])
+
+
+@pytest.mark.asyncio
+async def test_semaphore_timeout_queues_third(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CR-04: tiny timeout + slow workers → third call queues on semaphore."""
+    runtime = _mock_runtime(monkeypatch)
+    executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="face_pipeline_test")
+    semaphore = asyncio.Semaphore(2)
+    submitted = 0
+    submit_lock = threading.Lock()
+    release_workers = threading.Event()
+
+    def slow_detect(image_bytes: bytes, media_id: str) -> list:
+        nonlocal submitted
+        with submit_lock:
+            submitted += 1
+        # Hold the worker until the test releases — models head-of-line residual.
+        release_workers.wait(timeout=5.0)
+        return []
+
+    det = fpa.FacePipelineFaceDetector(
+        runtime,
+        timeout=0.05,
+        executor=executor,
+        submit_semaphore=semaphore,
+    )
+    monkeypatch.setattr(det, "_detect_sync", slow_detect)
+    payload = _png_bytes(Image.new("RGB", (4, 4), color=(9, 9, 9)))
+
+    async def one() -> None:
+        with pytest.raises(DetectionTimeoutError):
+            await det.detect([payload])
+
+    # Fill both slots with slow work that outlives the wait timeout.
+    t1 = asyncio.create_task(one())
+    t2 = asyncio.create_task(one())
+    # Wait until both workers have been submitted.
+    for _ in range(100):
+        with submit_lock:
+            if submitted >= 2:
+                break
+        await asyncio.sleep(0.02)
+    with submit_lock:
+        assert submitted == 2
+
+    # Third call should block on semaphore (not submit) while slots held after timeout.
+    third_started = asyncio.Event()
+
+    async def third() -> None:
+        third_started.set()
+        await det.detect([payload])
+
+    t3 = asyncio.create_task(third())
+    await third_started.wait()
+    await asyncio.sleep(0.1)
+    with submit_lock:
+        # Still only two workers submitted — third queued on semaphore, not executor.
+        assert submitted == 2
+    assert not t3.done()
+
+    # First two timed out; release workers so semaphore slots free and third can run.
+    await asyncio.gather(t1, t2)
+    release_workers.set()
+    await t3
+    executor.shutdown(wait=False, cancel_futures=True)
+
+
+@pytest.mark.asyncio
+async def test_breaker_name_and_executor_thread(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CR-05(c)(d): breaker name face_pipeline.detect; work on dedicated pool thread."""
+    runtime = _mock_runtime(monkeypatch)
+    runtime.detector.detect.return_value = [[]]  # type: ignore[attr-defined]
+    seen_thread: dict[str, str] = {}
+
+    def track_sync(image_bytes: bytes, media_id: str) -> list:
+        seen_thread["name"] = threading.current_thread().name
+        return []
+
+    det = fpa.FacePipelineFaceDetector(runtime, timeout=5.0)
+    monkeypatch.setattr(det, "_detect_sync", track_sync)
+    assert det._breaker is not None
+    assert det._breaker.adapter_name == "face_pipeline.detect"
+
+    img = Image.new("RGB", (8, 8), color=(3, 3, 3))
+    await det.detect([_png_bytes(img)])
+    assert seen_thread["name"].startswith("face_pipeline")
+
+
+def test_reset_hook_documents_process_lifetime_executor() -> None:
+    """CR-10: reset docstring states executor is intentionally not reset."""
+    doc = fpa.reset_shared_face_pipeline_runtime_for_tests.__doc__ or ""
+    assert "process-lifetime" in doc.lower() or "process lifetime" in doc.lower() or "not" in doc.lower()
+    assert "executor" in doc.lower()
+
+
+# ---------------------------------------------------------------------------
+# CR-06 — zero-norm fail-closed prefix
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_zero_norm_embedding_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CR-06: ZeroNormEmbeddingError → DetectionAdapterError with zero_norm_embedding: prefix."""
+    runtime = _mock_runtime(monkeypatch)
+    landmarks = np.array(
+        [[20, 20], [40, 20], [30, 30], [22, 40], [38, 40]],
+        dtype=np.float32,
+    )
+    raw = RawDetection(
+        bbox=np.array([10.0, 10.0, 40.0, 50.0], dtype=np.float32),
+        landmarks=landmarks,
+        score=0.9,
+    )
+    runtime.detector.detect.return_value = [[raw]]  # type: ignore[attr-defined]
+    aligned = MagicMock()
+    aligned.crop = np.zeros((112, 112, 3), dtype=np.uint8)
+    runtime.aligner.align.return_value = aligned  # type: ignore[attr-defined]
+    runtime.embedder.embed.side_effect = ZeroNormEmbeddingError("zero vector")  # type: ignore[attr-defined]
+
+    det = fpa.FacePipelineFaceDetector(runtime, timeout=5.0)
+    with pytest.raises(DetectionAdapterError) as exc_info:
+        await det.detect([_png_bytes(Image.new("RGB", (64, 64), color=(1, 1, 1)))])
+    assert "zero_norm_embedding:" in exc_info.value.error_message
+    assert isinstance(exc_info.value.__cause__, ZeroNormEmbeddingError)
+
+
+# ---------------------------------------------------------------------------
+# CR-07 — degenerate bbox dropped before align/embed
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_degenerate_bbox_dropped_before_align(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CR-07: x2<=x1 or y2<=y1 after clamp → drop; align never called for it."""
+    runtime = _mock_runtime(monkeypatch)
+    # Zero-size bbox (w=0,h=0) → corners equal after clamp.
+    raw = RawDetection(
+        bbox=np.array([5.0, 5.0, 0.0, 0.0], dtype=np.float32),
+        landmarks=np.zeros((5, 2), dtype=np.float32),
+        score=0.99,
+    )
+    runtime.detector.detect.return_value = [[raw]]  # type: ignore[attr-defined]
+    det = fpa.FacePipelineFaceDetector(runtime, timeout=5.0)
+    faces = await det.detect([_png_bytes(Image.new("RGB", (32, 32), color=(7, 7, 7)))])
+    assert faces == []
+    runtime.aligner.align.assert_not_called()  # type: ignore[attr-defined]
+    runtime.embedder.embed.assert_not_called()  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# CR-08 — atomic _SHARED tuple
+# ---------------------------------------------------------------------------
+
+
+def test_shared_is_single_tuple_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CR-08: module holds one _SHARED tuple, not separate key/runtime globals."""
+    assert hasattr(fpa, "_SHARED")
+    assert not hasattr(fpa, "_SHARED_RUNTIME") or fpa.__dict__.get("_SHARED_RUNTIME", "gone") == "gone"
+    # Prefer absence of split globals.
+    assert getattr(fpa, "_SHARED_KEY", "missing") == "missing" or not hasattr(fpa, "_SHARED_KEY")
+
+    _align_dims_to_sface(monkeypatch)
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+    assert fpa._SHARED is None
+
     runtime = fpa.FacePipelineRuntime(
         detector=MagicMock(),
         aligner=MagicMock(),
         embedder=MagicMock(),
-        manifest=manifest,
+        manifest=fpa.sface_embedding_model_manifest(),
         models_dir=DEFAULT_MODELS_DIR,
         score_threshold=0.9,
         nms_threshold=0.3,
         top_k=5000,
     )
-    det = fpa.FacePipelineFaceDetector(runtime, timeout=5.0)
-    with pytest.raises(DetectionAdapterError, match="decode failed"):
-        await det.detect([b"definitely-not-image-bytes"])
+    monkeypatch.setattr(fpa, "_load_face_pipeline_runtime", lambda **kw: runtime)
+    got = fpa.get_shared_face_pipeline_runtime(profile="face_pipeline", models_dir=DEFAULT_MODELS_DIR)
+    assert got is runtime
+    assert fpa._SHARED is not None
+    key, val = fpa._SHARED
+    assert val is runtime
+    assert isinstance(key, tuple)
+    # Dim pair is part of memo key (CR-03/CR-09).
+    assert SFACE_EMBEDDING_DIM in key
 
 
 # ---------------------------------------------------------------------------
@@ -300,6 +635,10 @@ async def test_bytes_to_face_detection_e2e(monkeypatch: pytest.MonkeyPatch) -> N
         assert face.pose_pitch is None
         assert face.pose_yaw is None
         assert face.pose_roll is None
+        # CR-01 models-present: phash + quality populated
+        assert face.image_phash is not None
+        assert face.landmark_quality is not None
+        assert 0.0 <= face.landmark_quality <= 1.0
 
     fpa.reset_shared_face_pipeline_runtime_for_tests()
 

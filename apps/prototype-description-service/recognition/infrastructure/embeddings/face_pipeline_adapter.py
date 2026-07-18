@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import io
 import logging
 import threading
 from collections.abc import Iterable, Sequence
@@ -20,10 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import cv2
 import httpx
 import numpy as np
-from PIL import Image
 
 from db.settings import get_database_settings
 from recognition.application.embedding.detector import (
@@ -31,6 +28,8 @@ from recognition.application.embedding.detector import (
     DetectionTimeoutError,
     FaceDetection,
     FaceDetectorProtocol,
+    InsightFaceFaceDetector,
+    _compute_detection_quality,
 )
 from recognition.application.embedding.generator import UnavailableEmbeddingGenerator
 from recognition.application.embedding.manifest import EmbeddingModelManifest
@@ -47,26 +46,34 @@ from recognition.infrastructure.face_pipeline._common import (
     DEFAULT_SCORE_THRESHOLD,
     DEFAULT_TOP_K,
     RawDetection,
+    ZeroNormEmbeddingError,
 )
 from recognition.infrastructure.face_pipeline.aligner import FivePointAligner
 from recognition.infrastructure.face_pipeline.ort_adapters import OrtSFaceEmbedder, OrtYuNetDetector
 from recognition.infrastructure.face_pipeline.provenance import (
     DEFAULT_MODELS_DIR,
     MODEL_MANIFEST,
+    ModelIntegrityError,
 )
 
 logger = logging.getLogger(__name__)
 
 # Dedicated bounded pool for sync ORT/CPU work — not the default asyncio pool.
+# Process-lifetime by design: reset_shared_face_pipeline_runtime_for_tests does
+# not shut it down (see that hook's docstring).
 _FACE_PIPELINE_MAX_WORKERS = 2
 _FACE_PIPELINE_EXECUTOR = ThreadPoolExecutor(
     max_workers=_FACE_PIPELINE_MAX_WORKERS,
     thread_name_prefix="face_pipeline",
 )
+# Gates run_in_executor submission. Value matches executor max_workers.
+# Timeouts do NOT reclaim a running worker: the slot stays held until the
+# executor future completes (head-of-line residual under load) — [RES-02].
+_FACE_PIPELINE_SUBMIT_SEMAPHORE = asyncio.Semaphore(_FACE_PIPELINE_MAX_WORKERS)
 
 _SHARED_LOCK = threading.Lock()
-_SHARED_RUNTIME: FacePipelineRuntime | FacePipelineRuntimeUnavailableError | None = None
-_SHARED_KEY: tuple[Any, ...] | None = None
+# Single atomic snapshot: (cache_key, runtime_or_sticky_error).
+_SHARED: tuple[tuple[Any, ...], FacePipelineRuntime | FacePipelineRuntimeUnavailableError] | None = None
 
 FACE_PIPELINE_GENERATOR_REASON = "face_pipeline embeds in detect()"
 
@@ -123,17 +130,35 @@ def decode_image_bytes(image_bytes: bytes) -> np.ndarray:
     """Decode image bytes to OpenCV BGR — InsightFaceAdapter._bytes_to_cv2 semantics.
 
     PIL open → convert('RGB') if mode != RGB → np.array → cv2.cvtColor RGB2BGR.
-    No EXIF transpose (incumbent performs none).
+    No EXIF transpose (incumbent performs none). Delegates to the real
+    InsightFaceAdapter method so math cannot fork.
     """
-    pil_image = Image.open(io.BytesIO(image_bytes))
-    if pil_image.mode != "RGB":
-        pil_image = pil_image.convert("RGB")
-    rgb_array = np.array(pil_image)
-    return cv2.cvtColor(rgb_array, cv2.COLOR_RGB2BGR)
+    # Lazy import: keeps modelless unit import path free of optional cycles.
+    from recognition.infrastructure.embeddings import InsightFaceAdapter
+
+    return InsightFaceAdapter._bytes_to_cv2(InsightFaceAdapter.__new__(InsightFaceAdapter), image_bytes)
+
+
+def assert_embedding_pgvector_pair() -> None:
+    """Fail closed when identity_detection.embedding_dimension != pgvector_dimension.
+
+    Profile-independent pairing guard (CR-09). Prefer settings-level check at
+    RecognitionSettings load; this path covers late/env-cache drift and
+    adapter construction without going through a full settings reload.
+    """
+    pg_dim = int(get_database_settings().pgvector_dimension)
+    id_dim = int(get_settings().identity_detection.embedding_dimension)
+    if id_dim != pg_dim:
+        raise ValueError(
+            "embedding/pgvector dimension mismatch: "
+            f"identity_detection.embedding_dimension={id_dim} "
+            f"pgvector_dimension={pg_dim}"
+        )
 
 
 def assert_three_way_embedding_dimensions(manifest: EmbeddingModelManifest) -> None:
     """Fail closed unless manifest == pgvector_dimension == identity_detection.embedding_dimension."""
+    assert_embedding_pgvector_pair()
     pg_dim = int(get_database_settings().pgvector_dimension)
     id_dim = int(get_settings().identity_detection.embedding_dimension)
     if not (manifest.dimensions == pg_dim == id_dim):
@@ -157,8 +182,18 @@ def _runtime_cache_key(
     score_threshold: float,
     nms_threshold: float,
     top_k: int,
+    pgvector_dimension: int,
+    embedding_dimension: int,
 ) -> tuple[Any, ...]:
-    return (profile, str(models_dir.resolve()), float(score_threshold), float(nms_threshold), int(top_k))
+    return (
+        profile,
+        str(models_dir.resolve()),
+        float(score_threshold),
+        float(nms_threshold),
+        int(top_k),
+        int(pgvector_dimension),
+        int(embedding_dimension),
+    )
 
 
 def _load_face_pipeline_runtime(
@@ -168,7 +203,8 @@ def _load_face_pipeline_runtime(
     nms_threshold: float,
     top_k: int,
 ) -> FacePipelineRuntime:
-    """Load YuNet+SFace as one atomic unit; any failure raises (caller caches Unavailable)."""
+    """Load YuNet+SFace as one atomic unit; any failure raises (caller decides cache)."""
+    assert_embedding_pgvector_pair()
     manifest = sface_embedding_model_manifest()
     assert_three_way_embedding_dimensions(manifest)
     detector = OrtYuNetDetector(
@@ -199,34 +235,46 @@ def get_shared_face_pipeline_runtime(
     nms_threshold: float = DEFAULT_NMS_THRESHOLD,
     top_k: int = DEFAULT_TOP_K,
 ) -> FacePipelineRuntime:
-    """Process-wide face_pipeline runtime singleton (memo on profile+dir+thresholds).
+    """Process-wide face_pipeline runtime singleton (memo on profile+dir+thresholds+dims).
 
-    Double-checked lock. Failed loads cache ``FacePipelineRuntimeUnavailableError`` so a
-    half-activated profile is never retried into a mixed YuNet-only state.
+    Double-checked lock with a single ``_SHARED`` tuple read for the fast path.
+    Only ``ModelIntegrityError`` (tamper / verified-load failure) is sticky-cached
+    as ``FacePipelineRuntimeUnavailableError``. Config-class failures (dim-guard
+    ``ValueError``, ``FileNotFoundError`` / missing model) raise without caching so
+    a corrected env/models_dir recovers without process restart.
     """
-    global _SHARED_RUNTIME, _SHARED_KEY
+    global _SHARED
 
     root = Path(models_dir) if models_dir is not None else DEFAULT_MODELS_DIR
+    pg_dim = int(get_database_settings().pgvector_dimension)
+    id_dim = int(get_settings().identity_detection.embedding_dimension)
     key = _runtime_cache_key(
         profile=profile,
         models_dir=root,
         score_threshold=score_threshold,
         nms_threshold=nms_threshold,
         top_k=top_k,
+        pgvector_dimension=pg_dim,
+        embedding_dimension=id_dim,
     )
 
-    cached = _SHARED_RUNTIME
-    if cached is not None and key == _SHARED_KEY:
-        if isinstance(cached, FacePipelineRuntimeUnavailableError):
-            raise cached
-        return cached
+    # Atomic single-tuple fast-path read (CR-08).
+    shared = _SHARED
+    if shared is not None:
+        cached_key, cached_val = shared
+        if cached_key == key:
+            if isinstance(cached_val, FacePipelineRuntimeUnavailableError):
+                raise cached_val
+            return cached_val
 
     with _SHARED_LOCK:
-        cached = _SHARED_RUNTIME
-        if cached is not None and key == _SHARED_KEY:
-            if isinstance(cached, FacePipelineRuntimeUnavailableError):
-                raise cached
-            return cached
+        shared = _SHARED
+        if shared is not None:
+            cached_key, cached_val = shared
+            if cached_key == key:
+                if isinstance(cached_val, FacePipelineRuntimeUnavailableError):
+                    raise cached_val
+                return cached_val
         try:
             runtime = _load_face_pipeline_runtime(
                 models_dir=root,
@@ -236,27 +284,42 @@ def get_shared_face_pipeline_runtime(
             )
         except FacePipelineRuntimeUnavailableError:
             raise
-        except Exception as exc:
+        except ModelIntegrityError as exc:
+            # Sticky: verified-load / tamper failures only (CR-03).
             reason = f"face_pipeline runtime unavailable: {exc}"
             unavailable = FacePipelineRuntimeUnavailableError(reason)
-            _SHARED_RUNTIME = unavailable
-            _SHARED_KEY = key
+            _SHARED = (key, unavailable)
             raise unavailable from exc
-        _SHARED_RUNTIME = runtime
-        _SHARED_KEY = key
+        except Exception as exc:
+            # Non-sticky: dim-guard, missing file, etc. — no cache (CR-03).
+            reason = f"face_pipeline runtime unavailable: {exc}"
+            raise FacePipelineRuntimeUnavailableError(reason) from exc
+        _SHARED = (key, runtime)
         return runtime
 
 
 def reset_shared_face_pipeline_runtime_for_tests() -> None:
-    """Clear the process singleton for isolated tests."""
-    global _SHARED_RUNTIME, _SHARED_KEY
+    """Clear the process singleton for isolated tests.
+
+    The dedicated ``_FACE_PIPELINE_EXECUTOR`` is intentionally process-lifetime
+    and is **not** shut down or replaced here. Workers may still be running when
+    the runtime snapshot is cleared; tests that need a clean executor must not
+    assume reset reclaims in-flight work (CR-10).
+    """
+    global _SHARED
     with _SHARED_LOCK:
-        _SHARED_RUNTIME = None
-        _SHARED_KEY = None
+        _SHARED = None
 
 
 class FacePipelineFaceDetector(FaceDetectorProtocol):
-    """One-pass YuNet→align→SFace detector implementing FaceDetectorProtocol."""
+    """One-pass YuNet→align→SFace detector implementing FaceDetectorProtocol.
+
+    ``detect()`` submits sync ORT work via a dedicated ThreadPoolExecutor gated
+    by an asyncio.Semaphore sized to ``max_workers``. A wait_for_adapter timeout
+    raises ``DetectionTimeoutError`` without cancelling the worker; the semaphore
+    slot is released only when the executor future completes (head-of-line
+    residual under sustained timeouts — [RES-02]).
+    """
 
     def __init__(
         self,
@@ -266,6 +329,7 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
         client: httpx.AsyncClient | None = None,
         breaker: AdapterCircuitBreaker | None = None,
         executor: ThreadPoolExecutor | None = None,
+        submit_semaphore: asyncio.Semaphore | None = None,
     ) -> None:
         assert_three_way_embedding_dimensions(runtime.manifest)
         self._runtime = runtime
@@ -276,6 +340,7 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
         self._client = client
         self._breaker = breaker or create_adapter_circuit_breaker("face_pipeline.detect")
         self._executor = executor if executor is not None else _FACE_PIPELINE_EXECUTOR
+        self._submit_semaphore = submit_semaphore if submit_semaphore is not None else _FACE_PIPELINE_SUBMIT_SEMAPHORE
 
     async def _fetch_image(self, url: str) -> bytes | None:
         """Fetch image bytes from a URL (mirrors InsightFaceFaceDetector)."""
@@ -293,11 +358,17 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
             return None
 
     def _detect_sync(self, image_bytes: bytes, media_id: str) -> list[FaceDetection]:
-        """Sync one-pass path: decode → detect → align → embed."""
+        """Sync one-pass path: decode → detect → clamp/drop → align → embed."""
         try:
             bgr = decode_image_bytes(image_bytes)
         except Exception as exc:
             raise DetectionAdapterError(media_id=media_id, error_message=f"decode failed: {exc}") from exc
+
+        # Same phash helper as InsightFaceFaceDetector (no forked math) — CR-01.
+        image_phash = InsightFaceFaceDetector._compute_phash(  # type: ignore[arg-type]
+            None,  # method does not use self
+            image_bytes,
+        )
 
         raw_batches = self._runtime.detector.detect([bgr])
         raw_faces: list[RawDetection] = raw_batches[0] if raw_batches else []
@@ -305,37 +376,76 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
             return []
 
         h, w = bgr.shape[:2]
-        crops: list[np.ndarray] = []
+        kept: list[tuple[RawDetection, tuple[int, int, int, int]]] = []
+        dropped = 0
         for face in raw_faces:
-            aligned = self._runtime.aligner.align(bgr, face.landmarks)
-            crops.append(aligned.crop)
-
-        embeddings = self._runtime.embedder.embed(crops)
-        model_id = self._runtime.manifest.model_id
-        results: list[FaceDetection] = []
-        for face, embedding in zip(raw_faces, embeddings, strict=True):
             x1, y1, x2, y2 = xywh_to_corner_bbox(face.bbox)
             # Clamp corners into image bounds for safety (still corner format).
             x1 = max(0, min(x1, w))
             y1 = max(0, min(y1, h))
             x2 = max(0, min(x2, w))
             y2 = max(0, min(y2, h))
+            if x2 <= x1 or y2 <= y1:
+                dropped += 1
+                continue
+            kept.append((face, (x1, y1, x2, y2)))
+
+        if dropped:
+            logger.debug(
+                "Dropped %d degenerate bbox detection(s) for %s before align/embed",
+                dropped,
+                media_id[:20],
+            )
+        if not kept:
+            return []
+
+        crops: list[np.ndarray] = []
+        for face, _bbox in kept:
+            aligned = self._runtime.aligner.align(bgr, face.landmarks)
+            crops.append(aligned.crop)
+
+        try:
+            embeddings = self._runtime.embedder.embed(crops)
+        except ZeroNormEmbeddingError as exc:
+            raise DetectionAdapterError(
+                media_id=media_id,
+                error_message=f"zero_norm_embedding: {exc}",
+            ) from exc
+
+        model_id = self._runtime.manifest.model_id
+        results: list[FaceDetection] = []
+        for (face, bbox), embedding in zip(kept, embeddings, strict=True):
+            # Incumbent quality path (pose_* may be None) — CR-01.
+            landmark_quality = _compute_detection_quality(
+                confidence=float(face.score),
+                pose_pitch=None,
+                pose_yaw=None,
+                pose_roll=None,
+                bbox=bbox,
+            )
             results.append(
                 FaceDetection(
                     media_id=media_id,
-                    bbox=(x1, y1, x2, y2),
+                    bbox=bbox,
                     confidence=float(face.score),
                     embedding=np.asarray(embedding, dtype=np.float32),
                     pose_pitch=None,
                     pose_yaw=None,
                     pose_roll=None,
+                    image_phash=image_phash,
+                    landmark_quality=landmark_quality,
                     model_id=model_id,
                 )
             )
         return results
 
     async def detect(self, sources: Iterable[bytes | str]) -> list[FaceDetection]:
-        """Detect faces and return embeddings in one pass per image."""
+        """Detect faces and return embeddings in one pass per image.
+
+        Submission is gated by ``_submit_semaphore`` (== executor max_workers).
+        Timeouts raise without reclaiming a still-running worker; the semaphore
+        slot is released only when the executor future completes ([RES-02]).
+        """
         detections: list[FaceDetection] = []
         loop = asyncio.get_running_loop()
 
@@ -365,9 +475,19 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
                     payload: bytes = current_bytes,
                     mid: str = current_media_id,
                 ) -> list[FaceDetection]:
-                    fut = loop.run_in_executor(self._executor, self._detect_sync, payload, mid)
+                    await self._submit_semaphore.acquire()
+                    # Submit via concurrent.futures so the release callback tracks the
+                    # real worker, not the asyncio Future that wait_for may cancel on
+                    # timeout (which would free the slot while the thread still runs).
+                    cfut = self._executor.submit(self._detect_sync, payload, mid)
+
+                    def _release_on_worker_done(_f: object) -> None:
+                        loop.call_soon_threadsafe(self._submit_semaphore.release)
+
+                    cfut.add_done_callback(_release_on_worker_done)
+                    afut = asyncio.wrap_future(cfut, loop=loop)
                     return await wait_for_adapter(
-                        fut,
+                        afut,
                         timeout_s=self._timeout,
                         adapter_name="face_pipeline.detect",
                     )
@@ -399,6 +519,7 @@ __all__ = [
     "FacePipelineRuntime",
     "FacePipelineRuntimeUnavailable",
     "FacePipelineRuntimeUnavailableError",
+    "assert_embedding_pgvector_pair",
     "assert_three_way_embedding_dimensions",
     "decode_image_bytes",
     "face_pipeline_unavailable_generator",

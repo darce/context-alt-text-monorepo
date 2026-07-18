@@ -30,7 +30,6 @@ from recognition.infrastructure.face_pipeline.ort_adapters import (
 )
 from recognition.infrastructure.face_pipeline.provenance import MODEL_MANIFEST
 
-
 # ---------------------------------------------------------------------------
 # FIR3-BR-02 — lower+upper clamp of cls/obj to [0,1] before sqrt
 # ---------------------------------------------------------------------------

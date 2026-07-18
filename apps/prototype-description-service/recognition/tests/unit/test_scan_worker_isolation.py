@@ -327,3 +327,124 @@ async def test_generic_exception_still_releases_for_retry_under_max_attempts(
     assert released.get("item_id") == item_id
     assert "transient adapter blip" in str(released.get("error_message") or "")
     assert failed == {}, "generic exceptions under max attempts must not mark FAILED"
+
+
+@pytest.mark.asyncio
+async def test_failure_path_restores_rls_bypass_after_rollback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FIR-FINAL2-LOCAL-01: SET LOCAL bypass is cleared by rollback; restore before status write.
+
+    Under FORCE RLS, mark_item_failed / release_item_for_retry affect zero rows
+    when bypass is not re-enabled after session.rollback(). Contract order:
+    enable_rls_bypass (start) → process → rollback → enable_rls_bypass →
+    failure update → commit.
+    """
+    tenant_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    item_id = uuid.uuid4()
+    item = _claimed_item(
+        item_id=item_id,
+        job_id=job_id,
+        tenant_id=tenant_id,
+        media_id=44,
+    )
+    assert item.attempts == 1
+
+    ops: list[str] = []
+    failed: dict[str, object] = {}
+    released: dict[str, object] = {}
+
+    class _Repo:
+        async def mark_item_completed(self, **_kwargs):  # noqa: ANN001
+            raise AssertionError("failure path must not complete")
+
+        async def release_item_for_retry(self, *, item_id, error_message):  # noqa: ANN001
+            ops.append("release_item_for_retry")
+            released["item_id"] = item_id
+            released["error_message"] = error_message
+
+        async def mark_item_failed(self, *, item_id, completed_at, error_message):  # noqa: ANN001
+            ops.append("mark_item_failed")
+            failed["item_id"] = item_id
+            failed["error_message"] = error_message
+            failed["completed_at"] = completed_at
+
+    class _Session:
+        async def rollback(self) -> None:
+            ops.append("rollback")
+
+        async def commit(self) -> None:
+            ops.append("commit")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    async def _track_bypass(_session) -> None:  # noqa: ANN001
+        ops.append("enable_rls_bypass")
+
+    class _Factory:
+        def __call__(self):
+            return _Session()
+
+    class _ScanService:
+        async def process_media_item(self, **_kwargs):  # noqa: ANN001
+            ops.append("process_media_item")
+            raise RuntimeError("adapter boom")
+
+        def emit_pending_scan_media_reconciled(self) -> None:
+            raise AssertionError("must not emit on failure")
+
+    handler = ScanItemHandler(
+        session_factory=_Factory(),  # type: ignore[arg-type]
+        detector=AsyncMock(),
+        generator=AsyncMock(),
+        max_attempts=3,
+        max_concurrency=1,
+    )
+
+    monkeypatch.setattr(
+        "recognition.worker.handlers.scan.enable_rls_bypass",
+        _track_bypass,
+    )
+    monkeypatch.setattr(
+        "recognition.worker.handlers.scan.SqlAlchemyScanQueueRepository",
+        lambda _session: _Repo(),
+    )
+    handler._refresh_job_progress = AsyncMock()  # type: ignore[method-assign]
+    handler._build_scan_service = lambda _session: _ScanService()  # type: ignore[method-assign]
+
+    await handler.process_items(claimed=[item])
+
+    # Durable status: retry release (attempts < max), not silent no-op.
+    assert released.get("item_id") == item_id
+    assert "adapter boom" in str(released.get("error_message") or "")
+    assert failed == {}
+
+    assert ops.count("enable_rls_bypass") >= 2, (
+        "must re-enable RLS bypass after rollback before failure status write; "
+        f"ops={ops}"
+    )
+    assert "rollback" in ops
+    assert "release_item_for_retry" in ops
+    assert "commit" in ops
+
+    first_bypass = ops.index("enable_rls_bypass")
+    process_idx = ops.index("process_media_item")
+    rollback_idx = ops.index("rollback")
+    # Second bypass must land after rollback and before the failure update.
+    post_rollback = ops[rollback_idx + 1 :]
+    assert "enable_rls_bypass" in post_rollback, (
+        f"enable_rls_bypass missing after rollback; ops={ops}"
+    )
+    second_bypass_rel = post_rollback.index("enable_rls_bypass")
+    failure_rel = post_rollback.index("release_item_for_retry")
+    commit_rel = post_rollback.index("commit")
+    assert first_bypass < process_idx < rollback_idx
+    assert second_bypass_rel < failure_rel < commit_rel, (
+        "contract: rollback → enable_rls_bypass → failure update → commit; "
+        f"ops={ops}"
+    )

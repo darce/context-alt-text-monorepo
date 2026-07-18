@@ -51,7 +51,7 @@ FROM pg_catalog.pg_attribute AS a
 JOIN pg_catalog.pg_class AS c ON a.attrelid = c.oid
 JOIN pg_catalog.pg_namespace AS n ON c.relnamespace = n.oid
 JOIN pg_catalog.pg_type AS t ON a.atttypid = t.oid
-WHERE n.nspname = 'public'
+WHERE n.nspname = current_schema()
   AND c.relkind IN ('r', 'm', 'p')
   AND NOT a.attisdropped
   AND a.attnum > 0

@@ -620,6 +620,73 @@ def test_sticky_integrity_recovers_after_operator_model_replace(
     fpa.reset_shared_face_pipeline_runtime_for_tests()
 
 
+def test_sticky_license_integrity_recovers_after_license_only_replace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FIR-PM-01: license ModelIntegrityError is sticky while license identity is
+    unchanged, but replacing only the license file must invalidate the sticky
+    runtime key and reload without reset_shared_face_pipeline_runtime_for_tests.
+
+    ONNX model bytes stay fixed — readiness already tracks license identity; the
+    shared runtime cache key must too ([RES-04], [DRIFT-02], [PROV-08]).
+    """
+    _align_dims_to_sface(monkeypatch)
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+
+    yunet_name = MODEL_MANIFEST["yunet"].file_name
+    sface_name = MODEL_MANIFEST["sface"].file_name
+    yunet_lic = MODEL_MANIFEST["yunet"].license_file
+    sface_lic = MODEL_MANIFEST["sface"].license_file
+
+    (tmp_path / yunet_name).write_bytes(b"yunet-onnx-stable")
+    (tmp_path / sface_name).write_bytes(b"sface-onnx-stable")
+    (tmp_path / yunet_lic).write_bytes(b"MIT-yunet-v1")
+    sface_lic_path = tmp_path / sface_lic
+    sface_lic_path.write_bytes(b"Apache-sface-bad-v1")
+
+    load_calls = 0
+    allow_success = False
+
+    def loader(*, models_dir: Path, **kwargs: object) -> fpa.FacePipelineRuntime:
+        nonlocal load_calls
+        load_calls += 1
+        if not allow_success:
+            raise ModelIntegrityError("license sha256 mismatch for 'sface'")
+        return fpa.FacePipelineRuntime(
+            detector=MagicMock(),
+            aligner=MagicMock(),
+            embedder=MagicMock(),
+            manifest=fpa.sface_embedding_model_manifest(),
+            models_dir=models_dir,
+            score_threshold=0.9,
+            nms_threshold=0.3,
+            top_k=5000,
+        )
+
+    monkeypatch.setattr(fpa, "_load_face_pipeline_runtime", loader)
+
+    with pytest.raises(fpa.FacePipelineRuntimeUnavailableError, match="license sha256"):
+        fpa.get_shared_face_pipeline_runtime(profile="face_pipeline", models_dir=tmp_path)
+    assert load_calls == 1
+
+    # Unchanged model + license identity: sticky — no reload.
+    with pytest.raises(fpa.FacePipelineRuntimeUnavailableError):
+        fpa.get_shared_face_pipeline_runtime(profile="face_pipeline", models_dir=tmp_path)
+    assert load_calls == 1, "unchanged license identity must keep sticky integrity failure"
+
+    # License-only repair (ONNX bytes untouched).
+    sface_lic_path.write_bytes(b"Apache-sface-good-after-repair-v2")
+    allow_success = True
+
+    runtime = fpa.get_shared_face_pipeline_runtime(profile="face_pipeline", models_dir=tmp_path)
+    assert runtime is not None
+    assert load_calls == 2, (
+        "license-only identity change must re-verify/rebuild without test reset; "
+        f"load_calls={load_calls}"
+    )
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+
+
 def test_grok47c_02_ort_inference_session_has_no_explicit_cleanup_contract() -> None:
     """GROK47C-02 adjudication [RES-04]: onnxruntime InferenceSession exposes no
     close/dispose/context-manager contract. Failed constructors leave no live

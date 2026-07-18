@@ -208,6 +208,25 @@ class TestFinalA02LivePgvectorWidthReadiness:
 
         assert result.status is HealthStatus.UNHEALTHY
 
+    def test_typmod_sql_scopes_to_current_schema_not_hardcoded_public(self) -> None:
+        """FIR-FINAL2-LOCAL-02: readiness catalog probe must follow schema contract.
+
+        Migration/heal/verify use current_schema(); hardcoding n.nspname='public'
+        leaves correct non-public search_path installs permanently unready
+        ([rg-005], [SERVE-01]).
+        """
+        from recognition.application import health as health_mod
+
+        sql = health_mod._IDENTITY_VECTOR_TYPMOD_SQL
+        assert "current_schema()" in sql, (
+            "typmod probe must filter by current_schema() (or equivalent visible "
+            f"relation strategy); got SQL:\n{sql}"
+        )
+        # Hardcoded public is the bug: reject exact nspname = 'public' / "public".
+        assert "nspname = 'public'" not in sql
+        assert 'nspname = "public"' not in sql
+        assert "nspname='public'" not in sql.replace(" ", "")
+
 
 # ---------------------------------------------------------------------------
 # FINALA-03 — admission must not succeed after deadline
@@ -541,7 +560,7 @@ class TestFinalB01ConfidenceCheckPoseSafety:
     async def test_extreme_vs_frontal_threshold_direction(self) -> None:
         """Extreme pose final_threshold must be strictly stricter than frontal leniency."""
         check = ConfidenceCheck(_make_settings(), _maturity_repo(adj=0.0))
-        common = dict(similarity=0.70, confidence=0.99, bbox_size=200)
+        common = {"similarity": 0.70, "confidence": 0.99, "bbox_size": 200}
 
         frontal = await check.evaluate(
             _make_candidate(**common, pose_pitch=0.0, pose_yaw=0.0, pose_roll=0.0)

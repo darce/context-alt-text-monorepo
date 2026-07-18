@@ -46,6 +46,7 @@ import {
   REVIEW_QUEUE_BAND_CHIP_LABEL,
   REVIEW_QUEUE_DRAIN_MESSAGE,
   REVIEW_QUEUE_FILTER,
+  SELECTION_SPLIT_MESSAGE,
   type ReviewQueueBand,
   type ReviewQueueFilter,
   type ReviewQueueItem,
@@ -319,9 +320,11 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       awaitBulkIdleOrFlushRef: data.awaitBulkIdleOrFlushRef,
     });
 
+    // BR-59: the truncation gate targets only the clusters the commit can fire —
+    // the filter-intersected selection, not the full selectedIds set.
     const selectedTargetClusterIds = React.useMemo(() => {
       const ids: string[] = [];
-      for (const sid of selectedIds) {
+      for (const sid of filteredSelectedIds) {
         const item = queueBySuggestionId.get(sid);
         if (!item) {
           continue;
@@ -332,7 +335,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         }
       }
       return ids;
-    }, [queueBySuggestionId, selectedIds]);
+    }, [queueBySuggestionId, filteredSelectedIds]);
 
     const truncation = useSelectedClusterTruncation(selectedTargetClusterIds);
 
@@ -358,22 +361,33 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       }
     }, [findings.queue, pruneMissingIds]);
 
-    // BR-54: announce tray count changes on select/deselect via polite live region.
-    const prevSelectionSizeRef = React.useRef(selectedIds.size);
+    // BR-63: when the selection extends beyond the active KIND ∩ band view,
+    // render/announce the split count; otherwise keep the simple count.
+    const selectionCountMessage =
+      selectedIds.size !== filteredSelectedIds.length
+        ? sprintf(
+            /* translators: 1: total selected review items, 2: selected items within active filters */
+            __(SELECTION_SPLIT_MESSAGE, 'alt-context'),
+            selectedIds.size,
+            filteredSelectedIds.length,
+          )
+        : sprintf(
+            /* translators: %d: number of selected review items */
+            __('%d selected', 'alt-context'),
+            selectedIds.size,
+          );
+
+    // BR-54/BR-63: announce tray count changes (select/deselect, filter split)
+    // via polite live region. Ref-compare skips the mount announce.
+    const prevSelectionMessageRef = React.useRef(selectionCountMessage);
     React.useEffect(() => {
-      const prev = prevSelectionSizeRef.current;
-      prevSelectionSizeRef.current = selectedIds.size;
-      if (prev === selectedIds.size) {
+      const prev = prevSelectionMessageRef.current;
+      prevSelectionMessageRef.current = selectionCountMessage;
+      if (prev === selectionCountMessage) {
         return;
       }
-      setLiveMessage(
-        sprintf(
-          /* translators: %d: number of selected review items */
-          __('%d selected', 'alt-context'),
-          selectedIds.size,
-        ),
-      );
-    }, [selectedIds.size]);
+      setLiveMessage(selectionCountMessage);
+    }, [selectionCountMessage]);
 
     // Reset truncation confirm when selection or gate changes.
     React.useEffect(() => {
@@ -781,11 +795,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             data-testid="acx-review-selection-tray"
           >
             <span className="acx-review-queue__selection-count">
-              {sprintf(
-                /* translators: %d: number of selected review items */
-                __('%d selected', 'alt-context'),
-                selectedIds.size,
-              )}
+              {selectionCountMessage}
             </span>
             <button
               type="button"

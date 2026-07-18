@@ -422,6 +422,49 @@ describe('useBulkReviewCommit (PR-30 state machine)', () => {
     expect(commitCalls).not.toContain('b');
   });
 
+  it('BR-62: filter change during hold narrows fired set to live selection ∩ filters', async () => {
+    // resolveItems honors the active KIND∩band view (host wiring); simulate a
+    // URL-driven band change during the hold by shrinking the allowed set.
+    let allowedByFilters = new Set(['a', 'b', 'c']);
+    const filterAwareResolveItems = (ids: readonly string[]): BulkCommitItem[] =>
+      ids
+        .filter((id) => allowedByFilters.has(id))
+        .map((id) => items[id])
+        .filter(Boolean);
+
+    const { result } = renderHook(() =>
+      useBulkReviewCommit({
+        selectedIds,
+        onSelectedIdsChange,
+        resolveItems: filterAwareResolveItems,
+        flushHeldSingle,
+        commitOne,
+        heldSingleSuggestionId: null,
+        setBulkActionActive,
+        isBulkActiveRef,
+        awaitBulkIdleOrFlushRef,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.initiateBulk();
+    });
+    expect(result.current.bulk.phase).toBe('holding');
+    expect(result.current.bulk.holdCount).toBe(3);
+
+    // Band change via URL during the hold: only 'a' stays in the live view.
+    allowedByFilters = new Set(['a']);
+
+    await expireBulkHold();
+    // Chosen honest behavior: the fired set respects the new intersection.
+    expect(commitCalls).toEqual(['a']);
+    expect(commitCalls).not.toContain('b');
+    expect(commitCalls).not.toContain('c');
+    // Unfired ids stay selected — nothing committed outside the live view.
+    expect(selectedIds.has('b')).toBe(true);
+    expect(selectedIds.has('c')).toBe(true);
+  });
+
   it('BR-55: committing-phase announce drops Undo suffix', async () => {
     let resolveA: ((v: 'committed' | 'failed') => void) | null = null;
     commitOne = (_kind, id) => {

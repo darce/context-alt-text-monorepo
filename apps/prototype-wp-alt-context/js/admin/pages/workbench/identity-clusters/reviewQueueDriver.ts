@@ -50,6 +50,13 @@ export type WorkbenchNextAction =
  */
 export const REVIEW_QUEUE_DRAIN_MESSAGE = 'All caught up — no items need review';
 
+/**
+ * Tray/announce copy when the selection extends beyond the active KIND ∩ band
+ * view (BR-63). Single swept constant — render and live region share it.
+ * sprintf args: 1 = total selected, 2 = selected within current filters.
+ */
+export const SELECTION_SPLIT_MESSAGE = '%1$d selected — %2$d in current filter';
+
 /** Filter chip kinds for the pre-commit review queue (KIND-derived). */
 export const REVIEW_QUEUE_FILTER = {
   ALL: 'all',
@@ -74,12 +81,17 @@ export type ReviewQueueBand = (typeof REVIEW_QUEUE_BAND)[keyof typeof REVIEW_QUE
 /**
  * Strong-match floor for preset band chips.
  *
- * WHY 0.80: historical recognition pipeline boundary — the suggestion band was
- * [~0.65, 0.80) and ≥0.80 was treated as a strong auto-accept-class match.
- * These chips are fixed presets over ProjectedSuggestion.similarity (post
- * isHumanLabeledTarget), never a user-tunable threshold control.
+ * WHY 0.45: midpoint of the live pending band. The recognition pipeline
+ * (`recognition/application/settings/clustering.py`) defaults `suggestion_floor`
+ * to 0.35 and `suggestion_ceiling` to 0.55 — matches ≥ ceiling auto-accept, so
+ * pending suggestions live in [floor, ceiling) and this preset splits that
+ * PENDING range in half (strong = upper half). It is a fixed preset, not synced
+ * to backend settings (the frontend cannot read them), so drift is possible if
+ * the backend band moves. These chips are fixed presets over
+ * ProjectedSuggestion.similarity (post isHumanLabeledTarget), never a
+ * user-tunable threshold control.
  */
-export const STRONG_SIMILARITY_MIN = 0.8;
+export const STRONG_SIMILARITY_MIN = 0.45;
 
 /**
  * KIND → human chip copy (sr-007). Only the two live demo chips.
@@ -117,18 +129,26 @@ export type ReviewQueueItem =
   | {
       kind: typeof NEXT_ACTION_KIND.MERGE;
       suggestionId: string;
-      /** Merge payload similarity (same band predicate domain as assignment). */
+      /**
+       * Merge payload similarity (cluster-pair domain — NOT the assignment
+       * ProjectedSuggestion.similarity domain). Carried for card display only;
+       * band filtering excludes MERGE (BR-60).
+       */
       similarity: number;
     }
   | { kind: typeof NEXT_ACTION_KIND.NAME; suggestionId: string; clusterId: string }
   | { kind: typeof NEXT_ACTION_KIND.CLUSTER; clusterId: string };
 
-/** Similarity for band filtering when the item carries one; undefined for name/cluster. */
+/**
+ * Band-filter similarity: ASSIGNMENT only (ProjectedSuggestion.similarity).
+ * MERGE similarity is a different domain (cluster-pair), so merges are excluded
+ * from strong/weaker exactly like NAME/CLUSTER — visible under band=all only (BR-60).
+ */
 export const queueItemSimilarity = (item: ReviewQueueItem): number | undefined => {
   switch (item.kind) {
     case NEXT_ACTION_KIND.ASSIGNMENT:
-    case NEXT_ACTION_KIND.MERGE:
       return item.similarity;
+    case NEXT_ACTION_KIND.MERGE:
     case NEXT_ACTION_KIND.NAME:
     case NEXT_ACTION_KIND.CLUSTER:
       return undefined;
@@ -136,9 +156,9 @@ export const queueItemSimilarity = (item: ReviewQueueItem): number | undefined =
 };
 
 /**
- * Pure band predicate over ProjectedSuggestion.similarity (and merge similarity).
+ * Pure band predicate over ASSIGNMENT items' ProjectedSuggestion.similarity.
  * Applied AFTER isHumanLabeledTarget eligibility (queue is already eligibility-filtered).
- * Items without a similarity (name/cluster) only pass when band is `all`.
+ * Items without a band similarity (merge/name/cluster) only pass when band is `all`.
  */
 export const matchesSimilarityBand = (
   similarity: number | undefined,

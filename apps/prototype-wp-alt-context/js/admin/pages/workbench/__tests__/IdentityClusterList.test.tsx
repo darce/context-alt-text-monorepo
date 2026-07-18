@@ -44,9 +44,14 @@ const loaderResultFrom = (
   };
 };
 
-type FindClusterByLabel = (label: string, signal?: AbortSignal) => Promise<{ id: string; label: string } | null>;
+interface ClusterLabelMatch {
+  id: string;
+  label: string;
+  identityCount?: number;
+}
+type FindClusterByLabel = (label: string, signal?: AbortSignal) => Promise<ClusterLabelMatch | null>;
 let defaultFindClusterByLabel: ReturnType<typeof vi.fn<FindClusterByLabel>>;
-let findClusterDeferreds: Deferred<{ id: string; label: string } | null>[] = [];
+let findClusterDeferreds: Deferred<ClusterLabelMatch | null>[] = [];
 
 // Mock ResizeObserver for Radix UI
 window.ResizeObserver = class ResizeObserver {
@@ -194,7 +199,7 @@ const resolveDeferred = async <T,>(deferred: Deferred<T>, value: T, advanceMs = 
   await flushTimers(advanceMs);
 };
 
-const resolveFindClusterDeferreds = async (value: { id: string; label: string } | null) => {
+const resolveFindClusterDeferreds = async (value: ClusterLabelMatch | null) => {
   while (findClusterDeferreds.length > 0) {
     const deferred = findClusterDeferreds.shift();
     if (deferred) {
@@ -232,7 +237,7 @@ describe('IdentityClusterList', () => {
     setupMocks();
     findClusterDeferreds = [];
     defaultFindClusterByLabel = vi.fn(() => {
-      const deferred = createDeferred<{ id: string; label: string } | null>();
+      const deferred = createDeferred<ClusterLabelMatch | null>();
       findClusterDeferreds.push(deferred);
       return deferred.promise;
     });
@@ -461,9 +466,9 @@ describe('IdentityClusterList', () => {
 
   it('uses search to find cluster by label when saving to an existing label', async () => {
     const existingCluster = { id: 'cluster-500', label: 'Erin McCleod', identity_count: 1 };
-    const matchDeferreds: Deferred<{ id: string; label: string } | null>[] = [];
+    const matchDeferreds: Deferred<ClusterLabelMatch | null>[] = [];
     const findClusterByLabelRemote = vi.fn(() => {
-      const deferred = createDeferred<{ id: string; label: string } | null>();
+      const deferred = createDeferred<ClusterLabelMatch | null>();
       matchDeferreds.push(deferred);
       return deferred.promise;
     });
@@ -516,7 +521,11 @@ describe('IdentityClusterList', () => {
       if (!matchDeferred) {
         throw new Error('Expected match deferred to be defined.');
       }
-      await resolveDeferred(matchDeferred, { id: existingCluster.id, label: existingCluster.label });
+      await resolveDeferred(matchDeferred, {
+        id: existingCluster.id,
+        label: existingCluster.label,
+        identityCount: existingCluster.identity_count,
+      });
     });
 
     await actFlow(async () => {
@@ -526,7 +535,7 @@ describe('IdentityClusterList', () => {
     await waitFor(() => expect(findClusterByLabelRemote).toHaveBeenCalled());
     await waitForEditClosed();
 
-    // No merge modal expected since identity_count is 1 (< 5)
+    // No merge modal expected since identityCount is 1 (< 5)
 
     await waitFor(() =>
       expect(api.mergeCluster).toHaveBeenCalledWith('cluster-1', 'cluster-500', 'Erin McCleod', expect.anything()),
@@ -537,9 +546,9 @@ describe('IdentityClusterList', () => {
     const updateDeferred = createDeferred<unknown>();
     (api.updateClusterLabel as Mock).mockReturnValue(updateDeferred.promise);
 
-    const matchDeferreds: Deferred<{ id: string; label: string } | null>[] = [];
+    const matchDeferreds: Deferred<ClusterLabelMatch | null>[] = [];
     const findClusterByLabelRemote = vi.fn(() => {
-      const deferred = createDeferred<{ id: string; label: string } | null>();
+      const deferred = createDeferred<ClusterLabelMatch | null>();
       matchDeferreds.push(deferred);
       return deferred.promise;
     });

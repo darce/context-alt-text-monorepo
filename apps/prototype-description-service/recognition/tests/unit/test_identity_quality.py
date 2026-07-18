@@ -101,8 +101,13 @@ class TestComputeIdentityQuality:
         assert info.score < 0.6
         assert info.threshold_adjustment > 0.0  # Stricter
 
-    def test_extreme_pose_penalized(self) -> None:
-        info = compute_identity_quality(
+    def test_extreme_pose_not_penalized(self) -> None:
+        """FIR2-BR-03: canonical quality is pose-neutral (no extreme-pose penalty).
+
+        Pose remains optional for diversity/buckets; threshold quality uses
+        confidence + bbox only so models without pose are not disadvantaged.
+        """
+        extreme = compute_identity_quality(
             confidence=0.9,
             pose_pitch=45.0,
             pose_yaw=0.0,
@@ -110,8 +115,24 @@ class TestComputeIdentityQuality:
             bbox_width=100,
             bbox_height=100,
         )
-        assert info.pose_penalty < 1.0
-        assert info.score < 0.9
+        frontal = compute_identity_quality(
+            confidence=0.9,
+            pose_pitch=0.0,
+            pose_yaw=0.0,
+            pose_roll=0.0,
+            bbox_width=100,
+            bbox_height=100,
+        )
+        missing = compute_identity_quality(
+            confidence=0.9,
+            pose_pitch=None,
+            pose_yaw=None,
+            pose_roll=None,
+            bbox_width=100,
+            bbox_height=100,
+        )
+        assert extreme.score == frontal.score == missing.score
+        assert extreme.score == pytest.approx(0.9, abs=0.001)
 
     def test_small_face_penalized(self) -> None:
         info = compute_identity_quality(

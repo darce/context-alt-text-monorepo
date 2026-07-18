@@ -11,10 +11,18 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from recognition.application.settings import ClusteringSettings
 from recognition.application.settings.scan import ScanSettings
+from recognition.infrastructure.face_pipeline._common import (
+    DEFAULT_NMS_THRESHOLD,
+    DEFAULT_SCORE_THRESHOLD,
+    DEFAULT_TOP_K,
+)
+from recognition.infrastructure.face_pipeline.provenance import DEFAULT_MODELS_DIR
+
+_FACE_PIPELINE_PROFILES: frozenset[str] = frozenset({"insightface", "face_pipeline"})
 
 
 def _resolve_insightface_cache_root() -> Path:
@@ -28,6 +36,36 @@ def _resolve_insightface_cache_root() -> Path:
         return Path(explicit_home)
 
     return Path.home() / ".insightface"
+
+
+def _resolve_face_pipeline_profile() -> str:
+    """Read RECOGNITION_FACE_PIPELINE_PROFILE; fail closed on unknown values (rg-008)."""
+    raw = os.environ.get("RECOGNITION_FACE_PIPELINE_PROFILE", "insightface").strip()
+    if raw not in _FACE_PIPELINE_PROFILES:
+        raise ValueError(
+            f"Invalid RECOGNITION_FACE_PIPELINE_PROFILE={raw!r}; allowed values: {sorted(_FACE_PIPELINE_PROFILES)}"
+        )
+    return raw
+
+
+def _resolve_face_pipeline_models_dir() -> Path | None:
+    """Optional models dir override; None means face_pipeline DEFAULT_MODELS_DIR."""
+    raw = os.environ.get("RECOGNITION_FACE_PIPELINE_MODELS_DIR", "").strip()
+    if not raw:
+        return None
+    return Path(raw)
+
+
+def _resolve_embedding_dimension() -> int:
+    """Bind identity_detection.embedding_dimension to RECOGNITION_EMBEDDING_DIMENSION."""
+    return int(os.environ.get("RECOGNITION_EMBEDDING_DIMENSION", "512"))
+
+
+def _resolve_face_pipeline_timeout_s() -> float:
+    """Default detector timeout matches the incumbent embedding timeout source."""
+    from db.settings import get_database_settings
+
+    return float(get_database_settings().embedding_timeout_s)
 
 
 class InsightFaceSettings(BaseModel):
@@ -49,6 +87,56 @@ class InsightFaceSettings(BaseModel):
         return self.cache_dir / "models"
 
 
+class FacePipelineSettings(BaseModel):
+    """Dark-launch settings for the FIR-3 YuNet+SFace runtime (FIR-4 S2).
+
+    Production default profile remains ``insightface``. Flat env vars follow the
+    existing ``RecognitionSettings`` convention (no nested pydantic-settings delimiter).
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    profile: Literal["insightface", "face_pipeline"] = Field(
+        default_factory=_resolve_face_pipeline_profile,  # type: ignore[arg-type]
+        validate_default=True,
+        description="Active face pipeline profile (dark default: insightface).",
+    )
+    models_dir: Path | None = Field(
+        default_factory=_resolve_face_pipeline_models_dir,
+        description="Override for face_pipeline ONNX models dir (None → DEFAULT_MODELS_DIR).",
+    )
+    score_threshold: float = Field(
+        default=DEFAULT_SCORE_THRESHOLD,
+        description="YuNet score threshold pass-through (FIR-3 default).",
+    )
+    nms_threshold: float = Field(
+        default=DEFAULT_NMS_THRESHOLD,
+        description="YuNet NMS threshold pass-through (FIR-3 default).",
+    )
+    top_k: int = Field(
+        default=DEFAULT_TOP_K,
+        description="YuNet top-k pass-through (FIR-3 default).",
+    )
+    timeout_s: float = Field(
+        default_factory=_resolve_face_pipeline_timeout_s,
+        description="Per-image detect timeout (defaults to DB_EMBEDDING_TIMEOUT_SECONDS).",
+    )
+
+    @field_validator("profile", mode="before")
+    @classmethod
+    def _validate_profile(cls, value: object) -> object:
+        if isinstance(value, str) and value not in _FACE_PIPELINE_PROFILES:
+            raise ValueError(
+                f"Invalid face_pipeline profile={value!r}; allowed values: {sorted(_FACE_PIPELINE_PROFILES)}"
+            )
+        return value
+
+    @property
+    def resolved_models_dir(self) -> Path:
+        """Models directory used for verified load (None → package DEFAULT_MODELS_DIR)."""
+        return self.models_dir if self.models_dir is not None else DEFAULT_MODELS_DIR
+
+
 class IdentityDetectionSettings(BaseModel):
     """Settings for identity detection and embedding generation."""
 
@@ -56,7 +144,10 @@ class IdentityDetectionSettings(BaseModel):
 
     default_threshold: float = Field(default=0.45, description="Default detection confidence threshold.")
     max_identities_per_image: int = Field(default=999, description="Maximum faces to detect per image.")
-    embedding_dimension: int = Field(default=512, description="Embedding vector dimension (face identity only).")
+    embedding_dimension: int = Field(
+        default_factory=_resolve_embedding_dimension,
+        description="Embedding vector dimension (face identity only). Env: RECOGNITION_EMBEDDING_DIMENSION.",
+    )
     max_candidates: int = Field(default=10, description="Maximum candidate matches to consider.")
 
 
@@ -94,6 +185,7 @@ class RecognitionSettings(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     insightface: InsightFaceSettings = Field(default_factory=InsightFaceSettings)
+    face_pipeline: FacePipelineSettings = Field(default_factory=FacePipelineSettings)
     identity_detection: IdentityDetectionSettings = Field(default_factory=IdentityDetectionSettings)
     clustering_limits: ClusteringLimitsSettings = Field(default_factory=ClusteringLimitsSettings)
     clustering: ClusteringSettings = Field(default_factory=ClusteringSettings)

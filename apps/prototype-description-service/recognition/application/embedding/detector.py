@@ -244,7 +244,9 @@ class InsightFaceFaceDetector(FaceDetectorProtocol):
             # Detect faces and get embeddings in one pass
             try:
 
-                async def detect_current_image(current_image_bytes: bytes = current_source_bytes) -> list[FaceDetection]:
+                async def detect_current_image(
+                    current_image_bytes: bytes = current_source_bytes,
+                ) -> list[FaceDetection]:
                     return await wait_for_adapter(
                         self._adapter.detect_faces(current_image_bytes),
                         timeout_s=self._timeout,

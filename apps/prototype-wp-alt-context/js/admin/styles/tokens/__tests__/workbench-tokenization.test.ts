@@ -17,7 +17,7 @@ const listComponentScssFiles = (): string[] =>
 const isExempt = (line: string): boolean =>
   /(?:\/\/|\/\*)\s*(REFA-3|E21-4)\s+disposition:/.test(line);
 
-const literalPatterns: ReadonlyArray<{ name: string; re: RegExp }> = [
+const literalPatterns: readonly { name: string; re: RegExp }[] = [
   { name: 'hex', re: /#[0-9a-fA-F]{3,8}\b/ },
   { name: 'rgb/rgba', re: /rgba?\(/ },
   // Named color keywords used as color values (not white-space, etc.)

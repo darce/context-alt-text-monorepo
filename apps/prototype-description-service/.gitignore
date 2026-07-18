@@ -1,1 +1,4 @@
 scripts/eval_harness/out/
+# Large ONNX weights are operator-fetched, never commit-eligible (FIR-3 S1 BR-10).
+*.onnx
+*.onnx.partial

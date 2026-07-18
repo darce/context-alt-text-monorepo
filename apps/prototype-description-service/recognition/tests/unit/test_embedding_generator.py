@@ -16,7 +16,6 @@ import pytest
 
 import recognition.application.embedding.generator as generator_module
 from recognition.application.embedding.detector import FaceDetection
-from recognition.application.embedding.manifest import incumbent_embedding_model_manifest
 from recognition.application.embedding.generator import (
     EmbeddingAdapterError,
     EmbeddingGenerator,
@@ -25,6 +24,7 @@ from recognition.application.embedding.generator import (
     InsightFaceEmbeddingGenerator,
     StubEmbeddingGenerator,
 )
+from recognition.application.embedding.manifest import incumbent_embedding_model_manifest
 from recognition.application.integrations import AdapterBreakerConfig, AdapterBreakerOpenError, AdapterCircuitBreaker
 from recognition.config import get_settings
 from recognition.infrastructure.embeddings import InsightFaceAdapter
@@ -153,9 +153,7 @@ class TestInsightFaceEmbeddingGenerator:
     async def test_calls_adapter_analyze(self, mock_adapter: MagicMock) -> None:
         """Should call adapter.analyze for each image."""
         expected_embedding = np.random.randn(_EMBEDDING_DIM).astype(np.float32)
-        mock_adapter.analyze = AsyncMock(
-            return_value=[_face_detection(confidence=0.92, embedding=expected_embedding)]
-        )
+        mock_adapter.analyze = AsyncMock(return_value=[_face_detection(confidence=0.92, embedding=expected_embedding)])
 
         generator = InsightFaceEmbeddingGenerator(mock_adapter)
         results = await generator.generate([b"real-face-image"])

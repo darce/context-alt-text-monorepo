@@ -1239,6 +1239,169 @@ class ClustersControllerTest extends TestCase
         $this->assertSame(502, $response->get_error_data()['status'] ?? null);
     }
 
+    public function testGetClusterMembersLocalProjectionHonorsLimitAndOffset(): void
+    {
+        $clustersRepo = new class() extends NullClustersRepository {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
+
+            public function find_by_uuid(string $cluster_uuid): ?array
+            {
+                return [
+                    'cluster_uuid' => $cluster_uuid,
+                    'label' => 'Paged Local',
+                ];
+            }
+        };
+
+        $membersRepo = new class() extends NullIdentityMembersRepository {
+            public ?int $capturedLimit = null;
+            public ?int $capturedOffset = null;
+
+            public function list_for_cluster(string $cluster_uuid, int $limit = 500, int $offset = 0, ?string $tenant_id = null): array
+            {
+                $this->capturedLimit = $limit;
+                $this->capturedOffset = $offset;
+
+                return [
+                    [
+                        'identity_uuid' => 'identity-page-2',
+                        'cluster_uuid' => $cluster_uuid,
+                        'attachment_id' => 202,
+                        'similarity' => 0.9,
+                        'total_count' => 5,
+                    ],
+                ];
+            }
+
+            public function count_for_cluster(string $cluster_uuid): int
+            {
+                throw new \RuntimeException('count_for_cluster should not be called when total_count metadata is present.');
+            }
+        };
+
+        $syncRepo = new class() extends NullSyncStateRepository {
+            public function get_snapshot_version(string $tenant_id): int
+            {
+                return 1;
+            }
+        };
+
+        $controller = new ClustersController($clustersRepo, $membersRepo, $syncRepo, null, new ClusterResponseMapper(), new MemberResponseMapper());
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cluster-local/members');
+        $request->set_param('cluster_id', 'cluster-local');
+        $request->set_param('limit', 2);
+        $request->set_param('offset', 2);
+        $response = $controller->get_cluster_members($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertSame(2, $membersRepo->capturedLimit);
+        $this->assertSame(2, $membersRepo->capturedOffset);
+        $this->assertSame(2, $data['limit']);
+        $this->assertSame(5, $data['total']);
+        $this->assertTrue($data['truncated']);
+        $this->assertSame('identity-page-2', $data['members'][0]['identity_id']);
+    }
+
+    public function testGetClusterMembersLocalProjectionCapsLimitAtMax(): void
+    {
+        $clustersRepo = new class() extends NullClustersRepository {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
+
+            public function find_by_uuid(string $cluster_uuid): ?array
+            {
+                return [
+                    'cluster_uuid' => $cluster_uuid,
+                    'label' => 'Cap Local',
+                ];
+            }
+        };
+
+        $membersRepo = new class() extends NullIdentityMembersRepository {
+            public ?int $capturedLimit = null;
+
+            public function list_for_cluster(string $cluster_uuid, int $limit = 500, int $offset = 0, ?string $tenant_id = null): array
+            {
+                $this->capturedLimit = $limit;
+
+                return [];
+            }
+
+            public function count_for_cluster(string $cluster_uuid): int
+            {
+                return 0;
+            }
+        };
+
+        $syncRepo = new class() extends NullSyncStateRepository {
+            public function get_snapshot_version(string $tenant_id): int
+            {
+                return 1;
+            }
+        };
+
+        $controller = new ClustersController($clustersRepo, $membersRepo, $syncRepo, null, new ClusterResponseMapper(), new MemberResponseMapper());
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cluster-local/members');
+        $request->set_param('cluster_id', 'cluster-local');
+        $request->set_param('limit', IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT + 100);
+        $response = $controller->get_cluster_members($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT, $membersRepo->capturedLimit);
+        $this->assertSame(IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT, $response->get_data()['limit']);
+    }
+
+    public function testGetClusterMembersProxyForwardsLimitAndOffset(): void
+    {
+        $controller = new ClustersController(
+            new NullClustersRepository(),
+            new NullIdentityMembersRepository(),
+            new NullSyncStateRepository(),
+            null,
+            new ClusterResponseMapper(),
+            new MemberResponseMapper()
+        );
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'members' => [
+                    ['identity_uuid' => 'id-page', 'media_id' => 10],
+                ],
+                'limit' => 2,
+                'total' => 5,
+                'truncated' => true,
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cluster-123/members');
+        $request->set_param('cluster_id', 'cluster-123');
+        $request->set_param('limit', 2);
+        $request->set_param('offset', 2);
+        $response = $controller->get_cluster_members($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertSame(2, $data['limit']);
+        $this->assertSame(5, $data['total']);
+        $this->assertTrue($data['truncated']);
+        $this->assertSame('id-page', $data['members'][0]['identity_uuid']);
+
+        $calls = $this->getHttpCalls();
+        $this->assertNotEmpty($calls);
+        $this->assertStringContainsString('/recognition/clusters/cluster-123/members', $calls[0]['url']);
+        $this->assertStringContainsString('limit=2', $calls[0]['url']);
+        $this->assertStringContainsString('offset=2', $calls[0]['url']);
+    }
+
     public function testStaleProjectionTriggersSyncPullBeforeServing(): void
     {
         $clustersRepo = new class() extends NullClustersRepository {

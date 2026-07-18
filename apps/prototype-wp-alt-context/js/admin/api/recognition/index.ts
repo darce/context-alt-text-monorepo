@@ -111,6 +111,7 @@ export {
   dismissCluster,
 } from './clusterApiMutations';
 export { fetchClusterMembers, removeClusterMember } from './clusterApiMembers';
+export type { FetchClusterMembersParams } from './clusterApiMembers';
 export { listRecognitionClusters, getRecognitionCluster, fetchTopUnlabeledClusters } from './clusterApiQueries';
 
 // Identity operations

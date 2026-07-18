@@ -163,6 +163,7 @@ class ClusterRepository(Protocol):
         cluster_id: str,
         *,
         limit: int | None = None,
+        offset: int = 0,
     ) -> list[tuple[Any, float]]:
         """Fetch cluster members and similarity scores for review UIs."""
         ...

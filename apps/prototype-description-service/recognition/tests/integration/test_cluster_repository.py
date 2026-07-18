@@ -60,6 +60,7 @@ class DummyClusterRepository(ClusterRepository):
         cluster_id: str,
         *,
         limit: int | None = None,
+        offset: int = 0,
     ) -> list[tuple[MediaIdentity, float]]:
         raise NotImplementedError
 
@@ -286,10 +287,22 @@ async def test_get_member_identities_with_similarity_can_count_and_limit(
 
     assert await repo.get_member_identity_count(cluster.id) == 3
 
-    limited = await repo.get_member_identities_with_similarity(cluster.id, limit=2)
+    all_members = await repo.get_member_identities_with_similarity(cluster.id)
+    assert len(all_members) == 3
+    ordered_ids = [str(identity.id) for identity, _similarity in all_members]
 
+    limited = await repo.get_member_identities_with_similarity(cluster.id, limit=2)
     assert len(limited) == 2
+    assert [str(identity.id) for identity, _similarity in limited] == ordered_ids[:2]
     assert {round(similarity, 2) for _identity, similarity in limited}.issubset({0.9, 0.91, 0.92})
+
+    paged = await repo.get_member_identities_with_similarity(cluster.id, limit=1, offset=1)
+    assert len(paged) == 1
+    assert str(paged[0][0].id) == ordered_ids[1]
+
+    tail = await repo.get_member_identities_with_similarity(cluster.id, limit=2, offset=2)
+    assert len(tail) == 1
+    assert str(tail[0][0].id) == ordered_ids[2]
 
 
 @pytest.mark.asyncio

@@ -45,12 +45,13 @@ class ClusterResponseEnvelopeService {
 	 * @param array<int,array<string,mixed>> $members
 	 * @return array<string,mixed>
 	 */
-	public function build_cluster_members_envelope( array $members, int $limit, int $total ): array {
+	public function build_cluster_members_envelope( array $members, int $limit, int $total, int $offset = 0 ): array {
+		$offset = max( 0, $offset );
 		return array(
 			'members' => $members,
 			'limit' => $limit,
 			'total' => $total,
-			'truncated' => $total > count( $members ),
+			'truncated' => ( $offset + count( $members ) ) < $total,
 		);
 	}
 
@@ -114,7 +115,7 @@ class ClusterResponseEnvelopeService {
 		);
 	}
 
-	public function normalize_cluster_members_response( WP_REST_Response|WP_Error $response, int $requested_limit ): WP_REST_Response|WP_Error {
+	public function normalize_cluster_members_response( WP_REST_Response|WP_Error $response, int $requested_limit, int $offset = 0 ): WP_REST_Response|WP_Error {
 		if ( ! ( $response instanceof WP_REST_Response ) ) {
 			return $response;
 		}
@@ -139,14 +140,19 @@ class ClusterResponseEnvelopeService {
 			$truncated = $data['truncated'];
 
 			return new WP_REST_Response(
-				$this->build_cluster_members_envelope( $members, $limit, $total ),
+				array(
+					'members' => $members,
+					'limit' => $limit,
+					'total' => $total,
+					'truncated' => $truncated,
+				),
 				$response->get_status()
 			);
 		}
 
 		$members = $data;
 		return new WP_REST_Response(
-			$this->build_cluster_members_envelope( $members, $requested_limit, count( $members ) ),
+			$this->build_cluster_members_envelope( $members, $requested_limit, count( $members ), $offset ),
 			$response->get_status()
 		);
 	}

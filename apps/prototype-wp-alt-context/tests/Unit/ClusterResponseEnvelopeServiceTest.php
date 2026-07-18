@@ -79,6 +79,28 @@ class ClusterResponseEnvelopeServiceTest extends TestCase
         $this->assertFalse($data['truncated']);
     }
 
+    public function testBuildClusterMembersEnvelopeUsesOffsetForTruncated(): void
+    {
+        $envelope = $this->service->build_cluster_members_envelope(
+            [['id' => 'm3']],
+            2,
+            5,
+            4
+        );
+
+        $this->assertSame(2, $envelope['limit']);
+        $this->assertSame(5, $envelope['total']);
+        $this->assertFalse($envelope['truncated']);
+
+        $midPage = $this->service->build_cluster_members_envelope(
+            [['id' => 'm2'], ['id' => 'm3']],
+            2,
+            5,
+            2
+        );
+        $this->assertTrue($midPage['truncated']);
+    }
+
     public function testNormalizeClusterLabelsResponseAcceptsCanonicalEnvelope(): void
     {
         $response = new WP_REST_Response([

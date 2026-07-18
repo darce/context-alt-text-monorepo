@@ -5,10 +5,10 @@
  */
 
 import React from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { __ } from '@wordpress/i18n';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { __, sprintf } from '@wordpress/i18n';
 
-import { fetchClusterMembers, removeClusterMember } from '../../../api/recognition';
+import { removeClusterMember } from '../../../api/recognition';
 import { queryKeys } from '../../../api/queryKeys';
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
 import {
@@ -20,6 +20,7 @@ import {
   DialogTitle,
 } from '../../../../components/ui/dialog';
 import { invalidateSuggestionProjection } from './suggestionProjection';
+import { useShowAllClusterMembers } from './useShowAllClusterMembers';
 
 const isDedicatedFaceThumbUrl = (thumbUrl: string | null | undefined): boolean => {
   return typeof thumbUrl === 'string' && thumbUrl.includes('recognition/face-thumbs/');
@@ -35,15 +36,16 @@ export const ClusterReviewPanel = ({ clusterId, onClose }: ClusterReviewPanelPro
   const [pendingRemovalIdentityId, setPendingRemovalIdentityId] = React.useState<string | null>(null);
 
   const {
-    data: membersResponse,
+    members,
     isLoading,
     isError,
-  } = useQuery({
-    queryKey: queryKeys.clusters.memberList(clusterId),
-    queryFn: () => fetchClusterMembers(clusterId),
-    enabled: Boolean(clusterId),
-  });
-  const members = membersResponse?.members ?? [];
+    truncated,
+    total,
+    isFullyLoaded,
+    isExpanding,
+    expandError,
+    showAll,
+  } = useShowAllClusterMembers(clusterId);
 
   const removeMutation = useMutation({
     mutationFn: (identityId: string) => removeClusterMember(identityId, true),
@@ -88,45 +90,74 @@ export const ClusterReviewPanel = ({ clusterId, onClose }: ClusterReviewPanelPro
         ) : isError ? (
           <p>{__('Unable to load cluster members.', 'alt-context')}</p>
         ) : members.length > 0 ? (
-          <div className="acx-cluster-review-panel__grid">
-            {members.map((member) => (
-              <div key={member.identity_id} className="acx-cluster-member-card">
-                <div className="acx-cluster-member-card__thumbnail">
-                  {member.thumb_url && isDedicatedFaceThumbUrl(member.thumb_url) ? (
-                    <img
-                      src={member.thumb_url}
-                      alt={__('Cluster member', 'alt-context')}
-                      className="acx-cluster-member-card__image"
-                    />
-                  ) : member.media_url && member.bbox ? (
-                    <FaceThumbnail
-                      mediaUrl={member.media_url}
-                      bbox={member.bbox}
-                      size="lg"
-                      alt={__('Cluster member', 'alt-context')}
-                    />
-                  ) : member.thumb_url ? (
-                    <img
-                      src={member.thumb_url}
-                      alt={__('Cluster member', 'alt-context')}
-                      className="acx-cluster-member-card__image"
-                    />
-                  ) : (
-                    <div className="acx-placeholder" />
-                  )}
-                  <button
-                    type="button"
-                    className="acx-cluster-member-card__remove"
-                    onClick={() => handleRemove(member.identity_id)}
-                    aria-label={__('Remove from cluster', 'alt-context')}
-                    title={__('Remove from cluster', 'alt-context')}
-                  >
-                    ×
-                  </button>
+          <>
+            <div className="acx-cluster-review-panel__grid">
+              {members.map((member) => (
+                <div key={member.identity_id} className="acx-cluster-member-card">
+                  <div className="acx-cluster-member-card__thumbnail">
+                    {member.thumb_url && isDedicatedFaceThumbUrl(member.thumb_url) ? (
+                      <img
+                        src={member.thumb_url}
+                        alt={__('Cluster member', 'alt-context')}
+                        className="acx-cluster-member-card__image"
+                      />
+                    ) : member.media_url && member.bbox ? (
+                      <FaceThumbnail
+                        mediaUrl={member.media_url}
+                        bbox={member.bbox}
+                        size="lg"
+                        alt={__('Cluster member', 'alt-context')}
+                      />
+                    ) : member.thumb_url ? (
+                      <img
+                        src={member.thumb_url}
+                        alt={__('Cluster member', 'alt-context')}
+                        className="acx-cluster-member-card__image"
+                      />
+                    ) : (
+                      <div className="acx-placeholder" />
+                    )}
+                    <button
+                      type="button"
+                      className="acx-cluster-member-card__remove"
+                      onClick={() => handleRemove(member.identity_id)}
+                      aria-label={__('Remove from cluster', 'alt-context')}
+                      title={__('Remove from cluster', 'alt-context')}
+                    >
+                      ×
+                    </button>
+                  </div>
                 </div>
+              ))}
+            </div>
+            {truncated && !isFullyLoaded ? (
+              <div className="acx-cluster-members-show-all">
+                <button
+                  type="button"
+                  className="button acx-cluster-members-show-all__button"
+                  onClick={() => {
+                    void showAll();
+                  }}
+                  disabled={isExpanding}
+                  data-truncated={truncated ? 'true' : 'false'}
+                  data-total={total}
+                >
+                  {isExpanding
+                    ? __('Loading all members…', 'alt-context')
+                    : sprintf(
+                        /* translators: %d: total member count */
+                        __('Show all (%d)', 'alt-context'),
+                        total,
+                      )}
+                </button>
+                {expandError ? (
+                  <p className="acx-cluster-members-show-all__error" role="alert">
+                    {expandError}
+                  </p>
+                ) : null}
               </div>
-            ))}
-          </div>
+            ) : null}
+          </>
         ) : (
           <p>{__('No members found.', 'alt-context')}</p>
         )}

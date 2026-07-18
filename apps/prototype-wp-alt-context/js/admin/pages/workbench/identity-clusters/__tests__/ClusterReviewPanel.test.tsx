@@ -28,6 +28,12 @@ vi.mock('@tanstack/react-query', async () => {
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
+  sprintf: (text: string, ...values: (string | number)[]) => {
+    let index = 0;
+    return text
+      .replace(/%(\d+)\$[sd]/g, (_match, group: string) => String(values[Number(group) - 1] ?? ''))
+      .replace(/%[sd]/g, () => String(values[index++] ?? ''));
+  },
 }));
 
 vi.mock('../../../../api/recognition', async () => {
@@ -95,6 +101,67 @@ describe('ClusterReviewPanel', () => {
       'http://example.test/thumb-envelope.jpg',
     );
     expect(screen.queryByText('No members found.')).not.toBeInTheDocument();
+  });
+
+  it('pages through show-all when the members envelope is truncated', async () => {
+    const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
+    const user = userEvent.setup();
+
+    fetchClusterMembersMock.mockImplementation(async (_clusterId, params = {}) => {
+      if ((params.offset ?? 0) === 0) {
+        return {
+          members: [
+            {
+              identity_id: 'identity-1',
+              media_id: 1,
+              similarity: 0.95,
+              confidence: 0.99,
+              bbox: { x: 0, y: 0, width: 10, height: 10 },
+              thumb_url: 'http://example.test/thumb-1.jpg',
+            },
+          ],
+          limit: 1,
+          total: 2,
+          truncated: true,
+        };
+      }
+      return {
+        members: [
+          {
+            identity_id: 'identity-2',
+            media_id: 2,
+            similarity: 0.9,
+            confidence: 0.9,
+            bbox: { x: 0, y: 0, width: 10, height: 10 },
+            thumb_url: 'http://example.test/thumb-2.jpg',
+          },
+        ],
+        limit: 1,
+        total: 2,
+        truncated: false,
+      };
+    });
+
+    renderPanel('cluster-truncated');
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Show all (2)' })).toBeInTheDocument();
+    });
+
+    const showAll = screen.getByRole('button', { name: 'Show all (2)' });
+    expect(showAll).toHaveAttribute('data-truncated', 'true');
+    expect(showAll).toHaveAttribute('data-total', '2');
+
+    await user.click(showAll);
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('img', { name: 'Cluster member' })).toHaveLength(2);
+    });
+    expect(screen.queryByRole('button', { name: 'Show all (2)' })).not.toBeInTheDocument();
+    expect(fetchClusterMembersMock).toHaveBeenCalledWith('cluster-truncated', {
+      limit: 1,
+      offset: 1,
+    });
   });
 
   it('removes a cluster member and invalidates related queries', async () => {

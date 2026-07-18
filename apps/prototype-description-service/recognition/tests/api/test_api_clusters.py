@@ -791,6 +791,108 @@ def test_list_cluster_members_marks_truncated_at_page_limit(
     assert len(body["members"]) == 500
 
 
+def test_list_cluster_members_accepts_limit_and_offset_paging(
+    api_client, tenant_id, fake_cluster_service, fake_cluster_repository
+) -> None:
+    cluster = seed_cluster(
+        fake_cluster_service,
+        tenant_id,
+        label="paged-members",
+        fake_cluster_repository=fake_cluster_repository,
+        identity_count=5,
+    )
+    fake_cluster_service.cluster_repository = fake_cluster_repository
+
+    identity_ids = [str(uuid.uuid4()) for _ in range(5)]
+    for index, identity_id in enumerate(identity_ids):
+        fake_cluster_repository.seed_member(
+            tenant_id=tenant_id,
+            cluster_id=cluster.id,
+            identity_id=identity_id,
+            media_id=str(index + 1),
+        )
+
+    first = api_client.get(
+        f"/recognition/clusters/{cluster.id}/members",
+        params={"limit": 2, "offset": 0},
+        headers={"X-Tenant-ID": tenant_id},
+    )
+    assert first.status_code == 200
+    first_body = first.json()
+    assert first_body["limit"] == 2
+    assert first_body["total"] == 5
+    assert first_body["truncated"] is True
+    assert len(first_body["members"]) == 2
+    assert first_body["members"][0]["identity_id"] == identity_ids[0]
+    assert first_body["members"][1]["identity_id"] == identity_ids[1]
+
+    second = api_client.get(
+        f"/recognition/clusters/{cluster.id}/members",
+        params={"limit": 2, "offset": 2},
+        headers={"X-Tenant-ID": tenant_id},
+    )
+    assert second.status_code == 200
+    second_body = second.json()
+    assert second_body["limit"] == 2
+    assert second_body["total"] == 5
+    assert second_body["truncated"] is True
+    assert [member["identity_id"] for member in second_body["members"]] == identity_ids[2:4]
+
+    tail = api_client.get(
+        f"/recognition/clusters/{cluster.id}/members",
+        params={"limit": 2, "offset": 4},
+        headers={"X-Tenant-ID": tenant_id},
+    )
+    assert tail.status_code == 200
+    tail_body = tail.json()
+    assert tail_body["limit"] == 2
+    assert tail_body["total"] == 5
+    assert tail_body["truncated"] is False
+    assert [member["identity_id"] for member in tail_body["members"]] == identity_ids[4:]
+
+
+def test_list_cluster_members_rejects_limit_above_page_cap(
+    api_client, tenant_id, fake_cluster_service, fake_cluster_repository
+) -> None:
+    cluster = seed_cluster(
+        fake_cluster_service,
+        tenant_id,
+        label="members-cap",
+        fake_cluster_repository=fake_cluster_repository,
+    )
+    fake_cluster_service.cluster_repository = fake_cluster_repository
+
+    resp = api_client.get(
+        f"/recognition/clusters/{cluster.id}/members",
+        params={"limit": 501, "offset": 0},
+        headers={"X-Tenant-ID": tenant_id},
+    )
+
+    assert resp.status_code == 400
+    assert "limit out of range" in resp.json()["detail"]
+
+
+def test_list_cluster_members_rejects_negative_offset(
+    api_client, tenant_id, fake_cluster_service, fake_cluster_repository
+) -> None:
+    cluster = seed_cluster(
+        fake_cluster_service,
+        tenant_id,
+        label="members-offset",
+        fake_cluster_repository=fake_cluster_repository,
+    )
+    fake_cluster_service.cluster_repository = fake_cluster_repository
+
+    resp = api_client.get(
+        f"/recognition/clusters/{cluster.id}/members",
+        params={"limit": 10, "offset": -1},
+        headers={"X-Tenant-ID": tenant_id},
+    )
+
+    assert resp.status_code == 400
+    assert "offset must be non-negative" in resp.json()["detail"]
+
+
 def test_list_cluster_members_includes_face_thumb_url_for_blob_backed_members(
     api_client, tenant_id, fake_cluster_service, fake_cluster_repository
 ) -> None:

@@ -287,6 +287,59 @@ describe('ClusterLabelingPanel', () => {
     expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
   });
 
+  it('pages through show-all when the members envelope is truncated', async () => {
+    const fetchMock = vi.mocked(fetchClusterMembers);
+    fetchMock.mockImplementation(async (_clusterId, params = {}): Promise<ClusterMembersResponse> => {
+      if ((params.offset ?? 0) === 0) {
+        return {
+          members: [
+            {
+              identity_id: 'identity-1',
+              media_id: 1,
+              similarity: 0.9,
+              confidence: 0.9,
+              bbox: { x: 0, y: 0, width: 10, height: 10 },
+              thumb_url: '/recognition/face-thumbs/job/1?x=0&y=0&width=10&height=10',
+            },
+          ],
+          limit: 1,
+          total: 2,
+          truncated: true,
+        };
+      }
+      return {
+        members: [
+          {
+            identity_id: 'identity-2',
+            media_id: 2,
+            similarity: 0.9,
+            confidence: 0.9,
+            bbox: { x: 0, y: 0, width: 10, height: 10 },
+            thumb_url: '/recognition/face-thumbs/job/2?x=0&y=0&width=10&height=10',
+          },
+        ],
+        limit: 1,
+        total: 2,
+        truncated: false,
+      };
+    });
+
+    const { container } = renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Show all (2)' })).toBeInTheDocument();
+    });
+    expect(container.querySelectorAll('.acx-cluster-labeling-panel__face')).toHaveLength(1);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Show all (2)' }));
+
+    await waitFor(() => {
+      expect(container.querySelectorAll('.acx-cluster-labeling-panel__face')).toHaveLength(2);
+    });
+    expect(screen.queryByRole('button', { name: 'Show all (2)' })).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith('source-cluster-id', { limit: 1, offset: 1 });
+  });
+
   it('prefers a face crop over a generic media thumbnail when bbox data is available', async () => {
     vi.mocked(fetchClusterMembers).mockResolvedValue(
       makeClusterMembersResponse([

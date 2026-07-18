@@ -261,6 +261,9 @@ class ClusterReadService {
 			return new WP_Error( 'missing_cluster_id', 'Cluster ID is required.', array( 'status' => 400 ) );
 		}
 
+		$limit  = $this->resolve_cluster_members_limit( $request );
+		$offset = absint( $request->get_param( 'offset' ) ?? 0 );
+
 		if ( $this->dependencies->projection_sync_service->should_use_local_projection( $tenant_id ) ) {
 			$cluster_row = $this->dependencies->clusters_repository->find_by_uuid( $cluster_id );
 			if ( ! is_array( $cluster_row ) ) {
@@ -271,9 +274,9 @@ class ClusterReadService {
 				);
 			}
 
-			$member_rows = $this->dependencies->members_repository->list_for_cluster( $cluster_id, self::GET_CLUSTER_MEMBERS_MAX_LIMIT, 0, $tenant_id );
-			if ( empty( $member_rows ) && $this->dependencies->projection_sync_service->cluster_row_should_have_members( $cluster_row ) && $this->dependencies->projection_sync_service->repair_targeted_projection( $tenant_id, array( $cluster_id ) ) ) {
-				$member_rows = $this->dependencies->members_repository->list_for_cluster( $cluster_id, self::GET_CLUSTER_MEMBERS_MAX_LIMIT, 0, $tenant_id );
+			$member_rows = $this->dependencies->members_repository->list_for_cluster( $cluster_id, $limit, $offset, $tenant_id );
+			if ( empty( $member_rows ) && 0 === $offset && $this->dependencies->projection_sync_service->cluster_row_should_have_members( $cluster_row ) && $this->dependencies->projection_sync_service->repair_targeted_projection( $tenant_id, array( $cluster_id ) ) ) {
+				$member_rows = $this->dependencies->members_repository->list_for_cluster( $cluster_id, $limit, $offset, $tenant_id );
 			}
 
 			$members = $this->dependencies->member_mapper->map_cluster_members( $member_rows );
@@ -282,17 +285,33 @@ class ClusterReadService {
 			} else {
 				$total = $this->dependencies->members_repository->count_for_cluster( $cluster_id );
 			}
-			return new WP_REST_Response( $this->dependencies->response_envelope_service->build_cluster_members_envelope( $members, self::GET_CLUSTER_MEMBERS_MAX_LIMIT, $total ), 200 );
+			return new WP_REST_Response( $this->dependencies->response_envelope_service->build_cluster_members_envelope( $members, $limit, $total, $offset ), 200 );
 		}
 
 		$response = $this->host->proxy_recognition_request(
 			'GET',
 			sprintf( '/recognition/clusters/%s/members', $cluster_id ),
 			array(),
-			array( 'tenant_id' => $tenant_id )
+			array(
+				'tenant_id' => $tenant_id,
+				'limit'     => $limit,
+				'offset'    => $offset,
+			)
 		);
 		$response = $this->dependencies->projection_sync_service->maybe_bootstrap_after_proxy_read( $tenant_id, $response );
-		return $this->dependencies->response_envelope_service->normalize_cluster_members_response( $response, self::GET_CLUSTER_MEMBERS_MAX_LIMIT );
+		return $this->dependencies->response_envelope_service->normalize_cluster_members_response( $response, $limit, $offset );
+	}
+
+	/**
+	 * Resolve members page size: default max, min 1, capped at GET_CLUSTER_MEMBERS_MAX_LIMIT.
+	 */
+	private function resolve_cluster_members_limit( WP_REST_Request $request ): int {
+		$raw = $request->get_param( 'limit' );
+		if ( null === $raw || '' === $raw ) {
+			return self::GET_CLUSTER_MEMBERS_MAX_LIMIT;
+		}
+
+		return max( 1, min( absint( $raw ), self::GET_CLUSTER_MEMBERS_MAX_LIMIT ) );
 	}
 
 	/**

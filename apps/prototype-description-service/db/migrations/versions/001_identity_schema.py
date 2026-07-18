@@ -124,7 +124,7 @@ DOWNGRADE_TABLE_ORDER = [
 
 
 def _relkind(op, name: str) -> str | None:
-    return (
+    raw = (
         op.get_bind()
         .execute(
             sa.text(
@@ -136,6 +136,10 @@ def _relkind(op, name: str) -> str | None:
         )
         .scalar()
     )
+    if raw is None:
+        return None
+    # pg_class.relkind is a single-char code ('r', 'i', 'm', ...); coerce Any→str.
+    return str(raw)
 
 
 def _existing_columns(op, table_name: str) -> set[str]:

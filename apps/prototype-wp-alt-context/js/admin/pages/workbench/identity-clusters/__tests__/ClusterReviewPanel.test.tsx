@@ -68,6 +68,33 @@ const PanelProviders = ({ children }: { children: React.ReactNode }) => (
   </ClusterPanelProvider>
 );
 
+/** Owner-level lifecycle live region (mirrors ScanTabContent): survives the
+ * panel's rebind remount / retirement unmount. */
+const OwnedPanel = ({
+  clusterId,
+  onClose,
+  onFocusQueueRoot,
+}: {
+  clusterId: string;
+  onClose: () => void;
+  onFocusQueueRoot?: () => void;
+}) => {
+  const [lifecycleMessage, setLifecycleMessage] = React.useState<string | null>(null);
+  return (
+    <>
+      <p role="status" aria-live="polite">
+        {lifecycleMessage}
+      </p>
+      <ClusterReviewPanel
+        clusterId={clusterId}
+        onClose={onClose}
+        onFocusQueueRoot={onFocusQueueRoot}
+        onLifecycleAnnounce={setLifecycleMessage}
+      />
+    </>
+  );
+};
+
 const renderPanel = (
   clusterId = 'cluster-123',
   onClose: () => void = () => undefined,
@@ -82,11 +109,7 @@ const renderPanel = (
   const utils = render(
     <QueryClientProvider client={queryClient}>
       <PanelProviders>
-        <ClusterReviewPanel
-          clusterId={clusterId}
-          onClose={onClose}
-          onFocusQueueRoot={onFocusQueueRoot}
-        />
+        <OwnedPanel clusterId={clusterId} onClose={onClose} onFocusQueueRoot={onFocusQueueRoot} />
       </PanelProviders>
     </QueryClientProvider>,
   );
@@ -106,6 +129,7 @@ const OwnedReviewHarness = ({
 }) => {
   const { clusterPanel, dispatchClusterPanel } = useClusterPanel();
   const { recordMergeSurvivor } = useMergeSurvivors();
+  const [lifecycleMessage, setLifecycleMessage] = React.useState<string | null>(null);
   const seeded = React.useRef(false);
 
   React.useEffect(() => {
@@ -118,17 +142,23 @@ const OwnedReviewHarness = ({
     }
   }, [dispatchClusterPanel, initialClusterId, recordMergeSurvivor, seedSurvivor]);
 
-  if (clusterPanel.mode !== 'review' || !clusterPanel.clusterId) {
-    return <div data-testid="review-closed">closed</div>;
-  }
-
   return (
-    <ClusterReviewPanel
-      key={clusterPanel.clusterId}
-      clusterId={clusterPanel.clusterId}
-      onClose={() => dispatchClusterPanel({ type: 'close' })}
-      onFocusQueueRoot={onFocusQueueRoot}
-    />
+    <>
+      <p role="status" aria-live="polite">
+        {lifecycleMessage}
+      </p>
+      {clusterPanel.mode !== 'review' || !clusterPanel.clusterId ? (
+        <div data-testid="review-closed">closed</div>
+      ) : (
+        <ClusterReviewPanel
+          key={clusterPanel.clusterId}
+          clusterId={clusterPanel.clusterId}
+          onClose={() => dispatchClusterPanel({ type: 'close' })}
+          onFocusQueueRoot={onFocusQueueRoot}
+          onLifecycleAnnounce={setLifecycleMessage}
+        />
+      )}
+    </>
   );
 };
 

@@ -35,25 +35,32 @@ interface ClusterReviewPanelProps {
   onClose: () => void;
   /** Focus the queue root anchor after retirement close (A11Y-21 companion). */
   onFocusQueueRoot?: () => void;
+  /**
+   * Lifecycle (retirement/rebind) announce sink owned by the parent. The panel
+   * is remounted on rebind (key change) and unmounted on close, so its own
+   * state cannot carry the A11Y-21 announce across the transition — the owner
+   * renders the persistent `role=status` region that survives both.
+   */
+  onLifecycleAnnounce?: (message: string) => void;
 }
 
 export const ClusterReviewPanel = ({
   clusterId,
   onClose,
   onFocusQueueRoot,
+  onLifecycleAnnounce,
 }: ClusterReviewPanelProps): React.JSX.Element => {
   const queryClient = useQueryClient();
   const { dispatchClusterPanel } = useClusterPanel();
   const { resolveSurvivor } = useMergeSurvivors();
   const [pendingRemovalIdentityId, setPendingRemovalIdentityId] = React.useState<string | null>(null);
   const [showAllAnnouncement, setShowAllAnnouncement] = React.useState<string | null>(null);
-  const [lifecycleMessage, setLifecycleMessage] = React.useState<string | null>(null);
   const memberGridRef = React.useRef<HTMLDivElement | null>(null);
   const wasExpandingRef = React.useRef(false);
 
   const { status: liveTargetStatus } = useLiveReviewTarget(clusterId, {
     resolveSurvivor: (retiredId) => resolveSurvivor(retiredId),
-    onAnnounce: (message) => setLifecycleMessage(message),
+    onAnnounce: (message) => onLifecycleAnnounce?.(message),
     onRebind: (survivorId) => {
       dispatchClusterPanel({ type: 'open_review', clusterId: survivorId });
     },
@@ -131,13 +138,9 @@ export const ClusterReviewPanel = ({
         </button>
       </div>
 
-      <p className="acx-cluster-review-panel__lifecycle" role="status" aria-live="polite">
-        {lifecycleMessage}
-      </p>
-
       <div className="acx-cluster-review-panel__content">
         {suppressStaleMembership ? (
-          <p>{lifecycleMessage ?? __('This review target is no longer available.', 'alt-context')}</p>
+          <p>{__('This review target is no longer available.', 'alt-context')}</p>
         ) : isLoading ? (
           <p>{__('Loading members...', 'alt-context')}</p>
         ) : isError ? (

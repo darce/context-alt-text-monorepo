@@ -2510,19 +2510,16 @@ describe('ReviewQueue', () => {
           {
             id: 'assign-live-1',
             identity_id: 'id-1',
-            cluster_id: 'cluster-head',
-            cluster_label: 'Alex',
+            suggested_cluster_id: 'cluster-head',
             representative_similarity: 0.95,
-            resolution: 'pending',
-            identity_media_url: 'http://example.test/id.jpg',
-            identity_bbox: { x: 0, y: 0, width: 10, height: 10 },
-            representative_media_url: 'http://example.test/rep.jpg',
-            representative_bbox: { x: 0, y: 0, width: 10, height: 10 },
+            avg_member_similarity: 0.9,
+            cluster_label: 'Alex',
+            cluster_identity_count: 2,
           },
         ],
         limit: 50,
         offset: 0,
-        data_source: DATA_SOURCE.SERVICE,
+        data_source: DATA_SOURCE.LOCAL_PROJECTION,
       });
       vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
         suggestions: [],
@@ -2534,7 +2531,14 @@ describe('ReviewQueue', () => {
         limit: 10,
         offset: 0,
       });
-      vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({ clusters: [] });
+      vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+        clusters: [],
+        limit: 20,
+        total: 0,
+        truncated: false,
+        singleton_count: 0,
+        data_source: DATA_SOURCE.LOCAL_PROJECTION,
+      });
       vi.mocked(fetchClusterMembers).mockRejectedValue(
         new HTTPError({
           status: 404,

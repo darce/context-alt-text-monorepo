@@ -47,6 +47,9 @@ export const ScanTabContent = (): React.JSX.Element => {
 
   const findingsDetailRef = React.useRef<HTMLDivElement>(null);
   const reviewQueueRef = React.useRef<ReviewQueueHandle>(null);
+  // Open-target lifecycle announce (§11 / A11Y-21). Owned here so it survives
+  // the review panel's rebind remount and retirement unmount.
+  const [reviewLifecycleMessage, setReviewLifecycleMessage] = React.useState<string | null>(null);
   const findings = useWorkbenchFindings();
   const [userExpandedMedia, setUserExpandedMedia] = React.useState(false);
   const previousHasFindings = React.useRef(findings.hasFindings);
@@ -143,6 +146,9 @@ export const ScanTabContent = (): React.JSX.Element => {
       <ScanScrollRestoration />
       {!scanRun.isScanning && !hasIdentities && <NoMediaPanel />}
       <ErrorBoundary>
+        <p className="acx-review-lifecycle-announce" role="status" aria-live="polite">
+          {reviewLifecycleMessage}
+        </p>
         <div ref={findingsDetailRef} className="acx-findings-detail-anchor" tabIndex={-1}>
           {clusterPanel.mode === 'label' && clusterPanel.clusterId ? (
             <ClusterLabelingPanel
@@ -158,6 +164,7 @@ export const ScanTabContent = (): React.JSX.Element => {
               key={clusterPanel.clusterId}
               clusterId={clusterPanel.clusterId}
               onClose={() => dispatchClusterPanel({ type: 'close' })}
+              onLifecycleAnnounce={setReviewLifecycleMessage}
               onFocusQueueRoot={() => {
                 findingsDetailRef.current?.focus({ preventScroll: true });
               }}

@@ -312,12 +312,12 @@ Per-state single-primary gating (Analyze vs Describe) with the pinned token role
 - [x] axe + tokenization (incl. new spacing-literal patterns) green; no `WorkbenchContextValue` widening
 
 ### Checklist for Slice 2: Undo (gated advance)
-- [ ] Immediate-commit + gated advance; undo cancels before fire (0 calls); commit = 1 call; card advances only on POST success — unit-proven
-- [ ] Concurrency invariants unit-tested: rapid double-action flush order; unmount-during-window single fire; post-window failure re-surfaces at head with retry
-- [ ] Merge/name mutation pending + error handling built (none exists today); no silent failure path remains
-- [ ] Undo window pauses on focus/hover of the hold region; Undo in tab order next to the actioned control
-- [ ] Inline `role=status` hold announce + **persistent** inline `role=alert` failure; ToastContext untouched; group fan-out removed (rg-002)
-- [ ] Every `invalidateSuggestionProjection` call + per-event `keptCrossFamilyTargets` preserved through the rewrite; presence asserts green (UXP-3 contract)
+- [x] Immediate-commit + gated advance; undo cancels before fire (0 calls); commit = 1 call; card advances only on POST success — unit-proven
+- [x] Concurrency invariants unit-tested: rapid double-action flush order; unmount-during-window single fire; post-window failure re-surfaces at head with retry
+- [x] Merge/name mutation pending + error handling built (none exists today); no silent failure path remains
+- [x] Undo window pauses on focus/hover of the hold region; Undo in tab order next to the actioned control
+- [x] Inline `role=status` hold announce + **persistent** inline `role=alert` failure; ToastContext untouched; group fan-out removed (rg-002)
+- [x] Every `invalidateSuggestionProjection` call + per-event `keptCrossFamilyTargets` preserved through the rewrite; presence asserts green (UXP-3 contract)
 
 ### Checklist for Slice 3: Person-commit
 - [ ] Creatable roster combobox on the card → `commitClusterToRosterEntry` (real person, not label)

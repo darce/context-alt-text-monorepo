@@ -10,10 +10,12 @@ import type { TopUnlabeledCluster } from '../../../../api/recognition/types/clus
 import {
   buildReviewQueue,
   clampQueueIndex,
+  filterReviewQueue,
   NEXT_ACTION_CHIP_LABEL,
   NEXT_ACTION_KIND,
   nextQueueIndex,
   prevQueueIndex,
+  removeAtQueueCursor,
   removeAtQueueIndex,
   REVIEW_QUEUE_FILTER,
   queueItemToNextAction,
@@ -165,6 +167,77 @@ describe('buildReviewQueue — order (default priority)', () => {
       expectedReviewSuggestionIds,
     );
   });
+
+  it('same-cluster runs stay contiguous (group packing over pure projection order)', () => {
+    // a1 (0.9) and a2 (0.5) share cluster A; b1 (0.7) is cluster B.
+    // Pure projection by score: [a1, b1, a2]. Group packing packs A as a run:
+    // group score max(0.9, 0.5)=0.9 > b1 0.7 → queue [a1, a2, b1].
+    const rows = [
+      makeSuggestion({
+        id: 'a1',
+        identity_id: 'id-a1',
+        suggested_cluster_id: 'cluster-a',
+        cluster_label: 'Alice',
+        representative_similarity: 0.9,
+        created_at: '2026-01-01T00:00:00.000Z',
+      }),
+      makeSuggestion({
+        id: 'a2',
+        identity_id: 'id-a2',
+        suggested_cluster_id: 'cluster-a',
+        cluster_label: 'Alice',
+        representative_similarity: 0.5,
+        created_at: '2026-01-02T00:00:00.000Z',
+      }),
+      makeSuggestion({
+        id: 'b1',
+        identity_id: 'id-b1',
+        suggested_cluster_id: 'cluster-b',
+        cluster_label: 'Bob',
+        representative_similarity: 0.7,
+        created_at: '2026-01-03T00:00:00.000Z',
+      }),
+    ];
+
+    const projected = projectReviewQueue(rows);
+    expect(projected.map((p) => p.suggestionId)).toEqual(['a1', 'b1', 'a2']);
+
+    const reviewItems = buildSuggestionReviewItems(projected);
+    expect(reviewItems).toHaveLength(2);
+    expect(reviewItems[0].type).toBe('group');
+    expect(reviewItems[1].type).toBe('single');
+
+    const queue = buildReviewQueue({
+      reviewItems,
+      mergeSuggestions: [],
+      nameSuggestions: [],
+      sortedClusters: [],
+    });
+
+    expect(queue.map((item) => ('suggestionId' in item ? item.suggestionId : null))).toEqual([
+      'a1',
+      'a2',
+      'b1',
+    ]);
+    expect(queue[0]).toMatchObject({
+      suggestionId: 'a1',
+      clusterId: 'cluster-a',
+      runSize: 2,
+      runIndex: 0,
+    });
+    expect(queue[1]).toMatchObject({
+      suggestionId: 'a2',
+      clusterId: 'cluster-a',
+      runSize: 2,
+      runIndex: 1,
+    });
+    expect(queue[2]).toMatchObject({
+      suggestionId: 'b1',
+      clusterId: 'cluster-b',
+      runSize: 1,
+      runIndex: 0,
+    });
+  });
 });
 
 describe('buildReviewQueue — filter (KIND)', () => {
@@ -203,6 +276,14 @@ describe('buildReviewQueue — filter (KIND)', () => {
       NEXT_ACTION_KIND.NAME,
       NEXT_ACTION_KIND.CLUSTER,
     ]);
+  });
+
+  it('filterReviewQueue applies KIND filter to an already-built item list', () => {
+    const full = buildReviewQueue(sources, REVIEW_QUEUE_FILTER.ALL);
+    const mergesOnly = filterReviewQueue(full, REVIEW_QUEUE_FILTER.MERGE);
+    expect(mergesOnly).toHaveLength(2);
+    expect(mergesOnly.every((item) => item.kind === NEXT_ACTION_KIND.MERGE)).toBe(true);
+    expect(filterReviewQueue(full, REVIEW_QUEUE_FILTER.ALL)).toEqual(full);
   });
 });
 
@@ -289,42 +370,74 @@ describe('buildReviewQueue — flattening', () => {
 describe('PR-54 index semantics under removal', () => {
   const ids = ['a', 'b', 'c', 'd'] as const;
 
-  it('successful commit does not increment the index — removal advances the head slot', () => {
-    // User is at index 0 (head). Commit removes the head without index++.
-    const index = 0;
-    let queue = [...ids];
+  it('successful commit keeps the cursor (no-increment) via removeAtQueueCursor', () => {
+    // Head commit: cursor stays 0; former next item slides into the slot.
+    let cursor = 0;
+    let queue: string[] = [...ids];
 
-    queue = removeAtQueueIndex(queue, index);
-    // Index stays 0; former [1] is now at the head slot.
-    expect(index).toBe(0);
-    expect(queue[index]).toBe('b');
-    expect(queue).toEqual(['b', 'c', 'd']);
+    let next = removeAtQueueCursor(queue, cursor);
+    expect(next.index).toBe(cursor);
+    expect(next.items[next.index]).toBe('b');
+    expect(next.items).toEqual(['b', 'c', 'd']);
+    queue = next.items;
+    cursor = next.index;
 
-    // Commit again at head — still no index increment.
-    queue = removeAtQueueIndex(queue, index);
-    expect(index).toBe(0);
-    expect(queue[index]).toBe('c');
+    // Mid commit: still no-increment — same cursor now points at former next.
+    cursor = 1; // on 'c'
+    next = removeAtQueueCursor(queue, cursor);
+    expect(next.index).toBe(cursor);
+    expect(next.items).toEqual(['b', 'd']);
+    expect(next.items[next.index]).toBe('d');
   });
 
-  it('prev and next are the only index mutations', () => {
-    let index = 0;
+  it('removeAtQueueCursor clamps after tail removal and empties safely', () => {
+    // Tail removal: cursor was on last item → lands on new last item.
+    const tail = removeAtQueueCursor(['a', 'b', 'c'], 2);
+    expect(tail.items).toEqual(['a', 'b']);
+    expect(tail.index).toBe(1);
+    expect(tail.items[tail.index]).toBe('b');
+
+    // Emptying the queue: index is 0; empty-state handling is a caller obligation.
+    const emptied = removeAtQueueCursor(['only'], 0);
+    expect(emptied.items).toEqual([]);
+    expect(emptied.index).toBe(0);
+
+    // Out-of-bounds: no-op copy; cursor clamped to current length.
+    const oobHigh = removeAtQueueCursor(['a', 'b'], 5);
+    expect(oobHigh.items).toEqual(['a', 'b']);
+    expect(oobHigh.index).toBe(1);
+
+    const oobNeg = removeAtQueueCursor(['a', 'b'], -1);
+    expect(oobNeg.items).toEqual(['a', 'b']);
+    expect(oobNeg.index).toBe(0);
+
+    // Items-only helper still returns the filtered array.
+    expect(removeAtQueueIndex(['a', 'b', 'c'], 1)).toEqual(['a', 'c']);
+  });
+
+  it('prev/next step within bounds and clamp oversized/negative inputs', () => {
     const length = ids.length;
 
-    index = nextQueueIndex(index, length);
-    expect(index).toBe(1);
-    index = nextQueueIndex(index, length);
-    expect(index).toBe(2);
-    index = prevQueueIndex(index);
-    expect(index).toBe(1);
-    index = prevQueueIndex(index);
-    expect(index).toBe(0);
+    // Happy-path stepping.
+    expect(nextQueueIndex(0, length)).toBe(1);
+    expect(nextQueueIndex(1, length)).toBe(2);
+    expect(prevQueueIndex(2, length)).toBe(1);
+    expect(prevQueueIndex(1, length)).toBe(0);
+
     // Bound at start / end.
-    expect(prevQueueIndex(0)).toBe(0);
+    expect(prevQueueIndex(0, length)).toBe(0);
     expect(nextQueueIndex(length - 1, length)).toBe(length - 1);
-    // removeAtQueueIndex never touches the caller's index variable.
-    const afterRemoval = removeAtQueueIndex(ids, 1);
-    expect(afterRemoval).toEqual(['a', 'c', 'd']);
-    expect(index).toBe(0);
+
+    // Negative / oversized inputs clamp before stepping (BR-02).
+    expect(nextQueueIndex(-2, length)).toBe(1); // clamp → 0, then +1
+    expect(prevQueueIndex(10, 3)).toBe(1); // clamp → 2, then -1
+    expect(nextQueueIndex(99, 3)).toBe(2); // clamp → 2, stay at last
+    expect(prevQueueIndex(-5, 3)).toBe(0); // clamp → 0, stay at first
+
+    // Empty queue: stay non-negative.
+    expect(nextQueueIndex(0, 0)).toBe(0);
+    expect(prevQueueIndex(0, 0)).toBe(0);
+    expect(prevQueueIndex(5, 0)).toBe(0);
   });
 
   it('restored index clamps to min(index, length-1); empty queue → empty state (no negative)', () => {
@@ -337,8 +450,5 @@ describe('PR-54 index semantics under removal', () => {
     expect(clampQueueIndex(5, 0)).toBe(0);
     expect(clampQueueIndex(-3, 0)).toBe(0);
     expect(clampQueueIndex(-1, 4)).toBe(0);
-    // next/prev on empty also stay non-negative.
-    expect(nextQueueIndex(0, 0)).toBe(0);
-    expect(prevQueueIndex(0)).toBe(0);
   });
 });

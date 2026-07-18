@@ -682,3 +682,56 @@ def test_fir4_plan_no_completed_image_ort_smoke_claim() -> None:
         "exists on HEAD. Remove or rephrase the claim. Hits:\n  - "
         + "\n  - ".join(offenders)
     )
+
+
+def test_fir4_plan_no_stale_dockerfile_pip_install_bench_instruction() -> None:
+    """COORD-FINAL-01 / FINALB-07: plan must not instruct Dockerfile pip install .[bench].
+
+    HEAD image deps use frozen ``uv sync --extra bench`` plus project
+    ``--no-deps --no-build-isolation``. Stale ``pip install ".[bench]"`` /
+    face→bench *rename-as-Dockerfile-install* prose misleads operators.
+    """
+    text = _fir4_plan_text()
+    offenders: list[str] = []
+    # Stale Dockerfile install path (not historical package rename alone).
+    patterns = (
+        r"Dockerfile[^\n]{0,80}pip install[^\n]{0,40}\.?\[bench\]",
+        r"pip install\s+[\"']?\.\[bench\][\"']?",
+        r"pip install\s+[\"']?\"\.\[bench\]\"[\"']?",
+        r"Dockerfile's\s+`?pip install[^\n]{0,60}\.?\[(?:face|bench)\]",
+        r"becomes\s+`?\"?\.\[bench\]\"?`?\s*\(rename",
+        r"pip install\s+\"\.\[face\]\".*becomes",
+    )
+    for pat in patterns:
+        for m in re.finditer(pat, text, flags=re.IGNORECASE | re.DOTALL):
+            line_no = text.count("\n", 0, m.start()) + 1
+            snippet = m.group(0).replace("\n", " ")[:120]
+            offenders.append(f"L{line_no}: {snippet}")
+    # Dedupe while preserving order.
+    seen: set[str] = set()
+    unique = []
+    for item in offenders:
+        if item not in seen:
+            seen.add(item)
+            unique.append(item)
+    assert not unique, (
+        "COORD-FINAL-01/FINALB-07: FIR-4 plan still documents Dockerfile "
+        '`pip install ".[bench]"` / face→bench rename-as-install. Replace with '
+        "frozen `uv sync --extra bench` + project `--no-deps --no-build-isolation`. "
+        "Hits:\n  - " + "\n  - ".join(unique)
+    )
+
+
+def test_fir4_plan_documents_frozen_uv_sync_bench_and_no_build_isolation() -> None:
+    """COORD-FINAL-01: accepted plan must match HEAD image install surface."""
+    text = _fir4_plan_text()
+    assert re.search(r"uv sync[^\n]*--extra\s+bench|--extra\s+bench[^\n]*uv sync", text) or (
+        "uv sync" in text and "--extra bench" in text
+    ), (
+        "COORD-FINAL-01: FIR-4 plan must document frozen image deps via "
+        "`uv sync ... --extra bench` (not unlocked pip bench resolve)"
+    )
+    assert "--no-deps" in text and "--no-build-isolation" in text, (
+        "COORD-FINAL-01: FIR-4 plan must document project install with "
+        "`--no-deps --no-build-isolation` (FINALB-05 / DEP-01/02)"
+    )

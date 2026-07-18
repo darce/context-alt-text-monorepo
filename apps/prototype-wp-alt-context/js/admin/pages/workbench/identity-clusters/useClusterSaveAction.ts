@@ -242,7 +242,7 @@ export const useClusterSaveAction = ({
         // cluster's label exactly equals currentLabel (remote exact-dupe, FIX-8), a case-only
         // edit of OUR cluster must rename — never silent cancelEditing and never surprise-merge
         // into the duplicate (UXP-3-BR-40). Case-variant labels still merge below.
-        if (match && match.label === currentLabel) {
+        if (match?.label === currentLabel) {
           mutationStarted = applyPersonLabel(trimmed, abortController);
           if (!mutationStarted) {
             resetSaveStatus();

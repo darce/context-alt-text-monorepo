@@ -231,11 +231,15 @@ export const useClusterSaveAction = ({
           return;
         }
 
-        // Case-only self-match is a rename, not a merge: exact-compare so "bob"→"Bob"
-        // against a different "Bob" cluster still merges, and a true same-label hit no-ops.
-        if (match?.label === currentLabel) {
-          cancelEditing();
-          resetSaveStatus();
+        // match is already self-filtered (filterEditableClusterMatch). When a DIFFERENT
+        // cluster's label exactly equals currentLabel (remote exact-dupe, FIX-8), a case-only
+        // edit of OUR cluster must rename — never silent cancelEditing and never surprise-merge
+        // into the duplicate (UXP-3-BR-40). Case-variant labels still merge below.
+        if (match && match.label === currentLabel) {
+          mutationStarted = applyPersonLabel(trimmed, abortController);
+          if (!mutationStarted) {
+            resetSaveStatus();
+          }
           return;
         }
 

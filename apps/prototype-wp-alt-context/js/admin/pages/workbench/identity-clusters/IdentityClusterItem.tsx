@@ -200,7 +200,9 @@ export const IdentityClusterItem = ({
 
     const trimmed = editState.labelInput.trim();
     const currentLabel = cluster.label ?? '';
-    if (!trimmed || trimmed.toLowerCase() === currentLabel.toLowerCase()) {
+    // Exact bail (B6 / UXP-3-BR-39): case-only edits must still run proactive match so
+    // "bob"→"Bob" against a different "Bob" cluster arms the Merge-with preview.
+    if (!trimmed || trimmed === currentLabel) {
       setMatchedCluster(null);
       return;
     }

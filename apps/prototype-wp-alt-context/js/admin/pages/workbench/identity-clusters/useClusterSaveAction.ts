@@ -127,7 +127,8 @@ export const useClusterSaveAction = ({
       }
 
       const currentLabel = clusterLabel ?? '';
-      if (currentLabel.toLowerCase() === canonical.toLowerCase()) {
+      // Exact dirty check (B6): "bob"→"Bob" proceeds; "Bob"→"Bob" still no-ops.
+      if (currentLabel === canonical) {
         cancelEditing();
         return;
       }
@@ -192,7 +193,8 @@ export const useClusterSaveAction = ({
       }
 
       const currentLabel = clusterLabel ?? '';
-      if (currentLabel?.toLowerCase() === trimmed.toLowerCase()) {
+      // Exact dirty check (B6): case-only rename ("bob"→"Bob") must mutate.
+      if (currentLabel === trimmed) {
         cancelEditing();
         return;
       }
@@ -229,7 +231,9 @@ export const useClusterSaveAction = ({
           return;
         }
 
-        if (match?.label.toLowerCase() === currentLabel.toLowerCase()) {
+        // Case-only self-match is a rename, not a merge: exact-compare so "bob"→"Bob"
+        // against a different "Bob" cluster still merges, and a true same-label hit no-ops.
+        if (match?.label === currentLabel) {
           cancelEditing();
           resetSaveStatus();
           return;

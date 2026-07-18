@@ -28,16 +28,21 @@ const member = (overrides: Partial<ClusterGroup['members'][number]> = {}): Clust
   ...overrides,
 });
 
-const renderSaveAction = ({
-  mutations = baseMutations(),
-  cancelEditing = vi.fn(),
-  queueSaveStatus = vi.fn(),
-  resetSaveStatus = vi.fn(),
-  findClusterByLabel = vi.fn().mockResolvedValue(null),
-  requestConfirm = vi.fn().mockResolvedValue(true),
-  setError = vi.fn(),
-  ...rest
-}: Partial<Parameters<typeof useClusterSaveAction>[0]> & {
+type SaveOpts = Parameters<typeof useClusterSaveAction>[0];
+
+type SaveActionOverrides = Partial<
+  Omit<
+    SaveOpts,
+    | 'mutations'
+    | 'cancelEditing'
+    | 'queueSaveStatus'
+    | 'resetSaveStatus'
+    | 'findClusterByLabel'
+    | 'requestConfirm'
+    | 'setError'
+    | 'saveAbortRef'
+  >
+> & {
   mutations?: ReturnType<typeof baseMutations>;
   cancelEditing?: ReturnType<typeof vi.fn>;
   queueSaveStatus?: ReturnType<typeof vi.fn>;
@@ -45,29 +50,38 @@ const renderSaveAction = ({
   findClusterByLabel?: ReturnType<typeof vi.fn>;
   requestConfirm?: ReturnType<typeof vi.fn>;
   setError?: ReturnType<typeof vi.fn>;
-} = {}) => {
+};
+
+const renderSaveAction = (overrides: SaveActionOverrides = {}) => {
+  const mutations = overrides.mutations ?? baseMutations();
+  const cancelEditing = overrides.cancelEditing ?? vi.fn();
+  const queueSaveStatus = overrides.queueSaveStatus ?? vi.fn();
+  const resetSaveStatus = overrides.resetSaveStatus ?? vi.fn();
+  const findClusterByLabel = overrides.findClusterByLabel ?? vi.fn().mockResolvedValue(null);
+  const requestConfirm = overrides.requestConfirm ?? vi.fn().mockResolvedValue(true);
+  const setError = overrides.setError ?? vi.fn();
   const saveAbortRef = { current: null as AbortController | null };
 
   const { result } = renderHook(() =>
     useClusterSaveAction({
-      clusterLabel: 'Old',
-      members: [member()],
-      editableClusterId: 'editable',
-      canEdit: true,
-      canSearchForMatch: false,
-      labelInput: '',
-      matchedCluster: null,
-      options: [],
-      saveStatus: 'idle',
+      clusterLabel: overrides.clusterLabel ?? 'Old',
+      members: overrides.members ?? [member()],
+      editableClusterId: overrides.editableClusterId ?? 'editable',
+      anchorIdentityId: overrides.anchorIdentityId,
+      canEdit: overrides.canEdit ?? true,
+      canSearchForMatch: overrides.canSearchForMatch ?? false,
+      labelInput: overrides.labelInput ?? '',
+      matchedCluster: overrides.matchedCluster ?? null,
+      options: overrides.options ?? [],
+      saveStatus: overrides.saveStatus ?? 'idle',
       mutations,
-      findClusterByLabel,
-      requestConfirm,
-      cancelEditing,
-      setError,
-      queueSaveStatus,
-      resetSaveStatus,
+      findClusterByLabel: findClusterByLabel as unknown as SaveOpts['findClusterByLabel'],
+      requestConfirm: requestConfirm as unknown as SaveOpts['requestConfirm'],
+      cancelEditing: cancelEditing as unknown as SaveOpts['cancelEditing'],
+      setError: setError as unknown as SaveOpts['setError'],
+      queueSaveStatus: queueSaveStatus as unknown as SaveOpts['queueSaveStatus'],
+      resetSaveStatus: resetSaveStatus as unknown as SaveOpts['resetSaveStatus'],
       saveAbortRef,
-      ...rest,
     }),
   );
 
@@ -145,12 +159,12 @@ describe('useClusterSaveAction person path (FIX-1)', () => {
 });
 
 /**
- * Characterization (TEST-03 / B6): pin today's case-insensitive dirty-check bails
- * before the exact-compare fix. These assert actual current behavior; Slice 2 flips them.
+ * Five-case grid (B6): exact dirty check; case-only rename mutates; merge preserved.
+ * Flipped from characterization (TEST-03 → desired). Predicted failures noted (TEST-06).
  */
-describe('useClusterSaveAction casing characterization (B6 / TEST-03)', () => {
-  it('TODAY: case-only rename bob→Bob bails via cancelEditing without rename', async () => {
-    // Actual current: dirty check lowercases both sides → silent no-op
+describe('useClusterSaveAction casing grid (B6)', () => {
+  it('1. bob→Bob mutates: exact dirty check proceeds to rename and queues save status', async () => {
+    // Predicted first failure: cancelEditing called; rename not called (case-insensitive bail)
     const { result, mutations, cancelEditing, queueSaveStatus, findClusterByLabel } = renderSaveAction({
       clusterLabel: 'bob',
       labelInput: 'Bob',
@@ -161,14 +175,16 @@ describe('useClusterSaveAction casing characterization (B6 / TEST-03)', () => {
       await result.current.handleSave();
     });
 
-    expect(cancelEditing).toHaveBeenCalled();
-    expect(mutations.rename).not.toHaveBeenCalled();
+    expect(mutations.rename).toHaveBeenCalledWith('Bob', expect.any(AbortSignal));
     expect(mutations.merge).not.toHaveBeenCalled();
-    expect(queueSaveStatus).not.toHaveBeenCalled();
-    expect(findClusterByLabel).not.toHaveBeenCalled();
+    expect(cancelEditing).not.toHaveBeenCalled();
+    expect(queueSaveStatus).toHaveBeenCalled();
+    // Self-match filtered / null lookup — rename path, not merge
+    expect(findClusterByLabel).toHaveBeenCalledWith('Bob', expect.any(AbortSignal));
   });
 
-  it('TODAY: exact same label Bob→Bob bails via cancelEditing without rename', async () => {
+  it('2. Bob→Bob no-ops: exact same label still cancels without mutation', async () => {
+    // Predicted first failure: none expected if exact compare lands; stays green as no-op
     const { result, mutations, cancelEditing, queueSaveStatus } = renderSaveAction({
       clusterLabel: 'Bob',
       labelInput: 'Bob',
@@ -184,8 +200,8 @@ describe('useClusterSaveAction casing characterization (B6 / TEST-03)', () => {
     expect(queueSaveStatus).not.toHaveBeenCalled();
   });
 
-  it('TODAY: merge path preserved when typed label differs from current (Alice→bob matching Bob)', async () => {
-    // Actual current: dirty check passes; case-insensitive match still merges
+  it('3. bob typed with a different existing Bob cluster routes to merge', async () => {
+    // Predicted first failure: none if current≠bob (Alice); regression guard for merge path
     const findClusterByLabel = vi.fn().mockResolvedValue({
       id: 'other-bob',
       label: 'Bob',
@@ -207,7 +223,34 @@ describe('useClusterSaveAction casing characterization (B6 / TEST-03)', () => {
     expect(cancelEditing).not.toHaveBeenCalled();
   });
 
-  it('TODAY: handlePersonSelect case-only bob→Bob also bails without rename', () => {
+  it('4. bob→Bob with different Bob cluster merges (post-findClusterByLabel exact, not silent bail)', async () => {
+    // Predicted first failure: cancelEditing + no merge when match.label lowercases to current
+    // (dirty check already exact; this pins the second case-insensitive bail)
+    const findClusterByLabel = vi.fn().mockResolvedValue({
+      id: 'other-bob',
+      label: 'Bob',
+      identityCount: 2,
+    });
+    const { result, mutations, cancelEditing, queueSaveStatus } = renderSaveAction({
+      clusterLabel: 'bob',
+      labelInput: 'Bob',
+      members: [member({ cluster_label: 'bob' })],
+      findClusterByLabel,
+    });
+
+    await act(async () => {
+      await result.current.handleSave();
+    });
+
+    // Different cluster with case-variant label → merge (exact post-bail lets it through)
+    expect(mutations.merge).toHaveBeenCalledWith('other-bob', 'Bob', expect.any(AbortSignal));
+    expect(mutations.rename).not.toHaveBeenCalled();
+    expect(cancelEditing).not.toHaveBeenCalled();
+    expect(queueSaveStatus).toHaveBeenCalled();
+  });
+
+  it('5. handlePersonSelect case-only bob→Bob renames (exact dirty check on person path)', () => {
+    // Predicted first failure: cancelEditing; rename not called
     const { result, mutations, cancelEditing, queueSaveStatus } = renderSaveAction({
       clusterLabel: 'bob',
       members: [member({ cluster_label: 'bob' })],
@@ -217,8 +260,8 @@ describe('useClusterSaveAction casing characterization (B6 / TEST-03)', () => {
       result.current.handlePersonSelect('Bob');
     });
 
-    expect(cancelEditing).toHaveBeenCalled();
-    expect(mutations.rename).not.toHaveBeenCalled();
-    expect(queueSaveStatus).not.toHaveBeenCalled();
+    expect(mutations.rename).toHaveBeenCalledWith('Bob', expect.any(AbortSignal));
+    expect(cancelEditing).not.toHaveBeenCalled();
+    expect(queueSaveStatus).toHaveBeenCalled();
   });
 });

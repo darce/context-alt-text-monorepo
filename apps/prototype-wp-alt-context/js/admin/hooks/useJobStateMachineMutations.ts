@@ -85,7 +85,9 @@ export const useJobStateMachineMutations = ({
     },
   });
 
-  const mutateClusterRef = useRef<() => void>(() => {});
+  const mutateClusterRef = useRef<() => void>(() => {
+    // Placeholder until createCluster is assigned below; replaced on each render.
+  });
 
   const retryControllerRef = useRef(
     createClusterAutoRetry({

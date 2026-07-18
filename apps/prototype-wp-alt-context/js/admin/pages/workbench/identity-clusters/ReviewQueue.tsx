@@ -107,15 +107,21 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
 
     const length = filteredQueue.length;
     const safeIndex = clampQueueIndex(index, length);
+    // Gate clamp on settled data — empty queue during loading must not wipe a
+    // restored URL/panel index (panel round-trip + rq= reload).
+    const queueSettled = !data.isLoading && !findings.isLoading;
 
     // Clamp restored/oversized index back to parent (PR-54).
     React.useEffect(() => {
+      if (!queueSettled) {
+        return;
+      }
       if (length > 0 && index !== safeIndex) {
         onIndexChange(safeIndex);
       } else if (length === 0 && index !== 0) {
         onIndexChange(0);
       }
-    }, [index, safeIndex, length, onIndexChange]);
+    }, [index, safeIndex, length, onIndexChange, queueSettled]);
 
     const currentItem = length > 0 ? filteredQueue[safeIndex] : null;
     const currentKey = currentItem ? queueItemKey(currentItem) : null;

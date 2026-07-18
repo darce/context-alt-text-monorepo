@@ -21,7 +21,7 @@ import { ReviewQueue, type ReviewQueueHandle } from '../ReviewQueue';
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
   _n: (single: string, plural: string, number: number) => (number === 1 ? single : plural),
-  sprintf: (format: string, ...args: Array<string | number>) => {
+  sprintf: (format: string, ...args: (string | number)[]) => {
     let i = 0;
     return format.replace(/%(\d+)\$[sd]|%[sd]/g, () => String(args[i++]));
   },
@@ -71,7 +71,7 @@ interface HarnessProps {
   initialIndex?: number;
   initialKind?: ReviewQueueKindParam;
   emptyStateAnchorRef?: React.RefObject<HTMLElement | null>;
-  queueRef?: React.RefObject<ReviewQueueHandle | null>;
+  queueRef?: React.RefObject<ReviewQueueHandle>;
 }
 
 const ReviewQueueHarness = ({
@@ -215,14 +215,20 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     await screen.findByText(/Is this/);
-    expect(screen.getByText('Alex')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    // Face label + question both render the name — assert via card textContent.
+    expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Alex/);
 
-    await user.click(screen.getByRole('button', { name: 'Next' }));
-    expect(await screen.findByText('Jordan')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Next review item' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Jordan/);
+    });
     expect(screen.getByText('2 of 2')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'Previous' }));
-    expect(await screen.findByText('Alex')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Previous review item' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Alex/);
+    });
     expect(screen.getByText('1 of 2')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Yes' }));
@@ -256,23 +262,23 @@ describe('ReviewQueue', () => {
       limit: 10,
       offset: 0,
     });
-    vi.mocked(acceptSuggestion).mockImplementation(async (id: string) => {
+    vi.mocked(acceptSuggestion).mockImplementation((id: string) =>
       // Simulate optimistic removal by resolving; mutation onMutate removes from cache.
-      return {
+      Promise.resolve({
         suggestion_id: id,
         resolution: 'accepted' as const,
         identity_id: 'identity-1',
         cluster_id: 'cluster-1',
         message: 'ok',
-      };
-    });
+      }),
+    );
 
     const user = userEvent.setup();
     renderQueue();
 
     const yes = await screen.findByRole('button', { name: 'Yes' });
     yes.focus();
-    expect(yes).toBeFocused();
+    expect(yes).toHaveFocus();
 
     await user.click(yes);
 
@@ -280,10 +286,10 @@ describe('ReviewQueue', () => {
       expect(acceptSuggestion).toHaveBeenCalled();
     });
 
-    // Bare toBeFocused — never tabUntilFocused for this assert.
+    // Bare toHaveFocus — never tabUntilFocused for this assert.
     await waitFor(() => {
       const nextPrimary = screen.getByRole('button', { name: 'Yes' });
-      expect(nextPrimary).toBeFocused();
+      expect(nextPrimary).toHaveFocus();
     });
   });
 
@@ -332,7 +338,7 @@ describe('ReviewQueue', () => {
     });
 
     await waitFor(() => {
-      expect(anchorRef.current).toBeFocused();
+      expect(anchorRef.current).toHaveFocus();
     });
   });
 
@@ -476,7 +482,7 @@ describe('ReviewQueue', () => {
     act(() => {
       queueRef.current?.focusCurrentCard();
     });
-    expect(screen.getByRole('button', { name: 'Yes' })).toBeFocused();
+    expect(screen.getByRole('button', { name: 'Yes' })).toHaveFocus();
   });
 
   it('preserves controlled index across unmount/remount (panel round-trip)', async () => {
@@ -533,14 +539,18 @@ describe('ReviewQueue', () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText('Jordan')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Jordan/);
+    });
     expect(screen.getByText('2 of 2')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'toggle-panel' }));
     expect(screen.getByText('panel-mode')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'toggle-panel' }));
-    expect(await screen.findByText('Jordan')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Jordan/);
+    });
     expect(screen.getByText('2 of 2')).toBeInTheDocument();
   });
 
@@ -573,9 +583,13 @@ describe('ReviewQueue', () => {
     const user = userEvent.setup();
     renderQueue();
 
-    await screen.findByText('Alex');
-    await user.click(screen.getByRole('button', { name: 'Next' }));
-    await screen.findByText('Jordan');
+    await waitFor(() => {
+      expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Alex/);
+    });
+    await user.click(screen.getByRole('button', { name: 'Next review item' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Jordan/);
+    });
 
     const statuses = screen.getAllByRole('status');
     expect(statuses.some((node) => within(node).queryByText(/Review item/i))).toBe(true);

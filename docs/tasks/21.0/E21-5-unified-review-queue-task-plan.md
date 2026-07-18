@@ -302,14 +302,14 @@ Per-state single-primary gating (Analyze vs Describe) with the pinned token role
 - [x] Existing consumers unchanged; zero rendered-UI diff; driver unit tests green
 
 ### Checklist for Slice 1b: Card-at-a-time shell swap
-- [ ] `ReviewQueue.tsx` renders exactly one card + chips + position/prev-next; reuses existing cards; index lifted to `ScanTabContent` + mirrored in `rq=` (§2), filter/hold state local; `focusCurrentCard()` ref handle; position survives a panel round-trip
-- [ ] 4-queue stack retired (anchor else-branch in `ScanTabContent.tsx` swapped; `SuggestionReviewPanel` + `GroupedSuggestionCard` deleted); existing mutations still fire per card
-- [ ] Advance-focus: next card's primary action focused on advance; empty-state anchor focused on drain — `ReviewQueue.test.tsx` component assert is the authoritative gate; e2e bare-`toBeFocused()` check conditional (skip-guarded ≥2 pending, consumes one suggestion, local seed only, no re-tab)
-- [ ] `_review-queue.scss` registered via `@use` in `components/index.scss`; type steps per Design-direction preamble; all controls ≥24×24 px (bounding-box asserted)
-- [ ] ② face crop ≥48×48 asserted; click-to-original opens `ReviewCardLightbox` (new card-local dialog: `mediaUrl` + bbox rect from the FaceThumbnail crop data; Esc/close) — button semantics, in tab order
-- [ ] `rq=` param encoding per §2 (`kind.band.index`, pinned enums); reload restores filter + position (asserted); commit-does-not-increment-index + clamp rule in Slice-1a driver tests (PR-54)
-- [ ] `review-queue.spec.ts` seeded: keyboard-walk reaches actions; card-transition `role=status` asserted
-- [ ] axe + tokenization (incl. new spacing-literal patterns) green; no `WorkbenchContextValue` widening
+- [x] `ReviewQueue.tsx` renders exactly one card + chips + position/prev-next; reuses existing cards; index lifted to `ScanTabContent` + mirrored in `rq=` (§2), filter/hold state local; `focusCurrentCard()` ref handle; position survives a panel round-trip
+- [x] 4-queue stack retired (anchor else-branch in `ScanTabContent.tsx` swapped; `SuggestionReviewPanel` + `GroupedSuggestionCard` deleted); existing mutations still fire per card
+- [x] Advance-focus: next card's primary action focused on advance; empty-state anchor focused on drain — `ReviewQueue.test.tsx` component assert is the authoritative gate; e2e bare-`toBeFocused()` check conditional (skip-guarded ≥2 pending, consumes one suggestion, local seed only, no re-tab)
+- [x] `_review-queue.scss` registered via `@use` in `components/index.scss`; type steps per Design-direction preamble; all controls ≥24×24 px (bounding-box asserted)
+- [x] ② face crop ≥48×48 asserted; click-to-original opens `ReviewCardLightbox` (new card-local dialog: `mediaUrl` + bbox rect from the FaceThumbnail crop data; Esc/close) — button semantics, in tab order
+- [x] `rq=` param encoding per §2 (`kind.band.index`, pinned enums); reload restores filter + position (asserted); commit-does-not-increment-index + clamp rule in Slice-1a driver tests (PR-54)
+- [x] `review-queue.spec.ts` seeded: keyboard-walk reaches actions; card-transition `role=status` asserted
+- [x] axe + tokenization (incl. new spacing-literal patterns) green; no `WorkbenchContextValue` widening
 
 ### Checklist for Slice 2: Undo (gated advance)
 - [ ] Immediate-commit + gated advance; undo cancels before fire (0 calls); commit = 1 call; card advances only on POST success — unit-proven

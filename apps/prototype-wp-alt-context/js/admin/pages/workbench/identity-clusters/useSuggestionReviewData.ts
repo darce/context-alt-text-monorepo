@@ -3,7 +3,10 @@ import { useQueryClient } from '@tanstack/react-query';
 
 import { getConfig } from '../../../api/config';
 import { SUGGESTION_PAGE_SIZE, useSuggestionReviewQueries } from './useSuggestionReviewQueries';
-import { useSuggestionReviewMutations } from './useSuggestionReviewMutations';
+import {
+  useSuggestionReviewMutations,
+  type SuggestionCommitKind,
+} from './useSuggestionReviewMutations';
 
 export const useSuggestionReviewData = () => {
   const queryClient = useQueryClient();
@@ -32,6 +35,8 @@ export const useSuggestionReviewData = () => {
     holdAnnounce,
     isHoldActive,
     isCommitting,
+    isCardActionsDisabled,
+    retryPending,
     scheduleAccept,
     scheduleReject,
     scheduleAcceptMerge,
@@ -57,14 +62,29 @@ export const useSuggestionReviewData = () => {
   const isError = assignmentQuery.isError && mergeQuery.isError && hasNoSuggestionData;
   const failureCount = Math.max(assignmentQuery.failureCount, mergeQuery.failureCount);
   const tenantId = getConfig().tenant_id;
-  const isAnyMutationPending =
-    isHoldActive ||
-    isCommitting ||
+
+  // BR-15: do NOT fold isHoldActive into a global pending flag — that disabled every
+  // card during a hold and made §3 flush-on-next-action production-dead.
+  const isBulkOrMutationPending =
+    bulkActionClusterId !== null ||
     mutations.accept.isPending ||
     mutations.reject.isPending ||
     mutations.acceptMerge.isPending ||
     mutations.rejectMerge.isPending ||
-    bulkActionClusterId !== null;
+    mutations.acceptName.isPending ||
+    mutations.rejectName.isPending;
+
+  const isAnyMutationPending = isBulkOrMutationPending || isCommitting;
+
+  const isCardPending = React.useCallback(
+    (suggestionId: string, kinds: readonly SuggestionCommitKind[]): boolean => {
+      if (isBulkOrMutationPending) {
+        return true;
+      }
+      return isCardActionsDisabled(suggestionId, kinds);
+    },
+    [isBulkOrMutationPending, isCardActionsDisabled],
+  );
 
   return {
     assignmentSuggestions,
@@ -82,6 +102,7 @@ export const useSuggestionReviewData = () => {
     failureCount,
     tenantId,
     isAnyMutationPending,
+    isCardPending,
     bulkActionClusterId,
     setBulkActionClusterId,
     bulkActionRef,
@@ -95,6 +116,7 @@ export const useSuggestionReviewData = () => {
     holdAnnounce,
     isHoldActive,
     isCommitting,
+    retryPending,
     scheduleAccept,
     scheduleReject,
     scheduleAcceptMerge,

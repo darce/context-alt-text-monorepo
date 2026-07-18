@@ -10,6 +10,10 @@ import React from 'react';
 import { useMutation, type QueryClient } from '@tanstack/react-query';
 
 import { queryKeys } from '../../../api/queryKeys';
+import type {
+  PendingMergeSuggestionsResponse,
+  PendingNameSuggestionsResponse,
+} from '../../../api/recognition/types';
 import {
   acceptMergeSuggestion,
   acceptNameSuggestion,
@@ -24,6 +28,9 @@ import type { SuggestionReviewPage } from './useSuggestionReviewQueries';
 
 /** Pinned undo hold window — unit, e2e, and AT scripts share this single constant. */
 export const UNDO_HOLD_MS = 5000;
+
+/** Single hold/status copy — component + tests consume this export (BR-24). */
+export const HOLD_STATUS_COPY = 'Saving… — Undo';
 
 export type SuggestionCommitKind =
   | 'accept'
@@ -43,7 +50,11 @@ export interface CommitHoldState {
   errorMessage: string | null;
 }
 
-export type ScheduleCommitOutcome = 'committed' | 'undone' | 'failed';
+export type ScheduleCommitOutcome =
+  | 'committed'
+  | 'undone'
+  | 'failed'
+  | 'not_attempted_prior_failed';
 
 export interface ScheduleCommitResult {
   outcome: ScheduleCommitOutcome;
@@ -57,8 +68,8 @@ interface UseSuggestionReviewMutationsOptions {
 }
 
 const reviewPageKey = queryKeys.suggestions.projection.reviewPage(0);
-
-const HOLD_ANNOUNCE = 'Saving… — Undo';
+const mergePendingKey = queryKeys.suggestions.mergePending();
+const namePendingKey = queryKeys.suggestions.namePending();
 
 const failureMessageFor = (kind: SuggestionCommitKind): string => {
   switch (kind) {
@@ -74,6 +85,8 @@ const failureMessageFor = (kind: SuggestionCommitKind): string => {
 };
 
 interface HeldCommit {
+  /** Monotonic identity for this hold entry (BR-22 stale-timer guard). */
+  entryId: number;
   kind: SuggestionCommitKind;
   suggestionId: string;
   resolve: (result: ScheduleCommitResult) => void;
@@ -99,6 +112,13 @@ export const useSuggestionReviewMutations = ({
   /** Serializes flush/schedule so at most one commit is in flight and order is preserved. */
   const chainRef = React.useRef(Promise.resolve());
   const committingRef = React.useRef(false);
+  /** Failed hold snapshot — used so schedule/retry can re-check without waiting on React state. */
+  const failedHoldRef = React.useRef<{ kind: SuggestionCommitKind; suggestionId: string } | null>(null);
+  /** BR-17: reject re-entry while a retry POST is in flight. */
+  const retryInFlightRef = React.useRef(false);
+  const [retryPending, setRetryPending] = React.useState(false);
+  /** BR-22: per-hold monotonically increasing entry id. */
+  const nextEntryIdRef = React.useRef(1);
 
   const removePendingSuggestionFromCache = React.useCallback(
     (suggestionId: string) => {
@@ -112,6 +132,38 @@ export const useSuggestionReviewMutations = ({
         }
         // COR-3 (rg-015): no envelope total to decrement; the loaded count follows items.
         return { ...current, items: filtered };
+      });
+    },
+    [queryClient],
+  );
+
+  const removeMergeSuggestionFromCache = React.useCallback(
+    (suggestionId: string) => {
+      queryClient.setQueryData<PendingMergeSuggestionsResponse | undefined>(mergePendingKey, (current) => {
+        if (!current) {
+          return current;
+        }
+        const filtered = current.suggestions.filter((item) => item.id !== suggestionId);
+        if (filtered.length === current.suggestions.length) {
+          return current;
+        }
+        return { ...current, suggestions: filtered };
+      });
+    },
+    [queryClient],
+  );
+
+  const removeNameSuggestionFromCache = React.useCallback(
+    (suggestionId: string) => {
+      queryClient.setQueryData<PendingNameSuggestionsResponse | undefined>(namePendingKey, (current) => {
+        if (!current) {
+          return current;
+        }
+        const filtered = current.suggestions.filter((item) => item.id !== suggestionId);
+        if (filtered.length === current.suggestions.length) {
+          return current;
+        }
+        return { ...current, suggestions: filtered };
       });
     },
     [queryClient],
@@ -160,18 +212,23 @@ export const useSuggestionReviewMutations = ({
           }
           break;
         case 'acceptMerge':
-          void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.mergePending() });
+          // BR-18: drop from cache before invalidation so the card leaves the queue immediately.
+          removeMergeSuggestionFromCache(suggestionId);
+          void queryClient.invalidateQueries({ queryKey: mergePendingKey });
           invalidateMediaIdentities();
           void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
           break;
         case 'rejectMerge':
-          void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.mergePending() });
+          removeMergeSuggestionFromCache(suggestionId);
+          void queryClient.invalidateQueries({ queryKey: mergePendingKey });
           break;
         case 'acceptName':
-          void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.namePending() });
+          removeNameSuggestionFromCache(suggestionId);
+          void queryClient.invalidateQueries({ queryKey: namePendingKey });
           break;
         case 'rejectName':
-          void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.namePending() });
+          removeNameSuggestionFromCache(suggestionId);
+          void queryClient.invalidateQueries({ queryKey: namePendingKey });
           break;
       }
     },
@@ -180,6 +237,8 @@ export const useSuggestionReviewMutations = ({
       invalidateMediaIdentities,
       invalidateSuggestionQueries,
       queryClient,
+      removeMergeSuggestionFromCache,
+      removeNameSuggestionFromCache,
       removePendingSuggestionFromCache,
     ],
   );
@@ -217,6 +276,7 @@ export const useSuggestionReviewMutations = ({
       try {
         await fireCommitApi(kind, suggestionId);
         applySuccessSideEffects(kind, suggestionId);
+        failedHoldRef.current = null;
         if (options.updateUi) {
           setHoldSafe({
             phase: 'idle',
@@ -227,6 +287,7 @@ export const useSuggestionReviewMutations = ({
         }
         return { outcome: 'committed', kind, suggestionId };
       } catch {
+        failedHoldRef.current = { kind, suggestionId };
         if (options.updateUi) {
           setHoldSafe({
             phase: 'failed',
@@ -265,10 +326,12 @@ export const useSuggestionReviewMutations = ({
     }
     clearHeldTimer();
     held.deadlineMs = Date.now() + held.remainingMs;
+    const entryId = held.entryId;
     held.timerId = setTimeout(() => {
       // Fire on window close — chained so it never races a concurrent schedule.
       const fire = async () => {
-        if (heldRef.current?.suggestionId !== held.suggestionId || heldRef.current?.kind !== held.kind) {
+        // BR-22: match entry identity, not just kind+id (undo→re-accept must not truncate).
+        if (heldRef.current?.entryId !== entryId) {
           return;
         }
         await flushHeldInternal({ updateUi: true });
@@ -285,8 +348,15 @@ export const useSuggestionReviewMutations = ({
   const openHold = React.useCallback(
     (kind: SuggestionCommitKind, suggestionId: string): Promise<ScheduleCommitResult> =>
       new Promise<ScheduleCommitResult>((resolve) => {
+        // BR-23: never arm UI/timer after unmount.
+        if (!mountedRef.current) {
+          resolve({ outcome: 'failed', kind, suggestionId });
+          return;
+        }
         // Clear a prior failure surface when a new action starts.
+        failedHoldRef.current = null;
         const entry: HeldCommit = {
+          entryId: nextEntryIdRef.current++,
           kind,
           suggestionId,
           resolve,
@@ -309,6 +379,11 @@ export const useSuggestionReviewMutations = ({
 
   const scheduleCommit = React.useCallback(
     (kind: SuggestionCommitKind, suggestionId: string): Promise<ScheduleCommitResult> => {
+      // BR-17: failed same item blocks new schedules — retry is the only path.
+      if (hold.phase === 'failed' && hold.suggestionId === suggestionId) {
+        return Promise.resolve({ outcome: 'failed', kind, suggestionId });
+      }
+
       // Idle path: open the hold synchronously so the Saving… state is visible in the
       // same turn as the click (tests and AT both observe this immediately).
       if (!heldRef.current && !committingRef.current) {
@@ -320,16 +395,35 @@ export const useSuggestionReviewMutations = ({
       // flushHeld / next schedule deadlock waiting for a window that needs them to fire.
       return new Promise<ScheduleCommitResult>((resolve) => {
         const prepare = async (): Promise<void> => {
+          // BR-23: drop late prepares after unmount.
+          if (!mountedRef.current) {
+            resolve({ outcome: 'failed', kind, suggestionId });
+            return;
+          }
           if (heldRef.current) {
             const prior = await flushHeldInternal({ updateUi: true });
             // Failed prior stays at queue head with alert — do not open a second window.
             if (prior?.outcome === 'failed') {
-              resolve(prior);
+              // BR-21: resolve with THIS action's kind/id, not the prior item's result.
+              resolve({
+                outcome: 'not_attempted_prior_failed',
+                kind,
+                suggestionId,
+              });
               return;
             }
           }
           while (committingRef.current) {
             await Promise.resolve();
+          }
+          if (!mountedRef.current) {
+            resolve({ outcome: 'failed', kind, suggestionId });
+            return;
+          }
+          // BR-17: same item still failed after chain — do not open a second path.
+          if (failedHoldRef.current?.suggestionId === suggestionId) {
+            resolve({ outcome: 'failed', kind, suggestionId });
+            return;
           }
           void openHold(kind, suggestionId).then(resolve);
         };
@@ -340,7 +434,7 @@ export const useSuggestionReviewMutations = ({
         );
       });
     },
-    [flushHeldInternal, openHold],
+    [flushHeldInternal, hold.phase, hold.suggestionId, openHold],
   );
 
   const undoHold = React.useCallback((): void => {
@@ -363,19 +457,39 @@ export const useSuggestionReviewMutations = ({
     if (hold.phase !== 'failed' || !hold.kind || !hold.suggestionId) {
       return null;
     }
+    // BR-17: synchronous re-entry guard before any async work.
+    if (retryInFlightRef.current || committingRef.current) {
+      return null;
+    }
+    retryInFlightRef.current = true;
+    if (mountedRef.current) {
+      setRetryPending(true);
+    }
     const kind = hold.kind;
     const suggestionId = hold.suggestionId;
     const run = async (): Promise<ScheduleCommitResult> => {
+      // Re-check the failed hold is still current for this kind+id.
+      if (
+        failedHoldRef.current?.kind !== kind ||
+        failedHoldRef.current?.suggestionId !== suggestionId
+      ) {
+        return { outcome: 'failed', kind, suggestionId };
+      }
       // Retry re-fires exactly one POST for the failed item (no new undo window).
       return executeHeldCommit(kind, suggestionId, { updateUi: true });
     };
-    const scheduled = chainRef.current.then(run, run);
+    const scheduled = chainRef.current.then(run, run).finally(() => {
+      retryInFlightRef.current = false;
+      if (mountedRef.current) {
+        setRetryPending(false);
+      }
+    });
     chainRef.current = scheduled.then(
       () => undefined,
       () => undefined,
     );
     return scheduled;
-  }, [executeHeldCommit, hold]);
+  }, [executeHeldCommit, hold.kind, hold.phase, hold.suggestionId]);
 
   const setHoldPaused = React.useCallback(
     (paused: boolean): void => {
@@ -466,8 +580,9 @@ export const useSuggestionReviewMutations = ({
 
   const acceptMergeMutation = useMutation({
     mutationFn: acceptMergeSuggestion,
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.mergePending() });
+    onSuccess: (_data, suggestionId) => {
+      removeMergeSuggestionFromCache(suggestionId);
+      void queryClient.invalidateQueries({ queryKey: mergePendingKey });
       invalidateMediaIdentities();
       void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
     },
@@ -475,22 +590,25 @@ export const useSuggestionReviewMutations = ({
 
   const rejectMergeMutation = useMutation({
     mutationFn: rejectMergeSuggestion,
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.mergePending() });
+    onSuccess: (_data, suggestionId) => {
+      removeMergeSuggestionFromCache(suggestionId);
+      void queryClient.invalidateQueries({ queryKey: mergePendingKey });
     },
   });
 
   const acceptNameMutation = useMutation({
     mutationFn: acceptNameSuggestion,
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.namePending() });
+    onSuccess: (_data, suggestionId) => {
+      removeNameSuggestionFromCache(suggestionId);
+      void queryClient.invalidateQueries({ queryKey: namePendingKey });
     },
   });
 
   const rejectNameMutation = useMutation({
     mutationFn: rejectNameSuggestion,
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.namePending() });
+    onSuccess: (_data, suggestionId) => {
+      removeNameSuggestionFromCache(suggestionId);
+      void queryClient.invalidateQueries({ queryKey: namePendingKey });
     },
   });
 
@@ -498,8 +616,8 @@ export const useSuggestionReviewMutations = ({
     mutationFn: bulkAcceptSuggestions,
     onSuccess: () => {
       void invalidateSuggestionProjection(queryClient);
-      void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.namePending() });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.mergePending() });
+      void queryClient.invalidateQueries({ queryKey: namePendingKey });
+      void queryClient.invalidateQueries({ queryKey: mergePendingKey });
       void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
     },
   });
@@ -507,11 +625,57 @@ export const useSuggestionReviewMutations = ({
   const isHoldActive = hold.phase === 'holding' || hold.phase === 'committing';
   const isCommitting = hold.phase === 'committing';
 
+  /**
+   * BR-15: only the held/failed card's accept/reject are disabled during a hold.
+   * Other cards stay enabled so scheduleCommit's busy path can flush → open.
+   * During 'committing' the committing card stays briefly disabled.
+   */
+  const isCardActionsDisabled = React.useCallback(
+    (suggestionId: string, kinds: readonly SuggestionCommitKind[]): boolean => {
+      if (
+        acceptMutation.isPending ||
+        rejectMutation.isPending ||
+        acceptMergeMutation.isPending ||
+        rejectMergeMutation.isPending ||
+        acceptNameMutation.isPending ||
+        rejectNameMutation.isPending
+      ) {
+        return true;
+      }
+      if (hold.phase === 'idle' || !hold.suggestionId || hold.kind === null) {
+        return false;
+      }
+      if (hold.suggestionId !== suggestionId) {
+        return false;
+      }
+      if (hold.phase === 'failed') {
+        return true;
+      }
+      if (hold.phase === 'holding' || hold.phase === 'committing') {
+        return kinds.includes(hold.kind);
+      }
+      return false;
+    },
+    [
+      acceptMergeMutation.isPending,
+      acceptMutation.isPending,
+      acceptNameMutation.isPending,
+      hold.kind,
+      hold.phase,
+      hold.suggestionId,
+      rejectMergeMutation.isPending,
+      rejectMutation.isPending,
+      rejectNameMutation.isPending,
+    ],
+  );
+
   return {
     hold,
-    holdAnnounce: HOLD_ANNOUNCE,
+    holdAnnounce: HOLD_STATUS_COPY,
     isHoldActive,
     isCommitting,
+    isCardActionsDisabled,
+    retryPending,
     scheduleAccept: (suggestionId: string) => scheduleCommit('accept', suggestionId),
     scheduleReject: (suggestionId: string) => scheduleCommit('reject', suggestionId),
     scheduleAcceptMerge: (suggestionId: string) => scheduleCommit('acceptMerge', suggestionId),

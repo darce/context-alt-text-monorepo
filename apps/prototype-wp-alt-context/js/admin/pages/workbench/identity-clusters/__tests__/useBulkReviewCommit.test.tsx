@@ -804,4 +804,96 @@ describe('BR-49 chainRef circular wait + BR-48 person-commit bulk ordering', () 
     expect(order[2]).toBe('person:committed');
     expect(personResult).toMatchObject({ outcome: 'committed' });
   }, 15_000);
+
+  it('BR-48: person-commit during running sequence waits for completion; no interleave', async () => {
+    const order: string[] = [];
+    vi.mocked(rosterApi.commitClusterToRosterEntry).mockReset();
+    vi.mocked(rosterApi.commitClusterToRosterEntry).mockImplementation(() => {
+      order.push('person:post');
+      return Promise.resolve({
+        cluster_id: 'cluster-rs',
+        roster_entry_id: 1,
+        label: 'Alex',
+      } as never);
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const bulkActionRef = { current: false };
+    const awaitBulkIdleOrFlushRef: { current: (() => Promise<void>) | null } = {
+      current: null,
+    };
+    const isBulkActiveRef = { current: false };
+
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+
+    const { result: mut } = renderHook(
+      () =>
+        useSuggestionReviewMutations({
+          queryClient,
+          bulkActionRef,
+          awaitBulkIdleOrFlushRef,
+          isBulkActiveRef,
+        }),
+      { wrapper },
+    );
+
+    let selectedIds = new Set(['rs-a', 'rs-b']);
+    const { result: bulk } = renderHook(() =>
+      useBulkReviewCommit({
+        selectedIds,
+        onSelectedIdsChange: (next) => {
+          selectedIds = next;
+        },
+        resolveItems: (ids) =>
+          ids.map((id) => ({
+            suggestionId: id,
+            commitKind: 'accept' as const,
+            label: 'L',
+          })),
+        flushHeldSingle: () => mut.current.flushHeld(),
+        commitOne: async (kind, id) => {
+          order.push(`bulk:${id}`);
+          return mut.current.commitOneNow(kind, id);
+        },
+        heldSingleSuggestionId: null,
+        setBulkActionActive: (active) => {
+          bulkActionRef.current = active;
+        },
+        isBulkActiveRef,
+        awaitBulkIdleOrFlushRef,
+      }),
+    );
+
+    await act(async () => {
+      await bulk.current.initiateBulk();
+    });
+    expect(bulk.current.bulk.phase).toBe('holding');
+
+    // Expire hold WITHOUT resolving the 10ms POSTs → sequence is live (committing).
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(UNDO_HOLD_MS);
+    });
+    expect(order).toEqual(['bulk:rs-a']);
+    expect(isBulkActiveRef.current).toBe(true);
+
+    // Schedule person-commit mid-sequence — must wait for the whole sequence.
+    let personResult: { outcome: string } | null = null;
+    await act(async () => {
+      const p = mut.current.schedulePersonCommit({
+        clusterId: 'cluster-rs',
+        newEntryName: 'Alex',
+      });
+      await vi.advanceTimersByTimeAsync(50);
+      await Promise.resolve();
+      await Promise.resolve();
+      personResult = await p;
+    });
+
+    expect(order).toEqual(['bulk:rs-a', 'bulk:rs-b', 'person:post']);
+    expect(personResult).toMatchObject({ outcome: 'committed' });
+  }, 15_000);
 });

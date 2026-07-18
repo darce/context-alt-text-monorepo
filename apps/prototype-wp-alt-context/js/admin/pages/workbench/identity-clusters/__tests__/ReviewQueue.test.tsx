@@ -1886,6 +1886,54 @@ describe('ReviewQueue', () => {
       expect(bulkAcceptSuggestions).not.toHaveBeenCalled();
     });
 
+    it('BR-47: selected card disables single Accept/Reject with deselect reason; deselect re-enables', async () => {
+      seedMariaGroup();
+      const user = userEvent.setup();
+      renderQueue();
+
+      const yes = await screen.findByRole('button', { name: 'Yes' });
+      const no = screen.getByRole('button', { name: 'No' });
+      expect(yes).not.toBeDisabled();
+      expect(no).not.toBeDisabled();
+
+      await user.click(screen.getByTestId('acx-review-select'));
+      expect(yes).toBeDisabled();
+      expect(no).toBeDisabled();
+      expect(yes).toHaveAttribute(
+        'title',
+        'Deselect this item to accept or reject it individually.',
+      );
+      expect(no).toHaveAttribute(
+        'title',
+        'Deselect this item to accept or reject it individually.',
+      );
+
+      await user.click(screen.getByTestId('acx-review-select'));
+      expect(yes).not.toBeDisabled();
+      expect(no).not.toBeDisabled();
+    });
+
+    it('BR-54: tray count changes announced via polite live region on select/deselect', async () => {
+      seedMariaGroup();
+      const user = userEvent.setup();
+      const { container } = renderQueue();
+
+      await screen.findByRole('button', { name: 'Yes' });
+      const liveRegion = container.querySelector('.acx-review-queue__live');
+      expect(liveRegion).not.toBeNull();
+      expect(liveRegion).toHaveAttribute('aria-live', 'polite');
+
+      await user.click(screen.getByTestId('acx-review-select'));
+      await waitFor(() => {
+        expect(liveRegion).toHaveTextContent('1 selected');
+      });
+
+      await user.click(screen.getByTestId('acx-review-select'));
+      await waitFor(() => {
+        expect(liveRegion).toHaveTextContent('0 selected');
+      });
+    });
+
     it('bulk undo during hold = 0 POSTs', async () => {
       seedMariaGroup();
       vi.mocked(acceptSuggestion).mockClear();

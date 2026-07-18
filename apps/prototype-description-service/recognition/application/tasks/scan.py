@@ -147,9 +147,9 @@ async def process_scan_job_inline(
                 detections=detections,
             )
 
-    try:
-        from recognition.application.scan.service import run_scan_three_phase
+    from recognition.application.scan.service import PersistIntegrityError, run_scan_three_phase
 
+    try:
         await run_scan_three_phase(
             mark_running=mark_running_phase,
             detect=detect_phase,
@@ -161,6 +161,7 @@ async def process_scan_job_inline(
         EmbeddingTimeoutError,
         DetectionAdapterError,
         EmbeddingAdapterError,
+        PersistIntegrityError,
     ) as exc:
         async with session_factory() as session:
             tenant_uuid = uuid.UUID(str(tenant_id))

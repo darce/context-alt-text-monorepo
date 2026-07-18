@@ -284,9 +284,62 @@ def test_quality_with_pose_none_via_helper() -> None:
         pose_pitch=None,
         pose_yaw=None,
         pose_roll=None,
-        bbox=(10, 20, 50, 80),
+        bbox=(10, 20, 50, 80),  # corner (x1,y1,x2,y2) → 40×60
     )
     assert 0.0 <= score <= 1.0
+
+
+@pytest.mark.asyncio
+async def test_build_embedding_runtime_detectors_share_detect_breaker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GROKHARM-03 [RES-03, SERVE-01]: process-wide face_pipeline.detect breaker shared.
+
+    Two detectors from build_embedding_runtime must hold the same breaker instance;
+    tripping one must open the other. Reset hook clears the shared breaker.
+    """
+    from recognition.infrastructure.embeddings import runtime_factory as rf
+
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+    runtime = _mock_runtime(monkeypatch)
+    monkeypatch.setattr(fpa, "get_shared_face_pipeline_runtime", lambda **_kw: runtime)
+
+    settings = type(
+        "S",
+        (),
+        {
+            "runtime_mode": "production",
+            "face_pipeline": type(
+                "FP",
+                (),
+                {
+                    "profile": "face_pipeline",
+                    "resolved_models_dir": DEFAULT_MODELS_DIR,
+                    "score_threshold": 0.9,
+                    "nms_threshold": 0.3,
+                    "top_k": 5000,
+                    "timeout_s": 5.0,
+                },
+            )(),
+        },
+    )()
+
+    det1, _gen1 = await rf.build_embedding_runtime(settings=settings)  # type: ignore[arg-type]
+    det2, _gen2 = await rf.build_embedding_runtime(settings=settings)  # type: ignore[arg-type]
+    assert isinstance(det1, fpa.FacePipelineFaceDetector)
+    assert isinstance(det2, fpa.FacePipelineFaceDetector)
+    assert det1._breaker is det2._breaker
+    assert det1._breaker.adapter_name == "face_pipeline.detect"
+
+    det1._breaker.force_open()
+    assert det2._breaker.snapshot().is_open is True
+
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+    det3, _gen3 = await rf.build_embedding_runtime(settings=settings)  # type: ignore[arg-type]
+    assert isinstance(det3, fpa.FacePipelineFaceDetector)
+    assert det3._breaker is not det1._breaker
+    assert det3._breaker.snapshot().is_open is False
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
 
 
 @pytest.mark.asyncio

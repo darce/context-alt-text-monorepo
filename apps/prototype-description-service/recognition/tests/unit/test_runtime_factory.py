@@ -113,10 +113,11 @@ async def test_factory_face_pipeline_success(monkeypatch: pytest.MonkeyPatch) ->
         return runtime
 
     class _FPDet:
-        def __init__(self, rt, *, client=None, timeout=None) -> None:
+        def __init__(self, rt, *, client=None, timeout=None, breaker=None) -> None:
             self.runtime = rt
             self.client = client
             self.timeout = timeout
+            self.breaker = breaker
 
     # Lazy import reads from face_pipeline_adapter (S3CR-01); patch there.
     monkeypatch.setattr(fpa, "get_shared_face_pipeline_runtime", _get_runtime)
@@ -130,6 +131,7 @@ async def test_factory_face_pipeline_success(monkeypatch: pytest.MonkeyPatch) ->
     assert isinstance(det, _FPDet)
     assert det.runtime is runtime
     assert det.client is client
+    assert det.breaker is not None
     assert isinstance(gen, UnavailableEmbeddingGenerator)
     assert FACE_PIPELINE_GENERATOR_REASON in gen.reason
 
@@ -158,7 +160,7 @@ async def test_factory_face_pipeline_ignores_adapter_provider(monkeypatch: pytes
     runtime = object()
 
     class _FPDet:
-        def __init__(self, rt, *, client=None, timeout=None) -> None:
+        def __init__(self, rt, *, client=None, timeout=None, breaker=None) -> None:
             self.runtime = rt
 
     monkeypatch.setattr(fpa, "get_shared_face_pipeline_runtime", lambda **kw: runtime)

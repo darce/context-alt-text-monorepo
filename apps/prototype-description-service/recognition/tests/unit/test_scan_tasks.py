@@ -300,3 +300,82 @@ async def test_process_scan_job_inline_marks_job_failed_on_typed_adapter_failure
     assert events[1][0] == "failed"
     assert expected_text in (events[1][1] or "")
     assert all(name != "saved" for name, _ in events)
+
+
+@pytest.mark.asyncio
+async def test_process_scan_job_inline_marks_job_failed_on_persist_integrity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FIR4-BR-03 [RLSE-05, OBS-08]: persist integrity must fail the job (not stuck RUNNING).
+
+    Real producer shape: wrong-width embedding raises PersistIntegrityError from
+    _persist_identities; inline catch-set must map it to mark_job_failed.
+    """
+    from recognition.application.scan.service import PersistIntegrityError
+
+    tenant_id = str(uuid.uuid4())
+    job_id = str(uuid.uuid4())
+    events: list[tuple[str, str | None]] = []
+    integrity_exc = PersistIntegrityError("embedding length 127 != pgvector_dimension 128")
+
+    class FakeScanService:
+        def __init__(self, session, detector=None, generator=None, object_store_factory=None) -> None:
+            self.session = session
+
+        async def mark_job_running(self, received_job_id):
+            events.append(("running", str(received_job_id)))
+            return SimpleNamespace(id=received_job_id)
+
+        async def mark_job_failed(self, received_job_id, error_message: str):
+            events.append(("failed", error_message))
+            return SimpleNamespace(id=received_job_id)
+
+        async def save_job_results(self, **kwargs):
+            # Real persist-time integrity failure (wrong-width embedding path).
+            raise integrity_exc
+
+    class FakeDetector:
+        async def detect(self, sources):
+            import numpy as np
+
+            # Real producer shape: corner bbox + wrong-width embedding + model_id.
+            return [
+                FaceDetection(
+                    media_id="1",
+                    bbox=(10, 10, 50, 50),
+                    confidence=0.95,
+                    embedding=np.zeros(127, dtype=np.float32),
+                    model_id="sface@test",
+                )
+            ]
+
+    class FakeGenerator:
+        async def generate(self, face_images):
+            raise AssertionError("face_pipeline embeds in detect; generator unused")
+
+    import recognition.application.scan.service as scan_service_module
+    import recognition.config as recognition_config
+    import recognition.infrastructure.embeddings.runtime_factory as runtime_factory
+
+    monkeypatch.setattr(recognition_config, "get_settings", _prod_settings)
+    monkeypatch.setattr(scan_tasks, "set_tenant_context", AsyncMock())
+    monkeypatch.setattr(scan_service_module, "ScanService", FakeScanService)
+
+    async def _fake_build(*, settings, http_client=None, adapter_provider=None):
+        return FakeDetector(), FakeGenerator()
+
+    monkeypatch.setattr(runtime_factory, "build_embedding_runtime", _fake_build)
+
+    with pytest.raises(PersistIntegrityError, match="embedding length"):
+        await scan_tasks.process_scan_job_inline(
+            tenant_id=tenant_id,
+            job_id=job_id,
+            media_ids=["1"],
+            media_sources=["http://example.test/1.jpg"],
+            session_factory=lambda: _FakeSessionContext(),
+        )
+
+    assert events[0] == ("running", job_id)
+    assert events[1][0] == "failed"
+    assert events[1][1]
+    assert "embedding length" in (events[1][1] or "")

@@ -54,7 +54,7 @@ def _compute_detection_quality(
         pose_pitch: Head pitch angle in degrees (up/down).
         pose_yaw: Head yaw angle in degrees (left/right).
         pose_roll: Head roll angle in degrees (tilt).
-        bbox: Bounding box (x, y, width, height).
+        bbox: Bounding box (x1, y1, x2, y2) corner.
 
     Returns:
         Quality score in [0.0, 1.0]. Lower scores for extreme poses or low confidence.
@@ -62,13 +62,17 @@ def _compute_detection_quality(
     # Import here to avoid circular dependency
     from recognition.application.assignment.quality import compute_identity_quality
 
+    # FaceDetection.bbox is corner format (x1,y1,x2,y2) for both face_pipeline and
+    # InsightFace callers — derive width/height; do not treat x2/y2 as size [SERVE-08].
+    bbox_width = int(bbox[2] - bbox[0])
+    bbox_height = int(bbox[3] - bbox[1])
     info = compute_identity_quality(
         confidence=confidence,
         pose_pitch=pose_pitch,
         pose_yaw=pose_yaw,
         pose_roll=pose_roll,
-        bbox_width=bbox[2],
-        bbox_height=bbox[3],
+        bbox_width=bbox_width,
+        bbox_height=bbox_height,
     )
     return info.score
 

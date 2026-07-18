@@ -342,10 +342,13 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
     """One-pass YuNet→align→SFace detector implementing FaceDetectorProtocol.
 
     ``detect()`` submits sync ORT work via a dedicated ThreadPoolExecutor gated
-    by an asyncio.Semaphore sized to ``max_workers``. A wait_for_adapter timeout
+    by an asyncio.Semaphore sized to ``max_workers``. One overall detection
+    deadline bounds both submit-semaphore admission and executor-result wait
+    (no second independent full timeout window — [RES-02][RES-14]). A timeout
     raises ``DetectionTimeoutError`` without cancelling the worker; the semaphore
     slot is released only when the executor future completes (head-of-line
-    residual under sustained timeouts — [RES-02]).
+    residual under sustained timeouts — [RES-02]). Admission timeout maps through
+    ``AdapterTimeoutError`` so the shared breaker counts it ([RES-03][OBS-05]).
     """
 
     def __init__(
@@ -508,30 +511,73 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
                     payload: bytes = current_bytes,
                     mid: str = current_media_id,
                 ) -> list[FaceDetection]:
+                    # One overall deadline covers admission + executor wait.
+                    # Do not give each stage a full independent timeout window.
+                    deadline = time.perf_counter() + self._timeout
+                    adapter_name = "face_pipeline.detect"
+
+                    def _remaining() -> float:
+                        return deadline - time.perf_counter()
+
+                    def _raise_timeout(cause: BaseException | None = None) -> None:
+                        err = AdapterTimeoutError(
+                            adapter_name=adapter_name,
+                            timeout_s=self._timeout,
+                        )
+                        if cause is not None:
+                            raise err from cause
+                        raise err
+
                     # Saturation signal: log when submit-queue wait exceeds ~50ms (E2E-07).
                     wait_started = time.perf_counter()
-                    await self._submit_semaphore.acquire()
+                    admit_budget = _remaining()
+                    if admit_budget <= 0:
+                        _raise_timeout()
+                    try:
+                        await asyncio.wait_for(
+                            self._submit_semaphore.acquire(),
+                            timeout=admit_budget,
+                        )
+                    except TimeoutError as exc:
+                        # Never acquired: do not release. Cancellation of the wait_for
+                        # waiter must not over-release ([RES-15]).
+                        _raise_timeout(exc)
                     wait_ms = (time.perf_counter() - wait_started) * 1000.0
                     if wait_ms > 50.0:
                         logger.info(
                             "face_pipeline submit queue wait %.0fms",
                             wait_ms,
                         )
-                    # Submit via concurrent.futures so the release callback tracks the
-                    # real worker, not the asyncio Future that wait_for may cancel on
-                    # timeout (which would free the slot while the thread still runs).
-                    cfut = self._executor.submit(self._detect_sync, payload, mid)
+                    # Slot held. Release only via the real concurrent worker future
+                    # completion callback after a successful submit — never on
+                    # timeout of the asyncio waiter ([RES-02][RES-04]).
+                    # If submit fails before the callback is registered, release here.
+                    callback_owns_release = False
+                    try:
+                        # Submit via concurrent.futures so the release callback tracks the
+                        # real worker, not the asyncio Future that wait_for may cancel on
+                        # timeout (which would free the slot while the thread still runs).
+                        cfut = self._executor.submit(self._detect_sync, payload, mid)
 
-                    def _release_on_worker_done(_f: object) -> None:
-                        loop.call_soon_threadsafe(self._submit_semaphore.release)
+                        def _release_on_worker_done(_f: object) -> None:
+                            loop.call_soon_threadsafe(self._submit_semaphore.release)
 
-                    cfut.add_done_callback(_release_on_worker_done)
-                    afut = asyncio.wrap_future(cfut, loop=loop)
-                    return await wait_for_adapter(
-                        afut,
-                        timeout_s=self._timeout,
-                        adapter_name="face_pipeline.detect",
-                    )
+                        cfut.add_done_callback(_release_on_worker_done)
+                        callback_owns_release = True
+                        afut = asyncio.wrap_future(cfut, loop=loop)
+                        exec_budget = _remaining()
+                        if exec_budget <= 0:
+                            # Worker already running; callback releases the slot.
+                            _raise_timeout()
+                        return await wait_for_adapter(
+                            afut,
+                            timeout_s=exec_budget,
+                            adapter_name=adapter_name,
+                        )
+                    except BaseException:
+                        if not callback_owns_release:
+                            self._submit_semaphore.release()
+                        raise
 
                 faces = await self._breaker.call(detect_current)
                 detections.extend(faces)

@@ -27,12 +27,10 @@ vi.mock('../../../../api/recognition', async (importOriginal) => {
 const buildSuggestion = (
   overrides: Partial<PendingSuggestion> & Pick<PendingSuggestion, 'id' | 'identity_id'>,
 ): PendingSuggestion => ({
-  id: overrides.id,
-  identity_id: overrides.identity_id,
-  suggested_cluster_id: overrides.suggested_cluster_id ?? 'cluster-1',
-  representative_similarity: overrides.representative_similarity ?? 0.9,
-  cluster_label: overrides.cluster_label === undefined ? 'Alice' : overrides.cluster_label,
-  cluster_identity_count: overrides.cluster_identity_count ?? 3,
+  suggested_cluster_id: 'cluster-1',
+  representative_similarity: 0.9,
+  cluster_label: 'Alice',
+  cluster_identity_count: 3,
   ...overrides,
 });
 
@@ -169,11 +167,7 @@ describe('InlineSuggestionPrompt batched query', () => {
 
     // K = ceil(P/500) with P <= 500 → 1 request for N cards (RES-15)
     expect(fetchPending).toHaveBeenCalledTimes(1);
-    expect(fetchPending).toHaveBeenCalledWith(
-      INLINE_SUGGESTION_BATCH_LIMIT,
-      0,
-      INLINE_SUGGESTION_BATCH_TIMEOUT_MS,
-    );
+    expect(fetchPending).toHaveBeenCalledWith(INLINE_SUGGESTION_BATCH_LIMIT, 0, INLINE_SUGGESTION_BATCH_TIMEOUT_MS);
   });
 
   it('pages through pending suggestions: exactly ceil(P/500) requests when P > 500', async () => {
@@ -209,10 +203,9 @@ describe('InlineSuggestionPrompt batched query', () => {
       });
 
     const { wrapper } = createWrapper();
-    render(
-      <InlineSuggestionPrompt identityId="id-late" onConfirm={vi.fn()} onReject={vi.fn()} isPending={false} />,
-      { wrapper },
-    );
+    render(<InlineSuggestionPrompt identityId="id-late" onConfirm={vi.fn()} onReject={vi.fn()} isPending={false} />, {
+      wrapper,
+    });
 
     // Identity on page 2 still gets its prompt — no silent drop past the first page.
     await waitFor(() => expect(screen.getByText('Late Page Match')).toBeInTheDocument());
@@ -249,12 +242,7 @@ describe('InlineSuggestionPrompt batched query', () => {
 
     const { wrapper } = createWrapper();
     const { container } = render(
-      <InlineSuggestionPrompt
-        identityId="id-empty"
-        onConfirm={vi.fn()}
-        onReject={vi.fn()}
-        isPending={false}
-      />,
+      <InlineSuggestionPrompt identityId="id-empty" onConfirm={vi.fn()} onReject={vi.fn()} isPending={false} />,
       { wrapper },
     );
 
@@ -291,10 +279,9 @@ describe('InlineSuggestionPrompt batched query', () => {
     });
 
     const { wrapper } = createWrapper();
-    render(
-      <InlineSuggestionPrompt identityId="id-1" onConfirm={vi.fn()} onReject={vi.fn()} isPending={false} />,
-      { wrapper },
-    );
+    render(<InlineSuggestionPrompt identityId="id-1" onConfirm={vi.fn()} onReject={vi.fn()} isPending={false} />, {
+      wrapper,
+    });
 
     await waitFor(() => expect(screen.getByText('High Match')).toBeInTheDocument());
     expect(screen.getByText('87%')).toBeInTheDocument();

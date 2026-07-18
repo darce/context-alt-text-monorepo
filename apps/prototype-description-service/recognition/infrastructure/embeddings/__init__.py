@@ -4,6 +4,9 @@ This module provides the infrastructure adapter that wraps InsightFace for
 face detection and embedding generation. It implements the port interfaces
 expected by the application layer.
 
+Maps InsightFace output directly into the neutral application-layer
+``FaceDetection`` seam type (FIR-2 S2b).
+
 See: docs/tasks/4.0/4.2.4/RECOGNITION_SERVICE_V4.2.4_IMPLEMENTATION_PLAN.md
 """
 
@@ -12,13 +15,14 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
 from PIL import Image
 
+from recognition.application.embedding.detector import FaceDetection
+from recognition.application.embedding.manifest import incumbent_embedding_model_manifest
 from recognition.config import get_settings
 
 if TYPE_CHECKING:
@@ -30,24 +34,11 @@ _SHARED_ADAPTER: InsightFaceAdapter | None = None
 _SHARED_ADAPTER_LOCK = asyncio.Lock()
 
 
-@dataclass
-class DetectedFace:
-    """Face detection result from InsightFace."""
-
-    bbox: tuple[int, int, int, int]  # x1, y1, x2, y2
-    confidence: float
-    embedding_512: np.ndarray  # 512D face identity vector
-    pose: tuple[float, float, float] | None  # pitch, yaw, roll
-    age: int | None
-    gender: int | None  # 0=female, 1=male
-    landmarks: np.ndarray | None  # 5-point or 106-point landmarks
-
-
 class InsightFaceAdapter:
     """Adapter for InsightFace detection and embedding generation.
 
     Wraps InsightFace's FaceAnalysis for face detection and generates
-    512D face embeddings.
+    face embeddings at the configured dimension, returning FaceDetection.
 
     Usage:
         adapter = InsightFaceAdapter()
@@ -60,6 +51,7 @@ class InsightFaceAdapter:
         self._app: FaceAnalysis | None = None
         self._model_loaded = False
         self._model_lock = asyncio.Lock()
+        self._manifest = incumbent_embedding_model_manifest()
 
     async def ensure_loaded(self) -> None:
         """Lazily load the InsightFace model on first use."""
@@ -135,14 +127,14 @@ class InsightFaceAdapter:
         pil_image = Image.open(io.BytesIO(image_bytes))
         return self._pil_to_cv2(pil_image)
 
-    async def detect_faces(self, image_bytes: bytes) -> list[DetectedFace]:
+    async def detect_faces(self, image_bytes: bytes) -> list[FaceDetection]:
         """Detect all faces in an image.
 
         Args:
             image_bytes: Image data as bytes (JPEG, PNG, etc.)
 
         Returns:
-            List of DetectedFace with bounding boxes, embeddings, and metadata
+            List of FaceDetection with bounding boxes, embeddings, and metadata
         """
         await self.ensure_loaded()
 
@@ -155,42 +147,44 @@ class InsightFaceAdapter:
         loop = asyncio.get_running_loop()
         faces = await loop.run_in_executor(None, self._app.get, cv2_image)
 
-        results: list[DetectedFace] = []
+        model_id = self._manifest.model_id
+        results: list[FaceDetection] = []
         for face in faces:
             bbox = tuple(int(x) for x in face.bbox)
 
-            # Extract optional attributes
-            pose = None
+            # Pose angles feed quality scoring + clustering maturity (not product fields).
+            pose_pitch: float | None = None
+            pose_yaw: float | None = None
+            pose_roll: float | None = None
             if hasattr(face, "pose") and face.pose is not None:
-                pose = tuple(float(x) for x in face.pose)
-
-            age = int(face.age) if hasattr(face, "age") and face.age is not None else None
-            gender = int(face.gender) if hasattr(face, "gender") and face.gender is not None else None
-            landmarks = face.kps if hasattr(face, "kps") else None
+                pose_pitch = float(face.pose[0])
+                pose_yaw = float(face.pose[1])
+                pose_roll = float(face.pose[2])
 
             results.append(
-                DetectedFace(
+                FaceDetection(
+                    media_id="",  # filled by InsightFaceFaceDetector with source id
                     bbox=bbox,  # type: ignore[arg-type]
                     confidence=float(face.det_score),
-                    embedding_512=face.normed_embedding,
-                    pose=pose,  # type: ignore[arg-type]
-                    age=age,
-                    gender=gender,
-                    landmarks=landmarks,
+                    embedding=face.normed_embedding,
+                    pose_pitch=pose_pitch,
+                    pose_yaw=pose_yaw,
+                    pose_roll=pose_roll,
+                    model_id=model_id,
                 )
             )
 
         logger.debug("Detected %d faces in image", len(results))
         return results
 
-    async def analyze(self, image_bytes: bytes) -> list[DetectedFace]:
+    async def analyze(self, image_bytes: bytes) -> list[FaceDetection]:
         """Detect faces and generate embeddings in one call.
 
         Args:
             image_bytes: Image data as bytes
 
         Returns:
-            List of DetectedFace objects
+            List of FaceDetection objects
         """
         return await self.detect_faces(image_bytes)
 
@@ -202,6 +196,8 @@ class InsightFaceAdapter:
             "det_thresh": self.settings.insightface.det_thresh,
             "det_size": self.settings.insightface.det_size,
             "model_loaded": self._model_loaded,
+            "model_id": self._manifest.model_id,
+            "embedding_dimensions": self._manifest.dimensions,
         }
 
 
@@ -224,7 +220,6 @@ def reset_shared_insightface_adapter_for_tests() -> None:
 
 
 __all__ = [
-    "DetectedFace",
     "InsightFaceAdapter",
     "get_shared_insightface_adapter",
     "reset_shared_insightface_adapter_for_tests",

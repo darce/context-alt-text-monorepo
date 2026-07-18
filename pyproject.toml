@@ -1,9 +1,11 @@
-# Lane-only shim: lets the grok secure-sandbox `uv sync` provisioning succeed
-# (repo intentionally has no root Python project). DROP BEFORE MERGE to main.
+# Virtual root project — exists so the remote grok sandbox's root `uv sync`
+# (scripts/remote_agent.sh) succeeds in this monorepo, whose real Python
+# projects live under apps/*. Not a build target; installs nothing.
 [project]
-name = "uxp-2-lane-sandbox-shim"
+name = "context-alt-text-monorepo-root"
 version = "0.0.0"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
+dependencies = []
 
 [tool.uv]
 package = false

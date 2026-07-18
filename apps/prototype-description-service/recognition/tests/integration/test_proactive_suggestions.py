@@ -73,6 +73,7 @@ async def test_unlabeled_clusters_are_filtered_from_suggestions(db_session, tena
         bbox_height=1,
         confidence=0.99,
         embedding=embedding,
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add(identity)
     await db_session.flush()
@@ -91,6 +92,7 @@ async def test_unlabeled_clusters_are_filtered_from_suggestions(db_session, tena
         bbox_height=1,
         confidence=0.99,
         embedding=embedding,  # Similar to cluster member
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add(suggestion_identity)
     await db_session.flush()
@@ -161,6 +163,7 @@ async def test_stale_accepted_suggestion_is_relisted_for_review(db_session, tena
         bbox_height=1,
         confidence=0.99,
         embedding=embedding,
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add(identity)
     await db_session.flush()
@@ -231,6 +234,7 @@ async def test_identity_removal_triggers_suggestion_refresh(db_session, tenant) 
         bbox_height=1,
         confidence=0.99,
         embedding=embedding,
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add(identity)
     await db_session.flush()
@@ -280,6 +284,7 @@ async def test_background_surfacing_after_label_creates_suggestions(db_session, 
         bbox_height=120,
         confidence=0.99,
         embedding=rep_embedding,
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add(rep_identity)
     await db_session.flush()
@@ -321,6 +326,7 @@ async def test_background_surfacing_after_label_creates_suggestions(db_session, 
         bbox_height=48,
         confidence=0.5,
         embedding=candidate_embedding,
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add(candidate_identity)
     await db_session.flush()
@@ -388,6 +394,7 @@ async def test_update_cluster_surfaces_suggestions_for_existing_unlabeled_single
         bbox_height=120,
         confidence=0.99,
         embedding=rep_embedding,
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add(rep_identity)
     await db_session.flush()
@@ -429,6 +436,7 @@ async def test_update_cluster_surfaces_suggestions_for_existing_unlabeled_single
         bbox_height=48,
         confidence=0.5,
         embedding=candidate_embedding,
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add(candidate_identity)
     await db_session.flush()
@@ -487,6 +495,7 @@ async def test_replayed_cluster_bind_curation_job_surfaces_singleton_suggestions
         bbox_height=120,
         confidence=0.99,
         embedding=rep_embedding,
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add(rep_identity)
     await db_session.flush()
@@ -529,6 +538,7 @@ async def test_replayed_cluster_bind_curation_job_surfaces_singleton_suggestions
         bbox_height=48,
         confidence=0.5,
         embedding=candidate_embedding,
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add(candidate_identity)
     await db_session.flush()
@@ -604,6 +614,7 @@ async def test_merge_cleanup_curation_job_surfaces_singleton_suggestions_and_del
         bbox_height=120,
         confidence=0.99,
         embedding=target_embedding,
+        embedding_model="buffalo_l@insightface",
     )
     source_embedding = [0.0] * 512
     source_embedding[1] = 1.0
@@ -617,6 +628,7 @@ async def test_merge_cleanup_curation_job_surfaces_singleton_suggestions_and_del
         bbox_height=72,
         confidence=0.95,
         embedding=source_embedding,
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add_all([target_identity, source_identity])
     await db_session.flush()
@@ -657,6 +669,7 @@ async def test_merge_cleanup_curation_job_surfaces_singleton_suggestions_and_del
         bbox_height=48,
         confidence=0.5,
         embedding=candidate_embedding,
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add(candidate_identity)
     await db_session.flush()
@@ -730,6 +743,7 @@ async def test_background_backfill_surfaces_suggestions_for_later_batch_cluster(
         bbox_height=96,
         confidence=0.99,
         embedding=rep_embedding,
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add(rep_identity)
     await db_session.flush()
@@ -771,6 +785,7 @@ async def test_background_backfill_surfaces_suggestions_for_later_batch_cluster(
         bbox_height=64,
         confidence=0.93,
         embedding=candidate_embedding,
+        embedding_model="buffalo_l@insightface",
     )
     db_session.add(candidate_identity)
     await db_session.flush()
@@ -837,6 +852,7 @@ async def test_top_unlabeled_cards_show_known_label_ctas_for_later_batch_cluster
             bbox_height=96,
             confidence=0.99,
             embedding=rep_embedding,
+            embedding_model="buffalo_l@insightface",
         )
         db_session.add(rep_identity)
         await db_session.flush()
@@ -882,6 +898,7 @@ async def test_top_unlabeled_cards_show_known_label_ctas_for_later_batch_cluster
             bbox_height=64,
             confidence=0.93,
             embedding=embedding,
+            embedding_model="buffalo_l@insightface",
         )
         db_session.add(candidate_identity)
         await db_session.flush()

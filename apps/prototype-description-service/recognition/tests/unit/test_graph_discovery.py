@@ -12,7 +12,7 @@ from recognition.application.discovery.graph import GraphAlgorithm, GraphDiscove
 from recognition.application.settings import ClusteringSettings
 from recognition.domain.identity import MediaIdentity
 from recognition.shared.ids import generate_id
-from recognition.shared.similarity import FACE_EMBEDDING_DIM
+from recognition.shared.similarity import face_embedding_dim
 
 
 class FakeGraphAlgorithm(GraphAlgorithm):
@@ -94,8 +94,8 @@ async def test_graph_discovery_matches_to_anchor_clusters() -> None:
 @pytest.mark.asyncio
 async def test_graph_discovery_uses_face_embeddings() -> None:
     """GraphDiscovery should send face-only embeddings to the graph algorithm."""
-    face = np.ones(FACE_EMBEDDING_DIM, dtype=np.float32)
-    meta = np.arange(FACE_EMBEDDING_DIM, dtype=np.float32) * 10.0
+    face = np.ones(face_embedding_dim(), dtype=np.float32)
+    meta = np.arange(face_embedding_dim(), dtype=np.float32) * 10.0
     identities = [
         make_identity(np.concatenate([face, meta])),
         make_identity(np.concatenate([face * 0.5, meta * 0.5])),
@@ -110,9 +110,9 @@ async def test_graph_discovery_uses_face_embeddings() -> None:
     candidates = result.candidates
 
     assert algo.seen_embeddings is not None
-    assert all(len(vec) == FACE_EMBEDDING_DIM for vec in algo.seen_embeddings)
+    assert all(len(vec) == face_embedding_dim() for vec in algo.seen_embeddings)
     assert candidates
-    assert all(c.identity_vector.shape[0] == FACE_EMBEDDING_DIM for c in candidates)
+    assert all(c.identity_vector.shape[0] == face_embedding_dim() for c in candidates)
 
 
 @pytest.mark.asyncio
@@ -134,10 +134,10 @@ async def test_graph_discovery_selects_hdbscan(monkeypatch) -> None:
 
     settings = make_settings(threshold=0.8, hdbscan_max_batch_size=3)
     discovery = graph_module.GraphDiscovery(settings=settings, algorithm=None)
-    anchor_embeddings: dict[str, list[np.ndarray]] = {"anchor": [np.ones(FACE_EMBEDDING_DIM, dtype=np.float32)]}
+    anchor_embeddings: dict[str, list[np.ndarray]] = {"anchor": [np.ones(face_embedding_dim(), dtype=np.float32)]}
 
-    small_batch = [make_identity(np.ones(FACE_EMBEDDING_DIM, dtype=np.float32)) for _ in range(3)]
-    large_batch = [make_identity(np.ones(FACE_EMBEDDING_DIM, dtype=np.float32)) for _ in range(10)]
+    small_batch = [make_identity(np.ones(face_embedding_dim(), dtype=np.float32)) for _ in range(3)]
+    large_batch = [make_identity(np.ones(face_embedding_dim(), dtype=np.float32)) for _ in range(10)]
 
     await discovery.discover(small_batch, anchor_embeddings, inject_anchors=False)
     await discovery.discover(large_batch, anchor_embeddings, inject_anchors=False)

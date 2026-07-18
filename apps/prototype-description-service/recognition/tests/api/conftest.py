@@ -641,8 +641,6 @@ class FakeMediaIdentity:
         self.pose_pitch = 10.0
         self.pose_yaw = -5.0
         self.pose_roll = 0.0
-        self.age = 30
-        self.gender = 1
         self.quality_score = 0.9
 
 
@@ -678,8 +676,6 @@ class FakeMediaIdentityService:
                         "yaw": identity.pose_yaw,
                         "roll": identity.pose_roll,
                     },
-                    "age": identity.age,
-                    "gender": "male" if identity.gender == 1 else "female",
                     "det_score": identity.confidence,
                     "bbox_area": identity.bbox["width"] * identity.bbox["height"],
                     "landmark_quality": identity.quality_score,

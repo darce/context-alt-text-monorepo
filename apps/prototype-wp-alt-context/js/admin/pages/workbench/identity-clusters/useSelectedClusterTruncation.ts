@@ -30,14 +30,21 @@ export interface UseSelectedClusterTruncationResult {
   targetClusterIds: readonly string[];
   /** True while any first-page envelope is still loading. */
   isLoading: boolean;
+  /**
+   * BR-52: true when any first-page envelope fetch failed.
+   * Gate fails closed (commit disabled) until refetch succeeds.
+   */
+  isError: boolean;
   /** Clusters whose first-page envelope reports truncated=true. */
   truncatedClusters: readonly TruncationClusterInfo[];
-  /** True when any selected target cluster is truncated (gate active). */
+  /** True when any selected target cluster is truncated OR a fetch failed (gate active). */
   isTruncationGated: boolean;
   /** Sum of totals across truncated target clusters (confirm copy). */
   gatedTotal: number;
   /** Sum of hidden counts across truncated target clusters. */
   gatedHiddenCount: number;
+  /** Retry failed member-list fetches (truncation error path). */
+  refetch: () => void;
 }
 
 const uniqueIds = (ids: readonly (string | null | undefined)[]): string[] => {
@@ -73,6 +80,8 @@ export const useSelectedClusterTruncation = (
   });
 
   const isLoading = ids.length > 0 && queries.some((q) => q.isLoading || q.isFetching);
+  // BR-52: fetch error fails closed — treat as gated until retry succeeds.
+  const isError = ids.length > 0 && queries.some((q) => q.isError);
 
   // Compute from query results each render — selection sets are small (no useMemo:
   // useQueries result is referentially unstable per @tanstack/query/no-unstable-deps).
@@ -93,16 +102,24 @@ export const useSelectedClusterTruncation = (
     });
   }
 
-  const isTruncationGated = truncatedClusters.length > 0;
+  const isTruncationGated = truncatedClusters.length > 0 || isError;
   const gatedTotal = truncatedClusters.reduce((sum, c) => sum + c.total, 0);
   const gatedHiddenCount = truncatedClusters.reduce((sum, c) => sum + c.hiddenCount, 0);
+
+  const refetch = (): void => {
+    for (const q of queries) {
+      void q.refetch();
+    }
+  };
 
   return {
     targetClusterIds: ids,
     isLoading,
+    isError,
     truncatedClusters,
     isTruncationGated,
     gatedTotal,
     gatedHiddenCount,
+    refetch,
   };
 };

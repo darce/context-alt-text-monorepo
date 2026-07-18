@@ -34,6 +34,9 @@ export const UNDO_HOLD_MS = 5000;
 /** Single hold/status copy — component + tests consume this export (BR-24). */
 export const HOLD_STATUS_COPY = 'Saving… — Undo';
 
+/** BR-55: committing phase drops Undo suffix (Undo unreachable). */
+export const HOLD_COMMITTING_STATUS_COPY = 'Saving…';
+
 export type SuggestionCommitKind =
   | 'accept'
   | 'reject'
@@ -472,58 +475,66 @@ export const useSuggestionReviewMutations = ({
         return openHold(kind, suggestionId);
       }
 
-      // Busy path: chain only the prepare step (flush prior + open hold). The returned
-      // promise tracks the full hold lifetime; chainRef must NOT await that lifetime or
-      // flushHeld / next schedule deadlock waiting for a window that needs them to fire.
-      return new Promise<ScheduleCommitResult>((resolve) => {
-        const prepare = async (): Promise<void> => {
-          // BR-23: drop late prepares after unmount.
-          if (!mountedRef.current) {
-            resolve({ outcome: 'failed', kind, suggestionId });
-            return;
-          }
-          // PR-30 bulk→single: flush/wait bulk hold/sequence before opening a single hold.
-          const awaitBulk = awaitBulkIdleOrFlushRef?.current;
-          if (awaitBulk) {
-            await awaitBulk();
-          }
-          if (!mountedRef.current) {
-            resolve({ outcome: 'failed', kind, suggestionId });
-            return;
-          }
-          if (heldRef.current) {
-            const prior = await flushHeldInternal({ updateUi: true });
-            // Failed prior stays at queue head with alert — do not open a second window.
-            if (prior?.outcome === 'failed') {
-              // BR-21: resolve with THIS action's kind/id, not the prior item's result.
-              resolve({
-                outcome: 'not_attempted_prior_failed',
-                kind,
-                suggestionId,
-              });
+      // BR-49: await bulk OUTSIDE chainRef. Bulk's runSequence → commitOneNow must not
+      // enqueue behind a chain link that is itself waiting for bulk (circular wait).
+      const runBusy = async (): Promise<ScheduleCommitResult> => {
+        if (!mountedRef.current) {
+          return { outcome: 'failed', kind, suggestionId };
+        }
+        const awaitBulk = awaitBulkIdleOrFlushRef?.current;
+        if (awaitBulk) {
+          await awaitBulk();
+        }
+        if (!mountedRef.current) {
+          return { outcome: 'failed', kind, suggestionId };
+        }
+
+        // Busy path: chain only the prepare step (flush prior + open hold). The returned
+        // promise tracks the full hold lifetime; chainRef must NOT await that lifetime or
+        // flushHeld / next schedule deadlock waiting for a window that needs them to fire.
+        return new Promise<ScheduleCommitResult>((resolve) => {
+          const prepare = async (): Promise<void> => {
+            // BR-23: drop late prepares after unmount.
+            if (!mountedRef.current) {
+              resolve({ outcome: 'failed', kind, suggestionId });
               return;
             }
-          }
-          while (committingRef.current || personCommittingRef.current) {
-            await Promise.resolve();
-          }
-          if (!mountedRef.current) {
-            resolve({ outcome: 'failed', kind, suggestionId });
-            return;
-          }
-          // BR-17: same item still failed after chain — do not open a second path.
-          if (failedHoldRef.current?.suggestionId === suggestionId) {
-            resolve({ outcome: 'failed', kind, suggestionId });
-            return;
-          }
-          void openHold(kind, suggestionId).then(resolve);
-        };
+            if (heldRef.current) {
+              const prior = await flushHeldInternal({ updateUi: true });
+              // Failed prior stays at queue head with alert — do not open a second window.
+              if (prior?.outcome === 'failed') {
+                // BR-21: resolve with THIS action's kind/id, not the prior item's result.
+                resolve({
+                  outcome: 'not_attempted_prior_failed',
+                  kind,
+                  suggestionId,
+                });
+                return;
+              }
+            }
+            while (committingRef.current || personCommittingRef.current) {
+              await Promise.resolve();
+            }
+            if (!mountedRef.current) {
+              resolve({ outcome: 'failed', kind, suggestionId });
+              return;
+            }
+            // BR-17: same item still failed after chain — do not open a second path.
+            if (failedHoldRef.current?.suggestionId === suggestionId) {
+              resolve({ outcome: 'failed', kind, suggestionId });
+              return;
+            }
+            void openHold(kind, suggestionId).then(resolve);
+          };
 
-        chainRef.current = chainRef.current.then(prepare, prepare).then(
-          () => undefined,
-          () => undefined,
-        );
-      });
+          chainRef.current = chainRef.current.then(prepare, prepare).then(
+            () => undefined,
+            () => undefined,
+          );
+        });
+      };
+
+      return runBusy();
     },
     [
       awaitBulkIdleOrFlushRef,
@@ -628,22 +639,16 @@ export const useSuggestionReviewMutations = ({
   /**
    * Slice-5 bulk: fire one atomic commit without hold UI (side-effects on success).
    * Caller owns single-in-flight sequencing across the bulk set.
+   * BR-49: executes directly — does NOT enqueue on chainRef (bulk already serializes;
+   * re-entering chain from awaitBulkIdleOrFlush would deadlock with pre-chain waiters).
    */
   const commitOneNow = React.useCallback(
     async (
       kind: SuggestionCommitKind,
       suggestionId: string,
     ): Promise<'committed' | 'failed'> => {
-      const run = async (): Promise<'committed' | 'failed'> => {
-        const result = await executeHeldCommit(kind, suggestionId, { updateUi: false });
-        return result.outcome === 'committed' ? 'committed' : 'failed';
-      };
-      const scheduled = chainRef.current.then(run, run);
-      chainRef.current = scheduled.then(
-        () => undefined,
-        () => undefined,
-      );
-      return scheduled;
+      const result = await executeHeldCommit(kind, suggestionId, { updateUi: false });
+      return result.outcome === 'committed' ? 'committed' : 'failed';
     },
     [executeHeldCommit],
   );
@@ -720,45 +725,68 @@ export const useSuggestionReviewMutations = ({
         setPersonCommitPending(true);
       }
 
-      return new Promise<PersonCommitResult>((resolve) => {
-        const prepare = async (): Promise<void> => {
-          try {
-            if (!mountedRef.current) {
-              resolve({ outcome: 'failed', clusterId: request.clusterId });
-              return;
-            }
-            // Flush any held accept/reject first (single-in-flight).
-            if (heldRef.current) {
-              const prior = await flushHeldInternal({ updateUi: true });
-              if (prior?.outcome === 'failed') {
-                resolve({ outcome: 'not_attempted_prior_failed', clusterId: request.clusterId });
-                return;
-              }
-            }
-            while (committingRef.current || personCommittingRef.current) {
-              await Promise.resolve();
-            }
-            if (!mountedRef.current) {
-              resolve({ outcome: 'failed', clusterId: request.clusterId });
-              return;
-            }
-            const result = await executePersonCommit(request);
-            resolve(result);
-          } finally {
-            personCommitInFlightRef.current = false;
-            if (mountedRef.current) {
-              setPersonCommitPending(false);
-            }
+      // BR-48/49: await bulk OUTSIDE chainRef (same restructure as scheduleCommit).
+      const run = async (): Promise<PersonCommitResult> => {
+        try {
+          if (!mountedRef.current) {
+            return { outcome: 'failed', clusterId: request.clusterId };
           }
-        };
+          const awaitBulk = awaitBulkIdleOrFlushRef?.current;
+          if (awaitBulk) {
+            await awaitBulk();
+          }
+          if (!mountedRef.current) {
+            return { outcome: 'failed', clusterId: request.clusterId };
+          }
 
-        chainRef.current = chainRef.current.then(prepare, prepare).then(
-          () => undefined,
-          () => undefined,
-        );
-      });
+          return await new Promise<PersonCommitResult>((resolve) => {
+            const prepare = async (): Promise<void> => {
+              try {
+                if (!mountedRef.current) {
+                  resolve({ outcome: 'failed', clusterId: request.clusterId });
+                  return;
+                }
+                // Flush any held accept/reject first (single-in-flight).
+                if (heldRef.current) {
+                  const prior = await flushHeldInternal({ updateUi: true });
+                  if (prior?.outcome === 'failed') {
+                    resolve({
+                      outcome: 'not_attempted_prior_failed',
+                      clusterId: request.clusterId,
+                    });
+                    return;
+                  }
+                }
+                while (committingRef.current || personCommittingRef.current) {
+                  await Promise.resolve();
+                }
+                if (!mountedRef.current) {
+                  resolve({ outcome: 'failed', clusterId: request.clusterId });
+                  return;
+                }
+                const result = await executePersonCommit(request);
+                resolve(result);
+              } catch {
+                resolve({ outcome: 'failed', clusterId: request.clusterId });
+              }
+            };
+
+            chainRef.current = chainRef.current.then(prepare, prepare).then(
+              () => undefined,
+              () => undefined,
+            );
+          });
+        } finally {
+          personCommitInFlightRef.current = false;
+          if (mountedRef.current) {
+            setPersonCommitPending(false);
+          }
+        }
+      };
+
+      return run();
     },
-    [executePersonCommit, flushHeldInternal],
+    [awaitBulkIdleOrFlushRef, executePersonCommit, flushHeldInternal],
   );
 
   const retryPersonCommit = React.useCallback((): Promise<PersonCommitResult> | null => {

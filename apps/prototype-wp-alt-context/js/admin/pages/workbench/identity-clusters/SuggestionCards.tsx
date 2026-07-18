@@ -22,6 +22,8 @@ interface SuggestionCardProps {
   /** Opens click-to-original lightbox for a face crop (E21-5 ②). */
   onOpenOriginal?: (target: FaceOriginalTarget) => void;
   isPending: boolean;
+  /** BR-47: title when Accept/Reject disabled (e.g. selected for bulk). */
+  disabledReason?: string | null;
   lowConfidenceThreshold: number;
   /** Slice-2 hold/failure chrome — placed immediately after the actioned control. */
   actionAccessory?: React.ReactNode;
@@ -76,6 +78,7 @@ export const SuggestionCard = ({
   onReview,
   onOpenOriginal,
   isPending,
+  disabledReason = null,
   lowConfidenceThreshold,
   actionAccessory = null,
   actionAccessoryAfter = 'accept',
@@ -172,11 +175,18 @@ export const SuggestionCard = ({
           className="button button-primary acx-suggestion-card__accept"
           onClick={onAccept}
           disabled={isPending}
+          title={isPending && disabledReason ? disabledReason : undefined}
         >
           {__('Yes', 'alt-context')}
         </button>
         {actionAccessoryAfter === 'accept' ? actionAccessory : null}
-        <button type="button" className="button acx-suggestion-card__reject" onClick={onReject} disabled={isPending}>
+        <button
+          type="button"
+          className="button acx-suggestion-card__reject"
+          onClick={onReject}
+          disabled={isPending}
+          title={isPending && disabledReason ? disabledReason : undefined}
+        >
           {__('No', 'alt-context')}
         </button>
         {actionAccessoryAfter === 'reject' ? actionAccessory : null}

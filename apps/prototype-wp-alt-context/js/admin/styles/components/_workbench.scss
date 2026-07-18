@@ -635,6 +635,13 @@
        by weight as well as color (§7 pinned token role). */
     font-weight: var(--acx-font-weight-semibold);
 
+    /* Offline uses aria-disabled (never html-disabled); match :disabled affordance. */
+    &:disabled,
+    &[aria-disabled='true'] {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
     /* §7 media-footer hierarchy: when Analyze is not the state's accent primary
        it steps down to a neutral/ghost secondary — no accent (COL-03/COL-09). */
     &--secondary {
@@ -682,7 +689,9 @@ button.acx-accent-primary-action {
   color: var(--acx-color-accent-contrast);
   font-weight: var(--acx-font-weight-semibold);
 
-  &:disabled {
+  /* Offline / remote-gate uses aria-disabled (still focusable); match html :disabled. */
+  &:disabled,
+  &[aria-disabled='true'] {
     opacity: 0.6;
     cursor: not-allowed;
   }

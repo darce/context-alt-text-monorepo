@@ -699,7 +699,13 @@ export const useBulkReviewCommit = ({
       clearHeldTimer();
       heldBulkRef.current = null;
       held.resolve();
-      const first = held.items[0];
+      // BR-50/BR-62: unmount flush re-filters against live selection + filters (was raw items[0])
+      const live = selectedIdsRef.current;
+      const stillSelected = held.items.filter((i) => live.has(i.suggestionId));
+      const allowedNow = new Set(
+        resolveItemsRef.current(stillSelected.map((i) => i.suggestionId)).map((i) => i.suggestionId),
+      );
+      const first = stillSelected.find((i) => allowedNow.has(i.suggestionId));
       if (first) {
         setBulkActionActiveRef.current(true);
         void commitOneRef.current(first.commitKind, first.suggestionId).finally(() => {

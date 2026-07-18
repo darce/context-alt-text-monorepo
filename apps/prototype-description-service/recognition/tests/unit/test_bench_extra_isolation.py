@@ -10,29 +10,42 @@ Heuristics: [SERVE-03][RLSE-08]
 from __future__ import annotations
 
 import importlib
+import importlib.abc
+import importlib.machinery
 import sys
 from types import ModuleType
 
 import pytest
 
+from recognition.tests.unit.face_pipeline_support import MODELS_PRESENT, MODELS_SKIP
+
+
+class _InsightfaceBlockFinder(importlib.abc.MetaPathFinder):
+    """sys.meta_path finder that refuses insightface* imports (S5CR-07)."""
+
+    def find_spec(  # noqa: D102
+        self,
+        fullname: str,
+        path: object = None,  # noqa: ARG002
+        target: object = None,  # noqa: ARG002
+    ) -> importlib.machinery.ModuleSpec | None:
+        if fullname == "insightface" or fullname.startswith("insightface."):
+            raise ModuleNotFoundError(
+                f"blocked insightface import for S5 isolation test: {fullname}",
+                name=fullname,
+            )
+        return None
+
 
 def _block_insightface(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Remove insightface and refuse any re-import for the duration of the test."""
+    """Remove insightface and refuse any re-import via sys.meta_path for the test."""
     for key in list(sys.modules):
         if key == "insightface" or key.startswith("insightface."):
             monkeypatch.delitem(sys.modules, key, raising=False)
 
-    real_import = __import__
-
-    def _guarded_import(name: str, globals=None, locals=None, fromlist=(), level: int = 0):  # noqa: ANN001
-        if name == "insightface" or name.startswith("insightface."):
-            raise ModuleNotFoundError(
-                f"blocked insightface import for S5 isolation test: {name}",
-                name=name,
-            )
-        return real_import(name, globals, locals, fromlist, level)
-
-    monkeypatch.setattr("builtins.__import__", _guarded_import)
+    finder = _InsightfaceBlockFinder()
+    # Insert at front so we win over normal path finders.
+    monkeypatch.setattr(sys, "meta_path", [finder, *sys.meta_path])
 
 
 def test_face_pipeline_modules_import_without_insightface(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -96,3 +109,35 @@ async def test_face_pipeline_factory_branch_without_insightface(
     assert isinstance(gen, UnavailableEmbeddingGenerator)
     assert "insightface" not in sys.modules
     fpa.reset_shared_face_pipeline_runtime_for_tests()
+
+
+@pytest.mark.skipif(not MODELS_PRESENT, reason=MODELS_SKIP)
+def test_face_pipeline_runtime_constructs_under_insightface_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S5CR-07: models-present success path must not import insightface."""
+    from recognition.infrastructure.embeddings import face_pipeline_adapter as fpa
+    from recognition.infrastructure.face_pipeline.provenance import DEFAULT_MODELS_DIR
+
+    _block_insightface(monkeypatch)
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+
+    # Align dims so the three-way guard does not raise before model load.
+    monkeypatch.setenv("RECOGNITION_EMBEDDING_DIMENSION", "128")
+    monkeypatch.setenv("PGVECTOR_DIM", "128")
+    from db.settings import get_database_settings
+    from recognition.config import get_settings
+
+    get_settings.cache_clear()
+    get_database_settings.cache_clear()
+
+    runtime = fpa.get_shared_face_pipeline_runtime(
+        profile="face_pipeline",
+        models_dir=DEFAULT_MODELS_DIR,
+    )
+    assert isinstance(runtime, fpa.FacePipelineRuntime)
+    assert "insightface" not in sys.modules
+    assert not any(k.startswith("insightface.") for k in sys.modules)
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+    get_settings.cache_clear()
+    get_database_settings.cache_clear()

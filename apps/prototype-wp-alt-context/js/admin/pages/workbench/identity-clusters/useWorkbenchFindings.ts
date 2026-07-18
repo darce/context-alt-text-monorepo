@@ -96,16 +96,16 @@ const assignmentAction = (item: SuggestionReviewItem): WorkbenchNextAction => {
   if (item.type === 'group') {
     return {
       kind: NEXT_ACTION_KIND.ASSIGNMENT,
-      suggestionId: item.suggestions[0].id,
+      suggestionId: item.suggestions[0].suggestionId,
       clusterId: item.clusterId,
       label: item.label,
     };
   }
   return {
     kind: NEXT_ACTION_KIND.ASSIGNMENT,
-    suggestionId: item.suggestion.id,
-    clusterId: item.suggestion.suggested_cluster_id,
-    label: item.suggestion.cluster_label ?? item.suggestion.suggested_label ?? null,
+    suggestionId: item.suggestion.suggestionId,
+    clusterId: item.suggestion.clusterId,
+    label: item.suggestion.label ?? item.suggestion.enrichment?.suggestedLabel ?? null,
   };
 };
 
@@ -152,10 +152,13 @@ const collectPreviews = (
   for (const item of queues.reviewItems) {
     const suggestion = item.type === 'group' ? item.suggestions[0] : item.suggestion;
     previews.push({
-      key: `assignment-${suggestion.id}`,
-      thumbUrl: suggestion.identity_thumb_url ?? null,
-      mediaUrl: suggestion.identity_media_url ?? null,
-      label: item.type === 'group' ? item.label : (suggestion.cluster_label ?? suggestion.suggested_label ?? null),
+      key: `assignment-${suggestion.suggestionId}`,
+      thumbUrl: suggestion.enrichment?.identityThumbUrl ?? null,
+      mediaUrl: suggestion.enrichment?.identityMediaUrl ?? null,
+      label:
+        item.type === 'group'
+          ? item.label
+          : (suggestion.label ?? suggestion.enrichment?.suggestedLabel ?? null),
     });
   }
 

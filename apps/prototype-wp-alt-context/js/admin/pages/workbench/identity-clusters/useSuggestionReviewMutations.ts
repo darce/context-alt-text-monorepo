@@ -10,31 +10,34 @@ import {
   rejectMergeSuggestion,
   rejectNameSuggestion,
   rejectSuggestion,
-  type PendingSuggestionsResponse,
 } from '../../../api/recognition';
+import { invalidateSuggestionProjection } from './suggestionProjection';
+import type { SuggestionReviewPage } from './useSuggestionReviewQueries';
 
 interface UseSuggestionReviewMutationsOptions {
   queryClient: QueryClient;
   bulkActionRef: React.MutableRefObject<boolean>;
 }
 
+const reviewPageKey = queryKeys.suggestions.projection.reviewPage(0);
+
 export const useSuggestionReviewMutations = ({ queryClient, bulkActionRef }: UseSuggestionReviewMutationsOptions) => {
   const removePendingSuggestionFromCache = (suggestionId: string) => {
-    queryClient.setQueryData<PendingSuggestionsResponse | undefined>(queryKeys.suggestions.pending(), (current) => {
+    queryClient.setQueryData<SuggestionReviewPage | undefined>(reviewPageKey, (current) => {
       if (!current) {
         return current;
       }
-      const filtered = current.suggestions.filter((suggestion) => suggestion.id !== suggestionId);
-      if (filtered.length === current.suggestions.length) {
+      const filtered = current.items.filter((item) => item.suggestionId !== suggestionId);
+      if (filtered.length === current.items.length) {
         return current;
       }
-      // COR-3 (rg-015): no envelope total to decrement; the loaded count follows suggestions.
-      return { ...current, suggestions: filtered };
+      // COR-3 (rg-015): no envelope total to decrement; the loaded count follows items.
+      return { ...current, items: filtered };
     });
   };
 
   const invalidateSuggestionQueries = () => {
-    void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.pending() });
+    void invalidateSuggestionProjection(queryClient);
     void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
   };
 
@@ -45,15 +48,15 @@ export const useSuggestionReviewMutations = ({ queryClient, bulkActionRef }: Use
   const acceptMutation = useMutation({
     mutationFn: acceptSuggestion,
     onMutate: async (suggestionId: string) => {
-      await queryClient.cancelQueries({ queryKey: queryKeys.suggestions.pending() });
-      const previous = queryClient.getQueryData<PendingSuggestionsResponse>(queryKeys.suggestions.pending());
+      await queryClient.cancelQueries({ queryKey: reviewPageKey });
+      const previous = queryClient.getQueryData<SuggestionReviewPage>(reviewPageKey);
       removePendingSuggestionFromCache(suggestionId);
       return { previous };
     },
     onError: (error, _suggestionId, context) => {
       console.warn('[SuggestionReviewPanel] accept failed, restoring cache:', error);
       if (context?.previous) {
-        queryClient.setQueryData(queryKeys.suggestions.pending(), context.previous);
+        queryClient.setQueryData(reviewPageKey, context.previous);
       }
     },
     onSettled: () => {
@@ -76,15 +79,15 @@ export const useSuggestionReviewMutations = ({ queryClient, bulkActionRef }: Use
   const rejectMutation = useMutation({
     mutationFn: rejectSuggestion,
     onMutate: async (suggestionId: string) => {
-      await queryClient.cancelQueries({ queryKey: queryKeys.suggestions.pending() });
-      const previous = queryClient.getQueryData<PendingSuggestionsResponse>(queryKeys.suggestions.pending());
+      await queryClient.cancelQueries({ queryKey: reviewPageKey });
+      const previous = queryClient.getQueryData<SuggestionReviewPage>(reviewPageKey);
       removePendingSuggestionFromCache(suggestionId);
       return { previous };
     },
     onError: (error, _suggestionId, context) => {
       console.warn('[SuggestionReviewPanel] reject failed, restoring cache:', error);
       if (context?.previous) {
-        queryClient.setQueryData(queryKeys.suggestions.pending(), context.previous);
+        queryClient.setQueryData(reviewPageKey, context.previous);
       }
     },
     onSuccess: (_data, suggestionId) => {
@@ -121,7 +124,7 @@ export const useSuggestionReviewMutations = ({ queryClient, bulkActionRef }: Use
   const bulkAcceptMutation = useMutation({
     mutationFn: bulkAcceptSuggestions,
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.pending() });
+      void invalidateSuggestionProjection(queryClient);
       void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.namePending() });
       void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.mergePending() });
       void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });

@@ -90,11 +90,11 @@ Scoped TDD per slice locally (never local full-suite); `make check-remote` green
 
 ### Checklist for S1: Rider-1 ORT bump
 
-- [ ] `pyproject.toml` L32 `onnxruntime>=1.16.0` → `>=1.22`; `[gpu]` mirror `onnxruntime-gpu>=1.22`; `uv.lock` regenerated
-- [ ] `uv sync`/lock refresh resolves on macOS-arm64 + Linux
-- [ ] **Models-present** FIR-3 parity run on bumped ORT: fetch → `pytest -rs`, zero `MODELS_SKIP` in the model-gated set, output recorded as evidence — no tolerance widening ([SERVE-07], [TEST-08])
-- [ ] **Incumbent co-gate**: scratch venv + insightface extra; multi-face + single-face fixtures on old vs bumped ORT — detection counts stable AND per-face cosine ≥ 0.999999; ORT version pair + fixture IDs recorded; rollback = pin revert noted
-- [ ] `make check-remote` green; slice decision recorded
+- [x] `pyproject.toml` L32 `onnxruntime>=1.16.0` → `>=1.22`; `[gpu]` mirror `onnxruntime-gpu>=1.22`; `uv.lock` regenerated (59972be7)
+- [x] `uv sync`/lock refresh resolves on macOS-arm64 (ORT 1.26.0 verified in-worktree); Linux via check-remote gate env
+- [x] **Models-present** FIR-3 parity run on bumped ORT: 79 passed, 0 skipped, ORT 1.26.0 — grok run + independent orchestrator re-run (handoff test id 898) — no tolerance widening ([SERVE-07], [TEST-08])
+- [x] **Incumbent co-gate**: DISCHARGED by lock-identity proof — uv.lock resolved onnxruntime 1.26.0 both before and after the floor bump (no artifact crosses ORT versions; 1.16 line uninstallable on cp312), recorded in handoff test id 898; rollback = pin revert
+- [x] `make check-remote` green (2084 passed @HEAD 7bdf6686); slice decision recorded
 
 ### Checklist for S2: Bridge + settings
 

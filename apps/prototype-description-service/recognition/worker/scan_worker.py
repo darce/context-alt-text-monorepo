@@ -21,22 +21,23 @@ from db.settings import get_database_settings
 from db.tenant_context import enable_rls_bypass, set_tenant_context
 from recognition.application.embedding.detector import (
     FaceDetectorProtocol,
-    InsightFaceFaceDetector,
     StubFaceDetector,
     UnavailableFaceDetector,
 )
 from recognition.application.embedding.generator import (
     EmbeddingGeneratorProtocol,
-    InsightFaceEmbeddingGenerator,
     StubEmbeddingGenerator,
-    UnavailableEmbeddingGenerator,
 )
-from recognition.application.scan.capability import publish_embedding_runtime_capability
+from recognition.application.scan.capability import (
+    ScanWorkerCounters,
+    format_capability_reason,
+    publish_embedding_runtime_capability,
+)
 from recognition.application.scan.queue_repository import ScanQueueItem
 from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.config import get_settings as get_recognition_settings
 from recognition.domain.job import CLUSTERING_JOB_TYPES, JobStatus
-from recognition.infrastructure.embeddings import get_shared_insightface_adapter
+from recognition.infrastructure.embeddings.runtime_factory import build_embedding_runtime
 from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
 from recognition.worker.handlers.clustering import ClusteringJobHandler, CurationJobHandler, SplitJobHandler
 from recognition.worker.handlers.scan import ScanItemHandler
@@ -113,6 +114,8 @@ class ScanWorker:
             return FilesystemObjectStore(root=worker_blob_root, tenant_id=tenant_id)
 
         self._object_store_factory = _worker_object_store_factory
+        # Cumulative reconcile counters published on every heartbeat ([OBS-05]/[OBS-08]).
+        self._scan_counters = ScanWorkerCounters()
 
         self._scan_handler = ScanItemHandler(
             session_factory=self._session_factory,
@@ -121,6 +124,7 @@ class ScanWorker:
             max_attempts=self._config.max_attempts,
             max_concurrency=self._config.max_concurrency,
             object_store_factory=self._object_store_factory,
+            counters=self._scan_counters,
         )
         self._job_handlers = {
             "split": SplitJobHandler(),
@@ -208,24 +212,32 @@ class ScanWorker:
         now = datetime.now(tz=UTC)
         if self._embedding_retry_after is not None and now < self._embedding_retry_after:
             return
-        try:
-            adapter = await get_shared_insightface_adapter()
+        settings = get_recognition_settings()
+        # Pre-S3 semantics (S3CR-02): do not allocate httpx.AsyncClient until the
+        # factory returns a usable detector; on Unavailable close/clear any client
+        # so none exists while the runtime is not ready. Retry after 30s.
+        self._detector, self._generator = await build_embedding_runtime(
+            settings=settings,
+            http_client=self._http_client,
+        )
+        if isinstance(self._detector, UnavailableFaceDetector):
+            self._embedding_runtime_ready = False
+            self._embedding_retry_after = now + timedelta(seconds=30)
+            if self._http_client is not None:
+                await self._http_client.aclose()
+                self._http_client = None
+        else:
             if self._http_client is None:
                 self._http_client = httpx.AsyncClient(timeout=30.0)
-            self._detector = InsightFaceFaceDetector(adapter, client=self._http_client)
-            self._generator = InsightFaceEmbeddingGenerator(adapter)
+                # Attach shared client after success (factory ran with None).
+                if hasattr(self._detector, "_client"):
+                    self._detector._client = self._http_client
             self._embedding_retry_after = None
             self._embedding_runtime_ready = True
-        except Exception as exc:
-            logger.exception("Failed to initialize InsightFace adapter; scan items will fail closed until it recovers.")
-            reason = str(exc) or exc.__class__.__name__
-            self._detector = UnavailableFaceDetector(reason)
-            self._generator = UnavailableEmbeddingGenerator(reason)
-            self._embedding_retry_after = now + timedelta(seconds=30)
 
         # BR-11: preserve the ObjectStore factory wired in __init__ so the
         # production scan_handler keeps multipart-blob support after the
-        # InsightFace adapter loads (or after the stub fallback fires).
+        # adapter loads (or after the fail-closed fallback fires).
         self._scan_handler = ScanItemHandler(
             session_factory=self._session_factory,
             detector=self._detector,
@@ -233,24 +245,41 @@ class ScanWorker:
             max_attempts=self._config.max_attempts,
             max_concurrency=self._config.max_concurrency,
             object_store_factory=self._object_store_factory,
+            counters=self._scan_counters,
         )
         await self._heartbeat_embedding_runtime_capability()
 
     async def _publish_embedding_runtime_capability(self, session: AsyncSession) -> None:
-        """Write the worker-published embedding-runtime heartbeat for API intake."""
+        """Write the worker-published embedding-runtime heartbeat for API intake.
+
+        Contract expansion (S3CR-07 / S4): ``reason`` carries ``profile=<name>`` plus
+        always-present cumulative counters (zeros until first media) so silence is
+        distinguishable from health ([OBS-05], [OBS-08]). Pre-S3 used ``reason=None``
+        on the ready path; consumers must accept the profile + counter suffix.
+        """
         from recognition.shared.db.dialect import is_postgres
 
         if not is_postgres(session):
             return
+        profile = get_recognition_settings().face_pipeline.profile
         if self._runtime_mode == "test" or self._embedding_runtime_ready:
             available = True
-            reason = None
+            reason = format_capability_reason(profile=profile, counters=self._scan_counters)
         elif isinstance(self._detector, UnavailableFaceDetector):
             available = False
-            reason = self._detector.reason
+            base = self._detector.reason or "embedding runtime unavailable"
+            reason = format_capability_reason(
+                profile=profile,
+                available_detail=base,
+                counters=self._scan_counters,
+            )
         else:
             available = False
-            reason = "embedding runtime not initialized"
+            reason = format_capability_reason(
+                profile=profile,
+                available_detail="embedding runtime not initialized",
+                counters=self._scan_counters,
+            )
         await publish_embedding_runtime_capability(session, available=available, reason=reason)
 
     async def _heartbeat_embedding_runtime_capability(self) -> None:

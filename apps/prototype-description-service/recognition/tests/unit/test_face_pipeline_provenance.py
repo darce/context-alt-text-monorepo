@@ -24,6 +24,7 @@ from recognition.infrastructure.face_pipeline.provenance import (
     MODEL_MANIFEST,
     PENDING_OPERATOR_FETCH,
     ModelIntegrityError,
+    ModelMissingError,
     ModelProvenance,
     _file_sha256,
     load_verified_model,
@@ -132,7 +133,7 @@ def test_load_verified_model_tampered_raises(tmp_path: Path, monkeypatch: pytest
 
 
 def test_load_verified_model_missing_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Missing on-disk model refuses to load."""
+    """Missing on-disk model refuses to load as ModelMissingError (non-integrity)."""
     file_name = "face_recognition_sface_2021dec.onnx"
     entry = _make_entry(
         file_name=file_name,
@@ -149,8 +150,10 @@ def test_load_verified_model_missing_raises(tmp_path: Path, monkeypatch: pytest.
     )
     monkeypatch.setitem(MODEL_MANIFEST, "sface", entry)
 
-    with pytest.raises(ModelIntegrityError, match="missing"):
+    with pytest.raises(ModelMissingError, match="missing"):
         load_verified_model("sface", models_dir=tmp_path)
+    # Not a sticky integrity failure class.
+    assert not issubclass(ModelMissingError, ModelIntegrityError)
 
 
 def test_load_verified_model_sentinel_hash_refuses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -167,7 +170,7 @@ def test_load_verified_model_sentinel_hash_refuses(tmp_path: Path, monkeypatch: 
     )
     monkeypatch.setitem(MODEL_MANIFEST, "yunet", entry)
 
-    with pytest.raises(ModelIntegrityError, match=PENDING_OPERATOR_FETCH):
+    with pytest.raises(ModelMissingError, match=PENDING_OPERATOR_FETCH):
         load_verified_model("yunet", models_dir=tmp_path)
 
 
@@ -191,7 +194,7 @@ def test_load_verified_model_missing_license_raises(tmp_path: Path, monkeypatch:
     )
     monkeypatch.setitem(MODEL_MANIFEST, "yunet", entry)
 
-    with pytest.raises(ModelIntegrityError, match="license file missing"):
+    with pytest.raises(ModelMissingError, match="license file missing"):
         load_verified_model("yunet", models_dir=tmp_path)
 
 
@@ -499,3 +502,123 @@ def test_download_verified_over_cap_raises(tmp_path: Path, monkeypatch: pytest.M
         )
     assert not dest.exists()
     assert not dest.with_suffix(dest.suffix + ".partial").exists()
+
+
+# ---------------------------------------------------------------------------
+# FIR-4 S5: --verify-only (no network; exit non-zero on missing/hash mismatch)
+# ---------------------------------------------------------------------------
+
+
+def test_verify_only_missing_model_raises(tmp_path: Path) -> None:
+    """Empty dest → ModelFetchError (missing), no network."""
+    fetch = _load_fetch_script()
+    with pytest.raises(fetch.ModelFetchError):
+        fetch.verify_only(dest_dir=tmp_path, models=("yunet",))
+
+
+def test_verify_only_hash_mismatch_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Present file with wrong sha256 fails closed (no download)."""
+    fetch = _load_fetch_script()
+    yunet = MODEL_MANIFEST["yunet"]
+    if yunet.sha256 == PENDING_OPERATOR_FETCH:
+        pytest.skip("manifest still PENDING_OPERATOR_FETCH")
+
+    # Wrong model bytes + a license that would pass if we only checked presence.
+    bad_model = b"wrong-yunet-bytes"
+    _write_model(tmp_path, yunet.file_name, bad_model)
+    license_payload = b"synthetic-license"
+    synthetic = _make_entry(
+        file_name=yunet.file_name,
+        sha256=_sha256(b"expected-correct-bytes"),  # deliberately not bad_model
+        size_bytes=len(b"expected-correct-bytes"),
+        license_file=yunet.license_file,
+        license_payload=license_payload,
+        framework=yunet.framework,
+        embedding_dim=yunet.embedding_dim,
+        normalization=yunet.normalization,
+        metric=yunet.metric,
+        source_url=yunet.source_url,
+        source_ref=yunet.source_ref,
+        license_id=yunet.license_id,
+    )
+    monkeypatch.setitem(MODEL_MANIFEST, "yunet", synthetic)
+    monkeypatch.setitem(fetch.MODEL_MANIFEST, "yunet", synthetic)
+    _write_license(tmp_path, yunet.license_file, license_payload)
+
+    with pytest.raises(fetch.ModelFetchError):
+        fetch.verify_only(dest_dir=tmp_path, models=("yunet",))
+
+
+def test_verify_only_happy_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Matching model + license returns paths; main --verify-only exits 0."""
+    fetch = _load_fetch_script()
+    payload = b"verified-yunet-v1"
+    license_payload = b"MIT-ok"
+    file_name = "face_detection_yunet_2026may.onnx"
+    license_file = "LICENSE.yunet"
+    entry = _make_entry(
+        file_name=file_name,
+        sha256=_sha256(payload),
+        size_bytes=len(payload),
+        license_file=license_file,
+        license_payload=license_payload,
+        framework="opencv",
+        embedding_dim=None,
+    )
+    monkeypatch.setitem(MODEL_MANIFEST, "yunet", entry)
+    monkeypatch.setitem(fetch.MODEL_MANIFEST, "yunet", entry)
+    _write_model(tmp_path, file_name, payload)
+    _write_license(tmp_path, license_file, license_payload)
+
+    paths = fetch.verify_only(dest_dir=tmp_path, models=("yunet",))
+    assert len(paths) == 1
+    assert paths[0].name == file_name
+
+    rc = fetch.main(["--dest", str(tmp_path), "--models", "yunet", "--verify-only"])
+    assert rc == 0
+
+
+def test_verify_only_main_exit_nonzero_on_missing(tmp_path: Path) -> None:
+    """CLI --verify-only returns 1 when models are absent (no network)."""
+    fetch = _load_fetch_script()
+    rc = fetch.main(["--dest", str(tmp_path), "--models", "yunet", "--verify-only"])
+    assert rc == 1
+
+
+def test_verify_only_license_mismatch_raises_no_network(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S5CR-05: valid model bytes + wrong license_sha256 → verify fails, no network."""
+    fetch = _load_fetch_script()
+
+    def _network_forbidden(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("verify-only must not call urlopen / network")
+
+    # Patch wherever the fetch script would reach the network.
+    monkeypatch.setattr(fetch.urllib.request, "urlopen", _network_forbidden)
+
+    payload = b"verified-yunet-license-mismatch"
+    license_payload = b"actual-license-bytes"
+    file_name = "face_detection_yunet_2026may.onnx"
+    license_file = "LICENSE.yunet"
+    entry = _make_entry(
+        file_name=file_name,
+        sha256=_sha256(payload),
+        size_bytes=len(payload),
+        license_file=license_file,
+        license_payload=license_payload,
+        license_sha256="a" * 64,  # wrong on purpose
+        framework="opencv",
+        embedding_dim=None,
+    )
+    monkeypatch.setitem(MODEL_MANIFEST, "yunet", entry)
+    monkeypatch.setitem(fetch.MODEL_MANIFEST, "yunet", entry)
+    _write_model(tmp_path, file_name, payload)
+    _write_license(tmp_path, license_file, license_payload)
+
+    with pytest.raises(fetch.ModelFetchError):
+        fetch.verify_only(dest_dir=tmp_path, models=("yunet",))
+
+    rc = fetch.main(["--dest", str(tmp_path), "--models", "yunet", "--verify-only"])
+    assert rc == 1

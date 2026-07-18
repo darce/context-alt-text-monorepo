@@ -78,7 +78,13 @@ async def test_process_items_isolates_poisoned_tenant_among_three(
 
     session_factory = async_sessionmaker(bind=db_session.bind, expire_on_commit=False)
 
-    async def _process_media_item(*, tenant_id: str, media_id: int, media_url: str) -> int:
+    async def _process_media_item(
+        *,
+        tenant_id: str,
+        media_id: int,
+        media_url: str,
+        job_id: uuid.UUID | str | None = None,
+    ) -> int:
         if uuid.UUID(tenant_id) == poison_tenant_id:
             raise RuntimeError("poisoned tenant")
         return 1

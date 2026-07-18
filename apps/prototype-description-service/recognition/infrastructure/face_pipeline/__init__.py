@@ -7,6 +7,7 @@ Import surface is stdlib-only at this package root (no cv2/onnxruntime).
 from recognition.infrastructure.face_pipeline.provenance import (
     MODEL_MANIFEST,
     ModelIntegrityError,
+    ModelMissingError,
     ModelProvenance,
     load_verified_model,
 )
@@ -14,6 +15,7 @@ from recognition.infrastructure.face_pipeline.provenance import (
 __all__ = [
     "MODEL_MANIFEST",
     "ModelIntegrityError",
+    "ModelMissingError",
     "ModelProvenance",
     "load_verified_model",
 ]

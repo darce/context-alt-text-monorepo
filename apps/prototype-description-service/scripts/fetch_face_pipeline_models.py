@@ -9,6 +9,11 @@ Usage (from apps/prototype-description-service):
     uv run python scripts/fetch_face_pipeline_models.py
     uv run python scripts/fetch_face_pipeline_models.py --models yunet
     uv run python scripts/fetch_face_pipeline_models.py --dest /tmp/models
+    uv run python scripts/fetch_face_pipeline_models.py --verify-only
+
+``--verify-only`` checks local files against the manifest (no network) and
+exits non-zero on missing, model hash mismatch, or license hash mismatch —
+use for dark-env provisioning and deploy preflight.
 
 ONNX files are gitignored; LICENSE files are committed for audit trail.
 
@@ -39,6 +44,7 @@ from recognition.infrastructure.face_pipeline.provenance import (  # noqa: E402
     MODEL_MANIFEST,
     PENDING_OPERATOR_FETCH,
     ModelIntegrityError,
+    ModelMissingError,
     ModelProvenance,
     load_verified_model,
 )
@@ -247,7 +253,7 @@ def fetch_one(name: str, *, dest_dir: Path) -> Path:
 
         # Final gate: loader path (same verification production will use).
         verified = load_verified_model(name, models_dir=dest_dir)
-    except (ModelFetchError, ModelIntegrityError):
+    except (ModelFetchError, ModelIntegrityError, ModelMissingError):
         # Fail-closed for model weights only — never unlink license_file
         # (LICENSE.yunet / LICENSE.sface are git-tracked audit artifacts).
         _unlink_quiet(model_path)
@@ -273,6 +279,32 @@ def fetch_all(
     return paths
 
 
+def verify_only(
+    *,
+    dest_dir: Path | None = None,
+    models: tuple[str, ...] | None = None,
+) -> list[Path]:
+    """Verify local model + license files against the manifest (no network).
+
+    Raises ``ModelFetchError`` wrapping integrity failures so callers share the
+    same exit path as fetch. Does not download or write files.
+    """
+    root = Path(dest_dir) if dest_dir is not None else DEFAULT_MODELS_DIR
+    names = models if models is not None else tuple(MODEL_MANIFEST.keys())
+    paths: list[Path] = []
+    for name in names:
+        entry = MODEL_MANIFEST.get(name)
+        if entry is None:
+            raise ModelFetchError(f"unknown model name: {name!r}")
+        try:
+            verified = load_verified_model(name, models_dir=root)
+        except (ModelIntegrityError, ModelMissingError) as exc:
+            raise ModelFetchError(str(exc)) from exc
+        print(f"verified {name}: {verified} sha256={entry.sha256[:12]}…")
+        paths.append(verified)
+    return paths
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Fetch YuNet + SFace ONNX models with sha256 verification.")
     parser.add_argument(
@@ -288,16 +320,26 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Subset of models to fetch (default: all)",
     )
+    parser.add_argument(
+        "--verify-only",
+        action="store_true",
+        help=(
+            "Check local files against the manifest only (no network). "
+            "Exit 1 on missing, model hash mismatch, or license hash mismatch (no network)."
+        ),
+    )
     args = parser.parse_args(argv)
     try:
-        paths = fetch_all(
-            dest_dir=args.dest,
-            models=tuple(args.models) if args.models else None,
-        )
-    except (ModelFetchError, ModelIntegrityError) as exc:
+        model_names = tuple(args.models) if args.models else None
+        if args.verify_only:
+            paths = verify_only(dest_dir=args.dest, models=model_names)
+            print(f"ok: verified {len(paths)} model(s)")
+        else:
+            paths = fetch_all(dest_dir=args.dest, models=model_names)
+            print(f"ok: fetched {len(paths)} model(s)")
+    except (ModelFetchError, ModelIntegrityError, ModelMissingError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
-    print(f"ok: fetched {len(paths)} model(s)")
     return 0
 
 

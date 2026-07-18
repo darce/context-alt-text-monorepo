@@ -52,7 +52,7 @@ async def test_scan_item_handler_binds_api_correlation_id_during_processing() ->
 
     captured_ids: list[str | None] = []
 
-    async def _fake_process(*, tenant_id, media_id, media_url):  # noqa: ANN001
+    async def _fake_process(*, tenant_id, media_id, media_url, job_id=None):  # noqa: ANN001
         captured_ids.append(get_correlation_id())
         return 0
 
@@ -99,7 +99,7 @@ async def test_scan_item_handler_generates_worker_id_when_missing() -> None:
 
     captured_ids: list[str | None] = []
 
-    async def _fake_process(*, tenant_id, media_id, media_url):  # noqa: ANN001
+    async def _fake_process(*, tenant_id, media_id, media_url, job_id=None):  # noqa: ANN001
         captured_ids.append(get_correlation_id())
         return 0
 

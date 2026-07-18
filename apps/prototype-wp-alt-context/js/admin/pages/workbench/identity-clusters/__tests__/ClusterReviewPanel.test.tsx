@@ -6,7 +6,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fetchClusterMembers, removeClusterMember } from '../../../../api/recognition';
 import { queryKeys } from '../../../../api/queryKeys';
 import type { ClusterMembersResponse } from '../../../../api/recognition';
+import { HTTPError } from '../../../../utils/http';
 import { ClusterReviewPanel } from '../ClusterReviewPanel';
+
+const membersNotFound = (): HTTPError =>
+  new HTTPError({
+    status: 404,
+    retryAfterSeconds: undefined,
+    endpoint: '/acx/v1/recognition/clusters/x/members',
+    bodyPreview: 'cluster_not_found',
+    message: 'cluster not found',
+  });
 
 const reactQueryState = vi.hoisted(() => ({
   useQueryOverride: null as Record<string, unknown> | null,
@@ -334,5 +344,30 @@ describe('ClusterReviewPanel', () => {
 
     await user.click(screen.getByLabelText('Close'));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * Characterization (E21-5 Slice 7 / FBT-1 ⑤): open-target lifecycle is NOT live-derived yet.
+   * A 404 on the members query (cluster_not_found retirement) leaves the panel open —
+   * stale open-target. Slice 7 flips this to rebind-else-close + announce + focus.
+   */
+  it('characterization: members 404 leaves panel open (stale open-target pre-fix)', async () => {
+    const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
+    const onClose = vi.fn();
+    fetchClusterMembersMock.mockRejectedValue(membersNotFound());
+
+    renderPanel('cluster-retired-x', onClose);
+
+    await waitFor(() => {
+      expect(fetchClusterMembersMock).toHaveBeenCalled();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Unable to load cluster members.')).toBeInTheDocument();
+    });
+
+    // Pre-fix: retirement does not close the open review pane.
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByText('Review Cluster')).toBeInTheDocument();
   });
 });

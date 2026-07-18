@@ -29,13 +29,20 @@ WORKDIR /build
 
 COPY pyproject.toml .
 
-# Install the package deps (no editable install — just deps) plus the [face] extra.
+# Install the package deps (no editable install — just deps) plus the [bench] extra.
+# insightface remains installed through FIR-4: the production dark default still
+# uses the incumbent path (FIR-6 removes it). face_pipeline ONNX models are NOT
+# baked into the image here (operator fetch/verify for dark envs).
 # We install into a virtualenv so we can copy it cleanly to the runtime stage.
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
-    && pip install --no-cache-dir ".[face]"
+    && pip install --no-cache-dir ".[bench]"
+
+# Fail closed if pip resolved onnxruntime outside the S1-evidenced 1.22+ line
+# (image install does not use uv.lock). [SERVE-07][PROV-08]
+RUN python -c "import onnxruntime as o; v=o.__version__; parts=v.split('.'); assert len(parts)>=2 and (int(parts[0]), int(parts[1])) >= (1, 22), v; print('ORT', v)"
 
 # ---------------------------------------------------------------------------
 # Stage 2: Runtime — slim image with only what's needed to run

@@ -126,3 +126,12 @@ from an older commit.
   behavior in `scripts/deploy/recognition-service.sh`, not here.
 - Local/manual deploy remains available and identical:
   `REMOTE_BUILD=1 scripts/deploy/recognition-service.sh deploy <env>`.
+- **Dark face_pipeline envs (FIR-4):** the image still ships insightface via
+  `.[bench]` (incumbent dark default) and does **not** include face_pipeline
+  ONNX weights. If an environment sets
+  `RECOGNITION_FACE_PIPELINE_PROFILE=face_pipeline`, provision models on the
+  host/volume first
+  (`uv run python scripts/fetch_face_pipeline_models.py` from
+  `apps/prototype-description-service`), then re-check offline with
+  `--verify-only` before flipping the profile. Missing/hash-mismatched models
+  fail closed at boot.

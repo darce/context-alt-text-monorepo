@@ -14,26 +14,30 @@ uv run --locked --extra dev uvicorn api.main:app --reload
 
 The checked-in `.python-version` pins the interpreter to Python 3.12.7, while `uv` manages the project-local `.venv` from `uv.lock`.
 
-### Face Detection (InsightFace)
+### Face detection profiles
 
-Face detection requires InsightFace which has platform-specific installation:
-
-**Linux x86_64** (including Hugging Face Spaces):
-
-```bash
-uv sync --locked --extra dev --extra face      # CPU
-uv sync --locked --extra dev --extra gpu       # GPU (CUDA)
-```
-
-**macOS Apple Silicon**:
+**Default install** (core deps) supports the commercial `face_pipeline` profile
+(YuNet + SFace via onnxruntime). Fetch models once:
 
 ```bash
-# InsightFace requires compilation with correct SDK paths
 uv sync --locked --extra dev
-./scripts/install_insightface_mac.sh
+./scripts/install_insightface_mac.sh   # runs fetch_face_pipeline_models.py
+# or: uv run python scripts/fetch_face_pipeline_models.py
+# re-check without network: uv run python scripts/fetch_face_pipeline_models.py --verify-only
 ```
 
-Without InsightFace installed, the service falls back to stub detectors that generate synthetic embeddings (useful for testing, not production).
+**Incumbent InsightFace** (production dark default until FIR-6) and FIR-5
+bake-off legs need the `[bench]` extra:
+
+```bash
+uv sync --locked --extra dev --extra bench     # insightface
+uv sync --locked --extra dev --extra gpu       # onnxruntime-gpu (Linux only)
+# macOS Apple Silicon insightface compile:
+./scripts/install_insightface_mac.sh --bench
+```
+
+Without a real backend loaded, production mode fails closed to `Unavailable*`;
+`runtime_mode=test` still uses stub detectors for synthetic embeddings.
 
 ### Database (Local PostgreSQL reset contract)
 

@@ -22,6 +22,14 @@ export const PERSON_COMMIT_COMMITTING_COPY = 'Adding to roster…';
 export const PERSON_COMMIT_FAILURE_COPY =
   'Could not add to roster. Retry to try again.';
 
+export const PERSON_COMMIT_SUCCESS_COPY = 'Added to roster.';
+
 export const PERSON_COMMIT_COMBOBOX_ARIA = 'Commit to roster entry';
 
 export const PERSON_COMMIT_PLACEHOLDER = 'Choose or create a person…';
+
+/**
+ * BR-35: always-available create action (call-site; shared combobox only offers
+ * Create on zero substring matches). `%s` is the typed name.
+ */
+export const PERSON_COMMIT_CREATE_NEW_COPY = 'Create new person "%s"';

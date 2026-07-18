@@ -145,8 +145,13 @@ export const useSuggestionReviewMutations = ({
   /** Serializes flush/schedule so at most one commit is in flight and order is preserved. */
   const chainRef = React.useRef(Promise.resolve());
   const committingRef = React.useRef(false);
-  /** Person-commit in-flight (shares chainRef with accept/reject holds). */
+  /** Person-commit POST executing (inside executePersonCommit). */
   const personCommittingRef = React.useRef(false);
+  /**
+   * BR-25/26: synchronous re-entry latch set at schedule/retry time (before any
+   * await). Covers held-accept flush latency where phase is still 'idle'.
+   */
+  const personCommitInFlightRef = React.useRef(false);
   /** Last person-commit request for retry (rg-002: re-fire exactly one POST). */
   const lastPersonCommitRef = React.useRef<PersonCommitRequest | null>(null);
   /** Failed hold snapshot — used so schedule/retry can re-check without waiting on React state. */
@@ -154,6 +159,8 @@ export const useSuggestionReviewMutations = ({
   /** BR-17: reject re-entry while a retry POST is in flight. */
   const retryInFlightRef = React.useRef(false);
   const [retryPending, setRetryPending] = React.useState(false);
+  /** BR-25: disables confirm/retry immediately on schedule (not only phase==='committing'). */
+  const [personCommitPending, setPersonCommitPending] = React.useState(false);
   /** BR-22: per-hold monotonically increasing entry id. */
   const nextEntryIdRef = React.useRef(1);
 
@@ -203,6 +210,23 @@ export const useSuggestionReviewMutations = ({
           return current;
         }
         const filtered = current.suggestions.filter((item) => item.id !== suggestionId);
+        if (filtered.length === current.suggestions.length) {
+          return current;
+        }
+        return { ...current, suggestions: filtered };
+      });
+    },
+    [queryClient],
+  );
+
+  /** BR-29: person-commit success drops namePending rows for the committed cluster. */
+  const removeNameSuggestionForCluster = React.useCallback(
+    (clusterId: string) => {
+      queryClient.setQueryData<PendingNameSuggestionsResponse | undefined>(namePendingKey, (current) => {
+        if (!current) {
+          return current;
+        }
+        const filtered = current.suggestions.filter((item) => item.cluster_id !== clusterId);
         if (filtered.length === current.suggestions.length) {
           return current;
         }
@@ -590,11 +614,16 @@ export const useSuggestionReviewMutations = ({
           rosterEntryId: request.rosterEntryId,
           newEntryName: request.newEntryName,
         });
-        // clusterLabelSetClear: committing labels a cluster (same as roster drawer).
+        // BR-28: clusterLabelSetClear kept targets (extras allowed).
         void invalidateSuggestionProjection(queryClient);
+        void queryClient.invalidateQueries({ queryKey: mergePendingKey });
         void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.labels() });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
         void queryClient.invalidateQueries({ queryKey: queryKeys.roster.entries() });
         void queryClient.invalidateQueries({ queryKey: namePendingKey });
+        // BR-29: drop namePending rows for this cluster immediately (async curation lag).
+        removeNameSuggestionForCluster(request.clusterId);
         setPersonCommitSafe({
           phase: 'succeeded',
           clusterId: request.clusterId,
@@ -612,50 +641,72 @@ export const useSuggestionReviewMutations = ({
         personCommittingRef.current = false;
       }
     },
-    [queryClient, setPersonCommitSafe],
+    [queryClient, removeNameSuggestionForCluster, setPersonCommitSafe],
   );
 
   const schedulePersonCommit = React.useCallback(
-    (request: PersonCommitRequest): Promise<PersonCommitResult> =>
-      new Promise<PersonCommitResult>((resolve) => {
+    (request: PersonCommitRequest): Promise<PersonCommitResult> => {
+      // BR-25: synchronous re-entry gate before any async work / flush latency.
+      if (personCommitInFlightRef.current) {
+        return Promise.resolve({ outcome: 'failed', clusterId: request.clusterId });
+      }
+      personCommitInFlightRef.current = true;
+      if (mountedRef.current) {
+        setPersonCommitPending(true);
+      }
+
+      return new Promise<PersonCommitResult>((resolve) => {
         const prepare = async (): Promise<void> => {
-          if (!mountedRef.current) {
-            resolve({ outcome: 'failed', clusterId: request.clusterId });
-            return;
-          }
-          // Flush any held accept/reject first (single-in-flight).
-          if (heldRef.current) {
-            const prior = await flushHeldInternal({ updateUi: true });
-            if (prior?.outcome === 'failed') {
-              resolve({ outcome: 'not_attempted_prior_failed', clusterId: request.clusterId });
+          try {
+            if (!mountedRef.current) {
+              resolve({ outcome: 'failed', clusterId: request.clusterId });
               return;
             }
+            // Flush any held accept/reject first (single-in-flight).
+            if (heldRef.current) {
+              const prior = await flushHeldInternal({ updateUi: true });
+              if (prior?.outcome === 'failed') {
+                resolve({ outcome: 'not_attempted_prior_failed', clusterId: request.clusterId });
+                return;
+              }
+            }
+            while (committingRef.current || personCommittingRef.current) {
+              await Promise.resolve();
+            }
+            if (!mountedRef.current) {
+              resolve({ outcome: 'failed', clusterId: request.clusterId });
+              return;
+            }
+            const result = await executePersonCommit(request);
+            resolve(result);
+          } finally {
+            personCommitInFlightRef.current = false;
+            if (mountedRef.current) {
+              setPersonCommitPending(false);
+            }
           }
-          while (committingRef.current || personCommittingRef.current) {
-            await Promise.resolve();
-          }
-          if (!mountedRef.current) {
-            resolve({ outcome: 'failed', clusterId: request.clusterId });
-            return;
-          }
-          const result = await executePersonCommit(request);
-          resolve(result);
         };
 
         chainRef.current = chainRef.current.then(prepare, prepare).then(
           () => undefined,
           () => undefined,
         );
-      }),
+      });
+    },
     [executePersonCommit, flushHeldInternal],
   );
 
   const retryPersonCommit = React.useCallback((): Promise<PersonCommitResult> | null => {
     const last = lastPersonCommitRef.current;
+    // BR-26: phase + sync latch — reject double-retry before any async work.
     if (!last || personCommit.phase !== 'failed') {
       return null;
     }
-    if (personCommittingRef.current || committingRef.current) {
+    if (
+      personCommitInFlightRef.current ||
+      personCommittingRef.current ||
+      committingRef.current
+    ) {
       return null;
     }
     return schedulePersonCommit(last);
@@ -763,7 +814,10 @@ export const useSuggestionReviewMutations = ({
   });
 
   const isHoldActive = hold.phase === 'holding' || hold.phase === 'committing';
-  const isCommitting = hold.phase === 'committing' || personCommit.phase === 'committing';
+  const isCommitting =
+    hold.phase === 'committing' ||
+    personCommit.phase === 'committing' ||
+    personCommitPending;
 
   /**
    * BR-15: only the held/failed card's accept/reject are disabled during a hold.
@@ -780,7 +834,8 @@ export const useSuggestionReviewMutations = ({
         rejectMergeMutation.isPending ||
         acceptNameMutation.isPending ||
         rejectNameMutation.isPending ||
-        personCommit.phase === 'committing'
+        personCommit.phase === 'committing' ||
+        personCommitPending
       ) {
         return true;
       }
@@ -806,6 +861,7 @@ export const useSuggestionReviewMutations = ({
       hold.phase,
       hold.suggestionId,
       personCommit.phase,
+      personCommitPending,
       rejectMergeMutation.isPending,
       rejectMutation.isPending,
       rejectNameMutation.isPending,
@@ -820,6 +876,7 @@ export const useSuggestionReviewMutations = ({
     isCardActionsDisabled,
     retryPending,
     personCommit,
+    personCommitPending,
     scheduleAccept: (suggestionId: string) => scheduleCommit('accept', suggestionId),
     scheduleReject: (suggestionId: string) => scheduleCommit('reject', suggestionId),
     scheduleAcceptMerge: (suggestionId: string) => scheduleCommit('acceptMerge', suggestionId),

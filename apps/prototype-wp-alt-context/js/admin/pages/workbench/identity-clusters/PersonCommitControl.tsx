@@ -7,7 +7,7 @@
  */
 
 import React from 'react';
-import { __ } from '@wordpress/i18n';
+import { __, sprintf } from '@wordpress/i18n';
 import { useQuery } from '@tanstack/react-query';
 
 import { Combobox } from '../../../../components/ui/combobox';
@@ -19,8 +19,10 @@ import {
   PERSON_COMMIT_COMBOBOX_ARIA,
   PERSON_COMMIT_COMMITTING_COPY,
   PERSON_COMMIT_CONFIRM_COPY,
+  PERSON_COMMIT_CREATE_NEW_COPY,
   PERSON_COMMIT_FAILURE_COPY,
   PERSON_COMMIT_PLACEHOLDER,
+  PERSON_COMMIT_SUCCESS_COPY,
   VIEW_IN_ROSTER_COPY,
   VIEW_IN_ROSTER_HREF,
 } from './personCommitCopy';
@@ -54,6 +56,8 @@ export const PersonCommitControl = ({
 }: PersonCommitControlProps): React.JSX.Element => {
   const [selectedEntryId, setSelectedEntryId] = React.useState('');
   const [newEntryName, setNewEntryName] = React.useState('');
+  /** BR-35: live combobox search draft for the always-available create action. */
+  const [draftInput, setDraftInput] = React.useState('');
   const isBusy = phase === 'committing' || disabled;
 
   const rosterQuery = useQuery({
@@ -68,10 +72,12 @@ export const PersonCommitControl = ({
   React.useEffect(() => {
     setSelectedEntryId('');
     setNewEntryName('');
+    setDraftInput('');
     const trimmed = suggestedCreateName?.trim() ?? '';
     if (trimmed.length > 0) {
       setSelectedEntryId('create');
       setNewEntryName(trimmed);
+      setDraftInput(trimmed);
     }
   }, [clusterId, suggestedCreateName]);
 
@@ -82,6 +88,7 @@ export const PersonCommitControl = ({
     }
     setSelectedEntryId('create');
     setNewEntryName(trimmed);
+    setDraftInput(trimmed);
   };
 
   const handleSelectEntry = (nextValue: string): void => {
@@ -96,6 +103,15 @@ export const PersonCommitControl = ({
     !isBusy &&
     ((isCreatingEntry && newEntryName.trim().length > 0) ||
       (!isCreatingEntry && selectedEntryId !== ''));
+
+  const createCandidate = (isCreatingEntry ? newEntryName : draftInput).trim();
+  const exactRosterMatch = rosterEntries.some(
+    (entry) => entry.name.trim().toLowerCase() === createCandidate.toLowerCase(),
+  );
+  // BR-35: always offer create when typed name is non-empty and not an exact match
+  // (shared combobox only surfaces Create on zero substring matches).
+  const showExplicitCreate =
+    !isBusy && createCandidate.length > 0 && !exactRosterMatch && !isCreatingEntry;
 
   const handleConfirm = (): void => {
     if (!canCommit) {
@@ -116,7 +132,7 @@ export const PersonCommitControl = ({
         data-person-commit-primary={isPrimary ? 'true' : 'false'}
       >
         <p className="acx-person-commit__success-message" role="status">
-          {__('Added to roster.', 'alt-context')}
+          {__(PERSON_COMMIT_SUCCESS_COPY, 'alt-context')}
         </p>
         <a className="acx-person-commit__roster-link" href={VIEW_IN_ROSTER_HREF}>
           {__(VIEW_IN_ROSTER_COPY, 'alt-context')}
@@ -142,6 +158,7 @@ export const PersonCommitControl = ({
           value={isCreatingEntry ? newEntryName : selectedEntryId}
           onSelect={handleSelectEntry}
           onCreate={handleCreate}
+          onValueChange={setDraftInput}
           ariaLabel={__(PERSON_COMMIT_COMBOBOX_ARIA, 'alt-context')}
           placeholder={__(PERSON_COMMIT_PLACEHOLDER, 'alt-context')}
           className="acx-person-commit__combobox"
@@ -165,6 +182,17 @@ export const PersonCommitControl = ({
             : __(PERSON_COMMIT_CONFIRM_COPY, 'alt-context')}
         </button>
       </div>
+
+      {showExplicitCreate ? (
+        <button
+          type="button"
+          className="button button-link acx-person-commit__create-new"
+          onClick={() => handleCreate(createCandidate)}
+          disabled={isBusy}
+        >
+          {sprintf(__(PERSON_COMMIT_CREATE_NEW_COPY, 'alt-context'), createCandidate)}
+        </button>
+      ) : null}
 
       {phase === 'failed' ? (
         <div className="acx-person-commit__failure" role="alert">

@@ -125,6 +125,7 @@ interface HarnessProps {
   emptyStateAnchorRef?: React.RefObject<HTMLElement | null>;
   queueRef?: React.RefObject<ReviewQueueHandle>;
   onLabel?: (clusterId: string) => void;
+  onReview?: (clusterId: string) => void;
 }
 
 const ReviewQueueHarness = ({
@@ -133,6 +134,7 @@ const ReviewQueueHarness = ({
   emptyStateAnchorRef,
   queueRef,
   onLabel,
+  onReview,
 }: HarnessProps): React.JSX.Element => {
   const [index, setIndex] = React.useState(initialIndex);
   const [kind, setKind] = React.useState<ReviewQueueKindParam>(initialKind);
@@ -145,6 +147,7 @@ const ReviewQueueHarness = ({
       onKindChange={setKind}
       emptyStateAnchorRef={emptyStateAnchorRef}
       onLabel={onLabel}
+      onReview={onReview}
     />
   );
 };
@@ -1467,6 +1470,292 @@ describe('ReviewQueue', () => {
     expect(order[0]).toBe('accept:sugg-1');
     expect(order).toContain('person-commit');
     expect(order.indexOf('accept:sugg-1')).toBeLessThan(order.indexOf('person-commit'));
+  });
+
+  it('BR-27: focus on NAME card lands on person-commit combobox/confirm (not demoted Accept)', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'name-1',
+          cluster_id: 'cluster-name-1',
+          suggested_name: 'Morgan',
+          confidence_score: 0.91,
+          source: 'test',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
+      ],
+      limit: 25,
+      offset: 0,
+    });
+
+    const queueRef = React.createRef<ReviewQueueHandle>();
+    renderQueue({ queueRef });
+
+    await screen.findByTestId('acx-review-card');
+    expect(screen.getByTestId('acx-review-card')).toHaveAttribute('data-review-kind', 'name');
+
+    act(() => {
+      queueRef.current?.focusCurrentCard();
+    });
+
+    const focused = document.activeElement as HTMLElement | null;
+    expect(focused).not.toBe(document.body);
+    expect(focused?.closest('[data-testid="acx-person-commit"]')).not.toBeNull();
+    // Demoted Accept suggestion must not steal primacy.
+    expect(focused?.classList.contains('acx-suggestion-card__accept')).toBe(false);
+  });
+
+  it('BR-27: focus on CLUSTER with nothing selected lands on enabled person-commit control', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [
+        {
+          id: 'cluster-top-1',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 4,
+          user_confirmed: false,
+          suggested_label: null,
+          suggested_target_cluster_id: null,
+          representatives: [],
+        },
+      ],
+      limit: 20,
+      total: 1,
+      truncated: false,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    const queueRef = React.createRef<ReviewQueueHandle>();
+    renderQueue({ queueRef });
+
+    await screen.findByTestId('acx-review-card');
+    expect(screen.getByTestId('acx-review-card')).toHaveAttribute('data-review-kind', 'cluster');
+
+    act(() => {
+      queueRef.current?.focusCurrentCard();
+    });
+
+    const focused = document.activeElement as HTMLElement | null;
+    expect(focused).not.toBe(document.body);
+    expect(focused?.closest('[data-testid="acx-person-commit"]')).not.toBeNull();
+    expect((focused as HTMLButtonElement | null)?.disabled).not.toBe(true);
+  });
+
+  it('BR-30: person-commit failure after accept advances shows queue-level alert; retry fires 1 POST', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+        {
+          id: 'sugg-2',
+          identity_id: 'identity-2',
+          suggested_cluster_id: 'cluster-2',
+          representative_similarity: 0.8,
+          avg_member_similarity: 0.75,
+          cluster_label: 'Jordan',
+          cluster_identity_count: 2,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+
+    let rejectPerson!: (reason?: unknown) => void;
+    const personGate = new Promise<void>((_resolve, reject) => {
+      rejectPerson = reject;
+    });
+    // First call hangs until we reject (after accept advanced).
+    vi.mocked(commitClusterToRosterEntry)
+      .mockImplementationOnce(() => personGate)
+      .mockResolvedValueOnce(undefined);
+    // Prevent invalidate refetch from restoring the accepted row while person-commit is open.
+    vi.mocked(acceptSuggestion).mockImplementation((id: string) => {
+      vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+        suggestions: [
+          {
+            id: 'sugg-2',
+            identity_id: 'identity-2',
+            suggested_cluster_id: 'cluster-2',
+            representative_similarity: 0.8,
+            avg_member_similarity: 0.75,
+            cluster_label: 'Jordan',
+            cluster_identity_count: 2,
+          },
+        ],
+        limit: 10,
+        offset: 0,
+      });
+      return Promise.resolve({
+        suggestion_id: id,
+        resolution: 'accepted' as const,
+        identity_id: 'identity-1',
+        cluster_id: 'cluster-1',
+        message: 'ok',
+      });
+    });
+
+    const user = userEvent.setup();
+    renderQueue();
+
+    const yes = await screen.findByRole('button', { name: 'Yes' });
+    // Hold accept open, then person-commit flushes it.
+    await user.click(yes);
+    expect(screen.getByText(HOLD_STATUS_COPY)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
+    await user.click(await screen.findByRole('option', { name: /Alex/i }));
+    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
+
+    // Accept flushed → card advanced to sugg-2 before person-commit settles.
+    await waitFor(() => {
+      expect(acceptSuggestion).toHaveBeenCalledWith('sugg-1');
+      expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Jordan/);
+    });
+
+    await act(async () => {
+      rejectPerson(new Error('network'));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const fallback = await screen.findByTestId('acx-person-commit-queue-fallback');
+    expect(fallback).toHaveAttribute('role', 'alert');
+    const retry = within(fallback).getByRole('button', { name: 'Retry' });
+    await user.click(retry);
+
+    await waitFor(() => {
+      expect(commitClusterToRosterEntry).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('BR-31: CLUSTER card renders Review members affordance and drives onReview', async () => {
+    const onReview = vi.fn();
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [
+        {
+          id: 'cluster-top-1',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 4,
+          user_confirmed: false,
+          suggested_label: null,
+          suggested_target_cluster_id: null,
+          representatives: [],
+        },
+      ],
+      limit: 20,
+      total: 1,
+      truncated: false,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ReviewQueueHarness onReview={onReview} />
+      </QueryClientProvider>,
+    );
+
+    await screen.findByTestId('acx-review-card');
+    const reviewBtn = screen.getByRole('button', { name: 'Review' });
+    await user.click(reviewBtn);
+    expect(onReview).toHaveBeenCalledWith('cluster-top-1');
+  });
+
+  it('BR-34: null-clusterId assignment item renders no person-commit chrome', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-null',
+          identity_id: 'identity-null',
+          // Runtime null — matrix hides person-commit; item.clusterId is authoritative (no fallback).
+          suggested_cluster_id: null as unknown as string,
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+
+    renderQueue();
+    await screen.findByRole('button', { name: 'Yes' });
+    expect(screen.queryByTestId('acx-person-commit')).not.toBeInTheDocument();
+  });
+
+  it('BR-35: substring match still allows Create new person via explicit call-site action', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+
+    const user = userEvent.setup();
+    renderQueue();
+    await screen.findByTestId('acx-person-commit');
+
+    await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
+    // Type a substring of existing "Alex" — shared combobox would hide Create.
+    const search = await screen.findByPlaceholderText(/Choose or create/i);
+    await user.clear(search);
+    await user.type(search, 'Al');
+
+    const createBtn = await screen.findByRole('button', { name: /Create new person "Al"/i });
+    await user.click(createBtn);
+
+    // Confirm uses create path with the typed name.
+    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
+    await waitFor(() => {
+      expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
+        clusterId: 'cluster-1',
+        rosterEntryId: undefined,
+        newEntryName: 'Al',
+      });
+    });
   });
 });
 

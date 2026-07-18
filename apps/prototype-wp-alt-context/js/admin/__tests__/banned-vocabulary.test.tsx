@@ -425,28 +425,26 @@ describe('banned vocabulary across js/admin pages', () => {
     const { NEXT_ACTION_CHIP_LABEL, NEXT_ACTION_KIND } = await import(
       '../pages/workbench/identity-clusters/reviewQueueDriver'
     );
-    const {
-      JUST_LABEL_COPY,
-      MODEL_OUTPUT_DISCLOSURE,
-      PERSON_COMMIT_CONFIRM_COPY,
-      PERSON_COMMIT_FAILURE_COPY,
-      VIEW_IN_ROSTER_COPY,
-    } = await import('../pages/workbench/identity-clusters/personCommitCopy');
+    // BR-33: sweep every exported person-commit copy constant (import *).
+    const personCommitCopy = await import('../pages/workbench/identity-clusters/personCommitCopy');
 
+    const personCommitStrings = Object.values(personCommitCopy).filter(
+      (value) => typeof value === 'string',
+    ) as string[];
     const surface = [
       NEXT_ACTION_CHIP_LABEL[NEXT_ACTION_KIND.ASSIGNMENT],
       NEXT_ACTION_CHIP_LABEL[NEXT_ACTION_KIND.MERGE],
-      MODEL_OUTPUT_DISCLOSURE,
-      JUST_LABEL_COPY,
-      PERSON_COMMIT_CONFIRM_COPY,
-      PERSON_COMMIT_FAILURE_COPY,
-      VIEW_IN_ROSTER_COPY,
+      ...personCommitStrings,
     ].join(' ');
 
     for (const banned of BANNED_STRINGS) {
       expect(surface.toLowerCase()).not.toContain(banned.toLowerCase());
     }
-    expect(surface).toContain(MODEL_OUTPUT_DISCLOSURE);
+    expect(surface).toContain(personCommitCopy.MODEL_OUTPUT_DISCLOSURE);
+    expect(surface).toContain(personCommitCopy.PERSON_COMMIT_SUCCESS_COPY);
+    expect(surface).toContain(personCommitCopy.PERSON_COMMIT_COMBOBOX_ARIA);
+    expect(surface).toContain(personCommitCopy.PERSON_COMMIT_PLACEHOLDER);
+    expect(surface).toContain(personCommitCopy.PERSON_COMMIT_COMMITTING_COPY);
     expect(surface).not.toMatch(UUID_REGEX);
   });
 });

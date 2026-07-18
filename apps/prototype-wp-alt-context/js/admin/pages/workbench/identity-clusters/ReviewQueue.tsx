@@ -21,6 +21,12 @@ import {
 import { EmptyStateWarning } from './EmptyStateWarning';
 import { MergeSuggestionCard } from './MergeSuggestionCard';
 import { PersonCommitControl } from './PersonCommitControl';
+import {
+  PERSON_COMMIT_FAILURE_COPY,
+  PERSON_COMMIT_SUCCESS_COPY,
+  VIEW_IN_ROSTER_COPY,
+  VIEW_IN_ROSTER_HREF,
+} from './personCommitCopy';
 import { shouldShowPersonCommit, isPersonCommitPrimaryKind } from './personCommitVisibility';
 import { ReviewCardLightbox } from './ReviewCardLightbox';
 import {
@@ -48,6 +54,31 @@ import {
 } from './useSuggestionReviewMutations';
 import { useSuggestionReviewQueries } from './useSuggestionReviewQueries';
 import { useWorkbenchFindings } from './useWorkbenchFindings';
+
+/** Cluster id for person-commit chrome / orphaned status surface (item.clusterId authoritative). */
+const itemClusterId = (item: ReviewQueueItem): string | null => {
+  switch (item.kind) {
+    case NEXT_ACTION_KIND.ASSIGNMENT:
+    case NEXT_ACTION_KIND.NAME:
+    case NEXT_ACTION_KIND.CLUSTER:
+      return item.clusterId;
+    case NEXT_ACTION_KIND.MERGE:
+      return null;
+  }
+};
+
+const isEnabledFocusTarget = (el: HTMLElement | null): el is HTMLElement => {
+  if (!el) {
+    return false;
+  }
+  if (el.hasAttribute('disabled') || (el as HTMLButtonElement).disabled) {
+    return false;
+  }
+  if (el.getAttribute('aria-disabled') === 'true') {
+    return false;
+  }
+  return true;
+};
 
 const LOW_CONFIDENCE_THRESHOLD = 0.6;
 
@@ -164,20 +195,47 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       return map;
     }, [topUnlabeledClusters]);
 
+    // BR-27: per-kind primary — NAME/CLUSTER prefer person-commit (combobox when confirm
+    // disabled); skip disabled elements before falling back; never land on body.
     const focusPrimaryInCard = React.useCallback((): void => {
       const root = cardRegionRef.current;
       if (!root) {
         emptyStateAnchorRef?.current?.focus({ preventScroll: true });
         return;
       }
-      const primary =
-        root.querySelector<HTMLElement>('.acx-suggestion-card__accept') ??
-        root.querySelector<HTMLElement>('.acx-top-cluster-card__title-action') ??
-        root.querySelector<HTMLElement>('.acx-button--primary') ??
-        root.querySelector<HTMLElement>('button.button-primary') ??
-        root.querySelector<HTMLElement>('button:not([disabled])');
-      primary?.focus({ preventScroll: true });
-    }, [emptyStateAnchorRef]);
+
+      const preferPersonCommit =
+        currentItem?.kind === NEXT_ACTION_KIND.NAME ||
+        currentItem?.kind === NEXT_ACTION_KIND.CLUSTER;
+
+      const personCommitSelectors = [
+        '.acx-person-commit__confirm:not([disabled])',
+        '.acx-person-commit [role="combobox"]:not([disabled])',
+        '.acx-person-commit button:not([disabled])',
+        '.acx-person-commit a[href]',
+      ] as const;
+      const acceptSelectors = [
+        '.acx-suggestion-card__accept:not([disabled])',
+        '.acx-top-cluster-card__title-action:not([disabled])',
+        '.acx-top-cluster-card__review-btn:not([disabled])',
+        '.acx-button--primary:not([disabled])',
+        'button.button-primary:not([disabled])',
+        'button:not([disabled])',
+      ] as const;
+
+      const selectors = preferPersonCommit
+        ? [...personCommitSelectors, ...acceptSelectors]
+        : [...acceptSelectors, ...personCommitSelectors];
+
+      for (const selector of selectors) {
+        const candidate = root.querySelector<HTMLElement>(selector);
+        if (isEnabledFocusTarget(candidate)) {
+          candidate.focus({ preventScroll: true });
+          return;
+        }
+      }
+      emptyStateAnchorRef?.current?.focus({ preventScroll: true });
+    }, [currentItem?.kind, emptyStateAnchorRef]);
 
     const focusCurrentCard = React.useCallback((): void => {
       if (length === 0) {
@@ -237,6 +295,8 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     const navigateAfterFlush = React.useCallback(
       (navigate: () => void): void => {
         clearAdvanceFocus();
+        // BR-29: leave succeeded/failed person-commit surface when leaving the card.
+        data.clearPersonCommitSuccess();
         if (data.hold.phase !== 'holding') {
           navigate();
           return;
@@ -261,6 +321,16 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       },
       [clearAdvanceFocus, data],
     );
+
+    // BR-30: when person-commit fails/succeeds after the card advanced away, surface
+    // alert/status in queue chrome (card-scoped phase never mounts).
+    const currentClusterId = currentItem ? itemClusterId(currentItem) : null;
+    const personCommitSurfacedOnCard =
+      data.personCommit.clusterId != null && data.personCommit.clusterId === currentClusterId;
+    const showQueuePersonCommitFallback =
+      (data.personCommit.phase === 'failed' || data.personCommit.phase === 'succeeded') &&
+      data.personCommit.clusterId != null &&
+      !personCommitSurfacedOnCard;
 
     const handleFilterClick = (nextFilter: ReviewQueueFilter): void => {
       navigateAfterFlush(() => {
@@ -386,6 +456,42 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           {liveMessage}
         </div>
 
+        {showQueuePersonCommitFallback && data.personCommit.phase === 'failed' ? (
+          <div
+            className="acx-review-queue__person-commit-fallback acx-person-commit__failure"
+            role="alert"
+            data-testid="acx-person-commit-queue-fallback"
+          >
+            <p className="acx-person-commit__failure-message">
+              {data.personCommit.errorMessage ?? __(PERSON_COMMIT_FAILURE_COPY, 'alt-context')}
+            </p>
+            <button
+              type="button"
+              className="button acx-person-commit__retry"
+              onClick={() => {
+                void data.retryPersonCommit();
+              }}
+              disabled={data.personCommitPending}
+            >
+              {__('Retry', 'alt-context')}
+            </button>
+          </div>
+        ) : null}
+        {showQueuePersonCommitFallback && data.personCommit.phase === 'succeeded' ? (
+          <div
+            className="acx-review-queue__person-commit-fallback acx-person-commit--success"
+            role="status"
+            data-testid="acx-person-commit-queue-fallback"
+          >
+            <p className="acx-person-commit__success-message">
+              {__(PERSON_COMMIT_SUCCESS_COPY, 'alt-context')}
+            </p>
+            <a className="acx-person-commit__roster-link" href={VIEW_IN_ROSTER_HREF}>
+              {__(VIEW_IN_ROSTER_COPY, 'alt-context')}
+            </a>
+          </div>
+        ) : null}
+
         <div ref={cardRegionRef} className="acx-review-queue__card-region">
           {showUnavailableWarning ? (
             <EmptyStateWarning
@@ -418,6 +524,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               hold={data.hold}
               retryPending={data.retryPending}
               personCommit={data.personCommit}
+              personCommitPending={data.personCommitPending}
               onReview={onReview}
               onLabel={onLabel}
               onOpenOriginal={(target) => setLightbox(target)}
@@ -466,6 +573,7 @@ interface CurrentCardProps {
   hold: ReturnType<typeof useSuggestionReviewData>['hold'];
   retryPending: boolean;
   personCommit: PersonCommitState;
+  personCommitPending: boolean;
   onReview?: (clusterId: string) => void;
   onLabel?: (clusterId: string) => void;
   onOpenOriginal: (target: FaceOriginalTarget) => void;
@@ -560,6 +668,7 @@ const CurrentCard = ({
   hold,
   retryPending,
   personCommit,
+  personCommitPending,
   onReview,
   onLabel,
   onOpenOriginal,
@@ -638,14 +747,23 @@ const CurrentCard = ({
         phase={phaseForCard}
         errorMessage={errorForCard}
         // Stay interactive during accept hold — schedulePersonCommit flushes first.
-        // Only block while a person-commit POST (this or another card) is in flight.
-        disabled={personCommit.phase === 'committing'}
+        // BR-25: disable on schedule (personCommitPending), not only phase==='committing'.
+        disabled={personCommit.phase === 'committing' || personCommitPending}
         suggestedCreateName={options?.suggestedCreateName}
         onCommit={(request) => {
-          void schedulePersonCommit(request);
+          // BR-27: person-commit success may remove the NAME card — arm advance focus.
+          void schedulePersonCommit(request).then((result) => {
+            if (result.outcome === 'committed') {
+              markAdvanceFocus();
+            }
+          });
         }}
         onRetry={() => {
-          void retryPersonCommit();
+          void retryPersonCommit()?.then((result) => {
+            if (result?.outcome === 'committed') {
+              markAdvanceFocus();
+            }
+          });
         }}
         onJustLabel={onLabel}
       />
@@ -672,8 +790,7 @@ const CurrentCard = ({
           : null;
       const assignmentKinds = ['accept', 'reject'] as const;
       const assignmentHold = holdRegionFor(assignmentKinds, suggestion.suggestionId);
-      // Matrix: person-commit only when clusterId != null (item.clusterId is authoritative).
-      const commitClusterId = item.clusterId ?? suggestion.clusterId;
+      // BR-34: item.clusterId authoritative — no suggestion.clusterId fallback (null-hide matrix).
       return (
         <>
           {runHint ? <p className="acx-review-queue__run-hint">{runHint}</p> : null}
@@ -696,7 +813,7 @@ const CurrentCard = ({
             actionAccessory={assignmentHold}
             actionAccessoryAfter={hold.kind === 'reject' ? 'reject' : 'accept'}
           />
-          {personCommitFor(commitClusterId, NEXT_ACTION_KIND.ASSIGNMENT)}
+          {personCommitFor(item.clusterId, NEXT_ACTION_KIND.ASSIGNMENT)}
         </>
       );
     }
@@ -742,7 +859,11 @@ const CurrentCard = ({
       const nameKinds = ['acceptName', 'rejectName'] as const;
       const nameHold = holdRegionFor(nameKinds, suggestion.id);
       const afterAccept = hold.kind === 'acceptName' || hold.kind === null;
-      const namePending = isCardPending(suggestion.id, nameKinds);
+      // BR-29 belt: disable accept/reject while person-commit succeeded for this cluster.
+      const namePersonCommitDone =
+        personCommit.phase === 'succeeded' && personCommit.clusterId === item.clusterId;
+      const namePending =
+        isCardPending(suggestion.id, nameKinds) || namePersonCommitDone || personCommitPending;
       return (
         <div
           className="acx-suggestion-card acx-name-suggestion-card"

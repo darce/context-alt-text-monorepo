@@ -134,16 +134,37 @@ def test_decode_clamps_scores_above_one() -> None:
     assert dets[0].score == pytest.approx(1.0)
 
 
-def test_decode_negative_logits_upper_clamp_only() -> None:
-    """OpenCV MIN(x,1) only — negative product → NaN score → not kept (BR-06)."""
+def test_decode_negative_logits_clamped_to_unit_interval() -> None:
+    """cls/obj must be clamped to [0,1] (lower+upper) before sqrt (FIR3-BR-02).
+
+    Upper-only MIN(x,1) leaves negatives; mixed signs then yield NaN and drop.
+    Lower+upper clamp yields score 0 and also drops at any positive threshold.
+    """
     stride = 16
     pad_w = pad_h = 16
     cls = np.array([-0.5], dtype=np.float32)
     obj = np.array([1.0], dtype=np.float32)
     bbox = np.zeros((1, 4), dtype=np.float32)
     kps = np.zeros((1, 10), dtype=np.float32)
-    # score_threshold=0.0 still drops NaN (NaN >= 0 is False)
-    dets = decode_yunet_level(cls, obj, bbox, kps, stride=stride, pad_w=pad_w, pad_h=pad_h, score_threshold=0.0)
+    dets = decode_yunet_level(cls, obj, bbox, kps, stride=stride, pad_w=pad_w, pad_h=pad_h, score_threshold=0.01)
+    assert dets == []
+
+
+def test_decode_both_negative_cls_obj_no_false_detection() -> None:
+    """Both cls<0 and obj<0 must not produce a positive score / false detection.
+
+    Upper-only clamp keeps negatives: (-0.5)*(-0.5)=0.25 → score=0.5 (false hit).
+    Correct contract clamps both into [0,1] → 0*0 → score 0 → no detection even
+    at a permissive threshold that the false score would clear.
+    """
+    stride = 16
+    pad_w = pad_h = 16
+    cls = np.array([-0.5], dtype=np.float32)
+    obj = np.array([-0.5], dtype=np.float32)
+    bbox = np.zeros((1, 4), dtype=np.float32)
+    kps = np.zeros((1, 10), dtype=np.float32)
+    # Permissive vs production 0.9; upper-only false score 0.5 would pass this.
+    dets = decode_yunet_level(cls, obj, bbox, kps, stride=stride, pad_w=pad_w, pad_h=pad_h, score_threshold=0.01)
     assert dets == []
 
 

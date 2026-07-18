@@ -14,6 +14,7 @@ on:
       - "apps/prototype-description-service/recognition/tests/unit/face_pipeline_support.py"
       - "apps/prototype-description-service/recognition/tests/unit/test_fir_release_gates.py"
       - "apps/prototype-description-service/scripts/fetch_face_pipeline_models.py"
+      - "apps/prototype-description-service/scripts/check_junit_no_skips.py"
       - "apps/prototype-description-service/pyproject.toml"
       - "apps/prototype-description-service/uv.lock"
       - ".github/workflows/face-pipeline-ort-parity.yml"
@@ -29,6 +30,7 @@ on:
       - "apps/prototype-description-service/recognition/tests/unit/face_pipeline_support.py"
       - "apps/prototype-description-service/recognition/tests/unit/test_fir_release_gates.py"
       - "apps/prototype-description-service/scripts/fetch_face_pipeline_models.py"
+      - "apps/prototype-description-service/scripts/check_junit_no_skips.py"
       - "apps/prototype-description-service/pyproject.toml"
       - "apps/prototype-description-service/uv.lock"
       - ".github/workflows/face-pipeline-ort-parity.yml"
@@ -85,7 +87,11 @@ jobs:
       - name: Verify models against manifest (no network)
         run: uv run python scripts/fetch_face_pipeline_models.py --verify-only
 
-      - name: Run ORT parity suite (skips are failures under PARITY_REQUIRED)
+      - name: Run ORT parity suite (JUnit + fail-closed on skips)
         run: >
           uv run --extra dev --extra bench pytest
           recognition/tests/unit/test_face_pipeline_ort_parity.py -q
+          --junitxml=parity-junit.xml
+
+      - name: Fail if any parity test skipped
+        run: python scripts/check_junit_no_skips.py parity-junit.xml

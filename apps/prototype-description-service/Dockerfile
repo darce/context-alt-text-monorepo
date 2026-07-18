@@ -89,8 +89,11 @@ COPY shared/ shared/
 COPY scripts/ scripts/
 COPY pyproject.toml .
 
-# Install the app package itself (deps already present from frozen lock sync)
-RUN pip install --no-cache-dir -e . --no-deps
+# Install the app package into /opt/venv without resolving build/runtime deps.
+# --no-deps: runtime deps come only from the frozen uv.lock sync above.
+# --no-build-isolation: PEP 517 must not pull setuptools/etc. from the network
+# outside the lock (FINALB-05 / DEP-01/02). Use the venv interpreter explicitly.
+RUN /opt/venv/bin/pip install --no-cache-dir -e . --no-deps --no-build-isolation
 
 # Default cache directory inside the container (mapped to a volume)
 ENV CACHE_BASE=/data/cache

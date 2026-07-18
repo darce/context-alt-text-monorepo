@@ -80,3 +80,35 @@ describe('useClusterActions rescan offline gate', () => {
     expect(recognitionApi.scanFacesBatched).not.toHaveBeenCalled();
   });
 });
+
+describe('useClusterActions bulk dismiss invalidation (clusterDismiss event)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    offline = false;
+  });
+
+  it('bulk dismiss invalidates the suggestion projection and clusters.all', async () => {
+    // TEST-06 predicted first failure (pre-fix): invalidateQueries never called with
+    // { queryKey: ['suggestions','projection'] } — roster bulk dismiss only touched clusters.all.
+    vi.mocked(recognitionApi.dismissCluster).mockResolvedValue(undefined);
+
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } });
+    const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
+    const clientWrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+
+    const { result } = renderHook(() => useClusterActions(), { wrapper: clientWrapper });
+
+    result.current.bulkDismissMutation.mutate({ clusterIds: ['c-1', 'c-2'] });
+
+    await waitFor(() => {
+      expect(recognitionApi.dismissCluster).toHaveBeenCalledTimes(2);
+    });
+
+    await waitFor(() => {
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['suggestions', 'projection'] });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['clusters'] });
+    });
+  });
+});

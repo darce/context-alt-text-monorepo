@@ -116,10 +116,10 @@ Scoped TDD per slice locally (never local full-suite); `make check-remote` green
 
 ### Checklist for S4: Observability
 
-- [ ] `_persist_identities` returns structured reconcile result (detected/matched/new) threaded through `process_media_item`; wide per-scan event emitted in `ScanService` (covers worker + HTTP + inline): detection count, matched/new counts, `embedding_model`, profile, job/correlation id ([OBS-01..03]); one-line `len(det.embedding) == pgvector_dimension` assert with clear ValueError added in `_persist_identities` ([EMB-01] depth)
-- [ ] Metrics named honestly (row recycling, not assignment/unknown); quality-gate rejection metric explicitly deferred to FIR-6 (no scan-time gate exists); cross-profile quality fields labeled per-profile
-- [ ] Counters on worker metrics/capability surface ([OBS-05]); silence distinguishable from health ([OBS-08])
-- [ ] Event shape asserted on both profiles across all three paths; log-capture integration test dark-profile
+- [x] `_persist_identities` returns structured reconcile result (detected/matched/new) threaded through `process_media_item`; wide per-scan event emitted in `ScanService` (covers worker + HTTP + inline): detection count, matched/new counts, `embedding_model`, profile, job/correlation id ([OBS-01..03]); one-line `len(det.embedding) == pgvector_dimension` assert with clear ValueError added in `_persist_identities` ([EMB-01] depth)
+- [x] Metrics named honestly (row recycling, not assignment/unknown); quality-gate rejection metric explicitly deferred to FIR-6 (no scan-time gate exists); cross-profile quality fields labeled per-profile
+- [x] Counters on worker metrics/capability surface ([OBS-05]); silence distinguishable from health ([OBS-08])
+- [x] Event shape asserted on both profiles across all three paths; log-capture integration test dark-profile
 
 ### Checklist for S5: License isolation + deps sweep
 

@@ -109,7 +109,10 @@ describe('useInlineSuggestionBatch', () => {
     const { wrapper } = createWrapper();
     const { result } = renderHook(() => useInlineSuggestionBatch(['a']), { wrapper });
 
+    // Wait for the data to be applied, not merely the fetch to fire — getMatch is
+    // also undefined while loading, which would green a broken filter (BR-11).
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(result.current.getMatch('a')).toBeUndefined();
   });
 
@@ -146,7 +149,9 @@ describe('useInlineSuggestionBatch', () => {
     const { wrapper } = createWrapper();
     const { result } = renderHook(() => useInlineSuggestionBatch([identityId]), { wrapper });
 
+    // Wait for the data to be applied, not merely the fetch to fire (BR-11).
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(result.current.getMatch(identityId)).toBeUndefined();
   });
 });

@@ -36,8 +36,10 @@ export const InlineSuggestionPrompt = ({
   onReject,
   isPending,
 }: InlineSuggestionPromptProps): React.JSX.Element | null => {
-  // Capture label so TS narrows string | null | undefined → string for onConfirm.
-  const label = match?.label;
+  // Capture trimmed label so TS narrows string | null | undefined → string for
+  // onConfirm, and whitespace-only labels never render (defense-in-depth: the
+  // hooks already filter, but this gate must not be weaker than theirs).
+  const label = match?.label?.trim();
   if (!match || !label) {
     return null;
   }

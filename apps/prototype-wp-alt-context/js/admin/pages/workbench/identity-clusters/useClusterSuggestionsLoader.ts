@@ -20,9 +20,11 @@ import { buildNamingOptions, type NamingOption } from './buildNamingOptions';
 import {
   PROJECTION_TOP_K,
   identityBatchIdsKey,
+  isHumanLabeledTarget,
   projectIdentityWindow,
   type ProjectedSuggestion,
 } from './suggestionProjection';
+import type { ClusterLabelMatch } from './useClusterMatchAction';
 
 export interface ClusterSuggestionsLoaderOptions {
   /** Identity ID to fetch suggestions for */
@@ -50,8 +52,8 @@ export interface ClusterSuggestionsLoaderResult {
   isLoading: boolean;
   /** Roster query failed — consumers degrade to cluster-only options */
   rosterError: boolean;
-  /** Find cluster ID by label (case-insensitive); remote search only */
-  findClusterByLabel: (label: string, signal?: AbortSignal) => Promise<{ id: string; label: string } | null>;
+  /** Find cluster ID by label (case-insensitive); remote search only; BR-17 gated */
+  findClusterByLabel: (label: string, signal?: AbortSignal) => Promise<ClusterLabelMatch | null>;
 }
 
 const DEFAULT_DEBOUNCE_MS = 300;
@@ -127,7 +129,7 @@ export const useClusterSuggestionsLoader = ({
   }, [rosterEntries, rosterError, labelMatches, debouncedValue, editableClusterId]);
 
   const findClusterByLabel = React.useCallback(
-    async (label: string, signal?: AbortSignal): Promise<{ id: string; label: string } | null> => {
+    async (label: string, signal?: AbortSignal): Promise<ClusterLabelMatch | null> => {
       const normalizedLabel = label.toLowerCase().trim();
       if (!normalizedLabel) {
         return null;
@@ -136,10 +138,18 @@ export const useClusterSuggestionsLoader = ({
       try {
         const results = await listRecognitionClusters({ search: label, limit: 10, labeled_only: true }, signal);
         const match = results.clusters.find(
-          (cluster) => cluster.id !== editableClusterId && cluster.label.toLowerCase() === normalizedLabel,
+          (cluster) =>
+            cluster.id !== editableClusterId &&
+            cluster.label.toLowerCase() === normalizedLabel &&
+            // BR-17: auto cluster-* labels are never merge/assign targets (FIX-2).
+            isHumanLabeledTarget(cluster.label),
         );
         if (match?.id && match.label) {
-          return { id: match.id, label: match.label };
+          return {
+            id: match.id,
+            label: match.label,
+            identityCount: typeof match.identity_count === 'number' ? match.identity_count : undefined,
+          };
         }
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') {
